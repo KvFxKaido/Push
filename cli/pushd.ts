@@ -1865,7 +1865,15 @@ export function wrapCliDetectAllToolCalls(text) {
     mutating = wrapped;
     phase = 'done';
   }
-  return { readOnly, fileMutations, mutating, extraMutations };
+  // CLI's `cliDetectAllToolCalls` reports parse/shape failures via the
+  // `malformed` channel on its own `ToolDispatchResult`, separate from
+  // the kernel's `DetectedToolCalls.droppedCandidates` slot the Web-side
+  // detector populates. Pushd surfaces malformed reports through its
+  // event stream rather than through the Coder kernel, so we hand the
+  // kernel an empty array here. The shape is still required so the
+  // kernel's `detected.droppedCandidates.length > 0` guard doesn't trip
+  // on `undefined.length`.
+  return { readOnly, fileMutations, mutating, extraMutations, droppedCandidates: [] };
 }
 
 /**

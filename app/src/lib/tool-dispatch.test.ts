@@ -1163,3 +1163,77 @@ describe('detectAllToolCalls — XML-wrapper recovery', () => {
     expect(result.readOnly[0].call.tool).toBe('sandbox_read_file');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Dropped-candidate tracking — the Coder "loops on sandbox_diff" bug.
+// Before this surface existed, a malformed edit_range emitted alongside a
+// valid diff would let the diff execute alone (the only sandbox tool with no
+// args check), leaving the Coder to infer from a clean diff that "the edit
+// somehow didn't apply" and try again. The candidates array surfaces both
+// calls so callers can refuse execution and force a retry.
+// ---------------------------------------------------------------------------
+describe('detectAllToolCalls — droppedCandidates tracking', () => {
+  it('captures a malformed edit_range emitted alongside a valid diff so neither runs silently', () => {
+    const text = [
+      '```json',
+      // edit_range with missing start_line / end_line — fails source validation
+      '{"tool": "edit_range", "args": {"path": "/workspace/README.md", "content": "x"}}',
+      '```',
+      'Let me also check the diff:',
+      '```json',
+      '{"tool": "diff", "args": {}}',
+      '```',
+    ].join('\n');
+    const result = detectAllToolCalls(text);
+    // The valid diff is still classified — the *caller* refuses to run it
+    // when droppedCandidates is non-empty. Detection here just exposes both.
+    expect(result.readOnly).toHaveLength(1);
+    expect(result.readOnly[0].call.tool).toBe('sandbox_diff');
+    expect(result.droppedCandidates).toHaveLength(1);
+    expect(result.droppedCandidates[0].rawToolName).toBe('edit_range');
+    expect(result.droppedCandidates[0].resolvedToolName).toBe('sandbox_edit_range');
+  });
+
+  it('captures top-level-args malformations (model emits path/command outside args wrapper)', () => {
+    const text = [
+      '```json',
+      '{"tool": "read", "path": "/workspace/README.md"}',
+      '```',
+      '```json',
+      '{"tool": "diff", "args": {}}',
+      '```',
+    ].join('\n');
+    const result = detectAllToolCalls(text);
+    expect(result.droppedCandidates).toHaveLength(1);
+    expect(result.droppedCandidates[0].rawToolName).toBe('read');
+    expect(result.droppedCandidates[0].resolvedToolName).toBe('sandbox_read_file');
+  });
+
+  it('captures unrecognized tool names so the model gets a parse error instead of a silent drop', () => {
+    const text = [
+      '```json',
+      '{"tool": "sandbox", "args": {"command": "read", "path": "/workspace/app/src/lib"}}',
+      '```',
+    ].join('\n');
+    const result = detectAllToolCalls(text);
+    expect(result.readOnly).toHaveLength(0);
+    expect(result.mutating).toBeNull();
+    expect(result.droppedCandidates).toHaveLength(1);
+    expect(result.droppedCandidates[0].rawToolName).toBe('sandbox');
+    expect(result.droppedCandidates[0].resolvedToolName).toBeNull();
+  });
+
+  it('leaves droppedCandidates empty when every emitted call validates', () => {
+    const text = [
+      '```json',
+      '{"tool": "read", "args": {"path": "/workspace/README.md"}}',
+      '```',
+      '```json',
+      '{"tool": "diff", "args": {}}',
+      '```',
+    ].join('\n');
+    const result = detectAllToolCalls(text);
+    expect(result.readOnly).toHaveLength(2);
+    expect(result.droppedCandidates).toHaveLength(0);
+  });
+});

@@ -253,6 +253,7 @@ export function buildCoderDetectors<
       fileMutations: sandboxFileMutations,
       mutating: sandboxMutating,
       extraMutations: raw.extraMutations,
+      droppedCandidates: raw.droppedCandidates,
     };
   };
 

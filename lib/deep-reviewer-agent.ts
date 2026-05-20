@@ -99,12 +99,36 @@ const REVIEWER_MUTATION_BLOCKLIST = [
  *     push, delegate, workflow dispatch, etc.). At most one per turn.
  *   - `extraMutations`: overflow calls that violated ordering or batch-size
  *     rules. Callers are expected to reject these with a structured error.
+ *   - `droppedCandidates`: parsed JSON objects that carried a `{tool, args}`
+ *     wrapper shape but failed source-specific validation (wrong/missing
+ *     args, unrecognized tool name). Before this slot existed, these were
+ *     silently dropped when at least one other call in the same turn
+ *     validated — biasing detection toward whichever surviving tool had the
+ *     loosest validator (notably `sandbox_diff`, the only sandbox tool that
+ *     takes no args). Callers surface these as parse errors so the model
+ *     sees that part of its plan failed instead of receiving a misleading
+ *     result from the surviving call.
  */
 export interface DetectedToolCalls<TCall> {
   readOnly: TCall[];
   fileMutations: TCall[];
   mutating: TCall | null;
   extraMutations: TCall[];
+  droppedCandidates: DroppedToolCallCandidate[];
+}
+
+/**
+ * A `{tool, args}`-shaped candidate that the model emitted but no source
+ * validated. Captures enough to build a `[TOOL_CALL_PARSE_ERROR]` message
+ * for the model without re-scanning the original text.
+ */
+export interface DroppedToolCallCandidate {
+  /** Raw `tool` field as the model wrote it (public name, alias, canonical, or unknown). */
+  rawToolName: string;
+  /** Canonical tool name resolved through the alias table, or null if the name is unknown. */
+  resolvedToolName: string | null;
+  /** First ~200 chars of the candidate's JSON for diagnostic surfacing. */
+  sample: string;
 }
 
 /**
@@ -514,6 +538,36 @@ export async function runDeepReviewer<TCall, TCard>(
     // read-only, so any file-mutation batch is folded into the same
     // rejection path as true overflow side-effects.
     const detected = detectAllToolCalls(accumulated);
+
+    // --- Dropped-candidate guard: see coder-agent.ts / explorer-agent.ts
+    // for rationale. Surface the malformed calls so the reviewer knows
+    // its plan didn't land instead of trusting a misleading result from
+    // whichever sibling call happened to validate.
+    if (detected.droppedCandidates.length > 0) {
+      const dropped = detected.droppedCandidates;
+      const primary = dropped[0];
+      const summary = dropped
+        .map((d) =>
+          d.resolvedToolName
+            ? `${d.rawToolName} (${d.resolvedToolName})`
+            : `${d.rawToolName} (unknown)`,
+        )
+        .join(', ');
+      messages.push({
+        id: `deep-review-dropped-${round}`,
+        role: 'user',
+        content: formatAgentParseError(
+          buildToolCallParseErrorBlock({
+            errorType: 'validation_failed',
+            detectedTool: primary?.resolvedToolName || primary?.rawToolName || null,
+            problem: `Tool call${dropped.length === 1 ? '' : 's'} failed validation: ${summary}. None of the calls this turn were executed.`,
+            hint: 'Each tool call must be `{"tool": "<name>", "args": {...}}` with required fields nested under args. Re-emit only the calls you intend to run.',
+          }),
+        ),
+        timestamp: Date.now(),
+      });
+      continue;
+    }
     if (detected.extraMutations.length > 0 || detected.fileMutations.length > 0) {
       messages.push({
         id: `deep-review-parse-error-${round}`,

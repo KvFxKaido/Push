@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatMessage, ReasoningBlock } from '@/types';
-import { handleMultipleMutationsError, handleRecoveryResult } from './chat-tool-execution';
+import {
+  handleDroppedCandidatesError,
+  handleMultipleMutationsError,
+  handleRecoveryResult,
+} from './chat-tool-execution';
 
 // These helpers cover the assistant-message stamping in `nextApiMessages`
 // for the tool-path branches. Without `reasoningBlocks` threaded through,
@@ -76,5 +80,92 @@ describe('chat-tool-execution: apiMessages reasoningBlocks round-trip', () => {
     );
     expect(assistantEntry).toBeDefined();
     expect(assistantEntry?.reasoningBlocks).toBeUndefined();
+  });
+
+  it('handleDroppedCandidatesError surfaces the malformed tool name and arg-shape hint', () => {
+    const apiMessages: ChatMessage[] = [userMessage('edit it')];
+    const action = handleDroppedCandidatesError(
+      {
+        droppedCandidates: [
+          {
+            rawToolName: 'edit_range',
+            resolvedToolName: 'sandbox_edit_range',
+            sample: '{"tool":"edit_range","args":{"path":"/workspace/README.md"}}',
+          },
+        ],
+      },
+      'assistant text',
+      'thinking',
+      blocks,
+      apiMessages,
+      'zen',
+      'minimax-m2.7',
+    );
+    // Assistant text is preserved.
+    const assistantEntry = action.apiMessages.find(
+      (m) => m.role === 'assistant' && m.content === 'assistant text',
+    );
+    expect(assistantEntry).toBeDefined();
+    expect(assistantEntry?.reasoningBlocks).toEqual(blocks);
+
+    // The error message names the dropped tool and gives the model
+    // actionable feedback about the args wrapper shape.
+    expect(action.errorMessage.content).toContain('edit_range');
+    expect(action.errorMessage.content).toContain('sandbox_edit_range');
+    expect(action.errorMessage.content).toContain('args');
+    expect(action.assistantUpdate.toolMeta.toolName).toBe('sandbox_edit_range');
+    // Source derives from the resolved canonical name, not a hardcoded
+    // 'sandbox' — Copilot review on PR #599. sandbox_edit_range is a
+    // sandbox tool so the value happens to match, but the test asserts
+    // through the resolved-name route to lock in the behavior.
+    expect(action.assistantUpdate.toolMeta.source).toBe('sandbox');
+  });
+
+  it('handleDroppedCandidatesError flags unknown tool names without a resolved canonical', () => {
+    const apiMessages: ChatMessage[] = [userMessage('do something')];
+    const action = handleDroppedCandidatesError(
+      {
+        droppedCandidates: [
+          {
+            rawToolName: 'sandbox',
+            resolvedToolName: null,
+            sample: '{"tool":"sandbox","args":{"command":"read","path":"/workspace"}}',
+          },
+        ],
+      },
+      'assistant',
+      '',
+      [],
+      apiMessages,
+      'zen',
+      'minimax-m2.7',
+    );
+    expect(action.errorMessage.content).toContain('sandbox (unknown)');
+  });
+
+  it('handleDroppedCandidatesError routes a github-tool drop through the github source', () => {
+    // Locks in the Copilot fix: source must derive from the resolved
+    // canonical name, not be hardcoded 'sandbox'. A github tool dropped
+    // for bad args was being mislabeled as sandbox in run-event
+    // telemetry before this change.
+    const apiMessages: ChatMessage[] = [userMessage('check pr')];
+    const action = handleDroppedCandidatesError(
+      {
+        droppedCandidates: [
+          {
+            rawToolName: 'pr',
+            resolvedToolName: 'fetch_pr',
+            sample: '{"tool":"pr","args":{"repo":"a/b"}}',
+          },
+        ],
+      },
+      'assistant',
+      '',
+      [],
+      apiMessages,
+      'zen',
+      'minimax-m2.7',
+    );
+    expect(action.assistantUpdate.toolMeta.source).toBe('github');
   });
 });

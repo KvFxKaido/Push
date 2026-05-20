@@ -99,7 +99,13 @@ function baseCoderOptions(overrides: {
     toolExec: async () => ({ kind: 'executed', resultText: 'tool ok' }),
     detectAllToolCalls:
       overrides.detectAllToolCalls ??
-      (() => ({ readOnly: [], mutating: null, fileMutations: [], extraMutations: [] })),
+      (() => ({
+        readOnly: [],
+        mutating: null,
+        fileMutations: [],
+        extraMutations: [],
+        droppedCandidates: [],
+      })),
     detectAnyToolCall: overrides.detectAnyToolCall ?? (() => null),
     webSearchToolProtocol: '',
     sandboxToolProtocol: '',
@@ -188,5 +194,77 @@ describe('runCoderAgent (PushStream consumer)', () => {
     expect(snap.role).toBe('coder');
     expect(snap.totalChars).toBeGreaterThan(0);
     expect(Object.keys(snap.sections).length).toBeGreaterThan(0);
+  });
+
+  it('refuses to execute when detectAllToolCalls reports dropped candidates and surfaces the malformed name', async () => {
+    // Reproduces the "Coder loops on sandbox_diff" bug: model emits a
+    // malformed edit_range alongside a valid diff. Without this guard
+    // the diff runs and the model infers from a clean diff that "my
+    // edit silently failed" and tries again indefinitely.
+    const { stream } = makePushStream([
+      [
+        { type: 'text_delta', text: 'try edit then diff' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', text: 'I am done.' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+
+    const statuses: Array<{ phase: string; detail?: string }> = [];
+    let detectCallCount = 0;
+    let policyCallCount = 0;
+    const result = await runCoderAgent(
+      baseCoderOptions({
+        stream,
+        // Round 1 must reach the dropped-candidate guard, so the policy
+        // returns null. Round 2 halts so the test terminates.
+        evaluateAfterModel: async () => {
+          policyCallCount += 1;
+          if (policyCallCount === 1) return null;
+          return { action: 'halt', summary: 'done' };
+        },
+        detectAllToolCalls: () => {
+          detectCallCount += 1;
+          if (detectCallCount === 1) {
+            return {
+              readOnly: [{ call: { tool: 'sandbox_diff', args: {} } }] as never,
+              mutating: null,
+              fileMutations: [],
+              extraMutations: [],
+              droppedCandidates: [
+                {
+                  rawToolName: 'edit_range',
+                  resolvedToolName: 'sandbox_edit_range',
+                  sample:
+                    '{"tool":"edit_range","args":{"path":"/workspace/README.md","content":"x"}}',
+                },
+              ],
+            };
+          }
+          return {
+            readOnly: [],
+            mutating: null,
+            fileMutations: [],
+            extraMutations: [],
+            droppedCandidates: [],
+          };
+        },
+      }),
+      {
+        onStatus: (phase, detail) => statuses.push({ phase, detail }),
+      },
+    );
+
+    // The valid sandbox_diff in the same turn must NOT have executed —
+    // the parse-error guard short-circuits the round.
+    expect(statuses.some((s) => s.phase === 'Coder executing...')).toBe(false);
+    // The dropped candidate is surfaced via the status callback so the
+    // operator sees what was rejected.
+    const parseStatus = statuses.find((s) => s.phase === 'Coder parse error');
+    expect(parseStatus).toBeDefined();
+    expect(parseStatus?.detail).toContain('edit_range');
+    expect(result.rounds).toBe(2);
   });
 });

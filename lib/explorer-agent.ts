@@ -520,6 +520,37 @@ export async function runExplorerAgent<TCall, TCard>(
     }
 
     const detected = detectAllToolCalls(accumulated);
+
+    // --- Dropped-candidate guard: the model emitted one or more
+    // `{tool, args}` shapes that no source validated (wrong args,
+    // unrecognized tool name). Surface them as a parse error and skip
+    // execution of any surviving calls — same rationale as the Coder
+    // and orchestrator paths.
+    if (detected.droppedCandidates.length > 0) {
+      const dropped = detected.droppedCandidates;
+      const primary = dropped[0];
+      const summary = dropped
+        .map((d) =>
+          d.resolvedToolName
+            ? `${d.rawToolName} (${d.resolvedToolName})`
+            : `${d.rawToolName} (unknown)`,
+        )
+        .join(', ');
+      messages.push({
+        id: `explorer-parse-error-${round}`,
+        role: 'user',
+        content: formatAgentParseError(
+          buildToolCallParseErrorBlock({
+            errorType: 'validation_failed',
+            detectedTool: primary?.resolvedToolName || primary?.rawToolName || null,
+            problem: `Tool call${dropped.length === 1 ? '' : 's'} failed validation: ${summary}. None of the calls this turn were executed.`,
+            hint: 'Each tool call must be `{"tool": "<name>", "args": {...}}` with required fields nested under args. Re-emit only the calls you intend to run.',
+          }),
+        ),
+        timestamp: Date.now(),
+      });
+      continue;
+    }
     // Explorer is strictly read-only: file mutations emitted here are
     // treated as protocol violations alongside any true side-effect
     // overflow. We fold them into the same rejection path so the model

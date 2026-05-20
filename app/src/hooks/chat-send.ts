@@ -31,7 +31,7 @@ import { handleMultipleMutationsError } from '@/lib/chat-tool-execution';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import { getToolInvocationKey, type MutationFailureTracker } from '@push/lib/agent-loop-utils';
 import type { ChatMessage, ReasoningBlock } from '@/types';
-import { createTurnRunContext } from './chat-send-helpers';
+import { createTurnRunContext, dispatchDroppedCandidatesError } from './chat-send-helpers';
 import type { AssistantTurnResult, SendLoopContext } from './chat-send-types';
 import { executeBatchedToolCalls } from './chat-batched-execution';
 import { processNoToolPath } from './chat-no-tool-path';
@@ -113,6 +113,23 @@ export async function processAssistantTurn(
         loopCompletedNormally: false,
       };
     }
+  }
+
+  // --- Dropped-candidate error: model emitted one or more `{tool, args}`-
+  // shaped calls that failed source validation. Runs before the extra-
+  // mutation check so a malformed primary call surfaces with the right
+  // reason. See `dispatchDroppedCandidatesError` for state-update details.
+  if (detected.droppedCandidates.length > 0) {
+    return dispatchDroppedCandidatesError(
+      detected,
+      round,
+      accumulated,
+      thinkingAccumulated,
+      reasoningBlocks,
+      apiMessages,
+      recoveryState,
+      ctx,
+    );
   }
 
   // --- Multiple-mutations error: model emitted >1 mutating call in one turn.
