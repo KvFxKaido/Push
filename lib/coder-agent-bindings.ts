@@ -257,7 +257,7 @@ export function buildCoderDetectors<
       // parse-error guard in lib/coder-agent.ts doesn't false-positive
       // on them. `coder_update_state` and `coder_checkpoint` are
       // recognized tool names handled outside the source-detector
-      // pipeline (detectCoderStateUpdate / detectCheckpointCall in the
+      // pipeline (detectUpdateStateCall / detectCheckpointCall in the
       // Coder loop), so the dispatcher's `extractBareToolJsonObjects`
       // sees them as `tool: "<name>"` but the source detectors return
       // null and they land in droppedCandidates with
@@ -580,7 +580,7 @@ export function buildCoderToolExec<
 
 /**
  * The set of "Coder-internal" tool names handled by the Coder loop's
- * own pre-parse detectors (`detectCoderStateUpdate`,
+ * own pre-parse detectors (`detectUpdateStateCall`,
  * `detectCheckpointCall`) rather than by the source-detector pipeline.
  * The dispatcher's `extractBareToolJsonObjects` still finds these in
  * the model output and the source detectors correctly return null —

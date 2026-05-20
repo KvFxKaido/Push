@@ -6,7 +6,7 @@ import {
 } from './coder-agent-bindings.js';
 
 // Pins the contract from PR #605: Coder-internal tool names — handled
-// outside the source-detector pipeline by detectCoderStateUpdate /
+// outside the source-detector pipeline by detectUpdateStateCall /
 // detectCheckpointCall in the Coder loop — must not be reported as
 // dropped candidates by the bindings. Otherwise the Coder's parse-
 // error guard from PR #599 bails on the whole batch every time the
