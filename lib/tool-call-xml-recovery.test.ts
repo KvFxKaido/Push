@@ -307,3 +307,46 @@ describe('recoverXmlToolCalls — Shape C (Anthropic function_calls/invoke/param
     expect(recoverXmlToolCalls(text)).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Nested-wrapper regression — Codex P1 review on PR #600. A literal
+// `<function_calls>...</function_calls>` string embedded inside a
+// `<tool_call>` arg value (e.g. documentation snippets in an edit_file
+// `content` arg) used to bypass the eligibility gate's suffix check and
+// drop the outer call. The dedupe pass keeps the outer wrapper and
+// ignores the inner.
+// ---------------------------------------------------------------------------
+describe('recoverXmlToolCalls — nested wrappers do not break the outer call', () => {
+  it('keeps a tool_call whose arg value literally contains a <function_calls> block', () => {
+    const text = [
+      '<tool_call>write_file',
+      '<arg_key>path</arg_key>',
+      '<arg_value>/workspace/docs/tools.md</arg_value>',
+      '<arg_key>content</arg_key>',
+      '<arg_value>Example tool call: <function_calls><invoke name="read"><parameter name="path">/foo</parameter></invoke></function_calls></arg_value>',
+      '</tool_call>',
+    ].join('\n');
+    const recovered = recoverXmlToolCalls(text);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0].tool).toBe('write_file');
+    expect(recovered[0].args).toMatchObject({ path: '/workspace/docs/tools.md' });
+    // The nested function_calls inside the arg value must NOT have
+    // produced its own recovered call — otherwise the dispatcher would
+    // execute the docs example as a real read.
+    expect(recovered).toHaveLength(1);
+  });
+
+  it('keeps a function_calls call whose parameter value embeds a tool_call literal', () => {
+    const text = [
+      '<function_calls>',
+      '<invoke name="write_file">',
+      '<parameter name="path">/workspace/docs/tools.md</parameter>',
+      '<parameter name="content">Hermes shape: <tool_call>{"name":"read","arguments":{"path":"/foo"}}</tool_call></parameter>',
+      '</invoke>',
+      '</function_calls>',
+    ].join('\n');
+    const recovered = recoverXmlToolCalls(text);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0].tool).toBe('write_file');
+  });
+});

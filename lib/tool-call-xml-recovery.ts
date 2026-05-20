@@ -161,6 +161,29 @@ export function recoverXmlToolCalls(text: string): RecoveredXmlCall[] {
     });
   }
   matches.sort((a, b) => a.blockStart - b.blockStart);
+
+  // Drop matches that nest inside an earlier (outer) wrapper. This
+  // happens when a `<function_calls>...</function_calls>` literal lives
+  // inside the args payload of a `<tool_call>` — e.g., documentation
+  // strings or example content in an `edit_file` arg. Without this
+  // pass, the nested match would slip into the sorted `matches` array,
+  // its `blockEnd` would terminate inside the outer wrapper, and the
+  // suffix gap check would then read the outer `</tool_call>` text as
+  // prose and reject the WHOLE batch — dropping the otherwise-valid
+  // outer call that worked before this commit. Codex P1 review on
+  // PR #600. The outer wrapper is the real call; the inner string is
+  // just content. Sort order guarantees the outer match arrives
+  // first, so a simple running `lastEnd` watermark catches every
+  // nested case.
+  const deduped: typeof matches = [];
+  let lastEnd = -1;
+  for (const m of matches) {
+    if (m.blockStart < lastEnd) continue;
+    deduped.push(m);
+    lastEnd = m.blockEnd;
+  }
+  matches.length = 0;
+  matches.push(...deduped);
   if (matches.length === 0) return [];
 
   // Whole-message eligibility gate — see `XML_GAP_REGEX`. Reject the
