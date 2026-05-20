@@ -1551,6 +1551,15 @@ export interface WorkspaceScreenNavigationProps {
 export interface WorkspaceScreenHomeBridgeProps {
   pendingResumeChatId: string | null;
   onConversationIndexChange: (index: ConversationIndex) => void;
+  /** Set by the pre-flight menu on confirm. The workspace drains it by
+   * calling `createNewChat` when the active chat already has messages
+   * — without this signal, confirming the menu in the current
+   * workspace (the drawer's "+ New chat" flow) is a no-op because no
+   * existing effect knows to mint a fresh chat. Cross-context commits
+   * already mint via the chat-management auto-create effect, so the
+   * drain is idempotent in that case. */
+  pendingNewChatKey: string | null;
+  onPendingNewChatConsumed: () => void;
 }
 
 /**

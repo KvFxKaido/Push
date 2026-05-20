@@ -22,7 +22,7 @@ import {
 import { useDraftChatComposer, type DraftChatSeed } from '@/hooks/useDraftChatComposer';
 import { useBranchManager } from '@/hooks/useBranchManager';
 import { RepoAppearanceBadge } from '@/components/repo/repo-appearance';
-import { setPreferredProvider, type PreferredProvider } from '@/lib/providers';
+import { type PreferredProvider } from '@/lib/providers';
 import { formatModelDisplayName } from '@/lib/providers';
 import type { ModelCatalog } from '@/hooks/useModelCatalog';
 import type { ActiveRepo, RepoWithActivity } from '@/types';
@@ -89,6 +89,62 @@ function modelOptionsForProvider(catalog: ModelCatalog, provider: PreferredProvi
     }
     default:
       return [];
+  }
+}
+
+function applyProviderModel(
+  catalog: ModelCatalog,
+  provider: PreferredProvider,
+  model: string,
+): void {
+  // Each provider in `useModelCatalog` exposes its own `setModel`
+  // which both persists the choice and updates the catalog's state
+  // for that provider. Dispatching here keeps the switch in one place
+  // — adding a new provider forces an obvious update here when the
+  // exhaustiveness check (`default`) is hit.
+  switch (provider) {
+    case 'ollama':
+      catalog.ollama.setModel(model);
+      return;
+    case 'openrouter':
+      catalog.openRouter.setModel(model);
+      return;
+    case 'cloudflare':
+      catalog.cloudflare.setModel(model);
+      return;
+    case 'zen':
+      catalog.zen.setModel(model);
+      return;
+    case 'nvidia':
+      catalog.nvidia.setModel(model);
+      return;
+    case 'blackbox':
+      catalog.blackbox.setModel(model);
+      return;
+    case 'kilocode':
+      catalog.kilocode.setModel(model);
+      return;
+    case 'openadapter':
+      catalog.openadapter.setModel(model);
+      return;
+    case 'azure':
+      catalog.azure.setModel(model);
+      return;
+    case 'bedrock':
+      catalog.bedrock.setModel(model);
+      return;
+    case 'vertex':
+      catalog.vertex.setModel(model);
+      return;
+    case 'anthropic':
+      catalog.anthropic.setModel(model);
+      return;
+    case 'openai':
+      catalog.openai.setModel(model);
+      return;
+    case 'google':
+      catalog.google.setModel(model);
+      return;
   }
 }
 
@@ -236,12 +292,21 @@ export function ComposerDraftScreen({
 
   const handleConfirm = () => {
     if (!isReadyToConfirm) return;
-    // Mirror the model choice into Settings only at commit — picking
-    // a model in the sheet and then cancelling the menu must not move
-    // the workspace's persisted default. The workspace's ChatInput
-    // picks it up from `catalog.activeBackend` on the next render.
+    // Mirror the provider/model choice into Settings + the live
+    // catalog at commit — picking and then cancelling must NOT move
+    // the workspace's default, so the writes are deferred to here.
+    // `setPreferredProvider` only persists to localStorage;
+    // `setActiveBackend` updates the React state inside
+    // `useModelCatalog` so the workspace's ChatInput sees the choice
+    // on the next render instead of waiting for a reload. The
+    // per-provider `setModel` persists + updates state for the model
+    // pick.
     if (state.provider) {
-      setPreferredProvider(state.provider);
+      catalog.setPreferredProvider(state.provider);
+      catalog.setActiveBackend(state.provider);
+      if (state.model) {
+        applyProviderModel(catalog, state.provider, state.model);
+      }
     }
     onCommit({
       mode: state.mode,

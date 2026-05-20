@@ -70,7 +70,12 @@ export function WorkspaceSessionScreen({
     onEndWorkspace,
     onOpenDraftComposer,
   } = navigation;
-  const { pendingResumeChatId, onConversationIndexChange } = homeBridge;
+  const {
+    pendingResumeChatId,
+    onConversationIndexChange,
+    pendingNewChatKey,
+    onPendingNewChatConsumed,
+  } = homeBridge;
 
   const isScratch = workspaceSession.kind === 'scratch';
   const isChat = workspaceSession.kind === 'chat';
@@ -322,6 +327,26 @@ export function WorkspaceSessionScreen({
     switchChat,
     sendMessage,
   });
+
+  // Drain `pendingNewChatKey` set by the pre-flight menu on confirm.
+  // Cross-context commits already mint via the chat-management auto-
+  // create effect (lines above) because the workspace remounts and
+  // the existing chats don't match the new context. Same-context
+  // commits keep the session, so without this drain the user would
+  // stay on whatever chat they were on. Skip when the active chat is
+  // already empty — minting another empty chat on top would be noise.
+  const drainedNewChatKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!pendingNewChatKey) return;
+    if (drainedNewChatKeyRef.current === pendingNewChatKey) return;
+    const activeConv = conversations[activeChatId];
+    if (!activeConv) return; // wait for chat-management auto-create to settle
+    drainedNewChatKeyRef.current = pendingNewChatKey;
+    if (activeConv.messages.length > 0) {
+      createNewChat();
+    }
+    onPendingNewChatConsumed();
+  }, [activeChatId, conversations, createNewChat, onPendingNewChatConsumed, pendingNewChatKey]);
 
   const snapshots = useSnapshotManager(workspaceSession, sandbox, workspaceRepo, isStreaming);
   const branches = useBranchManager(workspaceRepo, workspaceSession);

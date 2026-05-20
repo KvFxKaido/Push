@@ -200,6 +200,13 @@ function App() {
   // workspace's own ChatInput.
   const [draftComposerOpen, setDraftComposerOpen] = useState(false);
   const [draftSeed, setDraftSeed] = useState<DraftComposerSeed | null>(null);
+  // Signal to the workspace that it should mint a fresh chat. Required
+  // for the same-context "+ New chat" path (drawer → menu → confirm
+  // when target context matches current workspace): the workspace
+  // isn't remounted so the chat-management auto-create effect never
+  // fires. WorkspaceSessionScreen drains this by calling
+  // `createNewChat()` when the active chat has messages.
+  const [pendingNewChatKey, setPendingNewChatKey] = useState<string | null>(null);
 
   const { resolveRepoAppearance, setRepoAppearance, clearRepoAppearance } = useRepoAppearance();
   // Catalog is lifted to App so both the pre-flight composer and the
@@ -438,14 +445,22 @@ function App() {
     [handleOpenDraftComposer],
   );
 
+  const handlePendingNewChatConsumed = useCallback(() => {
+    setPendingNewChatKey(null);
+  }, []);
+
   // Commits the pre-flight menu into a real workspace session. Same-
   // context commits keep the existing session (no sandbox restart);
   // cross-context commits swap to a new session id, which remounts
-  // WorkspaceSessionScreen and starts a fresh sandbox the same way the
-  // launcher tiles used to do. Message entry happens later in the
-  // workspace's own ChatInput.
+  // WorkspaceSessionScreen and starts a fresh sandbox via the same
+  // path the navigation handlers use to swap workspaces. Either way
+  // we stamp `pendingNewChatKey` so the workspace mints a fresh chat
+  // even when the session is reused — confirming the menu always
+  // means "open a new chat here", not "stay in the current one".
+  // Message entry happens later in the workspace's own ChatInput.
   const handleCommitDraft = useCallback(
     (commit: ComposerDraftCommit) => {
+      setPendingNewChatKey(crypto.randomUUID());
       setDraftComposerOpen(false);
       setDraftSeed(null);
       setPendingResumeChatId(null);
@@ -743,6 +758,8 @@ function App() {
         homeBridge={{
           pendingResumeChatId,
           onConversationIndexChange: setConversationIndex,
+          pendingNewChatKey,
+          onPendingNewChatConsumed: handlePendingNewChatConsumed,
         }}
         catalog={catalog}
       />
