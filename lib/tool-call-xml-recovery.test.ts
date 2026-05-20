@@ -199,3 +199,154 @@ describe('recoverXmlToolCalls — multiple calls, ordering, prose tolerance', ()
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Shape C — Anthropic's documented `<function_calls>` + `<invoke>` +
+// `<parameter>` format. Visible in the wild from models trained on the
+// public Claude tool-use protocol; before this recovery existed they
+// fell through entirely (extractBareToolJsonObjects sees no JSON, the
+// `<tool_call>` regex doesn't match), so the Explorer terminated with
+// zero tool execution on a turn that contained a legitimate intent.
+// ---------------------------------------------------------------------------
+describe('recoverXmlToolCalls — Shape C (Anthropic function_calls/invoke/parameter)', () => {
+  it('recovers a single invoke with one parameter', () => {
+    const text = [
+      '<function_calls>',
+      '<invoke name="read">',
+      '<parameter name="path">/workspace/README.md</parameter>',
+      '</invoke>',
+      '</function_calls>',
+    ].join('\n');
+    const recovered = recoverXmlToolCalls(text);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0].tool).toBe('read');
+    expect(recovered[0].args).toEqual({ path: '/workspace/README.md' });
+  });
+
+  it('expands multiple invoke children of one function_calls wrapper into separate calls', () => {
+    const text = [
+      '<function_calls>',
+      '<invoke name="read"><parameter name="path">/a</parameter></invoke>',
+      '<invoke name="diff"></invoke>',
+      '</function_calls>',
+    ].join('\n');
+    const recovered = recoverXmlToolCalls(text);
+    expect(recovered.map((r) => r.tool)).toEqual(['read', 'diff']);
+    expect(recovered[0].args).toEqual({ path: '/a' });
+    expect(recovered[1].args).toEqual({});
+  });
+
+  it('coerces JSON-shaped parameter values (numbers, booleans, arrays)', () => {
+    const text = [
+      '<function_calls>',
+      '<invoke name="edit_range">',
+      '<parameter name="path">/a</parameter>',
+      '<parameter name="start_line">10</parameter>',
+      '<parameter name="end_line">12</parameter>',
+      '<parameter name="content">replacement</parameter>',
+      '</invoke>',
+      '</function_calls>',
+    ].join('\n');
+    const recovered = recoverXmlToolCalls(text);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0].args).toEqual({
+      path: '/a',
+      start_line: 10,
+      end_line: 12,
+      content: 'replacement',
+    });
+  });
+
+  it('tolerates single-quoted or unquoted name attributes', () => {
+    const text = [
+      "<function_calls><invoke name='read'><parameter name=path>/a</parameter></invoke></function_calls>",
+    ].join('\n');
+    const recovered = recoverXmlToolCalls(text);
+    expect(recovered).toEqual([{ tool: 'read', args: { path: '/a' }, offset: 0 }]);
+  });
+
+  it('rejects a function_calls block embedded in prose (eligibility gate)', () => {
+    // Mirrors the Shape A/B gate: a stray mention in prose must not
+    // execute. Without this, "do not run <function_calls>...</function_calls>"
+    // would slip through.
+    const text =
+      'Do not run <function_calls><invoke name="read"><parameter name="path">/a</parameter></invoke></function_calls> in production.';
+    expect(recoverXmlToolCalls(text)).toEqual([]);
+  });
+
+  it('returns offsets anchored to each invoke so dispatcher ordering is preserved', () => {
+    const text = [
+      '<function_calls>',
+      '<invoke name="a"><parameter name="x">1</parameter></invoke>',
+      '<invoke name="b"><parameter name="y">2</parameter></invoke>',
+      '</function_calls>',
+    ].join('\n');
+    const recovered = recoverXmlToolCalls(text);
+    expect(recovered).toHaveLength(2);
+    expect(recovered[0].offset).toBeLessThan(recovered[1].offset);
+  });
+
+  it('mixes with `<tool_call>` blocks in the same message and preserves textual order', () => {
+    const text = [
+      '<tool_call>{"name":"first","arguments":{}}</tool_call>',
+      '<function_calls><invoke name="second"></invoke></function_calls>',
+    ].join('\n');
+    const recovered = recoverXmlToolCalls(text);
+    expect(recovered.map((r) => r.tool)).toEqual(['first', 'second']);
+  });
+
+  it('emits nothing for a function_calls block with no invoke children — the hybrid JSON case is handled upstream', () => {
+    // The model in the original failure log emitted
+    //   <function_calls>{"tool":"sandbox","args":{...}}</function_calls>
+    // The bare JSON is found by extractBareToolJsonObjects and surfaces
+    // as a dropped candidate (no source claims "sandbox"). This recovery
+    // intentionally does NOT also emit a call from the same payload —
+    // otherwise we'd double-report.
+    const text =
+      '<function_calls>{"tool":"sandbox","args":{"command":"read","path":"/a"}}</function_calls>';
+    expect(recoverXmlToolCalls(text)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Nested-wrapper regression — Codex P1 review on PR #600. A literal
+// `<function_calls>...</function_calls>` string embedded inside a
+// `<tool_call>` arg value (e.g. documentation snippets in an edit_file
+// `content` arg) used to bypass the eligibility gate's suffix check and
+// drop the outer call. The dedupe pass keeps the outer wrapper and
+// ignores the inner.
+// ---------------------------------------------------------------------------
+describe('recoverXmlToolCalls — nested wrappers do not break the outer call', () => {
+  it('keeps a tool_call whose arg value literally contains a <function_calls> block', () => {
+    const text = [
+      '<tool_call>write_file',
+      '<arg_key>path</arg_key>',
+      '<arg_value>/workspace/docs/tools.md</arg_value>',
+      '<arg_key>content</arg_key>',
+      '<arg_value>Example tool call: <function_calls><invoke name="read"><parameter name="path">/foo</parameter></invoke></function_calls></arg_value>',
+      '</tool_call>',
+    ].join('\n');
+    const recovered = recoverXmlToolCalls(text);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0].tool).toBe('write_file');
+    expect(recovered[0].args).toMatchObject({ path: '/workspace/docs/tools.md' });
+    // The nested function_calls inside the arg value must NOT have
+    // produced its own recovered call — otherwise the dispatcher would
+    // execute the docs example as a real read.
+    expect(recovered).toHaveLength(1);
+  });
+
+  it('keeps a function_calls call whose parameter value embeds a tool_call literal', () => {
+    const text = [
+      '<function_calls>',
+      '<invoke name="write_file">',
+      '<parameter name="path">/workspace/docs/tools.md</parameter>',
+      '<parameter name="content">Hermes shape: <tool_call>{"name":"read","arguments":{"path":"/foo"}}</tool_call></parameter>',
+      '</invoke>',
+      '</function_calls>',
+    ].join('\n');
+    const recovered = recoverXmlToolCalls(text);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0].tool).toBe('write_file');
+  });
+});
