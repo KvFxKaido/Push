@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Push is a mobile-first AI coding agent with three surfaces — a web app, an experimental Capacitor Android shell, and a local CLI — all sharing a role-based runtime in root `lib/`.
 
-> Loader order is `AGENTS.md` → `CLAUDE.md` → `GEMINI.md`. `AGENTS.md` carries the startup contract and overrides this file when they conflict; `docs/architecture.md` is the canonical source of truth for architecture details.
+> Loader order is `PUSH.md` → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md` (first found wins). `PUSH.md` is the Push-specific override when present; otherwise `AGENTS.md` carries the startup contract and overrides this file when they conflict. `docs/architecture.md` is the canonical source of truth for architecture details.
 
 ## Quick start
 

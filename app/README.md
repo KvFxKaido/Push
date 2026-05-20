@@ -7,7 +7,7 @@ Frontend source for Push. See the [root README](../README.md) for architecture a
 ```bash
 npm install       # Install dependencies
 npm run dev       # Start dev server (port 5173)
-npm run build     # Type-check + production build → dist/
+npm run build     # Production build → dist/
 npm run preview   # Preview production build locally
 npm run lint      # Run ESLint
 npm run android:setup  # Regenerate the gitignored Capacitor Android project
@@ -72,6 +72,7 @@ To verify a deployed build picked them up, open DevTools → Sources, find the h
 
 Worker runtime vars/secrets:
 
+- `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` — optional server-side keys for the direct Anthropic and OpenAI Worker proxies. When set, the Worker prefers these secrets over client-supplied Settings keys for those providers.
 - `PUSH_DEPLOYMENT_TOKEN` — optional private-deployment API gate. When set, every `/api/*` route except `/api/health` requires `X-Push-Deployment-Token`. Open the app once with `#push_token=<token>` to store it in the browser.
 - `PUSH_RELAY_ENABLED` / `PUSH_RELAY_TOKEN` — enable the Remote session relay route and set the deployment-scoped `pushd_relay_*` bearer used by `push daemon relay enable`. Keep the token in a Worker secret.
 - `PUSH_RELAY_BUFFER_COUNT` / `PUSH_RELAY_BUFFER_AGE_MS` — optional replay-buffer tuning for the relay Durable Object.
