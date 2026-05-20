@@ -13,7 +13,9 @@ const orchestrator = vi.hoisted(() => ({
   getActiveProvider: vi.fn(() => 'openrouter'),
 }));
 const sandboxClient = vi.hoisted(() => ({
-  getSandboxDiff: vi.fn<() => Promise<string | { diff: string }>>(async () => ''),
+  getSandboxDiff: vi.fn<
+    () => Promise<string | { diff: string; head_sha?: string; diff_since_ref?: string }>
+  >(async () => ''),
   getSandboxOwnerToken: vi.fn<(sandboxId?: string) => string | null>(() => 'tok-1'),
 }));
 const userProfile = vi.hoisted(() => ({
