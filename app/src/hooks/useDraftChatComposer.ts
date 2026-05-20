@@ -8,10 +8,9 @@ export interface DraftChatState {
   mode: DraftChatMode;
   repoFullName: string | null;
   branch: string | null;
-  text: string;
   /** When null, the workspace falls back to its default provider (the
-   * one Settings selects). The pre-flight only overrides on explicit
-   * pick — "Default" stays Default. */
+   * one Settings selects). The pre-flight menu only overrides on
+   * explicit pick — "Default" stays Default. */
   provider: PreferredProvider | null;
   /** Model id within `provider`. Null lets the workspace pick the
    * remembered or catalog default for the provider. */
@@ -30,7 +29,6 @@ const EMPTY_STATE: DraftChatState = {
   mode: 'repo',
   repoFullName: null,
   branch: null,
-  text: '',
   provider: null,
   model: null,
 };
@@ -41,7 +39,6 @@ function seedToState(seed: DraftChatSeed | null | undefined): DraftChatState {
     mode: seed.mode ?? (seed.repoFullName ? 'repo' : 'chat'),
     repoFullName: seed.repoFullName ?? null,
     branch: seed.branch ?? null,
-    text: '',
     provider: seed.provider ?? null,
     model: seed.model ?? null,
   };
@@ -56,9 +53,9 @@ interface UseDraftChatComposerArgs {
 export function useDraftChatComposer({ seed, repos, loadRepoBranches }: UseDraftChatComposerArgs) {
   const [state, setState] = useState<DraftChatState>(() => seedToState(seed));
 
-  // Re-seed when the composer is reopened with a new seed (key change in parent
-  // resets the hook, but if the parent re-renders without remount, this keeps
-  // state aligned with the latest seed).
+  // Re-seed when the menu is reopened with a new seed (key change in
+  // parent resets the hook, but if the parent re-renders without
+  // remount, this keeps state aligned with the latest seed).
   useEffect(() => {
     setState(seedToState(seed));
   }, [seed]);
@@ -101,10 +98,6 @@ export function useDraftChatComposer({ seed, repos, loadRepoBranches }: UseDraft
     setState((prev) => ({ ...prev, branch }));
   }, []);
 
-  const setText = useCallback((text: string) => {
-    setState((prev) => ({ ...prev, text }));
-  }, []);
-
   const setProvider = useCallback((provider: PreferredProvider | null, model?: string | null) => {
     setState((prev) => ({
       ...prev,
@@ -125,7 +118,6 @@ export function useDraftChatComposer({ seed, repos, loadRepoBranches }: UseDraft
     setMode,
     setRepo,
     setBranch,
-    setText,
     setProvider,
     setModel,
   };

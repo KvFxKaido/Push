@@ -19,7 +19,6 @@ import type {
   ConversationIndex,
   DraftComposerSeed,
   LocalPcBinding,
-  PendingFirstMessage,
   RelayBinding,
   RepoWithActivity,
   WorkspaceSession,
@@ -193,15 +192,21 @@ function App() {
   const [relayPairingActive, setRelayPairingActive] = useState(false);
   const relayGenRef = useRef(0);
 
-  // Pre-flight composer overlay. `draftComposerOpen` controls visibility;
-  // `draftSeed` lets callers prefill the target repo/branch/mode so the
-  // user only changes what they need to. Commits go through
-  // `handleCommitDraft`, which materializes (or reuses) a WorkspaceSession
-  // and hands the first message off to the workspace via
-  // `pendingFirstMessage` — drained by `useWorkspaceSessionBridge`.
+  // Pre-flight context menu overlay. `draftComposerOpen` controls
+  // visibility; `draftSeed` lets callers prefill the target
+  // repo/branch/mode/model so the user only changes what they need to.
+  // Commits go through `handleCommitDraft`, which materializes (or
+  // reuses) a WorkspaceSession — message entry happens later in the
+  // workspace's own ChatInput.
   const [draftComposerOpen, setDraftComposerOpen] = useState(false);
   const [draftSeed, setDraftSeed] = useState<DraftComposerSeed | null>(null);
-  const [pendingFirstMessage, setPendingFirstMessage] = useState<PendingFirstMessage | null>(null);
+  // Signal to the workspace that it should mint a fresh chat. Required
+  // for the same-context "+ New chat" path (drawer → menu → confirm
+  // when target context matches current workspace): the workspace
+  // isn't remounted so the chat-management auto-create effect never
+  // fires. WorkspaceSessionScreen drains this by calling
+  // `createNewChat()` when the active chat has messages.
+  const [pendingNewChatKey, setPendingNewChatKey] = useState<string | null>(null);
 
   const { resolveRepoAppearance, setRepoAppearance, clearRepoAppearance } = useRepoAppearance();
   // Catalog is lifted to App so both the pre-flight composer and the
@@ -415,11 +420,10 @@ function App() {
   }, []);
 
   // HomeScreen launcher tile wrappers — every "new chat" entry routes
-  // through pre-flight so the user picks (or confirms) context + types
-  // a first message in one surface. Local-pc / relay tiles stay direct
-  // because they need pairing and don't have a "first message" UX.
-  // OnboardingScreen keeps the direct handlers since pre-flight is
-  // auth-gated (needs the repo list).
+  // through the pre-flight menu so the user picks (or confirms) context
+  // in one surface. Local-pc / relay tiles stay direct because they
+  // need pairing. OnboardingScreen keeps the direct handlers since the
+  // menu is auth-gated (needs the repo list).
   const handleStartScratchFromHome = useCallback(
     () => handleOpenDraftComposer({ mode: 'scratch' }),
     [handleOpenDraftComposer],
@@ -441,23 +445,22 @@ function App() {
     [handleOpenDraftComposer],
   );
 
-  const handlePendingFirstMessageConsumed = useCallback(() => {
-    setPendingFirstMessage(null);
+  const handlePendingNewChatConsumed = useCallback(() => {
+    setPendingNewChatKey(null);
   }, []);
 
-  // Commits the pre-flight composer into a real workspace session +
-  // a queued first message. Same-context commits keep the existing
-  // session (no sandbox restart); cross-context commits swap to a new
-  // session id, which remounts WorkspaceSessionScreen and starts a
-  // fresh sandbox the same way the launcher tiles do.
+  // Commits the pre-flight menu into a real workspace session. Same-
+  // context commits keep the existing session (no sandbox restart);
+  // cross-context commits swap to a new session id, which remounts
+  // WorkspaceSessionScreen and starts a fresh sandbox via the same
+  // path the navigation handlers use to swap workspaces. Either way
+  // we stamp `pendingNewChatKey` so the workspace mints a fresh chat
+  // even when the session is reused — confirming the menu always
+  // means "open a new chat here", not "stay in the current one".
+  // Message entry happens later in the workspace's own ChatInput.
   const handleCommitDraft = useCallback(
     (commit: ComposerDraftCommit) => {
-      setPendingFirstMessage({
-        key: crypto.randomUUID(),
-        text: commit.text,
-        provider: commit.provider,
-        model: commit.model,
-      });
+      setPendingNewChatKey(crypto.randomUUID());
       setDraftComposerOpen(false);
       setDraftSeed(null);
       setPendingResumeChatId(null);
@@ -755,8 +758,8 @@ function App() {
         homeBridge={{
           pendingResumeChatId,
           onConversationIndexChange: setConversationIndex,
-          pendingFirstMessage,
-          onPendingFirstMessageConsumed: handlePendingFirstMessageConsumed,
+          pendingNewChatKey,
+          onPendingNewChatConsumed: handlePendingNewChatConsumed,
         }}
         catalog={catalog}
       />

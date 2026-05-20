@@ -73,8 +73,8 @@ export function WorkspaceSessionScreen({
   const {
     pendingResumeChatId,
     onConversationIndexChange,
-    pendingFirstMessage,
-    onPendingFirstMessageConsumed,
+    pendingNewChatKey,
+    onPendingNewChatConsumed,
   } = homeBridge;
 
   const isScratch = workspaceSession.kind === 'scratch';
@@ -328,51 +328,25 @@ export function WorkspaceSessionScreen({
     sendMessage,
   });
 
-  // Drain pending first message handed in by the pre-flight composer.
-  // On commit, App stashes `{ key, text, provider?, model? }` and either
-  // keeps the current workspace (same-context commit) or swaps to a new
-  // session id. Either way, we land here with the conversation map
-  // settling. If the active chat has no history we send into it;
-  // otherwise we mint a fresh chat and let this effect re-fire once the
-  // new id propagates. `drainedKeyRef` dedupes across re-renders.
-  //
-  // When the composer set an explicit provider/model, we dispatch via
-  // raw `sendMessage` with those options so the chat's first-turn lock
-  // anchors to the user's pre-flight pick. Otherwise we fall through to
-  // `sendMessageWithChatDraft`, which respects the chat's own draft +
-  // the workspace default.
-  const drainedFirstMessageKeyRef = useRef<string | null>(null);
+  // Drain `pendingNewChatKey` set by the pre-flight menu on confirm.
+  // Cross-context commits already mint via the chat-management auto-
+  // create effect (lines above) because the workspace remounts and
+  // the existing chats don't match the new context. Same-context
+  // commits keep the session, so without this drain the user would
+  // stay on whatever chat they were on. Skip when the active chat is
+  // already empty — minting another empty chat on top would be noise.
+  const drainedNewChatKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!pendingFirstMessage) return;
-    if (drainedFirstMessageKeyRef.current === pendingFirstMessage.key) return;
-
+    if (!pendingNewChatKey) return;
+    if (drainedNewChatKeyRef.current === pendingNewChatKey) return;
     const activeConv = conversations[activeChatId];
     if (!activeConv) return; // wait for chat-management auto-create to settle
-
+    drainedNewChatKeyRef.current = pendingNewChatKey;
     if (activeConv.messages.length > 0) {
       createNewChat();
-      return;
     }
-
-    drainedFirstMessageKeyRef.current = pendingFirstMessage.key;
-    if (pendingFirstMessage.provider) {
-      void sendMessage(pendingFirstMessage.text, undefined, {
-        provider: pendingFirstMessage.provider,
-        model: pendingFirstMessage.model ?? null,
-      });
-    } else {
-      void sendMessageWithChatDraft(pendingFirstMessage.text);
-    }
-    onPendingFirstMessageConsumed();
-  }, [
-    activeChatId,
-    conversations,
-    createNewChat,
-    onPendingFirstMessageConsumed,
-    pendingFirstMessage,
-    sendMessage,
-    sendMessageWithChatDraft,
-  ]);
+    onPendingNewChatConsumed();
+  }, [activeChatId, conversations, createNewChat, onPendingNewChatConsumed, pendingNewChatKey]);
 
   const snapshots = useSnapshotManager(workspaceSession, sandbox, workspaceRepo, isStreaming);
   const branches = useBranchManager(workspaceRepo, workspaceSession);

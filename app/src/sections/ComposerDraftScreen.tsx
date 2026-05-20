@@ -19,11 +19,10 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
-import { SendLiftIcon } from '@/components/icons/push-custom-icons';
 import { useDraftChatComposer, type DraftChatSeed } from '@/hooks/useDraftChatComposer';
 import { useBranchManager } from '@/hooks/useBranchManager';
 import { RepoAppearanceBadge } from '@/components/repo/repo-appearance';
-import { setPreferredProvider, type PreferredProvider } from '@/lib/providers';
+import { type PreferredProvider } from '@/lib/providers';
 import { formatModelDisplayName } from '@/lib/providers';
 import type { ModelCatalog } from '@/hooks/useModelCatalog';
 import type { ActiveRepo, RepoWithActivity } from '@/types';
@@ -33,9 +32,6 @@ export interface ComposerDraftCommit {
   mode: 'repo' | 'chat' | 'scratch';
   repoFullName: string | null;
   branch: string | null;
-  text: string;
-  provider: PreferredProvider | null;
-  model: string | null;
 }
 
 interface ComposerDraftScreenProps {
@@ -96,6 +92,62 @@ function modelOptionsForProvider(catalog: ModelCatalog, provider: PreferredProvi
   }
 }
 
+function applyProviderModel(
+  catalog: ModelCatalog,
+  provider: PreferredProvider,
+  model: string,
+): void {
+  // Each provider in `useModelCatalog` exposes its own `setModel`
+  // which both persists the choice and updates the catalog's state
+  // for that provider. Dispatching here keeps the switch in one place
+  // — adding a new provider forces an obvious update here when the
+  // exhaustiveness check (`default`) is hit.
+  switch (provider) {
+    case 'ollama':
+      catalog.ollama.setModel(model);
+      return;
+    case 'openrouter':
+      catalog.openRouter.setModel(model);
+      return;
+    case 'cloudflare':
+      catalog.cloudflare.setModel(model);
+      return;
+    case 'zen':
+      catalog.zen.setModel(model);
+      return;
+    case 'nvidia':
+      catalog.nvidia.setModel(model);
+      return;
+    case 'blackbox':
+      catalog.blackbox.setModel(model);
+      return;
+    case 'kilocode':
+      catalog.kilocode.setModel(model);
+      return;
+    case 'openadapter':
+      catalog.openadapter.setModel(model);
+      return;
+    case 'azure':
+      catalog.azure.setModel(model);
+      return;
+    case 'bedrock':
+      catalog.bedrock.setModel(model);
+      return;
+    case 'vertex':
+      catalog.vertex.setModel(model);
+      return;
+    case 'anthropic':
+      catalog.anthropic.setModel(model);
+      return;
+    case 'openai':
+      catalog.openai.setModel(model);
+      return;
+    case 'google':
+      catalog.google.setModel(model);
+      return;
+  }
+}
+
 function defaultModelForProvider(
   catalog: ModelCatalog,
   provider: PreferredProvider,
@@ -152,12 +204,11 @@ export function ComposerDraftScreen({
   const branchLoaderRef = useRef<((repoFullName: string) => Promise<void> | void) | null>(null);
   const proxyLoadRepoBranches = useCallback((name: string) => branchLoaderRef.current?.(name), []);
 
-  const { state, setMode, setRepo, setBranch, setText, setProvider, setModel } =
-    useDraftChatComposer({
-      seed,
-      repos,
-      loadRepoBranches: proxyLoadRepoBranches,
-    });
+  const { state, setMode, setRepo, setBranch, setProvider, setModel } = useDraftChatComposer({
+    seed,
+    repos,
+    loadRepoBranches: proxyLoadRepoBranches,
+  });
 
   const stateActiveRepo: ActiveRepo | null = useMemo(() => {
     if (!state.repoFullName) return null;
@@ -223,33 +274,44 @@ export function ComposerDraftScreen({
     return branchManager.displayBranches;
   }, [branchManager.displayBranches, state.mode]);
 
-  const trimmedText = state.text.trim();
-  const isReadyToSend =
-    trimmedText.length > 0 && (state.mode !== 'repo' || Boolean(state.repoFullName));
+  const isReadyToConfirm = state.mode !== 'repo' || Boolean(state.repoFullName);
 
-  const handleSend = () => {
-    if (!isReadyToSend) return;
-    // Only emit provider/model when the user explicitly picked one in
-    // pre-flight. Implicit picks let the workspace stick to its default
-    // and respect any existing per-chat lock — we don't want every
-    // commit to re-anchor the chat to whatever Settings currently shows.
-    const explicitProvider = state.provider;
-    const resolvedModel = explicitProvider
-      ? (state.model ?? defaultModelForProvider(catalog, explicitProvider))
-      : null;
-    // Mirror the choice into Settings only at commit — picking a model
-    // in the sheet and then cancelling the composer must not move the
-    // workspace's persisted default.
-    if (explicitProvider) {
-      setPreferredProvider(explicitProvider);
+  const confirmLabel =
+    state.mode === 'chat'
+      ? 'Start chat'
+      : state.mode === 'scratch'
+        ? 'Open scratch workspace'
+        : state.repoFullName
+          ? `Open ${state.repoFullName}`
+          : 'Select a repo to continue';
+
+  const confirmHint =
+    state.mode === 'repo' && !state.repoFullName
+      ? 'Pick a repo from the menu above.'
+      : 'Opens a new chat in the selected context.';
+
+  const handleConfirm = () => {
+    if (!isReadyToConfirm) return;
+    // Mirror the provider/model choice into Settings + the live
+    // catalog at commit — picking and then cancelling must NOT move
+    // the workspace's default, so the writes are deferred to here.
+    // `setPreferredProvider` only persists to localStorage;
+    // `setActiveBackend` updates the React state inside
+    // `useModelCatalog` so the workspace's ChatInput sees the choice
+    // on the next render instead of waiting for a reload. The
+    // per-provider `setModel` persists + updates state for the model
+    // pick.
+    if (state.provider) {
+      catalog.setPreferredProvider(state.provider);
+      catalog.setActiveBackend(state.provider);
+      if (state.model) {
+        applyProviderModel(catalog, state.provider, state.model);
+      }
     }
     onCommit({
       mode: state.mode,
       repoFullName: state.mode === 'repo' ? state.repoFullName : null,
       branch: state.mode === 'repo' ? state.branch : null,
-      text: trimmedText,
-      provider: explicitProvider,
-      model: resolvedModel,
     });
   };
 
@@ -295,13 +357,6 @@ export function ComposerDraftScreen({
         void catalog.refreshOpenAdapterModels();
     }
   }, [catalog, modelSheetOpen]);
-
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-      event.preventDefault();
-      handleSend();
-    }
-  };
 
   const modeLabel = MODE_OPTIONS.find((m) => m.mode === state.mode)?.label ?? 'Mode';
   const ModeIcon = MODE_OPTIONS.find((m) => m.mode === state.mode)?.icon ?? FolderGit2;
@@ -401,38 +456,14 @@ export function ComposerDraftScreen({
 
       <div className="border-t border-push-edge/60 bg-[#040608] px-4 pb-4 pt-3">
         <div className="mx-auto flex w-full max-w-md flex-col gap-2">
-          <div className="rounded-2xl border border-push-edge-subtle bg-push-grad-input shadow-[0_12px_34px_rgba(0,0,0,0.5)] backdrop-blur-xl">
-            <textarea
-              value={state.text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={handleKeyDown}
-              autoFocus
-              rows={3}
-              placeholder={
-                state.mode === 'chat'
-                  ? 'Ask anything…'
-                  : state.mode === 'scratch'
-                    ? 'Describe what you want to build…'
-                    : state.repoFullName
-                      ? 'Describe what you want to do in this repo…'
-                      : 'Pick a repo to get started…'
-              }
-              className="block min-h-[3.25rem] w-full resize-none bg-transparent px-4 pt-3 text-push-sm text-push-fg outline-none placeholder:text-push-fg-dim"
-            />
-            <div className="flex items-center justify-end gap-2 px-2 pb-2">
-              <button
-                onClick={handleSend}
-                disabled={!isReadyToSend}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-push-accent text-black transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
-                aria-label="Send"
-              >
-                <SendLiftIcon className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-          <p className="text-center text-push-2xs text-push-fg-dim">
-            Sends as a new chat in the selected context.
-          </p>
+          <button
+            onClick={handleConfirm}
+            disabled={!isReadyToConfirm}
+            className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-push-accent px-4 text-push-sm font-medium text-black shadow-[0_12px_34px_rgba(0,0,0,0.5)] transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {confirmLabel}
+          </button>
+          <p className="text-center text-push-2xs text-push-fg-dim">{confirmHint}</p>
         </div>
       </div>
 
