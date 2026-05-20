@@ -235,6 +235,12 @@ export function WorkspaceSessionScreen({
 
   useEffect(() => {
     if (pendingResumeChatId) return;
+    // Pre-flight menu owns chat minting on commit — let its drain
+    // effect create the fresh chat in the right context. Without this
+    // guard the auto-effect can race the drain on a cross-context
+    // commit, switching the user into a matching existing chat
+    // before the drain runs.
+    if (pendingNewChat) return;
 
     const activeConversation = conversations[activeChatId];
     const workspaceMode =
@@ -268,6 +274,7 @@ export function WorkspaceSessionScreen({
     activeChatId,
     conversations,
     createNewChat,
+    pendingNewChat,
     pendingResumeChatId,
     switchChat,
     workspaceRepo?.full_name,
@@ -330,43 +337,31 @@ export function WorkspaceSessionScreen({
   });
 
   // Drain `pendingNewChat` set by the pre-flight menu on confirm.
-  // Cross-context commits already mint via the chat-management auto-
-  // create effect because the workspace remounts and the existing
-  // chats don't match the new context. Same-context commits keep the
-  // session, so without this drain the user would stay on whatever
-  // chat they were on. When the menu picked a provider/model
-  // override, we apply it to the target chat's draft so the first
-  // send anchors the chat there — the catalog-wide default is left
-  // alone.
+  // Confirming the menu always means "open a fresh chat here" — even
+  // when the current chat is empty, the user tapped "+ New chat" and
+  // expects a new one. The auto-create-conv effect above is gated on
+  // `pendingNewChat` so it doesn't race the drain on cross-context
+  // commits (the workspace would otherwise switch into an existing
+  // matching chat before we mint).
+  //
+  // When the menu picked a provider/model override, apply it to the
+  // newly minted chat's draft. First-send-anchors-lock then pins
+  // that chat — the catalog-wide default is left alone.
   const drainedNewChatKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!pendingNewChat) return;
     if (drainedNewChatKeyRef.current === pendingNewChat.key) return;
-    const activeConv = conversations[activeChatId];
-    if (!activeConv) return; // wait for chat-management auto-create to settle
     drainedNewChatKeyRef.current = pendingNewChat.key;
-    // Mint a fresh chat if the active one already has history, then
-    // hold the draft override for the new id. Otherwise the active
-    // chat is empty already (cross-context auto-create or user
-    // confirmed in a fresh workspace), so we apply the override to
-    // it directly.
-    const targetChatId = activeConv.messages.length > 0 ? createNewChat() : activeChatId;
+    const newChatId = createNewChat();
     if (pendingNewChat.provider) {
       const provider = pendingNewChat.provider;
-      upsertChatDraft(targetChatId, {
+      upsertChatDraft(newChatId, {
         provider,
         models: pendingNewChat.model ? { [provider]: pendingNewChat.model } : undefined,
       });
     }
     onPendingNewChatConsumed();
-  }, [
-    activeChatId,
-    conversations,
-    createNewChat,
-    onPendingNewChatConsumed,
-    pendingNewChat,
-    upsertChatDraft,
-  ]);
+  }, [createNewChat, onPendingNewChatConsumed, pendingNewChat, upsertChatDraft]);
 
   const snapshots = useSnapshotManager(workspaceSession, sandbox, workspaceRepo, isStreaming);
   const branches = useBranchManager(workspaceRepo, workspaceSession);
