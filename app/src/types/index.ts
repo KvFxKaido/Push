@@ -1016,21 +1016,6 @@ export interface DraftComposerSeed {
   branch?: string | null;
 }
 
-/**
- * First-message envelope handed off from the pre-flight composer to the
- * workspace screen. The workspace's drain effect creates (or reuses) an
- * empty chat and sends `text` once the screen has mounted. `key` lets the
- * drain effect dedupe across re-renders. When `provider` and/or `model`
- * are set, the drain effect dispatches via raw `sendMessage` with those
- * options so the chat's lock applies them from the very first turn.
- */
-export interface PendingFirstMessage {
-  key: string;
-  text: string;
-  provider?: import('@/lib/providers').PreferredProvider | null;
-  model?: string | null;
-}
-
 // File browser types (re-exported from sandbox-client for convenience)
 export interface FileEntry {
   name: string;
@@ -1566,11 +1551,6 @@ export interface WorkspaceScreenNavigationProps {
 export interface WorkspaceScreenHomeBridgeProps {
   pendingResumeChatId: string | null;
   onConversationIndexChange: (index: ConversationIndex) => void;
-  /** Set by the pre-flight composer when the user hits send. The workspace
-   * drain effect creates (or reuses) an empty chat and dispatches the text,
-   * then calls `onPendingFirstMessageConsumed` to clear it. */
-  pendingFirstMessage: PendingFirstMessage | null;
-  onPendingFirstMessageConsumed: () => void;
 }
 
 /**
