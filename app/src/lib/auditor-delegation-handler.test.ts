@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deterministicEmptyDiffVerdict } from './auditor-delegation-handler';
+import { deterministicEmptyDiffVerdict, hasUntrackedFiles } from './auditor-delegation-handler';
 
 // Unit test for the pure short-circuit predicate that decides whether
 // the Auditor can return a canned "no workspace changes" verdict without
@@ -166,5 +166,72 @@ describe('deterministicEmptyDiffVerdict', () => {
       commitsMade: true,
     });
     expect(result).toBeNull();
+  });
+
+  it('falls through to LLM when untracked files were created — `git diff HEAD` misses them', () => {
+    // Reproduces the 2026-05-20 retry-session bug: Coder ran
+    // sandbox_write_file on a brand new path. The file exists on
+    // disk but `git diff HEAD` is empty (untracked, never staged,
+    // never committed) and HEAD didn't move. The deterministic
+    // short-circuit previously fired "no workspace changes" on a
+    // turn that did real work. With the porcelain-status signal
+    // wired in, the predicate now defers to the LLM Auditor.
+    const result = deterministicEmptyDiffVerdict({
+      diffFetchSucceeded: true,
+      evalDiff: '',
+      criteriaResults: [],
+      commitsMade: false,
+      untrackedFilesPresent: true,
+    });
+    expect(result).toBeNull();
+  });
+
+  it('still short-circuits when nothing happened — diff empty, no commits, no untracked, no criteria', () => {
+    // The true no-op case: Coder claimed done but the workspace is
+    // untouched on every channel. Worth keeping a crisp deterministic
+    // verdict here instead of paying for an LLM call that reaches
+    // the same conclusion.
+    const result = deterministicEmptyDiffVerdict({
+      diffFetchSucceeded: true,
+      evalDiff: '',
+      criteriaResults: [],
+      commitsMade: false,
+      untrackedFilesPresent: false,
+    });
+    expect(result).not.toBeNull();
+    expect(result?.verdict).toBe('incomplete');
+  });
+});
+
+describe('hasUntrackedFiles', () => {
+  it('returns false for null/undefined/empty input — the sandbox returns "" when git status is clean', () => {
+    expect(hasUntrackedFiles(undefined)).toBe(false);
+    expect(hasUntrackedFiles(null)).toBe(false);
+    expect(hasUntrackedFiles('')).toBe(false);
+  });
+
+  it('returns true on a `??` line (the porcelain prefix for untracked entries)', () => {
+    // The exact shape sandbox/worker emits from `git status --porcelain`.
+    expect(hasUntrackedFiles('?? hello.txt\n')).toBe(true);
+  });
+
+  it('returns true when an untracked entry is mixed with modified entries', () => {
+    // A turn that edits one tracked file AND creates one untracked
+    // file would have a non-empty diff already, but we still want
+    // the porcelain signal to honor untracked entries — they're
+    // independent evidence channels.
+    expect(hasUntrackedFiles(' M src/app.ts\n?? new.txt\n')).toBe(true);
+  });
+
+  it('returns false when only modified/staged entries are present (no untracked)', () => {
+    // Modified-but-not-untracked goes via `git diff HEAD`, not via
+    // the untracked-file signal. The predicate already has the diff
+    // body to drive its decision; we don't want to double-trip on
+    // the porcelain status.
+    expect(hasUntrackedFiles('M  src/a.ts\n M src/b.ts\n')).toBe(false);
+  });
+
+  it('tolerates CRLF line endings from the worker shell', () => {
+    expect(hasUntrackedFiles('?? a.txt\r\n')).toBe(true);
   });
 });

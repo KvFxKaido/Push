@@ -168,6 +168,7 @@ export async function handleCoderAuditor(
     let evalDiff: string | null = null;
     let diffFetchSucceeded = false;
     let commitsMade = false;
+    let untrackedFilesPresent = false;
     try {
       // Pass the pre-Coder HEAD captured by coder-delegation-handler so
       // the sandbox also returns `diff_since_ref` (the committed-but-
@@ -197,14 +198,42 @@ export async function handleCoderAuditor(
       const canDetermineCommits =
         Boolean(auditorInput.preCoderHead) && typeof diffResult.head_sha === 'string';
       commitsMade = canDetermineCommits ? diffResult.head_sha !== auditorInput.preCoderHead : true;
-      // Concatenation preserves both halves for the LLM. The Auditor
-      // prompt's [SANDBOX DIFF] section will render whichever is
-      // present (or both, with a separator) so the model can audit
-      // the full set of changes.
-      if (workingTreeDiff && rangedDiff) {
-        evalDiff = `${workingTreeDiff}\n--- committed since coder started ---\n${rangedDiff}`;
+      // Untracked-file detection. `sandbox_write_file` creating a brand
+      // new file produces no `git diff HEAD` content (the file is
+      // unstaged and untracked) and no HEAD advance — the deterministic
+      // short-circuit fired "no workspace changes" on that case in the
+      // 2026-05-20 retry session even though real work happened. The
+      // porcelain status was already in the diff response, just unused.
+      // We parse it for `??` entries and treat any as evidence of work.
+      // PR #606.
+      untrackedFilesPresent = hasUntrackedFiles(diffResult.git_status);
+      // Concatenation preserves all evidence halves for the LLM. The
+      // Auditor prompt's [SANDBOX DIFF] section will render whichever
+      // is present (or all three, separated by markers) so the model
+      // can audit the full set of changes — including newly-created
+      // files that show up only in the porcelain status.
+      const untrackedSection = untrackedFilesPresent
+        ? `--- untracked files (git status --porcelain) ---\n${diffResult.git_status ?? ''}`
+        : '';
+      const parts = [workingTreeDiff, rangedDiff, untrackedSection].filter((s) => s.length > 0);
+      if (parts.length === 0) {
+        evalDiff = null;
+      } else if (parts.length === 1) {
+        evalDiff = parts[0];
       } else {
-        evalDiff = workingTreeDiff || rangedDiff || null;
+        // Multi-part: insert the "committed since coder started" marker
+        // between working-tree and ranged halves (matches the pre-#606
+        // text so older snapshot tests/log greps still find it), then
+        // append the untracked section if present.
+        const headSections: string[] = [];
+        if (workingTreeDiff) headSections.push(workingTreeDiff);
+        if (rangedDiff) {
+          headSections.push(
+            workingTreeDiff ? `--- committed since coder started ---\n${rangedDiff}` : rangedDiff,
+          );
+        }
+        if (untrackedSection) headSections.push(untrackedSection);
+        evalDiff = headSections.join('\n');
       }
       // `getSandboxDiff` can resolve with HTTP 200 and a populated `error`
       // field (git failure inside the sandbox, see `routeDiff` in
@@ -230,6 +259,7 @@ export async function handleCoderAuditor(
       evalDiff,
       criteriaResults: auditorInput.allCriteriaResults,
       commitsMade,
+      untrackedFilesPresent,
     });
     if (deterministicResult) {
       ctx.updateVerificationStateForChat(chatId, (state) =>
@@ -379,7 +409,7 @@ function formatAuditorSummaryLine(evalResult: EvaluationResult): string {
  * when the empty-diff case is unambiguous, or `null` to let the caller
  * fall through to the LLM evaluator.
  *
- * Four conditions must hold:
+ * Five conditions must hold:
  *   1. The diff fetch succeeded — a thrown sandbox call leaves us blind to
  *      what actually happened, so we trust the LLM evaluator instead of
  *      asserting "no changes".
@@ -400,6 +430,13 @@ function formatAuditorSummaryLine(evalResult: EvaluationResult): string {
  *      side of running the LLM rather than firing a false-positive
  *      short-circuit. PR #604 — fix for the post-commit Auditor
  *      false-positive observed against #601.
+ *   5. **No untracked files were created.** `sandbox_write_file` creating
+ *      a brand new file produces no `git diff HEAD` content (the file
+ *      is unstaged and untracked) and no HEAD advance — the predicate
+ *      was firing "no workspace changes" on that case in the 2026-05-20
+ *      retry session even though the file existed on disk. The handler
+ *      parses `git status --porcelain` for `??` entries and sets
+ *      `untrackedFilesPresent`. PR #606.
  *
  * Exported for unit testing; the handler above is the only production
  * caller.
@@ -409,12 +446,14 @@ export function deterministicEmptyDiffVerdict(input: {
   evalDiff: string | null;
   criteriaResults: readonly { passed: boolean }[];
   commitsMade?: boolean;
+  untrackedFilesPresent?: boolean;
 }): EvaluationResult | null {
   if (!input.diffFetchSucceeded) return null;
   const diffIsEmpty = !input.evalDiff || input.evalDiff.trim().length === 0;
   if (!diffIsEmpty) return null;
   if (input.criteriaResults.some((r) => r.passed)) return null;
   if (input.commitsMade) return null;
+  if (input.untrackedFilesPresent) return null;
   return {
     verdict: 'incomplete',
     summary:
@@ -424,4 +463,21 @@ export function deterministicEmptyDiffVerdict(input: {
     ],
     confidence: 'high',
   };
+}
+
+/**
+ * Parse `git status --porcelain` output and return true when any
+ * untracked file entries (`??`) are present. Exported for unit
+ * testing; the handler is the only production caller. See PR #606.
+ *
+ * Porcelain format (v1): each line is two status chars + space + path.
+ * `??` in the first column means untracked. We tolerate `\r\n`
+ * newlines and trailing whitespace from the worker shell.
+ */
+export function hasUntrackedFiles(gitStatus: string | undefined | null): boolean {
+  if (!gitStatus) return false;
+  for (const line of gitStatus.split(/\r?\n/)) {
+    if (line.startsWith('??')) return true;
+  }
+  return false;
 }
