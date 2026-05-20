@@ -99,6 +99,7 @@ describe('chat-tool-execution: apiMessages reasoningBlocks round-trip', () => {
       blocks,
       apiMessages,
       'zen',
+      'minimax-m2.7',
     );
     // Assistant text is preserved.
     const assistantEntry = action.apiMessages.find(
@@ -113,6 +114,11 @@ describe('chat-tool-execution: apiMessages reasoningBlocks round-trip', () => {
     expect(action.errorMessage.content).toContain('sandbox_edit_range');
     expect(action.errorMessage.content).toContain('args');
     expect(action.assistantUpdate.toolMeta.toolName).toBe('sandbox_edit_range');
+    // Source derives from the resolved canonical name, not a hardcoded
+    // 'sandbox' — Copilot review on PR #599. sandbox_edit_range is a
+    // sandbox tool so the value happens to match, but the test asserts
+    // through the resolved-name route to lock in the behavior.
+    expect(action.assistantUpdate.toolMeta.source).toBe('sandbox');
   });
 
   it('handleDroppedCandidatesError flags unknown tool names without a resolved canonical', () => {
@@ -132,7 +138,34 @@ describe('chat-tool-execution: apiMessages reasoningBlocks round-trip', () => {
       [],
       apiMessages,
       'zen',
+      'minimax-m2.7',
     );
     expect(action.errorMessage.content).toContain('sandbox (unknown)');
+  });
+
+  it('handleDroppedCandidatesError routes a github-tool drop through the github source', () => {
+    // Locks in the Copilot fix: source must derive from the resolved
+    // canonical name, not be hardcoded 'sandbox'. A github tool dropped
+    // for bad args was being mislabeled as sandbox in run-event
+    // telemetry before this change.
+    const apiMessages: ChatMessage[] = [userMessage('check pr')];
+    const action = handleDroppedCandidatesError(
+      {
+        droppedCandidates: [
+          {
+            rawToolName: 'pr',
+            resolvedToolName: 'fetch_pr',
+            sample: '{"tool":"pr","args":{"repo":"a/b"}}',
+          },
+        ],
+      },
+      'assistant',
+      '',
+      [],
+      apiMessages,
+      'zen',
+      'minimax-m2.7',
+    );
+    expect(action.assistantUpdate.toolMeta.source).toBe('github');
   });
 });

@@ -610,7 +610,7 @@ export function dispatchDroppedCandidatesError(
   recoveryState: ToolCallRecoveryState,
   ctx: SendLoopContext,
 ): AssistantTurnResult {
-  const { chatId, lockedProvider, setConversations, appendRunEvent } = ctx;
+  const { chatId, lockedProvider, resolvedModel, setConversations, appendRunEvent } = ctx;
   const errorAction = handleDroppedCandidatesError(
     detected,
     accumulated,
@@ -618,6 +618,7 @@ export function dispatchDroppedCandidatesError(
     reasoningBlocks,
     apiMessages,
     lockedProvider,
+    resolvedModel,
   );
 
   appendRunEvent(chatId, {

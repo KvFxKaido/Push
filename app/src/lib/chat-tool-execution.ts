@@ -33,6 +33,7 @@ import {
   type ToolCallRecoveryResult,
 } from '@/lib/tool-call-recovery';
 import { recordMalformedToolCallMetric } from '@/lib/tool-call-metrics';
+import { getToolSource } from '@push/lib/tool-call-diagnosis';
 import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from '@/lib/tracing';
 import {
   correlationToSpanAttributes,
@@ -510,6 +511,7 @@ export function handleDroppedCandidatesError(
   reasoningBlocks: ReasoningBlock[],
   apiMessages: readonly ChatMessage[],
   provider: ActiveProvider,
+  model: string | undefined,
 ): MultipleMutationsErrorAction {
   const dropped = detected.droppedCandidates;
   const primary = dropped[0];
@@ -526,12 +528,31 @@ export function handleDroppedCandidatesError(
     hint: 'Each tool call must be `{"tool": "<name>", "args": {...}}` with the args object wrapping required fields. Re-emit only the calls you intend to run and confirm the args match the tool signature.',
   });
 
+  // Derive the tool's source from the resolved canonical name so toolMeta
+  // (and the downstream run-event preview) routes to the right
+  // observability bucket. Falling back to the raw name handles aliases
+  // the registry knows but didn't carry on the candidate. `getToolSource`
+  // ultimately returns 'sandbox' for unrecognized names — matching the
+  // legacy default — so a fully-unknown tool stays where it was before.
+  const primaryToolName = primary?.resolvedToolName || primary?.rawToolName || null;
+  const toolSource = getToolSource(primaryToolName);
+
   const toolMeta = buildToolMeta({
-    toolName: primary?.resolvedToolName || primary?.rawToolName || 'unknown',
-    source: 'sandbox',
+    toolName: primaryToolName || 'unknown',
+    source: toolSource,
     provider,
     durationMs: 0,
     isError: true,
+  });
+
+  // Mirror `handleRecoveryResult`: record the validation_failed drop in
+  // the in-memory compliance counter so this surface shows up alongside
+  // the other malformed-call paths instead of dropping out of the stats.
+  recordMalformedToolCallMetric({
+    provider,
+    model,
+    reason: 'validation_failed',
+    toolName: primaryToolName,
   });
 
   const errorMessage: ChatMessage = {
