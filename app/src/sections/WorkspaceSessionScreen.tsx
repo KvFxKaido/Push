@@ -205,18 +205,32 @@ export function WorkspaceSessionScreen({
     perfMark(workspaceSession.kind === 'chat' ? 'surface:chat' : 'surface:workspace');
   }, [workspaceSession.id, workspaceSession.kind]);
 
-  // Workspace-patch replay (persist-diffs PR 3). The sandbox status
-  // transition we care about is `creating → ready` — the fresh-create
-  // path. `reconnecting → ready` is a snapshot restore that brings the
-  // working tree back as-is, so replay would double-apply.
+  // Workspace-patch replay (persist-diffs PR 3). Two signals must
+  // align before replay fires:
+  //
+  //  1. `creating → ready` status transition. Snapshot restore takes
+  //     the `reconnecting → ready` path and brings the working tree
+  //     back as-is; replay would double-apply.
+  //
+  //  2. The sandbox id must also have *changed* since the last replay.
+  //     `useSandbox.refresh()` re-enters `creating` as a transient
+  //     "checking" state on the *same* container (see useSandbox.ts:532)
+  //     — a non-silent refresh on a live container would otherwise
+  //     trigger replay against the already-applied working tree and
+  //     drag the card to `applied('already-applied')` prematurely,
+  //     leaving nothing to replay when a *real* new container later
+  //     replaces this one.
   const prevSandboxStatusRef = useRef(sandbox.status);
+  const lastReplayedSandboxIdRef = useRef<string | null>(null);
   useEffect(() => {
-    const prev = prevSandboxStatusRef.current;
-    const curr = sandbox.status;
-    prevSandboxStatusRef.current = curr;
-    if (prev === 'creating' && curr === 'ready' && sandbox.sandboxId) {
-      void replayOnFreshSandbox(sandbox.sandboxId, activeChatId, conversations);
-    }
+    const prevStatus = prevSandboxStatusRef.current;
+    const currStatus = sandbox.status;
+    prevSandboxStatusRef.current = currStatus;
+    if (prevStatus !== 'creating' || currStatus !== 'ready') return;
+    if (!sandbox.sandboxId) return;
+    if (sandbox.sandboxId === lastReplayedSandboxIdRef.current) return;
+    lastReplayedSandboxIdRef.current = sandbox.sandboxId;
+    void replayOnFreshSandbox(sandbox.sandboxId, activeChatId, conversations);
   }, [sandbox.status, sandbox.sandboxId, replayOnFreshSandbox, activeChatId, conversations]);
 
   useEffect(() => {

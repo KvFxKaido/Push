@@ -145,6 +145,35 @@ describe('useWorkspacePatchReplay', () => {
     expect(card.data.applyState).toMatchObject({ kind: 'conflict' });
   });
 
+  it('targets the latest pending card *within* a single message (not the first)', async () => {
+    // Codex/Copilot review on #597: the reverse-scan finds the latest
+    // pending card but a forward `find` would re-target the *first*
+    // one if multiple pending cards live on one message. Index-based
+    // targeting must keep them aligned.
+    mockReplayWorkspacePatch.mockResolvedValue({ kind: 'applied', appliedAt: 1234 });
+
+    const olderOnSameMsg = workspacePatchCard({ baseSha: 'older' });
+    const newerOnSameMsg = workspacePatchCard({ baseSha: 'newer' });
+    const harness = makeHarness([
+      assistantMessageWithCards('asst-1', [olderOnSameMsg, newerOnSameMsg]),
+    ]);
+    await harness.replayOnFreshSandbox('sb-1', 'chat-1', harness.getConversations());
+
+    expect(mockReplayWorkspacePatch).toHaveBeenCalledTimes(1);
+    const calledWithCard = mockReplayWorkspacePatch.mock.calls[0][1] as { baseSha: string };
+    expect(calledWithCard.baseSha).toBe('newer');
+
+    const cards = harness.getConversations()['chat-1'].messages[0].cards ?? [];
+    expect((cards[0] as Extract<ChatCard, { type: 'workspace-patch' }>).data.applyState).toEqual({
+      kind: 'pending',
+    });
+    expect(
+      (cards[1] as Extract<ChatCard, { type: 'workspace-patch' }>).data.applyState,
+    ).toMatchObject({
+      kind: 'applied',
+    });
+  });
+
   it('targets the most recent pending card across multiple messages', async () => {
     mockReplayWorkspacePatch.mockResolvedValue({ kind: 'applied', appliedAt: 1234 });
 
