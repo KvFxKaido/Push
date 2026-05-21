@@ -29,6 +29,7 @@ interface RepoAppearanceSheetProps {
   appearance: RepoAppearance;
   onSave: (appearance: RepoAppearance) => void;
   onReset: () => void;
+  description?: string;
 }
 
 export function RepoAppearanceSheet({
@@ -38,6 +39,7 @@ export function RepoAppearanceSheet({
   appearance,
   onSave,
   onReset,
+  description = 'Pick a quiet icon and accent color for this repo on this device.',
 }: RepoAppearanceSheetProps) {
   const [draft, setDraft] = useState<RepoAppearance>(appearance);
 
@@ -54,9 +56,7 @@ export function RepoAppearanceSheet({
             <Palette className="h-4 w-4 text-push-fg-dim" />
             Customize {repoName}
           </SheetTitle>
-          <SheetDescription className="text-xs text-push-fg-dim">
-            Pick a quiet icon and accent color for this repo on this device.
-          </SheetDescription>
+          <SheetDescription className="text-xs text-push-fg-dim">{description}</SheetDescription>
         </SheetHeader>
 
         <div className="space-y-5 pt-3">
