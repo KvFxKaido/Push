@@ -15,7 +15,10 @@
 import { streamChat, peekLastPromptSnapshot } from '@/lib/orchestrator';
 import { drainRecentContextMetrics } from '@/lib/context-metrics';
 import { assertReadyForAssistantTurn } from '@push/lib/llm-message-invariants';
-import { buildLinkedLibraryContext } from '@/lib/linked-library-context';
+import {
+  buildLinkedLibraryContext,
+  spliceLinkedImagesIntoLastUser,
+} from '@/lib/linked-library-context';
 import { buildTodoContext } from '@/lib/todo-tools';
 import { setOpenRouterSessionId } from '@/lib/openrouter-session';
 import { getDefaultMemoryStore } from '@push/lib/context-memory-store';
@@ -145,17 +148,34 @@ export async function streamAssistantRound(
     }
   }
 
-  // Library v2b — fetch + render content for libraries linked to this
-  // chat. Fresh every turn (never persisted in chat history). Helper
-  // returns undefined when nothing to inject — failures are swallowed
-  // so a single unreachable library doesn't block the send.
+  // Library v2b/v2c — fetch + render content for libraries linked to
+  // this chat. Fresh every turn (never persisted in chat history).
+  // Returns two channels: `systemText` flows into the system message's
+  // library_context section, `imageAttachments` are spliced into the
+  // latest user message's attachments[] so vision-capable models can
+  // see the pixels via the existing image_url-block path. Failures
+  // are swallowed inside the helper so a single unreachable library
+  // doesn't block the send.
   const linkedLibraryIds = conversationsRef.current[chatId]?.linkedLibraryIds ?? [];
-  const linkedLibraryContent =
-    linkedLibraryIds.length > 0 ? await buildLinkedLibraryContext(linkedLibraryIds) : undefined;
+  const linkedLibraryPayload =
+    linkedLibraryIds.length > 0
+      ? await buildLinkedLibraryContext(linkedLibraryIds)
+      : { systemText: undefined, imageAttachments: [] };
+  const linkedLibraryContent = linkedLibraryPayload.systemText;
+
+  // v2c — graft linked-library image attachments onto a CLONE of the
+  // latest user message in apiMessages so the model sees the pixels
+  // on every turn (via the existing image_url-block path) without
+  // mutating the conversation in IndexedDB. No-op when there are no
+  // images or no user message.
+  const apiMessagesForSend = spliceLinkedImagesIntoLastUser(
+    apiMessages,
+    linkedLibraryPayload.imageAttachments,
+  );
 
   const error = await new Promise<Error | null>((resolve) => {
     streamChat(
-      apiMessages,
+      apiMessagesForSend,
       (token) => {
         if (abortRef.current) return;
         const contentKey = `${round}:${accumulated.length}:${token}`;
@@ -270,8 +290,15 @@ export async function streamAssistantRound(
   // peeking is only safe AFTER streamChat resolves. Hashes + sizes only —
   // the section content itself never leaves `_lastPromptSnapshots`, so this
   // is safe even when sections include sensitive context.
+  //
+  // The peek must use `apiMessagesForSend` (the post-splice clone), not
+  // the original `apiMessages`: the snapshot was written during
+  // streamChat's execution under the post-splice key. Peeking with the
+  // original array would key-miss whenever v2c linked image attachments
+  // were added, silently emitting an empty `assistant.prompt_snapshot`
+  // event for those turns.
   const snapshotEntry = peekLastPromptSnapshot(
-    apiMessages,
+    apiMessagesForSend,
     workspaceContextRef.current ?? undefined,
   );
   if (snapshotEntry) {
