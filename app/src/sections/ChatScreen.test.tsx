@@ -184,4 +184,49 @@ describe('ChatScreen', () => {
 
     expect(html).toContain('sandbox-expiry-banner');
   });
+
+  it('renders the background glow active when no repo appearance is set (default true)', () => {
+    const html = renderToStaticMarkup(
+      <ChatScreen
+        workspace={baseWorkspace({ activeRepoAppearance: null })}
+        shell={baseShell()}
+        chat={baseChat()}
+        banners={baseBanners()}
+      />,
+    );
+
+    expect(html).toContain('push-glow-blob');
+    expect(html).toContain('animation-play-state:running');
+  });
+
+  it('renders the background glow active when glowEnabled is true on the appearance', () => {
+    const html = renderToStaticMarkup(
+      <ChatScreen
+        workspace={baseWorkspace({
+          activeRepoAppearance: { icon: 'repo-ledger', color: 'sky', glowEnabled: true },
+        })}
+        shell={baseShell()}
+        chat={baseChat()}
+        banners={baseBanners()}
+      />,
+    );
+
+    expect(html).toContain('animation-play-state:running');
+  });
+
+  it('pauses the background glow when the repo opts out via glowEnabled false', () => {
+    const html = renderToStaticMarkup(
+      <ChatScreen
+        workspace={baseWorkspace({
+          activeRepoAppearance: { icon: 'repo-ledger', color: 'sky', glowEnabled: false },
+        })}
+        shell={baseShell()}
+        chat={baseChat()}
+        banners={baseBanners()}
+      />,
+    );
+
+    expect(html).toContain('push-glow-blob');
+    expect(html).toContain('animation-play-state:paused');
+  });
 });
