@@ -1,8 +1,10 @@
 import { lazy, Suspense, useCallback, useState } from 'react';
 import { Toaster } from '@/components/ui/sonner';
 import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
+import { useChatModeAppearance } from '@/hooks/useChatModeAppearance';
 import { useWorkspaceChatComposerController } from '@/hooks/useWorkspaceChatComposerController';
 import { useWorkspaceChatPanelsController } from '@/hooks/useWorkspaceChatPanelsController';
+import { getRepoAppearanceColorHex } from '@/lib/repo-appearance';
 import { ChatSurfaceScreen } from './ChatSurfaceScreen';
 import {
   buildRepoChatDrawerProps,
@@ -102,6 +104,12 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
   } = props;
 
   const pinnedArtifacts = usePinnedArtifacts(activeRepo?.full_name ?? null);
+  const {
+    appearance: chatModeAppearance,
+    setAppearance: setChatModeAppearance,
+    resetAppearance: resetChatModeAppearance,
+  } = useChatModeAppearance();
+  const chatModeAccentHex = getRepoAppearanceColorHex(chatModeAppearance.color);
   const [workspaceHubMounted, setWorkspaceHubMounted] = useState(false);
   const [launcherSheetMounted, setLauncherSheetMounted] = useState(false);
 
@@ -284,6 +292,10 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
         onOpenLauncher={openLauncherWithMount}
         onOpenWorkspaceHub={openWorkspaceHubWithMount}
         drawerProps={drawerProps}
+        appearance={chatModeAppearance}
+        accentHex={chatModeAccentHex}
+        onSaveAppearance={setChatModeAppearance}
+        onResetAppearance={resetChatModeAppearance}
         containerProps={{
           messages,
           agentStatus,

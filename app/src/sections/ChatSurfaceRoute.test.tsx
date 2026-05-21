@@ -303,4 +303,22 @@ describe('ChatSurfaceRoute', () => {
     ];
     expect(args.inputProps.draftKey).toBe('chat-42');
   });
+
+  it('passes a resolved chat-mode appearance and accent hex into ChatSurfaceScreen', () => {
+    renderToStaticMarkup(<ChatSurfaceRoute {...baseProps()} />);
+
+    const [args] = chatSurfaceScreenSpy.mock.calls[0] as [
+      {
+        appearance: { color: string; glowEnabled: boolean };
+        accentHex: string;
+        onSaveAppearance: unknown;
+        onResetAppearance: unknown;
+      },
+    ];
+    expect(args.appearance).toBeDefined();
+    expect(args.appearance.glowEnabled).toBe(true);
+    expect(args.accentHex).toMatch(/^#[0-9a-f]{6}$/i);
+    expect(args.onSaveAppearance).toBeTypeOf('function');
+    expect(args.onResetAppearance).toBeTypeOf('function');
+  });
 });

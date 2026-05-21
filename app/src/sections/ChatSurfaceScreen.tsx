@@ -1,9 +1,13 @@
-import type { ComponentProps } from 'react';
+import { useState, type ComponentProps } from 'react';
+import { Palette } from 'lucide-react';
 import { LauncherGridIcon, WorkspaceDockIcon } from '@/components/icons/push-custom-icons';
+import { ChatBackgroundGlow } from '@/components/chat/ChatBackgroundGlow';
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { RepoChatDrawer } from '@/components/chat/RepoChatDrawer';
+import { RepoAppearanceSheet } from '@/components/repo/RepoAppearanceSheet';
 import { usePerfMark } from '@/hooks/usePerfMark';
+import type { RepoAppearance } from '@/lib/repo-appearance';
 
 type RepoChatDrawerProps = ComponentProps<typeof RepoChatDrawer>;
 type ChatContainerProps = ComponentProps<typeof ChatContainer>;
@@ -17,6 +21,10 @@ interface ChatSurfaceScreenProps {
   drawerProps: RepoChatDrawerProps;
   containerProps: ChatContainerProps;
   inputProps: ChatInputProps;
+  appearance: RepoAppearance;
+  accentHex: string;
+  onSaveAppearance: (appearance: RepoAppearance) => void;
+  onResetAppearance: () => void;
 }
 
 const HEADER_PLAIN_INTERACTIVE_CLASS =
@@ -32,14 +40,20 @@ export function ChatSurfaceScreen({
   drawerProps,
   containerProps,
   inputProps,
+  appearance,
+  accentHex,
+  onSaveAppearance,
+  onResetAppearance,
 }: ChatSurfaceScreenProps) {
   usePerfMark('chat-surface:painted', 'surface:chat');
+  const [appearanceSheetOpen, setAppearanceSheetOpen] = useState(false);
   return (
     <div className="relative flex h-dvh flex-col overflow-hidden bg-[#000] safe-area-top safe-area-bottom">
       <div
-        className={`relative z-10 flex min-h-0 flex-1 flex-col bg-[#000] transition-[transform,box-shadow] duration-500 ease-in-out will-change-transform ${chatShellShadow}`}
+        className={`relative z-10 isolate flex min-h-0 flex-1 flex-col bg-[#000] transition-[transform,box-shadow] duration-500 ease-in-out will-change-transform ${chatShellShadow}`}
         style={{ transform: chatShellTransform }}
       >
+        <ChatBackgroundGlow active={appearance.glowEnabled} color={accentHex} />
         <header className="relative z-10 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 pt-3 pb-2">
           <div className="relative z-20 flex min-w-0 items-center gap-2">
             <div className="flex h-[34px] min-w-0 items-center gap-1 pl-0.5 pr-1">
@@ -68,6 +82,14 @@ export function ChatSurfaceScreen({
 
           <div className="relative z-20 flex min-w-0 items-center justify-end gap-2">
             <button
+              onClick={() => setAppearanceSheetOpen(true)}
+              className={HEADER_ROUND_BUTTON_CLASS}
+              aria-label="Customize chat appearance"
+              title="Customize chat"
+            >
+              <Palette className="relative z-10 h-3.5 w-3.5" />
+            </button>
+            <button
               onClick={onOpenWorkspaceHub}
               className={HEADER_ROUND_BUTTON_CLASS}
               aria-label="Open chat panel"
@@ -82,6 +104,14 @@ export function ChatSurfaceScreen({
         <ChatContainer {...containerProps} />
         <ChatInput {...inputProps} />
       </div>
+      <RepoAppearanceSheet
+        open={appearanceSheetOpen}
+        onOpenChange={setAppearanceSheetOpen}
+        repoName="Chat"
+        appearance={appearance}
+        onSave={onSaveAppearance}
+        onReset={onResetAppearance}
+      />
     </div>
   );
 }
