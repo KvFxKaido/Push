@@ -624,12 +624,15 @@ function App() {
     if (relayPairingActive) return 'relay-pairing';
     if (workspaceSession?.kind === 'local-pc') return 'workspace';
     if (workspaceSession?.kind === 'relay') return 'workspace';
+    // Pre-flight composer sits above the scratch/chat short-circuits so
+    // "+ New chat" on those workspaces actually renders it. Gated on
+    // `authToken` because the picker lists repos via GitHub REST — the
+    // accountless scratch/chat tiles on OnboardingScreen still fall
+    // through to the workspace short-circuits below.
+    if (draftComposerOpen && authToken) return 'draft-composer';
     if (workspaceSession?.kind === 'scratch') return 'workspace';
     if (workspaceSession?.kind === 'chat') return 'workspace';
     if (!authToken) return 'onboarding';
-    // Pre-flight composer is GitHub-gated (it lists repos), so it
-    // belongs after the auth check.
-    if (draftComposerOpen) return 'draft-composer';
     if (workspaceSession?.kind === 'repo') return 'workspace';
     return 'home';
   }, [authToken, workspaceSession, localPcPairingActive, relayPairingActive, draftComposerOpen]);
