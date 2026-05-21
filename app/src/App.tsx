@@ -624,12 +624,17 @@ function App() {
     if (relayPairingActive) return 'relay-pairing';
     if (workspaceSession?.kind === 'local-pc') return 'workspace';
     if (workspaceSession?.kind === 'relay') return 'workspace';
+    // Pre-flight composer is GitHub-gated (it lists repos), so it
+    // belongs above the scratch/chat short-circuits but only fires when
+    // the user is authed — without this ordering, the "+ New chat"
+    // button on a scratch/chat workspace silently latches
+    // `draftComposerOpen` while the workspace stays mounted, and the
+    // stale seed surfaces the next time the user lands on a repo
+    // workspace (the composer check below would finally see it).
+    if (draftComposerOpen && authToken) return 'draft-composer';
     if (workspaceSession?.kind === 'scratch') return 'workspace';
     if (workspaceSession?.kind === 'chat') return 'workspace';
     if (!authToken) return 'onboarding';
-    // Pre-flight composer is GitHub-gated (it lists repos), so it
-    // belongs after the auth check.
-    if (draftComposerOpen) return 'draft-composer';
     if (workspaceSession?.kind === 'repo') return 'workspace';
     return 'home';
   }, [authToken, workspaceSession, localPcPairingActive, relayPairingActive, draftComposerOpen]);
