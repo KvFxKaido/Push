@@ -132,12 +132,13 @@
   //   { "binding": "ARTIFACTS", "id": "<returned id>" }
   // Chat library — user-scoped persistent attachments. Same fail-closed
   // contract: /api/library/* returns NOT_CONFIGURED 503 when the binding
-  // is missing. Add manually after running:
+  // is missing. The CHAT_LIBRARY binding below is wired for this
+  // deployment. Operators forking the repo into a fresh CF account
+  // create their own namespace via:
   //
   //   npx wrangler kv:namespace create CHAT_LIBRARY
   //
-  // Then insert into the kv_namespaces array below:
-  //   { "binding": "CHAT_LIBRARY", "id": "<returned id>" }
+  // …then swap the id in the kv_namespaces array below.
   "kv_namespaces": [
     {
       "binding": "SNAPSHOT_INDEX",

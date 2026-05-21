@@ -23,7 +23,12 @@ import {
 } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useChatLibrary } from '@/hooks/useChatLibrary';
-import { formatFileSize, processFile, type StagedAttachment } from '@/lib/file-processing';
+import {
+  ACCEPTED_FILE_TYPES,
+  formatFileSize,
+  processFile,
+  type StagedAttachment,
+} from '@/lib/file-processing';
 import type { LibraryItemMeta } from '@/lib/chat-library-types';
 
 interface LibraryPanelProps {
@@ -35,9 +40,6 @@ interface LibraryPanelProps {
   buttonClassName: string;
   iconClassName?: string;
 }
-
-const ACCEPTED_FILES =
-  'image/*,.js,.ts,.tsx,.jsx,.py,.go,.rs,.java,.c,.cpp,.h,.md,.txt,.json,.yaml,.yml,.html,.css,.sql,.sh,.rb,.php,.swift,.kt,.scala,.vue,.svelte,.astro';
 
 export function LibraryPanel({
   disabled,
@@ -57,20 +59,33 @@ export function LibraryPanel({
   const [busy, setBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  /**
+   * Single close path that always resets transient UI. The controlled
+   * Popover's `onOpenChange` only fires for user-initiated dismissals
+   * (escape / click outside), so any place that programmatically closes
+   * the panel (the Close button, post-attach auto-close) must route
+   * through this helper or the cleanup is skipped and selections leak
+   * across reopens.
+   */
+  const closeAndReset = useCallback(() => {
+    setOpen(false);
+    setSelected(new Set());
+    setRenamingId(null);
+    setRenameValue('');
+  }, []);
+
   const handleOpenChange = useCallback(
     (next: boolean) => {
-      setOpen(next);
       if (next) {
+        setOpen(true);
         // Lazy first-load + refresh-on-reopen — fetched from the event
         // handler instead of an effect to avoid cascading-renders lint.
         if (!hasFetched || !isLoading) void refresh();
       } else {
-        setSelected(new Set());
-        setRenamingId(null);
-        setRenameValue('');
+        closeAndReset();
       }
     },
-    [hasFetched, isLoading, refresh],
+    [closeAndReset, hasFetched, isLoading, refresh],
   );
 
   const toggleSelect = useCallback((id: string) => {
@@ -109,9 +124,11 @@ export function LibraryPanel({
     if (selected.size === 0) return;
     setBusy(true);
     try {
+      // Parallel fetch — each library `get` is an independent KV
+      // round-trip, no need to serialize.
+      const results = await Promise.all(Array.from(selected).map((id) => fetchOne(id)));
       const fetched: StagedAttachment[] = [];
-      for (const id of selected) {
-        const item = await fetchOne(id);
+      for (const item of results) {
         if (!item) continue;
         // Re-stamp with a fresh id so the same library item can be attached
         // to multiple chats without colliding in the staged-attachment list.
@@ -128,12 +145,12 @@ export function LibraryPanel({
       }
       if (fetched.length > 0) {
         onAttach(fetched);
-        setOpen(false);
+        closeAndReset();
       }
     } finally {
       setBusy(false);
     }
-  }, [fetchOne, onAttach, selected]);
+  }, [closeAndReset, fetchOne, onAttach, selected]);
 
   const handleStartRename = useCallback((item: LibraryItemMeta) => {
     setRenamingId(item.id);
@@ -209,7 +226,7 @@ export function LibraryPanel({
             <input
               ref={fileInputRef}
               type="file"
-              accept={ACCEPTED_FILES}
+              accept={ACCEPTED_FILE_TYPES}
               multiple
               onChange={handleUpload}
               className="hidden"
@@ -316,7 +333,7 @@ export function LibraryPanel({
           <div className="flex items-center justify-between gap-2 px-1 pt-0.5">
             <button
               type="button"
-              onClick={() => setOpen(false)}
+              onClick={closeAndReset}
               className="flex items-center gap-1 rounded-md px-2 py-1 text-push-2xs text-[#7c879b] hover:text-[#d7deeb]"
             >
               <X className="h-3 w-3" />

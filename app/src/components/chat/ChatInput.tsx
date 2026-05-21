@@ -7,7 +7,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ModelPicker } from '@/components/ui/model-picker';
 import { ProviderIcon } from '@/components/ui/provider-icon';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { processFile, getTotalAttachmentSize } from '@/lib/file-processing';
+import { ACCEPTED_FILE_TYPES, processFile, getTotalAttachmentSize } from '@/lib/file-processing';
 import type { StagedAttachment } from '@/lib/file-processing';
 import { getVisionCapabilityNotice } from '@/lib/model-capabilities';
 import {
@@ -152,8 +152,6 @@ function formatDeploymentLabel(dep: ExperimentalDeployment): string {
   return dep.model;
 }
 
-const ACCEPTED_FILES =
-  'image/*,.js,.ts,.tsx,.jsx,.py,.go,.rs,.java,.c,.cpp,.h,.md,.txt,.json,.yaml,.yml,.html,.css,.sql,.sh,.rb,.php,.swift,.kt,.scala,.vue,.svelte,.astro';
 const MAX_PAYLOAD = 750 * 1024; // 750KB total
 const COMPOSER_DRAFT_KEY_PREFIX = 'push:chat-composer-draft:';
 
@@ -1344,7 +1342,7 @@ export function ChatInput({
           <input
             ref={fileInputRef}
             type="file"
-            accept={ACCEPTED_FILES}
+            accept={ACCEPTED_FILE_TYPES}
             multiple
             onChange={handleFileSelect}
             className="hidden"

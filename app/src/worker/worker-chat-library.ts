@@ -35,6 +35,7 @@ import {
   type LibraryItem,
   type LibraryItemMeta,
 } from '@/lib/chat-library-types';
+import { readBodyText } from './worker-middleware';
 
 interface LibraryEnv {
   CHAT_LIBRARY?: KVNamespace;
@@ -48,6 +49,17 @@ interface LibraryEnv {
  * per-message budget while blocking outright abuse.
  */
 const MAX_LIBRARY_ITEM_CONTENT_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Outer body-size cap enforced before JSON.parse so a malicious client
+ * can't force the Worker to allocate multi-MB strings in memory before
+ * the inner `content` check fires. Generous enough for a 2MB content
+ * payload plus JSON overhead.
+ */
+const MAX_LIBRARY_BODY_BYTES = 3 * 1024 * 1024;
+
+/** Defense-in-depth cap on the user-set label. */
+const MAX_LIBRARY_LABEL_CHARS = 200;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -72,11 +84,32 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-async function readJsonBody(request: Request): Promise<unknown | null> {
+type ReadJsonResult = { ok: true; body: unknown } | { ok: false; response: Response };
+
+/**
+ * Read + JSON-parse the request body with an enforced byte cap. Returns
+ * the structured error response inline so callers can early-return
+ * without re-implementing the envelope.
+ */
+async function readJsonBody(request: Request): Promise<ReadJsonResult> {
+  const bodyResult = await readBodyText(request, MAX_LIBRARY_BODY_BYTES);
+  if (!bodyResult.ok) {
+    const code = bodyResult.status === 413 ? 'BODY_TOO_LARGE' : 'BAD_REQUEST';
+    return {
+      ok: false,
+      response: jsonResponse({ ok: false, code, message: bodyResult.error }, bodyResult.status),
+    };
+  }
   try {
-    return await request.json();
+    return { ok: true, body: JSON.parse(bodyResult.text) };
   } catch {
-    return null;
+    return {
+      ok: false,
+      response: jsonResponse(
+        { ok: false, code: 'INVALID_JSON', message: 'Request body must be valid JSON.' },
+        400,
+      ),
+    };
   }
 }
 
@@ -108,7 +141,9 @@ function parseAttachment(raw: unknown): AttachmentData | null {
 export async function handleLibraryCreate(request: Request, env: LibraryEnv): Promise<Response> {
   if (!env.CHAT_LIBRARY) return notConfiguredResponse();
 
-  const body = await readJsonBody(request);
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
   if (!isRecord(body)) {
     return jsonResponse(
       { ok: false, code: 'BAD_REQUEST', message: 'Request body must be a JSON object.' },
@@ -143,6 +178,16 @@ export async function handleLibraryCreate(request: Request, env: LibraryEnv): Pr
   if (body.label !== undefined && typeof body.label !== 'string') {
     return jsonResponse(
       { ok: false, code: 'INVALID_LABEL', message: 'label must be a string when provided.' },
+      400,
+    );
+  }
+  if (typeof body.label === 'string' && body.label.length > MAX_LIBRARY_LABEL_CHARS) {
+    return jsonResponse(
+      {
+        ok: false,
+        code: 'LABEL_TOO_LONG',
+        message: `label exceeds ${MAX_LIBRARY_LABEL_CHARS} character ceiling.`,
+      },
       400,
     );
   }
@@ -202,7 +247,9 @@ export async function handleLibraryList(_request: Request, env: LibraryEnv): Pro
 export async function handleLibraryGet(request: Request, env: LibraryEnv): Promise<Response> {
   if (!env.CHAT_LIBRARY) return notConfiguredResponse();
 
-  const body = await readJsonBody(request);
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
   if (!isRecord(body)) {
     return jsonResponse(
       { ok: false, code: 'BAD_REQUEST', message: 'Request body must be a JSON object.' },
@@ -236,7 +283,9 @@ export async function handleLibraryGet(request: Request, env: LibraryEnv): Promi
 export async function handleLibraryUpdate(request: Request, env: LibraryEnv): Promise<Response> {
   if (!env.CHAT_LIBRARY) return notConfiguredResponse();
 
-  const body = await readJsonBody(request);
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
   if (!isRecord(body)) {
     return jsonResponse(
       { ok: false, code: 'BAD_REQUEST', message: 'Request body must be a JSON object.' },
@@ -254,6 +303,16 @@ export async function handleLibraryUpdate(request: Request, env: LibraryEnv): Pr
         ok: false,
         code: 'INVALID_LABEL',
         message: 'label must be a string, null (to clear), or omitted.',
+      },
+      400,
+    );
+  }
+  if (typeof body.label === 'string' && body.label.length > MAX_LIBRARY_LABEL_CHARS) {
+    return jsonResponse(
+      {
+        ok: false,
+        code: 'LABEL_TOO_LONG',
+        message: `label exceeds ${MAX_LIBRARY_LABEL_CHARS} character ceiling.`,
       },
       400,
     );
@@ -301,7 +360,9 @@ export async function handleLibraryUpdate(request: Request, env: LibraryEnv): Pr
 export async function handleLibraryDelete(request: Request, env: LibraryEnv): Promise<Response> {
   if (!env.CHAT_LIBRARY) return notConfiguredResponse();
 
-  const body = await readJsonBody(request);
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
   if (!isRecord(body)) {
     return jsonResponse(
       { ok: false, code: 'BAD_REQUEST', message: 'Request body must be a JSON object.' },

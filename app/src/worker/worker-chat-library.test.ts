@@ -127,7 +127,8 @@ describe('handleLibraryCreate', () => {
   it('rejects oversized content with CONTENT_TOO_LARGE 413', async () => {
     const kv = new MockKvNamespace();
     const env = { CHAT_LIBRARY: kv as unknown as KVNamespace };
-    // Just past the 2MB server-side ceiling.
+    // Just past the 2MB server-side ceiling, but well under the 3MB
+    // outer body cap so this reaches the CONTENT_TOO_LARGE branch.
     const huge = 'x'.repeat(2 * 1024 * 1024 + 1);
     const res = await handleLibraryCreate(
       makeRequest({ attachment: { ...VALID_DOC, content: huge } }),
@@ -138,6 +139,49 @@ describe('handleLibraryCreate', () => {
     expect(json.code).toBe('CONTENT_TOO_LARGE');
     // Nothing should have been persisted.
     expect(kv.store.size).toBe(0);
+  });
+
+  it('rejects an oversized body with BODY_TOO_LARGE 413 before JSON parse', async () => {
+    const kv = new MockKvNamespace();
+    const env = { CHAT_LIBRARY: kv as unknown as KVNamespace };
+    // Bust the outer 3MB body cap, fires before the inner content check.
+    const enormous = 'x'.repeat(3 * 1024 * 1024 + 100);
+    const res = await handleLibraryCreate(
+      makeRequest({ attachment: { ...VALID_DOC, content: enormous } }),
+      env,
+    );
+    expect(res.status).toBe(413);
+    const json = (await res.json()) as Record<string, unknown>;
+    expect(json.code).toBe('BODY_TOO_LARGE');
+    expect(kv.store.size).toBe(0);
+  });
+
+  it('rejects a long label with LABEL_TOO_LONG', async () => {
+    const kv = new MockKvNamespace();
+    const env = { CHAT_LIBRARY: kv as unknown as KVNamespace };
+    const longLabel = 'a'.repeat(201);
+    const res = await handleLibraryCreate(
+      makeRequest({ attachment: VALID_DOC, label: longLabel }),
+      env,
+    );
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as Record<string, unknown>;
+    expect(json.code).toBe('LABEL_TOO_LONG');
+    expect(kv.store.size).toBe(0);
+  });
+
+  it('returns INVALID_JSON when the body is not parseable', async () => {
+    const kv = new MockKvNamespace();
+    const env = { CHAT_LIBRARY: kv as unknown as KVNamespace };
+    const req = new Request('https://push.test/api/library/create', {
+      method: 'POST',
+      body: 'not-json{',
+      headers: { 'content-type': 'application/json' },
+    });
+    const res = await handleLibraryCreate(req, env);
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as Record<string, unknown>;
+    expect(json.code).toBe('INVALID_JSON');
   });
 });
 
@@ -284,6 +328,22 @@ describe('handleLibraryUpdate', () => {
     const env = { CHAT_LIBRARY: kv as unknown as KVNamespace };
     const res = await handleLibraryUpdate(makeRequest({ id: 'nope', label: 'x' }), env);
     expect(res.status).toBe(404);
+  });
+
+  it('rejects a long label with LABEL_TOO_LONG', async () => {
+    const kv = new MockKvNamespace();
+    const env = { CHAT_LIBRARY: kv as unknown as KVNamespace };
+    const createRes = await handleLibraryCreate(
+      makeRequest({ attachment: VALID_DOC, label: 'orig' }),
+      env,
+    );
+    const created = (await createRes.json()) as Record<string, unknown>;
+    const id = (created.item as Record<string, unknown>).id as string;
+
+    const res = await handleLibraryUpdate(makeRequest({ id, label: 'a'.repeat(201) }), env);
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as Record<string, unknown>;
+    expect(json.code).toBe('LABEL_TOO_LONG');
   });
 });
 
