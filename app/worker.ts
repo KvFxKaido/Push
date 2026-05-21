@@ -78,11 +78,14 @@ import {
   handleArtifactsList,
 } from './src/worker/worker-artifacts';
 import {
-  handleLibraryCreate,
-  handleLibraryDelete,
-  handleLibraryGet,
-  handleLibraryList,
-  handleLibraryUpdate,
+  handleCollectionsCreate,
+  handleCollectionsDelete,
+  handleCollectionsGet,
+  handleCollectionsList,
+  handleCollectionsUpdate,
+  handleItemsCreate,
+  handleItemsDelete,
+  handleItemsUpdate,
 } from './src/worker/worker-chat-library';
 
 // Re-export the Sandbox Durable Object class so wrangler can bind to it.
@@ -374,13 +377,16 @@ const EXACT_API_ROUTES: ExactApiRoute[] = [
   { path: '/api/artifacts/list', method: 'POST', handler: handleArtifactsList },
   { path: '/api/artifacts/get', method: 'POST', handler: handleArtifactsGet },
   { path: '/api/artifacts/delete', method: 'POST', handler: handleArtifactsDelete },
-  // Chat library — user-scoped attachment store. See
-  // app/src/worker/worker-chat-library.ts for the request/response shape.
-  { path: '/api/library/create', method: 'POST', handler: handleLibraryCreate },
-  { path: '/api/library/list', method: 'POST', handler: handleLibraryList },
-  { path: '/api/library/get', method: 'POST', handler: handleLibraryGet },
-  { path: '/api/library/update', method: 'POST', handler: handleLibraryUpdate },
-  { path: '/api/library/delete', method: 'POST', handler: handleLibraryDelete },
+  // Chat library — user-managed bundles (v2a). Collections + items live
+  // under separate route tiers; see worker-chat-library.ts.
+  { path: '/api/library/collections/create', method: 'POST', handler: handleCollectionsCreate },
+  { path: '/api/library/collections/list', method: 'POST', handler: handleCollectionsList },
+  { path: '/api/library/collections/get', method: 'POST', handler: handleCollectionsGet },
+  { path: '/api/library/collections/update', method: 'POST', handler: handleCollectionsUpdate },
+  { path: '/api/library/collections/delete', method: 'POST', handler: handleCollectionsDelete },
+  { path: '/api/library/items/create', method: 'POST', handler: handleItemsCreate },
+  { path: '/api/library/items/update', method: 'POST', handler: handleItemsUpdate },
+  { path: '/api/library/items/delete', method: 'POST', handler: handleItemsDelete },
   { path: '/api/ollama/chat', method: 'POST', handler: handleOllamaChat },
   { path: '/api/ollama/models', method: 'GET', handler: handleOllamaModels },
   { path: '/api/openrouter/chat', method: 'POST', handler: handleOpenRouterChat },

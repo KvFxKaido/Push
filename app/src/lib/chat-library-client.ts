@@ -1,12 +1,12 @@
 /**
- * Client wrapper for `/api/library/*`. Plain `fetch` — the global
- * `installDeploymentAuthFetch` shim (see `deployment-auth.ts`) attaches
- * the deployment token header to /api/* requests automatically.
+ * Client wrapper for `/api/library/*` (v2a). Plain `fetch` — the
+ * global `installDeploymentAuthFetch` shim attaches the deployment
+ * token header to /api/* requests automatically.
  */
 
 import type { AttachmentData } from '@/types';
 import { resolveApiUrl } from './api-url';
-import type { LibraryItem, LibraryItemMeta } from './chat-library-types';
+import type { Library, LibraryItem, LibraryItemMeta, LibraryMeta } from './chat-library-types';
 
 export interface LibraryApiSuccess<T> {
   ok: true;
@@ -67,36 +67,89 @@ async function post<T>(
   return { ok: true, data: extract(jsonRec) };
 }
 
-export function libraryList(): Promise<LibraryApiResult<LibraryItemMeta[]>> {
-  return post('/api/library/list', {}, (j) =>
-    Array.isArray(j.items) ? (j.items as LibraryItemMeta[]) : [],
+// ---------------------------------------------------------------------------
+// Collections
+// ---------------------------------------------------------------------------
+
+export function collectionsList(): Promise<LibraryApiResult<LibraryMeta[]>> {
+  return post('/api/library/collections/list', {}, (j) =>
+    Array.isArray(j.collections) ? (j.collections as LibraryMeta[]) : [],
   );
 }
 
-export function libraryCreate(
-  attachment: AttachmentData,
-  label?: string,
-): Promise<LibraryApiResult<{ item: LibraryItem; meta: LibraryItemMeta }>> {
-  return post('/api/library/create', { attachment, label }, (j) => ({
-    item: j.item as LibraryItem,
-    meta: j.meta as LibraryItemMeta,
+export function collectionsCreate(
+  name: string,
+  instructions?: string,
+): Promise<LibraryApiResult<{ collection: Library; meta: LibraryMeta }>> {
+  return post('/api/library/collections/create', { name, instructions }, (j) => ({
+    collection: j.collection as Library,
+    meta: j.meta as LibraryMeta,
   }));
 }
 
-export function libraryGet(id: string): Promise<LibraryApiResult<LibraryItem>> {
-  return post('/api/library/get', { id }, (j) => j.item as LibraryItem);
+export interface CollectionDetail {
+  collection: Library;
+  /** When `includeContent` was false, items are metadata-only. */
+  items: LibraryItemMeta[] | LibraryItem[];
 }
 
-export function libraryUpdate(
+export function collectionsGet(
+  id: string,
+  options?: { includeContent?: boolean },
+): Promise<LibraryApiResult<CollectionDetail>> {
+  return post(
+    '/api/library/collections/get',
+    { id, includeContent: options?.includeContent === true },
+    (j) => ({
+      collection: j.collection as Library,
+      items: (j.items as LibraryItemMeta[] | LibraryItem[]) ?? [],
+    }),
+  );
+}
+
+export function collectionsUpdate(
+  id: string,
+  patch: { name?: string; instructions?: string | null },
+): Promise<LibraryApiResult<{ collection: Library; meta: LibraryMeta }>> {
+  return post('/api/library/collections/update', { id, ...patch }, (j) => ({
+    collection: j.collection as Library,
+    meta: j.meta as LibraryMeta,
+  }));
+}
+
+export function collectionsDelete(id: string): Promise<LibraryApiResult<{ deletedItems: number }>> {
+  return post('/api/library/collections/delete', { id }, (j) => ({
+    deletedItems: typeof j.deletedItems === 'number' ? j.deletedItems : 0,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Items
+// ---------------------------------------------------------------------------
+
+export function itemsCreate(
+  libraryId: string,
+  attachment: AttachmentData,
+  label?: string,
+): Promise<LibraryApiResult<{ item: LibraryItem; meta: LibraryItemMeta; collection: Library }>> {
+  return post('/api/library/items/create', { libraryId, attachment, label }, (j) => ({
+    item: j.item as LibraryItem,
+    meta: j.meta as LibraryItemMeta,
+    collection: j.collection as Library,
+  }));
+}
+
+export function itemsUpdate(
+  libraryId: string,
   id: string,
   label: string | null,
 ): Promise<LibraryApiResult<{ item: LibraryItem; meta: LibraryItemMeta }>> {
-  return post('/api/library/update', { id, label }, (j) => ({
+  return post('/api/library/items/update', { libraryId, id, label }, (j) => ({
     item: j.item as LibraryItem,
     meta: j.meta as LibraryItemMeta,
   }));
 }
 
-export function libraryDelete(id: string): Promise<LibraryApiResult<true>> {
-  return post('/api/library/delete', { id }, () => true);
+export function itemsDelete(libraryId: string, id: string): Promise<LibraryApiResult<true>> {
+  return post('/api/library/items/delete', { libraryId, id }, () => true);
 }
