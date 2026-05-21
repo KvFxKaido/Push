@@ -186,10 +186,6 @@ async function migrateV1IfNeeded(kv: KVNamespace): Promise<void> {
   if (marker === 'done') return;
 
   const v1Keys = await listAllKeys(kv, V1_LIBRARY_ITEM_KV_PREFIX);
-  // The `library:` prefix is NOT a prefix of `lib:` (the byte after
-  // `lib` is `r` vs `:`), so v2 collection keys won't show up here.
-  // But we still filter defensively in case future prefixes share
-  // letters: v1 item values always have a `filename` field.
 
   if (v1Keys.length === 0) {
     await kv.put(V1_MIGRATION_MARKER_KEY, 'done');
@@ -199,6 +195,25 @@ async function migrateV1IfNeeded(kv: KVNamespace): Promise<void> {
   const defaultId = DEFAULT_LIBRARY_ID;
   const now = Date.now();
 
+  // Upsert the Default library record BEFORE moving any items. If the
+  // worker crashes mid-migration with items already moved, the next
+  // run can still see them under `lib:DEFAULT` instead of leaving
+  // orphan `item:DEFAULT:*` entries with no owning collection. Idempotent
+  // — same key, deterministic shape, so concurrent racers converge.
+  const existingDefault = await getLibrary(kv, defaultId);
+  if (!existingDefault) {
+    const seedLib: Library = {
+      id: defaultId,
+      name: 'Default',
+      itemCount: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await putLibrary(kv, seedLib);
+  }
+
+  const validTypes = new Set<LibraryItem['type']>(['image', 'code', 'document']);
+
   for (const oldKey of v1Keys) {
     const oldValue = await kv.get(oldKey.name);
     if (!oldValue) continue;
@@ -206,12 +221,20 @@ async function migrateV1IfNeeded(kv: KVNamespace): Promise<void> {
     try {
       parsed = JSON.parse(oldValue);
     } catch {
+      // Malformed JSON. Leave for the final sweep; we'll delete it
+      // alongside other corrupted stragglers below.
       continue;
     }
+    // Validate the v1 shape end-to-end before persisting as v2. A
+    // missing/unexpected `type` would have produced an invalid
+    // LibraryItem under the previous force-cast.
     if (
       !isRecord(parsed) ||
       typeof parsed.filename !== 'string' ||
-      typeof parsed.content !== 'string'
+      parsed.filename.length === 0 ||
+      typeof parsed.content !== 'string' ||
+      typeof parsed.type !== 'string' ||
+      !validTypes.has(parsed.type as LibraryItem['type'])
     ) {
       continue;
     }
@@ -236,16 +259,25 @@ async function migrateV1IfNeeded(kv: KVNamespace): Promise<void> {
     await kv.delete(oldKey.name);
   }
 
-  // Recompute itemCount from actual storage so an interleaved second
-  // migration run can't end up with a stale count. Also inherit the
-  // earliest createdAt if a prior run already wrote the Default record.
+  // Final sweep: any v1 keys still present after the loop are malformed
+  // (failed JSON parse or shape validation). Delete them so they don't
+  // block the marker forever and force every future request to re-walk
+  // them. These records were already corrupted — dropping them is the
+  // least-bad option for a single-user store; preserving them would
+  // require either an explicit quarantine prefix or admin intervention.
+  const stragglers = await listAllKeys(kv, V1_LIBRARY_ITEM_KV_PREFIX);
+  await Promise.all(stragglers.map((s) => kv.delete(s.name)));
+
+  // Now reconcile the Default library record: itemCount derived from
+  // actual storage (interleave-safe), createdAt inherited if a prior
+  // run already wrote one.
   const actualItems = await listAllKeys(kv, libraryItemsPrefix(defaultId));
-  const existing = await getLibrary(kv, defaultId);
+  const existingFinal = await getLibrary(kv, defaultId);
   const defaultLib: Library = {
     id: defaultId,
-    name: existing?.name ?? 'Default',
+    name: existingFinal?.name ?? 'Default',
     itemCount: actualItems.length,
-    createdAt: existing?.createdAt ?? now,
+    createdAt: existingFinal?.createdAt ?? now,
     updatedAt: now,
   };
   await kv.put(libraryKvKey(defaultId), JSON.stringify(defaultLib), {
@@ -425,19 +457,22 @@ export async function handleCollectionsGet(request: Request, env: LibraryEnv): P
     return jsonResponse({ ok: true, collection: collectionForResponse, items: itemMetas });
   }
 
-  // Full content path — used by Attach Library. Sequentially read each
-  // item value (KV doesn't have a bulk-get); ordering matches metadata
-  // listing.
-  const items: LibraryItem[] = [];
-  for (const key of keys) {
-    const raw = await env.CHAT_LIBRARY.get(key.name);
-    if (!raw) continue;
-    try {
-      items.push(JSON.parse(raw) as LibraryItem);
-    } catch {
-      continue;
-    }
-  }
+  // Full content path — used by Attach Library. KV has no bulk-get,
+  // but each `get` is an independent round-trip so Promise.all kills
+  // the N×latency tax on libraries with many items.
+  const kv = env.CHAT_LIBRARY;
+  const fetched = await Promise.all(
+    keys.map(async (key) => {
+      const raw = await kv.get(key.name);
+      if (!raw) return null;
+      try {
+        return JSON.parse(raw) as LibraryItem;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  const items: LibraryItem[] = fetched.filter((i): i is LibraryItem => i !== null);
   items.sort((a, b) => b.createdAt - a.createdAt);
   return jsonResponse({ ok: true, collection: collectionForResponse, items });
 }
@@ -566,9 +601,7 @@ export async function handleCollectionsDelete(
   // can't be found via the namespaced list. Items first means partial
   // failure leaves the library findable for a retry.
   const itemKeys = await listAllKeys(kv, libraryItemsPrefix(body.id));
-  for (const key of itemKeys) {
-    await kv.delete(key.name);
-  }
+  await Promise.all(itemKeys.map((key) => kv.delete(key.name)));
   await kv.delete(libraryKvKey(body.id));
   return jsonResponse({ ok: true, deletedItems: itemKeys.length });
 }
@@ -747,14 +780,24 @@ export async function handleItemsUpdate(request: Request, env: LibraryEnv): Prom
     nextLabel = trimmed.length > 0 ? trimmed : undefined;
   }
 
+  const now = Date.now();
   const item: LibraryItem = {
     ...existing,
     label: nextLabel,
-    updatedAt: Date.now(),
+    updatedAt: now,
   };
   await env.CHAT_LIBRARY.put(key, JSON.stringify(item), {
     metadata: libraryItemMetaFromItem(item),
   });
+
+  // Bump the owning library's updatedAt so item renames reorder the
+  // collections list. Without this the library would be sorted by
+  // its last create/delete only — surprising for "recently touched".
+  const library = await getLibrary(env.CHAT_LIBRARY, body.libraryId);
+  if (library) {
+    await putLibrary(env.CHAT_LIBRARY, { ...library, updatedAt: now });
+  }
+
   return jsonResponse({ ok: true, item, meta: libraryItemMetaFromItem(item) });
 }
 
@@ -789,8 +832,14 @@ export async function handleItemsDelete(request: Request, env: LibraryEnv): Prom
   const existed = await env.CHAT_LIBRARY.get(key);
   await env.CHAT_LIBRARY.delete(key);
 
-  // Decrement itemCount only if the item actually existed — keeps the
-  // count honest even when delete is called twice in a race.
+  // Decrement itemCount only if the item actually existed. This makes
+  // the *sequential* double-delete case idempotent (second call sees
+  // nothing, skips the decrement) but does NOT protect against
+  // genuinely concurrent deletes of the same id — two callers can
+  // both observe `existed` before either KV.delete returns and both
+  // decrement. itemCount is best-effort under concurrent mutations;
+  // `collections/get` reconciles from the actual item list on next
+  // detail open, so the drift is bounded and self-healing.
   if (existed) {
     const library = await getLibrary(env.CHAT_LIBRARY, body.libraryId);
     if (library) {

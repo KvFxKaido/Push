@@ -75,6 +75,13 @@ export function useChatLibrary(): UseChatLibraryResult {
   const [openCollectionId, setOpenCollectionId] = useState<string | null>(null);
   const [openCollection, setOpenCollection] = useState<CollectionDetailState | null>(null);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
+  // Monotonic token for the latest openCollectionRef call. If the user
+  // taps library A then quickly taps B, a slow response for A would
+  // overwrite the detail pane while it should be showing B. Each call
+  // captures the token at start; only the latest matching token gets
+  // to commit state. Stays simple — no AbortController needed since
+  // the discarded response just doesn't render.
+  const detailRequestTokenRef = useRef(0);
 
   // -------------------------------------------------------------------------
   // Collection list
@@ -107,25 +114,32 @@ export function useChatLibrary(): UseChatLibraryResult {
     setOpenCollectionId(id);
     if (id === null) {
       setOpenCollection(null);
+      detailRequestTokenRef.current++;
       return;
     }
+    const token = ++detailRequestTokenRef.current;
     setIsDetailLoading(true);
     setError(null);
     try {
       const res = await collectionsGet(id);
+      // Ignore stale responses — a newer openCollectionRef won the race.
+      if (token !== detailRequestTokenRef.current) return;
       if (!res.ok) {
         setError(res.message);
+        // Clear both the id and the detail so the UI falls back to the
+        // list view (LibraryPanel keys the detail vs list switch off
+        // openCollectionId). Leaving the id set with detail null would
+        // strand the user on a blank panel with no back button.
         setOpenCollection(null);
+        setOpenCollectionId(null);
         return;
       }
-      // Server may return items with or without content depending on
-      // includeContent; default call is metadata-only.
       const itemsMeta = (res.data.items as LibraryItemMeta[]).filter(
         (i): i is LibraryItemMeta => typeof (i as LibraryItemMeta).libraryId === 'string',
       );
       setOpenCollection({ collection: res.data.collection, items: itemsMeta });
     } finally {
-      setIsDetailLoading(false);
+      if (token === detailRequestTokenRef.current) setIsDetailLoading(false);
     }
   }, []);
 

@@ -144,11 +144,15 @@ export function LibraryPanel({
       if (!files || files.length === 0) return;
       setBusy(true);
       try {
-        for (const file of Array.from(files)) {
-          const processed = await processFile(file);
-          if (processed.status !== 'ready') continue;
-          await saveItem(libId, processed);
-        }
+        // Process + save in parallel — each file is independent and
+        // both processFile (browser memory) and saveItem (KV write)
+        // benefit from N concurrent operations. itemCount drift from
+        // concurrent saves is reconciled by the server's self-heal on
+        // the next detail open.
+        const processed = await Promise.all(Array.from(files).map((f) => processFile(f)));
+        await Promise.all(
+          processed.filter((p) => p.status === 'ready').map((p) => saveItem(libId, p)),
+        );
       } finally {
         setBusy(false);
         e.target.value = '';
@@ -282,7 +286,12 @@ export function LibraryPanel({
 
   // ---------- render helpers ----------
 
-  const showingDetail = openCollectionId !== null;
+  // Show the detail view only when there's something to render (either
+  // loaded state or in-flight loading). If a fetch fails the hook
+  // clears openCollectionId, but this belt-and-braces guard also
+  // catches any future code path that could leave the id set with
+  // null/non-loading detail — prevents the popover from going blank.
+  const showingDetail = openCollectionId !== null && (openCollection !== null || isDetailLoading);
   const detail = openCollection;
   const canAttachLibrary = useMemo(() => {
     if (!detail) return false;

@@ -391,6 +391,39 @@ describe('handleItemsUpdate', () => {
     expect(item.content).toBe(VALID_DOC.content);
     expect(item.updatedAt).toBeGreaterThan(item.createdAt as number);
   });
+
+  it('bumps the owning library updatedAt so item renames reorder the list', async () => {
+    const kv = new MockKvNamespace();
+    const env = { CHAT_LIBRARY: kv as unknown as KVNamespace };
+    // Set up A + an item in A first (item create bumps A's updatedAt),
+    // then create B last so B is on top of the list.
+    const libA = await createLibrary(env, 'A');
+    const createRes = await handleItemsCreate(
+      makeRequest({ libraryId: libA, attachment: VALID_DOC, label: 'orig' }),
+      env,
+    );
+    const itemId = ((await createRes.json()) as { item: { id: string } }).item.id;
+    await new Promise((r) => setTimeout(r, 2));
+    const libB = await createLibrary(env, 'B');
+
+    let listJson = (await (await handleCollectionsList(makeRequest({}), env)).json()) as Record<
+      string,
+      unknown
+    >;
+    let collections = listJson.collections as Array<Record<string, unknown>>;
+    expect(collections[0].id).toBe(libB);
+
+    // Rename an item inside A — expect A to bubble to the top.
+    await new Promise((r) => setTimeout(r, 2));
+    await handleItemsUpdate(makeRequest({ libraryId: libA, id: itemId, label: 'renamed' }), env);
+
+    listJson = (await (await handleCollectionsList(makeRequest({}), env)).json()) as Record<
+      string,
+      unknown
+    >;
+    collections = listJson.collections as Array<Record<string, unknown>>;
+    expect(collections[0].id).toBe(libA);
+  });
 });
 
 describe('handleItemsDelete', () => {
@@ -548,6 +581,95 @@ describe('v1 → v2a migration', () => {
     // The Default record always lives at the same key, regardless of
     // how many migration races happened.
     expect(await kv.get('lib:00000000-0000-4000-8000-000000000001')).not.toBeNull();
+  });
+
+  it('writes the Default library record before moving items (no orphans on partial failure)', async () => {
+    // We can't easily simulate a worker crash mid-migration in vitest,
+    // but we can verify the ordering: after the move-items phase the
+    // Default record must already exist. Approximate by seeding two
+    // v1 items and checking that after migration completes, the
+    // Default library is present and itemCount matches actual storage.
+    const kv = new MockKvNamespace();
+    const env = { CHAT_LIBRARY: kv as unknown as KVNamespace };
+    await kv.put(
+      'library:v1-a',
+      JSON.stringify({
+        id: 'v1-a',
+        type: 'document',
+        filename: 'a.md',
+        mimeType: 'text/markdown',
+        sizeBytes: 5,
+        content: 'alpha',
+        createdAt: 1000,
+        updatedAt: 1000,
+      }),
+    );
+    await kv.put(
+      'library:v1-b',
+      JSON.stringify({
+        id: 'v1-b',
+        type: 'document',
+        filename: 'b.md',
+        mimeType: 'text/markdown',
+        sizeBytes: 5,
+        content: 'beta',
+        createdAt: 2000,
+        updatedAt: 2000,
+      }),
+    );
+    await handleCollectionsList(makeRequest({}), env);
+    const libRecord = await kv.get('lib:00000000-0000-4000-8000-000000000001');
+    expect(libRecord).not.toBeNull();
+    const parsed = JSON.parse(libRecord as string) as Record<string, unknown>;
+    expect(parsed.itemCount).toBe(2);
+  });
+
+  it('rejects v1 items with bad/missing type and cleans them up in the final sweep', async () => {
+    const kv = new MockKvNamespace();
+    const env = { CHAT_LIBRARY: kv as unknown as KVNamespace };
+    // One valid + one with an unknown `type`.
+    await kv.put(
+      'library:good',
+      JSON.stringify({
+        id: 'good',
+        type: 'document',
+        filename: 'good.md',
+        mimeType: 'text/markdown',
+        sizeBytes: 5,
+        content: 'ok',
+        createdAt: 1000,
+        updatedAt: 1000,
+      }),
+    );
+    await kv.put(
+      'library:bad-type',
+      JSON.stringify({
+        id: 'bad-type',
+        type: 'video', // not in {image, code, document}
+        filename: 'movie.mp4',
+        mimeType: 'video/mp4',
+        sizeBytes: 5,
+        content: 'binary',
+        createdAt: 1000,
+        updatedAt: 1000,
+      }),
+    );
+    await handleCollectionsList(makeRequest({}), env);
+
+    // Only the valid item gets migrated; the bad-type item is purged
+    // by the final-sweep cleanup so it can't strand future migrations.
+    const libRes = await handleCollectionsGet(
+      makeRequest({ id: '00000000-0000-4000-8000-000000000001' }),
+      env,
+    );
+    const json = (await libRes.json()) as Record<string, unknown>;
+    const items = json.items as Array<Record<string, unknown>>;
+    expect(items.length).toBe(1);
+    expect(items[0].filename).toBe('good.md');
+    // Marker is set, and both v1 keys are gone (good migrated, bad swept).
+    expect(await kv.get('_meta:v1-migrated')).toBe('done');
+    expect(await kv.get('library:good')).toBeNull();
+    expect(await kv.get('library:bad-type')).toBeNull();
   });
 });
 
