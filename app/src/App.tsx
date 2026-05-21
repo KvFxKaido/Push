@@ -413,10 +413,19 @@ function App() {
     [setActiveRepo],
   );
 
-  const handleOpenDraftComposer = useCallback((seed?: DraftComposerSeed | null) => {
-    setDraftSeed(seed ?? null);
-    setDraftComposerOpen(true);
-  }, []);
+  const handleOpenDraftComposer = useCallback(
+    (seed?: DraftComposerSeed | null) => {
+      // Composer is gated on `authToken` in the screen selector (it
+      // lists repos via GitHub REST). Short-circuit here so an unauthed
+      // tap can't latch `draftComposerOpen` — the screen memo re-runs
+      // on auth changes and would otherwise surface the stale seed the
+      // moment the user signs in.
+      if (!authToken) return;
+      setDraftSeed(seed ?? null);
+      setDraftComposerOpen(true);
+    },
+    [authToken],
+  );
 
   const handleCancelDraftComposer = useCallback(() => {
     setDraftComposerOpen(false);
