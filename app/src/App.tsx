@@ -604,11 +604,14 @@ function App() {
       if (!repo) return;
 
       const targetBranch = conversation.branch || undefined;
-      const resolvedBranch = targetBranch || repo.default_branch;
+      // Legacy conversations may have no `branch` set. Treat a missing
+      // target branch as "match whatever's current" so tapping an older
+      // chat on a non-default branch doesn't yank the workspace back to
+      // the default branch and restart the sandbox.
       const sameContext =
         workspaceSession?.kind === 'repo' &&
         workspaceSession.repo.full_name === repo.full_name &&
-        workspaceSession.repo.current_branch === resolvedBranch;
+        (!targetBranch || workspaceSession.repo.current_branch === targetBranch);
 
       if (!sameContext) {
         // handleSelectRepo resets pendingResumeChatId internally; (re-)set
