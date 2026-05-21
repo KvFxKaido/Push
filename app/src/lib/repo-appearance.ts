@@ -19,11 +19,13 @@ export type RepoAppearanceColorId =
 export interface RepoAppearance {
   icon: RepoAppearanceIconId;
   color: RepoAppearanceColorId;
+  glowEnabled: boolean;
 }
 
 export const DEFAULT_REPO_APPEARANCE: RepoAppearance = {
   icon: 'repo-ledger',
   color: 'slate',
+  glowEnabled: true,
 };
 
 export const REPO_APPEARANCE_ICON_OPTIONS: Array<{ id: RepoAppearanceIconId; label: string }> = [
@@ -71,9 +73,12 @@ export function coerceRepoAppearance(value: unknown): RepoAppearance | null {
   if (!isRepoAppearanceIconId(candidate.icon) || !isRepoAppearanceColorId(candidate.color)) {
     return null;
   }
+  // glowEnabled was added after the v1 schema landed; missing values
+  // mean "glow on" so existing users get the new default.
   return {
     icon: candidate.icon,
     color: candidate.color,
+    glowEnabled: typeof candidate.glowEnabled === 'boolean' ? candidate.glowEnabled : true,
   };
 }
 

@@ -157,6 +157,46 @@ export function RepoAppearanceSheet({
             </div>
           </section>
 
+          <section className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xs font-medium uppercase tracking-[0.12em] text-push-fg-dim">
+                Background glow
+              </h2>
+              <span className="text-push-2xs text-push-fg-dim">Ambient gradient</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {(
+                [
+                  { id: true, label: 'On' },
+                  { id: false, label: 'Off' },
+                ] as const
+              ).map((option) => {
+                const selected = draft.glowEnabled === option.id;
+                return (
+                  <button
+                    key={String(option.id)}
+                    type="button"
+                    onClick={() => setDraft((prev) => ({ ...prev, glowEnabled: option.id }))}
+                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-auto gap-2 px-3 py-3 ${
+                      selected ? 'border-push-edge-hover text-push-fg' : 'text-push-fg-secondary'
+                    }`}
+                    style={
+                      selected
+                        ? {
+                            borderColor: hexToRgba(colorHex, 0.42),
+                            backgroundColor: hexToRgba(colorHex, 0.12),
+                          }
+                        : undefined
+                    }
+                  >
+                    <HubControlGlow />
+                    <span className="relative z-10 text-push-2xs">{option.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
           <div className="flex items-center gap-2">
             <button
               type="button"
