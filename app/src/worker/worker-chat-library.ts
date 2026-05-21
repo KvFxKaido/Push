@@ -40,6 +40,15 @@ interface LibraryEnv {
   CHAT_LIBRARY?: KVNamespace;
 }
 
+/**
+ * Server-side ceiling on the `content` field. The client today caps
+ * individual attachments at ~750KB (image) / 50KB (text) but library
+ * items can be saved separately, so a single item could legitimately
+ * approach the client cap. 2MB gives ~2.5x headroom over the client's
+ * per-message budget while blocking outright abuse.
+ */
+const MAX_LIBRARY_ITEM_CONTENT_BYTES = 2 * 1024 * 1024;
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -120,6 +129,17 @@ export async function handleLibraryCreate(request: Request, env: LibraryEnv): Pr
     );
   }
 
+  if (attachment.content.length > MAX_LIBRARY_ITEM_CONTENT_BYTES) {
+    return jsonResponse(
+      {
+        ok: false,
+        code: 'CONTENT_TOO_LARGE',
+        message: `content exceeds ${MAX_LIBRARY_ITEM_CONTENT_BYTES} byte ceiling.`,
+      },
+      413,
+    );
+  }
+
   if (body.label !== undefined && typeof body.label !== 'string') {
     return jsonResponse(
       { ok: false, code: 'INVALID_LABEL', message: 'label must be a string when provided.' },
@@ -152,13 +172,22 @@ export async function handleLibraryCreate(request: Request, env: LibraryEnv): Pr
 export async function handleLibraryList(_request: Request, env: LibraryEnv): Promise<Response> {
   if (!env.CHAT_LIBRARY) return notConfiguredResponse();
 
-  // KV.list returns up to 1000 keys per call; for a single-operator
-  // library this is well within the cap. If a multi-user model ever
-  // lands we'll need to paginate per user.
-  const result = await env.CHAT_LIBRARY.list<LibraryItemMeta>({ prefix: LIBRARY_KV_PREFIX });
+  // KV.list returns up to 1000 keys per call with a `list_complete` flag
+  // and a `cursor` for the next page. Loop until exhausted so we never
+  // silently truncate when a user's library crosses the page boundary.
   const items: LibraryItemMeta[] = [];
-  for (const key of result.keys) {
-    if (key.metadata) items.push(key.metadata);
+  let cursor: string | undefined;
+  while (true) {
+    const result = await env.CHAT_LIBRARY.list<LibraryItemMeta>({
+      prefix: LIBRARY_KV_PREFIX,
+      cursor,
+    });
+    for (const key of result.keys) {
+      if (key.metadata) items.push(key.metadata);
+    }
+    if (result.list_complete) break;
+    cursor = result.cursor;
+    if (!cursor) break;
   }
   // Most-recently-created first — matches user expectation when picking
   // from a growing list.

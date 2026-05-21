@@ -46,7 +46,11 @@ export function LibraryPanel({
   iconClassName,
 }: LibraryPanelProps) {
   const [open, setOpen] = useState(false);
-  const lib = useChatLibrary();
+  // Destructure stable refs from the hook — the wrapping object is a new
+  // identity every render, so depending on `lib` directly defeats the
+  // useCallback memoization for every handler below.
+  const { items, isLoading, error, hasFetched, refresh, save, fetchOne, rename, remove } =
+    useChatLibrary();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -59,14 +63,14 @@ export function LibraryPanel({
       if (next) {
         // Lazy first-load + refresh-on-reopen — fetched from the event
         // handler instead of an effect to avoid cascading-renders lint.
-        if (!lib.hasFetched || !lib.isLoading) void lib.refresh();
+        if (!hasFetched || !isLoading) void refresh();
       } else {
         setSelected(new Set());
         setRenamingId(null);
         setRenameValue('');
       }
     },
-    [lib],
+    [hasFetched, isLoading, refresh],
   );
 
   const toggleSelect = useCallback((id: string) => {
@@ -88,15 +92,17 @@ export function LibraryPanel({
           const processed = await processFile(file);
           if (processed.status !== 'ready') continue;
           // StagedAttachment extends AttachmentData; the server discards
-          // the client-side id and generates its own.
-          await lib.save(processed);
+          // the client-side id and generates its own. Per-file failures
+          // surface via the hook's `error` state — partial success is
+          // intentional for batch uploads.
+          await save(processed);
         }
       } finally {
         setBusy(false);
         e.target.value = '';
       }
     },
-    [lib],
+    [save],
   );
 
   const handleAttachSelected = useCallback(async () => {
@@ -105,7 +111,7 @@ export function LibraryPanel({
     try {
       const fetched: StagedAttachment[] = [];
       for (const id of selected) {
-        const item = await lib.fetchOne(id);
+        const item = await fetchOne(id);
         if (!item) continue;
         // Re-stamp with a fresh id so the same library item can be attached
         // to multiple chats without colliding in the staged-attachment list.
@@ -127,7 +133,7 @@ export function LibraryPanel({
     } finally {
       setBusy(false);
     }
-  }, [lib, onAttach, selected]);
+  }, [fetchOne, onAttach, selected]);
 
   const handleStartRename = useCallback((item: LibraryItemMeta) => {
     setRenamingId(item.id);
@@ -137,14 +143,18 @@ export function LibraryPanel({
   const handleCommitRename = useCallback(async () => {
     if (!renamingId) return;
     const trimmed = renameValue.trim();
-    await lib.rename(renamingId, trimmed.length === 0 ? null : trimmed);
-    setRenamingId(null);
-    setRenameValue('');
-  }, [lib, renamingId, renameValue]);
+    const ok = await rename(renamingId, trimmed.length === 0 ? null : trimmed);
+    // On failure leave the rename UI open so the user doesn't lose their
+    // input; the panel's error banner shows the message.
+    if (ok) {
+      setRenamingId(null);
+      setRenameValue('');
+    }
+  }, [rename, renamingId, renameValue]);
 
   const handleDelete = useCallback(
     async (id: string) => {
-      await lib.remove(id);
+      await remove(id);
       setSelected((prev) => {
         if (!prev.has(id)) return prev;
         const next = new Set(prev);
@@ -152,7 +162,7 @@ export function LibraryPanel({
         return next;
       });
     },
-    [lib],
+    [remove],
   );
 
   const selectedCount = selected.size;
@@ -206,26 +216,26 @@ export function LibraryPanel({
             />
           </div>
 
-          {lib.error && (
+          {error && (
             <div className="rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-push-2xs text-red-300">
-              {lib.error}
+              {error}
             </div>
           )}
 
           <div className="max-h-[360px] overflow-y-auto rounded-lg border border-[#2a3447] bg-[#070a10]">
-            {lib.isLoading && lib.items.length === 0 ? (
+            {isLoading && items.length === 0 ? (
               <div className="flex items-center justify-center gap-2 px-3 py-6 text-push-2xs text-[#7c879b]">
                 <Loader2 className="h-3 w-3 animate-spin" />
                 Loading…
               </div>
-            ) : lib.items.length === 0 ? (
+            ) : items.length === 0 ? (
               <div className="px-3 py-4 text-center text-push-2xs text-[#7c879b]">
                 No saved files yet. Tap <span className="text-[#d7deeb]">Add files</span> to keep
                 files around for reuse across chats.
               </div>
             ) : (
               <ul className="divide-y divide-[#1a2230]">
-                {lib.items.map((item) => {
+                {items.map((item) => {
                   const isSelected = selected.has(item.id);
                   const isRenaming = renamingId === item.id;
                   return (

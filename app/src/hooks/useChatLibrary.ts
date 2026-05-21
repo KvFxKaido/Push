@@ -102,22 +102,32 @@ export function useChatLibrary(): UseChatLibraryResult {
     return true;
   }, []);
 
-  const remove = useCallback(
-    async (id: string): Promise<boolean> => {
-      setError(null);
-      const prev = items;
-      // Optimistic remove — restore on failure.
-      setItems((current) => current.filter((m) => m.id !== id));
-      const res = await libraryDelete(id);
-      if (!res.ok) {
-        setItems(prev);
-        setError(res.message);
-        return false;
+  const remove = useCallback(async (id: string): Promise<boolean> => {
+    setError(null);
+    // Optimistic remove — capture the row inside the setter so concurrent
+    // deletes don't get rolled back to a stale snapshot. Restore via a
+    // second functional setter on failure.
+    let removed: LibraryItemMeta | undefined;
+    setItems((current) => {
+      removed = current.find((m) => m.id === id);
+      return current.filter((m) => m.id !== id);
+    });
+    const res = await libraryDelete(id);
+    if (!res.ok) {
+      const restored = removed;
+      if (restored) {
+        setItems((current) => {
+          if (current.some((m) => m.id === id)) return current;
+          const next = [...current, restored];
+          next.sort((a, b) => b.createdAt - a.createdAt);
+          return next;
+        });
       }
-      return true;
-    },
-    [items],
-  );
+      setError(res.message);
+      return false;
+    }
+    return true;
+  }, []);
 
   return { items, isLoading, error, hasFetched, refresh, save, fetchOne, rename, remove };
 }
