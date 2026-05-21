@@ -1,0 +1,378 @@
+/**
+ * Worker handlers for `/api/library/*`.
+ *
+ * Persists chat-mode attachments to the `CHAT_LIBRARY` KV namespace so a
+ * file uploaded once can be re-attached to any future chat without
+ * re-uploading. Storage is a thin passthrough — the client posts the
+ * already-processed `AttachmentData` blob (image base64 or text content
+ * already resized/truncated by `file-processing.ts`) and the server
+ * just persists.
+ *
+ * Routes (all POST so payloads ride in JSON body):
+ *   POST /api/library/create   body: { attachment, label? }
+ *   POST /api/library/list     body: {}
+ *   POST /api/library/get      body: { id }
+ *   POST /api/library/update   body: { id, label? }
+ *   POST /api/library/delete   body: { id }
+ *
+ * Auth model — matches the rest of /api/* in this worker: no per-user
+ * authn today. The deployment-token gate is applied upstream in
+ * worker.ts. When per-user auth lands the KV key can take a user-id
+ * namespace additively (the LibraryItem shape doesn't change).
+ *
+ * Fail-closed: when `env.CHAT_LIBRARY` isn't bound, every route returns
+ * NOT_CONFIGURED 503 — same shape as `/api/artifacts/*` and
+ * `/api/sandbox-cf/*` use when their bindings are missing.
+ */
+
+import type { KVNamespace } from '@cloudflare/workers-types';
+
+import type { AttachmentData } from '@/types';
+import {
+  libraryKvKey,
+  LIBRARY_KV_PREFIX,
+  metaFromItem,
+  type LibraryItem,
+  type LibraryItemMeta,
+} from '@/lib/chat-library-types';
+import { readBodyText } from './worker-middleware';
+
+interface LibraryEnv {
+  CHAT_LIBRARY?: KVNamespace;
+}
+
+/**
+ * Server-side ceiling on the `content` field. The client today caps
+ * individual attachments at ~750KB (image) / 50KB (text) but library
+ * items can be saved separately, so a single item could legitimately
+ * approach the client cap. 2MB gives ~2.5x headroom over the client's
+ * per-message budget while blocking outright abuse.
+ */
+const MAX_LIBRARY_ITEM_CONTENT_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Outer body-size cap enforced before JSON.parse so a malicious client
+ * can't force the Worker to allocate multi-MB strings in memory before
+ * the inner `content` check fires. Generous enough for a 2MB content
+ * payload plus JSON overhead.
+ */
+const MAX_LIBRARY_BODY_BYTES = 3 * 1024 * 1024;
+
+/** Defense-in-depth cap on the user-set label. */
+const MAX_LIBRARY_LABEL_CHARS = 200;
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+function notConfiguredResponse(): Response {
+  return jsonResponse(
+    {
+      ok: false,
+      code: 'NOT_CONFIGURED',
+      message:
+        'CHAT_LIBRARY KV binding is not configured. Run `wrangler kv:namespace create CHAT_LIBRARY` and add the returned id to wrangler.jsonc.',
+    },
+    503,
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+type ReadJsonResult = { ok: true; body: unknown } | { ok: false; response: Response };
+
+/**
+ * Read + JSON-parse the request body with an enforced byte cap. Returns
+ * the structured error response inline so callers can early-return
+ * without re-implementing the envelope.
+ */
+async function readJsonBody(request: Request): Promise<ReadJsonResult> {
+  const bodyResult = await readBodyText(request, MAX_LIBRARY_BODY_BYTES);
+  if (!bodyResult.ok) {
+    const code = bodyResult.status === 413 ? 'BODY_TOO_LARGE' : 'BAD_REQUEST';
+    return {
+      ok: false,
+      response: jsonResponse({ ok: false, code, message: bodyResult.error }, bodyResult.status),
+    };
+  }
+  try {
+    return { ok: true, body: JSON.parse(bodyResult.text) };
+  } catch {
+    return {
+      ok: false,
+      response: jsonResponse(
+        { ok: false, code: 'INVALID_JSON', message: 'Request body must be valid JSON.' },
+        400,
+      ),
+    };
+  }
+}
+
+function parseAttachment(raw: unknown): AttachmentData | null {
+  if (!isRecord(raw)) return null;
+  if (typeof raw.filename !== 'string' || raw.filename.length === 0) return null;
+  if (raw.type !== 'image' && raw.type !== 'code' && raw.type !== 'document') return null;
+  if (typeof raw.mimeType !== 'string') return null;
+  if (typeof raw.sizeBytes !== 'number' || !Number.isFinite(raw.sizeBytes) || raw.sizeBytes < 0) {
+    return null;
+  }
+  if (typeof raw.content !== 'string') return null;
+  if (raw.thumbnail !== undefined && typeof raw.thumbnail !== 'string') return null;
+  return {
+    id: typeof raw.id === 'string' ? raw.id : '',
+    type: raw.type,
+    filename: raw.filename,
+    mimeType: raw.mimeType,
+    sizeBytes: raw.sizeBytes,
+    content: raw.content,
+    thumbnail: typeof raw.thumbnail === 'string' ? raw.thumbnail : undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// /api/library/create
+// ---------------------------------------------------------------------------
+
+export async function handleLibraryCreate(request: Request, env: LibraryEnv): Promise<Response> {
+  if (!env.CHAT_LIBRARY) return notConfiguredResponse();
+
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
+  if (!isRecord(body)) {
+    return jsonResponse(
+      { ok: false, code: 'BAD_REQUEST', message: 'Request body must be a JSON object.' },
+      400,
+    );
+  }
+
+  const attachment = parseAttachment(body.attachment);
+  if (!attachment) {
+    return jsonResponse(
+      {
+        ok: false,
+        code: 'INVALID_ATTACHMENT',
+        message:
+          'attachment must be { type: "image"|"code"|"document", filename, mimeType, sizeBytes, content }.',
+      },
+      400,
+    );
+  }
+
+  if (attachment.content.length > MAX_LIBRARY_ITEM_CONTENT_BYTES) {
+    return jsonResponse(
+      {
+        ok: false,
+        code: 'CONTENT_TOO_LARGE',
+        message: `content exceeds ${MAX_LIBRARY_ITEM_CONTENT_BYTES} byte ceiling.`,
+      },
+      413,
+    );
+  }
+
+  if (body.label !== undefined && typeof body.label !== 'string') {
+    return jsonResponse(
+      { ok: false, code: 'INVALID_LABEL', message: 'label must be a string when provided.' },
+      400,
+    );
+  }
+  if (typeof body.label === 'string' && body.label.length > MAX_LIBRARY_LABEL_CHARS) {
+    return jsonResponse(
+      {
+        ok: false,
+        code: 'LABEL_TOO_LONG',
+        message: `label exceeds ${MAX_LIBRARY_LABEL_CHARS} character ceiling.`,
+      },
+      400,
+    );
+  }
+  const label = typeof body.label === 'string' ? body.label.trim() : undefined;
+
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  const item: LibraryItem = {
+    ...attachment,
+    id,
+    label: label || undefined,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await env.CHAT_LIBRARY.put(libraryKvKey(id), JSON.stringify(item), {
+    metadata: metaFromItem(item),
+  });
+
+  return jsonResponse({ ok: true, item, meta: metaFromItem(item) });
+}
+
+// ---------------------------------------------------------------------------
+// /api/library/list
+// ---------------------------------------------------------------------------
+
+export async function handleLibraryList(_request: Request, env: LibraryEnv): Promise<Response> {
+  if (!env.CHAT_LIBRARY) return notConfiguredResponse();
+
+  // KV.list returns up to 1000 keys per call with a `list_complete` flag
+  // and a `cursor` for the next page. Loop until exhausted so we never
+  // silently truncate when a user's library crosses the page boundary.
+  const items: LibraryItemMeta[] = [];
+  let cursor: string | undefined;
+  while (true) {
+    const result = await env.CHAT_LIBRARY.list<LibraryItemMeta>({
+      prefix: LIBRARY_KV_PREFIX,
+      cursor,
+    });
+    for (const key of result.keys) {
+      if (key.metadata) items.push(key.metadata);
+    }
+    if (result.list_complete) break;
+    cursor = result.cursor;
+    if (!cursor) break;
+  }
+  // Most-recently-created first — matches user expectation when picking
+  // from a growing list.
+  items.sort((a, b) => b.createdAt - a.createdAt);
+  return jsonResponse({ ok: true, items });
+}
+
+// ---------------------------------------------------------------------------
+// /api/library/get
+// ---------------------------------------------------------------------------
+
+export async function handleLibraryGet(request: Request, env: LibraryEnv): Promise<Response> {
+  if (!env.CHAT_LIBRARY) return notConfiguredResponse();
+
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
+  if (!isRecord(body)) {
+    return jsonResponse(
+      { ok: false, code: 'BAD_REQUEST', message: 'Request body must be a JSON object.' },
+      400,
+    );
+  }
+  if (typeof body.id !== 'string' || body.id.length === 0) {
+    return jsonResponse({ ok: false, code: 'INVALID_ID', message: 'id is required.' }, 400);
+  }
+
+  const raw = await env.CHAT_LIBRARY.get(libraryKvKey(body.id));
+  if (!raw) {
+    return jsonResponse({ ok: false, code: 'NOT_FOUND', message: 'Library item not found.' }, 404);
+  }
+  try {
+    const item = JSON.parse(raw) as LibraryItem;
+    return jsonResponse({ ok: true, item });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return jsonResponse(
+      { ok: false, code: 'CORRUPT_RECORD', message: `Failed to parse stored item: ${message}` },
+      500,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// /api/library/update
+// ---------------------------------------------------------------------------
+
+export async function handleLibraryUpdate(request: Request, env: LibraryEnv): Promise<Response> {
+  if (!env.CHAT_LIBRARY) return notConfiguredResponse();
+
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
+  if (!isRecord(body)) {
+    return jsonResponse(
+      { ok: false, code: 'BAD_REQUEST', message: 'Request body must be a JSON object.' },
+      400,
+    );
+  }
+  if (typeof body.id !== 'string' || body.id.length === 0) {
+    return jsonResponse({ ok: false, code: 'INVALID_ID', message: 'id is required.' }, 400);
+  }
+  // v1 only allows label edits. Filename and content are immutable —
+  // delete and re-upload to "replace" a file.
+  if (body.label !== undefined && body.label !== null && typeof body.label !== 'string') {
+    return jsonResponse(
+      {
+        ok: false,
+        code: 'INVALID_LABEL',
+        message: 'label must be a string, null (to clear), or omitted.',
+      },
+      400,
+    );
+  }
+  if (typeof body.label === 'string' && body.label.length > MAX_LIBRARY_LABEL_CHARS) {
+    return jsonResponse(
+      {
+        ok: false,
+        code: 'LABEL_TOO_LONG',
+        message: `label exceeds ${MAX_LIBRARY_LABEL_CHARS} character ceiling.`,
+      },
+      400,
+    );
+  }
+
+  const key = libraryKvKey(body.id);
+  const raw = await env.CHAT_LIBRARY.get(key);
+  if (!raw) {
+    return jsonResponse({ ok: false, code: 'NOT_FOUND', message: 'Library item not found.' }, 404);
+  }
+  let existing: LibraryItem;
+  try {
+    existing = JSON.parse(raw) as LibraryItem;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return jsonResponse(
+      { ok: false, code: 'CORRUPT_RECORD', message: `Failed to parse stored item: ${message}` },
+      500,
+    );
+  }
+
+  let nextLabel: string | undefined = existing.label;
+  if (body.label === null) {
+    nextLabel = undefined;
+  } else if (typeof body.label === 'string') {
+    const trimmed = body.label.trim();
+    nextLabel = trimmed.length > 0 ? trimmed : undefined;
+  }
+
+  const item: LibraryItem = {
+    ...existing,
+    label: nextLabel,
+    updatedAt: Date.now(),
+  };
+  await env.CHAT_LIBRARY.put(key, JSON.stringify(item), {
+    metadata: metaFromItem(item),
+  });
+  return jsonResponse({ ok: true, item, meta: metaFromItem(item) });
+}
+
+// ---------------------------------------------------------------------------
+// /api/library/delete
+// ---------------------------------------------------------------------------
+
+export async function handleLibraryDelete(request: Request, env: LibraryEnv): Promise<Response> {
+  if (!env.CHAT_LIBRARY) return notConfiguredResponse();
+
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
+  if (!isRecord(body)) {
+    return jsonResponse(
+      { ok: false, code: 'BAD_REQUEST', message: 'Request body must be a JSON object.' },
+      400,
+    );
+  }
+  if (typeof body.id !== 'string' || body.id.length === 0) {
+    return jsonResponse({ ok: false, code: 'INVALID_ID', message: 'id is required.' }, 400);
+  }
+
+  await env.CHAT_LIBRARY.delete(libraryKvKey(body.id));
+  return jsonResponse({ ok: true });
+}

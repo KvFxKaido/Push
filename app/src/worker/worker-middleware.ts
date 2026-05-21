@@ -118,6 +118,12 @@ export interface Env {
   // /api/artifacts/* route returns NOT_CONFIGURED 503 when unset so the
   // operator notices instead of silently returning empty lists.
   ARTIFACTS?: KVNamespace;
+  // Chat library — user-scoped persistent file store so attachments
+  // uploaded once can be re-attached to any future chat. Same
+  // fail-closed pattern: /api/library/* routes return NOT_CONFIGURED
+  // 503 when the binding is unset. Auth-scoping is deferred (matches
+  // ARTIFACTS); KV keys are flat `library:<id>` today.
+  CHAT_LIBRARY?: KVNamespace;
   // Local-dev escape hatch for the per-exec sandbox deadline. Set to "1" in
   // .dev.vars to raise SANDBOX_EXEC_TIMEOUT_MS from 150s to 300s — covers
   // first-request container cold-starts on local wrangler, which routinely

@@ -77,6 +77,13 @@ import {
   handleArtifactsGet,
   handleArtifactsList,
 } from './src/worker/worker-artifacts';
+import {
+  handleLibraryCreate,
+  handleLibraryDelete,
+  handleLibraryGet,
+  handleLibraryList,
+  handleLibraryUpdate,
+} from './src/worker/worker-chat-library';
 
 // Re-export the Sandbox Durable Object class so wrangler can bind to it.
 // The Cloudflare Sandbox SDK ships the DO implementation; we only need to
@@ -367,6 +374,13 @@ const EXACT_API_ROUTES: ExactApiRoute[] = [
   { path: '/api/artifacts/list', method: 'POST', handler: handleArtifactsList },
   { path: '/api/artifacts/get', method: 'POST', handler: handleArtifactsGet },
   { path: '/api/artifacts/delete', method: 'POST', handler: handleArtifactsDelete },
+  // Chat library — user-scoped attachment store. See
+  // app/src/worker/worker-chat-library.ts for the request/response shape.
+  { path: '/api/library/create', method: 'POST', handler: handleLibraryCreate },
+  { path: '/api/library/list', method: 'POST', handler: handleLibraryList },
+  { path: '/api/library/get', method: 'POST', handler: handleLibraryGet },
+  { path: '/api/library/update', method: 'POST', handler: handleLibraryUpdate },
+  { path: '/api/library/delete', method: 'POST', handler: handleLibraryDelete },
   { path: '/api/ollama/chat', method: 'POST', handler: handleOllamaChat },
   { path: '/api/ollama/models', method: 'GET', handler: handleOllamaModels },
   { path: '/api/openrouter/chat', method: 'POST', handler: handleOpenRouterChat },

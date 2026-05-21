@@ -11,6 +11,14 @@ export { formatSize as formatFileSize } from './diff-utils';
 const MAX_IMAGE_SIZE = 750 * 1024; // 750KB per image (base64 grows ~33%)
 const MAX_TEXT_SIZE = 50 * 1024; // 50KB per text file
 
+/**
+ * Shared `accept` string for file inputs that should take everything
+ * `processFile()` knows how to handle. Both the chat composer and the
+ * library panel reference this so the two surfaces can't drift.
+ */
+export const ACCEPTED_FILE_TYPES =
+  'image/*,.js,.ts,.tsx,.jsx,.py,.go,.rs,.java,.c,.cpp,.h,.md,.txt,.json,.yaml,.yml,.html,.css,.sql,.sh,.rb,.php,.swift,.kt,.scala,.vue,.svelte,.astro';
+
 // Supported types
 const SUPPORTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 const SUPPORTED_CODE_EXTENSIONS = [

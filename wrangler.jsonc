@@ -130,6 +130,15 @@
   //
   // Then insert into the kv_namespaces array below:
   //   { "binding": "ARTIFACTS", "id": "<returned id>" }
+  // Chat library — user-scoped persistent attachments. Same fail-closed
+  // contract: /api/library/* returns NOT_CONFIGURED 503 when the binding
+  // is missing. The CHAT_LIBRARY binding below is wired for this
+  // deployment. Operators forking the repo into a fresh CF account
+  // create their own namespace via:
+  //
+  //   npx wrangler kv:namespace create CHAT_LIBRARY
+  //
+  // …then swap the id in the kv_namespaces array below.
   "kv_namespaces": [
     {
       "binding": "SNAPSHOT_INDEX",
@@ -142,6 +151,10 @@
     {
       "binding": "ARTIFACTS",
       "id": "8fd209d7301d40d1a7a02eb88934bf8e"
+    },
+    {
+      "binding": "CHAT_LIBRARY",
+      "id": "cea06bc65f86466693b79921d3426c43"
     }
   ],
   // Cloudflare Sandbox SDK — the default sandbox backend when

@@ -2,11 +2,12 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { ChevronsUpDown, Loader2, Lock, RefreshCw, Square } from 'lucide-react';
 import { AttachmentPreview } from './AttachmentPreview';
 import { ContextMeter } from './ContextMeter';
+import { LibraryPanel } from './LibraryPanel';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ModelPicker } from '@/components/ui/model-picker';
 import { ProviderIcon } from '@/components/ui/provider-icon';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { processFile, getTotalAttachmentSize } from '@/lib/file-processing';
+import { ACCEPTED_FILE_TYPES, processFile, getTotalAttachmentSize } from '@/lib/file-processing';
 import type { StagedAttachment } from '@/lib/file-processing';
 import { getVisionCapabilityNotice } from '@/lib/model-capabilities';
 import {
@@ -35,6 +36,10 @@ interface ChatInputProps {
   repoName?: string;
   placeholder?: string;
   contextUsage?: { used: number; max: number; percent: number };
+  /** When true, render the Library button that lets the user attach
+   *  previously-saved files. Chat mode opts in; workspace mode keeps the
+   *  repo as its persistence layer. */
+  libraryEnabled?: boolean;
   draftKey?: string | null;
   prefillRequest?: {
     token: number;
@@ -147,8 +152,6 @@ function formatDeploymentLabel(dep: ExperimentalDeployment): string {
   return dep.model;
 }
 
-const ACCEPTED_FILES =
-  'image/*,.js,.ts,.tsx,.jsx,.py,.go,.rs,.java,.c,.cpp,.h,.md,.txt,.json,.yaml,.yml,.html,.css,.sql,.sh,.rb,.php,.swift,.kt,.scala,.vue,.svelte,.astro';
 const MAX_PAYLOAD = 750 * 1024; // 750KB total
 const COMPOSER_DRAFT_KEY_PREFIX = 'push:chat-composer-draft:';
 
@@ -218,6 +221,7 @@ export function ChatInput({
   repoName,
   placeholder,
   contextUsage,
+  libraryEnabled,
   draftKey,
   prefillRequest,
   editState,
@@ -375,6 +379,21 @@ export function ChatInput({
 
   const handleRemoveAttachment = useCallback((id: string) => {
     setStagedAttachments((prev) => prev.filter((a) => a.id !== id));
+  }, []);
+
+  const handleAttachFromLibrary = useCallback((attachments: StagedAttachment[]) => {
+    setStagedAttachments((prev) => {
+      // Respect the same cumulative size budget as direct uploads.
+      let currentSize = getTotalAttachmentSize(prev);
+      const accepted: StagedAttachment[] = [];
+      for (const att of attachments) {
+        const size = att.content.length || att.sizeBytes || 0;
+        if (currentSize + size > MAX_PAYLOAD * 1.5) continue;
+        accepted.push(att);
+        currentSize += size;
+      }
+      return [...prev, ...accepted];
+    });
   }, []);
 
   const handleButtonClick = () => {
@@ -697,6 +716,15 @@ export function ChatInput({
               <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
               <AttachmentLinkIcon className="relative z-10 h-4 w-4" />
             </button>
+
+            {libraryEnabled && (
+              <LibraryPanel
+                disabled={isStreaming}
+                onAttach={handleAttachFromLibrary}
+                buttonClassName={`flex h-10 w-10 items-center justify-center rounded-full border text-push-fg-secondary ${COMPOSER_CONTROL_SURFACE_CLASS} ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`}
+                iconClassName="relative z-10 h-4 w-4"
+              />
+            )}
 
             {providerControls && (
               <Popover>
@@ -1314,7 +1342,7 @@ export function ChatInput({
           <input
             ref={fileInputRef}
             type="file"
-            accept={ACCEPTED_FILES}
+            accept={ACCEPTED_FILE_TYPES}
             multiple
             onChange={handleFileSelect}
             className="hidden"
