@@ -521,7 +521,7 @@ export function useChat(
   }, []);
 
   // --- Chat management ---
-  const { createNewChat, switchChat, renameChat, deleteChat, deleteAllChats } = useChatManagement({
+  const chatMgmt = useChatManagement({
     conversations,
     setConversations: updateConversations,
     setActiveChatId,
@@ -616,7 +616,7 @@ export function useChat(
       let chatId = options?.chatId || activeChatIdRef.current;
       const conversationsSnapshot = conversationsRef.current;
       if (!chatId || !conversationsSnapshot[chatId]) {
-        chatId = createNewChat();
+        chatId = chatMgmt.createNewChat();
       }
 
       // --- Prepare context ---
@@ -749,7 +749,7 @@ export function useChat(
       }
     },
     [
-      createNewChat,
+      chatMgmt,
       updateAgentStatus,
       flushCheckpoint,
       executeDelegateCall,
@@ -900,11 +900,7 @@ export function useChat(
     conversationsLoaded,
     activeChatId,
     sortedChatIds,
-    switchChat,
-    renameChat,
-    createNewChat,
-    deleteChat,
-    deleteAllChats,
+    ...chatMgmt,
     regenerateLastResponse,
     editMessageAndResend,
 

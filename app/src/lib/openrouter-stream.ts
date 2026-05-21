@@ -46,6 +46,7 @@ export async function* openrouterStream(
       prior: req.priorSessionDigest,
       onEmit: req.onSessionDigestEmitted,
     },
+    req.linkedLibraryContent,
   );
 
   // 2. Layer in OpenRouter-specific body extensions (reasoning effort,

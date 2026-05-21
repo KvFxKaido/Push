@@ -47,6 +47,7 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
     activeChatId,
     switchChat,
     renameChat,
+    setChatLinkedLibraries,
     deleteChat,
     regenerateLastResponse,
     editMessageAndResend,
@@ -309,6 +310,11 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
           placeholder: 'Message',
           contextUsage,
           libraryEnabled: true,
+          linkedLibraryIds:
+            (activeChatId && conversations[activeChatId]?.linkedLibraryIds) || undefined,
+          onSetLinkedLibraries: activeChatId
+            ? (ids) => setChatLinkedLibraries(activeChatId, ids)
+            : undefined,
           draftKey: activeChatId,
           prefillRequest: composerPrefillRequest,
           editState,

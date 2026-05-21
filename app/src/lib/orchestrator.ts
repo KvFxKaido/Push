@@ -280,6 +280,7 @@ export function toLLMMessages(
   intentHint?: string | null,
   todoContent?: string,
   sessionDigestOptions?: SessionDigestOptions,
+  linkedLibraryContent?: string,
 ): LLMMessage[] {
   // When a systemPromptOverride is provided (Auditor, Coder), the caller has already
   // composed a complete system prompt — don't append Orchestrator-specific protocols.
@@ -438,6 +439,20 @@ export function toLLMMessages(
       if (memoryBlocks.length > 0) {
         builder.set('memory', memoryBlocks.join('\n\n'));
       }
+    }
+
+    // Linked-library content (v2b) — user-managed bundles linked to
+    // this chat, pre-rendered by the caller. Applies in every
+    // *non-override* mode (chat, repo, scratch, local-pc); delegated
+    // roles that pass a `systemPromptOverride` (Auditor / Coder)
+    // intentionally skip the orchestrator builder entirely, so linked
+    // libraries don't reach those backgrounded prompts — they're
+    // user-explicit context for the chat surface, not for
+    // delegated workers. Placed before the turn-volatile `memory`
+    // section so Anthropic prompt caching (`cache_control` on the
+    // whole system message) can amortize the canon across turns.
+    if (linkedLibraryContent && linkedLibraryContent.length > 0) {
+      builder.set('library_context', linkedLibraryContent);
     }
 
     // Intent hint (last so it overrides)

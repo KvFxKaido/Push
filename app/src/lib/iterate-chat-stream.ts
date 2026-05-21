@@ -75,6 +75,9 @@ export interface IterateChatStreamRequest<M extends LlmMessage> {
   systemPromptOverride?: string;
   scratchpadContent?: string;
   todoContent?: string;
+  /** Pre-rendered linked-library content (v2b). Passed through to the
+   *  provider stream which forwards it to `toLLMMessages`. */
+  linkedLibraryContent?: string;
   workspaceContext?: unknown;
   hasSandbox?: boolean;
   googleSearchGrounding?: boolean;
@@ -219,6 +222,7 @@ export async function iterateChatStream<M extends LlmMessage>(
         systemPromptOverride: request.systemPromptOverride,
         scratchpadContent: request.scratchpadContent,
         todoContent: request.todoContent,
+        linkedLibraryContent: request.linkedLibraryContent,
         workspaceContext: request.workspaceContext,
         hasSandbox: request.hasSandbox,
         googleSearchGrounding: request.googleSearchGrounding,

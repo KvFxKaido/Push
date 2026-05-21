@@ -128,6 +128,7 @@ function baseProps(overrides: Partial<ChatRouteProps> = {}): ChatRouteProps {
     activeChatId: null,
     switchChat: vi.fn(),
     renameChat: vi.fn(),
+    setChatLinkedLibraries: vi.fn(),
     deleteChat: vi.fn(),
     deleteAllChats: vi.fn(),
     clearMemoryByRepo: vi.fn(),

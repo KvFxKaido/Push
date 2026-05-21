@@ -19,6 +19,7 @@ export const PROMPT_SECTION_IDS = [
   'delegation',
   'guidelines',
   'project_context',
+  'library_context',
   'memory',
   'sandbox_environment',
   'state',
@@ -39,6 +40,11 @@ const SECTION_CONFIG: Record<PromptSectionId, { priority: number; volatile: bool
   delegation: { priority: 50, volatile: false },
   guidelines: { priority: 60, volatile: false },
   project_context: { priority: 70, volatile: true },
+  // library_context — user-linked Library bundles (web app v2b). Volatile
+  // because the user can link/unlink at any time and library content can
+  // change between turns. Placed between project_context (loaded from
+  // disk/repo) and memory (turn-volatile working memory).
+  library_context: { priority: 72, volatile: true },
   memory: { priority: 75, volatile: true },
   sandbox_environment: { priority: 77, volatile: true },
   state: { priority: 78, volatile: true },

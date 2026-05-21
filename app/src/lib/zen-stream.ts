@@ -42,6 +42,7 @@ export async function* zenStream(
       prior: req.priorSessionDigest,
       onEmit: req.onSessionDigestEmitted,
     },
+    req.linkedLibraryContent,
   );
 
   // 2. Plain OpenAI-compatible request body — Zen has no provider-specific

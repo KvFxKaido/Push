@@ -36,6 +36,11 @@ import type { LibraryItem, LibraryItemMeta, LibraryMeta } from '@/lib/chat-libra
 interface LibraryPanelProps {
   disabled?: boolean;
   onAttach: (attachments: StagedAttachment[]) => void;
+  /** Library v2b — IDs of libraries currently linked to the active chat. */
+  linkedLibraryIds?: readonly string[];
+  /** Library v2b — set the linkage on the active chat. Undefined when
+   *  no chat is active (pre-flight composer); the Link toggle disables. */
+  onSetLinkedLibraries?: (nextIds: readonly string[]) => void;
   buttonClassName: string;
   iconClassName?: string;
 }
@@ -46,6 +51,8 @@ const INSTRUCTIONS_MAX = 2000;
 export function LibraryPanel({
   disabled,
   onAttach,
+  linkedLibraryIds,
+  onSetLinkedLibraries,
   buttonClassName,
   iconClassName,
 }: LibraryPanelProps) {
@@ -233,6 +240,29 @@ export function LibraryPanel({
     }
   }, [deleteCollection, openCollection, openCollectionRef]);
 
+  // Library v2b — toggle whether the currently-open library is linked
+  // to the active chat. `onSetLinkedLibraries` is undefined when no
+  // chat is active (pre-flight composer), in which case the toggle
+  // disables. The set operation is idempotent on the server side; we
+  // just splice the id in or out of the current array.
+  const isOpenLibraryLinked = useMemo(() => {
+    if (!openCollection || !linkedLibraryIds) return false;
+    return linkedLibraryIds.includes(openCollection.collection.id);
+  }, [linkedLibraryIds, openCollection]);
+
+  const canToggleLink = !!onSetLinkedLibraries;
+
+  const handleToggleLink = useCallback(() => {
+    if (!openCollection || !onSetLinkedLibraries) return;
+    const id = openCollection.collection.id;
+    const current = linkedLibraryIds ?? [];
+    if (current.includes(id)) {
+      onSetLinkedLibraries(current.filter((existing) => existing !== id));
+    } else {
+      onSetLinkedLibraries([...current, id]);
+    }
+  }, [linkedLibraryIds, onSetLinkedLibraries, openCollection]);
+
   // ---------- Attach Library ----------
 
   const handleAttachLibrary = useCallback(async () => {
@@ -351,6 +381,9 @@ export function LibraryPanel({
             error={error}
             busy={busy}
             canAttachLibrary={canAttachLibrary}
+            isLinked={isOpenLibraryLinked}
+            canToggleLink={canToggleLink}
+            onToggleLink={handleToggleLink}
             fileInputRef={fileInputRef}
             isRenamingCollection={isRenamingCollection}
             renameCollectionValue={renameCollectionValue}
@@ -546,6 +579,11 @@ interface CollectionDetailViewProps {
   error: string | null;
   busy: boolean;
   canAttachLibrary: boolean;
+  /** v2b — true when this library is in the active chat's linkedLibraryIds. */
+  isLinked: boolean;
+  /** v2b — false when there's no active chat to mutate. */
+  canToggleLink: boolean;
+  onToggleLink: () => void;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   isRenamingCollection: boolean;
   renameCollectionValue: string;
@@ -578,6 +616,9 @@ function CollectionDetailView({
   error,
   busy,
   canAttachLibrary,
+  isLinked,
+  canToggleLink,
+  onToggleLink,
   fileInputRef,
   isRenamingCollection,
   renameCollectionValue,
@@ -665,6 +706,33 @@ function CollectionDetailView({
           <Check className="h-3.5 w-3.5" />
         )}
         Attach library
+      </button>
+
+      <button
+        type="button"
+        onClick={onToggleLink}
+        disabled={!canToggleLink || busy}
+        className={`flex w-full items-center justify-center gap-1.5 rounded-md border px-2.5 py-1.5 text-push-2xs disabled:opacity-40 ${
+          isLinked
+            ? 'border-push-accent/40 bg-push-accent/10 text-push-accent hover:bg-push-accent/20'
+            : 'border-[#2a3447] bg-[#070a10] text-[#d7deeb] hover:border-[#3d5579]'
+        }`}
+        title={
+          canToggleLink
+            ? isLinked
+              ? 'Linked to this chat — tap to unlink'
+              : 'Link this library so it auto-attaches every turn'
+            : 'No active chat to link to'
+        }
+      >
+        {isLinked ? (
+          <>
+            <Check className="h-3 w-3" />
+            Linked to this chat — tap to unlink
+          </>
+        ) : (
+          'Link to this chat'
+        )}
       </button>
 
       <InstructionsSection

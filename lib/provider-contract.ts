@@ -141,6 +141,13 @@ export interface PushStreamRequest<M extends LlmMessage = LlmMessage> {
   scratchpadContent?: string;
   todoContent?: string;
   /**
+   * Library v2b — pre-rendered text block for each library linked to
+   * the current chat (web app only, CLI ignores). Baked into the
+   * system message via the `library_context` section. Caller pre-
+   * fetches and formats; the provider stream is a passthrough.
+   */
+  linkedLibraryContent?: string;
+  /**
    * Runtime context passed through unchanged by the adapter. Opaque at the
    * contract level — different runtimes carry different shapes (Web's
    * `WorkspaceContext`, CLI's `SessionContext`, etc.). Gateways that need

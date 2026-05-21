@@ -46,6 +46,7 @@ export async function* openaiStream(
       prior: req.priorSessionDigest,
       onEmit: req.onSessionDigestEmitted,
     },
+    req.linkedLibraryContent,
   );
 
   const body: Record<string, unknown> = {

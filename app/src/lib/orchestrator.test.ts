@@ -385,3 +385,89 @@ describe('chat-mode web-search gating', () => {
     }
   });
 });
+
+describe('toLLMMessages — linked-library context injection (v2b)', () => {
+  function buildChatMessages(): ChatMessage[] {
+    return [{ id: 'u1', role: 'user', content: 'hi', timestamp: 0 } as unknown as ChatMessage];
+  }
+
+  it('injects linkedLibraryContent into the system message when provided', () => {
+    const llm = toLLMMessages(
+      buildChatMessages(),
+      { description: 'chat mode', includeGitHubTools: false, mode: 'chat' },
+      undefined, // hasSandbox
+      undefined, // systemPromptOverride
+      undefined, // scratchpadContent
+      undefined, // providerType
+      undefined, // providerModel
+      undefined, // onPreCompact
+      undefined, // intentHint
+      undefined, // todoContent
+      undefined, // sessionDigestOptions
+      '# Linked libraries\n\n## Library: Project ZERO\n\n[Files]\n\nFile: timeline.md\n```\n# Timeline\n```',
+    );
+    const system = llm.find((m) => m.role === 'system');
+    // System content may be plain string (most providers) or a
+    // structured array (Anthropic with cache_control). Normalise to a
+    // single string for the substring check.
+    const text =
+      typeof system?.content === 'string'
+        ? system.content
+        : Array.isArray(system?.content)
+          ? system.content.map((part) => ('text' in part ? part.text : '')).join('')
+          : '';
+    expect(text).toContain('# Linked libraries');
+    expect(text).toContain('Project ZERO');
+    expect(text).toContain('timeline.md');
+  });
+
+  it('does not include the library_context section when linkedLibraryContent is undefined', () => {
+    const llm = toLLMMessages(
+      buildChatMessages(),
+      { description: 'chat mode', includeGitHubTools: false, mode: 'chat' },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    );
+    const system = llm.find((m) => m.role === 'system');
+    const text =
+      typeof system?.content === 'string'
+        ? system.content
+        : Array.isArray(system?.content)
+          ? system.content.map((part) => ('text' in part ? part.text : '')).join('')
+          : '';
+    expect(text).not.toContain('# Linked libraries');
+  });
+
+  it('does not include the library_context section when linkedLibraryContent is empty string', () => {
+    const llm = toLLMMessages(
+      buildChatMessages(),
+      { description: 'chat mode', includeGitHubTools: false, mode: 'chat' },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      '',
+    );
+    const system = llm.find((m) => m.role === 'system');
+    const text =
+      typeof system?.content === 'string'
+        ? system.content
+        : Array.isArray(system?.content)
+          ? system.content.map((part) => ('text' in part ? part.text : '')).join('')
+          : '';
+    expect(text).not.toContain('# Linked libraries');
+  });
+});

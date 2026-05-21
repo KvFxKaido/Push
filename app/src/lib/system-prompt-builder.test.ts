@@ -145,12 +145,13 @@ describe('SystemPromptBuilder', () => {
     expect(PROMPT_SECTION_IDS).toContain('delegation');
     expect(PROMPT_SECTION_IDS).toContain('guidelines');
     expect(PROMPT_SECTION_IDS).toContain('project_context');
+    expect(PROMPT_SECTION_IDS).toContain('library_context');
     expect(PROMPT_SECTION_IDS).toContain('memory');
     expect(PROMPT_SECTION_IDS).toContain('sandbox_environment');
     expect(PROMPT_SECTION_IDS).toContain('state');
     expect(PROMPT_SECTION_IDS).toContain('custom');
     expect(PROMPT_SECTION_IDS).toContain('last_instructions');
-    expect(PROMPT_SECTION_IDS).toHaveLength(15);
+    expect(PROMPT_SECTION_IDS).toHaveLength(16);
   });
 
   // --- Volatility classification ---

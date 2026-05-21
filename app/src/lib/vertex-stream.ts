@@ -67,6 +67,7 @@ export async function* vertexStream(
       prior: req.priorSessionDigest,
       onEmit: req.onSessionDigestEmitted,
     },
+    req.linkedLibraryContent,
   );
 
   // 2. Plain OpenAI-compatible request body. The Worker forwards verbatim
