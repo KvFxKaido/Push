@@ -141,6 +141,11 @@ export interface ChatRouteRepositoryProps {
   reposError: string | null;
   branches: BranchManager;
   handleSelectRepoFromDrawer: (repo: RepoWithActivity, branch?: string) => void;
+  /** Resumes a chat picked from the Chats drawer. Migrates the workspace
+   * session to the chat's mode/repo/branch when the current context
+   * doesn't match; same-context taps just route the active chat via
+   * pendingResumeChatId so the sandbox is preserved. */
+  handleResumeChatFromDrawer: (chatId: string) => void;
 }
 
 export interface ChatRouteCatalogProps {

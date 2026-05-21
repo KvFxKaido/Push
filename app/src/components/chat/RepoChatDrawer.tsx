@@ -49,7 +49,11 @@ interface RepoChatDrawerProps {
   setRepoAppearance: (repoFullName: string, appearance: RepoAppearance) => void;
   clearRepoAppearance: (repoFullName: string) => void;
   onSelectRepo: (repo: RepoWithActivity, branch?: string) => void;
-  onSwitchChat: (id: string) => void;
+  /** Resume the chat the user tapped. The handler is responsible for
+   * migrating the workspace session (repo / branch / mode) to match the
+   * chat — switching activeChatId in isolation gets reverted by the
+   * workspace's belong-to-workspace auto-effects. */
+  onResumeChat: (id: string) => void;
   onNewChat: () => void;
   onDeleteChat: (id: string) => void;
   onRenameChat: (id: string, title: string) => void;
@@ -84,7 +88,7 @@ export function RepoChatDrawer({
   setRepoAppearance,
   clearRepoAppearance,
   onSelectRepo,
-  onSwitchChat,
+  onResumeChat,
   onNewChat,
   onDeleteChat,
   onRenameChat,
@@ -195,15 +199,8 @@ export function RepoChatDrawer({
     }));
   };
 
-  const openChat = (chatId: string, repo?: RepoWithActivity, chatBranch?: string) => {
-    if (repo && activeRepo?.id !== repo.id) {
-      onSelectRepo(repo);
-    }
-    // Switch branch if the chat belongs to a different branch
-    if (chatBranch && setCurrentBranch && chatBranch !== currentBranch) {
-      setCurrentBranch(chatBranch);
-    }
-    onSwitchChat(chatId);
+  const openChat = (chatId: string) => {
+    onResumeChat(chatId);
     onOpenChange(false);
   };
 
@@ -243,7 +240,7 @@ export function RepoChatDrawer({
     }
   };
 
-  const renderChatRow = (chat: Conversation, repo?: RepoWithActivity) => {
+  const renderChatRow = (chat: Conversation) => {
     const isActiveChat = chat.id === activeChatId;
     const isEditing = editingChatId === chat.id;
     const messageCount = chat.messages.filter((m) => !m.isToolResult).length;
@@ -304,7 +301,7 @@ export function RepoChatDrawer({
         ) : (
           <>
             <button
-              onClick={() => openChat(chat.id, repo, chat.branch)}
+              onClick={() => openChat(chat.id)}
               className="min-w-0 flex-1 px-2.5 py-2 text-left"
             >
               <p
@@ -629,7 +626,7 @@ export function RepoChatDrawer({
 
                                 if (!hasMultipleBranches) {
                                   // Single branch — no sub-headers needed
-                                  return chats.map((chat) => renderChatRow(chat, repo));
+                                  return chats.map((chat) => renderChatRow(chat));
                                 }
 
                                 // Sort branches: active branch first, then default branch, then rest alphabetically
@@ -672,7 +669,7 @@ export function RepoChatDrawer({
                                           ({branchChats.length})
                                         </span>
                                       </button>
-                                      {branchChats.map((chat) => renderChatRow(chat, repo))}
+                                      {branchChats.map((chat) => renderChatRow(chat))}
                                     </div>
                                   );
                                 });
