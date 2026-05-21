@@ -624,13 +624,11 @@ function App() {
     if (relayPairingActive) return 'relay-pairing';
     if (workspaceSession?.kind === 'local-pc') return 'workspace';
     if (workspaceSession?.kind === 'relay') return 'workspace';
-    // Pre-flight composer is GitHub-gated (it lists repos), so it
-    // belongs above the scratch/chat short-circuits but only fires when
-    // the user is authed — without this ordering, the "+ New chat"
-    // button on a scratch/chat workspace silently latches
-    // `draftComposerOpen` while the workspace stays mounted, and the
-    // stale seed surfaces the next time the user lands on a repo
-    // workspace (the composer check below would finally see it).
+    // Pre-flight composer sits above the scratch/chat short-circuits so
+    // "+ New chat" on those workspaces actually renders it. Gated on
+    // `authToken` because the picker lists repos via GitHub REST — the
+    // accountless scratch/chat tiles on OnboardingScreen still fall
+    // through to the workspace short-circuits below.
     if (draftComposerOpen && authToken) return 'draft-composer';
     if (workspaceSession?.kind === 'scratch') return 'workspace';
     if (workspaceSession?.kind === 'chat') return 'workspace';
