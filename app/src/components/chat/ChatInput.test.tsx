@@ -133,4 +133,34 @@ describe('ChatInput', () => {
 
     expect(html).toContain('Steering update captured. It will apply after the current step.');
   });
+
+  it('renders the linked-libraries chip strip when libraryEnabled + linkedLibraryIds is non-empty', () => {
+    const html = renderToStaticMarkup(
+      <ChatInput
+        {...buildProps({
+          libraryEnabled: true,
+          linkedLibraryIds: ['lib-abc12345-6789-4def-90ab-cdef01234567'],
+          onSetLinkedLibraries: vi.fn(),
+        })}
+      />,
+    );
+    // The "Linked" header appears in the chip strip.
+    expect(html).toContain('Linked');
+    // The short-id fallback (truncated UUID) shows until names resolve
+    // — `useChatLibrary` returns an empty collection list in this
+    // server-rendered context. First 8 chars + ellipsis.
+    expect(html).toContain('lib-abc1');
+    // The unlink button is rendered for each chip.
+    expect(html).toContain('aria-label="Unlink');
+  });
+
+  it('does not render the chip strip when linkedLibraryIds is empty or undefined', () => {
+    const empty = renderToStaticMarkup(
+      <ChatInput {...buildProps({ libraryEnabled: true, linkedLibraryIds: [] })} />,
+    );
+    expect(empty).not.toMatch(/<span[^>]*>Linked</);
+
+    const undef = renderToStaticMarkup(<ChatInput {...buildProps({ libraryEnabled: true })} />);
+    expect(undef).not.toMatch(/<span[^>]*>Linked</);
+  });
 });

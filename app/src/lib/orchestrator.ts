@@ -442,13 +442,15 @@ export function toLLMMessages(
     }
 
     // Linked-library content (v2b) — user-managed bundles linked to
-    // this chat, pre-rendered by the caller. Applies in every mode
-    // (chat, repo, scratch, local-pc): the linkage is per-chat and
-    // user-explicit, so the system message carries it whenever the
-    // caller passes a non-empty string. Anthropic prompt caching
-    // (`cache_control` on the system message) kicks in below
-    // automatically since the cacheable flag covers the whole system
-    // content, including this section.
+    // this chat, pre-rendered by the caller. Applies in every
+    // *non-override* mode (chat, repo, scratch, local-pc); delegated
+    // roles that pass a `systemPromptOverride` (Auditor / Coder)
+    // intentionally skip the orchestrator builder entirely, so linked
+    // libraries don't reach those backgrounded prompts — they're
+    // user-explicit context for the chat surface, not for
+    // delegated workers. Placed before the turn-volatile `memory`
+    // section so Anthropic prompt caching (`cache_control` on the
+    // whole system message) can amortize the canon across turns.
     if (linkedLibraryContent && linkedLibraryContent.length > 0) {
       builder.set('library_context', linkedLibraryContent);
     }

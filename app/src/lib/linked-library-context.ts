@@ -115,17 +115,50 @@ function renderLibrary(library: Library, items: readonly LibraryItem[]): string 
     parts.push('', '[Files]');
     for (const item of items) {
       parts.push('', `File: ${item.label ? `${item.label} (${item.filename})` : item.filename}`);
-      // Wrap text in a code fence so the model treats it as a literal
-      // attachment. Images are rare in v2a libraries (mostly canon
-      // markdown) but if one shows up we render the data URL inline —
-      // the chat-attachment pipeline normally pulls images out before
-      // they reach the system prompt; here the URL is best-effort.
       if (item.type === 'image') {
-        parts.push(`[image: ${item.mimeType}, ${item.sizeBytes} bytes]`);
+        // Image rendering limitation: the system message is text-only
+        // for every provider (image_url blocks live on user messages,
+        // not system), so we cannot pass the image data to the model
+        // through this path. We emit a metadata placeholder so the
+        // model is aware the linked library has an image but knows it
+        // can't see the pixels. Splitting image items out and routing
+        // them through the user-message attachments at send time is a
+        // v2c follow-up — see PR #619 Codex P2.
+        parts.push(
+          `[Image Attachment: ${item.filename} (${item.mimeType}), ${item.sizeBytes} bytes — content not available via linked-library context]`,
+        );
       } else {
-        parts.push('```', item.content, '```');
+        // Use a fence delimiter longer than any backtick run already
+        // present in the content so a markdown library that itself
+        // contains ``` blocks (very common for canon files) doesn't
+        // prematurely close the fence and corrupt the rest of the
+        // system prompt. CommonMark allows arbitrary backtick fences;
+        // we just need our outer fence to be strictly longer.
+        const fence = chooseFence(item.content);
+        parts.push(fence, item.content, fence);
       }
     }
   }
   return parts.join('\n');
+}
+
+/**
+ * Find the longest run of backticks in `content`, return a fence one
+ * longer. Minimum length 3 (the markdown default). Examples:
+ *   content="no fences here"      → "```"
+ *   content="```js\n...\n```"     → "````"  (4 ticks)
+ *   content="`````\n..."           → "``````" (6 ticks)
+ */
+function chooseFence(content: string): string {
+  let longest = 0;
+  let current = 0;
+  for (const ch of content) {
+    if (ch === '`') {
+      current++;
+      if (current > longest) longest = current;
+    } else {
+      current = 0;
+    }
+  }
+  return '`'.repeat(Math.max(3, longest + 1));
 }

@@ -236,4 +236,79 @@ describe('buildLinkedLibraryContext', () => {
     // Total rendered length is bounded (cap + framing prose).
     expect(result!.length).toBeLessThan(500 * 1024);
   });
+
+  it('escapes triple-backtick content so a markdown library cannot prematurely close the fence', async () => {
+    // Library file whose own content uses ``` for inner code blocks.
+    // Without the fence-escape, the inner ``` would close our outer
+    // fence and the rest of the system prompt would bleed into a code
+    // block.
+    const trickyContent =
+      'Here is a code block in the library:\n\n```\nsome code\n```\n\nAnd after.';
+    mockedGet.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        collection: {
+          id: 'lib-1',
+          name: 'Tricky',
+          itemCount: 1,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        items: [
+          {
+            id: 'i-1',
+            libraryId: 'lib-1',
+            type: 'document',
+            filename: 'has-fences.md',
+            mimeType: 'text/markdown',
+            sizeBytes: trickyContent.length,
+            content: trickyContent,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+      },
+    });
+    const result = await buildLinkedLibraryContext(['lib-1']);
+    expect(result).toBeDefined();
+    // The outer fence must be at least 4 backticks (one more than the
+    // 3-backtick run inside the content) — Markdown fence-length rule.
+    expect(result).toContain('````');
+    // And the inner ``` content survives intact.
+    expect(result).toContain('```\nsome code\n```');
+  });
+
+  it('emits an explicit metadata-only placeholder for image items (system message is text-only)', async () => {
+    mockedGet.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        collection: {
+          id: 'lib-1',
+          name: 'Visuals',
+          itemCount: 1,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        items: [
+          {
+            id: 'i-img',
+            libraryId: 'lib-1',
+            type: 'image',
+            filename: 'diagram.png',
+            mimeType: 'image/png',
+            sizeBytes: 12345,
+            content: 'data:image/png;base64,iVBORw0K…',
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+      },
+    });
+    const result = await buildLinkedLibraryContext(['lib-1']);
+    expect(result).toContain('Image Attachment: diagram.png');
+    expect(result).toContain('image/png');
+    expect(result).toContain('not available via linked-library context');
+    // The base64 payload must NOT leak into the system prompt.
+    expect(result).not.toContain('iVBORw0K');
+  });
 });
