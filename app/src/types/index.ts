@@ -970,6 +970,15 @@ export interface Conversation {
    * entries are kept so the JobCard stays rendered in the transcript.
    */
   pendingJobIds?: Record<string, BackgroundJobPersistenceEntry>;
+  /**
+   * Library v2b linkage — IDs of `Library` collections (see
+   * `chat-library-types.ts`) whose contents are auto-injected into the
+   * system message on every turn of this chat, fetched fresh from KV.
+   * The content itself is NOT persisted into chat history; only the
+   * IDs live here. Survives provider/model switches because the
+   * linkage is chat-scoped, not provider-scoped.
+   */
+  linkedLibraryIds?: string[];
 }
 
 // Onboarding + Active Repo types

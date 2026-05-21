@@ -42,6 +42,7 @@ export async function* kilocodeStream(
       prior: req.priorSessionDigest,
       onEmit: req.onSessionDigestEmitted,
     },
+    req.linkedLibraryContent,
   );
 
   // 2. Plain OpenAI-compatible request body — no Kilo Code-specific fields.

@@ -157,6 +157,40 @@ export function useChatManagement({
     [dirtyConversationIdsRef, setConversations],
   );
 
+  /**
+   * Library v2b — set the `linkedLibraryIds` array on a conversation.
+   * Pass the full next-state array (not a delta); callers usually
+   * splice via a quick map. Updates are persisted via the same
+   * dirty-ref mechanism as rename — chat-stream-round reads the latest
+   * via `conversationsRef` on every send, so the next assistant turn
+   * picks up the change immediately.
+   */
+  const setChatLinkedLibraries = useCallback(
+    (id: string, nextIds: readonly string[]) => {
+      setConversations((prev) => {
+        const existing = prev[id];
+        if (!existing) return prev;
+        // De-dup + freeze: same array contents in a different order
+        // shouldn't churn React or hit IndexedDB.
+        const deduped = Array.from(new Set(nextIds));
+        const current = existing.linkedLibraryIds ?? [];
+        if (
+          deduped.length === current.length &&
+          deduped.every((libId, i) => libId === current[i])
+        ) {
+          return prev;
+        }
+        const updated = {
+          ...prev,
+          [id]: { ...existing, linkedLibraryIds: deduped.length > 0 ? deduped : undefined },
+        };
+        dirtyConversationIdsRef.current.add(id);
+        return updated;
+      });
+    },
+    [dirtyConversationIdsRef, setConversations],
+  );
+
   const deleteChat = useCallback(
     (id: string) => {
       clearQueuedFollowUps(id);
@@ -274,5 +308,12 @@ export function useChatManagement({
     workspaceModeRef,
   ]);
 
-  return { createNewChat, switchChat, renameChat, deleteChat, deleteAllChats };
+  return {
+    createNewChat,
+    switchChat,
+    renameChat,
+    setChatLinkedLibraries,
+    deleteChat,
+    deleteAllChats,
+  };
 }

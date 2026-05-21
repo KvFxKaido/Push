@@ -43,6 +43,7 @@ export async function* ollamaStream(
       prior: req.priorSessionDigest,
       onEmit: req.onSessionDigestEmitted,
     },
+    req.linkedLibraryContent,
   );
 
   // 2. Plain OpenAI-compatible request body — Ollama Cloud has no

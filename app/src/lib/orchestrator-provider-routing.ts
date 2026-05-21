@@ -441,6 +441,7 @@ export async function streamChat(
   todoContent?: string,
   onReasoningBlock?: (block: ReasoningBlock) => void,
   sessionDigest?: SessionDigestPlumbing,
+  linkedLibraryContent?: string,
 ): Promise<void> {
   const provider = providerOverride || getActiveProvider();
 
@@ -497,6 +498,7 @@ export async function streamChat(
       systemPromptOverride: undefined,
       scratchpadContent,
       todoContent,
+      linkedLibraryContent,
       workspaceContext,
       hasSandbox,
       onPreCompact,

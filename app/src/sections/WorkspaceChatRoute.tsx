@@ -74,6 +74,11 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     activeChatId,
     switchChat,
     renameChat,
+    // `setChatLinkedLibraries` is accepted by the route prop type for
+    // parity with chat mode but not surfaced here — repo/scratch
+    // surfaces use the git repo (or scratch dir) as their durable
+    // context, so libraries aren't wired into the composer. Leaving
+    // it un-destructured is intentional.
     deleteChat,
     regenerateLastResponse,
     editMessageAndResend,

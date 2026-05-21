@@ -55,6 +55,7 @@ export async function* cloudflareStream(
       prior: req.priorSessionDigest,
       onEmit: req.onSessionDigestEmitted,
     },
+    req.linkedLibraryContent,
   );
 
   // 2. Plain OpenAI-compatible request body. The Worker normalizes the

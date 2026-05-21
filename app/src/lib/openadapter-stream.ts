@@ -42,6 +42,7 @@ export async function* openadapterStream(
       prior: req.priorSessionDigest,
       onEmit: req.onSessionDigestEmitted,
     },
+    req.linkedLibraryContent,
   );
 
   const body: Record<string, unknown> = {

@@ -3,6 +3,7 @@ import { ChevronsUpDown, Loader2, Lock, RefreshCw, Square } from 'lucide-react';
 import { AttachmentPreview } from './AttachmentPreview';
 import { ContextMeter } from './ContextMeter';
 import { LibraryPanel } from './LibraryPanel';
+import { LinkedLibraryChips } from './LinkedLibraryChips';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ModelPicker } from '@/components/ui/model-picker';
 import { ProviderIcon } from '@/components/ui/provider-icon';
@@ -40,6 +41,14 @@ interface ChatInputProps {
    *  previously-saved files. Chat mode opts in; workspace mode keeps the
    *  repo as its persistence layer. */
   libraryEnabled?: boolean;
+  /** Library v2b — IDs of libraries linked to the current chat. Used to
+   *  show the chip strip above the composer and to gate the Link
+   *  toggle's state in the picker detail view. */
+  linkedLibraryIds?: readonly string[];
+  /** Library v2b — replace the linked-library set on the current chat.
+   *  Undefined when no active chat exists (e.g. pre-flight composer);
+   *  the Link toggle stays disabled in that case. */
+  onSetLinkedLibraries?: (nextIds: readonly string[]) => void;
   draftKey?: string | null;
   prefillRequest?: {
     token: number;
@@ -222,6 +231,8 @@ export function ChatInput({
   placeholder,
   contextUsage,
   libraryEnabled,
+  linkedLibraryIds,
+  onSetLinkedLibraries,
   draftKey,
   prefillRequest,
   editState,
@@ -661,6 +672,17 @@ export function ChatInput({
           </div>
         )}
 
+        {/* Linked libraries (v2b) — auto-attach every turn until unlinked */}
+        {libraryEnabled && linkedLibraryIds && linkedLibraryIds.length > 0 && (
+          <LinkedLibraryChips
+            libraryIds={linkedLibraryIds}
+            onUnlink={(id) => {
+              if (!onSetLinkedLibraries) return;
+              onSetLinkedLibraries(linkedLibraryIds.filter((existing) => existing !== id));
+            }}
+          />
+        )}
+
         {/* Attachment preview */}
         {hasAttachments && (
           <div className="px-3 pt-3">
@@ -721,6 +743,8 @@ export function ChatInput({
               <LibraryPanel
                 disabled={isStreaming}
                 onAttach={handleAttachFromLibrary}
+                linkedLibraryIds={linkedLibraryIds}
+                onSetLinkedLibraries={onSetLinkedLibraries}
                 buttonClassName={`flex h-10 w-10 items-center justify-center rounded-full border text-push-fg-secondary ${COMPOSER_CONTROL_SURFACE_CLASS} ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`}
                 iconClassName="relative z-10 h-4 w-4"
               />

@@ -15,6 +15,7 @@
 import { streamChat, peekLastPromptSnapshot } from '@/lib/orchestrator';
 import { drainRecentContextMetrics } from '@/lib/context-metrics';
 import { assertReadyForAssistantTurn } from '@push/lib/llm-message-invariants';
+import { buildLinkedLibraryContext } from '@/lib/linked-library-context';
 import { buildTodoContext } from '@/lib/todo-tools';
 import { setOpenRouterSessionId } from '@/lib/openrouter-session';
 import { getDefaultMemoryStore } from '@push/lib/context-memory-store';
@@ -72,6 +73,7 @@ export async function streamAssistantRound(
     abortControllerRef,
     sandboxIdRef,
     localDaemonBindingRef,
+    conversationsRef,
     setConversations,
     updateAgentStatus,
     emitRunEngineEvent,
@@ -142,6 +144,14 @@ export async function streamAssistantRound(
       sessionDigestRecords = [];
     }
   }
+
+  // Library v2b — fetch + render content for libraries linked to this
+  // chat. Fresh every turn (never persisted in chat history). Helper
+  // returns undefined when nothing to inject — failures are swallowed
+  // so a single unreachable library doesn't block the send.
+  const linkedLibraryIds = conversationsRef.current[chatId]?.linkedLibraryIds ?? [];
+  const linkedLibraryContent =
+    linkedLibraryIds.length > 0 ? await buildLinkedLibraryContext(linkedLibraryIds) : undefined;
 
   const error = await new Promise<Error | null>((resolve) => {
     streamChat(
@@ -249,6 +259,7 @@ export async function streamAssistantRound(
           if (digest) recordSessionDigest(chatId, digest);
         },
       },
+      linkedLibraryContent,
     );
   });
 

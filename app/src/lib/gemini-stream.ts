@@ -49,6 +49,7 @@ export async function* geminiStream(
       prior: req.priorSessionDigest,
       onEmit: req.onSessionDigestEmitted,
     },
+    req.linkedLibraryContent,
   );
 
   // Per-request flag wins; otherwise the Web Search menu's mode decides

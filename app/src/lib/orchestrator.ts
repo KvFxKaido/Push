@@ -280,6 +280,7 @@ export function toLLMMessages(
   intentHint?: string | null,
   todoContent?: string,
   sessionDigestOptions?: SessionDigestOptions,
+  linkedLibraryContent?: string,
 ): LLMMessage[] {
   // When a systemPromptOverride is provided (Auditor, Coder), the caller has already
   // composed a complete system prompt — don't append Orchestrator-specific protocols.
@@ -438,6 +439,18 @@ export function toLLMMessages(
       if (memoryBlocks.length > 0) {
         builder.set('memory', memoryBlocks.join('\n\n'));
       }
+    }
+
+    // Linked-library content (v2b) — user-managed bundles linked to
+    // this chat, pre-rendered by the caller. Applies in every mode
+    // (chat, repo, scratch, local-pc): the linkage is per-chat and
+    // user-explicit, so the system message carries it whenever the
+    // caller passes a non-empty string. Anthropic prompt caching
+    // (`cache_control` on the system message) kicks in below
+    // automatically since the cacheable flag covers the whole system
+    // content, including this section.
+    if (linkedLibraryContent && linkedLibraryContent.length > 0) {
+      builder.set('library_context', linkedLibraryContent);
     }
 
     // Intent hint (last so it overrides)

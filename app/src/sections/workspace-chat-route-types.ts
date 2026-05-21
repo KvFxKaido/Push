@@ -113,6 +113,8 @@ export interface ChatRouteConversationProps {
   activeChatId: string | null;
   switchChat: (id: string) => void;
   renameChat: (id: string, name: string) => void;
+  /** Library v2b — replace the chat's linked-library ids. Empty array clears. */
+  setChatLinkedLibraries: (id: string, nextIds: readonly string[]) => void;
   deleteChat: (id: string) => void;
   deleteAllChats: () => void;
   clearMemoryByRepo: () => void;
