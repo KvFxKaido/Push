@@ -75,6 +75,7 @@ function baseShell(overrides: Partial<Props['shell']> = {}): Props['shell'] {
 function baseChat(): Props['chat'] {
   return {
     containerProps: {
+      messages: [],
       agentStatus: { active: false },
     } as unknown as Props['chat']['containerProps'],
     inputProps: {} as Props['chat']['inputProps'],
