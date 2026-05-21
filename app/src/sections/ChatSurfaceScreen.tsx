@@ -104,14 +104,17 @@ export function ChatSurfaceScreen({
         <ChatContainer {...containerProps} />
         <ChatInput {...inputProps} />
       </div>
-      <RepoAppearanceSheet
-        open={appearanceSheetOpen}
-        onOpenChange={setAppearanceSheetOpen}
-        repoName="Chat"
-        appearance={appearance}
-        onSave={onSaveAppearance}
-        onReset={onResetAppearance}
-      />
+      {appearanceSheetOpen && (
+        <RepoAppearanceSheet
+          open={appearanceSheetOpen}
+          onOpenChange={setAppearanceSheetOpen}
+          repoName="Chat"
+          appearance={appearance}
+          onSave={onSaveAppearance}
+          onReset={onResetAppearance}
+          description="Pick a quiet accent color for chat mode on this device."
+        />
+      )}
     </div>
   );
 }
