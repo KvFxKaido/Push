@@ -62,6 +62,18 @@ const MAX_LIBRARY_LABEL_CHARS = 200;
 /** 2000-char ceiling on per-library `instructions`. */
 const MAX_LIBRARY_INSTRUCTIONS_CHARS = 2000;
 
+/**
+ * Deterministic UUID for the "Default" library produced by the v1→v2a
+ * migration. Using a fixed id (rather than `crypto.randomUUID()`) means
+ * concurrent first requests after a v1 deploy converge on the same
+ * record instead of each minting a separate Default — KV `put` of the
+ * same key with the same shape is idempotent, and items written under
+ * `item:<DEFAULT>:<old_id>` collide harmlessly. The chance of a
+ * user-created library colliding with this UUID is zero (crypto random
+ * bytes won't produce these exact bits).
+ */
+const DEFAULT_LIBRARY_ID = '00000000-0000-4000-8000-000000000001';
+
 // ---------------------------------------------------------------------------
 // Response helpers
 // ---------------------------------------------------------------------------
@@ -184,9 +196,8 @@ async function migrateV1IfNeeded(kv: KVNamespace): Promise<void> {
     return;
   }
 
-  const defaultId = crypto.randomUUID();
+  const defaultId = DEFAULT_LIBRARY_ID;
   const now = Date.now();
-  let migrated = 0;
 
   for (const oldKey of v1Keys) {
     const oldValue = await kv.get(oldKey.name);
@@ -223,14 +234,18 @@ async function migrateV1IfNeeded(kv: KVNamespace): Promise<void> {
       metadata: libraryItemMetaFromItem(newItem),
     });
     await kv.delete(oldKey.name);
-    migrated++;
   }
 
+  // Recompute itemCount from actual storage so an interleaved second
+  // migration run can't end up with a stale count. Also inherit the
+  // earliest createdAt if a prior run already wrote the Default record.
+  const actualItems = await listAllKeys(kv, libraryItemsPrefix(defaultId));
+  const existing = await getLibrary(kv, defaultId);
   const defaultLib: Library = {
     id: defaultId,
-    name: 'Default',
-    itemCount: migrated,
-    createdAt: now,
+    name: existing?.name ?? 'Default',
+    itemCount: actualItems.length,
+    createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };
   await kv.put(libraryKvKey(defaultId), JSON.stringify(defaultLib), {
@@ -282,7 +297,9 @@ export async function handleCollectionsCreate(
   if (typeof body.name !== 'string' || body.name.trim().length === 0) {
     return jsonResponse({ ok: false, code: 'INVALID_NAME', message: 'name is required.' }, 400);
   }
-  if (body.name.length > MAX_LIBRARY_LABEL_CHARS) {
+  // Cap applies to the trimmed name (what we actually persist) so a
+  // user typing leading/trailing whitespace can't be falsely rejected.
+  if (body.name.trim().length > MAX_LIBRARY_LABEL_CHARS) {
     return jsonResponse(
       {
         ok: false,
@@ -382,13 +399,30 @@ export async function handleCollectionsGet(request: Request, env: LibraryEnv): P
 
   const keys = await listAllKeys<LibraryItemMeta>(env.CHAT_LIBRARY, libraryItemsPrefix(library.id));
 
+  // Self-heal `itemCount` from actual storage. The cached count on the
+  // Library record is maintained by item create/delete with non-atomic
+  // read-modify-write, so concurrent mutations can drift it. Detail
+  // open is the cheap moment to reconcile — we're already paying for
+  // the prefix list here. Persist back so collections/list rows pick
+  // up the corrected badge on next refresh.
+  let collectionForResponse = library;
+  if (library.itemCount !== keys.length) {
+    const reconciled: Library = {
+      ...library,
+      itemCount: keys.length,
+      updatedAt: Date.now(),
+    };
+    await putLibrary(env.CHAT_LIBRARY, reconciled);
+    collectionForResponse = reconciled;
+  }
+
   if (!includeContent) {
     const itemMetas: LibraryItemMeta[] = [];
     for (const key of keys) {
       if (key.metadata) itemMetas.push(key.metadata);
     }
     itemMetas.sort((a, b) => b.createdAt - a.createdAt);
-    return jsonResponse({ ok: true, collection: library, items: itemMetas });
+    return jsonResponse({ ok: true, collection: collectionForResponse, items: itemMetas });
   }
 
   // Full content path — used by Attach Library. Sequentially read each
@@ -405,7 +439,7 @@ export async function handleCollectionsGet(request: Request, env: LibraryEnv): P
     }
   }
   items.sort((a, b) => b.createdAt - a.createdAt);
-  return jsonResponse({ ok: true, collection: library, items });
+  return jsonResponse({ ok: true, collection: collectionForResponse, items });
 }
 
 // ---------------------------------------------------------------------------
@@ -438,7 +472,7 @@ export async function handleCollectionsUpdate(
         400,
       );
     }
-    if (body.name.length > MAX_LIBRARY_LABEL_CHARS) {
+    if (body.name.trim().length > MAX_LIBRARY_LABEL_CHARS) {
       return jsonResponse(
         {
           ok: false,
@@ -591,7 +625,7 @@ export async function handleItemsCreate(request: Request, env: LibraryEnv): Prom
       400,
     );
   }
-  if (typeof body.label === 'string' && body.label.length > MAX_LIBRARY_LABEL_CHARS) {
+  if (typeof body.label === 'string' && body.label.trim().length > MAX_LIBRARY_LABEL_CHARS) {
     return jsonResponse(
       {
         ok: false,
@@ -678,7 +712,7 @@ export async function handleItemsUpdate(request: Request, env: LibraryEnv): Prom
       400,
     );
   }
-  if (typeof body.label === 'string' && body.label.length > MAX_LIBRARY_LABEL_CHARS) {
+  if (typeof body.label === 'string' && body.label.trim().length > MAX_LIBRARY_LABEL_CHARS) {
     return jsonResponse(
       {
         ok: false,

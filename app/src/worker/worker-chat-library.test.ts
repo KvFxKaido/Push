@@ -138,6 +138,17 @@ describe('handleCollectionsCreate', () => {
     expect(res.status).toBe(503);
     expect(((await res.json()) as Record<string, unknown>).code).toBe('NOT_CONFIGURED');
   });
+
+  it('compares the trimmed name against the cap (whitespace-padded names are OK)', async () => {
+    const kv = new MockKvNamespace();
+    const env = { CHAT_LIBRARY: kv as unknown as KVNamespace };
+    // 200 leading spaces + 5-char name = 205 raw chars, 5 trimmed. Must succeed.
+    const padded = `${' '.repeat(200)}ZERO!`;
+    const res = await handleCollectionsCreate(makeRequest({ name: padded }), env);
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as Record<string, unknown>;
+    expect((json.collection as Record<string, unknown>).name).toBe('ZERO!');
+  });
 });
 
 describe('handleCollectionsList', () => {
@@ -515,5 +526,64 @@ describe('v1 → v2a migration', () => {
     // Still exactly one Default — second run didn't create another.
     expect(collections.length).toBe(1);
     expect(collections[0].itemCount).toBe(1);
+  });
+
+  it('uses a deterministic Default library id so concurrent races converge', async () => {
+    const kv = new MockKvNamespace();
+    const env = { CHAT_LIBRARY: kv as unknown as KVNamespace };
+    await kv.put(
+      'library:v1-x',
+      JSON.stringify({
+        id: 'v1-x',
+        type: 'document',
+        filename: 'x.md',
+        mimeType: 'text/markdown',
+        sizeBytes: 5,
+        content: 'hello',
+        createdAt: 1000,
+        updatedAt: 1000,
+      }),
+    );
+    await handleCollectionsList(makeRequest({}), env);
+    // The Default record always lives at the same key, regardless of
+    // how many migration races happened.
+    expect(await kv.get('lib:00000000-0000-4000-8000-000000000001')).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// itemCount self-heal on collections/get
+// ---------------------------------------------------------------------------
+
+describe('handleCollectionsGet self-heal', () => {
+  it('reconciles a drifted Library.itemCount from the actual item list', async () => {
+    const kv = new MockKvNamespace();
+    const env = { CHAT_LIBRARY: kv as unknown as KVNamespace };
+    const libId = await createLibrary(env, 'PZ');
+    await handleItemsCreate(makeRequest({ libraryId: libId, attachment: VALID_DOC }), env);
+    await handleItemsCreate(makeRequest({ libraryId: libId, attachment: VALID_DOC }), env);
+
+    // Simulate drift: overwrite the Library record with a stale count
+    // (mimicking what a non-atomic concurrent mutation could produce).
+    const libKey = `lib:${libId}`;
+    const raw = await kv.get(libKey);
+    expect(raw).not.toBeNull();
+    const parsed = JSON.parse(raw as string) as Record<string, unknown>;
+    parsed.itemCount = 99;
+    await kv.put(libKey, JSON.stringify(parsed));
+
+    const res = await handleCollectionsGet(makeRequest({ id: libId }), env);
+    const json = (await res.json()) as Record<string, unknown>;
+    const collection = json.collection as Record<string, unknown>;
+    // Detail view shows the real count.
+    expect(collection.itemCount).toBe(2);
+
+    // And the persisted record now matches, so list rows pick up the
+    // corrected badge next refresh.
+    const listRes = await handleCollectionsList(makeRequest({}), env);
+    const listJson = (await listRes.json()) as Record<string, unknown>;
+    const collections = listJson.collections as Array<Record<string, unknown>>;
+    const target = collections.find((c) => c.id === libId);
+    expect(target?.itemCount).toBe(2);
   });
 });
