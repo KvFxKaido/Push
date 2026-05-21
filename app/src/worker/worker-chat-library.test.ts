@@ -708,4 +708,41 @@ describe('handleCollectionsGet self-heal', () => {
     const target = collections.find((c) => c.id === libId);
     expect(target?.itemCount).toBe(2);
   });
+
+  it('does NOT bump updatedAt when self-healing — opening a drifted library must not reorder the list', async () => {
+    const kv = new MockKvNamespace();
+    const env = { CHAT_LIBRARY: kv as unknown as KVNamespace };
+    // Create A (with an item so it has a real updatedAt), then B last so
+    // B is on top of the recency-sorted list.
+    const libA = await createLibrary(env, 'A');
+    await handleItemsCreate(makeRequest({ libraryId: libA, attachment: VALID_DOC }), env);
+    await new Promise((r) => setTimeout(r, 2));
+    const libB = await createLibrary(env, 'B');
+
+    // Force-drift A's cached itemCount to mimic a concurrent-mutation race.
+    const libKey = `lib:${libA}`;
+    const raw = await kv.get(libKey);
+    const parsed = JSON.parse(raw as string) as Record<string, unknown>;
+    const originalUpdatedAt = parsed.updatedAt as number;
+    parsed.itemCount = 99;
+    await kv.put(libKey, JSON.stringify(parsed));
+    await new Promise((r) => setTimeout(r, 2));
+
+    // Opening A's detail triggers the self-heal.
+    await handleCollectionsGet(makeRequest({ id: libA }), env);
+
+    // A's updatedAt must be preserved — opening for a passive
+    // correction is not a user action.
+    const reconciledRaw = await kv.get(libKey);
+    const reconciled = JSON.parse(reconciledRaw as string) as Record<string, unknown>;
+    expect(reconciled.itemCount).toBe(1);
+    expect(reconciled.updatedAt).toBe(originalUpdatedAt);
+
+    // List order must still put B first.
+    const listRes = await handleCollectionsList(makeRequest({}), env);
+    const listJson = (await listRes.json()) as Record<string, unknown>;
+    const collections = listJson.collections as Array<Record<string, unknown>>;
+    expect(collections[0].id).toBe(libB);
+    expect(collections[1].id).toBe(libA);
+  });
 });

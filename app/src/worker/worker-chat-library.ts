@@ -437,12 +437,17 @@ export async function handleCollectionsGet(request: Request, env: LibraryEnv): P
   // open is the cheap moment to reconcile — we're already paying for
   // the prefix list here. Persist back so collections/list rows pick
   // up the corrected badge on next refresh.
+  //
+  // `updatedAt` is intentionally NOT bumped here: this is a passive
+  // internal correction, not a user action. Bumping it would promote
+  // the library to the top of the recency-sorted list as a side-effect
+  // of merely opening it, breaking the "most-recently-updated first"
+  // contract `collections/list` advertises.
   let collectionForResponse = library;
   if (library.itemCount !== keys.length) {
     const reconciled: Library = {
       ...library,
       itemCount: keys.length,
-      updatedAt: Date.now(),
     };
     await putLibrary(env.CHAT_LIBRARY, reconciled);
     collectionForResponse = reconciled;
