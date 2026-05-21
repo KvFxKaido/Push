@@ -12,7 +12,7 @@
  */
 
 import { useEffect, useMemo } from 'react';
-import { X } from 'lucide-react';
+import { Library, X } from 'lucide-react';
 import { useChatLibrary } from '@/hooks/useChatLibrary';
 
 interface LinkedLibraryChipsProps {
@@ -21,21 +21,26 @@ interface LinkedLibraryChipsProps {
 }
 
 export function LinkedLibraryChips({ libraryIds, onUnlink }: LinkedLibraryChipsProps) {
-  const { collections, hasFetched, refresh } = useChatLibrary();
-
-  // Trigger one fetch on first mount with non-empty linkage so names
-  // are available. Re-fetches when libraryIds gains entries we don't
-  // have a name for yet.
-  useEffect(() => {
-    if (libraryIds.length === 0) return;
-    if (!hasFetched) void refresh();
-  }, [hasFetched, libraryIds, refresh]);
+  const { collections, hasFetched, isLoading, refresh } = useChatLibrary();
 
   const nameById = useMemo(() => {
     const map = new Map<string, string>();
     for (const c of collections) map.set(c.id, c.name);
     return map;
   }, [collections]);
+
+  // Trigger a fetch when we have linkage but unresolved names — covers
+  // both first-mount (nothing fetched yet) and runtime "user just
+  // linked a library we hadn't loaded the list for" (which the prior
+  // `!hasFetched` gate missed entirely). `refresh` itself coalesces
+  // concurrent calls via an inflight ref, and the `isLoading` guard
+  // prevents the effect from re-firing while the fetch is in flight.
+  useEffect(() => {
+    if (libraryIds.length === 0) return;
+    if (isLoading) return;
+    const hasUnresolved = libraryIds.some((id) => !nameById.has(id));
+    if (!hasFetched || hasUnresolved) void refresh();
+  }, [hasFetched, isLoading, libraryIds, nameById, refresh]);
 
   if (libraryIds.length === 0) return null;
 
@@ -50,7 +55,7 @@ export function LinkedLibraryChips({ libraryIds, onUnlink }: LinkedLibraryChipsP
             className="flex shrink-0 items-center gap-1 rounded-full border border-push-accent/30 bg-push-accent/10 px-2 py-0.5 text-push-2xs text-push-accent"
             title={`Linked library — ${name}. Auto-attached on every turn.`}
           >
-            <BookGlyph className="h-2.5 w-2.5" />
+            <Library className="h-2.5 w-2.5" />
             <span className="max-w-[120px] truncate">{name}</span>
             <button
               type="button"
@@ -65,23 +70,5 @@ export function LinkedLibraryChips({ libraryIds, onUnlink }: LinkedLibraryChipsP
         );
       })}
     </div>
-  );
-}
-
-function BookGlyph({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M3 5.5A1.5 1.5 0 0 1 4.5 4H10a2 2 0 0 1 2 2v13a1 1 0 0 0-1-1H4.5A1.5 1.5 0 0 1 3 16.5v-11Z" />
-      <path d="M21 5.5A1.5 1.5 0 0 0 19.5 4H14a2 2 0 0 0-2 2v13a1 1 0 0 1 1-1h6.5a1.5 1.5 0 0 0 1.5-1.5v-11Z" />
-    </svg>
   );
 }

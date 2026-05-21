@@ -168,4 +168,72 @@ describe('buildLinkedLibraryContext', () => {
     // happened (parallelism comes from Promise.all in the helper).
     expect(mockedGet).toHaveBeenCalledTimes(3);
   });
+
+  it('hard-truncates a library that pushes past the 400KB cap and lists later libraries by name', async () => {
+    // Library A is huge (well over 400KB), B and C are normal-sized.
+    const huge = 'x'.repeat(500 * 1024);
+    mockedGet
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          collection: {
+            id: 'A',
+            name: 'A',
+            itemCount: 1,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+          items: [
+            {
+              id: 'i-1',
+              libraryId: 'A',
+              type: 'document',
+              filename: 'big.md',
+              mimeType: 'text/markdown',
+              sizeBytes: huge.length,
+              content: huge,
+              createdAt: 1,
+              updatedAt: 1,
+            },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          collection: {
+            id: 'B',
+            name: 'Beta',
+            itemCount: 0,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+          items: [],
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          collection: {
+            id: 'C',
+            name: 'Gamma',
+            itemCount: 0,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+          items: [],
+        },
+      });
+
+    const result = await buildLinkedLibraryContext(['A', 'B', 'C']);
+    expect(result).toBeDefined();
+    // Truncation marker for A appears.
+    expect(result).toContain('Truncated: library "A"');
+    // Later libraries skipped and announced by name (not silently dropped).
+    expect(result).toContain('Skipped due to');
+    expect(result).toContain('Beta');
+    expect(result).toContain('Gamma');
+    // Total rendered length is bounded (cap + framing prose).
+    expect(result!.length).toBeLessThan(500 * 1024);
+  });
 });

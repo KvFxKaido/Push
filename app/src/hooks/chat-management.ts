@@ -170,15 +170,17 @@ export function useChatManagement({
       setConversations((prev) => {
         const existing = prev[id];
         if (!existing) return prev;
-        // De-dup + freeze: same array contents in a different order
-        // shouldn't churn React or hit IndexedDB.
+        // De-dup. Preserve user-add order in the persisted array (it
+        // drives chip display order), but compare against the existing
+        // state order-INSENSITIVELY so passing the same set of ids in
+        // a different order doesn't churn React or hit IndexedDB.
         const deduped = Array.from(new Set(nextIds));
         const current = existing.linkedLibraryIds ?? [];
-        if (
-          deduped.length === current.length &&
-          deduped.every((libId, i) => libId === current[i])
-        ) {
-          return prev;
+        if (deduped.length === current.length) {
+          const currentSet = new Set(current);
+          if (deduped.every((libId) => currentSet.has(libId))) {
+            return prev;
+          }
         }
         const updated = {
           ...prev,
