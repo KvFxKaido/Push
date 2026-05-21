@@ -233,12 +233,6 @@ Removed providers (`mistral`, `zai`, `minimax`) are gracefully redirected to `op
 
 You can switch provider/model mid-session with `/provider` and `/model`. Switching providers updates runtime endpoint/key/model without restarting the CLI.
 
-### Provider policies
-
-- Ollama: `docs/security/PROVIDER_USAGE_POLICY_OLLAMA.md`
-- OpenRouter: `docs/security/PROVIDER_USAGE_POLICY_OPENROUTER.md`
-- OpenCode Zen: `docs/security/PROVIDER_USAGE_POLICY_ZEN.md`
-
 ## Tools
 
 All providers support prompt-engineered tool calls (fenced JSON blocks in the content stream). OpenAI-compatible native `delta.tool_calls` are also accepted: `cli/openai-stream.ts` uses the shared SSE pump to accumulate them and flush each assembled call back into the same text-based dispatcher.

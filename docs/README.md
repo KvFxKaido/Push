@@ -54,19 +54,6 @@ Detailed per-doc status lives in [`runbooks/README.md`](runbooks/README.md). Sum
 
 - `security/SECURITY_AUDIT.md`
   - Status: Security findings and mitigation history.
-- `security/PROVIDER_USAGE_POLICY.md`
-  - Status: Mistral provider key usage policy and terms-boundary review checklist (last reviewed 2026-02-21).
-- `security/PROVIDER_USAGE_POLICY_OPENROUTER.md`
-  - Status: OpenRouter provider key usage policy and terms-boundary review checklist (last reviewed 2026-02-21).
-- `security/PROVIDER_USAGE_POLICY_OLLAMA.md`
-  - Status: Ollama provider key usage policy and terms/data-boundary review checklist (last reviewed 2026-02-21).
-- `security/PROVIDER_USAGE_POLICY_ZAI.md`
-  - Status: Z.AI provider key usage policy and terms/data-boundary review checklist (last reviewed 2026-02-21).
-- `security/PROVIDER_USAGE_POLICY_GOOGLE.md`
-  - Status: Google Gemini provider key usage policy and terms/data-boundary review checklist (last reviewed 2026-02-21).
-- `security/PROVIDER_USAGE_POLICY_ZEN.md`
-  - Status: OpenCode Zen provider key usage policy and terms/data-boundary review checklist (last reviewed 2026-02-21).
-
 ## CLI Docs
 
 - `cli/design/Push Runtime Protocol.md`
