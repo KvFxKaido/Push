@@ -120,18 +120,8 @@ export function ChatScreen({
   const { containerProps: chatContainerProps, inputProps: chatInputProps } = chat;
   const { sandboxStatusBannerProps, sandboxExpiryBannerProps } = banners;
 
-  // Count real user prompts only — synthetic tool-result messages also have
-  // role: 'user' and would inflate the count mid-first-turn whenever the
-  // orchestrator calls a tool, prematurely deactivating the glow.
-  const userPromptCount = chatContainerProps.messages.reduce(
-    (n, m) => (m.role === 'user' && !m.isToolResult ? n + 1 : n),
-    0,
-  );
-  const agentActive = chatContainerProps.agentStatus.active;
-  const isFirstTurn = userPromptCount === 0 || (userPromptCount === 1 && agentActive);
-  const glowColor = getRepoAppearanceColorHex(
-    (activeRepoAppearance ?? DEFAULT_REPO_APPEARANCE).color,
-  );
+  const resolvedAppearance = activeRepoAppearance ?? DEFAULT_REPO_APPEARANCE;
+  const glowColor = getRepoAppearanceColorHex(resolvedAppearance.color);
 
   return (
     <div className="relative flex h-dvh flex-col overflow-hidden bg-[#000] safe-area-top safe-area-bottom">
@@ -139,7 +129,7 @@ export function ChatScreen({
         className={`relative z-10 isolate flex min-h-0 flex-1 flex-col bg-[#000] transition-[transform,box-shadow] duration-500 ease-in-out will-change-transform ${chatShellShadow}`}
         style={{ transform: chatShellTransform }}
       >
-        <ChatBackgroundGlow active={isFirstTurn} color={glowColor} />
+        <ChatBackgroundGlow active={resolvedAppearance.glowEnabled} color={glowColor} />
         <header className="relative z-10 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 pt-3 pb-2">
           <div className="relative z-20 flex min-w-0 items-center gap-2">
             <div className="flex h-[34px] min-w-0 items-center gap-1 pl-0.5 pr-1">
