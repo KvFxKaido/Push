@@ -175,7 +175,7 @@ export async function streamAssistantRound(
 
   const error = await new Promise<Error | null>((resolve) => {
     streamChat(
-      apiMessagesForSend as ChatMessage[],
+      apiMessagesForSend,
       (token) => {
         if (abortRef.current) return;
         const contentKey = `${round}:${accumulated.length}:${token}`;
@@ -290,8 +290,15 @@ export async function streamAssistantRound(
   // peeking is only safe AFTER streamChat resolves. Hashes + sizes only —
   // the section content itself never leaves `_lastPromptSnapshots`, so this
   // is safe even when sections include sensitive context.
+  //
+  // The peek must use `apiMessagesForSend` (the post-splice clone), not
+  // the original `apiMessages`: the snapshot was written during
+  // streamChat's execution under the post-splice key. Peeking with the
+  // original array would key-miss whenever v2c linked image attachments
+  // were added, silently emitting an empty `assistant.prompt_snapshot`
+  // event for those turns.
   const snapshotEntry = peekLastPromptSnapshot(
-    apiMessages,
+    apiMessagesForSend,
     workspaceContextRef.current ?? undefined,
   );
   if (snapshotEntry) {

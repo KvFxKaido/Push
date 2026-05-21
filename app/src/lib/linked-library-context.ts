@@ -138,20 +138,20 @@ export async function buildLinkedLibraryContext(
 
 /**
  * v2c — graft linked-library image attachments onto the latest user
- * message in `messages`. Pure function: returns a new array with the
- * target message cloned (fresh `attachments` array) and everything
- * else passed by reference identity so downstream caches stay warm.
+ * message in `messages`. Pure function: never mutates `messages` or
+ * any of its entries. Returns a new top-level array with the target
+ * message cloned (fresh `attachments` array); every other entry
+ * keeps reference identity so downstream caches (prompt snapshot,
+ * provider memoization) stay warm.
  *
- * No-op (returns `messages` unchanged) when `imageAttachments` is
- * empty or no user message exists. The clone is intentionally
- * shallow — `apiMessages` is owned by the caller and other downstream
- * code only reads the user message's content, never mutates its
- * attachments after this point.
+ * No-op (returns the input reference unchanged) when `imageAttachments`
+ * is empty or no user message exists, so callers don't pay for a
+ * fresh array on the common path.
  */
 export function spliceLinkedImagesIntoLastUser(
-  messages: readonly ChatMessage[],
+  messages: ChatMessage[],
   imageAttachments: readonly AttachmentData[],
-): readonly ChatMessage[] {
+): ChatMessage[] {
   if (imageAttachments.length === 0) return messages;
   let lastUserIdx = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -176,7 +176,7 @@ function toAttachmentData(item: LibraryItem, library: Library): AttachmentData {
   // the image with its system-message library reference. Filename
   // stays as-stored.
   return {
-    id: `linked-${library.id}-${item.id}-${crypto.randomUUID().slice(0, 8)}`,
+    id: `linked-${library.id}-${item.id}-${shortRandomSuffix()}`,
     type: 'image',
     filename: item.filename,
     mimeType: item.mimeType,
@@ -185,6 +185,26 @@ function toAttachmentData(item: LibraryItem, library: Library): AttachmentData {
     thumbnail: item.thumbnail,
   };
 }
+
+/**
+ * 8-char random suffix used to disambiguate linked-attachment ids
+ * across turns. Prefers `crypto.randomUUID()` for entropy quality but
+ * falls back to `Math.random()` in environments where randomUUID
+ * isn't available or throws (non-secure contexts, certain embedded
+ * runtimes). Collision risk for an 8-char hex slice is irrelevant
+ * here — the namespace already includes the library + item ids; this
+ * only protects against same-turn re-resolution producing identical
+ * ids if a downstream consumer keys on full id equality.
+ */
+function shortRandomSuffix(): string {
+  try {
+    return crypto.randomUUID().slice(0, 8);
+  } catch {
+    return Math.random().toString(36).slice(2, 10).padEnd(8, '0');
+  }
+}
+
+export const __test = { shortRandomSuffix };
 
 function renderLibrary(library: Library, items: readonly LibraryItem[]): string {
   const parts: string[] = [`## Library: ${library.name}`];

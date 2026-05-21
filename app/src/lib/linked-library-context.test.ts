@@ -14,6 +14,7 @@ vi.mock('./chat-library-client', () => ({
 
 import { collectionsGet } from './chat-library-client';
 import {
+  __test,
   buildLinkedLibraryContext,
   spliceLinkedImagesIntoLastUser,
 } from './linked-library-context';
@@ -451,19 +452,19 @@ describe('spliceLinkedImagesIntoLastUser', () => {
   }
 
   it('returns the same array reference when imageAttachments is empty', () => {
-    const messages: readonly ChatMessage[] = [userMsg('u1', 'hi')];
+    const messages: ChatMessage[] = [userMsg('u1', 'hi')];
     const out = spliceLinkedImagesIntoLastUser(messages, []);
     expect(out).toBe(messages);
   });
 
   it('returns the same array reference when no user message exists', () => {
-    const messages: readonly ChatMessage[] = [assistantMsg('a1', 'hello')];
+    const messages: ChatMessage[] = [assistantMsg('a1', 'hello')];
     const out = spliceLinkedImagesIntoLastUser(messages, [image('img1', 'a.png')]);
     expect(out).toBe(messages);
   });
 
   it('appends image attachments onto a clone of the latest user message', () => {
-    const messages: readonly ChatMessage[] = [
+    const messages: ChatMessage[] = [
       userMsg('u1', 'first'),
       assistantMsg('a1', 'reply'),
       userMsg('u2', 'second'),
@@ -487,7 +488,7 @@ describe('spliceLinkedImagesIntoLastUser', () => {
   it('preserves existing user attachments and appends new ones after them', () => {
     const existing = image('existing', 'a.png');
     const linked = image('linked', 'b.png');
-    const messages: readonly ChatMessage[] = [userMsg('u1', 'hi', [existing])];
+    const messages: ChatMessage[] = [userMsg('u1', 'hi', [existing])];
     const out = spliceLinkedImagesIntoLastUser(messages, [linked]);
 
     expect(out[0].attachments).toEqual([existing, linked]);
@@ -498,7 +499,7 @@ describe('spliceLinkedImagesIntoLastUser', () => {
   });
 
   it('appends to the LAST user message when multiple exist', () => {
-    const messages: readonly ChatMessage[] = [
+    const messages: ChatMessage[] = [
       userMsg('u1', 'first'),
       assistantMsg('a1', 'reply'),
       userMsg('u2', 'second'),
@@ -511,5 +512,33 @@ describe('spliceLinkedImagesIntoLastUser', () => {
     expect(out[4].attachments).toEqual([att]);
     expect(out[0].attachments).toBeUndefined();
     expect(out[2].attachments).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// shortRandomSuffix — crypto.randomUUID fallback
+// ---------------------------------------------------------------------------
+
+describe('shortRandomSuffix', () => {
+  it('returns an 8-char id when crypto.randomUUID succeeds', () => {
+    const id = __test.shortRandomSuffix();
+    expect(id).toHaveLength(8);
+  });
+
+  it('falls back to Math.random when crypto.randomUUID throws (non-secure context simulation)', () => {
+    const original = crypto.randomUUID;
+    vi.spyOn(crypto, 'randomUUID').mockImplementation(() => {
+      throw new Error('randomUUID requires a secure context');
+    });
+    try {
+      const id = __test.shortRandomSuffix();
+      expect(id).toHaveLength(8);
+      // Math.random fallback emits base36 chars — should not throw and
+      // should not return the literal "undefined" string from a swallowed
+      // error path.
+      expect(id).not.toContain('undefined');
+    } finally {
+      vi.spyOn(crypto, 'randomUUID').mockImplementation(original);
+    }
   });
 });
