@@ -75,6 +75,7 @@ export function WorkspaceSessionScreen({
     onConversationIndexChange,
     pendingNewChat,
     onPendingNewChatConsumed,
+    onResumeChatFromDrawer,
   } = homeBridge;
 
   const isScratch = workspaceSession.kind === 'scratch';
@@ -564,6 +565,7 @@ export function WorkspaceSessionScreen({
     reposError,
     branches,
     handleSelectRepoFromDrawer,
+    handleResumeChatFromDrawer: onResumeChatFromDrawer,
   };
 
   const catalogDomain = {

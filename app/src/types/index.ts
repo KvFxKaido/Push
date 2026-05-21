@@ -1561,6 +1561,12 @@ export interface WorkspaceScreenHomeBridgeProps {
    * has to mint the fresh chat itself. */
   pendingNewChat: PendingNewChat | null;
   onPendingNewChatConsumed: () => void;
+  /** Invoked when the user taps a chat in the in-workspace Chats drawer.
+   * The App handler migrates the workspace session to match the chat's
+   * mode/repo/branch (preserving the existing session when the context
+   * already matches), then sets pendingResumeChatId so
+   * useWorkspaceSessionBridge routes activeChatId to the tapped chat. */
+  onResumeChatFromDrawer: (chatId: string) => void;
 }
 
 export interface PendingNewChat {

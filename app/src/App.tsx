@@ -568,6 +568,62 @@ function App() {
     [conversationIndex, repos, handleSelectRepo, clearActiveRepo],
   );
 
+  // Tapping a chat in the sidebar must migrate the workspace to match the
+  // chat's mode/repo/branch — otherwise WorkspaceSessionScreen's
+  // belong-to-workspace effect (and useChatAutoSwitch) snap the active chat
+  // back to the workspace's matching conversation. Same-context taps keep
+  // the existing session (no sandbox restart) and rely on pendingResumeChatId
+  // + the resume bridge to switch the chat.
+  const handleResumeChatFromDrawer = useCallback(
+    (chatId: string) => {
+      const conversation = conversationIndex[chatId];
+      if (!conversation) return;
+
+      if (conversation.mode === 'chat') {
+        if (workspaceSession?.kind !== 'chat') {
+          clearActiveRepo();
+          setWorkspaceSession({ id: crypto.randomUUID(), kind: 'chat', sandboxId: null });
+        }
+        setPendingResumeChatId(chatId);
+        return;
+      }
+
+      const isScratchConv =
+        conversation.mode === 'scratch' || (!conversation.repoFullName && !conversation.mode);
+      if (isScratchConv) {
+        if (workspaceSession?.kind !== 'scratch') {
+          clearActiveRepo();
+          setWorkspaceSession({ id: crypto.randomUUID(), kind: 'scratch', sandboxId: null });
+        }
+        setPendingResumeChatId(chatId);
+        return;
+      }
+
+      if (!conversation.repoFullName) return;
+      const repo = repos.find((candidate) => candidate.full_name === conversation.repoFullName);
+      if (!repo) return;
+
+      const targetBranch = conversation.branch || undefined;
+      // Legacy conversations may have no `branch` set. Treat a missing
+      // target branch as "match whatever's current" so tapping an older
+      // chat on a non-default branch doesn't yank the workspace back to
+      // the default branch and restart the sandbox.
+      const sameContext =
+        workspaceSession?.kind === 'repo' &&
+        workspaceSession.repo.full_name === repo.full_name &&
+        (!targetBranch || workspaceSession.repo.current_branch === targetBranch);
+
+      if (!sameContext) {
+        // handleSelectRepo resets pendingResumeChatId internally; (re-)set
+        // it after so the resume bridge picks the tapped chat in the new
+        // session.
+        handleSelectRepo(repo, targetBranch);
+      }
+      setPendingResumeChatId(chatId);
+    },
+    [conversationIndex, repos, workspaceSession, handleSelectRepo, clearActiveRepo],
+  );
+
   const handleSetCurrentBranch = useCallback(
     (branch: string) => {
       setCurrentBranch(branch);
@@ -783,6 +839,7 @@ function App() {
           onConversationIndexChange: setConversationIndex,
           pendingNewChat,
           onPendingNewChatConsumed: handlePendingNewChatConsumed,
+          onResumeChatFromDrawer: handleResumeChatFromDrawer,
         }}
         catalog={catalog}
       />
