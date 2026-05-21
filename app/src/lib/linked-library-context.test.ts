@@ -421,6 +421,110 @@ describe('buildLinkedLibraryContext', () => {
     // ...so its image should not be forwarded as an orphan attachment.
     expect(result.imageAttachments).toEqual([]);
   });
+
+  it('drops images from a boundary-truncated library whose text was sliced', async () => {
+    // Library A is just over the cap so it gets partial-text inclusion
+    // (boundary truncated, remaining > 0). Its image must NOT be
+    // forwarded because the [Image: …] reference line may have been
+    // cut off by the slice, which would orphan the image_url block on
+    // the model side.
+    const huge = 'x'.repeat(500 * 1024);
+    mockedGet.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        collection: { id: 'A', name: 'Heavy', itemCount: 2, createdAt: 1, updatedAt: 1 },
+        items: [
+          {
+            id: 'doc',
+            libraryId: 'A',
+            type: 'document',
+            filename: 'big.md',
+            mimeType: 'text/markdown',
+            sizeBytes: huge.length,
+            content: huge,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+          {
+            id: 'pic',
+            libraryId: 'A',
+            type: 'image',
+            filename: 'orphan.png',
+            mimeType: 'image/png',
+            sizeBytes: 10,
+            content: 'data:image/png;base64,orphan',
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+      },
+    });
+    const result = await buildLinkedLibraryContext(['A']);
+    // System text shows the truncation marker AND mentions the
+    // dropped-images behavior so the model isn't confused.
+    expect(result.systemText).toContain('Truncated: library "Heavy"');
+    expect(result.systemText).toContain('Image attachments from this library were also dropped');
+    // No image attachments forwarded -- orphan pixels avoided.
+    expect(result.imageAttachments).toEqual([]);
+  });
+
+  it('caps total image bytes per turn and lists skipped image names in the tail', async () => {
+    // Three 800KB images = 2.4MB total. The 1.5MB image cap admits
+    // the first one (800KB), rejects the rest. Skipped image names
+    // appear in the system text tail so the model knows not to
+    // reference them.
+    const bigImage = (label: string) => `data:image/png;base64,${'A'.repeat(800 * 1024)}-${label}`;
+    mockedGet.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        collection: { id: 'A', name: 'Visuals', itemCount: 3, createdAt: 1, updatedAt: 1 },
+        items: [
+          {
+            id: 'i1',
+            libraryId: 'A',
+            type: 'image',
+            filename: 'first.png',
+            mimeType: 'image/png',
+            sizeBytes: 800 * 1024,
+            content: bigImage('first'),
+            createdAt: 1,
+            updatedAt: 1,
+          },
+          {
+            id: 'i2',
+            libraryId: 'A',
+            type: 'image',
+            filename: 'second.png',
+            mimeType: 'image/png',
+            sizeBytes: 800 * 1024,
+            content: bigImage('second'),
+            createdAt: 1,
+            updatedAt: 1,
+          },
+          {
+            id: 'i3',
+            libraryId: 'A',
+            type: 'image',
+            filename: 'third.png',
+            mimeType: 'image/png',
+            sizeBytes: 800 * 1024,
+            content: bigImage('third'),
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+      },
+    });
+    const result = await buildLinkedLibraryContext(['A']);
+    // Only the first image fits in the 1.5MB budget.
+    expect(result.imageAttachments).toHaveLength(1);
+    expect(result.imageAttachments[0].filename).toBe('first.png');
+    // Skipped images are explicit in the system text so the model
+    // doesn't try to reference invisible images.
+    expect(result.systemText).toContain('Skipped image attachments');
+    expect(result.systemText).toContain('second.png');
+    expect(result.systemText).toContain('third.png');
+  });
 });
 
 // ---------------------------------------------------------------------------

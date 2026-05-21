@@ -44,12 +44,29 @@ const INTRO =
  */
 const MAX_LINKED_LIBRARY_BYTES = 400 * 1024;
 
+/**
+ * Hard ceiling on aggregate `imageAttachments` bytes for one send.
+ * Library images are stored as base64 data URLs (each individually
+ * capped at 2MB by v2a's CONTENT_TOO_LARGE check), and the chat
+ * composer caps user-uploaded attachments at ~750KB total — but linked
+ * library images bypass both of those budgets because they're injected
+ * per turn at send time. Without a cap, three near-2MB linked images
+ * would blow past the 5MB worker body limit (MAX_BODY_SIZE_BYTES) and
+ * every send would 413. 1.5MB keeps total request bodies comfortably
+ * under the worker cap even with the user's own attachments and a
+ * full-cap system message.
+ */
+const MAX_LINKED_LIBRARY_IMAGE_BYTES = 1500 * 1024;
+
 export interface LinkedLibraryContext {
   /** Text block injected into the system message's `library_context`
    *  section. `undefined` when nothing resolved. */
   systemText: string | undefined;
-  /** Image items from every resolved library, with `libraryId` /
-   *  `label` / etc. preserved. Caller routes these into the latest
+  /** Image items from every resolved library that fit within the
+   *  per-turn budget, re-stamped with a fresh id (no `libraryId` /
+   *  `label` field — `AttachmentData` doesn't carry those; the model
+   *  correlates via `filename` against the [Image: …] reference line
+   *  in the system message). Caller routes these into the latest
    *  user message's `attachments[]` so the existing orchestrator
    *  image_url-block conversion picks them up. Always an array
    *  (possibly empty). */
@@ -78,8 +95,10 @@ export async function buildLinkedLibraryContext(
   const sections: string[] = [];
   const imageAttachments: AttachmentData[] = [];
   let usedBytes = 0;
+  let usedImageBytes = 0;
   let truncated = false;
   const skippedNames: string[] = [];
+  const skippedImageNames: string[] = [];
 
   for (const res of results) {
     if (!res || !res.ok) continue;
@@ -93,36 +112,49 @@ export async function buildLinkedLibraryContext(
     }
     const rendered = renderLibrary(collection, fullItems);
     const remaining = MAX_LINKED_LIBRARY_BYTES - usedBytes;
-    let includedThisLibrary = true;
+    // `fullyIncluded` is the gate for forwarding this library's
+    // images: only when the entire rendered text fits do we ship
+    // them. A boundary-truncated library may have its [Image: …]
+    // reference lines sliced off, which would orphan the image_url
+    // blocks (model gets pixels with no system-message anchor).
+    // Dropping images on partial inclusion is the conservative
+    // call — the user can raise the cap or trim heavy text libraries.
+    let fullyIncluded = false;
     if (rendered.length <= remaining) {
       sections.push(rendered);
       usedBytes += rendered.length;
+      fullyIncluded = true;
     } else {
       if (remaining > 0) {
         sections.push(
-          `${rendered.slice(0, remaining)}\n\n[Truncated: library "${collection.name}" exceeded the ${MAX_LINKED_LIBRARY_BYTES} byte cap; content above is partial.]`,
+          `${rendered.slice(0, remaining)}\n\n[Truncated: library "${collection.name}" exceeded the ${MAX_LINKED_LIBRARY_BYTES} byte cap; content above is partial. Image attachments from this library were also dropped to avoid orphan references.]`,
         );
         usedBytes += remaining;
       } else {
         skippedNames.push(collection.name);
-        includedThisLibrary = false;
       }
       truncated = true;
     }
-    // Image items from this library are forwarded only when the
-    // library's text content was at least partially included.
-    // Otherwise the model has no system-message reference to pair
-    // with the image, and surfacing orphan pixels is worse than
-    // dropping them with the explicit "skipped" tail message.
-    if (includedThisLibrary) {
+
+    if (fullyIncluded) {
       for (const item of fullItems) {
         if (item.type !== 'image') continue;
+        const cost = item.content.length;
+        // Skip any image that would push past the per-turn image
+        // byte budget. We don't pre-aggregate per library because a
+        // single 2MB image might still fit when no others have been
+        // forwarded; conversely several smaller images stop early.
+        if (usedImageBytes + cost > MAX_LINKED_LIBRARY_IMAGE_BYTES) {
+          skippedImageNames.push(`${item.filename} (from ${collection.name})`);
+          continue;
+        }
         imageAttachments.push(toAttachmentData(item, collection));
+        usedImageBytes += cost;
       }
     }
   }
 
-  if (sections.length === 0 && skippedNames.length === 0) {
+  if (sections.length === 0 && skippedNames.length === 0 && skippedImageNames.length === 0) {
     return { systemText: undefined, imageAttachments };
   }
   const parts = [HEADER, '', INTRO, ''];
@@ -131,6 +163,12 @@ export async function buildLinkedLibraryContext(
     parts.push(
       '',
       `[Skipped due to ${MAX_LINKED_LIBRARY_BYTES} byte cap: ${skippedNames.join(', ')}. Unlink one of the earlier libraries to include these.]`,
+    );
+  }
+  if (skippedImageNames.length > 0) {
+    parts.push(
+      '',
+      `[Skipped image attachments (${MAX_LINKED_LIBRARY_IMAGE_BYTES} byte per-turn cap): ${skippedImageNames.join(', ')}. The model cannot see these images this turn.]`,
     );
   }
   return { systemText: parts.join('\n'), imageAttachments };
@@ -170,11 +208,14 @@ export function spliceLinkedImagesIntoLastUser(
 }
 
 function toAttachmentData(item: LibraryItem, library: Library): AttachmentData {
-  // Re-stamp a fresh id so re-injection on every turn doesn't collide
-  // with a previously-spliced clone if any consumer holds references.
-  // Label is enriched with the library name so the model can correlate
-  // the image with its system-message library reference. Filename
-  // stays as-stored.
+  // Re-stamp a fresh id (namespaced under the owning library) so
+  // re-injection on every turn doesn't collide with a previously-
+  // spliced clone if any consumer holds references. The model
+  // correlates the inbound image_url block with its owning library
+  // via the `filename` (matching the [Image: filename] line in the
+  // system-message library_context section) — AttachmentData has no
+  // label or libraryId field, so no extra plumbing exists for richer
+  // correlation. The `library` arg is used only for id namespacing.
   return {
     id: `linked-${library.id}-${item.id}-${shortRandomSuffix()}`,
     type: 'image',
