@@ -272,7 +272,7 @@ const STANDARD_PROFILE_SETTINGS: HarnessProfileSettings = {
 
 const HEAVY_PROFILE_SETTINGS: HarnessProfileSettings = {
   profile: 'heavy',
-  maxCoderRounds: 20,
+  maxCoderRounds: 30,
   plannerRequired: true,
   contextResetsEnabled: true,
   evaluateAfterCoder: true,

@@ -185,6 +185,61 @@ function buildReadOnlyInspectionContext(sandboxId: string): ReadOnlyInspectionHa
   };
 }
 
+const MAX_PRELOAD_FILES = 8;
+const MAX_PRELOAD_TOTAL_CHARS = 24_000;
+
+/**
+ * Read the files an Orchestrator already inspected so they can be embedded in
+ * a Coder's delegation brief — the Coder then starts with the contents (and
+ * current line hashes) instead of spending its first rounds re-reading what
+ * the Orchestrator already saw. Routes through `handleReadFile`, so it inherits
+ * version priming (edits won't hit STALE_FILE), ledger recording, redaction,
+ * and sensitive-path refusal. Returns '' when nothing usable was read.
+ */
+export async function readFilesForCoderPreload(
+  sandboxId: string,
+  paths: string[],
+): Promise<string> {
+  const unique = Array.from(new Set(paths.map((p) => p.trim()).filter(Boolean)));
+  if (unique.length === 0 || !sandboxId) return '';
+
+  const selected = unique.slice(0, MAX_PRELOAD_FILES);
+  const skipped: string[] = unique.slice(MAX_PRELOAD_FILES);
+  const ctx = buildReadOnlyInspectionContext(sandboxId);
+
+  const results = await Promise.all(
+    selected.map(async (path) => {
+      try {
+        const res = await handleReadFile(ctx, { path });
+        return { path, text: res.text, ok: !res.structuredError && Boolean(res.text) };
+      } catch {
+        return { path, text: '', ok: false };
+      }
+    }),
+  );
+
+  const blocks: string[] = [];
+  let total = 0;
+  for (const r of results) {
+    if (!r.ok || total + r.text.length > MAX_PRELOAD_TOTAL_CHARS) {
+      skipped.push(r.path);
+      continue;
+    }
+    blocks.push(r.text);
+    total += r.text.length;
+  }
+  if (blocks.length === 0) return '';
+
+  const skipNote =
+    skipped.length > 0 ? `\nNot preloaded (read directly if needed): ${skipped.join(', ')}.` : '';
+  return (
+    '[PRELOADED_FILES] The Orchestrator already read these files for you. The line ' +
+    'hashes below are current, so you can edit directly without re-reading; re-read a ' +
+    `file only if an edit returns STALE_FILE or EDIT_HASH_MISMATCH.${skipNote}\n\n` +
+    `${blocks.join('\n\n')}\n[/PRELOADED_FILES]`
+  );
+}
+
 function buildEditContext(sandboxId: string): EditHandlerContext {
   return {
     sandboxId,

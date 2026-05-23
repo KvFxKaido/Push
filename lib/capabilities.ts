@@ -299,6 +299,18 @@ const LOCAL_DAEMON_ORCHESTRATOR_EXTRA: ReadonlySet<Capability> = new Set<Capabil
 ]);
 
 /**
+ * Remote-bound git ops the orchestrator carries in `cloud` mode (its
+ * direct-edit lane) but must drop in `local-daemon` mode: the paired pushd
+ * session has no GitHub remote, so the local-pc tool protocol already
+ * declares commit/push unavailable. Stripped only for the orchestrator —
+ * the coder keeps its git grant in local-daemon (see the function doc).
+ */
+const LOCAL_DAEMON_ORCHESTRATOR_REMOTE_GIT: ReadonlySet<Capability> = new Set<Capability>([
+  'git:commit',
+  'git:push',
+]);
+
+/**
  * Remote-bound capabilities that no role can use in `local-daemon` mode.
  * The paired pushd session has no GitHub remote wired up, so
  * `create_pr` / `merge_pr` / `delete_branch` / `trigger_workflow` would fail
@@ -330,6 +342,16 @@ const LOCAL_DAEMON_REMOTE_ONLY_CAPS: ReadonlySet<Capability> = new Set<Capabilit
 export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capability>>> = {
   orchestrator: new Set<Capability>([
     'repo:read',
+    // Cloud direct-edit lane: the orchestrator can make small, localized
+    // edits (docs, config, a focused change) and ship them itself instead
+    // of always hopping to the Coder. Deliberately NO `sandbox:exec` — the
+    // missing exec grant is the code-enforced boundary: anything needing
+    // tests/build/install can't be verified directly and must delegate.
+    // `git:commit`/`git:push` are stripped back out in local-daemon mode
+    // (no remote wired up); see `getEffectiveCapabilities`.
+    'repo:write',
+    'git:commit',
+    'git:push',
     'pr:read',
     'pr:write',
     'workflow:read',
@@ -400,7 +422,9 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
  *     the capability boundary, not as a runtime network error.
  *   - The orchestrator additionally picks up the daemon-orchestrator
  *     extras (exec, write, test, download) so it can wield sandbox tools
- *     directly (no Coder hop on the paired pushd path).
+ *     directly (no Coder hop on the paired pushd path), and drops the
+ *     cloud direct-edit lane's `git:commit`/`git:push` (no remote wired
+ *     up in a paired session).
  *
  * Reviewer/auditor have no remote-only caps to drop, so their effective
  * grant matches their static grant in both modes. Coder's grant changes
@@ -421,6 +445,7 @@ export function getEffectiveCapabilities(
   }
   if (role === 'orchestrator') {
     for (const cap of LOCAL_DAEMON_ORCHESTRATOR_EXTRA) result.add(cap);
+    for (const cap of LOCAL_DAEMON_ORCHESTRATOR_REMOTE_GIT) result.delete(cap);
   }
   return result;
 }

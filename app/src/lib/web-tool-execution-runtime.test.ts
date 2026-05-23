@@ -406,14 +406,18 @@ describe('WebToolExecutionRuntime — runtime-level role capability invariant', 
       expect(result.text).toContain('sandbox_exec');
     });
 
-    it('cloud orchestrator: sandbox_write_file is denied', async () => {
+    it('cloud orchestrator: sandbox_write_file passes the gate (direct-edit lane)', async () => {
+      // The cloud direct-edit lane grants repo:write, so the capability
+      // gate no longer blocks writes — only sandbox_exec stays denied
+      // (covered above). Any error here comes from the mock sandbox, not
+      // the role check.
       const result = await runtime.execute(mutationCall(), {
         allowedRepo: 'owner/repo',
         sandboxId: 'sb-1',
         isMainProtected: false,
         role: 'orchestrator',
       });
-      expect(result.structuredError?.type).toBe('ROLE_CAPABILITY_DENIED');
+      expect(result.structuredError?.type).not.toBe('ROLE_CAPABILITY_DENIED');
     });
 
     it('local-daemon orchestrator: sandbox_exec passes the gate', async () => {

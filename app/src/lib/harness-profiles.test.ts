@@ -81,7 +81,7 @@ const STANDARD_BASE: HarnessProfileSettings = {
 
 const HEAVY_BASE: HarnessProfileSettings = {
   profile: 'heavy',
-  maxCoderRounds: 20,
+  maxCoderRounds: 30,
   plannerRequired: true,
   contextResetsEnabled: true,
   evaluateAfterCoder: true,
@@ -303,9 +303,10 @@ describe('computeAdaptiveProfile', () => {
 
     const result = computeAdaptiveProfile({ ...HEAVY_BASE }, 'openrouter', 'some-model');
 
-    // Heavy already has planner=true and maxCoderRounds=20, so neither adaptation fires
-    expect(result.wasAdapted).toBe(false);
+    // Heavy already has planner=true, so the malformed-call adaptation must not
+    // add a duplicate "Enable planner" reason. It still clamps rounds to 20.
     expect(result.adaptedProfile.plannerRequired).toBe(true);
+    expect(result.adaptationReasons).not.toContainEqual(expect.stringContaining('Enable planner'));
     expect(result.adaptedProfile.maxCoderRounds).toBe(20);
   });
 

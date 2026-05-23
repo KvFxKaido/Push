@@ -83,10 +83,13 @@ describe('Role capability grants', () => {
     expect(roleHasCapability('coder', 'git:push')).toBe(true);
   });
 
-  it('Orchestrator can delegate but not write code directly', () => {
+  it('Orchestrator can delegate and make direct edits, but cannot run commands', () => {
     expect(roleHasCapability('orchestrator', 'delegate:coder')).toBe(true);
     expect(roleHasCapability('orchestrator', 'delegate:explorer')).toBe(true);
-    expect(roleHasCapability('orchestrator', 'repo:write')).toBe(false);
+    // Cloud direct-edit lane: write + commit + push, but no exec.
+    expect(roleHasCapability('orchestrator', 'repo:write')).toBe(true);
+    expect(roleHasCapability('orchestrator', 'git:commit')).toBe(true);
+    expect(roleHasCapability('orchestrator', 'git:push')).toBe(true);
     expect(roleHasCapability('orchestrator', 'sandbox:exec')).toBe(false);
   });
 
@@ -259,22 +262,26 @@ describe('ExecutionMode — orchestrator capability widening for local-daemon', 
   // `localDaemonBinding` via `getExecutionMode`; the capability layer
   // never sees the binding directly.
 
-  describe('cloud mode (default) keeps orchestrator narrow', () => {
-    it('orchestrator cannot exec or write files in cloud mode', () => {
+  describe('cloud mode (default) gives orchestrator a direct-edit lane (no exec)', () => {
+    it('orchestrator can write/edit/patch and commit/push, but cannot exec in cloud mode', () => {
+      // Direct-edit lane: file mutations + commit/push are in the grant.
+      expect(roleCanUseTool('orchestrator', 'sandbox_write_file', 'cloud')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'sandbox_edit_file', 'cloud')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'sandbox_edit_range', 'cloud')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'sandbox_search_replace', 'cloud')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'sandbox_apply_patchset', 'cloud')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'sandbox_prepare_commit', 'cloud')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'sandbox_push', 'cloud')).toBe(true);
+      // No exec lane — the boundary that keeps verify-needed work with the Coder.
       expect(roleCanUseTool('orchestrator', 'sandbox_exec', 'cloud')).toBe(false);
-      expect(roleCanUseTool('orchestrator', 'sandbox_write_file', 'cloud')).toBe(false);
-      expect(roleCanUseTool('orchestrator', 'sandbox_edit_file', 'cloud')).toBe(false);
-      expect(roleCanUseTool('orchestrator', 'sandbox_edit_range', 'cloud')).toBe(false);
-      expect(roleCanUseTool('orchestrator', 'sandbox_search_replace', 'cloud')).toBe(false);
-      expect(roleCanUseTool('orchestrator', 'sandbox_apply_patchset', 'cloud')).toBe(false);
       expect(roleCanUseTool('orchestrator', 'sandbox_run_tests', 'cloud')).toBe(false);
     });
 
     it('omitting the mode argument behaves like cloud (back-compat)', () => {
       expect(roleCanUseTool('orchestrator', 'sandbox_exec')).toBe(false);
-      expect(roleCanUseTool('orchestrator', 'sandbox_write_file')).toBe(false);
+      expect(roleCanUseTool('orchestrator', 'sandbox_write_file')).toBe(true);
       expect(roleHasCapability('orchestrator', 'sandbox:exec')).toBe(false);
-      expect(roleHasCapability('orchestrator', 'repo:write')).toBe(false);
+      expect(roleHasCapability('orchestrator', 'repo:write')).toBe(true);
     });
 
     it('orchestrator keeps its base grant in cloud mode', () => {
@@ -385,43 +392,45 @@ describe('ExecutionMode — orchestrator capability widening for local-daemon', 
     it('local-daemon orchestrator adds sandbox extras and removes remote-only caps', () => {
       const cloudCaps = getEffectiveCapabilities('orchestrator', 'cloud');
       const daemonCaps = getEffectiveCapabilities('orchestrator', 'local-daemon');
-      // Sandbox extras present only in daemon mode.
-      for (const cap of [
-        'sandbox:exec',
-        'repo:write',
-        'sandbox:test',
-        'sandbox:download',
-      ] as const) {
+      // Sandbox extras present only in daemon mode (repo:write is shared —
+      // cloud has it too via the direct-edit lane).
+      for (const cap of ['sandbox:exec', 'sandbox:test', 'sandbox:download'] as const) {
         expect(daemonCaps.has(cap)).toBe(true);
         expect(cloudCaps.has(cap)).toBe(false);
       }
-      // Remote-only caps present only in cloud mode (no remote in daemon).
-      for (const cap of ['pr:write', 'workflow:trigger'] as const) {
+      expect(cloudCaps.has('repo:write')).toBe(true);
+      expect(daemonCaps.has('repo:write')).toBe(true);
+      // Remote-bound caps present only in cloud (no remote in daemon): the
+      // PR/workflow ops plus the direct-edit lane's git:commit/git:push.
+      for (const cap of ['pr:write', 'workflow:trigger', 'git:commit', 'git:push'] as const) {
         expect(cloudCaps.has(cap)).toBe(true);
         expect(daemonCaps.has(cap)).toBe(false);
       }
     });
 
-    it('local-daemon orchestrator extras are exactly exec/write/test/download', () => {
+    it('local-daemon orchestrator extras are exactly exec/test/download', () => {
       const cloudCaps = getEffectiveCapabilities('orchestrator', 'cloud');
       const daemonCaps = getEffectiveCapabilities('orchestrator', 'local-daemon');
       const extras = new Set<Capability>();
       for (const cap of daemonCaps) {
         if (!cloudCaps.has(cap)) extras.add(cap);
       }
+      // repo:write is no longer a daemon-only extra — cloud has it too.
       expect(extras).toEqual(
-        new Set<Capability>(['sandbox:exec', 'repo:write', 'sandbox:test', 'sandbox:download']),
+        new Set<Capability>(['sandbox:exec', 'sandbox:test', 'sandbox:download']),
       );
     });
 
-    it('cloud-only orchestrator caps are exactly pr:write/workflow:trigger', () => {
+    it('cloud-only orchestrator caps are the remote-bound PR/workflow + git ops', () => {
       const cloudCaps = getEffectiveCapabilities('orchestrator', 'cloud');
       const daemonCaps = getEffectiveCapabilities('orchestrator', 'local-daemon');
       const cloudOnly = new Set<Capability>();
       for (const cap of cloudCaps) {
         if (!daemonCaps.has(cap)) cloudOnly.add(cap);
       }
-      expect(cloudOnly).toEqual(new Set<Capability>(['pr:write', 'workflow:trigger']));
+      expect(cloudOnly).toEqual(
+        new Set<Capability>(['pr:write', 'workflow:trigger', 'git:commit', 'git:push']),
+      );
     });
   });
 
