@@ -1607,7 +1607,10 @@ export async function listDirectory(
   sandboxId: string,
   path: string = '/workspace',
 ): Promise<FileEntry[]> {
-  const data = await sandboxFetch<{ entries: FileEntry[]; error?: string }>('list', {
+  const data = await sandboxFetch<{
+    entries: Array<Omit<FileEntry, 'path'> & { path?: string }>;
+    error?: string;
+  }>('list', {
     ...withOwnerToken({}, sandboxId),
     sandbox_id: sandboxId,
     path,
