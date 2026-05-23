@@ -1607,13 +1607,25 @@ export async function listDirectory(
   sandboxId: string,
   path: string = '/workspace',
 ): Promise<FileEntry[]> {
-  const data = await sandboxFetch<{ entries: FileEntry[]; error?: string }>('list', {
+  const data = await sandboxFetch<{
+    entries: Array<Omit<FileEntry, 'path'> & { path?: string }>;
+    error?: string;
+  }>('list', {
     ...withOwnerToken({}, sandboxId),
     sandbox_id: sandboxId,
     path,
   });
   if (data.error) throw new Error(data.error);
-  return data.entries;
+  // Backends return entries with name/type/size but no `path`; derive the
+  // absolute path here so the declared FileEntry contract always holds.
+  const base = path.replace(/\/+$/, '');
+  return (data.entries ?? []).map((entry) => ({
+    ...entry,
+    // `||` (not `??`): an empty path is as unusable as a missing one, so derive
+    // in both cases. Names from a directory listing never contain `/`, and the
+    // backend independently rejects paths outside the workspace.
+    path: entry.path || `${base}/${entry.name}`,
+  }));
 }
 
 export async function deleteFromSandbox(
