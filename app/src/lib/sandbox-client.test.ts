@@ -335,6 +335,19 @@ describe('listDirectory', () => {
     expect(entries[0].path).toBe('/workspace/sub/a.txt');
   });
 
+  it('derives a path when the backend returns an empty string', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({ entries: [{ name: 'a.txt', type: 'file', size: 1, path: '' }] }),
+    });
+
+    const { listDirectory } = await import('./sandbox-client');
+    const entries = await listDirectory('sb-123', '/workspace');
+
+    expect(entries[0].path).toBe('/workspace/a.txt');
+  });
+
   it('preserves an explicit path when the backend already provides one', async () => {
     mockFetch.mockResolvedValue({
       ok: true,

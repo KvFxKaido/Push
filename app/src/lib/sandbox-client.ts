@@ -1618,7 +1618,10 @@ export async function listDirectory(
   const base = path.replace(/\/+$/, '');
   return (data.entries ?? []).map((entry) => ({
     ...entry,
-    path: entry.path ?? `${base}/${entry.name}`,
+    // `||` (not `??`): an empty path is as unusable as a missing one, so derive
+    // in both cases. Names from a directory listing never contain `/`, and the
+    // backend independently rejects paths outside the workspace.
+    path: entry.path || `${base}/${entry.name}`,
   }));
 }
 
