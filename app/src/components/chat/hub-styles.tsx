@@ -1,12 +1,24 @@
-export const HUB_MATERIAL_SURFACE_CLASS =
-  'relative overflow-hidden border border-push-edge-subtle bg-push-grad-input shadow-[0_12px_34px_rgba(0,0,0,0.5),0_3px_10px_rgba(0,0,0,0.28)] backdrop-blur-xl';
+const HUB_MATERIAL_SURFACE_BASE_CLASS =
+  'relative overflow-hidden border border-push-edge-subtle bg-push-grad-input shadow-[0_12px_34px_rgba(0,0,0,0.5),0_3px_10px_rgba(0,0,0,0.28)]';
+
+export const HUB_MATERIAL_SURFACE_CLASS = `${HUB_MATERIAL_SURFACE_BASE_CLASS} backdrop-blur-xl`;
 
 export const HUB_MATERIAL_INTERACTIVE_CLASS =
   'transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110';
 
+const HUB_MATERIAL_PILL_LAYOUT_CLASS =
+  'inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-push-xs text-push-fg-dim disabled:opacity-50';
+
 export const HUB_MATERIAL_BUTTON_CLASS = `${HUB_MATERIAL_SURFACE_CLASS} ${HUB_MATERIAL_INTERACTIVE_CLASS}`;
 
-export const HUB_MATERIAL_PILL_BUTTON_CLASS = `${HUB_MATERIAL_BUTTON_CLASS} inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-push-xs text-push-fg-dim disabled:opacity-50`;
+export const HUB_MATERIAL_PILL_BUTTON_CLASS = `${HUB_MATERIAL_BUTTON_CLASS} ${HUB_MATERIAL_PILL_LAYOUT_CLASS}`;
+
+// Chrome on Android drops paint for elements when many backdrop-filter layers
+// stack in one view (the repo customizer renders ~18 of these pills at once),
+// leaving random icons/swatches blank until a repaint is forced. This variant
+// keeps the identical look but omits backdrop-blur, so no compositing layer is
+// created and every button paints on first render.
+export const HUB_MATERIAL_PILL_BUTTON_NO_BLUR_CLASS = `${HUB_MATERIAL_SURFACE_BASE_CLASS} ${HUB_MATERIAL_INTERACTIVE_CLASS} ${HUB_MATERIAL_PILL_LAYOUT_CLASS}`;
 
 export const HUB_MATERIAL_ROUND_BUTTON_CLASS = `${HUB_MATERIAL_BUTTON_CLASS} inline-flex h-8 w-8 items-center justify-center rounded-full text-push-fg-dim disabled:opacity-50`;
 

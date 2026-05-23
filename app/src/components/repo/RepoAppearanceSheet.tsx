@@ -8,7 +8,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import {
-  HUB_MATERIAL_PILL_BUTTON_CLASS,
+  HUB_MATERIAL_PILL_BUTTON_NO_BLUR_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
   HubControlGlow,
 } from '@/components/chat/hub-styles';
@@ -93,7 +93,7 @@ export function RepoAppearanceSheet({
                     key={option.id}
                     type="button"
                     onClick={() => setDraft((prev) => ({ ...prev, icon: option.id }))}
-                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-auto min-h-[72px] flex-col gap-2 px-3 py-3 ${
+                    className={`${HUB_MATERIAL_PILL_BUTTON_NO_BLUR_CLASS} h-auto min-h-[72px] flex-col gap-2 px-3 py-3 ${
                       selected ? 'border-push-edge-hover text-push-fg' : 'text-push-fg-secondary'
                     }`}
                     style={
@@ -129,7 +129,7 @@ export function RepoAppearanceSheet({
                     key={option.id}
                     type="button"
                     onClick={() => setDraft((prev) => ({ ...prev, color: option.id }))}
-                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-auto gap-2 px-3 py-3 ${
+                    className={`${HUB_MATERIAL_PILL_BUTTON_NO_BLUR_CLASS} h-auto gap-2 px-3 py-3 ${
                       selected ? 'border-push-edge-hover text-push-fg' : 'text-push-fg-secondary'
                     }`}
                     style={
@@ -177,7 +177,7 @@ export function RepoAppearanceSheet({
                     key={String(option.id)}
                     type="button"
                     onClick={() => setDraft((prev) => ({ ...prev, glowEnabled: option.id }))}
-                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-auto gap-2 px-3 py-3 ${
+                    className={`${HUB_MATERIAL_PILL_BUTTON_NO_BLUR_CLASS} h-auto gap-2 px-3 py-3 ${
                       selected ? 'border-push-edge-hover text-push-fg' : 'text-push-fg-secondary'
                     }`}
                     style={
@@ -205,7 +205,7 @@ export function RepoAppearanceSheet({
                 setDraft(DEFAULT_REPO_APPEARANCE);
                 onOpenChange(false);
               }}
-              className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-10 flex-1 gap-2 px-3 text-push-fg-secondary`}
+              className={`${HUB_MATERIAL_PILL_BUTTON_NO_BLUR_CLASS} h-10 flex-1 gap-2 px-3 text-push-fg-secondary`}
             >
               <HubControlGlow />
               <RotateCcw className="relative z-10 h-4 w-4" />
@@ -217,7 +217,7 @@ export function RepoAppearanceSheet({
                 onSave(draft);
                 onOpenChange(false);
               }}
-              className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-10 flex-[1.3] gap-2 px-3 text-push-fg`}
+              className={`${HUB_MATERIAL_PILL_BUTTON_NO_BLUR_CLASS} h-10 flex-[1.3] gap-2 px-3 text-push-fg`}
               style={{
                 borderColor: hexToRgba(colorHex, 0.42),
                 backgroundColor: hexToRgba(colorHex, 0.14),
