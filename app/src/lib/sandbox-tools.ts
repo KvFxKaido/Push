@@ -200,33 +200,53 @@ export async function readFilesForCoderPreload(
   sandboxId: string,
   paths: string[],
 ): Promise<string> {
-  const unique = Array.from(new Set(paths.map((p) => p.trim()).filter(Boolean)));
-  if (unique.length === 0 || !sandboxId) return '';
+  if (!sandboxId) return '';
+  // Normalize first so repo-relative briefs (`app/src/auth.ts`) and absolute
+  // `/workspace/...` paths resolve in the sandbox and dedupe to one key.
+  const unique = Array.from(
+    new Set(
+      paths
+        .map((p) => p.trim())
+        .filter(Boolean)
+        .map(normalizeSandboxPath),
+    ),
+  );
+  if (unique.length === 0) return '';
 
   const selected = unique.slice(0, MAX_PRELOAD_FILES);
+  // Files past the count cap are never read, so they never prime the ledger /
+  // version cache — preserving the Coder's read-before-edit contract.
   const skipped: string[] = unique.slice(MAX_PRELOAD_FILES);
   const ctx = buildReadOnlyInspectionContext(sandboxId);
 
-  const results = await Promise.all(
-    selected.map(async (path) => {
-      try {
-        const res = await handleReadFile(ctx, { path });
-        return { path, text: res.text, ok: !res.structuredError && Boolean(res.text) };
-      } catch {
-        return { path, text: '', ok: false };
-      }
-    }),
-  );
-
   const blocks: string[] = [];
   let total = 0;
-  for (const r of results) {
-    if (!r.ok || total + r.text.length > MAX_PRELOAD_TOTAL_CHARS) {
-      skipped.push(r.path);
+  // Sequential with an early stop on budget: a file we never read is a file we
+  // never prime. Reading everything in parallel and post-filtering would mark
+  // budget-skipped files as "read" and let the Coder blind-edit them without an
+  // explicit read — the read-before-edit hole flagged in review.
+  for (const path of selected) {
+    if (total >= MAX_PRELOAD_TOTAL_CHARS) {
+      skipped.push(path);
       continue;
     }
-    blocks.push(r.text);
-    total += r.text.length;
+    let text: string;
+    try {
+      const res = await handleReadFile(ctx, { path });
+      if (res.structuredError) {
+        skipped.push(path);
+        continue;
+      }
+      text = res.text;
+    } catch {
+      skipped.push(path);
+      continue;
+    }
+    // Empty read still counts as "known" (no content to embed); don't list it
+    // as skipped, which would misleadingly suggest it wasn't inspected.
+    if (!text) continue;
+    blocks.push(text);
+    total += text.length;
   }
   if (blocks.length === 0) return '';
 
