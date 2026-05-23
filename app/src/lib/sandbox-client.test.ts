@@ -293,6 +293,65 @@ describe('deleteFromSandbox', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 5b. listDirectory client function
+// ---------------------------------------------------------------------------
+//
+// Both sandbox backends return entries with name/type/size but no `path`.
+// listDirectory must derive the absolute path so the FileEntry contract holds —
+// otherwise the workspace hub crashes ("Cannot read properties of undefined
+// (reading 'split')") the moment a file or folder is opened.
+
+describe('listDirectory', () => {
+  it('derives an absolute path for entries that omit it', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          entries: [
+            { name: 'src', type: 'directory', size: 0 },
+            { name: 'app.ts', type: 'file', size: 42 },
+          ],
+        }),
+    });
+
+    const { listDirectory } = await import('./sandbox-client');
+    const entries = await listDirectory('sb-123', '/workspace');
+
+    expect(entries).toEqual([
+      { name: 'src', type: 'directory', size: 0, path: '/workspace/src' },
+      { name: 'app.ts', type: 'file', size: 42, path: '/workspace/app.ts' },
+    ]);
+  });
+
+  it('does not double the slash when the directory path has a trailing slash', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ entries: [{ name: 'a.txt', type: 'file', size: 1 }] }),
+    });
+
+    const { listDirectory } = await import('./sandbox-client');
+    const entries = await listDirectory('sb-123', '/workspace/sub/');
+
+    expect(entries[0].path).toBe('/workspace/sub/a.txt');
+  });
+
+  it('preserves an explicit path when the backend already provides one', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          entries: [{ name: 'a.txt', type: 'file', size: 1, path: '/custom/a.txt' }],
+        }),
+    });
+
+    const { listDirectory } = await import('./sandbox-client');
+    const entries = await listDirectory('sb-123', '/workspace');
+
+    expect(entries[0].path).toBe('/custom/a.txt');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 5. readSymbolsFromSandbox helper
 // ---------------------------------------------------------------------------
 

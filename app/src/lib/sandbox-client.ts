@@ -1613,7 +1613,13 @@ export async function listDirectory(
     path,
   });
   if (data.error) throw new Error(data.error);
-  return data.entries;
+  // Backends return entries with name/type/size but no `path`; derive the
+  // absolute path here so the declared FileEntry contract always holds.
+  const base = path.replace(/\/+$/, '');
+  return (data.entries ?? []).map((entry) => ({
+    ...entry,
+    path: entry.path ?? `${base}/${entry.name}`,
+  }));
 }
 
 export async function deleteFromSandbox(
