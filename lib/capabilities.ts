@@ -239,9 +239,11 @@ export function isCapabilityMapped(canonicalName: string): boolean {
  * Where the tool call is being executed.
  *
  *   - `cloud`        — cloud sandbox provider (Cloudflare Container, Modal,
- *                      etc.). The orchestrator delegates writes/exec to the
- *                      Coder via `delegate_coder`; direct file mutations
- *                      and shell are NOT in the orchestrator's grant.
+ *                      etc.). The orchestrator has a direct-edit lane
+ *                      (repo:write + git:commit/push) for small, localized
+ *                      changes, but delegates anything needing shell/exec
+ *                      to the Coder via `delegate_coder` — `sandbox:exec`
+ *                      is NOT in its grant.
  *   - `local-daemon` — a paired pushd daemon on the user's machine, reached
  *                      over loopback (`kind: 'local-pc'`) or Worker relay
  *                      (`kind: 'relay'`). There is no second hop, the
@@ -286,14 +288,16 @@ export function workspaceModeToExecutionMode(mode: string | null | undefined): E
 }
 
 /**
- * Capabilities orchestrator picks up in `local-daemon` mode. Mirrors the
- * coder grant minus the remote-bound git ops (commit/push/branch/draft)
- * and PR ops, which the local-pc tool protocol already declares
- * unavailable (no remote wired up).
+ * Capabilities the orchestrator picks up *only* in `local-daemon` mode, on
+ * top of the shared base grant. `repo:write` is already in the base grant
+ * (the cloud direct-edit lane), so it isn't repeated here — these are the
+ * truly daemon-only additions: shell/exec + test + download. The base
+ * grant's remote-bound git ops (commit/push) are stripped back out
+ * separately via `LOCAL_DAEMON_ORCHESTRATOR_REMOTE_GIT` (no remote in a
+ * paired session).
  */
 const LOCAL_DAEMON_ORCHESTRATOR_EXTRA: ReadonlySet<Capability> = new Set<Capability>([
   'sandbox:exec',
-  'repo:write',
   'sandbox:test',
   'sandbox:download',
 ]);
