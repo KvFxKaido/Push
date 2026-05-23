@@ -92,7 +92,12 @@ vi.mock('./tool-dispatch', async () => {
   };
 });
 
-import { classifyError, validateSandboxToolCall, executeSandboxToolCall } from './sandbox-tools';
+import {
+  classifyError,
+  validateSandboxToolCall,
+  executeSandboxToolCall,
+  readFilesForCoderPreload,
+} from './sandbox-tools';
 import * as sandboxClient from './sandbox-client';
 import {
   LocalDaemonUnreachableError,
@@ -4901,5 +4906,105 @@ describe('executeSandboxToolCall -- local-pc dispatch (PR 3c.3 file ops)', () =>
       // that's fine; the assertion below is what matters.
     }
     expect(readFileLocalDaemon).not.toHaveBeenCalled();
+  });
+});
+
+describe('readFilesForCoderPreload', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.readFromSandbox).mockReset();
+    fileLedger.reset();
+  });
+
+  it('returns empty string when sandboxId or paths are missing', async () => {
+    expect(await readFilesForCoderPreload('', ['app/a.ts'])).toBe('');
+    expect(await readFilesForCoderPreload('sb-1', [])).toBe('');
+    expect(await readFilesForCoderPreload('sb-1', ['', '   '])).toBe('');
+    expect(sandboxClient.readFromSandbox).not.toHaveBeenCalled();
+  });
+
+  it('embeds file contents in a PRELOADED_FILES block', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'export const x = 1;',
+      truncated: false,
+      version: 'v1',
+    });
+    const block = await readFilesForCoderPreload('sb-1', ['/workspace/src/a.ts']);
+    expect(block).toContain('[PRELOADED_FILES]');
+    expect(block).toContain('[/PRELOADED_FILES]');
+    expect(block).toContain('/workspace/src/a.ts');
+    expect(block).toContain('export const x = 1;');
+  });
+
+  it('normalizes repo-relative paths to /workspace before reading', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'const y = 2;',
+      truncated: false,
+      version: 'v1',
+    });
+    await readFilesForCoderPreload('sb-1', ['app/src/auth.ts']);
+    expect(sandboxClient.readFromSandbox).toHaveBeenCalledWith(
+      'sb-1',
+      '/workspace/app/src/auth.ts',
+      undefined,
+      undefined,
+    );
+  });
+
+  it('dedupes paths that normalize to the same key', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'const z = 3;',
+      truncated: false,
+      version: 'v1',
+    });
+    await readFilesForCoderPreload('sb-1', ['app/src/auth.ts', '/workspace/app/src/auth.ts']);
+    expect(sandboxClient.readFromSandbox).toHaveBeenCalledTimes(1);
+  });
+
+  it('caps the number of preloaded files and lists the rest as not preloaded', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'x',
+      truncated: false,
+      version: 'v1',
+    });
+    const paths = Array.from({ length: 10 }, (_, i) => `/workspace/f${i}.ts`);
+    const block = await readFilesForCoderPreload('sb-1', paths);
+    // Only the first 8 are read; the rest are never read (so never primed).
+    expect(sandboxClient.readFromSandbox).toHaveBeenCalledTimes(8);
+    expect(block).toContain('Not preloaded');
+    expect(block).toContain('/workspace/f8.ts');
+    expect(block).toContain('/workspace/f9.ts');
+  });
+
+  it('stops reading once the char budget is hit so skipped files are never primed', async () => {
+    // First file alone exceeds the total-char budget; the second must never be
+    // read (and therefore never primed in the version cache / ledger).
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValueOnce({
+      content: 'a'.repeat(30_000),
+      truncated: false,
+      version: 'v1',
+    });
+    const block = await readFilesForCoderPreload('sb-1', [
+      '/workspace/big.ts',
+      '/workspace/small.ts',
+    ]);
+    expect(sandboxClient.readFromSandbox).toHaveBeenCalledTimes(1);
+    expect(sandboxClient.readFromSandbox).toHaveBeenCalledWith(
+      'sb-1',
+      '/workspace/big.ts',
+      undefined,
+      undefined,
+    );
+    expect(block).toContain('Not preloaded (read directly if needed): /workspace/small.ts');
+  });
+
+  it('skips files that fail to read', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: '',
+      truncated: false,
+      error: 'No such file',
+      code: 'FILE_NOT_FOUND',
+    });
+    const block = await readFilesForCoderPreload('sb-1', ['/workspace/missing.ts']);
+    expect(block).toBe('');
   });
 });

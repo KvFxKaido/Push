@@ -70,6 +70,7 @@ import {
   detectSandboxToolCall,
   executeSandboxToolCall,
   getSandboxToolProtocol,
+  readFilesForCoderPreload,
   type SandboxToolCall,
 } from './sandbox-tools';
 import {
@@ -324,6 +325,16 @@ export async function runCoderAgent(
   } as DelegationEnvelope);
   if (effectivePlannerBrief) {
     taskPreamble += '\n\n' + effectivePlannerBrief;
+  }
+
+  // Preload the contents of the files the Orchestrator flagged so the Coder
+  // starts with them (and current line hashes) instead of burning its first
+  // rounds re-reading what the Orchestrator already saw.
+  if (files && files.length > 0) {
+    const preloadedFiles = await readFilesForCoderPreload(sandboxId, files);
+    if (preloadedFiles) {
+      taskPreamble += '\n\n' + preloadedFiles;
+    }
   }
 
   const verificationPolicyBlock = formatVerificationPolicyBlock(

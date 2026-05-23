@@ -239,9 +239,11 @@ export function isCapabilityMapped(canonicalName: string): boolean {
  * Where the tool call is being executed.
  *
  *   - `cloud`        — cloud sandbox provider (Cloudflare Container, Modal,
- *                      etc.). The orchestrator delegates writes/exec to the
- *                      Coder via `delegate_coder`; direct file mutations
- *                      and shell are NOT in the orchestrator's grant.
+ *                      etc.). The orchestrator has a direct-edit lane
+ *                      (repo:write + git:commit/push) for small, localized
+ *                      changes, but delegates anything needing shell/exec
+ *                      to the Coder via `delegate_coder` — `sandbox:exec`
+ *                      is NOT in its grant.
  *   - `local-daemon` — a paired pushd daemon on the user's machine, reached
  *                      over loopback (`kind: 'local-pc'`) or Worker relay
  *                      (`kind: 'relay'`). There is no second hop, the
@@ -286,16 +288,30 @@ export function workspaceModeToExecutionMode(mode: string | null | undefined): E
 }
 
 /**
- * Capabilities orchestrator picks up in `local-daemon` mode. Mirrors the
- * coder grant minus the remote-bound git ops (commit/push/branch/draft)
- * and PR ops, which the local-pc tool protocol already declares
- * unavailable (no remote wired up).
+ * Capabilities the orchestrator picks up *only* in `local-daemon` mode, on
+ * top of the shared base grant. `repo:write` is already in the base grant
+ * (the cloud direct-edit lane), so it isn't repeated here — these are the
+ * truly daemon-only additions: shell/exec + test + download. The base
+ * grant's remote-bound git ops (commit/push) are stripped back out
+ * separately via `LOCAL_DAEMON_ORCHESTRATOR_REMOTE_GIT` (no remote in a
+ * paired session).
  */
 const LOCAL_DAEMON_ORCHESTRATOR_EXTRA: ReadonlySet<Capability> = new Set<Capability>([
   'sandbox:exec',
-  'repo:write',
   'sandbox:test',
   'sandbox:download',
+]);
+
+/**
+ * Remote-bound git ops the orchestrator carries in `cloud` mode (its
+ * direct-edit lane) but must drop in `local-daemon` mode: the paired pushd
+ * session has no GitHub remote, so the local-pc tool protocol already
+ * declares commit/push unavailable. Stripped only for the orchestrator —
+ * the coder keeps its git grant in local-daemon (see the function doc).
+ */
+const LOCAL_DAEMON_ORCHESTRATOR_REMOTE_GIT: ReadonlySet<Capability> = new Set<Capability>([
+  'git:commit',
+  'git:push',
 ]);
 
 /**
@@ -330,6 +346,16 @@ const LOCAL_DAEMON_REMOTE_ONLY_CAPS: ReadonlySet<Capability> = new Set<Capabilit
 export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capability>>> = {
   orchestrator: new Set<Capability>([
     'repo:read',
+    // Cloud direct-edit lane: the orchestrator can make small, localized
+    // edits (docs, config, a focused change) and ship them itself instead
+    // of always hopping to the Coder. Deliberately NO `sandbox:exec` — the
+    // missing exec grant is the code-enforced boundary: anything needing
+    // tests/build/install can't be verified directly and must delegate.
+    // `git:commit`/`git:push` are stripped back out in local-daemon mode
+    // (no remote wired up); see `getEffectiveCapabilities`.
+    'repo:write',
+    'git:commit',
+    'git:push',
     'pr:read',
     'pr:write',
     'workflow:read',
@@ -400,7 +426,9 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
  *     the capability boundary, not as a runtime network error.
  *   - The orchestrator additionally picks up the daemon-orchestrator
  *     extras (exec, write, test, download) so it can wield sandbox tools
- *     directly (no Coder hop on the paired pushd path).
+ *     directly (no Coder hop on the paired pushd path), and drops the
+ *     cloud direct-edit lane's `git:commit`/`git:push` (no remote wired
+ *     up in a paired session).
  *
  * Reviewer/auditor have no remote-only caps to drop, so their effective
  * grant matches their static grant in both modes. Coder's grant changes
@@ -421,6 +449,7 @@ export function getEffectiveCapabilities(
   }
   if (role === 'orchestrator') {
     for (const cap of LOCAL_DAEMON_ORCHESTRATOR_EXTRA) result.add(cap);
+    for (const cap of LOCAL_DAEMON_ORCHESTRATOR_REMOTE_GIT) result.delete(cap);
   }
   return result;
 }

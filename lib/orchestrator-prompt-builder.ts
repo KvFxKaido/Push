@@ -58,10 +58,11 @@ Use this operating loop unless the request clearly calls for something else:
  * Options threaded into the orchestrator prompt builders.
  *
  * `isLocalDaemon` switches the tool-instructions block between two modes:
- *   - cloud (default) — orchestrator delegates exec and writes to the
- *     Coder; direct file mutations and shell are NOT in its grant.
- *   - local-daemon — orchestrator wields sandbox tools directly (no
- *     second hop, no delegation per local-pc tool protocol).
+ *   - cloud (default) — orchestrator has a direct-edit lane (repo:write +
+ *     git:commit/push) for small, localized changes, but NO sandbox:exec,
+ *     so it delegates anything that needs running commands to the Coder.
+ *   - local-daemon — orchestrator wields sandbox tools directly, including
+ *     exec (no second hop, no delegation per local-pc tool protocol).
  *
  * Set by `app/src/lib/orchestrator.ts` from `workspaceContext.mode`.
  * The CLI surface enters orchestrator-prompt territory rarely today; if
@@ -75,21 +76,20 @@ export interface OrchestratorPromptOptions {
 export function buildOrchestratorToolInstructions(opts: OrchestratorPromptOptions = {}): string {
   const { isLocalDaemon = false } = opts;
 
-  // Mutation surface differs by mode. In cloud mode, the orchestrator's
-  // trailing side-effects are delegation + GitHub mutations + ask_user —
-  // it does NOT have repo:write or sandbox:exec, so listing direct sandbox
-  // writes/exec as available would set the model up for a runtime denial
-  // (see `enforceRoleCapability` in `lib/capabilities.ts`). In local-daemon
-  // mode the grant widens to include sandbox:exec + repo:write, so the
-  // direct surface is real.
+  // Mutation surface differs by mode. Cloud orchestrator has a direct-edit
+  // lane (repo:write + git:commit/push) but NO sandbox:exec, so it can edit
+  // + commit + push directly yet must delegate anything that needs running
+  // commands. Local-daemon additionally has sandbox:exec, so it can run
+  // commands directly too. Both place mutating calls last (after reads).
   const mutatingShapesLine = isLocalDaemon
     ? '- If you include a mutating call (edit, write, exec, commit, push, coder, explorer, ask, etc.), place it LAST — it runs after all reads complete.'
-    : `- If you include a mutating call (${getToolPublicName('delegate_coder')}, ${getToolPublicName('delegate_explorer')}, ${getToolPublicName('ask_user')}, ${getToolPublicName('create_pr')}, ${getToolPublicName('merge_pr')}, ${getToolPublicName('trigger_workflow')}, etc.), place it LAST — it runs after all reads complete.`;
+    : '- If you include a mutating call (edit, write, commit, push, coder, explorer, ask, etc.), place it LAST — it runs after all reads complete.';
 
-  // Tool routing in cloud mode must route exec/writes through delegation
-  // because orchestrator's grant doesn't include sandbox:exec or
-  // repo:write. In local-daemon mode the daemon is the user's machine
-  // and orchestrator drives sandbox tools directly.
+  // Tool routing. Cloud orchestrator can edit + commit + push directly
+  // (repo:write + git:commit/push) but has no sandbox:exec, so it must route
+  // anything that runs commands through the Coder — that missing exec grant
+  // is the boundary on its direct-edit lane. Local-daemon adds sandbox:exec,
+  // so the daemon-as-user's-machine drives all sandbox tools directly.
   const toolRoutingBlock = isLocalDaemon
     ? `## Tool Routing
 
@@ -100,7 +100,8 @@ export function buildOrchestratorToolInstructions(opts: OrchestratorPromptOption
     : `## Tool Routing
 
 - Use **sandbox tools** for local read operations: reading code, searching, listing directories, diffs, symbol lookups.
-- For running commands, tests, type checks, builds, or any file mutation, emit ${getToolPublicName('delegate_coder')} — exec and writes belong to the Coder's capability grant, not yours. The runtime denies direct ${getToolPublicName('sandbox_exec')} / write calls from your role with ROLE_CAPABILITY_DENIED.
+- For small, localized changes that need no verification (docs, config, a focused edit), act directly: write the files (${getToolPublicName('sandbox_write_file')} / ${getToolPublicName('sandbox_edit_file')} / ${getToolPublicName('sandbox_apply_patchset')}), then propose the commit with ${getToolPublicName('sandbox_prepare_commit')} as that turn's single trailing side-effect — it runs the Auditor gate and returns a review card for the user to approve (it does not commit on its own). Only after approval, publish with ${getToolPublicName('sandbox_push')} in a later turn (one side-effect per turn — never emit commit and push together).
+- For running commands, tests, type checks, builds, or installs — and for any change you'd want to verify by running something — emit ${getToolPublicName('delegate_coder')}. Exec belongs to the Coder's grant, not yours; the runtime denies direct ${getToolPublicName('sandbox_exec')} with ROLE_CAPABILITY_DENIED.
 - Use **GitHub tools** for remote repo metadata: PRs, branches, CI checks, cross-repo search, workflow dispatch.
 - Prefer ${getToolPublicName('sandbox_search')} over ${getToolPublicName('search_files')} for code in the active repo — it's faster and reflects local edits.
 - Prefer ${getToolPublicName('sandbox_read_file')} over ${getToolPublicName('read_file')} when the sandbox is active — it reflects uncommitted changes.`;
@@ -157,19 +158,17 @@ General rules:
 export function buildOrchestratorDelegation(opts: OrchestratorPromptOptions = {}): string {
   const { isLocalDaemon = false } = opts;
 
-  // "Handle directly" third bullet — cloud orchestrator has no
-  // repo:write grant, so promising direct file writes/apply_patchset
-  // is misleading and will fail with ROLE_CAPABILITY_DENIED. In
-  // local-daemon mode the grant widens and the bullet stays
-  // accurate.
-  const handleDirectlyDirectWritesBullet = isLocalDaemon
-    ? `\n- The task can be completed in a single turn using a handful of file writes/edits or \`${getToolPublicName('sandbox_apply_patchset')}\`.`
-    : '';
+  // "Handle directly" file-writes bullet. Both cloud (direct-edit lane,
+  // repo:write) and local-daemon orchestrators can land a small change in a
+  // single turn with file writes/apply_patchset. Commit/push shipping is
+  // cloud-only and lives in the Tool Routing section, so it's left out here
+  // to stay accurate for local-daemon (no remote).
+  const handleDirectlyDirectWritesBullet = `\n- The task is a small, localized change you can complete in a single turn using a handful of file writes/edits or \`${getToolPublicName('sandbox_apply_patchset')}\` — nothing that needs running commands.`;
 
-  // Per-turn tool budget. Cloud orchestrator's actual mutation
-  // surface is delegation + GitHub mutations + ask_user — NOT
-  // direct sandbox writes/exec. Re-shape the budget to describe
-  // what the model can actually emit.
+  // Per-turn tool budget. Cloud orchestrator can emit a file-mutation batch
+  // plus a single trailing side-effect (commit/push/delegate/GitHub) — but
+  // no `sandbox_exec`. Local-daemon adds exec to that trailing slot. Both
+  // shapes follow the same reads → mutations → one-side-effect ordering.
   const perTurnBudget = isLocalDaemon
     ? `## Per-turn tool budget
 
@@ -183,9 +182,10 @@ Order matters: put reads first, then writes/edits, then the single side-effect l
 
 A single turn may emit:
 - Any number of read-only calls (they run in parallel, cap 6).
-- At most one trailing side-effecting call. Your side-effects are: \`${getToolPublicName('delegate_coder')}\`, \`${getToolPublicName('delegate_explorer')}\`, \`${getToolPublicName('plan_tasks')}\`, \`${getToolPublicName('ask_user')}\`, \`${getToolPublicName('create_pr')}\`, \`${getToolPublicName('merge_pr')}\`, \`${getToolPublicName('delete_branch')}\`, \`${getToolPublicName('trigger_workflow')}\`. Any second side-effect is rejected with \`MULTI_MUTATION_NOT_ALLOWED\`.
+- Any number of pure file mutations (\`${getToolPublicName('sandbox_write_file')}\`, \`${getToolPublicName('sandbox_edit_file')}\`, \`${getToolPublicName('sandbox_edit_range')}\`, \`${getToolPublicName('sandbox_search_replace')}\`, \`${getToolPublicName('sandbox_apply_patchset')}\`) — the runtime executes them sequentially as one mutation batch.
+- At most one trailing side-effecting call: \`${getToolPublicName('sandbox_prepare_commit')}\`, \`${getToolPublicName('sandbox_push')}\`, \`${getToolPublicName('delegate_coder')}\`, \`${getToolPublicName('delegate_explorer')}\`, \`${getToolPublicName('plan_tasks')}\`, \`${getToolPublicName('ask_user')}\`, \`${getToolPublicName('create_pr')}\`, \`${getToolPublicName('merge_pr')}\`, \`${getToolPublicName('delete_branch')}\`, \`${getToolPublicName('trigger_workflow')}\`. Any second side-effect is rejected with \`MULTI_MUTATION_NOT_ALLOWED\`.
 
-For any code change, emit a single \`${getToolPublicName('delegate_coder')}\` (or \`${getToolPublicName('plan_tasks')}\`) as the trailing side-effect — do not attempt direct \`${getToolPublicName('sandbox_write_file')}\` / \`${getToolPublicName('sandbox_exec')}\`; those require capabilities the Coder has and you don't.`;
+Order matters: put reads first, then writes/edits, then the single side-effect last. You have no \`${getToolPublicName('sandbox_exec')}\` — for a small, localized change you can verify by inspection (docs, config, a focused edit), write the files and emit \`${getToolPublicName('sandbox_prepare_commit')}\` in one turn. For anything that needs running commands (tests, builds, installs) or an iterative edit→verify loop, emit a single \`${getToolPublicName('delegate_coder')}\` (or \`${getToolPublicName('plan_tasks')}\`) instead.`;
 
   return `## Efficient Delegation and Handoffs
 
