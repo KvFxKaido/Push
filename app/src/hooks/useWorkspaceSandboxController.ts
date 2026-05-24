@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useRef, type MutableRefObject } from 'react';
 import { buildWorkspaceScratchActions, type SnapshotManager } from '@/hooks/useSnapshotManager';
 import type { SandboxStatus } from '@/hooks/useSandbox';
-import { downloadFromSandbox, execInSandbox } from '@/lib/sandbox-client';
+import { downloadFromSandbox } from '@/lib/sandbox-client';
+import { createSandboxGitBackend } from '@/lib/git-backend';
+import type { GitStatusInfo } from '@push/lib/git/status';
 import type {
   ActiveRepo,
   SandboxStateCardData,
@@ -10,45 +12,19 @@ import type {
   WorkspaceSession,
 } from '@/types';
 
-function parseSandboxGitStatus(sandboxId: string, stdout: string): SandboxStateCardData {
-  const lines = stdout
-    .split('\n')
-    .map((line) => line.trimEnd())
-    .filter(Boolean);
-  const statusLine =
-    lines
-      .find((line) => line.startsWith('##'))
-      ?.slice(2)
-      .trim() || 'unknown';
-  const branch = statusLine.split('...')[0].trim() || 'unknown';
-  const entries = lines.filter((line) => !line.startsWith('##'));
-
-  let stagedFiles = 0;
-  let unstagedFiles = 0;
-  let untrackedFiles = 0;
-  for (const entry of entries) {
-    const x = entry[0] || ' ';
-    const y = entry[1] || ' ';
-    if (x === '?' && y === '?') {
-      untrackedFiles++;
-      continue;
-    }
-    if (x !== ' ') stagedFiles++;
-    if (y !== ' ') unstagedFiles++;
-  }
-
+function gitStatusToCard(sandboxId: string, info: GitStatusInfo): SandboxStateCardData {
   return {
     sandboxId,
     repoPath: '/workspace',
-    branch,
-    statusLine,
-    changedFiles: entries.length,
-    stagedFiles,
-    unstagedFiles,
-    untrackedFiles,
-    preview: entries
+    branch: info.branch,
+    statusLine: info.statusLine || 'unknown',
+    changedFiles: info.entries.length,
+    stagedFiles: info.staged,
+    unstagedFiles: info.unstaged,
+    untrackedFiles: info.untracked.length,
+    preview: info.entries
       .slice(0, 6)
-      .map((line) => (line.length > 120 ? `${line.slice(0, 120)}...` : line)),
+      .map((entry) => (entry.raw.length > 120 ? `${entry.raw.slice(0, 120)}...` : entry.raw)),
     fetchedAt: new Date().toISOString(),
   };
 }
@@ -110,10 +86,10 @@ export function useWorkspaceSandboxController({
     async (id: string): Promise<SandboxStateCardData | null> => {
       setSandboxStateLoading(true);
       try {
-        const result = await execInSandbox(id, 'cd /workspace && git status -sb --porcelain=1');
-        if (result.exitCode !== 0) return null;
+        const info = await createSandboxGitBackend(id).status();
+        if (!info) return null;
 
-        const nextState = parseSandboxGitStatus(id, result.stdout);
+        const nextState = gitStatusToCard(id, info);
         setSandboxState(nextState);
         return nextState;
       } catch {

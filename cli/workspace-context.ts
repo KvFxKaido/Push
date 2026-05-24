@@ -1,10 +1,7 @@
-import { promisify } from 'node:util';
 import { promises as fs, type Dirent } from 'node:fs';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
-import { GitInfo, parseGitStatus, MANIFEST_PARSERS } from '../lib/repo-awareness.js';
-
-const execFileAsync = promisify(execFile);
+import { GitInfo, MANIFEST_PARSERS } from '../lib/repo-awareness.js';
+import { createLocalGitBackend } from './git-backend.js';
 
 const IGNORED_ENTRIES = new Set([
   '.git',
@@ -35,11 +32,7 @@ export interface ProjectInstructions {
 
 export async function getGitInfo(cwd: string): Promise<GitInfo | null> {
   try {
-    const { stdout } = await execFileAsync('git', ['status', '--short', '--branch'], {
-      cwd,
-      timeout: 5000,
-    });
-    return parseGitStatus(stdout);
+    return await createLocalGitBackend(cwd).status();
   } catch {
     return null;
   }

@@ -67,6 +67,7 @@ import { GIT_REF_VALIDATION_DETAIL, isInvalidGitRef } from './git-ref-validation
 import { sanitizeUntrustedSource } from '@push/lib/untrusted-content';
 import { createGitGuardPreHook } from '@push/lib/default-pre-hooks';
 import { reduceToolOutput } from '@push/lib/tool-output-reducers';
+import { createSandboxGitBackend } from './git-backend';
 import { getApprovalMode } from './approval-mode';
 
 import type { SandboxToolCall, SandboxExecutionOptions } from './sandbox-tool-detection';
@@ -886,23 +887,16 @@ export async function executeSandboxToolCall(
           };
         }
 
-        // Capture HEAD before switching so the result can carry `previous`.
-        // `--abbrev-ref HEAD` returns the branch name, or literally "HEAD"
-        // when detached. Failures here are non-fatal: we proceed without
-        // `previous` rather than blocking the switch. `execInSandbox` can
-        // throw on transport / timeout / non-2xx — wrap in try/catch so a
-        // probe failure can never abort the actual switch we were asked
-        // to perform.
+        // Capture the current branch before switching so the result can
+        // carry `previous`. `currentBranch()` returns null when detached.
+        // Failures here are non-fatal: we proceed without `previous` rather
+        // than blocking the switch. The backend's exec can throw on
+        // transport / timeout / non-2xx — wrap in try/catch so a probe
+        // failure can never abort the actual switch we were asked to perform.
         let previous: string | undefined;
         try {
-          const headProbe = await execInSandbox(
-            sandboxId,
-            'cd /workspace && git rev-parse --abbrev-ref HEAD',
-          );
-          if (headProbe.exitCode === 0) {
-            const head = headProbe.stdout.trim();
-            if (head && head !== 'HEAD') previous = head;
-          }
+          const branch = await createSandboxGitBackend(sandboxId).currentBranch();
+          if (branch) previous = branch;
         } catch {
           // Probe failed; continue without `previous`.
         }

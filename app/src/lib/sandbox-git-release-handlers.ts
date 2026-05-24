@@ -58,6 +58,7 @@ import type { DiffResult, ExecResult, FileReadResult } from './sandbox-client';
 import type { CreatedRepoResponse } from './sandbox-tool-utils';
 
 import { parseDiffStats } from './diff-utils';
+import { createSandboxGitBackend } from './git-backend';
 import {
   classifyError,
   formatStructuredError,
@@ -420,6 +421,11 @@ export async function handlePromoteToGithub(
   }
   const remoteUrl = `https://x-access-token:${authToken}@github.com/${createdRepo.full_name}.git`;
 
+  // Promote needs the exact current ref, so this read stays raw rather than
+  // going through the normalized `currentBranch()`. A detached HEAD must
+  // surface as `HEAD` (making the later `git push -u origin HEAD` fail loudly)
+  // instead of collapsing to null and falling back to the default branch —
+  // which would publish the wrong revision (Codex review on PR #629).
   const branchResult = await ctx.execInSandbox(
     ctx.sandboxId,
     'cd /workspace && git rev-parse --abbrev-ref HEAD',
@@ -516,12 +522,9 @@ export async function handleSaveDraft(
     };
   }
 
-  // Step 2: Get current branch
-  const currentBranchResult = await ctx.execInSandbox(
-    ctx.sandboxId,
-    'cd /workspace && git branch --show-current',
-  );
-  const currentBranch = currentBranchResult.exitCode === 0 ? currentBranchResult.stdout.trim() : '';
+  // Step 2: Get current branch (null → '' when detached / not a repo)
+  const currentBranch =
+    (await createSandboxGitBackend(ctx.sandboxId, ctx.execInSandbox).currentBranch()) ?? '';
 
   // Step 3: Determine draft branch name — must start with draft/ (unaudited path)
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);

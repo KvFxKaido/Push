@@ -1,4 +1,5 @@
 import type { StructuredToolError } from '@/types';
+import { detectGitMutation } from '@push/lib/git/mutation';
 import { getActiveGitHubToken } from './github-auth';
 
 export function normalizeSandboxPath(path: string): string {
@@ -450,33 +451,7 @@ export function shellEscape(value: string): string {
 }
 
 export function isLikelyMutatingSandboxExec(command: string): boolean {
-  const normalized = command.trim().toLowerCase();
-  if (!normalized) return false;
-
-  if (
-    /^(cd\s+\S+\s*&&\s*)?(pwd|ls|find|cat|head|tail|wc|stat|file|rg|grep|sed -n|awk|git status|git diff|git show|git branch --show-current)\b/.test(
-      normalized,
-    )
-  ) {
-    return false;
-  }
-
-  if (/(^|[^0-9])>>?/.test(normalized)) {
-    return true;
-  }
-
-  return (
-    /\b(rm|mv|cp|mkdir|rmdir|touch|chmod|chown|tee|patch)\b/.test(normalized) ||
-    /\bgit\s+(add|commit|checkout|switch|merge|rebase|reset|restore|clean|stash|cherry-pick|apply|am|push)\b/.test(
-      normalized,
-    ) ||
-    /\b(npm|pnpm|yarn)\s+(install|add|remove|uninstall|update|up|ci)\b/.test(normalized) ||
-    /\b(pip|pip3)\s+install\b/.test(normalized) ||
-    /\bgo\s+mod\b/.test(normalized) ||
-    /\bcargo\s+(add|remove)\b/.test(normalized) ||
-    /\bsed\s+-i\b/.test(normalized) ||
-    /\bperl\s+-pi\b/.test(normalized)
-  );
+  return detectGitMutation(command).isLikelyMutating;
 }
 
 // ---------------------------------------------------------------------------

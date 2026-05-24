@@ -31,7 +31,8 @@
 import { useCallback } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 
-import { execInSandbox, fetchSandboxDiffWithMeta } from '@/lib/sandbox-client';
+import { fetchSandboxDiffWithMeta } from '@/lib/sandbox-client';
+import { createSandboxGitBackend } from '@/lib/git-backend';
 import { replayWorkspacePatch } from '@/lib/sandbox-patch';
 import type { ChatCard, Conversation, RunEventInput } from '@/types';
 import {
@@ -121,14 +122,13 @@ export function useWorkspacePatchCapture(
       const targetMessageId = ctx.assistantToolCallMessageId;
 
       try {
-        const [diffCapture, headResult] = await Promise.all([
+        const [diffCapture, baseSha] = await Promise.all([
           fetchSandboxDiffWithMeta(sandboxId),
-          execInSandbox(sandboxId, 'cd /workspace && git rev-parse HEAD'),
+          createSandboxGitBackend(sandboxId).headSha(),
         ]);
 
         if (!diffCapture.diff) return; // V1: no card on empty diff.
 
-        const baseSha = (headResult.stdout || '').trim();
         if (!baseSha) {
           console.debug(
             '[WorkspacePatchCapture] git rev-parse HEAD produced no output — skipping capture',

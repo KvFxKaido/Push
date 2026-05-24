@@ -499,9 +499,9 @@ describe('handleSaveDraft', () => {
     });
     const result = await handleSaveDraft(ctx, { branch_name: 'main' });
     expect(result.text).toContain('branch_name must start with "draft/"');
-    // Only the branch-detect exec ran.
+    // Only the branch-detect exec ran (via the GitBackend's currentBranch()).
     expect(ctx.execInSandbox).toHaveBeenCalledTimes(1);
-    expect(ctx.execCalls[0][1]).toContain('git branch --show-current');
+    expect(ctx.execCalls[0][1]).toContain("git 'branch' '--show-current'");
   });
 
   it('runs checkout/stage/commit/push with mutation flags and returns branchSwitch on the auto-generated-branch path', async () => {
