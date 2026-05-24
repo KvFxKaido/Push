@@ -67,7 +67,14 @@ export interface GitBackend {
   status(): Promise<GitStatusInfo | null>;
 
   // --- Sanctioned writes (the only mutations the backend exposes; merge /
-  // reset / rebase / cherry-pick are policy-blocked and never surfaced). ---
+  // reset / rebase / cherry-pick are policy-blocked and never surfaced).
+  //
+  // Ref/branch/path arguments are passed through as-is. Callers MUST validate
+  // them (e.g. `isInvalidGitRef`) before calling — the sandbox adapter
+  // shell-escapes argv so there is no shell-injection surface, but it does not
+  // validate ref *semantics* (e.g. a leading `-` that git would read as a
+  // flag). Validation stays a caller concern to keep this layer transport-only.
+  // ---
 
   /** Create and switch to `name` (atomic `checkout -b`), optionally from a ref. */
   createBranch(name: string, from?: string): Promise<GitWriteResult>;

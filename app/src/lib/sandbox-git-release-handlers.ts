@@ -59,6 +59,7 @@ import type { CreatedRepoResponse } from './sandbox-tool-utils';
 
 import { parseDiffStats } from './diff-utils';
 import { createSandboxPushGit } from './git-backend';
+import { GIT_REF_VALIDATION_DETAIL, isInvalidGitRef } from './git-ref-validation';
 import {
   classifyError,
   formatStructuredError,
@@ -523,8 +524,15 @@ export async function handleSaveDraft(
   const pushGit = createSandboxPushGit(ctx.sandboxId, { execFn: ctx.execInSandbox });
   const currentBranch = (await pushGit.currentBranch()) ?? '';
 
-  // Step 3: Determine draft branch name — must start with draft/ (unaudited path)
+  // Step 3: Determine draft branch name — must be a valid ref and start with
+  // draft/ (unaudited path). Validate ref shape like the typed branch tools
+  // so a malformed/leading-hyphen name can't reach createBranch.
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  if (args.branch_name && isInvalidGitRef(args.branch_name)) {
+    return {
+      text: `[Tool Error — sandbox_save_draft]\nInvalid branch name "${args.branch_name}". ${GIT_REF_VALIDATION_DETAIL}`,
+    };
+  }
   if (args.branch_name && !args.branch_name.startsWith('draft/')) {
     return {
       text: '[Tool Error — sandbox_save_draft]\nbranch_name must start with "draft/". This tool skips Auditor review and is restricted to draft branches. Use sandbox_prepare_commit for non-draft branches.',

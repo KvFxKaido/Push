@@ -82,7 +82,19 @@ export class PushGit {
    */
   async commit(opts: { message: string; addArgs?: string[] }): Promise<PushGitCommitResult> {
     if (this.preCommit) {
-      const verdict = await this.preCommit();
+      let verdict: PreCommitVerdict;
+      try {
+        verdict = await this.preCommit();
+      } catch (err) {
+        // Fail safe: a gate that throws blocks the commit, mirroring the
+        // Auditor's default-to-UNSAFE-on-error stance — never commit when the
+        // gate couldn't render a verdict.
+        return {
+          ok: false,
+          blocked: true,
+          reason: err instanceof Error ? err.message : 'pre-commit gate failed',
+        };
+      }
       if (!verdict.ok) return { ok: false, blocked: true, reason: verdict.reason };
     }
     const result = await this.backend.commit(opts.message, { addArgs: opts.addArgs });

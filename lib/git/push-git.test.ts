@@ -51,6 +51,19 @@ describe('PushGit.commit', () => {
     expect(commit).not.toHaveBeenCalled();
   });
 
+  it('fail-safe blocks (no commit) when the gate throws', async () => {
+    const preCommit = vi.fn(async () => {
+      throw new Error('auditor crashed');
+    });
+    const commit = vi.fn(async () => writeOk());
+    const pg = new PushGit({ backend: fakeBackend({ commit }), preCommit });
+    const res = await pg.commit({ message: 'm' });
+    expect(res.ok).toBe(false);
+    expect(res.blocked).toBe(true);
+    expect(res.reason).toContain('auditor crashed');
+    expect(commit).not.toHaveBeenCalled();
+  });
+
   it('reports a failed commit (gate passed, git failed)', async () => {
     const pg = new PushGit({
       backend: fakeBackend({ commit: async () => writeFail('nothing to commit') }),

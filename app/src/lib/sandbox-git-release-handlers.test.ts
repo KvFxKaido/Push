@@ -504,6 +504,17 @@ describe('handleSaveDraft', () => {
     expect(ctx.execCalls[0][1]).toContain("git 'branch' '--show-current'");
   });
 
+  it('rejects an invalid branch_name before reaching createBranch', async () => {
+    const ctx = makeContext({
+      diffResults: [{ diff: 'diff --git a/x.ts b/x.ts\n+y\n', truncated: false }],
+      execResults: [ok('main')],
+    });
+    const result = await handleSaveDraft(ctx, { branch_name: '-bad' });
+    expect(result.text).toContain('Invalid branch name "-bad"');
+    // Only the branch-detect exec ran — no checkout/stage/commit/push.
+    expect(ctx.execInSandbox).toHaveBeenCalledTimes(1);
+  });
+
   it('runs checkout/stage/commit/push with mutation flags and returns branchSwitch on the auto-generated-branch path', async () => {
     const diff = 'diff --git a/x.ts b/x.ts\n+a\n';
     const ctx = makeContext({
