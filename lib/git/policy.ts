@@ -18,10 +18,14 @@
  * working byte-for-byte.
  *
  * Scope note (intentional, see PR plan): this oracle reproduces today's
- * block/allow/route decisions exactly — no behavior change. Two items from
+ * block/allow/route decisions exactly — no behavior change. A few items from
  * the longer-term design are deliberately NOT yet enforced here:
  *   - `git reset --hard` / other history rewrites beyond rebase: still
  *     `allow` (today's behavior); promoting reset to `block` is a follow-up.
+ *   - `git checkout -` / `git switch -` (previous-branch shorthand): still
+ *     `allow` (today's behavior) even though it changes branch — promoting
+ *     it to a `switch_branch` route is a follow-up behavior change. Pinned
+ *     in the drift corpus so the gap stays visible.
  *   - Protect Main: stays in the typed-tool pre-hook; folding it in would
  *     require the branch context this pure oracle doesn't take.
  */
@@ -52,18 +56,24 @@ export interface GitAllowDecision {
   family: GitAllowFamily;
 }
 
-export interface GitRouteDecision {
+/**
+ * A `route` decision. `args` is typed per `to` target so the typed
+ * branch/commit tools (wired up in a later PR) get the right keys
+ * statically rather than a stringly-typed bag.
+ */
+export type GitRouteDecision = {
   kind: 'route';
-  to: GitRouteTarget;
-  /** Best-effort extracted args (e.g. `{ name }`, `{ branch }`). */
-  args: Record<string, string>;
   /**
    * Legacy `detectBlockedGitCommand` label (e.g. `"git commit"`,
    * `"git checkout <branch>"`). Carried so the `sandbox_exec` guard's
    * reason text and `default-pre-hooks` guidance stay identical.
    */
   label: string;
-}
+} & (
+  | { to: 'create_branch'; args: { name: string } }
+  | { to: 'switch_branch'; args: { branch: string } }
+  | { to: 'commit' | 'push'; args: Record<string, never> }
+);
 
 export interface GitBlockDecision {
   kind: 'block';

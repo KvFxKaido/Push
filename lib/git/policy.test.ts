@@ -44,6 +44,11 @@ const CORPUS: Case[] = [
   { command: 'git checkout HEAD src/a.ts', expected: { kind: 'allow', family: 'restore-file' } },
   { command: 'git checkout HEAD~1', expected: { kind: 'allow', family: 'mutate' } },
   { command: 'git checkout main~3', expected: { kind: 'allow', family: 'mutate' } },
+  // previous-branch shorthand (`-` === `@{-1}`) DOES change branch, but is
+  // left `allow` today — a known under-block deferred to the behavior-change
+  // PR (see the scope note in policy.ts). Pinned here so the gap is visible.
+  { command: 'git checkout -', expected: { kind: 'allow', family: 'mutate' } },
+  { command: 'git switch -', expected: { kind: 'allow', family: 'mutate' } },
 
   // --- route: branch create -----------------------------------------------
   {
