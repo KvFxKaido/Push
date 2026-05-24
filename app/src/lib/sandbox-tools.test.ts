@@ -4127,7 +4127,7 @@ describe('executeSandboxToolCall -- sandbox_create_branch', () => {
 
     const calls = vi.mocked(sandboxClient.execInSandbox).mock.calls;
     expect(calls).toHaveLength(1);
-    expect(calls[0][1]).toContain("git checkout -b 'feature/foo'");
+    expect(calls[0][1]).toContain("git 'checkout' '-b' 'feature/foo'");
     expect(calls[0][3]?.markWorkspaceMutated).toBe(true);
   });
 
@@ -4155,7 +4155,7 @@ describe('executeSandboxToolCall -- sandbox_create_branch', () => {
     const calls = vi.mocked(sandboxClient.execInSandbox).mock.calls;
     expect(calls).toHaveLength(1);
     const cmd = calls[0][1];
-    expect(cmd).toContain("git checkout -b 'feature/foo' 'main'");
+    expect(cmd).toContain("git 'checkout' '-b' 'feature/foo' 'main'");
     // No separate `git checkout 'main'` — the previous chained form left
     // HEAD on `main` if branch creation failed. Atomic form avoids that.
     expect(cmd).not.toContain("git checkout 'main'");
@@ -4307,7 +4307,7 @@ describe('executeSandboxToolCall -- sandbox_switch_branch', () => {
     const calls = vi.mocked(sandboxClient.execInSandbox).mock.calls;
     expect(calls).toHaveLength(2);
     expect(calls[0][1]).toContain("git 'branch' '--show-current'");
-    expect(calls[1][1]).toContain("git switch 'main'");
+    expect(calls[1][1]).toContain("git 'switch' 'main'");
     // Branch switch must be marked as workspace-mutating so the cache/ledger
     // invalidation hooks fire (same as sandbox_create_branch).
     expect(calls[1][3]?.markWorkspaceMutated).toBe(true);
@@ -4400,7 +4400,9 @@ describe('executeSandboxToolCall -- sandbox_switch_branch', () => {
     });
     // Both the probe and the actual switch were attempted.
     expect(vi.mocked(sandboxClient.execInSandbox)).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(sandboxClient.execInSandbox).mock.calls[1][1]).toContain("git switch 'main'");
+    expect(vi.mocked(sandboxClient.execInSandbox).mock.calls[1][1]).toContain(
+      "git 'switch' 'main'",
+    );
   });
 
   it('rejects invalid branch names without invoking the sandbox', async () => {
@@ -4416,15 +4418,25 @@ describe('executeSandboxToolCall -- sandbox_switch_branch', () => {
 
   it('surfaces a structured error when git switch fails', async () => {
     vi.mocked(sandboxClient.execInSandbox)
+      // 1) branch probe (currentBranch)
       .mockResolvedValueOnce({
         stdout: 'feat/old\n',
         stderr: '',
         exitCode: 0,
         truncated: false,
       })
+      // 2) first `git switch` — misses locally
       .mockResolvedValueOnce({
         stdout: '',
         stderr: 'fatal: invalid reference: nonexistent',
+        exitCode: 1,
+        truncated: false,
+      })
+      // 3) fallback depth-1 fetch — branch missing on origin too, so the
+      // switchBranch fallback returns this failure.
+      .mockResolvedValueOnce({
+        stdout: '',
+        stderr: "fatal: couldn't find remote ref nonexistent: invalid reference",
         exitCode: 1,
         truncated: false,
       });
