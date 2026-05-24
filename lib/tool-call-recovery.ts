@@ -25,7 +25,27 @@ export const MAX_TOOL_CALL_DIAGNOSIS_RETRIES = 2;
 export interface ToolCallRecoveryState {
   diagnosisRetries: number;
   recoveryAttempted: boolean;
+  /**
+   * Count of "announced an action but emitted no tool call" nudges issued
+   * during this run. The Web no-tool path increments this when it re-prompts
+   * a model that narrated an imminent tool action ("Let's read X") without
+   * emitting the call. Capped so a model that keeps narrating can't spin the
+   * loop forever. Optional for back-compat with callers that predate the
+   * guard (CLI loop, tests) — read it as `?? 0`.
+   */
+  trailingIntentNudges?: number;
 }
+
+/**
+ * Cap on "announced an action but emitted no tool call" nudges per run.
+ * One nudge resolves the common case (the model emits the call it described).
+ * The cap is a safety valve: the Web round loop is otherwise unbounded, so a
+ * model that keeps narrating intent without ever acting must eventually be
+ * allowed to break rather than spin forever. Co-located with the
+ * `trailingIntentNudges` field so any future consumer (e.g. the CLI loop)
+ * reads the contract and its bound from one place.
+ */
+export const MAX_TRAILING_INTENT_NUDGES = 3;
 
 export interface UnimplementedToolErrorOptions {
   availableTools?: readonly string[];
