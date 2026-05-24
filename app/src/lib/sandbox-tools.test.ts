@@ -1595,7 +1595,7 @@ describe('executeSandboxToolCall -- sandbox_save_draft', () => {
     // Only the branch-detect exec ran — no checkout/stage/commit/push.
     expect(sandboxClient.execInSandbox).toHaveBeenCalledTimes(1);
     expect(vi.mocked(sandboxClient.execInSandbox).mock.calls[0][1]).toContain(
-      'git rev-parse --abbrev-ref HEAD',
+      "git 'rev-parse' '--abbrev-ref' 'HEAD'",
     );
   });
 
@@ -4306,7 +4306,7 @@ describe('executeSandboxToolCall -- sandbox_switch_branch', () => {
 
     const calls = vi.mocked(sandboxClient.execInSandbox).mock.calls;
     expect(calls).toHaveLength(2);
-    expect(calls[0][1]).toContain('git rev-parse --abbrev-ref HEAD');
+    expect(calls[0][1]).toContain("git 'rev-parse' '--abbrev-ref' 'HEAD'");
     expect(calls[1][1]).toContain("git switch 'main'");
     // Branch switch must be marked as workspace-mutating so the cache/ledger
     // invalidation hooks fire (same as sandbox_create_branch).
