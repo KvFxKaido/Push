@@ -28,6 +28,7 @@ import { markLastAssistantToolCall } from '@/lib/chat-tool-messages';
 import { handleRecoveryResult } from '@/lib/chat-tool-execution';
 import {
   createOrchestratorPolicy,
+  detectTrailingActionIntent,
   hasArtifactInResponse,
   hasGroundingEvidence,
   responseClaimsCompletion,
@@ -37,6 +38,15 @@ import { evaluateVerificationState, formatVerificationBlock } from '@/lib/verifi
 import { createId } from '@push/lib/id-utils';
 import type { ChatMessage, ReasoningBlock } from '@/types';
 import type { AssistantTurnResult, SendLoopContext } from './chat-send-types';
+
+/**
+ * Cap on "announced an action but emitted no tool call" nudges per run.
+ * One nudge resolves the common case (the model emits the call it described).
+ * The cap is a safety valve: the round loop is otherwise unbounded, so a model
+ * that keeps narrating intent without ever acting must eventually be allowed to
+ * break rather than spin forever.
+ */
+const MAX_TRAILING_INTENT_NUDGES = 3;
 
 export async function processNoToolPath(
   round: number,
@@ -231,6 +241,62 @@ export async function processNoToolPath(
         loopCompletedNormally: false,
       };
     }
+  }
+
+  // --- Turn policy: announced-action-without-tool-call guard ---
+  // The model ended its turn by announcing an imminent action ("Let's read
+  // README.md", "I'll search the docs") but emitted no tool call, so recovery
+  // found nothing to retry and the loop would dead-end with the work undone.
+  // Nudge it to actually emit the call (or conclude) and continue, instead of
+  // breaking. This stays out of the parser entirely — we never synthesize a
+  // call or guess args from prose; we just re-prompt. Capped to avoid an
+  // unbounded nudge loop. Mutually exclusive with the ungrounded-completion
+  // guard above via the `!responseClaimsCompletion` check.
+  const trailingIntentNudges = nextRecoveryState.trailingIntentNudges ?? 0;
+  if (
+    action.loopAction === 'break' &&
+    trailingIntentNudges < MAX_TRAILING_INTENT_NUDGES &&
+    !responseClaimsCompletion(accumulated) &&
+    detectTrailingActionIntent(accumulated)
+  ) {
+    appendRunEvent(chatId, {
+      type: 'tool.call_malformed',
+      round,
+      reason: 'announced_no_tool_call',
+      preview: summarizeToolResultPreview(accumulated),
+    });
+
+    setConversations((prev) => {
+      const conv = prev[chatId];
+      if (!conv) return prev;
+      const msgs = [...conv.messages];
+      const lastIdx = msgs.length - 1;
+      if (msgs[lastIdx]?.role === 'assistant') {
+        msgs[lastIdx] = { ...msgs[lastIdx], content: accumulated, status: 'done' };
+      }
+      dirtyConversationIdsRef.current.add(chatId);
+      return { ...prev, [chatId]: { ...conv, messages: msgs, lastMessageAt: Date.now() } };
+    });
+
+    return {
+      nextApiMessages: [
+        ...action.apiMessages,
+        {
+          id: createId(),
+          role: 'user',
+          content: [
+            '[POLICY: ANNOUNCED_NO_ACTION]',
+            'You described an action you were about to take (e.g. reading or searching a file) but did not emit a tool call, so nothing actually happened.',
+            'If you intended to act, emit the tool-call JSON now. If you are actually finished, state your conclusion directly without describing further steps.',
+            '[/POLICY]',
+          ].join('\n'),
+          timestamp: Date.now(),
+        },
+      ],
+      nextRecoveryState: { ...nextRecoveryState, trailingIntentNudges: trailingIntentNudges + 1 },
+      loopAction: 'continue',
+      loopCompletedNormally: false,
+    };
   }
 
   return {

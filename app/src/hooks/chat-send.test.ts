@@ -376,6 +376,80 @@ describe('chat-send', () => {
     expect(dirtyRef.current.has('chat-1')).toBe(true);
   });
 
+  it('nudges and continues when the turn announces an action but emits no tool call', async () => {
+    const conversationsRef = {
+      current: makeConversation([makeMessage({ content: 'streaming...' })]),
+    };
+    const dirtyRef = { current: new Set<string>() };
+    const ctx = makeLoopContext(conversationsRef, dirtyRef);
+    const apiMessages: ChatMessage[] = [
+      makeMessage({ id: 'user-1', role: 'user', content: 'Audit the docs', status: 'done' }),
+    ];
+
+    const result = await processAssistantTurn(
+      0,
+      "The docs look healthy.\n\nLet's read docs/decisions/README.md to check the status labels.",
+      '',
+      [],
+      apiMessages,
+      ctx,
+      { diagnosisRetries: 0, recoveryAttempted: false },
+    );
+
+    expect(result.loopAction).toBe('continue');
+    expect(result.loopCompletedNormally).toBe(false);
+    const lastMsg = result.nextApiMessages.at(-1);
+    expect(lastMsg?.role).toBe('user');
+    expect(lastMsg?.content).toContain('ANNOUNCED_NO_ACTION');
+    // Counter advances so the loop can't spin forever on a narrating model.
+    expect(result.nextRecoveryState.trailingIntentNudges).toBe(1);
+    // Assistant message is finalized, not left streaming.
+    expect(conversationsRef.current['chat-1'].messages.at(-1)?.status).toBe('done');
+  });
+
+  it('stops nudging announced-action turns once the per-run cap is reached', async () => {
+    const conversationsRef = {
+      current: makeConversation([makeMessage({ content: 'streaming...' })]),
+    };
+    const dirtyRef = { current: new Set<string>() };
+    const ctx = makeLoopContext(conversationsRef, dirtyRef);
+
+    const result = await processAssistantTurn(
+      0,
+      "Let's read docs/decisions/README.md to check the status labels.",
+      '',
+      [],
+      [makeMessage({ id: 'user-1', role: 'user', content: 'Audit the docs', status: 'done' })],
+      ctx,
+      { diagnosisRetries: 0, recoveryAttempted: false, trailingIntentNudges: 3 },
+    );
+
+    // Cap reached — let the turn break instead of looping forever.
+    expect(result.loopAction).toBe('break');
+    expect(result.loopCompletedNormally).toBe(true);
+  });
+
+  it('does NOT nudge a plain prose conclusion with no announced action', async () => {
+    const conversationsRef = {
+      current: makeConversation([makeMessage({ content: 'streaming...' })]),
+    };
+    const dirtyRef = { current: new Set<string>() };
+    const ctx = makeLoopContext(conversationsRef, dirtyRef);
+
+    const result = await processAssistantTurn(
+      0,
+      'The documentation is healthy and nothing needs updating right now.',
+      '',
+      [],
+      [makeMessage({ id: 'user-1', role: 'user', content: 'Audit the docs', status: 'done' })],
+      ctx,
+      { diagnosisRetries: 0, recoveryAttempted: false },
+    );
+
+    expect(result.loopAction).toBe('break');
+    expect(result.loopCompletedNormally).toBe(true);
+  });
+
   it('blocks completion with a runtime verification message when requirements are unmet', async () => {
     const conversationsRef = {
       current: makeConversation([makeMessage({ content: 'streaming...' })]),
