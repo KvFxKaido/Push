@@ -462,12 +462,9 @@ export async function handlePromoteToGithub(
     };
   }
 
-  const pushResult = await ctx.execInSandbox(
-    ctx.sandboxId,
-    `cd /workspace && git push -u origin ${shellEscape(branchName)}`,
-    undefined,
-    { markWorkspaceMutated: true },
-  );
+  const pushResult = await createSandboxPushGit(ctx.sandboxId, {
+    execFn: ctx.execInSandbox,
+  }).push({ setUpstream: true, ref: branchName });
 
   const rawPushError = `${pushResult.stderr}\n${pushResult.stdout}`.toLowerCase();
   const noCommitsYet =

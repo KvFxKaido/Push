@@ -276,12 +276,7 @@ export function useChatCardActions({
           // Enforce Protect Main for UI-driven commits
           if (isMainProtectedRef.current) {
             try {
-              const branchResult = await execInSandbox(
-                sandboxId,
-                'cd /workspace && git branch --show-current',
-              );
-              const currentBranch =
-                branchResult.exitCode === 0 ? branchResult.stdout?.trim() : null;
+              const currentBranch = await createSandboxPushGit(sandboxId).currentBranch();
               const mainBranches = new Set(['main', 'master']);
               const defBranch = branchInfoRef.current?.defaultBranch;
               if (defBranch) mainBranches.add(defBranch);
@@ -356,6 +351,24 @@ export function useChatCardActions({
             // gate; the backend shell-escapes the message and marks the
             // workspace mutated.
             const pushGit = createSandboxPushGit(sandboxId);
+            // Non-blocking desync check: warn (don't block) if the sandbox HEAD
+            // drifted from the branch Push tracks as active. PushGit only
+            // verifies the invariant; any future enforcement is the caller's.
+            const expectedBranch = branchInfoRef.current?.currentBranch;
+            if (expectedBranch) {
+              try {
+                const branchCheck = await pushGit.validateActiveBranch(expectedBranch);
+                if (!branchCheck.inSync) {
+                  console.warn(
+                    `[commit] sandbox HEAD (${branchCheck.actual ?? 'detached'}) differs from tracked branch (${branchCheck.expected}); committing anyway.`,
+                  );
+                }
+              } catch (err) {
+                // Best-effort observability — a failing/slow desync check must
+                // never block or fail the commit itself.
+                console.warn('[commit] branch validation failed:', err);
+              }
+            }
             const commit = await pushGit.commit({ message: normalizedCommitMessage });
 
             if (!commit.ok) {

@@ -1520,7 +1520,7 @@ describe('executeSandboxToolCall -- promote_to_github', () => {
     // mutate the workspace from the cache's perspective.
     expect(sandboxClient.execInSandbox).toHaveBeenLastCalledWith(
       'sb-1',
-      expect.stringMatching(/git push -u origin/),
+      expect.stringMatching(/git 'push' '-u' 'origin'/),
       undefined,
       { markWorkspaceMutated: true },
     );

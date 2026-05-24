@@ -82,6 +82,40 @@ describe('PushGit.commit', () => {
   });
 });
 
+describe('PushGit.validateActiveBranch', () => {
+  it('reports inSync when the sandbox HEAD matches the expected branch', async () => {
+    const pg = new PushGit({ backend: fakeBackend({ currentBranch: async () => 'feat/x' }) });
+    expect(await pg.validateActiveBranch('feat/x')).toEqual({
+      inSync: true,
+      expected: 'feat/x',
+      actual: 'feat/x',
+    });
+  });
+
+  it('reports a mismatch (does not enforce) when HEAD has drifted', async () => {
+    const pg = new PushGit({ backend: fakeBackend({ currentBranch: async () => 'other' }) });
+    expect(await pg.validateActiveBranch('feat/x')).toEqual({
+      inSync: false,
+      expected: 'feat/x',
+      actual: 'other',
+    });
+  });
+
+  it('normalizes whitespace on the expected branch before comparing', async () => {
+    const pg = new PushGit({ backend: fakeBackend({ currentBranch: async () => 'feat/x' }) });
+    const res = await pg.validateActiveBranch('  feat/x\n');
+    expect(res.inSync).toBe(true);
+    expect(res.expected).toBe('feat/x');
+  });
+
+  it('treats a detached / unreadable HEAD (null) as out of sync', async () => {
+    const pg = new PushGit({ backend: fakeBackend({ currentBranch: async () => null }) });
+    const res = await pg.validateActiveBranch('feat/x');
+    expect(res.inSync).toBe(false);
+    expect(res.actual).toBeNull();
+  });
+});
+
 describe('PushGit write delegation', () => {
   it('delegates branch + push writes to the backend', async () => {
     const createBranch = vi.fn(async () => writeOk());

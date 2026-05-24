@@ -10,10 +10,10 @@
  * Orchestration is deliberately NOT owned here — the `branchSwitch` / `meta`
  * routing, chat re-scoping, the Auditor delegation itself (provider lock,
  * brief, agent run), the Protect Main pre-hook, sandbox teardown, and
- * run-event emission all stay in the handlers. (A sandbox-HEAD-vs-session
- * desync validator also belongs to this facade per the design, but is left to
- * a follow-up: it needs the orchestration layer to supply
- * `session.activeBranch`, which this layer doesn't see.)
+ * run-event emission all stay in the handlers. In the same spirit,
+ * `validateActiveBranch` only *verifies* the sandbox-HEAD-vs-tracked-branch
+ * invariant and returns a typed diagnostic — the caller (which owns
+ * `session.activeBranch`) decides whether a mismatch warns or refuses.
  */
 
 import type { GitBackend, GitWriteResult } from './backend.js';
@@ -31,6 +31,15 @@ export type PreCommitGate = () => Promise<PreCommitVerdict>;
 export interface PushGitDeps {
   backend: GitBackend;
   preCommit?: PreCommitGate;
+}
+
+export interface ActiveBranchValidation {
+  /** True when the sandbox's HEAD branch matches the expected (tracked) one. */
+  inSync: boolean;
+  /** The branch the orchestration believes is active (session.activeBranch). */
+  expected: string;
+  /** The sandbox's actual HEAD branch, or null when detached / unreadable. */
+  actual: string | null;
 }
 
 export interface PushGitCommitResult {
@@ -61,6 +70,20 @@ export class PushGit {
   }
   status(): Promise<GitStatusInfo | null> {
     return this.backend.status();
+  }
+
+  /**
+   * Verify the sandbox's HEAD branch matches the branch the orchestration
+   * thinks is active. Returns a typed diagnostic and does NOT enforce —
+   * `lib/git/` only sees git reality, so the caller (which owns the session /
+   * UI context) decides whether a mismatch is a warning or a refusal.
+   */
+  async validateActiveBranch(expected: string): Promise<ActiveBranchValidation> {
+    const actual = await this.backend.currentBranch();
+    // `currentBranch()` is already trimmed; normalize the caller's value the
+    // same way so stray whitespace can't manufacture a spurious mismatch.
+    const normalizedExpected = expected.trim();
+    return { inSync: actual === normalizedExpected, expected: normalizedExpected, actual };
   }
 
   // --- Sanctioned writes ---
