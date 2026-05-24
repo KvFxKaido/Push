@@ -63,6 +63,9 @@ const ROUTES = new Set([
 ]);
 
 const MAX_READ_BYTES = 5_000_000;
+// Upper bound for a single download (tar.gz archive or raw file). Mirrors the
+// Modal backend's MAX_ARCHIVE_BYTES so both providers reject the same payloads.
+const MAX_ARCHIVE_BYTES = 100_000_000;
 const OWNER_TOKEN_PATH = '/tmp/push-owner-token';
 
 // Upper bound for a single `sandbox.exec` call. The Cloudflare Sandbox SDK's
@@ -911,20 +914,143 @@ async function routeDiff(env: Env, body: Json): Promise<Response> {
   });
 }
 
+// Directory tar excludes mirror the Modal backend (sandbox/app.py
+// create_archive) so a "download your work" archive is the same payload on
+// both providers — no VCS metadata or rebuildable dependency trees.
+const ARCHIVE_DIR_EXCLUDES = [
+  '.git',
+  'node_modules',
+  '__pycache__',
+  '.venv',
+  'dist',
+  'build',
+] as const;
+
 async function routeDownload(env: Env, body: Json): Promise<Response> {
   const sandboxId = requireStr(body, 'sandbox_id');
   const path = (str(body.path) ?? '/workspace').replace(/\/+$/g, '') || '/workspace';
+  const format = str(body.format) ?? 'tar.gz';
+
+  // Wire contract is shared with Modal (sandbox/app.py create_archive): the
+  // browser/CLI clients read `ok`, `archive_base64`/`file_base64`, `filename`,
+  // `content_type`, `size_bytes`, and `format` straight off this JSON. App-level
+  // failures return `{ ok: false, error }` with HTTP 200 so the client surfaces
+  // `error` rather than a transport error.
+  if (format !== 'tar.gz' && format !== 'raw') {
+    return Response.json({ ok: false, error: 'Unsupported format' });
+  }
+  if (!path.startsWith('/')) {
+    return Response.json({ ok: false, error: 'Path must be absolute' });
+  }
+  // Defense in depth: downloads exfiltrate file bytes and tarballs, so confine
+  // them to /workspace even though all UI surfaces only ever browse it.
+  if (path !== '/workspace' && !path.startsWith('/workspace/')) {
+    return Response.json({ ok: false, error: 'Path must be within /workspace' });
+  }
+
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  const quotedPath = shellSingleQuote(path);
 
-  // Produce a base64 tar.gz on stdout via the container.
-  const tarResult = (await withExecDeadline(
-    sandbox.exec(`tar -czf - -C ${JSON.stringify(path)} . | base64 -w0`),
-  )) as { stdout?: string };
+  // One probe resolves existence, kind, and byte size. `%F` distinguishes
+  // "regular file" from "directory"; `%s` is the authoritative size for the
+  // raw-file cap. A non-zero exit means the path does not exist.
+  const statResult = (await withExecDeadline(sandbox.exec(`stat -c '%F|%s' -- ${quotedPath}`))) as {
+    stdout?: string;
+    stderr?: string;
+    exitCode?: number;
+  };
+  if ((statResult.exitCode ?? 0) !== 0) {
+    return Response.json({
+      ok: false,
+      error: (statResult.stderr || `Path not found: ${path}`).trim() || `Path not found: ${path}`,
+    });
+  }
+  const [kind, sizeRaw] = (statResult.stdout ?? '').trim().split('|');
+  const isFile = kind === 'regular file';
+  const isDirectory = kind === 'directory';
+  const name = path.split('/').pop() || 'workspace';
 
-  const archive = tarResult.stdout?.trim() ?? '';
-  // Approximate decoded size — base64 expands 4:3.
-  const size = Math.floor((archive.length * 3) / 4);
-  return Response.json({ archive, size });
+  if (format === 'raw') {
+    if (!isFile) {
+      return Response.json({ ok: false, error: 'Raw download is only supported for files' });
+    }
+    const sizeBytes = Number.parseInt(sizeRaw ?? '', 10);
+    if (Number.isFinite(sizeBytes) && sizeBytes > MAX_ARCHIVE_BYTES) {
+      return Response.json({
+        ok: false,
+        error: `File exceeds max size of ${MAX_ARCHIVE_BYTES} bytes`,
+      });
+    }
+
+    const fileResult = (await withExecDeadline(sandbox.exec(`base64 -w0 -- ${quotedPath}`))) as {
+      stdout?: string;
+      stderr?: string;
+      exitCode?: number;
+    };
+    if ((fileResult.exitCode ?? 0) !== 0) {
+      return Response.json({
+        ok: false,
+        error:
+          (fileResult.stderr || 'Raw file download failed').trim() || 'Raw file download failed',
+      });
+    }
+
+    const fileBase64 = fileResult.stdout?.trim() ?? '';
+    const decodedSize = Number.isFinite(sizeBytes)
+      ? sizeBytes
+      : Math.floor((fileBase64.length * 3) / 4);
+    return Response.json({
+      ok: true,
+      filename: name,
+      content_type: guessContentType(name),
+      size_bytes: decodedSize,
+      file_base64: fileBase64,
+      format: 'raw',
+    });
+  }
+
+  // format === 'tar.gz'. A file is tarred relative to its parent so the archive
+  // contains just the file; a directory is tarred from within with the shared
+  // excludes applied.
+  let tarCommand: string;
+  if (isFile) {
+    const parent = path.slice(0, path.lastIndexOf('/')) || '/';
+    tarCommand = `tar -czf - -C ${shellSingleQuote(parent)} -- ${shellSingleQuote(name)} | base64 -w0`;
+  } else if (isDirectory) {
+    const excludes = ARCHIVE_DIR_EXCLUDES.map((e) => `--exclude=${shellSingleQuote(e)}`).join(' ');
+    tarCommand = `tar -czf - ${excludes} -C ${quotedPath} . | base64 -w0`;
+  } else {
+    return Response.json({ ok: false, error: `Unsupported path kind: ${kind || 'unknown'}` });
+  }
+
+  const tarResult = (await withExecDeadline(sandbox.exec(tarCommand))) as {
+    stdout?: string;
+    stderr?: string;
+    exitCode?: number;
+  };
+  if ((tarResult.exitCode ?? 0) !== 0) {
+    return Response.json({
+      ok: false,
+      error: (tarResult.stderr || 'Archive creation failed').trim() || 'Archive creation failed',
+    });
+  }
+
+  const archiveBase64 = tarResult.stdout?.trim() ?? '';
+  // Decoded size is approximate — base64 expands 4:3. The exact byte count
+  // would cost an extra round trip and only feeds a display string.
+  const sizeBytes = Math.floor((archiveBase64.length * 3) / 4);
+  if (sizeBytes > MAX_ARCHIVE_BYTES) {
+    return Response.json({
+      ok: false,
+      error: `Archive exceeds max size of ${MAX_ARCHIVE_BYTES} bytes`,
+    });
+  }
+  return Response.json({
+    ok: true,
+    archive_base64: archiveBase64,
+    size_bytes: sizeBytes,
+    format: 'tar.gz',
+  });
 }
 
 async function routeHydrate(env: Env, body: Json): Promise<Response> {
@@ -1150,6 +1276,48 @@ async function verifySandboxOwnerToken(
 // the `'\''` trick: close quote, escaped single quote, reopen quote.
 function shellSingleQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
+// Best-effort MIME guess for raw single-file downloads. The client only uses
+// this for the Blob type and falls back to application/octet-stream, so an
+// unknown extension is harmless — common text/code/image types are mapped so a
+// downloaded file lands with a sensible type.
+const CONTENT_TYPE_BY_EXT: Record<string, string> = {
+  txt: 'text/plain',
+  md: 'text/markdown',
+  csv: 'text/csv',
+  html: 'text/html',
+  css: 'text/css',
+  json: 'application/json',
+  xml: 'application/xml',
+  yaml: 'application/yaml',
+  yml: 'application/yaml',
+  js: 'text/javascript',
+  mjs: 'text/javascript',
+  cjs: 'text/javascript',
+  ts: 'text/typescript',
+  tsx: 'text/typescript',
+  jsx: 'text/javascript',
+  py: 'text/x-python',
+  sh: 'application/x-sh',
+  pdf: 'application/pdf',
+  zip: 'application/zip',
+  gz: 'application/gzip',
+  tar: 'application/x-tar',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  svg: 'image/svg+xml',
+  webp: 'image/webp',
+  ico: 'image/x-icon',
+};
+
+function guessContentType(filename: string): string {
+  const dot = filename.lastIndexOf('.');
+  if (dot < 0 || dot === filename.length - 1) return 'application/octet-stream';
+  const ext = filename.slice(dot + 1).toLowerCase();
+  return CONTENT_TYPE_BY_EXT[ext] ?? 'application/octet-stream';
 }
 
 function classifyCfError(err: unknown): string {

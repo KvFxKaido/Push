@@ -320,11 +320,24 @@ export class CloudflareSandboxProvider implements SandboxProvider {
   // -- Archive --------------------------------------------------------------
 
   async createArchive(sandboxId: string, path?: string): Promise<ArchiveResult> {
-    return await call<ArchiveResult>('download', {
+    // The `download` route speaks the canonical Modal wire shape
+    // ({ ok, archive_base64, size_bytes, format }), so map it onto the
+    // abstraction's ArchiveResult here — same as ModalSandboxProvider does via
+    // downloadFromSandbox.
+    const res = await call<{
+      ok?: boolean;
+      archive_base64?: string;
+      size_bytes?: number;
+      error?: string;
+    }>('download', {
       sandbox_id: sandboxId,
       owner_token: this.tokenFor(sandboxId),
       path,
     });
+    if (!res.ok || !res.archive_base64) {
+      throw new SandboxError(res.error || 'Archive creation failed', 'CONTAINER_ERROR');
+    }
+    return { archive: res.archive_base64, size: res.size_bytes };
   }
 
   async hydrateArchive(sandboxId: string, archive: string, path?: string): Promise<void> {
