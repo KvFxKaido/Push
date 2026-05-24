@@ -10,7 +10,7 @@
  * `ToolHookContext` populated by the binding.
  */
 
-import { detectBlockedGitCommand } from './git-mutation-detection.ts';
+import { classifyGitCommand } from './git/policy.ts';
 import type { ApprovalMode } from './approval-gates.ts';
 import type { PreToolHookEntry, PreToolUseResult, ToolHookContext } from './tool-hooks.ts';
 
@@ -125,12 +125,13 @@ export function createGitGuardPreHook(options: GitGuardOptions): PreToolHookEntr
       _context: ToolHookContext,
     ): PreToolUseResult => {
       const command = typeof args.command === 'string' ? args.command : '';
-      const blockedOp = detectBlockedGitCommand(command);
-      if (!blockedOp) return { decision: 'passthrough' };
+      const decision = classifyGitCommand(command);
+      if (decision.kind !== 'block' && decision.kind !== 'route') {
+        return { decision: 'passthrough' };
+      }
 
-      const isBranchCreate = blockedOp === 'git checkout -b' || blockedOp === 'git switch -c';
-      const isBranchSwitch =
-        blockedOp === 'git checkout <branch>' || blockedOp === 'git switch <branch>';
+      const isBranchCreate = decision.kind === 'route' && decision.to === 'create_branch';
+      const isBranchSwitch = decision.kind === 'route' && decision.to === 'switch_branch';
       const isBranchOp = isBranchCreate || isBranchSwitch;
 
       const mode = options.modeProvider();
@@ -143,7 +144,7 @@ export function createGitGuardPreHook(options: GitGuardOptions): PreToolHookEntr
       const allowDirectGitApplies = !isBranchOp && args.allowDirectGit === true;
       if (allowDirectGitApplies || !shouldBlock) return { decision: 'passthrough' };
 
-      const { reason, errorType } = formatGitGuardBlock(blockedOp, mode);
+      const { reason, errorType } = formatGitGuardBlock(decision.label, mode);
       return { decision: 'deny', reason, errorType };
     },
   };

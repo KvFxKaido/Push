@@ -1,17 +1,19 @@
 import type { ProcessRule, StaticPolicy } from '@push/lib/sandbox-policy';
-import { detectBlockedGitCommand } from './sandbox-tool-utils';
+import { classifyGitCommand } from '@push/lib/git/policy';
 
 /**
  * The sandbox_exec git guard expressed as a SandboxPolicy ProcessRule.
- * The predicate body is the existing `detectBlockedGitCommand` heuristic
- * (shell tokenization, redirect filtering, ref-expression carve-outs,
- * checkout-vs-switch path-vs-branch dispatch) — the schema gains a
- * predicate hook so rules can carry that detection logic without trying
- * to encode it in the simple argMatch pattern language.
+ * Thin adapter over the `classifyGitCommand` oracle: a `block` or `route`
+ * decision denies, surfacing the decision's legacy label as the reason
+ * (consumed as the blocked-op name in `coder-job-executor-adapter.ts`);
+ * `passthrough` / `allow` decisions return null so the rule doesn't fire.
  */
 const gitMutationGuard: ProcessRule = {
   command: '*',
-  predicate: (req) => detectBlockedGitCommand(req.raw ?? ''),
+  predicate: (req) => {
+    const decision = classifyGitCommand(req.raw ?? '');
+    return decision.kind === 'block' || decision.kind === 'route' ? decision.label : null;
+  },
   action: 'deny',
 };
 
