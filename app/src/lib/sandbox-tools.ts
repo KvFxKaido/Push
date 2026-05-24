@@ -61,13 +61,12 @@ import {
   formatStructuredError,
   isLikelyMutatingSandboxExec,
   createGitHubRepo,
-  shellEscape,
 } from './sandbox-tool-utils';
 import { GIT_REF_VALIDATION_DETAIL, isInvalidGitRef } from './git-ref-validation';
 import { sanitizeUntrustedSource } from '@push/lib/untrusted-content';
 import { createGitGuardPreHook } from '@push/lib/default-pre-hooks';
 import { reduceToolOutput } from '@push/lib/tool-output-reducers';
-import { createSandboxGitBackend } from './git-backend';
+import { createSandboxPushGit } from './git-backend';
 import { getApprovalMode } from './approval-mode';
 
 import type { SandboxToolCall, SandboxExecutionOptions } from './sandbox-tool-detection';
@@ -820,21 +819,13 @@ export async function executeSandboxToolCall(
           };
         }
 
-        // Atomic form: `git checkout -b <name> [<from>]` only changes HEAD
-        // on success. The previous chained form left HEAD on `<from>` if
-        // branch creation failed, silently mutating branch state on the
-        // error path.
-        const cmd = from
-          ? `cd /workspace && git checkout -b ${shellEscape(name)} ${shellEscape(from)}`
-          : `cd /workspace && git checkout -b ${shellEscape(name)}`;
+        // Sanctioned write: atomic `checkout -b` (only moves HEAD on success),
+        // shell-escaped and marked workspace-mutating by the backend.
+        const result = await createSandboxPushGit(sandboxId).createBranch(name, from);
 
-        const result = await execInSandbox(sandboxId, cmd, undefined, {
-          markWorkspaceMutated: true,
-        });
-
-        if (result.exitCode !== 0) {
+        if (!result.ok) {
           const reason = result.stderr || result.stdout || 'git checkout -b failed';
-          const err = classifyError(reason, cmd);
+          const err = classifyError(reason, 'git checkout -b');
           return {
             text: formatStructuredError(err, `[Tool Error — sandbox_create_branch]\n${reason}`),
             structuredError: err,
@@ -887,50 +878,29 @@ export async function executeSandboxToolCall(
           };
         }
 
-        // Capture the current branch before switching so the result can
-        // carry `previous`. `currentBranch()` returns null when detached.
-        // Failures here are non-fatal: we proceed without `previous` rather
-        // than blocking the switch. The backend's exec can throw on
-        // transport / timeout / non-2xx — wrap in try/catch so a probe
-        // failure can never abort the actual switch we were asked to perform.
+        const pushGit = createSandboxPushGit(sandboxId);
+
+        // Capture the current branch before switching so the result can carry
+        // `previous` (null when detached). Failures here are non-fatal: we
+        // proceed without `previous` rather than blocking the switch. The
+        // backend's exec can throw on transport / timeout / non-2xx — wrap in
+        // try/catch so a probe failure can never abort the switch.
         let previous: string | undefined;
         try {
-          const branch = await createSandboxGitBackend(sandboxId).currentBranch();
-          if (branch) previous = branch;
+          const current = await pushGit.currentBranch();
+          if (current) previous = current;
         } catch {
           // Probe failed; continue without `previous`.
         }
 
-        // `git switch` (not `git checkout`): branch-only by spec, so a path
-        // collision (e.g. `docs/` directory and no `docs` branch) fails fast
-        // with non-zero exit instead of silently doing a path-mode checkout
-        // that leaves HEAD where it was while we'd still emit `branchSwitch`.
-        //
-        // Fall back to a depth-1 fetch when the bare switch fails. The cf
-        // sandbox provider clones with `--depth=1 --branch <create-branch>`,
-        // which implies `--single-branch` and leaves only the create-time
-        // branch's remote ref locally — switching to any other remote branch
-        // in the same sandbox would otherwise fail with `invalid reference`.
-        // The explicit `<branch>:refs/remotes/origin/<branch>` refspec works
-        // even when remote.origin.fetch was set to single-branch by the
-        // shallow clone. The first switch's stderr is suppressed because the
-        // miss is an expected branch in the control flow, not a real error;
-        // a real failure (e.g. branch missing on origin too) surfaces from
-        // the second switch's stderr.
-        const escapedBranch = shellEscape(branch);
-        const cmd =
-          `cd /workspace && (` +
-          `git switch ${escapedBranch} 2>/dev/null || ` +
-          `(git fetch --depth=1 origin ${escapedBranch}:refs/remotes/origin/${escapedBranch} && ` +
-          `git switch ${escapedBranch})` +
-          `)`;
-        const result = await execInSandbox(sandboxId, cmd, undefined, {
-          markWorkspaceMutated: true,
-        });
+        // Sanctioned write. `switchBranch` is branch-only (a path collision
+        // fails fast instead of a silent path-mode checkout) and falls back to
+        // a depth-1 fetch for shallow clones — see SandboxPlumbingBackend.
+        const result = await pushGit.switchBranch(branch);
 
-        if (result.exitCode !== 0) {
+        if (!result.ok) {
           const reason = result.stderr || result.stdout || 'git switch failed';
-          const err = classifyError(reason, cmd);
+          const err = classifyError(reason, 'git switch');
           return {
             text: formatStructuredError(err, `[Tool Error — sandbox_switch_branch]\n${reason}`),
             structuredError: err,

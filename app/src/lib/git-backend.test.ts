@@ -12,7 +12,14 @@ describe('createSandboxGitBackend', () => {
 
     await backend.status();
 
-    expect(execFn).toHaveBeenCalledWith('sb-1', "git 'status' '--porcelain' '-b'");
+    // Reads pass no `mutates` hint, so the executor is called with the
+    // (sandboxId, command, workdir=undefined, options=undefined) shape.
+    expect(execFn).toHaveBeenCalledWith(
+      'sb-1',
+      "git 'status' '--porcelain' '-b'",
+      undefined,
+      undefined,
+    );
   });
 
   it('resolves reads to null when the executor throws (transport error)', async () => {

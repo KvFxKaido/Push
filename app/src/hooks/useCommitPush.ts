@@ -19,9 +19,9 @@ import {
   execInSandbox,
   readFromSandbox,
   writeToSandbox,
-  type ExecResult,
 } from '@/lib/sandbox-client';
 import { runAuditor } from '@/lib/auditor-agent';
+import { createSandboxPushGit } from '@/lib/git-backend';
 import { fetchAuditorFileContexts, type AuditorFileContext } from '@/lib/auditor-file-context';
 import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
 import { parseDiffStats } from '@/lib/diff-utils';
@@ -78,7 +78,7 @@ type AttemptResult =
   | { status: 'expired' }
   | { status: 'failed'; error: string };
 
-function isExecResultGone(result: ExecResult): boolean {
+function isExecResultGone(result: { error?: string; stderr?: string; stdout?: string }): boolean {
   // exit_code === -1 alone is not proof; isDefinitivelyGoneMessage matches on
   // the specific phrases that prove the container is gone, not transient
   // failures.
@@ -164,7 +164,6 @@ export function useCommitPush(
       setState((s) => ({ ...s, phase: 'error', error: 'Commit message is required.' }));
       return;
     }
-    const safeCommitMessage = message.replace(/'/g, `'"'"'`);
 
     const effectiveAuditorProvider = providerOverride || getActiveProvider();
     const effectiveAuditorModel = modelOverride?.trim() || undefined;
@@ -259,27 +258,18 @@ export function useCommitPush(
         }
 
         setState((s) => ({ ...s, phase: 'committing' }));
-        const commitResult = await execInSandbox(
-          targetSandbox,
-          `cd /workspace && git add -A && git commit -m '${safeCommitMessage}'`,
-          undefined,
-          { markWorkspaceMutated: true },
-        );
-        if (commitResult.exitCode !== 0) {
-          if (isExecResultGone(commitResult)) return { status: 'expired' };
-          const detail =
-            commitResult.stderr || commitResult.stdout || commitResult.error || 'Unknown error';
+        const pushGit = createSandboxPushGit(targetSandbox);
+        const commit = await pushGit.commit({ message });
+        if (!commit.ok) {
+          const r = commit.result;
+          if (r && isExecResultGone(r)) return { status: 'expired' };
+          const detail = r?.stderr || r?.stdout || r?.error || 'Unknown error';
           return { status: 'failed', error: `Commit failed: ${detail}` };
         }
 
         setState((s) => ({ ...s, phase: 'pushing' }));
-        const pushResult = await execInSandbox(
-          targetSandbox,
-          'cd /workspace && git push origin HEAD',
-          undefined,
-          { markWorkspaceMutated: true },
-        );
-        if (pushResult.exitCode !== 0) {
+        const pushResult = await pushGit.push();
+        if (!pushResult.ok) {
           if (isExecResultGone(pushResult)) return { status: 'expired' };
           const detail =
             pushResult.stderr || pushResult.stdout || pushResult.error || 'Unknown error';

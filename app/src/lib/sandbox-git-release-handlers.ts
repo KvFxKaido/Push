@@ -58,7 +58,9 @@ import type { DiffResult, ExecResult, FileReadResult } from './sandbox-client';
 import type { CreatedRepoResponse } from './sandbox-tool-utils';
 
 import { parseDiffStats } from './diff-utils';
-import { createSandboxGitBackend } from './git-backend';
+import { createSandboxPushGit } from './git-backend';
+import { GIT_REF_VALIDATION_DETAIL, isInvalidGitRef } from './git-ref-validation';
+import { isDefinitivelyGoneMessage } from './sandbox-error-utils';
 import {
   classifyError,
   formatStructuredError,
@@ -383,15 +385,26 @@ export async function handlePrepareCommit(
 export async function handleSandboxPush(
   ctx: GitReleaseHandlerContext,
 ): Promise<ToolExecutionResult> {
-  const pushResult = await ctx.execInSandbox(
-    ctx.sandboxId,
-    'cd /workspace && git push origin HEAD',
-    undefined,
-    { markWorkspaceMutated: true },
-  );
+  const pushResult = await createSandboxPushGit(ctx.sandboxId, {
+    execFn: ctx.execInSandbox,
+  }).push();
 
-  if (pushResult.exitCode !== 0) {
-    return { text: `[Tool Result — sandbox_push]\nPush failed: ${pushResult.stderr}` };
+  if (!pushResult.ok) {
+    const reason = pushResult.error || pushResult.stderr || pushResult.stdout || 'push failed';
+    // exitCode -1, or a transport/gone error the adapter caught, means the
+    // container is unreachable. Surface a structured error so the chat runtime
+    // can trigger sandbox recovery — the pre-refactor path threw here and the
+    // dispatcher's top-level catch classified it the same way.
+    if (pushResult.exitCode === -1 || isDefinitivelyGoneMessage(reason)) {
+      const err = classifyError(reason, 'sandbox_push');
+      err.type = 'SANDBOX_UNREACHABLE';
+      err.retryable = false;
+      return {
+        text: formatStructuredError(err, `[Tool Error — sandbox_push]\n${reason}`),
+        structuredError: err,
+      };
+    }
+    return { text: `[Tool Result — sandbox_push]\nPush failed: ${pushResult.stderr || reason}` };
   }
 
   return { text: `[Tool Result — sandbox_push]\nPushed successfully.` };
@@ -523,11 +536,18 @@ export async function handleSaveDraft(
   }
 
   // Step 2: Get current branch (null → '' when detached / not a repo)
-  const currentBranch =
-    (await createSandboxGitBackend(ctx.sandboxId, ctx.execInSandbox).currentBranch()) ?? '';
+  const pushGit = createSandboxPushGit(ctx.sandboxId, { execFn: ctx.execInSandbox });
+  const currentBranch = (await pushGit.currentBranch()) ?? '';
 
-  // Step 3: Determine draft branch name — must start with draft/ (unaudited path)
+  // Step 3: Determine draft branch name — must be a valid ref and start with
+  // draft/ (unaudited path). Validate ref shape like the typed branch tools
+  // so a malformed/leading-hyphen name can't reach createBranch.
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  if (args.branch_name && isInvalidGitRef(args.branch_name)) {
+    return {
+      text: `[Tool Error — sandbox_save_draft]\nInvalid branch name "${args.branch_name}". ${GIT_REF_VALIDATION_DETAIL}`,
+    };
+  }
   if (args.branch_name && !args.branch_name.startsWith('draft/')) {
     return {
       text: '[Tool Error — sandbox_save_draft]\nbranch_name must start with "draft/". This tool skips Auditor review and is restricted to draft branches. Use sandbox_prepare_commit for non-draft branches.',
@@ -543,13 +563,8 @@ export async function handleSaveDraft(
     ? args.branch_name !== currentBranch
     : !currentBranch.startsWith('draft/');
   if (needsNewBranch) {
-    const checkoutResult = await ctx.execInSandbox(
-      ctx.sandboxId,
-      `cd /workspace && git checkout -b ${shellEscape(draftBranchName)}`,
-      undefined,
-      { markWorkspaceMutated: true },
-    );
-    if (checkoutResult.exitCode !== 0) {
+    const checkoutResult = await pushGit.createBranch(draftBranchName);
+    if (!checkoutResult.ok) {
       return {
         text: `[Tool Error — sandbox_save_draft]\nFailed to create draft branch: ${checkoutResult.stderr}`,
       };
@@ -558,45 +573,26 @@ export async function handleSaveDraft(
 
   const activeDraftBranch = needsNewBranch ? draftBranchName : currentBranch;
 
-  // Step 5: Stage all changes and commit (no Auditor — drafts are WIP)
+  // Step 5: Stage + commit (no Auditor — drafts are WIP). The backend stages
+  // (`add -A`) then commits in one call.
   const draftMessage = args.message || 'WIP: draft save';
-  const stageResult = await ctx.execInSandbox(
-    ctx.sandboxId,
-    'cd /workspace && git add -A',
-    undefined,
-    { markWorkspaceMutated: true },
-  );
-  if (stageResult.exitCode !== 0) {
+  const commitResult = await pushGit.commit({ message: draftMessage });
+  if (!commitResult.ok) {
     return {
-      text: `[Tool Error — sandbox_save_draft]\nFailed to stage changes: ${stageResult.stderr}`,
+      text: `[Tool Error — sandbox_save_draft]\nFailed to commit draft: ${commitResult.result?.stderr ?? ''}`,
     };
   }
-
-  const commitResult = await ctx.execInSandbox(
-    ctx.sandboxId,
-    `cd /workspace && git commit -m ${shellEscape(draftMessage)}`,
-    undefined,
-    { markWorkspaceMutated: true },
-  );
-  if (commitResult.exitCode !== 0) {
-    return {
-      text: `[Tool Error — sandbox_save_draft]\nFailed to commit draft: ${commitResult.stderr}`,
-    };
-  }
+  // Read the new HEAD via plumbing rather than parsing the commit's human
+  // stdout (which varies with locale / git version / root-commit / hooks).
+  const commitSha = (await pushGit.headSha({ short: true })) ?? 'unknown';
   // git add + commit changes file hashes tracked by git
   ctx.clearFileVersionCache(ctx.sandboxId);
   ctx.clearPrefetchedEditFileCache(ctx.sandboxId);
 
   // Step 6: Push to remote
-  const pushResult = await ctx.execInSandbox(
-    ctx.sandboxId,
-    `cd /workspace && git push -u origin ${shellEscape(activeDraftBranch)}`,
-    undefined,
-    { markWorkspaceMutated: true },
-  );
+  const pushResult = await pushGit.push({ setUpstream: true, ref: activeDraftBranch });
 
-  const pushOk = pushResult.exitCode === 0;
-  const commitSha = commitResult.stdout.match(/\[.+? ([a-f0-9]+)\]/)?.[1] || 'unknown';
+  const pushOk = pushResult.ok;
   const draftStats = parseDiffStats(draftDiffResult.diff);
 
   const draftLines: string[] = [

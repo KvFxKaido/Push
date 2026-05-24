@@ -11,6 +11,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { SandboxPlumbingBackend, type GitBackend, type GitExec } from '../lib/git/backend.js';
+import { PushGit } from '../lib/git/push-git.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -18,20 +19,32 @@ const DEFAULT_TIMEOUT_MS = 5000;
 
 export function createLocalGitBackend(cwd: string, opts?: { timeoutMs?: number }): GitBackend {
   const timeout = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const exec: GitExec = async (args) => {
+  // The `mutates` hint is sandbox-only (workspace-revision bump); the local
+  // working tree needs no equivalent, so it is ignored here.
+  const exec: GitExec = async (args, _opts) => {
     try {
       const { stdout, stderr } = await execFileAsync('git', args, { cwd, timeout });
       return { stdout, stderr, exitCode: 0 };
     } catch (err) {
-      const e = err as { stdout?: string; stderr?: string; code?: number };
+      const e = err as { stdout?: string; stderr?: string; code?: number | string };
+      const message = err instanceof Error ? err.message : String(err);
+      // execFile sets a numeric exit code on a normal git failure, or a string
+      // like 'ENOENT' (or none, on timeout) when git can't be spawned.
+      const isGitExit = typeof e.code === 'number';
       return {
         stdout: e.stdout ?? '',
-        stderr: e.stderr ?? (err instanceof Error ? err.message : String(err)),
-        // execFile sets a numeric exit code on command failure, or a string
-        // like 'ENOENT' when git can't be spawned — normalize the latter to 1.
-        exitCode: typeof e.code === 'number' ? e.code : 1,
+        stderr: e.stderr ?? message,
+        exitCode: isGitExit ? (e.code as number) : 1,
+        // Reserve `error` for spawn/transport failures — a normal non-zero git
+        // exit is conveyed by stderr + exitCode, so callers prefer git's stderr.
+        error: isGitExit ? undefined : message,
       };
     }
   };
   return new SandboxPlumbingBackend(exec);
+}
+
+/** Build a PushGit facade over the local working tree at `cwd`. */
+export function createLocalPushGit(cwd: string, opts?: { timeoutMs?: number }): PushGit {
+  return new PushGit({ backend: createLocalGitBackend(cwd, opts) });
 }

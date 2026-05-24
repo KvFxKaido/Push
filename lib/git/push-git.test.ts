@@ -1,0 +1,98 @@
+import { describe, expect, it, vi } from 'vitest';
+import { PushGit } from './push-git.ts';
+import type { GitBackend, GitWriteResult } from './backend.ts';
+
+const writeOk = (stdout = ''): GitWriteResult => ({ ok: true, stdout, stderr: '', exitCode: 0 });
+const writeFail = (stderr = 'boom'): GitWriteResult => ({
+  ok: false,
+  stdout: '',
+  stderr,
+  exitCode: 1,
+});
+
+function fakeBackend(overrides: Partial<GitBackend> = {}): GitBackend {
+  return {
+    currentBranch: async () => 'main',
+    headSha: async () => 'abc1234',
+    status: async () => null,
+    createBranch: async () => writeOk(),
+    switchBranch: async () => writeOk(),
+    commit: async () => writeOk('committed'),
+    push: async () => writeOk(),
+    ...overrides,
+  };
+}
+
+describe('PushGit.commit', () => {
+  it('commits directly when no gate is injected', async () => {
+    const commit = vi.fn(async () => writeOk('done'));
+    const pg = new PushGit({ backend: fakeBackend({ commit }) });
+    const res = await pg.commit({ message: 'msg' });
+    expect(res).toEqual({ ok: true, blocked: false, result: writeOk('done') });
+    expect(commit).toHaveBeenCalledWith('msg', { addArgs: undefined });
+  });
+
+  it('runs the gate then commits when it passes', async () => {
+    const preCommit = vi.fn(async () => ({ ok: true }));
+    const commit = vi.fn(async () => writeOk());
+    const pg = new PushGit({ backend: fakeBackend({ commit }), preCommit });
+    const res = await pg.commit({ message: 'm' });
+    expect(preCommit).toHaveBeenCalledOnce();
+    expect(commit).toHaveBeenCalledOnce();
+    expect(res.ok).toBe(true);
+  });
+
+  it('blocks without committing when the gate denies', async () => {
+    const preCommit = vi.fn(async () => ({ ok: false, reason: 'UNSAFE' }));
+    const commit = vi.fn(async () => writeOk());
+    const pg = new PushGit({ backend: fakeBackend({ commit }), preCommit });
+    const res = await pg.commit({ message: 'm' });
+    expect(res).toEqual({ ok: false, blocked: true, reason: 'UNSAFE' });
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('fail-safe blocks (no commit) when the gate throws', async () => {
+    const preCommit = vi.fn(async () => {
+      throw new Error('auditor crashed');
+    });
+    const commit = vi.fn(async () => writeOk());
+    const pg = new PushGit({ backend: fakeBackend({ commit }), preCommit });
+    const res = await pg.commit({ message: 'm' });
+    expect(res.ok).toBe(false);
+    expect(res.blocked).toBe(true);
+    expect(res.reason).toContain('auditor crashed');
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('reports a failed commit (gate passed, git failed)', async () => {
+    const pg = new PushGit({
+      backend: fakeBackend({ commit: async () => writeFail('nothing to commit') }),
+    });
+    const res = await pg.commit({ message: 'm' });
+    expect(res.ok).toBe(false);
+    expect(res.blocked).toBe(false);
+    expect(res.result?.stderr).toContain('nothing to commit');
+  });
+
+  it('forwards addArgs to the backend', async () => {
+    const commit = vi.fn(async () => writeOk());
+    const pg = new PushGit({ backend: fakeBackend({ commit }) });
+    await pg.commit({ message: 'm', addArgs: ['-A', '--', '.', ':!.push'] });
+    expect(commit).toHaveBeenCalledWith('m', { addArgs: ['-A', '--', '.', ':!.push'] });
+  });
+});
+
+describe('PushGit write delegation', () => {
+  it('delegates branch + push writes to the backend', async () => {
+    const createBranch = vi.fn(async () => writeOk());
+    const switchBranch = vi.fn(async () => writeOk());
+    const push = vi.fn(async () => writeOk());
+    const pg = new PushGit({ backend: fakeBackend({ createBranch, switchBranch, push }) });
+    await pg.createBranch('feat/x', 'main');
+    await pg.switchBranch('feat/x');
+    await pg.push({ setUpstream: true, ref: 'feat/x' });
+    expect(createBranch).toHaveBeenCalledWith('feat/x', 'main');
+    expect(switchBranch).toHaveBeenCalledWith('feat/x');
+    expect(push).toHaveBeenCalledWith({ setUpstream: true, ref: 'feat/x' });
+  });
+});

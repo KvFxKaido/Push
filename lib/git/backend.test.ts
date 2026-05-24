@@ -81,3 +81,71 @@ describe('SandboxPlumbingBackend.status', () => {
     expect(await backend.status()).toBeNull();
   });
 });
+
+describe('SandboxPlumbingBackend writes', () => {
+  it('createBranch runs an atomic checkout -b (mutating), optionally from a ref', async () => {
+    const exec = vi.fn(async () => ok(''));
+    const backend = new SandboxPlumbingBackend(exec);
+    await backend.createBranch('feat/x');
+    expect(exec).toHaveBeenCalledWith(['checkout', '-b', 'feat/x'], { mutates: true });
+    await backend.createBranch('feat/x', 'main');
+    expect(exec).toHaveBeenLastCalledWith(['checkout', '-b', 'feat/x', 'main'], { mutates: true });
+  });
+
+  it('switchBranch falls back to a depth-1 fetch then retries the switch', async () => {
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce(fail('invalid reference')) // first switch
+      .mockResolvedValueOnce(ok('')) // fetch
+      .mockResolvedValueOnce(ok("Switched to branch 'x'")); // retry switch
+    const backend = new SandboxPlumbingBackend(exec as unknown as GitExec);
+    const res = await backend.switchBranch('x');
+    expect(res.ok).toBe(true);
+    expect(exec).toHaveBeenNthCalledWith(1, ['switch', 'x'], { mutates: true });
+    expect(exec).toHaveBeenNthCalledWith(
+      2,
+      ['fetch', '--depth=1', 'origin', 'x:refs/remotes/origin/x'],
+      { mutates: true },
+    );
+    expect(exec).toHaveBeenNthCalledWith(3, ['switch', 'x'], { mutates: true });
+  });
+
+  it('switchBranch surfaces the fetch failure when the fallback fetch fails', async () => {
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce(fail('no local ref'))
+      .mockResolvedValueOnce(fail('fetch failed'));
+    const backend = new SandboxPlumbingBackend(exec as unknown as GitExec);
+    const res = await backend.switchBranch('x');
+    expect(res.ok).toBe(false);
+    expect(res.stderr).toContain('fetch failed');
+  });
+
+  it('commit stages then commits; honors custom addArgs', async () => {
+    const exec = vi.fn(async () => ok('committed'));
+    const backend = new SandboxPlumbingBackend(exec);
+    await backend.commit('msg');
+    expect(exec).toHaveBeenNthCalledWith(1, ['add', '-A'], { mutates: true });
+    expect(exec).toHaveBeenNthCalledWith(2, ['commit', '-m', 'msg'], { mutates: true });
+    exec.mockClear();
+    await backend.commit('m2', { addArgs: ['-A', '--', '.', ':!.push'] });
+    expect(exec).toHaveBeenNthCalledWith(1, ['add', '-A', '--', '.', ':!.push'], { mutates: true });
+  });
+
+  it('commit returns the staging failure without committing', async () => {
+    const exec = vi.fn().mockResolvedValueOnce(fail('add failed'));
+    const backend = new SandboxPlumbingBackend(exec as unknown as GitExec);
+    const res = await backend.commit('msg');
+    expect(res.ok).toBe(false);
+    expect(exec).toHaveBeenCalledTimes(1);
+  });
+
+  it('push defaults to origin HEAD and supports setUpstream', async () => {
+    const exec = vi.fn(async () => ok(''));
+    const backend = new SandboxPlumbingBackend(exec);
+    await backend.push();
+    expect(exec).toHaveBeenCalledWith(['push', 'origin', 'HEAD'], { mutates: true });
+    await backend.push({ setUpstream: true, ref: 'feat/x' });
+    expect(exec).toHaveBeenLastCalledWith(['push', '-u', 'origin', 'feat/x'], { mutates: true });
+  });
+});
