@@ -10,10 +10,10 @@
  * Orchestration is deliberately NOT owned here — the `branchSwitch` / `meta`
  * routing, chat re-scoping, the Auditor delegation itself (provider lock,
  * brief, agent run), the Protect Main pre-hook, sandbox teardown, and
- * run-event emission all stay in the handlers. (A sandbox-HEAD-vs-session
- * desync validator also belongs to this facade per the design, but is left to
- * a follow-up: it needs the orchestration layer to supply
- * `session.activeBranch`, which this layer doesn't see.)
+ * run-event emission all stay in the handlers. In the same spirit,
+ * `validateActiveBranch` only *verifies* the sandbox-HEAD-vs-tracked-branch
+ * invariant and returns a typed diagnostic — the caller (which owns
+ * `session.activeBranch`) decides whether a mismatch warns or refuses.
  */
 
 import type { GitBackend, GitWriteResult } from './backend.js';
@@ -80,7 +80,10 @@ export class PushGit {
    */
   async validateActiveBranch(expected: string): Promise<ActiveBranchValidation> {
     const actual = await this.backend.currentBranch();
-    return { inSync: actual === expected, expected, actual };
+    // `currentBranch()` is already trimmed; normalize the caller's value the
+    // same way so stray whitespace can't manufacture a spurious mismatch.
+    const normalizedExpected = expected.trim();
+    return { inSync: actual === normalizedExpected, expected: normalizedExpected, actual };
   }
 
   // --- Sanctioned writes ---

@@ -101,6 +101,13 @@ describe('PushGit.validateActiveBranch', () => {
     });
   });
 
+  it('normalizes whitespace on the expected branch before comparing', async () => {
+    const pg = new PushGit({ backend: fakeBackend({ currentBranch: async () => 'feat/x' }) });
+    const res = await pg.validateActiveBranch('  feat/x\n');
+    expect(res.inSync).toBe(true);
+    expect(res.expected).toBe('feat/x');
+  });
+
   it('treats a detached / unreadable HEAD (null) as out of sync', async () => {
     const pg = new PushGit({ backend: fakeBackend({ currentBranch: async () => null }) });
     const res = await pg.validateActiveBranch('feat/x');

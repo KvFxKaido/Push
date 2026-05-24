@@ -276,12 +276,7 @@ export function useChatCardActions({
           // Enforce Protect Main for UI-driven commits
           if (isMainProtectedRef.current) {
             try {
-              const branchResult = await execInSandbox(
-                sandboxId,
-                'cd /workspace && git branch --show-current',
-              );
-              const currentBranch =
-                branchResult.exitCode === 0 ? branchResult.stdout?.trim() : null;
+              const currentBranch = await createSandboxPushGit(sandboxId).currentBranch();
               const mainBranches = new Set(['main', 'master']);
               const defBranch = branchInfoRef.current?.defaultBranch;
               if (defBranch) mainBranches.add(defBranch);
