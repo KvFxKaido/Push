@@ -29,6 +29,15 @@ export interface GitExecResult {
   exitCode: number;
 }
 
+export interface GitExecOptions {
+  /**
+   * Hint that this invocation mutates the workspace. The sandbox adapter maps
+   * it to `markWorkspaceMutated` (bumps the workspace revision / invalidates
+   * caches); the local CLI adapter ignores it. Read-only calls omit it.
+   */
+  mutates?: boolean;
+}
+
 /**
  * Runs `git <args>` and resolves with its result. Adapters must resolve,
  * not reject — both command *failures* (non-zero exit) and transport/exec
@@ -36,7 +45,12 @@ export interface GitExecResult {
  * exit). This lets the backend's typed reads return null on any failure
  * instead of throwing at call-sites.
  */
-export type GitExec = (args: string[]) => Promise<GitExecResult>;
+export type GitExec = (args: string[], opts?: GitExecOptions) => Promise<GitExecResult>;
+
+/** Result of a sanctioned write — the raw exec result plus an `ok` flag. */
+export interface GitWriteResult extends GitExecResult {
+  ok: boolean;
+}
 
 export interface GitBackend {
   /** Current branch name, or null when detached / not a repo / error. */
@@ -45,6 +59,26 @@ export interface GitBackend {
   headSha(opts?: { short?: boolean }): Promise<string | null>;
   /** Typed working-tree status, or null on error / not a repo. */
   status(): Promise<GitStatusInfo | null>;
+
+  // --- Sanctioned writes (the only mutations the backend exposes; merge /
+  // reset / rebase / cherry-pick are policy-blocked and never surfaced). ---
+
+  /** Create and switch to `name` (atomic `checkout -b`), optionally from a ref. */
+  createBranch(name: string, from?: string): Promise<GitWriteResult>;
+  /** Switch to `branch`, with a depth-1 fetch fallback for shallow clones. */
+  switchBranch(branch: string): Promise<GitWriteResult>;
+  /**
+   * Stage and commit. `addArgs` are the `git add` arguments (default `-A`);
+   * pass surface-specific forms (e.g. the CLI's `-A -- . :!.push`, or explicit
+   * pathspecs) when staging differs.
+   */
+  commit(message: string, opts?: { addArgs?: string[] }): Promise<GitWriteResult>;
+  /** Push (`git push [-u] <remote> <ref>`; defaults to `origin HEAD`). */
+  push(opts?: { setUpstream?: boolean; remote?: string; ref?: string }): Promise<GitWriteResult>;
+}
+
+function toWriteResult(res: GitExecResult): GitWriteResult {
+  return { ...res, ok: res.exitCode === 0 };
 }
 
 /**
@@ -81,5 +115,49 @@ export class SandboxPlumbingBackend implements GitBackend {
     const res = await this.exec(['status', '--porcelain', '-b']);
     if (res.exitCode !== 0) return null;
     return parseGitStatusInfo(res.stdout);
+  }
+
+  async createBranch(name: string, from?: string): Promise<GitWriteResult> {
+    // Atomic `checkout -b` only moves HEAD on success.
+    const args = from ? ['checkout', '-b', name, from] : ['checkout', '-b', name];
+    return toWriteResult(await this.exec(args, { mutates: true }));
+  }
+
+  async switchBranch(branch: string): Promise<GitWriteResult> {
+    // `git switch` is branch-only (a path collision fails fast instead of a
+    // silent path-mode checkout). Fall back to a depth-1 fetch when the bare
+    // switch fails: shallow clones (`--depth=1 --single-branch`) only have the
+    // create-time branch locally, so other remote branches need fetching first.
+    let res = await this.exec(['switch', branch], { mutates: true });
+    if (res.exitCode !== 0) {
+      const fetched = await this.exec(
+        ['fetch', '--depth=1', 'origin', `${branch}:refs/remotes/origin/${branch}`],
+        { mutates: true },
+      );
+      if (fetched.exitCode === 0) {
+        res = await this.exec(['switch', branch], { mutates: true });
+      } else {
+        res = fetched;
+      }
+    }
+    return toWriteResult(res);
+  }
+
+  async commit(message: string, opts?: { addArgs?: string[] }): Promise<GitWriteResult> {
+    const addArgs = opts?.addArgs ?? ['-A'];
+    const staged = await this.exec(['add', ...addArgs], { mutates: true });
+    if (staged.exitCode !== 0) return toWriteResult(staged);
+    return toWriteResult(await this.exec(['commit', '-m', message], { mutates: true }));
+  }
+
+  async push(opts?: {
+    setUpstream?: boolean;
+    remote?: string;
+    ref?: string;
+  }): Promise<GitWriteResult> {
+    const remote = opts?.remote ?? 'origin';
+    const ref = opts?.ref ?? 'HEAD';
+    const args = opts?.setUpstream ? ['push', '-u', remote, ref] : ['push', remote, ref];
+    return toWriteResult(await this.exec(args, { mutates: true }));
   }
 }

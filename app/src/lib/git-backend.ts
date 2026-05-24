@@ -12,25 +12,37 @@
  */
 
 import { SandboxPlumbingBackend, type GitBackend, type GitExec } from '@push/lib/git/backend';
+import { PushGit, type PreCommitGate } from '@push/lib/git/push-git';
 import { execInSandbox, type ExecResult } from './sandbox-client';
 import { shellEscape } from './sandbox-tool-utils';
 
-type SandboxExecFn = (sandboxId: string, command: string) => Promise<ExecResult>;
+type SandboxExecFn = (
+  sandboxId: string,
+  command: string,
+  workdir?: string,
+  options?: { markWorkspaceMutated?: boolean },
+) => Promise<ExecResult>;
 
 /**
  * Build a GitBackend bound to a sandbox. Defaults to the module-level
  * `execInSandbox`; pass a custom executor (e.g. a tool-handler's injected
  * `ctx.execInSandbox`) when the call-site already has one. Commands run in
- * the sandbox's default workdir (`/workspace`).
+ * the sandbox's default workdir (`/workspace`); write calls forward the
+ * `mutates` hint as `markWorkspaceMutated`.
  */
 export function createSandboxGitBackend(
   sandboxId: string,
   execFn: SandboxExecFn = execInSandbox,
 ): GitBackend {
-  const exec: GitExec = async (args) => {
+  const exec: GitExec = async (args, opts) => {
     const command = `git ${args.map(shellEscape).join(' ')}`;
     try {
-      const res = await execFn(sandboxId, command);
+      const res = await execFn(
+        sandboxId,
+        command,
+        undefined,
+        opts?.mutates ? { markWorkspaceMutated: true } : undefined,
+      );
       return { stdout: res.stdout, stderr: res.stderr, exitCode: res.exitCode };
     } catch (err) {
       // `execInSandbox` throws on transport/timeout/non-2xx. The GitExec
@@ -40,4 +52,19 @@ export function createSandboxGitBackend(
     }
   };
   return new SandboxPlumbingBackend(exec);
+}
+
+/**
+ * Build a PushGit facade bound to a sandbox. Pass `preCommit` (a closure the
+ * handler builds over the Auditor) to gate commits; pass `execFn` to reuse a
+ * call-site's injected executor.
+ */
+export function createSandboxPushGit(
+  sandboxId: string,
+  opts?: { execFn?: SandboxExecFn; preCommit?: PreCommitGate },
+): PushGit {
+  return new PushGit({
+    backend: createSandboxGitBackend(sandboxId, opts?.execFn),
+    preCommit: opts?.preCommit,
+  });
 }
