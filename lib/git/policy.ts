@@ -40,7 +40,12 @@ export type GitReadFamily = 'status' | 'log' | 'diff' | 'show' | 'non-git';
 /** Mutating-but-sanctioned raw git ops permitted to run as-is. */
 export type GitAllowFamily = 'restore-file' | 'mutate';
 
-/** Typed tools a `route` decision steers toward. */
+/**
+ * Typed tools a `route` decision steers toward. `git revert` intentionally
+ * maps to `'commit'` — it writes a commit and shares the audited commit
+ * flow + guidance — so there is no separate `'revert'` target; code that
+ * switches/logs/metrics on `to` will observe `'commit'` for reverts.
+ */
 export type GitRouteTarget = 'create_branch' | 'switch_branch' | 'commit' | 'push';
 
 /** Hard-blocked operations (no typed tool, forbidden outright). */
@@ -153,14 +158,17 @@ function isGitToken(token: string): boolean {
 
 /**
  * Split a shell command on top-level list separators (`;`, `|`, `||`,
- * `&&`). Single `&` is intentionally NOT a separator (it appears inside fd
- * duplicates like `2>&1`). Quote handling is best-effort — embedded
- * separators inside quoted strings are treated as separators too, which
- * biases toward over-detection (safer for a guard).
+ * `&&`) and newlines. `sandbox_exec` runs under `bash -c`, where a newline
+ * separates commands just like `;` — without splitting on it, only the
+ * first invocation in `git status\ngit push` would be classified and the
+ * `git push` would bypass the guard. Single `&` is intentionally NOT a
+ * separator (it appears inside fd duplicates like `2>&1`). Quote handling
+ * is best-effort — embedded separators inside quoted strings are treated as
+ * separators too, which biases toward over-detection (safer for a guard).
  */
 function splitOnListSeparators(command: string): string[] {
   return command
-    .split(/(?:&&|\|\|?|;)/)
+    .split(/(?:&&|\|\|?|;|\r?\n)/)
     .map((s) => s.trim())
     .filter(Boolean);
 }
@@ -323,8 +331,9 @@ function classifySegment(invocation: ParsedGitInvocation): GitDecision {
       return { kind: 'route', to: 'commit', args: {}, label: 'git commit' };
     case 'push':
       return { kind: 'route', to: 'push', args: {}, label: 'git push' };
-    // `revert` writes a new commit; preserved as a route to the audited
-    // commit flow (today it is blocked with commit/push guidance).
+    // `revert` writes a new commit; intentionally lumped under the `commit`
+    // route target (see GitRouteTarget) so it inherits the audited commit
+    // flow + guidance, matching today's commit/push block behavior.
     case 'revert':
       return { kind: 'route', to: 'commit', args: {}, label: 'git revert' };
     case 'merge':

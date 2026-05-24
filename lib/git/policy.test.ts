@@ -239,6 +239,16 @@ const CORPUS: Case[] = [
   },
   // no blocking segment → first git segment's non-blocking decision.
   { command: 'git add . && git status', expected: { kind: 'allow', family: 'mutate' } },
+  // newline separators: bash -c treats `\n` like `;`, so each line is
+  // classified — a trailing `git push`/`git commit` must not slip the guard.
+  {
+    command: 'git status\ngit push',
+    expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
+  },
+  {
+    command: 'git status\ngit commit -m x',
+    expected: { kind: 'route', to: 'commit', args: {}, label: 'git commit' },
+  },
 ];
 
 describe('classifyGitCommand — decision snapshot (drift guard)', () => {
