@@ -1,9 +1,15 @@
-// SKETCH (unwired proposal): command-aware, deterministic reducers for noisy
-// sandbox_exec output. Inspired by tokenjuice's rule-driven model, but adapted
-// to Push: pure functions, reduce-at-ingestion (before context fills), and
-// lossless for the human — only the model-facing text is shrunk, the UI card
-// keeps full stdout/stderr. Wire into app/src/lib/sandbox-tools.ts and
-// cli/tools.ts; add a drift/unit test in the same PR (CLAUDE.md feature checklist).
+// Command-aware, deterministic reducers for noisy exec output. Inspired by
+// tokenjuice's rule-driven model, adapted to Push: pure functions, reduce at
+// ingestion (before context fills), and lossless for the human — callers feed
+// only the model-facing text through here and keep the raw stdout/stderr for
+// the UI card / session store. See lib/tool-output-reducers.test.ts.
+//
+// Hard boundaries (enforced by reduceToolOutput, asserted in the test):
+//   - Reduces only the text it is given; exit code / failure semantics live in
+//     the caller's formatting and are never touched here.
+//   - Unsafe or ambiguous command shapes (pipes, chains, substitution, raw file
+//     reads) bail out and return the input unchanged.
+//   - Small wins pass through unchanged to protect prompt-cache stability.
 
 export interface ReducerInput {
   /** Raw command string, e.g. call.args.command. */
@@ -18,10 +24,21 @@ export interface ReducedOutput {
   stderr: string;
   /** True if anything actually changed. */
   reduced: boolean;
-  /** Which rule fired — for metrics/debugging. */
+  /** Which rule fired — only set when reduced. */
   reducerId?: string;
+  originalChars: number;
+  reducedChars: number;
   savedChars: number;
+  /** Why no reduction happened (passthrough) — undefined when reduced. */
+  reason?: PassthroughReason;
 }
+
+export type PassthroughReason =
+  | 'unsafe-command'
+  | 'unparseable-command'
+  | 'file-read'
+  | 'no-matching-rule'
+  | 'below-threshold';
 
 interface ParsedCommand {
   argv0: string; // basename of program, e.g. "git", "pnpm", "tsc"
@@ -48,17 +65,15 @@ const MAX_KEPT_RATIO = 0.75; // keep raw unless we cut at least 25%
 const FILE_READ_ARGV0 = new Set(['cat', 'head', 'tail', 'less', 'more', 'bat', 'nl', 'xxd', 'od']);
 
 function isUnsafeToReduce(command: string): boolean {
-  // Chains / pipes / substitution: output may already be filtered or
-  // transformed downstream — reducing could corrupt meaning. Stay raw.
-  if (/[|;]|&&|\|\||\$\(|`/.test(command)) return true;
-  return false;
+  // Chains / pipes / substitution / redirection: output may already be filtered
+  // or transformed downstream — reducing could corrupt meaning. Stay raw.
+  return /[|;><]|&&|\|\||\$\(|`/.test(command);
 }
 
 function parseCommand(command: string): ParsedCommand | null {
   const tokens = command.trim().split(/\s+/);
   if (tokens.length === 0 || !tokens[0]) return null;
   const argv0 = tokens[0].split('/').pop() ?? tokens[0];
-  if (FILE_READ_ARGV0.has(argv0)) return null; // exact file reads stay raw
   // First token that isn't a flag or a `-c key=val` / `-C dir` style option.
   let sub: string | undefined;
   for (let i = 1; i < tokens.length; i++) {
@@ -82,7 +97,7 @@ function headTail(lines: string[], head: number, tail: number, noun = 'lines'): 
   const omitted = lines.length - head - tail;
   return [
     ...lines.slice(0, head),
-    `… [${omitted} ${noun} omitted — full output in the run card; re-run with the same command for detail]`,
+    `… [${omitted} ${noun} omitted — full output in the run card; re-run the same command for detail]`,
     ...lines.slice(lines.length - tail),
   ];
 }
@@ -91,69 +106,6 @@ function stripAnsi(s: string): string {
   // eslint-disable-next-line no-control-regex
   return s.replace(/\u001b\[[0-9;]*m/g, '');
 }
-
-// ---------------------------------------------------------------------------
-// Reducers (the "rules"). Add command families here.
-// ---------------------------------------------------------------------------
-
-const gitStatus: Reducer = {
-  id: 'git/status',
-  match: (c) => c.argv0 === 'git' && c.sub === 'status',
-  reduce: (input) => {
-    const lines = stripAnsi(input.stdout).split('\n');
-    // Drop git's verbose hint blocks; keep branch + tracking + file entries.
-    const kept = lines.filter((l) => !/^\s*\(use /.test(l));
-    const branch = kept.filter((l) => /^(On branch|Your branch|HEAD detached)/.test(l));
-    const files = kept.filter((l) => /^(\s+|\?\?|[ MADRCU]{1,2}\s)/.test(l) && l.trim());
-    const summarizedFiles = headTail(files, 10, 5, 'changed paths');
-    const out = [...branch, ...summarizedFiles].filter(Boolean).join('\n');
-    return { stdout: out || input.stdout, stderr: input.stderr };
-  },
-};
-
-const inventory: Reducer = {
-  id: 'filesystem/inventory',
-  match: (c) =>
-    (c.argv0 === 'find' || c.argv0 === 'fd' || c.argv0 === 'ls') ||
-    (c.argv0 === 'rg' && /(^|\s)(--files|-l|--files-with-matches)(\s|$)/.test(c.raw)) ||
-    (c.argv0 === 'git' && c.sub === 'ls-files'),
-  reduce: (input) => {
-    const lines = stripAnsi(input.stdout).split('\n').filter((l) => l.trim());
-    if (lines.length <= 40) return { stdout: input.stdout, stderr: input.stderr };
-    const summary = [`[${lines.length} entries]`, ...headTail(lines, 20, 10, 'entries')];
-    return { stdout: summary.join('\n'), stderr: input.stderr };
-  },
-};
-
-const checkRunner: Reducer = {
-  id: 'check/test-typecheck-lint',
-  // tsc, eslint, vitest, jest, pytest, and the npm/pnpm/yarn wrappers around them.
-  match: (c) =>
-    ['tsc', 'tsgo', 'eslint', 'biome', 'vitest', 'jest', 'pytest', 'mypy', 'ruff'].includes(c.argv0) ||
-    (['npm', 'pnpm', 'yarn', 'npx'].includes(c.argv0) && /\b(test|lint|typecheck|check)\b/.test(c.raw)),
-  reduce: (input, failed) => {
-    if (failed) {
-      // On failure, signal lives in the errors — keep error/warn lines + the
-      // summary, drop passing-test chatter. Never silently eat the failure.
-      const merged = `${stripAnsi(input.stdout)}\n${stripAnsi(input.stderr)}`.split('\n');
-      const errs = merged.filter((l) =>
-        /(error|fail|✕|✗|FAIL|✖|warning)\b/i.test(l) || /\b\d+ (passed|failed|errors?|warnings?)\b/i.test(l),
-      );
-      const counters = countFacts(merged, {
-        errors: /\berror\b/i,
-        warnings: /\bwarning\b/i,
-        failed: /\b(fail|✕|✗|✖)\b/i,
-      });
-      const kept = headTail(errs, 25, 10, 'diagnostic lines');
-      return { stdout: [factLine(counters), ...kept].filter(Boolean).join('\n'), stderr: '' };
-    }
-    // Success: the model rarely needs the per-test log — keep the tail summary.
-    const lines = stripAnsi(input.stdout).split('\n').filter((l) => l.trim());
-    return { stdout: headTail(lines, 3, 8, 'passing lines').join('\n'), stderr: input.stderr };
-  },
-};
-
-const REDUCERS: Reducer[] = [gitStatus, inventory, checkRunner];
 
 // ---------------------------------------------------------------------------
 // Counters (tokenjuice "count facts" — keep the number even when you drop lines).
@@ -175,35 +127,116 @@ function factLine(counts: Record<string, number>): string {
 }
 
 // ---------------------------------------------------------------------------
+// Reducers (the "rules"). Add command families here.
+// ---------------------------------------------------------------------------
+
+const gitStatus: Reducer = {
+  id: 'git/status',
+  match: (c) => c.argv0 === 'git' && c.sub === 'status',
+  reduce: (input) => {
+    const lines = stripAnsi(input.stdout).split('\n');
+    // Drop git's repetitive "(use ...)" hint blocks and blank padding; keep
+    // branch/tracking lines, section headers, and file entries in order.
+    const kept = lines.filter((l) => l.trim().length > 0 && !/^\s*\(use /.test(l));
+    return { stdout: headTail(kept, 14, 6, 'status lines').join('\n'), stderr: input.stderr };
+  },
+};
+
+const inventory: Reducer = {
+  id: 'filesystem/inventory',
+  match: (c) =>
+    c.argv0 === 'find' ||
+    c.argv0 === 'fd' ||
+    c.argv0 === 'ls' ||
+    (c.argv0 === 'rg' && /(^|\s)(--files|-l|--files-with-matches)(\s|$)/.test(c.raw)) ||
+    (c.argv0 === 'git' && c.sub === 'ls-files'),
+  reduce: (input) => {
+    const lines = stripAnsi(input.stdout)
+      .split('\n')
+      .filter((l) => l.trim());
+    if (lines.length <= 40) return { stdout: input.stdout, stderr: input.stderr };
+    const summary = [`[${lines.length} entries]`, ...headTail(lines, 20, 10, 'entries')];
+    return { stdout: summary.join('\n'), stderr: input.stderr };
+  },
+};
+
+const checkRunner: Reducer = {
+  id: 'check/test-typecheck-lint',
+  // tsc, eslint, vitest, jest, pytest, and the npm/pnpm/yarn wrappers around them.
+  match: (c) =>
+    ['tsc', 'tsgo', 'eslint', 'biome', 'vitest', 'jest', 'pytest', 'mypy', 'ruff'].includes(
+      c.argv0,
+    ) ||
+    // npm/pnpm/yarn/npx/bun wrappers: match the task verb OR a wrapped runner
+    // name (`npx vitest run` — the verb regex alone misses "vitest").
+    (['npm', 'pnpm', 'yarn', 'npx', 'bun'].includes(c.argv0) &&
+      /\b(test|lint|typecheck|check|vitest|jest|tsc|tsgo|eslint|biome|pytest|mypy|ruff|mocha|ava)\b/.test(
+        c.raw,
+      )),
+  reduce: (input, failed) => {
+    if (failed) {
+      // On failure the signal lives in the errors — keep error/warn lines + a
+      // counter summary, drop passing-test chatter. Never silently eat the
+      // failure: error lines move into stdout and the caller still prints the
+      // non-zero exit code.
+      const merged = `${stripAnsi(input.stdout)}\n${stripAnsi(input.stderr)}`
+        .split('\n')
+        .filter((l) => l.trim());
+      const errs = merged.filter((l) => /(error|warn|fail|✕|✗|✖)/i.test(l));
+      const counters = countFacts(merged, { errors: /error/i, warnings: /warn/i });
+      const kept = headTail(errs, 25, 10, 'diagnostic lines');
+      return { stdout: [factLine(counters), ...kept].filter(Boolean).join('\n'), stderr: '' };
+    }
+    // Success: the model rarely needs the per-test log — keep head + tail summary.
+    const lines = stripAnsi(input.stdout)
+      .split('\n')
+      .filter((l) => l.trim());
+    return { stdout: headTail(lines, 3, 8, 'passing lines').join('\n'), stderr: input.stderr };
+  },
+};
+
+const REDUCERS: Reducer[] = [gitStatus, inventory, checkRunner];
+
+// ---------------------------------------------------------------------------
 // Entry point.
 // ---------------------------------------------------------------------------
 
 export function reduceToolOutput(input: ReducerInput): ReducedOutput {
-  const noChange: ReducedOutput = {
+  const originalChars = input.stdout.length + input.stderr.length;
+  const pass = (reason: PassthroughReason): ReducedOutput => ({
     stdout: input.stdout,
     stderr: input.stderr,
     reduced: false,
+    originalChars,
+    reducedChars: originalChars,
     savedChars: 0,
-  };
+    reason,
+  });
 
-  if (isUnsafeToReduce(input.command)) return noChange;
+  if (isUnsafeToReduce(input.command)) return pass('unsafe-command');
   const parsed = parseCommand(input.command);
-  if (!parsed) return noChange;
+  if (!parsed) return pass('unparseable-command');
+  if (FILE_READ_ARGV0.has(parsed.argv0)) return pass('file-read'); // exact reads stay raw
 
   const reducer = REDUCERS.find((r) => r.match(parsed));
-  if (!reducer) return noChange;
+  if (!reducer) return pass('no-matching-rule');
 
-  const failed = input.exitCode !== 0;
-  const result = reducer.reduce(input, failed);
-
-  const before = input.stdout.length + input.stderr.length;
-  const after = result.stdout.length + result.stderr.length;
-  const savedChars = before - after;
+  const result = reducer.reduce(input, input.exitCode !== 0);
+  const reducedChars = result.stdout.length + result.stderr.length;
+  const savedChars = originalChars - reducedChars;
 
   // Passthrough if the win is marginal (tokenjuice SMALL_OUTPUT_PASSTHROUGH).
-  if (savedChars < MIN_SAVED_CHARS || after / Math.max(before, 1) > MAX_KEPT_RATIO) {
-    return noChange;
+  if (savedChars < MIN_SAVED_CHARS || reducedChars / Math.max(originalChars, 1) > MAX_KEPT_RATIO) {
+    return pass('below-threshold');
   }
 
-  return { ...result, reduced: true, reducerId: reducer.id, savedChars };
+  return {
+    stdout: result.stdout,
+    stderr: result.stderr,
+    reduced: true,
+    reducerId: reducer.id,
+    originalChars,
+    reducedChars,
+    savedChars,
+  };
 }

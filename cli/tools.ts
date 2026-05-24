@@ -23,6 +23,7 @@ import {
 import type { AgentRole } from '../lib/runtime-contract.ts';
 import { deriveProtocolVersion } from '../lib/tool-registry.ts';
 import { evaluatePreHooks } from '../lib/tool-hooks.ts';
+import { reduceToolOutput } from '../lib/tool-output-reducers.ts';
 
 /**
  * CLI tool execution is the pushd daemon surface — the daemon IS the
@@ -1069,6 +1070,19 @@ function formatExecOutput(stdout, stderr, exitCode, timedOut = false) {
   return parts.join('\n\n');
 }
 
+// Surfaces reducer telemetry in tool `meta` (freeform) only when a reduction
+// actually fired — keeps the common case clean.
+function reductionMeta(reduced) {
+  if (!reduced.reduced) return {};
+  return {
+    output_reduced: true,
+    reducer: reduced.reducerId,
+    original_chars: reduced.originalChars,
+    reduced_chars: reduced.reducedChars,
+    saved_chars: reduced.savedChars,
+  };
+}
+
 function classifyToolError(err) {
   const message = err instanceof Error ? err.message : String(err);
   const lower = message.toLowerCase();
@@ -1788,23 +1802,28 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           const { stdout, stderr } = isLocalSandbox
             ? await execFileAsync('docker', args!, execOpts)
             : await runCommandInResolvedShell(command, execOpts);
+          // Reduce the MODEL-FACING text only. exec is one-shot (no session
+          // store), so there is no raw-data consumer to protect here; the exit
+          // code is still printed verbatim by formatExecOutput.
+          const reduced = reduceToolOutput({ command, stdout, stderr, exitCode: 0 });
           return {
             ok: true,
-            text: truncateText(formatExecOutput(stdout, stderr, 0)),
-            meta: { command, timeout_ms: timeoutMs },
+            text: truncateText(formatExecOutput(reduced.stdout, reduced.stderr, 0)),
+            meta: { command, timeout_ms: timeoutMs, ...reductionMeta(reduced) },
           };
         } catch (err) {
           if (err.name === 'AbortError') throw err;
           const exitCode = typeof err.code === 'number' ? err.code : 1;
+          const reduced = reduceToolOutput({
+            command,
+            stdout: err.stdout || '',
+            stderr: err.stderr || err.message,
+            exitCode,
+          });
           return {
             ok: false,
             text: truncateText(
-              formatExecOutput(
-                err.stdout || '',
-                err.stderr || err.message,
-                exitCode,
-                Boolean(err.killed),
-              ),
+              formatExecOutput(reduced.stdout, reduced.stderr, exitCode, Boolean(err.killed)),
             ),
             structuredError: {
               code: err.killed ? 'EXEC_TIMEOUT' : 'EXEC_FAILED',
@@ -1816,6 +1835,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
               timeout_ms: timeoutMs,
               exit_code: exitCode,
               timed_out: Boolean(err.killed),
+              ...reductionMeta(reduced),
             },
           };
         }
