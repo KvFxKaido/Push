@@ -22,7 +22,11 @@
  * recorder) — only `ctx` and the loop's recovery state.
  */
 
-import { resolveToolCallRecovery, type ToolCallRecoveryState } from '@/lib/tool-call-recovery';
+import {
+  MAX_TRAILING_INTENT_NUDGES,
+  resolveToolCallRecovery,
+  type ToolCallRecoveryState,
+} from '@/lib/tool-call-recovery';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import { markLastAssistantToolCall } from '@/lib/chat-tool-messages';
 import { handleRecoveryResult } from '@/lib/chat-tool-execution';
@@ -38,15 +42,6 @@ import { evaluateVerificationState, formatVerificationBlock } from '@/lib/verifi
 import { createId } from '@push/lib/id-utils';
 import type { ChatMessage, ReasoningBlock } from '@/types';
 import type { AssistantTurnResult, SendLoopContext } from './chat-send-types';
-
-/**
- * Cap on "announced an action but emitted no tool call" nudges per run.
- * One nudge resolves the common case (the model emits the call it described).
- * The cap is a safety valve: the round loop is otherwise unbounded, so a model
- * that keeps narrating intent without ever acting must eventually be allowed to
- * break rather than spin forever.
- */
-const MAX_TRAILING_INTENT_NUDGES = 3;
 
 export async function processNoToolPath(
   round: number,
@@ -259,13 +254,6 @@ export async function processNoToolPath(
     !responseClaimsCompletion(accumulated) &&
     detectTrailingActionIntent(accumulated)
   ) {
-    appendRunEvent(chatId, {
-      type: 'tool.call_malformed',
-      round,
-      reason: 'announced_no_tool_call',
-      preview: summarizeToolResultPreview(accumulated),
-    });
-
     setConversations((prev) => {
       const conv = prev[chatId];
       if (!conv) return prev;
