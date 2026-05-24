@@ -1595,7 +1595,7 @@ describe('executeSandboxToolCall -- sandbox_save_draft', () => {
     // Only the branch-detect exec ran — no checkout/stage/commit/push.
     expect(sandboxClient.execInSandbox).toHaveBeenCalledTimes(1);
     expect(vi.mocked(sandboxClient.execInSandbox).mock.calls[0][1]).toContain(
-      "git 'rev-parse' '--abbrev-ref' 'HEAD'",
+      "git 'branch' '--show-current'",
     );
   });
 
@@ -4273,7 +4273,7 @@ describe('executeSandboxToolCall -- sandbox_switch_branch', () => {
     vi.mocked(sandboxClient.execInSandbox).mockReset();
   });
 
-  it('captures previous via git rev-parse, runs git switch, returns kind:switched', async () => {
+  it('captures previous via git branch --show-current, runs git switch, returns kind:switched', async () => {
     vi.mocked(sandboxClient.execInSandbox)
       // 1) HEAD probe
       .mockResolvedValueOnce({
@@ -4306,17 +4306,17 @@ describe('executeSandboxToolCall -- sandbox_switch_branch', () => {
 
     const calls = vi.mocked(sandboxClient.execInSandbox).mock.calls;
     expect(calls).toHaveLength(2);
-    expect(calls[0][1]).toContain("git 'rev-parse' '--abbrev-ref' 'HEAD'");
+    expect(calls[0][1]).toContain("git 'branch' '--show-current'");
     expect(calls[1][1]).toContain("git switch 'main'");
     // Branch switch must be marked as workspace-mutating so the cache/ledger
     // invalidation hooks fire (same as sandbox_create_branch).
     expect(calls[1][3]?.markWorkspaceMutated).toBe(true);
   });
 
-  it('omits previous when HEAD is detached (rev-parse returns "HEAD")', async () => {
+  it('omits previous when HEAD is detached (show-current returns empty)', async () => {
     vi.mocked(sandboxClient.execInSandbox)
       .mockResolvedValueOnce({
-        stdout: 'HEAD\n',
+        stdout: '\n',
         stderr: '',
         exitCode: 0,
         truncated: false,

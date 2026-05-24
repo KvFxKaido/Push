@@ -21,7 +21,7 @@
  * must quote it.
  */
 
-import { parseGitStatusInfo, type GitStatusInfo } from './status.ts';
+import { parseGitStatusInfo, type GitStatusInfo } from './status.js';
 
 export interface GitExecResult {
   stdout: string;
@@ -60,13 +60,14 @@ export class SandboxPlumbingBackend implements GitBackend {
   }
 
   async currentBranch(): Promise<string | null> {
-    const res = await this.exec(['rev-parse', '--abbrev-ref', 'HEAD']);
+    // `git branch --show-current` returns the branch name — including an
+    // unborn branch with no commits yet — and an empty string when detached,
+    // which is exactly the normalized contract. (`rev-parse --abbrev-ref
+    // HEAD` would print `HEAD` when detached and fail on an unborn branch,
+    // losing the name in a freshly-initialized repo.)
+    const res = await this.exec(['branch', '--show-current']);
     if (res.exitCode !== 0) return null;
-    const branch = res.stdout.trim();
-    // `rev-parse --abbrev-ref HEAD` prints `HEAD` for a detached head; the
-    // normalized contract is null there (no current branch).
-    if (!branch || branch === 'HEAD') return null;
-    return branch;
+    return res.stdout.trim() || null;
   }
 
   async headSha(opts?: { short?: boolean }): Promise<string | null> {

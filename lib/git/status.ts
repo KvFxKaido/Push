@@ -12,7 +12,7 @@
  * equivalently `--short --branch`).
  */
 
-import { parseGitStatus, type GitInfo } from '../repo-awareness.ts';
+import { parseGitStatus, type GitInfo } from '../repo-awareness.js';
 
 export interface GitStatusEntry {
   /** Index (staged) column, e.g. 'M', 'A', ' ', '?'. */

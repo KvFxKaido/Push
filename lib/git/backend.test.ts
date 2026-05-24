@@ -20,20 +20,25 @@ function fakeExec(table: Record<string, GitExecResult>): GitExec {
 describe('SandboxPlumbingBackend.currentBranch', () => {
   it('returns the branch name', async () => {
     const backend = new SandboxPlumbingBackend(
-      fakeExec({ 'rev-parse --abbrev-ref HEAD': ok('feature/x\n') }),
+      fakeExec({ 'branch --show-current': ok('feature/x\n') }),
     );
     expect(await backend.currentBranch()).toBe('feature/x');
   });
 
-  it('normalizes detached HEAD to null', async () => {
-    const backend = new SandboxPlumbingBackend(
-      fakeExec({ 'rev-parse --abbrev-ref HEAD': ok('HEAD\n') }),
-    );
+  it('returns the branch name on an unborn branch (no commits yet)', async () => {
+    // `git branch --show-current` reports the name even before the first
+    // commit, where `rev-parse --abbrev-ref HEAD` would have failed.
+    const backend = new SandboxPlumbingBackend(fakeExec({ 'branch --show-current': ok('main\n') }));
+    expect(await backend.currentBranch()).toBe('main');
+  });
+
+  it('normalizes detached HEAD (empty output) to null', async () => {
+    const backend = new SandboxPlumbingBackend(fakeExec({ 'branch --show-current': ok('\n') }));
     expect(await backend.currentBranch()).toBeNull();
   });
 
   it('returns null on git failure', async () => {
-    const backend = new SandboxPlumbingBackend(fakeExec({ 'rev-parse --abbrev-ref HEAD': fail() }));
+    const backend = new SandboxPlumbingBackend(fakeExec({ 'branch --show-current': fail() }));
     expect(await backend.currentBranch()).toBeNull();
   });
 });

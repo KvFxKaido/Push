@@ -421,10 +421,19 @@ export async function handlePromoteToGithub(
   }
   const remoteUrl = `https://x-access-token:${authToken}@github.com/${createdRepo.full_name}.git`;
 
+  // Promote needs the exact current ref, so this read stays raw rather than
+  // going through the normalized `currentBranch()`. A detached HEAD must
+  // surface as `HEAD` (making the later `git push -u origin HEAD` fail loudly)
+  // instead of collapsing to null and falling back to the default branch —
+  // which would publish the wrong revision (Codex review on PR #629).
+  const branchResult = await ctx.execInSandbox(
+    ctx.sandboxId,
+    'cd /workspace && git rev-parse --abbrev-ref HEAD',
+  );
   const branchName =
-    (await createSandboxGitBackend(ctx.sandboxId, ctx.execInSandbox).currentBranch()) ||
-    createdRepo.default_branch ||
-    'main';
+    branchResult.exitCode === 0
+      ? branchResult.stdout.trim() || createdRepo.default_branch || 'main'
+      : createdRepo.default_branch || 'main';
 
   const remoteResult = await ctx.execInSandbox(
     ctx.sandboxId,
