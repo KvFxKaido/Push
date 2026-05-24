@@ -367,6 +367,13 @@ describe('handleSandboxPush', () => {
     expect(result.text).toContain('Push failed: fatal: permission denied');
     expect(result.card).toBeUndefined();
   });
+
+  it('classifies an unreachable sandbox (exit -1) as SANDBOX_UNREACHABLE', async () => {
+    const ctx = makeContext({ execResults: [fail('', 'Sandbox not found', -1)] });
+    const result = await handleSandboxPush(ctx);
+    expect(result.structuredError?.type).toBe('SANDBOX_UNREACHABLE');
+    expect(result.text).toContain('[Tool Error — sandbox_push]');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -524,6 +531,7 @@ describe('handleSaveDraft', () => {
         ok(), // git checkout -b
         ok(), // git add -A
         ok('[draft/main-x abc1234] WIP: draft save'), // git commit
+        ok('abc1234'), // git rev-parse --short HEAD
         ok(), // git push
       ],
     });
@@ -551,16 +559,17 @@ describe('handleSaveDraft', () => {
       diffResults: [{ diff: 'diff --git a/x.ts b/x.ts\n+a\n', truncated: false }],
       execResults: [
         ok('draft/existing'),
-        ok(),
-        ok('[draft/existing def5678] WIP: draft save'),
-        ok(),
+        ok(), // git add -A
+        ok('[draft/existing def5678] WIP: draft save'), // git commit
+        ok('def5678'), // git rev-parse --short HEAD
+        ok(), // git push
       ],
     });
     const result = await handleSaveDraft(ctx, {});
     expect(result.text).toContain('Draft saved to branch: draft/existing');
     expect(result.branchSwitch).toBeUndefined();
-    // Only 4 execs: branch-detect, stage, commit, push (no checkout).
-    expect(ctx.execInSandbox).toHaveBeenCalledTimes(4);
+    // 5 execs: branch-detect, stage, commit, rev-parse (sha), push (no checkout).
+    expect(ctx.execInSandbox).toHaveBeenCalledTimes(5);
   });
 
   it('checks out a different draft branch when an explicit branch_name is requested while already on a draft branch', async () => {
@@ -575,6 +584,7 @@ describe('handleSaveDraft', () => {
         ok(), // git checkout -b draft/requested
         ok(), // git add -A
         ok('[draft/requested abc1234] WIP: draft save'), // git commit
+        ok('abc1234'), // git rev-parse --short HEAD
         ok(), // git push
       ],
     });
@@ -585,7 +595,7 @@ describe('handleSaveDraft', () => {
       kind: 'switched',
       source: 'release_draft',
     });
-    expect(ctx.execInSandbox).toHaveBeenCalledTimes(5);
+    expect(ctx.execInSandbox).toHaveBeenCalledTimes(6);
     // Second exec is the checkout — confirm it targets the requested branch.
     expect(ctx.execCalls[1][1]).toContain("git 'checkout' '-b' 'draft/requested'");
   });

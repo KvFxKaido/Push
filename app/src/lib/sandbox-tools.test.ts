@@ -1616,6 +1616,8 @@ describe('executeSandboxToolCall -- sandbox_save_draft', () => {
         exitCode: 0,
         truncated: false,
       })
+      // git rev-parse --short HEAD (commit sha via plumbing)
+      .mockResolvedValueOnce({ stdout: 'abc1234', stderr: '', exitCode: 0, truncated: false })
       // git push -u origin draft/...
       .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0, truncated: false });
 
@@ -1659,14 +1661,16 @@ describe('executeSandboxToolCall -- sandbox_save_draft', () => {
         exitCode: 0,
         truncated: false,
       })
+      // git rev-parse --short HEAD (commit sha via plumbing)
+      .mockResolvedValueOnce({ stdout: 'def5678', stderr: '', exitCode: 0, truncated: false })
       .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0, truncated: false });
 
     const result = await executeSandboxToolCall({ tool: 'sandbox_save_draft', args: {} }, 'sb-1');
 
     expect(result.text).toContain('Draft saved to branch: draft/existing');
     expect(result.branchSwitch).toBeUndefined();
-    // Only 4 execs (no checkout): branch-detect, stage, commit, push
-    expect(sandboxClient.execInSandbox).toHaveBeenCalledTimes(4);
+    // 5 execs (no checkout): branch-detect, stage, commit, rev-parse (sha), push
+    expect(sandboxClient.execInSandbox).toHaveBeenCalledTimes(5);
   });
 });
 

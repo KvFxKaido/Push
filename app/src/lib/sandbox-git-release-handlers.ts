@@ -60,6 +60,7 @@ import type { CreatedRepoResponse } from './sandbox-tool-utils';
 import { parseDiffStats } from './diff-utils';
 import { createSandboxPushGit } from './git-backend';
 import { GIT_REF_VALIDATION_DETAIL, isInvalidGitRef } from './git-ref-validation';
+import { isDefinitivelyGoneMessage } from './sandbox-error-utils';
 import {
   classifyError,
   formatStructuredError,
@@ -389,7 +390,21 @@ export async function handleSandboxPush(
   }).push();
 
   if (!pushResult.ok) {
-    return { text: `[Tool Result — sandbox_push]\nPush failed: ${pushResult.stderr}` };
+    const reason = pushResult.error || pushResult.stderr || pushResult.stdout || 'push failed';
+    // exitCode -1, or a transport/gone error the adapter caught, means the
+    // container is unreachable. Surface a structured error so the chat runtime
+    // can trigger sandbox recovery — the pre-refactor path threw here and the
+    // dispatcher's top-level catch classified it the same way.
+    if (pushResult.exitCode === -1 || isDefinitivelyGoneMessage(reason)) {
+      const err = classifyError(reason, 'sandbox_push');
+      err.type = 'SANDBOX_UNREACHABLE';
+      err.retryable = false;
+      return {
+        text: formatStructuredError(err, `[Tool Error — sandbox_push]\n${reason}`),
+        structuredError: err,
+      };
+    }
+    return { text: `[Tool Result — sandbox_push]\nPush failed: ${pushResult.stderr || reason}` };
   }
 
   return { text: `[Tool Result — sandbox_push]\nPushed successfully.` };
@@ -567,6 +582,9 @@ export async function handleSaveDraft(
       text: `[Tool Error — sandbox_save_draft]\nFailed to commit draft: ${commitResult.result?.stderr ?? ''}`,
     };
   }
+  // Read the new HEAD via plumbing rather than parsing the commit's human
+  // stdout (which varies with locale / git version / root-commit / hooks).
+  const commitSha = (await pushGit.headSha({ short: true })) ?? 'unknown';
   // git add + commit changes file hashes tracked by git
   ctx.clearFileVersionCache(ctx.sandboxId);
   ctx.clearPrefetchedEditFileCache(ctx.sandboxId);
@@ -575,7 +593,6 @@ export async function handleSaveDraft(
   const pushResult = await pushGit.push({ setUpstream: true, ref: activeDraftBranch });
 
   const pushOk = pushResult.ok;
-  const commitSha = commitResult.result?.stdout.match(/\[.+? ([a-f0-9]+)\]/)?.[1] || 'unknown';
   const draftStats = parseDiffStats(draftDiffResult.diff);
 
   const draftLines: string[] = [

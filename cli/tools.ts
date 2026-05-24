@@ -2357,11 +2357,14 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         // backend write.
         const addArgs =
           resolvedPaths.length > 0 ? ['--', ...resolvedPaths] : ['-A', '--', '.', ':!.push'];
-        const backend = createLocalGitBackend(workspaceRoot);
+        // No timeout for commit writes: slow pre-commit hooks, large staging
+        // sets, or busy disks must not be killed (the prior direct execFile
+        // flow was unbounded).
+        const backend = createLocalGitBackend(workspaceRoot, { timeoutMs: 0 });
         const commitResult = await backend.commit(message, { addArgs });
         if (!commitResult.ok) {
           const detail =
-            commitResult.error || commitResult.stderr || commitResult.stdout || 'git commit failed';
+            commitResult.stderr || commitResult.stdout || commitResult.error || 'git commit failed';
           return {
             ok: false,
             text: `git commit failed: ${detail}`,

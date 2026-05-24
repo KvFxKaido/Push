@@ -26,15 +26,18 @@ export function createLocalGitBackend(cwd: string, opts?: { timeoutMs?: number }
       const { stdout, stderr } = await execFileAsync('git', args, { cwd, timeout });
       return { stdout, stderr, exitCode: 0 };
     } catch (err) {
-      const e = err as { stdout?: string; stderr?: string; code?: number };
+      const e = err as { stdout?: string; stderr?: string; code?: number | string };
       const message = err instanceof Error ? err.message : String(err);
+      // execFile sets a numeric exit code on a normal git failure, or a string
+      // like 'ENOENT' (or none, on timeout) when git can't be spawned.
+      const isGitExit = typeof e.code === 'number';
       return {
         stdout: e.stdout ?? '',
         stderr: e.stderr ?? message,
-        // execFile sets a numeric exit code on command failure, or a string
-        // like 'ENOENT' when git can't be spawned — normalize the latter to 1.
-        exitCode: typeof e.code === 'number' ? e.code : 1,
-        error: message,
+        exitCode: isGitExit ? (e.code as number) : 1,
+        // Reserve `error` for spawn/transport failures — a normal non-zero git
+        // exit is conveyed by stderr + exitCode, so callers prefer git's stderr.
+        error: isGitExit ? undefined : message,
       };
     }
   };
