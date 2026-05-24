@@ -205,15 +205,17 @@ describe('useCommitPush.commitAndPush (audit → commit → push)', () => {
       card: { summary: 'looks good' },
     });
     sandboxClient.execInSandbox
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' });
+      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }) // git add -A
+      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }) // git commit
+      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }); // git push
 
     const hook = render();
     await hook.commitAndPush();
 
-    const [commitCall, pushCall] = sandboxClient.execInSandbox.mock.calls;
-    expect(commitCall[1]).toContain("git commit -m 'fix thing'");
-    expect(pushCall[1]).toContain('git push origin HEAD');
+    // The backend stages then commits, so [add, commit, push].
+    const [, commitCall, pushCall] = sandboxClient.execInSandbox.mock.calls;
+    expect(commitCall[1]).toContain("git 'commit' '-m' 'fix thing'");
+    expect(pushCall[1]).toContain("git 'push' 'origin' 'HEAD'");
     expect((reactState.cells[0].value as { phase: string }).phase).toBe('success');
   });
 
@@ -245,12 +247,13 @@ describe('useCommitPush.commitAndPush (audit → commit → push)', () => {
       card: { summary: '' },
     });
     sandboxClient.execInSandbox
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }) // git add -A
+      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }) // git commit
       .mockResolvedValueOnce({
         exitCode: 1,
         stdout: '',
         stderr: 'rejected (non-fast-forward)',
-      });
+      }); // git push
     const hook = render();
     await hook.commitAndPush();
     expect((reactState.cells[0].value as { phase: string; error: string }).phase).toBe('error');
@@ -268,8 +271,9 @@ describe('useCommitPush.commitAndPush (audit → commit → push)', () => {
       card: { summary: '' },
     });
     sandboxClient.execInSandbox
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' });
+      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }) // git add -A
+      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }) // git commit
+      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }); // git push
     const hook = render();
     await hook.commitAndPush();
     // runAuditor receives an empty file-context array rather than crashing.
@@ -311,11 +315,13 @@ describe('useCommitPush.commitAndPush (audit → commit → push)', () => {
       card: { summary: '' },
     });
     sandboxClient.execInSandbox
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' });
+      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }) // git add -A
+      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }) // git commit
+      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }); // git push
     const hook = render();
     await hook.commitAndPush();
-    expect(sandboxClient.execInSandbox.mock.calls[0][1]).toContain(`'it'"'"'s fine'`);
+    // The backend shell-escapes the message identically; commit is the 2nd exec.
+    expect(sandboxClient.execInSandbox.mock.calls[1][1]).toContain(`'it'"'"'s fine'`);
   });
 });
 
@@ -341,7 +347,7 @@ describe('useCommitPush.commitAndPush — sandbox-expiry recovery', () => {
     });
 
     sandboxClient.execInSandbox
-      // 1: commit on dead sandbox → expired signal
+      // 1: git add -A on dead sandbox → expired signal
       .mockResolvedValueOnce({
         exitCode: -1,
         stdout: '',
@@ -350,9 +356,11 @@ describe('useCommitPush.commitAndPush — sandbox-expiry recovery', () => {
       })
       // 2: git apply in new sandbox
       .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
-      // 3: commit in new sandbox
+      // 3: git add -A in new sandbox
       .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
-      // 4: push in new sandbox
+      // 4: git commit in new sandbox
+      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
+      // 5: git push in new sandbox
       .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' });
 
     const onSandboxExpired = vi.fn().mockResolvedValue('sbx-2');
@@ -368,8 +376,9 @@ describe('useCommitPush.commitAndPush — sandbox-expiry recovery', () => {
     const calls = sandboxClient.execInSandbox.mock.calls;
     expect(calls[1][0]).toBe('sbx-2');
     expect(calls[1][1]).toContain('git apply');
-    expect(calls[2][1]).toContain("git commit -m 'fix thing'");
-    expect(calls[3][1]).toContain('git push origin HEAD');
+    // Recovery commit/push go through the backend (escaped argv): [add, commit, push].
+    expect(calls[3][1]).toContain("git 'commit' '-m' 'fix thing'");
+    expect(calls[4][1]).toContain("git 'push' 'origin' 'HEAD'");
     expect((reactState.cells[0].value as { phase: string }).phase).toBe('success');
   });
 
@@ -379,19 +388,23 @@ describe('useCommitPush.commitAndPush — sandbox-expiry recovery', () => {
     auditor.runAuditor.mockResolvedValue({ verdict: 'safe', card: { summary: '' } });
 
     sandboxClient.execInSandbox
-      // 1: commit succeeds on the original sandbox
+      // 1: git add -A on the original sandbox
       .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
-      // 2: push fails because the sandbox is gone
+      // 2: git commit succeeds on the original sandbox
+      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
+      // 3: git push fails because the sandbox is gone
       .mockResolvedValueOnce({
         exitCode: -1,
         stdout: '',
         stderr: 'Sandbox has been terminated',
       })
-      // 3: git apply in new sandbox
+      // 4: git apply in new sandbox
       .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
-      // 4: commit in new sandbox (the prior commit is gone with the dead container)
+      // 5: git add -A in new sandbox (the prior commit is gone with the dead container)
       .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
-      // 5: push in new sandbox
+      // 6: git commit in new sandbox
+      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
+      // 7: git push in new sandbox
       .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' });
 
     const onSandboxExpired = vi.fn().mockResolvedValue('sbx-2');

@@ -21,6 +21,7 @@ import type {
   SandboxStateCardData,
 } from '@/types';
 import { execInSandbox, writeToSandbox } from '@/lib/sandbox-client';
+import { createSandboxPushGit } from '@/lib/git-backend';
 import { executeToolCall } from '@/lib/github-tools';
 import type { ActiveProvider } from '@/lib/orchestrator';
 import { executeSandboxToolCall } from '@/lib/sandbox-tools';
@@ -350,18 +351,15 @@ export function useChatCardActions({
               return;
             }
 
-            const safeCommitMessage = normalizedCommitMessage.replace(/'/g, `'"'"'`);
+            // Step 2: Commit via the sanctioned backend write. The Auditor
+            // already ran at the prepare step, so this approved commit needs no
+            // gate; the backend shell-escapes the message and marks the
+            // workspace mutated.
+            const pushGit = createSandboxPushGit(sandboxId);
+            const commit = await pushGit.commit({ message: normalizedCommitMessage });
 
-            // Step 2: Commit in sandbox
-            const commitResult = await execInSandbox(
-              sandboxId,
-              `cd /workspace && git add -A && git commit -m '${safeCommitMessage}'`,
-              undefined,
-              { markWorkspaceMutated: true },
-            );
-
-            if (commitResult.exitCode !== 0) {
-              const errorDetail = commitResult.stderr || commitResult.stdout || 'Unknown error';
+            if (!commit.ok) {
+              const errorDetail = commit.result?.stderr || commit.result?.stdout || 'Unknown error';
               updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
                 if (card.type !== 'commit-review') return card;
                 return {
@@ -382,14 +380,9 @@ export function useChatCardActions({
               return { ...card, data: { ...card.data, status: 'pushing' } as CommitReviewCardData };
             });
 
-            const pushResult = await execInSandbox(
-              sandboxId,
-              'cd /workspace && git push origin HEAD',
-              undefined,
-              { markWorkspaceMutated: true },
-            );
+            const pushResult = await pushGit.push();
 
-            if (pushResult.exitCode !== 0) {
+            if (!pushResult.ok) {
               const pushErrorDetail = pushResult.stderr || pushResult.stdout || 'Unknown error';
               updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
                 if (card.type !== 'commit-review') return card;

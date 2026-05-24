@@ -27,12 +27,14 @@ export function createLocalGitBackend(cwd: string, opts?: { timeoutMs?: number }
       return { stdout, stderr, exitCode: 0 };
     } catch (err) {
       const e = err as { stdout?: string; stderr?: string; code?: number };
+      const message = err instanceof Error ? err.message : String(err);
       return {
         stdout: e.stdout ?? '',
-        stderr: e.stderr ?? (err instanceof Error ? err.message : String(err)),
+        stderr: e.stderr ?? message,
         // execFile sets a numeric exit code on command failure, or a string
         // like 'ENOENT' when git can't be spawned — normalize the latter to 1.
         exitCode: typeof e.code === 'number' ? e.code : 1,
+        error: message,
       };
     }
   };

@@ -353,7 +353,7 @@ describe('handleSandboxPush', () => {
     expect(ctx.execInSandbox).toHaveBeenCalledTimes(1);
     expect(ctx.execCalls[0]).toEqual([
       'sb-1',
-      'cd /workspace && git push origin HEAD',
+      "git 'push' 'origin' 'HEAD'",
       undefined,
       { markWorkspaceMutated: true },
     ]);
@@ -576,6 +576,6 @@ describe('handleSaveDraft', () => {
     });
     expect(ctx.execInSandbox).toHaveBeenCalledTimes(5);
     // Second exec is the checkout — confirm it targets the requested branch.
-    expect(ctx.execCalls[1][1]).toContain("git checkout -b 'draft/requested'");
+    expect(ctx.execCalls[1][1]).toContain("git 'checkout' '-b' 'draft/requested'");
   });
 });

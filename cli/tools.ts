@@ -5,6 +5,7 @@ import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { applyHashlineEdits, calculateContentVersion, renderAnchoredRange } from './hashline.js';
 import { runDiagnostics } from './diagnostics.js';
+import { createLocalGitBackend } from './git-backend.js';
 import { runCommandInResolvedShell, spawnCommandInResolvedShell } from './shell.js';
 import {
   buildArtifactRecord,
@@ -2351,36 +2352,29 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           paths.map((p) => ensureInsideWorkspace(workspaceRoot, p)),
         );
 
-        try {
-          // Stage specified files, or all if none specified
-          if (resolvedPaths.length > 0) {
-            await execFileAsync('git', ['add', '--', ...resolvedPaths], { cwd: workspaceRoot });
-          } else {
-            // Exclude .push/ (sessions, backups, internal state) from "all" staging
-            await execFileAsync('git', ['add', '-A', '--', '.', ':!.push'], { cwd: workspaceRoot });
-          }
-
-          const { stdout } = await execFileAsync('git', ['commit', '-m', message], {
-            cwd: workspaceRoot,
-          });
-
-          // Get the commit SHA
-          const { stdout: sha } = await execFileAsync('git', ['rev-parse', '--short', 'HEAD'], {
-            cwd: workspaceRoot,
-          });
-
-          return {
-            ok: true,
-            text: stdout.trim(),
-            meta: { sha: sha.trim(), message, filesStaged: resolvedPaths.length || 'all' },
-          };
-        } catch (err) {
+        // Stage specified files, or all (excluding .push/ — sessions, backups,
+        // internal state) if none specified, then commit — via the sanctioned
+        // backend write.
+        const addArgs =
+          resolvedPaths.length > 0 ? ['--', ...resolvedPaths] : ['-A', '--', '.', ':!.push'];
+        const backend = createLocalGitBackend(workspaceRoot);
+        const commitResult = await backend.commit(message, { addArgs });
+        if (!commitResult.ok) {
+          const detail =
+            commitResult.error || commitResult.stderr || commitResult.stdout || 'git commit failed';
           return {
             ok: false,
-            text: `git commit failed: ${err.message}`,
-            structuredError: { code: 'GIT_ERROR', message: err.message, retryable: true },
+            text: `git commit failed: ${detail}`,
+            structuredError: { code: 'GIT_ERROR', message: detail, retryable: true },
           };
         }
+
+        const sha = await backend.headSha({ short: true });
+        return {
+          ok: true,
+          text: commitResult.stdout.trim(),
+          meta: { sha: sha ?? 'unknown', message, filesStaged: resolvedPaths.length || 'all' },
+        };
       }
 
       case 'git_create_branch': {

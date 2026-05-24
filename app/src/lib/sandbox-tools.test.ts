@@ -1304,7 +1304,7 @@ describe('executeSandboxToolCall -- sandbox_push', () => {
     expect(sandboxClient.execInSandbox).toHaveBeenCalledTimes(1);
     expect(sandboxClient.execInSandbox).toHaveBeenCalledWith(
       'sb-1',
-      'cd /workspace && git push origin HEAD',
+      "git 'push' 'origin' 'HEAD'",
       undefined,
       { markWorkspaceMutated: true },
     );

@@ -27,6 +27,12 @@ export interface GitExecResult {
   stdout: string;
   stderr: string;
   exitCode: number;
+  /**
+   * Transport/exec-layer error detail (e.g. an unreachable / gone sandbox),
+   * surfaced by adapters when the executor reports one out-of-band. Callers
+   * that detect such conditions (cold-resume / expiry recovery) read it.
+   */
+  error?: string;
 }
 
 export interface GitExecOptions {
