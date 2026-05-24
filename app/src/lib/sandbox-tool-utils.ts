@@ -482,9 +482,9 @@ export function isLikelyMutatingSandboxExec(command: string): boolean {
 // ---------------------------------------------------------------------------
 // Git guard — block direct git mutations in sandbox_exec
 //
-// The detection heuristic lives in `lib/git-mutation-detection.ts` so the
-// CLI executor can reuse the same logic. Re-exported here for back-compat
-// with existing callers (`sandbox-tools.ts`, `sandbox-git-policy.ts`).
+// The classifier lives in `lib/git/policy.ts` (the `classifyGitCommand`
+// oracle); `detectBlockedGitCommand` is its legacy label adapter. Re-exported
+// here for back-compat with existing callers.
 // ---------------------------------------------------------------------------
 
-export { detectBlockedGitCommand } from '@push/lib/git-mutation-detection';
+export { detectBlockedGitCommand } from '@push/lib/git/policy';

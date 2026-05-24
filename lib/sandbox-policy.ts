@@ -263,9 +263,11 @@ function argvMatches(pattern: string[], argv: string[], classify: ArgClassifier)
  * Caller can pass a custom `ArgClassifier` to `evaluateProcess` to override.
  *
  * NB: even with this dispatch, the simple pattern language can't fully
- * capture sandbox_exec's variable-arity scan-all-operands logic. Wiring
- * sandbox_exec to this schema will require either a richer pattern (e.g.
- * `<rest:branch>`) or a per-rule predicate hook.
+ * capture sandbox_exec's variable-arity scan-all-operands logic. The
+ * canonical git classifier the sandbox_exec guard actually uses lives in
+ * `lib/git/policy.ts` (`classifyGitCommand`); the SANDBOX_EXEC_POLICY rule
+ * delegates to it through a `predicate`. This `defaultArgClassifier` is the
+ * generic reference for argMatch-shaped rules, not the git source of truth.
  */
 const defaultArgClassifier: ArgClassifier = (token, argv, index) => {
   const operand = argv[index];
