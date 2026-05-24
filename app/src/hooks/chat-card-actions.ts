@@ -356,6 +356,18 @@ export function useChatCardActions({
             // gate; the backend shell-escapes the message and marks the
             // workspace mutated.
             const pushGit = createSandboxPushGit(sandboxId);
+            // Non-blocking desync check: warn (don't block) if the sandbox HEAD
+            // drifted from the branch Push tracks as active. PushGit only
+            // verifies the invariant; any future enforcement is the caller's.
+            const expectedBranch = branchInfoRef.current?.currentBranch;
+            if (expectedBranch) {
+              const branchCheck = await pushGit.validateActiveBranch(expectedBranch);
+              if (!branchCheck.inSync) {
+                console.warn(
+                  `[commit] sandbox HEAD (${branchCheck.actual ?? 'detached'}) differs from tracked branch (${branchCheck.expected}); committing anyway.`,
+                );
+              }
+            }
             const commit = await pushGit.commit({ message: normalizedCommitMessage });
 
             if (!commit.ok) {

@@ -456,7 +456,7 @@ describe('handlePromoteToGithub', () => {
     // Final exec is the git push — must thread the mutation flag (commit 8b4cbe7).
     expect(ctx.execCalls.at(-1)).toEqual([
       'sb-1',
-      expect.stringMatching(/git push -u origin/),
+      expect.stringMatching(/git 'push' '-u' 'origin'/),
       undefined,
       { markWorkspaceMutated: true },
     ]);

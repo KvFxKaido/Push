@@ -2420,26 +2420,29 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           };
         }
 
-        try {
-          // Atomic form: `git checkout -b <name> [<from>]` only changes HEAD
-          // on success. The previous chained form left HEAD on `<from>` if
-          // branch creation failed (e.g. branch already exists), silently
-          // mutating workspace branch state on the error path.
-          const args = ['checkout', '-b', name];
-          if (from) args.push(from);
-          await execFileAsync('git', args, { cwd: workspaceRoot });
-          return {
-            ok: true,
-            text: `Created and switched to ${name}${from ? ` from ${from}` : ''}.`,
-            meta: { branch: name, from: from || null },
-          };
-        } catch (err) {
+        // Atomic `checkout -b` (only moves HEAD on success) via the sanctioned
+        // backend write.
+        const createResult = await createLocalGitBackend(workspaceRoot).createBranch(
+          name,
+          from || undefined,
+        );
+        if (!createResult.ok) {
+          const detail =
+            createResult.stderr ||
+            createResult.stdout ||
+            createResult.error ||
+            'git create_branch failed';
           return {
             ok: false,
-            text: `git create_branch failed: ${err.message}`,
-            structuredError: { code: 'GIT_ERROR', message: err.message, retryable: false },
+            text: `git create_branch failed: ${detail}`,
+            structuredError: { code: 'GIT_ERROR', message: detail, retryable: false },
           };
         }
+        return {
+          ok: true,
+          text: `Created and switched to ${name}${from ? ` from ${from}` : ''}.`,
+          meta: { branch: name, from: from || null },
+        };
       }
 
       case 'undo_edit': {

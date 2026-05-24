@@ -33,6 +33,15 @@ export interface PushGitDeps {
   preCommit?: PreCommitGate;
 }
 
+export interface ActiveBranchValidation {
+  /** True when the sandbox's HEAD branch matches the expected (tracked) one. */
+  inSync: boolean;
+  /** The branch the orchestration believes is active (session.activeBranch). */
+  expected: string;
+  /** The sandbox's actual HEAD branch, or null when detached / unreadable. */
+  actual: string | null;
+}
+
 export interface PushGitCommitResult {
   /** True when the commit ran and succeeded. */
   ok: boolean;
@@ -61,6 +70,17 @@ export class PushGit {
   }
   status(): Promise<GitStatusInfo | null> {
     return this.backend.status();
+  }
+
+  /**
+   * Verify the sandbox's HEAD branch matches the branch the orchestration
+   * thinks is active. Returns a typed diagnostic and does NOT enforce —
+   * `lib/git/` only sees git reality, so the caller (which owns the session /
+   * UI context) decides whether a mismatch is a warning or a refusal.
+   */
+  async validateActiveBranch(expected: string): Promise<ActiveBranchValidation> {
+    const actual = await this.backend.currentBranch();
+    return { inSync: actual === expected, expected, actual };
   }
 
   // --- Sanctioned writes ---
