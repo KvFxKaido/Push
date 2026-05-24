@@ -2421,11 +2421,11 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         }
 
         // Atomic `checkout -b` (only moves HEAD on success) via the sanctioned
-        // backend write.
-        const createResult = await createLocalGitBackend(workspaceRoot).createBranch(
-          name,
-          from || undefined,
-        );
+        // backend write. Unbounded timeout (the prior direct execFile flow had
+        // none) so the write isn't killed on slow disks / large repos.
+        const createResult = await createLocalGitBackend(workspaceRoot, {
+          timeoutMs: 0,
+        }).createBranch(name, from || undefined);
         if (!createResult.ok) {
           const detail =
             createResult.stderr ||

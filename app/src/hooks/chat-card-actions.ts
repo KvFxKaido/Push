@@ -356,11 +356,17 @@ export function useChatCardActions({
             // verifies the invariant; any future enforcement is the caller's.
             const expectedBranch = branchInfoRef.current?.currentBranch;
             if (expectedBranch) {
-              const branchCheck = await pushGit.validateActiveBranch(expectedBranch);
-              if (!branchCheck.inSync) {
-                console.warn(
-                  `[commit] sandbox HEAD (${branchCheck.actual ?? 'detached'}) differs from tracked branch (${branchCheck.expected}); committing anyway.`,
-                );
+              try {
+                const branchCheck = await pushGit.validateActiveBranch(expectedBranch);
+                if (!branchCheck.inSync) {
+                  console.warn(
+                    `[commit] sandbox HEAD (${branchCheck.actual ?? 'detached'}) differs from tracked branch (${branchCheck.expected}); committing anyway.`,
+                  );
+                }
+              } catch (err) {
+                // Best-effort observability — a failing/slow desync check must
+                // never block or fail the commit itself.
+                console.warn('[commit] branch validation failed:', err);
               }
             }
             const commit = await pushGit.commit({ message: normalizedCommitMessage });
