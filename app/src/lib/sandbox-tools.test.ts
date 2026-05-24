@@ -1595,7 +1595,7 @@ describe('executeSandboxToolCall -- sandbox_save_draft', () => {
     // Only the branch-detect exec ran — no checkout/stage/commit/push.
     expect(sandboxClient.execInSandbox).toHaveBeenCalledTimes(1);
     expect(vi.mocked(sandboxClient.execInSandbox).mock.calls[0][1]).toContain(
-      'git branch --show-current',
+      'git rev-parse --abbrev-ref HEAD',
     );
   });
 

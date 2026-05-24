@@ -1,7 +1,8 @@
 import type { RepoWithActivity, ActiveRepo, WorkspaceContext } from '@/types';
 import { getSandboxEnvironment, getSandboxLifecycleEvents } from './sandbox-client';
-import { parseGitStatus, MANIFEST_PARSERS, type GitInfo } from '@push/lib/repo-awareness';
-import { listDirectory, readFromSandbox, execInSandbox } from './sandbox-client';
+import { MANIFEST_PARSERS, type GitInfo } from '@push/lib/repo-awareness';
+import { listDirectory, readFromSandbox } from './sandbox-client';
+import { createSandboxGitBackend } from './git-backend';
 
 export { sanitizeProjectInstructions } from '@push/lib/project-instructions';
 
@@ -16,8 +17,7 @@ export interface SandboxWorkspaceContext {
 
 async function getGitSnapshot(sandboxId: string): Promise<GitInfo | null> {
   try {
-    const { stdout } = await execInSandbox(sandboxId, 'git status --porcelain -b');
-    return parseGitStatus(stdout);
+    return await createSandboxGitBackend(sandboxId).status();
   } catch {
     return null;
   }

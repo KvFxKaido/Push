@@ -58,6 +58,7 @@ import type { DiffResult, ExecResult, FileReadResult } from './sandbox-client';
 import type { CreatedRepoResponse } from './sandbox-tool-utils';
 
 import { parseDiffStats } from './diff-utils';
+import { createSandboxGitBackend } from './git-backend';
 import {
   classifyError,
   formatStructuredError,
@@ -420,14 +421,10 @@ export async function handlePromoteToGithub(
   }
   const remoteUrl = `https://x-access-token:${authToken}@github.com/${createdRepo.full_name}.git`;
 
-  const branchResult = await ctx.execInSandbox(
-    ctx.sandboxId,
-    'cd /workspace && git rev-parse --abbrev-ref HEAD',
-  );
   const branchName =
-    branchResult.exitCode === 0
-      ? branchResult.stdout.trim() || createdRepo.default_branch || 'main'
-      : createdRepo.default_branch || 'main';
+    (await createSandboxGitBackend(ctx.sandboxId, ctx.execInSandbox).currentBranch()) ||
+    createdRepo.default_branch ||
+    'main';
 
   const remoteResult = await ctx.execInSandbox(
     ctx.sandboxId,
@@ -516,12 +513,9 @@ export async function handleSaveDraft(
     };
   }
 
-  // Step 2: Get current branch
-  const currentBranchResult = await ctx.execInSandbox(
-    ctx.sandboxId,
-    'cd /workspace && git branch --show-current',
-  );
-  const currentBranch = currentBranchResult.exitCode === 0 ? currentBranchResult.stdout.trim() : '';
+  // Step 2: Get current branch (null → '' when detached / not a repo)
+  const currentBranch =
+    (await createSandboxGitBackend(ctx.sandboxId, ctx.execInSandbox).currentBranch()) ?? '';
 
   // Step 3: Determine draft branch name — must start with draft/ (unaudited path)
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);

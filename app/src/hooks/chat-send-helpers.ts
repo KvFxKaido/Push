@@ -31,7 +31,7 @@ import {
 import { markLastAssistantToolCall } from '@/lib/chat-tool-messages';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import type { DelegationOutcome, ReasoningBlock } from '@/types';
-import { execInSandbox } from '@/lib/sandbox-client';
+import { createSandboxGitBackend } from '@/lib/git-backend';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { executeTodoToolCall } from '@/lib/todo-tools';
 import { getToolName } from '@/lib/chat-tool-messages';
@@ -350,47 +350,20 @@ export function createTurnRunContext(
       return null;
     }
     try {
-      const statusResult = await execInSandbox(
-        sandboxIdRef.current,
-        [
-          'cd /workspace || exit 1',
-          'echo "---BRANCH---"',
-          'git branch --show-current 2>/dev/null',
-          'echo "---HEAD---"',
-          'git rev-parse --short HEAD 2>/dev/null',
-          'echo "---STATUS---"',
-          'git status --porcelain 2>/dev/null | head -20',
-        ].join('\n'),
-      );
-      const sections: Record<string, string[]> = {};
-      let currentSection: string | null = null;
-      for (const line of statusResult.stdout.split('\n')) {
-        const trimmed = line.trim();
-        if (trimmed === '---BRANCH---') {
-          currentSection = 'branch';
-          sections[currentSection] = [];
-          continue;
-        }
-        if (trimmed === '---HEAD---') {
-          currentSection = 'head';
-          sections[currentSection] = [];
-          continue;
-        }
-        if (trimmed === '---STATUS---') {
-          currentSection = 'status';
-          sections[currentSection] = [];
-          continue;
-        }
-        if (currentSection) {
-          sections[currentSection].push(line);
-        }
-      }
-      const statusLines = (sections.status || []).map((line) => line.trimEnd()).filter(Boolean);
+      const backend = createSandboxGitBackend(sandboxIdRef.current);
+      const [branch, head, info] = await Promise.all([
+        backend.currentBranch(),
+        backend.headSha({ short: true }),
+        backend.status(),
+      ]);
+      // Preserve the prior `git status --porcelain | head -20` cap; entries
+      // already exclude the `-b` header line.
+      const statusLines = (info?.entries ?? []).slice(0, 20).map((entry) => entry.raw);
       cachedStatus = {
         dirty: statusLines.length > 0,
         files: statusLines.length,
-        branch: sections.branch?.map((line) => line.trim()).find(Boolean),
-        head: sections.head?.map((line) => line.trim()).find(Boolean),
+        branch: branch ?? undefined,
+        head: head ?? undefined,
         changedFiles: statusLines
           .map(extractChangedPathFromStatusLine)
           .filter((value): value is string => Boolean(value))

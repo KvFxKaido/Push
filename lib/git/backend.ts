@@ -51,7 +51,11 @@ export interface GitBackend {
  * machine-readable forms (`rev-parse`, `--porcelain`) over human output.
  */
 export class SandboxPlumbingBackend implements GitBackend {
-  constructor(private readonly exec: GitExec) {}
+  private readonly exec: GitExec;
+
+  constructor(exec: GitExec) {
+    this.exec = exec;
+  }
 
   async currentBranch(): Promise<string | null> {
     const res = await this.exec(['rev-parse', '--abbrev-ref', 'HEAD']);
