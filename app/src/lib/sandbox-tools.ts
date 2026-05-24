@@ -66,6 +66,7 @@ import {
 import { GIT_REF_VALIDATION_DETAIL, isInvalidGitRef } from './git-ref-validation';
 import { sanitizeUntrustedSource } from '@push/lib/untrusted-content';
 import { createGitGuardPreHook } from '@push/lib/default-pre-hooks';
+import { reduceToolOutput } from '@push/lib/tool-output-reducers';
 import { getApprovalMode } from './approval-mode';
 
 import type { SandboxToolCall, SandboxExecutionOptions } from './sandbox-tool-detection';
@@ -551,6 +552,16 @@ export async function executeSandboxToolCall(
           };
         }
 
+        // Command-aware reduction of the MODEL-FACING text only. The raw
+        // stdout/stderr below (cardData) is left untouched so the UI stays
+        // lossless. Exit code is printed verbatim regardless of reduction.
+        const reduced = reduceToolOutput({
+          command: call.args.command,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.exitCode,
+        });
+
         const lines: string[] = [
           `[Tool Result — sandbox_exec]`,
           `Command: ${call.args.command}`,
@@ -560,8 +571,8 @@ export async function executeSandboxToolCall(
         // contents via `cat`, etc.). Sanitize: escape envelope markers, spoof
         // infrastructure tags, AND defang embedded JSON tool-call shapes that
         // the model could echo back next turn.
-        if (result.stdout) lines.push(`\nStdout:\n${sanitizeUntrustedSource(result.stdout)}`);
-        if (result.stderr) lines.push(`\nStderr:\n${sanitizeUntrustedSource(result.stderr)}`);
+        if (reduced.stdout) lines.push(`\nStdout:\n${sanitizeUntrustedSource(reduced.stdout)}`);
+        if (reduced.stderr) lines.push(`\nStderr:\n${sanitizeUntrustedSource(reduced.stderr)}`);
         if (result.truncated) lines.push(`\n[Output truncated]`);
 
         // On non-zero exit, append a corrective hint if stderr matches a known pattern
