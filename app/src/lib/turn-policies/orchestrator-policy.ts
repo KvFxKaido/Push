@@ -86,6 +86,17 @@ export function responseClaimsCompletion(response: string): boolean {
  *     followed by an investigative/tool action verb.
  *   - Questions and offers ("should I read X?", "let me know if…") return
  *     false: the model is handing control back, not forgetting to act.
+ *   - Ambiguous verbs are constrained to their tool sense so conversational
+ *     sign-offs don't trip the guard: "check in/back", "look forward",
+ *     "run through", and "find out" are excluded, while "check the logs",
+ *     "look at X", "run the tests" still match.
+ *
+ * Note: the announced action is intentionally NOT required to be the last
+ * substantive content of the line. The real failure this guards against ends
+ * with a long trailing clause ("…to see if any design docs should be
+ * added/updated, or if there is a PUSH.md file"), so a "short suffix" rule
+ * would miss it. A compound plan with no emitted call ("I'll read X, then
+ * delegate to Coder") is itself a dead-end and is correctly nudged.
  */
 export function detectTrailingActionIntent(response: string): boolean {
   const trimmed = response.trim();
@@ -102,9 +113,12 @@ export function detectTrailingActionIntent(response: string): boolean {
   }
   if (!lastLine) return false;
 
-  // Strip leading markdown decoration (list markers, blockquote, heading,
-  // bold/italic) so the intent phrase can anchor at the start.
-  const cleaned = lastLine.replace(/^(?:[-*>#]+\s*|\d+[.)]\s*|\*\*|__|_|\*)+/, '').trim();
+  // Strip leading markdown decoration (list markers, task-list checkboxes,
+  // blockquote, heading, bold/italic) so the intent phrase can anchor at the
+  // start — models often plan steps as `- [ ] Let's read …`.
+  const cleaned = lastLine
+    .replace(/^(?:[-*>#]+\s*|\d+[.)]\s*|\[[ xX]?\]\s*|\*\*|__|_|\*)+/, '')
+    .trim();
 
   // A question or an offer hands control back to the user — not a dead-end.
   if (/\?\s*$/.test(cleaned)) return false;
@@ -116,8 +130,12 @@ export function detectTrailingActionIntent(response: string): boolean {
     return false;
   }
 
+  // Verbs are split into two groups. Unambiguous tool verbs match bare;
+  // ambiguous ones carry a negative lookahead so conversational idioms
+  // ("check in", "look forward", "run through", "find out") don't match while
+  // their tool sense ("check the logs", "look at X", "run the tests") does.
   const trailingIntent =
-    /^(?:so,?\s+|now,?\s+|next,?\s+|then,?\s+|first,?\s+|finally,?\s+|ok(?:ay)?,?\s+|alright,?\s+)?(?:let'?s|let\s+me|i'?ll|i\s+will|i\s+am\s+going\s+to|i'?m\s+going\s+to|i\s+need\s+to|i\s+should|i\s+want\s+to|we'?ll|we\s+will|we\s+should|we\s+need\s+to)\b(?:\s+(?:now|then|also|quickly|first|next|go\s+ahead\s+and))?\s+(?:read|re-?read|open|view|inspect|examine|check|verify|confirm|search|find|look|grep|scan|list|fetch|pull|retrieve|explore|investigate|trace|review|run|execute|diff|cat)\b/i;
+    /^(?:so,?\s+|now,?\s+|next,?\s+|then,?\s+|first,?\s+|finally,?\s+|ok(?:ay)?,?\s+|alright,?\s+)?(?:let'?s|let\s+me|i'?ll|i\s+will|i\s+am\s+going\s+to|i'?m\s+going\s+to|i\s+need\s+to|i\s+should|i\s+want\s+to|we'?ll|we\s+will|we\s+should|we\s+need\s+to)\b(?:\s+(?:now|then|also|quickly|first|next|go\s+ahead\s+and))?\s+(?:(?:re-?read|read|open|view|inspect|examine|verify|confirm|search|grep|scan|list|fetch|pull|retrieve|explore|investigate|trace|review|execute|diff|cat)\b|check(?!\s+(?:in|back|on)\b)\b|find(?!\s+out\b)\b|run(?!\s+through\b)\b|look\s+(?:at|for|into)\b)/i;
 
   return trailingIntent.test(cleaned);
 }

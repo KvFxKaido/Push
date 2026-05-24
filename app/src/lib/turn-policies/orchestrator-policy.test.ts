@@ -198,4 +198,48 @@ describe('detectTrailingActionIntent', () => {
   it('returns false for empty input', () => {
     expect(detectTrailingActionIntent('   ')).toBe(false);
   });
+
+  // Cross-reviewer consensus (PR #632): ambiguous verbs must not match
+  // conversational sign-offs. Each excluded idiom + its tool-sense counterpart.
+  it.each([
+    "I'll check in tomorrow to see how it went.",
+    "I'll check back later once CI is green.",
+    "I'll look forward to your feedback.",
+    "I'll run through an example to illustrate.",
+    "I'll find out and report next time.",
+  ])('does NOT fire on the conversational sign-off %j', (text) => {
+    expect(detectTrailingActionIntent(text)).toBe(false);
+  });
+
+  it.each([
+    "I'll check the CI logs for the failing job.",
+    "Let's look at the failing test in detail.",
+    "I'll run the test suite now.",
+    "Let's find the caller of validateActiveBranch.",
+  ])('still fires on the tool-sense phrasing %j', (text) => {
+    expect(detectTrailingActionIntent(text)).toBe(true);
+  });
+
+  it('fires on a markdown task-list checkbox plan step', () => {
+    expect(detectTrailingActionIntent("- [ ] Let's read docs/decisions/README.md")).toBe(true);
+  });
+
+  it('fires on a compound plan with no emitted call (still a dead-end)', () => {
+    // Kilo flagged this as a false positive, but a multi-step plan with no
+    // tool call is itself a stall — the orchestrator announced work and did
+    // none of it, so the nudge is correct.
+    expect(
+      detectTrailingActionIntent("I'll read the config first, then delegate to Coder to fix it."),
+    ).toBe(true);
+  });
+
+  it('fires even when the announced action has a long trailing clause', () => {
+    // Mirrors the actual reported bug: the dead-end ended with a long "to see
+    // if …" clause. A "short suffix" rule would have missed it.
+    expect(
+      detectTrailingActionIntent(
+        "Let's read the current contents of docs/decisions/README.md to see if there are design docs that should be added or updated, or if a PUSH.md file exists.",
+      ),
+    ).toBe(true);
+  });
 });
