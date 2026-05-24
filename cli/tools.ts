@@ -1072,6 +1072,7 @@ function formatExecOutput(stdout, stderr, exitCode, timedOut = false) {
 
 // Surfaces reducer telemetry in tool `meta` (freeform) only when a reduction
 // actually fired — keeps the common case clean.
+/** @param {import('../lib/tool-output-reducers.ts').ReducedOutput} reduced */
 function reductionMeta(reduced) {
   if (!reduced.reduced) return {};
   return {
@@ -1802,9 +1803,12 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           const { stdout, stderr } = isLocalSandbox
             ? await execFileAsync('docker', args!, execOpts)
             : await runCommandInResolvedShell(command, execOpts);
-          // Reduce the MODEL-FACING text only. exec is one-shot (no session
-          // store), so there is no raw-data consumer to protect here; the exit
-          // code is still printed verbatim by formatExecOutput.
+          // Reduce the MODEL-FACING tool-result text. This is also what gets
+          // persisted to the CLI transcript, so reduction is intentionally part
+          // of the recorded context (the omission marker tells the model to
+          // re-run for full detail); the streaming exec_start/exec_poll session
+          // buffers are a separate path and stay raw. Exit code is still printed
+          // verbatim by formatExecOutput.
           const reduced = reduceToolOutput({ command, stdout, stderr, exitCode: 0 });
           return {
             ok: true,

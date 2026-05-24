@@ -97,6 +97,14 @@ describe('reduceToolOutput — inventory', () => {
     expect(
       reduceToolOutput({ command: 'find . > out.txt', stdout: big, stderr: '', exitCode: 0 }),
     ).toMatchObject({ reduced: false, reason: 'unsafe-command' });
+    expect(
+      reduceToolOutput({
+        command: 'find . -type f & echo bg',
+        stdout: big,
+        stderr: '',
+        exitCode: 0,
+      }),
+    ).toMatchObject({ reduced: false, reason: 'unsafe-command' });
   });
 
   it('never touches raw file reads', () => {
@@ -131,7 +139,7 @@ describe('reduceToolOutput — check/test/typecheck/lint', () => {
 
   it('preserves errors + counter on failure and never looks successful', () => {
     const stdout = [
-      lines(50, (i) => `info: scanning module ${i}`),
+      lines(200, (i) => `info: scanning module ${i}`),
       "src/a.ts(1,1): error TS2322: Type 'string' is not assignable to type 'number'.",
       'src/b.ts(4,9): error TS2304: Cannot find name "foo".',
       'src/c.ts(8,2): error TS7006: Parameter implicitly has an "any" type.',
@@ -144,11 +152,38 @@ describe('reduceToolOutput — check/test/typecheck/lint', () => {
     expect(out.reduced).toBe(true);
     expect(out.reducerId).toBe('check/test-typecheck-lint');
     expect(out.stdout).toContain('[summary: 3 errors, 3 warnings]');
+    // diagnostics (clustered at the tail) survive intact.
     expect(out.stdout).toContain('error TS2322');
     expect(out.stdout).toContain('warning TS6133');
-    // failure signal preserved; passing-only chatter dropped.
     expect(out.stdout).toContain('error');
-    expect(out.stdout).not.toContain('info: scanning module 0');
+    // large noise body is trimmed (a mid-run line is gone).
+    expect(out.stdout).not.toContain('info: scanning module 100');
+  });
+
+  it('preserves diagnostics on failure even with no error/warn tokens', () => {
+    // A failing run whose output contains none of the trigger words must still
+    // reach the model — the failure path never gates on keywords.
+    const stdout = lines(300, (i) => `step ${i}: проверка модуля завершена`);
+    const out = reduceToolOutput({ command: 'npm run check', stdout, stderr: '', exitCode: 1 });
+
+    expect(out.reduced).toBe(true);
+    expect(out.reducerId).toBe('check/test-typecheck-lint');
+    expect(out.stdout.trim().length).toBeGreaterThan(0); // not emptied
+    expect(out.stdout).toContain('step 0:'); // head context kept
+    expect(out.stdout).toContain('step 299:'); // tail context kept
+    expect(out.stdout).not.toContain('[summary:'); // no false error/warn counter
+  });
+
+  it('keeps stderr diagnostics on failure under the stderr stream', () => {
+    const out = reduceToolOutput({
+      command: 'eslint .',
+      stdout: '',
+      stderr: lines(120, (i) => `src/file${i}.ts:${i}:1  error  Unexpected console statement`),
+      exitCode: 1,
+    });
+    expect(out.reduced).toBe(true);
+    expect(out.stderr).toContain('Unexpected console statement'); // stays on stderr, not folded into stdout
+    expect(out.stdout).toContain('[summary:'); // counter spans both streams
   });
 
   it('matches bare runners and npm/pnpm/npx wrappers', () => {

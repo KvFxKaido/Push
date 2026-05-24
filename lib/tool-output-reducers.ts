@@ -65,12 +65,16 @@ const MAX_KEPT_RATIO = 0.75; // keep raw unless we cut at least 25%
 const FILE_READ_ARGV0 = new Set(['cat', 'head', 'tail', 'less', 'more', 'bat', 'nl', 'xxd', 'od']);
 
 function isUnsafeToReduce(command: string): boolean {
-  // Chains / pipes / substitution / redirection: output may already be filtered
-  // or transformed downstream — reducing could corrupt meaning. Stay raw.
-  return /[|;><]|&&|\|\||\$\(|`/.test(command);
+  // Chains / pipes / backgrounding / substitution / redirection: output may
+  // already be filtered or transformed downstream — reducing could corrupt
+  // meaning. Stay raw. (`&` covers both `&&` and standalone backgrounding.)
+  return /[|&;><`]|\$\(/.test(command);
 }
 
 function parseCommand(command: string): ParsedCommand | null {
+  // Whitespace split: doesn't honor quoted args with spaces (e.g.
+  // `git -C "my dir" status`). That only ever misidentifies the subcommand,
+  // which fails closed to a safe passthrough — never to a wrong reduction.
   const tokens = command.trim().split(/\s+/);
   if (tokens.length === 0 || !tokens[0]) return null;
   const argv0 = tokens[0].split('/').pop() ?? tokens[0];
@@ -97,7 +101,7 @@ function headTail(lines: string[], head: number, tail: number, noun = 'lines'): 
   const omitted = lines.length - head - tail;
   return [
     ...lines.slice(0, head),
-    `… [${omitted} ${noun} omitted — full output in the run card; re-run the same command for detail]`,
+    `… [${omitted} ${noun} omitted from model context; re-run the same command for full detail]`,
     ...lines.slice(lines.length - tail),
   ];
 }
@@ -175,17 +179,23 @@ const checkRunner: Reducer = {
       )),
   reduce: (input, failed) => {
     if (failed) {
-      // On failure the signal lives in the errors — keep error/warn lines + a
-      // counter summary, drop passing-test chatter. Never silently eat the
-      // failure: error lines move into stdout and the caller still prints the
-      // non-zero exit code.
-      const merged = `${stripAnsi(input.stdout)}\n${stripAnsi(input.stderr)}`
+      // On failure the model needs the diagnostics intact, so DON'T gate on a
+      // keyword heuristic (that would drop stack traces, assertion bodies,
+      // file/line refs, and token-less or non-English messages, and could empty
+      // the output entirely). Preserve BOTH streams via head/tail — the keyword
+      // counter is an additive summary, never a filter. Small failures fall
+      // below the threshold and pass through raw.
+      const so = stripAnsi(input.stdout)
         .split('\n')
         .filter((l) => l.trim());
-      const errs = merged.filter((l) => /(error|warn|fail|✕|✗|✖)/i.test(l));
-      const counters = countFacts(merged, { errors: /error/i, warnings: /warn/i });
-      const kept = headTail(errs, 25, 10, 'diagnostic lines');
-      return { stdout: [factLine(counters), ...kept].filter(Boolean).join('\n'), stderr: '' };
+      const se = stripAnsi(input.stderr)
+        .split('\n')
+        .filter((l) => l.trim());
+      const summary = factLine(countFacts([...so, ...se], { errors: /error/i, warnings: /warn/i }));
+      return {
+        stdout: [summary, ...headTail(so, 20, 30, 'lines')].filter(Boolean).join('\n'),
+        stderr: headTail(se, 20, 30, 'lines').join('\n'),
+      };
     }
     // Success: the model rarely needs the per-test log — keep head + tail summary.
     const lines = stripAnsi(input.stdout)
