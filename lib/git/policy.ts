@@ -278,8 +278,15 @@ const READ_FAMILIES = new Map<string, GitReadFamily>([
   ['show', 'show'],
 ]);
 
-/** First positional (non-flag) token — the branch name for create forms. */
+/**
+ * The branch name for a create form (`-b`/`-c`/`--create <name>`). Tokens
+ * after a `--` separator are positional regardless of a leading `-`, so an
+ * explicitly-separated name (`-b -- <name>`) is extracted even when it
+ * starts with a hyphen; otherwise the first non-flag token wins.
+ */
 function firstPositional(rest: string[]): string {
+  const sepIdx = rest.indexOf('--');
+  if (sepIdx !== -1 && sepIdx + 1 < rest.length) return rest[sepIdx + 1];
   return rest.find((t) => !t.startsWith('-')) ?? '';
 }
 

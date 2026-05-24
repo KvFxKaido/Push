@@ -96,6 +96,17 @@ const CORPUS: Case[] = [
       label: 'git checkout -b',
     },
   },
+  // name after an explicit `--` separator is extracted even with a leading
+  // hyphen (args enrichment only — the route/label decision is unchanged).
+  {
+    command: 'git checkout -b -- -my-branch',
+    expected: {
+      kind: 'route',
+      to: 'create_branch',
+      args: { name: '-my-branch' },
+      label: 'git checkout -b',
+    },
+  },
 
   // --- route: branch switch -----------------------------------------------
   {
