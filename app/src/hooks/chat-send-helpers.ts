@@ -350,6 +350,10 @@ export function createTurnRunContext(
       return null;
     }
     try {
+      // Three typed reads in place of the prior single section-marked exec.
+      // Run in parallel so the round-status fetch stays one round-trip of
+      // wall-clock latency (it's cached per round and only invalidated when a
+      // tool mutates the workspace, so the extra requests are infrequent).
       const backend = createSandboxGitBackend(sandboxIdRef.current);
       const [branch, head, info] = await Promise.all([
         backend.currentBranch(),

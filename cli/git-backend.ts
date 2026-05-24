@@ -14,10 +14,13 @@ import { SandboxPlumbingBackend, type GitBackend, type GitExec } from '../lib/gi
 
 const execFileAsync = promisify(execFile);
 
-export function createLocalGitBackend(cwd: string): GitBackend {
+const DEFAULT_TIMEOUT_MS = 5000;
+
+export function createLocalGitBackend(cwd: string, opts?: { timeoutMs?: number }): GitBackend {
+  const timeout = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const exec: GitExec = async (args) => {
     try {
-      const { stdout, stderr } = await execFileAsync('git', args, { cwd, timeout: 5000 });
+      const { stdout, stderr } = await execFileAsync('git', args, { cwd, timeout });
       return { stdout, stderr, exitCode: 0 };
     } catch (err) {
       const e = err as { stdout?: string; stderr?: string; code?: number };

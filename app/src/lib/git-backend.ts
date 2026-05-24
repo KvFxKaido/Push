@@ -3,12 +3,17 @@
  *
  * Wires the argv-based `GitExec` port to the sandbox executor so web
  * call-sites read git through the typed backend instead of bespoke
- * command-string + parse logic. The PR 2 reads pass only fixed flags, so
- * joining argv into `git <args>` needs no shell escaping.
+ * command-string + parse logic. Each argv token is shell-escaped before
+ * being joined into `git <args>`, so the adapter stays injection-safe even
+ * if a future read forwards caller-supplied data (today's reads pass only
+ * fixed flags). Transport/exec errors are converted to a non-zero result
+ * rather than propagated, honoring the `GitExec` contract so backend reads
+ * resolve to null instead of throwing.
  */
 
 import { SandboxPlumbingBackend, type GitBackend, type GitExec } from '@push/lib/git/backend';
 import { execInSandbox, type ExecResult } from './sandbox-client';
+import { shellEscape } from './sandbox-tool-utils';
 
 type SandboxExecFn = (sandboxId: string, command: string) => Promise<ExecResult>;
 
@@ -23,8 +28,16 @@ export function createSandboxGitBackend(
   execFn: SandboxExecFn = execInSandbox,
 ): GitBackend {
   const exec: GitExec = async (args) => {
-    const res = await execFn(sandboxId, `git ${args.join(' ')}`);
-    return { stdout: res.stdout, stderr: res.stderr, exitCode: res.exitCode };
+    const command = `git ${args.map(shellEscape).join(' ')}`;
+    try {
+      const res = await execFn(sandboxId, command);
+      return { stdout: res.stdout, stderr: res.stderr, exitCode: res.exitCode };
+    } catch (err) {
+      // `execInSandbox` throws on transport/timeout/non-2xx. The GitExec
+      // contract is resolve-don't-reject, so convert to a non-zero result;
+      // backend reads then return null rather than throwing at call-sites.
+      return { stdout: '', stderr: err instanceof Error ? err.message : String(err), exitCode: 1 };
+    }
   };
   return new SandboxPlumbingBackend(exec);
 }

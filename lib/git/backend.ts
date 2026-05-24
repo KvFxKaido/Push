@@ -30,9 +30,11 @@ export interface GitExecResult {
 }
 
 /**
- * Runs `git <args>` and resolves with its result. Command *failures*
- * (non-zero exit) must resolve with that exit code, not reject — adapters
- * over throwing executors (e.g. `execFile`) catch and convert.
+ * Runs `git <args>` and resolves with its result. Adapters must resolve,
+ * not reject — both command *failures* (non-zero exit) and transport/exec
+ * errors are converted to a `GitExecResult` (the latter with a non-zero
+ * exit). This lets the backend's typed reads return null on any failure
+ * instead of throwing at call-sites.
  */
 export type GitExec = (args: string[]) => Promise<GitExecResult>;
 
