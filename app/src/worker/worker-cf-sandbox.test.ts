@@ -1124,6 +1124,30 @@ describe('handleCloudflareSandbox routeDownload', () => {
     expect(sandbox.exec.mock.calls.at(-1)?.[0]).toBe(`rm -f '${tmp}'`);
   });
 
+  it('falls back to a non-empty error when the size stat fails with whitespace-only stderr', async () => {
+    const sandbox = mockSandbox();
+    const uuid = mockUuid();
+    const tmp = `/tmp/push-download-${uuid}.tar.gz`;
+    queueExecResults(sandbox, [
+      { stdout: '/workspace', stderr: '', exitCode: 0 }, // realpath
+      { stdout: 'directory|4096', stderr: '', exitCode: 0 }, // stat
+      { stdout: '', stderr: '', exitCode: 0 }, // tar
+      { stdout: '', stderr: '   \n', exitCode: 1 }, // stat archive size FAILS with whitespace-only stderr
+      { stdout: '', stderr: '', exitCode: 0 }, // rm (finally)
+    ]);
+
+    const response = await callRoute('download', { sandbox_id: 'sb-1', path: '/workspace' });
+
+    expect(response.status).toBe(200);
+    // Whitespace-only stderr must not collapse to error:"" after trim.
+    await expect(response.json()).resolves.toEqual({
+      ok: false,
+      error: 'Failed to measure archive size',
+    });
+    expect(sandbox.exec.mock.calls.some((c) => String(c[0]).startsWith('base64'))).toBe(false);
+    expect(sandbox.exec.mock.calls.at(-1)?.[0]).toBe(`rm -f '${tmp}'`);
+  });
+
   it('returns ok:false when the path does not exist', async () => {
     const sandbox = mockSandbox();
     queueExecResults(sandbox, [{ stdout: '', stderr: 'No such file or directory', exitCode: 1 }]);
