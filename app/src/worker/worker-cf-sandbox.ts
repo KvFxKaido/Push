@@ -1066,7 +1066,9 @@ async function routeDownload(env: Env, body: Json): Promise<Response> {
     if ((sizeResult.exitCode ?? 0) !== 0 || !Number.isFinite(archiveSize)) {
       return Response.json({
         ok: false,
-        error: (sizeResult.stderr || 'Failed to measure archive size').trim(),
+        error:
+          (sizeResult.stderr || 'Failed to measure archive size').trim() ||
+          'Failed to measure archive size',
       });
     }
     if (archiveSize > MAX_ARCHIVE_BYTES) {
