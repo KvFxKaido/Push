@@ -802,14 +802,14 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true });
     expect(sandbox.writeFile).toHaveBeenCalledWith(tmpB64, 'YXJjaGl2ZQ==');
-    expect(sandbox.exec).toHaveBeenNthCalledWith(2, 'mkdir -p "/workspace/project"');
-    expect(sandbox.exec).toHaveBeenNthCalledWith(3, `base64 -d ${tmpB64} > ${tmpTar}`);
-    expect(sandbox.exec).toHaveBeenNthCalledWith(4, `tar -tzf ${tmpTar}`);
+    expect(sandbox.exec).toHaveBeenNthCalledWith(2, "mkdir -p '/workspace/project'");
+    expect(sandbox.exec).toHaveBeenNthCalledWith(3, `base64 -d '${tmpB64}' > '${tmpTar}'`);
+    expect(sandbox.exec).toHaveBeenNthCalledWith(4, `tar -tzf '${tmpTar}'`);
     expect(sandbox.exec).toHaveBeenNthCalledWith(
       5,
-      `tar -xzf ${tmpTar} -C "/workspace/project" --no-same-owner`,
+      `tar -xzf '${tmpTar}' -C '/workspace/project' --no-same-owner`,
     );
-    expect(sandbox.exec).toHaveBeenNthCalledWith(6, `rm -f ${tmpB64} ${tmpTar}`);
+    expect(sandbox.exec).toHaveBeenNthCalledWith(6, `rm -f '${tmpB64}' '${tmpTar}'`);
   });
 
   it('returns 500 when creating the target directory fails', async () => {
@@ -845,7 +845,7 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
       error: 'Failed to decode archive: invalid input',
       code: 'CF_ERROR',
     });
-    expect(sandbox.exec).toHaveBeenNthCalledWith(4, `rm -f ${tmpB64} ${tmpTar}`);
+    expect(sandbox.exec).toHaveBeenNthCalledWith(4, `rm -f '${tmpB64}' '${tmpTar}'`);
   });
 
   it('returns 400 and cleans up when archive listing fails', async () => {
@@ -867,7 +867,7 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
       error: 'Invalid archive: not gzip',
       code: 'CF_ERROR',
     });
-    expect(sandbox.exec).toHaveBeenNthCalledWith(5, `rm -f ${tmpB64} ${tmpTar}`);
+    expect(sandbox.exec).toHaveBeenNthCalledWith(5, `rm -f '${tmpB64}' '${tmpTar}'`);
   });
 
   it.each(['/etc/passwd', 'safe/../evil.txt'])(
@@ -891,7 +891,7 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
         error: `Archive member rejected (path traversal): ${unsafeMember}`,
         code: 'CF_ERROR',
       });
-      expect(sandbox.exec).toHaveBeenNthCalledWith(5, `rm -f ${tmpB64} ${tmpTar}`);
+      expect(sandbox.exec).toHaveBeenNthCalledWith(5, `rm -f '${tmpB64}' '${tmpTar}'`);
     },
   );
 
@@ -915,7 +915,7 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
       error: 'Archive extraction failed: permission denied',
       code: 'CF_ERROR',
     });
-    expect(sandbox.exec).toHaveBeenNthCalledWith(6, `rm -f ${tmpB64} ${tmpTar}`);
+    expect(sandbox.exec).toHaveBeenNthCalledWith(6, `rm -f '${tmpB64}' '${tmpTar}'`);
   });
 });
 
@@ -1366,5 +1366,29 @@ describe('handleCloudflareSandbox snapshots (R2)', () => {
     expect(response.status).toBe(403);
     expect(r2.delete).not.toHaveBeenCalled();
     expect(r2.store.has('cf-snapshots/snap1')).toBe(true);
+  });
+
+  it('restore-snapshot rejects an over-long restore token before touching R2', async () => {
+    const r2 = makeR2({ 'cf-snapshots/snap1': { body: 'x', customMetadata: { rt: 'tok-abc' } } });
+    const response = await callRoute(
+      'restore-snapshot',
+      { snapshot_id: 'cf-snapshots/snap1', restore_token: 'a'.repeat(MAX_TOKEN_BYTES + 1) },
+      makeEnv({ SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'] }),
+    );
+    expect(response.status).toBe(403);
+    // Guard short-circuits before any R2 read or constant-time compare.
+    expect(r2.get).not.toHaveBeenCalled();
+    expect(getSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it('delete-snapshot rejects an over-long restore token before touching R2', async () => {
+    const r2 = makeR2({ 'cf-snapshots/snap1': { body: 'x', customMetadata: { rt: 'tok-abc' } } });
+    const response = await callRoute(
+      'delete-snapshot',
+      { snapshot_id: 'cf-snapshots/snap1', restore_token: 'a'.repeat(MAX_TOKEN_BYTES + 1) },
+      makeEnv({ SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'] }),
+    );
+    expect(response.status).toBe(403);
+    expect(r2.head).not.toHaveBeenCalled();
   });
 });

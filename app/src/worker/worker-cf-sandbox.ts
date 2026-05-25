@@ -1118,9 +1118,12 @@ async function hydrateBase64IntoSandbox(
   const tmpTar = `${tmpB64}.tar.gz`;
   await sandbox.writeFile(tmpB64, archive);
 
-  const cleanup = () => withExecDeadline(sandbox.exec(`rm -f ${tmpB64} ${tmpTar}`)).catch(() => {});
+  const cleanup = () =>
+    withExecDeadline(
+      sandbox.exec(`rm -f ${shellSingleQuote(tmpB64)} ${shellSingleQuote(tmpTar)}`),
+    ).catch(() => {});
 
-  const mkdir = (await withExecDeadline(sandbox.exec(`mkdir -p ${JSON.stringify(path)}`))) as {
+  const mkdir = (await withExecDeadline(sandbox.exec(`mkdir -p ${shellSingleQuote(path)}`))) as {
     exitCode?: number;
     stderr?: string;
   };
@@ -1135,7 +1138,9 @@ async function hydrateBase64IntoSandbox(
     };
   }
 
-  const decode = (await withExecDeadline(sandbox.exec(`base64 -d ${tmpB64} > ${tmpTar}`))) as {
+  const decode = (await withExecDeadline(
+    sandbox.exec(`base64 -d ${shellSingleQuote(tmpB64)} > ${shellSingleQuote(tmpTar)}`),
+  )) as {
     exitCode?: number;
     stderr?: string;
   };
@@ -1152,7 +1157,7 @@ async function hydrateBase64IntoSandbox(
   // refuse if any entry is absolute or contains "..". Even with internal
   // traffic we trust, this keeps a bad producer from escaping the target
   // directory during hydrate.
-  const list = (await withExecDeadline(sandbox.exec(`tar -tzf ${tmpTar}`))) as {
+  const list = (await withExecDeadline(sandbox.exec(`tar -tzf ${shellSingleQuote(tmpTar)}`))) as {
     stdout?: string;
     exitCode?: number;
     stderr?: string;
@@ -1169,7 +1174,9 @@ async function hydrateBase64IntoSandbox(
   }
 
   const extract = (await withExecDeadline(
-    sandbox.exec(`tar -xzf ${tmpTar} -C ${JSON.stringify(path)} --no-same-owner`),
+    sandbox.exec(
+      `tar -xzf ${shellSingleQuote(tmpTar)} -C ${shellSingleQuote(path)} --no-same-owner`,
+    ),
   )) as { exitCode?: number; stderr?: string };
   await cleanup();
 
@@ -1212,6 +1219,14 @@ async function routeHydrate(env: Env, body: Json): Promise<Response> {
 // restore), and would bloat the R2 object + base64 transfer.
 const SNAPSHOT_DIR_EXCLUDES = ['node_modules', '__pycache__', '.venv', 'dist', 'build'] as const;
 const SNAPSHOT_KEY_PREFIX = 'cf-snapshots/';
+// Cap on the *compressed* snapshot tar.gz. Much lower than MAX_ARCHIVE_BYTES
+// (used for one-shot downloads) because a snapshot is base64-encoded (~+33%)
+// and that string is held in Worker memory both on hibernate (from exec
+// stdout) and on restore (object.text() + the writeFile arg). With a ~128 MB
+// Worker memory ceiling, 32 MB compressed → ~43 MB base64 → ~2× copies on
+// restore stays comfortably under budget. node_modules is excluded and the
+// repo is shallow-cloned, so real source + .git is far below this.
+const MAX_SNAPSHOT_BYTES = 32 * 1024 * 1024;
 
 async function archiveWorkspaceToBase64(
   sandbox: SandboxStub,
@@ -1238,8 +1253,8 @@ async function archiveWorkspaceToBase64(
     if ((sizeRes.exitCode ?? 0) !== 0 || !Number.isFinite(size)) {
       return { ok: false, error: 'Failed to measure snapshot archive size' };
     }
-    if (size > MAX_ARCHIVE_BYTES) {
-      return { ok: false, error: `Snapshot exceeds max size of ${MAX_ARCHIVE_BYTES} bytes` };
+    if (size > MAX_SNAPSHOT_BYTES) {
+      return { ok: false, error: `Snapshot exceeds max size of ${MAX_SNAPSHOT_BYTES} bytes` };
     }
     const b64 = (await withExecDeadline(sandbox.exec(`base64 -w0 -- ${quotedTmp}`))) as {
       stdout?: string;
@@ -1323,6 +1338,16 @@ async function routeRestoreSnapshot(env: Env, body: Json): Promise<Response> {
   const repoFullName = str(body.repo_full_name);
   const branch = str(body.branch);
 
+  // Bound the token before any R2 work or constant-time compare. This route is
+  // owner-token-gate-exempt, so an unbounded restore_token would otherwise let
+  // a caller force arbitrarily large UTF-8 encoding + comparison work.
+  if (restoreToken.length > MAX_TOKEN_BYTES) {
+    return Response.json(
+      { ok: false, error: 'Invalid restore token', code: 'AUTH_FAILURE' },
+      { status: 403 },
+    );
+  }
+
   const object = await env.SNAPSHOTS.get(snapshotId);
   if (!object) {
     return Response.json(
@@ -1402,6 +1427,15 @@ async function routeDeleteSnapshot(env: Env, body: Json): Promise<Response> {
   }
   const snapshotId = requireStr(body, 'snapshot_id');
   const restoreToken = requireStr(body, 'restore_token');
+
+  // Same DoS guard as restore-snapshot: this route is owner-token-gate-exempt,
+  // so bound the token before the metadata lookup + constant-time compare.
+  if (restoreToken.length > MAX_TOKEN_BYTES) {
+    return Response.json(
+      { ok: false, error: 'Invalid restore token', code: 'AUTH_FAILURE' },
+      { status: 403 },
+    );
+  }
 
   // head() fetches metadata without downloading the archive body.
   const head = await env.SNAPSHOTS.head(snapshotId);
