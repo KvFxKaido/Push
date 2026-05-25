@@ -40,13 +40,13 @@ const SETTINGS_TAB_META: Record<SettingsTabKey, { title: string; description: st
   },
 };
 
-// `bg-push-surface-active` stays a raw hex: Tailwind theme tokens (push-*)
-// are utilities, not values, so they can't be referenced inside an arbitrary
-// CSS property like `[background-color:...]`. The token equivalent would be
-// bg-push-surface-active, but the native <select> needs the bracketed property
-// to override the UA background. The <option> children use the token.
+// The native <select> needs an explicit background-color to override the UA
+// widget background and to win over the bg-push-grad-input gradient. We set it
+// via an arbitrary property with theme() so it references the token (no raw
+// hex, keeps the ratchet happy) while preserving the exact cascade behavior of
+// the original bracketed declaration. The <option> children use the utility.
 const SETTINGS_SELECT_CLASS =
-  'rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50 [color-scheme:dark] bg-push-surface-active [&>option]:bg-push-surface-active [&>option]:text-push-fg';
+  'rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50 [color-scheme:dark] [background-color:theme(colors.push-surface-active)] [&>option]:bg-push-surface-active [&>option]:text-push-fg';
 
 // ── Prop groups ──────────────────────────────────────────────────────
 
