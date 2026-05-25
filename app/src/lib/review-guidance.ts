@@ -13,7 +13,11 @@ export interface ResolveReviewGuidanceArgs {
   repoFullName?: string | null;
   /** Branch to read REVIEW.md from when falling back to GitHub. Use the base branch. */
   ref?: string | null;
-  /** Sandbox to read the working-copy REVIEW.md from, when one is ready. */
+  /**
+   * Sandbox to read the working-copy REVIEW.md from. Pass only when the review
+   * targets the working tree; omit for GitHub-sourced reviews so guidance comes
+   * from the base branch (`ref`) and a PR can't override its own review rules.
+   */
   sandboxId?: string | null;
 }
 
