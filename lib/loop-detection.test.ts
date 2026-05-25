@@ -38,6 +38,17 @@ describe('tokenize', () => {
     const huge = Array.from({ length: 5000 }, (_, i) => `tok${i}`).join(' ');
     expect(tokenize(huge, 100).size).toBe(100);
   });
+
+  it('keeps non-ASCII (CJK/Cyrillic) tokens instead of dropping them', () => {
+    // Regression: an ASCII-only split produced EMPTY sets for non-English text,
+    // which jaccard then scored as identical (1.0) — a phantom near-duplicate.
+    const a = tokenize('你好 世界 这是 测试');
+    const b = tokenize('你好 地球 那是 实验');
+    expect(a.size).toBeGreaterThan(0);
+    expect(b.size).toBeGreaterThan(0);
+    expect(jaccard(a, b)).toBeLessThan(1);
+    expect(tokenize('переменная значение')).toContain('переменная');
+  });
 });
 
 describe('jaccard', () => {
@@ -264,6 +275,11 @@ describe('writeTargetOf', () => {
     expect(writeTargetOf({ pattern: 'foo' })).toBeNull();
     expect(writeTargetOf(undefined)).toBeNull();
     expect(writeTargetOf({ path: 'a.ts' })).toBeNull();
+  });
+
+  it('rejects empty or whitespace-only paths', () => {
+    expect(writeTargetOf({ path: '', content: 'x' })).toBeNull();
+    expect(writeTargetOf({ path: '   ', content: 'x' })).toBeNull();
   });
 });
 

@@ -1729,6 +1729,13 @@ async function runAssistantLoopImpl(
     // the near-duplicate ladder is computed for every write/edit but stays
     // dark (logged-only) unless PUSH_LOOP_DETECTION=1 — graded enforcement
     // (warn/block/compact) is a separate wiring step.
+    //
+    // Intentional asymmetry: only the *decision* (evaluateLoopState) is
+    // unified. The exact-match *signal* is still collected surface-specifically
+    // — batch-level here (`JSON.stringify(toolCalls)`), per-call on web via
+    // `MutationFailureTracker.isRepeatedCall`. The drift test pins the abort
+    // threshold, not the keying; converging the keying is a deliberate
+    // follow-up, not an oversight (see the decision doc).
     const callKey: string = JSON.stringify(toolCalls);
     const exactRepeatCount: number = (repeatedCalls.get(callKey) || 0) + 1;
     repeatedCalls.set(callKey, exactRepeatCount);

@@ -765,8 +765,10 @@ export function checkLoopBreaker(
   }
 
   // Near-duplicate similarity over file mutations — dark unless
-  // PUSH_LOOP_DETECTION=1. Recorded for every write/edit so the per-path
-  // window stays warm; only the exact-match breakers drive `action` today.
+  // PUSH_LOOP_DETECTION=1. Covers the content-string write shapes `writeTargetOf`
+  // recognizes (`sandbox_write_file`, `sandbox_edit_range`); structured edits
+  // (`sandbox_edit_file` hashline ops, `sandbox_apply_patchset`) don't feed the
+  // window yet. Only the exact-match breakers drive `action` today.
   let worstSimilarity: { value: number; streak: number } | undefined;
   for (const call of [
     ...detected.fileMutations,

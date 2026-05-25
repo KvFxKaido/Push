@@ -46,6 +46,12 @@ export interface LoopMetricsRunRecord {
 
 export async function appendLoopMetricsRecord(record: LoopMetricsRunRecord): Promise<void> {
   const dir = getLoopMetricsDir();
-  await fs.mkdir(dir, { recursive: true });
-  await fs.appendFile(getLoopMetricsFile(), `${JSON.stringify(record)}\n`, 'utf8');
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  const file = getLoopMetricsFile();
+  await fs.appendFile(file, `${JSON.stringify(record)}\n`, { encoding: 'utf8', mode: 0o600 });
+  // `appendFile`'s `mode` only applies when it creates the file, so chmod
+  // best-effort to keep telemetry non-world-readable even if the file predates
+  // this (or a permissive umask widened it) — matching the 0600 convention the
+  // config writer uses for `~/.push`.
+  await fs.chmod(file, 0o600).catch(() => {});
 }

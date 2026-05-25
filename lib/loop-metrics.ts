@@ -16,9 +16,15 @@
  * Shared in `lib/` because both the web round loop (`checkLoopBreaker`) and
  * the CLI engine compute the same verdict via the same oracle — the metric
  * belongs next to the policy, not mirrored per surface. Mirrors the in-memory
- * idiom of `cli/edit-metrics.ts` / `cli/context-metrics.ts`: per-scope
- * counters (scope = CLI `sessionId` / web `chatId`) with an aggregate view
- * when scope is omitted, so concurrent `pushd` sessions don't cross-talk.
+ * idiom of `cli/edit-metrics.ts` / `cli/context-metrics.ts`: per-scope counters
+ * with an aggregate view when scope is omitted, so concurrent runs don't
+ * cross-talk.
+ *
+ * Scope is a caller-chosen key, NOT necessarily a session id: the web keys on
+ * `chatId`, but the CLI mints a unique per-invocation key (`loop:<runId>`)
+ * because delegation sub-runs share `sessionId`/`runId` — keying on those would
+ * let a sub-run reset or mis-attribute the parent run's metrics. Pick a key
+ * that isolates the unit you want one record per.
  */
 
 import type { LoopLevel } from './loop-detection.js';
@@ -26,12 +32,21 @@ import type { LoopLevel } from './loop-detection.js';
 /** Cap on retained recent samples per scope — bounded so a long run can't grow unbounded. */
 export const MAX_RECENT_LOOP_VERDICTS = 50;
 
-const GLOBAL_SCOPE = '__global__';
+// Reserved bucket for scope-less (`undefined`) records. Distinct enough that it
+// won't collide with real scopes (CLI `loop:<runId>` keys, web `chatId`s).
+const GLOBAL_SCOPE = '__loop_metrics_aggregate__';
 
 export interface LoopVerdictSample {
   surface: 'web' | 'cli';
   level: LoopLevel;
   action: LoopLevel;
+  /**
+   * Whether the near-duplicate ladder was ENFORCED for this verdict (i.e.
+   * `PUSH_LOOP_DETECTION=1`) — mirrors `LoopVerdict.enforced`. NOT "the action
+   * fired": an exact-match abort has `action: 'abort'` with `enforced: false`,
+   * since exact-match is always enforced regardless of the similarity flag. Use
+   * `action !== 'none'` to ask whether anything fired.
+   */
   enforced: boolean;
   reasons: readonly string[];
   similarity?: number;

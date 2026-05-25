@@ -57,9 +57,15 @@ export const MAX_TOKENS_PER_WRITE = 4000;
 export function tokenize(content: string, maxTokens: number = MAX_TOKENS_PER_WRITE): Set<string> {
   const set = new Set<string>();
   if (!content) return set;
-  for (const part of content.toLowerCase().split(/[^a-z0-9_]+/)) {
-    if (!part) continue;
-    set.add(part);
+  // Unicode-aware: `\p{L}\p{N}` keeps non-ASCII scripts (CJK, Cyrillic, …) as
+  // tokens. An ASCII-only `[^a-z0-9_]` split would drop every non-ASCII letter,
+  // leaving two *different* non-English files with EMPTY token sets that
+  // `jaccard` then scores as identical (1.0) — a phantom near-duplicate that
+  // corrupts the dark telemetry and could falsely escalate under enforcement.
+  // `matchAll` also avoids a full lowercase copy + intermediate split array and
+  // lets us stop early at `maxTokens`.
+  for (const match of content.matchAll(/[\p{L}\p{N}_]+/gu)) {
+    set.add(match[0].toLowerCase());
     if (set.size >= maxTokens) break;
   }
   return set;
@@ -272,7 +278,9 @@ export function writeTargetOf(
   if (!args) return null;
   const path =
     typeof args.path === 'string' ? args.path : typeof args.file === 'string' ? args.file : null;
-  if (!path) return null;
+  // Reject empty/whitespace-only paths: they'd normalize to the `""` window key
+  // in the detector, lumping every malformed write into one shared bucket.
+  if (!path || !path.trim()) return null;
   if (typeof args.content === 'string') return { path, content: args.content };
   if (typeof args.new_string === 'string') return { path, content: args.new_string };
   if (typeof args.newString === 'string') return { path, content: args.newString };
