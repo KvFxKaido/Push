@@ -685,6 +685,7 @@ export function HubReviewTab({
     try {
       let diff = '';
       let nextContext: ReviewContext | null = null;
+      let ensuredSandboxId: string | null = sandboxId;
 
       if (reviewSource === 'github') {
         if (!repoFullName || !activeBranch || !defaultBranch) {
@@ -727,6 +728,11 @@ export function HubReviewTab({
         const diffResult = await getSandboxDiff(id);
         diff = diffResult.diff;
         nextContext = { kind: 'sandbox', label: 'Working tree' };
+        // `id` may have just been ensured this run, while the `sandboxId` prop
+        // is still null until state propagates. Track the resolved id so the
+        // working-tree review reads REVIEW.md (and symbols) from the live
+        // sandbox instead of falling back to GitHub on first run.
+        ensuredSandboxId = id;
       }
 
       if (!diff?.trim()) {
@@ -748,14 +754,15 @@ export function HubReviewTab({
               : 'working-tree';
       const reviewerSandboxId =
         nextContext.kind === 'sandbox'
-          ? sandboxId || undefined
+          ? ensuredSandboxId || undefined
           : sandboxStatus === 'ready'
             ? sandboxId || undefined
             : undefined;
 
       // Repo-specific review guidance from REVIEW.md, when present. Null leaves
-      // the reviewer on its built-in guidance.
-      setStatus('Loading REVIEW.md…');
+      // the reviewer on its built-in guidance. Skip the status flash when there
+      // is nothing to look up (scratch mode, no repo + no sandbox).
+      if (repoFullName || reviewerSandboxId) setStatus('Loading REVIEW.md…');
       const reviewGuidance = await resolveReviewGuidance({
         repoFullName,
         ref: defaultBranch || activeBranch,

@@ -34,7 +34,7 @@ describe('resolveReviewGuidance', () => {
     });
 
     expect(result).toBe('# REVIEW.md\nsandbox copy');
-    expect(mockReadFromSandbox).toHaveBeenCalledWith('sb-1', '/workspace/REVIEW.md');
+    expect(mockReadFromSandbox).toHaveBeenCalledWith('sb-1', '/workspace/REVIEW.md', 1, 600);
     expect(mockFetchReviewGuidance).not.toHaveBeenCalled();
   });
 

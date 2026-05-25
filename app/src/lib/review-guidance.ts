@@ -3,6 +3,11 @@ import { fetchReviewGuidance as fetchReviewGuidanceFromGitHub } from '@/lib/gith
 
 export const REVIEW_GUIDANCE_SANDBOX_PATH = '/workspace/REVIEW.md';
 
+// Defense-in-depth: bound the working-copy read so a pathological REVIEW.md
+// can't be pulled whole into memory before the char cap in formatReviewGuidance
+// applies. Comfortably covers a real guidance file.
+const REVIEW_GUIDANCE_MAX_LINES = 600;
+
 export interface ResolveReviewGuidanceArgs {
   /** owner/name — omitted in Sandbox/Scratch mode. */
   repoFullName?: string | null;
@@ -29,7 +34,12 @@ export async function resolveReviewGuidance({
 }: ResolveReviewGuidanceArgs): Promise<string | null> {
   if (sandboxId) {
     try {
-      const result = await readFromSandbox(sandboxId, REVIEW_GUIDANCE_SANDBOX_PATH);
+      const result = await readFromSandbox(
+        sandboxId,
+        REVIEW_GUIDANCE_SANDBOX_PATH,
+        1,
+        REVIEW_GUIDANCE_MAX_LINES,
+      );
       const content = result.error ? '' : result.content.trim();
       if (content) return content;
     } catch {

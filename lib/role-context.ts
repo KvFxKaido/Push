@@ -6,8 +6,9 @@ import { sanitizeProjectInstructions } from './project-instructions.js';
 const MAX_ROLE_PROJECT_HINTS_CHARS = 2500;
 
 // REVIEW.md is the Reviewer's primary repo-specific guidance (not a side hint
-// like project instructions), so it gets a larger budget before truncation.
-const MAX_REVIEW_GUIDANCE_CHARS = 6000;
+// like project instructions), so it gets the full sanitizer budget before
+// truncation rather than the compact policy-hints budget.
+const MAX_REVIEW_GUIDANCE_CHARS = 8000;
 
 export type ReviewerPromptSource = 'branch-diff' | 'pr-diff' | 'last-commit' | 'working-tree';
 export type AuditorPromptSource = 'working-tree-commit' | 'pr-merge' | 'sandbox-prepare-commit';
