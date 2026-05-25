@@ -71,6 +71,13 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Design tokens
+        # Blocking ratchet: fails if hardcoded colors exceed the committed
+        # baseline (0). New raw hex must use a DESIGN.md token; if a raw color
+        # is genuinely unavoidable, justify it and run
+        # `npm run check:design-tokens -- --update`.
+        run: npm run check:design-tokens
+
       - name: Typecheck
         run: npm run typecheck
 
