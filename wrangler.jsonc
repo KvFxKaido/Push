@@ -161,6 +161,10 @@
   // base64 tar.gz of /workspace (source + .git, minus node_modules/build
   // caches) keyed by an opaque snapshot id. Provision before deploy:
   //   npx wrangler r2 bucket create push-cf-snapshots
+  // Retention: superseded objects are deleted inline on the next hibernate, and
+  // the daily cron (triggers.crons) reaps any object no longer referenced by a
+  // live snapshot-index entry. An R2 lifecycle/expiry rule (set out-of-band via
+  // the dashboard or `wrangler r2 bucket lifecycle`) is an optional backstop.
   "r2_buckets": [
     {
       "binding": "SNAPSHOTS",

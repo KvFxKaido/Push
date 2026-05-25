@@ -1191,6 +1191,17 @@ function makeR2(seed: Record<string, R2Entry> = {}) {
   };
 }
 
+// Minimal SNAPSHOT_INDEX KV stub. getSnapshot reads getWithMetadata; a valid
+// entry (schema v1) lets routeHibernate discover the prior snapshot's R2 key.
+function makeSnapshotIndexKV(priorEntry?: Record<string, unknown>) {
+  return {
+    getWithMetadata: vi.fn(async () => ({ value: null, metadata: priorEntry ?? null })),
+    put: vi.fn(async () => {}),
+    delete: vi.fn(async () => {}),
+    list: vi.fn(async () => ({ keys: [], list_complete: true, cursor: '' })),
+  };
+}
+
 describe('handleCloudflareSandbox snapshots (R2)', () => {
   it('hibernate archives /workspace to R2 (keeping .git) and frees the container', async () => {
     const sandbox = mockSandbox();
@@ -1233,6 +1244,43 @@ describe('handleCloudflareSandbox snapshots (R2)', () => {
     const tarCall = sandbox.exec.mock.calls[1]?.[0] as string;
     expect(tarCall).toContain("--exclude='node_modules'");
     expect(tarCall).not.toContain("--exclude='.git'");
+  });
+
+  it('hibernate reclaims the previous snapshot object for the same repo/branch', async () => {
+    const sandbox = mockSandbox();
+    const uuid = mockUuid();
+    const r2 = makeR2({ 'cf-snapshots/old': { body: 'old', customMetadata: { rt: 'x' } } });
+    const indexKV = makeSnapshotIndexKV({
+      v: 1,
+      imageId: 'cf-snapshots/old',
+      restoreToken: 'x',
+      repoFullName: 'o/r',
+      branch: 'main',
+      createdAt: 1,
+      lastAccessedAt: 1,
+    });
+    queueExecResults(sandbox, [
+      { exitCode: 0 }, // tar
+      { stdout: '1024', exitCode: 0 }, // stat size
+      { stdout: 'QkFTRTY0', exitCode: 0 }, // base64
+      { exitCode: 0 }, // rm
+    ]);
+
+    const response = await callRoute(
+      'hibernate',
+      { sandbox_id: 'sb-1', repo_full_name: 'o/r', branch: 'main' },
+      makeEnv({
+        SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'],
+        SNAPSHOT_INDEX: indexKV as unknown as Env['SNAPSHOT_INDEX'],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    // New object written, prior one reclaimed so R2 keeps one object per branch.
+    expect(r2.store.has(`cf-snapshots/${uuid}`)).toBe(true);
+    expect(r2.delete).toHaveBeenCalledWith('cf-snapshots/old');
+    expect(r2.store.has('cf-snapshots/old')).toBe(false);
+    expect(indexKV.put).toHaveBeenCalled();
   });
 
   it('hibernate returns 503 when R2 is not configured', async () => {
