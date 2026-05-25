@@ -66,9 +66,9 @@ export function WebSearchMenu({ triggerClassName }: WebSearchMenuProps) {
         side="bottom"
         align="end"
         sideOffset={8}
-        className="w-[240px] rounded-xl border border-push-edge bg-push-grad-panel p-2 text-[#d7deeb] shadow-[0_12px_36px_rgba(0,0,0,0.55),0_4px_12px_rgba(0,0,0,0.25)]"
+        className="w-[240px] rounded-xl border border-push-edge bg-push-grad-panel p-2 text-push-fg-soft shadow-[0_12px_36px_rgba(0,0,0,0.55),0_4px_12px_rgba(0,0,0,0.25)]"
       >
-        <div className="px-2 pt-1 pb-2 text-push-2xs font-medium uppercase tracking-wide text-[#7c879b]">
+        <div className="px-2 pt-1 pb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-faint">
           Web search
         </div>
         <ul className="space-y-0.5">

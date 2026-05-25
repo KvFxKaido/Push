@@ -11,7 +11,9 @@ module.exports = {
         // Text hierarchy (bright → dim)
         'push-fg': '#f5f7ff', // primary text
         'push-fg-secondary': '#b4becf', // secondary text, labels
+        'push-fg-soft': '#d7deeb', // softened primary text (chat/library panels)
         'push-fg-muted': '#8b96aa', // muted text, subtle icons
+        'push-fg-faint': '#7c879b', // fainter muted text (chat/library panels)
         'push-fg-dim': '#667086', // dimmest text, placeholders
 
         // Surfaces (light → dark)
@@ -25,6 +27,7 @@ module.exports = {
         'push-edge-subtle': '#1b2230', // dividers, input borders
         'push-edge': '#1f2531', // primary border
         'push-edge-hover': '#2f3949', // hover border
+        'push-edge-focus': '#3d5579', // focus / active input border
 
         // Status
         'push-status-success': '#22c55e', // green

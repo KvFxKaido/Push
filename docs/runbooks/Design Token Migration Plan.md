@@ -1,6 +1,6 @@
 # Design Token Migration Plan
 
-Status: Draft plan, P0–P1 shipped. Added 2026-05-25.
+Status: Draft plan, P0–P2 shipped. Added 2026-05-25.
 
 Drives the legacy hardcoded-color backlog toward zero so the DESIGN.md token
 system is the single source of truth for color. The `check:design-tokens`
@@ -9,9 +9,10 @@ the existing violations and orders the cleanup.
 
 The baseline audit ran against `app/src` (excluding `src/components/ui/**`, the
 shadcn carveout) and found **441** hardcoded colors. P0 (carve out the CodeMirror
-editor theme) and P1 (34 mechanical swaps) have since landed, bringing the
-ratchet baseline to **362**. Re-run the numbers any time with
-`npm run check:design-tokens` (counts + top offenders).
+editor theme), P1 (34 mechanical swaps), and P2 (3 new tokens for the
+chat/library palette) have since landed, bringing the ratchet baseline to
+**264**. Re-run the numbers any time with `npm run check:design-tokens` (counts +
+top offenders).
 
 ## What counts
 
@@ -76,11 +77,11 @@ handful-of-files problem:
 
 | Hex | Count | Notes |
 |---|---:|---|
-| `#7c879b` | 49 | Muted gray — the single most-used hardcoded color |
-| `#d7deeb` | 32 | Light text |
-| `#52525b` | 20 | Gray |
-| `#3d5579` | 17 | Muted blue |
-| `#d1d8e6` | 12 | Light text |
+| `#7c879b` | 49 | Muted text — tokenized as `push-fg-faint` (P2 ✓) |
+| `#d7deeb` | 32 | Panel text — tokenized as `push-fg-soft` (P2 ✓) |
+| `#52525b` | 20 | Neutral zinc gray — no token yet (tail) |
+| `#3d5579` | 17 | Focus border — tokenized as `push-edge-focus` (P2 ✓) |
+| `#d1d8e6` | 12 | Light text ≈ `push-fg-soft` — drift snap (P3) |
 
 The purple/cyan family (`#a78bfa`, `#67e8f9`, `#c4b5fd`, …) is almost entirely
 `codemirror-theme.ts` syntax highlighting — handle via the P0 carveout, not new
@@ -99,10 +100,11 @@ screens is the acceptance bar.
   (`bg-[#070a10]` → `bg-push-surface`, etc.). Color-identical by construction
   (each token's value equals the literal hex), so no visual change. Baseline
   396 → 362.
-- **P2 — New tokens** Add tokens for the frequent no-token colors (`#7c879b`,
-  `#d7deeb`, `#52525b`, …) to DESIGN.md + `tailwind.config.js`, then swap their
-  usages. Each new token needs a DESIGN.md table row (the reviewer + ratchet
-  expect tokens to be documented).
+- **P2 ✓ — New tokens** Added `push-fg-faint` (`#7c879b`), `push-fg-soft`
+  (`#d7deeb`), and `push-edge-focus` (`#3d5579`) to DESIGN.md +
+  `tailwind.config.js` and swapped their 98 exact uses (color-identical).
+  Baseline 362 → 264. The neutral zinc `#52525b` and light `#e2e8f0` have no
+  clean home in the cool-blue palette — deferred to the tail.
 - **P3 — Drift** Snap the 108 near-token values to their token, one judgment
   call per value (a slightly-off shade may be intentional; if it is, that is a
   DESIGN.md gap to document, not a swap). Concentrated in the top files.
