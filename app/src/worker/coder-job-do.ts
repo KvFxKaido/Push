@@ -188,10 +188,13 @@ const SERVICE_OVERRIDES = new Map<string, CoderJobServiceOverrides>();
 // terminal event, SSE stays open, and the browser has nothing to reconcile
 // on refresh.
 //
-// Sized generously: 30 minutes is longer than any single tool round-trip
-// we ever expect to see, so healthy runs never bump into it; unhealthy
-// ones recover in bounded time instead of haunting the DO forever.
-export const MAX_JOB_WALL_CLOCK_MS = 30 * 60 * 1000;
+// Sized for long-running / big-refactor jobs: an autonomous Coder run can
+// legitimately churn through many rounds, so the budget covers a full
+// multi-round delegation (well beyond any single tool round-trip) while still
+// guaranteeing an unhealthy run recovers in bounded time instead of haunting
+// the DO forever. 60 min also matches (and never exceeds) the sandbox's own
+// lifetime, so a job can't outlive the container it runs in.
+export const MAX_JOB_WALL_CLOCK_MS = 60 * 60 * 1000;
 
 // SSE keepalive cadence. Cloudflare's edge proxies drop HTTP streams that
 // go quiet for ~100s, so a long gap between real events (model thinking,
