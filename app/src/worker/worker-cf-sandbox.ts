@@ -1270,83 +1270,122 @@ async function archiveWorkspaceToBase64(
   }
 }
 
-async function routeHibernate(env: Env, body: Json): Promise<Response> {
+export type CreateSnapshotResult =
+  | { ok: true; snapshotId: string; restoreToken: string; sizeBytes: number }
+  | { ok: false; error: string; status: number };
+
+/**
+ * Archive /workspace into R2, record it in the snapshot index, and reclaim the
+ * superseded object for the same repo/branch. Does NOT terminate the container,
+ * so it serves both hibernate (which terminates afterward) and mid-run resume
+ * checkpoints (which keep the run going). Requires env.SNAPSHOTS; callers
+ * without repo/branch still get a usable snapshot, just no index entry.
+ */
+export async function createWorkspaceSnapshot(
+  env: Env,
+  args: { sandboxId: string; repoFullName?: string; branch?: string },
+): Promise<CreateSnapshotResult> {
   if (!env.SNAPSHOTS) {
-    return Response.json(
-      { ok: false, error: 'Snapshot storage (R2) is not configured', code: 'CF_NOT_CONFIGURED' },
-      { status: 503 },
-    );
+    return { ok: false, error: 'Snapshot storage (R2) is not configured', status: 503 };
   }
+  if (!env.Sandbox) {
+    return { ok: false, error: 'Cloudflare Sandbox is not configured', status: 503 };
+  }
+  const { sandboxId, repoFullName, branch } = args;
+  const sandbox = getSandbox(env.Sandbox, sandboxId);
+
+  try {
+    const archived = await archiveWorkspaceToBase64(sandbox, SNAPSHOT_DIR_EXCLUDES);
+    if (!archived.ok) {
+      return { ok: false, error: archived.error, status: 500 };
+    }
+
+    // The index keeps one entry per repo/branch, so a new snapshot supersedes the
+    // prior one. Capture its R2 key first so we can reclaim it inline rather than
+    // leaving one orphaned object per snapshot for the cron to reap.
+    let priorImageId: string | undefined;
+    if (env.SNAPSHOT_INDEX && repoFullName && branch) {
+      priorImageId = (await getSnapshot(env.SNAPSHOT_INDEX, repoFullName, branch).catch(() => null))
+        ?.imageId;
+    }
+
+    const snapshotId = `${SNAPSHOT_KEY_PREFIX}${crypto.randomUUID()}`;
+    const restoreToken = crypto.randomUUID();
+    await env.SNAPSHOTS.put(snapshotId, archived.base64, {
+      customMetadata: { rt: restoreToken, repo: repoFullName ?? '', branch: branch ?? '' },
+      httpMetadata: { contentType: 'text/plain' },
+    });
+
+    // Advisory index (best-effort) — mirrors the Modal path so the eviction cron
+    // and resume-by-repo lookup see CF snapshots too. NOT the auth boundary:
+    // restore verifies the token against the R2 object's own metadata.
+    let indexUpdated = false;
+    if (env.SNAPSHOT_INDEX && repoFullName && branch) {
+      try {
+        await putSnapshot(env.SNAPSHOT_INDEX, {
+          repoFullName,
+          branch,
+          imageId: snapshotId,
+          restoreToken,
+          sizeBytes: archived.size,
+        });
+        indexUpdated = true;
+      } catch {
+        // Index is advisory; the caller still has the new snapshot_id for a
+        // direct restore. Leave both objects in place (see reclaim guard below).
+      }
+    }
+
+    // Reclaim the superseded object — but ONLY once the index durably points at
+    // the new one. If the index write failed, the entry still references
+    // priorImageId, so deleting it would strand resume-by-repo/branch on a
+    // missing snapshot. The prefix guard avoids deleting a non-R2 imageId (e.g. a
+    // Modal image id from a mixed-provider history). The cron is the backstop.
+    if (
+      indexUpdated &&
+      priorImageId &&
+      priorImageId !== snapshotId &&
+      priorImageId.startsWith(SNAPSHOT_KEY_PREFIX)
+    ) {
+      await env.SNAPSHOTS.delete(priorImageId).catch(() => {});
+    }
+
+    return { ok: true, snapshotId, restoreToken, sizeBytes: archived.size };
+  } catch (err) {
+    // Honor the result contract for runtime failures too (exec rejected, R2
+    // put threw) so best-effort callers never need a try/catch of their own.
+    return { ok: false, error: err instanceof Error ? err.message : String(err), status: 500 };
+  }
+}
+
+async function routeHibernate(env: Env, body: Json): Promise<Response> {
   const sandboxId = requireStr(body, 'sandbox_id');
   const repoFullName = str(body.repo_full_name);
   const branch = str(body.branch);
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
 
-  const archived = await archiveWorkspaceToBase64(sandbox, SNAPSHOT_DIR_EXCLUDES);
-  if (!archived.ok) {
-    return Response.json({ ok: false, error: archived.error, code: 'CF_ERROR' }, { status: 500 });
-  }
-
-  // The index keeps one entry per repo/branch, so a new hibernate supersedes
-  // the prior snapshot. Capture its R2 key first so we can reclaim it inline
-  // rather than leaving one orphaned object per hibernate for the cron to reap.
-  let priorImageId: string | undefined;
-  if (env.SNAPSHOT_INDEX && repoFullName && branch) {
-    priorImageId = (await getSnapshot(env.SNAPSHOT_INDEX, repoFullName, branch).catch(() => null))
-      ?.imageId;
-  }
-
-  const snapshotId = `${SNAPSHOT_KEY_PREFIX}${crypto.randomUUID()}`;
-  const restoreToken = crypto.randomUUID();
-  await env.SNAPSHOTS.put(snapshotId, archived.base64, {
-    customMetadata: { rt: restoreToken, repo: repoFullName ?? '', branch: branch ?? '' },
-    httpMetadata: { contentType: 'text/plain' },
-  });
-
-  // Advisory index (best-effort) — mirrors the Modal path so the eviction cron
-  // and resume-by-repo lookup see CF snapshots too. NOT the auth boundary:
-  // restore verifies the token against the R2 object's own metadata.
-  let indexUpdated = false;
-  if (env.SNAPSHOT_INDEX && repoFullName && branch) {
-    try {
-      await putSnapshot(env.SNAPSHOT_INDEX, {
-        repoFullName,
-        branch,
-        imageId: snapshotId,
-        restoreToken,
-        sizeBytes: archived.size,
-      });
-      indexUpdated = true;
-    } catch {
-      // Index is advisory; the client still has the new snapshot_id for a
-      // direct restore. Leave both objects in place (see reclaim guard below).
-    }
-  }
-
-  // Reclaim the superseded object — but ONLY once the index durably points at
-  // the new one. If the index write failed, the entry still references
-  // priorImageId, so deleting it would strand resume-by-repo/branch on a
-  // missing snapshot. The prefix guard avoids deleting a non-R2 imageId (e.g. a
-  // Modal image id from a mixed-provider history). The cron is the backstop.
-  if (
-    indexUpdated &&
-    priorImageId &&
-    priorImageId !== snapshotId &&
-    priorImageId.startsWith(SNAPSHOT_KEY_PREFIX)
-  ) {
-    await env.SNAPSHOTS.delete(priorImageId).catch(() => {});
+  const snap = await createWorkspaceSnapshot(env, { sandboxId, repoFullName, branch });
+  if (!snap.ok) {
+    return Response.json(
+      {
+        ok: false,
+        error: snap.error,
+        code: snap.status === 503 ? 'CF_NOT_CONFIGURED' : 'CF_ERROR',
+      },
+      { status: snap.status },
+    );
   }
 
   // Free the container now that its state is durable — mirrors Modal's
   // snapshot-and-terminate. Best-effort; the snapshot is already safe in R2.
+  const sandbox = getSandbox(env.Sandbox!, sandboxId);
   await sandbox.destroy?.().catch(() => {});
   await revokeToken(env.SANDBOX_TOKENS, sandboxId).catch(() => {});
 
   return Response.json({
     ok: true,
-    snapshot_id: snapshotId,
-    restore_token: restoreToken,
-    size_bytes: archived.size,
+    snapshot_id: snap.snapshotId,
+    restore_token: snap.restoreToken,
+    size_bytes: snap.sizeBytes,
   });
 }
 

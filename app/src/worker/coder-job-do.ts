@@ -26,7 +26,12 @@
  */
 
 import type { DurableObjectState } from '@cloudflare/workers-types';
-import { runCoderAgent as runCoderAgentLib, type CoderAgentOptions } from '@push/lib/coder-agent';
+import {
+  runCoderAgent as runCoderAgentLib,
+  type CoderAgentOptions,
+  type CoderCheckpointState,
+} from '@push/lib/coder-agent';
+import { createWorkspaceSnapshot, SNAPSHOT_KEY_PREFIX } from './worker-cf-sandbox';
 import {
   buildCoderDetectors,
   buildCoderEvaluateAfterModel,
@@ -247,11 +252,31 @@ CREATE TABLE IF NOT EXISTS event (
 );
 
 CREATE INDEX IF NOT EXISTS event_job_id_idx ON event (job_id, seq);
+
+CREATE TABLE IF NOT EXISTS checkpoint (
+  job_id TEXT PRIMARY KEY,
+  round INTEGER NOT NULL,
+  snapshot_id TEXT NOT NULL,
+  restore_token TEXT NOT NULL,
+  agent_state_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
 `;
 
 // ---------------------------------------------------------------------------
 // CoderJob DO
 // ---------------------------------------------------------------------------
+
+/** Latest durable resume checkpoint for a job: a filesystem snapshot handle
+ *  paired with the serialized loop state captured at the same round, so a
+ *  resume restores both consistently. One row per job (upserted). */
+interface JobCheckpoint {
+  round: number;
+  snapshotId: string;
+  restoreToken: string;
+  /** JSON of { round, messages, workingMemory, cards } from CoderCheckpointState. */
+  agentStateJson: string;
+}
 
 export class CoderJob {
   /** Per-job AbortControllers so /cancel can interrupt an in-flight run. */
@@ -657,6 +682,9 @@ export class CoderJob {
       onRunEvent: (event) => {
         void this.appendEvent(input.jobId, event);
       },
+      // Durable resume checkpoint: snapshot the workspace + persist loop state
+      // every few rounds so a sandbox death can be recovered. Best-effort.
+      onCheckpoint: (state) => this.captureCheckpoint(input, state),
     });
 
     return { summary: result.summary };
@@ -975,6 +1003,95 @@ export class CoderJob {
       .exec('SELECT status FROM job WHERE id = ?', jobId)
       .toArray()[0] as { status?: string } | undefined;
     return (row?.status as CoderJobStatus | undefined) ?? null;
+  }
+
+  /**
+   * Capture a durable resume checkpoint: snapshot the workspace and persist the
+   * serialized loop state at the same round, so a future resume restores both
+   * consistently. Best-effort — a snapshot failure just skips this checkpoint
+   * and the run continues uninterrupted.
+   *
+   * Checkpoints are PER-JOB and deliberately omit repo/branch, so they do NOT
+   * touch the shared repo/branch snapshot index. Otherwise a concurrent job (or
+   * a client hibernate) on the same branch would reclaim this job's
+   * still-referenced checkpoint object and break its resume. We reclaim this
+   * job's own previous checkpoint ourselves below.
+   */
+  private async captureCheckpoint(
+    input: CoderJobStartInput,
+    state: CoderCheckpointState<ChatCard>,
+  ): Promise<void> {
+    const prior = this.readCheckpoint(input.jobId);
+    const snap = await createWorkspaceSnapshot(this.env, { sandboxId: input.sandboxId });
+    if (!snap.ok) {
+      // Surface the lost checkpoint in logs — onStatus is a no-op here, so this
+      // is the only diagnostic trail for a snapshot a future resume may need.
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          event: 'coder_checkpoint_failed',
+          jobId: input.jobId,
+          round: state.round,
+          error: snap.error,
+        }),
+      );
+      return;
+    }
+    this.persistCheckpoint(input.jobId, {
+      round: state.round,
+      snapshotId: snap.snapshotId,
+      restoreToken: snap.restoreToken,
+      agentStateJson: JSON.stringify({
+        round: state.round,
+        messages: state.messages,
+        workingMemory: state.workingMemory,
+        cards: state.cards,
+      }),
+    });
+    // Reclaim this job's previous checkpoint object now the new one is durable —
+    // per-job, never cross-job. Prefix-guarded so we only delete our own R2 keys.
+    if (
+      prior &&
+      prior.snapshotId !== snap.snapshotId &&
+      prior.snapshotId.startsWith(SNAPSHOT_KEY_PREFIX) &&
+      this.env.SNAPSHOTS
+    ) {
+      await this.env.SNAPSHOTS.delete(prior.snapshotId).catch(() => {});
+    }
+  }
+
+  private persistCheckpoint(jobId: string, cp: JobCheckpoint): void {
+    this.ctx.storage.sql.exec(
+      `INSERT OR REPLACE INTO checkpoint
+         (job_id, round, snapshot_id, restore_token, agent_state_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      jobId,
+      cp.round,
+      cp.snapshotId,
+      cp.restoreToken,
+      cp.agentStateJson,
+      Date.now(),
+    );
+  }
+
+  /** Read the latest persisted checkpoint for a job, or null if none. Consumed
+   *  by per-job reclaim here and by the Phase 1 resume path. */
+  private readCheckpoint(jobId: string): JobCheckpoint | null {
+    const row = this.ctx.storage.sql
+      .exec(
+        'SELECT round, snapshot_id, restore_token, agent_state_json FROM checkpoint WHERE job_id = ?',
+        jobId,
+      )
+      .toArray()[0] as
+      | { round?: number; snapshot_id?: string; restore_token?: string; agent_state_json?: string }
+      | undefined;
+    if (!row || typeof row.snapshot_id !== 'string') return null;
+    return {
+      round: row.round ?? 0,
+      snapshotId: row.snapshot_id,
+      restoreToken: row.restore_token ?? '',
+      agentStateJson: row.agent_state_json ?? '',
+    };
   }
 }
 

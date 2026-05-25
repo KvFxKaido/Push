@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getSandbox } from '@cloudflare/sandbox';
-import { handleCloudflareSandbox, SANDBOX_EXEC_TIMEOUT_MS } from './worker-cf-sandbox';
+import {
+  createWorkspaceSnapshot,
+  handleCloudflareSandbox,
+  SANDBOX_EXEC_TIMEOUT_MS,
+} from './worker-cf-sandbox';
 import type { Env } from './worker-middleware';
 import { MAX_TOKEN_BYTES } from './sandbox-token-store';
 
@@ -1288,6 +1292,75 @@ describe('handleCloudflareSandbox snapshots (R2)', () => {
     const response = await callRoute('hibernate', { sandbox_id: 'sb-1' });
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toMatchObject({ code: 'CF_NOT_CONFIGURED' });
+  });
+
+  it('createWorkspaceSnapshot archives to R2 WITHOUT terminating the container', async () => {
+    const sandbox = mockSandbox();
+    const uuid = mockUuid();
+    const r2 = makeR2();
+    queueExecResults(sandbox, [
+      { exitCode: 0 }, // tar
+      { stdout: '2048', exitCode: 0 }, // stat size
+      { stdout: 'QkFTRTY0', exitCode: 0 }, // base64
+      { exitCode: 0 }, // rm
+    ]);
+
+    const result = await createWorkspaceSnapshot(
+      makeEnv({ SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'] }),
+      { sandboxId: 'sb-1' },
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      snapshotId: `cf-snapshots/${uuid}`,
+      restoreToken: uuid,
+      sizeBytes: 2048,
+    });
+    expect(r2.store.has(`cf-snapshots/${uuid}`)).toBe(true);
+    // The defining contract for mid-run checkpoints: the container survives.
+    expect(sandbox.destroy).not.toHaveBeenCalled();
+  });
+
+  it('createWorkspaceSnapshot returns a 503 result when R2 is unbound', async () => {
+    const result = await createWorkspaceSnapshot(makeEnv(), { sandboxId: 'sb-1' });
+    expect(result).toEqual({ ok: false, error: expect.any(String), status: 503 });
+  });
+
+  it('createWorkspaceSnapshot returns a 503 result (not a throw) when Sandbox is unbound', async () => {
+    const r2 = makeR2();
+    const result = await createWorkspaceSnapshot(
+      makeEnv({ SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'], Sandbox: undefined }),
+      { sandboxId: 'sb-1' },
+    );
+    expect(result).toEqual({ ok: false, error: expect.any(String), status: 503 });
+  });
+
+  it('createWorkspaceSnapshot without repo/branch leaves the shared index untouched (per-job isolation)', async () => {
+    const sandbox = mockSandbox();
+    mockUuid();
+    const r2 = makeR2();
+    const indexKV = makeSnapshotIndexKV();
+    queueExecResults(sandbox, [
+      { exitCode: 0 }, // tar
+      { stdout: '64', exitCode: 0 }, // stat
+      { stdout: 'Qg', exitCode: 0 }, // base64
+      { exitCode: 0 }, // rm
+    ]);
+
+    const result = await createWorkspaceSnapshot(
+      makeEnv({
+        SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'],
+        SNAPSHOT_INDEX: indexKV as unknown as Env['SNAPSHOT_INDEX'],
+      }),
+      { sandboxId: 'sb-1' },
+    );
+
+    expect(result.ok).toBe(true);
+    // The checkpoint path must NOT participate in the repo/branch index or its
+    // reclaim — that's what keeps concurrent same-branch jobs from deleting each
+    // other's checkpoints.
+    expect(indexKV.put).not.toHaveBeenCalled();
+    expect(r2.delete).not.toHaveBeenCalled();
   });
 
   it('restore-snapshot pulls the archive into a fresh sandbox and mints a token', async () => {
