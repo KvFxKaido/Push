@@ -14,6 +14,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { toast } from 'sonner';
 import {
   createSandbox,
   cleanupSandbox,
@@ -55,6 +56,10 @@ const APP_COMMIT_IDENTITY_KEY = 'github_app_commit_identity';
 // cheap: the reconnect does a liveness check and falls back to a fresh sandbox.
 const SANDBOX_MAX_AGE_MS = 50 * 60 * 1000; // 50 min
 const IDLE_HIBERNATE_MS = 8 * 60 * 1000; // 8 min idle before snapshot
+// Shown when a saved snapshot existed but couldn't be restored on reconnect, so
+// the user knows their prior workspace is gone and they're on a fresh sandbox
+// (otherwise the restore failure is silent and looks like a normal cold start).
+const RESTORE_FAILED_MESSAGE = 'Could not restore your saved workspace — starting a fresh sandbox.';
 const IDLE_CHECK_INTERVAL_MS = 60 * 1000; // check every minute
 
 function getGitHubToken(): string {
@@ -142,7 +147,11 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
           repoFullName: saved.repoFullName,
           branch: saved.branch,
         });
-        if (cancelled || session.status !== 'ready') return null;
+        if (cancelled) return null;
+        if (session.status !== 'ready') {
+          toast.error(RESTORE_FAILED_MESSAGE);
+          return null;
+        }
         setSandboxId(session.sandboxId);
         sandboxIdRef.current = session.sandboxId;
         sessionStorageKeyRef.current = activeSessionStorageKey;
@@ -165,6 +174,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
         return session.sandboxId;
       } catch (restoreErr) {
         console.debug('[useSandbox] Snapshot restore failed:', restoreErr);
+        if (!cancelled) toast.error(RESTORE_FAILED_MESSAGE);
         return null;
       }
     };

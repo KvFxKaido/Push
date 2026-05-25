@@ -12,6 +12,7 @@
     "format": "biome format --write",
     "format:check": "biome format",
     "lint": "npm --prefix app run lint",
+    "r2:snapshots:lifecycle": "npx wrangler r2 bucket lifecycle add push-cf-snapshots --expire-days 7",
     "test:cli": "node --import tsx --test cli/tests/*.test.mjs",
     "test:mcp:github": "cd mcp/github-server && npm test",
     "typecheck": "cd cli && npx tsgo --noEmit",
