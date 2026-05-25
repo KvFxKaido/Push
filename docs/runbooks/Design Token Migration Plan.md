@@ -1,6 +1,6 @@
 # Design Token Migration Plan
 
-Status: Draft plan, P0–P4 shipped. Added 2026-05-25.
+Status: Draft plan, P0–P6 shipped — backlog cleared (baseline 0). Added 2026-05-25.
 
 Drives the legacy hardcoded-color backlog toward zero so the DESIGN.md token
 system is the single source of truth for color. The `check:design-tokens`
@@ -8,10 +8,11 @@ ratchet (added with the canonical-docs work) holds the line; this plan scopes
 the existing violations and orders the cleanup.
 
 The baseline audit ran against `app/src` (excluding `src/components/ui/**`, the
-shadcn carveout) and found **441** hardcoded colors. P0–P4 have since landed
-(carveouts, 34 mechanical swaps, 3 new chat/library tokens, 29 drift snaps, and
-data-color carveouts), bringing the ratchet baseline to **112** — all of which
-are now Tailwind-arbitrary values; inline-style hex literals are at **zero**.
+shadcn carveout) and found **441** hardcoded colors. P0–P6 have since landed
+(carveouts, 34 mechanical swaps, new chat/library tokens, 29 drift snaps,
+data-color carveouts, the status/accent token round, and the neutrals round),
+bringing the ratchet baseline to **0** — the backlog is cleared. The remaining
+next step is graduation (wire the ratchet into CI; see below).
 Re-run the numbers any time with `npm run check:design-tokens` (counts + top
 offenders).
 
@@ -124,14 +125,20 @@ screens is the acceptance bar.
   screen (`src/components/RootErrorBoundary.tsx`, which renders before styles
   load). Carved all three out of the ratchet. Baseline 142 → 112; inline-style
   hexes now zero.
-- **Tail** The remaining 112 are all Tailwind-arbitrary values: direct Tailwind
-  palette shades (`#fca5a5`, `#86efac`, `#93c5fd`, …) that are candidates for
-  semantic status/accent tokens, near-blacks (`#000000`), neutral greys with no
-  cool-blue home (`#52525b`, `#e2e8f0`), the disabled send-button `#576176`
-  (~27 RGB from `push-fg-dim` — decide `push-fg-disabled` token vs. snap), and
-  one-off singletons. The single `[background-color:#121926]` arbitrary-property
-  form also remains (needs a utility rewrite or CSS var). All counted in the
-  baseline — none are bypasses.
+- **P5 ✓ — Status + accent tokens** Hybrid pass (112 → 83). Added
+  `push-status-success-soft` (`#4ade80`), `push-status-error-soft` (`#f87171`),
+  `push-status-success-bg` (`#173523`), `push-violet` (`#c4b5fd`, the chat
+  accent), and `push-link-hover` (`#86ccff`). Snapped the bright-blue link/action
+  text spread onto `push-link`. New tokens only where the shade carried meaning
+  the mid-tones didn't; everything else snapped — no one-token-per-shade.
+- **P6 ✓ — Neutrals** Cleared the rest (83 → 0). `#000` editor/input
+  backgrounds → `push-surface-inset`; greys snapped to the nearest
+  `push-fg`/`push-surface`/`push-edge` token; the `[background-color:#121926]`
+  arbitrary-property form → `bg-push-surface-active`. Added one
+  `push-fg-dimmest` (`#505971`) for the disabled/placeholder level below
+  `push-fg-dim` (line numbers, placeholders, empty-state hints). 19 of these
+  were exact matches to existing tokens that simply hadn't been migrated.
+- **Tail** Cleared — baseline is **0**. Next is graduation (below).
 
 ## Graduation
 

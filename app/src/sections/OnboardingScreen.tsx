@@ -57,7 +57,7 @@ export function OnboardingScreen({
   const [installationId, setInstallationId] = useState('');
 
   const onboardingButtonClass = `${HUB_MATERIAL_BUTTON_CLASS} relative flex w-full items-center justify-center gap-2 rounded-[18px] px-4 py-3 text-sm text-push-fg-secondary transition-all duration-200 disabled:pointer-events-none disabled:opacity-40`;
-  const onboardingInputClass = `${HUB_MATERIAL_INPUT_CLASS} w-full rounded-[18px] px-4 py-3 text-sm text-push-fg font-mono placeholder:text-[#4f596d]`;
+  const onboardingInputClass = `${HUB_MATERIAL_INPUT_CLASS} w-full rounded-[18px] px-4 py-3 text-sm text-push-fg font-mono placeholder:text-push-fg-dimmest`;
 
   const handleConnect = async () => {
     if (!pat.trim() || loading) return;
@@ -147,8 +147,8 @@ export function OnboardingScreen({
                 </button>
 
                 <p className="text-xs text-push-fg-dim text-center leading-relaxed">
-                  Personal access token with <code className="text-[#9ca6b9] font-mono">repo</code>{' '}
-                  scope.
+                  Personal access token with{' '}
+                  <code className="text-push-fg-muted font-mono">repo</code> scope.
                   <br />
                   Stored locally, never sent to our servers.
                 </p>
@@ -196,7 +196,7 @@ export function OnboardingScreen({
                   Already installed? Paste your installation ID.
                   <br />
                   Find it at{' '}
-                  <code className="text-[#9ca6b9] font-mono">
+                  <code className="text-push-fg-muted font-mono">
                     github.com/settings/installations
                   </code>
                   .
@@ -267,7 +267,7 @@ export function OnboardingScreen({
           <div className="mt-8">
             <div className="mb-6 flex items-center gap-3">
               <div className="flex-1 h-px bg-push-edge-subtle" />
-              <span className="text-xs text-[#4f596d]">or try without an account</span>
+              <span className="text-xs text-push-fg-dimmest">or try without an account</span>
               <div className="flex-1 h-px bg-push-edge-subtle" />
             </div>
 

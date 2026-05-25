@@ -81,12 +81,12 @@ export function RepoAndChatSelector({
                     onSelectRepo(repo);
                   }}
                   className={`mx-1 flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 ${
-                    isActive ? 'bg-[#0b74e8]/15' : 'hover:bg-push-surface-hover'
+                    isActive ? 'bg-push-accent/15' : 'hover:bg-push-surface-hover'
                   }`}
                 >
                   <span
                     className={`flex-1 truncate text-sm font-medium ${
-                      isActive ? 'text-push-link' : 'text-[#c5cfde]'
+                      isActive ? 'text-push-link' : 'text-push-fg-soft'
                     }`}
                   >
                     {repo.name}

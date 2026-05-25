@@ -10,7 +10,7 @@ const LocalPcChatScreen = lazy(() =>
 const RelayChatScreen = lazy(() =>
   import('./RelayChatScreen').then((module) => ({ default: module.RelayChatScreen })),
 );
-const workspaceFallback = <div className="h-dvh bg-[#000]" />;
+const workspaceFallback = <div className="h-dvh bg-push-surface-inset" />;
 
 export function WorkspaceScreen(props: WorkspaceScreenProps) {
   const { workspaceSession } = props.workspace;

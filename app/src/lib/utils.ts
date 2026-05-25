@@ -67,7 +67,7 @@ export const CARD_TEXT_WARNING = 'text-push-status-warning';
 export const CARD_BADGE_SUCCESS = 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-300';
 export const CARD_BADGE_ERROR = 'border border-red-500/20 bg-red-500/10 text-red-300';
 export const CARD_BADGE_WARNING = 'border border-yellow-500/20 bg-yellow-500/10 text-yellow-300';
-export const CARD_BADGE_INFO = 'border border-push-edge/70 bg-black/10 text-[#9db8df]';
+export const CARD_BADGE_INFO = 'border border-push-edge/70 bg-black/10 text-push-fg-secondary';
 
 /** Header background band (opacity /10) — used for card header rows. */
 export const CARD_HEADER_BG_SUCCESS =

@@ -117,7 +117,7 @@ export function ModelPicker({
       disabled={disabled || isRefreshing}
       aria-label={refreshAriaLabel}
       title={refreshAriaLabel}
-      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#2a3447] bg-[#070a10] text-[#8e99ad] transition-colors hover:text-[#d7deeb] disabled:opacity-60"
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-push-edge-hover bg-push-surface text-push-fg-muted transition-colors hover:text-push-fg-soft disabled:opacity-60"
     >
       {isRefreshing ? (
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -139,7 +139,7 @@ export function ModelPicker({
           placeholder={customPlaceholder ?? 'Enter model ID'}
           aria-label="Custom model ID"
           className={cn(
-            'h-8 min-w-0 flex-1 rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60',
+            'h-8 min-w-0 flex-1 rounded-lg border border-push-edge-hover bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60',
             triggerClassName,
           )}
         />
@@ -148,7 +148,7 @@ export function ModelPicker({
           onClick={() => setCustomMode(false)}
           disabled={disabled}
           aria-label="Pick from list"
-          className="flex h-8 shrink-0 items-center justify-center rounded-lg border border-[#2a3447] bg-[#070a10] px-2 text-[#d7deeb] hover:border-[#3d5579] disabled:opacity-60"
+          className="flex h-8 shrink-0 items-center justify-center rounded-lg border border-push-edge-hover bg-push-surface px-2 text-push-fg-soft hover:border-push-edge-focus disabled:opacity-60"
         >
           <ChevronsUpDown className="h-4 w-4" />
         </button>
@@ -169,7 +169,7 @@ export function ModelPicker({
             aria-label={ariaLabel}
             disabled={disabled || (options.length === 0 && !allowCustom)}
             className={cn(
-              'flex h-8 min-w-0 flex-1 items-center justify-between rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60',
+              'flex h-8 min-w-0 flex-1 items-center justify-between rounded-lg border border-push-edge-hover bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60',
               triggerClassName,
             )}
           >
@@ -182,20 +182,20 @@ export function ModelPicker({
         </PopoverTrigger>
         <PopoverContent
           className={cn(
-            'w-[320px] border-[#2a3447] bg-[#0d1117] p-0 text-[#d7deeb] shadow-md',
+            'w-[320px] border-push-edge-hover bg-push-surface-raised p-0 text-push-fg-soft shadow-md',
             popoverClassName,
           )}
           align="start"
         >
           <Command className="bg-transparent">
-            <CommandInput placeholder={searchPlaceholder} className="border-0 text-[#d7deeb]" />
+            <CommandInput placeholder={searchPlaceholder} className="border-0 text-push-fg-soft" />
             <CommandList>
               <CommandEmpty>{emptyLabel}</CommandEmpty>
               {groups.map((group) => (
                 <CommandGroup
                   key={group.key}
                   heading={group.label || undefined}
-                  className="text-[#7c879b]"
+                  className="text-push-fg-faint"
                 >
                   {group.models.map((model) => (
                     <CommandItem
@@ -205,21 +205,21 @@ export function ModelPicker({
                         if (model.id !== value) onChange(model.id);
                         setOpen(false);
                       }}
-                      className="text-[#d7deeb] data-[selected=true]:bg-[#1a2332]"
+                      className="text-push-fg-soft data-[selected=true]:bg-push-surface-active"
                     >
                       <span className="flex-1 truncate">{model.display}</span>
                       {model.hints && (
-                        <span className="ml-2 shrink-0 text-[#7c879b]">{model.hints}</span>
+                        <span className="ml-2 shrink-0 text-push-fg-faint">{model.hints}</span>
                       )}
                       {model.id === value && (
-                        <Check className="ml-2 h-4 w-4 shrink-0 text-[#d7deeb]" />
+                        <Check className="ml-2 h-4 w-4 shrink-0 text-push-fg-soft" />
                       )}
                     </CommandItem>
                   ))}
                 </CommandGroup>
               ))}
               {allowCustom && (
-                <CommandGroup className="text-[#7c879b]">
+                <CommandGroup className="text-push-fg-faint">
                   <CommandItem
                     value={CUSTOM_MODEL_VALUE}
                     keywords={['custom', 'custom model', 'manual']}
@@ -227,7 +227,7 @@ export function ModelPicker({
                       setCustomMode(true);
                       setOpen(false);
                     }}
-                    className="text-[#d7deeb] data-[selected=true]:bg-[#1a2332]"
+                    className="text-push-fg-soft data-[selected=true]:bg-push-surface-active"
                   >
                     <Pencil className="mr-2 h-3.5 w-3.5 shrink-0" />
                     <span className="flex-1 truncate">Custom model…</span>

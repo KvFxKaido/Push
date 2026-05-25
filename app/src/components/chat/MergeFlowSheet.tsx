@@ -867,7 +867,7 @@ function MergeFlowSheet({
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="pr-body" className="text-xs text-push-fg-secondary">
-                          Description <span className="text-[#3f3f46]">(optional)</span>
+                          Description <span className="text-push-fg-dimmest">(optional)</span>
                         </Label>
                         <Textarea
                           id="pr-body"
@@ -878,7 +878,7 @@ function MergeFlowSheet({
                           className={`${HUB_MATERIAL_INPUT_CLASS} min-h-[72px] rounded-[18px] text-sm resize-none`}
                         />
                       </div>
-                      <p className="text-push-xs text-[#3f3f46]">
+                      <p className="text-push-xs text-push-fg-dimmest">
                         {currentBranch} <ArrowRight className="h-3 w-3 inline" /> {defaultBranch}
                       </p>
                     </div>

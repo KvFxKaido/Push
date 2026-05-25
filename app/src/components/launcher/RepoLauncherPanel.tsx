@@ -330,14 +330,16 @@ export function RepoLauncherPanel({
                   iconClassName="h-3.5 w-3.5"
                 />
                 <span className="truncate text-sm font-medium text-push-fg">{repo.name}</span>
-                {repo.private && <Lock className="h-3 w-3 shrink-0 text-[#52525b]" />}
+                {repo.private && <Lock className="h-3 w-3 shrink-0 text-push-fg-dimmest" />}
                 {repo.activity.has_new_activity && (
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-push-accent" />
                 )}
               </div>
 
               {activeBranch && activeBranch !== repo.default_branch && (
-                <span className={`${HUB_TAG_CLASS} w-fit gap-1 text-push-xs text-[#9db8df]`}>
+                <span
+                  className={`${HUB_TAG_CLASS} w-fit gap-1 text-push-xs text-push-fg-secondary`}
+                >
                   <BranchWaveIcon className="h-3 w-3" />
                   <span className="max-w-[160px] truncate">{activeBranch}</span>
                 </span>
@@ -412,7 +414,7 @@ export function RepoLauncherPanel({
             >
               <DropdownMenuTrigger asChild>
                 <button
-                  className={`${LAUNCHER_ACTION_BUTTON_CLASS} justify-between text-[#9db8df]`}
+                  className={`${LAUNCHER_ACTION_BUTTON_CLASS} justify-between text-push-fg-secondary`}
                 >
                   <HubControlGlow />
                   <span className="relative z-10 inline-flex min-w-0 items-center gap-1">
@@ -632,7 +634,7 @@ export function RepoLauncherPanel({
           )}
           <button
             onClick={() => setShowAllRepos((value) => !value)}
-            className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 gap-2 px-3 text-sm font-medium text-[#9fb0c8]`}
+            className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 gap-2 px-3 text-sm font-medium text-push-fg-secondary`}
           >
             <HubControlGlow />
             <Search className="relative z-10 h-4 w-4" />
@@ -677,7 +679,7 @@ export function RepoLauncherPanel({
           </div>
           {loading && repos.length === 0 ? (
             <div className="flex items-center justify-center py-10">
-              <Loader2 className="h-5 w-5 animate-spin text-[#52525b]" />
+              <Loader2 className="h-5 w-5 animate-spin text-push-fg-dimmest" />
             </div>
           ) : recentRepos.length === 0 ? (
             <div
@@ -704,7 +706,7 @@ export function RepoLauncherPanel({
         {showAllRepos && (
           <section className="space-y-2">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#4f596d]" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-push-fg-dimmest" />
               <input
                 type="text"
                 placeholder="Search repositories..."

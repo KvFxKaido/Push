@@ -68,7 +68,7 @@ function formatContent(content: string): React.ReactNode[] {
               key={`code-${codeKey++}`}
               className="my-2 overflow-x-auto rounded-lg border border-push-edge bg-push-surface px-3 py-2.5"
             >
-              <code className="font-mono text-push-base text-[#e2e8f0] leading-relaxed">
+              <code className="font-mono text-push-base text-push-fg-soft leading-relaxed">
                 {fullCode}
               </code>
             </pre>,
@@ -101,7 +101,7 @@ function formatContent(content: string): React.ReactNode[] {
       const styles: Record<number, string> = {
         1: 'text-[18px] font-semibold text-push-fg mt-4 mb-1.5',
         2: 'text-[16px] font-semibold text-push-fg mt-3 mb-1',
-        3: 'text-push-lg font-medium text-[#e2e8f0] mt-2.5 mb-0.5',
+        3: 'text-push-lg font-medium text-push-fg-soft mt-2.5 mb-0.5',
         4: 'text-[14px] font-medium text-push-fg-muted mt-2 mb-0.5 uppercase tracking-wide',
       };
       parts.push(
@@ -184,7 +184,7 @@ function formatContent(content: string): React.ReactNode[] {
           key={`code-${codeKey}`}
           className="my-2 overflow-x-auto rounded-lg border border-push-edge bg-push-surface px-3 py-2.5"
         >
-          <code className="font-mono text-push-base text-[#e2e8f0] leading-relaxed">
+          <code className="font-mono text-push-base text-push-fg-soft leading-relaxed">
             {fullCode}
           </code>
         </pre>,
@@ -224,7 +224,7 @@ function formatInline(text: string): React.ReactNode[] {
       result.push(
         <code
           key={key++}
-          className="rounded border border-push-edge bg-push-surface px-1.5 py-0.5 font-mono text-push-base text-[#e2e8f0]"
+          className="rounded border border-push-edge bg-push-surface px-1.5 py-0.5 font-mono text-push-base text-push-fg-soft"
         >
           {match[6]}
         </code>,
@@ -273,7 +273,7 @@ function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreamin
       </button>
 
       {!expanded && !isStreaming && (
-        <p className="text-push-sm text-[#4a5568] leading-relaxed mt-1 ml-4 line-clamp-2 italic">
+        <p className="text-push-sm text-push-fg-dimmest leading-relaxed mt-1 ml-4 line-clamp-2 italic">
           {preview}
         </p>
       )}
@@ -288,7 +288,7 @@ function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreamin
 
       {isStreaming && !expanded && thinking && (
         <div className="mt-1.5 ml-4 pl-3 border-l border-push-edge">
-          <p className="text-push-sm text-[#4a5568] leading-relaxed whitespace-pre-wrap break-words line-clamp-3">
+          <p className="text-push-sm text-push-fg-dimmest leading-relaxed whitespace-pre-wrap break-words line-clamp-3">
             {thinking.slice(-200)}
           </p>
         </div>

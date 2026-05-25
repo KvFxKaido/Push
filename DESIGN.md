@@ -20,7 +20,8 @@ Tokens below are Tailwind theme extensions. Use them with the appropriate utilit
 | `push-fg-soft`     | `#d7deeb` | Softened primary text (chat/library panels) |
 | `push-fg-muted`    | `#8b96aa` | Muted text, subtle icons     |
 | `push-fg-faint`    | `#7c879b` | Fainter muted text (chat/library panels) |
-| `push-fg-dim`      | `#667086` | Placeholders, disabled text  |
+| `push-fg-dim`      | `#667086` | Very dim text                |
+| `push-fg-dimmest`  | `#505971` | Disabled / placeholder text (line numbers, empty-state hints) |
 
 ### Surfaces (light to dark)
 

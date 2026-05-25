@@ -14,7 +14,8 @@ module.exports = {
         'push-fg-soft': '#d7deeb', // softened primary text (chat/library panels)
         'push-fg-muted': '#8b96aa', // muted text, subtle icons
         'push-fg-faint': '#7c879b', // fainter muted text (chat/library panels)
-        'push-fg-dim': '#667086', // dimmest text, placeholders
+        'push-fg-dim': '#667086', // very dim text
+        'push-fg-dimmest': '#505971', // disabled / placeholder text (below dim)
 
         // Surfaces (light → dark)
         'push-surface': '#070a10', // base background

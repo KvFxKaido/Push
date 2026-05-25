@@ -102,7 +102,7 @@ export function SandboxStatusBanner({
           {isInScratchWorkspace && onExitWorkspace && (
             <button
               onClick={onExitWorkspace}
-              className="text-xs font-medium text-[#71717a] transition-colors hover:text-push-fg-secondary"
+              className="text-xs font-medium text-push-fg-dim transition-colors hover:text-push-fg-secondary"
             >
               Exit
             </button>

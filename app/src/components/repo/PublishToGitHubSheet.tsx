@@ -181,7 +181,10 @@ export function PublishToGitHubSheet({ open, onOpenChange, onSubmit }: PublishTo
                     : 'hover:border-push-edge-hover/80'
                 }`}
               >
-                <RadioGroupItem value="private" className="mt-0.5 border-[#3f3f46] text-push-sky" />
+                <RadioGroupItem
+                  value="private"
+                  className="mt-0.5 border-push-edge-hover text-push-sky"
+                />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-2 text-sm text-push-fg">
                     <Lock className="h-3.5 w-3.5 text-push-fg-dim" />
@@ -199,7 +202,10 @@ export function PublishToGitHubSheet({ open, onOpenChange, onSubmit }: PublishTo
                     : 'hover:border-push-edge-hover/80'
                 }`}
               >
-                <RadioGroupItem value="public" className="mt-0.5 border-[#3f3f46] text-push-sky" />
+                <RadioGroupItem
+                  value="public"
+                  className="mt-0.5 border-push-edge-hover text-push-sky"
+                />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-2 text-sm text-push-fg">
                     <Globe2 className="h-3.5 w-3.5 text-push-fg-dim" />

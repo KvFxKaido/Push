@@ -562,12 +562,12 @@ export function RepoChatDrawer({
                                               {branch.name}
                                             </span>
                                             {branch.isDefault && (
-                                              <span className="rounded-full bg-[#0d2847] px-1.5 py-0.5 text-push-2xs text-push-link">
+                                              <span className="rounded-full bg-push-surface-active px-1.5 py-0.5 text-push-2xs text-push-link">
                                                 default
                                               </span>
                                             )}
                                             {branch.isProtected && (
-                                              <span className="rounded-full bg-[#2a1a1a] px-1.5 py-0.5 text-push-2xs text-push-status-error-soft">
+                                              <span className="rounded-full bg-push-surface-active px-1.5 py-0.5 text-push-2xs text-push-status-error-soft">
                                                 protected
                                               </span>
                                             )}

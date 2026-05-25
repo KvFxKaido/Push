@@ -251,7 +251,7 @@ export function CommitPushSheet({
     <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetContent
         side="bottom"
-        className="bg-push-surface border-[#1a1a1a] rounded-t-2xl max-h-[85dvh] overflow-y-auto safe-area-bottom"
+        className="bg-push-surface border-push-edge-subtle rounded-t-2xl max-h-[85dvh] overflow-y-auto safe-area-bottom"
         style={{ paddingBottom: bottomPadding > 0 ? bottomPadding : undefined }}
       >
         <SheetHeader className="pb-2">
@@ -302,7 +302,7 @@ export function CommitPushSheet({
                   value={commitMessage}
                   onChange={(e) => setCommitMessage(e.target.value)}
                   placeholder="Describe your changes…"
-                  className="w-full rounded-lg border border-[#1a1a1a] bg-[#000] px-3 py-2.5 text-sm text-push-fg placeholder:text-[#3f3f46] focus:outline-none focus:ring-1 focus:ring-push-accent"
+                  className="w-full rounded-lg border border-push-edge-subtle bg-push-surface-inset px-3 py-2.5 text-sm text-push-fg placeholder:text-push-fg-dimmest focus:outline-none focus:ring-1 focus:ring-push-accent"
                   autoFocus
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && commitMessage.trim()) {
@@ -349,7 +349,7 @@ export function CommitPushSheet({
 
               <button
                 onClick={handleRetry}
-                className="w-full rounded-lg border border-[#1a1a1a] bg-push-surface py-2.5 text-sm font-medium text-push-fg-secondary transition-all hover:bg-push-surface-hover hover:text-push-fg active:scale-[0.98]"
+                className="w-full rounded-lg border border-push-edge-subtle bg-push-surface py-2.5 text-sm font-medium text-push-fg-secondary transition-all hover:bg-push-surface-hover hover:text-push-fg active:scale-[0.98]"
               >
                 Try Again
               </button>
