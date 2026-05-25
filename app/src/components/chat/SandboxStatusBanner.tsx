@@ -50,7 +50,7 @@ export function SandboxStatusBanner({
         </div>
         <button
           onClick={onStart}
-          className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} flex-shrink-0 px-3 text-[#8ad4ff]`}
+          className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} flex-shrink-0 px-3 text-push-link`}
         >
           <HubControlGlow />
           <span className="relative z-10">Start</span>

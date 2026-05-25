@@ -330,7 +330,7 @@ export function ChatScreen({
                   <button
                     onClick={instructions.handleCreateAgentsMd}
                     disabled={instructions.creatingAgentsMd || instructions.creatingAgentsMdWithAI}
-                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-[#8ad4ff]`}
+                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-push-link`}
                   >
                     <HubControlGlow />
                     <span className="relative z-10">

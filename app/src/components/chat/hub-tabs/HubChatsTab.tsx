@@ -199,7 +199,7 @@ export function HubChatsTab({
                         />
                         <button
                           type="submit"
-                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-emerald-300 transition-colors hover:bg-[#173523] hover:text-emerald-200"
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-emerald-300 transition-colors hover:bg-push-status-success-bg hover:text-emerald-200"
                           aria-label="Save chat name"
                         >
                           <Check className="h-3.5 w-3.5" />

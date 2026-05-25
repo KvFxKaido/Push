@@ -412,9 +412,9 @@ function DiffView({ lines }: DiffViewProps) {
             <span
               className={`flex-1 whitespace-pre ${
                 line.type === 'added'
-                  ? 'text-[#4ade80]'
+                  ? 'text-push-status-success-soft'
                   : line.type === 'removed'
-                    ? 'text-[#f87171]'
+                    ? 'text-push-status-error-soft'
                     : 'text-push-fg-secondary'
               }`}
             >

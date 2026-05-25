@@ -288,7 +288,7 @@ export function CommitPushSheet({
                   {suggestedMessage && suggestedMessage !== commitMessage && (
                     <button
                       onClick={handleUseSuggestion}
-                      className="flex items-center gap-1 text-xs text-push-accent hover:text-[#0060d3] transition-colors"
+                      className="flex items-center gap-1 text-xs text-push-accent hover:text-push-link transition-colors"
                       title="Use AI-suggested message"
                     >
                       <Sparkles className="h-3 w-3" />

@@ -281,7 +281,7 @@ export function RepoChatDrawer({
             />
             <button
               type="submit"
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-emerald-300 transition-colors hover:bg-[#173523] hover:text-emerald-200"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-emerald-300 transition-colors hover:bg-push-status-success-bg hover:text-emerald-200"
               aria-label="Save chat name"
             >
               <Check className="h-3.5 w-3.5" />
@@ -562,12 +562,12 @@ export function RepoChatDrawer({
                                               {branch.name}
                                             </span>
                                             {branch.isDefault && (
-                                              <span className="rounded-full bg-[#0d2847] px-1.5 py-0.5 text-push-2xs text-[#58a6ff]">
+                                              <span className="rounded-full bg-[#0d2847] px-1.5 py-0.5 text-push-2xs text-push-link">
                                                 default
                                               </span>
                                             )}
                                             {branch.isProtected && (
-                                              <span className="rounded-full bg-[#2a1a1a] px-1.5 py-0.5 text-push-2xs text-[#fca5a5]">
+                                              <span className="rounded-full bg-[#2a1a1a] px-1.5 py-0.5 text-push-2xs text-push-status-error-soft">
                                                 protected
                                               </span>
                                             )}
@@ -683,7 +683,7 @@ export function RepoChatDrawer({
 
                   {filteredChatModeChats.length > 0 && (
                     <div className={DRAWER_SECTION_SURFACE_CLASS}>
-                      <div className="px-1 py-2.5 text-push-xs font-medium uppercase tracking-wide text-[#c4b5fd]">
+                      <div className="px-1 py-2.5 text-push-xs font-medium uppercase tracking-wide text-push-violet">
                         Chats
                       </div>
                       <div className="space-y-1 px-0 pb-0">

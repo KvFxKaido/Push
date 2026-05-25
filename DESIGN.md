@@ -48,14 +48,19 @@ Tokens below are Tailwind theme extensions. Use them with the appropriate utilit
 | `push-accent`| `#0070f3` | Primary blue, CTAs, glow         |
 | `push-sky`   | `#38bdf8` | Focus rings, cyan highlights     |
 | `push-link`  | `#5cb7ff` | Links, interactive text actions  |
+| `push-link-hover` | `#86ccff` | Brighter link color on hover |
+| `push-violet`| `#c4b5fd` | Chat / conversation accent       |
 
 ### Status
 
-| Token                  | Hex       |
-| ---------------------- | --------- |
-| `push-status-success`  | `#22c55e` |
-| `push-status-error`    | `#ef4444` |
-| `push-status-warning`  | `#f59e0b` |
+| Token                       | Hex       | Use                                    |
+| --------------------------- | --------- | -------------------------------------- |
+| `push-status-success`       | `#22c55e` | Success state                          |
+| `push-status-success-soft`  | `#4ade80` | Lighter success / added text on dark   |
+| `push-status-success-bg`    | `#173523` | Success tint background (e.g. hover)   |
+| `push-status-error`         | `#ef4444` | Error state                            |
+| `push-status-error-soft`    | `#f87171` | Lighter error / removed text on dark   |
+| `push-status-warning`       | `#f59e0b` | Warning state                          |
 
 ### Gradients
 

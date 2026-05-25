@@ -294,7 +294,7 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
                   className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-push-surface-hover"
                 >
                   {file.type === 'directory' ? (
-                    <Folder className="h-4 w-4 shrink-0 text-[#4fb6ff]" />
+                    <Folder className="h-4 w-4 shrink-0 text-push-link" />
                   ) : (
                     <File className="h-4 w-4 shrink-0 text-push-fg-dim" />
                   )}

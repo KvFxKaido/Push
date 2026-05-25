@@ -237,7 +237,7 @@ function formatInline(text: string): React.ReactNode[] {
           href={match[9]}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-push-accent hover:text-[#3291ff] underline underline-offset-2 decoration-push-accent/30 hover:decoration-[#3291ff]/50 transition-colors"
+          className="text-push-accent hover:text-push-link underline underline-offset-2 decoration-push-accent/30 hover:decoration-push-link/50 transition-colors"
         >
           {match[8]}
         </a>,

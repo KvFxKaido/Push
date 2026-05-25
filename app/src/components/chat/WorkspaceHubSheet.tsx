@@ -1353,7 +1353,7 @@ export function WorkspaceHubSheet({
                   )}
                   <button
                     onClick={sandboxStatus === 'error' ? onNewSandbox : onStartSandbox}
-                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-7 gap-1 px-2.5 text-[#8ad4ff]`}
+                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-7 gap-1 px-2.5 text-push-link`}
                   >
                     <HubControlGlow />
                     {sandboxStatus === 'error' ? (
