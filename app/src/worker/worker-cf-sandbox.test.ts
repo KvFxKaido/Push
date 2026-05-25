@@ -1100,6 +1100,30 @@ describe('handleCloudflareSandbox routeDownload', () => {
     expect(sandbox.exec.mock.calls.at(-1)?.[0]).toBe(`rm -f '${tmp}'`);
   });
 
+  it('fails closed (and skips base64) when the archive size stat fails', async () => {
+    const sandbox = mockSandbox();
+    const uuid = mockUuid();
+    const tmp = `/tmp/push-download-${uuid}.tar.gz`;
+    queueExecResults(sandbox, [
+      { stdout: '/workspace', stderr: '', exitCode: 0 }, // realpath
+      { stdout: 'directory|4096', stderr: '', exitCode: 0 }, // stat
+      { stdout: '', stderr: '', exitCode: 0 }, // tar
+      { stdout: '', stderr: '', exitCode: 1 }, // stat archive size FAILS
+      { stdout: '', stderr: '', exitCode: 0 }, // rm (finally)
+    ]);
+
+    const response = await callRoute('download', { sandbox_id: 'sb-1', path: '/workspace' });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      ok: false,
+      error: 'Failed to measure archive size',
+    });
+    // An unmeasured archive must never reach base64; temp file still cleaned up.
+    expect(sandbox.exec.mock.calls.some((c) => String(c[0]).startsWith('base64'))).toBe(false);
+    expect(sandbox.exec.mock.calls.at(-1)?.[0]).toBe(`rm -f '${tmp}'`);
+  });
+
   it('returns ok:false when the path does not exist', async () => {
     const sandbox = mockSandbox();
     queueExecResults(sandbox, [{ stdout: '', stderr: 'No such file or directory', exitCode: 1 }]);

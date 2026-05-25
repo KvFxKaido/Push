@@ -1056,10 +1056,20 @@ async function routeDownload(env: Env, body: Json): Promise<Response> {
 
     const sizeResult = (await withExecDeadline(sandbox.exec(`stat -c %s -- ${quotedTmp}`))) as {
       stdout?: string;
+      stderr?: string;
       exitCode?: number;
     };
     const archiveSize = Number.parseInt((sizeResult.stdout ?? '').trim(), 10);
-    if (Number.isFinite(archiveSize) && archiveSize > MAX_ARCHIVE_BYTES) {
+    // Fail closed: if we can't read the archive's size, do NOT fall through to
+    // base64 — that would let an unmeasured (possibly oversized) archive bypass
+    // the cap, defeating the whole temp-file-then-measure approach.
+    if ((sizeResult.exitCode ?? 0) !== 0 || !Number.isFinite(archiveSize)) {
+      return Response.json({
+        ok: false,
+        error: (sizeResult.stderr || 'Failed to measure archive size').trim(),
+      });
+    }
+    if (archiveSize > MAX_ARCHIVE_BYTES) {
       return Response.json({
         ok: false,
         error: `Archive exceeds max size of ${MAX_ARCHIVE_BYTES} bytes`,
@@ -1078,11 +1088,10 @@ async function routeDownload(env: Env, body: Json): Promise<Response> {
       });
     }
 
-    const archiveBase64 = b64Result.stdout?.trim() ?? '';
     return Response.json({
       ok: true,
-      archive_base64: archiveBase64,
-      size_bytes: Number.isFinite(archiveSize) ? archiveSize : decodedBase64Size(archiveBase64),
+      archive_base64: b64Result.stdout?.trim() ?? '',
+      size_bytes: archiveSize,
       format: 'tar.gz',
     });
   } finally {
