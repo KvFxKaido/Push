@@ -5,6 +5,11 @@ import { sanitizeProjectInstructions } from './project-instructions.js';
 // without crowding out the diff itself.
 const MAX_ROLE_PROJECT_HINTS_CHARS = 2500;
 
+// REVIEW.md is the Reviewer's primary repo-specific guidance (not a side hint
+// like project instructions), so it gets the full sanitizer budget before
+// truncation rather than the compact policy-hints budget.
+const MAX_REVIEW_GUIDANCE_CHARS = 8000;
+
 export type ReviewerPromptSource = 'branch-diff' | 'pr-diff' | 'last-commit' | 'working-tree';
 export type AuditorPromptSource = 'working-tree-commit' | 'pr-merge' | 'sandbox-prepare-commit';
 
@@ -18,6 +23,12 @@ export interface RolePromptContextBase {
 
 export interface ReviewerPromptContext extends RolePromptContextBase {
   source?: ReviewerPromptSource;
+  /**
+   * Contents of a repo-root `REVIEW.md`, when one exists. Repository-specific
+   * review guidance the Reviewer applies on top of its built-in criteria. When
+   * absent, the reviewer falls back to its default guidance unchanged.
+   */
+  reviewGuidance?: string | null;
 }
 
 export interface AuditorPromptContext extends RolePromptContextBase {
@@ -32,6 +43,19 @@ function formatProjectPolicyHints(projectInstructions?: string | null): string |
   let sanitized = sanitizeProjectInstructions(raw);
   if (sanitized.length > MAX_ROLE_PROJECT_HINTS_CHARS) {
     sanitized = `${sanitized.slice(0, MAX_ROLE_PROJECT_HINTS_CHARS)}\n\n[Project policy hints truncated for this role prompt]`;
+  }
+  return sanitized;
+}
+
+function formatReviewGuidance(reviewGuidance?: string | null): string | null {
+  const raw = reviewGuidance?.trim();
+  if (!raw) return null;
+
+  // Reuse the project-instructions sanitizer: REVIEW.md is repo-owner-authored
+  // user content, so it gets the same delimiter-escaping defense.
+  let sanitized = sanitizeProjectInstructions(raw);
+  if (sanitized.length > MAX_REVIEW_GUIDANCE_CHARS) {
+    sanitized = `${sanitized.slice(0, MAX_REVIEW_GUIDANCE_CHARS)}\n\n[REVIEW.md truncated for this review]`;
   }
   return sanitized;
 }
@@ -84,6 +108,16 @@ export function buildReviewerContextBlock(context?: ReviewerPromptContext): stri
       '## Project Policy Hints',
       policyHints,
       'Use these hints to understand repo-specific expectations, but do not invent missing context or assume the diff is correct just because it matches the instructions.',
+    );
+  }
+
+  const reviewGuidance = formatReviewGuidance(context.reviewGuidance);
+  if (reviewGuidance) {
+    lines.push(
+      '',
+      '## Repository Review Guidance (REVIEW.md)',
+      reviewGuidance,
+      'This is repo-specific review guidance from REVIEW.md. Apply it on top of your standard criteria — it tells you what this repo cares about and how to weight findings. It refines priorities and severity; it does not lower the bar on correctness or security.',
     );
   }
 

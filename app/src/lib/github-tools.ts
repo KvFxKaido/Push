@@ -935,3 +935,21 @@ export async function fetchProjectInstructions(
   }
   return null;
 }
+
+/**
+ * Fetch repo-root `REVIEW.md` (Reviewer guidance) from GitHub via the REST API.
+ * Returns the file contents, or null when the repo has no REVIEW.md (so the
+ * Reviewer falls back to its built-in guidance). Pass `branch` to read from a
+ * specific ref — the in-app reviewer reads from the base branch.
+ */
+export async function fetchReviewGuidance(repo: string, branch?: string): Promise<string | null> {
+  const ref = branch ? `?ref=${encodeURIComponent(branch)}` : '';
+  const res = await githubFetch(`https://api.github.com/repos/${repo}/contents/REVIEW.md${ref}`, {
+    headers: getGitHubHeaders(),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`GitHub API error ${res.status} fetching REVIEW.md`);
+  const data = await res.json();
+  if (data.type !== 'file' || !data.content) return null;
+  return decodeGitHubBase64Utf8(data.content);
+}

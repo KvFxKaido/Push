@@ -19,6 +19,7 @@ import {
   fetchGitHubReviewDiff,
   fetchLatestCommitDiff,
 } from '@/lib/github-tools';
+import { resolveReviewGuidance } from '@/lib/review-guidance';
 import { parseDiffStats } from '@/lib/diff-utils';
 import { type ActiveProvider } from '@/lib/orchestrator';
 import {
@@ -684,6 +685,7 @@ export function HubReviewTab({
     try {
       let diff = '';
       let nextContext: ReviewContext | null = null;
+      let ensuredSandboxId: string | null = sandboxId;
 
       if (reviewSource === 'github') {
         if (!repoFullName || !activeBranch || !defaultBranch) {
@@ -726,6 +728,11 @@ export function HubReviewTab({
         const diffResult = await getSandboxDiff(id);
         diff = diffResult.diff;
         nextContext = { kind: 'sandbox', label: 'Working tree' };
+        // `id` may have just been ensured this run, while the `sandboxId` prop
+        // is still null until state propagates. Track the resolved id so the
+        // working-tree review reads REVIEW.md (and symbols) from the live
+        // sandbox instead of falling back to GitHub on first run.
+        ensuredSandboxId = id;
       }
 
       if (!diff?.trim()) {
@@ -747,10 +754,24 @@ export function HubReviewTab({
               : 'working-tree';
       const reviewerSandboxId =
         nextContext.kind === 'sandbox'
-          ? sandboxId || undefined
+          ? ensuredSandboxId || undefined
           : sandboxStatus === 'ready'
             ? sandboxId || undefined
             : undefined;
+
+      // Repo-specific review guidance from REVIEW.md, when present. Null leaves
+      // the reviewer on its built-in guidance.
+      //
+      // Honor the branch under review: prefer the sandbox working copy (live,
+      // possibly-uncommitted edits on the active branch), then fall back to the
+      // active branch's pushed REVIEW.md on GitHub. Skip the status flash when
+      // there's nothing to look up.
+      if (repoFullName || reviewerSandboxId) setStatus('Loading REVIEW.md…');
+      const reviewGuidance = await resolveReviewGuidance({
+        repoFullName,
+        ref: activeBranch || defaultBranch,
+        sandboxId: reviewerSandboxId,
+      });
 
       let reviewResult: ReviewResult;
 
@@ -774,6 +795,7 @@ export function HubReviewTab({
               source: reviewSourceForPrompt,
               sourceLabel: nextContext.label,
               projectInstructions,
+              reviewGuidance,
             },
             allowedRepo: repoFullName || '',
             branchContext:
@@ -810,6 +832,7 @@ export function HubReviewTab({
               source: reviewSourceForPrompt,
               sourceLabel: nextContext.label,
               projectInstructions,
+              reviewGuidance,
             },
           },
           (phase) => setStatus(phase),
