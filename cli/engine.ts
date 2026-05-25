@@ -48,6 +48,13 @@ import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
 import { deriveUserGoalAnchor } from '../lib/user-goal-anchor.ts';
 import { loadUserGoalFile, seedUserGoalFile, extractDigestBody } from './user-goal-file.ts';
 import { escapeToolResultBoundaries } from '../lib/untrusted-content.ts';
+import {
+  createSimilarityLoopDetector,
+  evaluateLoopState,
+  EXACT_REPEAT_LIMIT,
+  isSimilarityLoopDetectionEnabled,
+  writeTargetOf,
+} from '../lib/loop-detection.ts';
 import { TurnPolicyRegistry, createCoderPolicy } from './turn-policy.js';
 import { buildMalformedToolCallEvents, summarizeToolResultPreview } from '../lib/run-events.ts';
 import { getDefaultCliHookRegistry, readCliCurrentBranch } from './tool-hooks-default.ts';
@@ -704,6 +711,10 @@ export async function runAssistantLoop(
   }
   let finalAssistantText: string = '';
   const repeatedCalls: Map<string, number> = new Map();
+  // Per-run near-duplicate detector — feeds the shared loop-detection oracle
+  // (lib/loop-detection.ts). Dark by default: its verdict is logged for
+  // measurement but only the exact-match branch drives the abort below.
+  const similarityDetector = createSimilarityLoopDetector();
   const toolsUsed: Set<string> = new Set();
   // The CLI runs two complementary ledgers per turn:
   //   - promptLedger (cli/file-ledger.ts): owns prompt budgeting, search-hit
@@ -1642,10 +1653,38 @@ export async function runAssistantLoop(
       return { outcome: 'success', finalAssistantText, rounds: round, runId };
     }
 
+    // Loop detection delegates to the shared lib/loop-detection oracle so the
+    // CLI and web surfaces share one policy instead of each owning a bespoke
+    // breaker. The exact-match branch preserves the prior `seen >= 3` abort;
+    // the near-duplicate ladder is computed for every write/edit but stays
+    // dark (logged-only) unless PUSH_LOOP_DETECTION=1 — graded enforcement
+    // (warn/block/compact) is a separate wiring step.
     const callKey: string = JSON.stringify(toolCalls);
-    const seen: number = (repeatedCalls.get(callKey) || 0) + 1;
-    repeatedCalls.set(callKey, seen);
-    if (seen >= 3) {
+    const exactRepeatCount: number = (repeatedCalls.get(callKey) || 0) + 1;
+    repeatedCalls.set(callKey, exactRepeatCount);
+
+    let worstSimilarity: { value: number; streak: number } | undefined;
+    for (const call of toolCalls) {
+      const target = writeTargetOf(call.args as Record<string, unknown> | undefined);
+      if (!target) continue;
+      const obs = similarityDetector.observeWrite(target.path, target.content);
+      if (!worstSimilarity || obs.streak > worstSimilarity.streak) {
+        worstSimilarity = { value: obs.similarity, streak: obs.streak };
+      }
+    }
+
+    const loopVerdict = evaluateLoopState({
+      exactRepeat: { count: exactRepeatCount, limit: EXACT_REPEAT_LIMIT },
+      similarity: worstSimilarity,
+      similarityEnforced: isSimilarityLoopDetectionEnabled(),
+    });
+    if (loopVerdict.level !== 'none') {
+      console.warn(
+        `[Push] Turn ${round}: loop verdict ${loopVerdict.level} (action=${loopVerdict.action}) — ${loopVerdict.reasons.join('; ')}`,
+      );
+    }
+
+    if (loopVerdict.action === 'abort') {
       const loopText: string = `Detected repeated tool call loop (${toolCalls.map((c: ToolCall) => c.tool).join(', ')}). Stopping run.`;
       (state.messages as Message[]).push({
         role: 'user',

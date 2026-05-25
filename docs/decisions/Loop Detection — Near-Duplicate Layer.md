@@ -1,8 +1,26 @@
 # Loop Detection — Near-Duplicate Layer
 
-Status: Draft, added 2026-05-25
+Status: Prototype landed dark, added 2026-05-25
 
-Borrows the `loop-guard` pattern from [Kodrack/Pi-forge](https://github.com/Kodrack/Pi-forge) (a constraint-enforcement layer for small quantized local LLMs running the Pi coding agent). Triggered by a pattern-mining pass over Pi-forge. This doc records what Push already does, the one real gap Pi-forge fills, and a design for closing it. No implementation commitment yet — needs a `ROADMAP.md` entry to graduate.
+Borrows the `loop-guard` pattern from [Kodrack/Pi-forge](https://github.com/Kodrack/Pi-forge) (a constraint-enforcement layer for small quantized local LLMs running the Pi coding agent). Triggered by a pattern-mining pass over Pi-forge. This doc records what Push already does, the one real gap Pi-forge fills, and a design for closing it. Not yet a `ROADMAP.md` commitment — the prototype below proves the shared-kernel shape so the threshold/tokenization questions can be measured before graduation.
+
+## Implementation status (prototype)
+
+Landed (this branch):
+
+- `lib/loop-detection.ts` — the pure kernel: `tokenize` / `jaccard`, `createSimilarityLoopDetector` (per-path sliding window + near-duplicate streak), and `evaluateLoopState` (the single signals→verdict oracle). Plus `writeTargetOf` and the `PUSH_LOOP_DETECTION` kill-switch.
+- `lib/loop-detection.test.ts` — 30 unit tests (tokenization churn, Jaccard edges, per-path isolation, window expiry, streak/threshold boundaries, the full none→warn→block→compact→abort ladder, dark-vs-enforced gating).
+- CLI converged onto the kernel: `cli/engine.ts` deleted its ad-hoc `repeatedCalls` *decision* (the inline `seen >= 3` abort) and now routes through `evaluateLoopState`. Exact-match abort behavior is byte-for-byte preserved; the near-duplicate verdict is computed for every write/edit but logged-only.
+- `cli/tests/loop-detection-drift.test.mjs` — source-level drift guard (CLI must import + delegate to the oracle, must not re-inline a numeric threshold) plus a behavioral pin on the preserved abort threshold.
+
+Dark by default: the near-duplicate ladder only *enforces* under `PUSH_LOOP_DETECTION=1`, and even then the CLI currently enforces only the exact-match `abort` — graded warn/block/compact enforcement is deliberately deferred (see Pending).
+
+Pending (follow-ups, not in the prototype):
+
+- Web migration: fold `app/src/hooks/chat-send-helpers.ts:checkLoopBreaker` onto `evaluateLoopState` and feed `observeWrite` from the web write/edit path (web still uses the exact-match `MutationFailureTracker` directly).
+- Graded enforcement wiring: turn `warn`/`block`/`compact` verdicts into steering injects + a forced compaction on both surfaces (the message-injection + between-turn compaction plumbing the spec describes).
+- Measurement: emit verdicts to telemetry, collect false-positive rate on real runs, then tune thresholds and decide default-on.
+- `system:loop-detection` capability gate (currently env kill-switch only).
 
 ## TL;DR
 
