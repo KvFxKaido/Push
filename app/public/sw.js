@@ -1,4 +1,7 @@
-const CACHE_NAME = 'push-v11';
+// Dev fallback only — the production value is stamped per-build (with the git
+// short SHA) by stampServiceWorkerCache() in vite.config.ts, so each deploy
+// auto-purges stale caches. Don't bump this by hand.
+const CACHE_NAME = 'push-dev';
 const urlsToCache = ['/', '/index.html', '/manifest.json'];
 
 self.addEventListener('install', (event) => {

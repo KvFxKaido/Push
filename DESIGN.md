@@ -217,3 +217,7 @@ Common sizes: `size-3` (12px), `size-3.5` (14px), `size-4` (16px), `size-8` (32p
 - Don't use shadows to distinguish surface layers — use border and background contrast. Shadows are reserved for floating elements (dialogs, popovers, dropdowns)
 - Don't introduce light-mode colors; the app is dark-only
 - Don't hardcode colors — use the token classes with Tailwind prefixes: `text-push-fg`, `bg-push-surface`, `border-push-edge`, etc.
+
+## Shipping visual changes
+
+Visual changes reach installed PWAs automatically: the service-worker cache name (`app/public/sw.js`) is stamped per build with the git short SHA by `stampServiceWorkerCache()` in `app/vite.config.ts`, so every deploy purges stale caches. No manual cache bump is needed. New colors must still be added to `tailwind.config.js` + the token tables above (the `check:design-tokens` ratchet guards against new hardcoded hex).

@@ -15,6 +15,11 @@
 //   - src/lib/codemirror-theme.ts — CodeMirror syntax-highlight theme. These
 //     are editor token colors, not DESIGN.md app tokens, so they're out of
 //     scope for this ratchet. See docs/runbooks/Design Token Migration Plan.md.
+//   - src/lib/language-colors.ts, src/lib/repo-appearance.ts — data colors
+//     (canonical per-language badge colors; user-selectable repo accent
+//     palette), not design tokens.
+//   - src/components/RootErrorBoundary.tsx — crash-fallback screen that renders
+//     with inline styles precisely because the stylesheet may not have loaded.
 
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, relative, extname, dirname } from 'node:path';
@@ -25,7 +30,13 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = join(HERE, '..');
 const SRC_ROOT = join(APP_ROOT, 'src');
 const BASELINE_PATH = join(HERE, 'design-token-baseline.json');
-const EXCLUDE_PATHS = ['src/components/ui/', 'src/lib/codemirror-theme.ts'];
+const EXCLUDE_PATHS = [
+  'src/components/ui/',
+  'src/lib/codemirror-theme.ts',
+  'src/lib/language-colors.ts',
+  'src/lib/repo-appearance.ts',
+  'src/components/RootErrorBoundary.tsx',
+];
 const SCAN_EXT = new Set(['.ts', '.tsx']);
 const TOP_OFFENDERS = 12;
 
