@@ -7,8 +7,10 @@
 //   npm run check:design-tokens            # check against baseline
 //   npm run check:design-tokens -- --update  # rewrite baseline to current count
 //
-// Carveouts (matched as path prefixes against the app-relative path):
-//   - src/components/ui/** — shadcn, matching the design system's existing
+// Carveouts (app-relative paths). Entries ending in "/" are directory prefixes;
+// all others are matched as exact file paths so a carveout can't silently
+// swallow a neighbor (e.g. codemirror-theme.ts.test.ts):
+//   - src/components/ui/ — shadcn, matching the design system's existing
 //     carveout in biome.json / project conventions.
 //   - src/lib/codemirror-theme.ts — CodeMirror syntax-highlight theme. These
 //     are editor token colors, not DESIGN.md app tokens, so they're out of
@@ -23,9 +25,15 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = join(HERE, '..');
 const SRC_ROOT = join(APP_ROOT, 'src');
 const BASELINE_PATH = join(HERE, 'design-token-baseline.json');
-const EXCLUDE_PREFIXES = ['src/components/ui/', 'src/lib/codemirror-theme.ts'];
+const EXCLUDE_PATHS = ['src/components/ui/', 'src/lib/codemirror-theme.ts'];
 const SCAN_EXT = new Set(['.ts', '.tsx']);
 const TOP_OFFENDERS = 12;
+
+// Directory carveouts (trailing "/") match by prefix; file carveouts match
+// exactly, so they can't swallow a similarly-named neighbor.
+function isExcluded(rel) {
+  return EXCLUDE_PATHS.some((p) => (p.endsWith('/') ? rel.startsWith(p) : rel === p));
+}
 
 function walk(dir, out = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -43,7 +51,7 @@ let inlineHex = 0;
 
 for (const file of walk(SRC_ROOT)) {
   const rel = relative(APP_ROOT, file).split('\\').join('/');
-  if (EXCLUDE_PREFIXES.some((prefix) => rel.startsWith(prefix))) continue;
+  if (isExcluded(rel)) continue;
   let source;
   try {
     source = readFileSync(file, 'utf8');

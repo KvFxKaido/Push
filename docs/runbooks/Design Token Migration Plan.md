@@ -22,6 +22,9 @@ The detector (`app/scripts/design-token-detector.mjs`) flags two forms, hex only
 
 ## Scope by migratability
 
+Breakdown of the **initial 441-violation audit**. `codemirror-theme.ts` (45) has
+since been carved out in P0, so the live ratchet baseline is **396**.
+
 | Bucket | Count | Action |
 |---|---:|---|
 | Exact token match | 34 (8%) | Mechanical find/replace |
@@ -32,14 +35,15 @@ The detector (`app/scripts/design-token-detector.mjs`) flags two forms, hex only
 
 ## Concentration
 
-Top files are ~67% of the backlog — this is a handful-of-files problem:
+Top files in the **initial (pre-P0) audit** — ~67% of the backlog, a
+handful-of-files problem:
 
 | File | Count |
 |---|---:|
 | `src/components/chat/ChatInput.tsx` | 84 |
 | `src/components/chat/LibraryPanel.tsx` | 73 |
 | `src/components/filebrowser/FileEditor.tsx` | 54 |
-| `src/lib/codemirror-theme.ts` | 45 |
+| `src/lib/codemirror-theme.ts` | 45 (carved out in P0) |
 | `src/components/launcher/RepoLauncherPanel.tsx` | 38 |
 | `src/components/chat/MessageBubble.tsx` | 19 |
 | `src/components/filebrowser/CommitPushSheet.tsx` | 12 |
