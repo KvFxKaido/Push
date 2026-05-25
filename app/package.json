@@ -13,6 +13,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "check:design-tokens": "node scripts/check-design-tokens.mjs",
     "prepare": "cd .. && husky app/.husky",
     "cap:sync": "npm run build && cap sync",
     "android:setup": "node scripts/ensure-capacitor-android.mjs",

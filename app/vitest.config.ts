@@ -16,7 +16,13 @@ export default defineConfig({
     // `memory-persistence.test.ts`) so they run in CI through the
     // `app` job instead of sitting unexercised. Both the web tests and
     // the lib tests run in the `node` environment with no DOM
-    // dependencies, so they share one runner.
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', '../lib/**/*.test.ts'],
+    // dependencies, so they share one runner. `scripts/**` covers standalone
+    // tooling like the design-token ratchet detector.
+    include: [
+      'src/**/*.test.ts',
+      'src/**/*.test.tsx',
+      '../lib/**/*.test.ts',
+      'scripts/**/*.test.mjs',
+    ],
   },
 });
