@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from 'vitest';
-import type { KVNamespace } from '@cloudflare/workers-types';
+import type { KVNamespace, R2Bucket } from '@cloudflare/workers-types';
 import {
   buildSnapshotKey,
   DEFAULT_TTL_SECONDS,
@@ -8,6 +8,7 @@ import {
   INDEX_SCHEMA_VERSION,
   listSnapshots,
   putSnapshot,
+  reapOrphanedSnapshots,
   recordSnapshotEvent,
   summarizeSnapshotIndex,
   touchSnapshot,
@@ -350,5 +351,104 @@ describe('summarizeSnapshotIndex', () => {
       oldestAccessedAt: 1_000,
       newestAccessedAt: 5_000,
     });
+  });
+});
+
+interface FakeR2Object {
+  key: string;
+  uploaded: Date;
+  size: number;
+}
+
+function createFakeR2(
+  objects: FakeR2Object[],
+  pageSize = objects.length || 1,
+): { r2: R2Bucket; deleted: string[]; store: Map<string, FakeR2Object> } {
+  const store = new Map(objects.map((o) => [o.key, o] as const));
+  const deleted: string[] = [];
+  const r2 = {
+    async list(options?: { prefix?: string; cursor?: string }) {
+      const prefix = options?.prefix ?? '';
+      const all = [...store.values()].filter((o) => o.key.startsWith(prefix));
+      const start = options?.cursor ? Number.parseInt(options.cursor, 10) : 0;
+      const page = all.slice(start, start + pageSize);
+      const nextStart = start + pageSize;
+      const truncated = nextStart < all.length;
+      return truncated
+        ? { objects: page, truncated: true, cursor: String(nextStart) }
+        : { objects: page, truncated: false };
+    },
+    async delete(keys: string | string[]) {
+      const arr = Array.isArray(keys) ? keys : [keys];
+      for (const k of arr) {
+        store.delete(k);
+        deleted.push(k);
+      }
+    },
+  };
+  return { r2: r2 as unknown as R2Bucket, deleted, store };
+}
+
+describe('reapOrphanedSnapshots', () => {
+  const NOW = 1_700_000_000_000;
+  const OLD = new Date(NOW - 10 * 24 * 60 * 60 * 1000); // 10 days — past the 7-day grace
+  const RECENT = new Date(NOW - 60 * 1000); // 1 minute
+
+  it('reaps unreferenced objects past the grace period, keeps referenced and recent ones', async () => {
+    const { kv } = createFakeKv();
+    await putSnapshot(
+      kv,
+      { repoFullName: 'o/r', branch: 'main', imageId: 'cf-snapshots/live', restoreToken: 't' },
+      NOW,
+    );
+    const { r2, deleted, store } = createFakeR2([
+      { key: 'cf-snapshots/live', uploaded: OLD, size: 100 }, // referenced → keep
+      { key: 'cf-snapshots/orphan-old', uploaded: OLD, size: 200 }, // orphan + old → reap
+      { key: 'cf-snapshots/orphan-new', uploaded: RECENT, size: 50 }, // orphan but recent → keep
+    ]);
+
+    const result = await reapOrphanedSnapshots(kv, r2, 'cf-snapshots/', NOW);
+
+    expect(result).toEqual({ scanned: 3, reaped: 1, reapedBytes: 200 });
+    expect(deleted).toEqual(['cf-snapshots/orphan-old']);
+    expect(store.has('cf-snapshots/live')).toBe(true);
+    expect(store.has('cf-snapshots/orphan-new')).toBe(true);
+    expect(store.has('cf-snapshots/orphan-old')).toBe(false);
+  });
+
+  it('keeps everything when all objects are still referenced', async () => {
+    const { kv } = createFakeKv();
+    await putSnapshot(
+      kv,
+      { repoFullName: 'o/r', branch: 'main', imageId: 'cf-snapshots/a', restoreToken: 't' },
+      NOW,
+    );
+    const { r2, deleted } = createFakeR2([{ key: 'cf-snapshots/a', uploaded: OLD, size: 1 }]);
+
+    const result = await reapOrphanedSnapshots(kv, r2, 'cf-snapshots/', NOW);
+
+    expect(result.reaped).toBe(0);
+    expect(deleted).toEqual([]);
+  });
+
+  it('walks R2 list pagination', async () => {
+    const { kv } = createFakeKv(); // empty index → every object is orphaned
+    const objects = Array.from({ length: 5 }, (_, i) => ({
+      key: `cf-snapshots/o${i}`,
+      uploaded: OLD,
+      size: 10,
+    }));
+    const { r2, deleted } = createFakeR2(objects, 2); // 2 per page → 3 pages
+
+    const result = await reapOrphanedSnapshots(kv, r2, 'cf-snapshots/', NOW);
+
+    expect(result).toEqual({ scanned: 5, reaped: 5, reapedBytes: 50 });
+    expect(deleted.sort()).toEqual([
+      'cf-snapshots/o0',
+      'cf-snapshots/o1',
+      'cf-snapshots/o2',
+      'cf-snapshots/o3',
+      'cf-snapshots/o4',
+    ]);
   });
 });

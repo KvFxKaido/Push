@@ -19,7 +19,7 @@
  * bump `INDEX_SCHEMA_VERSION`.
  */
 
-import type { KVNamespace, KVNamespaceListResult } from '@cloudflare/workers-types';
+import type { KVNamespace, KVNamespaceListResult, R2Bucket } from '@cloudflare/workers-types';
 
 export const INDEX_SCHEMA_VERSION = 1;
 const KEY_PREFIX = 'snapshot:';
@@ -256,6 +256,62 @@ export async function summarizeSnapshotIndex(kv: KVNamespace): Promise<SnapshotI
     if (!cursor) break;
   }
   return { total, totalSizeBytes, oldestAccessedAt: oldest, newestAccessedAt: newest };
+}
+
+export interface ReapResult {
+  scanned: number;
+  reaped: number;
+  reapedBytes: number;
+}
+
+/**
+ * Reclaim orphaned R2 snapshot objects — the Cloudflare provider's R2-backed
+ * counterpart to KV's automatic TTL eviction.
+ *
+ * An R2 object is orphaned when no live index entry references its key. This
+ * happens when a snapshot is superseded but its old object wasn't deleted
+ * inline (anonymous snapshots with no repo/branch, or a missed inline delete),
+ * or when the index entry TTL-expired (7 days) while the object lingered.
+ *
+ * Only objects older than `graceMs` are reaped, so an object freshly written
+ * but not yet visible in the index (write lag / race) is never deleted out from
+ * under a restore. Default grace equals the index TTL: a snapshot stays
+ * restorable for at least that long, matching the KV contract.
+ *
+ * Walks both the KV index and the R2 listing by cursor, never materializing the
+ * full sets in memory beyond one page + the referenced-key set.
+ */
+export async function reapOrphanedSnapshots(
+  kv: KVNamespace,
+  r2: R2Bucket,
+  keyPrefix: string,
+  now: number = Date.now(),
+  graceMs: number = DEFAULT_TTL_SECONDS * 1000,
+): Promise<ReapResult> {
+  const referenced = new Set((await listSnapshots(kv)).map((e) => e.imageId));
+  const cutoff = now - graceMs;
+  let scanned = 0;
+  let reapedBytes = 0;
+  // Collect orphan keys across the whole listing FIRST, then delete. Deleting
+  // mid-pagination mutates the very listing we're walking and can skip objects.
+  const orphanKeys: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await r2.list({ prefix: keyPrefix, cursor });
+    scanned += page.objects.length;
+    for (const o of page.objects) {
+      if (!referenced.has(o.key) && o.uploaded.getTime() < cutoff) {
+        orphanKeys.push(o.key);
+        reapedBytes += o.size ?? 0;
+      }
+    }
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+  // R2 bulk delete caps at 1000 keys per call.
+  for (let i = 0; i < orphanKeys.length; i += 1000) {
+    await r2.delete(orphanKeys.slice(i, i + 1000));
+  }
+  return { scanned, reaped: orphanKeys.length, reapedBytes };
 }
 
 function validateEntry(raw: unknown): SnapshotIndexEntry | null {

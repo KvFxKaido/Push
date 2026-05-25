@@ -66,7 +66,8 @@ import {
 import { handleCloudflareSandbox } from './src/worker/worker-cf-sandbox';
 import { handleGitHubTools } from './src/worker/worker-github-tools';
 import { sanitizeUrlForLogging } from './src/worker/worker-log-utils';
-import { summarizeSnapshotIndex } from './src/worker/snapshot-index';
+import { summarizeSnapshotIndex, reapOrphanedSnapshots } from './src/worker/snapshot-index';
+import { SNAPSHOT_KEY_PREFIX } from './src/worker/worker-cf-sandbox';
 import { handleAdminSnapshots } from './src/worker/admin-routes';
 import { handleJobsRoute, matchJobsRoute } from './src/worker/worker-coder-job';
 import { handleRelayRequest, matchRelayRoute } from './src/worker/relay-routes';
@@ -216,12 +217,14 @@ export default {
   },
 
   /**
-   * Daily cron — walk the snapshot index and emit metrics.
+   * Daily cron — walk the snapshot index and emit metrics, then reap orphaned
+   * R2 snapshot objects.
    *
    * Triggered by the `triggers.crons` schedule in wrangler.jsonc. KV's TTL
-   * already evicts entries older than 7 days; this handler just observes
-   * what's left so we can tune per-user caps once user identity lands in
-   * the index keys (Modal Sandbox Snapshots Design §6).
+   * auto-evicts index entries after 7 days, but R2 objects don't expire on
+   * their own — so this also reaps any `cf-snapshots/*` object no longer
+   * referenced by a live index entry (e.g. a TTL-expired entry, or an
+   * anonymous snapshot), which is the R2-backed counterpart to KV's TTL.
    */
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     if (!env.SNAPSHOT_INDEX) {
@@ -256,6 +259,36 @@ export default {
               message: err instanceof Error ? err.message : String(err),
             }),
           );
+        }
+
+        // Reap orphaned R2 snapshot objects (no-op when the R2 binding is
+        // absent, e.g. a Modal-only deployment). Independent of the metrics
+        // pass — a failure in one shouldn't suppress the other.
+        if (env.SNAPSHOTS) {
+          try {
+            const reaped = await reapOrphanedSnapshots(
+              env.SNAPSHOT_INDEX!,
+              env.SNAPSHOTS,
+              SNAPSHOT_KEY_PREFIX,
+            );
+            console.log(
+              JSON.stringify({
+                level: 'info',
+                event: 'snapshot_reap_cron',
+                cron: event.cron,
+                ...reaped,
+              }),
+            );
+          } catch (err) {
+            console.error(
+              JSON.stringify({
+                level: 'error',
+                event: 'snapshot_reap_cron_error',
+                cron: event.cron,
+                message: err instanceof Error ? err.message : String(err),
+              }),
+            );
+          }
         }
       })(),
     );
