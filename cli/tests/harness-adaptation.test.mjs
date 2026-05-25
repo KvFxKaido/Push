@@ -202,3 +202,66 @@ describe('computeAdaptation', () => {
     resetAllFor(B);
   });
 });
+
+describe('computeAdaptation — Rule 3 (growth)', () => {
+  beforeEach(() => {
+    resetAllGlobal();
+  });
+
+  it('stays shrink-only when currentRound/maxAllowedRounds are omitted', () => {
+    const result = computeAdaptation(S, 30);
+    assert.equal(result.wasAdapted, false);
+    assert.equal(result.adjustedMaxRounds, 30);
+  });
+
+  it('extends the budget when near the ceiling with healthy signals', () => {
+    const result = computeAdaptation(S, 30, { currentRound: 28, maxAllowedRounds: 200 });
+    assert.equal(result.wasAdapted, true);
+    assert.equal(result.adjustedMaxRounds, 45); // 30 + GROWTH_INCREMENT(15)
+    assert.match(result.reasons[0], /Extend max rounds/);
+  });
+
+  it('does not extend when the agent is far from the ceiling', () => {
+    const result = computeAdaptation(S, 30, { currentRound: 10, maxAllowedRounds: 200 });
+    assert.equal(result.wasAdapted, false);
+    assert.equal(result.adjustedMaxRounds, 30);
+  });
+
+  it('tolerates sub-threshold malformed calls', () => {
+    recordMalformedToolCall('json_parse_error', S);
+    recordMalformedToolCall('json_parse_error', S); // 2 < threshold (3)
+    const result = computeAdaptation(S, 30, { currentRound: 28, maxAllowedRounds: 200 });
+    assert.equal(result.adjustedMaxRounds, 45);
+  });
+
+  it('never grows past maxAllowedRounds', () => {
+    const result = computeAdaptation(S, 40, { currentRound: 39, maxAllowedRounds: 50 });
+    assert.equal(result.wasAdapted, true);
+    assert.equal(result.adjustedMaxRounds, 50); // 40 + 15 = 55, capped to 50
+  });
+
+  it('is a no-op when already at maxAllowedRounds', () => {
+    const result = computeAdaptation(S, 50, { currentRound: 49, maxAllowedRounds: 50 });
+    assert.equal(result.wasAdapted, false);
+    assert.equal(result.adjustedMaxRounds, 50);
+  });
+
+  it('a session that tripped a reduction never grows again', () => {
+    for (let i = 0; i < 3; i++) recordMalformedToolCall('json_parse_error', S);
+    const reduced = computeAdaptation(S, 30, { currentRound: 1, maxAllowedRounds: 200 });
+    assert.equal(reduced.adjustedMaxRounds, 20); // Rule 1 floored it
+    const after = computeAdaptation(S, 20, { currentRound: 18, maxAllowedRounds: 200 });
+    assert.equal(after.wasAdapted, false);
+    assert.equal(after.adjustedMaxRounds, 20);
+  });
+
+  it('re-fires as the agent works up to each new ceiling (self-limiting)', () => {
+    const first = computeAdaptation(S, 30, { currentRound: 28, maxAllowedRounds: 200 });
+    assert.equal(first.adjustedMaxRounds, 45);
+    const mid = computeAdaptation(S, 45, { currentRound: 30, maxAllowedRounds: 200 });
+    assert.equal(mid.wasAdapted, false);
+    assert.equal(mid.adjustedMaxRounds, 45);
+    const second = computeAdaptation(S, 45, { currentRound: 43, maxAllowedRounds: 200 });
+    assert.equal(second.adjustedMaxRounds, 60);
+  });
+});

@@ -24,6 +24,7 @@ import {
   ensureSystemPromptReady,
   runAssistantLoop,
   DEFAULT_MAX_ROUNDS,
+  MAX_ALLOWED_ROUNDS,
 } from './engine.js';
 import {
   loadConfig,
@@ -233,7 +234,7 @@ Options:
   --task <text>                 Task text for headless mode
   --skill <name>               Run a skill (e.g. commit, review, fix)
   --accept <cmd>                Acceptance check command (repeatable)
-  --max-rounds <n>              Tool-loop cap per user prompt (default: 8)
+  --max-rounds <n>              Tool-loop cap per user prompt (default: 30, max: 200; harness may extend on healthy progress)
   --allow-exec                  Allow exec tool in headless mode (blocked by default)
   --mode <strict|auto|yolo>     Exec approval mode: strict=prompt all, auto=prompt high-risk (default), yolo=no prompts
   --json                        JSON output in headless mode / resume
@@ -3370,7 +3371,11 @@ export async function main() {
       cwd: values.cwd ? path.resolve(values.cwd) : undefined,
       maxRounds:
         values['max-rounds'] || values.maxRounds
-          ? clamp(Number(values['max-rounds'] || values.maxRounds || DEFAULT_MAX_ROUNDS), 1, 30)
+          ? clamp(
+              Number(values['max-rounds'] || values.maxRounds || DEFAULT_MAX_ROUNDS),
+              1,
+              MAX_ALLOWED_ROUNDS,
+            )
           : undefined,
     });
   }
@@ -3399,11 +3404,11 @@ export async function main() {
     const parsed = Number(maxRoundsRaw);
     if (!Number.isFinite(parsed)) {
       throw new Error(
-        `Invalid --max-rounds value: "${maxRoundsRaw}". Must be a number between 1 and 30.`,
+        `Invalid --max-rounds value: "${maxRoundsRaw}". Must be a number between 1 and ${MAX_ALLOWED_ROUNDS}.`,
       );
     }
   }
-  const maxRounds = clamp(Number(maxRoundsRaw || DEFAULT_MAX_ROUNDS), 1, 30);
+  const maxRounds = clamp(Number(maxRoundsRaw || DEFAULT_MAX_ROUNDS), 1, MAX_ALLOWED_ROUNDS);
   const acceptanceChecks = Array.isArray(values.accept) ? values.accept : [];
 
   const positionalTask = subcommand === 'run' ? positionals.slice(1).join(' ').trim() : '';
