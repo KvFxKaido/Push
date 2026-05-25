@@ -30,6 +30,10 @@ import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import { handleMultipleMutationsError } from '@/lib/chat-tool-execution';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import { type MutationFailureTracker } from '@push/lib/agent-loop-utils';
+import {
+  createSimilarityLoopDetector,
+  type SimilarityLoopDetector,
+} from '@push/lib/loop-detection';
 import type { ChatMessage, ReasoningBlock } from '@/types';
 import {
   checkLoopBreaker,
@@ -87,6 +91,7 @@ export async function processAssistantTurn(
     isRepeatedDelegationFailure: () => false,
     clear: () => {},
   },
+  loopDetector: SimilarityLoopDetector = createSimilarityLoopDetector(),
 ): Promise<AssistantTurnResult> {
   const { chatId, lockedProvider, setConversations, appendRunEvent } = ctx;
 
@@ -98,7 +103,7 @@ export async function processAssistantTurn(
   // (per-args failure budget, consecutive identical calls, and
   // per-agent delegation-outcome streaks). See `checkLoopBreaker` for
   // the trip rules and rationale.
-  if (checkLoopBreaker(detected, tracker, round)) {
+  if (checkLoopBreaker(detected, tracker, loopDetector, round)) {
     return {
       nextApiMessages: apiMessages,
       nextRecoveryState: recoveryState,

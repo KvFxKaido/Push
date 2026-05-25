@@ -9,16 +9,17 @@ Borrows the `loop-guard` pattern from [Kodrack/Pi-forge](https://github.com/Kodr
 Landed (this branch):
 
 - `lib/loop-detection.ts` — the pure kernel: `tokenize` / `jaccard`, `createSimilarityLoopDetector` (per-path sliding window + near-duplicate streak), and `evaluateLoopState` (the single signals→verdict oracle). Plus `writeTargetOf` and the `PUSH_LOOP_DETECTION` kill-switch.
-- `lib/loop-detection.test.ts` — 30 unit tests (tokenization churn, Jaccard edges, per-path isolation, window expiry, streak/threshold boundaries, the full none→warn→block→compact→abort ladder, dark-vs-enforced gating).
+- `lib/loop-detection.test.ts` — 33 unit tests (tokenization churn, Jaccard edges, per-path isolation, window expiry, streak/threshold boundaries, the full none→warn→block→compact→abort ladder, the web `exactBreakers` shape, dark-vs-enforced gating).
 - CLI converged onto the kernel: `cli/engine.ts` deleted its ad-hoc `repeatedCalls` *decision* (the inline `seen >= 3` abort) and now routes through `evaluateLoopState`. Exact-match abort behavior is byte-for-byte preserved; the near-duplicate verdict is computed for every write/edit but logged-only.
 - `cli/tests/loop-detection-drift.test.mjs` — source-level drift guard (CLI must import + delegate to the oracle, must not re-inline a numeric threshold) plus a behavioral pin on the preserved abort threshold.
+- Web converged onto the kernel: `app/src/hooks/chat-send-helpers.ts:checkLoopBreaker` now collects its three exact-match trips (per-args failure budget, delegation-outcome streak, consecutive identical call) as `exactBreakers` reasons and lets `evaluateLoopState` make the abort decision — still using `MutationFailureTracker` for signal *collection*, but no longer owning the *decision*. A per-run `SimilarityLoopDetector` is threaded from `chat-round-loop.ts` through `processAssistantTurn` and feeds `observeWrite` from the web write/edit path (dark). The oracle gained an `exactBreakers` input shape so count-based (CLI) and boolean-based (web) exact-match signals normalize to one abort contribution.
 
-Dark by default: the near-duplicate ladder only *enforces* under `PUSH_LOOP_DETECTION=1`, and even then the CLI currently enforces only the exact-match `abort` — graded warn/block/compact enforcement is deliberately deferred (see Pending).
+Dark by default: the near-duplicate ladder only *enforces* under `PUSH_LOOP_DETECTION=1`, and even then both surfaces currently enforce only the exact-match `abort` — graded warn/block/compact enforcement is deliberately deferred (see Pending).
 
-Pending (follow-ups, not in the prototype):
+Pending (follow-ups, not yet wired):
 
-- Web migration: fold `app/src/hooks/chat-send-helpers.ts:checkLoopBreaker` onto `evaluateLoopState` and feed `observeWrite` from the web write/edit path (web still uses the exact-match `MutationFailureTracker` directly).
 - Graded enforcement wiring: turn `warn`/`block`/`compact` verdicts into steering injects + a forced compaction on both surfaces (the message-injection + between-turn compaction plumbing the spec describes).
+- Web `sandbox_edit_file` (hashline) + `sandbox_search_replace` similarity: `writeTargetOf` currently captures `sandbox_write_file` + `sandbox_edit_range` (path + content string) on the web; structured hashline ops and search/replace don't yet contribute to the window.
 - Measurement: emit verdicts to telemetry, collect false-positive rate on real runs, then tune thresholds and decide default-on.
 - `system:loop-detection` capability gate (currently env kill-switch only).
 

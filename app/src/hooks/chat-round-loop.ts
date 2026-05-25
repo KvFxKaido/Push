@@ -35,6 +35,10 @@ import {
   createMutationFailureTracker,
   type MutationFailureTracker,
 } from '@push/lib/agent-loop-utils';
+import {
+  createSimilarityLoopDetector,
+  type SimilarityLoopDetector,
+} from '@push/lib/loop-detection';
 import { createId } from '@push/lib/id-utils';
 import { type ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import type { ChatMessage, ReasoningBlock, RunEventInput } from '@/types';
@@ -293,6 +297,10 @@ export async function runRoundLoop(
   let apiMessages = initial.apiMessages;
   let toolCallRecoveryState = initial.recoveryState;
   const tracker: MutationFailureTracker = createMutationFailureTracker();
+  // One near-duplicate detector per run, threaded alongside the tracker so its
+  // per-path window survives across rounds. Feeds the shared loop-detection
+  // oracle in `checkLoopBreaker`.
+  const loopDetector: SimilarityLoopDetector = createSimilarityLoopDetector();
   let loopCompletedNormally = false;
 
   // Track events fired during the current round so the workspace-patch
@@ -413,6 +421,7 @@ export async function runRoundLoop(
       loopCtx,
       toolCallRecoveryState,
       tracker,
+      loopDetector,
     );
 
     apiMessages = turnResult.nextApiMessages;

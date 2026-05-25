@@ -42,6 +42,12 @@ import {
   recordVerificationMutation,
 } from '@/lib/verification-runtime';
 import { getToolInvocationKey, type MutationFailureTracker } from '@push/lib/agent-loop-utils';
+import {
+  evaluateLoopState,
+  isSimilarityLoopDetectionEnabled,
+  type SimilarityLoopDetector,
+  writeTargetOf,
+} from '@push/lib/loop-detection';
 import { createId } from '@push/lib/id-utils';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import type { ChatMessage, ToolExecutionResult } from '@/types';
@@ -716,6 +722,7 @@ const MAX_REPEATED_TOOL_CALLS = 3;
 export function checkLoopBreaker(
   detected: DetectedToolCalls,
   tracker: MutationFailureTracker,
+  detector: SimilarityLoopDetector,
   round: number,
 ): boolean {
   const allIncomingCalls = [
@@ -724,16 +731,18 @@ export function checkLoopBreaker(
     ...(detected.mutating ? [detected.mutating] : []),
   ];
 
+  // Collect the three exact-match breaker trips as reasons rather than
+  // returning early — the shared lib/loop-detection oracle makes the abort
+  // decision so the CLI and web surfaces share one policy. The trip rules
+  // (and their per-call vs first-call scope) are unchanged.
+  const exactBreakers: string[] = [];
   for (let i = 0; i < allIncomingCalls.length; i++) {
     const call = allIncomingCalls[i];
     const toolName = getToolName(call);
     const key = getToolInvocationKey(toolName, call.call);
 
     if (tracker.isRepeatedFailure(key, MAX_REPEATED_TOOL_CALLS)) {
-      console.warn(
-        `[Push] Turn ${round}: loop circuit breaker tripped for ${toolName}. Breaking loop.`,
-      );
-      return true;
+      exactBreakers.push(`per-args failure budget exhausted: ${toolName}`);
     }
 
     const delegateAgent = delegateAgentForToolName(toolName);
@@ -741,19 +750,45 @@ export function checkLoopBreaker(
       delegateAgent &&
       tracker.isRepeatedDelegationFailure(delegateAgent, MAX_REPEATED_TOOL_CALLS)
     ) {
-      console.warn(
-        `[Push] Turn ${round}: delegation-outcome breaker tripped for ${toolName} (${MAX_REPEATED_TOOL_CALLS}+ consecutive non-complete ${delegateAgent} delegations). Breaking loop.`,
+      exactBreakers.push(
+        `delegation-outcome streak: ${MAX_REPEATED_TOOL_CALLS}+ non-complete ${delegateAgent} delegations`,
       );
-      return true;
     }
 
     if (i === 0 && tracker.isRepeatedCall(key, MAX_REPEATED_TOOL_CALLS)) {
-      console.warn(
-        `[Push] Turn ${round}: repeated-call breaker tripped for ${toolName} (same args ${MAX_REPEATED_TOOL_CALLS}+ rounds in a row). Breaking loop.`,
+      exactBreakers.push(
+        `consecutive identical call: ${toolName} (${MAX_REPEATED_TOOL_CALLS}+ rounds in a row)`,
       );
-      return true;
     }
   }
 
-  return false;
+  // Near-duplicate similarity over file mutations — dark unless
+  // PUSH_LOOP_DETECTION=1. Recorded for every write/edit so the per-path
+  // window stays warm; only the exact-match breakers drive `action` today.
+  let worstSimilarity: { value: number; streak: number } | undefined;
+  for (const call of [
+    ...detected.fileMutations,
+    ...(detected.mutating ? [detected.mutating] : []),
+  ]) {
+    const target = writeTargetOf((call.call as { args?: Record<string, unknown> }).args);
+    if (!target) continue;
+    const obs = detector.observeWrite(target.path, target.content);
+    if (!worstSimilarity || obs.streak > worstSimilarity.streak) {
+      worstSimilarity = { value: obs.similarity, streak: obs.streak };
+    }
+  }
+
+  const verdict = evaluateLoopState({
+    exactBreakers,
+    similarity: worstSimilarity,
+    similarityEnforced: isSimilarityLoopDetectionEnabled(),
+  });
+
+  if (verdict.level !== 'none') {
+    console.warn(
+      `[Push] Turn ${round}: loop verdict ${verdict.level} (action=${verdict.action}) — ${verdict.reasons.join('; ')}`,
+    );
+  }
+
+  return verdict.action === 'abort';
 }

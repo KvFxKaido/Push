@@ -179,6 +179,16 @@ function strongest(levels: readonly LoopLevel[]): LoopLevel {
 export interface LoopSignals {
   /** Exact repeated-call signal — the relocated, always-enforced breaker. */
   exactRepeat?: { count: number; limit?: number };
+  /**
+   * Already-tripped exact-match breaker reasons (web). The web computes its
+   * three exact-match rules (per-args failure budget, delegation-outcome
+   * streak, consecutive identical call) against `MutationFailureTracker` and
+   * passes the tripped reasons here; a non-empty array means `abort`. This is
+   * an alternate input shape for the same always-enforced exact-match signal
+   * `exactRepeat` carries for the CLI — signal collection differs per surface,
+   * the oracle normalizes both to one abort contribution.
+   */
+  exactBreakers?: readonly string[];
   /** Near-duplicate write signal from `SimilarityLoopDetector.observeWrite`. */
   similarity?: { value: number; streak: number };
   /** How many `block`s have already been issued this run (for compact escalation). */
@@ -217,6 +227,11 @@ export function evaluateLoopState(signals: LoopSignals): LoopVerdict {
       reasons.push(`exact tool call repeated ${signals.exactRepeat.count}x (limit ${limit})`);
       contributions.push({ level: 'abort', enforceable: true });
     }
+  }
+
+  if (signals.exactBreakers && signals.exactBreakers.length > 0) {
+    for (const reason of signals.exactBreakers) reasons.push(reason);
+    contributions.push({ level: 'abort', enforceable: true });
   }
 
   if (signals.similarity && signals.similarity.streak >= SIMILARITY_WARN_HITS) {

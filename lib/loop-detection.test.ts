@@ -161,6 +161,28 @@ describe('evaluateLoopState — exact repeated calls (always enforced)', () => {
   });
 });
 
+describe('evaluateLoopState — pre-tripped exact breakers (web shape)', () => {
+  it('aborts when any exact breaker reason is present', () => {
+    const v = evaluateLoopState({ exactBreakers: ['repeated failure: read_file'] });
+    expect(v.level).toBe('abort');
+    expect(v.action).toBe('abort');
+    expect(v.reasons).toContain('repeated failure: read_file');
+  });
+
+  it('does not abort on an empty breaker list', () => {
+    expect(evaluateLoopState({ exactBreakers: [] }).action).toBe('none');
+  });
+
+  it('aborts regardless of similarity enforcement and surfaces every reason', () => {
+    const v = evaluateLoopState({
+      exactBreakers: ['repeated call: delegate_coder', 'delegation-outcome: coder'],
+      similarityEnforced: false,
+    });
+    expect(v.action).toBe('abort');
+    expect(v.reasons).toHaveLength(2);
+  });
+});
+
 describe('evaluateLoopState — near-duplicate ladder (gated)', () => {
   it('reports level but suppresses action when dark', () => {
     const v = evaluateLoopState({
