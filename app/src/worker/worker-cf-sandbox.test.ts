@@ -919,6 +919,229 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
   });
 });
 
+describe('handleCloudflareSandbox routeDownload', () => {
+  it('returns a base64 file payload for a raw single-file download', async () => {
+    const sandbox = mockSandbox();
+    queueExecResults(sandbox, [
+      { stdout: '/workspace/src/notes.md', stderr: '', exitCode: 0 }, // realpath
+      { stdout: 'regular file|11', stderr: '', exitCode: 0 }, // stat
+      { stdout: 'aGVsbG8gd29ybGQ=', stderr: '', exitCode: 0 }, // base64
+    ]);
+
+    const response = await callRoute('download', {
+      sandbox_id: 'sb-1',
+      path: '/workspace/src/notes.md',
+      format: 'raw',
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      filename: 'notes.md',
+      content_type: 'text/markdown',
+      size_bytes: 11,
+      file_base64: 'aGVsbG8gd29ybGQ=',
+      format: 'raw',
+    });
+    expect(sandbox.exec.mock.calls[1]?.[0]).toBe("realpath -e -- '/workspace/src/notes.md'");
+    expect(sandbox.exec.mock.calls[2]?.[0]).toBe("stat -c '%F|%s' -- '/workspace/src/notes.md'");
+    expect(sandbox.exec.mock.calls[3]?.[0]).toBe("base64 -w0 -- '/workspace/src/notes.md'");
+  });
+
+  it('rejects a raw download of a directory', async () => {
+    const sandbox = mockSandbox();
+    queueExecResults(sandbox, [
+      { stdout: '/workspace/src', stderr: '', exitCode: 0 }, // realpath
+      { stdout: 'directory|4096', stderr: '', exitCode: 0 }, // stat
+    ]);
+
+    const response = await callRoute('download', {
+      sandbox_id: 'sb-1',
+      path: '/workspace/src',
+      format: 'raw',
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      ok: false,
+      error: 'Raw download is only supported for files',
+    });
+  });
+
+  it('tars a directory to a temp file with shared excludes for the default tar.gz format', async () => {
+    const sandbox = mockSandbox();
+    const uuid = mockUuid();
+    const tmp = `/tmp/push-download-${uuid}.tar.gz`;
+    queueExecResults(sandbox, [
+      { stdout: '/workspace', stderr: '', exitCode: 0 }, // realpath
+      { stdout: 'directory|4096', stderr: '', exitCode: 0 }, // stat
+      { stdout: '', stderr: '', exitCode: 0 }, // tar
+      { stdout: '2048', stderr: '', exitCode: 0 }, // stat archive size
+      { stdout: 'YXJjaGl2ZQ==', stderr: '', exitCode: 0 }, // base64
+      { stdout: '', stderr: '', exitCode: 0 }, // rm
+    ]);
+
+    const response = await callRoute('download', { sandbox_id: 'sb-1', path: '/workspace' });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      archive_base64: 'YXJjaGl2ZQ==',
+      size_bytes: 2048,
+      format: 'tar.gz',
+    });
+    expect(sandbox.exec.mock.calls[3]?.[0]).toBe(
+      `tar -czf '${tmp}' --exclude='.git' --exclude='node_modules' --exclude='__pycache__' ` +
+        `--exclude='.venv' --exclude='dist' --exclude='build' -C '/workspace' .`,
+    );
+    expect(sandbox.exec.mock.calls[4]?.[0]).toBe(`stat -c %s -- '${tmp}'`);
+    expect(sandbox.exec.mock.calls[5]?.[0]).toBe(`base64 -w0 -- '${tmp}'`);
+    expect(sandbox.exec.mock.calls[6]?.[0]).toBe(`rm -f '${tmp}'`);
+  });
+
+  it('tars a single file relative to its parent for the tar.gz format', async () => {
+    const sandbox = mockSandbox();
+    const uuid = mockUuid();
+    const tmp = `/tmp/push-download-${uuid}.tar.gz`;
+    queueExecResults(sandbox, [
+      { stdout: '/workspace/src/notes.md', stderr: '', exitCode: 0 }, // realpath
+      { stdout: 'regular file|11', stderr: '', exitCode: 0 }, // stat
+      { stdout: '', stderr: '', exitCode: 0 }, // tar
+      { stdout: '512', stderr: '', exitCode: 0 }, // stat archive size
+      { stdout: 'YXJjaGl2ZQ==', stderr: '', exitCode: 0 }, // base64
+      { stdout: '', stderr: '', exitCode: 0 }, // rm
+    ]);
+
+    const response = await callRoute('download', {
+      sandbox_id: 'sb-1',
+      path: '/workspace/src/notes.md',
+      format: 'tar.gz',
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ ok: true, format: 'tar.gz' });
+    expect(sandbox.exec.mock.calls[3]?.[0]).toBe(
+      `tar -czf '${tmp}' -C '/workspace/src' -- 'notes.md'`,
+    );
+  });
+
+  it('returns ok:false for an unsupported format without touching the sandbox', async () => {
+    const sandbox = mockSandbox();
+
+    const response = await callRoute('download', {
+      sandbox_id: 'sb-1',
+      path: '/workspace',
+      format: 'zip',
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: false, error: 'Unsupported format' });
+    // Only the owner-token auth read ran — no realpath/stat/tar.
+    expect(sandbox.exec).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a lexically out-of-tree path before spawning realpath', async () => {
+    const sandbox = mockSandbox();
+
+    const response = await callRoute('download', { sandbox_id: 'sb-1', path: '/etc/passwd' });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      ok: false,
+      error: 'Path must be within /workspace',
+    });
+    expect(sandbox.exec).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a traversal escape that resolves outside /workspace', async () => {
+    const sandbox = mockSandbox();
+    // The lexical pre-filter passes ("/workspace/.." starts with "/workspace/"),
+    // so realpath is the boundary: it resolves to /etc/passwd, which fails the
+    // post-resolution guard before any stat/read/tar runs.
+    queueExecResults(sandbox, [{ stdout: '/etc/passwd', stderr: '', exitCode: 0 }]);
+
+    const response = await callRoute('download', {
+      sandbox_id: 'sb-1',
+      path: '/workspace/../../etc/passwd',
+      format: 'raw',
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      ok: false,
+      error: 'Path must be within /workspace',
+    });
+    expect(sandbox.exec.mock.calls[1]?.[0]).toBe("realpath -e -- '/workspace/../../etc/passwd'");
+    // No stat/read happened after the failed guard.
+    expect(sandbox.exec).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects an oversized tar.gz archive before base64-encoding it', async () => {
+    const sandbox = mockSandbox();
+    const uuid = mockUuid();
+    const tmp = `/tmp/push-download-${uuid}.tar.gz`;
+    queueExecResults(sandbox, [
+      { stdout: '/workspace', stderr: '', exitCode: 0 }, // realpath
+      { stdout: 'directory|4096', stderr: '', exitCode: 0 }, // stat
+      { stdout: '', stderr: '', exitCode: 0 }, // tar
+      { stdout: '100000001', stderr: '', exitCode: 0 }, // stat archive size (> 100MB)
+      { stdout: '', stderr: '', exitCode: 0 }, // rm (finally)
+    ]);
+
+    const response = await callRoute('download', { sandbox_id: 'sb-1', path: '/workspace' });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      ok: false,
+      error: 'Archive exceeds max size of 100000000 bytes',
+    });
+    // base64 must never run for an oversized archive; the temp file is cleaned up.
+    expect(sandbox.exec.mock.calls.some((c) => String(c[0]).startsWith('base64'))).toBe(false);
+    expect(sandbox.exec.mock.calls.at(-1)?.[0]).toBe(`rm -f '${tmp}'`);
+  });
+
+  it('fails closed (and skips base64) when the archive size stat fails', async () => {
+    const sandbox = mockSandbox();
+    const uuid = mockUuid();
+    const tmp = `/tmp/push-download-${uuid}.tar.gz`;
+    queueExecResults(sandbox, [
+      { stdout: '/workspace', stderr: '', exitCode: 0 }, // realpath
+      { stdout: 'directory|4096', stderr: '', exitCode: 0 }, // stat
+      { stdout: '', stderr: '', exitCode: 0 }, // tar
+      { stdout: '', stderr: '', exitCode: 1 }, // stat archive size FAILS
+      { stdout: '', stderr: '', exitCode: 0 }, // rm (finally)
+    ]);
+
+    const response = await callRoute('download', { sandbox_id: 'sb-1', path: '/workspace' });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      ok: false,
+      error: 'Failed to measure archive size',
+    });
+    // An unmeasured archive must never reach base64; temp file still cleaned up.
+    expect(sandbox.exec.mock.calls.some((c) => String(c[0]).startsWith('base64'))).toBe(false);
+    expect(sandbox.exec.mock.calls.at(-1)?.[0]).toBe(`rm -f '${tmp}'`);
+  });
+
+  it('returns ok:false when the path does not exist', async () => {
+    const sandbox = mockSandbox();
+    queueExecResults(sandbox, [{ stdout: '', stderr: 'No such file or directory', exitCode: 1 }]);
+
+    const response = await callRoute('download', {
+      sandbox_id: 'sb-1',
+      path: '/workspace/missing.txt',
+      format: 'raw',
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      ok: false,
+      error: 'Path not found: /workspace/missing.txt',
+    });
+  });
+});
+
 describe('handleCloudflareSandbox snapshot stubs', () => {
   it.each(['hibernate', 'restore-snapshot'])(
     'returns 501 for %s with SNAPSHOT_NOT_SUPPORTED',
