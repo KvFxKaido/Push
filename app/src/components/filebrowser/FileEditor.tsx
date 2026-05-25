@@ -286,7 +286,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
           <button
             onClick={handleSave}
             disabled={saving || (!hasChanges && content === originalContent)}
-            className="flex h-8 px-3 items-center gap-1.5 rounded-lg bg-push-status-success text-white text-xs font-medium transition-colors hover:bg-push-status-success disabled:opacity-40"
+            className="flex h-8 px-3 items-center gap-1.5 rounded-lg bg-push-status-success text-white text-xs font-medium transition-all hover:brightness-110 disabled:opacity-40"
           >
             {saving ? (
               <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />

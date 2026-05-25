@@ -312,7 +312,7 @@ export function FileBrowser({
         <button
           onClick={() => setCommitSheetOpen(true)}
           disabled={status === 'loading'}
-          className="fixed bottom-6 right-[4.75rem] z-30 flex h-12 w-12 items-center justify-center rounded-full bg-push-status-success text-white shadow-lg shadow-push-status-success/25 transition-all duration-200 hover:bg-push-status-success active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
+          className="fixed bottom-6 right-[4.75rem] z-30 flex h-12 w-12 items-center justify-center rounded-full bg-push-status-success text-white shadow-lg shadow-push-status-success/25 transition-all duration-200 hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
           title="Commit & push"
           aria-label="Commit and push changes"
         >
