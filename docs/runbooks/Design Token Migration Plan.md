@@ -1,6 +1,6 @@
 # Design Token Migration Plan
 
-Status: Draft plan, P0–P3 shipped. Added 2026-05-25.
+Status: Draft plan, P0–P4 shipped. Added 2026-05-25.
 
 Drives the legacy hardcoded-color backlog toward zero so the DESIGN.md token
 system is the single source of truth for color. The `check:design-tokens`
@@ -8,10 +8,12 @@ ratchet (added with the canonical-docs work) holds the line; this plan scopes
 the existing violations and orders the cleanup.
 
 The baseline audit ran against `app/src` (excluding `src/components/ui/**`, the
-shadcn carveout) and found **441** hardcoded colors. P0–P3 have since landed
-(carveout, 34 mechanical swaps, 3 new chat/library tokens, and 29 drift snaps),
-bringing the ratchet baseline to **142**. Re-run the numbers any time with
-`npm run check:design-tokens` (counts + top offenders).
+shadcn carveout) and found **441** hardcoded colors. P0–P4 have since landed
+(carveouts, 34 mechanical swaps, 3 new chat/library tokens, 29 drift snaps, and
+data-color carveouts), bringing the ratchet baseline to **112** — all of which
+are now Tailwind-arbitrary values; inline-style hex literals are at **zero**.
+Re-run the numbers any time with `npm run check:design-tokens` (counts + top
+offenders).
 
 ## What counts
 
@@ -113,13 +115,23 @@ screens is the acceptance bar.
   color shifts — **pending visual review** on the PR. Baseline 264 → 142. One
   `[background-color:#121926]` arbitrary-property form is left for the tail (a
   token name can't go in raw CSS — needs a utility rewrite or a CSS var).
-- **Tail** Near-blacks (decide: `push-surface*` vs. a new black token), quoted
-  hex in inline styles (need a CSS var or utility rewrite), neutral greys with no
-  cool-blue home (`#52525b`, `#e2e8f0`), and one-off singletons. Notable: the
-  disabled send-button text `#576176` (ChatInput.tsx) — a dim disabled grey ~27
-  RGB from `push-fg-dim`, so too far to snap without visibly brightening a
-  high-visibility control; decide between a `push-fg-disabled` token and a
-  deliberate snap. All of these are counted in the 142 baseline (not bypasses).
+- **P4 ✓ — Data-color carveouts** Investigated CSS vars to tokenize the
+  inline-style hexes — **zero payoff**: none of the 31 inline hexes matched a
+  token, and a var conversion would mean RGB-channel rewrites across 216 opacity
+  usages for no tail reduction. The inline hexes were all legitimately
+  non-tokens: GitHub language data-colors (extracted to `src/lib/language-colors.ts`)
+  + the repo-accent palette (`src/lib/repo-appearance.ts`) + the crash-fallback
+  screen (`src/components/RootErrorBoundary.tsx`, which renders before styles
+  load). Carved all three out of the ratchet. Baseline 142 → 112; inline-style
+  hexes now zero.
+- **Tail** The remaining 112 are all Tailwind-arbitrary values: direct Tailwind
+  palette shades (`#fca5a5`, `#86efac`, `#93c5fd`, …) that are candidates for
+  semantic status/accent tokens, near-blacks (`#000000`), neutral greys with no
+  cool-blue home (`#52525b`, `#e2e8f0`), the disabled send-button `#576176`
+  (~27 RGB from `push-fg-dim` — decide `push-fg-disabled` token vs. snap), and
+  one-off singletons. The single `[background-color:#121926]` arbitrary-property
+  form also remains (needs a utility rewrite or CSS var). All counted in the
+  baseline — none are bypasses.
 
 ## Graduation
 

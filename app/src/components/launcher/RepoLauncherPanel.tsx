@@ -34,25 +34,7 @@ import type { SandboxStatus } from '@/hooks/useSandbox';
 import type { RepoAppearance } from '@/lib/repo-appearance';
 import { timeAgo, timeAgoCompact } from '@/lib/utils';
 import type { ActiveRepo, ConversationIndex, ConversationMeta, RepoWithActivity } from '@/types';
-
-const LANG_COLORS: Record<string, string> = {
-  TypeScript: '#3178c6',
-  JavaScript: '#f1e05a',
-  Python: '#3572a5',
-  Go: '#00add8',
-  Rust: '#dea584',
-  Java: '#b07219',
-  Shell: '#89e051',
-  HTML: '#e34c26',
-  CSS: '#563d7c',
-  Ruby: '#701516',
-  Swift: '#f05138',
-  Kotlin: '#a97bff',
-  MDX: '#fcb32c',
-  C: '#555555',
-  'C++': '#f34b7d',
-  'C#': '#178600',
-};
+import { getLanguageColor } from '@/lib/language-colors';
 
 type RepoChatMeta = {
   chatCount: number;
@@ -370,7 +352,7 @@ export function RepoLauncherPanel({
                   <span className="flex items-center gap-1">
                     <span
                       className="inline-block h-2.5 w-2.5 rounded-full"
-                      style={{ backgroundColor: LANG_COLORS[repo.language] || '#8b8b8b' }}
+                      style={{ backgroundColor: getLanguageColor(repo.language) }}
                     />
                     {repo.language}
                   </span>
