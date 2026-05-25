@@ -570,7 +570,7 @@ export function ComposerDraftScreen({
                       {branch.name}
                     </span>
                     {branch.isDefault && (
-                      <span className="rounded-full bg-[#0d2847] px-1.5 py-0.5 text-push-2xs text-[#58a6ff]">
+                      <span className="rounded-full bg-[#0d2847] px-1.5 py-0.5 text-push-2xs text-push-link">
                         default
                       </span>
                     )}

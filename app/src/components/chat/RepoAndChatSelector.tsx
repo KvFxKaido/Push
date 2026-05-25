@@ -111,7 +111,7 @@ export function RepoAndChatSelector({
                   onBrowseRepos();
                   setOpen(false);
                 }}
-                className="mx-1 mt-1 flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-push-link hover:bg-push-surface-hover hover:text-[#86ccff]"
+                className="mx-1 mt-1 flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-push-link hover:bg-push-surface-hover hover:text-push-link"
               >
                 <House className="h-4 w-4" />
                 <span className="text-sm font-medium">Home</span>
@@ -190,7 +190,7 @@ export function RepoAndChatSelector({
             onNewChat();
             setOpen(false);
           }}
-          className="mx-1 flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2.5 text-push-link hover:bg-push-surface-hover hover:text-[#86ccff]"
+          className="mx-1 flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2.5 text-push-link hover:bg-push-surface-hover hover:text-push-link"
         >
           <Plus className="h-4 w-4" />
           <span className="text-sm font-medium">New Chat</span>

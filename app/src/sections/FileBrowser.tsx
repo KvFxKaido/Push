@@ -460,7 +460,7 @@ function FileRow({ file, onTap, onLongPress }: FileRowProps) {
       >
         {/* Icon */}
         {isDir ? (
-          <Folder className="h-4 w-4 shrink-0 text-[#4fb6ff]" />
+          <Folder className="h-4 w-4 shrink-0 text-push-link" />
         ) : isEditable ? (
           <FileEdit className="h-4 w-4 shrink-0 text-push-status-success" />
         ) : (

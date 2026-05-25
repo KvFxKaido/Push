@@ -333,8 +333,8 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
                     : log.type === 'result'
                       ? 'ml-2 border-l border-push-edge pl-2 text-push-fg-dim'
                       : log.type === 'lifecycle'
-                        ? 'ml-2 border-l border-push-edge/70 pl-2 text-[#9edbaf]'
-                        : 'ml-2 border-l border-push-edge/70 pl-2 text-[#86c5ff]'
+                        ? 'ml-2 border-l border-push-edge/70 pl-2 text-push-status-success-soft'
+                        : 'ml-2 border-l border-push-edge/70 pl-2 text-push-link'
               }
             >
               {log.type === 'status' && log.source ? `[${getSourceLabel(log.source)}] ` : ''}

@@ -31,7 +31,10 @@ module.exports = {
 
         // Status
         'push-status-success': '#22c55e', // green
+        'push-status-success-soft': '#4ade80', // lighter green — success/added text on dark
+        'push-status-success-bg': '#173523', // dark green tint — success hover background
         'push-status-error': '#ef4444', // red
+        'push-status-error-soft': '#f87171', // lighter red — error/removed text on dark
         'push-status-warning': '#f59e0b', // amber
 
         // Accent
@@ -39,6 +42,7 @@ module.exports = {
         'push-sky': '#38bdf8', // cyan accent (focus rings, glow)
         'push-link': '#5cb7ff', // bright blue links, actions
         'push-glow': '#0070f3', // glow color for interactive elements
+        'push-violet': '#c4b5fd', // violet accent — chat/conversation affordances
         // ──────────────────────────────────────────────────
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',

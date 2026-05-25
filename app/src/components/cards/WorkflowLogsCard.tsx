@@ -130,7 +130,7 @@ export function WorkflowLogsCard({ data }: WorkflowLogsCardProps) {
           href={data.htmlUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center justify-center gap-1.5 text-push-sm text-push-link hover:text-[#86ccff] transition-colors"
+          className="flex items-center justify-center gap-1.5 text-push-sm text-push-link hover:text-push-link transition-colors"
         >
           <ExternalLink className="h-3 w-3" />
           View on GitHub

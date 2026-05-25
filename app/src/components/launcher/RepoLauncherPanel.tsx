@@ -358,7 +358,7 @@ export function RepoLauncherPanel({
                   </span>
                 )}
                 {repo.activity.open_prs > 0 && (
-                  <span className={`${HUB_TAG_CLASS} gap-1 text-[#58a6ff]`}>
+                  <span className={`${HUB_TAG_CLASS} gap-1 text-push-link`}>
                     <PRThreadIcon className="h-3 w-3" />
                     {repo.activity.open_prs}
                   </span>
@@ -370,7 +370,7 @@ export function RepoLauncherPanel({
                   </span>
                 )}
                 {chatMeta && (
-                  <span className={`${HUB_TAG_CLASS} gap-1 text-[#84bfff]`}>
+                  <span className={`${HUB_TAG_CLASS} gap-1 text-push-link`}>
                     <HistoryStackIcon className="h-3 w-3" />
                     {chatMeta.chatCount}
                   </span>
@@ -485,10 +485,12 @@ export function RepoLauncherPanel({
                         {branch.name}
                       </span>
                       {branch.isDefault && (
-                        <span className={`${HUB_TAG_CLASS} text-[#58a6ff]`}>default</span>
+                        <span className={`${HUB_TAG_CLASS} text-push-link`}>default</span>
                       )}
                       {branch.isProtected && (
-                        <span className={`${HUB_TAG_CLASS} text-[#fca5a5]`}>protected</span>
+                        <span className={`${HUB_TAG_CLASS} text-push-status-error-soft`}>
+                          protected
+                        </span>
                       )}
                     </DropdownMenuItem>
                   ))}
@@ -538,7 +540,7 @@ export function RepoLauncherPanel({
                   onClick={() => onResumeConversation(conv.id)}
                   className={`${LAUNCHER_CARD_CLASS} flex w-full items-start gap-3 text-left`}
                 >
-                  <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-[#c4b5fd]" />
+                  <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-push-violet" />
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-push-fg">{conv.title}</p>
                     <p className="mt-0.5 text-push-xs text-push-fg-dim">
@@ -572,7 +574,7 @@ export function RepoLauncherPanel({
             onClick={() => onResumeConversation(latestRepoConversation.id)}
             className={`${HUB_PANEL_SURFACE_CLASS} flex w-full items-start gap-3 p-3.5 text-left transition-all duration-200 hover:border-push-edge-hover`}
           >
-            <PushOrbitIcon className="mt-0.5 h-4 w-4 shrink-0 text-[#8ad4ff]" />
+            <PushOrbitIcon className="mt-0.5 h-4 w-4 shrink-0 text-push-link" />
             <div className="min-w-0">
               <p className="text-sm font-medium text-push-fg">Resume latest repo chat</p>
               <p className="mt-0.5 truncate text-xs text-push-fg-secondary">
@@ -611,7 +613,7 @@ export function RepoLauncherPanel({
           {mode !== 'chat' && onStartChat && (
             <button
               onClick={onStartChat}
-              className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 gap-2 px-3 text-sm font-medium text-[#c4b5fd]`}
+              className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 gap-2 px-3 text-sm font-medium text-push-violet`}
             >
               <HubControlGlow />
               <MessageSquare className="relative z-10 h-4 w-4" />

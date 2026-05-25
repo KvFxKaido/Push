@@ -272,7 +272,7 @@ export function OnboardingScreen({
             </div>
 
             <div className="grid grid-cols-2 gap-2">
-              <button onClick={onStartChat} className={`${onboardingButtonClass} text-[#c4b5fd]`}>
+              <button onClick={onStartChat} className={`${onboardingButtonClass} text-push-violet`}>
                 <HubControlGlow />
                 <MessageSquare className="relative z-10 h-4 w-4" />
                 <span className="relative z-10">Chat</span>
