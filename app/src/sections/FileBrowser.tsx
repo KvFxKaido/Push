@@ -203,7 +203,7 @@ export function FileBrowser({
   return (
     <div className="flex h-dvh flex-col bg-[#000] safe-area-top">
       {/* Header */}
-      <header className="flex items-center gap-2 border-b border-push-surface-active bg-push-grad-panel px-3 py-3">
+      <header className="flex items-center gap-2 border-b border-push-edge-subtle bg-push-grad-panel px-3 py-3">
         <button
           onClick={onBack}
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-push-edge bg-push-surface text-push-fg-secondary transition-colors hover:border-push-edge-hover hover:bg-push-surface-hover hover:text-push-fg active:scale-95"

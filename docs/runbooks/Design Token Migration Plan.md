@@ -51,6 +51,9 @@ handful-of-files problem:
 
 ## Reference data
 
+All counts below are from the **initial audit** (historical), kept to show what
+each phase targeted; they don't reflect the current baseline.
+
 **Exact-token swaps (P1):**
 
 | Hex | Token | Count |
@@ -107,7 +110,7 @@ screens is the acceptance bar.
 - **P3 ✓ — Drift** Snapped 29 off-shades (123 occurrences, all ≤12 RGB from
   their nearest token) to tokens, utility-preserving (e.g. `border-[#2a3447]` →
   `border-push-edge-hover`, `text-[#fafafa]` → `text-push-fg`). Small but real
-  color shifts — reviewed visually before merge. Baseline 264 → 142. One
+  color shifts — **pending visual review** on the PR. Baseline 264 → 142. One
   `[background-color:#121926]` arbitrary-property form is left for the tail (a
   token name can't go in raw CSS — needs a utility rewrite or a CSS var).
 - **Tail** Near-blacks (decide: `push-surface*` vs. a new black token) and the

@@ -40,6 +40,11 @@ const SETTINGS_TAB_META: Record<SettingsTabKey, { title: string; description: st
   },
 };
 
+// `[background-color:#121926]` stays a raw hex: Tailwind theme tokens (push-*)
+// are utilities, not values, so they can't be referenced inside an arbitrary
+// CSS property like `[background-color:...]`. The token equivalent would be
+// bg-push-surface-active, but the native <select> needs the bracketed property
+// to override the UA background. The <option> children use the token.
 const SETTINGS_SELECT_CLASS =
   'rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50 [color-scheme:dark] [background-color:#121926] [&>option]:bg-push-surface-active [&>option]:text-push-fg';
 
@@ -960,7 +965,7 @@ export function SettingsSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side={side}
-        className="w-[86vw] rounded-r-2xl border-push-surface-active bg-push-grad-panel p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.3)] sm:max-w-none [&>[data-slot=sheet-close]]:text-push-fg-secondary [&>[data-slot=sheet-close]]:hover:text-push-fg"
+        className="w-[86vw] rounded-r-2xl border-push-edge-subtle bg-push-grad-panel p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.3)] sm:max-w-none [&>[data-slot=sheet-close]]:text-push-fg-secondary [&>[data-slot=sheet-close]]:hover:text-push-fg"
       >
         <SheetTitle className="sr-only">Settings</SheetTitle>
         <SheetDescription className="sr-only">Configure your workspace</SheetDescription>
