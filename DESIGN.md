@@ -48,6 +48,7 @@ Tokens below are Tailwind theme extensions. Use them with the appropriate utilit
 | `push-accent`| `#0070f3` | Primary blue, CTAs, glow         |
 | `push-sky`   | `#38bdf8` | Focus rings, cyan highlights     |
 | `push-link`  | `#5cb7ff` | Links, interactive text actions  |
+| `push-link-hover` | `#86ccff` | Brighter link color on hover |
 | `push-violet`| `#c4b5fd` | Chat / conversation accent       |
 
 ### Status

@@ -41,6 +41,7 @@ module.exports = {
         'push-accent': '#0070f3', // blue accent
         'push-sky': '#38bdf8', // cyan accent (focus rings, glow)
         'push-link': '#5cb7ff', // bright blue links, actions
+        'push-link-hover': '#86ccff', // brighter link on hover
         'push-glow': '#0070f3', // glow color for interactive elements
         'push-violet': '#c4b5fd', // violet accent — chat/conversation affordances
         // ──────────────────────────────────────────────────
