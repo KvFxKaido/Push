@@ -10,6 +10,7 @@ import type {
   DurableObjectNamespace,
   Fetcher,
   KVNamespace,
+  R2Bucket,
   RateLimit,
 } from '@cloudflare/workers-types';
 import {
@@ -113,6 +114,12 @@ export interface Env {
   // (NOT_CONFIGURED 503) on every route including create when the binding
   // is missing. No silent auth bypass; no half-auth'd sandboxes.
   SANDBOX_TOKENS?: KVNamespace;
+  // R2 bucket backing Cloudflare-provider filesystem snapshots (the
+  // hibernate/restore-snapshot routes). Stores a base64 tar.gz of /workspace
+  // (source + .git, minus node_modules/build caches). Optional, fail-closed:
+  // CF hibernate/restore-snapshot return NOT_CONFIGURED 503 when unset, so the
+  // operator notices instead of silently losing snapshot capability.
+  SNAPSHOTS?: R2Bucket;
   // Renderable artifact store (HTML/React/Mermaid/file-tree) — same
   // fail-closed pattern as SANDBOX_TOKENS: optional binding, every
   // /api/artifacts/* route returns NOT_CONFIGURED 503 when unset so the

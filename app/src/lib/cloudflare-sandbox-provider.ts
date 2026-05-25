@@ -17,7 +17,7 @@
  * matching token.
  *
  * Capabilities:
- *   - snapshots: false (follow-up PR adds R2-backed archive snapshots)
+ *   - snapshots: true (R2-backed archive snapshots — hibernate/restore/delete)
  *   - portForwarding: false (SDK supports it; wire later)
  *   - externalStorage: false (R2 bindings exist; wire later)
  *
@@ -113,7 +113,7 @@ export class CloudflareSandboxProvider implements SandboxProvider {
   readonly name = 'cloudflare';
 
   readonly capabilities: SandboxProviderCapabilities = {
-    snapshots: false,
+    snapshots: true,
     portForwarding: false,
     externalStorage: false,
     staticPolicyEnforcement: false,
@@ -358,28 +358,73 @@ export class CloudflareSandboxProvider implements SandboxProvider {
     });
   }
 
-  // -- Snapshots (not supported on CF provider yet) -------------------------
-  // Class methods may take fewer params than the interface requires; callers
-  // still pass their args and TS accepts the contravariant signature.
+  // -- Snapshots (R2-backed archives) ---------------------------------------
+  // hibernate tars /workspace (source + .git, minus node_modules/build caches)
+  // into R2 and frees the container; restore-snapshot pulls it into a fresh
+  // sandbox. Wire shape matches Modal's hibernate/restore-snapshot routes.
 
-  async snapshot(): Promise<SnapshotHandle> {
-    throw new SandboxError(
-      'Snapshots are not supported on the Cloudflare provider yet',
-      'SNAPSHOT_FAILED',
-    );
+  async snapshot(sandboxId: string): Promise<SnapshotHandle> {
+    const res = await call<{
+      ok?: boolean;
+      snapshot_id?: string;
+      restore_token?: string;
+      size_bytes?: number;
+      error?: string;
+    }>('hibernate', {
+      sandbox_id: sandboxId,
+      owner_token: this.tokenFor(sandboxId),
+    });
+    if (!res.ok || !res.snapshot_id || !res.restore_token) {
+      throw new SandboxError(res.error || 'Snapshot failed', 'SNAPSHOT_FAILED');
+    }
+    // The container is terminated by hibernate — drop its cached token.
+    this.ownerTokens.delete(sandboxId);
+    return {
+      snapshotId: res.snapshot_id,
+      restoreToken: res.restore_token,
+      metadata: res.size_bytes != null ? { sizeBytes: res.size_bytes } : undefined,
+    };
   }
 
-  async restore(): Promise<SandboxSession> {
-    throw new SandboxError(
-      'Snapshot restore is not supported on the Cloudflare provider yet',
-      'SNAPSHOT_NOT_FOUND',
-    );
+  async restore(handle: SnapshotHandle): Promise<SandboxSession> {
+    if (!handle.restoreToken) {
+      throw new SandboxError('Missing restore token', 'AUTH_FAILURE');
+    }
+    const res = await call<{
+      ok?: boolean;
+      sandbox_id?: string;
+      owner_token?: string;
+      status?: 'ready' | 'error';
+      workspace_revision?: number;
+      environment?: SandboxEnvironment;
+      error?: string;
+    }>('restore-snapshot', {
+      snapshot_id: handle.snapshotId,
+      restore_token: handle.restoreToken,
+    });
+    if (!res.ok || !res.sandbox_id) {
+      throw new SandboxError(res.error || 'Snapshot restore failed', 'SNAPSHOT_NOT_FOUND');
+    }
+    const ownerToken = res.owner_token ?? '';
+    if (ownerToken) {
+      this.ownerTokens.set(res.sandbox_id, ownerToken);
+    }
+    return {
+      sandboxId: res.sandbox_id,
+      ownerToken,
+      status: res.status ?? 'ready',
+      workspaceRevision: res.workspace_revision,
+      environment: res.environment,
+    };
   }
 
-  async deleteSnapshot(): Promise<void> {
-    throw new SandboxError(
-      'Snapshot delete is not supported on the Cloudflare provider yet',
-      'SNAPSHOT_NOT_FOUND',
-    );
+  async deleteSnapshot(handle: SnapshotHandle): Promise<void> {
+    if (!handle.restoreToken) {
+      throw new SandboxError('Missing restore token', 'AUTH_FAILURE');
+    }
+    await call<{ ok: boolean }>('delete-snapshot', {
+      snapshot_id: handle.snapshotId,
+      restore_token: handle.restoreToken,
+    });
   }
 }

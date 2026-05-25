@@ -43,6 +43,7 @@ import {
   verifyToken,
   type VerifyResult,
 } from './sandbox-token-store';
+import { putSnapshot, touchSnapshot, deleteSnapshot } from './snapshot-index';
 
 const ROUTES = new Set([
   'create',
@@ -60,6 +61,7 @@ const ROUTES = new Set([
   'probe',
   'hibernate',
   'restore-snapshot',
+  'delete-snapshot',
 ]);
 
 const MAX_READ_BYTES = 5_000_000;
@@ -198,16 +200,18 @@ export async function handleCloudflareSandbox(
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  // Owner-token gate — every route except `create` must present a valid
-  // token matching the one issued at sandbox creation time. `create` is
-  // the only exemption (that's where tokens are minted). Snapshot stubs
-  // stay gated too so real implementations inherit auth for free.
+  // Owner-token gate — every route except the exempt set below must present a
+  // valid token matching the one issued at sandbox creation time. `create` is
+  // exempt (that's where tokens are minted); `restore-snapshot` and
+  // `delete-snapshot` are exempt because there is no live sandbox to verify
+  // against — they authenticate with the snapshot's restore_token, checked
+  // against the R2 object's metadata inside their handlers.
   // The primary verifier reads the token from the sandbox itself. That
   // avoids false "expired" sessions caused by Workers KV propagation lag
   // when a request lands in a different PoP than the one that created the
   // sandbox. `cleanup` keeps a KV fallback so a dead sandbox can still be
   // torn down if the token file is no longer reachable.
-  if (route !== 'create') {
+  if (route !== 'create' && route !== 'restore-snapshot' && route !== 'delete-snapshot') {
     const sandboxId = typeof body.sandbox_id === 'string' ? body.sandbox_id : '';
     const providedToken = typeof body.owner_token === 'string' ? body.owner_token : '';
     let auth: VerifyResult;
@@ -287,14 +291,11 @@ export async function handleCloudflareSandbox(
       case 'probe':
         return await routeProbe(env, body);
       case 'hibernate':
+        return await routeHibernate(env, body);
       case 'restore-snapshot':
-        return Response.json(
-          {
-            error: 'Snapshots not supported on the Cloudflare provider yet',
-            code: 'SNAPSHOT_NOT_SUPPORTED',
-          },
-          { status: 501 },
-        );
+        return await routeRestoreSnapshot(env, body);
+      case 'delete-snapshot':
+        return await routeDeleteSnapshot(env, body);
       default:
         return Response.json({ error: 'Unknown route' }, { status: 404 });
     }
@@ -1101,12 +1102,14 @@ async function routeDownload(env: Env, body: Json): Promise<Response> {
   }
 }
 
-async function routeHydrate(env: Env, body: Json): Promise<Response> {
-  const sandboxId = requireStr(body, 'sandbox_id');
-  const archive = requireStr(body, 'archive');
-  const path = (str(body.path) ?? '/workspace').replace(/\/+$/g, '') || '/workspace';
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
-
+// Decode a base64 tar.gz and extract it into `path` inside a sandbox. Shared by
+// the `restore` (hydrateArchive) route and the snapshot `restore-snapshot`
+// route so the path-traversal defense lives in exactly one place.
+async function hydrateBase64IntoSandbox(
+  sandbox: SandboxStub,
+  archive: string,
+  path: string,
+): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
   // Write the base64 archive to a tmp file via the SDK instead of passing it
   // through the shell command line. ARG_MAX on Linux is typically ~2 MB, and
   // RESTORE_MAX_BODY_SIZE_BYTES allows up to 12 MB — inline piping would fail
@@ -1115,71 +1118,344 @@ async function routeHydrate(env: Env, body: Json): Promise<Response> {
   const tmpTar = `${tmpB64}.tar.gz`;
   await sandbox.writeFile(tmpB64, archive);
 
-  const mkdir = (await withExecDeadline(sandbox.exec(`mkdir -p ${JSON.stringify(path)}`))) as {
+  const cleanup = () =>
+    withExecDeadline(
+      sandbox.exec(`rm -f ${shellSingleQuote(tmpB64)} ${shellSingleQuote(tmpTar)}`),
+    ).catch(() => {});
+
+  const mkdir = (await withExecDeadline(sandbox.exec(`mkdir -p ${shellSingleQuote(path)}`))) as {
     exitCode?: number;
     stderr?: string;
   };
   if ((mkdir.exitCode ?? 0) !== 0) {
-    return Response.json(
-      {
-        error: `Failed to create target directory: ${mkdir.stderr ?? ''}`.trim(),
-        code: 'CF_ERROR',
-      },
-      { status: 500 },
-    );
+    // No cleanup here: tmpTar doesn't exist yet and the only stray file is the
+    // tmp .b64, which a torn-down container discards anyway. Matches the
+    // pre-refactor behavior the route's tests pin.
+    return {
+      ok: false,
+      status: 500,
+      error: `Failed to create target directory: ${(mkdir.stderr ?? '').trim()}`,
+    };
   }
 
-  const decode = (await withExecDeadline(sandbox.exec(`base64 -d ${tmpB64} > ${tmpTar}`))) as {
+  const decode = (await withExecDeadline(
+    sandbox.exec(`base64 -d ${shellSingleQuote(tmpB64)} > ${shellSingleQuote(tmpTar)}`),
+  )) as {
     exitCode?: number;
     stderr?: string;
   };
   if ((decode.exitCode ?? 0) !== 0) {
-    await withExecDeadline(sandbox.exec(`rm -f ${tmpB64} ${tmpTar}`)).catch(() => {});
-    return Response.json(
-      { error: `Failed to decode archive: ${decode.stderr ?? ''}`.trim(), code: 'CF_ERROR' },
-      { status: 400 },
-    );
+    await cleanup();
+    return {
+      ok: false,
+      status: 400,
+      error: `Failed to decode archive: ${(decode.stderr ?? '').trim()}`,
+    };
   }
 
   // Defense in depth against path traversal: list archive members first and
   // refuse if any entry is absolute or contains "..". Even with internal
   // traffic we trust, this keeps a bad producer from escaping the target
   // directory during hydrate.
-  const list = (await withExecDeadline(sandbox.exec(`tar -tzf ${tmpTar}`))) as {
+  const list = (await withExecDeadline(sandbox.exec(`tar -tzf ${shellSingleQuote(tmpTar)}`))) as {
     stdout?: string;
     exitCode?: number;
     stderr?: string;
   };
   if ((list.exitCode ?? 0) !== 0) {
-    await withExecDeadline(sandbox.exec(`rm -f ${tmpB64} ${tmpTar}`)).catch(() => {});
-    return Response.json(
-      { error: `Invalid archive: ${list.stderr ?? ''}`.trim(), code: 'CF_ERROR' },
-      { status: 400 },
-    );
+    await cleanup();
+    return { ok: false, status: 400, error: `Invalid archive: ${(list.stderr ?? '').trim()}` };
   }
   const members = (list.stdout ?? '').split('\n').filter(Boolean);
   const unsafe = members.find((m) => m.startsWith('/') || m.split('/').some((seg) => seg === '..'));
   if (unsafe) {
-    await withExecDeadline(sandbox.exec(`rm -f ${tmpB64} ${tmpTar}`)).catch(() => {});
-    return Response.json(
-      { error: `Archive member rejected (path traversal): ${unsafe}`, code: 'CF_ERROR' },
-      { status: 400 },
-    );
+    await cleanup();
+    return { ok: false, status: 400, error: `Archive member rejected (path traversal): ${unsafe}` };
   }
 
   const extract = (await withExecDeadline(
-    sandbox.exec(`tar -xzf ${tmpTar} -C ${JSON.stringify(path)} --no-same-owner`),
+    sandbox.exec(
+      `tar -xzf ${shellSingleQuote(tmpTar)} -C ${shellSingleQuote(path)} --no-same-owner`,
+    ),
   )) as { exitCode?: number; stderr?: string };
-  await withExecDeadline(sandbox.exec(`rm -f ${tmpB64} ${tmpTar}`)).catch(() => {});
+  await cleanup();
 
   if ((extract.exitCode ?? 0) !== 0) {
+    return {
+      ok: false,
+      status: 500,
+      error: `Archive extraction failed: ${(extract.stderr ?? '').trim()}`,
+    };
+  }
+  return { ok: true };
+}
+
+async function routeHydrate(env: Env, body: Json): Promise<Response> {
+  const sandboxId = requireStr(body, 'sandbox_id');
+  const archive = requireStr(body, 'archive');
+  const path = (str(body.path) ?? '/workspace').replace(/\/+$/g, '') || '/workspace';
+  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+
+  const result = await hydrateBase64IntoSandbox(sandbox, archive, path);
+  if (!result.ok) {
+    return Response.json({ error: result.error, code: 'CF_ERROR' }, { status: result.status });
+  }
+  return Response.json({ ok: true });
+}
+
+// ---------------------------------------------------------------------------
+// Snapshots (R2-backed) — the Cloudflare equivalent of Modal's filesystem
+// snapshots. hibernate tars /workspace, stores it in R2, and frees the
+// container; restore-snapshot pulls it back into a fresh sandbox. The wire
+// contract matches the Modal /api/sandbox/hibernate + /restore-snapshot shape
+// ({ ok, snapshot_id, restore_token } / { ok, sandbox_id, owner_token, ... })
+// so client code (idle-hibernate + reconnect-restore) works unchanged.
+// ---------------------------------------------------------------------------
+
+// Snapshot archives KEEP .git (branch, history, staged + uncommitted state) so
+// a restored sandbox faithfully continues the work — unlike the "download your
+// work" archive, which strips VCS metadata. node_modules and build caches are
+// still excluded: they're large and regenerable (npm install / rebuild after
+// restore), and would bloat the R2 object + base64 transfer.
+const SNAPSHOT_DIR_EXCLUDES = ['node_modules', '__pycache__', '.venv', 'dist', 'build'] as const;
+const SNAPSHOT_KEY_PREFIX = 'cf-snapshots/';
+// Cap on the *compressed* snapshot tar.gz. Much lower than MAX_ARCHIVE_BYTES
+// (used for one-shot downloads) because a snapshot is base64-encoded (~+33%)
+// and that string is held in Worker memory both on hibernate (from exec
+// stdout) and on restore (object.text() + the writeFile arg). With a ~128 MB
+// Worker memory ceiling, 32 MB compressed → ~43 MB base64 → ~2× copies on
+// restore stays comfortably under budget. node_modules is excluded and the
+// repo is shallow-cloned, so real source + .git is far below this.
+const MAX_SNAPSHOT_BYTES = 32 * 1024 * 1024;
+
+async function archiveWorkspaceToBase64(
+  sandbox: SandboxStub,
+  excludes: readonly string[],
+): Promise<{ ok: true; base64: string; size: number } | { ok: false; error: string }> {
+  const tmp = `/tmp/push-snapshot-${crypto.randomUUID()}.tar.gz`;
+  const quotedTmp = shellSingleQuote(tmp);
+  const excludeArgs = excludes.map((e) => `--exclude=${shellSingleQuote(e)}`).join(' ');
+  try {
+    const tar = (await withExecDeadline(
+      sandbox.exec(`tar -czf ${quotedTmp} ${excludeArgs} -C /workspace .`),
+    )) as { stderr?: string; exitCode?: number };
+    if ((tar.exitCode ?? 0) !== 0) {
+      return { ok: false, error: `Snapshot archive failed: ${(tar.stderr ?? '').trim()}` };
+    }
+    // Measure off the temp file before materializing base64 so an oversized
+    // archive is rejected without buffering it into worker memory first.
+    const sizeRes = (await withExecDeadline(sandbox.exec(`stat -c %s -- ${quotedTmp}`))) as {
+      stdout?: string;
+      stderr?: string;
+      exitCode?: number;
+    };
+    const size = Number.parseInt((sizeRes.stdout ?? '').trim(), 10);
+    if ((sizeRes.exitCode ?? 0) !== 0 || !Number.isFinite(size)) {
+      return { ok: false, error: 'Failed to measure snapshot archive size' };
+    }
+    if (size > MAX_SNAPSHOT_BYTES) {
+      return { ok: false, error: `Snapshot exceeds max size of ${MAX_SNAPSHOT_BYTES} bytes` };
+    }
+    const b64 = (await withExecDeadline(sandbox.exec(`base64 -w0 -- ${quotedTmp}`))) as {
+      stdout?: string;
+      stderr?: string;
+      exitCode?: number;
+    };
+    if ((b64.exitCode ?? 0) !== 0) {
+      return { ok: false, error: `Snapshot encode failed: ${(b64.stderr ?? '').trim()}` };
+    }
+    return { ok: true, base64: b64.stdout?.trim() ?? '', size };
+  } finally {
+    await withExecDeadline(sandbox.exec(`rm -f ${quotedTmp}`)).catch(() => {});
+  }
+}
+
+async function routeHibernate(env: Env, body: Json): Promise<Response> {
+  if (!env.SNAPSHOTS) {
     return Response.json(
-      {
-        error: `Archive extraction failed: ${extract.stderr ?? ''}`.trim(),
-        code: 'CF_ERROR',
-      },
-      { status: 500 },
+      { ok: false, error: 'Snapshot storage (R2) is not configured', code: 'CF_NOT_CONFIGURED' },
+      { status: 503 },
     );
+  }
+  const sandboxId = requireStr(body, 'sandbox_id');
+  const repoFullName = str(body.repo_full_name);
+  const branch = str(body.branch);
+  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+
+  const archived = await archiveWorkspaceToBase64(sandbox, SNAPSHOT_DIR_EXCLUDES);
+  if (!archived.ok) {
+    return Response.json({ ok: false, error: archived.error, code: 'CF_ERROR' }, { status: 500 });
+  }
+
+  const snapshotId = `${SNAPSHOT_KEY_PREFIX}${crypto.randomUUID()}`;
+  const restoreToken = crypto.randomUUID();
+  await env.SNAPSHOTS.put(snapshotId, archived.base64, {
+    customMetadata: { rt: restoreToken, repo: repoFullName ?? '', branch: branch ?? '' },
+    httpMetadata: { contentType: 'text/plain' },
+  });
+
+  // Advisory index (best-effort) — mirrors the Modal path so the eviction cron
+  // and resume-by-repo lookup see CF snapshots too. NOT the auth boundary:
+  // restore verifies the token against the R2 object's own metadata.
+  if (env.SNAPSHOT_INDEX && repoFullName && branch) {
+    await putSnapshot(env.SNAPSHOT_INDEX, {
+      repoFullName,
+      branch,
+      imageId: snapshotId,
+      restoreToken,
+      sizeBytes: archived.size,
+    }).catch(() => {});
+  }
+
+  // Free the container now that its state is durable — mirrors Modal's
+  // snapshot-and-terminate. Best-effort; the snapshot is already safe in R2.
+  await sandbox.destroy?.().catch(() => {});
+  await revokeToken(env.SANDBOX_TOKENS, sandboxId).catch(() => {});
+
+  return Response.json({
+    ok: true,
+    snapshot_id: snapshotId,
+    restore_token: restoreToken,
+    size_bytes: archived.size,
+  });
+}
+
+async function routeRestoreSnapshot(env: Env, body: Json): Promise<Response> {
+  if (!env.SNAPSHOTS) {
+    return Response.json(
+      { ok: false, error: 'Snapshot storage (R2) is not configured', code: 'CF_NOT_CONFIGURED' },
+      { status: 503 },
+    );
+  }
+  if (!env.SANDBOX_TOKENS) {
+    return Response.json(
+      { ok: false, error: 'Sandbox token store is not configured', code: 'CF_NOT_CONFIGURED' },
+      { status: 503 },
+    );
+  }
+  const snapshotId = requireStr(body, 'snapshot_id');
+  const restoreToken = requireStr(body, 'restore_token');
+  const repoFullName = str(body.repo_full_name);
+  const branch = str(body.branch);
+
+  // Bound the token before any R2 work or constant-time compare. This route is
+  // owner-token-gate-exempt, so an unbounded restore_token would otherwise let
+  // a caller force arbitrarily large UTF-8 encoding + comparison work.
+  if (restoreToken.length > MAX_TOKEN_BYTES) {
+    return Response.json(
+      { ok: false, error: 'Invalid restore token', code: 'AUTH_FAILURE' },
+      { status: 403 },
+    );
+  }
+
+  const object = await env.SNAPSHOTS.get(snapshotId);
+  if (!object) {
+    return Response.json(
+      { ok: false, error: 'Snapshot not found', code: 'SNAPSHOT_NOT_FOUND' },
+      { status: 404 },
+    );
+  }
+  // Auth: the restore token must match the one stamped on the R2 object at
+  // hibernate time. Constant-time compare, same as owner-token verification.
+  const expected = object.customMetadata?.rt ?? '';
+  if (!expected || !timingSafeEqual(expected, restoreToken)) {
+    return Response.json(
+      { ok: false, error: 'Invalid restore token', code: 'AUTH_FAILURE' },
+      { status: 403 },
+    );
+  }
+  const archive = await object.text();
+
+  const sandboxId = crypto.randomUUID();
+  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+
+  // The archive carries /workspace including .git, but global git identity
+  // (~/.gitconfig) lives outside it — set a default so post-restore commits
+  // don't fail with "empty ident". Mirrors routeCreate's git config step.
+  await withExecDeadline(
+    sandbox.exec(
+      "git config --global user.name 'Push User' && git config --global user.email 'sandbox@diff.app'",
+    ),
+  ).catch(() => {});
+
+  const hydrated = await hydrateBase64IntoSandbox(sandbox, archive, '/workspace');
+  if (!hydrated.ok) {
+    await sandbox.destroy?.().catch(() => {});
+    return Response.json(
+      { ok: false, error: hydrated.error, code: 'CF_ERROR' },
+      { status: hydrated.status },
+    );
+  }
+
+  // Mint a fresh owner token for the new sandbox (the old one died with its
+  // container). Fail closed: if issuance fails, destroy the sandbox so we
+  // don't orphan an unreachable, un-cleanable container.
+  let ownerToken: string;
+  try {
+    ownerToken = await issueToken(env.SANDBOX_TOKENS, sandboxId);
+    await sandbox.writeFile(OWNER_TOKEN_PATH, ownerToken);
+  } catch (err) {
+    await sandbox.destroy?.().catch(() => {});
+    await revokeToken(env.SANDBOX_TOKENS, sandboxId).catch(() => {});
+    throw err;
+  }
+
+  const environment = await probeEnvironment(sandbox);
+
+  // Advisory: refresh the index access time so the restored snapshot's TTL
+  // resets (matches Modal's restore-snapshot index touch).
+  if (env.SNAPSHOT_INDEX && repoFullName && branch) {
+    await touchSnapshot(env.SNAPSHOT_INDEX, repoFullName, branch).catch(() => {});
+  }
+
+  return Response.json({
+    ok: true,
+    sandbox_id: sandboxId,
+    owner_token: ownerToken,
+    status: 'ready',
+    workspace_revision: 0,
+    environment,
+  });
+}
+
+async function routeDeleteSnapshot(env: Env, body: Json): Promise<Response> {
+  if (!env.SNAPSHOTS) {
+    return Response.json(
+      { ok: false, error: 'Snapshot storage (R2) is not configured', code: 'CF_NOT_CONFIGURED' },
+      { status: 503 },
+    );
+  }
+  const snapshotId = requireStr(body, 'snapshot_id');
+  const restoreToken = requireStr(body, 'restore_token');
+
+  // Same DoS guard as restore-snapshot: this route is owner-token-gate-exempt,
+  // so bound the token before the metadata lookup + constant-time compare.
+  if (restoreToken.length > MAX_TOKEN_BYTES) {
+    return Response.json(
+      { ok: false, error: 'Invalid restore token', code: 'AUTH_FAILURE' },
+      { status: 403 },
+    );
+  }
+
+  // head() fetches metadata without downloading the archive body.
+  const head = await env.SNAPSHOTS.head(snapshotId);
+  // Idempotent: a snapshot that's already gone is a successful delete.
+  if (!head) return Response.json({ ok: true });
+
+  const expected = head.customMetadata?.rt ?? '';
+  if (!expected || !timingSafeEqual(expected, restoreToken)) {
+    return Response.json(
+      { ok: false, error: 'Invalid restore token', code: 'AUTH_FAILURE' },
+      { status: 403 },
+    );
+  }
+
+  await env.SNAPSHOTS.delete(snapshotId);
+
+  const repoFullName = str(body.repo_full_name);
+  const branch = str(body.branch);
+  if (env.SNAPSHOT_INDEX && repoFullName && branch) {
+    await deleteSnapshot(env.SNAPSHOT_INDEX, repoFullName, branch).catch(() => {});
   }
 
   return Response.json({ ok: true });
