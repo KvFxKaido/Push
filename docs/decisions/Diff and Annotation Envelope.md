@@ -3,7 +3,7 @@
 Date: 2026-05-12
 Status: **Draft** — design-in-motion; implementation requires a `ROADMAP.md` entry before commitments
 Owner: Push
-Related: `docs/decisions/Remote Sessions via pushd Relay.md`, `docs/decisions/Web and CLI Runtime Contract.md`, `docs/architecture.md`
+Related: `docs/decisions/Remote Sessions via pushd Relay.md`, `docs/decisions/Web and CLI Runtime Contract.md`, `ARCHITECTURE.md`
 
 ## Context
 
@@ -60,7 +60,7 @@ Explicitly **not** in scope for v1:
 
 - Rendering options (layout mode, theme, line-wrap). Those are renderer concerns.
 - Syntax highlighting tokens. The renderer asks Shiki (or its TUI equivalent) for those given the file path/extension; transporting them would bloat the envelope and freeze a highlighter choice in the protocol.
-- Three-way / merge-conflict diffs. Push doesn't run local merges (`docs/architecture.md` — "Push **never** runs local `git merge`").
+- Three-way / merge-conflict diffs. Push doesn't run local merges (`ARCHITECTURE.md` — "Push **never** runs local `git merge`").
 
 ## Non-Goals
 
@@ -94,7 +94,7 @@ What to study from each project, and what to explicitly leave behind.
 
 **`@pierre/diffs`:**
 - Study: annotation framework (per-line attachment, layered content), unified vs split layout, intra-line char/word highlights, Shiki theming integration patterns.
-- Leave: Shadow DOM rendering (conflicts with Tailwind/shadcn theming surface in `docs/DESIGN.md`), the generic "third-party content" annotation shape.
+- Leave: Shadow DOM rendering (conflicts with Tailwind/shadcn theming surface in `DESIGN.md`), the generic "third-party content" annotation shape.
 
 **`modem-dev/hunk`:**
 - Study: review-first interaction model for agent changesets, sidebar navigation across many files, watch mode for live agent runs, inline AI/agent annotation placement, keyboard/pager affordances.

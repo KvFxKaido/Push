@@ -87,7 +87,7 @@ active ──idle timeout──▶ snapshotting ──▶ snapshotted ──resu
 | State | Meaning | Visible to the agent? |
 |---|---|---|
 | `active` | Container is running, accepting calls. | Yes (existing). |
-| `snapshotting` | A snapshot is being taken; container still serves reads but blocks mutations. | Yes — surfaced in the session capability block described in [architecture: Key Systems](../architecture.md#key-systems) so the agent knows not to dispatch more tools. |
+| `snapshotting` | A snapshot is being taken; container still serves reads but blocks mutations. | Yes — surfaced in the session capability block described in [architecture: Key Systems](../../ARCHITECTURE.md#key-systems) so the agent knows not to dispatch more tools. |
 | `snapshotted` | Container has been terminated; a snapshot exists for `(repo, branch)`. No live container. | No — the agent sees "no sandbox" until it's restored. |
 | `restoring` | A new container is being created from the snapshot. | Yes — surfaced as a capability-block phase, similar to today's "creating sandbox" state. |
 | `dead` | No container, no usable snapshot. Must clone fresh. | No. |
@@ -114,7 +114,7 @@ The "since last tool call" signal is already available — the run journal track
 
 **C. Explicit user hibernate (optional UI affordance).** Workspace Hub gets a "Hibernate sandbox" action that triggers an immediate snapshot. Useful for "I'm done for today, see you tomorrow." Not required for the first ship.
 
-**Crucially: branch switch does NOT snapshot.** Branch transitions now preserve context and route through `BranchSwitchPayload`; they are not automatic teardown points. Snapshotting should remain tied to eviction, idle hibernation, or an explicit user action, and any future branch-aware snapshot UX needs to respect the fork/switch semantics in `docs/architecture.md`.
+**Crucially: branch switch does NOT snapshot.** Branch transitions now preserve context and route through `BranchSwitchPayload`; they are not automatic teardown points. Snapshotting should remain tied to eviction, idle hibernation, or an explicit user action, and any future branch-aware snapshot UX needs to respect the fork/switch semantics in `ARCHITECTURE.md`.
 
 ### 4. When to resume
 
@@ -149,7 +149,7 @@ A daily Worker cron walks the snapshot index and evicts expired entries.
 
 ### 7. Capability block update
 
-Today the session capability block already exposes container lifetime, creation/download events, and recent workspace lifecycle state ([architecture: Key Systems](../architecture.md#key-systems)). Add three things:
+Today the session capability block already exposes container lifetime, creation/download events, and recent workspace lifecycle state ([architecture: Key Systems](../../ARCHITECTURE.md#key-systems)). Add three things:
 
 - `sandbox.phase` extended with `snapshotting | snapshotted | restoring`.
 - `sandbox.snapshotAge` (seconds since the snapshot was taken; null if active).

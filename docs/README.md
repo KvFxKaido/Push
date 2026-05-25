@@ -3,12 +3,14 @@
 Status reviewed: 2026-05-15
 
 Use this file to navigate active design/planning docs versus historical references.
-`docs/` is the canonical documentation home for this repo.
+The canonical architecture and design-system docs live at the repo root
+([`../ARCHITECTURE.md`](../ARCHITECTURE.md), [`../DESIGN.md`](../DESIGN.md));
+`docs/` is the home for decisions, runbooks, research, and security.
 
 ## Structure
 
-- `architecture.md` — tech stack, agent roles, key systems, and repo map
-- `DESIGN.md` — visual tokens, colors, typography, spacing, and component specs
+- [`../ARCHITECTURE.md`](../ARCHITECTURE.md) (repo root) — tech stack, agent roles, key systems, and repo map
+- [`../DESIGN.md`](../DESIGN.md) (repo root) — visual tokens, colors, typography, spacing, and component specs
 - `decisions/` — architecture decisions, research, analysis, and shipped design references
 - `runbooks/` — active, draft, or deferred product plans
 - `research/` — external research notes that inform upcoming design work
@@ -22,9 +24,9 @@ Use this file to navigate active design/planning docs versus historical referenc
 
 ## Architecture
 
-- `architecture.md`
+- [`../ARCHITECTURE.md`](../ARCHITECTURE.md) (repo root)
   - Status: Canonical architecture reference (tech stack, agent roles, key systems, repo map).
-- `DESIGN.md`
+- [`../DESIGN.md`](../DESIGN.md) (repo root)
   - Status: Canonical design system reference (colors, typography, spacing, components, motion).
 
 ## Decisions

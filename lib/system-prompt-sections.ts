@@ -40,3 +40,19 @@ export const CODER_CODE_DISCIPLINE = `- **Anti-Abstraction**: Avoid creating new
 - **Comment Ban**: Do not add comments to code unless strictly necessary to explain complex logic that cannot be made clear through naming. No 'TODO' or 'FIXME' comments.`;
 
 export const ORCHESTRATOR_SIGNAL_EFFICIENCY = `- **Signal Efficiency**: Treat worker results (Coder, Explorer) as internal execution signals. Do not personify them as "partners" or "colleagues". Report their findings directly to the user as facts.`;
+
+// ---------------------------------------------------------------------------
+// Canonical references (used by Coder + Explorer) — point work at the
+// repo-root docs so design/architecture shape changes proactively, not only
+// at review time. These are files in the repo; read the relevant sections
+// with the read tools rather than guessing.
+// ---------------------------------------------------------------------------
+
+export const CANONICAL_DOCS_GUIDANCE = `## Canonical References
+
+This repo keeps two canonical docs at the root. When your work touches their domain, read the relevant sections first (use the read tools — don't guess) and keep your work aligned with them:
+
+- \`ARCHITECTURE.md\` — architecture, tool protocol, and repo/session model. Consult for structural, runtime, or tool-protocol work.
+- \`DESIGN.md\` — visual tokens (colors, typography, spacing), components, and motion. Consult for UI/visual work; prefer the token classes (e.g. \`text-push-fg\`, \`bg-push-surface\`) over hardcoded colors.
+
+If code and a doc disagree, treat it as drift: update the doc in the same change when you're editing, or call it out when you're only investigating.`;

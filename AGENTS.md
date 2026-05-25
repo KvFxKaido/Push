@@ -2,7 +2,7 @@
 
 This is the **required entry doc** for Push. Repo instruction loaders read `PUSH.md` first (Push-specific override) and fall back to `AGENTS.md` → `CLAUDE.md` → `GEMINI.md`, so this file must remain self-sufficient when no `PUSH.md` is present.
 
-[`docs/architecture.md`](docs/architecture.md) is the deeper canonical reference for architecture and implementation details, but this file carries the minimum contract Push agents need at startup.
+[`ARCHITECTURE.md`](ARCHITECTURE.md) is the deeper canonical reference for architecture and implementation details, but this file carries the minimum contract Push agents need at startup.
 
 ## Core model
 
@@ -88,6 +88,6 @@ If a fourth guardrail emerges, promote this section to its own doc under `docs/d
 
 ## Pointer
 
-For full architecture, tool protocol, and implementation detail, see [`docs/architecture.md`](docs/architecture.md).
+For full architecture, tool protocol, and implementation detail, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
 For quick start and entry points, see [`CLAUDE.md`](CLAUDE.md).
-If this file conflicts with `docs/architecture.md`, prefer `docs/architecture.md` for detailed behavior and this file for startup contract.
+If this file conflicts with `ARCHITECTURE.md`, prefer `ARCHITECTURE.md` for detailed behavior and this file for startup contract.

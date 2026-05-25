@@ -6,8 +6,8 @@ Local coding agent for your terminal. Push currently ships three terminal surfac
 
 - [`architecture.md`](architecture.md) — CLI-specific architecture, runtime layers, and terminal surfaces
 - [`DESIGN.md`](DESIGN.md) — CLI/TUI presentation guidance and terminal design principles
-- [`../docs/architecture.md`](../docs/architecture.md) — shared Push architecture and operating model
-- [`../docs/DESIGN.md`](../docs/DESIGN.md) — graphical app visual system
+- [`../ARCHITECTURE.md`](../ARCHITECTURE.md) — shared Push architecture and operating model
+- [`../DESIGN.md`](../DESIGN.md) — graphical app visual system
 
 ## Quick start
 

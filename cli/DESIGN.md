@@ -1,6 +1,6 @@
 # CLI Design
 
-> Covers CLI/TUI presentation only. For the graphical app visual system, see [`../docs/DESIGN.md`](../docs/DESIGN.md).
+> Covers CLI/TUI presentation only. For the graphical app visual system, see [`../DESIGN.md`](../DESIGN.md).
 
 ## Overview
 
@@ -133,6 +133,6 @@ Use this file for terminal presentation guidance.
 
 Use shared docs for cross-surface truths:
 
-- [`../docs/architecture.md`](../docs/architecture.md) — shared architecture and operating model
-- [`../docs/DESIGN.md`](../docs/DESIGN.md) — graphical app visual system
+- [`../ARCHITECTURE.md`](../ARCHITECTURE.md) — shared architecture and operating model
+- [`../DESIGN.md`](../DESIGN.md) — graphical app visual system
 - [`README.md`](README.md) — CLI usage, commands, and operator-facing behavior

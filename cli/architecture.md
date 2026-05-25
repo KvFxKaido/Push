@@ -1,6 +1,6 @@
 # CLI Architecture
 
-> Covers CLI-specific behavior only. For shared Push architecture and operating model, see [`../docs/architecture.md`](../docs/architecture.md).
+> Covers CLI-specific behavior only. For shared Push architecture and operating model, see [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
 
 ## Overview
 
@@ -100,7 +100,7 @@ The CLI inherits shared product-wide rules from the root docs, including branch/
 
 Use the root docs for shared truths:
 
-- [`../docs/architecture.md`](../docs/architecture.md) — shared architecture and operating model
-- [`../docs/DESIGN.md`](../docs/DESIGN.md) — graphical app visual system
+- [`../ARCHITECTURE.md`](../ARCHITECTURE.md) — shared architecture and operating model
+- [`../DESIGN.md`](../DESIGN.md) — graphical app visual system
 
 Use this file for CLI-specific runtime shape, terminal surfaces, and local architectural concerns.
