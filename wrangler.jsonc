@@ -157,6 +157,16 @@
       "id": "cea06bc65f86466693b79921d3426c43"
     }
   ],
+  // R2 bucket backing Cloudflare-provider filesystem snapshots. Stores a
+  // base64 tar.gz of /workspace (source + .git, minus node_modules/build
+  // caches) keyed by an opaque snapshot id. Provision before deploy:
+  //   npx wrangler r2 bucket create push-cf-snapshots
+  "r2_buckets": [
+    {
+      "binding": "SNAPSHOTS",
+      "bucket_name": "push-cf-snapshots"
+    }
+  ],
   // Cloudflare Sandbox SDK — the default sandbox backend when
   // PUSH_SANDBOX_PROVIDER is "cloudflare" (see `vars` above). Modal stays
   // available as a fallback by redeploying with PUSH_SANDBOX_PROVIDER=modal.
