@@ -762,17 +762,15 @@ export function HubReviewTab({
       // Repo-specific review guidance from REVIEW.md, when present. Null leaves
       // the reviewer on its built-in guidance.
       //
-      // Prefer the sandbox working copy ONLY for working-tree reviews. For
-      // GitHub-sourced reviews (PR/branch/commit) read from the base branch so
-      // a PR sitting on its head branch can't rewrite the rules used to review
-      // itself. Skip the status flash when there's nothing to look up.
-      const reviewGuidanceSandboxId =
-        nextContext.kind === 'sandbox' ? reviewerSandboxId : undefined;
-      if (repoFullName || reviewGuidanceSandboxId) setStatus('Loading REVIEW.md…');
+      // Honor the branch under review: prefer the sandbox working copy (live,
+      // possibly-uncommitted edits on the active branch), then fall back to the
+      // active branch's pushed REVIEW.md on GitHub. Skip the status flash when
+      // there's nothing to look up.
+      if (repoFullName || reviewerSandboxId) setStatus('Loading REVIEW.md…');
       const reviewGuidance = await resolveReviewGuidance({
         repoFullName,
-        ref: defaultBranch || activeBranch,
-        sandboxId: reviewGuidanceSandboxId,
+        ref: activeBranch || defaultBranch,
+        sandboxId: reviewerSandboxId,
       });
 
       let reviewResult: ReviewResult;

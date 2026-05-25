@@ -11,13 +11,9 @@ const REVIEW_GUIDANCE_MAX_LINES = 600;
 export interface ResolveReviewGuidanceArgs {
   /** owner/name — omitted in Sandbox/Scratch mode. */
   repoFullName?: string | null;
-  /** Branch to read REVIEW.md from when falling back to GitHub. Use the base branch. */
+  /** Branch to read REVIEW.md from when falling back to GitHub. Use the branch under review. */
   ref?: string | null;
-  /**
-   * Sandbox to read the working-copy REVIEW.md from. Pass only when the review
-   * targets the working tree; omit for GitHub-sourced reviews so guidance comes
-   * from the base branch (`ref`) and a PR can't override its own review rules.
-   */
+  /** Sandbox to read the working-copy REVIEW.md from, when one is ready. */
   sandboxId?: string | null;
 }
 
