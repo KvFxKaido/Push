@@ -55,7 +55,8 @@ import {
   isSimilarityLoopDetectionEnabled,
   writeTargetOf,
 } from '../lib/loop-detection.ts';
-import { recordLoopVerdict } from '../lib/loop-metrics.ts';
+import { getLoopMetrics, recordLoopVerdict, resetLoopMetrics } from '../lib/loop-metrics.ts';
+import { appendLoopMetricsRecord } from './loop-metrics-store.ts';
 import { TurnPolicyRegistry, createCoderPolicy } from './turn-policy.js';
 import { buildMalformedToolCallEvents, summarizeToolResultPreview } from '../lib/run-events.ts';
 import { getDefaultCliHookRegistry, readCliCurrentBranch } from './tool-hooks-default.ts';
@@ -668,11 +669,79 @@ This summary will be persisted for retrieval by future related runs, so make it 
  * - emit: (event) => void — callback for streaming events (replaces stdout writing)
  * - runId: string — optional run id override (used by pushd for ack/event correlation)
  */
+/**
+ * Export the loop-detection telemetry for one runAssistantLoop invocation.
+ *
+ * Scope is unique per invocation (minted in the wrapper) so every run —
+ * top-level, delegated sub-run, parallel node — accounts in isolation even
+ * though they share `state.sessionId` / `runId`. Writes a JSONL record only
+ * when the run flagged at least one non-`none` verdict (keeps the file
+ * signal-dense; each record carries its own `total` for per-run rates), then
+ * clears the scope. Best-effort: never throws into the run's control flow.
+ */
+async function finalizeLoopMetricsExport(
+  scope: string,
+  sessionId: string,
+  result: RunResult | undefined,
+): Promise<void> {
+  try {
+    const metrics = getLoopMetrics(scope);
+    const flagged = metrics.total - metrics.byLevel.none;
+    if (flagged > 0) {
+      console.warn(
+        `[Push] loop-detection summary (session ${sessionId}): ${flagged}/${metrics.total} turns flagged — ` +
+          `warn ${metrics.byLevel.warn}, block ${metrics.byLevel.block}, compact ${metrics.byLevel.compact}, abort ${metrics.byLevel.abort}; ` +
+          `${metrics.darkSuppressed} would-fire (dark), ${metrics.enforcedActions} enforced.`,
+      );
+      await appendLoopMetricsRecord({
+        at: Date.now(),
+        surface: 'cli',
+        sessionId,
+        runId: result?.runId,
+        outcome: result?.outcome,
+        rounds: result?.rounds,
+        metrics,
+      });
+    }
+  } catch {
+    // Telemetry is best-effort; swallow so a write/IO error can't fail the run.
+  } finally {
+    resetLoopMetrics(scope);
+  }
+}
+
 export async function runAssistantLoop(
   state: SessionState,
   providerConfig: ProviderConfig,
   apiKey: string,
   maxRounds: number,
+  options: RunOptions = {},
+): Promise<RunResult> {
+  // Unique per-invocation scope for loop-detection telemetry — isolates this
+  // run's verdicts from sibling/sub-runs that share sessionId/runId.
+  const loopMetricsScope = `loop:${makeRunId()}`;
+  let result: RunResult | undefined;
+  try {
+    result = await runAssistantLoopImpl(
+      state,
+      providerConfig,
+      apiKey,
+      maxRounds,
+      loopMetricsScope,
+      options,
+    );
+    return result;
+  } finally {
+    await finalizeLoopMetricsExport(loopMetricsScope, state.sessionId, result);
+  }
+}
+
+async function runAssistantLoopImpl(
+  state: SessionState,
+  providerConfig: ProviderConfig,
+  apiKey: string,
+  maxRounds: number,
+  loopMetricsScope: string,
   options: RunOptions = {},
 ): Promise<RunResult> {
   const {
@@ -1681,7 +1750,7 @@ export async function runAssistantLoop(
     });
     recordLoopVerdict({
       surface: 'cli',
-      scope: state.sessionId,
+      scope: loopMetricsScope,
       round,
       level: loopVerdict.level,
       action: loopVerdict.action,
