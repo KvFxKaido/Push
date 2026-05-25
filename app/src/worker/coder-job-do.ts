@@ -28,10 +28,15 @@
 import type { DurableObjectState } from '@cloudflare/workers-types';
 import {
   runCoderAgent as runCoderAgentLib,
+  SandboxUnreachableError,
   type CoderAgentOptions,
   type CoderCheckpointState,
 } from '@push/lib/coder-agent';
-import { createWorkspaceSnapshot, SNAPSHOT_KEY_PREFIX } from './worker-cf-sandbox';
+import {
+  createWorkspaceSnapshot,
+  restoreWorkspaceSnapshot,
+  SNAPSHOT_KEY_PREFIX,
+} from './worker-cf-sandbox';
 import {
   buildCoderDetectors,
   buildCoderEvaluateAfterModel,
@@ -200,6 +205,11 @@ const SERVICE_OVERRIDES = new Map<string, CoderJobServiceOverrides>();
 // the DO forever. 60 min stays comfortably under the sandbox's own lifetime
 // (Modal containers live ~2h), so a job can't outlive the container it runs in.
 export const MAX_JOB_WALL_CLOCK_MS = 60 * 60 * 1000;
+
+// Max times a single job will auto-resume from a checkpoint after a confirmed
+// sandbox death. Bounded so a sandbox that keeps dying (bad image, infra issue)
+// can't restore-and-retry forever — after this the job fails as before.
+export const MAX_JOB_RESUMES = 2;
 
 // SSE keepalive cadence. Cloudflare's edge proxies drop HTTP streams that
 // go quiet for ~100s, so a long gap between real events (model thinking,
@@ -571,16 +581,6 @@ export class CoderJob {
   ): Promise<{ summary: string }> {
     const overrides = SERVICE_OVERRIDES.get(input.jobId) ?? {};
     const detectors = overrides.detectors ?? createWebDetectorAdapter();
-    const executor =
-      overrides.executor ??
-      createWebExecutorAdapter({
-        env: this.env,
-        origin: input.origin,
-        sandboxId: input.sandboxId,
-        ownerToken: input.ownerToken,
-        provider: input.provider,
-        jobId: input.jobId,
-      });
     const stream =
       overrides.stream ??
       createWebStreamAdapter({
@@ -605,33 +605,6 @@ export class CoderJob {
     const priorTurnsBlock = formatPriorTurnsPreamble(priorTurns);
 
     const declaredCaps = input.declaredCapabilities ?? Array.from(ROLE_CAPABILITIES.coder);
-    const capabilityLedger = new CapabilityLedger(declaredCaps);
-
-    const turnCtx: CoderTurnContext = {
-      role: 'coder',
-      round: 0,
-      maxRounds: input.envelope.harnessSettings?.maxCoderRounds ?? 30,
-      sandboxId: input.sandboxId,
-      allowedRepo: input.repoFullName,
-      activeProvider: input.provider,
-      activeModel: input.model,
-      signal,
-    };
-
-    const services = buildCoderJobServices({
-      detectors,
-      executor,
-      capabilityLedger,
-      turnCtx,
-      onStatus: () => {
-        // PR #2: no fine-grained progress events; the job status
-        // column + terminal event is all the UI layer gets.
-      },
-      correlation: input.correlation,
-      activeProvider: input.provider,
-      activeModel: input.model,
-      sandboxId: input.sandboxId,
-    });
 
     let taskPreamble = buildCoderDelegationBrief({
       ...input.envelope,
@@ -649,45 +622,154 @@ export class CoderJob {
       taskPreamble = priorTurnsBlock + '\n' + taskPreamble;
     }
 
-    const options: CoderAgentOptions<AnyToolCall, ChatCard> = {
-      provider: input.provider,
-      stream: stream as unknown as PushStream<LlmMessage>,
-      modelId: input.model,
-      sandboxId: input.sandboxId,
-      allowedRepo: input.repoFullName,
-      branchContext: input.envelope.branchContext,
-      projectInstructions: input.projectInstructions ?? input.envelope.projectInstructions,
-      instructionFilename: input.instructionFilename ?? input.envelope.instructionFilename,
-      userProfile: input.userProfile,
-      taskPreamble,
-      symbolSummary: null,
-      toolExec: buildCoderToolExec(services),
-      ...buildCoderDetectors(services),
-      webSearchToolProtocol: WEB_SEARCH_TOOL_PROTOCOL,
-      sandboxToolProtocol: getSandboxToolProtocol(),
-      verificationPolicyBlock: formatVerificationPolicyBlock(input.verificationPolicy),
-      approvalModeBlock: buildApprovalModeBlock('full-auto'),
-      evaluateAfterModel: buildCoderEvaluateAfterModel(services),
-      acceptanceCriteria: input.acceptanceCriteria ?? input.envelope.acceptanceCriteria,
-      harnessMaxRounds: input.envelope.harnessSettings?.maxCoderRounds,
-      harnessContextResetsEnabled: input.envelope.harnessSettings?.contextResetsEnabled,
-    };
+    // Seamless resume loop: on a confirmed sandbox death the kernel throws
+    // SandboxUnreachableError; we restore the latest checkpoint into a fresh
+    // sandbox and re-run the loop seeded with the checkpoint state. The
+    // sandbox-bound pieces (executor, turnCtx, services, options) are rebuilt
+    // each attempt against the current sandbox. Bounded by MAX_JOB_RESUMES.
+    let sandboxId = input.sandboxId;
+    let ownerToken = input.ownerToken;
+    let resumeState: CoderCheckpointState<ChatCard> | undefined;
+    let resumesUsed = 0;
 
-    const result = await runCoderAgentLib(options, {
-      onStatus: () => {},
-      signal,
-      // Forward the per-delegation prompt snapshot onto the job's SSE
-      // event stream so a foreground watcher can answer "what went to
-      // the background Coder for this job?" without re-running the build.
-      onRunEvent: (event) => {
-        void this.appendEvent(input.jobId, event);
-      },
-      // Durable resume checkpoint: snapshot the workspace + persist loop state
-      // every few rounds so a sandbox death can be recovered. Best-effort.
-      onCheckpoint: (state) => this.captureCheckpoint(input, state),
+    for (;;) {
+      const executor =
+        overrides.executor ??
+        createWebExecutorAdapter({
+          env: this.env,
+          origin: input.origin,
+          sandboxId,
+          ownerToken,
+          provider: input.provider,
+          jobId: input.jobId,
+        });
+      const turnCtx: CoderTurnContext = {
+        role: 'coder',
+        round: 0,
+        maxRounds: input.envelope.harnessSettings?.maxCoderRounds ?? 30,
+        sandboxId,
+        allowedRepo: input.repoFullName,
+        activeProvider: input.provider,
+        activeModel: input.model,
+        signal,
+      };
+      const services = buildCoderJobServices({
+        detectors,
+        executor,
+        capabilityLedger: new CapabilityLedger(declaredCaps),
+        turnCtx,
+        onStatus: () => {},
+        correlation: input.correlation,
+        activeProvider: input.provider,
+        activeModel: input.model,
+        sandboxId,
+      });
+
+      const options: CoderAgentOptions<AnyToolCall, ChatCard> = {
+        provider: input.provider,
+        stream: stream as unknown as PushStream<LlmMessage>,
+        modelId: input.model,
+        sandboxId,
+        allowedRepo: input.repoFullName,
+        branchContext: input.envelope.branchContext,
+        projectInstructions: input.projectInstructions ?? input.envelope.projectInstructions,
+        instructionFilename: input.instructionFilename ?? input.envelope.instructionFilename,
+        userProfile: input.userProfile,
+        taskPreamble,
+        symbolSummary: null,
+        toolExec: buildCoderToolExec(services),
+        ...buildCoderDetectors(services),
+        webSearchToolProtocol: WEB_SEARCH_TOOL_PROTOCOL,
+        sandboxToolProtocol: getSandboxToolProtocol(),
+        verificationPolicyBlock: formatVerificationPolicyBlock(input.verificationPolicy),
+        approvalModeBlock: buildApprovalModeBlock('full-auto'),
+        evaluateAfterModel: buildCoderEvaluateAfterModel(services),
+        acceptanceCriteria: input.acceptanceCriteria ?? input.envelope.acceptanceCriteria,
+        harnessMaxRounds: input.envelope.harnessSettings?.maxCoderRounds,
+        harnessContextResetsEnabled: input.envelope.harnessSettings?.contextResetsEnabled,
+        resumeState,
+      };
+
+      const checkpointSandboxId = sandboxId;
+      try {
+        const result = await runCoderAgentLib(options, {
+          onStatus: () => {},
+          signal,
+          // Forward the per-delegation prompt snapshot onto the job's SSE
+          // event stream so a foreground watcher can answer "what went to
+          // the background Coder for this job?" without re-running the build.
+          onRunEvent: (event) => {
+            void this.appendEvent(input.jobId, event);
+          },
+          // Durable resume checkpoint: snapshot the workspace + persist loop
+          // state every few rounds so a sandbox death can be recovered.
+          onCheckpoint: (state) => this.captureCheckpoint(input.jobId, checkpointSandboxId, state),
+        });
+        return { summary: result.summary };
+      } catch (err) {
+        if (!(err instanceof SandboxUnreachableError)) throw err;
+        const recovered = await this.resumeFromCheckpoint(input.jobId, resumesUsed);
+        if (!recovered) throw err;
+        sandboxId = recovered.sandboxId;
+        ownerToken = recovered.ownerToken;
+        resumeState = recovered.resumeState;
+        resumesUsed += 1;
+      }
+    }
+  }
+
+  /**
+   * Restore the latest checkpoint into a fresh sandbox so the job can resume.
+   * Returns the new sandbox handle + the deserialized loop state, or null when
+   * resume isn't possible (cap hit, no checkpoint, restore failed) — in which
+   * case the caller lets the original failure stand.
+   */
+  private async resumeFromCheckpoint(
+    jobId: string,
+    resumesUsed: number,
+  ): Promise<{
+    sandboxId: string;
+    ownerToken: string;
+    resumeState: CoderCheckpointState<ChatCard>;
+  } | null> {
+    if (resumesUsed >= MAX_JOB_RESUMES) return null;
+    const cp = this.readCheckpoint(jobId);
+    if (!cp) return null;
+
+    const restored = await restoreWorkspaceSnapshot(this.env, {
+      snapshotId: cp.snapshotId,
+      restoreToken: cp.restoreToken,
     });
+    if (!restored.ok) {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          event: 'coder_resume_restore_failed',
+          jobId,
+          round: cp.round,
+          error: restored.error,
+        }),
+      );
+      return null;
+    }
 
-    return { summary: result.summary };
+    let resumeState: CoderCheckpointState<ChatCard>;
+    try {
+      resumeState = JSON.parse(cp.agentStateJson) as CoderCheckpointState<ChatCard>;
+    } catch {
+      return null;
+    }
+
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'coder_job_resumed',
+        jobId,
+        round: cp.round,
+        sandboxId: restored.sandboxId,
+      }),
+    );
+    return { sandboxId: restored.sandboxId, ownerToken: restored.ownerToken, resumeState };
   }
 
   // -------------------------------------------------------------------------
@@ -1018,11 +1100,12 @@ export class CoderJob {
    * job's own previous checkpoint ourselves below.
    */
   private async captureCheckpoint(
-    input: CoderJobStartInput,
+    jobId: string,
+    sandboxId: string,
     state: CoderCheckpointState<ChatCard>,
   ): Promise<void> {
-    const prior = this.readCheckpoint(input.jobId);
-    const snap = await createWorkspaceSnapshot(this.env, { sandboxId: input.sandboxId });
+    const prior = this.readCheckpoint(jobId);
+    const snap = await createWorkspaceSnapshot(this.env, { sandboxId });
     if (!snap.ok) {
       // Surface the lost checkpoint in logs — onStatus is a no-op here, so this
       // is the only diagnostic trail for a snapshot a future resume may need.
@@ -1030,14 +1113,14 @@ export class CoderJob {
         JSON.stringify({
           level: 'warn',
           event: 'coder_checkpoint_failed',
-          jobId: input.jobId,
+          jobId,
           round: state.round,
           error: snap.error,
         }),
       );
       return;
     }
-    this.persistCheckpoint(input.jobId, {
+    this.persistCheckpoint(jobId, {
       round: state.round,
       snapshotId: snap.snapshotId,
       restoreToken: snap.restoreToken,

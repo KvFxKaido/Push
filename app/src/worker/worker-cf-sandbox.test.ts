@@ -3,6 +3,7 @@ import { getSandbox } from '@cloudflare/sandbox';
 import {
   createWorkspaceSnapshot,
   handleCloudflareSandbox,
+  restoreWorkspaceSnapshot,
   SANDBOX_EXEC_TIMEOUT_MS,
 } from './worker-cf-sandbox';
 import type { Env } from './worker-middleware';
@@ -1361,6 +1362,30 @@ describe('handleCloudflareSandbox snapshots (R2)', () => {
     // other's checkpoints.
     expect(indexKV.put).not.toHaveBeenCalled();
     expect(r2.delete).not.toHaveBeenCalled();
+  });
+
+  it('restoreWorkspaceSnapshot returns a result (not a throw) when Sandbox is unbound', async () => {
+    const r2 = makeR2({ 'cf-snapshots/snap1': { body: 'x', customMetadata: { rt: 'tok' } } });
+    const result = await restoreWorkspaceSnapshot(
+      makeEnv({ SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'], Sandbox: undefined }),
+      { snapshotId: 'cf-snapshots/snap1', restoreToken: 'tok' },
+    );
+    expect(result).toEqual({
+      ok: false,
+      error: expect.any(String),
+      status: 503,
+      code: 'CF_NOT_CONFIGURED',
+    });
+  });
+
+  it('restoreWorkspaceSnapshot rejects a bad token with a 403 result', async () => {
+    const r2 = makeR2({ 'cf-snapshots/snap1': { body: 'x', customMetadata: { rt: 'good' } } });
+    const result = await restoreWorkspaceSnapshot(
+      makeEnv({ SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'] }),
+      { snapshotId: 'cf-snapshots/snap1', restoreToken: 'bad' },
+    );
+    expect(result).toMatchObject({ ok: false, status: 403, code: 'AUTH_FAILURE' });
+    expect(getSandboxMock).not.toHaveBeenCalled();
   });
 
   it('restore-snapshot pulls the archive into a fresh sandbox and mints a token', async () => {
