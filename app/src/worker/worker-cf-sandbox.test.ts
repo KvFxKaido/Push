@@ -1326,6 +1326,43 @@ describe('handleCloudflareSandbox snapshots (R2)', () => {
     expect(result).toEqual({ ok: false, error: expect.any(String), status: 503 });
   });
 
+  it('createWorkspaceSnapshot returns a 503 result (not a throw) when Sandbox is unbound', async () => {
+    const r2 = makeR2();
+    const result = await createWorkspaceSnapshot(
+      makeEnv({ SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'], Sandbox: undefined }),
+      { sandboxId: 'sb-1' },
+    );
+    expect(result).toEqual({ ok: false, error: expect.any(String), status: 503 });
+  });
+
+  it('createWorkspaceSnapshot without repo/branch leaves the shared index untouched (per-job isolation)', async () => {
+    const sandbox = mockSandbox();
+    mockUuid();
+    const r2 = makeR2();
+    const indexKV = makeSnapshotIndexKV();
+    queueExecResults(sandbox, [
+      { exitCode: 0 }, // tar
+      { stdout: '64', exitCode: 0 }, // stat
+      { stdout: 'Qg', exitCode: 0 }, // base64
+      { exitCode: 0 }, // rm
+    ]);
+
+    const result = await createWorkspaceSnapshot(
+      makeEnv({
+        SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'],
+        SNAPSHOT_INDEX: indexKV as unknown as Env['SNAPSHOT_INDEX'],
+      }),
+      { sandboxId: 'sb-1' },
+    );
+
+    expect(result.ok).toBe(true);
+    // The checkpoint path must NOT participate in the repo/branch index or its
+    // reclaim — that's what keeps concurrent same-branch jobs from deleting each
+    // other's checkpoints.
+    expect(indexKV.put).not.toHaveBeenCalled();
+    expect(r2.delete).not.toHaveBeenCalled();
+  });
+
   it('restore-snapshot pulls the archive into a fresh sandbox and mints a token', async () => {
     const sandbox = mockSandbox();
     const uuid = mockUuid();

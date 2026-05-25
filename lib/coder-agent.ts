@@ -438,13 +438,21 @@ Working Memory:
  * Consistent point-in-time snapshot of the loop's resumable state, handed to
  * the host's `onCheckpoint` so it can be persisted alongside a filesystem
  * snapshot. On a sandbox death the host restores the workspace and rolls the
- * loop back to this exact `round`, so the two never diverge. `messages` and
- * `workingMemory` are live references — the host must serialize them
- * synchronously before yielding (the loop awaits `onCheckpoint`, so nothing
- * mutates them mid-call).
+ * loop back to this `round`, so the two never diverge.
+ *
+ * `messages` and `workingMemory` are live loop references. The loop awaits
+ * `onCheckpoint`, so they stay stable for the whole call — the host just must
+ * serialize/copy them within the callback rather than retaining the live
+ * references for later use.
  */
 export interface CoderCheckpointState<TCard = unknown> {
-  /** Round index this checkpoint was taken at (top of the round). */
+  /**
+   * The loop's 0-based `round` index at the top of which this checkpoint was
+   * taken — before that round's model call and tool execution. (Note this is
+   * the raw loop counter, distinct from the 1-based `rounds = round + 1` used
+   * for status/limits.) A resume re-enters the loop at this index: prior
+   * rounds' tool results are already in `messages`, and this round has not run.
+   */
   round: number;
   /** Full chat history through the prior round. */
   messages: CoderLoopMessage[];
