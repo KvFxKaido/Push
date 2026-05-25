@@ -163,8 +163,10 @@
   //   npx wrangler r2 bucket create push-cf-snapshots
   // Retention: superseded objects are deleted inline on the next hibernate, and
   // the daily cron (triggers.crons) reaps any object no longer referenced by a
-  // live snapshot-index entry. An R2 lifecycle/expiry rule (set out-of-band via
-  // the dashboard or `wrangler r2 bucket lifecycle`) is an optional backstop.
+  // live snapshot-index entry. As a belt-and-suspenders backstop, set a 7-day
+  // R2 lifecycle rule (matches the snapshot-index TTL) — one-time, out-of-band:
+  //   npm run r2:snapshots:lifecycle
+  // (i.e. `wrangler r2 bucket lifecycle add push-cf-snapshots --expire-days 7`).
   "r2_buckets": [
     {
       "binding": "SNAPSHOTS",
