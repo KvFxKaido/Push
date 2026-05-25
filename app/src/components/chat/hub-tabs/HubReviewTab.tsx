@@ -19,6 +19,7 @@ import {
   fetchGitHubReviewDiff,
   fetchLatestCommitDiff,
 } from '@/lib/github-tools';
+import { resolveReviewGuidance } from '@/lib/review-guidance';
 import { parseDiffStats } from '@/lib/diff-utils';
 import { type ActiveProvider } from '@/lib/orchestrator';
 import {
@@ -752,6 +753,15 @@ export function HubReviewTab({
             ? sandboxId || undefined
             : undefined;
 
+      // Repo-specific review guidance from REVIEW.md, when present. Null leaves
+      // the reviewer on its built-in guidance.
+      setStatus('Loading REVIEW.md…');
+      const reviewGuidance = await resolveReviewGuidance({
+        repoFullName,
+        ref: defaultBranch || activeBranch,
+        sandboxId: reviewerSandboxId,
+      });
+
       let reviewResult: ReviewResult;
 
       if (requestedReviewDepth === 'deep') {
@@ -774,6 +784,7 @@ export function HubReviewTab({
               source: reviewSourceForPrompt,
               sourceLabel: nextContext.label,
               projectInstructions,
+              reviewGuidance,
             },
             allowedRepo: repoFullName || '',
             branchContext:
@@ -810,6 +821,7 @@ export function HubReviewTab({
               source: reviewSourceForPrompt,
               sourceLabel: nextContext.label,
               projectInstructions,
+              reviewGuidance,
             },
           },
           (phase) => setStatus(phase),

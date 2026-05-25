@@ -26,6 +26,26 @@ describe('buildReviewerContextBlock', () => {
     expect(block).toContain('## Project Policy Hints');
     expect(block).toContain('Run npm test');
   });
+
+  it('renders REVIEW.md guidance when provided', () => {
+    const block = buildReviewerContextBlock({
+      repoFullName: 'owner/repo',
+      source: 'branch-diff',
+      reviewGuidance: '# REVIEW.md\n\nFlag any direct git merge as critical.',
+    });
+
+    expect(block).toContain('## Repository Review Guidance (REVIEW.md)');
+    expect(block).toContain('Flag any direct git merge as critical.');
+  });
+
+  it('omits the REVIEW.md section when no guidance is present', () => {
+    const block = buildReviewerContextBlock({
+      repoFullName: 'owner/repo',
+      source: 'branch-diff',
+    });
+
+    expect(block).not.toContain('Repository Review Guidance');
+  });
 });
 
 describe('buildAuditorContextBlock', () => {
