@@ -162,9 +162,11 @@ export function computeAdaptation(
   }
 
   // Rule 3: healthy progress near the ceiling → extend the budget. Opt-in via
-  // currentRound + maxAllowedRounds. Gated on no prior degradation this session
-  // (reductions are one-shot and persist) AND currently-healthy signals, so a
-  // session that ever showed malformed calls or edit errors never grows.
+  // currentRound + maxAllowedRounds. Gated on (a) no prior reduction this
+  // session (reductions are one-shot and persist) AND (b) current signals below
+  // the escalation thresholds. So a session that has ever tripped a reduction —
+  // or is currently breaching a threshold — never grows; sub-threshold noise
+  // (e.g. 1–2 malformed calls) still allows growth.
   const { currentRound, maxAllowedRounds } = options ?? {};
   if (
     currentRound !== undefined &&

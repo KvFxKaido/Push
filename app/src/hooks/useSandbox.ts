@@ -4,11 +4,13 @@
  * Status: idle → creating → ready → error
  *
  * The sandbox persists across messages in a single chat session.
- * Container auto-terminates on Modal's side after 30 min.
+ * Container auto-terminates on Modal's side after ~2h (see
+ * SANDBOX_TIMEOUT_SECONDS in sandbox/app.py).
  *
  * Session persistence: sandbox IDs are saved to localStorage so that
  * PWA refreshes can reconnect to an existing container instead of
- * creating a new one. Sessions expire after 25 min (safety margin).
+ * creating a new one. Saved sessions are reused for up to 50 min
+ * (safety margin under the container lifetime; see SANDBOX_MAX_AGE_MS).
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';

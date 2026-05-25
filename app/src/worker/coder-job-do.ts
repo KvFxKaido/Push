@@ -192,8 +192,8 @@ const SERVICE_OVERRIDES = new Map<string, CoderJobServiceOverrides>();
 // legitimately churn through many rounds, so the budget covers a full
 // multi-round delegation (well beyond any single tool round-trip) while still
 // guaranteeing an unhealthy run recovers in bounded time instead of haunting
-// the DO forever. 60 min also matches (and never exceeds) the sandbox's own
-// lifetime, so a job can't outlive the container it runs in.
+// the DO forever. 60 min stays comfortably under the sandbox's own lifetime
+// (Modal containers live ~2h), so a job can't outlive the container it runs in.
 export const MAX_JOB_WALL_CLOCK_MS = 60 * 60 * 1000;
 
 // SSE keepalive cadence. Cloudflare's edge proxies drop HTTP streams that

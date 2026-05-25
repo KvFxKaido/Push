@@ -3371,11 +3371,7 @@ export async function main() {
       cwd: values.cwd ? path.resolve(values.cwd) : undefined,
       maxRounds:
         values['max-rounds'] || values.maxRounds
-          ? clamp(
-              Number(values['max-rounds'] || values.maxRounds || DEFAULT_MAX_ROUNDS),
-              1,
-              MAX_ALLOWED_ROUNDS,
-            )
+          ? clamp(Number(values['max-rounds'] || values.maxRounds), 1, MAX_ALLOWED_ROUNDS)
           : undefined,
     });
   }

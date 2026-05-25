@@ -748,7 +748,7 @@ export function parseEnvironmentProbe(stdout: string): SandboxEnvironment | null
   if (diskFree) result.disk_free = diskFree;
   if (Object.keys(scripts).length) result.scripts = scripts;
   result.git_available = gitAvailable;
-  result.container_ttl = '30m';
+  result.container_ttl = '30m'; // placeholder; probeSandboxEnvironment preserves the authoritative TTL
   result.writable_root = '/workspace';
   if (uptimeSeconds !== undefined) result.uptime_seconds = uptimeSeconds;
   if (Object.keys(readiness).length > 0) result.readiness = readiness;
@@ -797,7 +797,15 @@ export async function probeSandboxEnvironment(
     suppressIdleTouch();
     const result = await execInSandbox(sandboxId, ENVIRONMENT_PROBE_SCRIPT);
     const env = parseEnvironmentProbe(result.stdout);
-    if (env) setSandboxEnvironment(sandboxId, env);
+    if (env) {
+      // The shell probe can't know the backend's real container lifetime, so
+      // parseEnvironmentProbe fills in a placeholder container_ttl. Don't let a
+      // re-probe clobber the authoritative value captured from create/restore
+      // (e.g. Modal's derived 2h) with that guess.
+      const priorTtl = getSandboxEnvironment(sandboxId)?.container_ttl;
+      if (priorTtl) env.container_ttl = priorTtl;
+      setSandboxEnvironment(sandboxId, env);
+    }
     return env;
   } catch {
     return null;
