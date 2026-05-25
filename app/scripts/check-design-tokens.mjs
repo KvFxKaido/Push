@@ -20,6 +20,9 @@
 //     palette), not design tokens.
 //   - src/components/RootErrorBoundary.tsx — crash-fallback screen that renders
 //     with inline styles precisely because the stylesheet may not have loaded.
+//   - *.test.ts / *.test.tsx / *.spec.* — test files. Hex in assertions is
+//     test data (pinning expected values), not shipping UI, so it's out of
+//     scope for this ratchet.
 
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, relative, extname, dirname } from 'node:path';
@@ -38,6 +41,7 @@ const EXCLUDE_PATHS = [
   'src/components/RootErrorBoundary.tsx',
 ];
 const SCAN_EXT = new Set(['.ts', '.tsx']);
+const TEST_FILE = /\.(test|spec)\.tsx?$/;
 const TOP_OFFENDERS = 12;
 
 // Directory carveouts (trailing "/") match by prefix; file carveouts match
@@ -50,7 +54,7 @@ function walk(dir, out = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) walk(full, out);
-    else if (SCAN_EXT.has(extname(entry.name))) out.push(full);
+    else if (SCAN_EXT.has(extname(entry.name)) && !TEST_FILE.test(entry.name)) out.push(full);
   }
   return out;
 }
