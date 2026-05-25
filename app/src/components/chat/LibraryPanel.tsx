@@ -350,7 +350,7 @@ export function LibraryPanel({
         side="top"
         align="start"
         sideOffset={10}
-        className="w-[340px] rounded-xl border border-[#1f2531] bg-push-grad-panel p-2.5 text-[#d7deeb] shadow-[0_12px_36px_rgba(0,0,0,0.55),0_4px_12px_rgba(0,0,0,0.25)] animate-fade-in"
+        className="w-[340px] rounded-xl border border-push-edge bg-push-grad-panel p-2.5 text-push-fg-soft shadow-[0_12px_36px_rgba(0,0,0,0.55),0_4px_12px_rgba(0,0,0,0.25)] animate-fade-in"
       >
         {!showingDetail && (
           <CollectionListView
@@ -460,7 +460,7 @@ function CollectionListView({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between px-1 pt-0.5">
-        <p className="text-push-2xs font-medium uppercase tracking-wide text-[#7c879b]">
+        <p className="text-push-2xs font-medium uppercase tracking-wide text-push-fg-faint">
           Libraries
         </p>
         {!isCreatingCollection && (
@@ -468,7 +468,7 @@ function CollectionListView({
             type="button"
             onClick={onStartCreate}
             disabled={busy}
-            className="flex items-center gap-1 rounded-md border border-[#2a3447] bg-[#070a10] px-2 py-1 text-push-2xs text-[#d7deeb] hover:border-[#3d5579] disabled:opacity-60"
+            className="flex items-center gap-1 rounded-md border border-push-edge-hover bg-push-surface px-2 py-1 text-push-2xs text-push-fg-soft hover:border-push-edge-focus disabled:opacity-60"
           >
             <Plus className="h-3 w-3" />
             New
@@ -477,7 +477,7 @@ function CollectionListView({
       </div>
 
       {isCreatingCollection && (
-        <div className="rounded-lg border border-[#2a3447] bg-[#070a10] p-2">
+        <div className="rounded-lg border border-push-edge-hover bg-push-surface p-2">
           <input
             autoFocus
             type="text"
@@ -489,13 +489,13 @@ function CollectionListView({
               if (e.key === 'Escape') onCancelCreate();
             }}
             placeholder="Library name"
-            className="w-full rounded border border-[#3d5579] bg-[#070a10] px-2 py-1 text-push-xs text-[#d7deeb] outline-none"
+            className="w-full rounded border border-push-edge-focus bg-push-surface px-2 py-1 text-push-xs text-push-fg-soft outline-none"
           />
           <div className="mt-2 flex justify-end gap-1">
             <button
               type="button"
               onClick={onCancelCreate}
-              className="rounded-md px-2 py-1 text-push-2xs text-[#7c879b] hover:text-[#d7deeb]"
+              className="rounded-md px-2 py-1 text-push-2xs text-push-fg-faint hover:text-push-fg-soft"
             >
               Cancel
             </button>
@@ -517,18 +517,18 @@ function CollectionListView({
         </div>
       )}
 
-      <div className="max-h-[360px] overflow-y-auto rounded-lg border border-[#2a3447] bg-[#070a10]">
+      <div className="max-h-[360px] overflow-y-auto rounded-lg border border-push-edge-hover bg-push-surface">
         {isLoading && collections.length === 0 ? (
-          <div className="flex items-center justify-center gap-2 px-3 py-6 text-push-2xs text-[#7c879b]">
+          <div className="flex items-center justify-center gap-2 px-3 py-6 text-push-2xs text-push-fg-faint">
             <Loader2 className="h-3 w-3 animate-spin" />
             Loading…
           </div>
         ) : collections.length === 0 ? (
-          <div className="px-3 py-4 text-center text-push-2xs text-[#7c879b]">
-            No libraries yet. Tap <span className="text-[#d7deeb]">New</span> to start one.
+          <div className="px-3 py-4 text-center text-push-2xs text-push-fg-faint">
+            No libraries yet. Tap <span className="text-push-fg-soft">New</span> to start one.
           </div>
         ) : (
-          <ul className="divide-y divide-[#1a2230]">
+          <ul className="divide-y divide-push-edge-subtle">
             {collections.map((c) => (
               <li key={c.id}>
                 <button
@@ -536,15 +536,15 @@ function CollectionListView({
                   onClick={() => onSelectCollection(c.id)}
                   className="flex w-full items-center gap-2 px-2 py-2 text-left hover:bg-push-accent/5"
                 >
-                  <BookIcon className="h-4 w-4 shrink-0 text-[#8891a1]" />
+                  <BookIcon className="h-4 w-4 shrink-0 text-push-fg-muted" />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-push-xs text-[#d7deeb]">{c.name}</p>
-                    <p className="truncate text-push-2xs text-[#7c879b]">
+                    <p className="truncate text-push-xs text-push-fg-soft">{c.name}</p>
+                    <p className="truncate text-push-2xs text-push-fg-faint">
                       {c.itemCount} {c.itemCount === 1 ? 'item' : 'items'}
                       {c.hasInstructions ? ' · instructions' : ''}
                     </p>
                   </div>
-                  <ChevronLeft className="h-3 w-3 rotate-180 text-[#7c879b]" />
+                  <ChevronLeft className="h-3 w-3 rotate-180 text-push-fg-faint" />
                 </button>
               </li>
             ))}
@@ -556,7 +556,7 @@ function CollectionListView({
         <button
           type="button"
           onClick={onClose}
-          className="flex items-center gap-1 rounded-md px-2 py-1 text-push-2xs text-[#7c879b] hover:text-[#d7deeb]"
+          className="flex items-center gap-1 rounded-md px-2 py-1 text-push-2xs text-push-fg-faint hover:text-push-fg-soft"
         >
           <X className="h-3 w-3" />
           Close
@@ -646,7 +646,7 @@ function CollectionDetailView({
 }: CollectionDetailViewProps) {
   if (isLoading && !detail) {
     return (
-      <div className="flex items-center justify-center gap-2 px-3 py-6 text-push-2xs text-[#7c879b]">
+      <div className="flex items-center justify-center gap-2 px-3 py-6 text-push-2xs text-push-fg-faint">
         <Loader2 className="h-3 w-3 animate-spin" />
         Loading…
       </div>
@@ -660,7 +660,7 @@ function CollectionDetailView({
         <button
           type="button"
           onClick={onBack}
-          className="rounded p-1 text-[#7c879b] hover:text-[#d7deeb]"
+          className="rounded p-1 text-push-fg-faint hover:text-push-fg-soft"
           aria-label="Back"
         >
           <ChevronLeft className="h-3.5 w-3.5" />
@@ -677,19 +677,19 @@ function CollectionDetailView({
               if (e.key === 'Enter') onCommitRenameCollection();
               if (e.key === 'Escape') onCancelRenameCollection();
             }}
-            className="flex-1 rounded border border-[#3d5579] bg-[#070a10] px-1.5 py-0.5 text-push-xs text-[#d7deeb] outline-none"
+            className="flex-1 rounded border border-push-edge-focus bg-push-surface px-1.5 py-0.5 text-push-xs text-push-fg-soft outline-none"
           />
         ) : (
           <button
             type="button"
             onClick={onStartRenameCollection}
-            className="flex-1 truncate text-left text-push-xs font-medium text-[#d7deeb]"
+            className="flex-1 truncate text-left text-push-xs font-medium text-push-fg-soft"
             title="Tap to rename"
           >
             {detail.collection.name}
           </button>
         )}
-        <span className="text-push-2xs text-[#7c879b]">
+        <span className="text-push-2xs text-push-fg-faint">
           {detail.collection.itemCount} {detail.collection.itemCount === 1 ? 'item' : 'items'}
         </span>
       </div>
@@ -715,7 +715,7 @@ function CollectionDetailView({
         className={`flex w-full items-center justify-center gap-1.5 rounded-md border px-2.5 py-1.5 text-push-2xs disabled:opacity-40 ${
           isLinked
             ? 'border-push-accent/40 bg-push-accent/10 text-push-accent hover:bg-push-accent/20'
-            : 'border-[#2a3447] bg-[#070a10] text-[#d7deeb] hover:border-[#3d5579]'
+            : 'border-push-edge-hover bg-push-surface text-push-fg-soft hover:border-push-edge-focus'
         }`}
         title={
           canToggleLink
@@ -751,13 +751,13 @@ function CollectionDetailView({
         </div>
       )}
 
-      <div className="max-h-[280px] overflow-y-auto rounded-lg border border-[#2a3447] bg-[#070a10]">
+      <div className="max-h-[280px] overflow-y-auto rounded-lg border border-push-edge-hover bg-push-surface">
         {detail.items.length === 0 ? (
-          <div className="px-3 py-4 text-center text-push-2xs text-[#7c879b]">
-            No files yet. Tap <span className="text-[#d7deeb]">Add files</span> to upload.
+          <div className="px-3 py-4 text-center text-push-2xs text-push-fg-faint">
+            No files yet. Tap <span className="text-push-fg-soft">Add files</span> to upload.
           </div>
         ) : (
-          <ul className="divide-y divide-[#1a2230]">
+          <ul className="divide-y divide-push-edge-subtle">
             {detail.items.map((item) => (
               <ItemRow
                 key={item.id}
@@ -780,7 +780,7 @@ function CollectionDetailView({
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={busy}
-          className="flex items-center gap-1 rounded-md border border-[#2a3447] bg-[#070a10] px-2 py-1 text-push-2xs text-[#d7deeb] hover:border-[#3d5579] disabled:opacity-60"
+          className="flex items-center gap-1 rounded-md border border-push-edge-hover bg-push-surface px-2 py-1 text-push-2xs text-push-fg-soft hover:border-push-edge-focus disabled:opacity-60"
         >
           <Plus className="h-3 w-3" />
           Add files
@@ -789,7 +789,7 @@ function CollectionDetailView({
           type="button"
           onClick={onDeleteCollection}
           disabled={busy}
-          className="flex items-center gap-1 rounded-md px-2 py-1 text-push-2xs text-[#7c879b] hover:text-red-400 disabled:opacity-60"
+          className="flex items-center gap-1 rounded-md px-2 py-1 text-push-2xs text-push-fg-faint hover:text-red-400 disabled:opacity-60"
           title="Delete library (cascades to all files)"
         >
           <Trash2 className="h-3 w-3" />
@@ -834,8 +834,8 @@ function InstructionsSection({
 }: InstructionsSectionProps) {
   if (isEditing) {
     return (
-      <div className="rounded-lg border border-[#2a3447] bg-[#070a10] p-2">
-        <p className="px-0.5 pb-1 text-push-2xs uppercase tracking-wide text-[#7c879b]">
+      <div className="rounded-lg border border-push-edge-hover bg-push-surface p-2">
+        <p className="px-0.5 pb-1 text-push-2xs uppercase tracking-wide text-push-fg-faint">
           Instructions
         </p>
         <textarea
@@ -844,17 +844,17 @@ function InstructionsSection({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="Voice / canon notes attached when this library is attached. Treated as a normal text attachment for now."
-          className="h-24 w-full resize-none rounded border border-[#3d5579] bg-[#070a10] px-2 py-1 text-push-2xs text-[#d7deeb] outline-none"
+          className="h-24 w-full resize-none rounded border border-push-edge-focus bg-push-surface px-2 py-1 text-push-2xs text-push-fg-soft outline-none"
         />
         <div className="mt-1 flex items-center justify-between">
-          <span className="text-push-2xs text-[#7c879b]">
+          <span className="text-push-2xs text-push-fg-faint">
             {value.length}/{INSTRUCTIONS_MAX}
           </span>
           <div className="flex gap-1">
             <button
               type="button"
               onClick={onCancel}
-              className="rounded-md px-2 py-1 text-push-2xs text-[#7c879b] hover:text-[#d7deeb]"
+              className="rounded-md px-2 py-1 text-push-2xs text-push-fg-faint hover:text-push-fg-soft"
             >
               Cancel
             </button>
@@ -876,12 +876,12 @@ function InstructionsSection({
     <button
       type="button"
       onClick={onStartEdit}
-      className="flex w-full items-start gap-2 rounded-lg border border-dashed border-[#2a3447] bg-[#070a10] px-2 py-2 text-left text-push-2xs text-[#7c879b] hover:border-[#3d5579] hover:text-[#d7deeb]"
+      className="flex w-full items-start gap-2 rounded-lg border border-dashed border-push-edge-hover bg-push-surface px-2 py-2 text-left text-push-2xs text-push-fg-faint hover:border-push-edge-focus hover:text-push-fg-soft"
     >
       <Pencil className="mt-0.5 h-3 w-3 shrink-0" />
       <span className="flex-1">
         {hasInstructions ? (
-          <span className="line-clamp-2 text-[#d7deeb]">{instructions}</span>
+          <span className="line-clamp-2 text-push-fg-soft">{instructions}</span>
         ) : (
           'Add instructions (optional)'
         )}
@@ -933,12 +933,12 @@ function ItemRow({
                 if (e.key === 'Escape') onCancelRename();
               }}
               placeholder="Label (leave blank to clear)"
-              className="w-full rounded border border-[#3d5579] bg-[#070a10] px-1.5 py-0.5 text-push-xs text-[#d7deeb] outline-none"
+              className="w-full rounded border border-push-edge-focus bg-push-surface px-1.5 py-0.5 text-push-xs text-push-fg-soft outline-none"
             />
           ) : (
-            <p className="truncate text-push-xs text-[#d7deeb]">{item.label || item.filename}</p>
+            <p className="truncate text-push-xs text-push-fg-soft">{item.label || item.filename}</p>
           )}
-          <p className="truncate text-push-2xs text-[#7c879b]">
+          <p className="truncate text-push-2xs text-push-fg-faint">
             {item.label ? `${item.filename} · ` : ''}
             {formatFileSize(item.sizeBytes)}
           </p>
@@ -947,7 +947,7 @@ function ItemRow({
           <button
             type="button"
             onClick={onStartRename}
-            className="rounded p-1 text-[#7c879b] hover:text-[#d7deeb]"
+            className="rounded p-1 text-push-fg-faint hover:text-push-fg-soft"
             title="Rename"
             aria-label="Rename"
           >
@@ -956,7 +956,7 @@ function ItemRow({
           <button
             type="button"
             onClick={onDelete}
-            className="rounded p-1 text-[#7c879b] hover:text-red-400"
+            className="rounded p-1 text-push-fg-faint hover:text-red-400"
             title="Delete"
             aria-label="Delete"
           >
@@ -969,9 +969,9 @@ function ItemRow({
 }
 
 function LibraryItemIcon({ type }: { type: LibraryItemMeta['type'] }) {
-  if (type === 'image') return <ImageIcon className="mt-0.5 h-4 w-4 shrink-0 text-[#8891a1]" />;
+  if (type === 'image') return <ImageIcon className="mt-0.5 h-4 w-4 shrink-0 text-push-fg-muted" />;
   if (type === 'code') return <FileCode className="mt-0.5 h-4 w-4 shrink-0 text-push-accent" />;
-  return <FileText className="mt-0.5 h-4 w-4 shrink-0 text-[#8891a1]" />;
+  return <FileText className="mt-0.5 h-4 w-4 shrink-0 text-push-fg-muted" />;
 }
 
 function BookIcon({ className }: { className?: string }) {

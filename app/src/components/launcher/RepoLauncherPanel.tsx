@@ -362,7 +362,7 @@ export function RepoLauncherPanel({
               )}
 
               {repo.description && (
-                <p className="line-clamp-1 text-xs text-[#788396]">{repo.description}</p>
+                <p className="line-clamp-1 text-xs text-push-fg-faint">{repo.description}</p>
               )}
 
               <div className="flex items-center gap-3 text-xs text-push-fg-dim">
@@ -437,7 +437,7 @@ export function RepoLauncherPanel({
                     <BranchWaveIcon className="h-3 w-3 text-push-fg-dim" />
                     <span className="truncate">Open on branch</span>
                   </span>
-                  <span className="relative z-10 truncate text-push-xs text-[#788396]">
+                  <span className="relative z-10 truncate text-push-xs text-push-fg-faint">
                     {repo.default_branch}
                   </span>
                 </button>
@@ -546,8 +546,8 @@ export function RepoLauncherPanel({
         {mode === 'chat' && recentChatConversations.length > 0 && (
           <section className="space-y-2">
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-medium text-[#cfd8e8]">Recent chats</h2>
-              <span className="text-xs text-[#657289]">{recentChatConversations.length}</span>
+              <h2 className="text-sm font-medium text-push-fg-soft">Recent chats</h2>
+              <span className="text-xs text-push-fg-dim">{recentChatConversations.length}</span>
             </div>
             <div className="space-y-1.5 stagger-in">
               {recentChatConversations.map((conv) => (
@@ -688,8 +688,8 @@ export function RepoLauncherPanel({
 
         <section className="space-y-2">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-medium text-[#cfd8e8]">Recent repos</h2>
-            <span className="text-xs text-[#657289]">{recentRepos.length}</span>
+            <h2 className="text-sm font-medium text-push-fg-soft">Recent repos</h2>
+            <span className="text-xs text-push-fg-dim">{recentRepos.length}</span>
           </div>
           {loading && repos.length === 0 ? (
             <div className="flex items-center justify-center py-10">
@@ -697,7 +697,7 @@ export function RepoLauncherPanel({
             </div>
           ) : recentRepos.length === 0 ? (
             <div
-              className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} space-y-3 border-dashed px-3 py-4 text-center text-xs text-[#788396]`}
+              className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} space-y-3 border-dashed px-3 py-4 text-center text-xs text-push-fg-faint`}
             >
               <p>No repositories yet.</p>
               {onPublishToGitHub && (
@@ -731,7 +731,7 @@ export function RepoLauncherPanel({
             </div>
             {filteredRepos.length === 0 ? (
               <div
-                className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} border-dashed px-3 py-4 text-center text-xs text-[#788396]`}
+                className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} border-dashed px-3 py-4 text-center text-xs text-push-fg-faint`}
               >
                 No repos match your search.
               </div>

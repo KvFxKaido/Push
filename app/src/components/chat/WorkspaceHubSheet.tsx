@@ -1094,7 +1094,7 @@ export function WorkspaceHubSheet({
       <SheetContent
         side="right"
         overlayClassName="bg-transparent"
-        className="w-[94vw] rounded-l-2xl border-l border-[#151b26] bg-push-grad-panel p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.3)] sm:max-w-none [&>[data-slot=sheet-close]]:hidden"
+        className="w-[94vw] rounded-l-2xl border-l border-push-edge-subtle bg-push-grad-panel p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.3)] sm:max-w-none [&>[data-slot=sheet-close]]:hidden"
       >
         <SheetHeader className="sr-only">
           <SheetTitle>{workspaceMode === 'chat' ? 'Chat Panel' : 'Workspace Hub'}</SheetTitle>
@@ -1747,7 +1747,7 @@ export function WorkspaceHubSheet({
           >
             <SheetContent
               side="bottom"
-              className="border-t border-[#151b26] bg-push-grad-panel px-0 pb-6 pt-0 text-push-fg"
+              className="border-t border-push-edge-subtle bg-push-grad-panel px-0 pb-6 pt-0 text-push-fg"
             >
               <SheetHeader className="border-b border-push-edge px-4 py-4">
                 <SheetTitle className="text-sm font-semibold text-push-fg">Push target</SheetTitle>

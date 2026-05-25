@@ -40,8 +40,13 @@ const SETTINGS_TAB_META: Record<SettingsTabKey, { title: string; description: st
   },
 };
 
+// `[background-color:#121926]` stays a raw hex: Tailwind theme tokens (push-*)
+// are utilities, not values, so they can't be referenced inside an arbitrary
+// CSS property like `[background-color:...]`. The token equivalent would be
+// bg-push-surface-active, but the native <select> needs the bracketed property
+// to override the UA background. The <option> children use the token.
 const SETTINGS_SELECT_CLASS =
-  'rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50 [color-scheme:dark] [background-color:#121926] [&>option]:bg-[#121926] [&>option]:text-push-fg';
+  'rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50 [color-scheme:dark] [background-color:#121926] [&>option]:bg-push-surface-active [&>option]:text-push-fg';
 
 // ── Prop groups ──────────────────────────────────────────────────────
 
@@ -960,7 +965,7 @@ export function SettingsSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side={side}
-        className="w-[86vw] rounded-r-2xl border-[#151b26] bg-push-grad-panel p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.3)] sm:max-w-none [&>[data-slot=sheet-close]]:text-push-fg-secondary [&>[data-slot=sheet-close]]:hover:text-push-fg"
+        className="w-[86vw] rounded-r-2xl border-push-edge-subtle bg-push-grad-panel p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.3)] sm:max-w-none [&>[data-slot=sheet-close]]:text-push-fg-secondary [&>[data-slot=sheet-close]]:hover:text-push-fg"
       >
         <SheetTitle className="sr-only">Settings</SheetTitle>
         <SheetDescription className="sr-only">Configure your workspace</SheetDescription>
@@ -989,7 +994,7 @@ export function SettingsSheet({
 
           {/* Tab bar */}
           <div className="shrink-0 border-b border-push-edge px-3 py-3">
-            <div className="rounded-2xl border border-push-edge bg-[#0b1017]/85 p-1.5 shadow-[0_12px_28px_rgba(0,0,0,0.22)]">
+            <div className="rounded-2xl border border-push-edge bg-push-surface-raised/85 p-1.5 shadow-[0_12px_28px_rgba(0,0,0,0.22)]">
               <div className="grid grid-cols-3 gap-1.5">
                 {(
                   [
@@ -1007,7 +1012,7 @@ export function SettingsSheet({
                       className={`flex min-h-[48px] items-center justify-center gap-2 rounded-xl px-2 text-push-xs font-medium transition-all ${
                         settingsTab === key
                           ? 'border border-push-edge-hover bg-push-grad-input text-push-fg shadow-[0_12px_24px_rgba(0,0,0,0.32),0_2px_6px_rgba(0,0,0,0.18)]'
-                          : 'border border-transparent text-push-fg-dim hover:border-[#1f2a3a] hover:bg-[#0c1018] hover:text-push-fg-secondary'
+                          : 'border border-transparent text-push-fg-dim hover:border-push-edge hover:bg-push-surface-raised hover:text-push-fg-secondary'
                       }`}
                     >
                       <span

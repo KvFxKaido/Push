@@ -1,6 +1,6 @@
 # Design Token Migration Plan
 
-Status: Draft plan, P0 shipped. Added 2026-05-25.
+Status: Draft plan, P0–P3 shipped. Added 2026-05-25.
 
 Drives the legacy hardcoded-color backlog toward zero so the DESIGN.md token
 system is the single source of truth for color. The `check:design-tokens`
@@ -8,9 +8,10 @@ ratchet (added with the canonical-docs work) holds the line; this plan scopes
 the existing violations and orders the cleanup.
 
 The baseline audit ran against `app/src` (excluding `src/components/ui/**`, the
-shadcn carveout) and found **441** hardcoded colors. P0 has since carved out the
-CodeMirror editor theme, bringing the ratchet baseline to **396**. Re-run the
-numbers any time with `npm run check:design-tokens` (counts + top offenders).
+shadcn carveout) and found **441** hardcoded colors. P0–P3 have since landed
+(carveout, 34 mechanical swaps, 3 new chat/library tokens, and 29 drift snaps),
+bringing the ratchet baseline to **142**. Re-run the numbers any time with
+`npm run check:design-tokens` (counts + top offenders).
 
 ## What counts
 
@@ -50,6 +51,9 @@ handful-of-files problem:
 
 ## Reference data
 
+All counts below are from the **initial audit** (historical), kept to show what
+each phase targeted; they don't reflect the current baseline.
+
 **Exact-token swaps (P1):**
 
 | Hex | Token | Count |
@@ -75,11 +79,11 @@ handful-of-files problem:
 
 | Hex | Count | Notes |
 |---|---:|---|
-| `#7c879b` | 49 | Muted gray — the single most-used hardcoded color |
-| `#d7deeb` | 32 | Light text |
-| `#52525b` | 20 | Gray |
-| `#3d5579` | 17 | Muted blue |
-| `#d1d8e6` | 12 | Light text |
+| `#7c879b` | 49 | Muted text — tokenized as `push-fg-faint` (P2 ✓) |
+| `#d7deeb` | 32 | Panel text — tokenized as `push-fg-soft` (P2 ✓) |
+| `#52525b` | 20 | Neutral zinc gray — no token yet (tail) |
+| `#3d5579` | 17 | Focus border — tokenized as `push-edge-focus` (P2 ✓) |
+| `#d1d8e6` | 12 | Light text ≈ `push-fg-soft` — drift snap (P3) |
 
 The purple/cyan family (`#a78bfa`, `#67e8f9`, `#c4b5fd`, …) is almost entirely
 `codemirror-theme.ts` syntax highlighting — handle via the P0 carveout, not new
@@ -94,16 +98,28 @@ screens is the acceptance bar.
 
 - **P0 ✓ — Carveout** `src/lib/codemirror-theme.ts` (editor syntax theme, not
   DESIGN.md app tokens) added to the ratchet's exclude list. Baseline 441 → 396.
-- **P1 — Mechanical** 34 exact-token swaps. Safe find/replace. Baseline → ~362.
-- **P2 — New tokens** Add tokens for the frequent no-token colors (`#7c879b`,
-  `#d7deeb`, `#52525b`, …) to DESIGN.md + `tailwind.config.js`, then swap their
-  usages. Each new token needs a DESIGN.md table row (the reviewer + ratchet
-  expect tokens to be documented).
-- **P3 — Drift** Snap the 108 near-token values to their token, one judgment
-  call per value (a slightly-off shade may be intentional; if it is, that is a
-  DESIGN.md gap to document, not a swap). Concentrated in the top files.
-- **Tail** Near-blacks (decide: `push-surface*` vs. a new black token) and the
-  long tail of one-off singletons.
+- **P1 ✓ — Mechanical** 34 exact-token swaps, all Tailwind-arbitrary values
+  (`bg-[#070a10]` → `bg-push-surface`, etc.). Color-identical by construction
+  (each token's value equals the literal hex), so no visual change. Baseline
+  396 → 362.
+- **P2 ✓ — New tokens** Added `push-fg-faint` (`#7c879b`), `push-fg-soft`
+  (`#d7deeb`), and `push-edge-focus` (`#3d5579`) to DESIGN.md +
+  `tailwind.config.js` and swapped their 98 exact uses (color-identical).
+  Baseline 362 → 264. The neutral zinc `#52525b` and light `#e2e8f0` have no
+  clean home in the cool-blue palette — deferred to the tail.
+- **P3 ✓ — Drift** Snapped 29 off-shades (123 occurrences, all ≤12 RGB from
+  their nearest token) to tokens, utility-preserving (e.g. `border-[#2a3447]` →
+  `border-push-edge-hover`, `text-[#fafafa]` → `text-push-fg`). Small but real
+  color shifts — **pending visual review** on the PR. Baseline 264 → 142. One
+  `[background-color:#121926]` arbitrary-property form is left for the tail (a
+  token name can't go in raw CSS — needs a utility rewrite or a CSS var).
+- **Tail** Near-blacks (decide: `push-surface*` vs. a new black token), quoted
+  hex in inline styles (need a CSS var or utility rewrite), neutral greys with no
+  cool-blue home (`#52525b`, `#e2e8f0`), and one-off singletons. Notable: the
+  disabled send-button text `#576176` (ChatInput.tsx) — a dim disabled grey ~27
+  RGB from `push-fg-dim`, so too far to snap without visibly brightening a
+  high-visibility control; decide between a `push-fg-disabled` token and a
+  deliberate snap. All of these are counted in the 142 baseline (not bypasses).
 
 ## Graduation
 

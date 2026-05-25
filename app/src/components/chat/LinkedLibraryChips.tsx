@@ -46,7 +46,9 @@ export function LinkedLibraryChips({ libraryIds, onUnlink }: LinkedLibraryChipsP
 
   return (
     <div className="flex items-center gap-1.5 overflow-x-auto px-3 pt-2 pb-1 scrollbar-none">
-      <span className="shrink-0 text-push-2xs uppercase tracking-wide text-[#7c879b]">Linked</span>
+      <span className="shrink-0 text-push-2xs uppercase tracking-wide text-push-fg-faint">
+        Linked
+      </span>
       {libraryIds.map((id) => {
         const name = nameById.get(id) ?? `${id.slice(0, 8)}…`;
         return (

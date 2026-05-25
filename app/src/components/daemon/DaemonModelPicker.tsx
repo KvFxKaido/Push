@@ -87,7 +87,7 @@ export function DaemonModelPicker({
           title={titleHint}
           disabled={disabled}
           className={cn(
-            'inline-flex max-w-full items-center gap-1.5 rounded-full border border-push-edge/60 bg-[#070a10] px-2.5 py-1 text-xs text-push-fg-secondary transition hover:border-push-edge hover:text-push-fg disabled:opacity-50',
+            'inline-flex max-w-full items-center gap-1.5 rounded-full border border-push-edge/60 bg-push-surface px-2.5 py-1 text-xs text-push-fg-secondary transition hover:border-push-edge hover:text-push-fg disabled:opacity-50',
             className,
           )}
         >
@@ -100,7 +100,7 @@ export function DaemonModelPicker({
       </PopoverTrigger>
       <PopoverContent
         align="start"
-        className="w-64 border-push-edge/60 bg-[#0d1117] p-1 text-push-fg shadow-md"
+        className="w-64 border-push-edge/60 bg-push-surface-raised p-1 text-push-fg shadow-md"
       >
         <div className="px-2 py-1.5 text-[10px] uppercase tracking-wide text-push-fg-secondary/60">
           Provider

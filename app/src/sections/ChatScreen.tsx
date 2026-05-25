@@ -144,7 +144,7 @@ export function ChatScreen({
               <div
                 className={`${activeRepoAppearance ? '-ml-1.5' : '-ml-2.5'} flex min-w-0 items-center self-stretch`}
               >
-                <p className="truncate text-sm font-medium leading-tight text-[#f5f7ff]">
+                <p className="truncate text-sm font-medium leading-tight text-push-fg">
                   {isScratch ? (
                     <span className="hidden sm:inline">Workspace</span>
                   ) : (
@@ -224,7 +224,7 @@ export function ChatScreen({
                     <span className="text-push-2xs text-push-fg-muted">
                       {snapshots.snapshotRestoreProgress.message}
                     </span>
-                    <div className="h-1 w-full overflow-hidden rounded bg-[#1a2130]">
+                    <div className="h-1 w-full overflow-hidden rounded bg-push-edge-subtle">
                       <div
                         className="h-full bg-emerald-500 transition-all duration-300"
                         style={{

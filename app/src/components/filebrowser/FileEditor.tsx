@@ -188,11 +188,11 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
         <header className="flex items-center gap-2 px-3 py-3 border-b border-[#1a1a1a]">
           <button
             onClick={onBack}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-push-fg-secondary transition-colors hover:text-[#fafafa] hover:bg-[#0d0d0d]"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-push-fg-secondary transition-colors hover:text-push-fg hover:bg-push-surface"
           >
             <ArrowLeft className="h-4 w-4" />
           </button>
-          <h1 className="text-sm font-medium text-[#fafafa] flex-1 truncate">{file.name}</h1>
+          <h1 className="text-sm font-medium text-push-fg flex-1 truncate">{file.name}</h1>
         </header>
 
         <div className="flex-1 flex flex-col items-center justify-center gap-4 px-6 text-center">
@@ -203,7 +203,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
           </div>
           <button
             onClick={onBack}
-            className="px-4 py-2 rounded-lg bg-[#1a1a1a] text-[#fafafa] text-sm hover:bg-[#252525] transition-colors"
+            className="px-4 py-2 rounded-lg bg-[#1a1a1a] text-push-fg text-sm hover:bg-[#252525] transition-colors"
           >
             Go back
           </button>
@@ -219,13 +219,13 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
         <button
           onClick={handleDiscard}
           disabled={saving}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-push-fg-secondary transition-colors hover:text-[#fafafa] hover:bg-[#0d0d0d] disabled:opacity-40"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-push-fg-secondary transition-colors hover:text-push-fg hover:bg-push-surface disabled:opacity-40"
         >
           <ArrowLeft className="h-4 w-4" />
         </button>
 
         <div className="flex-1 min-w-0">
-          <h1 className="text-sm font-medium text-[#fafafa] truncate flex items-center gap-2">
+          <h1 className="text-sm font-medium text-push-fg truncate flex items-center gap-2">
             <FileCode className="h-3.5 w-3.5 text-push-accent" />
             {file.name}
           </h1>
@@ -242,7 +242,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
             <button
               onClick={handleReset}
               disabled={saving}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-push-fg-secondary transition-colors hover:text-[#fafafa] hover:bg-[#0d0d0d]"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-push-fg-secondary transition-colors hover:text-push-fg hover:bg-push-surface"
               title="Revert changes"
             >
               <RotateCcw className="h-3.5 w-3.5" />
@@ -259,7 +259,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
               className={`flex h-8 px-3 items-center gap-1.5 rounded-lg text-xs transition-colors ${
                 showPreview
                   ? 'bg-push-accent/20 text-push-accent'
-                  : 'text-push-fg-secondary hover:text-[#fafafa] hover:bg-[#0d0d0d]'
+                  : 'text-push-fg-secondary hover:text-push-fg hover:bg-push-surface'
               } disabled:opacity-40`}
             >
               <Eye className="h-3.5 w-3.5" />
@@ -276,7 +276,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
             className={`flex h-8 px-3 items-center gap-1.5 rounded-lg text-xs transition-colors ${
               showDiff
                 ? 'bg-push-accent/20 text-push-accent'
-                : 'text-push-fg-secondary hover:text-[#fafafa] hover:bg-[#0d0d0d]'
+                : 'text-push-fg-secondary hover:text-push-fg hover:bg-push-surface'
             } disabled:opacity-40`}
           >
             <Check className="h-3.5 w-3.5" />
@@ -345,7 +345,7 @@ function CodeEditor({ content, onChange, disabled }: CodeEditorProps) {
   return (
     <div className="flex h-full">
       {/* Line numbers */}
-      <div className="flex-shrink-0 w-12 bg-[#0a0a0a] border-r border-[#1a1a1a] py-2 overflow-hidden select-none">
+      <div className="flex-shrink-0 w-12 bg-push-surface border-r border-[#1a1a1a] py-2 overflow-hidden select-none">
         {lines.map((_, i) => (
           <div
             key={i}
@@ -364,7 +364,7 @@ function CodeEditor({ content, onChange, disabled }: CodeEditorProps) {
         spellCheck={false}
         autoCapitalize="off"
         autoCorrect="off"
-        className="flex-1 h-full bg-[#000] text-[#fafafa] p-2 text-xs font-mono leading-[1.5em] resize-none border-none outline-none focus:outline-none disabled:opacity-50"
+        className="flex-1 h-full bg-[#000] text-push-fg p-2 text-xs font-mono leading-[1.5em] resize-none border-none outline-none focus:outline-none disabled:opacity-50"
         style={{ tabSize: 2 }}
       />
     </div>
@@ -383,7 +383,7 @@ interface DiffViewProps {
 
 function DiffView({ lines }: DiffViewProps) {
   return (
-    <div className="h-full overflow-auto bg-[#0d0d0d] p-2 font-mono text-xs">
+    <div className="h-full overflow-auto bg-push-surface p-2 font-mono text-xs">
       {lines.length === 0 ? (
         <p className="text-[#52525b] text-center py-8">No changes</p>
       ) : (
@@ -439,13 +439,13 @@ function mdInline(text: string): React.ReactNode[] {
   while ((m = regex.exec(text)) !== null) {
     if (m[2]) {
       result.push(
-        <strong key={k++} className="font-semibold text-[#fafafa]">
+        <strong key={k++} className="font-semibold text-push-fg">
           {m[2]}
         </strong>,
       );
     } else if (m[4]) {
       result.push(
-        <em key={k++} className="italic text-[#d1d8e6]">
+        <em key={k++} className="italic text-push-fg-soft">
           {m[4]}
         </em>,
       );
@@ -494,7 +494,7 @@ function MarkdownPreview({ content }: { content: string }) {
           nodes.push(
             <pre
               key={`code-${codeKey++}`}
-              className="my-3 overflow-x-auto rounded-lg border border-push-edge bg-[#0a0a0a] px-4 py-3"
+              className="my-3 overflow-x-auto rounded-lg border border-push-edge bg-push-surface px-4 py-3"
             >
               {codeLang && (
                 <div className="mb-1.5 text-push-2xs text-[#52525b] font-mono">{codeLang}</div>
@@ -530,10 +530,10 @@ function MarkdownPreview({ content }: { content: string }) {
       if (hm) {
         const lvl = hm[1].length;
         const styles: Record<number, string> = {
-          1: 'text-xl font-bold text-[#fafafa] mt-6 mb-2',
-          2: 'text-lg font-semibold text-[#fafafa] mt-5 mb-1.5',
+          1: 'text-xl font-bold text-push-fg mt-6 mb-2',
+          2: 'text-lg font-semibold text-push-fg mt-5 mb-1.5',
           3: 'text-base font-semibold text-[#e2e8f0] mt-4 mb-1',
-          4: 'text-sm font-medium text-[#8891a1] mt-3 mb-1 uppercase tracking-wide',
+          4: 'text-sm font-medium text-push-fg-muted mt-3 mb-1 uppercase tracking-wide',
         };
         nodes.push(
           <div key={`h-${i}`} className={styles[lvl]}>
@@ -549,7 +549,7 @@ function MarkdownPreview({ content }: { content: string }) {
         nodes.push(
           <div
             key={`bq-${i}`}
-            className="border-l-2 border-push-edge pl-3 my-1.5 text-[#8891a1] italic text-sm"
+            className="border-l-2 border-push-edge pl-3 my-1.5 text-push-fg-muted italic text-sm"
           >
             {qt ? mdInline(qt) : '\u00A0'}
           </div>,
@@ -568,7 +568,7 @@ function MarkdownPreview({ content }: { content: string }) {
             style={{ paddingLeft: `${indent * 16 + 4}px` }}
           >
             <span className="shrink-0 mt-[9px] block w-1 h-1 rounded-full bg-[#52525b]" />
-            <span className="flex-1 min-w-0 text-[#d1d8e6]">{mdInline(ulm[2])}</span>
+            <span className="flex-1 min-w-0 text-push-fg-soft">{mdInline(ulm[2])}</span>
           </div>,
         );
         continue;
@@ -587,7 +587,7 @@ function MarkdownPreview({ content }: { content: string }) {
             <span className="text-[#52525b] font-mono shrink-0 min-w-[1.25rem] text-right mt-px">
               {olm[2]}.
             </span>
-            <span className="flex-1 min-w-0 text-[#d1d8e6]">{mdInline(olm[3])}</span>
+            <span className="flex-1 min-w-0 text-push-fg-soft">{mdInline(olm[3])}</span>
           </div>,
         );
         continue;
@@ -601,7 +601,7 @@ function MarkdownPreview({ content }: { content: string }) {
 
       // Plain text
       nodes.push(
-        <div key={`p-${i}`} className="text-sm text-[#d1d8e6] leading-relaxed">
+        <div key={`p-${i}`} className="text-sm text-push-fg-soft leading-relaxed">
           {mdInline(line)}
         </div>,
       );
@@ -612,7 +612,7 @@ function MarkdownPreview({ content }: { content: string }) {
       nodes.push(
         <pre
           key={`code-${codeKey}`}
-          className="my-3 overflow-x-auto rounded-lg border border-push-edge bg-[#0a0a0a] px-4 py-3"
+          className="my-3 overflow-x-auto rounded-lg border border-push-edge bg-push-surface px-4 py-3"
         >
           <code className="font-mono text-xs text-[#e2e8f0] leading-relaxed">
             {codeLines.join('\n')}

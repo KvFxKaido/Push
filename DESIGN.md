@@ -17,7 +17,9 @@ Tokens below are Tailwind theme extensions. Use them with the appropriate utilit
 | ------------------ | --------- | ---------------------------- |
 | `push-fg`          | `#f5f7ff` | Primary text                 |
 | `push-fg-secondary`| `#b4becf` | Secondary text, labels       |
+| `push-fg-soft`     | `#d7deeb` | Softened primary text (chat/library panels) |
 | `push-fg-muted`    | `#8b96aa` | Muted text, subtle icons     |
+| `push-fg-faint`    | `#7c879b` | Fainter muted text (chat/library panels) |
 | `push-fg-dim`      | `#667086` | Placeholders, disabled text  |
 
 ### Surfaces (light to dark)
@@ -37,6 +39,7 @@ Tokens below are Tailwind theme extensions. Use them with the appropriate utilit
 | `push-edge-subtle` | `#1b2230` | Dividers, input borders      |
 | `push-edge`        | `#1f2531` | Primary border               |
 | `push-edge-hover`  | `#2f3949` | Hover border                 |
+| `push-edge-focus`  | `#3d5579` | Focus / active input border  |
 
 ### Accent & Interactive
 

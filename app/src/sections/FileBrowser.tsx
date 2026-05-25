@@ -203,7 +203,7 @@ export function FileBrowser({
   return (
     <div className="flex h-dvh flex-col bg-[#000] safe-area-top">
       {/* Header */}
-      <header className="flex items-center gap-2 border-b border-[#151b26] bg-push-grad-panel px-3 py-3">
+      <header className="flex items-center gap-2 border-b border-push-edge-subtle bg-push-grad-panel px-3 py-3">
         <button
           onClick={onBack}
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-push-edge bg-push-surface text-push-fg-secondary transition-colors hover:border-push-edge-hover hover:bg-push-surface-hover hover:text-push-fg active:scale-95"
@@ -250,7 +250,7 @@ export function FileBrowser({
         <button
           onClick={() => loadDirectory(currentPath)}
           disabled={status === 'loading'}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-push-edge bg-push-surface text-push-fg-dim transition-colors hover:border-push-edge-hover hover:bg-push-surface-hover hover:text-[#d1d8e6] active:scale-95 disabled:opacity-40"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-push-edge bg-push-surface text-push-fg-dim transition-colors hover:border-push-edge-hover hover:bg-push-surface-hover hover:text-push-fg-soft active:scale-95 disabled:opacity-40"
           aria-label="Refresh directory"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${status === 'loading' ? 'animate-spin' : ''}`} />
@@ -260,7 +260,7 @@ export function FileBrowser({
       {/* File list */}
       <div className="flex-1 overflow-y-auto overscroll-contain pb-28">
         {status === 'loading' && files.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-3 text-[#788396]">
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-push-fg-faint">
             <Loader2 className="h-5 w-5 animate-spin" />
             <span className="text-sm">Loading\u2026</span>
           </div>
@@ -276,18 +276,18 @@ export function FileBrowser({
             </button>
           </div>
         ) : files.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 text-[#788396]">
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-push-fg-faint">
             <Folder className="h-5 w-5" />
             <span className="text-sm">Empty directory</span>
           </div>
         ) : (
-          <ul className="divide-y divide-[#1a2130]/70">
+          <ul className="divide-y divide-push-edge-subtle/70">
             {/* Navigate up row */}
             {!isRoot && (
               <li>
                 <button
                   onClick={navigateUp}
-                  className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-push-surface-hover active:bg-[#121a29]"
+                  className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-push-surface-hover active:bg-push-surface-active"
                 >
                   <ChevronLeft className="h-4 w-4 shrink-0 text-push-fg-dim" />
                   <span className="text-sm text-push-fg-secondary">..</span>
@@ -456,7 +456,7 @@ function FileRow({ file, onTap, onLongPress }: FileRowProps) {
         onPointerDown={handlePointerDown}
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerLeave}
-        className="flex w-full select-none items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-push-surface-hover active:bg-[#121a29]"
+        className="flex w-full select-none items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-push-surface-hover active:bg-push-surface-active"
       >
         {/* Icon */}
         {isDir ? (

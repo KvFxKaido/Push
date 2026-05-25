@@ -59,7 +59,7 @@ export function ChatSurfaceScreen({
             <div className="flex h-[34px] min-w-0 items-center gap-1 pl-0.5 pr-1">
               <RepoChatDrawer {...drawerProps} />
               <div className="-ml-2.5 flex min-w-0 items-center self-stretch">
-                <p className="truncate text-sm font-medium leading-tight text-[#f5f7ff]">
+                <p className="truncate text-sm font-medium leading-tight text-push-fg">
                   <span className="hidden sm:inline">Chat</span>
                 </p>
               </div>

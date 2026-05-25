@@ -97,7 +97,7 @@ export function LauncherHomeContent({
               <h1 className="text-lg font-semibold tracking-tight text-push-fg">
                 {isChatMode ? 'Switch context' : 'Push'}
               </h1>
-              <p className="text-push-sm text-[#788396]">
+              <p className="text-push-sm text-push-fg-faint">
                 {isChatMode
                   ? 'Open a repo, workspace, or another chat.'
                   : 'Resume work or jump into a repo.'}
