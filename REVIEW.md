@@ -56,6 +56,24 @@ Mandatory mappings:
 
 These encode the rules that a generic reviewer would miss. Weight them heavily.
 
+### Consult the canonical docs
+
+Push keeps two canonical references the diff should stay consistent with. Pull
+them in when the change touches their domain — the deep reviewer can open the
+relevant sections directly; the quick reviewer should treat these as pointers:
+
+- **UI / visual diffs → `docs/DESIGN.md`** — visual tokens, colors, typography,
+  components. Flag raw hex / ad-hoc `px` values where a defined token exists, and
+  component patterns that diverge from the documented ones.
+- **Structural / tool-protocol / repo-session diffs → `docs/architecture.md`** —
+  the canonical architecture, tool protocol, and repo/session model. Flag
+  changes that contradict the documented contracts.
+
+Drift cuts both ways: if a diff intentionally changes behavior a doc describes,
+the **doc must be updated in the same PR**. Flag a landed change that leaves
+`DESIGN.md` / `architecture.md` describing the old reality — same discipline as
+the decision-doc `Status:` flip below.
+
 ### Behavior lives in code, not prompts
 
 If a change adds prompt/doc text to compensate for something the **runtime**
