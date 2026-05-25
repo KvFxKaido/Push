@@ -135,9 +135,11 @@ screens is the acceptance bar.
 
 ## Graduation
 
-Done ✓ — with the baseline at 0, `check:design-tokens` is wired into CI as a
-blocking step in the `app` job (`.github/workflows/ci.yml`). Any new hardcoded
-color now fails CI. A regex ratchet (rather than the originally-envisioned
+Done ✓ — `check:design-tokens` is wired into CI as a blocking step in the `app`
+job (`.github/workflows/ci.yml`). It fails when hardcoded colors exceed the
+committed baseline in `app/scripts/design-token-baseline.json`, which the
+migration drives to 0 (P6) — so once the backlog is cleared, any new raw hex
+fails CI. A regex ratchet (rather than the originally-envisioned
 ESLint rule) is the right tool here: the violations are Tailwind arbitrary
 values inside `className` strings (`bg-[#000]`), which an ESLint AST rule can't
 see — the detector scans the raw source instead. The standalone
