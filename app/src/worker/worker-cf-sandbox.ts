@@ -1435,6 +1435,12 @@ export async function restoreWorkspaceSnapshot(
     return { ok: false, error: 'Invalid restore token', status: 403, code: 'AUTH_FAILURE' };
   }
 
+  // Track resources created mid-restore so the catch can roll them back instead
+  // of orphaning a live sandbox / minted token if a later step throws.
+  let createdSandbox: SandboxStub | undefined;
+  let createdSandboxId: string | undefined;
+  let tokenIssued = false;
+
   try {
     const object = await env.SNAPSHOTS.get(snapshotId);
     if (!object) {
@@ -1450,6 +1456,8 @@ export async function restoreWorkspaceSnapshot(
 
     const sandboxId = crypto.randomUUID();
     const sandbox = getSandbox(env.Sandbox, sandboxId);
+    createdSandbox = sandbox;
+    createdSandboxId = sandboxId;
 
     // The archive carries /workspace including .git, but global git identity
     // (~/.gitconfig) lives outside it — set a default so post-restore commits
@@ -1483,6 +1491,7 @@ export async function restoreWorkspaceSnapshot(
         code: 'CF_ERROR',
       };
     }
+    tokenIssued = true;
 
     const environment = await probeEnvironment(sandbox);
 
@@ -1494,6 +1503,12 @@ export async function restoreWorkspaceSnapshot(
 
     return { ok: true, sandboxId, ownerToken, environment };
   } catch (err) {
+    // Roll back a half-created sandbox / minted token so a late throw (hydrate,
+    // probe, …) doesn't orphan a live, un-cleanable container.
+    await createdSandbox?.destroy?.().catch(() => {});
+    if (tokenIssued && createdSandboxId) {
+      await revokeToken(env.SANDBOX_TOKENS, createdSandboxId).catch(() => {});
+    }
     return {
       ok: false,
       error: err instanceof Error ? err.message : String(err),
