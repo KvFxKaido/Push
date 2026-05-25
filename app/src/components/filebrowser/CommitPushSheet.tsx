@@ -315,7 +315,7 @@ export function CommitPushSheet({
               <button
                 onClick={commitAndPush}
                 disabled={!commitMessage.trim()}
-                className="w-full rounded-lg bg-push-status-success py-2.5 text-sm font-medium text-white transition-all hover:bg-push-status-success active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none"
+                className="w-full rounded-lg bg-push-status-success py-2.5 text-sm font-medium text-white transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none"
               >
                 Commit &amp; Push
               </button>
@@ -330,7 +330,7 @@ export function CommitPushSheet({
               <span className="text-sm text-push-fg font-medium">Committed and pushed!</span>
               <button
                 onClick={handleDone}
-                className="w-full rounded-lg bg-push-status-success py-2.5 text-sm font-medium text-white transition-all hover:bg-push-status-success active:scale-[0.98]"
+                className="w-full rounded-lg bg-push-status-success py-2.5 text-sm font-medium text-white transition-all hover:brightness-110 active:scale-[0.98]"
               >
                 Done
               </button>
