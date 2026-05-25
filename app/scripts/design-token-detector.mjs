@@ -3,16 +3,21 @@
 // both the ratchet script (check-design-tokens.mjs) and its vitest test can
 // import it without a build step.
 
+// Valid CSS hex lengths only (8 RGBA, 6 RGB, 4 RGBA-short, 3 RGB-short),
+// longest-first so the alternation is greedy. Excludes invalid lengths like
+// `#12345` / `#1234567` that would otherwise add ratchet noise.
+const HEX = '(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{4}|[0-9a-fA-F]{3})';
+
 // Tailwind arbitrary color value: `bg-[#000]`, `border-[#1f2531]`, and the
 // arbitrary-property form `[background-color:#121926]`. Matches the `#hex` that
 // should instead be a token class.
-const TAILWIND_ARBITRARY_HEX = /(?:-\[#|\[[a-zA-Z-]+:\s*#)[0-9a-fA-F]{3,8}\b/g;
+const TAILWIND_ARBITRARY_HEX = new RegExp(`(?:-\\[#|\\[[a-zA-Z-]+:\\s*#)${HEX}\\b`, 'g');
 
 // A quoted bare hex literal — inline `style={{ color: '#fff' }}`, theme objects
 // (`backgroundColor: '#0d0d0d'`), or color constants. The quote must hug the
 // `#`, so Tailwind arbitrary values inside a className string are not matched
 // here (the char before `#` there is `[`, not a quote) and never double-count.
-const QUOTED_HEX = /(['"`])#[0-9a-fA-F]{3,8}\1/g;
+const QUOTED_HEX = new RegExp(`(['"\`])#${HEX}\\1`, 'g');
 
 /**
  * Count hardcoded colors in a source string.

@@ -40,18 +40,29 @@ let inlineHex = 0;
 for (const file of walk(SRC_ROOT)) {
   const rel = relative(APP_ROOT, file).split('\\').join('/');
   if (rel.startsWith(EXCLUDE_PREFIX)) continue;
-  const res = findHardcodedColors(readFileSync(file, 'utf8'));
+  let source;
+  try {
+    source = readFileSync(file, 'utf8');
+  } catch (err) {
+    // A single unreadable file (permissions, transient I/O) shouldn't crash
+    // the whole scan — warn and skip so the count stays meaningful.
+    console.warn(`  ! skipped unreadable file ${rel}: ${err.message}`);
+    continue;
+  }
+  const res = findHardcodedColors(source);
   if (res.total > 0) perFile.push({ rel, ...res });
   total += res.total;
   tailwind += res.tailwind;
   inlineHex += res.inlineHex;
 }
 
-let baseline = { total: Number.POSITIVE_INFINITY };
+const update = process.argv.includes('--update') || process.env.UPDATE_BASELINE === '1';
+
+let baseline = null;
 try {
   baseline = JSON.parse(readFileSync(BASELINE_PATH, 'utf8'));
 } catch {
-  // No baseline yet — first run should be invoked with --update to create it.
+  // No baseline yet (first run, or it was deleted).
 }
 
 perFile.sort((a, b) => b.total - a.total);
@@ -59,9 +70,7 @@ perFile.sort((a, b) => b.total - a.total);
 console.log('Design-token check (DESIGN.md) — hardcoded colors outside src/components/ui:');
 console.log(`  Tailwind arbitrary values (e.g. bg-[#000]): ${tailwind}`);
 console.log(`  Quoted hex literals (inline styles / constants): ${inlineHex}`);
-console.log(
-  `  Total: ${total}  (baseline: ${Number.isFinite(baseline.total) ? baseline.total : 'none'})`,
-);
+console.log(`  Total: ${total}  (baseline: ${baseline ? baseline.total : 'none'})`);
 if (perFile.length > 0) {
   console.log(`  Top offenders:`);
   for (const f of perFile.slice(0, TOP_OFFENDERS)) {
@@ -69,10 +78,16 @@ if (perFile.length > 0) {
   }
 }
 
-const update = process.argv.includes('--update') || process.env.UPDATE_BASELINE === '1';
 if (update) {
   writeFileSync(BASELINE_PATH, `${JSON.stringify({ total }, null, 2)}\n`);
   console.log(`\nBaseline updated to ${total}.`);
+  process.exit(0);
+}
+
+if (!baseline) {
+  console.log(
+    `\nℹ No baseline found. Initialize it with:\n    npm run check:design-tokens -- --update`,
+  );
   process.exit(0);
 }
 

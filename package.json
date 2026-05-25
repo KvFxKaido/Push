@@ -6,7 +6,7 @@
     "build": "cd app && npm install && npm run build",
     "build:cli": "cd cli && npx tsc -p tsconfig.json",
     "build:mcp:github": "cd mcp/github-server && npm run build",
-    "check:design-tokens": "npm --prefix app run check:design-tokens",
+    "check:design-tokens": "npm --prefix app run check:design-tokens --",
     "dev:cli": "node --import tsx cli/cli.ts",
     "dev:mcp:github": "cd mcp/github-server && npm run dev",
     "format": "biome format --write",

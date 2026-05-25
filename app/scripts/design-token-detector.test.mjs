@@ -38,4 +38,13 @@ describe('findHardcodedColors', () => {
     const r = findHardcodedColors('boxShadow: "0 2px 8px rgba(0,0,0,0.25)"');
     expect(r.total).toBe(0);
   });
+
+  it('ignores invalid-length hex (only 3/4/6/8 digits count)', () => {
+    const r = findHardcodedColors(`a('#12345'); b('#1234567'); c('#ab');`);
+    expect(r.total).toBe(0);
+  });
+
+  it('counts 4-digit (RGBA-short) hex', () => {
+    expect(findHardcodedColors(`x('#abcd')`).inlineHex).toBe(1);
+  });
 });
