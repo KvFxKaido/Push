@@ -48,6 +48,15 @@ import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
 import { deriveUserGoalAnchor } from '../lib/user-goal-anchor.ts';
 import { loadUserGoalFile, seedUserGoalFile, extractDigestBody } from './user-goal-file.ts';
 import { escapeToolResultBoundaries } from '../lib/untrusted-content.ts';
+import {
+  createSimilarityLoopDetector,
+  evaluateLoopState,
+  EXACT_REPEAT_LIMIT,
+  isSimilarityLoopDetectionEnabled,
+  writeTargetOf,
+} from '../lib/loop-detection.ts';
+import { getLoopMetrics, recordLoopVerdict, resetLoopMetrics } from '../lib/loop-metrics.ts';
+import { appendLoopMetricsRecord } from './loop-metrics-store.ts';
 import { TurnPolicyRegistry, createCoderPolicy } from './turn-policy.js';
 import { buildMalformedToolCallEvents, summarizeToolResultPreview } from '../lib/run-events.ts';
 import { getDefaultCliHookRegistry, readCliCurrentBranch } from './tool-hooks-default.ts';
@@ -660,11 +669,79 @@ This summary will be persisted for retrieval by future related runs, so make it 
  * - emit: (event) => void — callback for streaming events (replaces stdout writing)
  * - runId: string — optional run id override (used by pushd for ack/event correlation)
  */
+/**
+ * Export the loop-detection telemetry for one runAssistantLoop invocation.
+ *
+ * Scope is unique per invocation (minted in the wrapper) so every run —
+ * top-level, delegated sub-run, parallel node — accounts in isolation even
+ * though they share `state.sessionId` / `runId`. Writes a JSONL record only
+ * when the run flagged at least one non-`none` verdict (keeps the file
+ * signal-dense; each record carries its own `total` for per-run rates), then
+ * clears the scope. Best-effort: never throws into the run's control flow.
+ */
+async function finalizeLoopMetricsExport(
+  scope: string,
+  sessionId: string,
+  result: RunResult | undefined,
+): Promise<void> {
+  try {
+    const metrics = getLoopMetrics(scope);
+    const flagged = metrics.total - metrics.byLevel.none;
+    if (flagged > 0) {
+      console.warn(
+        `[Push] loop-detection summary (session ${sessionId}): ${flagged}/${metrics.total} turns flagged — ` +
+          `warn ${metrics.byLevel.warn}, block ${metrics.byLevel.block}, compact ${metrics.byLevel.compact}, abort ${metrics.byLevel.abort}; ` +
+          `${metrics.darkSuppressed} would-fire (dark), ${metrics.enforcedActions} enforced.`,
+      );
+      await appendLoopMetricsRecord({
+        at: Date.now(),
+        surface: 'cli',
+        sessionId,
+        runId: result?.runId,
+        outcome: result?.outcome,
+        rounds: result?.rounds,
+        metrics,
+      });
+    }
+  } catch {
+    // Telemetry is best-effort; swallow so a write/IO error can't fail the run.
+  } finally {
+    resetLoopMetrics(scope);
+  }
+}
+
 export async function runAssistantLoop(
   state: SessionState,
   providerConfig: ProviderConfig,
   apiKey: string,
   maxRounds: number,
+  options: RunOptions = {},
+): Promise<RunResult> {
+  // Unique per-invocation scope for loop-detection telemetry — isolates this
+  // run's verdicts from sibling/sub-runs that share sessionId/runId.
+  const loopMetricsScope = `loop:${makeRunId()}`;
+  let result: RunResult | undefined;
+  try {
+    result = await runAssistantLoopImpl(
+      state,
+      providerConfig,
+      apiKey,
+      maxRounds,
+      loopMetricsScope,
+      options,
+    );
+    return result;
+  } finally {
+    await finalizeLoopMetricsExport(loopMetricsScope, state.sessionId, result);
+  }
+}
+
+async function runAssistantLoopImpl(
+  state: SessionState,
+  providerConfig: ProviderConfig,
+  apiKey: string,
+  maxRounds: number,
+  loopMetricsScope: string,
   options: RunOptions = {},
 ): Promise<RunResult> {
   const {
@@ -704,6 +781,10 @@ export async function runAssistantLoop(
   }
   let finalAssistantText: string = '';
   const repeatedCalls: Map<string, number> = new Map();
+  // Per-run near-duplicate detector — feeds the shared loop-detection oracle
+  // (lib/loop-detection.ts). Dark by default: its verdict is logged for
+  // measurement but only the exact-match branch drives the abort below.
+  const similarityDetector = createSimilarityLoopDetector();
   const toolsUsed: Set<string> = new Set();
   // The CLI runs two complementary ledgers per turn:
   //   - promptLedger (cli/file-ledger.ts): owns prompt budgeting, search-hit
@@ -1642,10 +1723,55 @@ export async function runAssistantLoop(
       return { outcome: 'success', finalAssistantText, rounds: round, runId };
     }
 
+    // Loop detection delegates to the shared lib/loop-detection oracle so the
+    // CLI and web surfaces share one policy instead of each owning a bespoke
+    // breaker. The exact-match branch preserves the prior `seen >= 3` abort;
+    // the near-duplicate ladder is computed for every write/edit but stays
+    // dark (logged-only) unless PUSH_LOOP_DETECTION=1 — graded enforcement
+    // (warn/block/compact) is a separate wiring step.
+    //
+    // Intentional asymmetry: only the *decision* (evaluateLoopState) is
+    // unified. The exact-match *signal* is still collected surface-specifically
+    // — batch-level here (`JSON.stringify(toolCalls)`), per-call on web via
+    // `MutationFailureTracker.isRepeatedCall`. The drift test pins the abort
+    // threshold, not the keying; converging the keying is a deliberate
+    // follow-up, not an oversight (see the decision doc).
     const callKey: string = JSON.stringify(toolCalls);
-    const seen: number = (repeatedCalls.get(callKey) || 0) + 1;
-    repeatedCalls.set(callKey, seen);
-    if (seen >= 3) {
+    const exactRepeatCount: number = (repeatedCalls.get(callKey) || 0) + 1;
+    repeatedCalls.set(callKey, exactRepeatCount);
+
+    let worstSimilarity: { value: number; streak: number } | undefined;
+    for (const call of toolCalls) {
+      const target = writeTargetOf(call.args as Record<string, unknown> | undefined);
+      if (!target) continue;
+      const obs = similarityDetector.observeWrite(target.path, target.content);
+      if (!worstSimilarity || obs.streak > worstSimilarity.streak) {
+        worstSimilarity = { value: obs.similarity, streak: obs.streak };
+      }
+    }
+
+    const loopVerdict = evaluateLoopState({
+      exactRepeat: { count: exactRepeatCount, limit: EXACT_REPEAT_LIMIT },
+      similarity: worstSimilarity,
+      similarityEnforced: isSimilarityLoopDetectionEnabled(),
+    });
+    recordLoopVerdict({
+      surface: 'cli',
+      scope: loopMetricsScope,
+      round,
+      level: loopVerdict.level,
+      action: loopVerdict.action,
+      enforced: loopVerdict.enforced,
+      reasons: loopVerdict.reasons,
+      similarity: loopVerdict.similarity,
+    });
+    if (loopVerdict.level !== 'none') {
+      console.warn(
+        `[Push] Turn ${round}: loop verdict ${loopVerdict.level} (action=${loopVerdict.action}) — ${loopVerdict.reasons.join('; ')}`,
+      );
+    }
+
+    if (loopVerdict.action === 'abort') {
       const loopText: string = `Detected repeated tool call loop (${toolCalls.map((c: ToolCall) => c.tool).join(', ')}). Stopping run.`;
       (state.messages as Message[]).push({
         role: 'user',
