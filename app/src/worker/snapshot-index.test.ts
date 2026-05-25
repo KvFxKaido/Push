@@ -409,7 +409,7 @@ describe('reapOrphanedSnapshots', () => {
 
     const result = await reapOrphanedSnapshots(kv, r2, 'cf-snapshots/', NOW);
 
-    expect(result).toEqual({ scanned: 3, reaped: 1, reapedBytes: 200 });
+    expect(result).toEqual({ scanned: 3, reaped: 1, reapedBytes: 200, capped: false });
     expect(deleted).toEqual(['cf-snapshots/orphan-old']);
     expect(store.has('cf-snapshots/live')).toBe(true);
     expect(store.has('cf-snapshots/orphan-new')).toBe(true);
@@ -442,7 +442,7 @@ describe('reapOrphanedSnapshots', () => {
 
     const result = await reapOrphanedSnapshots(kv, r2, 'cf-snapshots/', NOW);
 
-    expect(result).toEqual({ scanned: 5, reaped: 5, reapedBytes: 50 });
+    expect(result).toEqual({ scanned: 5, reaped: 5, reapedBytes: 50, capped: false });
     expect(deleted.sort()).toEqual([
       'cf-snapshots/o0',
       'cf-snapshots/o1',
@@ -450,5 +450,21 @@ describe('reapOrphanedSnapshots', () => {
       'cf-snapshots/o3',
       'cf-snapshots/o4',
     ]);
+  });
+
+  it('caps reaping per run and signals a remaining backlog', async () => {
+    const { kv } = createFakeKv(); // empty index → all 5 orphaned
+    const objects = Array.from({ length: 5 }, (_, i) => ({
+      key: `cf-snapshots/o${i}`,
+      uploaded: OLD,
+      size: 10,
+    }));
+    const { r2, deleted } = createFakeR2(objects, 2); // 2 per page
+
+    const result = await reapOrphanedSnapshots(kv, r2, 'cf-snapshots/', NOW, undefined, 3);
+
+    expect(result.capped).toBe(true);
+    expect(result.reaped).toBe(3);
+    expect(deleted.length).toBe(3);
   });
 });

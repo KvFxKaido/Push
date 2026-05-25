@@ -262,6 +262,9 @@ export interface ReapResult {
   scanned: number;
   reaped: number;
   reapedBytes: number;
+  /** True when the per-run `maxReap` cap was hit and orphans remain for the
+   *  next run. Lets the cron log signal an in-progress backlog drain. */
+  capped: boolean;
 }
 
 /**
@@ -278,8 +281,12 @@ export interface ReapResult {
  * under a restore. Default grace equals the index TTL: a snapshot stays
  * restorable for at least that long, matching the KV contract.
  *
- * Walks both the KV index and the R2 listing by cursor, never materializing the
- * full sets in memory beyond one page + the referenced-key set.
+ * Memory profile: holds the referenced-key set (one entry per repo/branch, so
+ * bounded by the index, which itself TTLs) plus up to `maxReap` orphan keys.
+ * Orphans are collected before any delete — deleting mid-pagination mutates the
+ * listing we're walking and can skip objects — but collection stops at
+ * `maxReap` so a one-time backlog from a prior leak can't blow the Worker's
+ * memory; `capped: true` then signals the next daily run to continue draining.
  */
 export async function reapOrphanedSnapshots(
   kv: KVNamespace,
@@ -287,31 +294,35 @@ export async function reapOrphanedSnapshots(
   keyPrefix: string,
   now: number = Date.now(),
   graceMs: number = DEFAULT_TTL_SECONDS * 1000,
+  maxReap: number = 10_000,
 ): Promise<ReapResult> {
   const referenced = new Set((await listSnapshots(kv)).map((e) => e.imageId));
   const cutoff = now - graceMs;
   let scanned = 0;
   let reapedBytes = 0;
-  // Collect orphan keys across the whole listing FIRST, then delete. Deleting
-  // mid-pagination mutates the very listing we're walking and can skip objects.
   const orphanKeys: string[] = [];
+  let capped = false;
   let cursor: string | undefined;
   do {
     const page = await r2.list({ prefix: keyPrefix, cursor });
     scanned += page.objects.length;
     for (const o of page.objects) {
+      if (orphanKeys.length >= maxReap) {
+        capped = true;
+        break;
+      }
       if (!referenced.has(o.key) && o.uploaded.getTime() < cutoff) {
         orphanKeys.push(o.key);
         reapedBytes += o.size ?? 0;
       }
     }
-    cursor = page.truncated ? page.cursor : undefined;
+    cursor = !capped && page.truncated ? page.cursor : undefined;
   } while (cursor);
   // R2 bulk delete caps at 1000 keys per call.
   for (let i = 0; i < orphanKeys.length; i += 1000) {
     await r2.delete(orphanKeys.slice(i, i + 1000));
   }
-  return { scanned, reaped: orphanKeys.length, reapedBytes };
+  return { scanned, reaped: orphanKeys.length, reapedBytes, capped };
 }
 
 function validateEntry(raw: unknown): SnapshotIndexEntry | null {

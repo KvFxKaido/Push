@@ -1306,18 +1306,34 @@ async function routeHibernate(env: Env, body: Json): Promise<Response> {
   // Advisory index (best-effort) — mirrors the Modal path so the eviction cron
   // and resume-by-repo lookup see CF snapshots too. NOT the auth boundary:
   // restore verifies the token against the R2 object's own metadata.
+  let indexUpdated = false;
   if (env.SNAPSHOT_INDEX && repoFullName && branch) {
-    await putSnapshot(env.SNAPSHOT_INDEX, {
-      repoFullName,
-      branch,
-      imageId: snapshotId,
-      restoreToken,
-      sizeBytes: archived.size,
-    }).catch(() => {});
+    try {
+      await putSnapshot(env.SNAPSHOT_INDEX, {
+        repoFullName,
+        branch,
+        imageId: snapshotId,
+        restoreToken,
+        sizeBytes: archived.size,
+      });
+      indexUpdated = true;
+    } catch {
+      // Index is advisory; the client still has the new snapshot_id for a
+      // direct restore. Leave both objects in place (see reclaim guard below).
+    }
   }
 
-  // Reclaim the superseded object now that the new one is durably indexed.
-  if (priorImageId && priorImageId !== snapshotId) {
+  // Reclaim the superseded object — but ONLY once the index durably points at
+  // the new one. If the index write failed, the entry still references
+  // priorImageId, so deleting it would strand resume-by-repo/branch on a
+  // missing snapshot. The prefix guard avoids deleting a non-R2 imageId (e.g. a
+  // Modal image id from a mixed-provider history). The cron is the backstop.
+  if (
+    indexUpdated &&
+    priorImageId &&
+    priorImageId !== snapshotId &&
+    priorImageId.startsWith(SNAPSHOT_KEY_PREFIX)
+  ) {
     await env.SNAPSHOTS.delete(priorImageId).catch(() => {});
   }
 
