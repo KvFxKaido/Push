@@ -8,13 +8,19 @@ import { defineConfig, type Plugin } from 'vite';
 // Stamp the PWA service-worker cache name with a per-build id so installed
 // PWAs auto-purge stale caches on every deploy — no manual CACHE_NAME bump.
 // sw.js lives in public/ (copied verbatim), so we rewrite it in the built
-// output. The source value in public/sw.js is only the dev fallback.
+// output. The source value in public/sw.js is only the dev fallback. Runs in
+// closeBundle (after Vite's public-dir copy has settled) and throws if the
+// declaration isn't found, so a future sw.js format change can't silently
+// reintroduce stale-cache bugs.
 function stampServiceWorkerCache(): Plugin {
+  let outDir = path.resolve(__dirname, 'dist');
   return {
     name: 'stamp-sw-cache',
     apply: 'build',
-    writeBundle(options) {
-      const outDir = options.dir ?? path.resolve(__dirname, 'dist');
+    configResolved(config) {
+      outDir = path.resolve(config.root, config.build.outDir);
+    },
+    closeBundle() {
       const swPath = path.resolve(outDir, 'sw.js');
       if (!fs.existsSync(swPath)) return;
 
@@ -41,6 +47,12 @@ function stampServiceWorkerCache(): Plugin {
         /const CACHE_NAME = ['"][^'"]*['"];/,
         `const CACHE_NAME = 'push-${buildId}';`,
       );
+      if (stamped === source) {
+        throw new Error(
+          'stampServiceWorkerCache: CACHE_NAME declaration not found in dist/sw.js — ' +
+            'the PWA cache would not bust on deploy. Check the format in public/sw.js.',
+        );
+      }
       fs.writeFileSync(swPath, stamped);
     },
   };

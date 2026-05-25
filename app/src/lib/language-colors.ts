@@ -27,5 +27,9 @@ export const LANGUAGE_COLORS: Record<string, string> = {
 export const LANGUAGE_COLOR_FALLBACK = '#8b8b8b';
 
 export function getLanguageColor(language: string | null | undefined): string {
-  return (language && LANGUAGE_COLORS[language]) || LANGUAGE_COLOR_FALLBACK;
+  // Object.hasOwn guards against inherited keys (e.g. "toString") resolving to
+  // a prototype member instead of the fallback.
+  return language && Object.hasOwn(LANGUAGE_COLORS, language)
+    ? LANGUAGE_COLORS[language]
+    : LANGUAGE_COLOR_FALLBACK;
 }
