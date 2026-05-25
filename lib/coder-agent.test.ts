@@ -137,6 +137,44 @@ describe('runCoderAgent (PushStream consumer)', () => {
     expect(req.hasSandbox).toBe(true);
   });
 
+  it('fires onCheckpoint at the cadence (every 5th round) with a consistent state snapshot', async () => {
+    const rounds: PushStreamEvent[][] = Array.from({ length: 8 }, () => [
+      { type: 'text_delta', text: 'working' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+    const { stream } = makePushStream(rounds);
+
+    // Each round emits a read-only tool call so the loop keeps iterating; the
+    // after-model policy halts at round 6, stopping just past the round-5
+    // checkpoint.
+    // Two reads so the batch path (batchTotal >= 2) runs and the loop continues;
+    // a single read would fall through to the detectAnyToolCall path.
+    const detectAllToolCalls = () => ({
+      readOnly: [
+        { call: { tool: 'sandbox_read_file', args: { path: 'a' } } },
+        { call: { tool: 'sandbox_read_file', args: { path: 'b' } } },
+      ],
+      mutating: null,
+      fileMutations: [],
+      extraMutations: [],
+      droppedCandidates: [],
+    });
+    const evaluateAfterModel = async (_response: string, round: number) =>
+      round >= 6 ? ({ action: 'halt', summary: 'done' } as const) : null;
+
+    const checkpoints: Array<{ round: number; messageCount: number }> = [];
+    await runCoderAgent(baseCoderOptions({ stream, detectAllToolCalls, evaluateAfterModel }), {
+      onStatus: () => {},
+      onCheckpoint: async (state) => {
+        checkpoints.push({ round: state.round, messageCount: state.messages.length });
+      },
+    });
+
+    // Cadence is 5, skipping round 0 → exactly one checkpoint at round index 5.
+    expect(checkpoints.map((c) => c.round)).toEqual([5]);
+    expect(checkpoints[0]?.messageCount).toBeGreaterThan(0);
+  });
+
   it('throws AbortError when callbacks.signal aborts before round 1', async () => {
     const controller = new AbortController();
     controller.abort();

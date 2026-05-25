@@ -89,6 +89,13 @@ const CODER_ROUND_TIMEOUT_MS = 60_000; // 60s of inactivity (activity-based — 
 const MAX_CODER_ROUNDS = 30; // Circuit breaker — prevent runaway delegation
 const MAX_CHECKPOINTS = 3; // Max interactive checkpoint pauses per task
 const CHECKPOINT_ANSWER_TIMEOUT_MS = 30_000; // 30s for Orchestrator checkpoint response
+// Cadence (in rounds) for durable resume checkpoints — the host snapshots the
+// workspace + persists the serialized loop state so a sandbox death can be
+// recovered. Distinct from the interactive checkpoints above. Fires at the top
+// of a round (a quiescent point: prior rounds' tool calls are applied and no
+// new ones have started), so the filesystem and the captured state are
+// consistent for a clean rollback on resume.
+const CODER_CHECKPOINT_CADENCE_ROUNDS = 5;
 
 // Size limits to prevent 413 errors from provider APIs
 const MAX_TOOL_RESULT_SIZE = 24_000; // Max chars per tool result (~400 lines visible per read)
@@ -427,10 +434,37 @@ Working Memory:
  * checkpoint, working-memory, and ledger-advance callbacks back to the
  * Orchestrator without coupling the lib kernel to them.
  */
-export interface CoderAgentCallbacks {
+/**
+ * Consistent point-in-time snapshot of the loop's resumable state, handed to
+ * the host's `onCheckpoint` so it can be persisted alongside a filesystem
+ * snapshot. On a sandbox death the host restores the workspace and rolls the
+ * loop back to this exact `round`, so the two never diverge. `messages` and
+ * `workingMemory` are live references — the host must serialize them
+ * synchronously before yielding (the loop awaits `onCheckpoint`, so nothing
+ * mutates them mid-call).
+ */
+export interface CoderCheckpointState<TCard = unknown> {
+  /** Round index this checkpoint was taken at (top of the round). */
+  round: number;
+  /** Full chat history through the prior round. */
+  messages: CoderLoopMessage[];
+  /** Agent working memory (plan, tasks, observations, phase). */
+  workingMemory: CoderWorkingMemory;
+  /** UI cards emitted so far, so a resumed run doesn't re-emit them. */
+  cards: TCard[];
+}
+
+export interface CoderAgentCallbacks<TCard = unknown> {
   onStatus: (phase: string, detail?: string) => void;
   signal?: AbortSignal;
   onCheckpointRequest?: (question: string, context: string) => Promise<string>;
+  /**
+   * Durable resume checkpoint hook. Called at the top of every
+   * `CODER_CHECKPOINT_CADENCE_ROUNDS`th round with a consistent snapshot of the
+   * loop state; the host pairs it with a filesystem snapshot. Best-effort — the
+   * loop swallows errors so a failed checkpoint never breaks the run.
+   */
+  onCheckpoint?: (state: CoderCheckpointState<TCard>) => Promise<void>;
   onWorkingMemoryUpdate?: (state: CoderWorkingMemory) => void;
   /** Called once per loop round so the Web shim can advance `fileLedger`. */
   onAdvanceRound?: () => void;
@@ -583,7 +617,7 @@ export interface CoderAgentResult<TCard> {
 
 export async function runCoderAgent<TCall, TCard>(
   options: CoderAgentOptions<TCall, TCard>,
-  callbacks: CoderAgentCallbacks,
+  callbacks: CoderAgentCallbacks<TCard>,
 ): Promise<CoderAgentResult<TCard>> {
   const {
     provider,
@@ -765,6 +799,19 @@ export async function runCoderAgent<TCall, TCard>(
     rounds = round + 1;
     callbacks.onAdvanceRound?.();
     callbacks.onStatus('Coder working...', `Round ${rounds}`);
+
+    // Durable resume checkpoint. Top-of-round is quiescent: prior rounds' tool
+    // calls are applied to the workspace and none are in flight, so the
+    // filesystem the host snapshots matches the state captured here. Awaited so
+    // nothing mutates `messages`/`workingMemory` mid-snapshot; best-effort so a
+    // checkpoint failure never aborts the run.
+    if (callbacks.onCheckpoint && round > 0 && round % CODER_CHECKPOINT_CADENCE_ROUNDS === 0) {
+      try {
+        await callbacks.onCheckpoint({ round, messages, workingMemory, cards: allCards });
+      } catch (err) {
+        callbacks.onStatus('Checkpoint skipped', err instanceof Error ? err.message : String(err));
+      }
+    }
 
     // Stream Coder response via the active provider, with a per-round timeout
     const { error: streamError, text: accumulated } = await iteratePushStreamText(
