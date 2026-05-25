@@ -155,7 +155,7 @@ export function RepoAndChatSelector({
                 setOpen(false);
               }}
               className={`mx-1 flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2.5 ${
-                isActiveChat ? 'bg-[#101621]' : 'hover:bg-push-surface-hover'
+                isActiveChat ? 'bg-push-surface-active' : 'hover:bg-push-surface-hover'
               }`}
             >
               <MessageSquare className="h-3.5 w-3.5 shrink-0 text-push-fg-dim" />
@@ -172,7 +172,7 @@ export function RepoAndChatSelector({
                     e.preventDefault();
                     onDeleteChat(id);
                   }}
-                  className="h-7 w-7 shrink-0 rounded-md text-push-fg-dim transition-colors duration-150 hover:bg-[#1a1f2b] hover:text-red-400"
+                  className="h-7 w-7 shrink-0 rounded-md text-push-fg-dim transition-colors duration-150 hover:bg-push-edge-subtle hover:text-red-400"
                   aria-label={`Delete ${conv.title}`}
                 >
                   <Trash2 className="h-3.5 w-3.5" />

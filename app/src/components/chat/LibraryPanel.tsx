@@ -468,7 +468,7 @@ function CollectionListView({
             type="button"
             onClick={onStartCreate}
             disabled={busy}
-            className="flex items-center gap-1 rounded-md border border-[#2a3447] bg-push-surface px-2 py-1 text-push-2xs text-push-fg-soft hover:border-push-edge-focus disabled:opacity-60"
+            className="flex items-center gap-1 rounded-md border border-push-edge-hover bg-push-surface px-2 py-1 text-push-2xs text-push-fg-soft hover:border-push-edge-focus disabled:opacity-60"
           >
             <Plus className="h-3 w-3" />
             New
@@ -477,7 +477,7 @@ function CollectionListView({
       </div>
 
       {isCreatingCollection && (
-        <div className="rounded-lg border border-[#2a3447] bg-push-surface p-2">
+        <div className="rounded-lg border border-push-edge-hover bg-push-surface p-2">
           <input
             autoFocus
             type="text"
@@ -517,7 +517,7 @@ function CollectionListView({
         </div>
       )}
 
-      <div className="max-h-[360px] overflow-y-auto rounded-lg border border-[#2a3447] bg-push-surface">
+      <div className="max-h-[360px] overflow-y-auto rounded-lg border border-push-edge-hover bg-push-surface">
         {isLoading && collections.length === 0 ? (
           <div className="flex items-center justify-center gap-2 px-3 py-6 text-push-2xs text-push-fg-faint">
             <Loader2 className="h-3 w-3 animate-spin" />
@@ -528,7 +528,7 @@ function CollectionListView({
             No libraries yet. Tap <span className="text-push-fg-soft">New</span> to start one.
           </div>
         ) : (
-          <ul className="divide-y divide-[#1a2230]">
+          <ul className="divide-y divide-push-edge-subtle">
             {collections.map((c) => (
               <li key={c.id}>
                 <button
@@ -536,7 +536,7 @@ function CollectionListView({
                   onClick={() => onSelectCollection(c.id)}
                   className="flex w-full items-center gap-2 px-2 py-2 text-left hover:bg-push-accent/5"
                 >
-                  <BookIcon className="h-4 w-4 shrink-0 text-[#8891a1]" />
+                  <BookIcon className="h-4 w-4 shrink-0 text-push-fg-muted" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-push-xs text-push-fg-soft">{c.name}</p>
                     <p className="truncate text-push-2xs text-push-fg-faint">
@@ -715,7 +715,7 @@ function CollectionDetailView({
         className={`flex w-full items-center justify-center gap-1.5 rounded-md border px-2.5 py-1.5 text-push-2xs disabled:opacity-40 ${
           isLinked
             ? 'border-push-accent/40 bg-push-accent/10 text-push-accent hover:bg-push-accent/20'
-            : 'border-[#2a3447] bg-push-surface text-push-fg-soft hover:border-push-edge-focus'
+            : 'border-push-edge-hover bg-push-surface text-push-fg-soft hover:border-push-edge-focus'
         }`}
         title={
           canToggleLink
@@ -751,13 +751,13 @@ function CollectionDetailView({
         </div>
       )}
 
-      <div className="max-h-[280px] overflow-y-auto rounded-lg border border-[#2a3447] bg-push-surface">
+      <div className="max-h-[280px] overflow-y-auto rounded-lg border border-push-edge-hover bg-push-surface">
         {detail.items.length === 0 ? (
           <div className="px-3 py-4 text-center text-push-2xs text-push-fg-faint">
             No files yet. Tap <span className="text-push-fg-soft">Add files</span> to upload.
           </div>
         ) : (
-          <ul className="divide-y divide-[#1a2230]">
+          <ul className="divide-y divide-push-edge-subtle">
             {detail.items.map((item) => (
               <ItemRow
                 key={item.id}
@@ -780,7 +780,7 @@ function CollectionDetailView({
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={busy}
-          className="flex items-center gap-1 rounded-md border border-[#2a3447] bg-push-surface px-2 py-1 text-push-2xs text-push-fg-soft hover:border-push-edge-focus disabled:opacity-60"
+          className="flex items-center gap-1 rounded-md border border-push-edge-hover bg-push-surface px-2 py-1 text-push-2xs text-push-fg-soft hover:border-push-edge-focus disabled:opacity-60"
         >
           <Plus className="h-3 w-3" />
           Add files
@@ -834,7 +834,7 @@ function InstructionsSection({
 }: InstructionsSectionProps) {
   if (isEditing) {
     return (
-      <div className="rounded-lg border border-[#2a3447] bg-push-surface p-2">
+      <div className="rounded-lg border border-push-edge-hover bg-push-surface p-2">
         <p className="px-0.5 pb-1 text-push-2xs uppercase tracking-wide text-push-fg-faint">
           Instructions
         </p>
@@ -876,7 +876,7 @@ function InstructionsSection({
     <button
       type="button"
       onClick={onStartEdit}
-      className="flex w-full items-start gap-2 rounded-lg border border-dashed border-[#2a3447] bg-push-surface px-2 py-2 text-left text-push-2xs text-push-fg-faint hover:border-push-edge-focus hover:text-push-fg-soft"
+      className="flex w-full items-start gap-2 rounded-lg border border-dashed border-push-edge-hover bg-push-surface px-2 py-2 text-left text-push-2xs text-push-fg-faint hover:border-push-edge-focus hover:text-push-fg-soft"
     >
       <Pencil className="mt-0.5 h-3 w-3 shrink-0" />
       <span className="flex-1">
@@ -969,9 +969,9 @@ function ItemRow({
 }
 
 function LibraryItemIcon({ type }: { type: LibraryItemMeta['type'] }) {
-  if (type === 'image') return <ImageIcon className="mt-0.5 h-4 w-4 shrink-0 text-[#8891a1]" />;
+  if (type === 'image') return <ImageIcon className="mt-0.5 h-4 w-4 shrink-0 text-push-fg-muted" />;
   if (type === 'code') return <FileCode className="mt-0.5 h-4 w-4 shrink-0 text-push-accent" />;
-  return <FileText className="mt-0.5 h-4 w-4 shrink-0 text-[#8891a1]" />;
+  return <FileText className="mt-0.5 h-4 w-4 shrink-0 text-push-fg-muted" />;
 }
 
 function BookIcon({ className }: { className?: string }) {

@@ -112,7 +112,7 @@ function KeptCard({
       </div>
 
       {/* Content */}
-      <div className="text-push-sm text-[#d1d8e6] leading-relaxed whitespace-pre-wrap break-words">
+      <div className="text-push-sm text-push-fg-soft leading-relaxed whitespace-pre-wrap break-words">
         {displayContent}
       </div>
 

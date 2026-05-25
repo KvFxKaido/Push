@@ -332,7 +332,7 @@ export function HubDiffTab({
                   <button
                     onClick={() => toggleFile(fd.path)}
                     className={`sticky top-0 z-10 flex w-full items-center gap-2 border-b border-push-edge px-3 py-2 text-left backdrop-blur-sm ${
-                      isHighlightedFile ? 'bg-push-accent/10' : 'bg-[#0a0e16]/95'
+                      isHighlightedFile ? 'bg-push-accent/10' : 'bg-push-surface-raised/95'
                     }`}
                   >
                     {isCollapsed ? (

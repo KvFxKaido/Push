@@ -58,7 +58,7 @@ function AttachmentChip({
       ) : attachment.type === 'code' ? (
         <FileCode className="h-5 w-5 text-push-accent" />
       ) : (
-        <FileText className="h-5 w-5 text-[#8891a1]" />
+        <FileText className="h-5 w-5 text-push-fg-muted" />
       )}
 
       {/* Filename and size */}
@@ -75,7 +75,7 @@ function AttachmentChip({
       ) : (
         <button
           onClick={() => onRemove(attachment.id)}
-          className="h-5 w-5 flex items-center justify-center rounded-full hover:bg-push-surface-hover text-push-fg-dim hover:text-[#8891a1] transition-colors"
+          className="h-5 w-5 flex items-center justify-center rounded-full hover:bg-push-surface-hover text-push-fg-dim hover:text-push-fg-muted transition-colors"
           aria-label={`Remove ${attachment.filename}`}
         >
           <X className="h-3 w-3" />

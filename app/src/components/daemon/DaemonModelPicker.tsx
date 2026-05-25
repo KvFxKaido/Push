@@ -100,7 +100,7 @@ export function DaemonModelPicker({
       </PopoverTrigger>
       <PopoverContent
         align="start"
-        className="w-64 border-push-edge/60 bg-[#0d1117] p-1 text-push-fg shadow-md"
+        className="w-64 border-push-edge/60 bg-push-surface-raised p-1 text-push-fg shadow-md"
       >
         <div className="px-2 py-1.5 text-[10px] uppercase tracking-wide text-push-fg-secondary/60">
           Provider

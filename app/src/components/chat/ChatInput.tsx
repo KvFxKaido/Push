@@ -654,7 +654,7 @@ export function ChatInput({
 
   return (
     <div className="safe-area-bottom sticky bottom-0 z-10 px-3 pb-3 mx-auto w-full max-w-2xl">
-      <div className="relative overflow-hidden rounded-[24px] border border-[#171c25]/90 bg-push-grad-input shadow-[0_12px_40px_rgba(0,0,0,0.55),0_4px_12px_rgba(0,0,0,0.25)] backdrop-blur-xl">
+      <div className="relative overflow-hidden rounded-[24px] border border-push-surface-active/90 bg-push-grad-input shadow-[0_12px_40px_rgba(0,0,0,0.55),0_4px_12px_rgba(0,0,0,0.25)] backdrop-blur-xl">
         <div className="pointer-events-none absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-white/[0.03] to-transparent" />
 
         {editState && (
@@ -701,7 +701,7 @@ export function ChatInput({
               placeholder ?? (repoName ? `Ask about ${repoName}...` : 'Ask about code...')
             }
             rows={1}
-            className="w-full resize-none overflow-y-auto bg-transparent px-1 pb-2 text-push-lg leading-6 text-push-fg placeholder:text-[#6f7787] focus:outline-none"
+            className="w-full resize-none overflow-y-auto bg-transparent px-1 pb-2 text-push-lg leading-6 text-push-fg placeholder:text-push-fg-dim focus:outline-none"
           />
         </div>
 
@@ -793,8 +793,8 @@ export function ChatInput({
                   className="w-[250px] rounded-xl border border-push-edge bg-push-grad-panel p-2.5 text-push-fg-soft shadow-[0_12px_36px_rgba(0,0,0,0.55),0_4px_12px_rgba(0,0,0,0.25)] animate-fade-in"
                 >
                   <div className="space-y-2.5 px-1 py-1">
-                    <div className="rounded-lg border border-[#2a3447] bg-push-surface px-2.5 py-1.5">
-                      <p className="text-push-2xs text-[#8e99ad]">
+                    <div className="rounded-lg border border-push-edge-hover bg-push-surface px-2.5 py-1.5">
+                      <p className="text-push-2xs text-push-fg-muted">
                         {isDisplayedProviderLocked ? 'Current chat: locked' : 'This chat selection'}
                       </p>
                     </div>
@@ -803,7 +803,7 @@ export function ChatInput({
                         Backend
                       </p>
                       {providerControls.availableProviders.length === 0 ? (
-                        <div className="rounded-lg border border-[#2a3447] bg-push-surface px-2.5 py-2 text-push-xs text-push-fg-faint">
+                        <div className="rounded-lg border border-push-edge-hover bg-push-surface px-2.5 py-2 text-push-xs text-push-fg-faint">
                           No API keys configured yet.
                         </div>
                       ) : (
@@ -813,7 +813,7 @@ export function ChatInput({
                           onChange={(e) =>
                             providerControls.onSelectBackend(e.target.value as PreferredProvider)
                           }
-                          className="h-8 w-full rounded-lg border border-[#2a3447] bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60"
+                          className="h-8 w-full rounded-lg border border-push-edge-hover bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60"
                         >
                           {providerControls.availableProviders.map(([value, label]) => (
                             <option key={value} value={value}>
@@ -835,7 +835,7 @@ export function ChatInput({
                             type="button"
                             onClick={refreshSelectedModelList}
                             disabled={selectedModelLoading}
-                            className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-[#2a3447] bg-push-surface text-[#8e99ad] transition-colors hover:text-push-fg-soft disabled:opacity-50"
+                            className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-push-edge-hover bg-push-surface text-push-fg-muted transition-colors hover:text-push-fg-soft disabled:opacity-50"
                             aria-label="Refresh models"
                             title="Refresh models"
                           >
@@ -849,7 +849,7 @@ export function ChatInput({
                       </div>
 
                       {selectedProvider === 'demo' && (
-                        <div className="rounded-lg border border-[#2a3447] bg-push-surface px-2.5 py-2 text-push-xs text-[#9eabbe]">
+                        <div className="rounded-lg border border-push-edge-hover bg-push-surface px-2.5 py-2 text-push-xs text-[#9eabbe]">
                           Demo mode (no model selection)
                         </div>
                       )}
@@ -1174,7 +1174,7 @@ export function ChatInput({
                               onChange={(e) =>
                                 providerControls.onSelectAzureDeployment(e.target.value)
                               }
-                              className="h-8 w-full rounded-lg border border-[#2a3447] bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60"
+                              className="h-8 w-full rounded-lg border border-push-edge-hover bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60"
                             >
                               {providerControls.azureDeployments.map((dep) => (
                                 <option key={dep.id} value={dep.id}>
@@ -1187,7 +1187,7 @@ export function ChatInput({
                               type="text"
                               value={providerControls.azureModel}
                               onChange={(e) => providerControls.onSelectAzureModel(e.target.value)}
-                              className="h-8 w-full rounded-lg border border-[#2a3447] bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus"
+                              className="h-8 w-full rounded-lg border border-push-edge-hover bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus"
                               placeholder="Deployment or model"
                             />
                           )}
@@ -1208,7 +1208,7 @@ export function ChatInput({
                               onChange={(e) =>
                                 providerControls.onSelectBedrockDeployment(e.target.value)
                               }
-                              className="h-8 w-full rounded-lg border border-[#2a3447] bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60"
+                              className="h-8 w-full rounded-lg border border-push-edge-hover bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60"
                             >
                               {providerControls.bedrockDeployments.map((dep) => (
                                 <option key={dep.id} value={dep.id}>
@@ -1223,7 +1223,7 @@ export function ChatInput({
                               onChange={(e) =>
                                 providerControls.onSelectBedrockModel(e.target.value)
                               }
-                              className="h-8 w-full rounded-lg border border-[#2a3447] bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus"
+                              className="h-8 w-full rounded-lg border border-push-edge-hover bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus"
                               placeholder="Bedrock model id"
                             />
                           )}
@@ -1241,7 +1241,7 @@ export function ChatInput({
                             value={providerControls.vertexModel}
                             disabled={!canChangeModel}
                             onChange={(e) => providerControls.onSelectVertexModel(e.target.value)}
-                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60"
+                            className="h-8 w-full rounded-lg border border-push-edge-hover bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60"
                           >
                             {(providerControls.vertexModelOptions.length > 0
                               ? providerControls.vertexModelOptions
@@ -1268,7 +1268,7 @@ export function ChatInput({
                             onChange={(e) =>
                               providerControls.onSelectAnthropicModel(e.target.value)
                             }
-                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60"
+                            className="h-8 w-full rounded-lg border border-push-edge-hover bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60"
                           >
                             {(providerControls.anthropicModelOptions.length > 0
                               ? providerControls.anthropicModelOptions
@@ -1293,7 +1293,7 @@ export function ChatInput({
                             value={providerControls.openaiModel}
                             disabled={!canChangeModel}
                             onChange={(e) => providerControls.onSelectOpenAIModel(e.target.value)}
-                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60"
+                            className="h-8 w-full rounded-lg border border-push-edge-hover bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60"
                           >
                             {(providerControls.openaiModelOptions.length > 0
                               ? providerControls.openaiModelOptions
@@ -1318,7 +1318,7 @@ export function ChatInput({
                             value={providerControls.googleModel}
                             disabled={!canChangeModel}
                             onChange={(e) => providerControls.onSelectGoogleModel(e.target.value)}
-                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60"
+                            className="h-8 w-full rounded-lg border border-push-edge-hover bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60"
                           >
                             {(providerControls.googleModelOptions.length > 0
                               ? providerControls.googleModelOptions
@@ -1380,7 +1380,7 @@ export function ChatInput({
                     ? 'text-red-400'
                     : statusNotice.tone === 'warning'
                       ? 'text-amber-400'
-                      : 'text-[#788396]'
+                      : 'text-push-fg-faint'
                 }`}
               >
                 {statusNotice.text}
@@ -1413,7 +1413,7 @@ export function ChatInput({
                 ? `${COMPOSER_CONTROL_SURFACE_CLASS} border-red-400/50 bg-[linear-gradient(180deg,rgba(55,12,18,0.96)_0%,rgba(28,7,11,0.98)_100%)] text-red-300 ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
                 : canSend || canStreamWithDraft
                   ? `${COMPOSER_CONTROL_SURFACE_CLASS} text-push-fg-secondary ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
-                  : 'cursor-not-allowed rounded-full border border-[#262c38] bg-[#151a22] text-[#576176] shadow-none'
+                  : 'cursor-not-allowed rounded-full border border-push-edge bg-push-surface-active text-[#576176] shadow-none'
             }`}
             aria-label={sendButtonLabel}
             title={sendButtonLabel}

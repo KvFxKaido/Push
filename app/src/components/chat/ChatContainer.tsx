@@ -228,7 +228,7 @@ function EmptyState({
             <button
               type="button"
               onClick={handleHexTap}
-              className="mx-auto mb-5 flex h-12 w-12 cursor-pointer items-center justify-center rounded-xl border border-[#1e2634] bg-push-grad-icon shadow-[0_12px_30px_rgba(0,0,0,0.55)] active:scale-95 transition-transform"
+              className="mx-auto mb-5 flex h-12 w-12 cursor-pointer items-center justify-center rounded-xl border border-push-edge bg-push-grad-icon shadow-[0_12px_30px_rgba(0,0,0,0.55)] active:scale-95 transition-transform"
             >
               <PushMarkIcon
                 className={`text-push-accent transition-colors ${hexTap ? 'hex-tap' : ''}`}
@@ -238,13 +238,13 @@ function EmptyState({
                 width={22}
               />
             </button>
-            <h2 className="mb-2.5 text-lg font-semibold text-[#fafafa]">
+            <h2 className="mb-2.5 text-lg font-semibold text-push-fg">
               {activeRepo ? activeRepo.name : hasSandbox ? 'Workspace' : 'Push'}
             </h2>
           </>
         )}
         {isChat && (
-          <h2 className="mb-3 text-lg font-semibold text-[#fafafa]">Start a conversation</h2>
+          <h2 className="mb-3 text-lg font-semibold text-push-fg">Start a conversation</h2>
         )}
         <p className="text-sm leading-relaxed text-push-fg-secondary">
           {isChat
@@ -261,7 +261,7 @@ function EmptyState({
               <button
                 key={suggestion.label}
                 onClick={() => onSuggestion?.(suggestion)}
-                className="cursor-pointer rounded-xl border border-push-edge bg-push-grad-card px-4 py-3 text-left text-sm text-push-fg-secondary shadow-push-card card-hover spring-press hover:border-push-edge-hover hover:text-[#f0f4ff] hover:shadow-push-card-hover"
+                className="cursor-pointer rounded-xl border border-push-edge bg-push-grad-card px-4 py-3 text-left text-sm text-push-fg-secondary shadow-push-card card-hover spring-press hover:border-push-edge-hover hover:text-push-fg hover:shadow-push-card-hover"
               >
                 {suggestion.label}
               </button>
@@ -463,7 +463,7 @@ export function ChatContainer({
           text-push-fg-secondary
           shadow-push-lg backdrop-blur-sm
           transition-all duration-300 ease-out
-          hover:border-push-edge-hover hover:text-[#f0f4ff] hover:shadow-push-xl
+          hover:border-push-edge-hover hover:text-push-fg hover:shadow-push-xl
           spring-press
           ${showScrollButton ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-3 pointer-events-none'}
         `}

@@ -355,7 +355,7 @@ export function RepoChatDrawer({
         <SheetContent
           side="left"
           overlayClassName="bg-transparent"
-          className="w-[86vw] rounded-r-2xl border-[#151b26] bg-push-grad-panel p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.3)] sm:max-w-sm [&>[data-slot=sheet-close]]:text-push-fg-secondary [&>[data-slot=sheet-close]]:hover:text-push-fg"
+          className="w-[86vw] rounded-r-2xl border-push-surface-active bg-push-grad-panel p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.3)] sm:max-w-sm [&>[data-slot=sheet-close]]:text-push-fg-secondary [&>[data-slot=sheet-close]]:hover:text-push-fg"
         >
           {/* Subtle top glow */}
           <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-16 rounded-tr-2xl bg-gradient-to-b from-white/[0.03] to-transparent" />
@@ -552,7 +552,7 @@ export function RepoChatDrawer({
                                             }}
                                             className={`mx-1 flex items-center gap-2 rounded-lg px-3 py-2 ${
                                               isActiveBranch
-                                                ? 'bg-[#101621]'
+                                                ? 'bg-push-surface-active'
                                                 : 'hover:bg-push-surface-hover'
                                             }`}
                                           >

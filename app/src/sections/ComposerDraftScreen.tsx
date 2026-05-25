@@ -401,7 +401,7 @@ export function ComposerDraftScreen({
         </div>
       </div>
 
-      <div className="border-t border-push-edge/60 bg-[#040608] px-4 pb-4 pt-3">
+      <div className="border-t border-push-edge/60 bg-push-surface-inset px-4 pb-4 pt-3">
         <div className="mx-auto flex w-full max-w-md flex-col gap-2">
           <button
             onClick={handleConfirm}

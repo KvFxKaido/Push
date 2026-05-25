@@ -102,7 +102,7 @@ function formatContent(content: string): React.ReactNode[] {
         1: 'text-[18px] font-semibold text-push-fg mt-4 mb-1.5',
         2: 'text-[16px] font-semibold text-push-fg mt-3 mb-1',
         3: 'text-push-lg font-medium text-[#e2e8f0] mt-2.5 mb-0.5',
-        4: 'text-[14px] font-medium text-[#8891a1] mt-2 mb-0.5 uppercase tracking-wide',
+        4: 'text-[14px] font-medium text-push-fg-muted mt-2 mb-0.5 uppercase tracking-wide',
       };
       parts.push(
         <div key={`heading-${i}`} className={styles[level]}>
@@ -118,7 +118,7 @@ function formatContent(content: string): React.ReactNode[] {
       parts.push(
         <div
           key={`bq-${i}`}
-          className="border-l-2 border-push-edge pl-3 my-1 text-[#8891a1] italic"
+          className="border-l-2 border-push-edge pl-3 my-1 text-push-fg-muted italic"
         >
           {quoteText ? formatInline(quoteText) : '\u00A0'}
         </div>,
@@ -215,7 +215,7 @@ function formatInline(text: string): React.ReactNode[] {
     } else if (match[4]) {
       // Italic *text*
       result.push(
-        <em key={key++} className="italic text-[#d1d8e6]">
+        <em key={key++} className="italic text-push-fg-soft">
           {match[4]}
         </em>,
       );
@@ -261,7 +261,7 @@ function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreamin
     <div className="mb-2">
       <button
         onClick={() => setExpanded((e) => !e)}
-        className="flex items-center gap-1 text-push-xs text-push-fg-dim hover:text-[#8891a1] transition-colors duration-150 group"
+        className="flex items-center gap-1 text-push-xs text-push-fg-dim hover:text-push-fg-muted transition-colors duration-150 group"
       >
         <ChevronRight
           className={`h-3 w-3 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
@@ -333,7 +333,7 @@ function AttachmentBadge({ attachment }: { attachment: AttachmentData }) {
   return (
     <div className="flex items-center gap-1.5 rounded-lg bg-push-surface/50 border border-push-edge px-2 py-1">
       <Icon className="h-3.5 w-3.5 text-push-fg-muted" />
-      <span className="text-push-sm text-[#8891a1] truncate max-w-[120px]">
+      <span className="text-push-sm text-push-fg-muted truncate max-w-[120px]">
         {attachment.filename}
       </span>
     </div>
@@ -365,7 +365,7 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={handleCopy}
-      className="rounded-md p-1.5 text-push-fg-dim transition-colors duration-150 hover:bg-push-surface-active hover:text-[#d1d8e6]"
+      className="rounded-md p-1.5 text-push-fg-dim transition-colors duration-150 hover:bg-push-surface-active hover:text-push-fg-soft"
       title={copied ? 'Copied!' : 'Copy to clipboard'}
     >
       {copied ? (
@@ -500,7 +500,7 @@ export const MessageBubble = memo(function MessageBubble({
           {onEdit && (
             <button
               onClick={() => onEdit(message.id)}
-              className="rounded-md p-1.5 text-push-fg-dim transition-colors duration-150 hover:bg-push-surface-active hover:text-[#d1d8e6]"
+              className="rounded-md p-1.5 text-push-fg-dim transition-colors duration-150 hover:bg-push-surface-active hover:text-push-fg-soft"
               title="Edit and resend"
             >
               <Pencil className="h-3.5 w-3.5" />
@@ -527,7 +527,7 @@ export const MessageBubble = memo(function MessageBubble({
 
   return (
     <div className="flex items-start gap-2.5 px-4 py-1.5 group/assistant animate-fade-in">
-      <div className="mt-1.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[#1e2634] bg-push-grad-icon">
+      <div className="mt-1.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-push-edge bg-push-grad-icon">
         <PushMarkIcon className="h-[10px] w-[10px] text-push-accent" />
       </div>
       <div className="min-w-0 max-w-[85%]">
@@ -537,7 +537,7 @@ export const MessageBubble = memo(function MessageBubble({
         {hasContent && (
           <div
             className={`text-push-lg leading-relaxed break-words ${
-              isError ? 'text-red-400' : 'text-[#d1d8e6]'
+              isError ? 'text-red-400' : 'text-push-fg-soft'
             }`}
           >
             {content}
@@ -552,7 +552,7 @@ export const MessageBubble = memo(function MessageBubble({
             {canRegenerate && onRegenerate && (
               <button
                 onClick={onRegenerate}
-                className="rounded-md p-1.5 text-push-fg-dim transition-colors duration-150 hover:bg-push-surface-active hover:text-[#d1d8e6]"
+                className="rounded-md p-1.5 text-push-fg-dim transition-colors duration-150 hover:bg-push-surface-active hover:text-push-fg-soft"
                 title="Regenerate response"
               >
                 <RefreshCw className="h-3.5 w-3.5" />
@@ -561,7 +561,7 @@ export const MessageBubble = memo(function MessageBubble({
             {onPin && (
               <button
                 onClick={() => onPin(displayContentText, message.id)}
-                className="rounded-md p-1.5 text-push-fg-dim transition-colors duration-150 hover:bg-push-surface-active hover:text-[#d1d8e6]"
+                className="rounded-md p-1.5 text-push-fg-dim transition-colors duration-150 hover:bg-push-surface-active hover:text-push-fg-soft"
                 title="Pin to Kept"
               >
                 <Pin className="h-3.5 w-3.5" />

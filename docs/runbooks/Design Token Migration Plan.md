@@ -1,6 +1,6 @@
 # Design Token Migration Plan
 
-Status: Draft plan, P0–P2 shipped. Added 2026-05-25.
+Status: Draft plan, P0–P3 shipped. Added 2026-05-25.
 
 Drives the legacy hardcoded-color backlog toward zero so the DESIGN.md token
 system is the single source of truth for color. The `check:design-tokens`
@@ -8,11 +8,10 @@ ratchet (added with the canonical-docs work) holds the line; this plan scopes
 the existing violations and orders the cleanup.
 
 The baseline audit ran against `app/src` (excluding `src/components/ui/**`, the
-shadcn carveout) and found **441** hardcoded colors. P0 (carve out the CodeMirror
-editor theme), P1 (34 mechanical swaps), and P2 (3 new tokens for the
-chat/library palette) have since landed, bringing the ratchet baseline to
-**264**. Re-run the numbers any time with `npm run check:design-tokens` (counts +
-top offenders).
+shadcn carveout) and found **441** hardcoded colors. P0–P3 have since landed
+(carveout, 34 mechanical swaps, 3 new chat/library tokens, and 29 drift snaps),
+bringing the ratchet baseline to **142**. Re-run the numbers any time with
+`npm run check:design-tokens` (counts + top offenders).
 
 ## What counts
 
@@ -105,9 +104,12 @@ screens is the acceptance bar.
   `tailwind.config.js` and swapped their 98 exact uses (color-identical).
   Baseline 362 → 264. The neutral zinc `#52525b` and light `#e2e8f0` have no
   clean home in the cool-blue palette — deferred to the tail.
-- **P3 — Drift** Snap the 108 near-token values to their token, one judgment
-  call per value (a slightly-off shade may be intentional; if it is, that is a
-  DESIGN.md gap to document, not a swap). Concentrated in the top files.
+- **P3 ✓ — Drift** Snapped 29 off-shades (123 occurrences, all ≤12 RGB from
+  their nearest token) to tokens, utility-preserving (e.g. `border-[#2a3447]` →
+  `border-push-edge-hover`, `text-[#fafafa]` → `text-push-fg`). Small but real
+  color shifts — reviewed visually before merge. Baseline 264 → 142. One
+  `[background-color:#121926]` arbitrary-property form is left for the tail (a
+  token name can't go in raw CSS — needs a utility rewrite or a CSS var).
 - **Tail** Near-blacks (decide: `push-surface*` vs. a new black token) and the
   long tail of one-off singletons.
 
