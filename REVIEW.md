@@ -11,18 +11,10 @@ and **runtime-vs-prompt discipline**, not generic lint. The canonical references
 are `AGENTS.md` (startup contract, wins on conflict), `CLAUDE.md`, and
 `docs/architecture.md`.
 
-## Review philosophy
-
-- **Fact-based only.** Comment when there is a verifiable issue, bug, or
-  concrete improvement. Do **not** ask the author to "check", "verify", or
-  "confirm" something, and do not add comments that merely restate what the code
-  does.
-- **Targeted.** One specific issue per comment. Explain *why* it's a problem and
-  what to do; include a concrete code suggestion when one applies.
-- **No duplicates.** If the same issue recurs, comment on the first instance and
-  note the recurrence in the summary rather than repeating it inline.
-- **Scope.** Review the changed lines and their blast radius. Skip license /
-  copyright headers, date/time correctness, and inaccessible URLs.
+Standard review hygiene — fact-based comments only, no duplicate or
+restate-the-code noise, one issue per comment — is assumed. This file covers
+what's **specific to Push**: how to weight findings and where the real defects
+live.
 
 ## Review priorities (in order)
 

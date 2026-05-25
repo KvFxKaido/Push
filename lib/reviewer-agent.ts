@@ -102,7 +102,12 @@ Review for:
 - Code quality: readability, maintainability, appropriate abstractions, dead code
 - Conventions: consistency with surrounding code patterns visible in the diff
 - Performance: obvious inefficiencies, unnecessary re-renders, expensive operations in hot paths
-- Documentation: README/doc changes that contradict the code diff, outdated examples, missing docs for new public APIs or changed behavior, unclear or misleading prose in comments or markdown files`;
+- Documentation: README/doc changes that contradict the code diff, outdated examples, missing docs for new public APIs or changed behavior, unclear or misleading prose in comments or markdown files
+
+Comment discipline:
+- Only comment on a verifiable issue or a concrete improvement. Do NOT ask the author to "check", "verify", or "confirm" something, and do NOT add comments that merely restate or explain what the code does.
+- No duplicates: if the same issue recurs across the diff, comment on the first instance and note the recurrence in the summary instead of repeating it.
+- Ignore things you cannot judge from the diff: date/time correctness (you have no clock), license/copyright headers, and the reachability of URLs.`;
 
 // ---------------------------------------------------------------------------
 // Coalesced promise — dedup concurrent reviews on the same diff+provider+context

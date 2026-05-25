@@ -58,6 +58,30 @@ describe('runReviewer (PushStream consumer)', () => {
     expect(req.systemPromptOverride).toContain('Reviewer agent');
   });
 
+  it('includes the shared comment-discipline guards in the system prompt', async () => {
+    const { stream, capturedRequest } = makePushStream([
+      { type: 'text_delta', text: '{"summary":"x","comments":[]}' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+
+    await runReviewer(
+      makeAddedFileDiff('src/app.ts', 'const x = 1;'),
+      {
+        provider: 'openrouter',
+        modelId: 'reviewer-model',
+        stream,
+        resolveRuntimeContext: noopRuntime,
+      },
+      () => {},
+    );
+
+    const req = capturedRequest.current as { systemPromptOverride?: string };
+    // Fact-based / no-restate, no-duplicates, and un-judgeable-from-diff guards.
+    expect(req.systemPromptOverride).toContain('"check", "verify", or "confirm"');
+    expect(req.systemPromptOverride).toContain('No duplicates');
+    expect(req.systemPromptOverride).toContain('date/time correctness');
+  });
+
   it('throws when the stream errors', async () => {
     const stream: PushStream = () =>
       (async function* () {
