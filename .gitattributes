@@ -1,0 +1,11 @@
+# Line-ending policy.
+# Store text as LF in the repo and check it out as LF everywhere. This kills the
+# CRLF<->LF churn the Windows-side checkout (C:\dev\Push) otherwise introduces
+# whenever a Windows tool rewrites files in the WSL tree. Binary files are left
+# untouched (text=auto detects them by content).
+* text=auto eol=lf
+
+# Windows batch scripts must keep CRLF in the working tree or cmd.exe can
+# mis-parse them. Still normalized to LF in the repo; checked out as CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
