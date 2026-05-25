@@ -702,7 +702,7 @@ function App() {
     return 'home';
   }, [authToken, workspaceSession, localPcPairingActive, relayPairingActive, draftComposerOpen]);
 
-  const suspenseFallback = <div className="h-dvh bg-[#000]" />;
+  const suspenseFallback = <div className="h-dvh bg-push-surface-inset" />;
 
   // Instrument screen transitions — mark which screen is about to render.
   // The corresponding "painted" mark lives inside each screen component.
@@ -713,7 +713,7 @@ function App() {
   if (screen === 'onboarding') {
     return (
       <Suspense fallback={suspenseFallback}>
-        <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
+        <div className="flex h-dvh flex-col bg-push-surface-inset safe-area-top safe-area-bottom">
           <OnboardingScreen
             onConnect={handleConnect}
             onConnectOAuth={connectApp}
@@ -736,7 +736,7 @@ function App() {
   if (screen === 'home') {
     return (
       <Suspense fallback={suspenseFallback}>
-        <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
+        <div className="flex h-dvh flex-col bg-push-surface-inset safe-area-top safe-area-bottom">
           <HomeScreen
             repos={repos}
             loading={reposLoading}

@@ -48,9 +48,9 @@ export function ChatSurfaceScreen({
   usePerfMark('chat-surface:painted', 'surface:chat');
   const [appearanceSheetOpen, setAppearanceSheetOpen] = useState(false);
   return (
-    <div className="relative flex h-dvh flex-col overflow-hidden bg-[#000] safe-area-top safe-area-bottom">
+    <div className="relative flex h-dvh flex-col overflow-hidden bg-push-surface-inset safe-area-top safe-area-bottom">
       <div
-        className={`relative z-10 isolate flex min-h-0 flex-1 flex-col bg-[#000] transition-[transform,box-shadow] duration-500 ease-in-out will-change-transform ${chatShellShadow}`}
+        className={`relative z-10 isolate flex min-h-0 flex-1 flex-col bg-push-surface-inset transition-[transform,box-shadow] duration-500 ease-in-out will-change-transform ${chatShellShadow}`}
         style={{ transform: chatShellTransform }}
       >
         <ChatBackgroundGlow active={appearance.glowEnabled} color={accentHex} />

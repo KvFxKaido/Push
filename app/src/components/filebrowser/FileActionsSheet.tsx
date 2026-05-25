@@ -47,11 +47,11 @@ export function FileActionsSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="bottom"
-        className="bg-push-surface border-[#1a1a1a] rounded-t-2xl max-h-[50dvh]"
+        className="bg-push-surface border-push-edge-subtle rounded-t-2xl max-h-[50dvh]"
       >
         <SheetHeader className="pb-2">
           <SheetTitle className="text-push-fg text-sm font-medium truncate">{file.name}</SheetTitle>
-          <p className="text-xs text-[#52525b]">
+          <p className="text-xs text-push-fg-dimmest">
             {isDirectory ? 'Folder' : formatFileSize(file.size)}
             {editability?.warning === 'large_file' && (
               <span className="text-push-status-warning ml-1">• Large file</span>

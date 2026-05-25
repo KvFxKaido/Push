@@ -184,8 +184,8 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
 
   if (error) {
     return (
-      <div className="flex h-dvh flex-col bg-[#000] safe-area-top">
-        <header className="flex items-center gap-2 px-3 py-3 border-b border-[#1a1a1a]">
+      <div className="flex h-dvh flex-col bg-push-surface-inset safe-area-top">
+        <header className="flex items-center gap-2 px-3 py-3 border-b border-push-edge-subtle">
           <button
             onClick={onBack}
             className="flex h-8 w-8 items-center justify-center rounded-lg text-push-fg-secondary transition-colors hover:text-push-fg hover:bg-push-surface"
@@ -199,11 +199,11 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
           <AlertCircle className="h-8 w-8 text-push-status-error/70" />
           <div>
             <p className="text-push-fg-secondary text-sm mb-1">Cannot open file</p>
-            <p className="text-[#52525b] text-xs">{error}</p>
+            <p className="text-push-fg-dimmest text-xs">{error}</p>
           </div>
           <button
             onClick={onBack}
-            className="px-4 py-2 rounded-lg bg-[#1a1a1a] text-push-fg text-sm hover:bg-[#252525] transition-colors"
+            className="px-4 py-2 rounded-lg bg-push-surface-active text-push-fg text-sm hover:brightness-110 transition-colors"
           >
             Go back
           </button>
@@ -213,9 +213,9 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
   }
 
   return (
-    <div className="flex h-dvh flex-col bg-[#000] safe-area-top">
+    <div className="flex h-dvh flex-col bg-push-surface-inset safe-area-top">
       {/* Header */}
-      <header className="flex items-center gap-2 px-3 py-3 border-b border-[#1a1a1a]">
+      <header className="flex items-center gap-2 px-3 py-3 border-b border-push-edge-subtle">
         <button
           onClick={handleDiscard}
           disabled={saving}
@@ -229,7 +229,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
             <FileCode className="h-3.5 w-3.5 text-push-accent" />
             {file.name}
           </h1>
-          <p className="text-push-2xs text-[#52525b]">
+          <p className="text-push-2xs text-push-fg-dimmest">
             {language} • {formatFileSize(new Blob([content]).size)}
             {isLargeFile && <span className="text-push-status-warning ml-1">large file</span>}
             {hasChanges && <span className="text-push-status-warning ml-1">• unsaved</span>}
@@ -301,9 +301,9 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
       {/* Editor / Diff view */}
       <div className="flex-1 overflow-hidden relative">
         {loading ? (
-          <div className="flex h-full items-center justify-center text-[#52525b]">
+          <div className="flex h-full items-center justify-center text-push-fg-dimmest">
             <div className="flex flex-col items-center gap-3">
-              <span className="w-5 h-5 border-2 border-[#52525b] border-t-push-accent rounded-full animate-spin" />
+              <span className="w-5 h-5 border-2 border-push-fg-dimmest border-t-push-accent rounded-full animate-spin" />
               <span className="text-xs">Loading...</span>
             </div>
           </div>
@@ -322,7 +322,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
       </div>
 
       {/* Footer - character count */}
-      <footer className="px-3 py-2 border-t border-[#1a1a1a] flex items-center justify-between text-push-2xs text-[#52525b]">
+      <footer className="px-3 py-2 border-t border-push-edge-subtle flex items-center justify-between text-push-2xs text-push-fg-dimmest">
         <span>{content.length.toLocaleString()} chars</span>
         <span>{content.split('\n').length.toLocaleString()} lines</span>
       </footer>
@@ -345,11 +345,11 @@ function CodeEditor({ content, onChange, disabled }: CodeEditorProps) {
   return (
     <div className="flex h-full">
       {/* Line numbers */}
-      <div className="flex-shrink-0 w-12 bg-push-surface border-r border-[#1a1a1a] py-2 overflow-hidden select-none">
+      <div className="flex-shrink-0 w-12 bg-push-surface border-r border-push-edge-subtle py-2 overflow-hidden select-none">
         {lines.map((_, i) => (
           <div
             key={i}
-            className="min-h-[1.5em] px-2 text-right text-push-2xs text-[#52525b] leading-[1.5em] font-mono"
+            className="min-h-[1.5em] px-2 text-right text-push-2xs text-push-fg-dimmest leading-[1.5em] font-mono"
           >
             {i + 1}
           </div>
@@ -364,7 +364,7 @@ function CodeEditor({ content, onChange, disabled }: CodeEditorProps) {
         spellCheck={false}
         autoCapitalize="off"
         autoCorrect="off"
-        className="flex-1 h-full bg-[#000] text-push-fg p-2 text-xs font-mono leading-[1.5em] resize-none border-none outline-none focus:outline-none disabled:opacity-50"
+        className="flex-1 h-full bg-push-surface-inset text-push-fg p-2 text-xs font-mono leading-[1.5em] resize-none border-none outline-none focus:outline-none disabled:opacity-50"
         style={{ tabSize: 2 }}
       />
     </div>
@@ -385,7 +385,7 @@ function DiffView({ lines }: DiffViewProps) {
   return (
     <div className="h-full overflow-auto bg-push-surface p-2 font-mono text-xs">
       {lines.length === 0 ? (
-        <p className="text-[#52525b] text-center py-8">No changes</p>
+        <p className="text-push-fg-dimmest text-center py-8">No changes</p>
       ) : (
         lines.map((line, i) => (
           <div
@@ -404,7 +404,7 @@ function DiffView({ lines }: DiffViewProps) {
                   ? 'text-push-status-success'
                   : line.type === 'removed'
                     ? 'text-push-status-error'
-                    : 'text-[#52525b]'
+                    : 'text-push-fg-dimmest'
               }`}
             >
               {line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' '}
@@ -453,7 +453,7 @@ function mdInline(text: string): React.ReactNode[] {
       result.push(
         <code
           key={k++}
-          className="rounded border border-push-edge bg-push-surface px-1.5 py-0.5 font-mono text-xs text-[#e2e8f0]"
+          className="rounded border border-push-edge bg-push-surface px-1.5 py-0.5 font-mono text-xs text-push-fg-soft"
         >
           {m[6]}
         </code>,
@@ -497,9 +497,11 @@ function MarkdownPreview({ content }: { content: string }) {
               className="my-3 overflow-x-auto rounded-lg border border-push-edge bg-push-surface px-4 py-3"
             >
               {codeLang && (
-                <div className="mb-1.5 text-push-2xs text-[#52525b] font-mono">{codeLang}</div>
+                <div className="mb-1.5 text-push-2xs text-push-fg-dimmest font-mono">
+                  {codeLang}
+                </div>
               )}
-              <code className="font-mono text-xs text-[#e2e8f0] leading-relaxed">
+              <code className="font-mono text-xs text-push-fg-soft leading-relaxed">
                 {codeLines.join('\n')}
               </code>
             </pre>,
@@ -532,7 +534,7 @@ function MarkdownPreview({ content }: { content: string }) {
         const styles: Record<number, string> = {
           1: 'text-xl font-bold text-push-fg mt-6 mb-2',
           2: 'text-lg font-semibold text-push-fg mt-5 mb-1.5',
-          3: 'text-base font-semibold text-[#e2e8f0] mt-4 mb-1',
+          3: 'text-base font-semibold text-push-fg-soft mt-4 mb-1',
           4: 'text-sm font-medium text-push-fg-muted mt-3 mb-1 uppercase tracking-wide',
         };
         nodes.push(
@@ -567,7 +569,7 @@ function MarkdownPreview({ content }: { content: string }) {
             className="flex items-start gap-2 my-0.5 text-sm"
             style={{ paddingLeft: `${indent * 16 + 4}px` }}
           >
-            <span className="shrink-0 mt-[9px] block w-1 h-1 rounded-full bg-[#52525b]" />
+            <span className="shrink-0 mt-[9px] block w-1 h-1 rounded-full bg-push-fg-dimmest" />
             <span className="flex-1 min-w-0 text-push-fg-soft">{mdInline(ulm[2])}</span>
           </div>,
         );
@@ -584,7 +586,7 @@ function MarkdownPreview({ content }: { content: string }) {
             className="flex items-start gap-2 my-0.5 text-sm"
             style={{ paddingLeft: `${indent * 16 + 4}px` }}
           >
-            <span className="text-[#52525b] font-mono shrink-0 min-w-[1.25rem] text-right mt-px">
+            <span className="text-push-fg-dimmest font-mono shrink-0 min-w-[1.25rem] text-right mt-px">
               {olm[2]}.
             </span>
             <span className="flex-1 min-w-0 text-push-fg-soft">{mdInline(olm[3])}</span>
@@ -614,7 +616,7 @@ function MarkdownPreview({ content }: { content: string }) {
           key={`code-${codeKey}`}
           className="my-3 overflow-x-auto rounded-lg border border-push-edge bg-push-surface px-4 py-3"
         >
-          <code className="font-mono text-xs text-[#e2e8f0] leading-relaxed">
+          <code className="font-mono text-xs text-push-fg-soft leading-relaxed">
             {codeLines.join('\n')}
           </code>
         </pre>,
@@ -624,5 +626,5 @@ function MarkdownPreview({ content }: { content: string }) {
     return nodes;
   }, [content]);
 
-  return <div className="h-full overflow-auto bg-[#000] px-5 py-4">{parts}</div>;
+  return <div className="h-full overflow-auto bg-push-surface-inset px-5 py-4">{parts}</div>;
 }

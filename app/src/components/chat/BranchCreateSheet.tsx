@@ -197,7 +197,10 @@ function BranchCreateSheet({
                     : 'hover:border-push-edge-hover/80'
                 }`}
               >
-                <RadioGroupItem value="switch" className="mt-0.5 border-[#3f3f46] text-push-sky" />
+                <RadioGroupItem
+                  value="switch"
+                  className="mt-0.5 border-push-edge-hover text-push-sky"
+                />
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm text-push-fg">Switch to branch</span>
                   <span className="mt-0.5 block text-push-xs text-push-fg-dim">
@@ -212,7 +215,10 @@ function BranchCreateSheet({
                     : 'hover:border-push-edge-hover/80'
                 }`}
               >
-                <RadioGroupItem value="stay" className="mt-0.5 border-[#3f3f46] text-push-sky" />
+                <RadioGroupItem
+                  value="stay"
+                  className="mt-0.5 border-push-edge-hover text-push-sky"
+                />
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm text-push-fg">Stay on {fromBranch}</span>
                   <span className="mt-0.5 block text-push-xs text-push-fg-dim">

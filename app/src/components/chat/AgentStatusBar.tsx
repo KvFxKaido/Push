@@ -34,8 +34,8 @@ export function AgentStatusBar({ status }: AgentStatusBarProps) {
       <span className="agent-pulse inline-block h-1.5 w-1.5 rounded-full bg-push-accent shadow-[0_0_8px_rgba(0,112,243,0.4)]" />
       <span className="text-xs text-push-fg-secondary tracking-wide">
         {status.phase}
-        {status.detail && <span className="text-[#52525b] ml-1.5">{status.detail}</span>}
-        {elapsedLabel && <span className="text-[#52525b] ml-1.5">({elapsedLabel})</span>}
+        {status.detail && <span className="text-push-fg-dimmest ml-1.5">{status.detail}</span>}
+        {elapsedLabel && <span className="text-push-fg-dimmest ml-1.5">({elapsedLabel})</span>}
       </span>
     </div>
   );

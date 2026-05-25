@@ -201,7 +201,7 @@ export function FileBrowser({
   const isRoot = currentPath === '/workspace' || currentPath === '/';
 
   return (
-    <div className="flex h-dvh flex-col bg-[#000] safe-area-top">
+    <div className="flex h-dvh flex-col bg-push-surface-inset safe-area-top">
       {/* Header */}
       <header className="flex items-center gap-2 border-b border-push-edge-subtle bg-push-grad-panel px-3 py-3">
         <button

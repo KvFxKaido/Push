@@ -27,7 +27,7 @@ const WorkspaceChatRoute = lazy(() =>
   import('./WorkspaceChatRoute').then((module) => ({ default: module.WorkspaceChatRoute })),
 );
 
-const workspaceRouteFallback = <div className="h-dvh bg-[#000]" />;
+const workspaceRouteFallback = <div className="h-dvh bg-push-surface-inset" />;
 
 export function WorkspaceSessionScreen({
   workspace,
@@ -473,7 +473,7 @@ export function WorkspaceSessionScreen({
 
   if (showFileBrowser && sandbox.sandboxId) {
     return (
-      <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
+      <div className="flex h-dvh flex-col bg-push-surface-inset safe-area-top safe-area-bottom">
         <Suspense
           fallback={
             <div className="flex flex-1 items-center justify-center text-sm text-push-fg-dim">

@@ -443,7 +443,7 @@ export function DaemonChatBody({
         onPin={pinnedArtifacts.pin}
       />
 
-      <div className="border-t border-push-edge/40 bg-[#000]/80 px-3 py-2 backdrop-blur safe-area-bottom">
+      <div className="border-t border-push-edge/40 bg-push-surface-inset/80 px-3 py-2 backdrop-blur safe-area-bottom">
         <div className="mb-2 grid grid-cols-[auto,minmax(0,1fr)] items-center gap-2">
           <DaemonModelPicker
             activeProvider={catalog.activeProviderLabel}
@@ -493,7 +493,7 @@ export function DaemonChatBody({
                   : `${capitalize(daemonLabel)} unreachable`
             }
             rows={1}
-            className="min-h-[40px] max-h-[160px] flex-1 resize-none rounded-2xl border border-push-edge/60 bg-[#000] px-3 py-2 text-sm text-push-fg outline-none focus:border-push-edge"
+            className="min-h-[40px] max-h-[160px] flex-1 resize-none rounded-2xl border border-push-edge/60 bg-push-surface-inset px-3 py-2 text-sm text-push-fg outline-none focus:border-push-edge"
             disabled={isStreaming || status.state !== 'open'}
             aria-label="Message"
           />
@@ -609,7 +609,7 @@ function ReconnectBanner({
     <div
       role="status"
       aria-live="polite"
-      className="flex items-center justify-between gap-3 border-b border-push-edge/40 bg-[#1a0b0b]/40 px-4 py-2 text-xs"
+      className="flex items-center justify-between gap-3 border-b border-push-edge/40 bg-push-surface-raised/40 px-4 py-2 text-xs"
     >
       {body}
     </div>

@@ -849,7 +849,7 @@ export function ChatInput({
                       </div>
 
                       {selectedProvider === 'demo' && (
-                        <div className="rounded-lg border border-push-edge-hover bg-push-surface px-2.5 py-2 text-push-xs text-[#9eabbe]">
+                        <div className="rounded-lg border border-push-edge-hover bg-push-surface px-2.5 py-2 text-push-xs text-push-fg-secondary">
                           Demo mode (no model selection)
                         </div>
                       )}
@@ -1413,7 +1413,7 @@ export function ChatInput({
                 ? `${COMPOSER_CONTROL_SURFACE_CLASS} border-red-400/50 bg-[linear-gradient(180deg,rgba(55,12,18,0.96)_0%,rgba(28,7,11,0.98)_100%)] text-red-300 ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
                 : canSend || canStreamWithDraft
                   ? `${COMPOSER_CONTROL_SURFACE_CLASS} text-push-fg-secondary ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
-                  : 'cursor-not-allowed rounded-full border border-push-edge bg-push-surface-active text-[#576176] shadow-none'
+                  : 'cursor-not-allowed rounded-full border border-push-edge bg-push-surface-active text-push-fg-dimmest shadow-none'
             }`}
             aria-label={sendButtonLabel}
             title={sendButtonLabel}
