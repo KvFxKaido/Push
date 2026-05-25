@@ -41,6 +41,11 @@ endpoint_image = modal.Image.debian_slim(python_version="3.12").pip_install("fas
 OWNER_TOKEN_FILE = "/tmp/push-owner-token"
 WORKSPACE_REVISION_FILE = "/tmp/push-workspace-revision"
 MAX_ARCHIVE_BYTES = 100_000_000
+# Max lifetime of a sandbox container. Sized for long-running / big-refactor
+# sessions — Modal hard-stops the container at this deadline regardless of
+# activity, so it doubles as the session ceiling the model is told about via
+# `container_ttl`. Keep the two in sync by deriving the reported string below.
+SANDBOX_TIMEOUT_SECONDS = 7200  # 2h
 LIST_DIR_SCRIPT = """
 import json
 import os
@@ -1011,7 +1016,7 @@ def _run_environment_probe(sb):
     if scripts:
         result["scripts"] = scripts
     result["git_available"] = git_available
-    result["container_ttl"] = "30m"
+    result["container_ttl"] = f"{SANDBOX_TIMEOUT_SECONDS // 60}m"
     result["writable_root"] = "/workspace"
     if readiness:
         result["readiness"] = readiness
@@ -1028,7 +1033,7 @@ def create(data: dict):
         "infinity",
         app=app,
         image=sandbox_image,
-        timeout=3600,
+        timeout=SANDBOX_TIMEOUT_SECONDS,
     )
 
     github_token = data.get("github_token", "")
@@ -1726,7 +1731,7 @@ def restore_from_snapshot(data: dict):
             "infinity",
             app=app,
             image=snapshot_image,
-            timeout=3600,
+            timeout=SANDBOX_TIMEOUT_SECONDS,
         )
 
         # Verify the restore token matches what was written before snapshotting.

@@ -177,6 +177,13 @@ type WorkingMemory = CoderWorkingMemory;
 
 export const DEFAULT_MAX_ROUNDS: number = 30;
 
+// Absolute ceiling for the tool-loop round budget. The default stays at 30 as a
+// gentle circuit breaker, but big-refactor / long-running sessions can opt into
+// more — either explicitly via `--max-rounds`, or implicitly when the adaptive
+// harness extends the budget on healthy progress (see harness-adaptation.ts).
+// This is the runaway backstop, not the everyday cap.
+export const MAX_ALLOWED_ROUNDS: number = 200;
+
 // Sentinel appended to the base prompt — signals that workspace context
 // (git status, project instructions, memory) still needs to be loaded.
 const NEEDS_ENRICHMENT: string = '[WORKSPACE_PENDING]';
@@ -1057,10 +1064,16 @@ async function runAssistantLoopImpl(
     dispatchEvent('assistant.turn_start', { round: turnIndex });
 
     // Adaptive round-budget check: shrink maxRounds when in-session signals
-    // (malformed calls, edit errors) accumulate. Mirrors the web side's
-    // computeAdaptiveProfile. Never raises the ceiling — only reduces it.
-    // Each rule is one-shot per session, so calling this every round is safe.
-    const adaptation = computeAdaptation(state.sessionId, maxRounds);
+    // (malformed calls, edit errors) accumulate, or extend it when the agent is
+    // working near the ceiling with healthy signals (long-refactor headroom).
+    // Mirrors the web side's computeAdaptiveProfile. Reductions are one-shot and
+    // growth is self-limiting, so calling this every round is safe.
+    const adaptation = computeAdaptation(state.sessionId, maxRounds, {
+      currentRound: round,
+      // Growth headroom only for default-or-larger budgets. A deliberately
+      // small explicit --max-rounds is a hard cap, not a floor to grow from.
+      maxAllowedRounds: maxRounds >= DEFAULT_MAX_ROUNDS ? MAX_ALLOWED_ROUNDS : undefined,
+    });
     if (adaptation.wasAdapted) {
       const previousMaxRounds = maxRounds;
       maxRounds = adaptation.adjustedMaxRounds;

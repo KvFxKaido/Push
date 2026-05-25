@@ -4,11 +4,13 @@
  * Status: idle → creating → ready → error
  *
  * The sandbox persists across messages in a single chat session.
- * Container auto-terminates on Modal's side after 30 min.
+ * Container auto-terminates on Modal's side after ~2h (see
+ * SANDBOX_TIMEOUT_SECONDS in sandbox/app.py).
  *
  * Session persistence: sandbox IDs are saved to localStorage so that
  * PWA refreshes can reconnect to an existing container instead of
- * creating a new one. Sessions expire after 25 min (safety margin).
+ * creating a new one. Saved sessions are reused for up to 50 min
+ * (safety margin under the container lifetime; see SANDBOX_MAX_AGE_MS).
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
@@ -46,7 +48,12 @@ import { isDefinitivelyGoneMessage, isDefinitivelyGoneError } from '@/lib/sandbo
 export type SandboxStatus = 'idle' | 'reconnecting' | 'creating' | 'ready' | 'error';
 
 const APP_COMMIT_IDENTITY_KEY = 'github_app_commit_identity';
-const SANDBOX_MAX_AGE_MS = 25 * 60 * 1000; // 25 min (conservative vs Modal's 30 min)
+// Max age of a saved session we'll still try to reconnect to. Kept well under
+// the sandbox's real lifetime (Modal containers live ~2h) so we don't waste a
+// round-trip probing a container that's almost certainly gone — but generous
+// enough that a long session that idled survives a reconnect. A stale guess is
+// cheap: the reconnect does a liveness check and falls back to a fresh sandbox.
+const SANDBOX_MAX_AGE_MS = 50 * 60 * 1000; // 50 min
 const IDLE_HIBERNATE_MS = 8 * 60 * 1000; // 8 min idle before snapshot
 const IDLE_CHECK_INTERVAL_MS = 60 * 1000; // check every minute
 
