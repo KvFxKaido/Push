@@ -60,6 +60,7 @@ import {
   SHARED_SAFETY_SECTION,
   SHARED_OPERATIONAL_CONSTRAINTS,
   CODER_CODE_DISCIPLINE,
+  CANONICAL_DOCS_GUIDANCE,
 } from './system-prompt-sections.js';
 import {
   getToolPublicName,
@@ -623,6 +624,7 @@ export async function runCoderAgent<TCall, TCard>(
     .set('guidelines', buildCoderGuidelines())
     .append('guidelines', SHARED_OPERATIONAL_CONSTRAINTS)
     .append('guidelines', CODER_CODE_DISCIPLINE)
+    .append('guidelines', CANONICAL_DOCS_GUIDANCE)
     .set(
       'tool_instructions',
       // Idempotent prepend: when the caller-supplied protocol already
