@@ -95,7 +95,7 @@ The architectural shape is already there — the web dispatcher can adopt `creat
 
 - CLI parser robustness fixes should now land in `lib/tool-dispatch.ts` — the CLI picks them up automatically. Web-side fixes still need to land in `app/src/lib/tool-dispatch.ts` until the second tranche unifies the grouping state machine.
 - When debugging "assistant response vanished" or "empty TUI transcript" on CLI, the Layer 3 safety net now surfaces a diagnostic transcript entry instead of rendering nothing, so the symptom is visible. Trace the root cause through `lib/tool-dispatch.ts` (shared kernel) first, then the CLI-side `extractBareToolJsonObjects` in `lib/tool-call-parsing.ts`.
-- Claims about "runtime parity" in `docs/architecture.md`, `ROADMAP.md`, and the parent runtime contract doc should call out the CLI-side resolution and the remaining Web-side unification work, rather than eliding both under "partly converged."
+- Claims about "runtime parity" in `ARCHITECTURE.md`, `ROADMAP.md`, and the parent runtime contract doc should call out the CLI-side resolution and the remaining Web-side unification work, rather than eliding both under "partly converged."
 
 ## Reproducer
 

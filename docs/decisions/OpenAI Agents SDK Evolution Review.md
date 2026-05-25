@@ -25,7 +25,7 @@ The core architectural claim: **the harness and the sandbox are separate layers 
 | **Harness** (control plane) | Agent loop, model calls, tool routing, handoffs, approvals, tracing, recovery, run state | Worker + client-side journal + role system (Orchestrator/Explorer/Coder/Reviewer/Auditor) |
 | **Sandbox** (compute plane) | Files, commands, packages, artifacts, isolation | Modal containers (`sandbox/app.py`) |
 
-This is exactly Push's three-layer topology (Web → Agent workflow → Sandbox VM) confirmed by an independent team. The harness runs outside the sandbox and interacts with it through tool calls — same shape as our agent-outside-sandbox model documented in `docs/architecture.md`.
+This is exactly Push's three-layer topology (Web → Agent workflow → Sandbox VM) confirmed by an independent team. The harness runs outside the sandbox and interacts with it through tool calls — same shape as our agent-outside-sandbox model documented in `ARCHITECTURE.md`.
 
 **Verdict:** Validates our architecture. No change needed.
 

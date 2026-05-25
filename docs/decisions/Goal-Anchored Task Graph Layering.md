@@ -2,7 +2,7 @@
 
 **Status:** Current, web shipped 2026-05-14 (PR #550), CLI parity shipped 2026-05-14 (this PR)
 **Scope:** Orchestrator plan_tasks emission + delegation brief + CLI planner output
-**Related:** [`docs/architecture.md`](../architecture.md), PR #549 (user-goal anchor v1+v2), PR #550 (web runtime gate)
+**Related:** [`ARCHITECTURE.md`](../../ARCHITECTURE.md), PR #549 (user-goal anchor v1+v2), PR #550 (web runtime gate)
 
 ## Problem
 

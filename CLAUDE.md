@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Push is a mobile-first AI coding agent with three surfaces — a web app, an experimental Capacitor Android shell, and a local CLI — all sharing a role-based runtime in root `lib/`.
 
-> Loader order is `PUSH.md` → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md` (first found wins). `PUSH.md` is the Push-specific override when present; otherwise `AGENTS.md` carries the startup contract and overrides this file when they conflict. `docs/architecture.md` is the canonical source of truth for architecture details.
+> Loader order is `PUSH.md` → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md` (first found wins). `PUSH.md` is the Push-specific override when present; otherwise `AGENTS.md` carries the startup contract and overrides this file when they conflict. `ARCHITECTURE.md` is the canonical source of truth for architecture details.
 
 ## Quick start
 
@@ -144,8 +144,8 @@ Loader order is `PUSH.md` → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md` (first
 ## Pointers
 
 - [`AGENTS.md`](AGENTS.md) — startup contract; **read this first**, it overrides this file
-- [`docs/architecture.md`](docs/architecture.md) — canonical architecture, tool protocol, repo/session model
-- [`docs/DESIGN.md`](docs/DESIGN.md) — visual tokens, colors, typography, components
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — canonical architecture, tool protocol, repo/session model
+- [`DESIGN.md`](DESIGN.md) — visual tokens, colors, typography, components
 - [`cli/README.md`](cli/README.md) — CLI surfaces, providers, env vars, tools, sessions
 - [`cli/architecture.md`](cli/architecture.md) — CLI runtime layers
 - [`app/README.md`](app/README.md) — frontend, Worker secrets, sandbox backend selection, Android

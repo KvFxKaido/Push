@@ -95,7 +95,7 @@ npm install
 - [CONTRIBUTING.md](CONTRIBUTING.md) — project philosophy and contribution guidelines
 - [AGENTS.md](AGENTS.md) — project context for AI collaborators
 - [CLAUDE.md](CLAUDE.md) — quick start and entry points
-- [docs/architecture.md](docs/architecture.md) — tech stack, agent roles, and key systems
+- [ARCHITECTURE.md](ARCHITECTURE.md) — tech stack, agent roles, and key systems
 - [cli/README.md](cli/README.md) — terminal workflows, config, and provider details
 - [app/README.md](app/README.md) — frontend, Worker, and experimental Android setup
 

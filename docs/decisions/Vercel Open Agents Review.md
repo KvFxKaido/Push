@@ -54,7 +54,7 @@ Honest list of what we already cover. Don't reimplement these:
 
 - **Agent-outside-sandbox topology** — Push agent runs in the Worker/CLI; Modal is dumb compute. Same shape.
 - **Tool dispatch and registry** — `lib/tool-registry.ts` + `app/src/lib/tool-dispatch.ts` define ~40 tools shared across web and CLI. More unified than open-agents (we also feed a CLI; they don't).
-- **Role split** — Orchestrator / Explorer / Coder / Reviewer / Auditor ([architecture: Agent Roles](../architecture.md#agent-roles)). Open Agents has a single chat-driven agent; ours is more sophisticated.
+- **Role split** — Orchestrator / Explorer / Coder / Reviewer / Auditor ([architecture: Agent Roles](../../ARCHITECTURE.md#agent-roles)). Open Agents has a single chat-driven agent; ours is more sophisticated.
 - **GitHub App + OAuth + PAT** — `app/src/lib/github-auth.ts`, `app/src/hooks/useGitHubAppAuth.ts`. Token refresh, commit identity, PAT fallback all wired.
 - **MCP** — `mcp/github-server/src/index.ts` exposes ~17 GitHub tools over stdio.
 - **Skills (filesystem)** — `cli/skill-loader.ts` loads `.push/skills/` and `.claude/commands/` `.md` files at runtime; supports shadowing built-ins.
@@ -82,7 +82,7 @@ Modal supports memory snapshots and filesystem checkpoints. Adopting them would 
 **Open questions to answer in a follow-up design doc:**
 
 - Modal snapshot lifecycle: what's the actual resume latency, snapshot size budget, and pricing impact per session?
-- Where snapshots live in the runtime contract: is "hibernated" a new sandbox phase exposed to the agent via the session capability block described in [architecture: Key Systems](../architecture.md#key-systems)?
+- Where snapshots live in the runtime contract: is "hibernated" a new sandbox phase exposed to the agent via the session capability block described in [architecture: Key Systems](../../ARCHITECTURE.md#key-systems)?
 - Interaction with the existing `run-journal` checkpoint flow — is the journal still authoritative, or does the snapshot become the source of truth and the journal degrade to an audit log?
 - Branch transitions now preserve the sandbox and route via `BranchSwitchPayload`. Snapshot design should key by workspace identity and branch, but can no longer assume branch switching tears down the sandbox.
 - Multi-tenant cleanup: TTL, eviction policy, and how we handle stale snapshots on Modal.
@@ -148,6 +148,6 @@ Vercel introduced [skills.sh](https://vercel.com/changelog/introducing-skills-th
 - [vercel-labs/open-agents](https://github.com/vercel-labs/open-agents)
 - [Open Agents Vercel template](https://vercel.com/templates/template/open-agents)
 - [Modal Checkpoints](https://modal.com/docs/guide/checkpoints)
-- Internal: `docs/decisions/Resumable Sessions Design.md`, `docs/architecture.md`, `app/src/lib/snapshot-manager.ts`, `app/src/lib/run-journal.ts`, `lib/tool-registry.ts`
+- Internal: `docs/decisions/Resumable Sessions Design.md`, `ARCHITECTURE.md`, `app/src/lib/snapshot-manager.ts`, `app/src/lib/run-journal.ts`, `lib/tool-registry.ts`
 - [Vercel Agentic Infrastructure](https://vercel.com/blog/agentic-infrastructure)
-- Internal: `docs/decisions/Resumable Sessions Design.md`, `docs/architecture.md`, `app/src/lib/snapshot-manager.ts`, `app/src/lib/run-journal.ts`, `lib/tool-registry.ts`
+- Internal: `docs/decisions/Resumable Sessions Design.md`, `ARCHITECTURE.md`, `app/src/lib/snapshot-manager.ts`, `app/src/lib/run-journal.ts`, `lib/tool-registry.ts`

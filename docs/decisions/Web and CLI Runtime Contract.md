@@ -1,7 +1,7 @@
 # Web and CLI Runtime Contract
 
 Status: Current, refreshed 2026-04-05 after the first shared-runtime convergence tranche shipped
-Origin: [Web–CLI Parity Plan](../runbooks/Web-CLI%20Parity%20Plan.md), [Architecture](../architecture.md), [Context Memory and Retrieval Architecture](Context%20Memory%20and%20Retrieval%20Architecture.md)
+Origin: [Web–CLI Parity Plan](../runbooks/Web-CLI%20Parity%20Plan.md), [Architecture](../../ARCHITECTURE.md), [Context Memory and Retrieval Architecture](Context%20Memory%20and%20Retrieval%20Architecture.md)
 
 ## Why This Exists
 
