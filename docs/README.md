@@ -44,7 +44,7 @@ Detailed per-doc status lives in [`decisions/README.md`](decisions/README.md). S
 Detailed per-doc status lives in [`runbooks/README.md`](runbooks/README.md). Summary by role:
 
 - **Current** — `Chat Surface Evolution Plan.md` (Track C remaining), `Private Cloudflare Deployment.md`, `Provider Stats Endpoint.md`, `Test Coverage Plan.md` (Phases 1–5 shipped, Phase 6 outlined), `Workspace Publish to GitHub Plan.md` (follow-through).
-- **Draft spikes** — `Tiered Orchestrator Routing Spike.md`, `Canonical SOP Playbooks Spike.md`, `Hashline Effectiveness Metric.md`.
+- **Draft spikes / plans** — `Tiered Orchestrator Routing Spike.md`, `Canonical SOP Playbooks Spike.md`, `Hashline Effectiveness Metric.md`, `Design Token Migration Plan.md`.
 - **Deferred reference** — `Background Coder Tasks Plan.md`.
 
 ## Research

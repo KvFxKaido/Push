@@ -7,8 +7,14 @@
 //   npm run check:design-tokens            # check against baseline
 //   npm run check:design-tokens -- --update  # rewrite baseline to current count
 //
-// Carveout: src/components/ui/** (shadcn) is excluded, matching the design
-// system's existing carveout in biome.json / project conventions.
+// Carveouts (app-relative paths). Entries ending in "/" are directory prefixes;
+// all others are matched as exact file paths so a carveout can't silently
+// swallow a neighbor (e.g. codemirror-theme.ts.test.ts):
+//   - src/components/ui/ — shadcn, matching the design system's existing
+//     carveout in biome.json / project conventions.
+//   - src/lib/codemirror-theme.ts — CodeMirror syntax-highlight theme. These
+//     are editor token colors, not DESIGN.md app tokens, so they're out of
+//     scope for this ratchet. See docs/runbooks/Design Token Migration Plan.md.
 
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, relative, extname, dirname } from 'node:path';
@@ -19,9 +25,15 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = join(HERE, '..');
 const SRC_ROOT = join(APP_ROOT, 'src');
 const BASELINE_PATH = join(HERE, 'design-token-baseline.json');
-const EXCLUDE_PREFIX = 'src/components/ui/';
+const EXCLUDE_PATHS = ['src/components/ui/', 'src/lib/codemirror-theme.ts'];
 const SCAN_EXT = new Set(['.ts', '.tsx']);
 const TOP_OFFENDERS = 12;
+
+// Directory carveouts (trailing "/") match by prefix; file carveouts match
+// exactly, so they can't swallow a similarly-named neighbor.
+function isExcluded(rel) {
+  return EXCLUDE_PATHS.some((p) => (p.endsWith('/') ? rel.startsWith(p) : rel === p));
+}
 
 function walk(dir, out = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -39,7 +51,7 @@ let inlineHex = 0;
 
 for (const file of walk(SRC_ROOT)) {
   const rel = relative(APP_ROOT, file).split('\\').join('/');
-  if (rel.startsWith(EXCLUDE_PREFIX)) continue;
+  if (isExcluded(rel)) continue;
   let source;
   try {
     source = readFileSync(file, 'utf8');
@@ -67,7 +79,9 @@ try {
 
 perFile.sort((a, b) => b.total - a.total);
 
-console.log('Design-token check (DESIGN.md) — hardcoded colors outside src/components/ui:');
+console.log(
+  'Design-token check (DESIGN.md) — hardcoded colors (excludes components/ui, codemirror-theme):',
+);
 console.log(`  Tailwind arbitrary values (e.g. bg-[#000]): ${tailwind}`);
 console.log(`  Quoted hex literals (inline styles / constants): ${inlineHex}`);
 console.log(`  Total: ${total}  (baseline: ${baseline ? baseline.total : 'none'})`);
