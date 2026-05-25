@@ -87,7 +87,7 @@ export function DaemonModelPicker({
           title={titleHint}
           disabled={disabled}
           className={cn(
-            'inline-flex max-w-full items-center gap-1.5 rounded-full border border-push-edge/60 bg-[#070a10] px-2.5 py-1 text-xs text-push-fg-secondary transition hover:border-push-edge hover:text-push-fg disabled:opacity-50',
+            'inline-flex max-w-full items-center gap-1.5 rounded-full border border-push-edge/60 bg-push-surface px-2.5 py-1 text-xs text-push-fg-secondary transition hover:border-push-edge hover:text-push-fg disabled:opacity-50',
             className,
           )}
         >

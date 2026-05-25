@@ -1,6 +1,6 @@
 # Design Token Migration Plan
 
-Status: Draft plan, P0 shipped. Added 2026-05-25.
+Status: Draft plan, P0–P1 shipped. Added 2026-05-25.
 
 Drives the legacy hardcoded-color backlog toward zero so the DESIGN.md token
 system is the single source of truth for color. The `check:design-tokens`
@@ -8,9 +8,10 @@ ratchet (added with the canonical-docs work) holds the line; this plan scopes
 the existing violations and orders the cleanup.
 
 The baseline audit ran against `app/src` (excluding `src/components/ui/**`, the
-shadcn carveout) and found **441** hardcoded colors. P0 has since carved out the
-CodeMirror editor theme, bringing the ratchet baseline to **396**. Re-run the
-numbers any time with `npm run check:design-tokens` (counts + top offenders).
+shadcn carveout) and found **441** hardcoded colors. P0 (carve out the CodeMirror
+editor theme) and P1 (34 mechanical swaps) have since landed, bringing the
+ratchet baseline to **362**. Re-run the numbers any time with
+`npm run check:design-tokens` (counts + top offenders).
 
 ## What counts
 
@@ -94,7 +95,10 @@ screens is the acceptance bar.
 
 - **P0 ✓ — Carveout** `src/lib/codemirror-theme.ts` (editor syntax theme, not
   DESIGN.md app tokens) added to the ratchet's exclude list. Baseline 441 → 396.
-- **P1 — Mechanical** 34 exact-token swaps. Safe find/replace. Baseline → ~362.
+- **P1 ✓ — Mechanical** 34 exact-token swaps, all Tailwind-arbitrary values
+  (`bg-[#070a10]` → `bg-push-surface`, etc.). Color-identical by construction
+  (each token's value equals the literal hex), so no visual change. Baseline
+  396 → 362.
 - **P2 — New tokens** Add tokens for the frequent no-token colors (`#7c879b`,
   `#d7deeb`, `#52525b`, …) to DESIGN.md + `tailwind.config.js`, then swap their
   usages. Each new token needs a DESIGN.md table row (the reviewer + ratchet

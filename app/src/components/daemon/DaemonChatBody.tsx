@@ -475,7 +475,7 @@ export function DaemonChatBody({
                 </span>
               }
               className="min-w-0"
-              triggerClassName="h-7 rounded-full border-push-edge/60 bg-[#070a10] px-2.5 text-xs"
+              triggerClassName="h-7 rounded-full border-push-edge/60 bg-push-surface px-2.5 text-xs"
               popoverClassName="w-[min(20rem,calc(100vw-2rem))]"
             />
           ) : null}

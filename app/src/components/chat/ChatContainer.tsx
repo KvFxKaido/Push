@@ -232,7 +232,7 @@ function EmptyState({
             >
               <PushMarkIcon
                 className={`text-push-accent transition-colors ${hexTap ? 'hex-tap' : ''}`}
-                pathClassName={`transition-all duration-300 ${hexTap ? 'fill-[#0070f3]/20' : 'fill-transparent'}`}
+                pathClassName={`transition-all duration-300 ${hexTap ? 'fill-push-accent/20' : 'fill-transparent'}`}
                 height={22}
                 onAnimationEnd={() => setHexTap(false)}
                 width={22}

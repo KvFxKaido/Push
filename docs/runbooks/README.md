@@ -19,7 +19,7 @@ This folder contains active plans, draft spikes, deferred designs, and a few shi
 | `Background Coder Tasks Plan.md` | Partially superseded by `AgentJob Foundation.md` | Original multi-phase reference; main-chat migration arc shipped via the AgentJob Foundation. Phases 2–4 (retry/backoff, push notifications, job history, multi-role background jobs) still deferred. |
 | `Canonical SOP Playbooks Spike.md` | Draft spike, added 2026-04-14 | Named playbooks that compile to task graphs on top of the existing `plan_tasks` runtime. No code yet. |
 | `Chat Surface Evolution Plan.md` | Mostly shipped 2026-03-31 | Tracks A, B, D, E, F landed; Track C (explicit context escalation) remains open. |
-| `Design Token Migration Plan.md` | Draft plan, P0 shipped 2026-05-25 | Scopes the hardcoded-color backlog (buckets + concentration + phased P0–P3) behind the `check:design-tokens` ratchet. P0 carved out the CodeMirror theme (baseline 441 → 396); P1–P3 pending. |
+| `Design Token Migration Plan.md` | Draft plan, P0–P1 shipped 2026-05-25 | Scopes the hardcoded-color backlog (buckets + concentration + phased P0–P3) behind the `check:design-tokens` ratchet. P0 carved out the CodeMirror theme, P1 did the 34 mechanical swaps (baseline 441 → 362); P2–P3 pending. |
 | `Hashline Effectiveness Metric.md` | Draft plan | Fixture-based measurement of hashline edit-success delta. Initial 3-fixture run logged in `../decisions/Hashline System Review.md`; full corpus not yet executed. |
 | `Private Cloudflare Deployment.md` | Current runbook | Cloudflare Access plus `PUSH_DEPLOYMENT_TOKEN` fallback for private app/phone testing. |
 | `Provider Stats Endpoint.md` | Active, shipped 2026-04-29 | Operating notes for the Workers Analytics Engine-backed provider stats endpoint. |

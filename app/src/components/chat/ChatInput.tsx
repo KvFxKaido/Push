@@ -790,10 +790,10 @@ export function ChatInput({
                   side="top"
                   align="start"
                   sideOffset={10}
-                  className="w-[250px] rounded-xl border border-[#1f2531] bg-push-grad-panel p-2.5 text-[#d7deeb] shadow-[0_12px_36px_rgba(0,0,0,0.55),0_4px_12px_rgba(0,0,0,0.25)] animate-fade-in"
+                  className="w-[250px] rounded-xl border border-push-edge bg-push-grad-panel p-2.5 text-[#d7deeb] shadow-[0_12px_36px_rgba(0,0,0,0.55),0_4px_12px_rgba(0,0,0,0.25)] animate-fade-in"
                 >
                   <div className="space-y-2.5 px-1 py-1">
-                    <div className="rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 py-1.5">
+                    <div className="rounded-lg border border-[#2a3447] bg-push-surface px-2.5 py-1.5">
                       <p className="text-push-2xs text-[#8e99ad]">
                         {isDisplayedProviderLocked ? 'Current chat: locked' : 'This chat selection'}
                       </p>
@@ -803,7 +803,7 @@ export function ChatInput({
                         Backend
                       </p>
                       {providerControls.availableProviders.length === 0 ? (
-                        <div className="rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 py-2 text-push-xs text-[#7c879b]">
+                        <div className="rounded-lg border border-[#2a3447] bg-push-surface px-2.5 py-2 text-push-xs text-[#7c879b]">
                           No API keys configured yet.
                         </div>
                       ) : (
@@ -813,7 +813,7 @@ export function ChatInput({
                           onChange={(e) =>
                             providerControls.onSelectBackend(e.target.value as PreferredProvider)
                           }
-                          className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                          className="h-8 w-full rounded-lg border border-[#2a3447] bg-push-surface px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
                         >
                           {providerControls.availableProviders.map(([value, label]) => (
                             <option key={value} value={value}>
@@ -835,7 +835,7 @@ export function ChatInput({
                             type="button"
                             onClick={refreshSelectedModelList}
                             disabled={selectedModelLoading}
-                            className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-[#2a3447] bg-[#070a10] text-[#8e99ad] transition-colors hover:text-[#d7deeb] disabled:opacity-50"
+                            className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-[#2a3447] bg-push-surface text-[#8e99ad] transition-colors hover:text-[#d7deeb] disabled:opacity-50"
                             aria-label="Refresh models"
                             title="Refresh models"
                           >
@@ -849,7 +849,7 @@ export function ChatInput({
                       </div>
 
                       {selectedProvider === 'demo' && (
-                        <div className="rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 py-2 text-push-xs text-[#9eabbe]">
+                        <div className="rounded-lg border border-[#2a3447] bg-push-surface px-2.5 py-2 text-push-xs text-[#9eabbe]">
                           Demo mode (no model selection)
                         </div>
                       )}
@@ -1174,7 +1174,7 @@ export function ChatInput({
                               onChange={(e) =>
                                 providerControls.onSelectAzureDeployment(e.target.value)
                               }
-                              className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                              className="h-8 w-full rounded-lg border border-[#2a3447] bg-push-surface px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
                             >
                               {providerControls.azureDeployments.map((dep) => (
                                 <option key={dep.id} value={dep.id}>
@@ -1187,7 +1187,7 @@ export function ChatInput({
                               type="text"
                               value={providerControls.azureModel}
                               onChange={(e) => providerControls.onSelectAzureModel(e.target.value)}
-                              className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579]"
+                              className="h-8 w-full rounded-lg border border-[#2a3447] bg-push-surface px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579]"
                               placeholder="Deployment or model"
                             />
                           )}
@@ -1208,7 +1208,7 @@ export function ChatInput({
                               onChange={(e) =>
                                 providerControls.onSelectBedrockDeployment(e.target.value)
                               }
-                              className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                              className="h-8 w-full rounded-lg border border-[#2a3447] bg-push-surface px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
                             >
                               {providerControls.bedrockDeployments.map((dep) => (
                                 <option key={dep.id} value={dep.id}>
@@ -1223,7 +1223,7 @@ export function ChatInput({
                               onChange={(e) =>
                                 providerControls.onSelectBedrockModel(e.target.value)
                               }
-                              className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579]"
+                              className="h-8 w-full rounded-lg border border-[#2a3447] bg-push-surface px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579]"
                               placeholder="Bedrock model id"
                             />
                           )}
@@ -1241,7 +1241,7 @@ export function ChatInput({
                             value={providerControls.vertexModel}
                             disabled={!canChangeModel}
                             onChange={(e) => providerControls.onSelectVertexModel(e.target.value)}
-                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-push-surface px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
                           >
                             {(providerControls.vertexModelOptions.length > 0
                               ? providerControls.vertexModelOptions
@@ -1268,7 +1268,7 @@ export function ChatInput({
                             onChange={(e) =>
                               providerControls.onSelectAnthropicModel(e.target.value)
                             }
-                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-push-surface px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
                           >
                             {(providerControls.anthropicModelOptions.length > 0
                               ? providerControls.anthropicModelOptions
@@ -1293,7 +1293,7 @@ export function ChatInput({
                             value={providerControls.openaiModel}
                             disabled={!canChangeModel}
                             onChange={(e) => providerControls.onSelectOpenAIModel(e.target.value)}
-                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-push-surface px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
                           >
                             {(providerControls.openaiModelOptions.length > 0
                               ? providerControls.openaiModelOptions
@@ -1318,7 +1318,7 @@ export function ChatInput({
                             value={providerControls.googleModel}
                             disabled={!canChangeModel}
                             onChange={(e) => providerControls.onSelectGoogleModel(e.target.value)}
-                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-push-surface px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
                           >
                             {(providerControls.googleModelOptions.length > 0
                               ? providerControls.googleModelOptions

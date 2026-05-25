@@ -1007,7 +1007,7 @@ export function SettingsSheet({
                       className={`flex min-h-[48px] items-center justify-center gap-2 rounded-xl px-2 text-push-xs font-medium transition-all ${
                         settingsTab === key
                           ? 'border border-push-edge-hover bg-push-grad-input text-push-fg shadow-[0_12px_24px_rgba(0,0,0,0.32),0_2px_6px_rgba(0,0,0,0.18)]'
-                          : 'border border-transparent text-push-fg-dim hover:border-[#1f2a3a] hover:bg-[#0c1018] hover:text-push-fg-secondary'
+                          : 'border border-transparent text-push-fg-dim hover:border-[#1f2a3a] hover:bg-push-surface-raised hover:text-push-fg-secondary'
                       }`}
                     >
                       <span
