@@ -113,8 +113,13 @@ screens is the acceptance bar.
   color shifts — **pending visual review** on the PR. Baseline 264 → 142. One
   `[background-color:#121926]` arbitrary-property form is left for the tail (a
   token name can't go in raw CSS — needs a utility rewrite or a CSS var).
-- **Tail** Near-blacks (decide: `push-surface*` vs. a new black token) and the
-  long tail of one-off singletons.
+- **Tail** Near-blacks (decide: `push-surface*` vs. a new black token), quoted
+  hex in inline styles (need a CSS var or utility rewrite), neutral greys with no
+  cool-blue home (`#52525b`, `#e2e8f0`), and one-off singletons. Notable: the
+  disabled send-button text `#576176` (ChatInput.tsx) — a dim disabled grey ~27
+  RGB from `push-fg-dim`, so too far to snap without visibly brightening a
+  high-visibility control; decide between a `push-fg-disabled` token and a
+  deliberate snap. All of these are counted in the 142 baseline (not bypasses).
 
 ## Graduation
 
