@@ -142,7 +142,13 @@ screens is the acceptance bar.
 
 ## Graduation
 
-Once the baseline is near zero, graduate from the standalone ratchet to a
-blocking ESLint rule for new/changed code (the original intent deferred because
-the 441-violation backlog made a blocking rule break CI or flood warnings). See
-the canonical-docs PR discussion for that rationale.
+Done ✓ — `check:design-tokens` is wired into CI as a blocking step in the `app`
+job (`.github/workflows/ci.yml`). It fails when hardcoded colors exceed the
+committed baseline in `app/scripts/design-token-baseline.json`, which the
+migration drives to 0 (P6) — so once the backlog is cleared, any new raw hex
+fails CI. A regex ratchet (rather than the originally-envisioned
+ESLint rule) is the right tool here: the violations are Tailwind arbitrary
+values inside `className` strings (`bg-[#000]`), which an ESLint AST rule can't
+see — the detector scans the raw source instead. The standalone
+`npm run check:design-tokens` report (with `--update` to re-baseline a justified
+addition) stays available for local use.
