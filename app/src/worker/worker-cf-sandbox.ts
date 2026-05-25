@@ -1389,101 +1389,145 @@ async function routeHibernate(env: Env, body: Json): Promise<Response> {
   });
 }
 
-async function routeRestoreSnapshot(env: Env, body: Json): Promise<Response> {
+export type RestoreSnapshotResult =
+  | { ok: true; sandboxId: string; ownerToken: string; environment: Json }
+  | { ok: false; error: string; status: number; code: string };
+
+/**
+ * Restore a snapshot into a FRESH sandbox: verify the restore token against the
+ * R2 object's metadata, hydrate /workspace, mint a new owner token, and probe.
+ * Returns a result (never throws) so both the route and the DO resume path can
+ * consume it. Does not delete the snapshot — the caller decides retention.
+ */
+export async function restoreWorkspaceSnapshot(
+  env: Env,
+  args: { snapshotId: string; restoreToken: string; repoFullName?: string; branch?: string },
+): Promise<RestoreSnapshotResult> {
   if (!env.SNAPSHOTS) {
-    return Response.json(
-      { ok: false, error: 'Snapshot storage (R2) is not configured', code: 'CF_NOT_CONFIGURED' },
-      { status: 503 },
-    );
+    return {
+      ok: false,
+      error: 'Snapshot storage (R2) is not configured',
+      status: 503,
+      code: 'CF_NOT_CONFIGURED',
+    };
   }
   if (!env.SANDBOX_TOKENS) {
-    return Response.json(
-      { ok: false, error: 'Sandbox token store is not configured', code: 'CF_NOT_CONFIGURED' },
-      { status: 503 },
-    );
+    return {
+      ok: false,
+      error: 'Sandbox token store is not configured',
+      status: 503,
+      code: 'CF_NOT_CONFIGURED',
+    };
   }
+  if (!env.Sandbox) {
+    return {
+      ok: false,
+      error: 'Cloudflare Sandbox is not configured',
+      status: 503,
+      code: 'CF_NOT_CONFIGURED',
+    };
+  }
+  const { snapshotId, restoreToken, repoFullName, branch } = args;
+
+  // Bound the token before any R2 work or constant-time compare — an unbounded
+  // restore_token would otherwise force arbitrarily large UTF-8 encode/compare.
+  if (restoreToken.length > MAX_TOKEN_BYTES) {
+    return { ok: false, error: 'Invalid restore token', status: 403, code: 'AUTH_FAILURE' };
+  }
+
+  try {
+    const object = await env.SNAPSHOTS.get(snapshotId);
+    if (!object) {
+      return { ok: false, error: 'Snapshot not found', status: 404, code: 'SNAPSHOT_NOT_FOUND' };
+    }
+    // Auth: the restore token must match the one stamped on the R2 object at
+    // snapshot time. Constant-time compare, same as owner-token verification.
+    const expected = object.customMetadata?.rt ?? '';
+    if (!expected || !timingSafeEqual(expected, restoreToken)) {
+      return { ok: false, error: 'Invalid restore token', status: 403, code: 'AUTH_FAILURE' };
+    }
+    const archive = await object.text();
+
+    const sandboxId = crypto.randomUUID();
+    const sandbox = getSandbox(env.Sandbox, sandboxId);
+
+    // The archive carries /workspace including .git, but global git identity
+    // (~/.gitconfig) lives outside it — set a default so post-restore commits
+    // don't fail with "empty ident". Mirrors routeCreate's git config step.
+    await withExecDeadline(
+      sandbox.exec(
+        "git config --global user.name 'Push User' && git config --global user.email 'sandbox@diff.app'",
+      ),
+    ).catch(() => {});
+
+    const hydrated = await hydrateBase64IntoSandbox(sandbox, archive, '/workspace');
+    if (!hydrated.ok) {
+      await sandbox.destroy?.().catch(() => {});
+      return { ok: false, error: hydrated.error, status: hydrated.status, code: 'CF_ERROR' };
+    }
+
+    // Mint a fresh owner token for the new sandbox (the old one died with its
+    // container). Fail closed: destroy the sandbox if issuance fails so we don't
+    // orphan an unreachable, un-cleanable container.
+    let ownerToken: string;
+    try {
+      ownerToken = await issueToken(env.SANDBOX_TOKENS, sandboxId);
+      await sandbox.writeFile(OWNER_TOKEN_PATH, ownerToken);
+    } catch (err) {
+      await sandbox.destroy?.().catch(() => {});
+      await revokeToken(env.SANDBOX_TOKENS, sandboxId).catch(() => {});
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+        status: 500,
+        code: 'CF_ERROR',
+      };
+    }
+
+    const environment = await probeEnvironment(sandbox);
+
+    // Advisory: refresh the index access time so the restored snapshot's TTL
+    // resets (matches Modal's restore-snapshot index touch).
+    if (env.SNAPSHOT_INDEX && repoFullName && branch) {
+      await touchSnapshot(env.SNAPSHOT_INDEX, repoFullName, branch).catch(() => {});
+    }
+
+    return { ok: true, sandboxId, ownerToken, environment };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      status: 500,
+      code: 'CF_ERROR',
+    };
+  }
+}
+
+async function routeRestoreSnapshot(env: Env, body: Json): Promise<Response> {
   const snapshotId = requireStr(body, 'snapshot_id');
   const restoreToken = requireStr(body, 'restore_token');
   const repoFullName = str(body.repo_full_name);
   const branch = str(body.branch);
 
-  // Bound the token before any R2 work or constant-time compare. This route is
-  // owner-token-gate-exempt, so an unbounded restore_token would otherwise let
-  // a caller force arbitrarily large UTF-8 encoding + comparison work.
-  if (restoreToken.length > MAX_TOKEN_BYTES) {
+  const result = await restoreWorkspaceSnapshot(env, {
+    snapshotId,
+    restoreToken,
+    repoFullName,
+    branch,
+  });
+  if (!result.ok) {
     return Response.json(
-      { ok: false, error: 'Invalid restore token', code: 'AUTH_FAILURE' },
-      { status: 403 },
+      { ok: false, error: result.error, code: result.code },
+      { status: result.status },
     );
   }
-
-  const object = await env.SNAPSHOTS.get(snapshotId);
-  if (!object) {
-    return Response.json(
-      { ok: false, error: 'Snapshot not found', code: 'SNAPSHOT_NOT_FOUND' },
-      { status: 404 },
-    );
-  }
-  // Auth: the restore token must match the one stamped on the R2 object at
-  // hibernate time. Constant-time compare, same as owner-token verification.
-  const expected = object.customMetadata?.rt ?? '';
-  if (!expected || !timingSafeEqual(expected, restoreToken)) {
-    return Response.json(
-      { ok: false, error: 'Invalid restore token', code: 'AUTH_FAILURE' },
-      { status: 403 },
-    );
-  }
-  const archive = await object.text();
-
-  const sandboxId = crypto.randomUUID();
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
-
-  // The archive carries /workspace including .git, but global git identity
-  // (~/.gitconfig) lives outside it — set a default so post-restore commits
-  // don't fail with "empty ident". Mirrors routeCreate's git config step.
-  await withExecDeadline(
-    sandbox.exec(
-      "git config --global user.name 'Push User' && git config --global user.email 'sandbox@diff.app'",
-    ),
-  ).catch(() => {});
-
-  const hydrated = await hydrateBase64IntoSandbox(sandbox, archive, '/workspace');
-  if (!hydrated.ok) {
-    await sandbox.destroy?.().catch(() => {});
-    return Response.json(
-      { ok: false, error: hydrated.error, code: 'CF_ERROR' },
-      { status: hydrated.status },
-    );
-  }
-
-  // Mint a fresh owner token for the new sandbox (the old one died with its
-  // container). Fail closed: if issuance fails, destroy the sandbox so we
-  // don't orphan an unreachable, un-cleanable container.
-  let ownerToken: string;
-  try {
-    ownerToken = await issueToken(env.SANDBOX_TOKENS, sandboxId);
-    await sandbox.writeFile(OWNER_TOKEN_PATH, ownerToken);
-  } catch (err) {
-    await sandbox.destroy?.().catch(() => {});
-    await revokeToken(env.SANDBOX_TOKENS, sandboxId).catch(() => {});
-    throw err;
-  }
-
-  const environment = await probeEnvironment(sandbox);
-
-  // Advisory: refresh the index access time so the restored snapshot's TTL
-  // resets (matches Modal's restore-snapshot index touch).
-  if (env.SNAPSHOT_INDEX && repoFullName && branch) {
-    await touchSnapshot(env.SNAPSHOT_INDEX, repoFullName, branch).catch(() => {});
-  }
-
   return Response.json({
     ok: true,
-    sandbox_id: sandboxId,
-    owner_token: ownerToken,
+    sandbox_id: result.sandboxId,
+    owner_token: result.ownerToken,
     status: 'ready',
     workspace_revision: 0,
-    environment,
+    environment: result.environment,
   });
 }
 

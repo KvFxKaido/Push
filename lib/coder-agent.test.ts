@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { generateCheckpointAnswer, runCoderAgent, type CoderAgentOptions } from './coder-agent.js';
+import {
+  generateCheckpointAnswer,
+  runCoderAgent,
+  SandboxUnreachableError,
+  type CoderAgentOptions,
+} from './coder-agent.js';
 import type { PushStream, PushStreamEvent } from './provider-contract.js';
 
 type Call = { call: { tool: string; args: Record<string, unknown> } };
@@ -173,6 +178,106 @@ describe('runCoderAgent (PushStream consumer)', () => {
     // Cadence is 5, skipping round 0 → exactly one checkpoint at round index 5.
     expect(checkpoints.map((c) => c.round)).toEqual([5]);
     expect(checkpoints[0]?.messageCount).toBeGreaterThan(0);
+  });
+
+  it('throws SandboxUnreachableError after consecutive SANDBOX_UNREACHABLE tool results', async () => {
+    const { stream } = makePushStream([
+      [
+        { type: 'text_delta', text: 'reading files' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+    const detectAllToolCalls = () => ({
+      readOnly: [
+        { call: { tool: 'sandbox_read_file', args: { path: 'a' } } },
+        { call: { tool: 'sandbox_read_file', args: { path: 'b' } } },
+      ],
+      mutating: null,
+      fileMutations: [],
+      extraMutations: [],
+      droppedCandidates: [],
+    });
+    const toolExec = async () => ({
+      kind: 'executed' as const,
+      resultText: 'gone',
+      errorType: 'SANDBOX_UNREACHABLE',
+    });
+
+    await expect(
+      runCoderAgent(
+        {
+          ...baseCoderOptions({ stream, detectAllToolCalls, evaluateAfterModel: async () => null }),
+          toolExec,
+        },
+        { onStatus: () => {} },
+      ),
+    ).rejects.toBeInstanceOf(SandboxUnreachableError);
+  });
+
+  it('does not throw on an isolated SANDBOX_UNREACHABLE blip (counter resets on success)', async () => {
+    const { stream } = makePushStream(
+      Array.from({ length: 4 }, () => [
+        { type: 'text_delta' as const, text: 'work' },
+        { type: 'done' as const, finishReason: 'stop' as const },
+      ]),
+    );
+    const detectAllToolCalls = () => ({
+      readOnly: [
+        { call: { tool: 'sandbox_read_file', args: { path: 'a' } } },
+        { call: { tool: 'sandbox_read_file', args: { path: 'b' } } },
+      ],
+      mutating: null,
+      fileMutations: [],
+      extraMutations: [],
+      droppedCandidates: [],
+    });
+    // First call a blip, every later call succeeds → the consecutive counter
+    // never reaches the threshold.
+    let n = 0;
+    const toolExec = async () => {
+      n += 1;
+      return n === 1
+        ? { kind: 'executed' as const, resultText: 'blip', errorType: 'SANDBOX_UNREACHABLE' }
+        : { kind: 'executed' as const, resultText: 'ok' };
+    };
+    const evaluateAfterModel = async (_r: string, round: number) =>
+      round >= 2 ? ({ action: 'halt', summary: 'done' } as const) : null;
+
+    await expect(
+      runCoderAgent(
+        { ...baseCoderOptions({ stream, detectAllToolCalls, evaluateAfterModel }), toolExec },
+        { onStatus: () => {} },
+      ),
+    ).resolves.toMatchObject({ summary: 'done' });
+  });
+
+  it('seeds the loop from resumeState (restored messages + starting round)', async () => {
+    const { stream, capturedRequests } = makePushStream([
+      [
+        { type: 'text_delta', text: 'I am done.' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+    const resumeState = {
+      round: 7,
+      messages: [
+        { id: 'coder-task', role: 'user' as const, content: 'original task', timestamp: 1 },
+        { id: 'prior', role: 'assistant' as const, content: 'prior progress', timestamp: 2 },
+      ],
+      workingMemory: { plan: 'restored plan' },
+      cards: [] as never[],
+    };
+
+    const result = await runCoderAgent(
+      { ...baseCoderOptions({ stream }), resumeState },
+      { onStatus: () => {} },
+    );
+
+    // The first model call sees the restored history, not a fresh [taskPreamble].
+    const req = capturedRequests[0] as { messages: Array<{ content: string }> };
+    expect(req.messages.some((m) => m.content === 'prior progress')).toBe(true);
+    // Resumes at round 7 → reported as 1-based rounds 8.
+    expect(result.rounds).toBe(8);
   });
 
   it('throws AbortError when callbacks.signal aborts before round 1', async () => {

@@ -106,9 +106,29 @@ const CODER_STATE_REINJECTION_CADENCE_ROUNDS = 6;
 
 // --- Mutation failure guardrails ---
 const MAX_CONSECUTIVE_MUTATION_FAILURES = 3; // Hard failure threshold for same tool+file
+// Consecutive SANDBOX_UNREACHABLE tool results that signal the container is
+// genuinely gone (not a one-off blip). At/above this the loop throws
+// SandboxUnreachableError so the host can restore a checkpoint and resume,
+// rather than burning rounds against a dead sandbox.
+const SANDBOX_LOSS_THRESHOLD = 2;
 
 // Silence lint on the unused re-export alias when tree-shaken in some builds.
 void LIB_MAX_TOOL_RESULT_SIZE;
+
+/**
+ * Thrown by the Coder loop when the sandbox is confirmed unreachable across
+ * `SANDBOX_LOSS_THRESHOLD` consecutive tool calls. The host (coder-job DO)
+ * catches it to drive seamless resume: restore the latest checkpoint into a
+ * fresh sandbox and re-run the loop seeded with the checkpoint's state. Distinct
+ * class so the host can tell it apart from ordinary run failures.
+ */
+export class SandboxUnreachableError extends Error {
+  readonly code = 'SANDBOX_UNREACHABLE' as const;
+  constructor(message = 'Sandbox is unreachable') {
+    super(message);
+    this.name = 'SandboxUnreachableError';
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Message shape — structural subset of Web `ChatMessage` used by the loop.
@@ -599,6 +619,14 @@ export interface CoderAgentOptions<TCall, TCard> {
   acceptanceCriteria?: AcceptanceCriterion[];
   harnessMaxRounds?: number;
   harnessContextResetsEnabled?: boolean;
+
+  /**
+   * Seed the loop from a prior checkpoint instead of starting fresh — used by
+   * the host's resume path after a sandbox death. When set, the loop begins
+   * with these messages/working memory/cards and re-enters at `round`, against
+   * a freshly-restored sandbox whose filesystem matches this state.
+   */
+  resumeState?: CoderCheckpointState<TCard>;
 }
 
 /**
@@ -639,7 +667,7 @@ export async function runCoderAgent<TCall, TCard>(
     userProfile,
     taskPreamble,
     symbolSummary,
-    toolExec,
+    toolExec: rawToolExec,
     detectAllToolCalls,
     detectAnyToolCall,
     webSearchToolProtocol,
@@ -751,7 +779,12 @@ export async function runCoderAgent<TCall, TCard>(
         })
     : stream;
 
-  const allCards: TCard[] = [];
+  // Resume seed: when present, the loop continues a checkpointed run against a
+  // freshly-restored sandbox instead of starting fresh. Copies are taken so we
+  // never alias the caller's persisted state.
+  const resumeState = options.resumeState;
+
+  const allCards: TCard[] = resumeState ? [...resumeState.cards] : [];
   let rounds = 0;
   let checkpointCount = 0;
 
@@ -760,7 +793,7 @@ export async function runCoderAgent<TCall, TCard>(
   const contextResetsEnabled = harnessContextResetsEnabled ?? false;
 
   // Agent-internal working memory — survives context trimming via injection
-  const workingMemory: CoderWorkingMemory = {};
+  const workingMemory: CoderWorkingMemory = resumeState ? { ...resumeState.workingMemory } : {};
   // Track the last injected snapshot so we can emit compact diffs
   let lastInjectedState: CoderWorkingMemory | null = null;
   let lastInjectedStateRound: number | null = null;
@@ -770,15 +803,36 @@ export async function runCoderAgent<TCall, TCard>(
   // --- Mutation failure guardrail state ---
   const mutationFailures = new Map<string, MutationFailureEntry>();
 
-  // Build initial messages
-  const messages: CoderLoopMessage[] = [
-    {
-      id: 'coder-task',
-      role: 'user',
-      content: taskPreamble,
-      timestamp: Date.now(),
-    },
-  ];
+  // Wrap the host toolExec so a genuinely-gone sandbox — SANDBOX_UNREACHABLE
+  // across SANDBOX_LOSS_THRESHOLD consecutive calls — throws
+  // SandboxUnreachableError. The host catches it to restore a checkpoint and
+  // re-run with `resumeState`, instead of burning rounds against a dead box. A
+  // single transient blip (one loss then a success) resets the counter.
+  let consecutiveSandboxLoss = 0;
+  const toolExec: typeof rawToolExec = async (call, execCtx) => {
+    const result = await rawToolExec(call, execCtx);
+    if (result.kind === 'executed' && result.errorType === 'SANDBOX_UNREACHABLE') {
+      consecutiveSandboxLoss += 1;
+      if (consecutiveSandboxLoss >= SANDBOX_LOSS_THRESHOLD) {
+        throw new SandboxUnreachableError();
+      }
+    } else if (result.kind === 'executed') {
+      consecutiveSandboxLoss = 0;
+    }
+    return result;
+  };
+
+  // Build initial messages (or restore them from the resume seed).
+  const messages: CoderLoopMessage[] = resumeState
+    ? resumeState.messages.map((m) => ({ ...m }))
+    : [
+        {
+          id: 'coder-task',
+          role: 'user',
+          content: taskPreamble,
+          timestamp: Date.now(),
+        },
+      ];
 
   const getAwarenessBlock = (prefixNewline = true): string => {
     const awarenessSummary = callbacks.getFileAwarenessSummary?.();
@@ -786,7 +840,7 @@ export async function runCoderAgent<TCall, TCard>(
     return `${prefixNewline ? '\n' : ''}[FILE_AWARENESS] ${awarenessSummary} [/FILE_AWARENESS]`;
   };
 
-  for (let round = 0; ; round++) {
+  for (let round = resumeState?.round ?? 0; ; round++) {
     if (callbacks.signal?.aborted) {
       throw new DOMException('Coder cancelled by user.', 'AbortError');
     }
