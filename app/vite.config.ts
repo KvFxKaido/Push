@@ -1,7 +1,50 @@
+import { execSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'path';
 import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 // https://vite.dev/config/
+
+// Stamp the PWA service-worker cache name with a per-build id so installed
+// PWAs auto-purge stale caches on every deploy — no manual CACHE_NAME bump.
+// sw.js lives in public/ (copied verbatim), so we rewrite it in the built
+// output. The source value in public/sw.js is only the dev fallback.
+function stampServiceWorkerCache(): Plugin {
+  return {
+    name: 'stamp-sw-cache',
+    apply: 'build',
+    writeBundle(options) {
+      const outDir = options.dir ?? path.resolve(__dirname, 'dist');
+      const swPath = path.resolve(outDir, 'sw.js');
+      if (!fs.existsSync(swPath)) return;
+
+      const fromGit = () => {
+        try {
+          return execSync('git rev-parse --short HEAD', {
+            stdio: ['ignore', 'pipe', 'ignore'],
+          })
+            .toString()
+            .trim();
+        } catch {
+          return '';
+        }
+      };
+      const buildId =
+        process.env.WORKERS_CI_COMMIT_SHA?.slice(0, 8) ||
+        process.env.CF_PAGES_COMMIT_SHA?.slice(0, 8) ||
+        process.env.GITHUB_SHA?.slice(0, 8) ||
+        fromGit() ||
+        Date.now().toString(36);
+
+      const source = fs.readFileSync(swPath, 'utf8');
+      const stamped = source.replace(
+        /const CACHE_NAME = ['"][^'"]*['"];/,
+        `const CACHE_NAME = 'push-${buildId}';`,
+      );
+      fs.writeFileSync(swPath, stamped);
+    },
+  };
+}
 const API_PROXY_TARGET = process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8787';
 const API_PROXY_ORIGIN = (() => {
   try {
@@ -64,7 +107,7 @@ function chunkBaseName(chunkName: string, facadeModuleId?: string | null): strin
 
 export default defineConfig({
   base: './',
-  plugins: [react()],
+  plugins: [react(), stampServiceWorkerCache()],
   build: {
     rollupOptions: {
       output: {
