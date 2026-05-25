@@ -1,4 +1,4 @@
-const CACHE_NAME = 'push-v11';
+const CACHE_NAME = 'push-v12';
 const urlsToCache = ['/', '/index.html', '/manifest.json'];
 
 self.addEventListener('install', (event) => {
