@@ -1,6 +1,6 @@
 # Design Token Migration Plan
 
-Status: Draft plan. Added 2026-05-25.
+Status: Draft plan, P0 shipped. Added 2026-05-25.
 
 Drives the legacy hardcoded-color backlog toward zero so the DESIGN.md token
 system is the single source of truth for color. The `check:design-tokens`
@@ -8,8 +8,9 @@ ratchet (added with the canonical-docs work) holds the line; this plan scopes
 the existing violations and orders the cleanup.
 
 The baseline audit ran against `app/src` (excluding `src/components/ui/**`, the
-shadcn carveout) and found **441** hardcoded colors. Re-run the numbers any time
-with `npm run check:design-tokens` (counts + top offenders).
+shadcn carveout) and found **441** hardcoded colors. P0 has since carved out the
+CodeMirror editor theme, bringing the ratchet baseline to **396**. Re-run the
+numbers any time with `npm run check:design-tokens` (counts + top offenders).
 
 ## What counts
 
@@ -27,7 +28,7 @@ The detector (`app/scripts/design-token-detector.mjs`) flags two forms, hex only
 | Near-token drift (RGB dist ≤12) | 108 (24%) | Snap to existing token, eyeball each |
 | Genuinely new (no nearby token) | 299 (68%) | Add a token or accept a justified one-off |
 | ↳ near-black (`#000000`, `#1a1a1a`, …) | 42 | Map to `push-surface*` or add a black token |
-| ↳ `src/lib/codemirror-theme.ts` | 45 | Editor syntax theme — **carveout candidate**, not app tokens |
+| ↳ `src/lib/codemirror-theme.ts` | 45 | Editor syntax theme, not app tokens — **carved out (P0 ✓)** |
 
 ## Concentration
 
@@ -87,8 +88,8 @@ baseline down and lock in progress. Verify the UI is visually unchanged before
 re-baselining — these are color swaps, so a screenshot diff on the touched
 screens is the acceptance bar.
 
-- **P0 — Carveout** `src/lib/codemirror-theme.ts` (editor syntax theme, not
-  DESIGN.md app tokens). Add to the detector's exclude list. Baseline → ~396.
+- **P0 ✓ — Carveout** `src/lib/codemirror-theme.ts` (editor syntax theme, not
+  DESIGN.md app tokens) added to the ratchet's exclude list. Baseline 441 → 396.
 - **P1 — Mechanical** 34 exact-token swaps. Safe find/replace. Baseline → ~362.
 - **P2 — New tokens** Add tokens for the frequent no-token colors (`#7c879b`,
   `#d7deeb`, `#52525b`, …) to DESIGN.md + `tailwind.config.js`, then swap their
