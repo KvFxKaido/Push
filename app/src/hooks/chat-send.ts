@@ -103,7 +103,7 @@ export async function processAssistantTurn(
   // (per-args failure budget, consecutive identical calls, and
   // per-agent delegation-outcome streaks). See `checkLoopBreaker` for
   // the trip rules and rationale.
-  if (checkLoopBreaker(detected, tracker, loopDetector, round)) {
+  if (checkLoopBreaker(detected, tracker, loopDetector, round, chatId)) {
     return {
       nextApiMessages: apiMessages,
       nextRecoveryState: recoveryState,

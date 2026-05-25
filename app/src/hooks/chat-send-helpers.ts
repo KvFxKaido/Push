@@ -48,6 +48,7 @@ import {
   type SimilarityLoopDetector,
   writeTargetOf,
 } from '@push/lib/loop-detection';
+import { recordLoopVerdict } from '@push/lib/loop-metrics';
 import { createId } from '@push/lib/id-utils';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import type { ChatMessage, ToolExecutionResult } from '@/types';
@@ -724,6 +725,7 @@ export function checkLoopBreaker(
   tracker: MutationFailureTracker,
   detector: SimilarityLoopDetector,
   round: number,
+  scope?: string,
 ): boolean {
   const allIncomingCalls = [
     ...detected.readOnly,
@@ -782,6 +784,17 @@ export function checkLoopBreaker(
     exactBreakers,
     similarity: worstSimilarity,
     similarityEnforced: isSimilarityLoopDetectionEnabled(),
+  });
+
+  recordLoopVerdict({
+    surface: 'web',
+    scope,
+    round,
+    level: verdict.level,
+    action: verdict.action,
+    enforced: verdict.enforced,
+    reasons: verdict.reasons,
+    similarity: verdict.similarity,
   });
 
   if (verdict.level !== 'none') {

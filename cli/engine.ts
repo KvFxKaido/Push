@@ -55,6 +55,7 @@ import {
   isSimilarityLoopDetectionEnabled,
   writeTargetOf,
 } from '../lib/loop-detection.ts';
+import { recordLoopVerdict } from '../lib/loop-metrics.ts';
 import { TurnPolicyRegistry, createCoderPolicy } from './turn-policy.js';
 import { buildMalformedToolCallEvents, summarizeToolResultPreview } from '../lib/run-events.ts';
 import { getDefaultCliHookRegistry, readCliCurrentBranch } from './tool-hooks-default.ts';
@@ -1677,6 +1678,16 @@ export async function runAssistantLoop(
       exactRepeat: { count: exactRepeatCount, limit: EXACT_REPEAT_LIMIT },
       similarity: worstSimilarity,
       similarityEnforced: isSimilarityLoopDetectionEnabled(),
+    });
+    recordLoopVerdict({
+      surface: 'cli',
+      scope: state.sessionId,
+      round,
+      level: loopVerdict.level,
+      action: loopVerdict.action,
+      enforced: loopVerdict.enforced,
+      reasons: loopVerdict.reasons,
+      similarity: loopVerdict.similarity,
     });
     if (loopVerdict.level !== 'none') {
       console.warn(
