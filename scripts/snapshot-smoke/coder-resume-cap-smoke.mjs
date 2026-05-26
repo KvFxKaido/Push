@@ -16,18 +16,26 @@
 // sandbox's owner token (from `/api/sandbox-cf/create`), but the DO never
 // surfaces the post-resume sandbox identity through any public API. We
 // recover it out of band:
-//   - new sandboxId comes from the `coder_job_resumed` line in
-//     `wrangler tail push --format json` (the DO emits it after a successful
-//     restore — `coder-job-do.ts` ~L766).
-//   - new ownerToken comes from the `SANDBOX_TOKENS` KV namespace
-//     (`restoreWorkspaceSnapshot` mints a fresh token via `issueToken`,
-//     which writes `token:<sandboxId> → { token, createdAt, ... }`). We
-//     read it via `npx wrangler kv key get`.
-//
-// Single-tenant assumption (same as `coder-resume-smoke.mjs`): with no
-// other traffic on prod during the run, every `coder_job_resumed` line in
-// the tail log belongs to our job. We also filter by jobId just to be
-// safe against concurrent test runs.
+//   - PRIMARY: KV-list-diff against the baselined `SANDBOX_TOKENS`
+//     namespace + the set of sandboxIds we've already seen this run.
+//     `restoreWorkspaceSnapshot` mints a fresh token via `issueToken`
+//     which writes `token:<sandboxId> → { token, createdAt, ... }`, and
+//     KV is settled by the time the SSE `assistant.prompt_snapshot`
+//     fires for the resumed loop — so the diff reliably points at the
+//     new sandbox. We then `npx wrangler kv key get` to read the token,
+//     polling on null because the list-index and value-store can
+//     transiently disagree.
+//   - DISAMBIGUATOR: when KV-diff returns multiple unseen ids
+//     (concurrent traffic on the same CF account), the script cross-
+//     checks the tail log's `coder_job_resumed` line — it carries the
+//     authoritative sandboxId for THIS jobId, so we can pick correctly
+//     without killing an unrelated sandbox. Tail can lag 20-30s, so the
+//     cross-check has its own deadline.
+//   - HANG GUARD: every `await promptSnapshotPromise` races a 120s
+//     timer + the SSE terminal event. A failed resume emits no follow-up
+//     prompt_snapshot, so without the race the driver would block
+//     forever on `await`. The race lets us report the failure cleanly
+//     and exit instead.
 //
 // Provider: cloudflare (the only one configured on prod), model
 // `@cf/moonshotai/kimi-k2.6`. Same task as the existing driver.
@@ -184,19 +192,45 @@ async function listSandboxIdsFromKv(kvId) {
   });
 }
 
-/** Poll the KV list until exactly one sandboxId appears that isn't in the
- *  caller's `known` set. Returns that id, or null on timeout. */
-async function waitForNewSandboxIdViaKv(kvId, known, deadlineAt) {
+/** Poll the KV list until a sandboxId appears that isn't in the caller's
+ *  `known` set. Returns that id, or null on timeout. On the unambiguous
+ *  case (exactly one fresh id) we return it directly. On the ambiguous
+ *  case (multiple fresh ids — concurrent test traffic or shared CF account
+ *  noise) we cross-check against the tail log's `coder_job_resumed`
+ *  payload for THIS jobId: it carries the authoritative sandboxId the DO
+ *  actually minted. Without that disambiguator we'd risk killing an
+ *  unrelated sandbox on the next loop iteration. */
+async function waitForNewSandboxIdViaKv({ kvId, known, jobId, tailPath, deadlineAt }) {
   while (Date.now() < deadlineAt) {
     try {
       const ids = await listSandboxIdsFromKv(kvId);
       const fresh = ids.filter((id) => !known.has(id));
       if (fresh.length === 1) return fresh[0];
       if (fresh.length > 1) {
-        // Multiple unseen sandboxes — most likely background test noise.
-        // Caller can decide what to do; return the lexicographically-first
-        // so behavior is deterministic at least.
-        return fresh.sort()[0];
+        // Ambiguous: somebody else's test/work introduced a new sandbox in
+        // parallel. Consult the tail log's structured `coder_job_resumed`
+        // line for THIS jobId to disambiguate. Tail can lag 20-30s, so
+        // give it real time before failing. If the log says a specific
+        // sandboxId belongs to our job AND it's in `fresh`, use it.
+        // Otherwise fail rather than guess (a wrong guess kills someone
+        // else's sandbox on the next /cleanup call).
+        warn(
+          `KV diff returned ${fresh.length} unseen sandboxes — cross-checking the tail log's coder_job_resumed line for jobId=${jobId.slice(0, 8)}`,
+        );
+        const tailDeadline = Math.min(deadlineAt, Date.now() + 45000);
+        const logSandboxId = await waitForResumeLog(tailPath, jobId, 0, tailDeadline);
+        if (logSandboxId && fresh.includes(logSandboxId)) {
+          info(`tail cross-check picked sandboxId=${logSandboxId} for our jobId`);
+          return logSandboxId;
+        }
+        if (logSandboxId) {
+          warn(
+            `tail says our resume sandboxId is ${logSandboxId}, but it's not in the KV fresh set — KV may have evicted it; aborting to avoid killing an unrelated sandbox`,
+          );
+        } else {
+          warn('no coder_job_resumed line for our jobId in the tail within the cross-check window');
+        }
+        return null;
       }
     } catch (e) {
       // Don't fail the test on a transient wrangler issue; retry.
@@ -253,28 +287,62 @@ async function readOwnerTokenFromKv(kvId, sandboxId) {
 }
 
 /** Spawn `wrangler tail` and stream its JSON output to a file. Returns a
- *  handle the caller can close on script exit. */
+ *  handle the caller MUST await on `ready` before opening any traffic that
+ *  will produce tail events the test depends on — otherwise the first
+ *  wrangler stdout chunks can arrive before `fs.open` resolves and the
+ *  data listener is attached, dropping them silently. Surfaces fs.open or
+ *  write failures as a rejected `ready` so the caller fails loud instead
+ *  of silently degrading later log-corroboration checks. */
 function startTailToFile(path) {
   const proc = spawn('npx', ['wrangler', 'tail', 'push', '--format', 'json'], {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  const out = (async () => {
+  // Buffer everything wrangler emits between spawn and `fs.open` resolving,
+  // then flush it to the file once the handle is open. Without buffering,
+  // chunks delivered before the listener attaches are lost.
+  const earlyChunks = [];
+  const bufferingListener = (chunk) => earlyChunks.push(chunk);
+  proc.stdout.on('data', bufferingListener);
+  proc.stderr.on('data', bufferingListener);
+
+  const ready = (async () => {
     const handle = await fs.open(path, 'w');
+    // Replay buffered chunks BEFORE swapping listeners so order is preserved.
+    for (const chunk of earlyChunks) {
+      await handle.write(chunk);
+    }
+    proc.stdout.off('data', bufferingListener);
+    proc.stderr.off('data', bufferingListener);
     proc.stdout.on('data', (chunk) => {
-      handle.write(chunk).catch(() => {});
+      handle.write(chunk).catch((err) => {
+        warn(`tail-log write failed (data may be missing): ${err.message}`);
+      });
     });
     proc.stderr.on('data', (chunk) => {
-      handle.write(chunk).catch(() => {});
+      handle.write(chunk).catch((err) => {
+        warn(`tail-log stderr write failed: ${err.message}`);
+      });
     });
     proc.on('close', () => handle.close().catch(() => {}));
   })();
-  return { proc, ready: out };
+  return { proc, ready };
 }
 
 /** Poll the tail log for the next `coder_job_resumed` line matching jobId.
  *  Returns the new sandboxId from the log payload, or null on timeout.
  *  The log line shape (per `coder-job-do.ts` resumeFromCheckpoint):
  *    "{\"level\":\"info\",\"event\":\"coder_job_resumed\",\"jobId\":\"X\",\"round\":N,\"sandboxId\":\"Y\"}"
+ *
+ *  Coupling note: this regex is intentionally pinned to `wrangler tail
+ *  --format json`'s string-escaped representation of the worker's
+ *  structured log + the field order `JSON.stringify` produces from
+ *  `coder-job-do.ts`. If either format changes, this match silently
+ *  becomes null. That's tolerable here because both paths that consume
+ *  this helper (the KV-ambiguous disambiguator + the cap-log
+ *  corroborator) treat null as a DIAGNOSTIC degradation, not a primary
+ *  assertion: the script still pass/fails on the SSE-observed
+ *  job.failed / job.completed terminal. Worth tightening if/when we
+ *  build automation that depends on this signal alone.
  */
 async function waitForResumeLog(tailPath, jobId, sinceOffset, deadlineAt) {
   // Escape jobId for use in a regex (UUIDs are ASCII-safe, but be belt-and-braces).
@@ -465,10 +533,16 @@ async function main() {
   info(`SANDBOX_TOKENS namespace id = ${kvId}`);
 
   // Start tail BEFORE creating the job so we don't miss early events.
+  // Await `ready` so the file handle is open before any traffic produces
+  // events the test depends on. The fixed sleep below is still needed to
+  // give the wrangler subprocess time to dial the worker; without it,
+  // early prod log lines can arrive before the websocket attaches.
   await fs.rm(cfg.tailLogPath, { force: true });
   const tail = startTailToFile(cfg.tailLogPath);
+  await tail.ready.catch((err) => {
+    throw new Error(`failed to start wrangler tail to ${cfg.tailLogPath}: ${err.message}`);
+  });
   info(`wrangler tail spawned → ${cfg.tailLogPath} (pid=${tail.proc.pid})`);
-  // Give wrangler a beat to connect before we start traffic.
   await new Promise((r) => setTimeout(r, 4000));
 
   const cleanup = async () => {
@@ -575,29 +649,72 @@ async function main() {
     // entry — once at job start (kill 1), then again after each
     // successful resumeFromCheckpoint (kills 2/3). The SSE callback above
     // sets resolvePromptSnapshot which resolves this promise.
+    //
+    // Race against `terminalEvent` and `maxWaitMs` so the await can't hang
+    // forever when a resume fails: a terminal SSE event (job.failed /
+    // job.completed) arrives without a follow-up prompt_snapshot when
+    // resumeFromCheckpoint bails (cap hit, no checkpoint, restore failed).
+    // Without this guard the loop would block indefinitely; with it we
+    // fall through to the same "unexpected terminal" branch the top of
+    // the loop already handles.
     info(`waiting for prompt_snapshot before kill ${k}`);
-    await promptSnapshotPromise;
+    const promptWaitDeadline = Math.min(overallDeadline, Date.now() + 120000);
+    const promptWaitResult = await Promise.race([
+      promptSnapshotPromise.then(() => 'snapshot'),
+      (async () => {
+        while (Date.now() < promptWaitDeadline && !terminalEvent) {
+          await new Promise((r) => setTimeout(r, 500));
+        }
+        return terminalEvent ? 'terminal' : 'deadline';
+      })(),
+    ]);
     promptSnapshotPromise = newPromptSnapshotPromise();
+    if (promptWaitResult === 'terminal') {
+      // The top-of-loop check on the next iteration would report this as
+      // unexpected, but be explicit here so the failure mode is clear in
+      // the run log when k > 1 (a resume gave up without re-entering).
+      fail(
+        `terminal SSE event (${terminalEvent.event}) arrived before prompt_snapshot ${k} — ` +
+          'previous resume likely bailed (check tail for coder_resume_*)',
+      );
+      break;
+    }
+    if (promptWaitResult === 'deadline') {
+      fail(`prompt_snapshot ${k} did not arrive within 120s and no terminal SSE event either`);
+      break;
+    }
 
     // For kills 2/3, the prompt_snapshot we just observed is the resumed
     // loop's. The DO already finished `restoreWorkspaceSnapshot` (which
     // wrote the new sandbox's token to SANDBOX_TOKENS KV) before
     // re-entering runCoderAgent, so KV is settled by the time we get here.
-    // Diff against `knownSandboxIds` to identify the new one.
+    // Diff against `knownSandboxIds` to identify the new one — and when
+    // KV shows multiple unseen sandboxes (concurrent CF account traffic),
+    // cross-check the tail's `coder_job_resumed` line for OUR jobId so
+    // we never kill an unrelated sandbox.
     if (k > 1) {
       info(`discovering new sandboxId via SANDBOX_TOKENS KV diff`);
-      const newSandboxId = await waitForNewSandboxIdViaKv(
+      const newSandboxId = await waitForNewSandboxIdViaKv({
         kvId,
-        knownSandboxIds,
-        Date.now() + 15000,
-      );
+        known: knownSandboxIds,
+        jobId,
+        tailPath: cfg.tailLogPath,
+        deadlineAt: Date.now() + 60000,
+      });
       if (!newSandboxId) {
-        fail(`kill ${k}: could not identify new sandboxId via KV diff within 15s`);
+        fail(`kill ${k}: could not identify new sandboxId via KV diff (+ tail cross-check)`);
         break;
       }
-      const newToken = await readOwnerTokenFromKv(kvId, newSandboxId).catch(() => null);
+      // Poll for the token. The KV list/get can transiently disagree
+      // (eventual consistency between list-index and value reads), so a
+      // single null GET is not a real failure — retry with a generous
+      // budget rather than failing the run.
+      const newToken = await waitForKvToken(kvId, newSandboxId, Date.now() + 15000);
       if (!newToken) {
-        fail(`kill ${k}: KV list returned ${newSandboxId} but GET produced no token`);
+        fail(
+          `kill ${k}: KV list returned ${newSandboxId} but no token record within 15s ` +
+            '(possible KV propagation lag; consider raising the polling budget)',
+        );
         break;
       }
       resumesObserved.push(newSandboxId);
