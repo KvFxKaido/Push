@@ -16,6 +16,7 @@ at the path that actually runs.
 | **1** | Seed → hibernate (snapshot to R2) → restore into a fresh sandbox → verify file count + content digest → time each phase → grade restore latency | ✅ `snapshot-smoke.mjs` | #647 |
 | **2** | Unrestorable snapshot: wrong `restore_token` → `403 AUTH_FAILURE`; nonexistent id → `404 SNAPSHOT_NOT_FOUND` (the backend errors the UI turns into a restore-failure toast) | ✅ `snapshot-smoke.mjs` | #651 |
 | **3** | Coder-job **mid-run resume**: kill a sandbox while a job runs → DO restores the latest checkpoint into a fresh sandbox and continues | ✅ `coder-resume-smoke.mjs` (end-to-end via `/api/sandbox-cf/cleanup` as of the fatal-flag fix) | #649/#650 |
+| **3b** | `MAX_JOB_RESUMES = 2` cap: kill three times in a row → 3rd resume bails (cap exhausted) and the job fails | ⚠️ `coder-resume-cap-smoke.mjs` (flaky — see "Layer 3 cap test" below) | #649/#650 |
 
 Layer 3 needs a real model-driven Coder job (model calls, the `CoderJob`
 Durable Object, SSE) so it ships as a driver + runbook pair rather than a
@@ -178,6 +179,57 @@ The `PUSH_SMOKE_EXTERNAL_KILL=1` mode + Cloudflare-dashboard kill
 workaround from earlier revisions is still available for the case where
 you specifically want to test infrastructure-level container death
 (container OOM, edge deploy, etc.) rather than the `/cleanup` code path.
+
+### Layer 3 cap test — `MAX_JOB_RESUMES = 2`
+
+`coder-resume-cap-smoke.mjs` exercises the upper bound on the resume
+chain: kill the same job three times, expect the third to fail with
+`job.failed` because `resumeFromCheckpoint(2)` short-circuits on
+`resumesUsed >= MAX_JOB_RESUMES` and returns null.
+
+Driver mechanics differ from the single-kill `coder-resume-smoke.mjs`:
+the script spawns its own `wrangler tail` for diagnostics, baselines
+the `SANDBOX_TOKENS` KV namespace at startup, then for each kill cycle
+uses the SSE `assistant.prompt_snapshot` event (fast) as the resume
+signal, then KV-list-diff (against the baseline + already-seen
+sandboxIds) to discover the new sandbox identity the DO minted during
+`restoreWorkspaceSnapshot`, then `wrangler kv key get` for the new
+owner token. The DO doesn't surface the post-resume sandbox identity
+through any public API, so KV diff is how we recover it.
+
+**Status (2026-05-26, prod):** the cap path is wired and was observed
+end-to-end on one validating run (jobId `3262f268`, 97s, 2 successful
+resumes then `job.failed` with `error: "Sandbox is unreachable"`). New
+observability log lines (`coder_resume_cap_exhausted`,
+`coder_resume_no_checkpoint`, `coder_resume_state_parse_failed`) close
+the silent-null paths in `resumeFromCheckpoint` so a failed resume is
+no longer indistinguishable from a successful one that hasn't happened
+yet.
+
+**Known flakiness — re-run on a miss.** The test passes intermittently
+on the bundled palette task because:
+
+- The default `subsequentKillDelayMs = 8000` is in a narrow sweet spot.
+- Smaller (≤ 3s) hits a Cloudflare Sandbox container-provisioning race
+  (`SandboxError: Container is starting. Please retry in a moment.`)
+  during the next restore — the kill lands faster than CF can spin up
+  the new container.
+- Larger (≥ 10s) gives kimi-k2.6 enough rope to summarize the remaining
+  work on the resumed sandbox before the next kill lands, exiting the
+  loop with `job.completed` and no resume attempt.
+- Even within the sweet spot, model variance occasionally lands the
+  kill BEFORE the resumed kernel makes its first tool call, in which
+  case the model produces a "task done" summary with no tool calls and
+  the loop exits cleanly.
+
+This is a test-driver limitation, not a runtime bug. The cap itself is
+deterministic. If a run produces `job.completed` rather than
+`job.failed` at kill 3, re-run; on the order of 1 in 3 runs hits the
+cap cleanly. Future improvements to make this deterministic would mean
+either rewriting the bundled task to require provably more tool calls
+on the resumed loop, or switching the test to a model with more
+predictable retry behavior — neither of which seemed worth doing for a
+one-shot validation of a bound that's already proven.
 
 ### #651 unhappy-path / UI toast
 

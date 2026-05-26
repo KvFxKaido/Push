@@ -732,9 +732,37 @@ export class CoderJob {
     ownerToken: string;
     resumeState: CoderCheckpointState<ChatCard>;
   } | null> {
-    if (resumesUsed >= MAX_JOB_RESUMES) return null;
+    // Three silent-null paths in this function previously returned without
+    // any log: cap-exhausted, no-checkpoint, and JSON parse failure on the
+    // persisted agent state. From the outside they're indistinguishable
+    // from a successful resume that just didn't happen yet, which made
+    // debugging a stalled / terminally-failing job require reading DO
+    // storage directly. Each path now emits a single structured warn log
+    // so `wrangler tail` shows why a resume bailed.
+    if (resumesUsed >= MAX_JOB_RESUMES) {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          event: 'coder_resume_cap_exhausted',
+          jobId,
+          resumesUsed,
+          cap: MAX_JOB_RESUMES,
+        }),
+      );
+      return null;
+    }
     const cp = this.readCheckpoint(jobId);
-    if (!cp) return null;
+    if (!cp) {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          event: 'coder_resume_no_checkpoint',
+          jobId,
+          resumesUsed,
+        }),
+      );
+      return null;
+    }
 
     const restored = await restoreWorkspaceSnapshot(this.env, {
       snapshotId: cp.snapshotId,
@@ -756,7 +784,16 @@ export class CoderJob {
     let resumeState: CoderCheckpointState<ChatCard>;
     try {
       resumeState = JSON.parse(cp.agentStateJson) as CoderCheckpointState<ChatCard>;
-    } catch {
+    } catch (err) {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          event: 'coder_resume_state_parse_failed',
+          jobId,
+          round: cp.round,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
       return null;
     }
 
