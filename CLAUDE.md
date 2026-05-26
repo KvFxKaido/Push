@@ -125,6 +125,17 @@ Tool calls normalize to the same text-dispatch path: fenced/bare JSON in the mod
 
 If a prompt change is compensating for something the runtime *should* handle (validation, routing, safety, correctness), **fix the runtime instead**. Prompts are guidance for cooperating models — not a control plane. Legitimate prompt/doc updates: surfacing hard runtime boundaries (e.g. that the parser ignores reasoning tokens), clarifying role contracts, or documenting quirks models can't infer. Test: if a non-cooperating model could break it, the fix belongs in code.
 
+### Symmetric structured logs
+
+When a runtime function has multiple early-exit paths that change observable behavior, emit a structured log line on each branch — not just the loud-failure one. Anything callers can't distinguish from "still in progress" is invisible to ops until you add the log.
+
+Canonical shape is `console.log(JSON.stringify({ level, event, ...ctx }))` with one line per branch; pick event names that pair semantically (success ↔ failure ↔ cap-hit). The resume path in `app/src/worker/coder-job-do.ts` is the established example:
+
+- `coder_checkpoint_captured` ↔ `coder_checkpoint_failed`
+- `coder_job_resumed` ↔ `coder_resume_restore_failed` ↔ `coder_resume_cap_exhausted` ↔ `coder_resume_no_checkpoint` ↔ `coder_resume_state_parse_failed`
+
+In-band with the change that introduces the silent path — not as a follow-up. Silent returns shipped at PR-merge time become an "untriaged runtime degradation" the next person paying attention has to root-cause.
+
 ### Decision-doc discipline
 
 When you ship something specified in `docs/decisions/`, **flip that doc's `Status:` field in the same PR**. Don't leave specs at "Draft" while the code has landed. See `docs/decisions/README.md` for the label vocabulary (Current / Historical / Draft / Reference / Superseded by `<doc>` / Merged into `<doc>`).
@@ -136,6 +147,20 @@ Three guardrails from the 2026-04 Big Four extraction; apply before adding cross
 1. **Storage: scope keys CLI-first.** Durable identifiers (`repoFullName + branch`) beat per-session ones. Web `chatId` is durable but CLI `sessionId` is per-run, so chatId-shaped keys break cross-run retrieval on CLI. If both surfaces touch the store, put the scope resolver in `lib/` from day one (see `lib/role-memory-budgets.ts` as the shape to follow).
 2. **Background tasks: name the coordinator's home first.** State + callback clusters need an owning module **before the first line of code**. If the owner isn't obvious in one sentence, the coordinator silently lands in `useChat.ts`. Ship feature hooks as siblings under `app/src/hooks/` or `app/src/lib/`; the `max-lines` ESLint guard on `useChat.ts` enforces this in CI.
 3. **Web/CLI communication: one source of truth per vocabulary.** Any new tool, event, or envelope type needs a single canonical definition **and a drift-detector test in the same PR**. Tool-protocol drift uses `cli/tests/daemon-integration.test.mjs` (prompt-vs-capability sync); event/envelope drift uses `cli/tests/protocol-drift.test.mjs` (strict-mode schema pins). Extend `lib/capabilities.ts` for shared capability tables and `cli/protocol-schema.ts` strict mode for envelopes.
+
+### PR self-review pass
+
+Before opening a PR (or pushing a review-response commit), walk the diff through these checks. Each one corresponds to a class of bug bot reviewers (Copilot, Codex, Kilo) have caught more than once on this repo, so shifting them left saves a ~30-min review cycle.
+
+- **HTTP status classification.** Every `if (status >= 400)` arm should enumerate the cases (auth, rate-limit, not-found, validation) and assign each a sensible `structuredError.type` / surface code. Default fallbacks to "everything is sandbox loss" or "everything is unknown" are bugs (see PR #656's rate-limit misclassification).
+- **`await` in a loop.** Every `await` inside a `for`/`while` should prove it can exit on terminal conditions (deadlines, abort signals, event-completion races) — not just on the happy path. A naked `await promiseThatOnlyResolvesOnSuccess` is a hang waiting to happen (see PR #657's `prompt_snapshot` race fix).
+- **Fire-and-forget IIFEs / promises.** `(async () => { ... })()` and `someFn().catch(() => {})` swallow errors silently. Prove the returned promise is awaited somewhere or the failure mode is acceptable. If not acceptable, surface the error via `warn()` / structured log (see PR #657's `startTailToFile.ready` fix).
+- **Silent return paths.** Any `return null` / `return` / `return false` from a runtime function that callers can't distinguish from "still in progress" gets a structured log line in the same change (see Symmetric structured logs above).
+- **Config-file changes.** Grep new diffs in `wrangler.jsonc`, `*.yml`, `.env*`, anything in `secrets/` for account IDs, slugs, tokens, or hardcoded URLs that should be secrets or dashboard vars. The public repo has bitten this — committed account-bound identifiers in `wrangler.jsonc` belong in the secret store, dashboard vars, or `.dev.vars`.
+- **Error-formatting paths.** Confirm upstream content (HTTP bodies, stderr, exec output) isn't passed through to the UI verbatim — wrap or escape. Past HTML-leak regressions shipped because raw upstream JSON ended up rendered.
+- **Auth / allowlist seams.** New endpoints or auth gates: trace at least one denied path AND one allowed path end-to-end. When a PR gates a security-sensitive resource on one path, grep every other path that touches the same resource — bots have caught the asymmetry on every PR where the author only traced one side.
+
+Not exhaustive; encode new patterns here when a review catches the same class twice.
 
 ### Project instructions loading
 
