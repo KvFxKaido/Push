@@ -8,6 +8,7 @@ import {
   HUB_TAG_CLASS,
   HubControlGlow,
 } from '@/components/chat/hub-styles';
+import { PageScaffold } from '@/components/layout';
 import { PushMarkIcon } from '@/components/icons/push-custom-icons';
 import type { GitHubUser } from '@/types';
 
@@ -76,9 +77,8 @@ export function OnboardingScreen({
   };
 
   return (
-    <div className="relative flex h-dvh flex-col items-center justify-center bg-[linear-gradient(180deg,rgba(4,6,10,1)_0%,rgba(2,4,8,1)_100%)] px-6 safe-area-top">
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-white/[0.03] to-transparent" />
-      <div className="w-full max-w-sm space-y-6">
+    <PageScaffold width="sm" align="center" className="px-6">
+      <div className="space-y-6">
         {/* Logo + tagline */}
         <div className="text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center text-push-accent animate-fade-in-up">
@@ -319,6 +319,6 @@ export function OnboardingScreen({
           </div>
         </div>
       </div>
-    </div>
+    </PageScaffold>
   );
 }
