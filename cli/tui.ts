@@ -1736,7 +1736,13 @@ export async function runTUI(options = {}) {
     frameInterval = setInterval(() => {
       frameTick = (frameTick + 1) % TICK_MODULUS;
       if (anyConsumerVisible()) {
-        tuiState.dirty.add('all');
+        // Only the spinner glyph (header) and the elapsed-time activity row
+        // (footer) animate per tick. Dirtying 'all' makes render() take the
+        // full-redraw path (ESC.clearScreen + full repaint) 10×/s, which
+        // visibly flickers the screen for the whole run. Scope the redraw to
+        // the two animated regions so render() takes the partial-redraw path.
+        tuiState.dirty.add('header');
+        tuiState.dirty.add('footer');
         scheduler.flush();
       }
     }, FRAME_TICK_MS);
