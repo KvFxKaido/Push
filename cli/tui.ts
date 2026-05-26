@@ -1727,22 +1727,27 @@ export async function runTUI(options = {}) {
   // itself stays alive while any consumer is *eligible*, so the first
   // frame of a new run paints immediately.
   const activityRowVisible = () => tuiState.runState === 'running';
-  const anyConsumerVisible = () =>
-    (spinner.name !== 'off' && tuiState.runState === 'running' && theme.unicode) ||
-    activityRowVisible();
+  // The spinner glyph only animates when it is actually drawn: a pinned spinner,
+  // a live run, and a Unicode-capable terminal. Used to decide whether the
+  // header needs repainting on a frame tick (reduced-motion / non-Unicode runs
+  // animate only the footer's elapsed-time row).
+  const spinnerVisible = () =>
+    spinner.name !== 'off' && tuiState.runState === 'running' && theme.unicode;
+  const anyConsumerVisible = () => spinnerVisible() || activityRowVisible();
   const anyConsumerEligible = () => spinner.name !== 'off' || activityRowVisible();
   const startFrameTicker = () => {
     if (frameInterval) return;
     frameInterval = setInterval(() => {
       frameTick = (frameTick + 1) % TICK_MODULUS;
       if (anyConsumerVisible()) {
-        // Only the spinner glyph (header) and the elapsed-time activity row
-        // (footer) animate per tick. Dirtying 'all' makes render() take the
-        // full-redraw path (ESC.clearScreen + full repaint) 10×/s, which
-        // visibly flickers the screen for the whole run. Scope the redraw to
-        // the two animated regions so render() takes the partial-redraw path.
-        tuiState.dirty.add('header');
+        // Dirtying 'all' made render() take the full-redraw path
+        // (ESC.clearScreen + full repaint) 10×/s, flickering the whole screen
+        // for the run. Scope the redraw to only the region(s) that actually
+        // animate so render() stays on the partial-redraw path: the elapsed-time
+        // row (footer) animates whenever a run is active; the spinner glyph
+        // (header) only when it is actually drawn.
         tuiState.dirty.add('footer');
+        if (spinnerVisible()) tuiState.dirty.add('header');
         scheduler.flush();
       }
     }, FRAME_TICK_MS);
