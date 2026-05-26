@@ -1131,6 +1131,21 @@ export class CoderJob {
         cards: state.cards,
       }),
     });
+    // Success-side mirror of `coder_checkpoint_failed` and `coder_job_resumed` —
+    // a single structured log line per durable checkpoint so observability of
+    // the resume path is symmetric (failure → log, success → log). Without it,
+    // a successful checkpoint was a silent operation: tail logs only revealed
+    // the resume path when it broke, never when it worked. snapshotId omitted
+    // (it's a per-run UUID that only the DO needs); round + jobId is enough to
+    // correlate with a captureCheckpoint cadence boundary in any later replay.
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'coder_checkpoint_captured',
+        jobId,
+        round: state.round,
+      }),
+    );
     // Reclaim this job's previous checkpoint object now the new one is durable —
     // per-job, never cross-job. Prefix-guarded so we only delete our own R2 keys.
     if (
