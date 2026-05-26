@@ -199,38 +199,53 @@ async function listSandboxIdsFromKv(kvId) {
  *  noise) we cross-check against the tail log's `coder_job_resumed`
  *  payload for THIS jobId: it carries the authoritative sandboxId the DO
  *  actually minted. Without that disambiguator we'd risk killing an
- *  unrelated sandbox on the next loop iteration. */
+ *  unrelated sandbox on the next loop iteration.
+ *
+ *  Cross-check semantics: `waitForResumeLog` returns the LATEST
+ *  `coder_job_resumed` match for our jobId — by iter 3 the file may
+ *  contain lines for kill 1's AND kill 2's resumes, and we want the
+ *  newest (kill 2's). We then verify it's in `fresh`: if so, that's
+ *  our new sandbox; if not, we're either looking at stale tail content
+ *  (kill 2's resume not yet flushed by wrangler) or KV has evicted the
+ *  fresh entry — keep polling until either case resolves or we time out. */
 async function waitForNewSandboxIdViaKv({ kvId, known, jobId, tailPath, deadlineAt }) {
+  let ambiguityFirstSeenAt = null;
   while (Date.now() < deadlineAt) {
     try {
       const ids = await listSandboxIdsFromKv(kvId);
       const fresh = ids.filter((id) => !known.has(id));
       if (fresh.length === 1) return fresh[0];
       if (fresh.length > 1) {
-        // Ambiguous: somebody else's test/work introduced a new sandbox in
-        // parallel. Consult the tail log's structured `coder_job_resumed`
-        // line for THIS jobId to disambiguate. Tail can lag 20-30s, so
-        // give it real time before failing. If the log says a specific
-        // sandboxId belongs to our job AND it's in `fresh`, use it.
-        // Otherwise fail rather than guess (a wrong guess kills someone
-        // else's sandbox on the next /cleanup call).
-        warn(
-          `KV diff returned ${fresh.length} unseen sandboxes — cross-checking the tail log's coder_job_resumed line for jobId=${jobId.slice(0, 8)}`,
-        );
-        const tailDeadline = Math.min(deadlineAt, Date.now() + 45000);
-        const logSandboxId = await waitForResumeLog(tailPath, jobId, 0, tailDeadline);
+        if (ambiguityFirstSeenAt === null) {
+          ambiguityFirstSeenAt = Date.now();
+          warn(
+            `KV diff returned ${fresh.length} unseen sandboxes — cross-checking tail log's coder_job_resumed for jobId=${jobId.slice(0, 8)}`,
+          );
+        }
+        // Tail can lag 20-30s, so give the disambiguator a meaningful
+        // budget on top of the overall deadline. waitForResumeLog returns
+        // the LATEST match for our jobId; if it's in `fresh` we're done,
+        // otherwise either tail is still catching up (older line is the
+        // current latest) or KV has drifted — both resolve by retrying.
+        const tailDeadline = Math.min(deadlineAt, ambiguityFirstSeenAt + 45000);
+        const logSandboxId = await waitForResumeLog(tailPath, jobId, tailDeadline);
         if (logSandboxId && fresh.includes(logSandboxId)) {
           info(`tail cross-check picked sandboxId=${logSandboxId} for our jobId`);
           return logSandboxId;
         }
-        if (logSandboxId) {
-          warn(
-            `tail says our resume sandboxId is ${logSandboxId}, but it's not in the KV fresh set — KV may have evicted it; aborting to avoid killing an unrelated sandbox`,
-          );
-        } else {
-          warn('no coder_job_resumed line for our jobId in the tail within the cross-check window');
+        if (Date.now() >= tailDeadline) {
+          if (logSandboxId) {
+            warn(
+              `tail says our latest resume sandboxId is ${logSandboxId}, but it's not in the KV fresh set — KV may have evicted it; aborting to avoid killing an unrelated sandbox`,
+            );
+          } else {
+            warn(
+              'no coder_job_resumed line for our jobId in the tail within the cross-check window',
+            );
+          }
+          return null;
         }
-        return null;
+        // Tail and KV disagreed; loop continues and re-checks both.
       }
     } catch (e) {
       // Don't fail the test on a transient wrangler issue; retry.
@@ -328,8 +343,15 @@ function startTailToFile(path) {
   return { proc, ready };
 }
 
-/** Poll the tail log for the next `coder_job_resumed` line matching jobId.
- *  Returns the new sandboxId from the log payload, or null on timeout.
+/** Poll the tail log for `coder_job_resumed` lines matching jobId.
+ *  Returns the LATEST match's sandboxId, or null on timeout. The "latest"
+ *  semantic is important for the multi-resume case: by iter 3 the file
+ *  may contain lines for kill 1's AND kill 2's resumes, and we want the
+ *  newest (kill 2's), not the earliest. Counterpart to the previous
+ *  "first match" behavior, which would return kill 1's sandboxId every
+ *  time the disambiguator was invoked after iter 2 — defeating the
+ *  protection that helper exists to provide.
+ *
  *  The log line shape (per `coder-job-do.ts` resumeFromCheckpoint):
  *    "{\"level\":\"info\",\"event\":\"coder_job_resumed\",\"jobId\":\"X\",\"round\":N,\"sandboxId\":\"Y\"}"
  *
@@ -344,18 +366,22 @@ function startTailToFile(path) {
  *  job.failed / job.completed terminal. Worth tightening if/when we
  *  build automation that depends on this signal alone.
  */
-async function waitForResumeLog(tailPath, jobId, sinceOffset, deadlineAt) {
+async function waitForResumeLog(tailPath, jobId, deadlineAt) {
   // Escape jobId for use in a regex (UUIDs are ASCII-safe, but be belt-and-braces).
   const idEsc = jobId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Use a global regex so we can scan ALL matches (matchAll) and return the
+  // last one. Without `g`, matchAll throws and there's no clean way to find
+  // the latest occurrence — which is what we need when the file already
+  // contains lines for prior resumes in this job.
   const re = new RegExp(
     `\\\\"event\\\\":\\\\"coder_job_resumed\\\\"[\\s\\S]*?\\\\"jobId\\\\":\\\\"${idEsc}\\\\"[\\s\\S]*?\\\\"sandboxId\\\\":\\\\"([0-9a-f-]+)\\\\"`,
+    'g',
   );
   while (Date.now() < deadlineAt) {
     try {
       const txt = await fs.readFile(tailPath, 'utf8');
-      const slice = txt.slice(sinceOffset);
-      const m = slice.match(re);
-      if (m) return m[1];
+      const matches = [...txt.matchAll(re)];
+      if (matches.length > 0) return matches[matches.length - 1][1];
     } catch {
       /* tail file may not exist yet */
     }
