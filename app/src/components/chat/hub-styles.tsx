@@ -40,3 +40,16 @@ export function HubControlGlow() {
     <span className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
   );
 }
+
+// Chat surface header chrome. These describe the in-bar buttons used by
+// the 3-region chat app bar (ChatScreen / ChatSurfaceScreen) — not the
+// navigation HeaderBar primitive used by pairing/settings pages. The
+// chat app bar puts interactive content in all three grid cells (drawer
+// + label left, launcher pill center, palette + dock right), so it can't
+// share HeaderBar's `back / title / actions` API. The classes were
+// duplicated verbatim across both chat screens; consolidating here is
+// the minimum needed to keep them from drifting.
+export const HEADER_PLAIN_INTERACTIVE_CLASS =
+  'relative text-push-fg-secondary transition-colors duration-200 hover:text-push-fg active:scale-[0.98]';
+export const HEADER_ROUND_BUTTON_CLASS = `flex h-9 w-9 items-center justify-center ${HEADER_PLAIN_INTERACTIVE_CLASS}`;
+export const HEADER_PILL_BUTTON_CLASS = `pointer-events-auto flex h-9 items-center gap-2 px-1.5 ${HEADER_PLAIN_INTERACTIVE_CLASS}`;

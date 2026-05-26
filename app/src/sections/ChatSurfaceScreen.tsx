@@ -5,6 +5,7 @@ import { ChatBackgroundGlow } from '@/components/chat/ChatBackgroundGlow';
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { RepoChatDrawer } from '@/components/chat/RepoChatDrawer';
+import { HEADER_PILL_BUTTON_CLASS, HEADER_ROUND_BUTTON_CLASS } from '@/components/chat/hub-styles';
 import { RepoAppearanceSheet } from '@/components/repo/RepoAppearanceSheet';
 import { usePerfMark } from '@/hooks/usePerfMark';
 import type { RepoAppearance } from '@/lib/repo-appearance';
@@ -26,11 +27,6 @@ interface ChatSurfaceScreenProps {
   onSaveAppearance: (appearance: RepoAppearance) => void;
   onResetAppearance: () => void;
 }
-
-const HEADER_PLAIN_INTERACTIVE_CLASS =
-  'relative text-push-fg-secondary transition-colors duration-200 hover:text-push-fg active:scale-[0.98]';
-const HEADER_ROUND_BUTTON_CLASS = `flex h-9 w-9 items-center justify-center ${HEADER_PLAIN_INTERACTIVE_CLASS}`;
-const HEADER_PILL_BUTTON_CLASS = `pointer-events-auto flex h-9 items-center gap-2 px-1.5 ${HEADER_PLAIN_INTERACTIVE_CLASS}`;
 
 export function ChatSurfaceScreen({
   chatShellTransform,

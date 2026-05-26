@@ -220,8 +220,10 @@ Glassmorphic chrome: pill buttons, gradient panels, layered shadows. These are t
 | `HUB_TOP_BANNER_STRIP_CLASS`       | Animated full-width banner strip                      | Top-of-page status (sandbox state, missing AGENTS.md)     |
 | `HUB_TAG_CLASS`                    | Rounded-full, uppercase mono, `tracking-[0.16em]`     | Inline metadata tag (`RECOMMENDED`, `EXPERIMENTAL`)       |
 | `<HubControlGlow />`               | Inner top-half highlight overlay                      | Drop inside a HUB surface for subtle gloss                |
+| `HEADER_ROUND_BUTTON_CLASS`        | `h-9 w-9` plain interactive (no glass surface)        | Chat app-bar icon buttons (palette, dock, web search)     |
+| `HEADER_PILL_BUTTON_CLASS`         | `h-9 px-1.5` plain interactive with gap-2             | Chat app-bar pill (launcher button in the center cell)    |
 
-Hub button height is `h-8`, not `h-9` — pill rhythm differs from the shadcn `h-9` baseline by design. For full-width form CTAs that need more presence, use `${HUB_MATERIAL_BUTTON_CLASS} h-9 px-4 rounded-md` (the surface treatment composes onto the standard button shape).
+Hub button height is `h-8`, not `h-9` — pill rhythm differs from the shadcn `h-9` baseline by design. The `HEADER_*` chat app-bar buttons are `h-9` because they sit on the page surface (`bg-push-surface-inset`), not on a glass panel; they're plain interactive — no border, no shadow — and only color-shift on hover. For full-width form CTAs that need more presence, use `${HUB_MATERIAL_BUTTON_CLASS} h-9 px-4 rounded-md` (the surface treatment composes onto the standard button shape).
 
 ### Layout primitives — `app/src/components/layout/`
 
@@ -236,7 +238,9 @@ A new top-level surface (full-screen pairing flow, settings sub-page, onboarding
 
 ### When to reach for which
 
-- **Chrome** (top bars, header pills, account buttons, mode chips, page wrappers): use HUB classes + layout primitives. This is the dominant Push aesthetic.
+- **Navigation chrome** (back-button top bars on pairing / settings / sub-page screens): use `<HeaderBar>` + `<PageScaffold>`. Three roles per slot: `back` / `title` / `actions`.
+- **Chat app bar** (`ChatScreen`, `ChatSurfaceScreen`): use the `HEADER_*` classes directly with an inline 3-region grid. Each cell holds interactive content, not a passive title — `HeaderBar` would have to be contorted to fit, so it deliberately doesn't try.
+- **Chrome** (header pills, account buttons, mode chips, page wrappers): use HUB classes + layout primitives. This is the dominant Push aesthetic.
 - **Inside content cards** (chat bubbles, file diffs, code blocks): use token classes directly. The HUB material is for navigation surfaces; content is flatter.
 - **Inside `<Dialog>` / `<Sheet>` forms**: shadcn `Button` and `Input` from `components/ui/` are fine. Dialogs already have their own glass treatment from the overlay; double-glassing reads as muddy.
 
