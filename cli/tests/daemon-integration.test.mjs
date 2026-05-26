@@ -16,6 +16,7 @@ import {
   DEFAULT_RESTART_POLICY,
   VALID_AGENT_ROLES,
   handleRequest,
+  adoptClientModelSelection,
   ensureRuntimeState,
   collectOrphanedDelegations,
   formatDelegationInterruptedNote,
@@ -4708,5 +4709,37 @@ describe('v1 synthetic downgrade', () => {
       response.payload.capabilities.includes('event_v2'),
       `expected event_v2 in capabilities, got: ${JSON.stringify(response.payload.capabilities)}`,
     );
+  });
+});
+
+describe('adoptClientModelSelection (mid-session model switch reaches the daemon)', () => {
+  it('adopts a non-empty model and valid provider from the run payload', () => {
+    const state = { provider: 'ollama', model: 'stale-model' };
+    adoptClientModelSelection(state, {
+      provider: 'blackbox',
+      model: 'blackboxai/anthropic/claude-haiku-4.5',
+    });
+    assert.equal(state.model, 'blackboxai/anthropic/claude-haiku-4.5');
+    assert.equal(state.provider, 'blackbox');
+  });
+
+  it('keeps existing values when the payload omits provider/model', () => {
+    const state = { provider: 'ollama', model: 'keep-me' };
+    adoptClientModelSelection(state, { text: 'hi' });
+    assert.equal(state.model, 'keep-me');
+    assert.equal(state.provider, 'ollama');
+  });
+
+  it('ignores an unknown provider so a bad client value cannot corrupt state', () => {
+    const state = { provider: 'ollama', model: 'm1' };
+    adoptClientModelSelection(state, { provider: 'not-a-real-provider', model: 'm2' });
+    assert.equal(state.provider, 'ollama'); // unchanged
+    assert.equal(state.model, 'm2'); // model still adopted independently
+  });
+
+  it('ignores blank/whitespace model strings', () => {
+    const state = { provider: 'ollama', model: 'keep' };
+    adoptClientModelSelection(state, { model: '   ' });
+    assert.equal(state.model, 'keep');
   });
 });

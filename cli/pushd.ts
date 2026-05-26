@@ -1244,6 +1244,14 @@ async function handleSendUserMessage(req, emitEvent) {
   }
 
   const { state } = entry;
+
+  // Adopt the client's current provider/model so a mid-session switch in the
+  // TUI (switchModel updates only local state + config) takes effect here. The
+  // daemon otherwise keeps entry.state.model fixed at start_session time, so
+  // switching looks applied in the UI but every run keeps the old model.
+  // Per-role routing (resolveRoleRouting) still takes precedence over this base.
+  adoptClientModelSelection(state, req.payload);
+
   const runId = makeRunId();
   const abortController = new AbortController();
 
@@ -1755,6 +1763,24 @@ async function handleConfigureRoleRouting(req) {
   return makeResponse(req.requestId, 'configure_role_routing', sessionId, true, {
     roleRouting: state.roleRouting,
   });
+}
+
+/**
+ * Adopt a client-supplied provider/model into session state, in place.
+ *
+ * The TUI carries its current provider/model on every `send_user_message` so a
+ * mid-session switch reaches the daemon (the daemon otherwise keeps the model
+ * fixed at `start_session` time). Empty/missing values are ignored, and an
+ * unknown provider is rejected so a bad client value can't corrupt session
+ * state. Returns the same `state` for convenience.
+ */
+export function adoptClientModelSelection(state, payload) {
+  if (!state || !payload) return state;
+  const reqModel = typeof payload.model === 'string' ? payload.model.trim() : '';
+  if (reqModel) state.model = reqModel;
+  const reqProvider = normalizeProviderInput(payload.provider);
+  if (reqProvider && PROVIDER_CONFIGS[reqProvider]) state.provider = reqProvider;
+  return state;
 }
 
 // ─── Task graph / delegation scaffolds ──────────────────────────
