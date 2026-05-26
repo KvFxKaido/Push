@@ -26,6 +26,7 @@ import { getAnthropicKey } from '@/hooks/useAnthropicConfig';
 import { PROVIDER_URLS } from './providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
+import { isNativeWebSearchEnabled } from './web-search-mode';
 
 export async function* anthropicStream(
   req: PushStreamRequest<ChatMessage>,
@@ -50,6 +51,12 @@ export async function* anthropicStream(
     req.linkedLibraryContent,
   );
 
+  // Per-request flag wins; otherwise the Web Search menu's mode decides.
+  // `'auto'` (the default) enables Anthropic's native `web_search_20250305`
+  // server-side tool so Claude chats search the web without the user
+  // having to opt in; explicit non-native backends suppress it.
+  const anthropicWebSearch = req.anthropicWebSearch ?? isNativeWebSearchEnabled('anthropic');
+
   const body: Record<string, unknown> = {
     model: req.model,
     messages: llmMessages,
@@ -57,6 +64,7 @@ export async function* anthropicStream(
     ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
+    ...(anthropicWebSearch ? { anthropic_web_search: true } : {}),
   };
 
   // The Worker prefers its own server-side ANTHROPIC_API_KEY when set and

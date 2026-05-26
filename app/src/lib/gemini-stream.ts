@@ -27,7 +27,7 @@ import { getGoogleKey } from '@/hooks/useGoogleConfig';
 import { PROVIDER_URLS } from './providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
-import { getWebSearchMode } from './web-search-mode';
+import { isNativeWebSearchEnabled } from './web-search-mode';
 
 export async function* geminiStream(
   req: PushStreamRequest<ChatMessage>,
@@ -52,9 +52,11 @@ export async function* geminiStream(
     req.linkedLibraryContent,
   );
 
-  // Per-request flag wins; otherwise the Web Search menu's mode decides
-  // (grounding flips on when the user picks `google-grounding`).
-  const grounding = req.googleSearchGrounding ?? getWebSearchMode() === 'google-grounding';
+  // Per-request flag wins; otherwise the Web Search menu's mode decides.
+  // `'auto'` (the default) enables grounding so Gemini chats get their
+  // native search tool out of the box; explicit non-Google backends
+  // (`tavily`, `duckduckgo`, `ollama`) and `'off'` suppress it.
+  const grounding = req.googleSearchGrounding ?? isNativeWebSearchEnabled('google');
 
   const body: Record<string, unknown> = {
     model: req.model,

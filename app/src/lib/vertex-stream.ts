@@ -44,6 +44,7 @@ import { buildExperimentalProxyHeaders } from './experimental-providers';
 import { encodeVertexServiceAccountHeader, normalizeVertexRegion } from './vertex-provider';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
+import { isNativeWebSearchEnabled } from './web-search-mode';
 
 export async function* vertexStream(
   req: PushStreamRequest<ChatMessage>,
@@ -73,6 +74,18 @@ export async function* vertexStream(
   // 2. Plain OpenAI-compatible request body. The Worker forwards verbatim
   //    on the OpenAPI transport; on the Anthropic transport it rewrites the
   //    body via `buildAnthropicMessagesRequest` before calling Vertex.
+  //
+  //    Vertex carries both Claude and Gemini under one provider. Claude IDs
+  //    look like `claude-*` and route through the Anthropic transport; gate
+  //    `anthropic_web_search` on that prefix so the field only lands on a
+  //    request the bridge will actually consume. OpenAPI-transport upstreams
+  //    ignore unknown root fields anyway, but keeping the flag scoped to
+  //    Anthropic-transport models is clearer.
+  const isAnthropicTransport =
+    typeof req.model === 'string' && req.model.trim().toLowerCase().startsWith('claude-');
+  const anthropicWebSearch =
+    req.anthropicWebSearch ?? (isAnthropicTransport && isNativeWebSearchEnabled('vertex'));
+
   const body: Record<string, unknown> = {
     model: req.model,
     messages: llmMessages,
@@ -80,6 +93,7 @@ export async function* vertexStream(
     ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
+    ...(anthropicWebSearch ? { anthropic_web_search: true } : {}),
   };
 
   // 3. Headers — branch on configured Vertex mode.

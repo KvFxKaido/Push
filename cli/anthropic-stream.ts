@@ -55,6 +55,17 @@ import type { ProviderConfig } from './provider.ts';
 
 const ANTHROPIC_API_VERSION = '2023-06-01';
 
+/** Per-request flag wins; otherwise Anthropic's native `web_search_20250305`
+ *  tool defaults ON so Claude CLI chats search the web without an opt-in
+ *  step (parity with the web app's `'auto'` web-search mode). Set
+ *  `PUSH_ANTHROPIC_WEB_SEARCH=0` (or `false`/`no`/`off`) to disable. */
+function resolveAnthropicWebSearch(req: PushStreamRequest<LlmMessage>): boolean {
+  if (typeof req.anthropicWebSearch === 'boolean') return req.anthropicWebSearch;
+  const env = process.env.PUSH_ANTHROPIC_WEB_SEARCH?.trim().toLowerCase();
+  if (!env) return true;
+  return !(env === '0' || env === 'false' || env === 'no' || env === 'off');
+}
+
 export function createCliAnthropicStream(
   config: ProviderConfig,
   apiKey: string,
@@ -146,6 +157,7 @@ async function* cliAnthropicStream(
     temperature: req.temperature ?? 0.1,
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
     ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
+    ...(resolveAnthropicWebSearch(req) ? { anthropic_web_search: true } : {}),
   };
 
   // `buildAnthropicMessagesRequest` does not include `model` in the body

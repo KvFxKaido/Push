@@ -193,6 +193,17 @@ export function buildAnthropicMessagesRequest(
     body.top_p = request.top_p;
   }
 
+  // Anthropic's native server-side web search. The model emits
+  // `server_tool_use` + `web_search_tool_result` content blocks alongside
+  // its text response; our SSE translator ignores those block types (only
+  // text and signed thinking flow through), so the user sees the model's
+  // narration including any inline citations. Multi-turn round-trip of
+  // the search blocks is lossy — but the model can simply re-search on
+  // the next turn, so functionally it works.
+  if (request.anthropic_web_search) {
+    body.tools = [{ type: 'web_search_20250305', name: 'web_search' }];
+  }
+
   return body;
 }
 

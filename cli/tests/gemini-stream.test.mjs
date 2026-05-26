@@ -207,11 +207,11 @@ describe('createCliGeminiStream', () => {
     assert.deepEqual(body.tools, [{ googleSearch: {} }]);
   });
 
-  it('opts in via PUSH_GOOGLE_SEARCH_GROUNDING env var when the request omits the flag', async () => {
+  it('defaults grounding ON when env var unset and request omits the flag', async () => {
     const { calls, handler } = captureFetch();
     globalThis.fetch = handler;
     const prior = process.env.PUSH_GOOGLE_SEARCH_GROUNDING;
-    process.env.PUSH_GOOGLE_SEARCH_GROUNDING = '1';
+    delete process.env.PUSH_GOOGLE_SEARCH_GROUNDING;
     try {
       const stream = createCliGeminiStream(GEMINI_CONFIG, 'AIza');
       await collect(
@@ -224,6 +224,29 @@ describe('createCliGeminiStream', () => {
 
       const body = JSON.parse(calls[0].init.body);
       assert.deepEqual(body.tools, [{ googleSearch: {} }]);
+    } finally {
+      if (prior === undefined) delete process.env.PUSH_GOOGLE_SEARCH_GROUNDING;
+      else process.env.PUSH_GOOGLE_SEARCH_GROUNDING = prior;
+    }
+  });
+
+  it('lets PUSH_GOOGLE_SEARCH_GROUNDING=0 opt out of the default grounding', async () => {
+    const { calls, handler } = captureFetch();
+    globalThis.fetch = handler;
+    const prior = process.env.PUSH_GOOGLE_SEARCH_GROUNDING;
+    process.env.PUSH_GOOGLE_SEARCH_GROUNDING = '0';
+    try {
+      const stream = createCliGeminiStream(GEMINI_CONFIG, 'AIza');
+      await collect(
+        stream({
+          provider: 'google',
+          model: 'gemini-3.1-pro-preview',
+          messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }],
+        }),
+      );
+
+      const body = JSON.parse(calls[0].init.body);
+      assert.equal(body.tools, undefined);
     } finally {
       if (prior === undefined) delete process.env.PUSH_GOOGLE_SEARCH_GROUNDING;
       else process.env.PUSH_GOOGLE_SEARCH_GROUNDING = prior;

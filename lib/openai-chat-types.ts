@@ -15,6 +15,8 @@
  *     the Anthropic bridge; other bridges ignore it).
  *   - `google_search_grounding` on the request root (consumed by the
  *     Gemini bridge; other bridges ignore it).
+ *   - `anthropic_web_search` on the request root (consumed by the
+ *     Anthropic bridge; other bridges ignore it).
  *
  * Validation lives where the request actually enters Push (the Worker
  * guardrails). Library consumers — adapters, bridges, and the CLI —
@@ -42,12 +44,17 @@ export type OpenAIMessage = {
   reasoning_blocks?: OpenAIReasoningBlock[];
 };
 
-/** Push-private google search grounding extension */
-export interface OpenAIChatRequestGoogleSearchGrounding {
+/** Push-private native-web-search extensions. Each provider's bridge
+ *  consumes the matching field and emits the upstream's native search
+ *  tool; bridges for other providers ignore the field. */
+export interface OpenAIChatRequestNativeWebSearch {
+  /** Enable Gemini's native `googleSearch` grounding tool. */
   google_search_grounding?: boolean;
+  /** Enable Anthropic's native `web_search_20250305` server-side tool. */
+  anthropic_web_search?: boolean;
 }
 
-export interface OpenAIChatRequest extends OpenAIChatRequestGoogleSearchGrounding {
+export interface OpenAIChatRequest extends OpenAIChatRequestNativeWebSearch {
   model?: string;
   messages?: OpenAIMessage[];
   temperature?: number;

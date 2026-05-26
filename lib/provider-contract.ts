@@ -198,6 +198,8 @@ export interface PushStreamRequest<M extends LlmMessage = LlmMessage> {
   onSessionDigestEmitted?: (digest: import('./session-digest.js').SessionDigest | null) => void;
   /** Google-specific flag to enable search grounding */
   googleSearchGrounding?: boolean;
+  /** Anthropic-specific flag to enable native `web_search_20250305` tool */
+  anthropicWebSearch?: boolean;
 }
 
 export type PushStream<M extends LlmMessage = LlmMessage> = (

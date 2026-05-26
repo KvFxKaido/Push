@@ -24,6 +24,19 @@ vi.mock('./tool-dispatch', () => ({
   KNOWN_TOOL_NAMES: new Set(['sandbox_write_file', 'sandbox_read_file']),
 }));
 
+let webSearchMode: 'auto' | 'off' | 'duckduckgo' | 'google-grounding' = 'auto';
+vi.mock('./web-search-mode', () => ({
+  getWebSearchMode: () => webSearchMode,
+  isNativeWebSearchEnabled: (provider: string, mode?: string) => {
+    const m = mode ?? webSearchMode;
+    if (m === 'off') return false;
+    if (m === 'auto')
+      return provider === 'google' || provider === 'anthropic' || provider === 'vertex';
+    if (m === 'google-grounding') return provider === 'google';
+    return false;
+  },
+}));
+
 interface ControllableStream {
   response: Response;
   push(frame: string): void;
@@ -210,5 +223,52 @@ describe('anthropicStream', () => {
     expect(body.max_tokens).toBe(4096);
     expect(body.temperature).toBe(0.5);
     expect(body.top_p).toBe(0.95);
+  });
+
+  it('defaults anthropic_web_search on in auto mode', async () => {
+    installStreamFetch(fetchMock);
+    const { anthropicStream } = await import('./anthropic-stream');
+    const iter = anthropicStream(baseRequest);
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.anthropic_web_search).toBe(true);
+  });
+
+  it('omits anthropic_web_search when web search is off', async () => {
+    installStreamFetch(fetchMock);
+    webSearchMode = 'off';
+    try {
+      const { anthropicStream } = await import('./anthropic-stream');
+      const iter = anthropicStream(baseRequest);
+      void iter[Symbol.asyncIterator]()
+        .next()
+        .catch(() => {});
+      await new Promise((r) => setTimeout(r, 0));
+
+      const init = fetchMock.mock.calls[0][1] as RequestInit;
+      const body = JSON.parse(init.body as string);
+      expect(body.anthropic_web_search).toBeUndefined();
+    } finally {
+      webSearchMode = 'auto';
+    }
+  });
+
+  it('lets an explicit anthropicWebSearch=false override the default', async () => {
+    installStreamFetch(fetchMock);
+    const { anthropicStream } = await import('./anthropic-stream');
+    const iter = anthropicStream({ ...baseRequest, anthropicWebSearch: false });
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.anthropic_web_search).toBeUndefined();
   });
 });

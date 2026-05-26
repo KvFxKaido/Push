@@ -1,13 +1,17 @@
 /**
- * Web Search mode — user-selected pref governing both the `web_search`
- * tool's backend routing and Gemini's native search grounding.
+ * Web Search mode — user-selected pref governing both the
+ * prompt-engineered `web_search` tool's backend routing AND each
+ * provider's native server-side search tool (Gemini's `googleSearch`,
+ * Anthropic's `web_search_20250305`).
  *
  * One menu controls both mechanisms so users don't have to reason about
  * two surfaces. The orchestrator removes the `web_search` tool from the
- * system prompt entirely when mode is `'off'` (the model can't call a
- * tool it doesn't know exists). When mode is an explicit backend
- * (`tavily`, `google-grounding`, etc.) the tool routes through that
- * backend; `auto` keeps the original key + active-provider routing.
+ * system prompt entirely when mode is `'off'`. When mode is `'auto'`
+ * (the default) each provider opts into its own native search tool via
+ * `isNativeWebSearchEnabled` AND the prompt-engineered tool routes via
+ * the original key + active-provider fallback. Explicit non-native
+ * backends (`tavily`, `duckduckgo`, `ollama`) suppress the native tool
+ * and force the prompt-engineered path through that backend.
  *
  * Keep this file dependency-free (only `safe-storage`) so the
  * orchestrator's prompt builder can read it without dragging in the
@@ -56,6 +60,40 @@ export function getWebSearchMode(): WebSearchMode {
 
 export function setWebSearchMode(mode: WebSearchMode): void {
   safeStorageSet(WEB_SEARCH_MODE_KEY, mode);
+}
+
+/**
+ * Provider-native web-search enablement rule.
+ *
+ * `'auto'` (the default) opts each provider into its own native search
+ * tool — that's how Gemini gets `googleSearch` grounding and Anthropic
+ * gets `web_search_20250305` without the user having to know either tool
+ * exists. Explicit non-native backends (`'tavily'`, `'duckduckgo'`,
+ * `'ollama'`) suppress native — the user has chosen a specific
+ * client-side backend and we don't want the provider running a parallel
+ * server-side search behind their back. `'google-grounding'` is the
+ * provider-specific opt-in that forces grounding on Gemini.
+ *
+ * Returns false for providers that don't have a native tool — the
+ * prompt-engineered `web_search` (DuckDuckGo / Tavily / Ollama) covers
+ * those.
+ */
+export function isNativeWebSearchEnabled(
+  provider: string,
+  mode: WebSearchMode = getWebSearchMode(),
+): boolean {
+  switch (mode) {
+    case 'off':
+      return false;
+    case 'auto':
+      return provider === 'google' || provider === 'anthropic' || provider === 'vertex';
+    case 'google-grounding':
+      return provider === 'google';
+    case 'tavily':
+    case 'duckduckgo':
+    case 'ollama':
+      return false;
+  }
 }
 
 /**

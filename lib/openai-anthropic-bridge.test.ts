@@ -114,6 +114,27 @@ describe('buildAnthropicMessagesRequest', () => {
     expect(body.messages[0].content[1]).toMatchObject({ type: 'text', text: 'Here.' });
   });
 
+  it('adds the native web_search tool when anthropic_web_search is true', () => {
+    const body = buildAnthropicMessagesRequest({
+      model: 'claude-opus-4-7',
+      messages: [{ role: 'user', content: 'Latest TC39 stage-4 proposals?' }],
+      stream: true,
+      anthropic_web_search: true,
+    });
+    expect(body).toMatchObject({
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+    });
+  });
+
+  it('omits the tools field when anthropic_web_search is unset', () => {
+    const body = buildAnthropicMessagesRequest({
+      model: 'claude-opus-4-7',
+      messages: [{ role: 'user', content: 'Hello' }],
+      stream: true,
+    });
+    expect(body).not.toHaveProperty('tools');
+  });
+
   it('preserves cache_control on text and image content parts', () => {
     // Prompt caching is the LEDE for going direct-Anthropic vs OpenRouter,
     // so a regression here would silently kill cache hit rate on every turn.
