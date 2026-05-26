@@ -149,6 +149,8 @@ async function main() {
     }
   };
 
+  let original = null; // { sandboxId, ownerToken } — source sandbox; torn down in finally unless hibernate destroyed it
+  let originHibernated = false; // a successful hibernate destroys + revokes the source container itself
   let restored = null; // { sandboxId, ownerToken } for cleanup in finally
   let snapshot = null; // { snapshotId, restoreToken } for cleanup in finally
 
@@ -164,6 +166,7 @@ async function main() {
     }
     const origSandbox = created.json.sandbox_id;
     const origToken = created.json.owner_token;
+    original = { sandboxId: origSandbox, ownerToken: origToken };
     pass(`sandbox ${origSandbox} ready in ${ms(timings.createMs)}`);
 
     // --- Step 2: seed the workspace + capture pre-manifest ------------------
@@ -202,6 +205,7 @@ async function main() {
       throw new Error('cannot continue without a snapshot');
     }
     snapshot = { snapshotId: hib.json.snapshot_id, restoreToken: hib.json.restore_token };
+    originHibernated = true; // the worker destroyed + revoked the source container
     const sizeKb = Math.round((hib.json.size_bytes ?? 0) / 1024);
     pass(`snapshot ${snapshot.snapshotId} (${sizeKb}KB compressed) in ${ms(timings.hibernateMs)}`);
 
@@ -264,9 +268,21 @@ async function main() {
     if (postDigest === preDigest) pass(`content digest matches (${postDigest.slice(0, 12)}…)`);
     else fail(`content digest mismatch: ${preDigest.slice(0, 12)} ≠ ${postDigest.slice(0, 12)}`);
   } finally {
-    // --- cleanup: tear down the restored sandbox + delete the snapshot -----
-    // The original container was destroyed by hibernate, so only the restored
-    // one needs cleanup. Best-effort; failures here don't fail the test.
+    // --- cleanup: best-effort teardown; failures here don't fail the test ---
+    // On a clean run hibernate already destroyed the source sandbox. But if we
+    // bailed before/at hibernate (e.g. it hit the RPC size ceiling), the source
+    // is still live and its token still valid — tear it down rather than leak it.
+    if (original && !originHibernated) {
+      try {
+        await call('cleanup', {
+          sandbox_id: original.sandboxId,
+          owner_token: original.ownerToken,
+        });
+        info('cleaned up source sandbox (hibernate did not run)');
+      } catch (e) {
+        info(`cleanup of source sandbox failed: ${e.message}`);
+      }
+    }
     if (restored) {
       try {
         await call('cleanup', { sandbox_id: restored.sandboxId, owner_token: restored.ownerToken });
