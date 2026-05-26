@@ -83,14 +83,22 @@ const cfg = {
   // run, the run completes at ~3 min. 45s is a comfortable middle. Tune via
   // env if you swap the model/task.
   killDelayMs: Number.parseInt(process.env.PUSH_SMOKE_KILL_DELAY_MS ?? '45000', 10),
-  // Total wait for the resume confirmation log line AFTER the kill. wrangler
-  // tail buffers events on a 20-30s lag, and the DO needs time to restore
-  // from R2 + re-enter the loop. 180s gives plenty of headroom for both
-  // pieces plus a little for kimi-k2.6 to drive a few more rounds on the
-  // restored sandbox before completion.
+  // Minimum extra wall clock to keep the SSE stream open AFTER the kill fires.
+  // wrangler tail buffers events on a ~20-30s lag and the DO needs time to
+  // restore from R2 + re-enter the loop, so terminal SSE typically lands
+  // 60-120s post-kill. 180s gives headroom for both pieces plus a little for
+  // kimi-k2.6 to drive a few more rounds on the restored sandbox. Applied as
+  // `deadline = max(deadline, now + postKillWaitMs)` when the kill completes,
+  // so a tight `maxWaitMs` can't cut off the resume window.
   postKillWaitMs: Number.parseInt(process.env.PUSH_SMOKE_POST_KILL_MS ?? '180000', 10),
-  // Hard ceiling on total wall clock.
+  // Hard ceiling on total wall clock (before the post-kill extension kicks in).
   maxWaitMs: Number.parseInt(process.env.PUSH_SMOKE_MAX_WAIT_MS ?? '420000', 10),
+  // External-kill mode: skip the auto-kill timer and treat any clean
+  // `job.completed` as a PASS. Use this with the README workaround when the
+  // operator is destroying the sandbox container from the Cloudflare
+  // dashboard — the script then just provisions the job + prints the IDs +
+  // waits for terminal SSE without trying to drive the kill itself.
+  externalKill: process.env.PUSH_SMOKE_EXTERNAL_KILL === '1',
 };
 if (!cfg.baseUrl) {
   console.error('FATAL: set PUSH_SMOKE_BASE_URL');
@@ -205,21 +213,30 @@ async function startCoderJob(sandboxId, ownerToken) {
   return json.jobId;
 }
 
-/** Parse a single SSE block of `id:\nevent:\ndata:` lines into { id, event, data }. */
+/** Parse a single SSE block of `id:\nevent:\ndata:` lines into { id, event, data }.
+ *  Per the SSE spec, multiple `data:` lines per event must be joined with `\n` —
+ *  the CoderJob DO only emits single-line payloads today (`formatSseChunk`
+ *  writes one `data:` per event), but the parser handles spec-conformant
+ *  multi-line frames for portability. */
 function parseSseBlock(block) {
   const lines = block.split('\n');
-  const out = { id: null, event: null, data: null };
+  let id = null;
+  let event = null;
+  const dataLines = [];
   for (const line of lines) {
     if (line.startsWith(':')) continue; // heartbeat comment
-    if (line.startsWith('id: ')) out.id = line.slice(4);
-    else if (line.startsWith('event: ')) out.event = line.slice(7);
-    else if (line.startsWith('data: ')) out.data = line.slice(6);
+    if (line.startsWith('id: ')) id = line.slice(4);
+    else if (line.startsWith('event: ')) event = line.slice(7);
+    else if (line.startsWith('data: ')) dataLines.push(line.slice(6));
+    else if (line === 'data:') dataLines.push(''); // bare `data:` is an empty-line payload per spec
   }
-  return out;
+  return { id, event, data: dataLines.length ? dataLines.join('\n') : null };
 }
 
 /** Open the SSE stream and run `onEvent(parsed)` for each event until the
- *  stream closes or `onEvent` returns 'stop'. Returns when the stream ends. */
+ *  stream closes or `onEvent` returns 'stop'. Returns when the stream ends.
+ *  Tolerates both LF and CRLF line endings — proxies (and some servers)
+ *  emit `\r\n\r\n` block delimiters rather than `\n\n`. */
 async function tailEvents(jobId, onEvent, signal) {
   const res = await fetch(`${cfg.baseUrl}/api/jobs/${encodeURIComponent(jobId)}/events`, {
     method: 'GET',
@@ -235,8 +252,10 @@ async function tailEvents(jobId, onEvent, signal) {
   while (true) {
     const { done, value } = await reader.read();
     if (done) return 'eof';
-    buf += decoder.decode(value, { stream: true });
-    // SSE event blocks are delimited by a blank line (LF LF).
+    // Normalize CRLF → LF on the buffer so the `\n\n` block split and the
+    // per-line `\n` split inside parseSseBlock both work regardless of which
+    // line ending the upstream chose.
+    buf += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
     let idx;
     while ((idx = buf.indexOf('\n\n')) !== -1) {
       const block = buf.slice(0, idx);
@@ -257,24 +276,52 @@ async function tailEvents(jobId, onEvent, signal) {
   }
 }
 
+/** Call /api/sandbox-cf/cleanup. Returns true on a real success (HTTP 200),
+ *  false otherwise — caller must distinguish "the kill landed" from "the kill
+ *  tried but didn't take", or a job that completed naturally will look like
+ *  a passing resume. */
 async function killSandbox(sandboxId, ownerToken) {
   const { status, json } = await postJson('/api/sandbox-cf/cleanup', {
     sandbox_id: sandboxId,
     owner_token: ownerToken,
   });
   if (status !== 200) {
-    warn(`cleanup returned ${status}: ${JSON.stringify(json)}`);
-  } else {
-    pass(`sandbox ${sandboxId} cleaned up`);
+    fail(`cleanup returned ${status}: ${JSON.stringify(json)}`);
+    return false;
+  }
+  pass(`sandbox ${sandboxId} cleaned up`);
+  return true;
+}
+
+/** Best-effort idempotent sandbox teardown for the script's exit path —
+ *  catches the case where the auto-kill never fired (job terminated early,
+ *  SSE setup failed, externalKill mode) and we'd otherwise leak the
+ *  scratch container until its ~30-minute lifetime expires. Silent: a
+ *  non-200 here is fine (the sandbox may already be gone). */
+async function bestEffortCleanup(sandboxId, ownerToken) {
+  try {
+    const { status } = await postJson('/api/sandbox-cf/cleanup', {
+      sandbox_id: sandboxId,
+      owner_token: ownerToken,
+    });
+    if (status === 200) info(`best-effort cleanup of ${sandboxId} succeeded`);
+  } catch {
+    /* swallow — best-effort */
   }
 }
 
 async function main() {
   console.log(`\nCoder-job resume smoke → ${cfg.baseUrl}`);
   console.log(`  provider=${cfg.provider}  model=${cfg.model}`);
-  console.log(`  repo=${cfg.repo}  branch=${cfg.branch}  killDelayMs=${cfg.killDelayMs}\n`);
+  console.log(
+    `  repo=${cfg.repo}  branch=${cfg.branch}  ` +
+      `killDelayMs=${cfg.externalKill ? '(externalKill)' : cfg.killDelayMs}\n`,
+  );
 
   // --- Step 1: create scratch sandbox -----------------------------------
+  // Empty `repo` is intentional: `routeCreate` interprets that as a scratch
+  // sandbox (no clone), which is all the resume path needs to exercise.
+  // `cfg.repo` only flows into the envelope below for snapshot-index keying.
   console.log('Step 1 — create scratch sandbox');
   const created = await postJson('/api/sandbox-cf/create', { repo: '', branch: cfg.branch });
   if (created.status !== 200 || !created.json?.sandbox_id || !created.json?.owner_token) {
@@ -290,11 +337,19 @@ async function main() {
   const jobId = await startCoderJob(sandboxId, ownerToken);
   pass(`jobId=${jobId}`);
 
-  // Hint for the parallel observer:
-  info(`tail filter: wrangler tail --name push --format pretty --search "${jobId.slice(0, 8)}"`);
+  // Hint for the parallel observer — full set of structured-log signals the
+  // resume path emits, success + failure sides both included.
+  info(`tail filter: wrangler tail push --format pretty --search "${jobId.slice(0, 8)}"`);
   info(
-    `             grep -E "coder_job_resumed|coder_resume_restore_failed|coder_checkpoint_failed"`,
+    `             grep -E "coder_checkpoint_captured|coder_job_resumed|` +
+      `coder_resume_restore_failed|coder_checkpoint_failed"`,
   );
+  if (cfg.externalKill) {
+    info(
+      `EXTERNAL_KILL mode: auto-kill DISABLED. Destroy the sandbox container ` +
+        `for ${sandboxId} from the Cloudflare dashboard while the job is running.`,
+    );
+  }
 
   // --- Step 3: drive the run --------------------------------------------
   // The SSE stream surfaces only `assistant.prompt_snapshot`, `job.started`,
@@ -326,9 +381,14 @@ async function main() {
   let promptSnapshotAt = null;
   let killScheduledAt = null;
   let killCompletedAt = null;
+  let killSucceeded = false;
 
   const startedAt = Date.now();
-  const deadline = startedAt + cfg.maxWaitMs;
+  // `deadline` is mutable: when the kill fires we extend it to at least
+  // `now + postKillWaitMs` so a tight `maxWaitMs` can't cut off the resume
+  // window. In externalKill mode the deadline stays at `maxWaitMs` since
+  // the operator controls timing.
+  let deadline = startedAt + cfg.maxWaitMs;
 
   const ctrl = new AbortController();
 
@@ -336,17 +396,23 @@ async function main() {
   // inside the SSE callback (after prompt_snapshot) rather than here so
   // the kill window is measured from "kernel is actually running", not
   // from /api/jobs/start which can include a small DO-spinup delay.
+  // Skipped entirely in externalKill mode — the operator drives the kill
+  // from the Cloudflare dashboard.
   let killTimer = null;
   const armKillTimer = () => {
-    if (killTimer) return;
+    if (killTimer || cfg.externalKill) return;
     killScheduledAt = Date.now();
     info(`armed kill timer for +${cfg.killDelayMs}ms (after prompt_snapshot)`);
     killTimer = setTimeout(async () => {
-      try {
-        info(`kill timer fired — calling cleanup`);
-        await killSandbox(sandboxId, ownerToken);
-      } finally {
-        killCompletedAt = Date.now();
+      info(`kill timer fired — calling cleanup`);
+      killSucceeded = await killSandbox(sandboxId, ownerToken);
+      killCompletedAt = Date.now();
+      // Extend the deadline so wrangler tail + DO resume have headroom even
+      // if `maxWaitMs` was set tight on this run.
+      const extended = killCompletedAt + cfg.postKillWaitMs;
+      if (extended > deadline) {
+        deadline = extended;
+        info(`extended deadline to +${deadline - startedAt}ms (post-kill budget)`);
       }
     }, cfg.killDelayMs);
   };
@@ -389,11 +455,23 @@ async function main() {
   ctrl.abort();
   await ssePromise;
 
+  // Best-effort cleanup of the scratch sandbox. Hits whichever of these
+  // paths we didn't already exercise:
+  //   - auto-kill never fired (externalKill mode, fast natural completion)
+  //   - auto-kill returned non-200 (sandbox already gone or AUTH_FAILURE)
+  //   - SSE setup blew up after sandbox creation
+  // Idempotent on the worker side, silent on this side.
+  if (!killSucceeded) {
+    await bestEffortCleanup(sandboxId, ownerToken);
+  }
+
   const elapsedMs = Date.now() - startedAt;
   const killElapsed =
     killCompletedAt && promptSnapshotAt ? killCompletedAt - promptSnapshotAt : null;
   console.log('\n--- Summary ---');
-  info(`elapsed ${elapsedMs.toLocaleString()}ms`);
+  info(
+    `elapsed ${elapsedMs.toLocaleString()}ms  mode=${cfg.externalKill ? 'externalKill' : 'auto-kill'}`,
+  );
   info(
     `prompt_snapshot at +${promptSnapshotAt ? promptSnapshotAt - startedAt : '?'}ms; ` +
       `kill armed at +${killScheduledAt ? killScheduledAt - startedAt : '?'}ms; ` +
@@ -401,31 +479,57 @@ async function main() {
       `(${killElapsed ?? '?'}ms after prompt_snapshot)`,
   );
 
-  if (!killCompletedAt) {
-    fail(
-      'kill timer never fired — job ended before killDelayMs elapsed. Increase killDelayMs or use a heavier task.',
-    );
-  } else if (!terminalEvent) {
+  // Pass criteria:
+  //   - auto-kill mode: kill landed cleanly (200 OK) AND job.completed
+  //     followed. A completion AFTER a confirmed kill is the headline
+  //     positive — the DO must have restored from checkpoint to keep the
+  //     loop going. job.failed after the kill means resume bailed.
+  //   - externalKill mode: any clean job.completed is a PASS, since the
+  //     operator (you) is responsible for killing the sandbox container at
+  //     the right moment via the Cloudflare dashboard. The script can't
+  //     tell from SSE whether the kill happened, so we trust the operator
+  //     and rely on the parallel wrangler tail's `coder_job_resumed` /
+  //     `coder_resume_restore_failed` lines for corroboration.
+  if (!terminalEvent) {
     warn('no terminal SSE event observed within maxWaitMs — job may still be running');
   } else if (terminalEvent.event === 'job.completed') {
-    pass(`job.completed after kill: ${(terminalEvent.payload?.summary ?? '').slice(0, 200)}`);
-    info(
-      'A completion after the kill is the headline positive: the DO must have restored from checkpoint to keep the run going. ' +
-        'Confirm `coder_job_resumed` in the parallel wrangler tail for the structured-log corroboration.',
-    );
+    if (cfg.externalKill) {
+      pass(`job.completed (externalKill): ${(terminalEvent.payload?.summary ?? '').slice(0, 200)}`);
+      info(
+        'Confirm the resume path actually engaged via `coder_job_resumed` in the parallel ' +
+          'wrangler tail — without it, the job may have just completed naturally with no kill.',
+      );
+    } else if (killSucceeded) {
+      pass(`job.completed after kill: ${(terminalEvent.payload?.summary ?? '').slice(0, 200)}`);
+      info(
+        'A completion AFTER a confirmed kill is the headline positive: the DO must have ' +
+          'restored from checkpoint to keep the run going. Confirm `coder_job_resumed` in the ' +
+          'parallel wrangler tail for the structured-log corroboration.',
+      );
+    } else if (!killCompletedAt) {
+      fail(
+        'kill timer never fired — job ended before killDelayMs elapsed. Increase ' +
+          'killDelayMs, use a heavier task, or switch to PUSH_SMOKE_EXTERNAL_KILL=1.',
+      );
+    } else {
+      // killCompletedAt set but killSucceeded false → cleanup non-200, already failed.
+    }
   } else {
-    fail(`job.failed after kill: ${(terminalEvent.payload?.error ?? '').slice(0, 240)}`);
+    fail(`job.failed: ${(terminalEvent.payload?.error ?? '').slice(0, 240)}`);
     info(
-      'A failure after the kill means resume bailed — likely the kill landed before the round-5 checkpoint, ' +
-        'or MAX_JOB_RESUMES was exhausted. Confirm via `coder_resume_restore_failed` in the parallel wrangler tail.',
+      'A failure after a kill usually means resume bailed — kill landed before the round-5 ' +
+        'checkpoint, MAX_JOB_RESUMES was exhausted, or `/cleanup` did not surface as ' +
+        'SANDBOX_UNREACHABLE (see README §"Layer 3" / "Known gap").',
     );
   }
 
   // The script asserts only what SSE shows; the structured-log corroboration
   // is reported separately by the parallel wrangler tail (see deliverable).
-  process.exit(
-    failures === 0 && killCompletedAt && terminalEvent?.event === 'job.completed' ? 0 : 1,
-  );
+  // Exit 0 on a clean job.completed (kill confirmed in auto mode, or trusted
+  // operator in externalKill mode). Exit 1 on anything else.
+  const passingCompletion =
+    terminalEvent?.event === 'job.completed' && (cfg.externalKill || killSucceeded);
+  process.exit(failures === 0 && passingCompletion ? 0 : 1);
 }
 
 main().catch((err) => {

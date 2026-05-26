@@ -102,7 +102,9 @@ plus:
 | `PUSH_SMOKE_PROVIDER` | `cloudflare` | provider for the Coder run |
 | `PUSH_SMOKE_MODEL` | `@cf/moonshotai/kimi-k2.6` | model id |
 | `PUSH_SMOKE_KILL_DELAY_MS` | `45000` | delay after `prompt_snapshot` before killing the sandbox |
-| `PUSH_SMOKE_POST_KILL_MS` | `180000` | how long to keep the SSE stream open after the kill |
+| `PUSH_SMOKE_POST_KILL_MS` | `180000` | minimum extra wall clock to keep SSE open after the kill (extends `maxWaitMs` so a tight ceiling can't cut off the resume window) |
+| `PUSH_SMOKE_MAX_WAIT_MS` | `420000` | hard ceiling on total wall clock (extended by `POST_KILL_MS` once the kill fires) |
+| `PUSH_SMOKE_EXTERNAL_KILL` | unset | `1` disables the auto-kill timer and treats any clean `job.completed` as a PASS — use when killing the sandbox via the Cloudflare dashboard (see Layer 3 §"Procedure (current, with workaround)" below) |
 
 ```bash
 PUSH_SMOKE_BASE_URL=https://push.<sub>.workers.dev \
@@ -173,12 +175,16 @@ job; the kill step just has to come from outside the public API.
 
 ### Procedure (current, with workaround)
 
-1. Run `coder-resume-smoke.mjs` against the target deployment with
-   `PUSH_SMOKE_KILL_DELAY_MS=999999999` to inhibit the auto-kill — the
-   script will print the `sandboxId` + `jobId` and then wait. Note both.
-2. Wait for `coder_checkpoint_captured` in a parallel `wrangler tail`
-   stream before proceeding (round 5 is the first cadence boundary; on
-   kimi-k2.6 + the bundled palette task that's ~25-40s into the run).
+1. Run `coder-resume-smoke.mjs` with `PUSH_SMOKE_EXTERNAL_KILL=1`. The script
+   skips the auto-kill timer, prints the `sandboxId` + `jobId`, and waits on
+   the SSE stream for the terminal event. The pass criterion in this mode
+   relaxes to "any clean `job.completed`" — since you control the kill, the
+   script can't distinguish kill-then-resume from natural-completion-no-kill,
+   so corroboration shifts to the parallel `wrangler tail` (step 4).
+2. Wait for `coder_checkpoint_captured` in a parallel
+   `wrangler tail push --format json` stream before proceeding (round 5 is
+   the first cadence boundary; on kimi-k2.6 + the bundled palette task
+   that's ~25-40s into the run).
 3. **Kill the sandbox at the infrastructure level.** In the Cloudflare
    dashboard: Workers → push → Sandbox container → Destroy. This produces
    the RPC-throw failure mode that maps to `SANDBOX_UNREACHABLE`.
