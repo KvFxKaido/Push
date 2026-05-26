@@ -27,11 +27,16 @@ vi.mock('./tool-dispatch', () => ({
 let webSearchMode: 'auto' | 'google-grounding' | 'off' | 'duckduckgo' = 'auto';
 vi.mock('./web-search-mode', () => ({
   getWebSearchMode: () => webSearchMode,
-  isNativeWebSearchEnabled: (provider: string, mode?: string) => {
+  isNativeWebSearchEnabled: (provider: string, modelId?: string, mode?: string) => {
     const m = mode ?? webSearchMode;
     if (m === 'off') return false;
-    if (m === 'auto')
-      return provider === 'google' || provider === 'anthropic' || provider === 'vertex';
+    if (m === 'auto') {
+      if (provider === 'google' || provider === 'anthropic') return true;
+      if (provider === 'vertex') {
+        return typeof modelId === 'string' && modelId.trim().toLowerCase().startsWith('claude-');
+      }
+      return false;
+    }
     if (m === 'google-grounding') return provider === 'google';
     return false;
   },

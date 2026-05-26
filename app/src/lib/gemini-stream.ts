@@ -56,7 +56,7 @@ export async function* geminiStream(
   // `'auto'` (the default) enables grounding so Gemini chats get their
   // native search tool out of the box; explicit non-Google backends
   // (`tavily`, `duckduckgo`, `ollama`) and `'off'` suppress it.
-  const grounding = req.googleSearchGrounding ?? isNativeWebSearchEnabled('google');
+  const grounding = req.googleSearchGrounding ?? isNativeWebSearchEnabled('google', req.model);
 
   const body: Record<string, unknown> = {
     model: req.model,

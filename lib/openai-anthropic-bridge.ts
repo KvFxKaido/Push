@@ -200,7 +200,10 @@ export function buildAnthropicMessagesRequest(
   // narration including any inline citations. Multi-turn round-trip of
   // the search blocks is lossy — but the model can simply re-search on
   // the next turn, so functionally it works.
-  if (request.anthropic_web_search) {
+  // Strict `=== true` so a malformed input (e.g. the string `"false"`) can't
+  // accidentally enable the tool. The Worker guardrails don't normalize
+  // Push-private extension fields, so the bridge is the canonical check.
+  if (request.anthropic_web_search === true) {
     body.tools = [{ type: 'web_search_20250305', name: 'web_search' }];
   }
 

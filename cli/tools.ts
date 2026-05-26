@@ -1476,11 +1476,18 @@ async function executeWebSearch(query, maxResults, signal, options = {}) {
   // scrape is unofficial and fragile. Surface a structured error so the
   // caller's catch arm can tell the model what to do. To use DDG, the user
   // sets `PUSH_WEB_SEARCH_BACKEND=duckduckgo` explicitly.
-  throw new Error(
+  //
+  // Marked via `name` (rather than a one-off subclass) so the caller can
+  // distinguish this permanent-config failure from a transient one — the
+  // same convention `AbortError` rides — and set `retryable: false` on
+  // the structured error.
+  const err = new Error(
     'No web search backend is configured. Set TAVILY_API_KEY (recommended), ' +
       'configure an Ollama key, or set PUSH_WEB_SEARCH_BACKEND=duckduckgo to ' +
       'use the unofficial DuckDuckGo HTML scrape.',
   );
+  err.name = 'WebSearchConfigError';
+  throw err;
 }
 
 /**
@@ -1744,13 +1751,16 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         } catch (err) {
           if (err instanceof Error && err.name === 'AbortError') throw err;
           const message = err instanceof Error ? err.message : String(err);
+          // Permanent config failures (no backend wired) aren't retryable;
+          // pinging the same broken state again won't help the model.
+          const isConfigError = err instanceof Error && err.name === 'WebSearchConfigError';
           return {
             ok: false,
             text: `Web search (${sourceHint}) failed: ${message}`,
             structuredError: {
               code: 'WEB_SEARCH_ERROR',
               message,
-              retryable: true,
+              retryable: !isConfigError,
             },
             meta: { query, max_results: maxResults, source: sourceHint, backend },
           };

@@ -74,19 +74,31 @@ export function setWebSearchMode(mode: WebSearchMode): void {
  * server-side search behind their back. `'google-grounding'` is the
  * provider-specific opt-in that forces grounding on Gemini.
  *
+ * Vertex carries both Claude and Gemini under one provider id. Only the
+ * Anthropic transport (`claude-*` model IDs) is wired today — Vertex
+ * Gemini grounding through the OpenAI-compatible proxy needs its own
+ * request-shape translation and isn't covered here. Pass the model id
+ * so the helper can gate Vertex correctly; callers without a model in
+ * scope (or for non-Vertex providers) can omit it.
+ *
  * Returns false for providers that don't have a native tool — the
  * prompt-engineered `web_search` (DuckDuckGo / Tavily / Ollama) covers
  * those.
  */
 export function isNativeWebSearchEnabled(
   provider: string,
+  modelId?: string,
   mode: WebSearchMode = getWebSearchMode(),
 ): boolean {
   switch (mode) {
     case 'off':
       return false;
     case 'auto':
-      return provider === 'google' || provider === 'anthropic' || provider === 'vertex';
+      if (provider === 'google' || provider === 'anthropic') return true;
+      if (provider === 'vertex') {
+        return typeof modelId === 'string' && modelId.trim().toLowerCase().startsWith('claude-');
+      }
+      return false;
     case 'google-grounding':
       return provider === 'google';
     case 'tavily':

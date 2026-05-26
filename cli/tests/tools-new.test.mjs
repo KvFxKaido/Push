@@ -294,6 +294,9 @@ describe('web_search', () => {
     assert.match(result.text, /No web search backend is configured/);
     assert.match(result.text, /TAVILY_API_KEY/);
     assert.match(result.text, /PUSH_WEB_SEARCH_BACKEND=duckduckgo/);
+    // Permanent config failure — retrying without the user reconfiguring
+    // would hit the same wall, so the structured error opts out of retry.
+    assert.equal(result.structuredError.retryable, false);
   });
 
   it('honors PUSH_WEB_SEARCH_BACKEND=duckduckgo even when Tavily key is set', async () => {

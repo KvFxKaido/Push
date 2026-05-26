@@ -77,14 +77,19 @@ export async function* vertexStream(
   //
   //    Vertex carries both Claude and Gemini under one provider. Claude IDs
   //    look like `claude-*` and route through the Anthropic transport; gate
-  //    `anthropic_web_search` on that prefix so the field only lands on a
-  //    request the bridge will actually consume. OpenAPI-transport upstreams
-  //    ignore unknown root fields anyway, but keeping the flag scoped to
-  //    Anthropic-transport models is clearer.
+  //    `anthropic_web_search` on that prefix so the field never lands on a
+  //    non-Anthropic upstream (some strict OpenAI-compatible proxies reject
+  //    unknown root fields). The gate AND-s the transport check with the
+  //    enablement signal so an explicit `req.anthropicWebSearch=true` from
+  //    a caller can't smuggle the field onto a Vertex Gemini turn.
+  //
+  //    Vertex Gemini grounding through the OpenAI-compatible transport is a
+  //    separate effort — it'd need request-shape translation in the Worker.
   const isAnthropicTransport =
     typeof req.model === 'string' && req.model.trim().toLowerCase().startsWith('claude-');
   const anthropicWebSearch =
-    req.anthropicWebSearch ?? (isAnthropicTransport && isNativeWebSearchEnabled('vertex'));
+    isAnthropicTransport &&
+    (req.anthropicWebSearch ?? isNativeWebSearchEnabled('vertex', req.model));
 
   const body: Record<string, unknown> = {
     model: req.model,

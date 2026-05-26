@@ -134,7 +134,10 @@ export function buildGeminiGenerateContentRequest(
     body.generationConfig = generationConfig;
   }
 
-  if (request.google_search_grounding) {
+  // Strict `=== true` so a malformed input (e.g. the string `"false"`) can't
+  // accidentally enable grounding — the Worker guardrails don't normalize
+  // Push-private extension fields, so the bridge is the canonical check.
+  if (request.google_search_grounding === true) {
     body.tools = [
       {
         googleSearch: {},

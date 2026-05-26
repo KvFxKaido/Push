@@ -366,11 +366,16 @@ export async function executeWebSearch(
   if (activeProvider === 'google' && getGoogleKey()) {
     return executeGoogleGroundedSearch(query);
   }
+  // Drop the "switch to a provider with native search" line: when this
+  // path fires the active provider either lacks native search (so the
+  // suggestion is the actionable fix) OR it's a native-equipped provider
+  // whose model bypassed the native tool (so the suggestion is
+  // misleading because native is already wired). Tavily + DDG are the
+  // actionable options in both cases.
   return {
     text:
       '[Tool Error — web_search] No official web search backend is configured for this chat. ' +
-      'Add a Tavily API key in Settings (recommended), switch to a provider with native ' +
-      'search (Google Gemini or Anthropic Claude), or pick "DuckDuckGo" from the Web Search ' +
+      'Add a Tavily API key in Settings (recommended), or pick "DuckDuckGo" from the Web Search ' +
       'menu to use the unofficial HTML scrape. Falling back to training knowledge until then.',
   };
 }

@@ -258,6 +258,11 @@ describe('executeWebSearch — backend selection', () => {
     expect(result.text).toMatch(/No official web search backend is configured/);
     expect(result.text).toMatch(/Tavily/);
     expect(result.text).toMatch(/DuckDuckGo/);
+    // Drop the "switch to a provider with native search" suggestion — it's
+    // misleading when the active provider IS a native-equipped one whose
+    // model bypassed native, and Tavily / DDG are the actionable options
+    // for the non-native case anyway.
+    expect(result.text).not.toMatch(/switch to a provider/i);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

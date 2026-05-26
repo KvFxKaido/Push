@@ -55,7 +55,8 @@ export async function* anthropicStream(
   // `'auto'` (the default) enables Anthropic's native `web_search_20250305`
   // server-side tool so Claude chats search the web without the user
   // having to opt in; explicit non-native backends suppress it.
-  const anthropicWebSearch = req.anthropicWebSearch ?? isNativeWebSearchEnabled('anthropic');
+  const anthropicWebSearch =
+    req.anthropicWebSearch ?? isNativeWebSearchEnabled('anthropic', req.model);
 
   const body: Record<string, unknown> = {
     model: req.model,
