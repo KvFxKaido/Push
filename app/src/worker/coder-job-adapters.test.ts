@@ -182,6 +182,65 @@ describe('createWebExecutorAdapter — sandbox tool dispatch', () => {
     expect(result.structuredError?.fatal).toBeUndefined();
   });
 
+  it('classifies HTTP 429 (rate-limited) as RATE_LIMITED, not SANDBOX_UNREACHABLE', async () => {
+    // The per-job rate-limit bucket (`X-Forwarded-For: job:<jobId>`) returns
+    // `{ error: 'Rate limit exceeded…' }` with HTTP 429 — no `code` field.
+    // Defaulting `err.code ?? 'SANDBOX_UNREACHABLE'` here would falsely trip
+    // the kernel's loss tracker on two consecutive 429s and burn a resume
+    // budget on a healthy sandbox. Distinct type + retryable=true tells the
+    // kernel "back off and try again" without poisoning the loss counter.
+    handleCloudflareSandboxMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: 'Rate limit exceeded. Try again later.' }), {
+        status: 429,
+      }),
+    );
+    const adapter = createWebExecutorAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok-1',
+      provider: 'openrouter',
+      jobId: 'job-test-1',
+    });
+    const result = await adapter.executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'ls' } } as SandboxToolCall,
+      'sb-1',
+      { auditorProviderOverride: 'openrouter', auditorModelOverride: undefined },
+    );
+    expect(result.structuredError?.type).toBe('RATE_LIMITED');
+    expect(result.structuredError?.retryable).toBe(true);
+    expect(result.structuredError?.fatal).toBeUndefined();
+  });
+
+  it('classifies unknown 4xx without an err.code as UNKNOWN (not SANDBOX_UNREACHABLE)', async () => {
+    // Previously any 4xx without an `err.code` defaulted to
+    // SANDBOX_UNREACHABLE, which fed the kernel's loss counter on errors
+    // that have nothing to do with the sandbox being gone (e.g. handler
+    // validation rejecting a request body shape). Map unknown 4xx to
+    // UNKNOWN so the loss counter stays put. 5xx without a code still
+    // defaults to SANDBOX_UNREACHABLE — backend trouble in the sandbox
+    // handler IS the sandbox being unreachable from the kernel's POV.
+    handleCloudflareSandboxMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: 'Some unexpected 4xx' }), { status: 422 }),
+    );
+    const adapter = createWebExecutorAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok-1',
+      provider: 'openrouter',
+      jobId: 'job-test-1',
+    });
+    const result = await adapter.executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'ls' } } as SandboxToolCall,
+      'sb-1',
+      { auditorProviderOverride: 'openrouter', auditorModelOverride: undefined },
+    );
+    expect(result.structuredError?.type).toBe('UNKNOWN');
+    expect(result.structuredError?.retryable).toBe(false);
+    expect(result.structuredError?.fatal).toBeUndefined();
+  });
+
   it('formats sandbox_diff output', async () => {
     handleCloudflareSandboxMock.mockResolvedValue(
       new Response(JSON.stringify({ diff: 'diff --git a/x b/x\n+foo', changed_files: ['x'] }), {
