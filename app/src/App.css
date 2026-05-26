@@ -96,6 +96,12 @@ select:focus-visible {
 .bg-push-grad-icon {
   background: linear-gradient(180deg, #0d1119 0%, #070a10 100%);
 }
+.bg-push-grad-page {
+  /* Page background gradient owned by <PageScaffold>. Previously hand-rolled */
+  /* as `bg-[linear-gradient(180deg,rgba(4,6,10,1)_0%,rgba(2,4,8,1)_100%)]` */
+  /* in HomeScreen, OnboardingScreen, LocalPcPairing, ComposerDraftScreen.   */
+  background: linear-gradient(180deg, #04060a 0%, #020408 100%);
+}
 
 .chat-user-bubble {
   border-color: #313b49;

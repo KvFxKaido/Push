@@ -12,6 +12,8 @@ import { SandboxExpiryBanner } from '@/components/chat/SandboxExpiryBanner';
 import { SandboxStatusBanner } from '@/components/chat/SandboxStatusBanner';
 import { usePerfMark } from '@/hooks/usePerfMark';
 import {
+  HEADER_PILL_BUTTON_CLASS,
+  HEADER_ROUND_BUTTON_CLASS,
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_TOP_BANNER_STRIP_CLASS,
   HubControlGlow,
@@ -72,11 +74,6 @@ interface ChatScreenProps {
   approvalMode?: ApprovalMode;
   onCycleApprovalMode?: () => void;
 }
-
-const HEADER_PLAIN_INTERACTIVE_CLASS =
-  'relative text-push-fg-secondary transition-colors duration-200 hover:text-push-fg active:scale-[0.98]';
-const HEADER_ROUND_BUTTON_CLASS = `flex h-9 w-9 items-center justify-center ${HEADER_PLAIN_INTERACTIVE_CLASS}`;
-const HEADER_PILL_BUTTON_CLASS = `pointer-events-auto flex h-9 items-center gap-2 px-1.5 ${HEADER_PLAIN_INTERACTIVE_CLASS}`;
 
 const APPROVAL_MODE_CONFIG: Record<
   ApprovalMode,

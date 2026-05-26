@@ -14,7 +14,7 @@
  * Layout: full-screen-replacement-y. Pairing is rare (one-time per
  * device); the form gets the whole viewport, not a sliver.
  */
-import { ArrowLeft, ChevronRight, Loader2, Monitor, ShieldCheck } from 'lucide-react';
+import { ChevronRight, Loader2, Monitor, ShieldCheck } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { createLocalDaemonBinding, type LocalDaemonBinding } from '@/lib/local-daemon-binding';
 import { LOCAL_PC_HOST, isValidPort } from '@/lib/local-pc-binding';
@@ -24,6 +24,8 @@ import {
   type PairedDeviceRecord,
 } from '@/lib/local-pc-storage';
 import type { LocalPcBinding } from '@/types';
+import { HeaderBar, PageScaffold, SectionCard, StatusBanner } from '@/components/layout';
+import { HUB_MATERIAL_BUTTON_CLASS } from '@/components/chat/hub-styles';
 
 interface LocalPcPairingProps {
   /** Fired on successful pair. The caller swaps the screen to the workspace. */
@@ -220,45 +222,52 @@ export function LocalPcPairing({ onPaired, onCancel }: LocalPcPairingProps) {
 
   const isTesting = state.kind === 'testing';
 
+  // Local input classes — kept local to LocalPcPairing on purpose.
+  // HUB_MATERIAL_INPUT_CLASS (h-8 pill) is too compact for these
+  // labeled fields with helper text, so the inputs use the design-
+  // system `rounded-lg` form treatment on a HUB-matching gradient
+  // surface. Not promoted to a shared class because the only other
+  // pairing surface (RelayPairing) needs a single bundle input that
+  // fits the pill rhythm fine — there isn't a second caller yet.
+  // Amber accent (the visual identity for "local PC mode") survives
+  // only on the Monitor header icon and the focus border below.
+  const portClasses = `block w-full rounded-lg border bg-push-grad-input px-3 py-2 text-sm text-push-fg outline-none placeholder:text-push-fg-dim focus:border-amber-400/60 ${
+    portValid ? 'border-push-edge/60' : 'border-push-status-error/60'
+  }`;
+  const tokenClasses =
+    'block w-full rounded-lg border border-push-edge/60 bg-push-grad-input px-3 py-2 text-sm text-push-fg outline-none placeholder:text-push-fg-dim focus:border-amber-400/60';
+
   return (
-    <div className="flex h-dvh flex-col bg-[linear-gradient(180deg,rgba(4,6,10,1)_0%,rgba(2,4,8,1)_100%)] safe-area-top safe-area-bottom">
-      <header className="flex items-center justify-between border-b border-push-edge/40 px-4 py-3">
-        <div className="flex items-center gap-2.5">
-          {onCancel && (
-            <button
-              type="button"
-              onClick={onCancel}
-              aria-label="Back to hub"
-              className="-ml-2 inline-flex h-8 w-8 items-center justify-center rounded-full text-push-fg-secondary transition hover:bg-white/5"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </button>
-          )}
-          <Monitor className="h-4 w-4 text-amber-300" aria-hidden="true" />
-          <h1 className="text-sm font-semibold tracking-tight text-push-fg">Pair Local PC</h1>
-        </div>
-      </header>
+    <PageScaffold
+      width="md"
+      className="px-4 py-6"
+      header={
+        <HeaderBar
+          back={onCancel}
+          backLabel="Back to hub"
+          icon={<Monitor className="size-4 text-amber-300" aria-hidden="true" />}
+          title="Pair Local PC"
+        />
+      }
+    >
+      <div className="flex flex-col gap-6">
+        <SectionCard
+          title="Run this on your PC"
+          description="Mints a one-time bearer token bound to this browser's origin. Copy the bearer into the form below — it's only shown once."
+        >
+          <pre
+            className="overflow-x-auto rounded-lg border border-push-edge/50 bg-black/40 p-3 font-mono text-xs text-push-fg-secondary"
+            aria-label="Pairing command"
+          >
+            {commandPreview}
+          </pre>
+          <p className="flex items-center gap-1.5 text-[11px] text-push-fg-dim">
+            <ShieldCheck className="size-3 text-push-status-success-soft" aria-hidden="true" />
+            Origin auto-filled from this tab so it can&apos;t drift.
+          </p>
+        </SectionCard>
 
-      <div className="flex-1 overflow-y-auto px-4 py-6">
-        <div className="mx-auto flex w-full max-w-md flex-col gap-6">
-          <section className="space-y-2">
-            <h2 className="text-base font-medium text-push-fg">Run this on your PC</h2>
-            <p className="text-xs text-push-fg-dim">
-              Mints a one-time bearer token bound to this browser&apos;s origin. Copy the bearer
-              into the form below — it&apos;s only shown once.
-            </p>
-            <pre
-              className="overflow-x-auto rounded-lg border border-push-edge/50 bg-black/40 p-3 font-mono text-xs text-push-fg-secondary"
-              aria-label="Pairing command"
-            >
-              {commandPreview}
-            </pre>
-            <p className="flex items-center gap-1.5 text-[11px] text-push-fg-dim">
-              <ShieldCheck className="h-3 w-3 text-emerald-300" aria-hidden="true" />
-              Origin auto-filled from this tab so it can&apos;t drift.
-            </p>
-          </section>
-
+        <SectionCard variant="subtle">
           <form className="space-y-3" onSubmit={handlePair} aria-label="Local PC pairing">
             <div className="space-y-1.5">
               <label htmlFor="local-pc-port" className="text-xs font-medium text-push-fg-secondary">
@@ -273,9 +282,7 @@ export function LocalPcPairing({ onPaired, onCancel }: LocalPcPairingProps) {
                 value={portInput}
                 disabled={isTesting}
                 onChange={(e) => setPortInput(e.target.value.replace(/[^0-9]/g, ''))}
-                className={`w-full rounded-lg border bg-black/40 px-3 py-2 text-sm text-push-fg outline-none placeholder:text-push-fg-dim focus:border-amber-400/60 ${
-                  portValid ? 'border-push-edge/60' : 'border-rose-400/60'
-                }`}
+                className={portClasses}
               />
               <p className="text-[11px] text-push-fg-dim">
                 Find this with{' '}
@@ -302,7 +309,7 @@ export function LocalPcPairing({ onPaired, onCancel }: LocalPcPairingProps) {
                 value={tokenInput}
                 disabled={isTesting}
                 onChange={(e) => setTokenInput(e.target.value)}
-                className="w-full rounded-lg border border-push-edge/60 bg-black/40 px-3 py-2 text-sm text-push-fg outline-none placeholder:text-push-fg-dim focus:border-amber-400/60"
+                className={tokenClasses}
               />
               <p className="text-[11px] text-push-fg-dim">
                 Stored in this browser&apos;s IndexedDB. Only sent to{' '}
@@ -314,41 +321,37 @@ export function LocalPcPairing({ onPaired, onCancel }: LocalPcPairingProps) {
             </div>
 
             {state.kind === 'failed' && (
-              <div
-                role="alert"
-                className="rounded-lg border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200"
-              >
-                <p className="font-medium text-rose-100">Pairing failed</p>
-                <p className="mt-0.5 text-rose-200/80">{state.reason}</p>
-                <p className="mt-1.5 text-rose-200/70">
+              <StatusBanner variant="error" title="Pairing failed">
+                <p>{state.reason}</p>
+                <p className="mt-1.5 opacity-80">
                   Check that pushd is running with{' '}
                   <code className="rounded bg-black/30 px-1 py-0.5">PUSHD_WS=1</code> and that the
                   port + token match.
                 </p>
-              </div>
+              </StatusBanner>
             )}
 
             <button
               type="submit"
               disabled={!formValid || isTesting}
-              className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-full border border-amber-400/40 bg-amber-500/15 text-sm font-medium text-amber-100 transition hover:bg-amber-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+              className={`${HUB_MATERIAL_BUTTON_CLASS} inline-flex h-11 w-full items-center justify-center gap-2 rounded-full px-4 text-sm font-medium text-push-fg disabled:cursor-not-allowed disabled:opacity-50`}
             >
               {isTesting ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
                   <span>Testing connection…</span>
                 </>
               ) : (
                 <>
                   <span>Pair this PC</span>
-                  <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                  <ChevronRight className="size-4" aria-hidden="true" />
                 </>
               )}
             </button>
           </form>
-        </div>
+        </SectionCard>
       </div>
-    </div>
+    </PageScaffold>
   );
 }
 

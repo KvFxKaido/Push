@@ -19,13 +19,15 @@
  * mid-rollout — that lands as a separate debug-mode panel; this
  * one stays focused on the happy path.
  */
-import { ArrowLeft, ChevronRight, Globe, Loader2, ShieldCheck } from 'lucide-react';
+import { ChevronRight, Globe, Loader2, ShieldCheck } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { createRelayDaemonBinding } from '@/lib/relay-daemon-binding';
 import { type LocalDaemonBinding } from '@/lib/local-daemon-binding';
 import { parseRemotePairBundle } from '@/lib/relay-binding';
 import { mintPairedRemoteId, setPairedRemote, type PairedRemoteRecord } from '@/lib/relay-storage';
 import type { RelayBinding } from '@/types';
+import { HeaderBar, PageScaffold, SectionCard, StatusBanner } from '@/components/layout';
+import { HUB_MATERIAL_BUTTON_CLASS, HUB_MATERIAL_INPUT_CLASS } from '@/components/chat/hub-styles';
 
 interface RelayPairingProps {
   /** Fired on successful pair. The caller swaps the screen to the workspace. */
@@ -206,77 +208,85 @@ export function RelayPairing({ onPaired, onCancel }: RelayPairingProps) {
   };
 
   return (
-    <div className="min-h-screen w-full overflow-y-auto bg-background text-foreground">
-      <div className="mx-auto max-w-2xl px-6 py-8">
-        {onCancel && (
-          <button
-            type="button"
-            onClick={onCancel}
-            className="mb-6 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back
-          </button>
-        )}
-
-        <div className="mb-6 inline-flex items-center gap-2 text-sm text-muted-foreground">
-          <Globe className="h-4 w-4" />
-          <span className="font-medium">Remote · Experimental</span>
-        </div>
-
-        <h1 className="mb-2 text-2xl font-medium tracking-tight">Pair a Remote daemon</h1>
-        <p className="mb-8 text-sm text-muted-foreground">
-          Push connects this phone to a paired computer through the Worker relay. Run{' '}
-          <code className="rounded bg-muted px-1.5 py-0.5 text-xs">push daemon pair --remote</code>{' '}
-          on the computer and paste the bundle below.
-        </p>
-
-        <form onSubmit={handlePair} className="space-y-6">
-          <label className="block">
-            <span className="mb-2 block text-sm font-medium">Pairing bundle</span>
+    <PageScaffold
+      width="md"
+      className="px-4 py-6"
+      header={
+        <HeaderBar
+          back={onCancel}
+          backLabel="Back to hub"
+          icon={<Globe className="size-4 text-push-sky" aria-hidden="true" />}
+          title="Pair a Remote daemon"
+          subtitle="Remote · Experimental"
+        />
+      }
+    >
+      <SectionCard
+        title="Run this on a paired computer"
+        description={
+          <>
+            Push connects this phone to a paired computer through the Worker relay. Run{' '}
+            <code className="rounded bg-white/5 px-1 py-0.5 text-push-fg-secondary">
+              push daemon pair --remote
+            </code>{' '}
+            on the computer and paste the bundle below.
+          </>
+        }
+      >
+        <form onSubmit={handlePair} className="space-y-3" aria-label="Remote daemon pairing">
+          <div className="space-y-1.5">
+            <label
+              htmlFor="relay-pair-bundle"
+              className="text-xs font-medium text-push-fg-secondary"
+            >
+              Pairing bundle
+            </label>
             <input
+              id="relay-pair-bundle"
               type="password"
               value={bundleInput}
               onChange={(e) => setBundleInput(e.target.value)}
               placeholder="push-remote.…"
               autoComplete="off"
               spellCheck={false}
-              className="block w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               disabled={state.kind === 'testing'}
+              className={`${HUB_MATERIAL_INPUT_CLASS} block w-full font-mono`}
             />
-            <p className="mt-1.5 text-[11px] text-muted-foreground">
+            <p className="text-[11px] text-push-fg-dim">
               The bundle is a single line that starts with{' '}
-              <code className="rounded bg-muted px-1 py-0.5 text-[10px]">push-remote.</code> — paste
-              it from the daemon's output.
+              <code className="rounded bg-white/5 px-1 py-0.5 text-push-fg-secondary">
+                push-remote.
+              </code>{' '}
+              — paste it from the daemon's output.
             </p>
-          </label>
+          </div>
 
           {state.kind === 'failed' && (
-            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            <StatusBanner variant="error" title="Pairing failed">
               {state.reason}
-            </div>
+            </StatusBanner>
           )}
 
           <button
             type="submit"
             disabled={!formValid}
-            className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+            className={`${HUB_MATERIAL_BUTTON_CLASS} inline-flex h-11 w-full items-center justify-center gap-2 rounded-full px-4 text-sm font-medium text-push-fg disabled:cursor-not-allowed disabled:opacity-50`}
           >
             {state.kind === 'testing' ? (
               <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Testing connection…
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                <span>Testing connection…</span>
               </>
             ) : (
               <>
-                <ShieldCheck className="h-4 w-4" />
-                Pair
-                <ChevronRight className="h-4 w-4" />
+                <ShieldCheck className="size-4 text-push-sky" aria-hidden="true" />
+                <span>Pair</span>
+                <ChevronRight className="size-4" aria-hidden="true" />
               </>
             )}
           </button>
         </form>
-      </div>
-    </div>
+      </SectionCard>
+    </PageScaffold>
   );
 }

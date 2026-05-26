@@ -13,6 +13,7 @@ import { useWorkspaceComposerState } from '@/hooks/useWorkspaceComposerState';
 import { useWorkspacePreferences } from '@/hooks/useWorkspacePreferences';
 import { useWorkspaceSandboxController } from '@/hooks/useWorkspaceSandboxController';
 import { perfMark } from '@/lib/perf-marks';
+import { getRepoAppearanceColorHex } from '@/lib/repo-appearance';
 import { useWorkspaceSessionBridge } from './useWorkspaceSessionBridge';
 import { getDefaultMemoryStore } from '@/lib/context-memory-store';
 import type { ActiveRepo, RepoWithActivity, WorkspaceScreenProps } from '@/types';
@@ -472,6 +473,17 @@ export function WorkspaceSessionScreen({
   }, [sandbox, workspaceRepo]);
 
   if (showFileBrowser && sandbox.sandboxId) {
+    // Carry the repo's ambient glow into the file browser so chat ↔
+    // file-tree feels like one continuous workspace, not two skins. Scratch
+    // sessions have no repo to theme from, so they render flat (matching
+    // the pre-glow file browser); the glow is a repo-identity affordance
+    // and there's no identity to express here.
+    const fileBrowserAppearance = workspaceRepo
+      ? resolveRepoAppearance(workspaceRepo.full_name)
+      : null;
+    const fileBrowserAccentHex = fileBrowserAppearance
+      ? getRepoAppearanceColorHex(fileBrowserAppearance.color)
+      : null;
     return (
       <div className="flex h-dvh flex-col bg-push-surface-inset safe-area-top safe-area-bottom">
         <Suspense
@@ -490,6 +502,8 @@ export function WorkspaceSessionScreen({
             lockedProvider={lockedProvider}
             lockedModel={lockedModel}
             onSandboxExpired={handleCommitSandboxExpired}
+            accentHex={fileBrowserAccentHex}
+            glowEnabled={fileBrowserAppearance?.glowEnabled ?? false}
           />
         </Suspense>
         <Toaster position="bottom-center" />
