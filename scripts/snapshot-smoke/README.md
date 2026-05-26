@@ -56,6 +56,10 @@ Node 18+ (uses global `fetch`). Zero dependencies — nothing to install.
 | `PUSH_SMOKE_GREEN_MS` / `PUSH_SMOKE_YELLOW_MS` | `5000` / `15000` | restore-latency grading bars (from the spike) |
 | `PUSH_SMOKE_KEEP` | unset | `1` keeps the snapshot in R2 (skips `delete-snapshot`) |
 | `PUSH_SMOKE_STRICT_LATENCY` | unset | `1` makes a red restore grade fail the run |
+| `PUSH_SMOKE_DEPLOYMENT_TOKEN` | unset | Sent as `X-Push-Deployment-Token`. **Required for a private deployment** (Worker has `PUSH_DEPLOYMENT_TOKEN` set) — otherwise every route 401s with `DEPLOYMENT_AUTH_REQUIRED`. |
+
+> **Private deployment:** if the Worker sets `PUSH_DEPLOYMENT_TOKEN`, source it without
+> echoing the value, e.g. `export PUSH_SMOKE_DEPLOYMENT_TOKEN="$(grep '^PUSH_DEPLOYMENT_TOKEN=' .dev.vars | cut -d= -f2- | tr -d '"\r')"`.
 
 ## Output
 

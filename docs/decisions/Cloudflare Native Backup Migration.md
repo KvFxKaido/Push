@@ -94,7 +94,11 @@ by keeping it is the 32 MB headroom.
    integrity + latency) is route-level and validates the swap **unchanged** —
    it is the regression gate. Layer 2 (unrestorable snapshot) changes: the
    `restore_token` assertions become `BACKUP_NOT_FOUND` / `BACKUP_EXPIRED`
-   checks against the native error codes.
+   checks against the native error codes. Against a private deployment the
+   harness needs `PUSH_SMOKE_DEPLOYMENT_TOKEN` (the `X-Push-Deployment-Token`
+   gate is unchanged by this migration). Validated GREEN on prod 2026-05-25
+   against the hand-rolled path (create 5.4s cold / hibernate 1.8s / restore
+   4.0s, integrity preserved), so the swap has a known-good baseline to match.
 
 ## Risks / open questions
 
