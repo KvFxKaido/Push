@@ -3,6 +3,7 @@ import { getSandbox } from '@cloudflare/sandbox';
 import {
   createWorkspaceSnapshot,
   handleCloudflareSandbox,
+  MAX_SNAPSHOT_BYTES,
   restoreWorkspaceSnapshot,
   SANDBOX_EXEC_TIMEOUT_MS,
 } from './worker-cf-sandbox';
@@ -1320,6 +1321,61 @@ describe('handleCloudflareSandbox snapshots (R2)', () => {
     expect(r2.store.has(`cf-snapshots/${uuid}`)).toBe(true);
     // The defining contract for mid-run checkpoints: the container survives.
     expect(sandbox.destroy).not.toHaveBeenCalled();
+  });
+
+  it('createWorkspaceSnapshot rejects an over-cap archive (413) before base64/RPC', async () => {
+    const sandbox = mockSandbox();
+    const r2 = makeR2();
+    queueExecResults(sandbox, [
+      { exitCode: 0 }, // tar
+      { stdout: String(MAX_SNAPSHOT_BYTES + 1), exitCode: 0 }, // stat — over the cap
+      { exitCode: 0 }, // rm (finally)
+    ]);
+
+    const result = await createWorkspaceSnapshot(
+      makeEnv({ SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'] }),
+      { sandboxId: 'sb-1' },
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: expect.stringContaining('exceeds max size'),
+      status: 413,
+    });
+    // Never base64-encoded — the whole point is to stop before the value would
+    // cross the 32 MiB DO RPC boundary — and nothing written to R2.
+    const cmds = sandbox.exec.mock.calls.map((c) => c[0] as string);
+    expect(cmds.some((c) => c.startsWith('base64 -w0'))).toBe(false);
+    expect(r2.put).not.toHaveBeenCalled();
+  });
+
+  it('hibernate surfaces an over-cap archive as 413 SNAPSHOT_TOO_LARGE (not a raw RPC throw)', async () => {
+    const sandbox = mockSandbox();
+    const r2 = makeR2();
+    const tokensKV = makeDefaultTokensKV();
+    queueExecResults(sandbox, [
+      { exitCode: 0 }, // tar
+      { stdout: String(MAX_SNAPSHOT_BYTES + 1), exitCode: 0 }, // stat — over the cap
+      { exitCode: 0 }, // rm
+    ]);
+
+    const response = await callRoute(
+      'hibernate',
+      { sandbox_id: 'sb-1' },
+      makeEnv({
+        SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'],
+        SANDBOX_TOKENS: tokensKV as unknown as Env['SANDBOX_TOKENS'],
+      }),
+    );
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      code: 'SNAPSHOT_TOO_LARGE',
+    });
+    // The snapshot never succeeded, so the container must NOT be torn down.
+    expect(sandbox.destroy).not.toHaveBeenCalled();
+    expect(r2.put).not.toHaveBeenCalled();
   });
 
   it('createWorkspaceSnapshot returns a 503 result when R2 is unbound', async () => {

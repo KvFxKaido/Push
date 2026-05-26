@@ -1219,19 +1219,25 @@ async function routeHydrate(env: Env, body: Json): Promise<Response> {
 // restore), and would bloat the R2 object + base64 transfer.
 const SNAPSHOT_DIR_EXCLUDES = ['node_modules', '__pycache__', '.venv', 'dist', 'build'] as const;
 export const SNAPSHOT_KEY_PREFIX = 'cf-snapshots/';
-// Cap on the *compressed* snapshot tar.gz. Much lower than MAX_ARCHIVE_BYTES
-// (used for one-shot downloads) because a snapshot is base64-encoded (~+33%)
-// and that string is held in Worker memory both on hibernate (from exec
-// stdout) and on restore (object.text() + the writeFile arg). With a ~128 MB
-// Worker memory ceiling, 32 MB compressed → ~43 MB base64 → ~2× copies on
-// restore stays comfortably under budget. node_modules is excluded and the
-// repo is shallow-cloned, so real source + .git is far below this.
-const MAX_SNAPSHOT_BYTES = 32 * 1024 * 1024;
+// Cloudflare's Durable Object RPC boundary caps a serialized argument/return at
+// 32 MiB. The snapshot archive is base64-encoded (~+33%) and crosses that
+// boundary in BOTH directions — on hibernate the `base64` exec's stdout is
+// returned over RPC, and on restore the encoded archive is passed back in — so
+// the binding constraint is the *base64* size, not Worker memory. The compressed
+// tar.gz must therefore stay under 32 MiB × 3/4 ≈ 24 MiB. (Measured 2026-05-25:
+// ~25 MiB compressed fails with a raw "Serialized RPC ... limited to 32MiB"
+// error.) Cap a megabyte below the crossover so the guard rejects oversized
+// snapshots with a clean error instead of that opaque RPC throw. node_modules is
+// excluded and the repo is shallow-cloned, so real source + .git is far below this.
+const DO_RPC_MAX_BYTES = 32 * 1024 * 1024;
+export const MAX_SNAPSHOT_BYTES = Math.floor((DO_RPC_MAX_BYTES * 3) / 4) - 1024 * 1024;
 
 async function archiveWorkspaceToBase64(
   sandbox: SandboxStub,
   excludes: readonly string[],
-): Promise<{ ok: true; base64: string; size: number } | { ok: false; error: string }> {
+): Promise<
+  { ok: true; base64: string; size: number } | { ok: false; error: string; tooLarge?: boolean }
+> {
   const tmp = `/tmp/push-snapshot-${crypto.randomUUID()}.tar.gz`;
   const quotedTmp = shellSingleQuote(tmp);
   const excludeArgs = excludes.map((e) => `--exclude=${shellSingleQuote(e)}`).join(' ');
@@ -1254,7 +1260,13 @@ async function archiveWorkspaceToBase64(
       return { ok: false, error: 'Failed to measure snapshot archive size' };
     }
     if (size > MAX_SNAPSHOT_BYTES) {
-      return { ok: false, error: `Snapshot exceeds max size of ${MAX_SNAPSHOT_BYTES} bytes` };
+      // Reject before base64 so the oversized value never crosses the DO RPC
+      // boundary (which would throw an opaque "Serialized RPC ... 32MiB" error).
+      return {
+        ok: false,
+        error: `Snapshot exceeds max size of ${MAX_SNAPSHOT_BYTES} bytes`,
+        tooLarge: true,
+      };
     }
     const b64 = (await withExecDeadline(sandbox.exec(`base64 -w0 -- ${quotedTmp}`))) as {
       stdout?: string;
@@ -1297,7 +1309,9 @@ export async function createWorkspaceSnapshot(
   try {
     const archived = await archiveWorkspaceToBase64(sandbox, SNAPSHOT_DIR_EXCLUDES);
     if (!archived.ok) {
-      return { ok: false, error: archived.error, status: 500 };
+      // 413 for an over-cap archive so callers can distinguish "too large" from
+      // a generic backend error (routeHibernate maps it to SNAPSHOT_TOO_LARGE).
+      return { ok: false, error: archived.error, status: archived.tooLarge ? 413 : 500 };
     }
 
     // The index keeps one entry per repo/branch, so a new snapshot supersedes the
@@ -1369,7 +1383,12 @@ async function routeHibernate(env: Env, body: Json): Promise<Response> {
       {
         ok: false,
         error: snap.error,
-        code: snap.status === 503 ? 'CF_NOT_CONFIGURED' : 'CF_ERROR',
+        code:
+          snap.status === 503
+            ? 'CF_NOT_CONFIGURED'
+            : snap.status === 413
+              ? 'SNAPSHOT_TOO_LARGE'
+              : 'CF_ERROR',
       },
       { status: snap.status },
     );
