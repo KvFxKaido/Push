@@ -267,6 +267,7 @@ export type SandboxErrorCode =
   | 'WORKSPACE_CHANGED'
   | 'SNAPSHOT_NOT_FOUND'
   | 'SNAPSHOT_FAILED'
+  | 'SNAPSHOT_TOO_LARGE'
   | 'UNKNOWN';
 
 export class SandboxError extends Error {

@@ -77,15 +77,21 @@ async function call<T>(route: string, body: Record<string, unknown>): Promise<T>
   return parsed as T;
 }
 
-function mapCfErrorCode(code: string | undefined, httpStatus: number): SandboxErrorCode {
+export function mapCfErrorCode(code: string | undefined, httpStatus: number): SandboxErrorCode {
   if (httpStatus === 503) return 'NOT_CONFIGURED';
   // 501 / SNAPSHOT_NOT_SUPPORTED is "feature unavailable", not "snapshot
   // missing" — map to SNAPSHOT_FAILED so callers don't misinterpret it as a
   // missing-entry cache miss they should retry against.
   if (httpStatus === 501) return 'SNAPSHOT_FAILED';
+  // 413 / SNAPSHOT_TOO_LARGE: the workspace archive exceeds the snapshot size
+  // ceiling. Distinct from SNAPSHOT_FAILED so callers can surface an actionable
+  // "workspace too large to snapshot" message rather than a generic failure.
+  if (httpStatus === 413) return 'SNAPSHOT_TOO_LARGE';
   if (httpStatus === 404) return 'NOT_FOUND';
   if (httpStatus === 403) return 'AUTH_FAILURE';
   switch (code) {
+    case 'SNAPSHOT_TOO_LARGE':
+      return 'SNAPSHOT_TOO_LARGE';
     case 'CF_NOT_CONFIGURED':
       return 'NOT_CONFIGURED';
     case 'TIMEOUT':
