@@ -1428,7 +1428,10 @@ function resolveWebSearchSourceHint(options = {}) {
   if (backend === 'duckduckgo') return 'duckduckgo_html';
   if (resolveTavilyApiKey()) return 'tavily';
   if (resolveOllamaApiKey(options)) return 'ollama_native';
-  return 'duckduckgo_html';
+  // No key + no explicit DDG opt-in. The hint feeds the structured tool-error
+  // path, not the success path — auto-mode without a configured backend now
+  // throws instead of scraping DDG (see `executeWebSearch`).
+  return 'none';
 }
 
 async function executeWebSearch(query, maxResults, signal, options = {}) {
@@ -1469,8 +1472,15 @@ async function executeWebSearch(query, maxResults, signal, options = {}) {
     return { backend, source: 'ollama_native', results };
   }
 
-  const results = await executeDuckDuckGoWebSearch(query, maxResults, signal);
-  return { backend, source: 'duckduckgo_html', results };
+  // DuckDuckGo is intentionally NOT a silent auto-mode fallback — the HTML
+  // scrape is unofficial and fragile. Surface a structured error so the
+  // caller's catch arm can tell the model what to do. To use DDG, the user
+  // sets `PUSH_WEB_SEARCH_BACKEND=duckduckgo` explicitly.
+  throw new Error(
+    'No web search backend is configured. Set TAVILY_API_KEY (recommended), ' +
+      'configure an Ollama key, or set PUSH_WEB_SEARCH_BACKEND=duckduckgo to ' +
+      'use the unofficial DuckDuckGo HTML scrape.',
+  );
 }
 
 /**

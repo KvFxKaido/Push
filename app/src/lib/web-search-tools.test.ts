@@ -250,19 +250,23 @@ describe('executeWebSearch — backend selection', () => {
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer AIza-key');
   });
 
-  it('falls through to DDG when Google provider has no key', async () => {
+  it('returns a configuration nudge when Google provider has no key (no silent DDG)', async () => {
     getTavilyKeyMock.mockReturnValue(null);
     getGoogleKeyMock.mockReturnValue(null);
-    const { calls } = queueFetchResponses([jsonResponse({ results: [] })]);
-    await executeWebSearch('q', 'google');
-    expect(calls[0][0]).toBe('/api/search');
+    const { fetchMock } = queueFetchResponses([]);
+    const result = await executeWebSearch('q', 'google');
+    expect(result.text).toMatch(/No official web search backend is configured/);
+    expect(result.text).toMatch(/Tavily/);
+    expect(result.text).toMatch(/DuckDuckGo/);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('falls back to the free DuckDuckGo search when nothing else applies', async () => {
+  it('returns a configuration nudge when nothing else applies (auto mode, no DDG fallback)', async () => {
     getTavilyKeyMock.mockReturnValue(null);
-    const { calls } = queueFetchResponses([jsonResponse({ results: [] })]);
-    await executeWebSearch('q', 'anthropic');
-    expect(calls[0][0]).toBe('/api/search');
+    const { fetchMock } = queueFetchResponses([]);
+    const result = await executeWebSearch('q', 'anthropic');
+    expect(result.text).toMatch(/No official web search backend is configured/);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('returns a "turned off" error and skips fetch when mode is off', async () => {
