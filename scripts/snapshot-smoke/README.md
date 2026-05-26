@@ -15,10 +15,12 @@ at the path that actually runs.
 |---|---|---|---|
 | **1** | Seed → hibernate (snapshot to R2) → restore into a fresh sandbox → verify file count + content digest → time each phase → grade restore latency | ✅ `snapshot-smoke.mjs` | #647 |
 | **2** | Unrestorable snapshot: wrong `restore_token` → `403 AUTH_FAILURE`; nonexistent id → `404 SNAPSHOT_NOT_FOUND` (the backend errors the UI turns into a restore-failure toast) | ✅ `snapshot-smoke.mjs` | #651 |
-| **3** | Coder-job **mid-run resume**: kill a sandbox while a job runs → DO restores the latest checkpoint into a fresh sandbox and continues | ❌ manual (needs a live model-driven job) — see below | #649/#650 |
+| **3** | Coder-job **mid-run resume**: kill a sandbox while a job runs → DO restores the latest checkpoint into a fresh sandbox and continues | partial — `coder-resume-smoke.mjs` drives the seed sandbox + job + SSE; the kill step still depends on the runbook below | #649/#650 |
 
-Layer 3 can't be scripted without driving a real Coder job (model calls, the
-`CoderJob` Durable Object, SSE). It's a runbook, not a script.
+Layer 3 needs a real model-driven Coder job (model calls, the `CoderJob`
+Durable Object, SSE) so it ships as a driver + runbook pair rather than a
+pure assertion script. See "Layer 3" below for the live-test status, the
+known runtime gap, and the workaround procedure.
 
 ## Prerequisites
 
@@ -85,27 +87,117 @@ This is the headline path from #649/#650: a checkpoint is taken every few rounds
 death (`SandboxUnreachableError`) the DO restores the latest checkpoint into a
 fresh sandbox and continues — bounded by `MAX_JOB_RESUMES = 2`.
 
-**Procedure**
+### Driver
 
-1. Start a Coder job long enough to checkpoint — a multi-round refactor task, on
-   the Cloudflare backend. Note the `sandboxId` and `jobId`.
-2. Wait for at least one checkpoint. Confirm via the job's SSE stream
-   (`/api/coder-job/events?jobId=…`) or by grepping Worker logs
-   (`npx wrangler tail`) for a checkpoint write before proceeding.
-3. **Kill the sandbox mid-run.** Either:
-   - `POST /api/sandbox-cf/cleanup` with that `sandbox_id` + its `owner_token`, or
-   - destroy the container from the Cloudflare dashboard.
-4. **Confirm resume.** In `wrangler tail`, expect:
+`coder-resume-smoke.mjs` is a thin Layer-3 cousin of `snapshot-smoke.mjs`:
+creates a scratch sandbox via `/api/sandbox-cf/create`, posts a multi-step
+Coder envelope to `/api/jobs/start`, watches the SSE stream for
+`assistant.prompt_snapshot`, and fires `/api/sandbox-cf/cleanup` on a
+calibrated `killDelayMs` (default 45s — past the round-5 checkpoint on
+kimi-k2.6, before natural completion). Same env vars as `snapshot-smoke.mjs`
+plus:
+
+| Var | Default | Meaning |
+|---|---|---|
+| `PUSH_SMOKE_PROVIDER` | `cloudflare` | provider for the Coder run |
+| `PUSH_SMOKE_MODEL` | `@cf/moonshotai/kimi-k2.6` | model id |
+| `PUSH_SMOKE_KILL_DELAY_MS` | `45000` | delay after `prompt_snapshot` before killing the sandbox |
+| `PUSH_SMOKE_POST_KILL_MS` | `180000` | how long to keep the SSE stream open after the kill |
+
+```bash
+PUSH_SMOKE_BASE_URL=https://push.<sub>.workers.dev \
+PUSH_SMOKE_DEPLOYMENT_TOKEN="$(grep ^PUSH_DEPLOYMENT_TOKEN= .dev.vars | cut -d= -f2- | tr -d '"\r')" \
+node scripts/snapshot-smoke/coder-resume-smoke.mjs
+```
+
+The script asserts only what SSE shows (kill fired, terminal `job.completed`
+vs `job.failed`). Structured-log corroboration (`coder_checkpoint_captured`,
+`coder_job_resumed`, `coder_resume_restore_failed`) is read from a parallel
+`wrangler tail push --format json` — wrangler buffers events with a ~20-30s
+lag, so in-driver real-time polling races a fast job. Run the tail in a
+separate process and read the events post-hoc.
+
+### Status (2026-05-25, live prod test)
+
+| Component | Result |
+|---|---|
+| `captureCheckpoint` runs at the round-5 cadence and writes to R2 | ✅ — three captures observed for one 67s/15-round run, at rounds 5/10/15 |
+| `coder_checkpoint_captured` structured log on success | ✅ — added in this revision (symmetric to `coder_checkpoint_failed`); deployed |
+| `MAX_JOB_RESUMES = 2` bound | not yet exercised — needs a kill method that triggers resume |
+| **`coder_job_resumed` after `/api/sandbox-cf/cleanup` kill** | ❌ — **runbook's documented kill method does NOT trigger resume on the deployed runtime** (see below) |
+
+### Known gap — `/cleanup` doesn't surface as `SANDBOX_UNREACHABLE`
+
+`lib/coder-agent.ts` raises `SandboxUnreachableError` only after
+`SANDBOX_LOSS_THRESHOLD = 2` consecutive tool calls return
+`structuredError.type === 'SANDBOX_UNREACHABLE'`. The DO's `runLoop` catches
+that exception and drives resume.
+
+After `POST /api/sandbox-cf/cleanup` succeeds, the next sandbox tool call
+hits the owner-token gate before reaching the route handler. The gate's
+`verifySandboxOwnerToken` calls `sandbox.exec(...)` on the (now-destroyed)
+container, hits a "no such" classification, and returns `404 NOT_FOUND`
+(`worker-cf-sandbox.ts` line ~1716). `coder-job-executor-adapter.ts` passes
+that code straight through:
+
+```ts
+structuredError: { type: err.code ?? 'SANDBOX_UNREACHABLE', ... }
+```
+
+So the executed-tool result carries `errorType: 'NOT_FOUND'`, not
+`'SANDBOX_UNREACHABLE'`. The coder-agent's loss counter never increments,
+`SandboxUnreachableError` never throws, and the DO never enters the resume
+path. The model just sees repeated "[Tool Error] NOT_FOUND" results, gives
+up after a few rounds, and produces a partial-completion summary like
+*"I encountered a sandbox failure during the task."*
+
+The resume path is wired correctly for INFRASTRUCTURE-LEVEL sandbox death
+(container OOM, edge deploy, RPC throw without an error code) — which is
+also the realistic production scenario. But the runbook-documented
+`/api/sandbox-cf/cleanup` kill method tests only the failure-tolerance of
+the model, not the resume code.
+
+**Proposed fix (single PR, narrow):** in
+`app/src/worker/coder-job-executor-adapter.ts`, map `NOT_FOUND` returned
+from the auth gate (and the equivalent classifier in the `catch` arm) to
+`SANDBOX_UNREACHABLE` for the kernel's `structuredError.type`. The
+semantics are identical from the loop's perspective ("the sandbox is gone
+from my point of view"), and the auth gate is the ONLY public path that
+returns `NOT_FOUND` for a destroyed sandbox — so the blast radius is small.
+
+Until that ships, Layer 3 happy-path live verification needs the second
+kill method from the original runbook: **destroy the container from the
+Cloudflare dashboard** (or wait for natural infra death). The
+`coder-resume-smoke.mjs` driver above still produces the seed sandbox +
+job; the kill step just has to come from outside the public API.
+
+### Procedure (current, with workaround)
+
+1. Run `coder-resume-smoke.mjs` against the target deployment with
+   `PUSH_SMOKE_KILL_DELAY_MS=999999999` to inhibit the auto-kill — the
+   script will print the `sandboxId` + `jobId` and then wait. Note both.
+2. Wait for `coder_checkpoint_captured` in a parallel `wrangler tail`
+   stream before proceeding (round 5 is the first cadence boundary; on
+   kimi-k2.6 + the bundled palette task that's ~25-40s into the run).
+3. **Kill the sandbox at the infrastructure level.** In the Cloudflare
+   dashboard: Workers → push → Sandbox container → Destroy. This produces
+   the RPC-throw failure mode that maps to `SANDBOX_UNREACHABLE`.
+4. **Confirm resume.** In the parallel `wrangler tail`, expect:
    - `coder_job_resumed` — restored from checkpoint, continuing (success).
-   - `coder_resume_restore_failed` — restore returned an error (this is the
-     #651 path; after `MAX_JOB_RESUMES` or a hard failure the job fails and the
-     **client surfaces the restore-failure toast**).
-5. **Verify the #651 toast (UI).** Force the failure path: kill the sandbox
-   *and* delete its checkpoint snapshot from R2 (or hit it with an unrestorable
-   snapshot) so `resumeFromCheckpoint` returns null → the original failure
-   stands → the web app shows the restore-failure toast. Layer 2 above already
-   asserts the backend returns the error that triggers it.
+   - `coder_resume_restore_failed` — restore returned an error.
+5. **Pass criteria:** same `jobId`, new `sandboxId` in the `coder_job_resumed`
+   log line, and `job.completed` (not `job.failed`) lands on the SSE stream.
 
-**Pass criteria:** the job continues from the checkpointed round (not from
-scratch) after the kill, with the same `jobId` and a *new* `sandboxId` in
-`coder_job_resumed`; and the toast appears when resume is genuinely unrecoverable.
+### Procedure (post-fix, when `NOT_FOUND`→`SANDBOX_UNREACHABLE` mapping ships)
+
+The `coder-resume-smoke.mjs` driver's default `killDelayMs=45000` /
+`/api/sandbox-cf/cleanup` kill path becomes the end-to-end signal:
+`job.completed` after the kill ⇒ the DO restored from checkpoint and the
+loop continued.
+
+### #651 unhappy-path / UI toast
+
+Verifying the #651 restore-failure toast requires a browser session
+(deferred). Layer 2 above already asserts the backend codes that trigger
+the toast (`403 AUTH_FAILURE`, `404 SNAPSHOT_NOT_FOUND`), so the missing
+piece is purely the UI side.
