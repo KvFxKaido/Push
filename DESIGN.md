@@ -200,6 +200,46 @@ Shadows are used for overlays and floating elements (dialogs, popovers, dropdown
 - Track: transparent
 - Thumb: `#1f2531`, hover `#2f3949`, radius 2px
 
+## Composition layer
+
+The tables above are the **token** layer. The components in `components/ui/` are the **primitive** layer (shadcn, intentionally untouched). Sitting between them is the **composition** layer — the actual Push visual language. It comes in two pieces.
+
+### Hub utility classes — `app/src/components/chat/hub-styles.tsx`
+
+Glassmorphic chrome: pill buttons, gradient panels, layered shadows. These are the visual identity most surfaces already use (HomeScreen, OnboardingScreen, ChatScreen, ChatSurfaceScreen, LauncherHomeContent). Compose them with token classes for color and size; the hub class supplies surface treatment.
+
+| Class                              | Shape                                                 | Use                                                       |
+| ---------------------------------- | ----------------------------------------------------- | --------------------------------------------------------- |
+| `HUB_MATERIAL_BUTTON_CLASS`        | Glass surface + interactive hover                     | Default button surface — wrap with size/layout            |
+| `HUB_MATERIAL_PILL_BUTTON_CLASS`   | `h-8 rounded-full px-3 text-push-xs`                  | Inline pill action (header chips, mode pickers)           |
+| `HUB_MATERIAL_PILL_BUTTON_NO_BLUR_CLASS` | Identical look, no `backdrop-blur`              | Use when ≥10 pills render in one view (Android paint bug) |
+| `HUB_MATERIAL_ROUND_BUTTON_CLASS`  | `h-8 w-8 rounded-full`                                | Icon-only header actions (back, settings, menu)           |
+| `HUB_MATERIAL_INPUT_CLASS`         | `h-8 rounded-full px-3 text-xs`                       | Inline input — auth forms, pairing forms                  |
+| `HUB_PANEL_SURFACE_CLASS`          | `rounded-[20px]` gradient panel, primary shadow       | Top-level panel containing a form / section group         |
+| `HUB_PANEL_SUBTLE_SURFACE_CLASS`   | `rounded-[18px]` gradient panel, lighter shadow       | Nested panel inside a HUB_PANEL                           |
+| `HUB_TOP_BANNER_STRIP_CLASS`       | Animated full-width banner strip                      | Top-of-page status (sandbox state, missing AGENTS.md)     |
+| `HUB_TAG_CLASS`                    | Rounded-full, uppercase mono, `tracking-[0.16em]`     | Inline metadata tag (`RECOMMENDED`, `EXPERIMENTAL`)       |
+| `<HubControlGlow />`               | Inner top-half highlight overlay                      | Drop inside a HUB surface for subtle gloss                |
+
+Hub button height is `h-8`, not `h-9` — pill rhythm differs from the shadcn `h-9` baseline by design. For full-width form CTAs that need more presence, use `${HUB_MATERIAL_BUTTON_CLASS} h-9 px-4 rounded-md` (the surface treatment composes onto the standard button shape).
+
+### Layout primitives — `app/src/components/layout/`
+
+| Component       | Shape                                                                 |
+| --------------- | --------------------------------------------------------------------- |
+| `<PageScaffold>`| Page wrapper: dark gradient bg, safe-area insets, `width` prop maps to `max-w-sm \| max-w-md \| max-w-2xl \| full` |
+| `<HeaderBar>`   | 3-col grid top bar: `back` (HUB_MATERIAL_ROUND_BUTTON), `title`/`subtitle`, `actions` slot. `h-12 px-3 pt-3 pb-2` |
+| `<StatusBanner>`| `variant: 'info' \| 'warning' \| 'error' \| 'success'` using `push-status-*` tokens. Replaces ad-hoc `border-rose-400/40` / `text-destructive` patterns |
+| `<SectionCard>` | `HUB_PANEL_SURFACE_CLASS` wrapper with `p-4 space-y-3` and optional `title` / `description` slots |
+
+A new top-level surface (full-screen pairing flow, settings sub-page, onboarding step) should be `<PageScaffold header={<HeaderBar … />}>…</PageScaffold>` rather than an ad-hoc `<div className="min-h-dvh …">`. The primitives own the gradient background, the safe-area math, and the back-button shape so screens don't each reinvent them.
+
+### When to reach for which
+
+- **Chrome** (top bars, header pills, account buttons, mode chips, page wrappers): use HUB classes + layout primitives. This is the dominant Push aesthetic.
+- **Inside content cards** (chat bubbles, file diffs, code blocks): use token classes directly. The HUB material is for navigation surfaces; content is flatter.
+- **Inside `<Dialog>` / `<Sheet>` forms**: shadcn `Button` and `Input` from `components/ui/` are fine. Dialogs already have their own glass treatment from the overlay; double-glassing reads as muddy.
+
 ## Icons
 
 Lucide React (`lucide-react`). Default size `size-4` (16px).
@@ -223,6 +263,9 @@ Common sizes: `size-3` (12px), `size-3.5` (14px), `size-4` (16px), `size-8` (32p
 - Don't use shadows to distinguish surface layers — use border and background contrast. Shadows are reserved for floating elements (dialogs, popovers, dropdowns)
 - Don't introduce light-mode colors; the app is dark-only
 - Don't hardcode colors — use the token classes with Tailwind prefixes: `text-push-fg`, `bg-push-surface`, `border-push-edge`, etc.
+- Don't use shadcn `Button` from `components/ui/button.tsx` for chrome — it carries `bg-primary` / `text-primary-foreground`, which is shadcn's neutral blue, not `push-accent`. Reach for `HUB_MATERIAL_BUTTON_CLASS` (or `HUB_MATERIAL_PILL_BUTTON_CLASS` for inline pills). The shadcn Button is fine **inside** `<Dialog>` / `<Sheet>` forms — see the composition layer notes above.
+- Don't invent a new page wrapper with `min-h-dvh bg-[linear-gradient(...)]`. Use `<PageScaffold>` — it owns the gradient, the safe-area insets, and the max-width rhythm so all surfaces share them.
+- Don't invent per-screen error/warning chrome (`text-rose-200`, `text-destructive`, `bg-amber-500/15`). Use `<StatusBanner variant="error" | "warning" | …>` so status colors live in one place.
 
 ## Shipping visual changes
 
