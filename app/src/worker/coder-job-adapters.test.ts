@@ -115,6 +115,132 @@ describe('createWebExecutorAdapter — sandbox tool dispatch', () => {
     expect(result.text).toContain('sandbox gone');
   });
 
+  it('maps NOT_FOUND from the auth gate to SANDBOX_UNREACHABLE so the kernel can resume', async () => {
+    // Reproduces the post-`/api/sandbox-cf/cleanup` failure mode the layer-3
+    // smoke test surfaced (see scripts/snapshot-smoke/README.md §"Layer 3"):
+    // the auth gate's `verifySandboxOwnerToken` reads the owner-token file
+    // from the destroyed sandbox, hits "no such" via `classifyCfError`, and
+    // returns 404 + `code: 'NOT_FOUND'`. Without translation, the kernel's
+    // `SANDBOX_LOSS_THRESHOLD` counter never increments and the CoderJob
+    // DO never enters the resume path — `/cleanup` silently bypasses it.
+    handleCloudflareSandboxMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: 'Sandbox not found', code: 'NOT_FOUND' }), {
+        status: 404,
+      }),
+    );
+    const adapter = createWebExecutorAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok-1',
+      provider: 'openrouter',
+      jobId: 'job-test-1',
+    });
+    const result = await adapter.executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'ls' } } as SandboxToolCall,
+      'sb-1',
+      { auditorProviderOverride: 'openrouter', auditorModelOverride: undefined },
+    );
+    expect(result.structuredError?.type).toBe('SANDBOX_UNREACHABLE');
+    // A dead sandbox is recoverable via the DO's restore path, even though
+    // the underlying response was a 404 (not a 5xx).
+    expect(result.structuredError?.retryable).toBe(true);
+    // `fatal: true` short-circuits the kernel's SANDBOX_LOSS_THRESHOLD so the
+    // first occurrence throws SandboxUnreachableError instead of waiting for
+    // a second consecutive tool call that some models never make.
+    expect(result.structuredError?.fatal).toBe(true);
+    expect(result.text).toContain('Sandbox not found');
+  });
+
+  it('passes AUTH_FAILURE through unchanged (a token mismatch is not a sandbox loss)', async () => {
+    // Distinct from NOT_FOUND: AUTH_FAILURE means the caller's token doesn't
+    // match what's on file — the sandbox itself is alive and reachable.
+    // Mapping this to SANDBOX_UNREACHABLE would trick the kernel into
+    // attempting resume on a healthy sandbox owned by someone else.
+    handleCloudflareSandboxMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: 'Invalid owner token', code: 'AUTH_FAILURE' }), {
+        status: 403,
+      }),
+    );
+    const adapter = createWebExecutorAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok-1',
+      provider: 'openrouter',
+      jobId: 'job-test-1',
+    });
+    const result = await adapter.executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'ls' } } as SandboxToolCall,
+      'sb-1',
+      { auditorProviderOverride: 'openrouter', auditorModelOverride: undefined },
+    );
+    expect(result.structuredError?.type).toBe('AUTH_FAILURE');
+    expect(result.structuredError?.retryable).toBe(false);
+    // Not fatal — the sandbox is alive, the caller just doesn't own it.
+    // Forcing a resume here would attempt to restore over a healthy sandbox.
+    expect(result.structuredError?.fatal).toBeUndefined();
+  });
+
+  it('classifies HTTP 429 (rate-limited) as RATE_LIMITED, not SANDBOX_UNREACHABLE', async () => {
+    // The per-job rate-limit bucket (`X-Forwarded-For: job:<jobId>`) returns
+    // `{ error: 'Rate limit exceeded…' }` with HTTP 429 — no `code` field.
+    // Defaulting `err.code ?? 'SANDBOX_UNREACHABLE'` here would falsely trip
+    // the kernel's loss tracker on two consecutive 429s and burn a resume
+    // budget on a healthy sandbox. Distinct type + retryable=true tells the
+    // kernel "back off and try again" without poisoning the loss counter.
+    handleCloudflareSandboxMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: 'Rate limit exceeded. Try again later.' }), {
+        status: 429,
+      }),
+    );
+    const adapter = createWebExecutorAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok-1',
+      provider: 'openrouter',
+      jobId: 'job-test-1',
+    });
+    const result = await adapter.executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'ls' } } as SandboxToolCall,
+      'sb-1',
+      { auditorProviderOverride: 'openrouter', auditorModelOverride: undefined },
+    );
+    expect(result.structuredError?.type).toBe('RATE_LIMITED');
+    expect(result.structuredError?.retryable).toBe(true);
+    expect(result.structuredError?.fatal).toBeUndefined();
+  });
+
+  it('classifies unknown 4xx without an err.code as UNKNOWN (not SANDBOX_UNREACHABLE)', async () => {
+    // Previously any 4xx without an `err.code` defaulted to
+    // SANDBOX_UNREACHABLE, which fed the kernel's loss counter on errors
+    // that have nothing to do with the sandbox being gone (e.g. handler
+    // validation rejecting a request body shape). Map unknown 4xx to
+    // UNKNOWN so the loss counter stays put. 5xx without a code still
+    // defaults to SANDBOX_UNREACHABLE — backend trouble in the sandbox
+    // handler IS the sandbox being unreachable from the kernel's POV.
+    handleCloudflareSandboxMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: 'Some unexpected 4xx' }), { status: 422 }),
+    );
+    const adapter = createWebExecutorAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok-1',
+      provider: 'openrouter',
+      jobId: 'job-test-1',
+    });
+    const result = await adapter.executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'ls' } } as SandboxToolCall,
+      'sb-1',
+      { auditorProviderOverride: 'openrouter', auditorModelOverride: undefined },
+    );
+    expect(result.structuredError?.type).toBe('UNKNOWN');
+    expect(result.structuredError?.retryable).toBe(false);
+    expect(result.structuredError?.fatal).toBeUndefined();
+  });
+
   it('formats sandbox_diff output', async () => {
     handleCloudflareSandboxMock.mockResolvedValue(
       new Response(JSON.stringify({ diff: 'diff --git a/x b/x\n+foo', changed_files: ['x'] }), {

@@ -477,12 +477,61 @@ export function createWebExecutorAdapter(args: WebExecutorAdapterArgs): CoderJob
         });
         if (status >= 400) {
           const err = data as ErrorResponse;
+          // Classify the sandbox-handler error into a structured tool error
+          // the kernel can act on. Three buckets, narrowest first:
+          //
+          //   1. NOT_FOUND at the HTTP layer uniquely signals the sandbox
+          //      container is gone — emitted by the owner-token gate's
+          //      `verifySandboxOwnerToken` after a destroy, by `/connect`'s
+          //      liveness probe, and by the route-level catch arm via
+          //      `classifyCfError('no such ...')` in `worker-cf-sandbox.ts`.
+          //      These all mean "the sandbox is unreachable from my POV";
+          //      map to SANDBOX_UNREACHABLE and tag `fatal: true` so the
+          //      kernel's loss tracker throws on the FIRST occurrence
+          //      (without `fatal`, the threshold-of-2 waits for a second
+          //      consecutive failing call that models which gracefully
+          //      summarize after one error — kimi-k2.6 — never make).
+          //      `routeRead` also uses `code: 'NOT_FOUND'` for missing files
+          //      but returns it with HTTP 200, so it never enters this
+          //      branch — file-not-found stays distinct.
+          //
+          //   2. HTTP 429 (rate-limited) does NOT carry a `code` field — the
+          //      response is `{ error: 'Rate limit exceeded…' }`. The
+          //      previous default-to-SANDBOX_UNREACHABLE would falsely trip
+          //      the kernel's loss tracker on two consecutive 429s and burn
+          //      a resume budget on a healthy sandbox. Map explicitly to
+          //      RATE_LIMITED + retryable so the kernel sees the right shape.
+          //
+          //   3. Other 4xx without an `err.code` is treated as an unknown
+          //      bad-request shape — default to `UNKNOWN` (not retryable,
+          //      definitely not SANDBOX_UNREACHABLE). 5xx without a code
+          //      still defaults to SANDBOX_UNREACHABLE: backend trouble on
+          //      the sandbox handler IS the sandbox being unreachable from
+          //      the kernel's POV, and retryable=true gives the resume path
+          //      a chance.
+          const isSandboxGone = err.code === 'NOT_FOUND';
+          const is4xxNoCode = status >= 400 && status < 500 && !err.code;
+          let type: string;
+          if (isSandboxGone) {
+            type = 'SANDBOX_UNREACHABLE';
+          } else if (status === 429) {
+            type = 'RATE_LIMITED';
+          } else if (is4xxNoCode) {
+            type = 'UNKNOWN';
+          } else {
+            type = err.code ?? 'SANDBOX_UNREACHABLE';
+          }
           return {
             text: formatResult(call, data, status),
             structuredError: {
-              type: err.code ?? 'SANDBOX_UNREACHABLE',
-              retryable: status >= 500,
+              type,
+              // A dead sandbox is recoverable via the DO's restore path;
+              // rate limits are recoverable after a backoff; everything
+              // else carries the previous `status >= 500` heuristic.
+              retryable:
+                type === 'SANDBOX_UNREACHABLE' || type === 'RATE_LIMITED' ? true : status >= 500,
               message: err.error ?? `HTTP ${status}`,
+              ...(isSandboxGone ? { fatal: true } : {}),
             },
           };
         }
