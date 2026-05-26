@@ -219,11 +219,20 @@ export function FileBrowser({
   // and the floating commit drawer stay opaque on purpose — the glow
   // only bleeds through the transparent file-list area, matching how it
   // bleeds through the chat-message column.
-  const showGlow = glowEnabled && typeof accentHex === 'string' && accentHex.length > 0;
+  //
+  // `overflow-hidden` is required to clip the glow blobs' keyframe
+  // translate during drift animation — same constraint chat shells
+  // carry. Existing FAB + commit drawer use `position: fixed` so they
+  // anchor to the viewport, not this element's content box, and remain
+  // visible through the clip. If a future descendant introduces an
+  // ancestor-side `transform`/`will-change`/`filter` it would turn this
+  // element into a containing block for fixed children and they'd start
+  // clipping; revisit then.
+  const showGlow = glowEnabled && !!accentHex;
 
   return (
     <div className="relative isolate flex h-dvh flex-col overflow-hidden bg-push-surface-inset safe-area-top">
-      {showGlow && <ChatBackgroundGlow active={true} color={accentHex as string} />}
+      {showGlow && <ChatBackgroundGlow active={true} color={accentHex} />}
       {/* Header */}
       <header className="relative z-10 flex items-center gap-2 border-b border-push-edge-subtle bg-push-grad-panel px-3 py-3">
         <button

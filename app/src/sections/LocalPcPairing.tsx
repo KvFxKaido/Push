@@ -222,10 +222,13 @@ export function LocalPcPairing({ onPaired, onCancel }: LocalPcPairingProps) {
 
   const isTesting = state.kind === 'testing';
 
-  // Shared input class — local PC inputs need more vertical room than
-  // HUB_MATERIAL_INPUT_CLASS provides (h-8 pill is too compact for
-  // labeled fields with helper text), so they use the design-system
-  // `rounded-lg` form treatment on a HUB-matching gradient surface.
+  // Local input classes — kept local to LocalPcPairing on purpose.
+  // HUB_MATERIAL_INPUT_CLASS (h-8 pill) is too compact for these
+  // labeled fields with helper text, so the inputs use the design-
+  // system `rounded-lg` form treatment on a HUB-matching gradient
+  // surface. Not promoted to a shared class because the only other
+  // pairing surface (RelayPairing) needs a single bundle input that
+  // fits the pill rhythm fine — there isn't a second caller yet.
   // Amber accent (the visual identity for "local PC mode") survives
   // only on the Monitor header icon and the focus border below.
   const portClasses = `block w-full rounded-lg border bg-push-grad-input px-3 py-2 text-sm text-push-fg outline-none placeholder:text-push-fg-dim focus:border-amber-400/60 ${
