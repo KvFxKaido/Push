@@ -4730,11 +4730,18 @@ describe('adoptClientModelSelection (mid-session model switch reaches the daemon
     assert.equal(state.provider, 'ollama');
   });
 
-  it('ignores an unknown provider so a bad client value cannot corrupt state', () => {
+  it('ignores BOTH fields when the provider is unknown (atomic selection)', () => {
     const state = { provider: 'ollama', model: 'm1' };
     adoptClientModelSelection(state, { provider: 'not-a-real-provider', model: 'm2' });
     assert.equal(state.provider, 'ollama'); // unchanged
-    assert.equal(state.model, 'm2'); // model still adopted independently
+    assert.equal(state.model, 'm1'); // model NOT adopted — it belongs to the bad provider
+  });
+
+  it('adopts a model-only payload as a same-provider switch', () => {
+    const state = { provider: 'blackbox', model: 'old' };
+    adoptClientModelSelection(state, { model: 'blackboxai/anthropic/claude-opus-4.7' });
+    assert.equal(state.provider, 'blackbox'); // unchanged
+    assert.equal(state.model, 'blackboxai/anthropic/claude-opus-4.7');
   });
 
   it('ignores blank/whitespace model strings', () => {

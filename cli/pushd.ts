@@ -1770,16 +1770,23 @@ async function handleConfigureRoleRouting(req) {
  *
  * The TUI carries its current provider/model on every `send_user_message` so a
  * mid-session switch reaches the daemon (the daemon otherwise keeps the model
- * fixed at `start_session` time). Empty/missing values are ignored, and an
- * unknown provider is rejected so a bad client value can't corrupt session
- * state. Returns the same `state` for convenience.
+ * fixed at `start_session` time). Returns the same `state` for convenience.
+ *
+ * provider + model are treated as ONE atomic selection: the model belongs to
+ * the named provider. So if the payload names a provider we don't recognize,
+ * BOTH fields are ignored — adopting only the model would strand a foreign
+ * model on the session's old provider and break the next run. A payload with no
+ * provider (model-only) is a same-provider model switch and adopts the model.
  */
 export function adoptClientModelSelection(state, payload) {
   if (!state || !payload) return state;
+  if (payload.provider != null) {
+    const reqProvider = normalizeProviderInput(payload.provider);
+    if (!reqProvider || !PROVIDER_CONFIGS[reqProvider]) return state; // unknown provider → adopt nothing
+    state.provider = reqProvider;
+  }
   const reqModel = typeof payload.model === 'string' ? payload.model.trim() : '';
   if (reqModel) state.model = reqModel;
-  const reqProvider = normalizeProviderInput(payload.provider);
-  if (reqProvider && PROVIDER_CONFIGS[reqProvider]) state.provider = reqProvider;
   return state;
 }
 
