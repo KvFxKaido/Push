@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useFileBrowser } from '@/hooks/useFileBrowser';
+import { ChatBackgroundGlow } from '@/components/chat/ChatBackgroundGlow';
 import { FileActionsSheet } from '@/components/filebrowser/FileActionsSheet';
 import { UploadButton } from '@/components/filebrowser/UploadButton';
 import { CommitPushSheet } from '@/components/filebrowser/CommitPushSheet';
@@ -49,6 +50,15 @@ interface FileBrowserProps {
   lockedModel?: string | null;
   /** Recovery callback for the commit/push pipeline when the sandbox dies. */
   onSandboxExpired?: () => Promise<string | null>;
+  /**
+   * Repo accent color hex. When paired with `glowEnabled`, renders the
+   * same `<ChatBackgroundGlow>` ambient wash chat uses, so navigating
+   * between chat and file browser inside the same repo feels continuous.
+   * Optional — scratch workspaces and tests omit it (no glow).
+   */
+  accentHex?: string | null;
+  /** Mirrors `RepoAppearance.glowEnabled`. Toggle off without losing the accent. */
+  glowEnabled?: boolean;
 }
 
 export function FileBrowser({
@@ -60,6 +70,8 @@ export function FileBrowser({
   lockedProvider,
   lockedModel,
   onSandboxExpired,
+  accentHex,
+  glowEnabled = false,
 }: FileBrowserProps) {
   const {
     currentPath,
@@ -200,10 +212,20 @@ export function FileBrowser({
 
   const isRoot = currentPath === '/workspace' || currentPath === '/';
 
+  // Glow-stacking mirrors ChatScreen / ChatSurfaceScreen: outer is the
+  // page-bg layer, `relative isolate` opens a stacking context so the
+  // glow's `-z-10` sits behind sibling content but ABOVE the outer
+  // element's own background paint. The header (`bg-push-grad-panel`)
+  // and the floating commit drawer stay opaque on purpose — the glow
+  // only bleeds through the transparent file-list area, matching how it
+  // bleeds through the chat-message column.
+  const showGlow = glowEnabled && typeof accentHex === 'string' && accentHex.length > 0;
+
   return (
-    <div className="flex h-dvh flex-col bg-push-surface-inset safe-area-top">
+    <div className="relative isolate flex h-dvh flex-col overflow-hidden bg-push-surface-inset safe-area-top">
+      {showGlow && <ChatBackgroundGlow active={true} color={accentHex as string} />}
       {/* Header */}
-      <header className="flex items-center gap-2 border-b border-push-edge-subtle bg-push-grad-panel px-3 py-3">
+      <header className="relative z-10 flex items-center gap-2 border-b border-push-edge-subtle bg-push-grad-panel px-3 py-3">
         <button
           onClick={onBack}
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-push-edge bg-push-surface text-push-fg-secondary transition-colors hover:border-push-edge-hover hover:bg-push-surface-hover hover:text-push-fg active:scale-95"

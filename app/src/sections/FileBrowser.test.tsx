@@ -205,4 +205,52 @@ describe('FileBrowser', () => {
     expect(html).toContain('src');
     expect(html).toContain('components');
   });
+
+  // Pin the repo-glow wiring (PR feat/ui-repo-glow-filebrowser): the
+  // glow only renders when BOTH accentHex is non-empty AND glowEnabled
+  // is true, so callers can keep the accent for theming and toggle the
+  // ambient effect independently — same contract chat uses.
+  describe('repo background glow', () => {
+    it('is absent by default (no accentHex, glowEnabled defaults to false)', () => {
+      const html = renderToStaticMarkup(
+        <FileBrowser
+          sandboxId="sbx-1"
+          workspaceLabel="my-repo"
+          capabilities={{ canCommitAndPush: true }}
+          onBack={vi.fn()}
+        />,
+      );
+      expect(html).not.toContain('push-glow-blob');
+    });
+
+    it('renders when accentHex is set AND glowEnabled is true', () => {
+      const html = renderToStaticMarkup(
+        <FileBrowser
+          sandboxId="sbx-1"
+          workspaceLabel="my-repo"
+          capabilities={{ canCommitAndPush: true }}
+          onBack={vi.fn()}
+          accentHex="#58a6ff"
+          glowEnabled
+        />,
+      );
+      expect(html).toContain('push-glow-blob');
+    });
+
+    it('stays absent when glow is disabled even with an accent', () => {
+      // Accent without glow is the "keep theme, kill ambient" toggle —
+      // matches RepoAppearance.glowEnabled=false in chat.
+      const html = renderToStaticMarkup(
+        <FileBrowser
+          sandboxId="sbx-1"
+          workspaceLabel="my-repo"
+          capabilities={{ canCommitAndPush: true }}
+          onBack={vi.fn()}
+          accentHex="#58a6ff"
+          glowEnabled={false}
+        />,
+      );
+      expect(html).not.toContain('push-glow-blob');
+    });
+  });
 });
