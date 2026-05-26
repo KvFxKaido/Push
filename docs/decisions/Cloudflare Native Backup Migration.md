@@ -36,9 +36,10 @@ caps serialized args/returns at **32 MiB**, so the *effective* ceiling is on the
 | ~25 MiB | ~33.3 MiB | FAIL — `Serialized RPC ... limited to 32MiB ... was 34958536 bytes` (`CF_ERROR` 500) |
 
 Two problems this exposes:
-1. **The `MAX_SNAPSHOT_BYTES = 32 MB` guard is dead code.** It sits *above* the
-   real ~24 MiB RPC ceiling, so it never fires; oversized snapshots crash with an
-   ungraceful `CF_ERROR` instead of a clean "too large" rejection.
+1. **The `MAX_SNAPSHOT_BYTES = 32 MB` guard was dead code** (fixed in #654). It
+   sat *above* the real ~24 MiB RPC ceiling, so it never fired; oversized
+   snapshots crashed with an ungraceful `CF_ERROR` instead of a clean "too large"
+   rejection.
 2. node_modules is excluded and clones are shallow, so source-only snapshots fit
    easily — but a workspace with >~24 MiB of *incompressible* content (binary
    assets, datasets, large committed blobs) silently passes the guard and then
@@ -48,10 +49,12 @@ Native backup sidesteps this entirely: it streams the squashfs to R2 by
 presigned multipart upload (container→R2 direct), with no base64 and no RPC
 round-trip, so the 32 MiB DO RPC cap simply doesn't apply.
 
-**Cheap interim hardening (independent of the migration):** lower
-`MAX_SNAPSHOT_BYTES` so the guard fires *before* the RPC limit — measure against
-the base64 size (reject when `compressed × 1.33 ≥ 32 MiB`, i.e. ~23 MiB
-compressed) — so oversized snapshots fail gracefully. Ship via PR (load-bearing).
+**Interim hardening — SHIPPED in #654 (`2ec340e0`):** `MAX_SNAPSHOT_BYTES` is now
+derived from the RPC limit (`32 MiB × 3/4 − 1 MiB ≈ 23 MiB`) so the guard fires
+*before* base64 crosses the boundary, surfaced as a distinct `413
+SNAPSHOT_TOO_LARGE` (wired through the `SandboxErrorCode` union + provider so it
+reaches callers, not `UNKNOWN`). The current path now fails gracefully; this
+migration remains the way to remove the ceiling entirely.
 
 ## What the native API actually does (verified 2026-05-25, SDK 0.8.11)
 
@@ -154,8 +157,8 @@ when either holds:
 2. We are doing other CF-sandbox work and want to retire the hand-rolled bytes
    opportunistically.
 
-Either way, do the cheap guard fix (see "Why revisit") regardless — it makes the
-current path fail gracefully and is worth shipping even if the migration waits.
+The interim guard fix that makes the current path fail gracefully already shipped
+(#654, see "Why revisit"); this migration is what removes the ceiling for good.
 
 ## Rollback
 
