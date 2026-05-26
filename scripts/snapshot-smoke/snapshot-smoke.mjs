@@ -60,6 +60,11 @@ const cfg = {
   // every /api/* route (except /api/health) requires this token in the
   // X-Push-Deployment-Token header. Leave empty for an open deployment.
   deploymentToken: process.env.PUSH_SMOKE_DEPLOYMENT_TOKEN ?? '',
+  // Stress mode: seed N MB of INCOMPRESSIBLE data (/dev/urandom) instead of the
+  // compressible file tree. This is what actually probes the 32 MB *compressed*
+  // snapshot ceiling (MAX_SNAPSHOT_BYTES) — the file-count mode never does,
+  // because its content gzips to ~nothing. 0 = use file-count mode.
+  blobMb: Number.parseInt(process.env.PUSH_SMOKE_BLOB_MB ?? '0', 10),
 };
 
 if (!cfg.baseUrl) {
@@ -161,13 +166,22 @@ async function main() {
     const origToken = created.json.owner_token;
     pass(`sandbox ${origSandbox} ready in ${ms(timings.createMs)}`);
 
-    // --- Step 2: seed a deterministic file tree + capture pre-manifest ------
-    console.log('Step 2 — seed workspace + manifest');
-    const seedCmd =
-      'rm -rf /workspace/smoke-data && mkdir -p /workspace/smoke-data && ' +
-      `for i in $(seq 1 ${cfg.files}); do { echo "smoke file $i"; seq 1 256; } ` +
-      '> /workspace/smoke-data/file_$i.txt; done && ' +
-      'echo seeded $(find /workspace/smoke-data -type f | wc -l)';
+    // --- Step 2: seed the workspace + capture pre-manifest ------------------
+    // Two modes: incompressible blob (stresses the compressed-size ceiling) or
+    // a compressible file tree (default — exercises file count + the path).
+    const seedCmd = cfg.blobMb
+      ? 'rm -rf /workspace/smoke-data && mkdir -p /workspace/smoke-data && ' +
+        `head -c ${cfg.blobMb * 1024 * 1024} /dev/urandom > /workspace/smoke-data/blob.bin && ` +
+        'echo seeded $(stat -c %s /workspace/smoke-data/blob.bin) bytes'
+      : 'rm -rf /workspace/smoke-data && mkdir -p /workspace/smoke-data && ' +
+        `for i in $(seq 1 ${cfg.files}); do { echo "smoke file $i"; seq 1 256; } ` +
+        '> /workspace/smoke-data/file_$i.txt; done && ' +
+        'echo seeded $(find /workspace/smoke-data -type f | wc -l)';
+    console.log(
+      cfg.blobMb
+        ? `Step 2 — seed ${cfg.blobMb} MB incompressible blob + manifest`
+        : 'Step 2 — seed workspace + manifest',
+    );
     await t('seedMs', () => exec(origSandbox, origToken, seedCmd));
     const preManifest = await exec(origSandbox, origToken, MANIFEST_CMD);
     const [preCount, preDigest] = preManifest.split(/\s+/);

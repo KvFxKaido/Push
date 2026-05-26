@@ -22,13 +22,36 @@ CF snapshot *implementation* to the native API **behind the existing
 
 ## Why revisit
 
-The custom path's load-bearing weakness is the **32 MB compressed ceiling**
-(`MAX_SNAPSHOT_BYTES`): the archive is base64-encoded and passes through Worker
-memory twice — once on hibernate (from `exec` stdout) and once on restore
-(`object.text()` + the `writeFile` arg) — against a ~128 MB Worker memory
-budget. node_modules is excluded and clones are shallow, so source-only
-snapshots usually fit, but it is a hard ceiling we own and an architectural smell
-we would otherwise carry forever.
+The custom path base64-encodes the archive and moves that string across the
+Worker↔Sandbox **Durable Object RPC boundary** — on hibernate (the `base64`
+exec's stdout return) and on restore (the base64 archive passed back in). DO RPC
+caps serialized args/returns at **32 MiB**, so the *effective* ceiling is on the
+**base64** size, i.e. ~24 MiB of *compressed* archive (base64 ≈ ×1.33).
+
+**Measured on prod 2026-05-25** (`PUSH_SMOKE_BLOB_MB`, incompressible data):
+
+| Compressed | base64 | Result |
+|---|---|---|
+| ~20 MiB | ~26.6 MiB | PASS (hibernate 6.5s, restore 6.9s, integrity OK) |
+| ~25 MiB | ~33.3 MiB | FAIL — `Serialized RPC ... limited to 32MiB ... was 34958536 bytes` (`CF_ERROR` 500) |
+
+Two problems this exposes:
+1. **The `MAX_SNAPSHOT_BYTES = 32 MB` guard is dead code.** It sits *above* the
+   real ~24 MiB RPC ceiling, so it never fires; oversized snapshots crash with an
+   ungraceful `CF_ERROR` instead of a clean "too large" rejection.
+2. node_modules is excluded and clones are shallow, so source-only snapshots fit
+   easily — but a workspace with >~24 MiB of *incompressible* content (binary
+   assets, datasets, large committed blobs) silently passes the guard and then
+   fails the snapshot at RPC time.
+
+Native backup sidesteps this entirely: it streams the squashfs to R2 by
+presigned multipart upload (container→R2 direct), with no base64 and no RPC
+round-trip, so the 32 MiB DO RPC cap simply doesn't apply.
+
+**Cheap interim hardening (independent of the migration):** lower
+`MAX_SNAPSHOT_BYTES` so the guard fires *before* the RPC limit — measure against
+the base64 size (reject when `compressed × 1.33 ≥ 32 MiB`, i.e. ~23 MiB
+compressed) — so oversized snapshots fail gracefully. Ship via PR (load-bearing).
 
 ## What the native API actually does (verified 2026-05-25, SDK 0.8.11)
 
@@ -41,7 +64,7 @@ we would otherwise carry forever.
 | Handle | `DirectoryBackup {id, dir}` — serializable, docs say store in KV/D1/DO | `snapshot_id` + `restore_token` (R2 customMetadata) |
 | Excludes | `excludes` globs + `gitignore` (keeps `.git` by default) | hardcoded `SNAPSHOT_DIR_EXCLUDES` |
 | TTL | `ttl` (default 3 days, no upper bound), enforced **at restore time only**; does **not** auto-delete from R2 | KV index TTL (7 days) + inline reclaim + cron reaper |
-| Size ceiling | none documented (the ~24 MiB issue was the local-dev RPC transport, since fixed) | 32 MB compressed |
+| Size ceiling | none documented (presigned multipart, no RPC round-trip) | **~24 MiB compressed** — DO RPC 32 MiB cap on the base64 (measured; the 32 MB guard never fires) |
 | Maturity | Sandbox SDK is **Beta**; the backup API is not separately flagged experimental | ours, stable |
 
 Key correction to the 2026-04-19 spike (`scripts/cf-sandbox-spike/`, now retired):
@@ -124,11 +147,15 @@ by keeping it is the 32 MB headroom.
 Promote from Draft to an implementation commitment (with a `ROADMAP.md` entry)
 when either holds:
 
-1. A real workspace approaches the 32 MB compressed ceiling (raise
-   `PUSH_SMOKE_FILES` or seed a real repo against `scripts/snapshot-smoke/` to
-   measure), **or**
+1. A real workspace's snapshot approaches the ~24 MiB compressed RPC ceiling
+   (probe with `PUSH_SMOKE_BLOB_MB` against `scripts/snapshot-smoke/`, or seed a
+   real repo) — **already shown to bite incompressible workspaces at 25 MiB**, so
+   if Push ever snapshots binary-heavy workspaces this is live, **or**
 2. We are doing other CF-sandbox work and want to retire the hand-rolled bytes
    opportunistically.
+
+Either way, do the cheap guard fix (see "Why revisit") regardless — it makes the
+current path fail gracefully and is worth shipping even if the migration waits.
 
 ## Rollback
 
