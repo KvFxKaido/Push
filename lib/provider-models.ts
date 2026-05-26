@@ -32,7 +32,7 @@ export const OPENROUTER_MAX_SESSION_ID_LENGTH = 256;
 export const ZEN_DEFAULT_MODEL = 'big-pickle';
 export const NVIDIA_DEFAULT_MODEL = 'nvidia/llama-3.1-nemotron-70b-instruct';
 export const KILOCODE_DEFAULT_MODEL = 'google/gemini-3-flash-preview';
-export const BLACKBOX_DEFAULT_MODEL = 'blackbox-ai';
+export const BLACKBOX_DEFAULT_MODEL = 'blackboxai/anthropic/claude-haiku-4.5';
 export const OPENADAPTER_DEFAULT_MODEL = 'deepseek/deepseek-v3';
 
 // Direct-provider defaults — populated by the scaffolding PR; the streaming /
@@ -136,10 +136,22 @@ export const KILOCODE_MODELS: string[] = [
   'kilo-auto/balanced',
 ];
 
+// Curated from the blackbox `/v1/models` endpoint (2026-05-25): coding-relevant
+// subset of the ~130 available. The old `blackbox-ai`/`blackbox-pro`/
+// `blackbox-search` names are NOT valid model ids — the API rejects them
+// ("Invalid model name … Call `/v1/models`"). All valid ids are
+// `blackboxai/<vendor>/<model>`. Free-text entry still permitted at the UI layer.
 export const BLACKBOX_MODELS: string[] = [
   BLACKBOX_DEFAULT_MODEL,
-  'blackbox-pro',
-  'blackbox-search',
+  'blackboxai/anthropic/claude-sonnet-4.6',
+  'blackboxai/anthropic/claude-opus-4.7',
+  'blackboxai/openai/gpt-5.5',
+  'blackboxai/openai/gpt-5.3-codex',
+  'blackboxai/google/gemini-3.1-pro-preview',
+  'blackboxai/x-ai/grok-4.3',
+  'blackboxai/z-ai/glm-5',
+  'blackboxai/moonshotai/kimi-k2.6',
+  'blackboxai/deepseek/deepseek-v4-flash',
 ];
 
 export const OPENADAPTER_MODELS: string[] = [

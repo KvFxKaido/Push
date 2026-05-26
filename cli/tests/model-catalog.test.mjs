@@ -131,7 +131,7 @@ describe('DEFAULT_MODELS', () => {
     zen: 'big-pickle',
     nvidia: 'nvidia/llama-3.1-nemotron-70b-instruct',
     kilocode: 'google/gemini-3-flash-preview',
-    blackbox: 'blackbox-ai',
+    blackbox: 'blackboxai/anthropic/claude-haiku-4.5',
     openadapter: 'deepseek/deepseek-v3',
     openai: 'gpt-5.4',
     anthropic: 'claude-sonnet-4-6',

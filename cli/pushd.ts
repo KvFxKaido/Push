@@ -1244,6 +1244,14 @@ async function handleSendUserMessage(req, emitEvent) {
   }
 
   const { state } = entry;
+
+  // Adopt the client's current provider/model so a mid-session switch in the
+  // TUI (switchModel updates only local state + config) takes effect here. The
+  // daemon otherwise keeps entry.state.model fixed at start_session time, so
+  // switching looks applied in the UI but every run keeps the old model.
+  // Per-role routing (resolveRoleRouting) still takes precedence over this base.
+  adoptClientModelSelection(state, req.payload);
+
   const runId = makeRunId();
   const abortController = new AbortController();
 
@@ -1755,6 +1763,31 @@ async function handleConfigureRoleRouting(req) {
   return makeResponse(req.requestId, 'configure_role_routing', sessionId, true, {
     roleRouting: state.roleRouting,
   });
+}
+
+/**
+ * Adopt a client-supplied provider/model into session state, in place.
+ *
+ * The TUI carries its current provider/model on every `send_user_message` so a
+ * mid-session switch reaches the daemon (the daemon otherwise keeps the model
+ * fixed at `start_session` time). Returns the same `state` for convenience.
+ *
+ * provider + model are treated as ONE atomic selection: the model belongs to
+ * the named provider. So if the payload names a provider we don't recognize,
+ * BOTH fields are ignored — adopting only the model would strand a foreign
+ * model on the session's old provider and break the next run. A payload with no
+ * provider (model-only) is a same-provider model switch and adopts the model.
+ */
+export function adoptClientModelSelection(state, payload) {
+  if (!state || !payload) return state;
+  if (payload.provider != null) {
+    const reqProvider = normalizeProviderInput(payload.provider);
+    if (!reqProvider || !PROVIDER_CONFIGS[reqProvider]) return state; // unknown provider → adopt nothing
+    state.provider = reqProvider;
+  }
+  const reqModel = typeof payload.model === 'string' ? payload.model.trim() : '';
+  if (reqModel) state.model = reqModel;
+  return state;
 }
 
 // ─── Task graph / delegation scaffolds ──────────────────────────

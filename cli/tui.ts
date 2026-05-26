@@ -2584,6 +2584,12 @@ export async function runTUI(options = {}) {
               text,
               attachToken: daemonAttachToken,
               capabilities: [...TUI_DAEMON_CAPABILITIES],
+              // Carry the current provider/model so a mid-session switch
+              // (switchModel only updates local state + config) actually reaches
+              // the daemon, which otherwise keeps the model fixed at
+              // start_session time. See handleSendUserMessage adoption.
+              provider: state.provider,
+              model: state.model,
             },
             daemonSessionId,
           );
