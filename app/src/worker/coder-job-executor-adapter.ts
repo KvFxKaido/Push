@@ -477,12 +477,39 @@ export function createWebExecutorAdapter(args: WebExecutorAdapterArgs): CoderJob
         });
         if (status >= 400) {
           const err = data as ErrorResponse;
+          // NOT_FOUND at the HTTP layer uniquely signals the sandbox container
+          // is gone — emitted by the owner-token gate's `verifySandboxOwnerToken`
+          // after a destroy, by the `/connect` liveness probe, and by the
+          // route-level catch arm via `classifyCfError('no such ...')` in
+          // `worker-cf-sandbox.ts`. From the kernel's perspective these are
+          // all "the sandbox is unreachable from my point of view", so map
+          // them to `SANDBOX_UNREACHABLE` so `lib/coder-agent.ts`'s
+          // sandbox-loss tracker can throw `SandboxUnreachableError` and the
+          // CoderJob DO can restore from the latest checkpoint.
+          //
+          // Also flag `fatal: true` so the kernel throws on the FIRST
+          // occurrence — without it, the threshold-of-2 in the kernel waits
+          // for a SECOND consecutive failing tool call, which never arrives
+          // for models that gracefully summarize after one error
+          // (kimi-k2.6 on Workers AI does exactly that). `/cleanup` is an
+          // unambiguous infrastructure signal; no waiting for confirmation.
+          //
+          // `routeRead` also uses `code: 'NOT_FOUND'` for missing files but
+          // returns it with HTTP 200, so it never enters this `status >= 400`
+          // branch — the file-not-found path stays distinct and never carries
+          // the `fatal` flag.
+          const isSandboxGone = err.code === 'NOT_FOUND';
+          const type = isSandboxGone ? 'SANDBOX_UNREACHABLE' : (err.code ?? 'SANDBOX_UNREACHABLE');
           return {
             text: formatResult(call, data, status),
             structuredError: {
-              type: err.code ?? 'SANDBOX_UNREACHABLE',
-              retryable: status >= 500,
+              type,
+              // A dead sandbox is recoverable via the DO's restore-from-checkpoint
+              // path — flag it retryable independent of HTTP status so callers
+              // (and OTEL spans) see the right shape.
+              retryable: type === 'SANDBOX_UNREACHABLE' ? true : status >= 500,
               message: err.error ?? `HTTP ${status}`,
+              ...(isSandboxGone ? { fatal: true } : {}),
             },
           };
         }

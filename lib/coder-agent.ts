@@ -547,6 +547,18 @@ export type CoderToolExecResult<TCard> =
        * lift Web's `ToolErrorType` union.
        */
       errorType?: string;
+      /**
+       * Marks a result as definitively (not transiently) unrecoverable on
+       * the same sandbox. When true, the kernel's sandbox-loss tracker
+       * throws `SandboxUnreachableError` on this single call rather than
+       * waiting for `SANDBOX_LOSS_THRESHOLD` consecutive failures. Set by
+       * the executor adapter when the worker returns `code: 'NOT_FOUND'`
+       * (auth gate confirmed the container is gone). Optional and omitted
+       * by default — transient SDK blips don't carry it and still respect
+       * the threshold-of-2 behavior. Propagated from
+       * `SandboxToolExecResult.structuredError.fatal`.
+       */
+      fatal?: boolean;
       policyPost?: { kind: 'inject'; content: string } | { kind: 'halt'; summary: string };
     }
   | { kind: 'denied'; reason: string };
@@ -808,10 +820,23 @@ export async function runCoderAgent<TCall, TCard>(
   // SandboxUnreachableError. The host catches it to restore a checkpoint and
   // re-run with `resumeState`, instead of burning rounds against a dead box. A
   // single transient blip (one loss then a success) resets the counter.
+  //
+  // The threshold-of-2 design exists for transient SDK blips, where ONE bad
+  // call is followed by recovery. But some failure modes are unambiguously
+  // terminal — the auth gate returning `NOT_FOUND` after `/api/sandbox-cf/cleanup`
+  // tells us the container is gone; no amount of waiting will fix it. Those
+  // results carry `fatal: true` (set by the executor adapter, see
+  // `coder-job-executor-adapter.ts`) and bypass the threshold — without this
+  // bypass, a model that gracefully summarizes after the FIRST tool error
+  // (kimi-k2.6 on Workers AI does exactly that) never makes the second
+  // failing call the counter needs, so the resume path silently doesn't fire.
   let consecutiveSandboxLoss = 0;
   const toolExec: typeof rawToolExec = async (call, execCtx) => {
     const result = await rawToolExec(call, execCtx);
     if (result.kind === 'executed' && result.errorType === 'SANDBOX_UNREACHABLE') {
+      if (result.fatal) {
+        throw new SandboxUnreachableError();
+      }
       consecutiveSandboxLoss += 1;
       if (consecutiveSandboxLoss >= SANDBOX_LOSS_THRESHOLD) {
         throw new SandboxUnreachableError();

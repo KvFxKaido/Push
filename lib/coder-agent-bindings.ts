@@ -144,6 +144,18 @@ export interface SandboxToolExecResult<TCard> {
     type: string;
     retryable: boolean;
     message: string;
+    /** Marks a result as definitively (not transiently) unrecoverable on
+     *  the same sandbox — e.g. the sandbox container has been destroyed
+     *  and the auth gate returns `NOT_FOUND`. The kernel uses this to
+     *  short-circuit the `SANDBOX_LOSS_THRESHOLD` counter and throw
+     *  `SandboxUnreachableError` on the FIRST occurrence rather than
+     *  waiting for the model to make a second consecutive tool call —
+     *  some models (kimi-k2.6 on Workers AI) gracefully summarize after
+     *  one error and never give the counter a second chance, which would
+     *  otherwise silently bypass the DO's resume path. Optional and
+     *  omitted by default so the threshold-of-2 behavior still applies
+     *  to transient SDK blips. */
+    fatal?: boolean;
   };
   /** Background-side observability for branch-affecting tools. See
    *  `SandboxToolMeta`. Undefined for foreground results — those use
@@ -573,6 +585,11 @@ export function buildCoderToolExec<
       resultText: sbResult.text,
       card: sbResult.card,
       errorType: sbResult.structuredError?.type,
+      // Propagate the fatal flag so the kernel's sandbox-loss tracker can
+      // throw `SandboxUnreachableError` on the FIRST occurrence — see the
+      // `fatal` field on `SandboxToolExecResult.structuredError` and the
+      // corresponding `CoderToolExecResult` field for the rationale.
+      fatal: sbResult.structuredError?.fatal,
       policyPost,
     };
   };

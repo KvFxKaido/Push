@@ -214,6 +214,43 @@ describe('runCoderAgent (PushStream consumer)', () => {
     ).rejects.toBeInstanceOf(SandboxUnreachableError);
   });
 
+  it('throws SandboxUnreachableError on the FIRST fatal-flagged SANDBOX_UNREACHABLE (bypasses threshold)', async () => {
+    // Models that gracefully summarize after one tool error never make the
+    // second consecutive failing call the threshold-of-2 needs. When the
+    // executor adapter marks a result as `fatal: true` (e.g. `/cleanup`
+    // killed the sandbox → auth gate returns NOT_FOUND), the kernel must
+    // throw immediately so the host's resume catch-arm fires before the
+    // model has a chance to wrap up gracefully.
+    //
+    // Single-call path here: one tool call from `detectAnyToolCall`,
+    // one fatal=true result → throw must propagate without waiting for
+    // a second call to land.
+    const { stream } = makePushStream([
+      [
+        { type: 'text_delta', text: 'reading' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+    const detectAnyToolCall = () =>
+      ({ call: { tool: 'sandbox_read_file', args: { path: 'a' } } }) as Call;
+    const toolExec = async () => ({
+      kind: 'executed' as const,
+      resultText: 'sandbox gone',
+      errorType: 'SANDBOX_UNREACHABLE',
+      fatal: true,
+    });
+
+    await expect(
+      runCoderAgent(
+        {
+          ...baseCoderOptions({ stream, detectAnyToolCall, evaluateAfterModel: async () => null }),
+          toolExec,
+        },
+        { onStatus: () => {} },
+      ),
+    ).rejects.toBeInstanceOf(SandboxUnreachableError);
+  });
+
   it('does not throw on an isolated SANDBOX_UNREACHABLE blip (counter resets on success)', async () => {
     const { stream } = makePushStream(
       Array.from({ length: 4 }, () => [

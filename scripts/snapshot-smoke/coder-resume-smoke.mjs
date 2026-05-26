@@ -44,17 +44,14 @@
 // `@cf/moonshotai/kimi-k2.6` — strong enough on Workers AI to chain multiple
 // tool calls. Override with PUSH_SMOKE_MODEL.
 //
-// KNOWN GAP (as of 2026-05-25): `/api/sandbox-cf/cleanup` does NOT trigger
-// the resume path on the deployed runtime — the auth gate returns
-// `code: 'NOT_FOUND'` for a destroyed sandbox, which the executor adapter
-// passes through as `errorType: 'NOT_FOUND'`; `lib/coder-agent.ts`'s
-// `SANDBOX_LOSS_THRESHOLD` counter only counts `'SANDBOX_UNREACHABLE'`. So
-// the kill above lets the model observe tool errors and produce a partial
-// summary rather than exercising the DO's resume catch arm. See
-// `scripts/snapshot-smoke/README.md` §"Layer 3" for the workaround
-// (destroy the container via the Cloudflare dashboard, which produces the
-// RPC-throw shape that DOES map to SANDBOX_UNREACHABLE) and the proposed
-// narrow fix in the executor adapter.
+// As of 2026-05-25 the `/api/sandbox-cf/cleanup` flow above triggers the
+// resume path end-to-end: the executor adapter maps `NOT_FOUND` from the
+// auth gate to `errorType: 'SANDBOX_UNREACHABLE', fatal: true`, and the
+// kernel's loss tracker throws `SandboxUnreachableError` on the first
+// `fatal` result (bypassing the threshold-of-2 that was previously
+// silently shielding the resume path from kicking in). See
+// `scripts/snapshot-smoke/README.md` §"Layer 3" for the full status table
+// and the live-test trace.
 //
 // Run:
 //   PUSH_SMOKE_BASE_URL=https://push.<sub>.workers.dev \
