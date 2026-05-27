@@ -44,6 +44,11 @@ import {
   renderKeybindHints,
   renderStatusBar,
 } from './tui-status.js';
+import {
+  evaluateHelloResponse,
+  formatUnknownEventWarning,
+  shouldWarnAboutUnknownEvent,
+} from './tui-daemon-handshake.js';
 import { getContextBudget, estimateContextTokens } from './context-manager.js';
 import { filterSessions } from './tui-fuzzy.js';
 import { findLastAssistantText, findLastCodeBlock, formatByteSize } from './tui-copy.js';
@@ -1458,6 +1463,11 @@ export async function runTUI(options = {}) {
   let daemonSessionId = null;
   let daemonAttachToken = null;
   let daemonAutoStartAttempted = false;
+  // Registry of unknown event types we've already surfaced a warning
+  // for on the current daemon connection. Cleared on each reconnect
+  // by `tryDaemonConnect` so a daemon upgrade resurfaces the warning
+  // for any genuinely-new types it starts emitting.
+  const unknownEventWarnedTypes = new Set();
 
   async function readDaemonPidFile(pidPath) {
     try {
@@ -1559,13 +1569,45 @@ export async function runTUI(options = {}) {
         500,
       );
       if (!hello.ok) {
+        // Surface the actual error code+message instead of silently
+        // disconnecting. The most common case is
+        // `UNSUPPORTED_PROTOCOL_VERSION` — the daemon binary is older
+        // or newer than this TUI build. Falling back to inline with no
+        // hint why hid the real cause; the warning gives the user a
+        // clear thread to pull on.
+        const code = hello.error?.code ? `${hello.error.code}: ` : '';
+        const message = hello.error?.message || 'unknown error';
+        addTranscriptEntry(
+          tuiState,
+          'warning',
+          `Daemon hello rejected (${code}${message}). Running inline; restart pushd or rebuild the TUI.`,
+        );
         client.close();
         return false;
+      }
+
+      const handshake = evaluateHelloResponse(hello.payload);
+      if (!handshake.accepted) {
+        addTranscriptEntry(tuiState, 'warning', handshake.reason);
+        client.close();
+        return false;
+      }
+      // Surface any non-fatal handshake warnings (e.g. missing
+      // runtimeVersion on older daemons) once per connect so the user
+      // knows what state they're in without it being a hard error.
+      for (const w of handshake.warnings) {
+        addTranscriptEntry(tuiState, 'warning', w);
       }
 
       daemonClient = client;
       tuiState.dirty.add('footer');
       scheduler?.schedule();
+
+      // Reset the per-connection unknown-event registry so a daemon
+      // upgrade across a reconnect re-surfaces drift instead of
+      // remembering "we already warned about that type" from the
+      // previous link.
+      unknownEventWarnedTypes.clear();
 
       // Register event handler — bridge daemon events to TUI
       client.onEvent((event) => {
@@ -2403,6 +2445,16 @@ export async function runTUI(options = {}) {
             addTranscriptEntry(tuiState, entry.role, entry.text);
             scheduler.schedule();
           }
+        } else if (shouldWarnAboutUnknownEvent(unknownEventWarnedTypes, event.type)) {
+          // Anything that isn't an explicit case, isn't a delegation
+          // event, and isn't on the known-noop allowlist
+          // (`TUI_KNOWN_NOOP_EVENT_TYPES`) is real protocol drift —
+          // typically a newer daemon emitting a new event family the
+          // TUI doesn't know about. Surface it once per type so the
+          // user (and ops) see the drift the first time it happens
+          // instead of getting a silent drop forever.
+          addTranscriptEntry(tuiState, 'warning', formatUnknownEventWarning(event.type));
+          scheduler.schedule();
         }
         break;
     }

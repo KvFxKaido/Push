@@ -1,0 +1,202 @@
+/**
+ * tui-daemon-handshake.ts — Hello-response evaluation + unknown-event triage.
+ *
+ * Two purely-functional concerns the TUI uses to keep its link with
+ * the daemon honest:
+ *
+ *   1. **Hello-response evaluation.** The daemon already advertises its
+ *      `protocolVersion` and `runtimeVersion` in the `hello` reply, but
+ *      the TUI used to ignore both fields — connecting in silence on
+ *      success and falling back to inline mode on failure with no hint
+ *      that "the daemon is alive but speaks a different protocol"
+ *      might be the actual cause. `evaluateHelloResponse` reads the
+ *      reply, checks it against the TUI's pinned `PROTOCOL_VERSION`,
+ *      and returns a typed result the caller renders: `accepted`
+ *      proceeds, `rejected` surfaces an actionable warning instead of
+ *      a silent disconnect.
+ *
+ *   2. **Unknown-event triage.** `handleEngineEvent`'s `default:`
+ *      branch used to silently swallow every event type the TUI
+ *      didn't explicitly handle. A newer daemon emitting a new event
+ *      family to an older TUI was invisible — the events vanished
+ *      with no log. `shouldWarnAboutUnknownEvent` gates a one-shot
+ *      warning per distinct type so the user (and ops) see drift the
+ *      first time it happens without spamming the transcript on every
+ *      occurrence.
+ *
+ * Both helpers are pure — they don't touch tuiState, the daemon
+ * client, or any other side-effecting surface. The TUI wires them
+ * into the relevant flows.
+ *
+ * No `import` from `cli/pushd.ts` on purpose: pulling the daemon
+ * module into the TUI's hot path would drag the whole runtime
+ * (capabilities, role agents, sandbox bindings) into a closure that
+ * shouldn't need any of it. The wire-protocol constant lives in
+ * `lib/protocol-schema.ts` (the shared layer); the daemon's runtime
+ * version is surfaced only when the daemon advertises it and is
+ * displayed informationally.
+ */
+
+import { PROTOCOL_VERSION } from '../lib/protocol-schema.js';
+
+/**
+ * Wire-protocol version the TUI expects the daemon to advertise.
+ * Imported from the shared schema module so the TUI and the daemon's
+ * own dispatcher compare against the same constant by construction —
+ * bumping `PROTOCOL_VERSION` lifts both sides at once and the
+ * handshake can never silently diverge from the request gate.
+ */
+export const EXPECTED_PROTOCOL_VERSION = PROTOCOL_VERSION;
+
+/**
+ * Daemon-emitted event types the TUI intentionally has no UI for. The
+ * `default:` branch of `handleEngineEvent` looks each unknown event
+ * up here before warning — anything on this set is a known no-op
+ * (logged elsewhere, surfaced through a downstream event, or just
+ * informational for tooling outside the TUI). Anything *off* this
+ * set is real drift and earns a one-shot transcript warning.
+ *
+ * Curated, not exhaustive: a new daemon-only event family that
+ * should also be silent in the TUI gets added here in the same PR
+ * that introduces it. The deliberate friction is the point — silent
+ * drops are how protocol drift hides today.
+ */
+export const TUI_KNOWN_NOOP_EVENT_TYPES: ReadonlySet<string> = new Set([
+  // Emitted once at session-create. The TUI already knows the session
+  // exists (it asked for it) so there's nothing new to render.
+  'session_started',
+  // Echo of the user's own message — re-rendering it would duplicate
+  // the entry the composer already pushed into the transcript.
+  'user_message',
+  // Dev observability events from the lib agent kernels. Useful via
+  // structured logging and debug surfaces; the TUI has no transcript
+  // role for them today.
+  'assistant.prompt_snapshot',
+  'context.compaction',
+  // Crash-recovery markers. The user-visible effect ships as the
+  // run_complete / error that follows; the markers themselves exist
+  // for ops tooling, not the chat surface.
+  'run_recovered',
+  'recovery_skipped',
+  // Delegation-interruption marker. Surfaced via the paired
+  // subagent.failed event the delegation renderer already handles.
+  'delegation_interrupted',
+]);
+
+/**
+ * Result of evaluating a `hello` reply. The TUI is expected to:
+ *
+ *   - `accepted: true`  — register the event handler and proceed.
+ *     Any `warnings` get surfaced as transcript entries but don't
+ *     block the connect.
+ *   - `accepted: false` — close the client and skip the connect. The
+ *     `reason` is a user-facing string the caller dumps into the
+ *     transcript so the failure mode is observable instead of
+ *     "daemon disconnected for unknown reason."
+ */
+export type HandshakeResult =
+  | { accepted: true; runtimeVersion: string | null; capabilities: string[]; warnings: string[] }
+  | { accepted: false; reason: string };
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Decide whether a hello response is acceptable.
+ *
+ * Hard-fails on:
+ *   - missing/non-object payload — the daemon is responding with the
+ *     wrong shape, so the rest of the protocol is going to be
+ *     unusable.
+ *   - protocolVersion mismatch — the daemon's dispatcher would
+ *     reject every subsequent request with
+ *     `UNSUPPORTED_PROTOCOL_VERSION` anyway, so failing fast here
+ *     turns the silent fallback into an actionable warning.
+ *
+ * Surfaces (non-fatal) warnings on:
+ *   - missing/non-string runtimeVersion. Older daemon that doesn't
+ *     advertise it. We accept and let the user keep going; the next
+ *     daemon upgrade will start advertising.
+ *
+ * Runtime version itself is informational — the TUI doesn't pin an
+ * "expected daemon runtime version" because that requires
+ * coordinating two literals (TUI + daemon) that already ship from
+ * the same npm package. Mismatches between the TUI and the daemon
+ * built from the same source would only arise from mixing installs,
+ * which is rare; if it becomes a real issue we can add the check
+ * here.
+ */
+export function evaluateHelloResponse(payload: unknown): HandshakeResult {
+  if (!isPlainObject(payload)) {
+    return {
+      accepted: false,
+      reason: `Daemon hello response is not an object (got ${typeof payload}). The daemon binary may be corrupt or mismatched.`,
+    };
+  }
+
+  const protocolVersion = payload.protocolVersion;
+  if (typeof protocolVersion !== 'string' || protocolVersion.length === 0) {
+    return {
+      accepted: false,
+      reason: `Daemon hello response is missing a protocolVersion field. Expected "${EXPECTED_PROTOCOL_VERSION}".`,
+    };
+  }
+  if (protocolVersion !== EXPECTED_PROTOCOL_VERSION) {
+    return {
+      accepted: false,
+      reason: `Daemon protocol version mismatch: expected "${EXPECTED_PROTOCOL_VERSION}", daemon advertised "${protocolVersion}". Restart pushd against a matching TUI build.`,
+    };
+  }
+
+  const warnings: string[] = [];
+  let runtimeVersion: string | null = null;
+  if (typeof payload.runtimeVersion === 'string' && payload.runtimeVersion.length > 0) {
+    runtimeVersion = payload.runtimeVersion;
+  } else {
+    warnings.push(
+      'Daemon did not advertise a runtimeVersion. Older binary — features added since this TUI build may not be available.',
+    );
+  }
+
+  const capabilities = Array.isArray(payload.capabilities)
+    ? payload.capabilities.filter((c): c is string => typeof c === 'string')
+    : [];
+
+  return { accepted: true, runtimeVersion, capabilities, warnings };
+}
+
+/**
+ * Decide whether to surface a one-shot warning for an unknown event.
+ *
+ * The `registry` is owned by the caller — typically a per-daemon-
+ * connection Set that gets cleared on reconnect so a daemon upgrade
+ * resurfaces the warning. Returns true the first time a given type
+ * is seen and never again for that registry, so the transcript
+ * shows each new drift exactly once instead of either a flood (one
+ * entry per occurrence) or nothing (silent drop, the regression
+ * we're closing).
+ *
+ * Types in `TUI_KNOWN_NOOP_EVENT_TYPES` short-circuit to false —
+ * they are intentionally silent, not drift.
+ */
+export function shouldWarnAboutUnknownEvent(registry: Set<string>, eventType: string): boolean {
+  if (!eventType || typeof eventType !== 'string') return false;
+  if (TUI_KNOWN_NOOP_EVENT_TYPES.has(eventType)) return false;
+  if (registry.has(eventType)) return false;
+  registry.add(eventType);
+  return true;
+}
+
+/**
+ * Format a transcript warning line for a single unknown event type.
+ * Caller-side helper so the wording stays consistent and so unit
+ * tests can pin it without driving a full TUI render loop.
+ */
+export function formatUnknownEventWarning(eventType: string): string {
+  return (
+    `Daemon emitted unknown event type "${eventType}" — the TUI silently ignored it. ` +
+    `This usually means the daemon is newer than the TUI; consider rebuilding the TUI ` +
+    `or filing a bug if both are from the same install.`
+  );
+}
