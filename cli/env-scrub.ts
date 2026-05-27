@@ -104,6 +104,17 @@ export interface ScrubOptions {
   source?: NodeJS.ProcessEnv;
   extraAllow?: ReadonlyArray<string>;
   extraAllowPrefixes?: ReadonlyArray<string>;
+  // Defaults to `process.platform`. On Windows env var names are
+  // case-insensitive at the OS level (`Path` and `PATH` are the same
+  // variable) and Node surfaces the OS spelling — commonly mixed case
+  // (`Path`, `SystemRoot`, `ComSpec`, `ProgramFiles`, `ProgramW6432`,
+  // `ProgramFiles(x86)`). When `platform === 'win32'` we match the
+  // allowlist case-insensitively so the canonical uppercase entries
+  // still cover those keys; without this, `cmd.exe` / `powershell` /
+  // anything under Program Files would fail to launch from a
+  // sandbox_exec subprocess on Windows. Output keys keep the source's
+  // original casing — only matching is normalized.
+  platform?: NodeJS.Platform;
 }
 
 export function scrubEnv(options: ScrubOptions = {}): NodeJS.ProcessEnv {
@@ -118,26 +129,32 @@ export function scrubEnv(options: ScrubOptions = {}): NodeJS.ProcessEnv {
   }
 
   const userAllow = parseAllowList(process.env.PUSH_SCRUB_ALLOW);
-  const allowKeys = new Set<string>([
-    ...DEFAULT_ALLOW_KEYS,
-    ...(options.extraAllow ?? []),
-    ...userAllow.keys,
-  ]);
-  const allowPrefixes: string[] = [
+  const allowKeysRaw = [...DEFAULT_ALLOW_KEYS, ...(options.extraAllow ?? []), ...userAllow.keys];
+  const allowPrefixesRaw: string[] = [
     ...DEFAULT_ALLOW_PREFIXES,
     ...(options.extraAllowPrefixes ?? []),
     ...userAllow.prefixes,
   ];
 
+  const platform = options.platform ?? process.platform;
+  const caseInsensitive = platform === 'win32';
+  const allowKeys = new Set<string>(
+    caseInsensitive ? allowKeysRaw.map((k) => k.toUpperCase()) : allowKeysRaw,
+  );
+  const allowPrefixes = caseInsensitive
+    ? allowPrefixesRaw.map((p) => p.toUpperCase())
+    : allowPrefixesRaw;
+
   const out: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(source)) {
     if (v === undefined) continue;
-    if (allowKeys.has(k)) {
+    const matchKey = caseInsensitive ? k.toUpperCase() : k;
+    if (allowKeys.has(matchKey)) {
       out[k] = v;
       continue;
     }
     for (const prefix of allowPrefixes) {
-      if (k.startsWith(prefix)) {
+      if (matchKey.startsWith(prefix)) {
         out[k] = v;
         break;
       }

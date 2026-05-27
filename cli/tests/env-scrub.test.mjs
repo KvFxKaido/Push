@@ -164,6 +164,73 @@ describe('scrubEnv', () => {
   });
 });
 
+describe('scrubEnv on Windows', () => {
+  // Windows env vars are case-insensitive at the OS level and Node
+  // surfaces the OS spelling. The allowlist's canonical uppercase
+  // entries must still cover Node's mixed-case keys, otherwise
+  // sandbox_exec subprocesses on Windows lose Path/SystemRoot/ComSpec
+  // and can't launch cmd/powershell/anything under Program Files.
+  it('matches Windows mixed-case env names case-insensitively', () => {
+    const out = scrubEnv({
+      platform: 'win32',
+      source: {
+        Path: 'C:\\Windows\\System32',
+        SystemRoot: 'C:\\Windows',
+        ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+        ProgramFiles: 'C:\\Program Files',
+        'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+        ProgramW6432: 'C:\\Program Files',
+        UserProfile: 'C:\\Users\\test',
+        APPDATA: 'C:\\Users\\test\\AppData\\Roaming',
+        PUSH_ANTHROPIC_API_KEY: 'sk-secret',
+      },
+    });
+    assert.equal(out.Path, 'C:\\Windows\\System32');
+    assert.equal(out.SystemRoot, 'C:\\Windows');
+    assert.equal(out.ComSpec, 'C:\\Windows\\System32\\cmd.exe');
+    assert.equal(out.ProgramFiles, 'C:\\Program Files');
+    assert.equal(out['ProgramFiles(x86)'], 'C:\\Program Files (x86)');
+    assert.equal(out.ProgramW6432, 'C:\\Program Files');
+    assert.equal(out.UserProfile, 'C:\\Users\\test');
+    assert.equal(out.APPDATA, 'C:\\Users\\test\\AppData\\Roaming');
+    assert.equal(out.PUSH_ANTHROPIC_API_KEY, undefined);
+  });
+
+  it('preserves the source key casing on output', () => {
+    const out = scrubEnv({
+      platform: 'win32',
+      source: { Path: 'C:\\Windows' },
+    });
+    assert.equal(out.Path, 'C:\\Windows');
+    assert.ok(!Object.prototype.hasOwnProperty.call(out, 'PATH'));
+  });
+
+  it('matches prefix patterns case-insensitively on Windows', () => {
+    const out = scrubEnv({
+      platform: 'win32',
+      source: {
+        Path: '/u',
+        // npm sets these lowercase even on Windows but be defensive:
+        Npm_Config_Registry: 'https://example.com/',
+        Lc_All: 'en_US.UTF-8',
+      },
+    });
+    assert.equal(out.Npm_Config_Registry, 'https://example.com/');
+    assert.equal(out.Lc_All, 'en_US.UTF-8');
+  });
+
+  it('keeps POSIX matching case-sensitive', () => {
+    // On POSIX, `Path` and `PATH` are distinct env vars. Don't merge
+    // them silently — preserve the prior strict matching.
+    const out = scrubEnv({
+      platform: 'linux',
+      source: { Path: '/usr/bin', PATH: '/usr/local/bin' },
+    });
+    assert.equal(out.PATH, '/usr/local/bin');
+    assert.equal(out.Path, undefined);
+  });
+});
+
 describe('scrubEnv end-to-end', () => {
   it('subprocess cannot see provider keys via env', async (t) => {
     // Skip on Windows — sh/env aren't reliably available there. The
