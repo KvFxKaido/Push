@@ -659,7 +659,304 @@ function validateSessionStateChanged(payload: unknown, basePath: string): Valida
   return issues;
 }
 
+// ---------------------------------------------------------------------------
+// Daemon-emitted lifecycle / streaming event validators (PR #4)
+// ---------------------------------------------------------------------------
+//
+// The events covered below all have stable on-the-wire shapes pinned
+// by `cli/pushd.ts` (the daemon broadcaster) and read by `cli/tui.ts`
+// (`handleEngineEvent`) and `app/src/hooks/chat-*` (web round loop).
+// Before this batch the protocol-drift suite only validated the nine
+// delegation envelopes + two prompt/compaction envelopes — 40+ other
+// daemon-emitted types went through strict mode unchecked, so a
+// rename or wrong-type regression survived CI as long as the
+// envelope-level fields (v/kind/sessionId/seq/ts/type/payload) were
+// well-formed. Each validator below is intentionally narrow about
+// the keys it pins (the ones at least one consumer actually reads)
+// and permissive about extras so additive payload growth is safe.
+
+/** Tokens streamed back to the TUI/web. Payload carries the chunk text.
+ *
+ * `text` must be a string (so concat sites never get `undefined`), but
+ * may be empty — provider streams legitimately emit zero-length deltas
+ * across the content/reasoning boundary, and rejecting them in strict
+ * mode killed the daemon's broadcast loop on real runs. */
+function validateAssistantTextChunk(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  if (typeof payload.text !== 'string') {
+    issues.push({
+      path: `${basePath}.text`,
+      message: `expected string, got ${JSON.stringify(payload.text)}`,
+    });
+  }
+  return issues;
+}
+
+/** Tool call announcement. Both `tool_call` and `tool.execution_start`
+ * land here because the TUI reads the same fields out of both. */
+function validateToolCall(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const n = expectNonEmptyString(payload, 'toolName', basePath);
+  if (n) issues.push(n);
+  // `args` is required but can be any JSON shape (string keys → any
+  // value). We only insist it's *present and an object*; per-tool
+  // arg schemas live in `lib/tool-registry.ts` and validate there.
+  if (!isPlainObject(payload.args)) {
+    issues.push({
+      path: `${basePath}.args`,
+      message: `expected plain object, got ${JSON.stringify(payload.args)}`,
+    });
+  }
+  return issues;
+}
+
+/** Tool call result. Both `tool_result` and `tool.execution_complete`
+ * land here. `text` and `preview` are alternates — the TUI's
+ * `handleEngineEvent` reads `text || preview`. */
+function validateToolResult(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const n = expectNonEmptyString(payload, 'toolName', basePath);
+  if (n) issues.push(n);
+  if (typeof payload.isError !== 'boolean') {
+    issues.push({
+      path: `${basePath}.isError`,
+      message: `expected boolean, got ${JSON.stringify(payload.isError)}`,
+    });
+  }
+  // text / preview both optional strings (one or the other is usually
+  // present; neither being set is legitimate for fire-and-forget
+  // tools whose stdout is intentionally discarded).
+  const t = expectOptionalString(payload, 'text', basePath);
+  if (t) issues.push(t);
+  const p = expectOptionalString(payload, 'preview', basePath);
+  if (p) issues.push(p);
+  const d = expectOptionalFiniteNumber(payload, 'durationMs', basePath);
+  if (d) issues.push(d);
+  return issues;
+}
+
+/** Parser-side malformed tool call detection. */
+function validateToolCallMalformed(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const r = expectNonEmptyString(payload, 'reason', basePath);
+  if (r) issues.push(r);
+  return issues;
+}
+
+/** Runtime error event. */
+function validateErrorPayload(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const m = expectNonEmptyString(payload, 'message', basePath);
+  if (m) issues.push(m);
+  // `code` is optional but, when present, must be a non-empty string —
+  // empty/null codes were a regression source on PR #656 because the
+  // surface code defaulted to "everything is unknown."
+  if ('code' in payload && payload.code !== undefined) {
+    if (typeof payload.code !== 'string' || payload.code.length === 0) {
+      issues.push({
+        path: `${basePath}.code`,
+        message: `expected non-empty string or omitted, got ${JSON.stringify(payload.code)}`,
+      });
+    }
+  }
+  if ('retryable' in payload && payload.retryable !== undefined) {
+    if (typeof payload.retryable !== 'boolean') {
+      issues.push({
+        path: `${basePath}.retryable`,
+        message: `expected boolean or omitted, got ${JSON.stringify(payload.retryable)}`,
+      });
+    }
+  }
+  return issues;
+}
+
+/** Soft warning event — at least one of `message` / `code` is required
+ * because the TUI renders `event.payload.message || event.payload.code`
+ * and an empty warning chip is worse than no event. */
+function validateWarningPayload(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const hasMessage = typeof payload.message === 'string' && payload.message.length > 0;
+  const hasCode = typeof payload.code === 'string' && payload.code.length > 0;
+  if (!hasMessage && !hasCode) {
+    issues.push({
+      path: basePath,
+      message: 'expected at least one of "message" or "code" to be a non-empty string',
+    });
+  }
+  return issues;
+}
+
+/** Status / progress event — same one-of rule as warning since the
+ * TUI renders `payload.detail || payload.phase`. */
+function validateStatusPayload(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const hasDetail = typeof payload.detail === 'string' && payload.detail.length > 0;
+  const hasPhase = typeof payload.phase === 'string' && payload.phase.length > 0;
+  if (!hasDetail && !hasPhase) {
+    issues.push({
+      path: basePath,
+      message: 'expected at least one of "detail" or "phase" to be a non-empty string',
+    });
+  }
+  return issues;
+}
+
+/** Approval request. Triggers an approval modal in the TUI / web. */
+function validateApprovalRequired(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const id = expectNonEmptyString(payload, 'approvalId', basePath);
+  if (id) issues.push(id);
+  const kind = expectNonEmptyString(payload, 'kind', basePath);
+  if (kind) issues.push(kind);
+  const title = expectNonEmptyString(payload, 'title', basePath);
+  if (title) issues.push(title);
+  if (typeof payload.summary !== 'string') {
+    // summary can be empty (e.g. for tools without a free-form
+    // detail), but must be a string — older daemons sometimes
+    // passed objects/JSON and the modal rendered "[object Object]".
+    issues.push({
+      path: `${basePath}.summary`,
+      message: `expected string, got ${JSON.stringify(payload.summary)}`,
+    });
+  }
+  if (!Array.isArray(payload.options) || payload.options.length === 0) {
+    issues.push({
+      path: `${basePath}.options`,
+      message: `expected non-empty array, got ${JSON.stringify(payload.options)}`,
+    });
+  }
+  return issues;
+}
+
+/** Approval decision broadcast. */
+function validateApprovalReceived(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const id = expectNonEmptyString(payload, 'approvalId', basePath);
+  if (id) issues.push(id);
+  if (payload.decision !== 'approve' && payload.decision !== 'deny') {
+    issues.push({
+      path: `${basePath}.decision`,
+      message: `expected "approve" or "deny", got ${JSON.stringify(payload.decision)}`,
+    });
+  }
+  // `by` is informational; when present should be a non-empty string.
+  if ('by' in payload && payload.by !== undefined) {
+    if (typeof payload.by !== 'string' || payload.by.length === 0) {
+      issues.push({
+        path: `${basePath}.by`,
+        message: `expected non-empty string or omitted, got ${JSON.stringify(payload.by)}`,
+      });
+    }
+  }
+  return issues;
+}
+
+/** Allowed values for `run_complete.outcome`. Mirrors the union used by
+ * the engine's emit sites (`cli/engine.ts` + the daemon's failure
+ * fallback in `cli/pushd.ts:handleSendUserMessage`). Kept narrow so a
+ * typo at emit time fails strict-mode loudly; expand here when a new
+ * outcome ships. */
+const RUN_COMPLETE_OUTCOMES = ['success', 'completed', 'failed', 'aborted', 'max_rounds'] as const;
+
+/** Run-end event. */
+function validateRunComplete(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const outcome = payload.outcome;
+  if (typeof outcome !== 'string' || !RUN_COMPLETE_OUTCOMES.includes(outcome as never)) {
+    issues.push({
+      path: `${basePath}.outcome`,
+      message: `expected one of ${JSON.stringify(RUN_COMPLETE_OUTCOMES)}, got ${JSON.stringify(outcome)}`,
+    });
+  }
+  // `summary` and `runId` both optional; daemon-side they're populated
+  // when the kernel surfaces a final message.
+  const s = expectOptionalString(payload, 'summary', basePath);
+  if (s) issues.push(s);
+  const r = expectOptionalString(payload, 'runId', basePath);
+  if (r) issues.push(r);
+  return issues;
+}
+
+/** Session-creation marker emitted once at start_session. */
+function validateSessionStarted(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const sid = expectNonEmptyString(payload, 'sessionId', basePath);
+  if (sid) issues.push(sid);
+  if (payload.state !== 'idle' && payload.state !== 'running') {
+    issues.push({
+      path: `${basePath}.state`,
+      message: `expected "idle" or "running", got ${JSON.stringify(payload.state)}`,
+    });
+  }
+  const mode = expectOptionalString(payload, 'mode', basePath);
+  if (mode) issues.push(mode);
+  const provider = expectOptionalString(payload, 'provider', basePath);
+  if (provider) issues.push(provider);
+  const sbox = expectOptionalString(payload, 'sandboxProvider', basePath);
+  if (sbox) issues.push(sbox);
+  return issues;
+}
+
+/** User-message echo emitted after `send_user_message`. The web and
+ * the TUI both re-render their own message synchronously and ignore
+ * this event today (it lives on the `TUI_KNOWN_NOOP_EVENT_TYPES`
+ * allowlist) — pinning the shape now prevents a regression where the
+ * payload silently flips to something that breaks future consumers. */
+function validateUserMessage(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  if (!isFiniteNonNegativeInt(payload.chars)) {
+    issues.push({
+      path: `${basePath}.chars`,
+      message: `expected non-negative integer, got ${JSON.stringify(payload.chars)}`,
+    });
+  }
+  if (typeof payload.preview !== 'string') {
+    issues.push({
+      path: `${basePath}.preview`,
+      message: `expected string, got ${JSON.stringify(payload.preview)}`,
+    });
+  }
+  return issues;
+}
+
 const PAYLOAD_VALIDATORS: Record<string, PayloadValidator> = {
+  // Existing delegation + dev observability + state events.
   'assistant.prompt_snapshot': validateAssistantPromptSnapshot,
   'context.compaction': validateContextCompaction,
   session_state_changed: validateSessionStateChanged,
@@ -672,6 +969,24 @@ const PAYLOAD_VALIDATORS: Record<string, PayloadValidator> = {
   'task_graph.task_failed': validateTaskGraphTaskFailed,
   'task_graph.task_cancelled': validateTaskGraphTaskCancelled,
   'task_graph.graph_completed': validateTaskGraphGraphCompleted,
+
+  // PR #4 batch: daemon-emitted lifecycle + streaming events. See the
+  // section comment above the validators for the rationale.
+  assistant_token: validateAssistantTextChunk,
+  assistant_thinking_token: validateAssistantTextChunk,
+  tool_call: validateToolCall,
+  'tool.execution_start': validateToolCall,
+  tool_result: validateToolResult,
+  'tool.execution_complete': validateToolResult,
+  'tool.call_malformed': validateToolCallMalformed,
+  error: validateErrorPayload,
+  warning: validateWarningPayload,
+  status: validateStatusPayload,
+  approval_required: validateApprovalRequired,
+  approval_received: validateApprovalReceived,
+  run_complete: validateRunComplete,
+  session_started: validateSessionStarted,
+  user_message: validateUserMessage,
 };
 
 /** The set of event types that have a per-payload schema in this module. */
