@@ -72,24 +72,33 @@ export async function* vertexStream(
   );
 
   // 2. Plain OpenAI-compatible request body. The Worker forwards verbatim
-  //    on the OpenAPI transport; on the Anthropic transport it rewrites the
-  //    body via `buildAnthropicMessagesRequest` before calling Vertex.
+  //    on the OpenAPI transport (Gemini) and rewrites via
+  //    `buildAnthropicMessagesRequest` on the Anthropic transport (Claude).
   //
-  //    Vertex carries both Claude and Gemini under one provider. Claude IDs
-  //    look like `claude-*` and route through the Anthropic transport; gate
-  //    `anthropic_web_search` on that prefix so the field never lands on a
-  //    non-Anthropic upstream (some strict OpenAI-compatible proxies reject
-  //    unknown root fields). The gate AND-s the transport check with the
-  //    enablement signal so an explicit `req.anthropicWebSearch=true` from
-  //    a caller can't smuggle the field onto a Vertex Gemini turn.
+  //    Vertex carries both Claude and Gemini under one provider. The model
+  //    id picks the transport: `claude-*` → Anthropic, anything else →
+  //    OpenAI-compat (Gemini). Native web search splits the same way:
   //
-  //    Vertex Gemini grounding through the OpenAI-compatible transport is a
-  //    separate effort — it'd need request-shape translation in the Worker.
+  //      - Anthropic transport reads `anthropic_web_search`; the bridge
+  //        emits the `web_search_20250305` tool on the upstream Anthropic
+  //        body. AND-ed with `isAnthropicTransport` so an explicit
+  //        `req.anthropicWebSearch=true` can't smuggle the field onto a
+  //        Gemini turn (some strict OpenAI-compat proxies reject unknown
+  //        root fields).
+  //      - Gemini transport reads `google_search_grounding`; the Worker's
+  //        `handleVertexChat` translates it into `tools: [{ googleSearch:
+  //        {} }]` on the upstream body. Vertex's OpenAI-compat layer
+  //        doesn't auto-translate the OpenAI `web_search` tool shape, so
+  //        the rewrite has to live somewhere — the Worker keeps the
+  //        Push-private flag out of the upstream request.
   const isAnthropicTransport =
     typeof req.model === 'string' && req.model.trim().toLowerCase().startsWith('claude-');
   const anthropicWebSearch =
     isAnthropicTransport &&
     (req.anthropicWebSearch ?? isNativeWebSearchEnabled('vertex', req.model));
+  const googleSearchGrounding =
+    !isAnthropicTransport &&
+    (req.googleSearchGrounding ?? isNativeWebSearchEnabled('vertex', req.model));
 
   const body: Record<string, unknown> = {
     model: req.model,
@@ -99,6 +108,7 @@ export async function* vertexStream(
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
     ...(anthropicWebSearch ? { anthropic_web_search: true } : {}),
+    ...(googleSearchGrounding ? { google_search_grounding: true } : {}),
   };
 
   // 3. Headers — branch on configured Vertex mode.

@@ -853,6 +853,49 @@ export const handleLegacyVertexModels = createExperimentalModelsHandler(
   'api/vertex/models',
 );
 
+/**
+ * Vertex AI's OpenAI-compat `chat/completions` endpoint doesn't auto-translate
+ * the OpenAI `web_search` tool shape into Gemini's `googleSearch` grounding
+ * tool — the upstream Gemini just sees no tool and answers without grounding
+ * (or rejects an unknown `web_search` type, depending on the Gemini version).
+ *
+ * When the client opts into grounding via the Push-private
+ * `google_search_grounding: true` flag, this helper rewrites the body to
+ * inject `tools: [{ googleSearch: {} }]` and strip the Push-private flag
+ * before forwarding. Mirrors `lib/openai-gemini-bridge.ts` for direct
+ * Gemini — kept here so the Vertex Gemini path stays a thin pass-through
+ * without invoking the bridge's full OpenAI→Gemini-native shape rewrite.
+ *
+ * Returns `bodyText` unchanged when grounding isn't requested.
+ */
+export function translateVertexOpenApiBody(
+  parsedRequest: { google_search_grounding?: unknown },
+  bodyText: string,
+): string {
+  if (parsedRequest.google_search_grounding !== true) return bodyText;
+  let body: Record<string, unknown>;
+  try {
+    body = JSON.parse(bodyText) as Record<string, unknown>;
+  } catch {
+    // Validation already ran on `bodyText`; if it doesn't parse here
+    // something corrupted it downstream. Fall back to forwarding raw
+    // and let Vertex's error surface — better than masking the bug.
+    return bodyText;
+  }
+  // Strip the Push-private flag so Vertex's compat layer doesn't see an
+  // unknown root field.
+  delete body.google_search_grounding;
+  // Append rather than overwrite: a hypothetical caller could already
+  // have set tools (Push doesn't today, but be defensive). Dedupe by
+  // checking whether the googleSearch tool is already present.
+  const existing = Array.isArray(body.tools) ? (body.tools as Array<Record<string, unknown>>) : [];
+  const hasGoogleSearch = existing.some(
+    (t) => typeof t === 'object' && t !== null && 'googleSearch' in t,
+  );
+  body.tools = hasGoogleSearch ? existing : [...existing, { googleSearch: {} }];
+  return JSON.stringify(body);
+}
+
 export async function handleVertexChat(request: Request, env: Env): Promise<Response> {
   if (!hasVertexNativeCredentials(request)) {
     return handleLegacyVertexChat(request, env);
@@ -901,7 +944,7 @@ export async function handleVertexChat(request: Request, env: Env): Promise<Resp
       ? JSON.stringify(
           buildAnthropicMessagesRequest(parsedRequest, { anthropicVersion: 'vertex-2023-10-16' }),
         )
-      : normalizedRequest.value.bodyText;
+      : translateVertexOpenApiBody(parsedRequest, normalizedRequest.value.bodyText);
 
   wlog('info', 'request', {
     requestId,

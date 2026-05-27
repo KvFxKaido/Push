@@ -222,6 +222,38 @@ describe('vertexStream', () => {
     expect(out).toEqual([{ type: 'text_delta', text: 'hi' }]);
   });
 
+  it('sets anthropic_web_search on Claude (Anthropic-transport) models', async () => {
+    installStreamFetch(fetchMock);
+    const { vertexStream } = await import('./vertex-stream');
+    const iter = vertexStream({ ...baseRequest, model: 'claude-opus-4-7@20251015' });
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.anthropic_web_search).toBe(true);
+    expect(body.google_search_grounding).toBeUndefined();
+  });
+
+  it('sets google_search_grounding on Gemini (OpenAI-compat-transport) models', async () => {
+    installStreamFetch(fetchMock);
+    const { vertexStream } = await import('./vertex-stream');
+    const iter = vertexStream({ ...baseRequest, model: 'gemini-2.5-pro' });
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.google_search_grounding).toBe(true);
+    // Must NOT leak the Anthropic flag onto a Gemini turn — strict
+    // OpenAI-compat proxies reject unknown root fields.
+    expect(body.anthropic_web_search).toBeUndefined();
+  });
+
   it('forwards max_tokens / temperature / top_p into the request body', async () => {
     installStreamFetch(fetchMock);
     const { vertexStream } = await import('./vertex-stream');

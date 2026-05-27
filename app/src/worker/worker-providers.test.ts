@@ -24,6 +24,7 @@ import {
   handleOpenRouterChat,
   handleOpenRouterModels,
   parseGeminiGroundingResponse,
+  translateVertexOpenApiBody,
 } from './worker-providers';
 import type { Env } from './worker-middleware';
 
@@ -1198,6 +1199,66 @@ function makeGroundedSearchRequest(query = 'gemini 3 release'): Request {
     body: JSON.stringify({ query }),
   });
 }
+
+describe('translateVertexOpenApiBody', () => {
+  it('returns body unchanged when google_search_grounding is not set', () => {
+    const bodyText = JSON.stringify({ model: 'gemini-2.5-pro', messages: [] });
+    expect(translateVertexOpenApiBody({}, bodyText)).toBe(bodyText);
+  });
+
+  it('strips google_search_grounding and injects tools: [{ googleSearch: {} }] when set', () => {
+    // Vertex's OpenAI-compat layer doesn't auto-translate the OpenAI
+    // `web_search` tool shape, so the bridge has to inject Gemini's
+    // native tool shape directly. Verify the upstream body it produces.
+    const bodyText = JSON.stringify({
+      model: 'gemini-2.5-pro',
+      messages: [{ role: 'user', content: 'who won euro 2024' }],
+      google_search_grounding: true,
+    });
+    const out = translateVertexOpenApiBody({ google_search_grounding: true }, bodyText);
+    const parsed = JSON.parse(out);
+    expect(parsed.tools).toEqual([{ googleSearch: {} }]);
+    expect(parsed.google_search_grounding).toBeUndefined();
+    expect(parsed.model).toBe('gemini-2.5-pro');
+  });
+
+  it('appends to existing tools rather than overwriting, and dedupes the googleSearch entry', () => {
+    const bodyText = JSON.stringify({
+      model: 'gemini-2.5-pro',
+      messages: [],
+      tools: [{ type: 'function', function: { name: 'calc' } }],
+      google_search_grounding: true,
+    });
+    const parsed = JSON.parse(
+      translateVertexOpenApiBody({ google_search_grounding: true }, bodyText),
+    );
+    expect(parsed.tools).toHaveLength(2);
+    expect(parsed.tools[0]).toMatchObject({ type: 'function', function: { name: 'calc' } });
+    expect(parsed.tools[1]).toEqual({ googleSearch: {} });
+
+    // If the request already carried googleSearch we don't duplicate it.
+    const bodyTextAlreadyHasIt = JSON.stringify({
+      tools: [{ googleSearch: {} }],
+      google_search_grounding: true,
+    });
+    const parsed2 = JSON.parse(
+      translateVertexOpenApiBody({ google_search_grounding: true }, bodyTextAlreadyHasIt),
+    );
+    expect(parsed2.tools).toEqual([{ googleSearch: {} }]);
+  });
+
+  it('treats non-boolean google_search_grounding as falsy (string "true" does NOT enable)', () => {
+    const bodyText = JSON.stringify({ google_search_grounding: 'true' });
+    // Strict `=== true` posture mirrors the Anthropic / Gemini bridges so
+    // malformed input can't accidentally enable grounding.
+    expect(
+      translateVertexOpenApiBody(
+        { google_search_grounding: 'true' as unknown as boolean },
+        bodyText,
+      ),
+    ).toBe(bodyText);
+  });
+});
 
 describe('parseGeminiGroundingResponse', () => {
   it('pulls answer text + cited web sources out of a Gemini :generateContent payload', () => {

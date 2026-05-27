@@ -74,12 +74,16 @@ export function setWebSearchMode(mode: WebSearchMode): void {
  * server-side search behind their back. `'google-grounding'` is the
  * provider-specific opt-in that forces grounding on Gemini.
  *
- * Vertex carries both Claude and Gemini under one provider id. Only the
- * Anthropic transport (`claude-*` model IDs) is wired today — Vertex
- * Gemini grounding through the OpenAI-compatible proxy needs its own
- * request-shape translation and isn't covered here. Pass the model id
- * so the helper can gate Vertex correctly; callers without a model in
- * scope (or for non-Vertex providers) can omit it.
+ * Vertex carries both Claude and Gemini under one provider id and both
+ * transports now have native search: Claude flows through
+ * `anthropic_web_search` → bridge tool[], Gemini flows through
+ * `google_search_grounding` → Worker-side translation to
+ * `tools: [{ googleSearch: {} }]` on the upstream OpenAI-compat body
+ * (Vertex's compat layer doesn't auto-translate the OpenAI `web_search`
+ * tool shape). The Vertex stream picks the right field based on the
+ * model id's transport; this helper just answers "is native available
+ * at all?" so the orchestrator can drop the prompt-engineered tool
+ * protocol when native is wired.
  *
  * Returns false for providers that don't have a native tool — the
  * prompt-engineered `web_search` (DuckDuckGo / Tavily / Ollama) covers
@@ -87,18 +91,14 @@ export function setWebSearchMode(mode: WebSearchMode): void {
  */
 export function isNativeWebSearchEnabled(
   provider: string,
-  modelId?: string,
+  _modelId?: string,
   mode: WebSearchMode = getWebSearchMode(),
 ): boolean {
   switch (mode) {
     case 'off':
       return false;
     case 'auto':
-      if (provider === 'google' || provider === 'anthropic') return true;
-      if (provider === 'vertex') {
-        return typeof modelId === 'string' && modelId.trim().toLowerCase().startsWith('claude-');
-      }
-      return false;
+      return provider === 'google' || provider === 'anthropic' || provider === 'vertex';
     case 'google-grounding':
       return provider === 'google';
     case 'tavily':
