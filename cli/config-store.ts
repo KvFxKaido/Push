@@ -9,6 +9,19 @@ export interface ProviderConfig {
   model?: string;
 }
 
+export interface ScrubConfig {
+  // Extra env var names (or PREFIX* patterns) to pass through to
+  // model-invoked subprocesses (sandbox_exec, exec, exec_start). The
+  // built-in allowlist in `cli/env-scrub.ts` already covers common
+  // shell + Node/Python/Go/Rust/Docker-client vars; widen here only
+  // when a build genuinely needs a project-specific env var.
+  allow?: string[];
+  // Disable scrubbing entirely. Unsafe — provider API keys hydrated
+  // into process.env by `applyConfigToEnv` become visible to every
+  // model-invoked subprocess. Intended for local debugging only.
+  disabled?: boolean;
+}
+
 export interface PushConfig {
   provider?: string;
   localSandbox?: boolean | string;
@@ -32,6 +45,7 @@ export interface PushConfig {
   alwaysAllow?: string[];
   disabledTools?: string[];
   safeExecPatterns?: string[];
+  scrub?: ScrubConfig;
   ollama?: ProviderConfig;
   openrouter?: ProviderConfig;
   zen?: ProviderConfig;
@@ -117,6 +131,17 @@ export function applyConfigToEnv(config: PushConfig): void {
   }
   if (Array.isArray(config.alwaysAllow) && config.alwaysAllow.length) {
     setEnvIfMissing('PUSH_ALWAYS_ALLOW', config.alwaysAllow.join(','));
+  }
+
+  // Forward the subprocess env-scrub policy to the daemon so that
+  // model-invoked execs apply the same allowlist across processes.
+  // See `cli/env-scrub.ts` for the policy itself.
+  const scrub = ensureObject(config.scrub) as ScrubConfig;
+  if (Array.isArray(scrub.allow) && scrub.allow.length) {
+    setEnvIfMissing('PUSH_SCRUB_ALLOW', scrub.allow.join(','));
+  }
+  if (scrub.disabled === true) {
+    setEnvIfMissing('PUSH_SCRUB_DISABLED', '1');
   }
 
   const ollama = ensureObject(config.ollama) as ProviderConfig;
