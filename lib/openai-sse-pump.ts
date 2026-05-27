@@ -280,6 +280,14 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
       // assistant blocks as a `pause_turn` event so the stream adapter can
       // issue a continuation request; do NOT emit `done` here because the
       // turn isn't actually finished from the consumer's perspective.
+      //
+      // Only emit `pause_turn` when replay blocks are actually present —
+      // a continuation request with no prior assistant content would spin
+      // pointlessly and Anthropic would reject the malformed turn anyway.
+      // When the sidecar is missing / malformed / empty (upstream dropped
+      // it, or this finish_reason came from a non-Anthropic provider that
+      // happens to use the same string), fall back to a terminal `done`
+      // so the consumer sees a clean finish with whatever already streamed.
       if (choice.finish_reason === 'pause_turn') {
         const rawBlocks = delta?.assistant_content_blocks;
         const assistantBlocks = Array.isArray(rawBlocks)
@@ -287,7 +295,12 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
               Record<string, unknown>
             >)
           : [];
-        yield { type: 'pause_turn', assistantBlocks };
+        if (assistantBlocks.length > 0) {
+          yield { type: 'pause_turn', assistantBlocks };
+          stopped = true;
+          return;
+        }
+        yield { type: 'done', finishReason: 'stop', usage: pendingUsage };
         stopped = true;
         return;
       }

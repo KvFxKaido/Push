@@ -213,7 +213,9 @@ async function* cliAnthropicStream(
       yield event;
     }
 
-    if (!paused) return;
+    // Defensive zero-length guard — see `app/src/lib/anthropic-stream.ts`
+    // for context. Belt-and-suspenders with the pump's empty-blocks filter.
+    if (!paused || paused.length === 0) return;
     if (attempt === MAX_PAUSE_TURN_ITERATIONS) {
       // Cap exhausted. Synthesize a terminal `done` so the consumer
       // doesn't hang — whatever text streamed so far becomes the answer.

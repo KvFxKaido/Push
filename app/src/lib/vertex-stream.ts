@@ -163,33 +163,61 @@ export async function* vertexStream(
   }
   injectTraceHeaders(headers);
 
-  // 4. POST + stream response.
-  const response = await fetch(PROVIDER_URLS.vertex.chat, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-    signal: req.signal,
-  });
+  // 4. POST + stream response. Anthropic-transport models (Claude on Vertex)
+  //    can return `stop_reason: pause_turn` mid-turn when the server-side
+  //    sampling loop hits its iteration cap — mirror the
+  //    `app/src/lib/anthropic-stream.ts` continuation loop here so Vertex
+  //    Claude doesn't truncate / leak the pause_turn event to consumers.
+  //    OpenAI-compat transport (Gemini) never emits pause_turn, so the
+  //    same loop is a no-op for those models.
+  const MAX_PAUSE_TURN_ITERATIONS = 3;
+  let currentBody: Record<string, unknown> = body;
+  for (let attempt = 0; attempt <= MAX_PAUSE_TURN_ITERATIONS; attempt += 1) {
+    const response = await fetch(PROVIDER_URLS.vertex.chat, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(currentBody),
+      signal: req.signal,
+    });
 
-  if (!response.ok) {
-    const errBody = await response.text().catch(() => '');
-    let detail = errBody;
-    try {
-      const parsed = JSON.parse(errBody);
-      detail = parseProviderError(parsed, errBody.slice(0, 200), true);
-    } catch {
-      detail = errBody ? errBody.slice(0, 200) : 'empty body';
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => '');
+      let detail = errBody;
+      try {
+        const parsed = JSON.parse(errBody);
+        detail = parseProviderError(parsed, errBody.slice(0, 200), true);
+      } catch {
+        detail = errBody ? errBody.slice(0, 200) : 'empty body';
+      }
+      throw new Error(`Google Vertex ${response.status}: ${detail}`);
     }
-    throw new Error(`Google Vertex ${response.status}: ${detail}`);
-  }
 
-  if (!response.body) {
-    throw new Error('Google Vertex response had no body');
-  }
+    if (!response.body) {
+      throw new Error('Google Vertex response had no body');
+    }
 
-  yield* openAISSEPump({
-    body: response.body,
-    signal: req.signal,
-    isKnownToolName: (name) => KNOWN_TOOL_NAMES.has(name),
-  });
+    let paused: Array<Record<string, unknown>> | null = null;
+    for await (const event of openAISSEPump({
+      body: response.body,
+      signal: req.signal,
+      isKnownToolName: (name) => KNOWN_TOOL_NAMES.has(name),
+    })) {
+      if (event.type === 'pause_turn') {
+        paused = event.assistantBlocks;
+        continue;
+      }
+      yield event;
+    }
+
+    if (!paused || paused.length === 0) return;
+    if (attempt === MAX_PAUSE_TURN_ITERATIONS) {
+      yield { type: 'done', finishReason: 'stop' };
+      return;
+    }
+    const nextMessages = Array.isArray(currentBody.messages)
+      ? [...(currentBody.messages as unknown[])]
+      : [];
+    nextMessages.push({ role: 'assistant', assistant_content_blocks: paused });
+    currentBody = { ...currentBody, messages: nextMessages };
+  }
 }

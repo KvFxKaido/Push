@@ -276,6 +276,44 @@ describe('openAISSEPump', () => {
     ]);
   });
 
+  it('falls back to done (not pause_turn) when finish_reason=pause_turn arrives without blocks', async () => {
+    // Defense against an upstream that emits pause_turn with no replay
+    // payload (or a non-Anthropic provider that happens to use the same
+    // string): the consumer's continuation loop would issue a request with
+    // an empty assistant turn and spin until the iteration cap. Synthesize
+    // a clean terminal event instead.
+    const s = makeStream();
+    const events = collect(openAISSEPump({ body: s.body }));
+
+    s.push(contentFrame('partial answer'));
+    s.push(
+      JSON.stringify({
+        choices: [{ finish_reason: 'pause_turn', delta: {} }],
+      }),
+    );
+    s.finish();
+
+    const out = await events;
+    expect(out.some((e) => e.type === 'pause_turn')).toBe(false);
+    expect(out.some((e) => e.type === 'done')).toBe(true);
+  });
+
+  it('also falls back to done when assistant_content_blocks is an empty array', async () => {
+    const s = makeStream();
+    const events = collect(openAISSEPump({ body: s.body }));
+
+    s.push(
+      JSON.stringify({
+        choices: [{ finish_reason: 'pause_turn', delta: { assistant_content_blocks: [] } }],
+      }),
+    );
+    s.finish();
+
+    const out = await events;
+    expect(out.some((e) => e.type === 'pause_turn')).toBe(false);
+    expect(out.some((e) => e.type === 'done')).toBe(true);
+  });
+
   it('emits a pause_turn event (not done) when finish_reason is pause_turn', async () => {
     // The Anthropic bridge surfaces `pause_turn` with the captured
     // assistant content[] as a sidecar so the stream adapter can replay

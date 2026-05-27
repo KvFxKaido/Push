@@ -137,7 +137,11 @@ export async function* anthropicStream(
       yield event;
     }
 
-    if (!paused) return;
+    // Defensive zero-length guard: the pump already drops empty pause_turn
+    // events into `done` (see `openai-sse-pump.ts`), but treat an empty
+    // array the same way at this layer so an upstream/test fake that emits
+    // `pause_turn` with `[]` directly can't loop.
+    if (!paused || paused.length === 0) return;
     if (attempt === MAX_PAUSE_TURN_ITERATIONS) {
       // Hit the cap. Synthesize a terminal `done` so the round loop sees
       // a clean finish — the user gets whatever text streamed through up
