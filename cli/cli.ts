@@ -51,6 +51,7 @@ import { compactContext } from './context-manager.js';
 import { buildHeadlessTaskBrief } from './task-brief.js';
 import { createDelegationTranscriptRenderer, isDelegationEvent } from './tui-delegation-events.js';
 import { runCommandInResolvedShell } from './shell.js';
+import { scrubEnv } from './env-scrub.js';
 import { ensureRepoCommandsSeeded } from './repo-commands.js';
 import {
   readClientAttachState,
@@ -258,6 +259,7 @@ async function runAcceptanceChecks(cwd, checks) {
         cwd,
         timeout: 120_000,
         maxBuffer: 4_000_000,
+        env: scrubEnv(),
       });
       entries.push({
         command,

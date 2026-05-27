@@ -7,6 +7,7 @@ import { applyHashlineEdits, calculateContentVersion, renderAnchoredRange } from
 import { runDiagnostics } from './diagnostics.js';
 import { createLocalGitBackend } from './git-backend.js';
 import { runCommandInResolvedShell, spawnCommandInResolvedShell } from './shell.js';
+import { scrubEnv } from './env-scrub.js';
 import {
   buildArtifactRecord,
   summarizeArtifact,
@@ -682,12 +683,13 @@ async function startExecSession(command, workspaceRoot, timeoutMs, ttyRequested 
       ]
     : null;
 
+  const subprocessEnv = scrubEnv();
   const { child } = isLocalSandbox
     ? {
         child: spawn('docker', sandboxArgs!, {
           cwd: workspaceRoot,
           stdio: ['pipe', 'pipe', 'pipe'],
-          env: process.env,
+          env: subprocessEnv,
         }),
       }
     : canUseScriptTty
@@ -695,13 +697,13 @@ async function startExecSession(command, workspaceRoot, timeoutMs, ttyRequested 
           child: spawn('script', ['-q', '-f', '-c', command, '/dev/null'], {
             cwd: workspaceRoot,
             stdio: ['pipe', 'pipe', 'pipe'],
-            env: process.env,
+            env: subprocessEnv,
           }),
         }
       : await spawnCommandInResolvedShell(command, {
           cwd: workspaceRoot,
           stdio: ['pipe', 'pipe', 'pipe'],
-          env: process.env,
+          env: subprocessEnv,
         });
 
   const sessionId = nextExecSessionId();
@@ -1819,6 +1821,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             cwd: workspaceRoot,
             timeout: timeoutMs,
             maxBuffer: 4_000_000,
+            env: scrubEnv(),
           };
           if (options.signal) execOpts.signal = options.signal;
           const { stdout, stderr } = isLocalSandbox

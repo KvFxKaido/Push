@@ -3990,6 +3990,7 @@ async function handleSandboxExec(req, _emitEvent, context) {
 
   const startedAt = Date.now();
   const { runCommandInResolvedShell } = await import('./shell.js');
+  const { scrubEnv } = await import('./env-scrub.js');
 
   // Phase 3 slice 3 audit emission. We build the payload incrementally
   // from the actual outcome (exit code, duration, cancelled flag) and
@@ -4010,6 +4011,7 @@ async function handleSandboxExec(req, _emitEvent, context) {
       cwd,
       timeout: timeoutMs,
       maxBuffer: SANDBOX_EXEC_MAX_OUTPUT,
+      env: scrubEnv(),
     };
     if (abortController) execOpts.signal = abortController.signal;
     const { stdout, stderr } = await runCommandInResolvedShell(command, execOpts);

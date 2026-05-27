@@ -325,6 +325,7 @@ Before any `write_file` or `edit_file` mutation, the original file is copied to 
 - **Tool loop detection:** If the same tool call sequence repeats 3 times, the run is stopped.
 - **Max rounds:** Default 8, configurable via `--max-rounds` (max 30). Prevents runaway loops.
 - **Output truncation:** Tool output is capped at 24KB to avoid context blowout.
+- **Subprocess env scrub:** Model-invoked commands (`sandbox_exec`, `exec`, `exec_start`, acceptance checks) run with a default-deny env allowlist defined in `cli/env-scrub.ts`. Provider API keys hydrated into the daemon's `process.env` by `applyConfigToEnv` (e.g. `PUSH_ANTHROPIC_API_KEY`, `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`) are stripped before the spawn, so `env`-style introspection from a sandboxed command can't exfiltrate them. The allowlist covers `PATH`/`HOME`/`SHELL`/locale, the common Node/Python/Go/Rust/Docker-client vars, `CI`, and `npm_config_*` / `NPM_CONFIG_*` / `BUN_*`. Widen via `config.scrub.allow` (exact names or `PREFIX*` patterns), or set `config.scrub.disabled: true` (or `PUSH_SCRUB_DISABLED=1`) to opt out entirely — only for local debugging.
 
 ## Docker sandbox
 
