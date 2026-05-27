@@ -85,12 +85,7 @@ const DEFAULT_ALLOW_KEYS: ReadonlyArray<string> = [
   'DOCKER_CERT_PATH',
 ];
 
-const DEFAULT_ALLOW_PREFIXES: ReadonlyArray<string> = [
-  'LC_',
-  'npm_config_',
-  'NPM_CONFIG_',
-  'BUN_',
-];
+const DEFAULT_ALLOW_PREFIXES: ReadonlyArray<string> = ['LC_', 'npm_config_', 'NPM_CONFIG_', 'BUN_'];
 
 function parseAllowList(raw: string | undefined): { keys: string[]; prefixes: string[] } {
   const keys: string[] = [];

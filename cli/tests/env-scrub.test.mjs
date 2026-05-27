@@ -213,9 +213,6 @@ describe('scrubEnv end-to-end', () => {
       !stdout.includes('sk-LEAKED-IF-VISIBLE-FALLBACK'),
       'ANTHROPIC_API_KEY leaked into subprocess env',
     );
-    assert.ok(
-      !stdout.includes('ghp_LEAKED-IF-VISIBLE'),
-      'GITHUB_TOKEN leaked into subprocess env',
-    );
+    assert.ok(!stdout.includes('ghp_LEAKED-IF-VISIBLE'), 'GITHUB_TOKEN leaked into subprocess env');
   });
 });
