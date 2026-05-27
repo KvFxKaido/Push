@@ -222,6 +222,104 @@ describe('vertexStream', () => {
     expect(out).toEqual([{ type: 'text_delta', text: 'hi' }]);
   });
 
+  it('replays pause_turn for Claude-on-Vertex (Anthropic-transport models)', async () => {
+    // Vertex Claude can pause_turn the same way direct Anthropic can —
+    // mirror the continuation loop from `app/src/lib/anthropic-stream.ts`
+    // here so consumers don't see pause_turn leak through and don't get
+    // truncated answers.
+    const responses: Array<ControllableStream> = [];
+    const responsesQueue = [() => makeControllableStream(), () => makeControllableStream()];
+    fetchMock.mockImplementation(async (_url: unknown, init?: RequestInit) => {
+      if (init?.signal?.aborted) throw new DOMException('aborted', 'AbortError');
+      const factory = responsesQueue.shift() ?? (() => makeControllableStream());
+      const s = factory();
+      responses.push(s);
+      init?.signal?.addEventListener('abort', () => s.abort());
+      return s.response;
+    });
+    const { vertexStream } = await import('./vertex-stream');
+    const events = collect(vertexStream({ ...baseRequest, model: 'claude-opus-4-7@20251015' }));
+
+    await new Promise((r) => setTimeout(r, 0));
+    const first = responses[0];
+    first.push(JSON.stringify({ choices: [{ delta: { content: 'Searching' } }] }));
+    first.push(
+      JSON.stringify({
+        choices: [
+          {
+            finish_reason: 'pause_turn',
+            delta: {
+              assistant_content_blocks: [
+                { type: 'text', text: 'Searching' },
+                { type: 'server_tool_use', id: 'su_01', name: 'web_search', input: {} },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    first.finish();
+
+    await new Promise((r) => setTimeout(r, 5));
+    const second = responses[1];
+    expect(second).toBeDefined();
+    second.push(JSON.stringify({ choices: [{ delta: { content: ' done.' } }] }));
+    second.push(JSON.stringify({ choices: [{ finish_reason: 'stop', delta: {} }] }));
+    second.finish();
+
+    const out = await events;
+    expect(out.some((e) => e.type === 'pause_turn')).toBe(false);
+    expect(out.some((e) => e.type === 'done')).toBe(true);
+    const text = out
+      .filter((e): e is { type: 'text_delta'; text: string } => e.type === 'text_delta')
+      .map((e) => e.text)
+      .join('');
+    expect(text).toBe('Searching done.');
+
+    // Continuation request body must carry the captured blocks as the
+    // prior assistant turn.
+    const secondInit = fetchMock.mock.calls[1][1] as RequestInit;
+    const secondBody = JSON.parse(secondInit.body as string);
+    const trailingAssistant = secondBody.messages[secondBody.messages.length - 1];
+    expect(trailingAssistant.role).toBe('assistant');
+    expect(trailingAssistant.assistant_content_blocks).toEqual([
+      { type: 'text', text: 'Searching' },
+      { type: 'server_tool_use', id: 'su_01', name: 'web_search', input: {} },
+    ]);
+  });
+
+  it('sets anthropic_web_search on Claude (Anthropic-transport) models', async () => {
+    installStreamFetch(fetchMock);
+    const { vertexStream } = await import('./vertex-stream');
+    const iter = vertexStream({ ...baseRequest, model: 'claude-opus-4-7@20251015' });
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.anthropic_web_search).toBe(true);
+    expect(body.google_search_grounding).toBeUndefined();
+  });
+
+  it('sets google_search_grounding on Gemini (OpenAI-compat-transport) models', async () => {
+    installStreamFetch(fetchMock);
+    const { vertexStream } = await import('./vertex-stream');
+    const iter = vertexStream({ ...baseRequest, model: 'gemini-2.5-pro' });
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.google_search_grounding).toBe(true);
+    // Must NOT leak the Anthropic flag onto a Gemini turn — strict
+    // OpenAI-compat proxies reject unknown root fields.
+    expect(body.anthropic_web_search).toBeUndefined();
+  });
+
   it('forwards max_tokens / temperature / top_p into the request body', async () => {
     installStreamFetch(fetchMock);
     const { vertexStream } = await import('./vertex-stream');

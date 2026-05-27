@@ -44,6 +44,7 @@ import { buildExperimentalProxyHeaders } from './experimental-providers';
 import { encodeVertexServiceAccountHeader, normalizeVertexRegion } from './vertex-provider';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
+import { isNativeWebSearchEnabled } from './web-search-mode';
 
 export async function* vertexStream(
   req: PushStreamRequest<ChatMessage>,
@@ -71,8 +72,34 @@ export async function* vertexStream(
   );
 
   // 2. Plain OpenAI-compatible request body. The Worker forwards verbatim
-  //    on the OpenAPI transport; on the Anthropic transport it rewrites the
-  //    body via `buildAnthropicMessagesRequest` before calling Vertex.
+  //    on the OpenAPI transport (Gemini) and rewrites via
+  //    `buildAnthropicMessagesRequest` on the Anthropic transport (Claude).
+  //
+  //    Vertex carries both Claude and Gemini under one provider. The model
+  //    id picks the transport: `claude-*` → Anthropic, anything else →
+  //    OpenAI-compat (Gemini). Native web search splits the same way:
+  //
+  //      - Anthropic transport reads `anthropic_web_search`; the bridge
+  //        emits the `web_search_20250305` tool on the upstream Anthropic
+  //        body. AND-ed with `isAnthropicTransport` so an explicit
+  //        `req.anthropicWebSearch=true` can't smuggle the field onto a
+  //        Gemini turn (some strict OpenAI-compat proxies reject unknown
+  //        root fields).
+  //      - Gemini transport reads `google_search_grounding`; the Worker's
+  //        `handleVertexChat` translates it into `tools: [{ googleSearch:
+  //        {} }]` on the upstream body. Vertex's OpenAI-compat layer
+  //        doesn't auto-translate the OpenAI `web_search` tool shape, so
+  //        the rewrite has to live somewhere — the Worker keeps the
+  //        Push-private flag out of the upstream request.
+  const isAnthropicTransport =
+    typeof req.model === 'string' && req.model.trim().toLowerCase().startsWith('claude-');
+  const anthropicWebSearch =
+    isAnthropicTransport &&
+    (req.anthropicWebSearch ?? isNativeWebSearchEnabled('vertex', req.model));
+  const googleSearchGrounding =
+    !isAnthropicTransport &&
+    (req.googleSearchGrounding ?? isNativeWebSearchEnabled('vertex', req.model));
+
   const body: Record<string, unknown> = {
     model: req.model,
     messages: llmMessages,
@@ -80,6 +107,8 @@ export async function* vertexStream(
     ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
+    ...(anthropicWebSearch ? { anthropic_web_search: true } : {}),
+    ...(googleSearchGrounding ? { google_search_grounding: true } : {}),
   };
 
   // 3. Headers — branch on configured Vertex mode.
@@ -134,33 +163,61 @@ export async function* vertexStream(
   }
   injectTraceHeaders(headers);
 
-  // 4. POST + stream response.
-  const response = await fetch(PROVIDER_URLS.vertex.chat, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-    signal: req.signal,
-  });
+  // 4. POST + stream response. Anthropic-transport models (Claude on Vertex)
+  //    can return `stop_reason: pause_turn` mid-turn when the server-side
+  //    sampling loop hits its iteration cap — mirror the
+  //    `app/src/lib/anthropic-stream.ts` continuation loop here so Vertex
+  //    Claude doesn't truncate / leak the pause_turn event to consumers.
+  //    OpenAI-compat transport (Gemini) never emits pause_turn, so the
+  //    same loop is a no-op for those models.
+  const MAX_PAUSE_TURN_ITERATIONS = 3;
+  let currentBody: Record<string, unknown> = body;
+  for (let attempt = 0; attempt <= MAX_PAUSE_TURN_ITERATIONS; attempt += 1) {
+    const response = await fetch(PROVIDER_URLS.vertex.chat, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(currentBody),
+      signal: req.signal,
+    });
 
-  if (!response.ok) {
-    const errBody = await response.text().catch(() => '');
-    let detail = errBody;
-    try {
-      const parsed = JSON.parse(errBody);
-      detail = parseProviderError(parsed, errBody.slice(0, 200), true);
-    } catch {
-      detail = errBody ? errBody.slice(0, 200) : 'empty body';
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => '');
+      let detail = errBody;
+      try {
+        const parsed = JSON.parse(errBody);
+        detail = parseProviderError(parsed, errBody.slice(0, 200), true);
+      } catch {
+        detail = errBody ? errBody.slice(0, 200) : 'empty body';
+      }
+      throw new Error(`Google Vertex ${response.status}: ${detail}`);
     }
-    throw new Error(`Google Vertex ${response.status}: ${detail}`);
-  }
 
-  if (!response.body) {
-    throw new Error('Google Vertex response had no body');
-  }
+    if (!response.body) {
+      throw new Error('Google Vertex response had no body');
+    }
 
-  yield* openAISSEPump({
-    body: response.body,
-    signal: req.signal,
-    isKnownToolName: (name) => KNOWN_TOOL_NAMES.has(name),
-  });
+    let paused: Array<Record<string, unknown>> | null = null;
+    for await (const event of openAISSEPump({
+      body: response.body,
+      signal: req.signal,
+      isKnownToolName: (name) => KNOWN_TOOL_NAMES.has(name),
+    })) {
+      if (event.type === 'pause_turn') {
+        paused = event.assistantBlocks;
+        continue;
+      }
+      yield event;
+    }
+
+    if (!paused || paused.length === 0) return;
+    if (attempt === MAX_PAUSE_TURN_ITERATIONS) {
+      yield { type: 'done', finishReason: 'stop' };
+      return;
+    }
+    const nextMessages = Array.isArray(currentBody.messages)
+      ? [...(currentBody.messages as unknown[])]
+      : [];
+    nextMessages.push({ role: 'assistant', assistant_content_blocks: paused });
+    currentBody = { ...currentBody, messages: nextMessages };
+  }
 }

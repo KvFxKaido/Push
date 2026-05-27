@@ -323,8 +323,12 @@ export async function executeGoogleGroundedSearch(query: string): Promise<ToolEx
  * Execute a web search. Honors the user-selected `WebSearchMode`:
  *  - `off`: defensive error (orchestrator should have removed the tool
  *    from the prompt already; this catches stale tool calls).
- *  - `auto`: routes through Tavily → Ollama → Google grounded → DDG
- *    based on configured keys + the active provider.
+ *  - `auto`: routes through Tavily → Ollama → Google grounded based on
+ *    configured keys + the active provider. DuckDuckGo is intentionally
+ *    NOT a silent fallback: the HTML scrape is unofficial and fragile,
+ *    and Cloudflare doesn't ship a managed open-web search API to
+ *    replace it, so we return a nudge instead and let the user opt in
+ *    explicitly (`mode === 'duckduckgo'`) or configure Tavily.
  *  - explicit backend (`tavily`/`google-grounding`/`ollama`/`duckduckgo`):
  *    forces that backend; the backend itself returns a config error if
  *    its required key/provider is missing.
@@ -348,7 +352,11 @@ export async function executeWebSearch(
   if (mode === 'google-grounding') return executeGoogleGroundedSearch(query);
   if (mode === 'duckduckgo') return executeFreeWebSearch(query);
 
-  // mode === 'auto': existing key + active-provider routing.
+  // mode === 'auto': pick the first available official backend in priority
+  // order. DuckDuckGo is intentionally excluded from this list — see the
+  // function-level doc above for why. The nudge below explains the situation
+  // to the model so it can either inform the user or fall back on its
+  // training knowledge.
   if (getTavilyKey()) {
     return executeTavilySearch(query);
   }
@@ -358,5 +366,16 @@ export async function executeWebSearch(
   if (activeProvider === 'google' && getGoogleKey()) {
     return executeGoogleGroundedSearch(query);
   }
-  return executeFreeWebSearch(query);
+  // Drop the "switch to a provider with native search" line: when this
+  // path fires the active provider either lacks native search (so the
+  // suggestion is the actionable fix) OR it's a native-equipped provider
+  // whose model bypassed the native tool (so the suggestion is
+  // misleading because native is already wired). Tavily + DDG are the
+  // actionable options in both cases.
+  return {
+    text:
+      '[Tool Error — web_search] No official web search backend is configured for this chat. ' +
+      'Add a Tavily API key in Settings (recommended), or pick "DuckDuckGo" from the Web Search ' +
+      'menu to use the unofficial HTML scrape. Falling back to training knowledge until then.',
+  };
 }

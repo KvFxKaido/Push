@@ -192,6 +192,10 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
            *  Anthropic bridge translator. See `ReasoningBlock` in
            *  `lib/provider-contract.ts`. Other backends never set this. */
           reasoning_block?: unknown;
+          /** Push-private: opaque assistant `content[]` array emitted by
+           *  the Anthropic bridge translator on `pause_turn` so the stream
+           *  adapter can replay them in a continuation request. */
+          assistant_content_blocks?: unknown;
           tool_calls?: unknown;
         };
         finish_reason?: unknown;
@@ -271,6 +275,35 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
 
     if (typeof choice.finish_reason === 'string' && choice.finish_reason) {
       yield* flushNativeToolCalls();
+      // `pause_turn` is the Anthropic-bridge signal that the server-side
+      // sampling loop ran out of iterations mid-turn. Surface the captured
+      // assistant blocks as a `pause_turn` event so the stream adapter can
+      // issue a continuation request; do NOT emit `done` here because the
+      // turn isn't actually finished from the consumer's perspective.
+      //
+      // Only emit `pause_turn` when replay blocks are actually present —
+      // a continuation request with no prior assistant content would spin
+      // pointlessly and Anthropic would reject the malformed turn anyway.
+      // When the sidecar is missing / malformed / empty (upstream dropped
+      // it, or this finish_reason came from a non-Anthropic provider that
+      // happens to use the same string), fall back to a terminal `done`
+      // so the consumer sees a clean finish with whatever already streamed.
+      if (choice.finish_reason === 'pause_turn') {
+        const rawBlocks = delta?.assistant_content_blocks;
+        const assistantBlocks = Array.isArray(rawBlocks)
+          ? (rawBlocks.filter((b) => typeof b === 'object' && b !== null) as Array<
+              Record<string, unknown>
+            >)
+          : [];
+        if (assistantBlocks.length > 0) {
+          yield { type: 'pause_turn', assistantBlocks };
+          stopped = true;
+          return;
+        }
+        yield { type: 'done', finishReason: 'stop', usage: pendingUsage };
+        stopped = true;
+        return;
+      }
       yield {
         type: 'done',
         finishReason: mapOpenAIFinishReason(choice.finish_reason),

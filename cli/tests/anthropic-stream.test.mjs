@@ -345,6 +345,76 @@ describe('createCliAnthropicStream', () => {
     }
   });
 
+  it('defaults the native web_search tool ON when no opt-out env / flag is set', async () => {
+    const { calls, handler } = captureFetch();
+    globalThis.fetch = handler;
+    const prior = process.env.PUSH_ANTHROPIC_WEB_SEARCH;
+    delete process.env.PUSH_ANTHROPIC_WEB_SEARCH;
+    try {
+      const stream = createCliAnthropicStream(ANTHROPIC_CONFIG, 'sk');
+      await collect(
+        stream({
+          provider: 'anthropic',
+          model: 'claude-sonnet-4-6',
+          messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }],
+        }),
+      );
+
+      const body = JSON.parse(calls[0].init.body);
+      assert.deepEqual(body.tools, [{ type: 'web_search_20250305', name: 'web_search' }]);
+    } finally {
+      if (prior === undefined) delete process.env.PUSH_ANTHROPIC_WEB_SEARCH;
+      else process.env.PUSH_ANTHROPIC_WEB_SEARCH = prior;
+    }
+  });
+
+  it('lets PUSH_ANTHROPIC_WEB_SEARCH=0 opt out of the default native search', async () => {
+    const { calls, handler } = captureFetch();
+    globalThis.fetch = handler;
+    const prior = process.env.PUSH_ANTHROPIC_WEB_SEARCH;
+    process.env.PUSH_ANTHROPIC_WEB_SEARCH = '0';
+    try {
+      const stream = createCliAnthropicStream(ANTHROPIC_CONFIG, 'sk');
+      await collect(
+        stream({
+          provider: 'anthropic',
+          model: 'claude-sonnet-4-6',
+          messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }],
+        }),
+      );
+
+      const body = JSON.parse(calls[0].init.body);
+      assert.equal(body.tools, undefined);
+    } finally {
+      if (prior === undefined) delete process.env.PUSH_ANTHROPIC_WEB_SEARCH;
+      else process.env.PUSH_ANTHROPIC_WEB_SEARCH = prior;
+    }
+  });
+
+  it('lets an explicit anthropicWebSearch=false override the env var', async () => {
+    const { calls, handler } = captureFetch();
+    globalThis.fetch = handler;
+    const prior = process.env.PUSH_ANTHROPIC_WEB_SEARCH;
+    process.env.PUSH_ANTHROPIC_WEB_SEARCH = '1';
+    try {
+      const stream = createCliAnthropicStream(ANTHROPIC_CONFIG, 'sk');
+      await collect(
+        stream({
+          provider: 'anthropic',
+          model: 'claude-sonnet-4-6',
+          messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }],
+          anthropicWebSearch: false,
+        }),
+      );
+
+      const body = JSON.parse(calls[0].init.body);
+      assert.equal(body.tools, undefined);
+    } finally {
+      if (prior === undefined) delete process.env.PUSH_ANTHROPIC_WEB_SEARCH;
+      else process.env.PUSH_ANTHROPIC_WEB_SEARCH = prior;
+    }
+  });
+
   it('does not tag any messages when cacheBreakpointIndices is empty or absent', async () => {
     const { calls, handler } = captureFetch();
     globalThis.fetch = handler;

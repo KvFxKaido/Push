@@ -52,12 +52,15 @@ export function createCliGeminiStream(
     cliGeminiStream(config, apiKey, req);
 }
 
-/** Per-request flag wins; otherwise `PUSH_GOOGLE_SEARCH_GROUNDING=1` opts in.
- *  Accepts the conventional truthy strings (`1`, `true`, `yes`, `on`). */
+/** Per-request flag wins; otherwise grounding defaults ON so Gemini chats
+ *  get the native `googleSearch` tool without an opt-in step (parity with
+ *  the web app's `'auto'` web-search mode). Set
+ *  `PUSH_GOOGLE_SEARCH_GROUNDING=0` (or `false`/`no`/`off`) to disable. */
 function resolveGoogleSearchGrounding(req: PushStreamRequest<LlmMessage>): boolean {
   if (typeof req.googleSearchGrounding === 'boolean') return req.googleSearchGrounding;
   const env = process.env.PUSH_GOOGLE_SEARCH_GROUNDING?.trim().toLowerCase();
-  return env === '1' || env === 'true' || env === 'yes' || env === 'on';
+  if (!env) return true;
+  return !(env === '0' || env === 'false' || env === 'no' || env === 'off');
 }
 
 async function* cliGeminiStream(

@@ -8,6 +8,16 @@ import type { ChatMessage } from '@/types';
 let webSearchModeForTest: 'auto' | 'off' = 'auto';
 vi.mock('./web-search-mode', () => ({
   getWebSearchMode: () => webSearchModeForTest,
+  // Default chat-mode tests don't pass a provider, so the helper sees
+  // `provider === ''` and returns false — the prompt-engineered tool
+  // protocol stays in the prompt, matching pre-change behavior.
+  isNativeWebSearchEnabled: (provider: string, _modelId?: string, mode?: string) => {
+    const m = mode ?? webSearchModeForTest;
+    if (m === 'off') return false;
+    if (m === 'auto')
+      return provider === 'google' || provider === 'anthropic' || provider === 'vertex';
+    return false;
+  },
 }));
 
 import { getContextBudget, ORCHESTRATOR_SYSTEM_PROMPT, toLLMMessages } from './orchestrator';

@@ -1428,7 +1428,10 @@ function resolveWebSearchSourceHint(options = {}) {
   if (backend === 'duckduckgo') return 'duckduckgo_html';
   if (resolveTavilyApiKey()) return 'tavily';
   if (resolveOllamaApiKey(options)) return 'ollama_native';
-  return 'duckduckgo_html';
+  // No key + no explicit DDG opt-in. The hint feeds the structured tool-error
+  // path, not the success path — auto-mode without a configured backend now
+  // throws instead of scraping DDG (see `executeWebSearch`).
+  return 'none';
 }
 
 async function executeWebSearch(query, maxResults, signal, options = {}) {
@@ -1469,8 +1472,22 @@ async function executeWebSearch(query, maxResults, signal, options = {}) {
     return { backend, source: 'ollama_native', results };
   }
 
-  const results = await executeDuckDuckGoWebSearch(query, maxResults, signal);
-  return { backend, source: 'duckduckgo_html', results };
+  // DuckDuckGo is intentionally NOT a silent auto-mode fallback — the HTML
+  // scrape is unofficial and fragile. Surface a structured error so the
+  // caller's catch arm can tell the model what to do. To use DDG, the user
+  // sets `PUSH_WEB_SEARCH_BACKEND=duckduckgo` explicitly.
+  //
+  // Marked via `name` (rather than a one-off subclass) so the caller can
+  // distinguish this permanent-config failure from a transient one — the
+  // same convention `AbortError` rides — and set `retryable: false` on
+  // the structured error.
+  const err = new Error(
+    'No web search backend is configured. Set TAVILY_API_KEY (recommended), ' +
+      'configure an Ollama key, or set PUSH_WEB_SEARCH_BACKEND=duckduckgo to ' +
+      'use the unofficial DuckDuckGo HTML scrape.',
+  );
+  err.name = 'WebSearchConfigError';
+  throw err;
 }
 
 /**
@@ -1734,13 +1751,16 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         } catch (err) {
           if (err instanceof Error && err.name === 'AbortError') throw err;
           const message = err instanceof Error ? err.message : String(err);
+          // Permanent config failures (no backend wired) aren't retryable;
+          // pinging the same broken state again won't help the model.
+          const isConfigError = err instanceof Error && err.name === 'WebSearchConfigError';
           return {
             ok: false,
             text: `Web search (${sourceHint}) failed: ${message}`,
             structuredError: {
               code: 'WEB_SEARCH_ERROR',
               message,
-              retryable: true,
+              retryable: !isConfigError,
             },
             meta: { query, max_results: maxResults, source: sourceHint, backend },
           };

@@ -24,6 +24,19 @@ vi.mock('./tool-dispatch', () => ({
   KNOWN_TOOL_NAMES: new Set(['sandbox_write_file', 'sandbox_read_file']),
 }));
 
+let webSearchMode: 'auto' | 'off' | 'duckduckgo' | 'google-grounding' = 'auto';
+vi.mock('./web-search-mode', () => ({
+  getWebSearchMode: () => webSearchMode,
+  isNativeWebSearchEnabled: (provider: string, _modelId?: string, mode?: string) => {
+    const m = mode ?? webSearchMode;
+    if (m === 'off') return false;
+    if (m === 'auto')
+      return provider === 'google' || provider === 'anthropic' || provider === 'vertex';
+    if (m === 'google-grounding') return provider === 'google';
+    return false;
+  },
+}));
+
 interface ControllableStream {
   response: Response;
   push(frame: string): void;
@@ -210,5 +223,123 @@ describe('anthropicStream', () => {
     expect(body.max_tokens).toBe(4096);
     expect(body.temperature).toBe(0.5);
     expect(body.top_p).toBe(0.95);
+  });
+
+  it('defaults anthropic_web_search on in auto mode', async () => {
+    installStreamFetch(fetchMock);
+    const { anthropicStream } = await import('./anthropic-stream');
+    const iter = anthropicStream(baseRequest);
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.anthropic_web_search).toBe(true);
+  });
+
+  it('omits anthropic_web_search when web search is off', async () => {
+    installStreamFetch(fetchMock);
+    webSearchMode = 'off';
+    try {
+      const { anthropicStream } = await import('./anthropic-stream');
+      const iter = anthropicStream(baseRequest);
+      void iter[Symbol.asyncIterator]()
+        .next()
+        .catch(() => {});
+      await new Promise((r) => setTimeout(r, 0));
+
+      const init = fetchMock.mock.calls[0][1] as RequestInit;
+      const body = JSON.parse(init.body as string);
+      expect(body.anthropic_web_search).toBeUndefined();
+    } finally {
+      webSearchMode = 'auto';
+    }
+  });
+
+  it('replays a paused turn by appending captured assistant blocks to the next request', async () => {
+    // pause_turn fires when Anthropic's server-side sampling loop runs out
+    // of iterations mid-turn (web_search_20250305 in particular). The
+    // adapter must issue a follow-up request with the captured assistant
+    // content[] so Anthropic can resume; from the round loop's perspective
+    // it should look like one continuous stream — pause_turn never surfaces.
+    const responses: Array<ControllableStream> = [];
+    const responsesQueue = [() => makeControllableStream(), () => makeControllableStream()];
+    fetchMock.mockImplementation(async (_url: unknown, init?: RequestInit) => {
+      if (init?.signal?.aborted) throw new DOMException('aborted', 'AbortError');
+      const factory = responsesQueue.shift() ?? (() => makeControllableStream());
+      const s = factory();
+      responses.push(s);
+      init?.signal?.addEventListener('abort', () => s.abort());
+      return s.response;
+    });
+    const { anthropicStream } = await import('./anthropic-stream');
+    const events = collect(anthropicStream(baseRequest));
+
+    // Wait for first request to fire, then push partial text + pause_turn.
+    await new Promise((r) => setTimeout(r, 0));
+    const first = responses[0];
+    first.push(JSON.stringify({ choices: [{ delta: { content: 'Searching' } }] }));
+    first.push(
+      JSON.stringify({
+        choices: [
+          {
+            finish_reason: 'pause_turn',
+            delta: {
+              assistant_content_blocks: [
+                { type: 'text', text: 'Searching' },
+                { type: 'server_tool_use', id: 'su_01', name: 'web_search', input: {} },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    first.finish();
+
+    // Adapter should issue a second request — wait for it, then deliver the
+    // terminal stream.
+    await new Promise((r) => setTimeout(r, 5));
+    const second = responses[1];
+    expect(second).toBeDefined();
+    second.push(JSON.stringify({ choices: [{ delta: { content: ' done.' } }] }));
+    second.push(JSON.stringify({ choices: [{ finish_reason: 'stop', delta: {} }] }));
+    second.finish();
+
+    const out = await events;
+    // pause_turn was an internal continuation signal — it should never
+    // surface to the consumer.
+    expect(out.some((e) => e.type === 'pause_turn')).toBe(false);
+    expect(out.some((e) => e.type === 'done')).toBe(true);
+    const textDeltas = out.filter(
+      (e): e is { type: 'text_delta'; text: string } => e.type === 'text_delta',
+    );
+    expect(textDeltas.map((e) => e.text).join('')).toBe('Searching done.');
+
+    // The second request's body must carry the captured blocks as the
+    // prior assistant turn so Anthropic can resume the paused sampling.
+    const secondInit = fetchMock.mock.calls[1][1] as RequestInit;
+    const secondBody = JSON.parse(secondInit.body as string);
+    const trailingAssistant = secondBody.messages[secondBody.messages.length - 1];
+    expect(trailingAssistant.role).toBe('assistant');
+    expect(trailingAssistant.assistant_content_blocks).toEqual([
+      { type: 'text', text: 'Searching' },
+      { type: 'server_tool_use', id: 'su_01', name: 'web_search', input: {} },
+    ]);
+  });
+
+  it('lets an explicit anthropicWebSearch=false override the default', async () => {
+    installStreamFetch(fetchMock);
+    const { anthropicStream } = await import('./anthropic-stream');
+    const iter = anthropicStream({ ...baseRequest, anthropicWebSearch: false });
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.anthropic_web_search).toBeUndefined();
   });
 });

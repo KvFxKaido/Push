@@ -204,7 +204,13 @@ describe('web_search', () => {
     assert.ok(result.text.includes('Tavily Result'));
   });
 
-  it('parses DuckDuckGo HTML results', async () => {
+  it('parses DuckDuckGo HTML results when the user explicitly opts in via PUSH_WEB_SEARCH_BACKEND', async () => {
+    // DDG is no longer a silent auto-mode fallback (the scrape is unofficial
+    // and we want the user to consciously opt in or set up Tavily). Pin the
+    // backend explicitly here so this stays a coverage test for the parser
+    // and Worker shape, not a behavioural test of the auto-mode fallthrough.
+    process.env.PUSH_WEB_SEARCH_BACKEND = 'duckduckgo';
+
     const html = [
       '<html><body>',
       '<a class="result__a" href="https://example.com/alpha">Alpha <b>Result</b></a>',
@@ -265,14 +271,15 @@ describe('web_search', () => {
     assert.ok(result.text.includes('Ollama Result'));
   });
 
-  it('falls back to DuckDuckGo when provider is ollama but key is missing', async () => {
-    let capturedUrl = '';
-    globalThis.fetch = async (url) => {
-      capturedUrl = String(url);
-      return new Response(
-        '<html><body><a class="result__a" href="https://example.com/ddg">DDG Result</a><a class="result__snippet">fallback path</a></body></html>',
-        { status: 200 },
-      );
+  it('returns a configuration error in auto mode when no backend is configured (no silent DDG)', async () => {
+    // Auto mode used to silently scrape DDG when neither Tavily nor an
+    // Ollama key was available. DDG is unofficial / fragile, so we now
+    // surface a structured tool error and let the user opt in to DDG
+    // explicitly via PUSH_WEB_SEARCH_BACKEND=duckduckgo.
+    let fetchCalled = false;
+    globalThis.fetch = async () => {
+      fetchCalled = true;
+      return new Response('', { status: 500 });
     };
 
     const result = await executeToolCall(
@@ -281,9 +288,15 @@ describe('web_search', () => {
       { providerId: 'ollama' },
     );
 
-    assert.equal(result.ok, true);
-    assert.equal(result.meta.source, 'duckduckgo_html');
-    assert.ok(capturedUrl.startsWith('https://html.duckduckgo.com/html/?q='));
+    assert.equal(result.ok, false);
+    assert.equal(fetchCalled, false);
+    assert.equal(result.meta.source, 'none');
+    assert.match(result.text, /No web search backend is configured/);
+    assert.match(result.text, /TAVILY_API_KEY/);
+    assert.match(result.text, /PUSH_WEB_SEARCH_BACKEND=duckduckgo/);
+    // Permanent config failure — retrying without the user reconfiguring
+    // would hit the same wall, so the structured error opts out of retry.
+    assert.equal(result.structuredError.retryable, false);
   });
 
   it('honors PUSH_WEB_SEARCH_BACKEND=duckduckgo even when Tavily key is set', async () => {
@@ -343,6 +356,7 @@ describe('web_search', () => {
   });
 
   it('returns no-results message when parser finds none', async () => {
+    process.env.PUSH_WEB_SEARCH_BACKEND = 'duckduckgo';
     globalThis.fetch = async () =>
       new Response('<html><body>No hits</body></html>', { status: 200 });
 
@@ -357,6 +371,7 @@ describe('web_search', () => {
   });
 
   it('returns structured error when upstream returns non-2xx', async () => {
+    process.env.PUSH_WEB_SEARCH_BACKEND = 'duckduckgo';
     globalThis.fetch = async () => new Response('upstream unavailable', { status: 503 });
 
     const result = await executeToolCall(

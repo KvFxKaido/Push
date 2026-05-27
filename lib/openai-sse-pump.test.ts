@@ -276,6 +276,83 @@ describe('openAISSEPump', () => {
     ]);
   });
 
+  it('falls back to done (not pause_turn) when finish_reason=pause_turn arrives without blocks', async () => {
+    // Defense against an upstream that emits pause_turn with no replay
+    // payload (or a non-Anthropic provider that happens to use the same
+    // string): the consumer's continuation loop would issue a request with
+    // an empty assistant turn and spin until the iteration cap. Synthesize
+    // a clean terminal event instead.
+    const s = makeStream();
+    const events = collect(openAISSEPump({ body: s.body }));
+
+    s.push(contentFrame('partial answer'));
+    s.push(
+      JSON.stringify({
+        choices: [{ finish_reason: 'pause_turn', delta: {} }],
+      }),
+    );
+    s.finish();
+
+    const out = await events;
+    expect(out.some((e) => e.type === 'pause_turn')).toBe(false);
+    expect(out.some((e) => e.type === 'done')).toBe(true);
+  });
+
+  it('also falls back to done when assistant_content_blocks is an empty array', async () => {
+    const s = makeStream();
+    const events = collect(openAISSEPump({ body: s.body }));
+
+    s.push(
+      JSON.stringify({
+        choices: [{ finish_reason: 'pause_turn', delta: { assistant_content_blocks: [] } }],
+      }),
+    );
+    s.finish();
+
+    const out = await events;
+    expect(out.some((e) => e.type === 'pause_turn')).toBe(false);
+    expect(out.some((e) => e.type === 'done')).toBe(true);
+  });
+
+  it('emits a pause_turn event (not done) when finish_reason is pause_turn', async () => {
+    // The Anthropic bridge surfaces `pause_turn` with the captured
+    // assistant content[] as a sidecar so the stream adapter can replay
+    // them in a continuation request. The pump must not synthesize a
+    // terminal `done` event for this case — the turn is still in
+    // progress from the consumer's perspective.
+    const s = makeStream();
+    const events = collect(openAISSEPump({ body: s.body }));
+
+    s.push(contentFrame('Looking up the answer.'));
+    s.push(
+      JSON.stringify({
+        choices: [
+          {
+            finish_reason: 'pause_turn',
+            delta: {
+              assistant_content_blocks: [
+                { type: 'text', text: 'Looking up the answer.' },
+                { type: 'server_tool_use', id: 'su_01', name: 'web_search', input: {} },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    s.finish();
+
+    const out = await events;
+    const pause = out.find((e) => e.type === 'pause_turn');
+    expect(pause).toBeDefined();
+    if (pause && pause.type === 'pause_turn') {
+      expect(pause.assistantBlocks).toHaveLength(2);
+      expect(pause.assistantBlocks[1]).toMatchObject({ type: 'server_tool_use', id: 'su_01' });
+    }
+    // No `done` should fire — the consumer is expected to drive the
+    // continuation via a new request, not treat pause_turn as terminal.
+    expect(out.some((e) => e.type === 'done')).toBe(false);
+  });
+
   it('maps usage onto the done event', async () => {
     const s = makeStream();
     const events = collect(openAISSEPump({ body: s.body }));

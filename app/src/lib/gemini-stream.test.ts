@@ -24,9 +24,17 @@ vi.mock('./tool-dispatch', () => ({
   KNOWN_TOOL_NAMES: new Set(['sandbox_write_file', 'sandbox_read_file']),
 }));
 
-let webSearchMode: 'auto' | 'google-grounding' | 'off' = 'auto';
+let webSearchMode: 'auto' | 'google-grounding' | 'off' | 'duckduckgo' = 'auto';
 vi.mock('./web-search-mode', () => ({
   getWebSearchMode: () => webSearchMode,
+  isNativeWebSearchEnabled: (provider: string, _modelId?: string, mode?: string) => {
+    const m = mode ?? webSearchMode;
+    if (m === 'off') return false;
+    if (m === 'auto')
+      return provider === 'google' || provider === 'anthropic' || provider === 'vertex';
+    if (m === 'google-grounding') return provider === 'google';
+    return false;
+  },
 }));
 
 interface ControllableStream {
@@ -217,7 +225,7 @@ describe('geminiStream', () => {
     }
   });
 
-  it('omits the flag when neither request nor mode opts in', async () => {
+  it('defaults grounding on in auto mode (no explicit flag, default pref)', async () => {
     installStreamFetch(fetchMock);
     const { geminiStream } = await import('./gemini-stream');
     const iter = geminiStream(baseRequest);
@@ -228,6 +236,44 @@ describe('geminiStream', () => {
 
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     const body = JSON.parse(init.body as string);
-    expect(body.google_search_grounding).toBeUndefined();
+    expect(body.google_search_grounding).toBe(true);
+  });
+
+  it('omits the flag when web search is off', async () => {
+    installStreamFetch(fetchMock);
+    webSearchMode = 'off';
+    try {
+      const { geminiStream } = await import('./gemini-stream');
+      const iter = geminiStream(baseRequest);
+      void iter[Symbol.asyncIterator]()
+        .next()
+        .catch(() => {});
+      await new Promise((r) => setTimeout(r, 0));
+
+      const init = fetchMock.mock.calls[0][1] as RequestInit;
+      const body = JSON.parse(init.body as string);
+      expect(body.google_search_grounding).toBeUndefined();
+    } finally {
+      webSearchMode = 'auto';
+    }
+  });
+
+  it('omits the flag when user picks an explicit non-native backend', async () => {
+    installStreamFetch(fetchMock);
+    webSearchMode = 'duckduckgo';
+    try {
+      const { geminiStream } = await import('./gemini-stream');
+      const iter = geminiStream(baseRequest);
+      void iter[Symbol.asyncIterator]()
+        .next()
+        .catch(() => {});
+      await new Promise((r) => setTimeout(r, 0));
+
+      const init = fetchMock.mock.calls[0][1] as RequestInit;
+      const body = JSON.parse(init.body as string);
+      expect(body.google_search_grounding).toBeUndefined();
+    } finally {
+      webSearchMode = 'auto';
+    }
   });
 });

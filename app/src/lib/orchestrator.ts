@@ -5,7 +5,7 @@ import { LOCAL_PC_TOOL_PROTOCOL, getSandboxToolProtocol } from './sandbox-tools'
 import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-tools';
 import { TODO_TOOL_PROTOCOL } from './todo-tools';
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
-import { getWebSearchMode } from './web-search-mode';
+import { getWebSearchMode, isNativeWebSearchEnabled } from './web-search-mode';
 import { ASK_USER_TOOL_PROTOCOL } from './ask-user-tools';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import type { UserProfile } from '@/types';
@@ -358,6 +358,16 @@ export function toLLMMessages(
     // description (set once at session setup by `useProjectInstructions`
     // and otherwise stale when the user later flips the menu to off).
     const webSearchEnabled = getWebSearchMode() !== 'off';
+    // When the active provider's native server-side search is enabled,
+    // skip the prompt-engineered `web_search` tool protocol. Anthropic's
+    // native tool is also literally named `web_search`, so leaving both
+    // active would create a name collision and a duplicate tool surface
+    // for the model. Providers without a native tool (OpenAI, OpenRouter,
+    // legacy ones) still get the prompt-engineered protocol as their
+    // only path.
+    const nativeWebSearchActive =
+      webSearchEnabled && isNativeWebSearchEnabled(providerType ?? '', providerModel);
+    const promptEngineeredWebSearchEnabled = webSearchEnabled && !nativeWebSearchActive;
 
     // Workspace description + GitHub tool protocol
     if (workspaceContext) {
@@ -400,7 +410,10 @@ export function toLLMMessages(
     // `webSearchEnabled` (hoisted above) drops the protocol from the
     // prompt so the model can't call a tool it doesn't know about.
     if (workspaceContext?.mode === 'chat') {
-      builder.set('tool_instructions', webSearchEnabled ? WEB_SEARCH_TOOL_PROTOCOL : '');
+      builder.set(
+        'tool_instructions',
+        promptEngineeredWebSearchEnabled ? WEB_SEARCH_TOOL_PROTOCOL : '',
+      );
     } else {
       const baseToolInstructions = builder.get('tool_instructions') ?? '';
       const toolProtocols: string[] = [];
@@ -422,7 +435,7 @@ export function toLLMMessages(
       }
       toolProtocols.push(SCRATCHPAD_TOOL_PROTOCOL);
       toolProtocols.push(TODO_TOOL_PROTOCOL);
-      if (webSearchEnabled) toolProtocols.push(WEB_SEARCH_TOOL_PROTOCOL);
+      if (promptEngineeredWebSearchEnabled) toolProtocols.push(WEB_SEARCH_TOOL_PROTOCOL);
       toolProtocols.push(ASK_USER_TOOL_PROTOCOL);
       builder.set('tool_instructions', baseToolInstructions + '\n' + toolProtocols.join('\n'));
 
