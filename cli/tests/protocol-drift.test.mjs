@@ -77,6 +77,7 @@ describe('protocol drift characterization — schema surface', () => {
     assert.deepEqual([...SCHEMA_VALIDATED_EVENT_TYPES].sort(), [
       'assistant.prompt_snapshot',
       'context.compaction',
+      'session_state_changed',
       'subagent.completed',
       'subagent.failed',
       'subagent.started',

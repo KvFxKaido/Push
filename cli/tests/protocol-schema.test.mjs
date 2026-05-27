@@ -549,16 +549,33 @@ describe('validateRunEventPayload — task_graph events', () => {
     );
 
     // Invariant 2: no orphan validators — every validated type must
-    // correspond to a real RunEventInput variant.
+    // correspond to a real RunEventInput variant, OR be on the
+    // daemon-only allowlist below.
+    //
+    // The allowlist is for events the daemon emits in response to
+    // out-of-band session mutations (not part of a run's event stream).
+    // These intentionally do not live in `RunEventInput` because lib
+    // agents never produce them — adding them to that union would
+    // misrepresent the shared contract. They still need schema
+    // validation, hence the allowlist instead of just skipping them.
+    const DAEMON_ONLY_VALIDATED_TYPES = new Set([
+      // Emitted by `update_session` and `configure_role_routing` in
+      // `cli/pushd.ts` so attached clients can mirror the daemon's
+      // session-scoped truth (provider, model, roleRouting).
+      'session_state_changed',
+    ]);
     const orphanValidators = [...SCHEMA_VALIDATED_EVENT_TYPES]
-      .filter((t) => !allTypes.has(t))
+      .filter((t) => !allTypes.has(t) && !DAEMON_ONLY_VALIDATED_TYPES.has(t))
       .sort();
     assert.deepEqual(
       orphanValidators,
       [],
-      `Payload validators registered for types that do not exist in RunEventInput.\n` +
+      `Payload validators registered for types that do not exist in RunEventInput\n` +
+        `and are not on the DAEMON_ONLY_VALIDATED_TYPES allowlist.\n` +
         `If you renamed or removed a RunEventInput variant, also drop its entry ` +
-        `from PAYLOAD_VALIDATORS in lib/protocol-schema.ts.`,
+        `from PAYLOAD_VALIDATORS in lib/protocol-schema.ts.\n` +
+        `If you added a new daemon-emitted event, extend ` +
+        `DAEMON_ONLY_VALIDATED_TYPES in this test.`,
     );
   });
 
