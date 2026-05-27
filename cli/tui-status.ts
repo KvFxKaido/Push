@@ -205,8 +205,8 @@ interface FileAwareness {
  * retrying with exponential backoff — turns sent right now run inline
  * but the chip's countdown tells the user we'll be back). `reconnect`
  * carries the live retry metadata so the footer can render a
- * `"reconnecting (N, retry in Xs)"` countdown without needing extra
- * state plumbing from the TUI module.
+ * `reconnect Ns (try N)` countdown without needing extra state
+ * plumbing from the TUI module.
  */
 export interface DaemonStatusIndicator {
   /** True when the chip should render as "daemon" (green). Drives the

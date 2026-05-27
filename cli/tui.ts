@@ -45,7 +45,6 @@ import {
   renderStatusBar,
 } from './tui-status.js';
 import {
-  cancelReconnect,
   createReconnectState,
   planNextRetry,
   recordAttemptResult,
@@ -1480,6 +1479,17 @@ export async function runTUI(options = {}) {
   // retry loop). Without it a TUI that boots with no daemon would
   // start hammering retries against a daemon that was never running.
   let daemonEverConnected = false;
+  // Cursor for the highest envelope `seq` the TUI has observed from
+  // the daemon. The TUI was previously sending `state.eventSeq` as
+  // `lastSeenSeq` on attach, but `state.eventSeq` is the *local* event
+  // counter — incoming daemon events never bumped it — so a reconnect
+  // after any daemon output replayed everything from seq 0 and the
+  // user saw duplicated transcript and tool lines (codex review on
+  // PR #664). Tracking the per-connection observed seq separately
+  // means `attachExistingDaemonSession` asks for events strictly
+  // *after* the last one we already rendered, while leaving the
+  // local `state.eventSeq` alone for the file-on-disk denormalisation.
+  let lastSeenDaemonSeq = 0;
   // Deferred hook so the reconnect helpers can wake the frame ticker
   // without referencing `refreshTicker` before it's defined further
   // down the closure (it lives in the TDZ at the point the helpers
@@ -1610,8 +1620,17 @@ export async function runTUI(options = {}) {
       client._socket.on('close', () => {
         if (daemonClient === client) {
           daemonClient = null;
-          tuiState.dirty.add('footer');
-          scheduler?.schedule();
+          // Null the session/attach tokens so any non-reconnect path
+          // (e.g. an unrelated `ensureDaemonConnected` invocation)
+          // doesn't short-circuit on `daemonSessionId` still being
+          // set and end up `send_user_message`-ing on a stale handle.
+          // The reconnect path stashes the pre-disconnect session id
+          // on `state.sessionId` and the attach token on
+          // `state.attachToken`, so `attachExistingDaemonSession`
+          // can restore both from there on success (copilot review
+          // on PR #664).
+          daemonSessionId = null;
+          daemonAttachToken = null;
           scheduleDaemonReconnect({ announce: true });
         }
       });
@@ -1736,7 +1755,14 @@ export async function runTUI(options = {}) {
         'attach_session',
         {
           sessionId: state.sessionId,
-          lastSeenSeq: state.eventSeq || 0,
+          // Use `lastSeenDaemonSeq`, not `state.eventSeq`, so reconnect
+          // resumes immediately after the last event we actually
+          // rendered. `state.eventSeq` is the LOCAL counter and is
+          // never advanced by inbound daemon events — using it here
+          // re-replayed everything from seq 0 on any reconnect after
+          // daemon output and duplicated the transcript (codex review
+          // on PR #664).
+          lastSeenSeq: lastSeenDaemonSeq,
           attachToken: state.attachToken || undefined,
           capabilities: [...TUI_DAEMON_CAPABILITIES],
         },
@@ -1876,20 +1902,46 @@ export async function runTUI(options = {}) {
     spinnerVisible() || activityRowVisible() || reconnectChipVisible();
   const anyConsumerEligible = () =>
     spinner.name !== 'off' || activityRowVisible() || reconnectChipVisible();
+  // Throttle the reconnect chip's repaint to whole-second granularity.
+  // The frame ticker fires at 10 FPS so spinner / activity row stay
+  // smooth, but the chip displays integer seconds and dirtying the
+  // footer 10×/s for an unchanged number wastes CPU during a 30s
+  // backoff wait (copilot review on PR #664). Tracking the
+  // last-emitted seconds value here means we only mark the footer
+  // dirty when the displayed text actually changes — and -1 as the
+  // sentinel guarantees the first tick after a disconnect always
+  // paints once even if seconds happens to be 0.
+  let lastReconnectChipSecs = -1;
   const startFrameTicker = () => {
     if (frameInterval) return;
     frameInterval = setInterval(() => {
       frameTick = (frameTick + 1) % TICK_MODULUS;
       if (anyConsumerVisible()) {
+        // Reconnect chip repaints only on whole-second transitions —
+        // see `lastReconnectChipSecs` comment above. Spinner /
+        // activity row repaint every tick because they encode
+        // sub-second motion.
+        let reconnectChipNeedsPaint = false;
+        if (reconnectChipVisible()) {
+          const curSecs = secondsUntilNextRetry(daemonReconnectState, Date.now());
+          if (curSecs !== lastReconnectChipSecs) {
+            lastReconnectChipSecs = curSecs;
+            reconnectChipNeedsPaint = true;
+          }
+        } else {
+          lastReconnectChipSecs = -1;
+        }
         // Dirtying 'all' made render() take the full-redraw path
         // (ESC.clearScreen + full repaint) 10×/s, flickering the whole screen
         // for the run. Scope the redraw to only the region(s) that actually
         // animate so render() stays on the partial-redraw path: the elapsed-time
         // row (footer) animates whenever a run is active; the spinner glyph
         // (header) only when it is actually drawn.
-        tuiState.dirty.add('footer');
-        if (spinnerVisible()) tuiState.dirty.add('header');
-        scheduler.flush();
+        if (spinnerVisible() || activityRowVisible() || reconnectChipNeedsPaint) {
+          tuiState.dirty.add('footer');
+          if (spinnerVisible()) tuiState.dirty.add('header');
+          scheduler.flush();
+        }
       }
     }, FRAME_TICK_MS);
     // Don't keep the Node event loop alive just for the frame ticker —
@@ -2256,6 +2308,14 @@ export async function runTUI(options = {}) {
   }
 
   function handleEngineEvent(event) {
+    // Track the highest daemon-emitted seq we've seen so the next
+    // attach (after a disconnect / reconnect) asks for events strictly
+    // after this point. Inline events have no `seq` field; daemon
+    // events always do. See `lastSeenDaemonSeq` declaration above for
+    // why this isn't `state.eventSeq`.
+    if (typeof event.seq === 'number' && event.seq > lastSeenDaemonSeq) {
+      lastSeenDaemonSeq = event.seq;
+    }
     const transcriptLenBefore = tuiState.transcript.length;
     const streamBufBefore = tuiState.streamBuf;
     const reasoningBufBefore = tuiState.reasoningBuf;

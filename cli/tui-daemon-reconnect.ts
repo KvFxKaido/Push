@@ -102,8 +102,9 @@ export function planNextRetry(
  * idle (the next disconnect starts fresh from 1s). On failure the
  * attempt count bumps but the caller is responsible for calling
  * `planNextRetry` again to arm the next timer — splitting the two so
- * the caller can decide whether to keep retrying (e.g. user typed
- * `/daemon stop` in between) without the state machine forcing it.
+ * the caller can decide whether to keep retrying without the state
+ * machine forcing it (a future "stop retrying" affordance can call
+ * `cancelReconnect` between the result and the next plan).
  */
 export function recordAttemptResult(
   state: ReconnectState,
@@ -124,10 +125,9 @@ export function recordAttemptResult(
  * the attempt count, so a subsequent re-arm continues the backoff
  * progression rather than restarting from 1s.
  *
- * Used when the daemon comes back via an unrelated path (e.g. the user
- * explicitly types `/daemon connect` while the coordinator is mid-wait)
- * — we want to drop the timer but not pretend the disconnect never
- * happened.
+ * Used when the daemon comes back via an unrelated path (e.g. another
+ * connect attempt succeeds outside the retry loop) — we want to drop
+ * the timer but not pretend the disconnect never happened.
  */
 export function cancelReconnect(state: ReconnectState): ReconnectState {
   return { phase: 'idle', attempts: state.attempts, nextRetryAtMs: null };
