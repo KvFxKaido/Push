@@ -211,6 +211,15 @@ export const MAX_JOB_WALL_CLOCK_MS = 60 * 60 * 1000;
 // can't restore-and-retry forever — after this the job fails as before.
 export const MAX_JOB_RESUMES = 2;
 
+// Max times a single job will auto-resume after a DO eviction (deploy, isolate
+// crash, hibernate without a live waitUntil). Independent from MAX_JOB_RESUMES:
+// the former counts sandbox-death resumes within a single runLoop call (lost on
+// DO restart), the latter counts DO-restart resumes and is persisted in the
+// `do_resume_count` column so the cap survives across evictions. Bounded so a
+// run that keeps killing its DO (OOM, bad input, infra issue) can't relaunch
+// itself forever on every wake — after this the orphan sweep fails the job.
+export const MAX_DO_RESTART_RESUMES = 2;
+
 // SSE keepalive cadence. Cloudflare's edge proxies drop HTTP streams that
 // go quiet for ~100s, so a long gap between real events (model thinking,
 // a slow sandbox tool) can disconnect the browser mid-run even though the
@@ -249,7 +258,8 @@ CREATE TABLE IF NOT EXISTS job (
   error_text TEXT,
   created_at INTEGER NOT NULL,
   started_at INTEGER,
-  finished_at INTEGER
+  finished_at INTEGER,
+  do_resume_count INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS event (
@@ -288,6 +298,15 @@ interface JobCheckpoint {
   agentStateJson: string;
 }
 
+/** Per-job seed used to relaunch `runLoop` after a DO eviction. The orphan
+ *  sweep restores the workspace snapshot before kicking off runLoop, so the
+ *  seeded sandbox handle is already wired to the restored state. */
+interface RestartSeed {
+  sandboxId: string;
+  ownerToken: string;
+  resumeState: CoderCheckpointState<ChatCard>;
+}
+
 export class CoderJob {
   /** Per-job AbortControllers so /cancel can interrupt an in-flight run. */
   private abortControllers = new Map<string, AbortController>();
@@ -295,6 +314,11 @@ export class CoderJob {
   /** In-memory live-event broadcast. SSE streams subscribe here to
    * receive events immediately after they're persisted. */
   private liveListeners = new Set<(event: RunEvent) => void>();
+
+  /** True once `sweepOrphanedJobs` has been kicked off for this DO instance.
+   *  Reset on every cold start — the persisted `do_resume_count` column is
+   *  the cross-eviction backstop. */
+  private orphanSweepKicked = false;
 
   private readonly ctx: DurableObjectState;
   private readonly env: Env;
@@ -314,6 +338,18 @@ export class CoderJob {
 
   private initSchema(): void {
     this.ctx.storage.sql.exec(SCHEMA_SQL);
+    // Add `do_resume_count` to pre-existing `job` tables created before the
+    // orphan-sweep landed. SQLite doesn't support ADD COLUMN IF NOT EXISTS,
+    // and constructor runs every DO wake, so swallow the "duplicate column"
+    // error after the first successful add. New DOs get the column from
+    // SCHEMA_SQL above and this ALTER is a no-op.
+    try {
+      this.ctx.storage.sql.exec(
+        'ALTER TABLE job ADD COLUMN do_resume_count INTEGER NOT NULL DEFAULT 0',
+      );
+    } catch {
+      // Already added on a prior wake; nothing to do.
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -321,6 +357,19 @@ export class CoderJob {
   // -------------------------------------------------------------------------
 
   async fetch(request: Request): Promise<Response> {
+    // First fetch after DO wake: scan for jobs left in 'running' by a prior
+    // eviction (deploy rollover, isolate OOM, hibernate without a live
+    // waitUntil) and either resume them from their last checkpoint or fail
+    // them with a structured terminal event. Without this sweep an orphaned
+    // job hangs for up to MAX_JOB_WALL_CLOCK_MS until the alarm backstop
+    // fires, and a `/events` reconnect sees no live events. Sweep runs in
+    // the background so the inbound request returns promptly; waitUntil
+    // keeps the DO alive until the sweep settles.
+    if (!this.orphanSweepKicked) {
+      this.orphanSweepKicked = true;
+      this.ctx.waitUntil(this.sweepOrphanedJobs());
+    }
+
     const url = new URL(request.url);
     const segments = url.pathname.split('/').filter(Boolean);
     const action = segments[segments.length - 1];
@@ -494,12 +543,12 @@ export class CoderJob {
   // a localized change, not a rewrite of the lifecycle wrapper.
   // -------------------------------------------------------------------------
 
-  private async runLoop(input: AgentJobStartInput): Promise<void> {
+  private async runLoop(input: AgentJobStartInput, seed?: RestartSeed): Promise<void> {
     const abortController = new AbortController();
     this.abortControllers.set(input.jobId, abortController);
 
     try {
-      const result = await this.executeJob(input, abortController.signal);
+      const result = await this.executeJob(input, abortController.signal, seed);
 
       // Claim the terminal transition atomically. If the alarm() or
       // /cancel path already wrote 'failed'/'cancelled' for this job
@@ -557,10 +606,11 @@ export class CoderJob {
   private async executeJob(
     input: AgentJobStartInput,
     signal: AbortSignal,
+    seed?: RestartSeed,
   ): Promise<{ summary: string }> {
     switch (input.role) {
       case 'coder':
-        return this.executeCoderJob(input, signal);
+        return this.executeCoderJob(input, signal, seed);
       // PR 2 adds new role arms here.
     }
     // The post-switch throw is the dispatcher's exhaustiveness backstop.
@@ -578,6 +628,7 @@ export class CoderJob {
   private async executeCoderJob(
     input: CoderJobStartInput,
     signal: AbortSignal,
+    seed?: RestartSeed,
   ): Promise<{ summary: string }> {
     const overrides = SERVICE_OVERRIDES.get(input.jobId) ?? {};
     const detectors = overrides.detectors ?? createWebDetectorAdapter();
@@ -627,9 +678,14 @@ export class CoderJob {
     // sandbox and re-run the loop seeded with the checkpoint state. The
     // sandbox-bound pieces (executor, turnCtx, services, options) are rebuilt
     // each attempt against the current sandbox. Bounded by MAX_JOB_RESUMES.
-    let sandboxId = input.sandboxId;
-    let ownerToken = input.ownerToken;
-    let resumeState: CoderCheckpointState<ChatCard> | undefined;
+    //
+    // `seed` is set when the orphan sweep relaunches this job after a DO
+    // eviction — it carries a freshly restored sandbox handle and the
+    // checkpoint loop state, so the kernel starts already-resumed rather
+    // than re-running from round 0 against a dead sandbox.
+    let sandboxId = seed?.sandboxId ?? input.sandboxId;
+    let ownerToken = seed?.ownerToken ?? input.ownerToken;
+    let resumeState: CoderCheckpointState<ChatCard> | undefined = seed?.resumeState;
     let resumesUsed = 0;
 
     for (;;) {
@@ -807,6 +863,160 @@ export class CoderJob {
       }),
     );
     return { sandboxId: restored.sandboxId, ownerToken: restored.ownerToken, resumeState };
+  }
+
+  // -------------------------------------------------------------------------
+  // Orphan sweep — recover jobs left in 'running' by a DO eviction
+  // -------------------------------------------------------------------------
+
+  /**
+   * Scan for `status='running'` rows whose runLoop died with the prior DO
+   * isolate (deploy, OOM, hibernate without a live waitUntil). For each
+   * orphan: if a checkpoint exists and the persisted DO-restart cap isn't
+   * exhausted, restore the workspace into a fresh sandbox and relaunch
+   * runLoop already-resumed. Otherwise mark the job failed with a
+   * structured terminal event so SSE consumers see the failure instead of
+   * waiting up to MAX_JOB_WALL_CLOCK_MS for the alarm backstop.
+   *
+   * Idempotent within a DO lifetime via `orphanSweepKicked`; persisted
+   * `do_resume_count` caps total relaunches across evictions.
+   */
+  private async sweepOrphanedJobs(): Promise<void> {
+    const orphans = this.ctx.storage.sql
+      .exec(`SELECT id, input_json, do_resume_count FROM job WHERE status = 'running'`)
+      .toArray() as Array<{ id: string; input_json: string; do_resume_count: number }>;
+
+    if (orphans.length === 0) return;
+
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'coder_orphan_sweep_started',
+        orphans: orphans.length,
+      }),
+    );
+
+    for (const row of orphans) {
+      await this.resumeOrphanedJob(row.id, row.input_json, row.do_resume_count);
+    }
+  }
+
+  private async resumeOrphanedJob(
+    jobId: string,
+    inputJson: string,
+    doResumeCount: number,
+  ): Promise<void> {
+    let input: AgentJobStartInput;
+    try {
+      input = JSON.parse(inputJson) as AgentJobStartInput;
+    } catch (err) {
+      await this.failOrphan(
+        jobId,
+        'coder_orphan_input_parse_failed',
+        'coder',
+        `DO restart: input_json parse failed (${err instanceof Error ? err.message : String(err)})`,
+      );
+      return;
+    }
+
+    if (doResumeCount >= MAX_DO_RESTART_RESUMES) {
+      await this.failOrphan(
+        jobId,
+        'coder_orphan_resume_cap_exhausted',
+        input.role,
+        `DO restart: resume cap of ${MAX_DO_RESTART_RESUMES} exhausted; the job has been auto-resumed too many times across DO evictions and is being failed to prevent an unbounded restart loop.`,
+      );
+      return;
+    }
+
+    const cp = this.readCheckpoint(jobId);
+    if (!cp) {
+      await this.failOrphan(
+        jobId,
+        'coder_orphan_no_checkpoint',
+        input.role,
+        'DO restart: the run was evicted before a checkpoint was captured (first checkpoint lands at round 5). No durable state exists to resume from.',
+      );
+      return;
+    }
+
+    const restored = await restoreWorkspaceSnapshot(this.env, {
+      snapshotId: cp.snapshotId,
+      restoreToken: cp.restoreToken,
+    });
+    if (!restored.ok) {
+      await this.failOrphan(
+        jobId,
+        'coder_orphan_restore_failed',
+        input.role,
+        `DO restart: workspace snapshot restore failed (${restored.error}).`,
+      );
+      return;
+    }
+
+    let resumeState: CoderCheckpointState<ChatCard>;
+    try {
+      resumeState = JSON.parse(cp.agentStateJson) as CoderCheckpointState<ChatCard>;
+    } catch (err) {
+      await this.failOrphan(
+        jobId,
+        'coder_orphan_state_parse_failed',
+        input.role,
+        `DO restart: agent_state_json parse failed (${err instanceof Error ? err.message : String(err)}).`,
+      );
+      return;
+    }
+
+    // Persist the incremented count BEFORE relaunching the loop. If this
+    // resume also dies before checkpointing, the next sweep sees the higher
+    // count and trips the cap — the alternative (increment on first
+    // checkpoint) lets a job that dies pre-checkpoint cycle forever.
+    this.ctx.storage.sql.exec(
+      'UPDATE job SET do_resume_count = ? WHERE id = ?',
+      doResumeCount + 1,
+      jobId,
+    );
+
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'coder_orphan_resumed',
+        jobId,
+        round: cp.round,
+        sandboxId: restored.sandboxId,
+        doResumeCount: doResumeCount + 1,
+      }),
+    );
+
+    this.ctx.waitUntil(
+      this.runLoop(input, {
+        sandboxId: restored.sandboxId,
+        ownerToken: restored.ownerToken,
+        resumeState,
+      }),
+    );
+  }
+
+  /**
+   * Mark an orphan as failed and emit a terminal SSE event. Uses the same
+   * `markTerminal` claim as runLoop / alarm() so a race with the alarm
+   * backstop or a late-arriving runLoop terminal cannot produce two
+   * conflicting `job.failed` broadcasts for the same id.
+   */
+  private async failOrphan(
+    jobId: string,
+    event: string,
+    role: AgentRole,
+    error: string,
+  ): Promise<void> {
+    if (!this.markTerminal(jobId, 'failed', null, error)) return;
+    console.warn(JSON.stringify({ level: 'warn', event, jobId, error }));
+    await this.appendEvent(jobId, {
+      type: 'job.failed',
+      executionId: jobId,
+      role,
+      error,
+    });
   }
 
   // -------------------------------------------------------------------------

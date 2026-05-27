@@ -24,6 +24,7 @@ import type { PushStream } from '@push/lib/provider-contract';
 import type { ChatMessage } from '@/types';
 import {
   CoderJob,
+  MAX_DO_RESTART_RESUMES,
   MAX_JOB_WALL_CLOCK_MS,
   __setCoderJobServiceOverrides,
   type CoderJobStartInput,
@@ -51,6 +52,7 @@ interface JobRow {
   created_at: number;
   started_at: number | null;
   finished_at: number | null;
+  do_resume_count: number;
 }
 
 interface EventRow {
@@ -62,9 +64,19 @@ interface EventRow {
   payload_json: string;
 }
 
+interface CheckpointRow {
+  job_id: string;
+  round: number;
+  snapshot_id: string;
+  restore_token: string;
+  agent_state_json: string;
+  created_at: number;
+}
+
 function createMockStorage() {
   const jobs = new Map<string, JobRow>();
   const events: EventRow[] = [];
+  const checkpoints = new Map<string, CheckpointRow>();
   let nextSeq = 1;
 
   function exec(
@@ -80,6 +92,8 @@ function createMockStorage() {
 
   function execQuery(sql: string, params: unknown[]): Record<string, unknown>[] {
     if (/^CREATE TABLE/i.test(sql) || /^CREATE INDEX/i.test(sql)) return [];
+
+    if (/^ALTER TABLE/i.test(sql)) return [];
 
     if (/^INSERT INTO job /i.test(sql)) {
       const [
@@ -109,8 +123,57 @@ function createMockStorage() {
         created_at: created_at as number,
         started_at: started_at as number,
         finished_at: null,
+        do_resume_count: 0,
       });
       return [];
+    }
+
+    if (/^UPDATE job SET do_resume_count = \? WHERE id = \?/i.test(sql)) {
+      const [count, id] = params;
+      const row = jobs.get(id as string);
+      if (row) row.do_resume_count = count as number;
+      return [];
+    }
+
+    if (/^SELECT id, input_json, do_resume_count FROM job WHERE status = 'running'/i.test(sql)) {
+      return [...jobs.values()]
+        .filter((j) => j.status === 'running')
+        .map((j) => ({
+          id: j.id,
+          input_json: j.input_json,
+          do_resume_count: j.do_resume_count,
+        }));
+    }
+
+    if (/^INSERT OR REPLACE INTO checkpoint/i.test(sql)) {
+      const [job_id, round, snapshot_id, restore_token, agent_state_json, created_at] = params;
+      checkpoints.set(job_id as string, {
+        job_id: job_id as string,
+        round: round as number,
+        snapshot_id: snapshot_id as string,
+        restore_token: restore_token as string,
+        agent_state_json: agent_state_json as string,
+        created_at: created_at as number,
+      });
+      return [];
+    }
+
+    if (
+      /^SELECT round, snapshot_id, restore_token, agent_state_json FROM checkpoint WHERE job_id = \?/i.test(
+        sql,
+      )
+    ) {
+      const row = checkpoints.get(params[0] as string);
+      return row
+        ? [
+            {
+              round: row.round,
+              snapshot_id: row.snapshot_id,
+              restore_token: row.restore_token,
+              agent_state_json: row.agent_state_json,
+            },
+          ]
+        : [];
     }
 
     if (/^INSERT INTO event /i.test(sql)) {
@@ -219,7 +282,7 @@ function createMockStorage() {
     throw new Error(`Unhandled SQL in mock: ${sql}`);
   }
 
-  return { exec, jobs, events };
+  return { exec, jobs, events, checkpoints };
 }
 
 function makeCtx() {
@@ -555,6 +618,9 @@ describe('CoderJob DO — end-to-end', () => {
     const { ctx, storage } = makeCtx();
     const job = new CoderJob(ctx, makeEnv());
 
+    // Warm the DO — see comment on the `/turn-summary` non-completed test.
+    await job.fetch(new Request('https://do/status?jobId=warmup-noop', { method: 'GET' }));
+
     // Seed a running job directly without going through handleStart so
     // no `job.started` event is appended.
     storage.jobs.set('job-noev', {
@@ -572,6 +638,7 @@ describe('CoderJob DO — end-to-end', () => {
       created_at: Date.now(),
       started_at: Date.now(),
       finished_at: null,
+      do_resume_count: 0,
     });
 
     const response = await job.fetch(
@@ -647,6 +714,9 @@ describe('CoderJob DO — end-to-end', () => {
       const { ctx, storage } = makeCtx();
       const job = new CoderJob(ctx, makeEnv());
 
+      // Warm the DO — see comment on the `/turn-summary` non-completed test.
+      await job.fetch(new Request('https://do/status?jobId=warmup-noop', { method: 'GET' }));
+
       storage.jobs.set('job-hb', {
         id: 'job-hb',
         chat_id: 'c',
@@ -662,6 +732,7 @@ describe('CoderJob DO — end-to-end', () => {
         created_at: Date.now(),
         started_at: Date.now(),
         finished_at: null,
+        do_resume_count: 0,
       });
 
       const response = await job.fetch(
@@ -710,6 +781,7 @@ describe('CoderJob DO — end-to-end', () => {
       created_at: startedLongAgo,
       started_at: startedLongAgo,
       finished_at: null,
+      do_resume_count: 0,
     });
 
     await job.alarm();
@@ -747,6 +819,7 @@ describe('CoderJob DO — end-to-end', () => {
       created_at: startedRecently,
       started_at: startedRecently,
       finished_at: null,
+      do_resume_count: 0,
     });
 
     await job.alarm();
@@ -817,6 +890,12 @@ describe('CoderJob DO — end-to-end', () => {
   it('/turn-summary returns null summary for a non-completed job (loader stops here)', async () => {
     const { ctx, storage } = makeCtx();
     const job = new CoderJob(ctx, makeEnv());
+    // Warm the DO so the orphan-recovery sweep is a no-op when the real
+    // fetch lands. In production a `status='running'` row on a cold DO is
+    // an orphan (the runLoop died with the prior isolate) and the sweep
+    // correctly fails it; the test fixture below shortcuts that path by
+    // seeding a row directly, so we have to mimic a warm DO here.
+    await job.fetch(new Request('https://do/status?jobId=warmup-noop', { method: 'GET' }));
     // Seed a job row that's still running — no terminal event yet.
     storage.jobs.set('job-running', {
       id: 'job-running',
@@ -833,6 +912,7 @@ describe('CoderJob DO — end-to-end', () => {
       created_at: Date.now(),
       started_at: Date.now(),
       finished_at: null,
+      do_resume_count: 0,
     });
 
     const resp = await job.fetch(
@@ -851,5 +931,189 @@ describe('CoderJob DO — end-to-end', () => {
       new Request('https://do/turn-summary?jobId=nope', { method: 'GET' }),
     );
     expect(resp.status).toBe(404);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Orphan sweep — recovery after DO eviction
+  // ---------------------------------------------------------------------------
+
+  it('orphan sweep marks a checkpoint-less running job failed on first fetch after DO wake', async () => {
+    // A `running` row with no `checkpoint` row models a job whose runLoop
+    // was evicted before round 5 (the first checkpoint cadence). On wake,
+    // there's no durable state to resume from, so the sweep fails the job
+    // with a structured terminal event instead of leaving SSE consumers
+    // waiting on the 60-minute alarm backstop.
+    const { ctx, storage } = makeCtx();
+    const job = new CoderJob(ctx, makeEnv());
+
+    storage.jobs.set('job-orphan-nocp', {
+      id: 'job-orphan-nocp',
+      chat_id: 'c',
+      repo: 'a/b',
+      branch: 'main',
+      sandbox_id: 'sb',
+      owner_token: 't',
+      origin: 'https://push.example.test',
+      status: 'running',
+      input_json: JSON.stringify(makeStartInput({ jobId: 'job-orphan-nocp' })),
+      result_json: null,
+      error_text: null,
+      created_at: Date.now() - 60_000,
+      started_at: Date.now() - 60_000,
+      finished_at: null,
+      do_resume_count: 0,
+    });
+
+    // Fetch on any route triggers the sweep on the first call.
+    await job.fetch(new Request('https://do/status?jobId=job-orphan-nocp', { method: 'GET' }));
+
+    const row = storage.jobs.get('job-orphan-nocp')!;
+    expect(row.status).toBe('failed');
+    expect(row.error_text).toMatch(/checkpoint/i);
+
+    const failed = storage.events.find((e) => e.type === 'job.failed');
+    expect(failed).toBeDefined();
+    expect(JSON.parse(failed!.payload_json).error).toMatch(/checkpoint/i);
+  });
+
+  it('orphan sweep refuses to resume past the DO-restart cap and fails the job', async () => {
+    // A job whose `do_resume_count` has reached MAX_DO_RESTART_RESUMES is a
+    // job whose previous DO-restart resumes keep dying before checkpointing
+    // again (each wake bumps the count before relaunching). Without this
+    // cap, an OOM-loop or bad input could relaunch on every DO wake
+    // forever; with the cap, the sweep terminally fails the job so a human
+    // gets a structured failure event and a clear error.
+    const { ctx, storage } = makeCtx();
+    const job = new CoderJob(ctx, makeEnv());
+
+    storage.jobs.set('job-orphan-cap', {
+      id: 'job-orphan-cap',
+      chat_id: 'c',
+      repo: 'a/b',
+      branch: 'main',
+      sandbox_id: 'sb',
+      owner_token: 't',
+      origin: 'https://push.example.test',
+      status: 'running',
+      input_json: JSON.stringify(makeStartInput({ jobId: 'job-orphan-cap' })),
+      result_json: null,
+      error_text: null,
+      created_at: Date.now() - 600_000,
+      started_at: Date.now() - 600_000,
+      finished_at: null,
+      do_resume_count: MAX_DO_RESTART_RESUMES,
+    });
+    // A checkpoint exists (so the no-checkpoint branch can't claim this),
+    // proving the cap path is what fired.
+    storage.checkpoints.set('job-orphan-cap', {
+      job_id: 'job-orphan-cap',
+      round: 10,
+      snapshot_id: 'snap-1',
+      restore_token: 'tok-1',
+      agent_state_json: JSON.stringify({ round: 10, messages: [], workingMemory: {}, cards: [] }),
+      created_at: Date.now(),
+    });
+
+    await job.fetch(new Request('https://do/status?jobId=job-orphan-cap', { method: 'GET' }));
+
+    const row = storage.jobs.get('job-orphan-cap')!;
+    expect(row.status).toBe('failed');
+    expect(row.error_text).toMatch(/cap of \d+ exhausted/i);
+
+    const failed = storage.events.find((e) => e.type === 'job.failed');
+    expect(failed).toBeDefined();
+    expect(JSON.parse(failed!.payload_json).error).toMatch(/cap of \d+ exhausted/i);
+  });
+
+  it('orphan sweep with a checkpoint but no SNAPSHOTS env fails with restore-failed', async () => {
+    // A real DO will have env.SNAPSHOTS bound; the test env doesn't.
+    // `restoreWorkspaceSnapshot` returns `{ ok: false, error: ... }` rather
+    // than throwing, so this models the production case where the R2
+    // binding is gone (misconfig) or the snapshot object was deleted — the
+    // sweep must surface that as a terminal failure, not a silent hang.
+    const { ctx, storage } = makeCtx();
+    const job = new CoderJob(ctx, makeEnv());
+
+    storage.jobs.set('job-orphan-restore', {
+      id: 'job-orphan-restore',
+      chat_id: 'c',
+      repo: 'a/b',
+      branch: 'main',
+      sandbox_id: 'sb',
+      owner_token: 't',
+      origin: 'https://push.example.test',
+      status: 'running',
+      input_json: JSON.stringify(makeStartInput({ jobId: 'job-orphan-restore' })),
+      result_json: null,
+      error_text: null,
+      created_at: Date.now() - 60_000,
+      started_at: Date.now() - 60_000,
+      finished_at: null,
+      do_resume_count: 0,
+    });
+    storage.checkpoints.set('job-orphan-restore', {
+      job_id: 'job-orphan-restore',
+      round: 5,
+      snapshot_id: 'snap-1',
+      restore_token: 'tok-1',
+      agent_state_json: JSON.stringify({ round: 5, messages: [], workingMemory: {}, cards: [] }),
+      created_at: Date.now(),
+    });
+
+    await job.fetch(new Request('https://do/status?jobId=job-orphan-restore', { method: 'GET' }));
+
+    const row = storage.jobs.get('job-orphan-restore')!;
+    expect(row.status).toBe('failed');
+    expect(row.error_text).toMatch(/snapshot restore failed/i);
+  });
+
+  it('orphan sweep is idempotent within a DO lifetime', async () => {
+    // The sweep flag is in-memory and only flips once per DO instance.
+    // Subsequent fetches must not re-sweep (no duplicate terminal events,
+    // no double-increment of do_resume_count).
+    const { ctx, storage } = makeCtx();
+    const job = new CoderJob(ctx, makeEnv());
+
+    storage.jobs.set('job-orphan-once', {
+      id: 'job-orphan-once',
+      chat_id: 'c',
+      repo: 'a/b',
+      branch: 'main',
+      sandbox_id: 'sb',
+      owner_token: 't',
+      origin: 'https://push.example.test',
+      status: 'running',
+      input_json: JSON.stringify(makeStartInput({ jobId: 'job-orphan-once' })),
+      result_json: null,
+      error_text: null,
+      created_at: Date.now() - 60_000,
+      started_at: Date.now() - 60_000,
+      finished_at: null,
+      do_resume_count: 0,
+    });
+
+    await job.fetch(new Request('https://do/status?jobId=job-orphan-once', { method: 'GET' }));
+    // Second fetch on a different route: even if there were still orphans,
+    // the sweep should not fire again on this DO instance.
+    await job.fetch(new Request('https://do/status?jobId=other', { method: 'GET' }));
+
+    const failedEvents = storage.events.filter((e) => e.type === 'job.failed');
+    expect(failedEvents).toHaveLength(1);
+  });
+
+  it('orphan sweep is a no-op when there are no running jobs', async () => {
+    // The happy DO-wake path: nothing left over from a prior eviction, so
+    // the sweep emits no logs, writes nothing, and the inbound request
+    // dispatches normally.
+    const { ctx, storage } = makeCtx();
+    const job = new CoderJob(ctx, makeEnv());
+
+    const response = await job.fetch(
+      new Request('https://do/status?jobId=nope', { method: 'GET' }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(storage.jobs.size).toBe(0);
+    expect(storage.events.length).toBe(0);
   });
 });
