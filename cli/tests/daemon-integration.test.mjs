@@ -16,7 +16,6 @@ import {
   DEFAULT_RESTART_POLICY,
   VALID_AGENT_ROLES,
   handleRequest,
-  adoptClientModelSelection,
   ensureRuntimeState,
   collectOrphanedDelegations,
   formatDelegationInterruptedNote,
@@ -661,7 +660,7 @@ describe('daemon version', () => {
     assert.ok(!response.payload.capabilities.includes('task_graph'));
   });
 
-  it('all 15 handler types are registered', async () => {
+  it('all 16 handler types are registered', async () => {
     const content = await fs.readFile(path.join(import.meta.dirname, '..', 'pushd.ts'), 'utf8');
     const handlers = [
       'hello',
@@ -670,6 +669,7 @@ describe('daemon version', () => {
       'start_session',
       'send_user_message',
       'attach_session',
+      'update_session',
       'submit_approval',
       'cancel_run',
       'configure_role_routing',
@@ -4712,41 +4712,211 @@ describe('v1 synthetic downgrade', () => {
   });
 });
 
-describe('adoptClientModelSelection (mid-session model switch reaches the daemon)', () => {
-  it('adopts a non-empty model and valid provider from the run payload', () => {
-    const state = { provider: 'ollama', model: 'stale-model' };
-    adoptClientModelSelection(state, {
-      provider: 'blackbox',
-      model: 'blackboxai/anthropic/claude-haiku-4.5',
-    });
-    assert.equal(state.model, 'blackboxai/anthropic/claude-haiku-4.5');
-    assert.equal(state.provider, 'blackbox');
+describe('update_session (daemon as source of truth for session-scoped state)', () => {
+  async function startTestSession(emit = () => {}) {
+    const start = await handleRequest(
+      makeRequest('start_session', {
+        provider: 'ollama',
+        model: 'ollama-base',
+        repo: { rootPath: process.cwd() },
+      }),
+      emit,
+    );
+    assert.equal(start.ok, true);
+    return { sessionId: start.payload.sessionId, attachToken: start.payload.attachToken };
+  }
+
+  it('applies a model-only patch and returns the new state', async () => {
+    const { sessionId, attachToken } = await startTestSession();
+    const res = await handleRequest(
+      makeRequest(
+        'update_session',
+        { sessionId, attachToken, patch: { model: 'ollama-updated' } },
+        sessionId,
+      ),
+      () => {},
+    );
+    assert.equal(res.ok, true);
+    assert.equal(res.payload.provider, 'ollama'); // unchanged
+    assert.equal(res.payload.model, 'ollama-updated');
   });
 
-  it('keeps existing values when the payload omits provider/model', () => {
-    const state = { provider: 'ollama', model: 'keep-me' };
-    adoptClientModelSelection(state, { text: 'hi' });
-    assert.equal(state.model, 'keep-me');
-    assert.equal(state.provider, 'ollama');
+  it('applies a provider+model patch atomically', async () => {
+    const { sessionId, attachToken } = await startTestSession();
+    const res = await handleRequest(
+      makeRequest(
+        'update_session',
+        {
+          sessionId,
+          attachToken,
+          patch: { provider: 'blackbox', model: 'blackboxai/anthropic/claude-haiku-4.5' },
+        },
+        sessionId,
+      ),
+      () => {},
+    );
+    assert.equal(res.ok, true);
+    assert.equal(res.payload.provider, 'blackbox');
+    assert.equal(res.payload.model, 'blackboxai/anthropic/claude-haiku-4.5');
   });
 
-  it('ignores BOTH fields when the provider is unknown (atomic selection)', () => {
-    const state = { provider: 'ollama', model: 'm1' };
-    adoptClientModelSelection(state, { provider: 'not-a-real-provider', model: 'm2' });
-    assert.equal(state.provider, 'ollama'); // unchanged
-    assert.equal(state.model, 'm1'); // model NOT adopted — it belongs to the bad provider
+  it('snaps model to the new provider default when patch omits model', async () => {
+    const { sessionId, attachToken } = await startTestSession();
+    const res = await handleRequest(
+      makeRequest(
+        'update_session',
+        { sessionId, attachToken, patch: { provider: 'blackbox' } },
+        sessionId,
+      ),
+      () => {},
+    );
+    assert.equal(res.ok, true);
+    assert.equal(res.payload.provider, 'blackbox');
+    // Old model would have been ollama-base; atomic-selection rule forbids
+    // stranding it on the new provider, so it snaps to blackbox's default.
+    assert.notEqual(res.payload.model, 'ollama-base');
+    assert.ok(typeof res.payload.model === 'string' && res.payload.model.length > 0);
   });
 
-  it('adopts a model-only payload as a same-provider switch', () => {
-    const state = { provider: 'blackbox', model: 'old' };
-    adoptClientModelSelection(state, { model: 'blackboxai/anthropic/claude-opus-4.7' });
-    assert.equal(state.provider, 'blackbox'); // unchanged
-    assert.equal(state.model, 'blackboxai/anthropic/claude-opus-4.7');
+  it('rejects unknown providers with PROVIDER_NOT_CONFIGURED', async () => {
+    const { sessionId, attachToken } = await startTestSession();
+    const res = await handleRequest(
+      makeRequest(
+        'update_session',
+        { sessionId, attachToken, patch: { provider: 'definitely-not-real' } },
+        sessionId,
+      ),
+      () => {},
+    );
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'PROVIDER_NOT_CONFIGURED');
   });
 
-  it('ignores blank/whitespace model strings', () => {
-    const state = { provider: 'ollama', model: 'keep' };
-    adoptClientModelSelection(state, { model: '   ' });
-    assert.equal(state.model, 'keep');
+  it('rejects empty/whitespace model strings with INVALID_REQUEST', async () => {
+    const { sessionId, attachToken } = await startTestSession();
+    const res = await handleRequest(
+      makeRequest('update_session', { sessionId, attachToken, patch: { model: '   ' } }, sessionId),
+      () => {},
+    );
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'INVALID_REQUEST');
+  });
+
+  it('rejects bad attach tokens with INVALID_TOKEN', async () => {
+    const { sessionId } = await startTestSession();
+    const res = await handleRequest(
+      makeRequest(
+        'update_session',
+        { sessionId, attachToken: 'wrong-token', patch: { model: 'something' } },
+        sessionId,
+      ),
+      () => {},
+    );
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'INVALID_TOKEN');
+  });
+
+  it('rejects updates while a run is active with RUN_IN_PROGRESS', async () => {
+    const { sessionId, attachToken } = await startTestSession();
+    // Mark the session as running via the test hook so we don't need a
+    // real provider round-trip.
+    const entry = __getActiveSessionForTesting(sessionId);
+    entry.activeRunId = 'run_fake_active';
+    try {
+      const res = await handleRequest(
+        makeRequest(
+          'update_session',
+          { sessionId, attachToken, patch: { model: 'should-be-rejected' } },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(res.ok, false);
+      assert.equal(res.error.code, 'RUN_IN_PROGRESS');
+    } finally {
+      entry.activeRunId = null;
+    }
+  });
+
+  it('returns SESSION_NOT_FOUND for unknown session ids', async () => {
+    const res = await handleRequest(
+      makeRequest(
+        'update_session',
+        { sessionId: 'sess_does_not_exist', patch: { model: 'x' } },
+        'sess_does_not_exist',
+      ),
+      () => {},
+    );
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'SESSION_NOT_FOUND');
+  });
+
+  it('attach_session response carries the current provider and model', async () => {
+    const { sessionId, attachToken } = await startTestSession();
+    await handleRequest(
+      makeRequest(
+        'update_session',
+        { sessionId, attachToken, patch: { model: 'hydration-target' } },
+        sessionId,
+      ),
+      () => {},
+    );
+    // Force lazy reload by evicting the in-memory entry so attach reads
+    // back from disk — covers the "TUI reconnects after daemon restart"
+    // case where the entry isn't already resident.
+    __evictActiveSessionForTesting(sessionId);
+    const res = await handleRequest(
+      makeRequest('attach_session', { sessionId, attachToken }, sessionId),
+      () => {},
+    );
+    assert.equal(res.ok, true);
+    assert.equal(res.payload.provider, 'ollama');
+    assert.equal(res.payload.model, 'hydration-target');
+  });
+
+  it('broadcasts session_state_changed to attached clients', async () => {
+    const broadcasted = [];
+    const emit = (event) => broadcasted.push(event);
+    const { sessionId, attachToken } = await startTestSession(emit);
+    await handleRequest(makeRequest('attach_session', { sessionId, attachToken }, sessionId), emit);
+    broadcasted.length = 0; // ignore session_started / attach replay
+    await handleRequest(
+      makeRequest(
+        'update_session',
+        { sessionId, attachToken, patch: { model: 'broadcast-target' } },
+        sessionId,
+      ),
+      emit,
+    );
+    const change = broadcasted.find((e) => e.type === 'session_state_changed');
+    assert.ok(
+      change,
+      `expected session_state_changed in broadcast; saw ${broadcasted.map((e) => e.type).join(',')}`,
+    );
+    assert.equal(change.payload.provider, 'ollama');
+    assert.equal(change.payload.model, 'broadcast-target');
+    // No runId because state changes are session-level, not run-scoped.
+    // Strict-mode forbids `runId: null` so the field must be absent.
+    assert.ok(!('runId' in change) || typeof change.runId === 'string');
+  });
+
+  it('configure_role_routing also broadcasts session_state_changed', async () => {
+    const broadcasted = [];
+    const emit = (event) => broadcasted.push(event);
+    const { sessionId, attachToken } = await startTestSession(emit);
+    await handleRequest(makeRequest('attach_session', { sessionId, attachToken }, sessionId), emit);
+    broadcasted.length = 0;
+    const res = await handleRequest(
+      makeRequest(
+        'configure_role_routing',
+        { sessionId, attachToken, routing: { coder: { provider: 'blackbox' } } },
+        sessionId,
+      ),
+      emit,
+    );
+    assert.equal(res.ok, true);
+    const change = broadcasted.find((e) => e.type === 'session_state_changed');
+    assert.ok(change, 'expected session_state_changed after configure_role_routing');
+    assert.equal(change.payload.roleRouting.coder.provider, 'blackbox');
   });
 });
