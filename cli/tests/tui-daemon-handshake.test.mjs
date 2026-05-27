@@ -58,7 +58,7 @@ describe('evaluateHelloResponse', () => {
     const result = evaluateHelloResponse({ runtimeVersion: '0.3.0' });
     assert.equal(result.accepted, false);
     if (!result.accepted) {
-      assert.match(result.reason, /missing a protocolVersion/);
+      assert.match(result.reason, /missing or has an invalid protocolVersion/);
     }
   });
 
@@ -157,6 +157,28 @@ describe('shouldWarnAboutUnknownEvent', () => {
     }
   });
 
+  it('includes the engine round-lifecycle events that fire on every prompt', () => {
+    // Regression guard for the PR #665 review finding: the engine
+    // emits `assistant.turn_start` / `assistant.turn_end` on every
+    // assistant turn from both inline mode and the daemon. Missing
+    // any of these from the allowlist floods the transcript with
+    // "unknown event" warnings the moment the user sends a message.
+    assert.ok(TUI_KNOWN_NOOP_EVENT_TYPES.has('assistant.turn_start'));
+    assert.ok(TUI_KNOWN_NOOP_EVENT_TYPES.has('assistant.turn_end'));
+    assert.ok(TUI_KNOWN_NOOP_EVENT_TYPES.has('harness.adaptation'));
+  });
+
+  it('includes the shared-runtime job + follow-up events', () => {
+    // RunEventInput declares these in `lib/runtime-contract.ts`; the
+    // TUI doesn't render them so they need to be on the allowlist
+    // or strict mode would surface a warning on every delegated run.
+    assert.ok(TUI_KNOWN_NOOP_EVENT_TYPES.has('job.started'));
+    assert.ok(TUI_KNOWN_NOOP_EVENT_TYPES.has('job.completed'));
+    assert.ok(TUI_KNOWN_NOOP_EVENT_TYPES.has('job.failed'));
+    assert.ok(TUI_KNOWN_NOOP_EVENT_TYPES.has('user.follow_up_queued'));
+    assert.ok(TUI_KNOWN_NOOP_EVENT_TYPES.has('user.follow_up_steered'));
+  });
+
   it('rejects non-string types defensively', () => {
     const registry = new Set();
     assert.equal(shouldWarnAboutUnknownEvent(registry, ''), false);
@@ -189,7 +211,11 @@ describe('formatUnknownEventWarning', () => {
   it('includes the event type verbatim in the warning text', () => {
     const text = formatUnknownEventWarning('weird.new.type');
     assert.match(text, /"weird\.new\.type"/);
-    // Should hint at the most likely cause so users know what to do.
-    assert.match(text, /daemon is newer/);
+    // Wording stays mode-neutral — `handleEngineEvent` fires from
+    // both daemon and inline flows, so the warning must not claim
+    // the daemon emitted it (PR #665 review).
+    assert.doesNotMatch(text, /^Daemon /);
+    assert.match(text, /Engine emitted/);
+    assert.match(text, /rebuilding|mixed binaries/);
   });
 });

@@ -1554,38 +1554,56 @@ export async function runTUI(options = {}) {
   }
 
   async function tryDaemonConnect() {
+    let client = null;
+    let socketPath;
     try {
       const { tryConnect } = await import('./daemon-client.js');
       const { getSocketPath } = await import('./pushd.js');
-      const socketPath = getSocketPath();
-      const client = await tryConnect(socketPath, 500);
+      socketPath = getSocketPath();
+      client = await tryConnect(socketPath, 500);
       if (!client) return false;
+    } catch {
+      // Connection-level failures (socket not present, EACCES, etc.)
+      // are the "daemon not running" path — silently fall back to
+      // inline and let the auto-spawn path handle it.
+      return false;
+    }
 
-      // Verify protocol with hello
-      const hello = await client.request(
+    // From here on, treat the hello round-trip as its own failure
+    // domain. `daemon-client.request` REJECTS the promise (not
+    // resolves with `ok: false`) when the daemon responds with a
+    // non-ok envelope — see `cli/daemon-client.ts:processLine`
+    // around lines 107-114. The previous shape (`if (!hello.ok)`)
+    // was dead code and the outer catch swallowed protocol-mismatch
+    // errors as silent disconnects (codex / copilot review on PR
+    // #665). Catching the RequestError here lets the user see the
+    // actual reason — `UNSUPPORTED_PROTOCOL_VERSION` is the most
+    // common one — instead of mysteriously falling back to inline.
+    let hello;
+    try {
+      hello = await client.request(
         'hello',
         { capabilities: [...TUI_DAEMON_CAPABILITIES] },
         null,
         500,
       );
-      if (!hello.ok) {
-        // Surface the actual error code+message instead of silently
-        // disconnecting. The most common case is
-        // `UNSUPPORTED_PROTOCOL_VERSION` — the daemon binary is older
-        // or newer than this TUI build. Falling back to inline with no
-        // hint why hid the real cause; the warning gives the user a
-        // clear thread to pull on.
-        const code = hello.error?.code ? `${hello.error.code}: ` : '';
-        const message = hello.error?.message || 'unknown error';
-        addTranscriptEntry(
-          tuiState,
-          'warning',
-          `Daemon hello rejected (${code}${message}). Running inline; restart pushd or rebuild the TUI.`,
-        );
+    } catch (err) {
+      const code = err?.code ? `${err.code}: ` : '';
+      const message = err?.message || 'unknown error';
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        `Daemon hello rejected (${code}${message}). Running inline; restart pushd or rebuild the TUI.`,
+      );
+      try {
         client.close();
-        return false;
+      } catch {
+        /* socket may already be torn down */
       }
+      return false;
+    }
 
+    try {
       const handshake = evaluateHelloResponse(hello.payload);
       if (!handshake.accepted) {
         addTranscriptEntry(tuiState, 'warning', handshake.reason);
@@ -1631,6 +1649,11 @@ export async function runTUI(options = {}) {
 
       return true;
     } catch {
+      try {
+        client.close();
+      } catch {
+        /* best-effort */
+      }
       return false;
     }
   }

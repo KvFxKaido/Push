@@ -73,6 +73,17 @@ export const TUI_KNOWN_NOOP_EVENT_TYPES: ReadonlySet<string> = new Set([
   // role for them today.
   'assistant.prompt_snapshot',
   'context.compaction',
+  // Engine round-lifecycle markers fired by `cli/engine.ts` on every
+  // assistant turn. The TUI tracks the same lifecycle implicitly
+  // (`tuiState.runState` flips on `assistant_token` / `run_complete`)
+  // so leaving these off the allowlist flooded the transcript with
+  // "unknown event" warnings on every prompt in both inline AND
+  // daemon mode (codex + copilot review on PR #665).
+  'assistant.turn_start',
+  'assistant.turn_end',
+  // Provider-adaptation marker fired when the engine swaps a
+  // sub-component for a provider quirk. Informational only.
+  'harness.adaptation',
   // Crash-recovery markers. The user-visible effect ships as the
   // run_complete / error that follows; the markers themselves exist
   // for ops tooling, not the chat surface.
@@ -81,6 +92,17 @@ export const TUI_KNOWN_NOOP_EVENT_TYPES: ReadonlySet<string> = new Set([
   // Delegation-interruption marker. Surfaced via the paired
   // subagent.failed event the delegation renderer already handles.
   'delegation_interrupted',
+  // Shared-runtime lifecycle events declared in
+  // `lib/runtime-contract.ts:RunEventInput`. The TUI doesn't have a
+  // transcript role for them today — `job.*` events fire on
+  // delegated work that surfaces via `subagent.*`, and the
+  // follow-up family is an orchestrator queueing affordance the
+  // user already sees through their own composer entry.
+  'job.started',
+  'job.completed',
+  'job.failed',
+  'user.follow_up_queued',
+  'user.follow_up_steered',
 ]);
 
 /**
@@ -139,7 +161,7 @@ export function evaluateHelloResponse(payload: unknown): HandshakeResult {
   if (typeof protocolVersion !== 'string' || protocolVersion.length === 0) {
     return {
       accepted: false,
-      reason: `Daemon hello response is missing a protocolVersion field. Expected "${EXPECTED_PROTOCOL_VERSION}".`,
+      reason: `Daemon hello response is missing or has an invalid protocolVersion field. Expected "${EXPECTED_PROTOCOL_VERSION}".`,
     };
   }
   if (protocolVersion !== EXPECTED_PROTOCOL_VERSION) {
@@ -192,11 +214,18 @@ export function shouldWarnAboutUnknownEvent(registry: Set<string>, eventType: st
  * Format a transcript warning line for a single unknown event type.
  * Caller-side helper so the wording stays consistent and so unit
  * tests can pin it without driving a full TUI render loop.
+ *
+ * Wording is mode-neutral on purpose: `handleEngineEvent` runs from
+ * both the daemon's `client.onEvent` bridge AND the inline-mode
+ * `runAssistantTurn`'s `emit:` callback, so saying "Daemon emitted"
+ * would be wrong half the time (copilot review on PR #665). The
+ * generic "engine emitted" plus the hint about rebuilding covers
+ * both modes.
  */
 export function formatUnknownEventWarning(eventType: string): string {
   return (
-    `Daemon emitted unknown event type "${eventType}" — the TUI silently ignored it. ` +
-    `This usually means the daemon is newer than the TUI; consider rebuilding the TUI ` +
-    `or filing a bug if both are from the same install.`
+    `Engine emitted unknown event type "${eventType}" — the TUI silently ignored it. ` +
+    `This usually means a newer event was added without a matching TUI handler; ` +
+    `consider rebuilding the TUI or filing a bug if you're not running mixed binaries.`
   );
 }
