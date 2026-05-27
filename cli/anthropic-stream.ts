@@ -160,48 +160,72 @@ async function* cliAnthropicStream(
     ...(resolveAnthropicWebSearch(req) ? { anthropic_web_search: true } : {}),
   };
 
-  // `buildAnthropicMessagesRequest` does not include `model` in the body
-  // (the Worker re-attaches it for the direct API; the Vertex path carries
-  // it in the URL). Direct `/v1/messages` requires `model` in JSON, so
-  // re-attach here too — same as the Worker's `handleAnthropicChat`.
-  const upstreamBody = JSON.stringify({
-    ...buildAnthropicMessagesRequest(openAIRequest),
-    model,
-  });
-
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'anthropic-version': ANTHROPIC_API_VERSION,
   };
   if (apiKey) headers['x-api-key'] = apiKey;
 
-  const response = await fetch(config.url, {
-    method: 'POST',
-    headers,
-    body: upstreamBody,
-    signal: req.signal,
-  });
+  // `pause_turn` continuation loop — mirrors `app/src/lib/anthropic-stream.ts`.
+  // The Anthropic bridge surfaces `pause_turn` when the server-side
+  // sampling loop hits its iteration cap (web_search_20250305 can trigger
+  // this for multi-search turns); we replay the assistant's captured
+  // content[] until the turn terminates. Capped at 3 iterations.
+  const MAX_PAUSE_TURN_ITERATIONS = 3;
+  let currentRequest = openAIRequest;
+  for (let attempt = 0; attempt <= MAX_PAUSE_TURN_ITERATIONS; attempt += 1) {
+    const upstreamBody = JSON.stringify({
+      ...buildAnthropicMessagesRequest(currentRequest),
+      model,
+    });
 
-  if (!response.ok) {
-    const errBody = await response.text().catch(() => '(no body)');
-    throw new CliProviderError(
-      `Provider error ${response.status} [provider=${config.id} model=${model} url=${config.url}]: ${errBody.slice(0, 400)}`,
-      response.status,
-    );
+    const response = await fetch(config.url, {
+      method: 'POST',
+      headers,
+      body: upstreamBody,
+      signal: req.signal,
+    });
+
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => '(no body)');
+      throw new CliProviderError(
+        `Provider error ${response.status} [provider=${config.id} model=${model} url=${config.url}]: ${errBody.slice(0, 400)}`,
+        response.status,
+      );
+    }
+
+    if (!response.body) {
+      // The Messages API normally streams. A bodyless response means upstream
+      // declined to stream (rare; usually only on errors which we've already
+      // handled). Yield a synthetic terminal event so the consumer doesn't
+      // hang waiting for `done`.
+      yield { type: 'done', finishReason: 'stop' };
+      return;
+    }
+
+    const translated = createAnthropicTranslatedStream(response, model);
+    let paused: Array<Record<string, unknown>> | null = null;
+    for await (const event of openAISSEPump({ body: translated, signal: req.signal })) {
+      if (event.type === 'pause_turn') {
+        paused = event.assistantBlocks;
+        continue;
+      }
+      yield event;
+    }
+
+    if (!paused) return;
+    if (attempt === MAX_PAUSE_TURN_ITERATIONS) {
+      // Cap exhausted. Synthesize a terminal `done` so the consumer
+      // doesn't hang — whatever text streamed so far becomes the answer.
+      yield { type: 'done', finishReason: 'stop' };
+      return;
+    }
+    currentRequest = {
+      ...currentRequest,
+      messages: [
+        ...(currentRequest.messages ?? []),
+        { role: 'assistant', assistant_content_blocks: paused },
+      ],
+    };
   }
-
-  if (!response.body) {
-    // The Messages API normally streams. A bodyless response means upstream
-    // declined to stream (rare; usually only on errors which we've already
-    // handled). Yield a synthetic terminal event so the consumer doesn't
-    // hang waiting for `done`.
-    yield { type: 'done', finishReason: 'stop' };
-    return;
-  }
-
-  // Translate the Anthropic SSE into OpenAI-shaped SSE, then pump it through
-  // the standard parser. This keeps every downstream consumer (CLI engine,
-  // daemon-provider-stream, lib-side agent roles) on a single event surface.
-  const translated = createAnthropicTranslatedStream(response, model);
-  yield* openAISSEPump({ body: translated, signal: req.signal });
 }

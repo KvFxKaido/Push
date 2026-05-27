@@ -123,6 +123,18 @@ export type PushStreamEvent =
   // the time a consumer cares about tool dispatch, the stream has flushed
   // the assembled call as fenced JSON `text_delta` on finish.
   | { type: 'tool_call_delta' }
+  /**
+   * Emitted by the Anthropic bridge when the upstream returns
+   * `stop_reason: pause_turn` — the server-side sampling loop hit its
+   * iteration cap mid-turn and needs the assistant's content array
+   * replayed in a follow-up request to continue. The stream adapter
+   * handles the replay internally; consumers should never see
+   * `finishReason: 'pause_turn'` reach the round loop. The opaque
+   * `assistantBlocks` payload is the Anthropic content array verbatim,
+   * sent back through `OpenAIMessage.assistant_content_blocks` on the
+   * continuation request.
+   */
+  | { type: 'pause_turn'; assistantBlocks: Array<Record<string, unknown>> }
   | {
       type: 'done';
       finishReason: 'stop' | 'length' | 'tool_calls' | 'aborted' | 'unknown';

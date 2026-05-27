@@ -54,6 +54,28 @@ function normalizeReasoningBlocks(raw: unknown): OpenAIReasoningBlock[] | undefi
   return out.length > 0 ? out : undefined;
 }
 
+const MAX_ASSISTANT_CONTENT_BLOCKS = 256;
+
+/** Validate the Push-private `assistant_content_blocks` sidecar used for
+ *  Anthropic `pause_turn` replay. Anthropic treats the replayed content
+ *  as opaque continuation context, so we don't introspect block shape —
+ *  just enforce that it's an array of objects within a sane bound.
+ *  Returns `undefined` (silently dropping the field) on malformed input,
+ *  same fail-closed posture as `normalizeReasoningBlocks` — bad metadata
+ *  shouldn't 400 the turn, the replay just won't go through. */
+function normalizeAssistantContentBlocks(raw: unknown): Array<Record<string, unknown>> | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  if (raw.length === 0) return undefined;
+  if (raw.length > MAX_ASSISTANT_CONTENT_BLOCKS) return undefined;
+  const out: Array<Record<string, unknown>> = [];
+  for (const entry of raw) {
+    const rec = asRecord(entry);
+    if (!rec) return undefined;
+    out.push(rec);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 /** Extract a `cache_control` field from a raw content part and return the
  *  normalized shape Push emits today, or `undefined` if the field is absent
  *  or malformed. Fail-closed by design: an unrecognized cache_control shape
@@ -149,8 +171,18 @@ export function validateAndNormalizeChatRequest(
 
     const reasoningBlocks =
       role === 'assistant' ? normalizeReasoningBlocks(messageRecord.reasoning_blocks) : undefined;
+    const assistantContentBlocks =
+      role === 'assistant'
+        ? normalizeAssistantContentBlocks(messageRecord.assistant_content_blocks)
+        : undefined;
 
     const rawContent = messageRecord.content;
+    // Allow undefined `content` on assistant turns that carry the pause_turn
+    // sidecar — the bridge uses `assistant_content_blocks` verbatim and the
+    // text content is never read. Without this branch we'd push a
+    // content-less assistant message and the bridge's text path would
+    // synthesize an empty `[{ type: 'text', text: '' }]` content[], shadowing
+    // the sidecar.
     if (typeof rawContent === 'string' || rawContent === null || rawContent === undefined) {
       normalizedMessages.push({
         ...(Object.prototype.hasOwnProperty.call(messageRecord, 'content')
@@ -158,6 +190,7 @@ export function validateAndNormalizeChatRequest(
           : {}),
         role,
         ...(reasoningBlocks ? { reasoning_blocks: reasoningBlocks } : {}),
+        ...(assistantContentBlocks ? { assistant_content_blocks: assistantContentBlocks } : {}),
       });
       continue;
     }
@@ -229,6 +262,7 @@ export function validateAndNormalizeChatRequest(
       role,
       content: normalizedParts,
       ...(reasoningBlocks ? { reasoning_blocks: reasoningBlocks } : {}),
+      ...(assistantContentBlocks ? { assistant_content_blocks: assistantContentBlocks } : {}),
     });
   }
 
@@ -282,17 +316,25 @@ export function validateAndNormalizeChatRequest(
   }
 
   // `bodyText` is what non-Anthropic transports forward upstream verbatim.
-  // The Push-private `reasoning_blocks` sidecar would be an unknown message
-  // parameter to strict OpenAI-compatible endpoints (Azure, OpenAI Chat,
-  // legacy Vertex) and may be rejected. Strip it here. The Anthropic bridge
-  // consumes from `parsed` (which still carries the field) and re-emits the
-  // blocks as Anthropic-shape `content[]` entries on its own wire.
+  // Push-private sidecars (`reasoning_blocks`, `assistant_content_blocks`)
+  // would be unknown message parameters to strict OpenAI-compatible
+  // endpoints (Azure, OpenAI Chat, legacy Vertex) and may be rejected.
+  // Strip them here. The Anthropic bridge consumes from `parsed` (which
+  // still carries the fields) and re-emits the blocks as Anthropic-shape
+  // `content[]` entries on its own wire.
   const stripped = {
     ...normalized,
     messages: normalizedMessages.map((msg) => {
-      if (msg.reasoning_blocks === undefined) return msg;
-      const { reasoning_blocks: _stripped, ...rest } = msg;
+      if (msg.reasoning_blocks === undefined && msg.assistant_content_blocks === undefined) {
+        return msg;
+      }
+      const {
+        reasoning_blocks: _stripped,
+        assistant_content_blocks: _strippedBlocks,
+        ...rest
+      } = msg;
       void _stripped;
+      void _strippedBlocks;
       return rest;
     }),
   };

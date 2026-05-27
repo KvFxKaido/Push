@@ -82,40 +82,78 @@ export async function* anthropicStream(
   };
   injectTraceHeaders(headers);
 
-  const response = await fetch(PROVIDER_URLS.anthropic.chat, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-    signal: req.signal,
-  });
+  // `pause_turn` continuation loop: the Anthropic bridge surfaces
+  // `pause_turn` when the server-side sampling loop hits its iteration
+  // cap mid-turn (common when `web_search_20250305` makes multiple
+  // searches). We replay the assistant's captured content[] as the next
+  // turn's prior assistant message; Anthropic resumes from where it
+  // paused. Cap at 3 iterations as a runaway-defense — beyond that a
+  // model is almost certainly stuck and the user would rather see what
+  // we have than wait through more spins.
+  const MAX_PAUSE_TURN_ITERATIONS = 3;
+  let currentBody = body;
+  for (let attempt = 0; attempt <= MAX_PAUSE_TURN_ITERATIONS; attempt += 1) {
+    const response = await fetch(PROVIDER_URLS.anthropic.chat, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(currentBody),
+      signal: req.signal,
+    });
 
-  if (!response.ok) {
-    const errBody = await response.text().catch(() => '');
-    let detail = errBody;
-    try {
-      const parsed = JSON.parse(errBody);
-      detail = parseProviderError(parsed, errBody.slice(0, 200), true);
-    } catch {
-      detail = errBody ? errBody.slice(0, 200) : 'empty body';
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => '');
+      let detail = errBody;
+      try {
+        const parsed = JSON.parse(errBody);
+        detail = parseProviderError(parsed, errBody.slice(0, 200), true);
+      } catch {
+        detail = errBody ? errBody.slice(0, 200) : 'empty body';
+      }
+      // Worker's handleAnthropicChat already prefixes its JSON error with
+      // `Anthropic ${status}: …`, so don't re-prefix here — that produces
+      // `Anthropic 401: Anthropic 401: …`. Fall back to a tagged prefix only
+      // when the response came from somewhere other than our Worker (network
+      // failure, dev proxy quirk) and didn't include the marker.
+      const message = detail.startsWith('Anthropic ')
+        ? detail
+        : `Anthropic ${response.status}: ${detail}`;
+      throw new Error(message);
     }
-    // Worker's handleAnthropicChat already prefixes its JSON error with
-    // `Anthropic ${status}: …`, so don't re-prefix here — that produces
-    // `Anthropic 401: Anthropic 401: …`. Fall back to a tagged prefix only
-    // when the response came from somewhere other than our Worker (network
-    // failure, dev proxy quirk) and didn't include the marker.
-    const message = detail.startsWith('Anthropic ')
-      ? detail
-      : `Anthropic ${response.status}: ${detail}`;
-    throw new Error(message);
-  }
 
-  if (!response.body) {
-    throw new Error('Anthropic response had no body');
-  }
+    if (!response.body) {
+      throw new Error('Anthropic response had no body');
+    }
 
-  yield* openAISSEPump({
-    body: response.body,
-    signal: req.signal,
-    isKnownToolName: (name) => KNOWN_TOOL_NAMES.has(name),
-  });
+    let paused: Array<Record<string, unknown>> | null = null;
+    for await (const event of openAISSEPump({
+      body: response.body,
+      signal: req.signal,
+      isKnownToolName: (name) => KNOWN_TOOL_NAMES.has(name),
+    })) {
+      if (event.type === 'pause_turn') {
+        paused = event.assistantBlocks;
+        continue;
+      }
+      yield event;
+    }
+
+    if (!paused) return;
+    if (attempt === MAX_PAUSE_TURN_ITERATIONS) {
+      // Hit the cap. Synthesize a terminal `done` so the round loop sees
+      // a clean finish — the user gets whatever text streamed through up
+      // to this point instead of a hanging turn.
+      yield { type: 'done', finishReason: 'stop' };
+      return;
+    }
+    // Append the paused assistant blocks as the next request's prior
+    // assistant turn. The Anthropic bridge picks up
+    // `assistant_content_blocks` and uses them verbatim as the upstream
+    // content[]. Cloning by spread keeps each iteration's body
+    // independent for telemetry / debugging.
+    const nextMessages = Array.isArray(currentBody.messages)
+      ? [...(currentBody.messages as unknown[])]
+      : [];
+    nextMessages.push({ role: 'assistant', assistant_content_blocks: paused });
+    currentBody = { ...currentBody, messages: nextMessages };
+  }
 }

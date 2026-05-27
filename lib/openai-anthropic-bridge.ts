@@ -76,6 +76,12 @@ function buildOpenAISseChunk(params: {
   content?: string;
   reasoningBlock?: OpenAIReasoningBlock;
   finishReason?: string | null;
+  /**
+   * Push-private sidecar: when finishReason is `'pause_turn'`, this carries
+   * the full assistant `content[]` array from the paused upstream so the
+   * pump can surface it to the stream adapter for a continuation request.
+   */
+  assistantBlocks?: Array<Record<string, unknown>>;
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
@@ -85,6 +91,7 @@ function buildOpenAISseChunk(params: {
   const delta: Record<string, unknown> = {};
   if (params.content) delta.content = params.content;
   if (params.reasoningBlock) delta.reasoning_block = params.reasoningBlock;
+  if (params.assistantBlocks) delta.assistant_content_blocks = params.assistantBlocks;
 
   const payload: Record<string, unknown> = {
     id: `chatcmpl-${crypto.randomUUID()}`,
@@ -117,6 +124,14 @@ function mapAnthropicStopReason(stopReason: string | null | undefined): string {
       return 'length';
     case 'tool_use':
       return 'tool_calls';
+    // `pause_turn` is Anthropic's signal that the server-side sampling loop
+    // ran out of iterations before completing the turn (web_search_20250305
+    // and other server tools can trigger it). The client is expected to
+    // replay the assistant's content[] in a follow-up request to continue;
+    // see the SSE translator below for the capture path and the pump for
+    // the surface event.
+    case 'pause_turn':
+      return 'pause_turn';
     default:
       return 'stop';
   }
@@ -154,6 +169,21 @@ export function buildAnthropicMessagesRequest(
 
     const contentBlocks = convertOpenAIContentToAnthropic(message.content);
     if (role === 'assistant') {
+      // Pause-turn continuation: when the caller carries the raw assistant
+      // content array from a prior paused response (server-side sampling
+      // loop hit its iteration cap), emit it verbatim. Anthropic treats it
+      // as continuation context, so the text + reasoning_blocks
+      // reconstruction would corrupt the round-trip — drop them.
+      if (
+        Array.isArray(message.assistant_content_blocks) &&
+        message.assistant_content_blocks.length > 0
+      ) {
+        anthropicMessages.push({
+          role: 'assistant',
+          content: message.assistant_content_blocks,
+        });
+        continue;
+      }
       const reasoning = reasoningBlocksToAnthropic(message.reasoning_blocks);
       anthropicMessages.push({
         role: 'assistant',
@@ -249,6 +279,18 @@ export function createAnthropicTranslatedStream(
       type RedactedState = { kind: 'redacted_thinking'; data: string };
       const openBlocks = new Map<number, ThinkingState | RedactedState>();
 
+      // Per-index full-content capture for `pause_turn` continuation. We
+      // keep the original `content_block_start` payload (so server_tool_use
+      // / web_search_tool_result blocks survive opaquely) and accumulate
+      // text / thinking / input_json deltas onto it as they arrive. On
+      // `pause_turn` stop_reason we emit the assembled blocks via the
+      // pump's `assistant_content_blocks` sidecar so the stream adapter
+      // can replay them in a follow-up request and continue the turn.
+      const capturedBlocks = new Map<number, Record<string, unknown>>();
+      // Accumulates partial JSON for server_tool_use input across
+      // `input_json_delta` events. Joined on content_block_stop.
+      const inputJsonBuffers = new Map<number, string>();
+
       const processSseLine = (rawLine: string): boolean => {
         const line = rawLine.trim();
         if (!line.startsWith('data:')) return false;
@@ -284,6 +326,10 @@ export function createAnthropicTranslatedStream(
                 data: typeof block.data === 'string' ? block.data : '',
               });
             }
+            // Capture the raw block shape for pause_turn replay. We keep a
+            // shallow clone so subsequent delta accumulation doesn't mutate
+            // the upstream's view of the payload.
+            capturedBlocks.set(idx, { ...block });
           }
           return false;
         }
@@ -324,6 +370,38 @@ export function createAnthropicTranslatedStream(
               );
             }
           }
+          // Finalize the captured block for pause_turn replay. Patch the
+          // accumulated text / thinking / signature / input back onto the
+          // raw block so replaying it as `content[]` round-trips with
+          // upstream's expected shape.
+          if (idx >= 0) {
+            const captured = capturedBlocks.get(idx);
+            if (captured) {
+              if (captured.type === 'thinking' && state?.kind === 'thinking') {
+                captured.thinking = state.text;
+                captured.signature = state.signature;
+              } else if (
+                captured.type === 'redacted_thinking' &&
+                state?.kind === 'redacted_thinking'
+              ) {
+                captured.data = state.data;
+              }
+              const pendingJson = inputJsonBuffers.get(idx);
+              if (pendingJson !== undefined) {
+                inputJsonBuffers.delete(idx);
+                if (pendingJson.length > 0) {
+                  try {
+                    captured.input = JSON.parse(pendingJson);
+                  } catch {
+                    // Malformed partial JSON shouldn't crash the bridge —
+                    // upstream may have closed mid-token. Leave the
+                    // captured `input` at whatever shape arrived in
+                    // `content_block_start` (often `{}`).
+                  }
+                }
+              }
+            }
+          }
           return false;
         }
 
@@ -332,6 +410,12 @@ export function createAnthropicTranslatedStream(
           const delta = parsed.delta as Record<string, unknown> | undefined;
           if (delta?.type === 'text_delta' && typeof delta.text === 'string' && delta.text) {
             controller.enqueue(encoder.encode(buildOpenAISseChunk({ model, content: delta.text })));
+            // Accumulate onto the captured block so the replay payload
+            // carries the full text the model emitted before pausing.
+            const captured = idx >= 0 ? capturedBlocks.get(idx) : undefined;
+            if (captured && captured.type === 'text') {
+              captured.text = (typeof captured.text === 'string' ? captured.text : '') + delta.text;
+            }
             return false;
           }
           // Thinking deltas ride a separate per-block state machine.
@@ -346,6 +430,16 @@ export function createAnthropicTranslatedStream(
             } else if (delta?.type === 'signature_delta' && typeof delta.signature === 'string') {
               state.signature += delta.signature;
             }
+          }
+          // server_tool_use blocks stream their `input` field as
+          // `input_json_delta` partials. Concatenate the partials so we
+          // can JSON-parse the complete object at content_block_stop.
+          if (
+            delta?.type === 'input_json_delta' &&
+            typeof delta.partial_json === 'string' &&
+            idx >= 0
+          ) {
+            inputJsonBuffers.set(idx, (inputJsonBuffers.get(idx) ?? '') + delta.partial_json);
           }
           return false;
         }
@@ -385,11 +479,23 @@ export function createAnthropicTranslatedStream(
                   ? message.stop_reason
                   : null;
             if (stopReason || eventType === 'message_stop') {
+              const mappedFinish = mapAnthropicStopReason(stopReason);
+              // On `pause_turn`, attach the captured assistant content[] so
+              // the pump can surface it to the stream adapter for replay.
+              // We sort by index so the upstream's content[] ordering is
+              // preserved through the round-trip (Anthropic relies on it).
+              const assistantBlocks =
+                mappedFinish === 'pause_turn'
+                  ? Array.from(capturedBlocks.entries())
+                      .sort(([a], [b]) => a - b)
+                      .map(([, block]) => block)
+                  : undefined;
               controller.enqueue(
                 encoder.encode(
                   buildOpenAISseChunk({
                     model,
-                    finishReason: mapAnthropicStopReason(stopReason),
+                    finishReason: mappedFinish,
+                    ...(assistantBlocks ? { assistantBlocks } : {}),
                     usage,
                   }),
                 ),

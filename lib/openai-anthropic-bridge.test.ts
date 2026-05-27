@@ -135,6 +135,49 @@ describe('buildAnthropicMessagesRequest', () => {
     expect(body).not.toHaveProperty('tools');
   });
 
+  it('uses assistant_content_blocks verbatim on the upstream content when present', () => {
+    // Pause-turn replay: the prior assistant turn carries an opaque
+    // content[] array that Anthropic recognized as continuation context.
+    // The bridge must NOT reconstruct the content from text + reasoning
+    // — Anthropic relies on the original block ordering (including
+    // server_tool_use / web_search_tool_result blocks) to resume.
+    const capturedBlocks = [
+      { type: 'text', text: 'I will search for that.' },
+      {
+        type: 'server_tool_use',
+        id: 'su_01',
+        name: 'web_search',
+        input: { query: 'tc39 stage 4' },
+      },
+      {
+        type: 'web_search_tool_result',
+        tool_use_id: 'su_01',
+        content: [{ type: 'web_search_result', url: 'https://example.com', title: 'TC39' }],
+      },
+    ];
+    const request: OpenAIChatRequest = {
+      model: 'claude-opus-4-7',
+      messages: [
+        { role: 'user', content: 'What are the latest TC39 stage 4 proposals?' },
+        {
+          role: 'assistant',
+          assistant_content_blocks: capturedBlocks,
+          // Reasoning + text content should be IGNORED when the sidecar
+          // is set — they were already inside the captured blocks.
+          content: 'placeholder text the bridge must drop',
+          reasoning_blocks: [{ type: 'thinking', text: 'ignored', signature: 'sig' }],
+        },
+      ],
+      stream: true,
+    };
+
+    const body = buildAnthropicMessagesRequest(request) as {
+      messages: Array<{ role: string; content: unknown }>;
+    };
+    expect(body.messages[1].role).toBe('assistant');
+    expect(body.messages[1].content).toEqual(capturedBlocks);
+  });
+
   it('preserves cache_control on text and image content parts', () => {
     // Prompt caching is the LEDE for going direct-Anthropic vs OpenRouter,
     // so a regression here would silently kill cache hit rate on every turn.
@@ -297,6 +340,66 @@ describe('createAnthropicTranslatedStream', () => {
     }>;
 
     expect(blocks).toEqual([{ type: 'redacted_thinking', data: 'enc-payload-xyz' }]);
+  });
+
+  it('captures assistant content blocks and emits pause_turn finish_reason on stop_reason=pause_turn', async () => {
+    // Web search server-tool turns can pause when Anthropic hits its
+    // internal sampling-loop cap. The translator must capture the full
+    // assistant content[] (text + server_tool_use + web_search_tool_result)
+    // and emit `finish_reason: pause_turn` with the blocks as a sidecar so
+    // the stream adapter can replay them in a continuation request.
+    const upstream = createEventStreamResponse([
+      'data: {"type":"message_start","message":{"usage":{"input_tokens":11,"output_tokens":0}}}',
+      'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Looking up "}}',
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"the answer."}}',
+      'data: {"type":"content_block_stop","index":0}',
+      'data: {"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"su_01","name":"web_search","input":{}}}',
+      'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"query\\":"}}',
+      'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\\"tc39 stage 4\\"}"}}',
+      'data: {"type":"content_block_stop","index":1}',
+      'data: {"type":"content_block_start","index":2,"content_block":{"type":"web_search_tool_result","tool_use_id":"su_01","content":[{"type":"web_search_result","url":"https://example.com","title":"TC39"}]}}',
+      'data: {"type":"content_block_stop","index":2}',
+      'data: {"type":"message_delta","delta":{"stop_reason":"pause_turn","usage":{"input_tokens":11,"output_tokens":12}}}',
+    ]);
+
+    const translated = createAnthropicTranslatedStream(upstream, 'claude-opus-4-7');
+    const text = await new Response(translated).text();
+    const payloads = text
+      .split('\n')
+      .filter((line) => line.startsWith('data: ') && !line.endsWith('[DONE]'))
+      .map((line) => JSON.parse(line.slice(6)) as Record<string, unknown>);
+
+    type Chunk = {
+      choices?: Array<{
+        delta?: { content?: string; assistant_content_blocks?: Array<Record<string, unknown>> };
+        finish_reason?: string;
+      }>;
+    };
+    const final = payloads.at(-1) as Chunk;
+    expect(final.choices?.[0]?.finish_reason).toBe('pause_turn');
+    const blocks = final.choices?.[0]?.delta?.assistant_content_blocks;
+    expect(Array.isArray(blocks)).toBe(true);
+    expect(blocks).toHaveLength(3);
+    expect(blocks?.[0]).toMatchObject({ type: 'text', text: 'Looking up the answer.' });
+    expect(blocks?.[1]).toMatchObject({
+      type: 'server_tool_use',
+      id: 'su_01',
+      name: 'web_search',
+      input: { query: 'tc39 stage 4' },
+    });
+    expect(blocks?.[2]).toMatchObject({
+      type: 'web_search_tool_result',
+      tool_use_id: 'su_01',
+    });
+
+    // Text deltas still flow through normally on the way to the pause — the
+    // user sees the partial response in the UI while the adapter sets up
+    // the continuation request.
+    const textContent = payloads
+      .map((p) => (p as Chunk).choices?.[0]?.delta?.content ?? '')
+      .join('');
+    expect(textContent).toBe('Looking up the answer.');
   });
 
   it('drops thinking blocks that arrive without a signature rather than emitting a poison block', async () => {

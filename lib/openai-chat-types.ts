@@ -42,6 +42,17 @@ export type OpenAIMessage = {
   role?: string;
   content?: string | OpenAIContentPart[] | null;
   reasoning_blocks?: OpenAIReasoningBlock[];
+  /**
+   * Push-private sidecar for replaying an Anthropic `pause_turn`
+   * continuation. When set on an assistant message, the Anthropic bridge
+   * uses these blocks as the upstream `content[]` array verbatim
+   * (bypassing the text + reasoning_blocks reconstruction) so the
+   * server-side sampling loop can resume from where it paused. Other
+   * bridges ignore the field. The blocks are stored opaquely because
+   * Anthropic treats the replayed content as continuation context, not
+   * something the client needs to interpret.
+   */
+  assistant_content_blocks?: Array<Record<string, unknown>>;
 };
 
 /** Push-private native-web-search extensions. Each provider's bridge
