@@ -1764,12 +1764,10 @@ async function handleConfigureRoleRouting(req) {
 
   const { state } = entry;
   state.roleRouting = { ...(state.roleRouting || {}), ...normalized };
-  await saveSessionState(state);
-
-  // Broadcast so any other attached client (web UI, second TUI, paired
-  // phone) observes the change without polling. The requester also
-  // receives this in addition to the RPC response — `state.provider` etc.
-  // handlers are idempotent.
+  // `broadcastSessionStateChanged` appends the event AND saves the
+  // state — calling `saveSessionState` first would persist a stale
+  // `eventSeq` that filters this very event out of attach-replay
+  // (codex / copilot review on PR #663). The helper owns the order.
   await broadcastSessionStateChanged(state);
 
   return makeResponse(req.requestId, 'configure_role_routing', sessionId, true, {
@@ -1849,6 +1847,25 @@ async function handleUpdateSession(req) {
     );
   }
 
+  // Delegations and task-graph executions read `state.provider` /
+  // `state.model` (via `resolveRoleRouting`) for every sub-agent call
+  // they make, so a mid-flight patch would silently swap the model
+  // under the running work. The session entry tracks both via
+  // `ensureRuntimeState`; non-empty Maps mean work is in flight even
+  // though `activeRunId` is null (the orchestrator turn that kicked
+  // them off has already returned). Block them with the same code
+  // so clients have one path to surface (copilot review on PR #663).
+  const activeDelegations = entry.activeDelegations?.size ?? 0;
+  const activeGraphs = entry.activeGraphs?.size ?? 0;
+  if (activeDelegations > 0 || activeGraphs > 0) {
+    return makeErrorResponse(
+      req.requestId,
+      'update_session',
+      'RUN_IN_PROGRESS',
+      `Background work is active (${activeDelegations} delegation(s), ${activeGraphs} task graph(s)); cannot update session state until it completes`,
+    );
+  }
+
   const { state } = entry;
   let nextProvider = state.provider;
   let nextModel = state.model;
@@ -1888,7 +1905,10 @@ async function handleUpdateSession(req) {
 
   state.provider = nextProvider;
   state.model = nextModel;
-  await saveSessionState(state);
+  // `broadcastSessionStateChanged` appends the event AND saves the
+  // state. A pre-save would persist a stale `eventSeq` and the
+  // attach-replay filter (`seq <= currentSeq`) would drop this very
+  // event on the next disk-reload.
   await broadcastSessionStateChanged(state);
 
   return makeResponse(req.requestId, 'update_session', sessionId, true, {
@@ -1907,6 +1927,13 @@ async function handleUpdateSession(req) {
  * for any consumer that watches state transitions — and the seq stays
  * monotonic instead of broadcasting an envelope with a duplicated seq).
  *
+ * Saves the slim session state *after* `appendSessionEvent` increments
+ * `state.eventSeq`, otherwise a daemon restart loads the pre-increment
+ * `eventSeq` from `state.json` and `attach_session` filters this very
+ * event out of replay (its `seq` is `> currentSeq` from disk). Callers
+ * therefore MUST NOT pre-save — they let this helper own the save
+ * order, which keeps the persisted cursor monotonic across restarts.
+ *
  * Not scoped to a runId: state changes are session-level and happen
  * between runs (an active run blocks `update_session`). The envelope
  * omits the `runId` field entirely — strict-mode rejects `runId: null`.
@@ -1918,6 +1945,7 @@ async function broadcastSessionStateChanged(state) {
     roleRouting: state.roleRouting || {},
   };
   await appendSessionEvent(state, 'session_state_changed', payload, null);
+  await saveSessionState(state);
   broadcastEvent(state.sessionId, {
     v: PROTOCOL_VERSION,
     kind: 'event',

@@ -1607,14 +1607,26 @@ export async function runTUI(options = {}) {
       if (state.provider !== payload.provider) {
         const newConfig = PROVIDER_CONFIGS[payload.provider];
         if (newConfig) {
+          // Resolve the key FIRST, then commit both fields together.
+          // A failed resolve must not leave `ctx.apiKey` pointing at
+          // the *previous* provider's credential — if the daemon
+          // disconnects right after the switch, the inline fallback
+          // would otherwise call the new provider with the wrong key
+          // instead of failing loudly with a missing-key error
+          // (copilot review on PR #663). On failure we still update
+          // `state.provider` + `ctx.providerConfig` so the daemon
+          // (which has its own creds) stays correct, and null the
+          // key so any inline fallback surfaces the misconfiguration
+          // instead of silently using stale credentials.
+          let resolvedKey = null;
+          try {
+            resolvedKey = resolveApiKey(newConfig);
+          } catch {
+            /* fall through with resolvedKey = null */
+          }
           state.provider = payload.provider;
           ctx.providerConfig = newConfig;
-          try {
-            ctx.apiKey = resolveApiKey(newConfig);
-          } catch {
-            // Inline fallback will surface the missing-key error if it ever
-            // matters; the daemon already has whatever creds it needs.
-          }
+          ctx.apiKey = resolvedKey;
           changed = true;
         }
       }

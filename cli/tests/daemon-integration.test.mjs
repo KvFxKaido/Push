@@ -4838,6 +4838,88 @@ describe('update_session (daemon as source of truth for session-scoped state)', 
     }
   });
 
+  it('rejects updates with active delegations as RUN_IN_PROGRESS', async () => {
+    // Delegations and task-graph executions share the session's
+    // provider/model via `resolveRoleRouting` — a mid-flight patch
+    // would swap the model under the running sub-agent.
+    const { sessionId, attachToken } = await startTestSession();
+    const entry = ensureRuntimeState(__getActiveSessionForTesting(sessionId));
+    entry.activeDelegations.set('sub_in_flight', { promise: Promise.resolve() });
+    try {
+      const res = await handleRequest(
+        makeRequest(
+          'update_session',
+          { sessionId, attachToken, patch: { model: 'should-be-rejected' } },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(res.ok, false);
+      assert.equal(res.error.code, 'RUN_IN_PROGRESS');
+      assert.match(res.error.message, /delegation/);
+    } finally {
+      entry.activeDelegations.delete('sub_in_flight');
+    }
+  });
+
+  it('rejects updates with active task graphs as RUN_IN_PROGRESS', async () => {
+    const { sessionId, attachToken } = await startTestSession();
+    const entry = ensureRuntimeState(__getActiveSessionForTesting(sessionId));
+    entry.activeGraphs.set('graph_in_flight', { promise: Promise.resolve() });
+    try {
+      const res = await handleRequest(
+        makeRequest(
+          'update_session',
+          { sessionId, attachToken, patch: { model: 'should-be-rejected' } },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(res.ok, false);
+      assert.equal(res.error.code, 'RUN_IN_PROGRESS');
+      assert.match(res.error.message, /task graph/);
+    } finally {
+      entry.activeGraphs.delete('graph_in_flight');
+    }
+  });
+
+  it('persists eventSeq across the broadcast so attach-replay does not skip the event', async () => {
+    // Regression: `broadcastSessionStateChanged` calls
+    // `appendSessionEvent` which bumps `state.eventSeq`. If the caller
+    // saves session state BEFORE the broadcast, the on-disk
+    // `state.json` keeps the old eventSeq and a reconnecting client
+    // computes `currentSeq` from the stale disk value — filtering
+    // this very event out of replay (`e.seq <= currentSeq`). Forcing
+    // a disk reload via eviction proves the persisted seq matches the
+    // emitted seq.
+    const { sessionId, attachToken } = await startTestSession();
+    const updateRes = await handleRequest(
+      makeRequest(
+        'update_session',
+        { sessionId, attachToken, patch: { model: 'replay-target' } },
+        sessionId,
+      ),
+      () => {},
+    );
+    assert.equal(updateRes.ok, true);
+    __evictActiveSessionForTesting(sessionId);
+    // Attach asking for events strictly after seq 0 — without the fix,
+    // the event lives at seq N on disk but state.json says
+    // `eventSeq = N-1`, so the replay filter drops it.
+    const replayed = [];
+    const attachRes = await handleRequest(
+      makeRequest('attach_session', { sessionId, attachToken, lastSeenSeq: 0 }, sessionId),
+      (event) => replayed.push(event),
+    );
+    assert.equal(attachRes.ok, true);
+    const change = replayed.find((e) => e.type === 'session_state_changed');
+    assert.ok(
+      change,
+      `expected session_state_changed in replay after disk reload; saw ${replayed.map((e) => e.type).join(',')}`,
+    );
+    assert.equal(change.payload.model, 'replay-target');
+  });
+
   it('returns SESSION_NOT_FOUND for unknown session ids', async () => {
     const res = await handleRequest(
       makeRequest(
