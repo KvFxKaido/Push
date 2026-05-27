@@ -198,9 +198,29 @@ interface FileAwareness {
  * a paired `pushd` daemon or running them inline. Updated whenever the
  * TUI's daemon connection state changes; sits next to git/cwd/context
  * so a glance at the footer answers "where are my turns going."
+ *
+ * `phase` reflects the live connection state machine: `connected` (turns
+ * flow through the daemon), `inline` (no daemon, never connected this
+ * session), or `reconnecting` (daemon disconnected and the TUI is
+ * retrying with exponential backoff — turns sent right now run inline
+ * but the chip's countdown tells the user we'll be back). `reconnect`
+ * carries the live retry metadata so the footer can render a
+ * `"reconnecting (N, retry in Xs)"` countdown without needing extra
+ * state plumbing from the TUI module.
  */
 export interface DaemonStatusIndicator {
+  /** True when the chip should render as "daemon" (green). Drives the
+   * existing colour rules. Backwards-compatible with callers that only
+   * pass `{ connected }`. */
   connected: boolean;
+  phase?: 'connected' | 'inline' | 'reconnecting';
+  reconnect?: {
+    /** 1-based count of retry attempts since the disconnect. */
+    attempt: number;
+    /** Seconds remaining until the next attempt fires. Clamped to
+     * non-negative; the footer rerenders on each frame tick. */
+    secondsUntilNextRetry: number;
+  } | null;
 }
 
 interface StatusBarOptions {
@@ -267,9 +287,31 @@ export function renderStatusBar(
   // chip is dropped entirely when the caller passes null so callers
   // that don't track daemon state (e.g. a one-shot smoke test) don't
   // see a misleading "inline" label.
+  //
+  // `reconnecting` is a distinct third state: the daemon disconnected
+  // and the TUI is retrying. We render an amber `reconnect Ns (try N)`
+  // chip so the disconnect is visible the moment it happens and the
+  // countdown tells the user we will be back without them having to
+  // restart the TUI. Falls through to the `connected ? daemon : inline`
+  // branch when no `phase` is supplied so old callers keep their two-
+  // state behaviour.
   if (daemonStatus) {
-    const text = daemonStatus.connected ? 'daemon' : 'inline';
-    const color: TokenName = daemonStatus.connected ? 'state.success' : 'fg.dim';
+    const phase = daemonStatus.phase ?? (daemonStatus.connected ? 'connected' : 'inline');
+    let text: string;
+    let color: TokenName;
+    if (phase === 'connected') {
+      text = 'daemon';
+      color = 'state.success';
+    } else if (phase === 'reconnecting') {
+      const r = daemonStatus.reconnect;
+      const secs = r ? Math.max(0, r.secondsUntilNextRetry) : 0;
+      const attempt = r ? r.attempt : 0;
+      text = `reconnect ${secs}s (try ${attempt})`;
+      color = 'state.warn';
+    } else {
+      text = 'inline';
+      color = 'fg.dim';
+    }
     parts.push({
       icon: '',
       text,
