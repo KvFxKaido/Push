@@ -627,9 +627,42 @@ function validateContextCompaction(payload: unknown, basePath: string): Validati
   return issues;
 }
 
+/**
+ * `session_state_changed` carries the daemon's current session-scoped state
+ * after `update_session` or `configure_role_routing` mutates it. Clients
+ * mirror their local view from this payload — the daemon is the source of
+ * truth for `provider`, `model`, and `roleRouting`.
+ *
+ * Required: `provider` (non-empty string), `model` (non-empty string).
+ * Optional but expected: `roleRouting` (plain object). Validator is
+ * permissive about per-role entries because role validation lives in
+ * `cli/pushd.ts:handleConfigureRoleRouting` — duplicating it here would
+ * couple the schema module to the agent role table.
+ */
+function validateSessionStateChanged(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected object, got ${JSON.stringify(payload)}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const provider = expectNonEmptyString(payload, 'provider', basePath);
+  if (provider) issues.push(provider);
+  const model = expectNonEmptyString(payload, 'model', basePath);
+  if (model) issues.push(model);
+  if ('roleRouting' in payload && payload.roleRouting !== undefined) {
+    if (!isPlainObject(payload.roleRouting)) {
+      issues.push({
+        path: `${basePath}.roleRouting`,
+        message: `expected plain object or omitted, got ${JSON.stringify(payload.roleRouting)}`,
+      });
+    }
+  }
+  return issues;
+}
+
 const PAYLOAD_VALIDATORS: Record<string, PayloadValidator> = {
   'assistant.prompt_snapshot': validateAssistantPromptSnapshot,
   'context.compaction': validateContextCompaction,
+  session_state_changed: validateSessionStateChanged,
   'subagent.started': validateSubagentStarted,
   'subagent.completed': validateSubagentCompleted,
   'subagent.failed': validateSubagentFailed,

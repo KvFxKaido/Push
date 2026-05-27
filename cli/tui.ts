@@ -1593,12 +1593,63 @@ export async function runTUI(options = {}) {
     }
   }
 
+  /**
+   * Copy daemon-truth provider/model into the local view. Called on
+   * attach response and on `session_state_changed` events. Also updates
+   * the in-process `ctx.providerConfig` / `ctx.apiKey` so the next
+   * inline-fallback call uses the right credentials. Returns true if
+   * any field changed (callers re-render the footer on change).
+   */
+  function hydrateSessionStateFromDaemon(payload) {
+    if (!payload || typeof payload !== 'object') return false;
+    let changed = false;
+    if (typeof payload.provider === 'string' && payload.provider) {
+      if (state.provider !== payload.provider) {
+        const newConfig = PROVIDER_CONFIGS[payload.provider];
+        if (newConfig) {
+          // Resolve the key FIRST, then commit both fields together.
+          // A failed resolve must not leave `ctx.apiKey` pointing at
+          // the *previous* provider's credential — if the daemon
+          // disconnects right after the switch, the inline fallback
+          // would otherwise call the new provider with the wrong key
+          // instead of failing loudly with a missing-key error
+          // (copilot review on PR #663). On failure we still update
+          // `state.provider` + `ctx.providerConfig` so the daemon
+          // (which has its own creds) stays correct, and null the
+          // key so any inline fallback surfaces the misconfiguration
+          // instead of silently using stale credentials.
+          let resolvedKey = null;
+          try {
+            resolvedKey = resolveApiKey(newConfig);
+          } catch {
+            /* fall through with resolvedKey = null */
+          }
+          state.provider = payload.provider;
+          ctx.providerConfig = newConfig;
+          ctx.apiKey = resolvedKey;
+          changed = true;
+        }
+      }
+    }
+    if (typeof payload.model === 'string' && payload.model) {
+      if (state.model !== payload.model) {
+        state.model = payload.model;
+        changed = true;
+      }
+    }
+    if (changed) {
+      tuiState.dirty.add('footer');
+      scheduler?.schedule();
+    }
+    return changed;
+  }
+
   async function attachExistingDaemonSession() {
     if (!daemonClient || daemonSessionId || !sessionPersisted || !state?.sessionId) {
       return false;
     }
     try {
-      await daemonClient.request(
+      const res = await daemonClient.request(
         'attach_session',
         {
           sessionId: state.sessionId,
@@ -1611,6 +1662,11 @@ export async function runTUI(options = {}) {
       );
       daemonSessionId = state.sessionId;
       daemonAttachToken = state.attachToken || null;
+      // Daemon is the source of truth for session-scoped state. Hydrate
+      // the local view from the attach response so a mid-session switch
+      // from another client (or a stale state.json on disk) doesn't
+      // leave the TUI showing the wrong provider/model after re-attach.
+      hydrateSessionStateFromDaemon(res.payload);
       return true;
     } catch {
       return false;
@@ -2278,6 +2334,16 @@ export async function runTUI(options = {}) {
         }
         break;
 
+      case 'session_state_changed':
+        // Daemon broadcasts this after `update_session` /
+        // `configure_role_routing` mutates session-scoped state. Mirror
+        // the change into the local view so the footer + next inline
+        // fallback stay consistent with daemon truth (and so another
+        // client switching provider/model is visible here without
+        // polling).
+        hydrateSessionStateFromDaemon(event.payload);
+        break;
+
       case 'approval_received':
         // Daemon mode: approval was processed, resume display
         if (tuiState.runState === 'awaiting_approval') {
@@ -2595,12 +2661,9 @@ export async function runTUI(options = {}) {
               text,
               attachToken: daemonAttachToken,
               capabilities: [...TUI_DAEMON_CAPABILITIES],
-              // Carry the current provider/model so a mid-session switch
-              // (switchModel only updates local state + config) actually reaches
-              // the daemon, which otherwise keeps the model fixed at
-              // start_session time. See handleSendUserMessage adoption.
-              provider: state.provider,
-              model: state.model,
+              // Provider/model intentionally omitted — the daemon owns
+              // session-scoped state. Mid-session switches route through
+              // `update_session` in switchModel/switchProvider.
             },
             daemonSessionId,
           );
@@ -3277,12 +3340,52 @@ export async function runTUI(options = {}) {
       return;
     }
 
-    state.model = target;
+    // Daemon mode: route through `update_session` so the daemon stays the
+    // source of truth for session-scoped state. Local mutation happens
+    // only after the daemon confirms — a rejection (active run, bad
+    // provider) surfaces in the transcript and the picker stays open
+    // with the old value selected.
+    if (daemonClient?.connected && daemonSessionId) {
+      try {
+        const res = await daemonClient.request(
+          'update_session',
+          {
+            sessionId: daemonSessionId,
+            attachToken: daemonAttachToken,
+            patch: { model: target },
+          },
+          daemonSessionId,
+        );
+        if (!res.ok) {
+          addTranscriptEntry(
+            tuiState,
+            'error',
+            res.error?.message || 'Daemon rejected model switch',
+          );
+          scheduler.flush();
+          return;
+        }
+        // The broadcast event handler will mirror provider/model into
+        // local state, but apply it inline here too so the post-switch
+        // status entry below reflects the new value without depending
+        // on event-ordering against the response.
+        hydrateSessionStateFromDaemon(res.payload);
+      } catch (err) {
+        addTranscriptEntry(tuiState, 'error', `Daemon error during model switch: ${err.message}`);
+        scheduler.flush();
+        return;
+      }
+    } else {
+      state.model = target;
+      await saveSessionState(state);
+    }
+
     // Persist per-provider model default (matches classic REPL behavior).
+    // This is a *user* preference for new sessions, not session-scoped
+    // state, so it lives in the global config even in daemon mode.
     if (!config[ctx.providerConfig.id]) config[ctx.providerConfig.id] = {};
     config[ctx.providerConfig.id].model = target;
     await saveConfig(config);
-    await saveSessionState(state);
     addTranscriptEntry(tuiState, 'status', `Model switched to: ${target}`);
     if (closePicker) {
       closeModelModal();
@@ -4773,16 +4876,54 @@ export async function runTUI(options = {}) {
     }
 
     const newConfig = PROVIDER_CONFIGS[target.id];
+    const targetModel = config[target.id]?.model || newConfig.defaultModel;
 
-    ctx.providerConfig = newConfig;
-    ctx.apiKey = newApiKey;
-    state.provider = target.id;
-    state.model = config[target.id]?.model || newConfig.defaultModel;
+    // Daemon mode: route through `update_session`. Provider+model are
+    // submitted together so the daemon applies the atomic-selection
+    // rule (a provider change snaps the model to the new provider's
+    // default if no model is supplied — we supply one explicitly here
+    // to preserve any per-provider model preference from the config).
+    if (daemonClient?.connected && daemonSessionId) {
+      try {
+        const res = await daemonClient.request(
+          'update_session',
+          {
+            sessionId: daemonSessionId,
+            attachToken: daemonAttachToken,
+            patch: { provider: target.id, model: targetModel },
+          },
+          daemonSessionId,
+        );
+        if (!res.ok) {
+          addTranscriptEntry(
+            tuiState,
+            'error',
+            res.error?.message || 'Daemon rejected provider switch',
+          );
+          scheduler.flush();
+          return;
+        }
+        hydrateSessionStateFromDaemon(res.payload);
+      } catch (err) {
+        addTranscriptEntry(
+          tuiState,
+          'error',
+          `Daemon error during provider switch: ${err.message}`,
+        );
+        scheduler.flush();
+        return;
+      }
+    } else {
+      ctx.providerConfig = newConfig;
+      ctx.apiKey = newApiKey;
+      state.provider = target.id;
+      state.model = targetModel;
+      await saveSessionState(state);
+    }
 
-    // Persist current default provider (matches classic REPL behavior).
+    // Persist current default provider (user preference for new sessions).
     config.provider = target.id;
     await saveConfig(config);
-    await saveSessionState(state);
     addTranscriptEntry(tuiState, 'status', `Switched to ${target.id} | model: ${state.model}`);
     setActiveOverlayModal(null);
     tuiState.providerModalCursor = index;

@@ -13,6 +13,7 @@
  *   start_session    — create a new session
  *   send_user_message — start a run from user input
  *   attach_session   — attach to existing session + event replay
+ *   update_session   — mutate session-scoped state (provider/model)
  *   submit_approval  — respond to an approval_required pause
  *   cancel_run       — abort active run
  *   configure_role_routing — set per-role provider/model routing
@@ -1245,12 +1246,11 @@ async function handleSendUserMessage(req, emitEvent) {
 
   const { state } = entry;
 
-  // Adopt the client's current provider/model so a mid-session switch in the
-  // TUI (switchModel updates only local state + config) takes effect here. The
-  // daemon otherwise keeps entry.state.model fixed at start_session time, so
-  // switching looks applied in the UI but every run keeps the old model.
-  // Per-role routing (resolveRoleRouting) still takes precedence over this base.
-  adoptClientModelSelection(state, req.payload);
+  // Session-scoped provider/model live in the daemon as the source of
+  // truth. Clients mutate them via `update_session` (handler below);
+  // we no longer adopt them from each `send_user_message` payload.
+  // Per-role routing (`resolveRoleRouting`) still takes precedence
+  // over the base provider/model when a role override is configured.
 
   const runId = makeRunId();
   const abortController = new AbortController();
@@ -1476,6 +1476,12 @@ async function handleAttachSession(req, emitEvent) {
     sessionId,
     state: entry.activeRunId ? 'running' : 'idle',
     activeRunId: entry.activeRunId || null,
+    // Session-scoped truth: the daemon is the source. Clients (TUI, web)
+    // hydrate from these on attach instead of loading state.json
+    // directly, which keeps the two views in lock-step after a
+    // mid-session switch from another client.
+    provider: state.provider,
+    model: state.model,
     roleRouting: state.roleRouting || {},
     replay: {
       fromSeq,
@@ -1758,7 +1764,11 @@ async function handleConfigureRoleRouting(req) {
 
   const { state } = entry;
   state.roleRouting = { ...(state.roleRouting || {}), ...normalized };
-  await saveSessionState(state);
+  // `broadcastSessionStateChanged` appends the event AND saves the
+  // state — calling `saveSessionState` first would persist a stale
+  // `eventSeq` that filters this very event out of attach-replay
+  // (codex / copilot review on PR #663). The helper owns the order.
+  await broadcastSessionStateChanged(state);
 
   return makeResponse(req.requestId, 'configure_role_routing', sessionId, true, {
     roleRouting: state.roleRouting,
@@ -1766,28 +1776,185 @@ async function handleConfigureRoleRouting(req) {
 }
 
 /**
- * Adopt a client-supplied provider/model into session state, in place.
+ * Patch session-scoped state (currently provider + model) from a client.
  *
- * The TUI carries its current provider/model on every `send_user_message` so a
- * mid-session switch reaches the daemon (the daemon otherwise keeps the model
- * fixed at `start_session` time). Returns the same `state` for convenience.
+ * This is the daemon-as-source-of-truth path: the TUI switches model/provider
+ * by calling this RPC instead of writing the session file directly. The old
+ * "carry the model on every send_user_message" workaround
+ * (`adoptClientModelSelection`) is gone — the daemon now owns the truth and
+ * every client reads it back via `attach_session` or the broadcast event.
  *
- * provider + model are treated as ONE atomic selection: the model belongs to
- * the named provider. So if the payload names a provider we don't recognize,
- * BOTH fields are ignored — adopting only the model would strand a foreign
- * model on the session's old provider and break the next run. A payload with no
- * provider (model-only) is a same-provider model switch and adopts the model.
+ * Atomicity rule: provider + model are treated as ONE selection. A patch with
+ * provider but no model snaps the model to that provider's default — adopting
+ * only the provider would strand the session's old model on the new provider.
+ * A model-only patch is a same-provider model switch.
+ *
+ * Rejected during an active run: switching mid-run would race with the
+ * already-streaming round (which has already captured the provider config
+ * via `PROVIDER_CONFIGS[state.provider]`).
  */
-export function adoptClientModelSelection(state, payload) {
-  if (!state || !payload) return state;
-  if (payload.provider != null) {
-    const reqProvider = normalizeProviderInput(payload.provider);
-    if (!reqProvider || !PROVIDER_CONFIGS[reqProvider]) return state; // unknown provider → adopt nothing
-    state.provider = reqProvider;
+async function handleUpdateSession(req) {
+  const sessionId = req.sessionId || req.payload?.sessionId;
+  if (!sessionId) {
+    return makeErrorResponse(
+      req.requestId,
+      'update_session',
+      'INVALID_REQUEST',
+      'sessionId is required',
+    );
   }
-  const reqModel = typeof payload.model === 'string' ? payload.model.trim() : '';
-  if (reqModel) state.model = reqModel;
-  return state;
+  const patch = req.payload?.patch;
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+    return makeErrorResponse(
+      req.requestId,
+      'update_session',
+      'INVALID_REQUEST',
+      'patch must be a non-null object with optional { provider, model }',
+    );
+  }
+
+  let entry = activeSessions.get(sessionId);
+  if (!entry) {
+    try {
+      const state = await loadSessionState(sessionId);
+      entry = { state, attachToken: state.attachToken };
+      activeSessions.set(sessionId, entry);
+    } catch {
+      return makeErrorResponse(
+        req.requestId,
+        'update_session',
+        'SESSION_NOT_FOUND',
+        `Session not found: ${sessionId}`,
+      );
+    }
+  }
+
+  if (!validateAttachToken(entry, req.payload?.attachToken)) {
+    return makeErrorResponse(
+      req.requestId,
+      'update_session',
+      'INVALID_TOKEN',
+      'Invalid or missing attach token',
+    );
+  }
+
+  if (entry.activeRunId) {
+    return makeErrorResponse(
+      req.requestId,
+      'update_session',
+      'RUN_IN_PROGRESS',
+      `Run ${entry.activeRunId} is active; cannot update session state mid-run`,
+    );
+  }
+
+  // Delegations and task-graph executions read `state.provider` /
+  // `state.model` (via `resolveRoleRouting`) for every sub-agent call
+  // they make, so a mid-flight patch would silently swap the model
+  // under the running work. The session entry tracks both via
+  // `ensureRuntimeState`; non-empty Maps mean work is in flight even
+  // though `activeRunId` is null (the orchestrator turn that kicked
+  // them off has already returned). Block them with the same code
+  // so clients have one path to surface (copilot review on PR #663).
+  const activeDelegations = entry.activeDelegations?.size ?? 0;
+  const activeGraphs = entry.activeGraphs?.size ?? 0;
+  if (activeDelegations > 0 || activeGraphs > 0) {
+    return makeErrorResponse(
+      req.requestId,
+      'update_session',
+      'RUN_IN_PROGRESS',
+      `Background work is active (${activeDelegations} delegation(s), ${activeGraphs} task graph(s)); cannot update session state until it completes`,
+    );
+  }
+
+  const { state } = entry;
+  let nextProvider = state.provider;
+  let nextModel = state.model;
+  let providerChanged = false;
+
+  if (patch.provider !== undefined && patch.provider !== null) {
+    const normalized = normalizeProviderInput(patch.provider);
+    if (!normalized || !PROVIDER_CONFIGS[normalized]) {
+      return makeErrorResponse(
+        req.requestId,
+        'update_session',
+        'PROVIDER_NOT_CONFIGURED',
+        `Unknown provider: ${JSON.stringify(patch.provider)}`,
+      );
+    }
+    nextProvider = normalized;
+    providerChanged = normalized !== state.provider;
+  }
+
+  if (patch.model !== undefined && patch.model !== null) {
+    if (typeof patch.model !== 'string' || !patch.model.trim()) {
+      return makeErrorResponse(
+        req.requestId,
+        'update_session',
+        'INVALID_REQUEST',
+        'model must be a non-empty string',
+      );
+    }
+    nextModel = patch.model.trim();
+  } else if (providerChanged) {
+    // Atomic-selection rule: a provider change without an explicit model
+    // snaps the model to the new provider's default. Adopting only the
+    // provider would leave the old model name on a foreign provider and
+    // the next run would fail at the provider call.
+    nextModel = PROVIDER_CONFIGS[nextProvider].defaultModel;
+  }
+
+  state.provider = nextProvider;
+  state.model = nextModel;
+  // `broadcastSessionStateChanged` appends the event AND saves the
+  // state. A pre-save would persist a stale `eventSeq` and the
+  // attach-replay filter (`seq <= currentSeq`) would drop this very
+  // event on the next disk-reload.
+  await broadcastSessionStateChanged(state);
+
+  return makeResponse(req.requestId, 'update_session', sessionId, true, {
+    provider: state.provider,
+    model: state.model,
+    roleRouting: state.roleRouting || {},
+  });
+}
+
+/**
+ * Emit `session_state_changed` to every client attached to the session.
+ *
+ * Persisted via `appendSessionEvent` so reconnecting clients pick up the
+ * change in their replay window (the attach response also carries the
+ * current values, but persisting the event keeps the timeline honest
+ * for any consumer that watches state transitions — and the seq stays
+ * monotonic instead of broadcasting an envelope with a duplicated seq).
+ *
+ * Saves the slim session state *after* `appendSessionEvent` increments
+ * `state.eventSeq`, otherwise a daemon restart loads the pre-increment
+ * `eventSeq` from `state.json` and `attach_session` filters this very
+ * event out of replay (its `seq` is `> currentSeq` from disk). Callers
+ * therefore MUST NOT pre-save — they let this helper own the save
+ * order, which keeps the persisted cursor monotonic across restarts.
+ *
+ * Not scoped to a runId: state changes are session-level and happen
+ * between runs (an active run blocks `update_session`). The envelope
+ * omits the `runId` field entirely — strict-mode rejects `runId: null`.
+ */
+async function broadcastSessionStateChanged(state) {
+  const payload = {
+    provider: state.provider,
+    model: state.model,
+    roleRouting: state.roleRouting || {},
+  };
+  await appendSessionEvent(state, 'session_state_changed', payload, null);
+  await saveSessionState(state);
+  broadcastEvent(state.sessionId, {
+    v: PROTOCOL_VERSION,
+    kind: 'event',
+    sessionId: state.sessionId,
+    seq: state.eventSeq,
+    ts: Date.now(),
+    type: 'session_state_changed',
+    payload,
+  });
 }
 
 // ─── Task graph / delegation scaffolds ──────────────────────────
@@ -5057,6 +5224,7 @@ const HANDLERS = {
   start_session: handleStartSession,
   send_user_message: handleSendUserMessage,
   attach_session: handleAttachSession,
+  update_session: handleUpdateSession,
   submit_approval: handleSubmitApproval,
   cancel_run: handleCancelRun,
   configure_role_routing: handleConfigureRoleRouting,
