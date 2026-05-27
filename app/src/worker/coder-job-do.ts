@@ -262,6 +262,8 @@ CREATE TABLE IF NOT EXISTS job (
   do_resume_count INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE INDEX IF NOT EXISTS job_status_idx ON job (status);
+
 CREATE TABLE IF NOT EXISTS event (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   job_id TEXT NOT NULL,
@@ -340,15 +342,16 @@ export class CoderJob {
     this.ctx.storage.sql.exec(SCHEMA_SQL);
     // Add `do_resume_count` to pre-existing `job` tables created before the
     // orphan-sweep landed. SQLite doesn't support ADD COLUMN IF NOT EXISTS,
-    // and constructor runs every DO wake, so swallow the "duplicate column"
-    // error after the first successful add. New DOs get the column from
-    // SCHEMA_SQL above and this ALTER is a no-op.
-    try {
+    // so probe via PRAGMA and only ALTER when the column is missing. The
+    // earlier `try { ALTER } catch {}` form would swallow real storage
+    // errors (sql-flake, table corruption) along with the expected duplicate.
+    const cols = this.ctx.storage.sql.exec('PRAGMA table_info(job)').toArray() as Array<{
+      name: string;
+    }>;
+    if (!cols.some((c) => c.name === 'do_resume_count')) {
       this.ctx.storage.sql.exec(
         'ALTER TABLE job ADD COLUMN do_resume_count INTEGER NOT NULL DEFAULT 0',
       );
-    } catch {
-      // Already added on a prior wake; nothing to do.
     }
   }
 
@@ -940,6 +943,23 @@ export class CoderJob {
       return;
     }
 
+    // Pre-restore re-check. The fetch path may have already taken /cancel
+    // (which now flips the row to 'cancelled' even with no live controller)
+    // or the wall-clock alarm may have fired between sweepOrphanedJobs's
+    // initial SELECT and our turn in the for-loop. Either way, restoring
+    // the snapshot is wasted work.
+    if (this.getJobStatus(jobId) !== 'running') {
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'coder_orphan_preempted',
+          jobId,
+          phase: 'pre_restore',
+        }),
+      );
+      return;
+    }
+
     const restored = await restoreWorkspaceSnapshot(this.env, {
       snapshotId: cp.snapshotId,
       restoreToken: cp.restoreToken,
@@ -963,6 +983,27 @@ export class CoderJob {
         'coder_orphan_state_parse_failed',
         input.role,
         `DO restart: agent_state_json parse failed (${err instanceof Error ? err.message : String(err)}).`,
+      );
+      return;
+    }
+
+    // Post-restore re-check. restoreWorkspaceSnapshot is the long await in
+    // this path; /cancel or alarm() can land while it's pending. Without
+    // this, we'd unconditionally launch runLoop on a job the client was
+    // already told was terminal, and the kernel could call sandbox tools /
+    // commit / open PRs after the terminal SSE event fired. markTerminal()
+    // at runLoop's end gates the duplicate terminal event but not the work
+    // in between. Sandbox cleanup is left to the provider's idle timeout —
+    // a small efficiency loss in this rare race, not a correctness gap.
+    if (this.getJobStatus(jobId) !== 'running') {
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'coder_orphan_preempted',
+          jobId,
+          phase: 'post_restore',
+          sandboxId: restored.sandboxId,
+        }),
       );
       return;
     }
@@ -995,6 +1036,13 @@ export class CoderJob {
         resumeState,
       }),
     );
+
+    // Ensure the wall-clock backstop is wired for the resumed run. handleStart
+    // schedules the alarm best-effort and a flake there would leave the
+    // orphaned row alarm-less; without rescheduling here, a resumed run that
+    // hangs would never get force-terminated. Same best-effort semantics as
+    // handleStart so an alarm-flake doesn't sink the recovery.
+    await this.rescheduleAlarm().catch(() => {});
   }
 
   /**
@@ -1157,6 +1205,25 @@ export class CoderJob {
     const status = this.getJobStatus(jobId);
     if (status && isTerminalStatus(status)) {
       return json({ jobId, cancelled: false, status, reason: 'ALREADY_TERMINAL' });
+    }
+    // No live AbortController but the row is still 'running'. The only
+    // legitimate source of this state is an orphan: a DO eviction left the
+    // row behind, and the sweep either hasn't run yet or is mid-restore
+    // (the long await window in resumeOrphanedJob). Marking the row
+    // 'cancelled' here makes the sweep's post-restore status re-check bail
+    // before relaunching, and gives the client a real terminal so the
+    // Cancel button doesn't lock out further attempts on an apparent 2xx.
+    if (status === 'running') {
+      const error = 'cancelled before resume';
+      if (this.markTerminal(jobId, 'cancelled', null, error)) {
+        await this.appendEvent(jobId, {
+          type: 'job.failed',
+          executionId: jobId,
+          role: 'coder',
+          error,
+        });
+      }
+      return json({ jobId, cancelled: true, reason: 'CANCELLED_ORPHAN' });
     }
     return json({ jobId, cancelled: false, reason: 'NO_ACTIVE_RUN' });
   }

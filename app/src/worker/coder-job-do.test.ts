@@ -95,6 +95,27 @@ function createMockStorage() {
 
     if (/^ALTER TABLE/i.test(sql)) return [];
 
+    if (/^PRAGMA table_info\(job\)/i.test(sql)) {
+      // Mimic the column list a freshly-created `job` table would have.
+      return [
+        { name: 'id' },
+        { name: 'chat_id' },
+        { name: 'repo' },
+        { name: 'branch' },
+        { name: 'sandbox_id' },
+        { name: 'owner_token' },
+        { name: 'origin' },
+        { name: 'status' },
+        { name: 'input_json' },
+        { name: 'result_json' },
+        { name: 'error_text' },
+        { name: 'created_at' },
+        { name: 'started_at' },
+        { name: 'finished_at' },
+        { name: 'do_resume_count' },
+      ];
+    }
+
     if (/^INSERT INTO job /i.test(sql)) {
       const [
         id,
@@ -1115,5 +1136,60 @@ describe('CoderJob DO — end-to-end', () => {
     expect(response.status).toBe(404);
     expect(storage.jobs.size).toBe(0);
     expect(storage.events.length).toBe(0);
+  });
+
+  it('/cancel on a running row with no live controller marks it cancelled (orphan path)', async () => {
+    // Codex P1 race: the sweep awaits restoreWorkspaceSnapshot, and during
+    // that window /cancel finds no AbortController for the orphan. The
+    // pre-fix behavior returned NO_ACTIVE_RUN and left the row 'running',
+    // so the UI permanently disabled Cancel on a 2xx while the sweep then
+    // launched runLoop anyway. Now /cancel marks the row 'cancelled' so
+    // the post-restore re-check in resumeOrphanedJob bails before relaunch.
+    const { ctx, storage } = makeCtx();
+    const job = new CoderJob(ctx, makeEnv());
+
+    // Warm the DO before seeding the orphan so the sweep is a no-op on this
+    // /cancel call. Models the production case where /cancel lands on a
+    // warm DO whose runLoop has died silently (or was never relaunched).
+    await job.fetch(new Request('https://do/status?jobId=warmup-noop', { method: 'GET' }));
+
+    storage.jobs.set('job-cancel-orphan', {
+      id: 'job-cancel-orphan',
+      chat_id: 'c',
+      repo: 'a/b',
+      branch: 'main',
+      sandbox_id: 'sb',
+      owner_token: 't',
+      origin: 'https://push.example.test',
+      status: 'running',
+      input_json: JSON.stringify(makeStartInput({ jobId: 'job-cancel-orphan' })),
+      result_json: null,
+      error_text: null,
+      created_at: Date.now() - 60_000,
+      started_at: Date.now() - 60_000,
+      finished_at: null,
+      do_resume_count: 0,
+    });
+
+    const resp = await job.fetch(
+      new Request('https://do/cancel?jobId=job-cancel-orphan', { method: 'POST' }),
+    );
+
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as {
+      cancelled: boolean;
+      reason?: string;
+    };
+    expect(body.cancelled).toBe(true);
+    expect(body.reason).toBe('CANCELLED_ORPHAN');
+
+    const row = storage.jobs.get('job-cancel-orphan')!;
+    expect(row.status).toBe('cancelled');
+    expect(row.error_text).toMatch(/cancelled before resume/i);
+
+    // Terminal SSE event is emitted so any /events subscriber sees the
+    // failure instead of waiting on the wall-clock alarm.
+    const terminal = storage.events.find((e) => e.type === 'job.failed');
+    expect(terminal).toBeDefined();
   });
 });
