@@ -1999,8 +1999,7 @@ export async function runTUI(options = {}) {
         'warning',
         `pushd ${started.status === 'started' ? 'spawned' : 'is running'} but is not responsive yet. Falling back to inline mode. Log: ${started.logPath}`,
       );
-      const tail = await readPushdLogTail(started.logPath);
-      if (tail) addTranscriptEntry(tuiState, 'warning', tail);
+      await appendDaemonLogTail();
       return false;
     } catch (err) {
       // Classify the spawn-path exception into a structured headline
@@ -2010,16 +2009,10 @@ export async function runTUI(options = {}) {
       const classified = classifyDaemonSpawnError(err);
       addTranscriptEntry(tuiState, 'warning', classified.headline);
       if (classified.hint) addTranscriptEntry(tuiState, 'warning', classified.hint);
-      // Try to tail the daemon log too — even on spawn failure the
-      // log path resolution is independent of the spawn itself, so
-      // a previous run's tail may already explain the problem.
-      try {
-        const { getLogPath } = await import('./pushd.js');
-        const tail = await readPushdLogTail(getLogPath());
-        if (tail) addTranscriptEntry(tuiState, 'warning', tail);
-      } catch {
-        /* best-effort; spawn failure already surfaced via headline */
-      }
+      // Even on spawn failure, a previous run's log tail may explain
+      // the problem (the spawn-path exception often fires before
+      // pushd writes anything, so this surfaces last-known state).
+      await appendDaemonLogTail();
       return false;
     }
   }
