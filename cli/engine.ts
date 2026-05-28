@@ -1982,38 +1982,48 @@ async function runAssistantLoopImpl(
       }
 
       // Overflow calls are rejected with a structured error so the model
-      // can correct on the next turn. Three distinct failure shapes land
-      // here, distinguished by structured-error code so the model sees
-      // the right correction hint:
+      // can correct on the next turn. Two distinct failure shapes land
+      // here, distinguished by reason (not just call kind) so the model
+      // sees the right correction hint:
       //
-      //   - `FILE_MUTATION_BATCH_OVERFLOW`: more than
-      //     MAX_FILE_MUTATION_BATCH file mutations in one turn. Tell the
-      //     model to split the batch across turns.
-      //   - `MULTI_MUTATION_NOT_ALLOWED`: a second side-effect, or any
-      //     call after a side-effect, or a read emitted after the
-      //     mutation transaction started. Tell the model to reorder or
-      //     split.
+      //   - `FILE_MUTATION_BATCH_OVERFLOW`: the file-mutation batch
+      //     filled to MAX_FILE_MUTATION_BATCH and additional file
+      //     mutations spilled into `extraMutations`. Tell the model to
+      //     split the batch across turns.
+      //   - `MULTI_MUTATION_NOT_ALLOWED`: ordering violation — a second
+      //     side-effect, any call after a side-effect, OR a file
+      //     mutation that didn't reach the batch because the
+      //     transaction was already done (exec → write_file, or
+      //     write_file → read → write_file). Tell the model to reorder.
+      //
+      // Key the choice on whether the batch actually overflowed
+      // (`fileMutationBatch.length >= MAX_FILE_MUTATION_BATCH`), NOT
+      // just on whether the call is a file mutation. A file mutation
+      // rejected for ordering reasons gets the ordering error, not the
+      // batch-overflow error. Codex P2 review on PR #680.
+      const batchOverflowed = fileMutationBatch.length >= MAX_FILE_MUTATION_BATCH;
       for (const call of rejectedMutations) {
         const isFileMut = isFileMutationToolCall(call);
-        const result: ToolResult = isFileMut
-          ? {
-              ok: false,
-              text: `Skipped file mutation ${call.tool}: at most ${MAX_FILE_MUTATION_BATCH} file mutations allowed per turn. Continue the batch on the next turn.`,
-              structuredError: {
-                code: 'FILE_MUTATION_BATCH_OVERFLOW',
-                message: `File mutation batch exceeds ${MAX_FILE_MUTATION_BATCH} per turn`,
-                retryable: true,
-              },
-            }
-          : {
-              ok: false,
-              text: `Skipped side-effecting tool call ${call.tool}: a turn may contain at most one side-effect (exec, commit, save_memory) after the file-mutation batch.`,
-              structuredError: {
-                code: 'MULTI_MUTATION_NOT_ALLOWED',
-                message: 'At most one side-effect tool call allowed per turn',
-                retryable: true,
-              },
-            };
+        const result: ToolResult =
+          isFileMut && batchOverflowed
+            ? {
+                ok: false,
+                text: `Skipped file mutation ${call.tool}: at most ${MAX_FILE_MUTATION_BATCH} file mutations allowed per turn. Continue the batch on the next turn.`,
+                structuredError: {
+                  code: 'FILE_MUTATION_BATCH_OVERFLOW',
+                  message: `File mutation batch exceeds ${MAX_FILE_MUTATION_BATCH} per turn`,
+                  retryable: true,
+                },
+              }
+            : {
+                ok: false,
+                text: `Skipped tool call ${call.tool}: a turn may emit reads in parallel, then a single batch of file mutations, then at most one trailing side-effect (exec, commit, save_memory). Reorder or split across turns.`,
+                structuredError: {
+                  code: 'MULTI_MUTATION_NOT_ALLOWED',
+                  message: 'Tool call violates per-turn mutation ordering',
+                  retryable: true,
+                },
+              };
 
         const executionId = nextToolExecutionId(round);
         const skippedSource = call.source || 'sandbox';
