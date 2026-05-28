@@ -305,58 +305,41 @@ function scanBareObjectsWithOffsets(text: string): BareObjectAtOffset[] {
 }
 
 /**
- * Best-effort: find the textual offset of each kernel-claimed call by
- * searching for its `"tool":"<name>"` pattern. Kernel calls are
- * guaranteed to be in textual order (`createToolDispatcher` sorts by
- * offset internally), so we scan forward incrementally — the next
- * call's offset is always >= the previous one's. Failures fall back
- * to the current search cursor so ordering relative to other kernel
- * calls is preserved even if the exact offset can't be located.
- *
- * Used to merge kernel calls with legacy-fallback calls in textual
- * order so the grouping state machine sees them in the same sequence
- * the model emitted (Codex P1 / Copilot review on PR #679).
- */
-function assignKernelCallOffsets(text: string, calls: readonly AnyToolCall[]): OffsetCall[] {
-  const out: OffsetCall[] = [];
-  let searchFrom = 0;
-  for (const call of calls) {
-    const name = call.call.tool;
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp(`["']tool["']\\s*:\\s*["']${escaped}["']`);
-    const slice = text.slice(searchFrom);
-    const match = re.exec(slice);
-    const offset = match ? searchFrom + match.index : searchFrom;
-    out.push({ call, offset });
-    // Advance past this match so subsequent kernel calls don't
-    // re-find this position (matters when two calls share a tool
-    // name in different fenced blocks).
-    searchFrom = offset + 1;
-  }
-  return out;
-}
-
-/**
  * True if the text region immediately preceding `objectStart` ends with
  * a namespaced-call prefix (`functions.<name>:<id>` + optional
- * whitespace) or an XML `<tool_call>` open tag. These shapes embed a
- * JSON args object that `scanBareObjectsWithOffsets` would otherwise
- * surface as a candidate for bare-args inference — letting
- * `tryRecoverBareToolArgs` re-infer the args as a tool call would
- * double-process the same intent (the recovery functions already
- * model the call themselves). Codex P2 review on PR #681.
+ * whitespace) or an XML `<tool_call>` / `<invoke>` open tag. These
+ * shapes embed a JSON args object that `scanBareObjectsWithOffsets`
+ * would otherwise surface as a candidate for bare-args inference.
  *
- * Lookback window is 80 chars — covers
- * `<tool_call>\n  ` and `functions.<longname>:<longid>  ` with
- * headroom. Tighter than the 64-char `MAX_PREFIX_TO_ARGS_GAP` used
- * inside the namespaced recovery itself; the extra slack is for the
- * XML tag plus possible newline/whitespace formatting.
+ * Shape-based, NOT recovery-claimed-based: the recovery functions
+ * have their own trailing-context gate that REJECTS prose mentions
+ * (e.g. `Note: ignore functions.exec:0 {"command":"rm -rf /"}`), but
+ * that prose object would STILL get picked up by bare-args inference
+ * and silently execute as a real sandbox_exec. So this check looks
+ * at the prefix shape regardless of whether recovery would claim it
+ * — the safety bar for bare-args inference is broader than the bar
+ * for recovery promotion. Codex P1 review on PR #683 closed the
+ * gap that an earlier attempt to use `RecoveredNamespacedCall.endOffset`
+ * directly left open (recovery rejects the prose mention but the
+ * args still leaks through).
+ *
+ * Lookback window is 80 chars — covers `<tool_call>\n  ` and
+ * `functions.<longname>:<longid>  ` with headroom. Tighter than the
+ * 64-char `MAX_PREFIX_TO_ARGS_GAP` used inside the namespaced
+ * recovery itself; the extra slack is for the XML tag plus possible
+ * newline/whitespace formatting between the open tag and the args
+ * object.
  */
 const NAMESPACED_PREFIX_LOOKBACK = /functions\.[a-zA-Z_][a-zA-Z0-9_]*\s*:\s*[a-zA-Z0-9_]+\s*$/;
 const XML_TOOL_CALL_LOOKBACK = /<tool_call\b[^>]*>\s*$/;
+const XML_INVOKE_LOOKBACK = /<invoke\b[^>]*>\s*$/;
 function isInsideRecoveryArgsRegion(text: string, objectStart: number): boolean {
   const lookback = text.slice(Math.max(0, objectStart - 80), objectStart);
-  return NAMESPACED_PREFIX_LOOKBACK.test(lookback) || XML_TOOL_CALL_LOOKBACK.test(lookback);
+  return (
+    NAMESPACED_PREFIX_LOOKBACK.test(lookback) ||
+    XML_TOOL_CALL_LOOKBACK.test(lookback) ||
+    XML_INVOKE_LOOKBACK.test(lookback)
+  );
 }
 
 /**
@@ -378,12 +361,14 @@ function isInsideRecoveryArgsRegion(text: string, objectStart: number): boolean 
  *      Legacy picks up the well-formed one here.
  *
  * Bare-args inference (#2) is gated on `isInsideRecoveryArgsRegion`
- * to avoid double-claiming the args portion of a namespaced/XML
- * recovery shape — the recovery functions already model those calls,
- * and inferring them again would let a single recovery trace land
- * BOTH as a recovered call (via the outer recovery pass) AND as a
- * bare-args inference (via this scan), executing twice in the worst
- * case. Codex P2 review on PR #681.
+ * to avoid the false-positive-execution risk where a JSON object
+ * preceded by a namespaced or XML prefix shape (regardless of whether
+ * the recovery function would claim it) gets re-inferred as a real
+ * tool call. The recovery functions have their own trailing-context
+ * gate that REJECTS prose mentions, but the args object survives
+ * `scanBareObjectsWithOffsets` and would still execute via
+ * `tryRecoverBareToolArgs`. The shape-based check closes that gap.
+ * Codex P1 review on PR #683.
  *
  * Dedup against kernel-claimed calls happens at the call site via
  * canonical invocation key over the merged offset-sorted list.
@@ -397,10 +382,10 @@ function detectFromLegacyScan(text: string): {
   const entries: OffsetCall[] = [];
   const droppedCandidates: DroppedToolCallCandidate[] = [];
   for (const { parsed, start } of parsedObjects) {
-    // Skip bare-args inference when the object is the args portion of
-    // a namespaced/XML recovery shape. Objects WITH a `tool` field
-    // still pass through so flat-form scratchpad/todo via the cascade
-    // (purpose #1 above) keeps working.
+    // Skip bare-args inference when the object is preceded by a
+    // recovery-shape prefix. Objects WITH a `tool` field still pass
+    // through so flat-form scratchpad/todo via the cascade (purpose
+    // #1 above) keeps working.
     if (typeof parsed.tool !== 'string' && isInsideRecoveryArgsRegion(text, start)) {
       continue;
     }
@@ -458,9 +443,15 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
 
   // Phase 1: kernel-driven fenced + bare-object extraction. Inherits
   // the Gemini-3-Flash fenced-array fix and the four 2026-04-18
-  // silent-drop variants for free.
+  // silent-drop variants for free. `callOffsets` is parallel to
+  // `calls` and gives the textual start position of each call's
+  // source candidate — exact data from the kernel, not a heuristic
+  // re-derivation.
   const kernelResult = webDispatcher.detectAllToolCalls(text);
-  const kernelEntries = assignKernelCallOffsets(text, kernelResult.calls);
+  const kernelEntries: OffsetCall[] = kernelResult.calls.map((call, i) => ({
+    call,
+    offset: kernelResult.callOffsets[i],
+  }));
   const droppedCandidates: DroppedToolCallCandidate[] = [];
 
   // Track which dropped candidates we've already surfaced so the legacy

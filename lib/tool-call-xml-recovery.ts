@@ -34,9 +34,22 @@ export interface RecoveredXmlCall {
   tool: string;
   /** Parsed args object. `{}` for tag bodies with no recoverable args. */
   args: Record<string, unknown>;
-  /** Offset of the opening `<tool_call>` tag. Lets the dispatcher merge
-   *  these candidates into its textual-order ordering. */
+  /** Offset of the opening `<tool_call>` (or `<function_calls>`) tag.
+   *  Lets the dispatcher merge these candidates into its textual-order
+   *  ordering. For a `<function_calls>` wrapper expanded into multiple
+   *  `<invoke>` children, each child carries the offset of its own
+   *  `<invoke>` tag, not the wrapper's. */
   offset: number;
+  /** Exclusive end offset — one past the last character of the
+   *  enclosing tag. For `<tool_call>` blocks this is `</tool_call>` + 1.
+   *  For `<invoke>` children expanded from a `<function_calls>` wrapper,
+   *  this is `</invoke>` + 1.
+   *
+   *  Lets callers detect when a bare JSON object found by their own
+   *  scanner is actually the args portion of a recovered call —
+   *  without that signal, bare-args inference would double-claim the
+   *  same intent. */
+  endOffset: number;
 }
 
 // Match a `<tool_call>` element. The `\b[^>]*` allows attributes the
@@ -136,8 +149,26 @@ export function recoverXmlToolCalls(text: string): RecoveredXmlCall[] {
     kind: 'tool_call' | 'function_calls';
     blockStart: number;
     blockEnd: number;
+    /**
+     * Absolute offset (in the outer `text`) at which the captured
+     * inner content begins — i.e., one past the close of the opening
+     * tag. `match[1]` is the capture group; `innerStart` is where
+     * that capture begins in the source. Used by `function_calls`
+     * expansion to re-anchor invoke child offsets correctly. For
+     * `tool_call` matches we don't currently re-anchor (the outer
+     * `[blockStart, blockEnd)` is the call's region), but the field
+     * is populated uniformly for both kinds.
+     */
+    innerStart: number;
     inner: string;
   }> = [];
+  // Helper: the regex shapes use `[^>]*` for the opening tag's
+  // attribute set, so the FIRST `>` after `match.index` always closes
+  // the opening tag — no `>`-containing string values to confuse it.
+  const findInnerStart = (m: RegExpExecArray): number => {
+    const closeIdx = text.indexOf('>', m.index);
+    return closeIdx === -1 ? m.index + m[0].length : closeIdx + 1;
+  };
   const toolCallRegex = new RegExp(TOOL_CALL_TAG_REGEX.source, TOOL_CALL_TAG_REGEX.flags);
   let match: RegExpExecArray | null;
   while ((match = toolCallRegex.exec(text)) !== null) {
@@ -145,6 +176,7 @@ export function recoverXmlToolCalls(text: string): RecoveredXmlCall[] {
       kind: 'tool_call',
       blockStart: match.index,
       blockEnd: match.index + match[0].length,
+      innerStart: findInnerStart(match),
       inner: match[1],
     });
   }
@@ -157,6 +189,7 @@ export function recoverXmlToolCalls(text: string): RecoveredXmlCall[] {
       kind: 'function_calls',
       blockStart: match.index,
       blockEnd: match.index + match[0].length,
+      innerStart: findInnerStart(match),
       inner: match[1],
     });
   }
@@ -208,17 +241,22 @@ export function recoverXmlToolCalls(text: string): RecoveredXmlCall[] {
     if (m.kind === 'tool_call') {
       const parsed = parseToolCallInner(m.inner);
       if (!parsed) continue;
-      out.push({ ...parsed, offset: m.blockStart });
+      out.push({ ...parsed, offset: m.blockStart, endOffset: m.blockEnd });
       continue;
     }
     // `<function_calls>` wrapper — expand each `<invoke>` child into its
-    // own recovered call. The wrapper itself only contributes the offset
-    // anchor; the inner content is the structured payload.
+    // own recovered call. Re-anchor each invoke's offsets to the outer
+    // text by adding `m.innerStart` (where the capture group begins),
+    // NOT `m.blockStart` — the latter would undercount by the opening
+    // tag's length and shift recovery regions backward, which lets the
+    // legacy bare-object skip miss objects inside the recovered
+    // invoke. Copilot review on PR #683.
     for (const invoke of parseFunctionCallsInner(m.inner)) {
       out.push({
         tool: invoke.tool,
         args: invoke.args,
-        offset: m.blockStart + invoke.innerOffset,
+        offset: m.innerStart + invoke.innerOffset,
+        endOffset: m.innerStart + invoke.innerEnd,
       });
     }
   }
@@ -323,10 +361,18 @@ function coerceArgValue(raw: string): unknown {
  * helper also emit them would either duplicate the call or pre-empt
  * the diagnosis.
  */
-function parseFunctionCallsInner(
-  inner: string,
-): Array<{ tool: string; args: Record<string, unknown>; innerOffset: number }> {
-  const out: Array<{ tool: string; args: Record<string, unknown>; innerOffset: number }> = [];
+function parseFunctionCallsInner(inner: string): Array<{
+  tool: string;
+  args: Record<string, unknown>;
+  innerOffset: number;
+  innerEnd: number;
+}> {
+  const out: Array<{
+    tool: string;
+    args: Record<string, unknown>;
+    innerOffset: number;
+    innerEnd: number;
+  }> = [];
   const invokeRegex = new RegExp(INVOKE_TAG_REGEX.source, INVOKE_TAG_REGEX.flags);
   let invoke: RegExpExecArray | null;
   while ((invoke = invokeRegex.exec(inner)) !== null) {
@@ -340,7 +386,12 @@ function parseFunctionCallsInner(
       if (!key || !ARG_KEY_REGEX.test(key)) continue;
       args[key] = coerceArgValue(param[2].trim());
     }
-    out.push({ tool: toolName, args, innerOffset: invoke.index });
+    out.push({
+      tool: toolName,
+      args,
+      innerOffset: invoke.index,
+      innerEnd: invoke.index + invoke[0].length,
+    });
   }
   return out;
 }

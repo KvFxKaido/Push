@@ -5,7 +5,7 @@ describe('recoverXmlToolCalls — Shape A (Hermes/Qwen JSON inside tag)', () => 
   it('recovers a single `{name, arguments}` body', () => {
     const text = '<tool_call>{"name": "read_file", "arguments": {"path": "TODO.md"}}</tool_call>';
     expect(recoverXmlToolCalls(text)).toEqual([
-      { tool: 'read_file', args: { path: 'TODO.md' }, offset: 0 },
+      expect.objectContaining({ tool: 'read_file', args: { path: 'TODO.md' }, offset: 0 }),
     ]);
   });
 
@@ -13,7 +13,9 @@ describe('recoverXmlToolCalls — Shape A (Hermes/Qwen JSON inside tag)', () => 
     // Some finetunes use Push's own wrapper keys inside the XML tag —
     // we accept both rather than forcing the model to pick one.
     const text = '<tool_call>{"tool": "git_status", "args": {}}</tool_call>';
-    expect(recoverXmlToolCalls(text)).toEqual([{ tool: 'git_status', args: {}, offset: 0 }]);
+    expect(recoverXmlToolCalls(text)).toEqual([
+      expect.objectContaining({ tool: 'git_status', args: {}, offset: 0 }),
+    ]);
   });
 
   it('tolerates whitespace and newlines around the JSON body', () => {
@@ -26,7 +28,7 @@ describe('recoverXmlToolCalls — Shape A (Hermes/Qwen JSON inside tag)', () => 
   it('repairs trailing commas inside the JSON body via shape-agnostic repair', () => {
     const text = '<tool_call>{"name": "read_file", "arguments": {"path": "TODO.md",}}</tool_call>';
     expect(recoverXmlToolCalls(text)).toEqual([
-      { tool: 'read_file', args: { path: 'TODO.md' }, offset: 0 },
+      expect.objectContaining({ tool: 'read_file', args: { path: 'TODO.md' }, offset: 0 }),
     ]);
   });
 
@@ -51,11 +53,11 @@ describe('recoverXmlToolCalls — Shape B (XML arg_key/arg_value pairs)', () => 
 
   it('recovers the exact mobile-app bug capture', () => {
     expect(recoverXmlToolCalls(MOBILE_BUG_CAPTURE)).toEqual([
-      {
+      expect.objectContaining({
         tool: 'commits',
         args: { count: 10, repo: 'KvFxKaido/Push' },
         offset: 0,
-      },
+      }),
     ]);
   });
 
@@ -104,7 +106,9 @@ describe('recoverXmlToolCalls — Shape B (XML arg_key/arg_value pairs)', () => 
 
   it('accepts an empty body (zero-arg tool name with no children)', () => {
     const text = '<tool_call>git_status</tool_call>';
-    expect(recoverXmlToolCalls(text)).toEqual([{ tool: 'git_status', args: {}, offset: 0 }]);
+    expect(recoverXmlToolCalls(text)).toEqual([
+      expect.objectContaining({ tool: 'git_status', args: {}, offset: 0 }),
+    ]);
   });
 
   it('rejects a tool name that is not a valid identifier', () => {
@@ -175,7 +179,7 @@ describe('recoverXmlToolCalls — multiple calls, ordering, prose tolerance', ()
       '<tool_call>read_file<arg_key>path</arg_key><arg_value>x</arg_value></tool_call>',
     ].join('\n');
     expect(recoverXmlToolCalls(text)).toEqual([
-      { tool: 'read_file', args: { path: 'x' }, offset: 5 },
+      expect.objectContaining({ tool: 'read_file', args: { path: 'x' }, offset: 5 }),
     ]);
   });
 
@@ -195,7 +199,7 @@ describe('recoverXmlToolCalls — multiple calls, ordering, prose tolerance', ()
     const text =
       '<tool_call id="0">read_file<arg_key>path</arg_key><arg_value>x</arg_value></tool_call>';
     expect(recoverXmlToolCalls(text)).toEqual([
-      { tool: 'read_file', args: { path: 'x' }, offset: 0 },
+      expect.objectContaining({ tool: 'read_file', args: { path: 'x' }, offset: 0 }),
     ]);
   });
 });
@@ -262,7 +266,13 @@ describe('recoverXmlToolCalls — Shape C (Anthropic function_calls/invoke/param
       "<function_calls><invoke name='read'><parameter name=path>/a</parameter></invoke></function_calls>",
     ].join('\n');
     const recovered = recoverXmlToolCalls(text);
-    expect(recovered).toEqual([{ tool: 'read', args: { path: '/a' }, offset: 0 }]);
+    // `<invoke>` is at position 16 (after the opening `<function_calls>`
+    // tag) — pre-PR #683 fix this would have asserted `offset: 0` which
+    // pinned the off-by-N bug Copilot caught.
+    const expectedOffset = text.indexOf('<invoke');
+    expect(recovered).toEqual([
+      expect.objectContaining({ tool: 'read', args: { path: '/a' }, offset: expectedOffset }),
+    ]);
   });
 
   it('rejects a function_calls block embedded in prose (eligibility gate)', () => {
@@ -348,5 +358,54 @@ describe('recoverXmlToolCalls — nested wrappers do not break the outer call', 
     const recovered = recoverXmlToolCalls(text);
     expect(recovered).toHaveLength(1);
     expect(recovered[0].tool).toBe('write_file');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// endOffset — exact `[offset, endOffset)` region for the recovered call,
+// so callers can detect when a bare JSON object found by their own scan
+// is actually the args portion of this recovery. Replaces the regex
+// lookback that PR #681 used. PR #683 follow-up.
+// ---------------------------------------------------------------------------
+
+describe('recoverXmlToolCalls — endOffset', () => {
+  it('endOffset for a `<tool_call>` block ends one past `</tool_call>`', () => {
+    const text = '<tool_call>{"name": "read_file", "arguments": {"path": "a.txt"}}</tool_call>';
+    const [r] = recoverXmlToolCalls(text);
+    expect(r.offset).toBe(0);
+    expect(r.endOffset).toBe(text.length);
+  });
+
+  it('endOffset for a `<function_calls>` invoke child bounds the `<invoke>`, not the wrapper', () => {
+    const text = [
+      '<function_calls>',
+      '<invoke name="read"><parameter name="path">/a</parameter></invoke>',
+      '<invoke name="write"><parameter name="path">/b</parameter></invoke>',
+      '</function_calls>',
+    ].join('\n');
+    const [read, write] = recoverXmlToolCalls(text);
+    // ABSOLUTE positions — text.indexOf nails the actual `<invoke` /
+    // `</invoke>` positions in the source string, so a bug that
+    // shifted offsets earlier (Copilot review on PR #683 caught this:
+    // `m.blockStart + invoke.innerOffset` undercounted by the opening
+    // `<function_calls>` tag's length) would fail these assertions.
+    // Pre-fix, this test passed with relative-only checks.
+    expect(read.offset).toBe(text.indexOf('<invoke name="read"'));
+    expect(read.endOffset).toBe(text.indexOf('</invoke>', read.offset) + '</invoke>'.length);
+    expect(write.offset).toBe(text.indexOf('<invoke name="write"'));
+    expect(write.endOffset).toBe(text.indexOf('</invoke>', write.offset) + '</invoke>'.length);
+    // Sanity invariants — also caught the absolute bug in isolation.
+    expect(read.offset).toBeLessThan(read.endOffset);
+    expect(read.endOffset).toBeLessThanOrEqual(write.offset);
+    expect(write.endOffset).toBeLessThan(text.length);
+  });
+
+  it('endOffset for back-to-back `<tool_call>` blocks bounds each one independently', () => {
+    const first = '<tool_call>{"name": "read_file", "arguments": {"path": "a"}}</tool_call>';
+    const second = '<tool_call>{"name": "read_file", "arguments": {"path": "b"}}</tool_call>';
+    const text = `${first}\n${second}`;
+    const [r1, r2] = recoverXmlToolCalls(text);
+    expect(r1.endOffset).toBeLessThan(r2.offset);
+    expect(r2.endOffset).toBe(text.length);
   });
 });
