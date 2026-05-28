@@ -226,6 +226,13 @@ export function useRelayDaemon(
     // crash the whole chat screen on mount. Wrap and route the
     // throw into a terminal `unreachable` so the ReconnectBanner
     // surfaces a recoverable Retry button.
+    //
+    // `cancelled` guards every async callback in this effect (attach
+    // result + hydration response). A reconnect re-runs the effect,
+    // closes the old binding, and would otherwise let in-flight RPC
+    // responses on the disposed binding overwrite state on the
+    // active one — github-actions review on #687.
+    let cancelled = false;
     // Reset attach lifecycle on every new dial. `attaching` reflects
     // the moment we issue `attach_session` over the freshly-opened
     // WS; without a target the state stays `idle` for the binding's
@@ -235,6 +242,7 @@ export function useRelayDaemon(
     // here. Same pattern as the createRelayDaemonBinding throw path
     // a few lines below.
     queueMicrotask(() => {
+      if (cancelled) return;
       setAttachStatus(hasTarget ? 'attaching' : 'idle');
       setAttachError(null);
       // Hydration is one-shot — clear it on every new dial so a
@@ -252,6 +260,7 @@ export function useRelayDaemon(
         ...(targetAttachToken !== null ? { targetAttachToken } : {}),
         lastSeq: lastSeqRef.current,
         onAttachComplete: (result: AttachResult) => {
+          if (cancelled) return;
           if (result.ok) {
             setAttachStatus('attached');
             setAttachError(null);
@@ -262,19 +271,29 @@ export function useRelayDaemon(
             // Logged via console.warn so ops can spot the regression.
             const handle = bindingRef.current;
             if (handle && targetSessionId !== null && targetAttachToken !== null) {
+              // `sessionId` lives in payload AND envelope — the
+              // daemon's `handleGetSessionMessages` reads it from
+              // `req.payload` (same as `handleAttachSession`); without
+              // the payload copy the call returns `INVALID_REQUEST` —
+              // Codex P2 on #687.
               void handle
                 .request<{ messages: DaemonHydratedMessage[] }>({
                   type: 'get_session_messages',
                   sessionId: targetSessionId,
-                  payload: { attachToken: targetAttachToken },
+                  payload: {
+                    sessionId: targetSessionId,
+                    attachToken: targetAttachToken,
+                  },
                   timeoutMs: 10_000,
                 })
                 .then((response) => {
+                  if (cancelled) return;
                   if (response.ok && Array.isArray(response.payload?.messages)) {
                     setHydratedMessages(response.payload.messages);
                   }
                 })
                 .catch((err: unknown) => {
+                  if (cancelled) return;
                   const msg = err instanceof Error ? err.message : String(err);
                   // Symmetric structured log so ops can distinguish a
                   // hydration miss from an attach miss; the chat surface
@@ -352,6 +371,7 @@ export function useRelayDaemon(
     }
     bindingRef.current = handle;
     return () => {
+      cancelled = true;
       bindingRef.current = null;
       handle.close();
     };

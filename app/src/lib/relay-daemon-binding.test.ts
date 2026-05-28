@@ -178,7 +178,12 @@ describe('createRelayDaemonBinding — targeted attach_session', () => {
     const attachReq = server.capturedRequests.find((r) => r.type === 'attach_session');
     expect(attachReq).toBeDefined();
     expect(attachReq?.sessionId).toBe(TARGET_SESSION_ID);
+    // sessionId MUST also appear in the payload — `handleAttachSession`
+    // destructures it from `req.payload` (cli/pushd.ts:1453). Without
+    // this duplication the daemon returns INVALID_REQUEST and the
+    // entire targeted attach silently fails — Codex P1 on PR #687.
     expect(attachReq?.payload).toEqual({
+      sessionId: TARGET_SESSION_ID,
       attachToken: TARGET_TOKEN,
       lastSeenSeq: 0,
     });
@@ -208,6 +213,63 @@ describe('createRelayDaemonBinding — targeted attach_session', () => {
       expect(result.error.retryable).toBe(false);
     }
     handle.close();
+  });
+
+  it('suppresses onAttachComplete after the binding is closed', async () => {
+    // Stand the server response off behind a manual gate so we can
+    // close the binding while the attach RPC is still in-flight.
+    // Without the `clientClosed` guard, a late response on the
+    // disposed binding would call back into a hook that already
+    // re-dialed — github-actions review on #687.
+    let releaseResponse!: () => void;
+    const responseGate = new Promise<void>((r) => {
+      releaseResponse = r;
+    });
+    server.setResponseOverride('attach_session', { ok: true, payload: {} });
+    const wss = new WebSocketServer({ port: 0 });
+    wss.on('connection', (ws) => {
+      ws.on('message', async (data) => {
+        const parsed = JSON.parse(data.toString('utf8').trim()) as {
+          kind?: string;
+          requestId?: string;
+          type?: string;
+        };
+        if (parsed.type !== 'attach_session') return;
+        await responseGate;
+        ws.send(
+          `${JSON.stringify({
+            v: PROTOCOL_VERSION,
+            kind: 'response',
+            requestId: parsed.requestId,
+            type: 'attach_session',
+            sessionId: TARGET_SESSION_ID,
+            ok: true,
+            payload: { sessionId: TARGET_SESSION_ID },
+            error: null,
+          })}\n`,
+        );
+      });
+    });
+    await new Promise<void>((r) => wss.once('listening', () => r()));
+    const port = (wss.address() as AddressInfo).port;
+    const attachFired: AttachResult[] = [];
+    const handle = createRelayDaemonBinding({
+      deploymentUrl: `http://127.0.0.1:${port}`,
+      sessionId: 'sess_relay_xyz',
+      token: VALID_TOKEN,
+      targetSessionId: TARGET_SESSION_ID,
+      targetAttachToken: TARGET_TOKEN,
+      allowAnyHost: true,
+      onAttachComplete: (r) => attachFired.push(r),
+    });
+    // Give the WS time to open + dispatch the attach request, then
+    // close before the gated response can land.
+    await new Promise((r) => setTimeout(r, 50));
+    handle.close();
+    releaseResponse();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(attachFired).toEqual([]);
+    await new Promise<void>((r) => wss.close(() => r()));
   });
 
   it('does not issue attach_session when target fields are absent', async () => {
