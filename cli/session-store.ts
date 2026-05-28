@@ -50,12 +50,15 @@ export interface SessionState {
    */
   attachToken?: string;
   /**
-   * Origin surface for the session, captured at `start_session` time
-   * from the client's request payload (the same value that's broadcast
-   * in `session_started`). Today's known values: `'tui'` (CLI full
-   * screen), `'interactive'` (CLI REPL / unspecified default),
-   * `'headless'` (`./push run`). Mobile shells will set their own tag
-   * when they begin issuing `start_session`.
+   * Origin surface for the session, set at session-creation time —
+   * either by the daemon's `handleStartSession` (from the client's
+   * request payload, mirrored into the `session_started` event) or
+   * by the CLI's inline creation paths (`cli/cli.ts:initSession` for
+   * REPL/headless, `cli/tui.ts:createFreshSessionState` for TUI).
+   * Today's known values: `'tui'` (CLI full screen), `'interactive'`
+   * (CLI REPL / unspecified default), `'headless'` (`./push run`).
+   * Mobile shells will set their own tag when they begin issuing
+   * `start_session`.
    *
    * Optional for migration: legacy sessions written before this field
    * existed load without it; `listSessions()` defaults to
