@@ -1109,8 +1109,22 @@ async function handlePing(req) {
 
 async function handleListSessions(req) {
   const limit = req.payload?.limit || 20;
+  // Optional mode filter so consumers can ask the server to omit
+  // sessions whose origin surface isn't useful in their context. The
+  // mobile drawer passes `['headless']` because `./push run` jobs
+  // aren't resumable as chats — without server-side filtering, a user
+  // with 50 consecutive headless runs would see an empty CLI section
+  // even though older interactive sessions exist. Strings only; other
+  // values are silently dropped.
+  const rawExclude = req.payload?.excludeModes;
+  const excludeModes =
+    Array.isArray(rawExclude) && rawExclude.length > 0
+      ? new Set(rawExclude.filter((m) => typeof m === 'string' && m.length > 0))
+      : null;
+
   const sessions = await listSessions();
-  const limited = sessions.slice(0, limit);
+  const filtered = excludeModes ? sessions.filter((s) => !excludeModes.has(s.mode)) : sessions;
+  const limited = filtered.slice(0, limit);
 
   // Enrich with active run state
   const enriched = limited.map((s) => {
