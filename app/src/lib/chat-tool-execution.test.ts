@@ -1,10 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatMessage, ReasoningBlock } from '@/types';
+import type { AnyToolCall } from './tool-dispatch';
 import {
   handleDroppedCandidatesError,
   handleMultipleMutationsError,
   handleRecoveryResult,
 } from './chat-tool-execution';
+
+// Minimal AnyToolCall constructor for tests that need to populate the
+// rejection lists. Tool name and source are the only fields the error
+// surface reads; the rest of the args shape is incidental. Casting
+// the whole object through `unknown` to bypass the discriminated-union
+// exhaustive check — the production types are strict by design, but
+// for these tests the inner `call` shape doesn't matter.
+function sandboxCall(tool: string, args: Record<string, unknown> = {}): AnyToolCall {
+  return { source: 'sandbox', call: { tool, args } } as unknown as AnyToolCall;
+}
 
 // These helpers cover the assistant-message stamping in `nextApiMessages`
 // for the tool-path branches. Without `reasoningBlocks` threaded through,
@@ -21,7 +32,7 @@ describe('chat-tool-execution: apiMessages reasoningBlocks round-trip', () => {
   it('handleMultipleMutationsError stamps reasoningBlocks onto the assistant entry it appends', () => {
     const apiMessages: ChatMessage[] = [userMessage('do two mutations')];
     const action = handleMultipleMutationsError(
-      { mutating: null, extraMutations: [] },
+      { mutating: null, batchOverflow: [], extraMutations: [] },
       'assistant text',
       'thinking',
       blocks,
@@ -68,7 +79,7 @@ describe('chat-tool-execution: apiMessages reasoningBlocks round-trip', () => {
   it('omits the field when no reasoning blocks were captured', () => {
     const apiMessages: ChatMessage[] = [userMessage('do two mutations')];
     const action = handleMultipleMutationsError(
-      { mutating: null, extraMutations: [] },
+      { mutating: null, batchOverflow: [], extraMutations: [] },
       'plain',
       '',
       [],
@@ -141,6 +152,108 @@ describe('chat-tool-execution: apiMessages reasoningBlocks round-trip', () => {
       'minimax-m2.7',
     );
     expect(action.errorMessage.content).toContain('sandbox (unknown)');
+  });
+
+  // -------------------------------------------------------------------------
+  // batchOverflow vs extraMutations — distinct error codes per failure
+  // shape. Mirrors the CLI split that landed in PR #680; web was lumping
+  // both into a single MULTI_MUTATION_NOT_ALLOWED hint with vague
+  // wording. This test pins the per-code distinction.
+  // -------------------------------------------------------------------------
+
+  it('handleMultipleMutationsError emits FILE_MUTATION_BATCH_OVERFLOW when only batch overflow', () => {
+    const apiMessages: ChatMessage[] = [userMessage('write 9 files')];
+    const action = handleMultipleMutationsError(
+      {
+        mutating: null,
+        batchOverflow: [
+          sandboxCall('sandbox_write_file', { path: '/9.md' }),
+          sandboxCall('sandbox_write_file', { path: '/10.md' }),
+        ],
+        extraMutations: [],
+      },
+      'assistant',
+      '',
+      [],
+      apiMessages,
+      'zen',
+    );
+    expect(action.errorMessage.content).toContain('FILE_MUTATION_BATCH_OVERFLOW');
+    expect(action.errorMessage.content).toContain('continue the batch on the next turn');
+    // The ordering-violation hint shouldn't fire when ordering is fine.
+    expect(action.errorMessage.content).not.toContain('MULTI_MUTATION_NOT_ALLOWED');
+  });
+
+  it('handleMultipleMutationsError emits MULTI_MUTATION_NOT_ALLOWED when only ordering violations', () => {
+    const apiMessages: ChatMessage[] = [userMessage('write then read')];
+    const action = handleMultipleMutationsError(
+      {
+        // mutating is set → the rejection list includes it as a "the
+        // model emitted multiple mutations and we rejected all" signal.
+        mutating: sandboxCall('sandbox_exec', { command: 'echo hi' }),
+        batchOverflow: [],
+        extraMutations: [sandboxCall('sandbox_write_file', { path: '/after-exec.md' })],
+      },
+      'assistant',
+      '',
+      [],
+      apiMessages,
+      'zen',
+    );
+    expect(action.errorMessage.content).toContain('MULTI_MUTATION_NOT_ALLOWED');
+    expect(action.errorMessage.content).toContain('Reorder or split');
+    expect(action.errorMessage.content).not.toContain('FILE_MUTATION_BATCH_OVERFLOW');
+  });
+
+  it('handleMultipleMutationsError does NOT classify a valid trailing exec as ordering when only batch overflowed', () => {
+    // Codex P2 / Copilot regression. Scenario: 9 file writes + valid
+    // trailing sandbox_exec. Kernel returns:
+    //   batchOverflow = [9th write], mutating = exec, extraMutations = []
+    // Pre-fix, `hasOrderingViolations = mutating !== null` included the
+    // exec as a per-call ordering violation and emitted
+    // MULTI_MUTATION_NOT_ALLOWED for it — the exec was actually fine,
+    // it just got aborted as collateral damage of the "reject whole
+    // turn on overflow" policy. Now the ordering code only fires when
+    // there ARE actual ordering extras.
+    const apiMessages: ChatMessage[] = [userMessage('write 9 files then run tests')];
+    const action = handleMultipleMutationsError(
+      {
+        mutating: sandboxCall('sandbox_exec', { command: 'npm test' }),
+        batchOverflow: [sandboxCall('sandbox_write_file', { path: '/9.md' })],
+        extraMutations: [],
+      },
+      'assistant',
+      '',
+      [],
+      apiMessages,
+      'zen',
+    );
+    expect(action.errorMessage.content).toContain('FILE_MUTATION_BATCH_OVERFLOW');
+    expect(action.errorMessage.content).not.toContain('MULTI_MUTATION_NOT_ALLOWED');
+    // The exec was legitimately the trailing side-effect; don't label
+    // it as a violation in the per-call list.
+    expect(action.errorMessage.content).not.toContain('sandbox_exec');
+  });
+
+  it('handleMultipleMutationsError emits BOTH codes when both shapes occur in one turn', () => {
+    const apiMessages: ChatMessage[] = [userMessage('write 9 files then exec then write')];
+    const action = handleMultipleMutationsError(
+      {
+        mutating: sandboxCall('sandbox_exec', { command: 'echo hi' }),
+        batchOverflow: [sandboxCall('sandbox_write_file', { path: '/9.md' })],
+        extraMutations: [sandboxCall('sandbox_write_file', { path: '/after-exec.md' })],
+      },
+      'assistant',
+      '',
+      [],
+      apiMessages,
+      'zen',
+    );
+    expect(action.errorMessage.content).toContain('FILE_MUTATION_BATCH_OVERFLOW');
+    expect(action.errorMessage.content).toContain('MULTI_MUTATION_NOT_ALLOWED');
+    // Both hints present.
+    expect(action.errorMessage.content).toContain('continue the batch on the next turn');
+    expect(action.errorMessage.content).toContain('Reorder or split');
   });
 
   it('handleDroppedCandidatesError routes a github-tool drop through the github source', () => {

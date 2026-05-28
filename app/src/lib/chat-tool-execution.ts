@@ -14,7 +14,7 @@ import type { AgentRole } from '@push/lib/runtime-contract';
 import type { ExecutionMode } from '@push/lib/capabilities';
 import { createDefaultApprovalGates } from '@/lib/approval-gates';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
-import { executeAnyToolCall } from '@/lib/tool-dispatch';
+import { executeAnyToolCall, MAX_FILE_MUTATION_BATCH } from '@/lib/tool-dispatch';
 import {
   appendCardsToLatestToolCall,
   buildToolMeta,
@@ -588,30 +588,92 @@ export function handleDroppedCandidatesError(
 }
 
 /**
- * Build the error response when the LLM emits multiple mutating tool calls
- * in a single turn. Returns the messages and state updates needed — caller
- * applies them to React state.
+ * Build the error response when the LLM emits a turn whose tool calls
+ * can't be fully accommodated. Two distinct failure shapes flow through
+ * this surface, distinguished by source list so the model sees the
+ * right correction hint:
+ *
+ *   - `batchOverflow` — file mutations exceeding MAX_FILE_MUTATION_BATCH.
+ *     Hint: continue the batch on the next turn.
+ *   - `extraMutations` — ordering violations (a second side-effect, a
+ *     call after a side-effect, a read after the mutation batch started,
+ *     or a file mutation that didn't reach the batch because the
+ *     transaction was already done). Hint: reorder or split.
+ *
+ * Mirrors the CLI's per-call error-code split (PR #680) so model-facing
+ * vocabulary is consistent across surfaces. Pre-split, web emitted a
+ * single MULTI_MUTATION_NOT_ALLOWED for both cases with a vague hint
+ * mentioning both possibilities; post-split, each case lists its own
+ * tool names and code.
+ *
+ * Returns the messages and state updates needed — caller applies them
+ * to React state.
  */
 export function handleMultipleMutationsError(
-  detected: { mutating: AnyToolCall | null; extraMutations: AnyToolCall[] },
+  detected: {
+    mutating: AnyToolCall | null;
+    batchOverflow: AnyToolCall[];
+    extraMutations: AnyToolCall[];
+  },
   accumulated: string,
   thinkingAccumulated: string,
   reasoningBlocks: ReasoningBlock[],
   apiMessages: readonly ChatMessage[],
   provider: ActiveProvider,
 ): MultipleMutationsErrorAction {
-  const rejectedMutations = detected.mutating
-    ? [detected.mutating, ...detected.extraMutations]
-    : detected.extraMutations;
-  const rejectedToolNames = rejectedMutations.map((call) => getToolName(call));
+  // `mutating` ONLY counts as a rejected ordering call when actual
+  // ordering extras are present (i.e. the model emitted a second
+  // side-effect, or violated the reads→mutations→side-effect order).
+  // When only `batchOverflow` triggered the rejection, `mutating` may
+  // be a legitimate trailing exec — it gets aborted as collateral
+  // damage of the conservative "reject whole turn on overflow"
+  // policy, but it must NOT be labeled as a per-call ordering
+  // violation in the model-facing error. Codex P2 / Copilot review
+  // on PR #684 caught this misclassification.
+  const hasOrderingViolations = detected.extraMutations.length > 0;
+  const orderingRejected: AnyToolCall[] = hasOrderingViolations
+    ? detected.mutating
+      ? [detected.mutating, ...detected.extraMutations]
+      : detected.extraMutations
+    : [];
+  const batchOverflowNames = detected.batchOverflow.map((call) => getToolName(call));
+  const orderingNames = orderingRejected.map((call) => getToolName(call));
+  // For the toolMeta primary tool (the assistant message header
+  // surface), prefer the first rejected ordering call when present
+  // (closer to current behavior), else the first batch-overflow call.
+  const primaryMutation = orderingRejected[0] ?? detected.batchOverflow[0];
+  const rejectedToolNames = [...orderingNames, ...batchOverflowNames];
+
+  const problemParts: string[] = [];
+  if (batchOverflowNames.length > 0) {
+    problemParts.push(
+      `File-mutation batch overflow (FILE_MUTATION_BATCH_OVERFLOW): ${batchOverflowNames.join(', ')}.`,
+    );
+  }
+  if (hasOrderingViolations) {
+    problemParts.push(
+      `Per-turn ordering violation (MULTI_MUTATION_NOT_ALLOWED): ${orderingNames.join(', ')}.`,
+    );
+  }
+
+  const hintParts: string[] = [];
+  if (batchOverflowNames.length > 0) {
+    hintParts.push(
+      `At most ${MAX_FILE_MUTATION_BATCH} file mutations per turn — continue the batch on the next turn.`,
+    );
+  }
+  if (hasOrderingViolations) {
+    hintParts.push(
+      `A turn may emit read-only calls first, then up to ${MAX_FILE_MUTATION_BATCH} pure file mutations as one batch (write/edit/patch on sandbox-backed surfaces), then at most one trailing side-effect (exec, commit, push, delegate, workflow_run). Reorder or split across turns.`,
+    );
+  }
 
   const parseErrorHeader = buildToolCallParseErrorBlock({
     errorType: 'multiple_mutating_calls',
-    problem: `Extra tool calls detected after the turn's mutation transaction: ${rejectedToolNames.join(', ')}.`,
-    hint: 'A turn may emit read-only calls first, then up to MAX_FILE_MUTATION_BATCH (8) pure file mutations as one batch (for example write/edit/patch on sandbox-backed surfaces, or CLI-only undo_edit where available), then at most one trailing side-effect (exec, commit, push, delegate, workflow_run). Any of the following lands here: a second side-effect, a file mutation or read emitted after a side-effect, a read emitted after the mutation batch starts, or file-mutation overflow beyond the batch limit. Reorder your calls or split them across turns.',
+    problem: problemParts.join(' '),
+    hint: hintParts.join(' '),
   });
 
-  const primaryMutation = rejectedMutations[0];
   const toolMeta = buildToolMeta({
     toolName: rejectedToolNames[0] || 'unknown',
     source: primaryMutation?.source || 'sandbox',
