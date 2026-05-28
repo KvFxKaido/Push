@@ -305,41 +305,41 @@ function scanBareObjectsWithOffsets(text: string): BareObjectAtOffset[] {
 }
 
 /**
- * Half-open `[start, end)` text range claimed by a recovery shape
- * (namespaced or XML). Used by `detectFromLegacyScan` to skip bare-args
- * inference over JSON objects that are actually the args portion of a
- * recovered call — the recovery functions already model those calls,
- * and inferring them again would double-claim the same intent.
+ * True if the text region immediately preceding `objectStart` ends with
+ * a namespaced-call prefix (`functions.<name>:<id>` + optional
+ * whitespace) or an XML `<tool_call>` / `<invoke>` open tag. These
+ * shapes embed a JSON args object that `scanBareObjectsWithOffsets`
+ * would otherwise surface as a candidate for bare-args inference.
+ *
+ * Shape-based, NOT recovery-claimed-based: the recovery functions
+ * have their own trailing-context gate that REJECTS prose mentions
+ * (e.g. `Note: ignore functions.exec:0 {"command":"rm -rf /"}`), but
+ * that prose object would STILL get picked up by bare-args inference
+ * and silently execute as a real sandbox_exec. So this check looks
+ * at the prefix shape regardless of whether recovery would claim it
+ * — the safety bar for bare-args inference is broader than the bar
+ * for recovery promotion. Codex P1 review on PR #683 closed the
+ * gap that an earlier attempt to use `RecoveredNamespacedCall.endOffset`
+ * directly left open (recovery rejects the prose mention but the
+ * args still leaks through).
+ *
+ * Lookback window is 80 chars — covers `<tool_call>\n  ` and
+ * `functions.<longname>:<longid>  ` with headroom. Tighter than the
+ * 64-char `MAX_PREFIX_TO_ARGS_GAP` used inside the namespaced
+ * recovery itself; the extra slack is for the XML tag plus possible
+ * newline/whitespace formatting between the open tag and the args
+ * object.
  */
-interface RecoveryRegion {
-  readonly start: number;
-  readonly end: number;
-}
-
-/**
- * Build the set of text regions claimed by namespaced + XML recovery.
- * Replaces the prior 80-char regex lookback (PR #681) with exact
- * boundaries surfaced by the recovery functions themselves
- * (`RecoveredNamespacedCall.endOffset`,
- * `RecoveredXmlCall.endOffset`). Regions are independent — overlap
- * checks happen at the lookup site.
- */
-function buildRecoveryRegions(text: string): RecoveryRegion[] {
-  const regions: RecoveryRegion[] = [];
-  for (const r of recoverNamespacedToolCalls(text)) {
-    regions.push({ start: r.offset, end: r.endOffset });
-  }
-  for (const r of recoverXmlToolCalls(text)) {
-    regions.push({ start: r.offset, end: r.endOffset });
-  }
-  return regions;
-}
-
-function isInsideAnyRegion(regions: readonly RecoveryRegion[], position: number): boolean {
-  for (const region of regions) {
-    if (position >= region.start && position < region.end) return true;
-  }
-  return false;
+const NAMESPACED_PREFIX_LOOKBACK = /functions\.[a-zA-Z_][a-zA-Z0-9_]*\s*:\s*[a-zA-Z0-9_]+\s*$/;
+const XML_TOOL_CALL_LOOKBACK = /<tool_call\b[^>]*>\s*$/;
+const XML_INVOKE_LOOKBACK = /<invoke\b[^>]*>\s*$/;
+function isInsideRecoveryArgsRegion(text: string, objectStart: number): boolean {
+  const lookback = text.slice(Math.max(0, objectStart - 80), objectStart);
+  return (
+    NAMESPACED_PREFIX_LOOKBACK.test(lookback) ||
+    XML_TOOL_CALL_LOOKBACK.test(lookback) ||
+    XML_INVOKE_LOOKBACK.test(lookback)
+  );
 }
 
 /**
@@ -360,23 +360,20 @@ function isInsideAnyRegion(regions: readonly RecoveryRegion[], position: number)
  *      rejects the whole sequence, including the well-formed sibling.
  *      Legacy picks up the well-formed one here.
  *
- * Bare-args inference (#2) is gated on `recoveryRegions` to avoid
- * double-claiming the args portion of a namespaced/XML recovery shape
- * — the recovery functions already model those calls, and inferring
- * them again would let a single recovery trace land BOTH as a
- * recovered call (via the outer recovery pass) AND as a bare-args
- * inference (via this scan), executing twice in the worst case.
- * Regions use precise `[offset, endOffset)` ranges surfaced by the
- * recovery functions (replaces the 80-char regex lookback from
- * PR #681 — Codex P2 review).
+ * Bare-args inference (#2) is gated on `isInsideRecoveryArgsRegion`
+ * to avoid the false-positive-execution risk where a JSON object
+ * preceded by a namespaced or XML prefix shape (regardless of whether
+ * the recovery function would claim it) gets re-inferred as a real
+ * tool call. The recovery functions have their own trailing-context
+ * gate that REJECTS prose mentions, but the args object survives
+ * `scanBareObjectsWithOffsets` and would still execute via
+ * `tryRecoverBareToolArgs`. The shape-based check closes that gap.
+ * Codex P1 review on PR #683.
  *
  * Dedup against kernel-claimed calls happens at the call site via
  * canonical invocation key over the merged offset-sorted list.
  */
-function detectFromLegacyScan(
-  text: string,
-  recoveryRegions: readonly RecoveryRegion[],
-): {
+function detectFromLegacyScan(text: string): {
   entries: OffsetCall[];
   droppedCandidates: DroppedToolCallCandidate[];
 } {
@@ -385,11 +382,11 @@ function detectFromLegacyScan(
   const entries: OffsetCall[] = [];
   const droppedCandidates: DroppedToolCallCandidate[] = [];
   for (const { parsed, start } of parsedObjects) {
-    // Skip bare-args inference when the object falls inside a known
-    // recovery args region. Objects WITH a `tool` field still pass
-    // through so flat-form scratchpad/todo via the cascade (purpose #1
-    // above) keeps working.
-    if (typeof parsed.tool !== 'string' && isInsideAnyRegion(recoveryRegions, start)) {
+    // Skip bare-args inference when the object is preceded by a
+    // recovery-shape prefix. Objects WITH a `tool` field still pass
+    // through so flat-form scratchpad/todo via the cascade (purpose
+    // #1 above) keeps working.
+    if (typeof parsed.tool !== 'string' && isInsideRecoveryArgsRegion(text, start)) {
       continue;
     }
     const serialized = JSON.stringify(parsed);
@@ -515,12 +512,7 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
   // Copilot review on PR #679.
   let legacyEntries: OffsetCall[] = [];
   if (hasExplicitWrappers) {
-    // Build recovery args regions from the recovery functions'
-    // precise `[offset, endOffset)` ranges so bare-args inference
-    // skips any JSON object that's actually the args portion of a
-    // namespaced/XML recovered call.
-    const recoveryRegions = buildRecoveryRegions(text);
-    const legacyResult = detectFromLegacyScan(text, recoveryRegions);
+    const legacyResult = detectFromLegacyScan(text);
     legacyEntries = legacyResult.entries;
     for (const dropped of legacyResult.droppedCandidates) {
       if (droppedSeen.has(dropped.rawToolName)) continue;

@@ -1413,4 +1413,60 @@ describe('detectAllToolCalls — textual-order merging', () => {
     expect(allTools).not.toContain('read_file');
     expect(allTools).not.toContain('sandbox_read_file');
   });
+
+  it('does NOT execute a prose `functions.exec:0 {...}` mention alongside a real fenced call', () => {
+    // Codex P1 on PR #683. Pre-fix: my "precise regions" check only
+    // skipped bare-args inference for objects inside ranges that
+    // `recoverNamespacedToolCalls` actually claimed. But that
+    // function's `hasRecoverableTrailingContext` gate REJECTS prose
+    // mentions — meaning a sentence like
+    // `Note: ignore functions.exec:0 {"command":"rm -rf /"} mention`
+    // produces no recovery entry, so the precise-regions list misses
+    // it. The args object survives `scanBareObjectsWithOffsets` and
+    // `tryRecoverBareToolArgs` infers `sandbox_exec` from its shape.
+    // Catastrophic execution from prose. The shape-based regex
+    // lookback closes this even when recovery rejected the mention.
+    const text = [
+      '```json',
+      '{"tool": "sandbox_read_file", "args": {"path": "/workspace/README.md"}}',
+      '```',
+      'Note: ignore functions.exec:0 {"command":"rm -rf /"} mention is just prose.',
+    ].join('\n');
+    const result = detectAllToolCalls(text);
+    const allTools = [
+      ...result.readOnly.map((c) => c.call.tool),
+      ...result.fileMutations.map((c) => c.call.tool),
+      ...(result.mutating ? [result.mutating.call.tool] : []),
+    ];
+    // The fenced read should land.
+    expect(allTools).toContain('sandbox_read_file');
+    // The prose-mention exec MUST NOT execute.
+    expect(allTools).not.toContain('sandbox_exec');
+    expect(allTools).not.toContain('exec');
+  });
+
+  it('does NOT execute a prose `<invoke>` mention as a bare-args call', () => {
+    // Same Codex P1 scenario, but for the XML invoke shape — a prose
+    // `<invoke name="exec"><parameter name="command">rm -rf /...
+    // </parameter></invoke>` reference inside a message with a real
+    // fenced call. Recovery's gap-gate rejects this, but the
+    // bare-object scan picks up nested JSON inside the parameter
+    // value — the shape-based check still blocks it from inferring
+    // as a tool call.
+    const text = [
+      '```json',
+      '{"tool": "sandbox_read_file", "args": {"path": "/workspace/a.txt"}}',
+      '```',
+      'Earlier the model emitted: <invoke name="write">{"path":"/etc/passwd","content":"x"}</invoke> — but I am explaining, not executing.',
+    ].join('\n');
+    const result = detectAllToolCalls(text);
+    const allTools = [
+      ...result.readOnly.map((c) => c.call.tool),
+      ...result.fileMutations.map((c) => c.call.tool),
+      ...(result.mutating ? [result.mutating.call.tool] : []),
+    ];
+    expect(allTools).toContain('sandbox_read_file');
+    expect(allTools).not.toContain('sandbox_write_file');
+    expect(allTools).not.toContain('write_file');
+  });
 });
