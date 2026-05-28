@@ -767,7 +767,7 @@ function validateErrorPayload(payload: unknown, basePath: string): ValidationIss
   // empty/null codes were a regression source on PR #656 because the
   // surface code defaulted to "everything is unknown."
   if ('code' in payload && payload.code !== undefined) {
-    if (typeof payload.code !== 'string' || payload.code.length === 0) {
+    if (!isNonEmptyString(payload.code)) {
       issues.push({
         path: `${basePath}.code`,
         message: `expected non-empty string or omitted, got ${JSON.stringify(payload.code)}`,
@@ -785,16 +785,32 @@ function validateErrorPayload(payload: unknown, basePath: string): ValidationIss
   return issues;
 }
 
-/** Soft warning event — at least one of `message` / `code` is required
+/** Soft warning event. At least one of `message` / `code` is required
  * because the TUI renders `event.payload.message || event.payload.code`
- * and an empty warning chip is worse than no event. */
+ * and an empty warning chip is worse than no event. Both fields are
+ * also type-checked when present so a malformed-but-truthy value
+ * (e.g. `message: 123`) doesn't slip past the OR-fallback and end up
+ * rendered as a non-string transcript entry (codex / copilot review
+ * on PR #666). */
 function validateWarningPayload(payload: unknown, basePath: string): ValidationIssue[] {
   if (!isPlainObject(payload)) {
     return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
   }
   const issues: ValidationIssue[] = [];
-  const hasMessage = typeof payload.message === 'string' && payload.message.length > 0;
-  const hasCode = typeof payload.code === 'string' && payload.code.length > 0;
+  if ('message' in payload && payload.message !== undefined && !isNonEmptyString(payload.message)) {
+    issues.push({
+      path: `${basePath}.message`,
+      message: `expected non-empty string or omitted, got ${JSON.stringify(payload.message)}`,
+    });
+  }
+  if ('code' in payload && payload.code !== undefined && !isNonEmptyString(payload.code)) {
+    issues.push({
+      path: `${basePath}.code`,
+      message: `expected non-empty string or omitted, got ${JSON.stringify(payload.code)}`,
+    });
+  }
+  const hasMessage = isNonEmptyString(payload.message);
+  const hasCode = isNonEmptyString(payload.code);
   if (!hasMessage && !hasCode) {
     issues.push({
       path: basePath,
@@ -805,14 +821,28 @@ function validateWarningPayload(payload: unknown, basePath: string): ValidationI
 }
 
 /** Status / progress event — same one-of rule as warning since the
- * TUI renders `payload.detail || payload.phase`. */
+ * TUI renders `payload.detail || payload.phase`. Each field also
+ * type-checked when present so a truthy non-string can't win the
+ * OR-fallback (codex / copilot review on PR #666). */
 function validateStatusPayload(payload: unknown, basePath: string): ValidationIssue[] {
   if (!isPlainObject(payload)) {
     return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
   }
   const issues: ValidationIssue[] = [];
-  const hasDetail = typeof payload.detail === 'string' && payload.detail.length > 0;
-  const hasPhase = typeof payload.phase === 'string' && payload.phase.length > 0;
+  if ('detail' in payload && payload.detail !== undefined && !isNonEmptyString(payload.detail)) {
+    issues.push({
+      path: `${basePath}.detail`,
+      message: `expected non-empty string or omitted, got ${JSON.stringify(payload.detail)}`,
+    });
+  }
+  if ('phase' in payload && payload.phase !== undefined && !isNonEmptyString(payload.phase)) {
+    issues.push({
+      path: `${basePath}.phase`,
+      message: `expected non-empty string or omitted, got ${JSON.stringify(payload.phase)}`,
+    });
+  }
+  const hasDetail = isNonEmptyString(payload.detail);
+  const hasPhase = isNonEmptyString(payload.phase);
   if (!hasDetail && !hasPhase) {
     issues.push({
       path: basePath,
@@ -843,11 +873,26 @@ function validateApprovalRequired(payload: unknown, basePath: string): Validatio
       message: `expected string, got ${JSON.stringify(payload.summary)}`,
     });
   }
+  // `options` is an array of non-empty strings: app consumers
+  // (`useApprovalQueue`) iterate it and use the entries as button
+  // labels. A non-string element falls back to the default
+  // approve/deny pair and silently hides the daemon's intent
+  // (copilot review on PR #666). Pin both the array shape AND the
+  // per-element type.
   if (!Array.isArray(payload.options) || payload.options.length === 0) {
     issues.push({
       path: `${basePath}.options`,
-      message: `expected non-empty array, got ${JSON.stringify(payload.options)}`,
+      message: `expected non-empty array of non-empty strings, got ${JSON.stringify(payload.options)}`,
     });
+  } else {
+    for (let i = 0; i < payload.options.length; i += 1) {
+      if (!isNonEmptyString(payload.options[i])) {
+        issues.push({
+          path: `${basePath}.options[${i}]`,
+          message: `expected non-empty string, got ${JSON.stringify(payload.options[i])}`,
+        });
+      }
+    }
   }
   return issues;
 }
@@ -868,7 +913,7 @@ function validateApprovalReceived(payload: unknown, basePath: string): Validatio
   }
   // `by` is informational; when present should be a non-empty string.
   if ('by' in payload && payload.by !== undefined) {
-    if (typeof payload.by !== 'string' || payload.by.length === 0) {
+    if (!isNonEmptyString(payload.by)) {
       issues.push({
         path: `${basePath}.by`,
         message: `expected non-empty string or omitted, got ${JSON.stringify(payload.by)}`,

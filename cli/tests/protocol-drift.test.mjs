@@ -258,6 +258,34 @@ describe('protocol drift characterization — approval family', () => {
     );
   });
 
+  it('rejects approval_required with a non-string element in options', () => {
+    // app's `useApprovalQueue` iterates `options` and uses each entry
+    // as a button label. A non-string element silently falls back to
+    // the default approve/deny pair and hides the daemon's intent
+    // (copilot review on PR #666).
+    assertStrictBroadcastFail(
+      makeEnvelope('approval_required', {
+        approvalId: 'approval_123',
+        kind: 'exec',
+        title: 'Approve exec',
+        summary: 'rm -rf dist',
+        options: ['approve', 42, 'deny'],
+      }),
+    );
+  });
+
+  it('rejects approval_required with an empty string in options', () => {
+    assertStrictBroadcastFail(
+      makeEnvelope('approval_required', {
+        approvalId: 'approval_123',
+        kind: 'exec',
+        title: 'Approve exec',
+        summary: 'rm -rf dist',
+        options: ['approve', '', 'deny'],
+      }),
+    );
+  });
+
   it('rejects approval_received with an unknown decision value', () => {
     assertStrictBroadcastFail(
       makeEnvelope('approval_received', {
@@ -408,6 +436,20 @@ describe('protocol drift characterization — lifecycle (error/warning/status)',
     assertStrictBroadcastFail(makeEnvelope('warning', { unrelated: 'field' }));
   });
 
+  it('rejects a warning envelope where message is a truthy non-string', () => {
+    // Regression: the TUI renders `payload.message || payload.code`,
+    // so a non-string message wins the OR-fallback and ends up as a
+    // non-string transcript entry. The first cut of this validator
+    // only checked "at least one is non-empty string"; copilot +
+    // codex on PR #666 flagged that present-but-malformed fields
+    // had to be type-checked individually.
+    assertStrictBroadcastFail(makeEnvelope('warning', { message: 123, code: 'PARTIAL_RESULT' }));
+  });
+
+  it('rejects a warning envelope where code is a truthy non-string', () => {
+    assertStrictBroadcastFail(makeEnvelope('warning', { message: 'ok', code: { typo: true } }));
+  });
+
   it('accepts a status envelope with phase + detail', () => {
     assertStrictBroadcastPass(
       makeEnvelope('status', { phase: 'context_trimming', detail: '100 → 50 tokens' }),
@@ -416,6 +458,13 @@ describe('protocol drift characterization — lifecycle (error/warning/status)',
 
   it('rejects a status envelope with neither phase nor detail', () => {
     assertStrictBroadcastFail(makeEnvelope('status', { source: 'orchestrator' }));
+  });
+
+  it('rejects a status envelope where detail is a truthy non-string', () => {
+    // Same OR-fallback rendering rule as warning — `payload.detail ||
+    // payload.phase`. Strict mode catches the drift instead of letting
+    // the malformed value render.
+    assertStrictBroadcastFail(makeEnvelope('status', { detail: { wrong: true }, phase: 'ok' }));
   });
 });
 
