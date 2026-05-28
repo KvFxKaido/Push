@@ -47,6 +47,7 @@ import { cancelPendingApprovals } from '@/lib/daemon-cancel-pending-approvals';
 import { RepoAppearanceSheet } from '@/components/repo/RepoAppearanceSheet';
 import { useChat } from '@/hooks/useChat';
 import { useDaemonAppearance } from '@/hooks/useDaemonAppearance';
+import { useDaemonCliSessions } from '@/hooks/useDaemonCliSessions';
 import { useDaemonSettingsBundles } from '@/hooks/useDaemonSettingsBundles';
 import { useModelCatalog } from '@/hooks/useModelCatalog';
 import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
@@ -242,6 +243,12 @@ export function DaemonChatBody({
   const scratchpad = useScratchpad(null);
   const todo = useTodo(null);
   const pinnedArtifacts = usePinnedArtifacts(null);
+  // CLI/TUI sessions the daemon already knows about, fetched once
+  // per `connecting → open` transition. Surfaced in the drawer's
+  // Local PC / Remote section so the user sees sessions started
+  // outside this device. Read-only: tap-to-resume needs an
+  // attach + replay pipeline that's intentionally out of scope here.
+  const { sessions: cliSessions } = useDaemonCliSessions(request, status);
   const decideApproval = useCallback(
     (decision: 'approve' | 'deny') => {
       // Read the head from the ref (a synchronous mirror of the
@@ -555,6 +562,8 @@ export function DaemonChatBody({
       onRenameChat: (id: string, title: string) => {
         renameChat(id, title);
       },
+      cliSessions,
+      cliSessionsLabel: mode,
     }),
     [
       drawerOpen,
@@ -568,6 +577,8 @@ export function DaemonChatBody({
       daemonAppearance,
       setDaemonAppearance,
       resetDaemonAppearance,
+      cliSessions,
+      mode,
     ],
   );
 

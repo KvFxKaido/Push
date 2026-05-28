@@ -35,8 +35,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { HUB_MATERIAL_PILL_BUTTON_CLASS, HubControlGlow } from '@/components/chat/hub-styles';
+import { CliSessionRow } from '@/components/chat/drawer-cli-row';
 import type { RepoAppearance } from '@/lib/repo-appearance';
-import type { ActiveRepo, Conversation, RepoWithActivity } from '@/types';
+import type { ActiveRepo, Conversation, DaemonCliSession, RepoWithActivity } from '@/types';
 
 interface RepoChatDrawerProps {
   open: boolean;
@@ -65,9 +66,23 @@ interface RepoChatDrawerProps {
   branchesError?: string | null;
   onRefreshBranches?: () => void;
   onDeleteBranch?: (branch: string) => Promise<boolean>;
+  /**
+   * Sessions discovered on the paired daemon via `list_sessions` that
+   * weren't started from this device. Optional — non-daemon callers
+   * (repo / scratch screens) never pass it. When present, the drawer
+   * renders these alongside the matching daemon-mode chat section
+   * with a "from CLI" badge. Rows are read-only in this version: no
+   * resume-into-mobile flow, no rename/delete affordances. The
+   * `cliSessionsLabel` decides which section header they appear
+   * under — `'local-pc'` shows them in the Local PC section,
+   * `'relay'` shows them in Remote.
+   */
+  cliSessions?: DaemonCliSession[];
+  cliSessionsLabel?: 'local-pc' | 'relay';
 }
 
 const EMPTY_CHATS: Conversation[] = [];
+const EMPTY_CLI_SESSIONS: DaemonCliSession[] = [];
 
 import { timeAgoCompact } from '@/lib/utils';
 
@@ -100,6 +115,8 @@ export function RepoChatDrawer({
   branchesError = null,
   onRefreshBranches,
   onDeleteBranch,
+  cliSessions = EMPTY_CLI_SESSIONS,
+  cliSessionsLabel,
 }: RepoChatDrawerProps) {
   const [expandedRepos, setExpandedRepos] = useState<Record<string, boolean>>({});
   const [searchQuery, setSearchQuery] = useState('');
@@ -215,6 +232,17 @@ export function RepoChatDrawer({
     if (!isSearching) return relayChats;
     return relayChats.filter((chat) => chat.title.toLowerCase().includes(normalizedQuery));
   }, [isSearching, normalizedQuery, relayChats]);
+
+  const filteredCliSessions = useMemo(() => {
+    if (!isSearching) return cliSessions;
+    return cliSessions.filter((s) => {
+      const haystack = `${s.sessionName} ${s.lastUserMessage} ${s.sessionId}`.toLowerCase();
+      return haystack.includes(normalizedQuery);
+    });
+  }, [isSearching, normalizedQuery, cliSessions]);
+  const localPcCliSessions =
+    cliSessionsLabel === 'local-pc' ? filteredCliSessions : EMPTY_CLI_SESSIONS;
+  const relayCliSessions = cliSessionsLabel === 'relay' ? filteredCliSessions : EMPTY_CLI_SESSIONS;
 
   const toggleRepo = (repoFullName: string, fallbackOpen: boolean) => {
     if (isSearching) return;
@@ -716,23 +744,29 @@ export function RepoChatDrawer({
                       </div>
                     </div>
                   )}
-                  {filteredLocalPcChats.length > 0 && (
+                  {(filteredLocalPcChats.length > 0 || localPcCliSessions.length > 0) && (
                     <div className={DRAWER_SECTION_SURFACE_CLASS}>
                       <div className="px-1 py-2.5 text-push-xs font-medium uppercase tracking-wide text-push-link">
                         Local PC
                       </div>
                       <div className="space-y-1 px-0 pb-0">
                         {filteredLocalPcChats.map((chat) => renderChatRow(chat))}
+                        {localPcCliSessions.map((s) => (
+                          <CliSessionRow key={s.sessionId} session={s} />
+                        ))}
                       </div>
                     </div>
                   )}
-                  {filteredRelayChats.length > 0 && (
+                  {(filteredRelayChats.length > 0 || relayCliSessions.length > 0) && (
                     <div className={DRAWER_SECTION_SURFACE_CLASS}>
                       <div className="px-1 py-2.5 text-push-xs font-medium uppercase tracking-wide text-push-link">
                         Remote
                       </div>
                       <div className="space-y-1 px-0 pb-0">
                         {filteredRelayChats.map((chat) => renderChatRow(chat))}
+                        {relayCliSessions.map((s) => (
+                          <CliSessionRow key={s.sessionId} session={s} />
+                        ))}
                       </div>
                     </div>
                   )}
@@ -750,7 +784,9 @@ export function RepoChatDrawer({
                     filteredUnscopedChats.length === 0 &&
                     filteredChatModeChats.length === 0 &&
                     filteredLocalPcChats.length === 0 &&
-                    filteredRelayChats.length === 0 && (
+                    filteredRelayChats.length === 0 &&
+                    localPcCliSessions.length === 0 &&
+                    relayCliSessions.length === 0 && (
                       <div className="rounded-xl border border-dashed border-push-edge/70 bg-push-surface/15 px-3 py-4 text-center text-push-sm text-push-fg-muted">
                         No repos or chats match your search.
                       </div>
