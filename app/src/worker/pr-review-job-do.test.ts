@@ -25,6 +25,7 @@ interface ReviewRow {
   is_cross_fork: number;
   status: string;
   comments_posted: number | null;
+  result_json: string | null;
   error_text: string | null;
   created_at: number;
   started_at: number | null;
@@ -39,10 +40,17 @@ function createMockCtx() {
   let seq = 1;
 
   function run(sql: string, p: unknown[]): Record<string, unknown>[] {
-    if (/^CREATE /i.test(sql)) return [];
+    if (/^CREATE /i.test(sql) || /^ALTER TABLE/i.test(sql)) return [];
+    // ensureResultColumn() probes for result_json; report it present.
+    if (/^PRAGMA table_info\(review\)/i.test(sql)) return [{ name: 'result_json' }];
     if (/^SELECT status FROM review WHERE delivery_id/i.test(sql)) {
       const r = reviews.get(p[0] as string);
       return r ? [{ status: r.status }] : [];
+    }
+    if (/^SELECT \* FROM review ORDER BY created_at DESC/i.test(sql)) {
+      return [...reviews.values()]
+        .sort((a, b) => b.created_at - a.created_at)
+        .map((r) => ({ ...r }));
     }
     if (/^SELECT delivery_id FROM review WHERE pr_number/i.test(sql)) {
       const [prNumber, headSha] = p as [number, string];
@@ -82,6 +90,7 @@ function createMockCtx() {
         is_cross_fork,
         status: 'queued',
         comments_posted: null,
+        result_json: null,
         error_text: null,
         created_at,
         started_at: null,
@@ -111,10 +120,11 @@ function createMockCtx() {
       return [];
     }
     if (/^UPDATE review SET status = 'completed'/i.test(sql)) {
-      setStatus(p[2] as string, {
+      setStatus(p[3] as string, {
         status: 'completed',
         comments_posted: p[0] as number,
-        finished_at: p[1] as number,
+        result_json: p[1] as string,
+        finished_at: p[2] as number,
       });
       return [];
     }
@@ -202,6 +212,40 @@ describe('PrReviewJob', () => {
 
     const status = await (await do_.fetch(new Request('https://do/status?deliveryId=d1'))).json();
     expect(status).toMatchObject({ status: 'completed', commentsPosted: 1, prNumber: 7 });
+  });
+
+  it('persists the full ReviewResult and lists reviews for the PR', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
+    __setPrReviewExecutorOverride('d1', async () => ({ result: RESULT, commentsPosted: 1 }));
+    __setPrReviewExecutorOverride('d2', async () => ({
+      result: { ...RESULT, summary: 'second review' },
+      commentsPosted: 0,
+    }));
+
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd1', headSha: 'shaA' })));
+    await Promise.allSettled(mock.pending);
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd2', headSha: 'shaB' })));
+    await Promise.allSettled(mock.pending);
+
+    // The full result is persisted on the row, not just the comment count.
+    expect(JSON.parse(mock.reviews.get('d1')!.result_json!)).toMatchObject({
+      summary: 'looks fine',
+    });
+
+    const body = (await (await do_.fetch(new Request('https://do/list'))).json()) as {
+      reviews: Array<{
+        deliveryId: string;
+        status: string;
+        commentsPosted: number | null;
+        result: { summary: string } | null;
+      }>;
+    };
+    expect(body.reviews).toHaveLength(2);
+    const byId = Object.fromEntries(body.reviews.map((r) => [r.deliveryId, r]));
+    expect(byId.d1).toMatchObject({ status: 'completed', commentsPosted: 1 });
+    expect(byId.d1.result?.summary).toBe('looks fine');
+    expect(byId.d2.result?.summary).toBe('second review');
   });
 
   it('dedupes a redelivered delivery id', async () => {

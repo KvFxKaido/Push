@@ -14,6 +14,7 @@ import {
 import { getSandboxDiff } from '@/lib/sandbox-client';
 import { runReviewer } from '@/lib/reviewer-agent';
 import { runDeepReviewer } from '@/lib/deep-reviewer-agent';
+import { PrReviewHistorySection } from './PrReviewHistorySection';
 import {
   executePostPRReview,
   fetchGitHubReviewDiff,
@@ -1076,6 +1077,11 @@ export function HubReviewTab({
 
       {/* Results */}
       <div className="min-h-0 flex-1 overflow-y-auto">
+        {/* Autonomous (webhook-triggered) PR reviews for this PR. Self-hides
+            when there's no open PR or no reviews yet. */}
+        <div className="px-3 pt-3 empty:hidden">
+          <PrReviewHistorySection repoFullName={repoFullName} activeBranch={activeBranch} />
+        </div>
         {!result && !running && !error && savedReview && (
           <div className="px-3 py-3">
             <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3.5 py-3`}>

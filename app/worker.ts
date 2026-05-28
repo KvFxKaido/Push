@@ -71,6 +71,7 @@ import { summarizeSnapshotIndex, reapOrphanedSnapshots } from './src/worker/snap
 import { SNAPSHOT_KEY_PREFIX } from './src/worker/worker-cf-sandbox';
 import { handleAdminSnapshots } from './src/worker/admin-routes';
 import { handleJobsRoute, matchJobsRoute } from './src/worker/worker-coder-job';
+import { handlePrReviewRoute, matchPrReviewRoute } from './src/worker/worker-pr-review';
 import { handleRelayRequest, matchRelayRoute } from './src/worker/relay-routes';
 import { handleStats } from './src/worker/worker-stats';
 import {
@@ -170,6 +171,16 @@ export default {
       if (jobsMatch) {
         return withRequestIdOnResponse(
           await handleJobsRoute(requestWithId, env, jobsMatch),
+          requestId,
+          requestWithId,
+          env,
+        );
+      }
+
+      // PR review history — read-only list from the PrReviewJob DO.
+      if (matchPrReviewRoute(url.pathname, request.method)) {
+        return withRequestIdOnResponse(
+          await handlePrReviewRoute(requestWithId, env),
           requestId,
           requestWithId,
           env,

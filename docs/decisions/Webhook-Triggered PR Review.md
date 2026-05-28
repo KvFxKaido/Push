@@ -1,10 +1,12 @@
 # Webhook-Triggered PR Review
 
 Date: 2026-05-28
-Status: **Draft — prototype landed** (receiver + DO + REVIEW.md base-ref binding behind unset secret / unbound DO); advisory-only, gating + PWA history still open. Needs a `ROADMAP.md` entry to graduate to a supported feature.
+Status: **Current** — ROADMAP-tracked (`Autonomous Webhook PR Review`). Shipped: receiver + DO + REVIEW.md base-ref binding (#690), shared token-injectable client (#691), and the PWA read-only review-history surface (DO `list` + polling). Advisory-only; severity→gating, re-run-from-PWA, `runDeepReviewer`, and abort propagation remain. Not live in prod until the `v4` DO migration is applied via a one-time non-versioned `wrangler deploy`.
 Owner: Push
 Related: `app/src/worker/github-webhook.ts` (the receiver — signature, allowlist, event-select, enqueue),
-`app/src/worker/pr-review-job-do.ts` (`PrReviewJob` DO — dedupe, coalesce, advisory post),
+`app/src/worker/pr-review-job-do.ts` (`PrReviewJob` DO — dedupe, coalesce, advisory post, `list` history),
+`app/src/worker/worker-pr-review.ts` (`/api/pr-reviews` — read-only history route),
+`app/src/hooks/usePrReviewHistory.ts` + `app/src/components/chat/hub-tabs/PrReviewHistorySection.tsx` (PWA polling surface),
 `lib/reviewer-agent.ts` (the single-shot Reviewer the DO drives),
 `lib/role-context.ts` (`buildReviewerContextBlock` — REVIEW.md injection, shared),
 `lib/review-guidance.ts` (`resolveReviewGuidance` — shared resolver the DO binds at the PR base ref),
@@ -239,6 +241,19 @@ Per the new-feature checklist ("one source of truth per vocabulary"):
   fetch, review post) carry the status into `classifyError`, which maps them to
   `auth` / `rate_limit` / `not_found` / `validation` / `upstream` on the
   `review.failed` event rather than collapsing to "unknown" — see PR #656.
+- **`/api/pr-reviews` read authorization (decided: keep as-is).** The history
+  read is gated by the deployment-token + origin checks like every other Push
+  read endpoint (`/api/jobs`, `/api/artifacts`), but unlike those its key
+  (`repo`+`pr`) is *guessable* and it does **not** verify the caller's GitHub
+  token can access that repo/PR. Accepted for the **single-owner private
+  deployment** model: a caller with the deployment token already has full app
+  access (and can open those PRs / run reviews in-app), and completed findings
+  are PR-bound anyway. Adding per-request GitHub authz here alone would create
+  the auth asymmetry CLAUDE.md warns against. **Multi-tenant caveat:** a shared
+  deployment token across distinct GitHub users would leak one user's review
+  history to another via the guessable key — revisit (across all read
+  endpoints, not just this one) if Push ever supports multi-tenant deployments.
+  Raised by Copilot on PR #692.
 
 ## Scope
 
@@ -256,11 +271,18 @@ Per the new-feature checklist ("one source of truth per vocabulary"):
 - Wiring: route in `EXACT_API_ROUTES`, DO export + `wrangler.jsonc` binding +
   `v4` migration, `Env` fields (`GITHUB_WEBHOOK_SECRET`, `PrReviewJob`,
   `PR_REVIEW_PROVIDER`/`PR_REVIEW_MODEL`).
+- **Shared client** (#691): `github-tools` REST helpers are token-injectable, so
+  the DO posts through the same client as the browser reviewer (one format, one
+  retry policy — review POST is non-retrying). No DO-local fetch helpers.
+- **PWA read-only history** (this cycle): the DO persists the full `ReviewResult`
+  (`result_json`) and exposes a `list` action; `/api/pr-reviews?repo=&pr=`
+  forwards to it; `usePrReviewHistory` polls (fast while in-flight, slow idle)
+  and `PrReviewHistorySection` renders per-PR review status + findings in the
+  review tab, self-hiding when there's no open PR or no reviews.
 
-**Remaining:** PWA review-history wiring (the differentiator — DO event log →
-review tab), `runDeepReviewer` upgrade (needs DO-side GitHub tool exec), and the
-`github-tools` token-injection refactor so the DO and browser share one client
-instead of the DO's inline token-fetch helpers.
+**Remaining:** `runDeepReviewer` upgrade (needs DO-side GitHub tool exec; the
+shared client unblocks it), re-run-from-PWA (a manual trigger route), and
+severity→gating (below).
 
 **Abort propagation (follow-up).** Superseding aborts the DO's `AbortController`,
 but `runReviewer` doesn't take an `AbortSignal` and `createWebStreamAdapter`
