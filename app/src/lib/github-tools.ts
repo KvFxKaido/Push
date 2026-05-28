@@ -899,16 +899,24 @@ export async function executePostPRReview(
   }
 
   const postReview = async (comments: typeof inlineComments, bodyText: string) =>
-    githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}/reviews`, {
-      method: 'POST',
-      headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        commit_id: commitSha,
-        body: bodyText,
-        event: 'COMMENT',
-        comments,
-      }),
-    });
+    githubFetch(
+      `https://api.github.com/repos/${repo}/pulls/${prNumber}/reviews`,
+      {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          commit_id: commitSha,
+          body: bodyText,
+          event: 'COMMENT',
+          comments,
+        }),
+      },
+      // Don't retry: POSTing a review is non-idempotent, so a retry after a
+      // timeout (where GitHub may have already created the review) would
+      // duplicate the advisory review. A failed post surfaces as an error the
+      // caller can handle instead.
+      { retry: false },
+    );
 
   let res = await postReview(inlineComments, buildBody(false));
   let inlinePosted = inlineComments.length;
