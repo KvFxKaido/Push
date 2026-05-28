@@ -25,12 +25,12 @@
  * have different `ToolCall` shapes today — the only stable contract is
  * "given a call, is it read-only / a pure file mutation?"
  *
- * Caps are also injected, not hardcoded. Web caps reads at 6 and file
- * mutations at 8 (with documented overflow semantics); CLI does not cap
- * either today. Passing `null` for a cap disables that cap, matching
- * CLI's current behavior. The divergence is intentional for now — see
- * `docs/decisions/Tool-Call Parser Convergence Gap.md` for the open
- * question of whether CLI should adopt web's caps.
+ * Caps are also injected, not hardcoded. The shared canonical caps —
+ * `DEFAULT_GROUPING_CAPS` (6 parallel reads, 8 file mutations) — are
+ * exported from this module; both web and CLI pass them in. Passing
+ * `null` for a cap disables that cap; `UNCAPPED_GROUPING` is the
+ * convenience shape for callers that want no limits (used by tests
+ * and one-off invocations, not by the production surfaces).
  */
 
 export interface GroupingPredicates<T> {
@@ -49,21 +49,46 @@ export interface GroupingPredicates<T> {
 export interface GroupingCaps {
   /**
    * Maximum parallel read calls per turn. Overflow is **truncated**
-   * (silently dropped) — matches the existing web behavior, which
-   * documents this as "truncate instead of bailing entirely" on the
-   * theory that the model can ask for the tail on the next turn.
-   *
-   * `null` disables the cap entirely (CLI default).
+   * (silently dropped) — the model can ask for the tail on the next
+   * turn. `null` disables the cap entirely (see `UNCAPPED_GROUPING`).
    */
   readonly maxParallelReads: number | null;
   /**
-   * Maximum file mutations per turn. Overflow is **prepended to
-   * `extraMutations`** so the caller can surface an overflow error
-   * to the model instead of silently dropping. `null` disables the
-   * cap entirely (CLI default).
+   * Maximum file mutations per turn. Overflow lands in
+   * `GroupedCalls.batchOverflow` (separate from ordering-violation
+   * `extraMutations`) so callers can give the model the right
+   * correction hint. `null` disables the cap entirely (see
+   * `UNCAPPED_GROUPING`).
    */
   readonly maxFileMutationBatch: number | null;
 }
+
+/**
+ * Per-turn cap on parallel read-only calls. Sized for a realistic
+ * exploration burst (open a handful of related files, scan a search,
+ * read a dir listing) without letting a runaway plan execute dozens
+ * of reads in one turn.
+ */
+export const MAX_PARALLEL_TOOL_CALLS = 6;
+
+/**
+ * Per-turn cap on file-mutation calls. Generous enough to cover
+ * realistic scaffolds (a handful of new docs, a coordinated multi-file
+ * config update) but bounded so a runaway tool-call loop surfaces a
+ * clear overflow error instead of executing thousands of writes
+ * sequentially.
+ */
+export const MAX_FILE_MUTATION_BATCH = 8;
+
+/**
+ * Canonical caps used by both web (`app/src/lib/tool-dispatch.ts`) and
+ * CLI (`cli/engine.ts`). Matches the web defaults shipped 2026-03 and
+ * adopted by CLI on the parser-convergence followup (PR after #679).
+ */
+export const DEFAULT_GROUPING_CAPS: GroupingCaps = {
+  maxParallelReads: MAX_PARALLEL_TOOL_CALLS,
+  maxFileMutationBatch: MAX_FILE_MUTATION_BATCH,
+};
 
 export interface GroupedCalls<T> {
   /** Contiguous prefix of read-only calls (parallel-safe). */
@@ -76,13 +101,21 @@ export interface GroupedCalls<T> {
   /** Optional trailing side-effecting call (at most one per turn). */
   mutating: T | null;
   /**
-   * Overflow / ordering-violation calls the turn couldn't accept.
-   * Callers reject these with a structured error so the model can
-   * correct on the next turn. Sources include:
+   * File-mutation calls that exceeded `maxFileMutationBatch`. The
+   * batch hit the cap, the rest of the input's contiguous file
+   * mutations spilled here. Callers should emit a "split the batch
+   * across turns" hint, NOT an ordering violation message.
+   */
+  batchOverflow: T[];
+  /**
+   * Ordering-violation calls the turn couldn't accept. Distinct from
+   * `batchOverflow` so callers can give the model the right
+   * correction hint. Sources:
    *   - a second side-effect after `mutating` was set
    *   - any call after `mutating` was set
    *   - a read emitted after the mutation transaction began
-   *   - file-mutation batch overflow beyond `maxFileMutationBatch`
+   *   - a file mutation that didn't reach the batch because the
+   *     transaction was already done (exec → write_file)
    */
   extraMutations: T[];
 }
@@ -106,6 +139,7 @@ export function groupCallsByPhase<T>(
     readOnly: [],
     fileMutations: [],
     mutating: null,
+    batchOverflow: [],
     extraMutations: [],
   };
 
@@ -169,20 +203,25 @@ export function groupCallsByPhase<T>(
     readOnly.length = caps.maxParallelReads;
   }
 
-  // Cap file-mutation batch — push overflow to extraMutations so the
-  // caller surfaces a clear "too many writes" error instead of silently
-  // dropping. See `GroupingCaps.maxFileMutationBatch`.
+  // Cap file-mutation batch — surface overflow in `batchOverflow` (not
+  // mixed into `extraMutations`) so the caller can give the model a
+  // "split the batch across turns" hint distinct from the ordering-
+  // violation hint that ordinary extras get. The two cases share a
+  // need to reject + retry but have different correction shapes,
+  // and mixing them led to the wrong hint in CLI rejection messages
+  // (Copilot review on PR #680).
+  let batchOverflow: T[] = [];
   if (caps.maxFileMutationBatch !== null && fileMutations.length > caps.maxFileMutationBatch) {
-    const overflow = fileMutations.splice(caps.maxFileMutationBatch);
-    extraMutations.unshift(...overflow);
+    batchOverflow = fileMutations.splice(caps.maxFileMutationBatch);
   }
 
-  return { readOnly, fileMutations, mutating, extraMutations };
+  return { readOnly, fileMutations, mutating, batchOverflow, extraMutations };
 }
 
 /**
- * Convenience: pass-through caps that disable both limits. CLI uses
- * this today because the inline state machine has never enforced caps.
+ * Convenience: pass-through caps that disable both limits. Useful for
+ * tests and any caller that explicitly wants no per-turn enforcement.
+ * Production surfaces (web + CLI) pass `DEFAULT_GROUPING_CAPS`.
  */
 export const UNCAPPED_GROUPING: GroupingCaps = {
   maxParallelReads: null,

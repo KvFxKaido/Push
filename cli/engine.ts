@@ -27,7 +27,11 @@ import { FileAwarenessLedger, type EditGuardVerdict } from '../lib/file-awarenes
 import { recordMalformedToolCall } from './tool-call-metrics.js';
 import { recordWriteFile } from './edit-metrics.js';
 import { recordContextTrim } from './context-metrics.js';
-import { groupCallsByPhase, UNCAPPED_GROUPING } from '../lib/tool-call-grouping.js';
+import {
+  DEFAULT_GROUPING_CAPS,
+  groupCallsByPhase,
+  MAX_FILE_MUTATION_BATCH,
+} from '../lib/tool-call-grouping.js';
 import { computeAdaptation } from './harness-adaptation.js';
 import {
   buildWorkspaceSnapshot,
@@ -1826,23 +1830,32 @@ async function runAssistantLoopImpl(
     //   - `mutating`: at most one trailing side-effecting call
     //     (exec, git_commit, save_memory, etc.)
     //   - `extraMutations`: overflow — a second side-effect, a read
-    //     emitted after the mutation transaction started, or any call
-    //     that arrived after the trailing side-effect. Surfaced as
-    //     `MULTI_MUTATION_NOT_ALLOWED` below.
+    //     emitted after the mutation transaction started, any call
+    //     that arrived after the trailing side-effect, OR file-mutation
+    //     batch overflow beyond `MAX_FILE_MUTATION_BATCH`. The handler
+    //     below distinguishes file-mutation overflow from second-
+    //     side-effect by error code so the model sees the right
+    //     correction hint.
     //
-    // CLI passes `UNCAPPED_GROUPING` because the inline state machine
-    // historically did not enforce caps. The web side caps at 6/8 and
-    // pushes overflow into `extraMutations`. The divergence is
-    // documented in `docs/decisions/Tool-Call Parser Convergence Gap.md`
-    // and remains an open follow-up.
+    // CLI uses `DEFAULT_GROUPING_CAPS` (the shared web/CLI defaults:
+    // 6 parallel reads, 8 file mutations) so a runaway tool-call loop
+    // surfaces a structured overflow error instead of executing
+    // thousands of writes sequentially. Adopted 2026-05-28 to close
+    // the cap divergence flagged in the Slice 1 commit message.
     const grouped = groupCallsByPhase<ToolCall>(
       toolCalls,
       { isReadOnly: isReadOnlyToolCall, isFileMutation: isFileMutationToolCall },
-      UNCAPPED_GROUPING,
+      DEFAULT_GROUPING_CAPS,
     );
     const readCalls: ToolCall[] = grouped.readOnly;
     const fileMutationBatch: ToolCall[] = grouped.fileMutations;
     const trailingSideEffect: ToolCall | null = grouped.mutating;
+    // `batchOverflow` and `extraMutations` are kept distinct by the
+    // kernel — see the per-list rejection handlers below. The grouper's
+    // contract: overflow file mutations that exceeded the cap go in
+    // `batchOverflow`; ordering violations (post-side-effect calls,
+    // reads after the mutation batch started) go in `extraMutations`.
+    const batchOverflow: ToolCall[] = grouped.batchOverflow;
     const rejectedMutations: ToolCall[] = grouped.extraMutations;
     const mutateCalls: ToolCall[] = [
       ...fileMutationBatch,
@@ -1974,21 +1987,57 @@ async function runAssistantLoopImpl(
         }
       }
 
-      // Overflow side-effects (second exec, commit after exec, etc.) are
-      // rejected with a structured error so the model can correct on the
-      // next turn. File mutations never land here — they were already
-      // executed as part of the batch above.
-      for (const call of rejectedMutations) {
-        const result: ToolResult = {
-          ok: false,
-          text: `Skipped side-effecting tool call ${call.tool}: a turn may contain at most one side-effect (exec, commit, save_memory) after the file-mutation batch.`,
-          structuredError: {
-            code: 'MULTI_MUTATION_NOT_ALLOWED',
-            message: 'At most one side-effect tool call allowed per turn',
-            retryable: true,
+      // Overflow calls are rejected with a structured error so the model
+      // can correct on the next turn. The kernel separates the two
+      // failure shapes into distinct lists, so each gets its own error
+      // code and correction hint:
+      //
+      //   - `batchOverflow` → `FILE_MUTATION_BATCH_OVERFLOW`: the
+      //     model emitted more than MAX_FILE_MUTATION_BATCH file
+      //     mutations in one turn. Tell the model to split the batch
+      //     across turns.
+      //   - `extraMutations` → `MULTI_MUTATION_NOT_ALLOWED`: ordering
+      //     violation — a second side-effect, any call after a
+      //     side-effect, a read emitted after the mutation batch
+      //     started, OR a file mutation that didn't reach the batch
+      //     because the transaction was already done (exec →
+      //     write_file). Tell the model to reorder.
+      //
+      // Pre-fix (PR #680 Copilot review) the two cases were mixed in a
+      // single `extraMutations` list and a global `batchOverflowed`
+      // flag misclassified ordering-violation file mutations as batch
+      // overflow. The kernel split keeps each list precise.
+      const skippedCalls: Array<{ call: ToolCall; result: ToolResult }> = [];
+      for (const call of batchOverflow) {
+        skippedCalls.push({
+          call,
+          result: {
+            ok: false,
+            text: `Skipped file mutation ${call.tool}: at most ${MAX_FILE_MUTATION_BATCH} file mutations allowed per turn. Continue the batch on the next turn.`,
+            structuredError: {
+              code: 'FILE_MUTATION_BATCH_OVERFLOW',
+              message: `File mutation batch exceeds ${MAX_FILE_MUTATION_BATCH} per turn`,
+              retryable: true,
+            },
           },
-        };
+        });
+      }
+      for (const call of rejectedMutations) {
+        skippedCalls.push({
+          call,
+          result: {
+            ok: false,
+            text: `Skipped tool call ${call.tool}: a turn may emit reads in parallel, then a single batch of file mutations, then at most one trailing side-effect (exec, commit, save_memory). Reorder or split across turns.`,
+            structuredError: {
+              code: 'MULTI_MUTATION_NOT_ALLOWED',
+              message: 'Tool call violates per-turn mutation ordering',
+              retryable: true,
+            },
+          },
+        });
+      }
 
+      for (const { call, result } of skippedCalls) {
         const executionId = nextToolExecutionId(round);
         const skippedSource = call.source || 'sandbox';
         const preview = summarizeToolResultPreview(result.text);

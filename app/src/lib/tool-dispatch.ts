@@ -44,7 +44,11 @@ import {
 } from '@push/lib/tool-call-diagnosis';
 import { recoverNamespacedToolCalls } from '@push/lib/tool-call-namespaced-recovery';
 import { recoverXmlToolCalls } from '@push/lib/tool-call-xml-recovery';
-import { groupCallsByPhase } from '@push/lib/tool-call-grouping';
+import {
+  groupCallsByPhase,
+  MAX_FILE_MUTATION_BATCH,
+  MAX_PARALLEL_TOOL_CALLS,
+} from '@push/lib/tool-call-grouping';
 import {
   createToolDispatcher,
   type ParsedToolObject,
@@ -82,15 +86,11 @@ export const PARALLEL_READ_ONLY_SANDBOX_TOOLS = new Set(
   getToolCanonicalNames({ source: 'sandbox', readOnly: true }),
 );
 
-export const MAX_PARALLEL_TOOL_CALLS = 6;
-/**
- * Cap on the number of file mutations the dispatcher will execute as a
- * single batch in one turn. Generous enough to cover realistic scaffolds
- * (a handful of new docs, a coordinated multi-file config update) but
- * bounded so a runaway tool-call loop still surfaces a clear overflow
- * error instead of executing thousands of writes sequentially.
- */
-export const MAX_FILE_MUTATION_BATCH = 8;
+// Canonical caps live in `@push/lib/tool-call-grouping` so the CLI engine
+// (`cli/engine.ts`) and the web dispatcher pull from the same source.
+// Re-exported here so existing imports (`@/lib/tool-dispatch`) keep
+// working without churn.
+export { MAX_PARALLEL_TOOL_CALLS, MAX_FILE_MUTATION_BATCH };
 const KNOWN_CAPABILITIES = new Set<Capability>(ALL_CAPABILITIES);
 
 function asTrimmedString(value: unknown): string | undefined {
@@ -140,11 +140,21 @@ export interface DetectedToolCalls {
    */
   mutating: AnyToolCall | null;
   /**
-   * Overflow calls that the turn couldn't accommodate. Sources include:
-   * a second side-effect, any call after a side-effect, a read emitted
-   * after the mutation transaction began, and file-mutation batch
-   * overflow (more than MAX_FILE_MUTATION_BATCH). Callers reject these
-   * with a structured error so the model can correct on the next turn.
+   * File-mutation calls that exceeded MAX_FILE_MUTATION_BATCH. Distinct
+   * from `extraMutations` so callers can give the model a "split the
+   * batch across turns" hint specifically for this case, instead of a
+   * generic ordering-violation message. PR #680 (CLI cap adoption +
+   * Copilot review on hint shape).
+   */
+  batchOverflow: AnyToolCall[];
+  /**
+   * Ordering-violation calls the turn couldn't accommodate. Sources
+   * include: a second side-effect, any call after a side-effect, a
+   * read emitted after the mutation transaction began, and a file
+   * mutation that didn't reach the batch because the transaction was
+   * already done (exec → write_file). File-mutation batch overflow
+   * lives in `batchOverflow`, NOT here. Callers reject these with a
+   * structured error so the model can correct on the next turn.
    */
   extraMutations: AnyToolCall[];
   /**
@@ -394,6 +404,7 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
     readOnly: [],
     fileMutations: [],
     mutating: null,
+    batchOverflow: [],
     extraMutations: [],
     droppedCandidates: [],
   };

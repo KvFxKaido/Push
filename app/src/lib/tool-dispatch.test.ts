@@ -708,9 +708,11 @@ describe('detectAllToolCalls', () => {
     expect(detected.extraMutations).toHaveLength(0);
   });
 
-  it('caps the file-mutation batch at MAX_FILE_MUTATION_BATCH and routes overflow into extraMutations', () => {
+  it('caps the file-mutation batch at MAX_FILE_MUTATION_BATCH and routes overflow into batchOverflow', () => {
     // 10 distinct file writes (MAX_FILE_MUTATION_BATCH = 8) — first 8
-    // should land in fileMutations (in order), last 2 in extraMutations.
+    // should land in fileMutations (in order), last 2 in batchOverflow
+    // (NOT extraMutations — those are now reserved for ordering
+    // violations only). Copilot review on PR #680.
     const calls = Array.from(
       { length: 10 },
       (_, i) =>
@@ -722,7 +724,8 @@ describe('detectAllToolCalls', () => {
     expect(detected.readOnly).toHaveLength(0);
     expect(detected.fileMutations).toHaveLength(8);
     expect(detected.mutating).toBeNull();
-    expect(detected.extraMutations).toHaveLength(2);
+    expect(detected.batchOverflow).toHaveLength(2);
+    expect(detected.extraMutations).toHaveLength(0);
 
     // Order preserved inside fileMutations
     detected.fileMutations.forEach((call, i) => {
@@ -732,16 +735,16 @@ describe('detectAllToolCalls', () => {
     });
     // Overflow appears in emission order
     if (
-      detected.extraMutations[0]?.source === 'sandbox' &&
-      detected.extraMutations[0].call.tool === 'sandbox_write_file'
+      detected.batchOverflow[0]?.source === 'sandbox' &&
+      detected.batchOverflow[0].call.tool === 'sandbox_write_file'
     ) {
-      expect(detected.extraMutations[0].call.args.path).toBe('/workspace/file8.md');
+      expect(detected.batchOverflow[0].call.args.path).toBe('/workspace/file8.md');
     }
     if (
-      detected.extraMutations[1]?.source === 'sandbox' &&
-      detected.extraMutations[1].call.tool === 'sandbox_write_file'
+      detected.batchOverflow[1]?.source === 'sandbox' &&
+      detected.batchOverflow[1].call.tool === 'sandbox_write_file'
     ) {
-      expect(detected.extraMutations[1].call.args.path).toBe('/workspace/file9.md');
+      expect(detected.batchOverflow[1].call.args.path).toBe('/workspace/file9.md');
     }
   });
 
