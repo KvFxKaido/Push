@@ -75,9 +75,17 @@ function assertStrictBroadcastFail(event, type = event.type) {
 describe('protocol drift characterization — schema surface', () => {
   it('pins the current set of schema-validated event types', () => {
     assert.deepEqual([...SCHEMA_VALIDATED_EVENT_TYPES].sort(), [
+      'approval_received',
+      'approval_required',
       'assistant.prompt_snapshot',
+      'assistant_thinking_token',
+      'assistant_token',
       'context.compaction',
+      'error',
+      'run_complete',
+      'session_started',
       'session_state_changed',
+      'status',
       'subagent.completed',
       'subagent.failed',
       'subagent.started',
@@ -87,30 +95,24 @@ describe('protocol drift characterization — schema surface', () => {
       'task_graph.task_failed',
       'task_graph.task_ready',
       'task_graph.task_started',
+      'tool.call_malformed',
+      'tool.execution_complete',
+      'tool.execution_start',
+      'tool_call',
+      'tool_result',
+      'user_message',
+      'warning',
     ]);
   });
 
-  it('treats assistant and approval payloads as envelope-only today', () => {
+  it('treats assistant_done and other untyped events as envelope-only today', () => {
+    // `assistant_done` carries no required payload fields the TUI
+    // reads; we leave it envelope-only on purpose. Anything else that
+    // doesn't have a registered validator also short-circuits to []
+    // — `validateRunEventPayload` returns no issues for unknown types.
     assert.deepEqual(validateRunEventPayload('assistant_done', { messageId: 'asst_123' }), []);
-    assert.deepEqual(validateRunEventPayload('assistant_token', { text: 'hello' }), []);
-    assert.deepEqual(
-      validateRunEventPayload('approval_required', {
-        approvalId: 'approval_123',
-        kind: 'exec',
-        title: 'Approve exec',
-        summary: 'rm -rf dist',
-        options: ['approve', 'deny'],
-      }),
-      [],
-    );
-    assert.deepEqual(
-      validateRunEventPayload('approval_received', {
-        approvalId: 'approval_123',
-        decision: 'approve',
-        by: 'client',
-      }),
-      [],
-    );
+    assert.deepEqual(validateRunEventPayload('assistant_thinking_done', {}), []);
+    assert.deepEqual(validateRunEventPayload('something.not.registered', { foo: 'bar' }), []);
   });
 });
 
@@ -233,6 +235,67 @@ describe('protocol drift characterization — approval family', () => {
     );
   });
 
+  it('rejects approval_required missing the approvalId field', () => {
+    assertStrictBroadcastFail(
+      makeEnvelope('approval_required', {
+        kind: 'exec',
+        title: 'Approve exec',
+        summary: 'rm -rf dist',
+        options: ['approve', 'deny'],
+      }),
+    );
+  });
+
+  it('rejects approval_required with an empty options array', () => {
+    assertStrictBroadcastFail(
+      makeEnvelope('approval_required', {
+        approvalId: 'approval_123',
+        kind: 'exec',
+        title: 'Approve exec',
+        summary: 'rm -rf dist',
+        options: [],
+      }),
+    );
+  });
+
+  it('rejects approval_required with a non-string element in options', () => {
+    // app's `useApprovalQueue` iterates `options` and uses each entry
+    // as a button label. A non-string element silently falls back to
+    // the default approve/deny pair and hides the daemon's intent
+    // (copilot review on PR #666).
+    assertStrictBroadcastFail(
+      makeEnvelope('approval_required', {
+        approvalId: 'approval_123',
+        kind: 'exec',
+        title: 'Approve exec',
+        summary: 'rm -rf dist',
+        options: ['approve', 42, 'deny'],
+      }),
+    );
+  });
+
+  it('rejects approval_required with an empty string in options', () => {
+    assertStrictBroadcastFail(
+      makeEnvelope('approval_required', {
+        approvalId: 'approval_123',
+        kind: 'exec',
+        title: 'Approve exec',
+        summary: 'rm -rf dist',
+        options: ['approve', '', 'deny'],
+      }),
+    );
+  });
+
+  it('rejects approval_received with an unknown decision value', () => {
+    assertStrictBroadcastFail(
+      makeEnvelope('approval_received', {
+        approvalId: 'approval_123',
+        decision: 'maybe',
+        by: 'client',
+      }),
+    );
+  });
+
   it('rejects approval_received with an invalid seq in strict mode', () => {
     assertStrictBroadcastFail(
       makeEnvelope(
@@ -241,6 +304,219 @@ describe('protocol drift characterization — approval family', () => {
         { seq: -1 },
       ),
     );
+  });
+});
+
+describe('protocol drift characterization — assistant streaming', () => {
+  installStrictModeHooks();
+
+  it('accepts assistant_token with non-empty text', () => {
+    assertStrictBroadcastPass(makeEnvelope('assistant_token', { text: 'hello world' }));
+  });
+
+  it('accepts assistant_token with empty text (zero-length delta)', () => {
+    // Provider streams legitimately emit zero-length chunks across the
+    // content/reasoning boundary. Rejecting them in strict mode hangs
+    // the daemon broadcast loop on real runs (caught at PR #4 dev time).
+    assertStrictBroadcastPass(makeEnvelope('assistant_token', { text: '' }));
+  });
+
+  it('rejects assistant_token with a non-string text field', () => {
+    assertStrictBroadcastFail(makeEnvelope('assistant_token', { text: 42 }));
+  });
+
+  it('accepts assistant_thinking_token symmetrically', () => {
+    assertStrictBroadcastPass(makeEnvelope('assistant_thinking_token', { text: 'thinking…' }));
+  });
+});
+
+describe('protocol drift characterization — tool events', () => {
+  installStrictModeHooks();
+
+  it('accepts a well-formed tool_call envelope', () => {
+    assertStrictBroadcastPass(
+      makeEnvelope('tool_call', { toolName: 'read_file', args: { path: 'README.md' } }),
+    );
+  });
+
+  it('accepts tool.execution_start with the same shape', () => {
+    assertStrictBroadcastPass(
+      makeEnvelope('tool.execution_start', {
+        toolName: 'read_file',
+        args: { path: 'README.md' },
+        executionId: 'exec_1',
+        round: 1,
+      }),
+    );
+  });
+
+  it('rejects tool_call with non-object args', () => {
+    assertStrictBroadcastFail(
+      makeEnvelope('tool_call', { toolName: 'read_file', args: 'not an object' }),
+    );
+  });
+
+  it('rejects tool_call with empty toolName', () => {
+    assertStrictBroadcastFail(makeEnvelope('tool_call', { toolName: '', args: {} }));
+  });
+
+  it('accepts a well-formed tool_result envelope', () => {
+    assertStrictBroadcastPass(
+      makeEnvelope('tool_result', {
+        toolName: 'read_file',
+        isError: false,
+        text: 'file contents',
+        durationMs: 42,
+      }),
+    );
+  });
+
+  it('accepts tool.execution_complete with preview instead of text', () => {
+    assertStrictBroadcastPass(
+      makeEnvelope('tool.execution_complete', {
+        toolName: 'exec',
+        isError: false,
+        preview: 'stdout snippet',
+        durationMs: 100,
+      }),
+    );
+  });
+
+  it('rejects tool_result with a non-boolean isError', () => {
+    assertStrictBroadcastFail(
+      makeEnvelope('tool_result', { toolName: 'read_file', isError: 'no' }),
+    );
+  });
+
+  it('accepts tool.call_malformed with a non-empty reason', () => {
+    assertStrictBroadcastPass(
+      makeEnvelope('tool.call_malformed', { reason: 'missing closing fence' }),
+    );
+  });
+
+  it('rejects tool.call_malformed without a reason', () => {
+    assertStrictBroadcastFail(makeEnvelope('tool.call_malformed', {}));
+  });
+});
+
+describe('protocol drift characterization — lifecycle (error/warning/status)', () => {
+  installStrictModeHooks();
+
+  it('accepts an error envelope with code + message + retryable', () => {
+    assertStrictBroadcastPass(
+      makeEnvelope('error', {
+        code: 'PROVIDER_TIMEOUT',
+        message: 'Upstream timed out after 30s',
+        retryable: true,
+      }),
+    );
+  });
+
+  it('accepts an error envelope with only message', () => {
+    assertStrictBroadcastPass(makeEnvelope('error', { message: 'something broke' }));
+  });
+
+  it('rejects an error envelope with an empty code', () => {
+    assertStrictBroadcastFail(makeEnvelope('error', { code: '', message: 'bad' }));
+  });
+
+  it('rejects an error envelope with a non-boolean retryable', () => {
+    assertStrictBroadcastFail(makeEnvelope('error', { message: 'bad', retryable: 'yes' }));
+  });
+
+  it('accepts a warning envelope with message only', () => {
+    assertStrictBroadcastPass(makeEnvelope('warning', { message: 'minor issue' }));
+  });
+
+  it('accepts a warning envelope with code only', () => {
+    assertStrictBroadcastPass(makeEnvelope('warning', { code: 'PARTIAL_RESULT' }));
+  });
+
+  it('rejects a warning envelope with neither message nor code', () => {
+    assertStrictBroadcastFail(makeEnvelope('warning', { unrelated: 'field' }));
+  });
+
+  it('rejects a warning envelope where message is a truthy non-string', () => {
+    // Regression: the TUI renders `payload.message || payload.code`,
+    // so a non-string message wins the OR-fallback and ends up as a
+    // non-string transcript entry. The first cut of this validator
+    // only checked "at least one is non-empty string"; copilot +
+    // codex on PR #666 flagged that present-but-malformed fields
+    // had to be type-checked individually.
+    assertStrictBroadcastFail(makeEnvelope('warning', { message: 123, code: 'PARTIAL_RESULT' }));
+  });
+
+  it('rejects a warning envelope where code is a truthy non-string', () => {
+    assertStrictBroadcastFail(makeEnvelope('warning', { message: 'ok', code: { typo: true } }));
+  });
+
+  it('accepts a status envelope with phase + detail', () => {
+    assertStrictBroadcastPass(
+      makeEnvelope('status', { phase: 'context_trimming', detail: '100 → 50 tokens' }),
+    );
+  });
+
+  it('rejects a status envelope with neither phase nor detail', () => {
+    assertStrictBroadcastFail(makeEnvelope('status', { source: 'orchestrator' }));
+  });
+
+  it('rejects a status envelope where detail is a truthy non-string', () => {
+    // Same OR-fallback rendering rule as warning — `payload.detail ||
+    // payload.phase`. Strict mode catches the drift instead of letting
+    // the malformed value render.
+    assertStrictBroadcastFail(makeEnvelope('status', { detail: { wrong: true }, phase: 'ok' }));
+  });
+});
+
+describe('protocol drift characterization — run_complete outcomes', () => {
+  installStrictModeHooks();
+
+  it('accepts each documented outcome value', () => {
+    for (const outcome of ['success', 'completed', 'failed', 'aborted', 'max_rounds']) {
+      assertStrictBroadcastPass(makeEnvelope('run_complete', { outcome, summary: 'ok' }));
+    }
+  });
+
+  it('rejects an unknown outcome value', () => {
+    assertStrictBroadcastFail(makeEnvelope('run_complete', { outcome: 'mystery' }));
+  });
+
+  it('accepts run_complete with summary omitted', () => {
+    assertStrictBroadcastPass(makeEnvelope('run_complete', { outcome: 'success' }));
+  });
+});
+
+describe('protocol drift characterization — session_started / user_message', () => {
+  installStrictModeHooks();
+
+  it('accepts a well-formed session_started envelope', () => {
+    assertStrictBroadcastPass(
+      makeEnvelope('session_started', {
+        sessionId: 'sess_abc',
+        state: 'idle',
+        mode: 'tui',
+        provider: 'ollama',
+        sandboxProvider: 'local',
+      }),
+    );
+  });
+
+  it('rejects session_started with an unknown state value', () => {
+    assertStrictBroadcastFail(
+      makeEnvelope('session_started', { sessionId: 'sess_abc', state: 'paused' }),
+    );
+  });
+
+  it('accepts a well-formed user_message envelope', () => {
+    assertStrictBroadcastPass(makeEnvelope('user_message', { chars: 27, preview: 'hello…' }));
+  });
+
+  it('rejects user_message with a negative char count', () => {
+    assertStrictBroadcastFail(makeEnvelope('user_message', { chars: -1, preview: 'x' }));
+  });
+
+  it('rejects user_message with a non-string preview', () => {
+    assertStrictBroadcastFail(makeEnvelope('user_message', { chars: 5, preview: null }));
   });
 });
 

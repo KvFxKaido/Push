@@ -469,7 +469,11 @@ describe('validateRunEventPayload — task_graph events', () => {
   });
 
   it('returns empty for unknown event types (no schema defined)', () => {
-    const issues = validateRunEventPayload('session_started', { sessionId: 'x' });
+    // Use a deliberately fake event name — every concrete daemon-
+    // emitted type the TUI cares about now has a validator (PR #4),
+    // so the only way to exercise the "no schema" branch is with a
+    // type the registry doesn't recognise.
+    const issues = validateRunEventPayload('totally.unregistered.type', { foo: 'bar' });
     assert.deepEqual(issues, []);
   });
 
@@ -563,6 +567,30 @@ describe('validateRunEventPayload — task_graph events', () => {
       // `cli/pushd.ts` so attached clients can mirror the daemon's
       // session-scoped truth (provider, model, roleRouting).
       'session_state_changed',
+      // Lifecycle + streaming events the daemon emits to fan-out
+      // clients. These shapes live in `cli/pushd.ts` (the
+      // broadcaster) and are read by `cli/tui.ts` /
+      // `app/src/hooks/chat-*`; the lib agent kernels don't emit
+      // them, so they don't belong in `RunEventInput`. Pinning their
+      // schemas here closes the silent-drift hole the audit flagged
+      // (PR #4): a rename or wrong-type regression now lands as a
+      // strict-mode broadcast failure instead of slipping through
+      // to a runtime UI bug.
+      'approval_received',
+      'approval_required',
+      'assistant_thinking_token',
+      'assistant_token',
+      'error',
+      'run_complete',
+      'session_started',
+      'status',
+      'tool.call_malformed',
+      'tool.execution_complete',
+      'tool.execution_start',
+      'tool_call',
+      'tool_result',
+      'user_message',
+      'warning',
     ]);
     const orphanValidators = [...SCHEMA_VALIDATED_EVENT_TYPES]
       .filter((t) => !allTypes.has(t) && !DAEMON_ONLY_VALIDATED_TYPES.has(t))
