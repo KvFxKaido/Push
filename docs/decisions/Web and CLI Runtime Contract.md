@@ -61,7 +61,7 @@ If a role or delegation concept means one thing on web and another in CLI, the s
 - structured error taxonomy
 - shared rules for read vs mutate semantics where possible
 
-This is already partly converged through `lib/tool-protocol.ts` and `lib/error-types.ts`. The "partly" is load-bearing: `detectAllToolCalls` and its sibling detectors are *not* shared and exist as independent implementations in `app/src/lib/tool-dispatch.ts` and `cli/tools.ts`. See [Tool-Call Parser Convergence Gap](Tool-Call%20Parser%20Convergence%20Gap.md) for the full analysis and the followup tranche this implies.
+This is fully converged as of 2026-05-28. The kernel `createToolDispatcher` in `lib/tool-dispatch.ts` owns fenced + bare extraction, recovery (namespaced + XML), and malformed-call reporting. Web's `detectAllToolCalls` (`app/src/lib/tool-dispatch.ts`) and CLI's `detectAllToolCalls` (via `cli/tools.ts:PASS_THROUGH_CLI_SOURCE`) both route through the same kernel. Per-turn phase grouping (reads → mutations batch → trailing side-effect) lives in shared `lib/tool-call-grouping.ts:groupCallsByPhase`. Both surfaces emit the same structured error codes — `FILE_MUTATION_BATCH_OVERFLOW` for batch overflow, `MULTI_MUTATION_NOT_ALLOWED` for ordering violations. See [Tool-Call Parser Convergence Gap](Tool-Call%20Parser%20Convergence%20Gap.md) for the six-PR resolution narrative (#677, #679, #680, #681, #683, #684).
 
 ### 3. Edit safety and workspace reasoning
 

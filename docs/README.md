@@ -33,10 +33,10 @@ The canonical architecture and design-system docs live at the repo root
 
 Detailed per-doc status lives in [`decisions/README.md`](decisions/README.md). Summary by role:
 
-- **Shipped design references** — `Agent Experience Wishlist.md`, `Resumable Sessions Design.md`, `Sectioned System Prompts.md`, `CLI Prompt Builder Convergence.md`, `Hashline System Review.md`.
+- **Shipped design references** — `Agent Experience Wishlist.md`, `Resumable Sessions Design.md`, `Sectioned System Prompts.md`, `CLI Prompt Builder Convergence.md`, `Hashline System Review.md`, `Tool-Call Parser Convergence Gap.md`.
 - **Current working designs** — `AgentScope Architecture Review.md`, `Architecture Remediation Plan — Defusing the Big Four.md`, `Coder Bypass of WebToolExecutionRuntime.md`, `Context Memory and Retrieval Architecture.md`, `CorrelationContext Contract.md`, `Copilot SDK Research.md`, `Harness Friction — Agent Self-Report.md`, `Duplication and Structural Symmetry Analysis.md`, `Sandbox Policy Seam.md`, `Vercel Open Agents Review.md`, `Web and CLI Runtime Contract.md`.
 - **Shipped / historical design references** — `Cloudflare AI Gateway Integration.md`, `Cloudflare Sandbox Provider Design.md`, `phase-5-tool-runtime-brief.md`, `PushStream Gateway Migration.md`, `Remote Sessions via pushd Relay.md`, `push-runtime-v2.md`.
-- **Draft / in-motion** — `Diff and Annotation Envelope.md`, `Modal Sandbox Snapshots Design.md`, `Rerank Before Prompt Packing.md`, `Streaming UI Deltas.md`, `Tool-Call Parser Convergence Gap.md`.
+- **Draft / in-motion** — `Diff and Annotation Envelope.md`, `Modal Sandbox Snapshots Design.md`, `Rerank Before Prompt Packing.md`, `Streaming UI Deltas.md`.
 - **Reference / comparative** — `Agent Tool Patterns — Claude Code Cross-Reference.md`, `Architecture Rating Snapshot.md`, `External Resource Review — Harness Engineering and Ralph Loop.md`, `Multi-Agent Orchestration Research — open-multi-agent.md`, `Oh My OpenAgent Review.md`, `OpenAI Agents SDK Evolution Review.md`.
 
 ## Runbooks
