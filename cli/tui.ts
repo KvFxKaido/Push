@@ -1600,15 +1600,15 @@ export async function runTUI(options = {}) {
    * from spawn-failure, unresponsive-after-spawn, and disconnect
    * paths so users see the daemon's last words without tailing the
    * log themselves. Silent no-op when the log file is missing or
-   * empty (the spawn path may run before the daemon writes
-   * anything; printing "log is empty" in that case is noise, not
-   * signal).
+   * empty (`readPushdLogTail` returns null in both cases — the spawn
+   * path can run before the daemon writes anything, and printing
+   * "log is empty" in that case is noise, not signal).
    */
   async function appendDaemonLogTail(heading) {
     try {
       const { getLogPath } = await import('./pushd.js');
       const tail = await readPushdLogTail(getLogPath());
-      if (!tail || /^Daemon log is empty\.$/.test(tail)) return;
+      if (!tail) return;
       addTranscriptEntry(tuiState, 'warning', heading ? `${heading}\n${tail}` : tail);
       scheduler?.schedule();
     } catch {

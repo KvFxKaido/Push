@@ -28,6 +28,17 @@
  */
 
 import { promises as fs } from 'node:fs';
+import type { FileHandle } from 'node:fs/promises';
+
+/**
+ * Bytes to read from the tail of `pushd.log` per call. `pushd.log`
+ * appends indefinitely (no rotation today — see
+ * `cli/cli.ts:readLogTail`), so reading the whole file would allocate
+ * megabytes of buffer the moment the user hit a spawn failure on a
+ * long-running install. 16KB is well over a typical "last 12 lines"
+ * worth of log output and small enough that the worst case is cheap.
+ */
+const LOG_TAIL_CHUNK_BYTES = 16 * 1024;
 
 /**
  * Structured result of `classifyDaemonSpawnError`. The TUI renders
@@ -172,26 +183,35 @@ export interface FormatLogTailOptions {
 }
 
 /**
- * Pure formatter: take the raw contents of `pushd.log` and produce
- * the transcript text the TUI renders under "Daemon log (last N
- * lines):". Trims trailing blanks, truncates over-long lines, and
- * skips the leading "[empty]" output if the log is genuinely empty.
+ * Pure formatter: take a string of log content and produce the
+ * transcript text the TUI renders under "Daemon log (last N lines):".
+ * Trims trailing blanks, truncates over-long lines, and returns the
+ * empty string when there's nothing to render (callers short-circuit
+ * on `!tail` instead of pattern-matching a sentinel — the previous
+ * "Daemon log is empty." sentinel emitted noise from direct callers
+ * that forgot to filter it).
+ *
+ * Options are clamped to sensible minimums so a `maxLines: 0` doesn't
+ * silently expand to the whole log (`Array.slice(-0)` returns
+ * everything, the opposite of what callers intend) and `maxLineChars`
+ * never drives the truncation math negative (copilot review on PR
+ * #667).
  *
  * Exported separately from the I/O helper so tests can pin the
  * formatting rules without touching the filesystem.
  */
 export function formatPushdLogTail(raw: string, opts: FormatLogTailOptions = {}): string {
-  const maxLines = opts.maxLines ?? DEFAULT_LOG_TAIL_LINES;
-  const maxLineChars = opts.maxLineChars ?? DEFAULT_LOG_TAIL_LINE_CHARS;
-  if (!raw || !raw.trim()) {
-    return 'Daemon log is empty.';
-  }
+  const maxLines = Math.max(1, opts.maxLines ?? DEFAULT_LOG_TAIL_LINES);
+  // 2 is the minimum at which truncation still produces visible
+  // content: one char + the ellipsis.
+  const maxLineChars = Math.max(2, opts.maxLineChars ?? DEFAULT_LOG_TAIL_LINE_CHARS);
+  if (!raw || !raw.trim()) return '';
   const lines = raw.split('\n');
   // Drop trailing blank entries (file ends with `\n`).
   while (lines.length > 0 && lines[lines.length - 1].length === 0) {
     lines.pop();
   }
-  if (lines.length === 0) return 'Daemon log is empty.';
+  if (lines.length === 0) return '';
   const tail = lines.slice(-maxLines).map((line) => {
     if (line.length <= maxLineChars) return line;
     return `${line.slice(0, maxLineChars - 1)}…`;
@@ -202,21 +222,50 @@ export function formatPushdLogTail(raw: string, opts: FormatLogTailOptions = {})
 }
 
 /**
- * I/O helper: read the daemon log and return the formatted tail.
- * Returns `null` when the file is missing or unreadable — callers
- * just skip the log entry instead of surfacing a confusing
- * "couldn't read the log of the daemon that failed to start"
- * secondary error. Other failures (a partial read, ENOMEM) bubble
- * up as `null` for the same reason.
+ * I/O helper: read the trailing bytes of the daemon log and return the
+ * formatted tail. Reads only the last `LOG_TAIL_CHUNK_BYTES` so a
+ * runaway daemon log doesn't OOM the TUI while it's trying to surface
+ * a diagnostic — mirrors the bounded-tail pattern in
+ * `cli/cli.ts:readLogTail` (codex / copilot review on PR #667).
+ *
+ * Returns:
+ *   - `null` when the file is missing or unreadable, OR when the
+ *     formatted tail is empty (the log file exists but contains no
+ *     content). Callers short-circuit on `!result` instead of having
+ *     to pattern-match a sentinel.
+ *   - the formatted tail string otherwise.
+ *
+ * If the chunk starts mid-line (i.e. the daemon log is larger than
+ * the chunk), the first line of the read window can be truncated.
+ * That's acceptable because `formatPushdLogTail`'s `slice(-maxLines)`
+ * drops it as long as the chunk holds more than `maxLines` newlines —
+ * which it always does in practice (16KB / 200 chars per line ≫ 12
+ * lines).
  */
 export async function readPushdLogTail(
   logPath: string,
   opts: FormatLogTailOptions = {},
 ): Promise<string | null> {
+  let handle: FileHandle | undefined;
   try {
-    const raw = await fs.readFile(logPath, 'utf8');
-    return formatPushdLogTail(raw, opts);
+    const stat = await fs.stat(logPath);
+    if (stat.size === 0) return null;
+    const start = Math.max(0, stat.size - LOG_TAIL_CHUNK_BYTES);
+    const length = Math.min(stat.size, LOG_TAIL_CHUNK_BYTES);
+    handle = await fs.open(logPath, 'r');
+    const { bytesRead, buffer } = await handle.read(Buffer.alloc(length), 0, length, start);
+    const raw = buffer.toString('utf8', 0, bytesRead);
+    const formatted = formatPushdLogTail(raw, opts);
+    return formatted.length > 0 ? formatted : null;
   } catch {
     return null;
+  } finally {
+    if (handle) {
+      try {
+        await handle.close();
+      } catch {
+        /* best-effort */
+      }
+    }
   }
 }

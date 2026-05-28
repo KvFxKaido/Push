@@ -88,9 +88,13 @@ describe('classifyDaemonSpawnError', () => {
 });
 
 describe('formatPushdLogTail', () => {
-  it('returns "empty" for an empty input', () => {
-    assert.equal(formatPushdLogTail(''), 'Daemon log is empty.');
-    assert.equal(formatPushdLogTail('   \n\n  \n'), 'Daemon log is empty.');
+  it('returns the empty string for empty input (not a noisy sentinel)', () => {
+    // Previously returned "Daemon log is empty." which callers had to
+    // pattern-match away. Returning '' lets every call site short-
+    // circuit with `if (!tail) return` instead (copilot review on
+    // PR #667).
+    assert.equal(formatPushdLogTail(''), '');
+    assert.equal(formatPushdLogTail('   \n\n  \n'), '');
   });
 
   it('returns the full log when smaller than maxLines', () => {
@@ -116,6 +120,28 @@ describe('formatPushdLogTail', () => {
     const tail = formatPushdLogTail(log, { maxLines: 2 });
     assert.match(tail, /Daemon log \(last 2 lines\)/);
     assert.match(tail, /d\ne$/);
+  });
+
+  it('clamps maxLines to at least 1 (defensive against caller misconfig)', () => {
+    // `Array.slice(-0)` returns the WHOLE array — the opposite of what
+    // `maxLines: 0` callers usually intend. Clamping to 1 matches the
+    // user-facing semantics ("show me the last line") and dodges the
+    // accidental full-log expansion (copilot review on PR #667).
+    const log = ['a', 'b', 'c', 'd', 'e'].join('\n');
+    const tail = formatPushdLogTail(log, { maxLines: 0 });
+    assert.match(tail, /Daemon log \(last 1 line/);
+    assert.match(tail, /e$/);
+  });
+
+  it('clamps maxLineChars to at least 2 so truncation math stays positive', () => {
+    // `maxLineChars: 1` would drive `slice(0, maxLineChars - 1)` to
+    // `slice(0, 0)` = empty string + ellipsis. Clamp to 2 so the
+    // truncated form is always at least one visible character plus
+    // the ellipsis.
+    const tail = formatPushdLogTail('a'.repeat(100), { maxLineChars: 1 });
+    const lineWithEllipsis = tail.split('\n').find((l) => l.endsWith('…'));
+    assert.ok(lineWithEllipsis);
+    assert.equal(lineWithEllipsis.length, 2); // 1 char + ellipsis
   });
 
   it('truncates over-long lines with an ellipsis', () => {
@@ -148,6 +174,18 @@ describe('readPushdLogTail', () => {
     assert.equal(tail, null);
   });
 
+  it('returns null for an empty log file (no noisy sentinel)', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pushd-log-tail-'));
+    const logPath = path.join(tmpDir, 'pushd.log');
+    try {
+      await fs.writeFile(logPath, '', 'utf8');
+      const tail = await readPushdLogTail(logPath);
+      assert.equal(tail, null);
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it('reads + formats a real log file', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pushd-log-tail-'));
     const logPath = path.join(tmpDir, 'pushd.log');
@@ -170,6 +208,52 @@ describe('readPushdLogTail', () => {
       const tail = await readPushdLogTail(logPath, { maxLines: 2 });
       assert.match(tail, /Daemon log \(last 2 lines\)/);
       assert.match(tail, /d\ne$/);
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('reads only the trailing bytes of a runaway log (bounded memory)', async () => {
+    // Regression guard for the codex + copilot finding on PR #667:
+    // `pushd.log` appends indefinitely and the helper used to slurp
+    // the whole file. We now read only the trailing ~16KB. Write a
+    // log far larger than the chunk and assert (a) the call doesn't
+    // OOM/timeout and (b) the rendered tail still contains the most
+    // recent lines.
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pushd-log-tail-'));
+    const logPath = path.join(tmpDir, 'pushd.log');
+    try {
+      // 200 chars per line × 5000 lines ≈ 1MB — well past the 16KB
+      // chunk so the bounded-read path is exercised.
+      const filler = 'x'.repeat(180);
+      const lines = [];
+      for (let i = 0; i < 5000; i += 1) lines.push(`line ${i}: ${filler}`);
+      lines.push('last-line-marker');
+      await fs.writeFile(logPath, `${lines.join('\n')}\n`, 'utf8');
+      const tail = await readPushdLogTail(logPath);
+      assert.ok(tail);
+      assert.match(tail, /last-line-marker$/);
+      // The first few thousand lines must NOT appear in the tail —
+      // they live before the 16KB window.
+      assert.doesNotMatch(tail, /line 0:/);
+      assert.doesNotMatch(tail, /line 100:/);
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('handles a log whose total size is below the chunk threshold', async () => {
+    // Regression guard: the bounded-read path uses
+    // `Math.min(stat.size, CHUNK_BYTES)` so a tiny log doesn't
+    // accidentally trigger a read past EOF.
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pushd-log-tail-'));
+    const logPath = path.join(tmpDir, 'pushd.log');
+    try {
+      await fs.writeFile(logPath, 'tiny\nlog\n', 'utf8');
+      const tail = await readPushdLogTail(logPath);
+      assert.ok(tail);
+      assert.match(tail, /Daemon log \(last 2 lines\)/);
+      assert.match(tail, /tiny\nlog$/);
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }
