@@ -50,6 +50,7 @@ import {
   recordAttemptResult,
   secondsUntilNextRetry,
 } from './tui-daemon-reconnect.js';
+import { classifyDaemonSpawnError, readPushdLogTail } from './tui-daemon-errors.js';
 import { getContextBudget, estimateContextTokens } from './context-manager.js';
 import { filterSessions } from './tui-fuzzy.js';
 import { findLastAssistantText, findLastCodeBlock, formatByteSize } from './tui-copy.js';
@@ -1583,6 +1584,28 @@ export async function runTUI(options = {}) {
     return { status: 'started', ready, pid: child.pid, socketPath, logPath };
   }
 
+  /**
+   * Best-effort: read the daemon log tail and append it to the
+   * transcript as a `warning` entry, prefixed with `heading`. Used
+   * from spawn-failure, unresponsive-after-spawn, and disconnect
+   * paths so users see the daemon's last words without tailing the
+   * log themselves. Silent no-op when the log file is missing or
+   * empty (the spawn path may run before the daemon writes
+   * anything; printing "log is empty" in that case is noise, not
+   * signal).
+   */
+  async function appendDaemonLogTail(heading) {
+    try {
+      const { getLogPath } = await import('./pushd.js');
+      const tail = await readPushdLogTail(getLogPath());
+      if (!tail || /^Daemon log is empty\.$/.test(tail)) return;
+      addTranscriptEntry(tuiState, 'warning', heading ? `${heading}\n${tail}` : tail);
+      scheduler?.schedule();
+    } catch {
+      /* swallowed — the diagnostic path must never crash the TUI */
+    }
+  }
+
   async function tryDaemonConnect() {
     try {
       const { tryConnect } = await import('./daemon-client.js');
@@ -1632,6 +1655,13 @@ export async function runTUI(options = {}) {
           daemonSessionId = null;
           daemonAttachToken = null;
           scheduleDaemonReconnect({ announce: true });
+          // Best-effort: tail the daemon log into the transcript so
+          // the user can see why pushd died. Fire-and-forget so the
+          // close handler stays synchronous; the warning entry
+          // arrives a tick later (often before the first reconnect
+          // attempt fires) and answers "what just happened?" without
+          // forcing the user to `tail -f ~/.push/run/pushd.log`.
+          void appendDaemonLogTail('Daemon log at disconnect:');
         }
       });
 
@@ -1893,18 +1923,38 @@ export async function runTUI(options = {}) {
         }
         return true;
       }
+      // Spawn succeeded but the socket never answered. Show the log
+      // tail so the user can see what pushd actually wrote on its way
+      // up (most common cause: a missing dep, an unhandled exception
+      // in the dispatcher, or a bind failure that didn't throw at the
+      // spawn level). The tail is best-effort — when the log isn't
+      // readable we still print the headline.
       addTranscriptEntry(
         tuiState,
         'warning',
         `pushd ${started.status === 'started' ? 'spawned' : 'is running'} but is not responsive yet. Falling back to inline mode. Log: ${started.logPath}`,
       );
+      const tail = await readPushdLogTail(started.logPath);
+      if (tail) addTranscriptEntry(tuiState, 'warning', tail);
       return false;
     } catch (err) {
-      addTranscriptEntry(
-        tuiState,
-        'warning',
-        `Could not start pushd (${err.message}). Falling back to inline mode.`,
-      );
+      // Classify the spawn-path exception into a structured headline
+      // + actionable hint instead of dumping the raw `err.message`.
+      // EACCES / EADDRINUSE / TSX_LOADER_MISSING etc. now read like
+      // diagnostics instead of opaque errno codes.
+      const classified = classifyDaemonSpawnError(err);
+      addTranscriptEntry(tuiState, 'warning', classified.headline);
+      if (classified.hint) addTranscriptEntry(tuiState, 'warning', classified.hint);
+      // Try to tail the daemon log too — even on spawn failure the
+      // log path resolution is independent of the spawn itself, so
+      // a previous run's tail may already explain the problem.
+      try {
+        const { getLogPath } = await import('./pushd.js');
+        const tail = await readPushdLogTail(getLogPath());
+        if (tail) addTranscriptEntry(tuiState, 'warning', tail);
+      } catch {
+        /* best-effort; spawn failure already surfaced via headline */
+      }
       return false;
     }
   }
