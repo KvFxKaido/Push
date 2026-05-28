@@ -58,6 +58,14 @@ export function conversationBelongsToWorkspace(
     return !conversation.repoFullName && conversation.mode !== 'chat';
   }
 
+  // Daemon-backed workspaces (local-pc / relay) scope to the matching
+  // mode tag so cross-mode actions (e.g. Settings → "Delete all chats"
+  // from a local-PC session) don't sweep up chats from chat mode,
+  // scratch, or the other daemon mode.
+  if (workspaceMode === 'local-pc' || workspaceMode === 'relay') {
+    return !conversation.repoFullName && conversation.mode === workspaceMode;
+  }
+
   return !conversation.repoFullName;
 }
 

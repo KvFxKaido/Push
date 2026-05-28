@@ -1500,18 +1500,20 @@ export function SettingsSectionContent({
                 Delete all chats{data.activeRepo ? ` for ${data.activeRepo.name}` : ''}
               </Button>
 
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  data.clearMemoryByRepo();
-                  onDismiss();
-                }}
-                className="text-push-fg-secondary hover:text-red-400 w-full justify-start gap-2 h-8 px-2"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                Clear repo memory{data.activeRepo ? ` for ${data.activeRepo.name}` : ''}
-              </Button>
+              {data.activeRepo && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    data.clearMemoryByRepo();
+                    onDismiss();
+                  }}
+                  className="text-push-fg-secondary hover:text-red-400 w-full justify-start gap-2 h-8 px-2"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Clear repo memory for {data.activeRepo.name}
+                </Button>
+              )}
 
               {data.activeBranch && (
                 <Button
