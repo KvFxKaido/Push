@@ -241,6 +241,19 @@ Per the new-feature checklist ("one source of truth per vocabulary"):
   fetch, review post) carry the status into `classifyError`, which maps them to
   `auth` / `rate_limit` / `not_found` / `validation` / `upstream` on the
   `review.failed` event rather than collapsing to "unknown" — see PR #656.
+- **`/api/pr-reviews` read authorization (decided: keep as-is).** The history
+  read is gated by the deployment-token + origin checks like every other Push
+  read endpoint (`/api/jobs`, `/api/artifacts`), but unlike those its key
+  (`repo`+`pr`) is *guessable* and it does **not** verify the caller's GitHub
+  token can access that repo/PR. Accepted for the **single-owner private
+  deployment** model: a caller with the deployment token already has full app
+  access (and can open those PRs / run reviews in-app), and completed findings
+  are PR-bound anyway. Adding per-request GitHub authz here alone would create
+  the auth asymmetry CLAUDE.md warns against. **Multi-tenant caveat:** a shared
+  deployment token across distinct GitHub users would leak one user's review
+  history to another via the guessable key — revisit (across all read
+  endpoints, not just this one) if Push ever supports multi-tenant deployments.
+  Raised by Copilot on PR #692.
 
 ## Scope
 

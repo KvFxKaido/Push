@@ -72,10 +72,13 @@ export function usePrReviewHistory(
         });
         if (cancelled) return;
         if (!res.ok) {
-          // 503 (DO not bound) / other: treat as "no history" — the surface
-          // stays hidden rather than showing an error for an unconfigured env.
+          // Non-OK (503 unconfigured DO, transient 429/5xx during a deploy):
+          // hide the surface but keep polling at the idle cadence so a review
+          // that starts/finishes later still appears without a remount.
           setReviews([]);
           setError(`pr-reviews ${res.status}`);
+          clearTimer();
+          timerRef.current = setTimeout(poll, IDLE_POLL_MS);
           return;
         }
         const data = (await res.json()) as { reviews?: PrReviewListItem[] };

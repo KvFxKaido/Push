@@ -47,8 +47,16 @@ export async function handlePrReviewRoute(request: Request, env: Env): Promise<R
   }
 
   const repo = requestUrl.searchParams.get('repo') ?? '';
-  const prNumber = Number.parseInt(requestUrl.searchParams.get('pr') ?? '', 10);
-  if (!REPO_RE.test(repo) || !Number.isInteger(prNumber) || prNumber <= 0) {
+  const prRaw = requestUrl.searchParams.get('pr') ?? '';
+  const prNumber = Number.parseInt(prRaw, 10);
+  // Digits-only so `pr=7abc` is rejected rather than aliased to #7 by parseInt;
+  // isSafeInteger guards against overflow on an absurdly long all-digits value.
+  if (
+    !REPO_RE.test(repo) ||
+    !/^\d+$/.test(prRaw) ||
+    !Number.isSafeInteger(prNumber) ||
+    prNumber <= 0
+  ) {
     return json(
       {
         error: 'INVALID_REQUEST',

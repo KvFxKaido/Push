@@ -75,6 +75,11 @@ describe('handlePrReviewRoute', () => {
     expect(
       (await handlePrReviewRoute(makeRequest('/api/pr-reviews?repo=a/b/c&pr=7'), env)).status,
     ).toBe(400);
+    // parseInt would alias "7abc" -> 7; the digits-only guard rejects it.
+    expect(
+      (await handlePrReviewRoute(makeRequest('/api/pr-reviews?repo=octo/repo&pr=7abc'), env))
+        .status,
+    ).toBe(400);
     expect(stub.fetch).not.toHaveBeenCalled();
   });
 
