@@ -34,7 +34,7 @@ import {
   type SessionEvent,
   type SessionResponse,
 } from '@/lib/local-daemon-binding';
-import { createRelayDaemonBinding } from '@/lib/relay-daemon-binding';
+import { type AttachResult, createRelayDaemonBinding } from '@/lib/relay-daemon-binding';
 import type { LiveDaemonBinding } from '@/lib/local-daemon-sandbox-client';
 import type { RelayBinding } from '@/types';
 
@@ -85,6 +85,35 @@ export interface UseRelayDaemonResult {
    * shouldn't lingering after the user has re-attached cleanly.
    */
   replayUnavailableAt: number | null;
+  /**
+   * Lifecycle of the targeted `attach_session` issued when the bundle
+   * carries `targetSessionId` + `targetAttachToken` (PR #686). `idle`
+   * for bundles with no target. `attaching` from WS-open until the
+   * daemon ack arrives; flips to `attached` on success or
+   * `attach_failed` on error. `attachError` carries the daemon error
+   * code/message when failed so a banner can surface the cause
+   * (`SESSION_NOT_FOUND` / `INVALID_TOKEN` / etc.) without forcing
+   * a re-pair.
+   */
+  attachStatus: 'idle' | 'attaching' | 'attached' | 'attach_failed';
+  attachError: { code: string; message: string } | null;
+  /**
+   * Conversation history fetched from the daemon's `state.messages`
+   * after `attach_session` succeeds. Null until hydration completes;
+   * one-shot — the hook does not re-fetch on subsequent reconnects.
+   * `DaemonChatBody` projects this into `ChatMessage[]` and seeds the
+   * conversation. Hydration failure is non-fatal: this stays null,
+   * the chat works as a fresh Remote chat, but a console warn surfaces
+   * the cause for ops triage.
+   */
+  hydratedMessages: DaemonHydratedMessage[] | null;
+}
+
+/** Shape returned by the daemon's `get_session_messages` RPC. */
+export interface DaemonHydratedMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
 }
 
 interface UseRelayDaemonOptions {
@@ -108,6 +137,11 @@ export function useRelayDaemon(
   const [wsEvents, setWsEvents] = useState<SessionEvent[]>([]);
   const [localReconnectKey, setLocalReconnectKey] = useState(0);
   const [replayUnavailableAt, setReplayUnavailableAt] = useState<number | null>(null);
+  const [attachStatus, setAttachStatus] = useState<
+    'idle' | 'attaching' | 'attached' | 'attach_failed'
+  >('idle');
+  const [attachError, setAttachError] = useState<{ code: string; message: string } | null>(null);
+  const [hydratedMessages, setHydratedMessages] = useState<DaemonHydratedMessage[] | null>(null);
 
   const reconnectReducer = useCallback(
     (prev: ReconnectInfo, action: ReconnectAction): ReconnectInfo => {
@@ -176,6 +210,9 @@ export function useRelayDaemon(
   const deploymentUrl = binding?.deploymentUrl ?? null;
   const sessionId = binding?.sessionId ?? null;
   const token = binding?.token ?? null;
+  const targetSessionId = binding?.targetSessionId ?? null;
+  const targetAttachToken = binding?.targetAttachToken ?? null;
+  const hasTarget = targetSessionId !== null && targetAttachToken !== null;
 
   useEffect(() => {
     if (deploymentUrl === null || sessionId === null || token === null) {
@@ -189,13 +226,92 @@ export function useRelayDaemon(
     // crash the whole chat screen on mount. Wrap and route the
     // throw into a terminal `unreachable` so the ReconnectBanner
     // surfaces a recoverable Retry button.
+    //
+    // `cancelled` guards every async callback in this effect (attach
+    // result + hydration response). A reconnect re-runs the effect,
+    // closes the old binding, and would otherwise let in-flight RPC
+    // responses on the disposed binding overwrite state on the
+    // active one — github-actions review on #687.
+    let cancelled = false;
+    // Reset attach lifecycle on every new dial. `attaching` reflects
+    // the moment we issue `attach_session` over the freshly-opened
+    // WS; without a target the state stays `idle` for the binding's
+    // lifetime. Defer via `queueMicrotask` so the setters don't run
+    // synchronously inside the effect body — the
+    // `react-hooks/set-state-in-effect` rule catches direct setState
+    // here. Same pattern as the createRelayDaemonBinding throw path
+    // a few lines below.
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setAttachStatus(hasTarget ? 'attaching' : 'idle');
+      setAttachError(null);
+      // Hydration is one-shot — clear it on every new dial so a
+      // stale transcript from a previous session can't leak into
+      // a re-paired binding.
+      setHydratedMessages(null);
+    });
     let handle: ReturnType<typeof createRelayDaemonBinding>;
     try {
       handle = createRelayDaemonBinding({
         deploymentUrl,
         sessionId,
         token,
+        ...(targetSessionId !== null ? { targetSessionId } : {}),
+        ...(targetAttachToken !== null ? { targetAttachToken } : {}),
         lastSeq: lastSeqRef.current,
+        onAttachComplete: (result: AttachResult) => {
+          if (cancelled) return;
+          if (result.ok) {
+            setAttachStatus('attached');
+            setAttachError(null);
+            // Kick off transcript hydration so the phone shows the
+            // TUI session's conversation history. Hydration failure
+            // is non-fatal: the attach succeeded, the chat surface
+            // works, but the user starts from an empty transcript.
+            // Logged via console.warn so ops can spot the regression.
+            const handle = bindingRef.current;
+            if (handle && targetSessionId !== null && targetAttachToken !== null) {
+              // `sessionId` lives in payload AND envelope — the
+              // daemon's `handleGetSessionMessages` reads it from
+              // `req.payload` (same as `handleAttachSession`); without
+              // the payload copy the call returns `INVALID_REQUEST` —
+              // Codex P2 on #687.
+              void handle
+                .request<{ messages: DaemonHydratedMessage[] }>({
+                  type: 'get_session_messages',
+                  sessionId: targetSessionId,
+                  payload: {
+                    sessionId: targetSessionId,
+                    attachToken: targetAttachToken,
+                  },
+                  timeoutMs: 10_000,
+                })
+                .then((response) => {
+                  if (cancelled) return;
+                  if (response.ok && Array.isArray(response.payload?.messages)) {
+                    setHydratedMessages(response.payload.messages);
+                  }
+                })
+                .catch((err: unknown) => {
+                  if (cancelled) return;
+                  const msg = err instanceof Error ? err.message : String(err);
+                  // Symmetric structured log so ops can distinguish a
+                  // hydration miss from an attach miss; the chat surface
+                  // intentionally stays usable on this path.
+                  console.warn(
+                    JSON.stringify({
+                      level: 'warn',
+                      event: 'relay_hydration_failed',
+                      reason: msg,
+                    }),
+                  );
+                });
+            }
+          } else {
+            setAttachStatus('attach_failed');
+            setAttachError({ code: result.error.code, message: result.error.message });
+          }
+        },
         onStatus: (next) => {
           setWsStatus(next);
           if (next.state === 'open') {
@@ -255,10 +371,19 @@ export function useRelayDaemon(
     }
     bindingRef.current = handle;
     return () => {
+      cancelled = true;
       bindingRef.current = null;
       handle.close();
     };
-  }, [deploymentUrl, sessionId, token, effectiveKey]);
+  }, [
+    deploymentUrl,
+    sessionId,
+    token,
+    targetSessionId,
+    targetAttachToken,
+    hasTarget,
+    effectiveKey,
+  ]);
 
   useEffect(() => {
     if (deploymentUrl === null || sessionId === null || token === null) return;
@@ -315,5 +440,16 @@ export function useRelayDaemon(
     setLocalReconnectKey((k) => k + 1);
   }, []);
 
-  return { status, events, request, liveBinding, reconnect, reconnectInfo, replayUnavailableAt };
+  return {
+    status,
+    events,
+    request,
+    liveBinding,
+    reconnect,
+    reconnectInfo,
+    replayUnavailableAt,
+    attachStatus,
+    attachError,
+    hydratedMessages,
+  };
 }
