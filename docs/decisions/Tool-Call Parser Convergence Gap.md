@@ -1,6 +1,6 @@
 # Tool-Call Parser Convergence Gap
 
-Status: **CLI side resolved 2026-04-15** (missing-fence drop) and **further hardened 2026-04-18** (four additional silent-drop modes closed in PR #334). The CLI now routes tool-call detection through the shared `createToolDispatcher` kernel at `lib/tool-dispatch.ts`, which handles single-object and array-wrapped fenced blocks plus the bare-object fallback. Web-side unification still pending — see [*Fix Direction for Layer 2*](#fix-direction-for-layer-2) below for the remaining work.
+Status: **Resolved 2026-05-28** — both CLI and Web now route through the shared `createToolDispatcher` kernel at `lib/tool-dispatch.ts`. The original CLI side closed 2026-04-15 (missing-fence drop) + 2026-04-18 (four silent-drop modes, PR #334). The Web side closed in a four-PR tranche on 2026-05-28: **#677** extracted phase-grouping to `lib/tool-call-grouping.ts`; **#679** migrated web's `detectAllToolCalls` onto `createToolDispatcher` (textual-order merge, three legacy-fallback shapes); **#680** unified the caps surface (web + CLI both pass `DEFAULT_GROUPING_CAPS`) and split `batchOverflow` from `extraMutations` so the model gets the right correction hint; **#681** added `enableInternalRecovery: false` for callers that run their own gated recovery + closed the recovery-args-region bypass in the legacy fallback. See [*Fix Direction for Layer 2*](#fix-direction-for-layer-2) below for the historical narrative. **The two open follow-ups (per-source `ToolSource` split + bare-block-eligibility loosening) have no current forcing function and are tracked as reference only.**
 Origin: Debugging a TUI "empty response" bug; raw-socket reproduction against `pushd` showed 452 bytes of malformed fenced tool calls being silently dropped by the CLI parser.
 
 ## The Gap (as originally identified)
@@ -80,22 +80,27 @@ The empirical evidence chain that made these visible was the typed-memory record
 
 **Tests:** `lib/tool-dispatch.test.ts` grew from ~40 to 51 tests across the parser tranche, covering each silent-drop variant with both happy-path (extraction succeeds) and gate-rejection (string-value substrings, non-tool arrays) pins.
 
-### Web portion — still pending
+### Web portion — closed 2026-05-28
 
-The web path is **not** migrated onto `createToolDispatcher` yet, and shouldn't be in a single commit because of a shape mismatch:
+The web tranche landed in four PRs, each closing one piece of the shape-mismatch problem this section originally framed:
 
-- Web `DetectedToolCalls` = `{ readOnly, fileMutations, mutating, extraMutations }` — calls grouped by execution phase (parallel reads → sequential file mutations → at most one trailing side-effect) so the caller can enforce the per-turn mutation transaction contract at `useChat.ts`.
-- CLI `DetectedToolCalls` / shared kernel = `{ calls, malformed }` — flat list; the CLI engine runs its own state-machine grouping at `cli/engine.ts` around line 948 onwards (identical semantics, different file).
+| PR | Scope | What it closed |
+|---|---|---|
+| **#677** | Extract phase-grouping into `lib/tool-call-grouping.ts` (`groupCallsByPhase<T>(calls, predicates, caps)`) | Eliminated the two parallel state machines (web `classifyDetectedCalls` + CLI engine inline grouping). Predicates and caps injected so each surface keeps its own behavior at first. |
+| **#679** | Migrate web's `detectAllToolCalls` onto `createToolDispatcher` via a thin single-source adapter (`WEB_DISPATCH_SOURCE`) | Web inherits kernel's fenced + bare extraction, including the fenced-array fix and the four 2026-04-18 silent-drop variants. Three legacy-fallback shapes documented and gated. Textual-order merge between kernel and legacy calls (Codex P1 / Copilot review). |
+| **#680** | CLI adopts `DEFAULT_GROUPING_CAPS` (6 parallel reads, 8 file mutations) + kernel splits `batchOverflow` from `extraMutations` | CLI cap divergence closed; rejection handler emits `FILE_MUTATION_BATCH_OVERFLOW` vs `MULTI_MUTATION_NOT_ALLOWED` precisely (Copilot review caught the global-flag misclassification). |
+| **#681** | Kernel `enableInternalRecovery: false` opt-out + web `isInsideRecoveryArgsRegion` gate in the legacy fallback | Heuristic recovery (namespaced + XML) can no longer bypass web's outer `!hasExplicitWrappers` gate (Codex P2). Args portion of a recovery shape isn't double-claimed as a bare-args inference. |
 
-Unifying the two requires lifting the grouping state machine out of both shells into a second shared primitive (something like `groupCallsByPhase`) that both the web dispatcher and `cli/engine.ts` can call on top of `createToolDispatcher`. It also requires migrating ~14 web-side per-source detectors (`detectToolCall`, `detectSandboxToolCall`, `detectScratchpadToolCall`, `detectWebSearchToolCall`, `detectAskUserToolCall`, plus the inline delegation shape detector and the bare-args recovery path) into `ToolSource` registrations. That's real kernel convergence work and should be planned as its own tranche.
+Two further follow-ups stay deferred without a forcing function:
 
-The architectural shape is already there — the web dispatcher can adopt `createToolDispatcher` whenever that tranche is scheduled without touching the kernel again.
+- **Per-source `ToolSource` split** — `WEB_DISPATCH_SOURCE` is one adapter that cascades through all nine existing detectors via re-stringify. Splitting into per-detector typed sources buys no behavioral win today because runtime dispatch (`executeAnyToolCall`) branches on `AnyToolCall.source`, not on the kernel source name. Deferred indefinitely.
+- **Bare-block-eligibility loosening** — `isBareBlockEligible`'s contiguity gate is conservative; the original doc noted it as "the next parser convergence follow-up." No forcing function today because the array fix above handles the dominant Gemini-3-Flash shape.
 
-## Until Full Extraction Lands
+## After Convergence (operational notes)
 
-- CLI parser robustness fixes should now land in `lib/tool-dispatch.ts` — the CLI picks them up automatically. Web-side fixes still need to land in `app/src/lib/tool-dispatch.ts` until the second tranche unifies the grouping state machine.
-- When debugging "assistant response vanished" or "empty TUI transcript" on CLI, the Layer 3 safety net now surfaces a diagnostic transcript entry instead of rendering nothing, so the symptom is visible. Trace the root cause through `lib/tool-dispatch.ts` (shared kernel) first, then the CLI-side `extractBareToolJsonObjects` in `lib/tool-call-parsing.ts`.
-- Claims about "runtime parity" in `ARCHITECTURE.md`, `ROADMAP.md`, and the parent runtime contract doc should call out the CLI-side resolution and the remaining Web-side unification work, rather than eliding both under "partly converged."
+- Parser robustness fixes land in `lib/tool-dispatch.ts` (shared kernel). Both web and CLI pick them up automatically. Web-only post-process (recovery paths, `droppedCandidates` mapping, legacy fallback for shapes the kernel filters) lives in `app/src/lib/tool-dispatch.ts:detectAllToolCalls`.
+- When debugging "assistant response vanished" or "empty TUI transcript" on CLI, the Layer 3 safety net surfaces a diagnostic transcript entry instead of rendering nothing. Trace the root cause through `lib/tool-dispatch.ts` (shared kernel) first, then the CLI-side `extractBareToolJsonObjects` in `lib/tool-call-parsing.ts`. The same kernel now backs the web path; debugging steps are the same on both surfaces.
+- The cap surface and `batchOverflow` / `extraMutations` split documented in `lib/tool-call-grouping.ts` is the canonical contract — surface-specific custom error codes (e.g. CLI's `FILE_MUTATION_BATCH_OVERFLOW`) consume those lists rather than re-deriving the overflow condition.
 
 ## Reproducer
 
