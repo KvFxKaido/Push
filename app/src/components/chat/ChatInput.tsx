@@ -545,7 +545,7 @@ export function ChatInput({
     readyImageAttachments.length > 0 && visionNotice.support === 'unknown';
   const canSend = canSendBase && !hasUnsupportedImageAttachments;
   const canStreamWithDraft =
-    Boolean(isStreaming) && hasDraftContent && !hasUnsupportedImageAttachments;
+    Boolean(isStreaming) && hasDraftContent && !hasUnsupportedImageAttachments && !disabled;
 
   const handleSend = (streamingBehavior?: ChatSendOptions['streamingBehavior']) => {
     if (!canSend && !canStreamWithDraft) return;
