@@ -284,13 +284,30 @@ export function createRelayDaemonBinding(opts: RelayDaemonBindingOptions): Local
       // chat state has never seen this daemon session before. A
       // future PR that persists per-session lastSeq on the web can
       // pass it through here for incremental replay on reconnect.
+      //
+      // `sessionId` lives in BOTH the envelope (for the dispatcher's
+      // audit log) AND `payload` (where `handleAttachSession` actually
+      // reads it). Without the payload copy the daemon returns
+      // `INVALID_REQUEST: sessionId is required` and the entire
+      // targeted attach silently fails — Codex P1 on PR #687. The
+      // CLI's TUI client at `cli/tui.ts:1921` follows the same
+      // payload-only shape so this matches the proven path.
       sendInternalRequest({
         type: 'attach_session',
         sessionId: opts.targetSessionId,
-        payload: { attachToken: opts.targetAttachToken, lastSeenSeq: 0 },
+        payload: {
+          sessionId: opts.targetSessionId,
+          attachToken: opts.targetAttachToken,
+          lastSeenSeq: 0,
+        },
         timeoutMs: ATTACH_REQUEST_TIMEOUT_MS,
       })
         .then((response) => {
+          // Suppress callbacks on a closed binding so a late attach
+          // response from a stale connection can't overwrite state
+          // in the active hook instance — github-actions review on
+          // #687.
+          if (clientClosed) return;
           try {
             opts.onAttachComplete?.({
               ok: true,
@@ -304,6 +321,7 @@ export function createRelayDaemonBinding(opts: RelayDaemonBindingOptions): Local
           }
         })
         .catch((err: unknown) => {
+          if (clientClosed) return;
           const error =
             err instanceof DaemonRequestError
               ? { code: err.code, message: err.message, retryable: err.retryable }
