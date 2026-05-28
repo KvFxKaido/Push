@@ -205,6 +205,36 @@ describe('chat-tool-execution: apiMessages reasoningBlocks round-trip', () => {
     expect(action.errorMessage.content).not.toContain('FILE_MUTATION_BATCH_OVERFLOW');
   });
 
+  it('handleMultipleMutationsError does NOT classify a valid trailing exec as ordering when only batch overflowed', () => {
+    // Codex P2 / Copilot regression. Scenario: 9 file writes + valid
+    // trailing sandbox_exec. Kernel returns:
+    //   batchOverflow = [9th write], mutating = exec, extraMutations = []
+    // Pre-fix, `hasOrderingViolations = mutating !== null` included the
+    // exec as a per-call ordering violation and emitted
+    // MULTI_MUTATION_NOT_ALLOWED for it — the exec was actually fine,
+    // it just got aborted as collateral damage of the "reject whole
+    // turn on overflow" policy. Now the ordering code only fires when
+    // there ARE actual ordering extras.
+    const apiMessages: ChatMessage[] = [userMessage('write 9 files then run tests')];
+    const action = handleMultipleMutationsError(
+      {
+        mutating: sandboxCall('sandbox_exec', { command: 'npm test' }),
+        batchOverflow: [sandboxCall('sandbox_write_file', { path: '/9.md' })],
+        extraMutations: [],
+      },
+      'assistant',
+      '',
+      [],
+      apiMessages,
+      'zen',
+    );
+    expect(action.errorMessage.content).toContain('FILE_MUTATION_BATCH_OVERFLOW');
+    expect(action.errorMessage.content).not.toContain('MULTI_MUTATION_NOT_ALLOWED');
+    // The exec was legitimately the trailing side-effect; don't label
+    // it as a violation in the per-call list.
+    expect(action.errorMessage.content).not.toContain('sandbox_exec');
+  });
+
   it('handleMultipleMutationsError emits BOTH codes when both shapes occur in one turn', () => {
     const apiMessages: ChatMessage[] = [userMessage('write 9 files then exec then write')];
     const action = handleMultipleMutationsError(

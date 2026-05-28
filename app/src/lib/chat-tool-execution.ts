@@ -621,14 +621,21 @@ export function handleMultipleMutationsError(
   apiMessages: readonly ChatMessage[],
   provider: ActiveProvider,
 ): MultipleMutationsErrorAction {
-  // Web rejects the whole turn (including `mutating`) when ANY extras
-  // are present — stricter than the CLI which runs the valid batch and
-  // rejects only the overflow. Preserve that behavior here; matching
-  // CLI's per-call split is a separate (larger) decision.
-  const hasOrderingViolations = detected.extraMutations.length > 0 || detected.mutating !== null;
-  const orderingRejected = detected.mutating
-    ? [detected.mutating, ...detected.extraMutations]
-    : detected.extraMutations;
+  // `mutating` ONLY counts as a rejected ordering call when actual
+  // ordering extras are present (i.e. the model emitted a second
+  // side-effect, or violated the reads→mutations→side-effect order).
+  // When only `batchOverflow` triggered the rejection, `mutating` may
+  // be a legitimate trailing exec — it gets aborted as collateral
+  // damage of the conservative "reject whole turn on overflow"
+  // policy, but it must NOT be labeled as a per-call ordering
+  // violation in the model-facing error. Codex P2 / Copilot review
+  // on PR #684 caught this misclassification.
+  const hasOrderingViolations = detected.extraMutations.length > 0;
+  const orderingRejected: AnyToolCall[] = hasOrderingViolations
+    ? detected.mutating
+      ? [detected.mutating, ...detected.extraMutations]
+      : detected.extraMutations
+    : [];
   const batchOverflowNames = detected.batchOverflow.map((call) => getToolName(call));
   const orderingNames = orderingRejected.map((call) => getToolName(call));
   // For the toolMeta primary tool (the assistant message header
@@ -657,7 +664,7 @@ export function handleMultipleMutationsError(
   }
   if (hasOrderingViolations) {
     hintParts.push(
-      'A turn may emit read-only calls first, then up to MAX_FILE_MUTATION_BATCH (8) pure file mutations as one batch (write/edit/patch on sandbox-backed surfaces), then at most one trailing side-effect (exec, commit, push, delegate, workflow_run). Reorder or split across turns.',
+      `A turn may emit read-only calls first, then up to ${MAX_FILE_MUTATION_BATCH} pure file mutations as one batch (write/edit/patch on sandbox-backed surfaces), then at most one trailing side-effect (exec, commit, push, delegate, workflow_run). Reorder or split across turns.`,
     );
   }
 
