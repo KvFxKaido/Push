@@ -196,6 +196,16 @@ Response payload:
 }
 ```
 
+### Client-side enforcement
+
+The TUI evaluates the `hello` response against its pinned `PROTOCOL_VERSION` before treating the link as live (`cli/tui-daemon-handshake.ts:evaluateHelloResponse`). The evaluator returns one of three typed results:
+
+- `accepted` — `protocolVersion` matches; the TUI proceeds and surfaces `runtimeVersion` on the status line.
+- `rejected` — `protocolVersion` is parseable but mismatched; the TUI raises an actionable warning ("daemon speaks `push.runtime.v2`, this build expects `push.runtime.v1` — upgrade one side") instead of silently falling back to inline mode.
+- `unparseable` — the response is missing required fields or shaped wrong; same warning surface, different headline.
+
+This is a deliberate change from the original "any hello reply is good enough" handshake. Silent version-mismatch fallback masked daemon-upgrade-skew bugs as transport errors. See PR #665.
+
 ## `start_session`
 
 Purpose:
