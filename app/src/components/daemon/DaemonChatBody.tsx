@@ -30,7 +30,7 @@
  * conversation init, workspace context, picker placement, layout)
  * lives here so the screens don't drift.
  */
-import { ArrowLeft, RefreshCw, Send, Square } from 'lucide-react';
+import { ArrowLeft, Palette, RefreshCw, Send, Square } from 'lucide-react';
 import { WorkspaceDockIcon } from '@/components/icons/push-custom-icons';
 import type { LucideIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -44,8 +44,10 @@ import { HEADER_PILL_BUTTON_CLASS, HEADER_ROUND_BUTTON_CLASS } from '@/component
 import { ApprovalPrompt } from '@/components/daemon/ApprovalPrompt';
 import { cancelPendingApprovals } from '@/lib/daemon-cancel-pending-approvals';
 import { DaemonModelPicker } from '@/components/daemon/DaemonModelPicker';
+import { RepoAppearanceSheet } from '@/components/repo/RepoAppearanceSheet';
 import { ModelPicker } from '@/components/ui/model-picker';
 import { useChat } from '@/hooks/useChat';
+import { useDaemonAppearance } from '@/hooks/useDaemonAppearance';
 import { useModelCatalog, buildModelControl } from '@/hooks/useModelCatalog';
 import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
 import { useScratchpad } from '@/hooks/useScratchpad';
@@ -58,7 +60,7 @@ import {
   setPreferredProvider,
   type PreferredProvider,
 } from '@/lib/providers';
-import { DEFAULT_REPO_APPEARANCE, getRepoAppearanceColorHex } from '@/lib/repo-appearance';
+import { getRepoAppearanceColorHex, type RepoAppearance } from '@/lib/repo-appearance';
 import type { Conversation, WorkspaceContext, WorkspaceMode } from '@/types';
 
 /**
@@ -124,19 +126,14 @@ export interface DaemonChatBodyProps {
   request: <T = unknown>(opts: RequestOptions) => Promise<SessionResponse<T>>;
 }
 
-// Daemon sessions don't have a per-session palette today. The shell
-// still renders the glow surface (so the structure matches repo / chat
-// mode); the layer stays disabled until a follow-up plumbs a per-daemon
-// appearance hook (mirroring `useChatModeAppearance`). `glowEnabled` is
-// explicitly forced false because `DEFAULT_REPO_APPEARANCE.glowEnabled`
-// defaults to true — without the override the animated glow would run
-// on every daemon session, which is a wasted compositor cost on mobile.
-const DAEMON_APPEARANCE = { ...DEFAULT_REPO_APPEARANCE, glowEnabled: false };
-const DAEMON_APPEARANCE_HEX = getRepoAppearanceColorHex(DAEMON_APPEARANCE.color);
-
 const MODE_HEADER_LABEL: Record<DaemonChatBodyProps['mode'], string> = {
   'local-pc': 'Local PC',
   relay: 'Remote',
+};
+
+const APPEARANCE_SHEET_DESCRIPTION: Record<DaemonChatBodyProps['mode'], string> = {
+  'local-pc': 'Pick a quiet accent color for local PC sessions on this device.',
+  relay: 'Pick a quiet accent color for remote sessions on this device.',
 };
 
 export function DaemonChatBody({
@@ -174,6 +171,7 @@ export function DaemonChatBody({
   // chat mode.
   const [hubOpen, setHubOpenState] = useState(false);
   const [drawerOpen, setDrawerOpenState] = useState(false);
+  const [appearanceSheetOpen, setAppearanceSheetOpen] = useState(false);
   const openHub = useCallback(() => {
     setDrawerOpenState(false);
     setHubOpenState(true);
@@ -186,6 +184,16 @@ export function DaemonChatBody({
     if (open) setHubOpenState(false);
     setDrawerOpenState(open);
   }, []);
+
+  // Per-mode appearance — local-pc and relay each persist their own
+  // palette so the user can keep the two visually distinct without
+  // them bleeding into each other. Mirrors `useChatModeAppearance`.
+  const {
+    appearance: daemonAppearance,
+    setAppearance: setDaemonAppearance,
+    resetAppearance: resetDaemonAppearance,
+  } = useDaemonAppearance(mode);
+  const daemonAppearanceHex = getRepoAppearanceColorHex(daemonAppearance.color);
 
   const scratchpad = useScratchpad(null);
   const todo = useTodo(null);
@@ -450,9 +458,15 @@ export function DaemonChatBody({
       activeRepo: null,
       conversations: daemonScopedConversations,
       activeChatId,
-      resolveRepoAppearance: () => DAEMON_APPEARANCE,
-      setRepoAppearance: () => {},
-      clearRepoAppearance: () => {},
+      // The drawer normally keys repo appearance by repoFullName.
+      // Daemon mode has no repo, so any key is irrelevant — both
+      // setters route into the per-mode daemon appearance state so the
+      // drawer's Customize affordance ends up at the same destination
+      // as the header Palette button. Without this, a user customizing
+      // a repo row from inside a daemon session would silently drop.
+      resolveRepoAppearance: () => daemonAppearance,
+      setRepoAppearance: (_: string, next: RepoAppearance) => setDaemonAppearance(next),
+      clearRepoAppearance: () => resetDaemonAppearance(),
       onSelectRepo: () => {},
       onResumeChat: (id: string) => {
         switchChat(id);
@@ -476,6 +490,9 @@ export function DaemonChatBody({
       createNewChat,
       deleteChat,
       renameChat,
+      daemonAppearance,
+      setDaemonAppearance,
+      resetDaemonAppearance,
     ],
   );
 
@@ -494,10 +511,7 @@ export function DaemonChatBody({
           className={`relative z-10 isolate flex min-h-0 flex-1 flex-col bg-push-surface-inset transition-[transform,box-shadow] duration-500 ease-in-out will-change-transform ${chatShellShadow}`}
           style={{ transform: chatShellTransform }}
         >
-          <ChatBackgroundGlow
-            active={DAEMON_APPEARANCE.glowEnabled}
-            color={DAEMON_APPEARANCE_HEX}
-          />
+          <ChatBackgroundGlow active={daemonAppearance.glowEnabled} color={daemonAppearanceHex} />
           <header className="relative z-10 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 pt-3 pb-2">
             <div className="relative z-20 flex min-w-0 items-center gap-2">
               <div className="flex h-[34px] min-w-0 items-center gap-1 pl-0.5 pr-1">
@@ -537,6 +551,15 @@ export function DaemonChatBody({
                 className={HEADER_ROUND_BUTTON_CLASS}
               >
                 <ArrowLeft className="relative z-10 h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setAppearanceSheetOpen(true)}
+                aria-label={`Customize ${headerLabel} appearance`}
+                title={`Customize ${headerLabel}`}
+                className={HEADER_ROUND_BUTTON_CLASS}
+              >
+                <Palette className="relative z-10 h-3.5 w-3.5" />
               </button>
               <button
                 type="button"
@@ -712,6 +735,18 @@ export function DaemonChatBody({
         onUnpinArtifact={pinnedArtifacts.unpin}
         onUpdateArtifactLabel={pinnedArtifacts.updateLabel}
       />
+
+      {appearanceSheetOpen && (
+        <RepoAppearanceSheet
+          open={appearanceSheetOpen}
+          onOpenChange={setAppearanceSheetOpen}
+          repoName={headerLabel}
+          appearance={daemonAppearance}
+          onSave={setDaemonAppearance}
+          onReset={resetDaemonAppearance}
+          description={APPEARANCE_SHEET_DESCRIPTION[mode]}
+        />
+      )}
     </>
   );
 }
