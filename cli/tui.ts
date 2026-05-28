@@ -45,6 +45,12 @@ import {
   renderStatusBar,
 } from './tui-status.js';
 import {
+  createReconnectState,
+  planNextRetry,
+  recordAttemptResult,
+  secondsUntilNextRetry,
+} from './tui-daemon-reconnect.js';
+import {
   evaluateHelloResponse,
   formatUnknownEventWarning,
   shouldWarnAboutUnknownEvent,
@@ -1463,6 +1469,40 @@ export async function runTUI(options = {}) {
   let daemonSessionId = null;
   let daemonAttachToken = null;
   let daemonAutoStartAttempted = false;
+  // Auto-reconnect state. When the daemon socket dies the TUI used to
+  // permanently fall back to inline mode for the rest of the session —
+  // the reconnect coordinator (`cli/tui-daemon-reconnect.ts`) replaces
+  // that with an exponential-backoff retry loop. State is kept on this
+  // closure so the frame ticker can render a live countdown and so the
+  // `socket.on('close')` handler can reschedule without rebuilding any
+  // of it.
+  let daemonReconnectState = createReconnectState();
+  let daemonReconnectTimer = null;
+  // Set to true on first successful connect so the disconnect path can
+  // tell the difference between "never connected this session" (no
+  // reconnect attempt warranted) and "connection dropped" (start the
+  // retry loop). Without it a TUI that boots with no daemon would
+  // start hammering retries against a daemon that was never running.
+  let daemonEverConnected = false;
+  // Cursor for the highest envelope `seq` the TUI has observed from
+  // the daemon. The TUI was previously sending `state.eventSeq` as
+  // `lastSeenSeq` on attach, but `state.eventSeq` is the *local* event
+  // counter — incoming daemon events never bumped it — so a reconnect
+  // after any daemon output replayed everything from seq 0 and the
+  // user saw duplicated transcript and tool lines (codex review on
+  // PR #664). Tracking the per-connection observed seq separately
+  // means `attachExistingDaemonSession` asks for events strictly
+  // *after* the last one we already rendered, while leaving the
+  // local `state.eventSeq` alone for the file-on-disk denormalisation.
+  let lastSeenDaemonSeq = 0;
+  // Deferred hook so the reconnect helpers can wake the frame ticker
+  // without referencing `refreshTicker` before it's defined further
+  // down the closure (it lives in the TDZ at the point the helpers
+  // are declared, and a direct reference would throw if a disconnect
+  // somehow fired before initialisation finished). The hook is
+  // replaced with the real ticker refresh after the frame ticker is
+  // initialised; before that, calling it is a safe no-op.
+  let invalidateReconnectAnimators = () => {};
   // Registry of unknown event types we've already surfaced a warning
   // for on the current daemon connection. Cleared on each reconnect
   // by `tryDaemonConnect` so a daemon upgrade resurfaces the warning
@@ -1633,19 +1673,35 @@ export async function runTUI(options = {}) {
         handleEngineEvent(event);
       });
 
-      // Handle daemon disconnect gracefully
+      // Daemon disconnects no longer demote the session to inline mode
+      // permanently — `scheduleDaemonReconnect` arms an exponential
+      // backoff timer and `daemonReconnectState` drives the footer
+      // chip so the user sees the retry countdown live.
       client._socket.on('close', () => {
         if (daemonClient === client) {
           daemonClient = null;
-          addTranscriptEntry(
-            tuiState,
-            'warning',
-            'Daemon disconnected. Falling back to inline mode.',
-          );
-          tuiState.dirty.add('all');
-          scheduler?.schedule();
+          // Null the session/attach tokens so any non-reconnect path
+          // (e.g. an unrelated `ensureDaemonConnected` invocation)
+          // doesn't short-circuit on `daemonSessionId` still being
+          // set and end up `send_user_message`-ing on a stale handle.
+          // The reconnect path stashes the pre-disconnect session id
+          // on `state.sessionId` and the attach token on
+          // `state.attachToken`, so `attachExistingDaemonSession`
+          // can restore both from there on success (copilot review
+          // on PR #664).
+          daemonSessionId = null;
+          daemonAttachToken = null;
+          scheduleDaemonReconnect({ announce: true });
         }
       });
+
+      daemonEverConnected = true;
+      // Any in-flight backoff is stale once we've handed back a live
+      // client — clear it (preserving the attempt count is irrelevant
+      // here because we made it through).
+      cancelPendingReconnectTimer();
+      daemonReconnectState = recordAttemptResult(daemonReconnectState, 'success');
+      tuiState.dirty.add('footer');
 
       return true;
     } catch {
@@ -1656,6 +1712,103 @@ export async function runTUI(options = {}) {
       }
       return false;
     }
+  }
+
+  /** Stop the pending retry timer if armed. Does not reset attempt
+   * count — `recordAttemptResult` is the only thing that does that. */
+  function cancelPendingReconnectTimer() {
+    if (daemonReconnectTimer) {
+      clearTimeout(daemonReconnectTimer);
+      daemonReconnectTimer = null;
+    }
+  }
+
+  /** Arm the next reconnect retry. Idempotent: calling twice in a row
+   * (e.g. socket close while a timer is already armed) cancels the
+   * pending timer first so we never end up with two firing in
+   * parallel. */
+  function scheduleDaemonReconnect({ announce } = { announce: false }) {
+    // Don't try to reconnect to a daemon we never connected to in the
+    // first place — that's the inline-by-design path, not a regression
+    // to recover from.
+    if (!daemonEverConnected) return;
+    cancelPendingReconnectTimer();
+    if (announce && daemonReconnectState.phase === 'idle') {
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        'Daemon disconnected. Reconnecting in the background; turns sent now run inline.',
+      );
+    }
+    const { next, delayMs } = planNextRetry(daemonReconnectState, Date.now());
+    daemonReconnectState = next;
+    daemonReconnectTimer = setTimeout(() => {
+      daemonReconnectTimer = null;
+      void attemptDaemonReconnect();
+    }, delayMs);
+    tuiState.dirty.add('footer');
+    scheduler?.schedule();
+    invalidateReconnectAnimators();
+  }
+
+  /** Single reconnect attempt. Tries to connect + re-attach to the
+   * existing session; on success the footer flips back to `daemon`
+   * and the user sees a one-line success entry. On failure we step
+   * the backoff and schedule the next attempt.
+   *
+   * Wrapped in try/catch defensively — `tryDaemonConnect` and
+   * `attachExistingDaemonSession` already swallow their own errors and
+   * return false, but a future helper that doesn't would otherwise
+   * silently kill the retry loop (a `void`-prefixed async function
+   * that throws unhooks itself from the schedule). On caught error we
+   * treat it as a failed attempt so the backoff still steps. */
+  async function attemptDaemonReconnect() {
+    try {
+      if (daemonClient?.connected) {
+        daemonReconnectState = recordAttemptResult(daemonReconnectState, 'success');
+        tuiState.dirty.add('footer');
+        scheduler?.schedule();
+        return;
+      }
+      const connected = await tryDaemonConnect();
+      if (connected) {
+        // `tryDaemonConnect` records the success itself (it sets
+        // `daemonEverConnected` + resets the reconnect state). If we
+        // had a session previously, re-attach so events replay.
+        if (daemonSessionId) {
+          // `attachExistingDaemonSession` short-circuits when
+          // `daemonSessionId` is already set, so clear it before
+          // calling — on success the helper restores it from
+          // `state.sessionId`.
+          const previousSessionId = daemonSessionId;
+          daemonSessionId = null;
+          const attached = await attachExistingDaemonSession();
+          if (!attached) {
+            // Connected to a daemon that doesn't know our session
+            // (e.g. it was wiped). Surface the mismatch — don't let
+            // the user silently end up on a fresh session.
+            addTranscriptEntry(
+              tuiState,
+              'warning',
+              `Reconnected to pushd but session ${previousSessionId} is not available; new messages will start a fresh daemon session.`,
+            );
+            // daemonSessionId stays null — the next ensureDaemonSession
+            // call will start_session and the user keeps moving.
+          }
+        }
+        addTranscriptEntry(tuiState, 'status', 'Reconnected to pushd daemon.');
+        tuiState.dirty.add('all');
+        scheduler?.schedule();
+        invalidateReconnectAnimators();
+        return;
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Best-effort warning — don't let a thrown helper kill the loop.
+      addTranscriptEntry(tuiState, 'warning', `Daemon reconnect attempt failed: ${message}`);
+    }
+    daemonReconnectState = recordAttemptResult(daemonReconnectState, 'fail');
+    scheduleDaemonReconnect({ announce: false });
   }
 
   /**
@@ -1718,7 +1871,14 @@ export async function runTUI(options = {}) {
         'attach_session',
         {
           sessionId: state.sessionId,
-          lastSeenSeq: state.eventSeq || 0,
+          // Use `lastSeenDaemonSeq`, not `state.eventSeq`, so reconnect
+          // resumes immediately after the last event we actually
+          // rendered. `state.eventSeq` is the LOCAL counter and is
+          // never advanced by inbound daemon events — using it here
+          // re-replayed everything from seq 0 on any reconnect after
+          // daemon output and duplicated the transcript (codex review
+          // on PR #664).
+          lastSeenSeq: lastSeenDaemonSeq,
           attachToken: state.attachToken || undefined,
           capabilities: [...TUI_DAEMON_CAPABILITIES],
         },
@@ -1854,22 +2014,55 @@ export async function runTUI(options = {}) {
   // animate only the footer's elapsed-time row).
   const spinnerVisible = () =>
     spinner.name !== 'off' && tuiState.runState === 'running' && theme.unicode;
-  const anyConsumerVisible = () => spinnerVisible() || activityRowVisible();
-  const anyConsumerEligible = () => spinner.name !== 'off' || activityRowVisible();
+  // The daemon-reconnect chip is a second animated footer consumer: while
+  // the coordinator is mid-wait, the `reconnect Ns (try N)` countdown needs
+  // to tick down once per second. Reusing the frame ticker is cheaper than
+  // a separate interval and avoids drift between the two.
+  const reconnectChipVisible = () => daemonReconnectState.phase === 'reconnecting';
+  const anyConsumerVisible = () =>
+    spinnerVisible() || activityRowVisible() || reconnectChipVisible();
+  const anyConsumerEligible = () =>
+    spinner.name !== 'off' || activityRowVisible() || reconnectChipVisible();
+  // Throttle the reconnect chip's repaint to whole-second granularity.
+  // The frame ticker fires at 10 FPS so spinner / activity row stay
+  // smooth, but the chip displays integer seconds and dirtying the
+  // footer 10×/s for an unchanged number wastes CPU during a 30s
+  // backoff wait (copilot review on PR #664). Tracking the
+  // last-emitted seconds value here means we only mark the footer
+  // dirty when the displayed text actually changes — and -1 as the
+  // sentinel guarantees the first tick after a disconnect always
+  // paints once even if seconds happens to be 0.
+  let lastReconnectChipSecs = -1;
   const startFrameTicker = () => {
     if (frameInterval) return;
     frameInterval = setInterval(() => {
       frameTick = (frameTick + 1) % TICK_MODULUS;
       if (anyConsumerVisible()) {
+        // Reconnect chip repaints only on whole-second transitions —
+        // see `lastReconnectChipSecs` comment above. Spinner /
+        // activity row repaint every tick because they encode
+        // sub-second motion.
+        let reconnectChipNeedsPaint = false;
+        if (reconnectChipVisible()) {
+          const curSecs = secondsUntilNextRetry(daemonReconnectState, Date.now());
+          if (curSecs !== lastReconnectChipSecs) {
+            lastReconnectChipSecs = curSecs;
+            reconnectChipNeedsPaint = true;
+          }
+        } else {
+          lastReconnectChipSecs = -1;
+        }
         // Dirtying 'all' made render() take the full-redraw path
         // (ESC.clearScreen + full repaint) 10×/s, flickering the whole screen
         // for the run. Scope the redraw to only the region(s) that actually
         // animate so render() stays on the partial-redraw path: the elapsed-time
         // row (footer) animates whenever a run is active; the spinner glyph
         // (header) only when it is actually drawn.
-        tuiState.dirty.add('footer');
-        if (spinnerVisible()) tuiState.dirty.add('header');
-        scheduler.flush();
+        if (spinnerVisible() || activityRowVisible() || reconnectChipNeedsPaint) {
+          tuiState.dirty.add('footer');
+          if (spinnerVisible()) tuiState.dirty.add('header');
+          scheduler.flush();
+        }
       }
     }, FRAME_TICK_MS);
     // Don't keep the Node event loop alive just for the frame ticker —
@@ -1886,6 +2079,12 @@ export async function runTUI(options = {}) {
     else stopFrameTicker();
   };
   refreshTicker();
+  // Late-bind the reconnect coordinator's animator hook — now that
+  // `refreshTicker` is in scope (out of the TDZ), reconnect-state
+  // transitions can wake the frame ticker so the `reconnect Ns` chip
+  // counts down once per second instead of freezing at its initial
+  // value until the next unrelated repaint.
+  invalidateReconnectAnimators = () => refreshTicker();
 
   // Single point that mutates runState. Manages the turn-start timestamp
   // (idle → running starts the clock; running → idle clears it; awaiting_*
@@ -2058,6 +2257,25 @@ export async function runTUI(options = {}) {
         typeof state.lastPromptTokens === 'number' ? state.lastPromptTokens : null;
       const tokens = lastPromptTokens ?? estimateContextTokens(state.messages || []);
       const budget = getContextBudget(state.provider, state.model);
+      // Persistent chip — read live so a reconnect/disconnect that
+      // already marked the footer dirty renders the new state. While
+      // the coordinator is mid-retry we expose the live attempt count
+      // and countdown so the user can see we're working on it.
+      const connected = Boolean(daemonClient?.connected);
+      const reconnecting = !connected && daemonReconnectState.phase === 'reconnecting';
+      const daemonStatus = connected
+        ? { connected: true, phase: 'connected' as const, reconnect: null }
+        : reconnecting
+          ? {
+              connected: false,
+              phase: 'reconnecting' as const,
+              reconnect: {
+                attempt: daemonReconnectState.attempts + 1,
+                secondsUntilNextRetry: secondsUntilNextRetry(daemonReconnectState, Date.now()),
+              },
+            }
+          : { connected: false, phase: 'inline' as const, reconnect: null };
+
       renderStatusBar(screenBuf, layout, theme, {
         gitStatus: tuiState.gitStatus,
         cwd: state.cwd,
@@ -2066,9 +2284,7 @@ export async function runTUI(options = {}) {
         messageCount: state.messages?.length || 0,
         contextBudget: budget,
         fileAwareness: tuiState.fileAwareness,
-        // Persistent chip — read live so a reconnect/disconnect that
-        // already marked the footer dirty renders the new state.
-        daemonStatus: { connected: Boolean(daemonClient?.connected) },
+        daemonStatus,
       });
       tuiState.session = state.sessionId;
       renderKeybindHints(screenBuf, layout, theme, tuiState);
@@ -2213,6 +2429,14 @@ export async function runTUI(options = {}) {
   }
 
   function handleEngineEvent(event) {
+    // Track the highest daemon-emitted seq we've seen so the next
+    // attach (after a disconnect / reconnect) asks for events strictly
+    // after this point. Inline events have no `seq` field; daemon
+    // events always do. See `lastSeenDaemonSeq` declaration above for
+    // why this isn't `state.eventSeq`.
+    if (typeof event.seq === 'number' && event.seq > lastSeenDaemonSeq) {
+      lastSeenDaemonSeq = event.seq;
+    }
     const transcriptLenBefore = tuiState.transcript.length;
     const streamBufBefore = tuiState.streamBuf;
     const reasoningBufBefore = tuiState.reasoningBuf;
@@ -5720,6 +5944,7 @@ export async function runTUI(options = {}) {
   } finally {
     // ── Cleanup ──────────────────────────────────────────────────
     clearInterval(gitStatusInterval);
+    cancelPendingReconnectTimer();
     stopFrameTicker();
     scheduler.destroy();
     process.stdin.removeListener('data', onData);
