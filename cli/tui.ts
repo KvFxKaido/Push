@@ -4219,7 +4219,7 @@ export async function runTUI(options = {}) {
         addTranscriptEntry(
           tuiState,
           'warning',
-          'Remote relay is not enabled. Use: /remote enable <deployment-url> <pushd_relay_...>',
+          'Remote relay is not enabled. Use: /remote setup <deployment-url> <pushd_relay_...>',
         );
       } else {
         addTranscriptEntry(

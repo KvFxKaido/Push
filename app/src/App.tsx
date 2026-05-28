@@ -356,6 +356,8 @@ function App() {
           token: record.token,
           attachTokenId: record.attachTokenId,
           deviceTokenId: record.deviceTokenId,
+          targetSessionId: record.targetSessionId,
+          targetAttachToken: record.targetAttachToken,
         },
         sandboxId: null,
       });
