@@ -47,15 +47,18 @@ The Push TUI is a custom-built, zero-dependency terminal interface implemented i
 
 | Module | Responsibility | Lines |
 |--------|----------------|-------|
-| `tui.ts` | Main event loop, state management, modal handling | ~5,250 |
+| `tui.ts` | Main event loop, state management, modal handling | ~6,000 |
 | `tui-renderer.ts` | Screen buffer, layout computation, ANSI escapes | ~710 |
-| `tui-theme.ts` | Color tier detection, design tokens, styling | ~550 |
+| `tui-theme.ts` | Color tier detection, design tokens, styling | ~540 |
 | `tui-input.ts` | Key parsing, input history, text composer | ~770 |
-| `tui-status.ts` | Git status, token estimation, status bar | ~410 |
+| `tui-status.ts` | Git status, token estimation, status bar | ~480 |
 | `tui-fuzzy.ts` | Fuzzy filtering for session picker | ~210 |
 | `tui-modal-input.ts` | Reusable modal list navigation + single-line edit helpers | ~200 |
 | `tui-widgets.ts` | Composable modal box + list-window render helpers | ~130 |
-| `tui-completer.ts` | Tab completion for commands | ~430 |
+| `tui-completer.ts` | Tab completion for commands | ~370 |
+| `tui-daemon-handshake.ts` | `hello`-response evaluation + unknown-event triage (pure) | ~230 |
+| `tui-daemon-reconnect.ts` | Reconnect state machine + backoff schedule (pure) | ~150 |
+| `tui-daemon-errors.ts` | Spawn/crash error classification + log-tail formatter | ~270 |
 
 ### Data Flow
 
@@ -363,6 +366,60 @@ function processInput(key) {
     return handleAction(action);
 }
 ```
+
+## Daemon Link
+
+The TUI's default mode is **daemon-attached**: `cli/tui.ts` spawns or connects to `pushd` (the local runtime daemon) and drives the chat round through the `push.runtime.v1` envelope rather than running the engine inline. Inline mode is still the fallback, but daemon-attached is the steady state — and that means the TUI now treats the link itself as a first-class subsystem with three pure helper modules behind it.
+
+### Hello-response evaluation — `tui-daemon-handshake.ts`
+
+The TUI used to treat any successful `hello` reply as proof the link was good. That hid version skew: an upgraded daemon emitting `push.runtime.v2` to an older TUI would connect cleanly and then drop every event into the transcript as "unknown" with no hint why.
+
+`evaluateHelloResponse(payload)` now reads the reply, compares its `protocolVersion` against the shared `PROTOCOL_VERSION` constant imported from `lib/protocol-schema.ts`, and returns a binary discriminated `HandshakeResult`:
+
+- `{ accepted: true; runtimeVersion; capabilities; warnings }` — versions match. The TUI proceeds and dumps any non-fatal entries from `warnings[]` into the transcript (e.g. "daemon did not advertise a runtimeVersion — older binary"). `runtimeVersion` is captured but currently informational only; the TUI does not pin or display it.
+- `{ accepted: false; reason }` — covers all hard fails: non-object payload, missing/empty `protocolVersion`, or `protocolVersion` mismatch. The TUI dumps `reason` as a `warning` transcript entry naming both expected and advertised versions, then closes the client instead of silently degrading to inline mode.
+
+The pinned constant lives in `lib/protocol-schema.ts` so the daemon's request gate and the TUI's handshake compare against the same value by construction — bumping the version lifts both sides at once. See PR #665.
+
+A companion helper, `shouldWarnAboutUnknownEvent`, gates the `default:` branch of `handleEngineEvent` so unrecognised event types raise a one-shot transcript warning per distinct type. `TUI_KNOWN_NOOP_EVENT_TYPES` exempts events the TUI deliberately ignores (e.g. `session_started`, `user_message`, engine round-lifecycle markers) — the deliberate friction is the point: silent drops are how protocol drift hides today.
+
+### Reconnect state machine — `tui-daemon-reconnect.ts`
+
+The pre-PR behavior was a one-shot regression: the moment the daemon socket closed, the TUI fell back to inline mode for the rest of the session. Every daemon hiccup looked like a permanent disconnect to the user.
+
+The reconnect coordinator is now a pure state machine that owns *when* the next attempt fires, not the connect itself:
+
+- `RECONNECT_BACKOFF_MS = [1s, 2s, 4s, 8s, 16s, 30s]`, capped at 30s and **retried forever** (the cap matters when the daemon binary has been replaced mid-session and the user is waiting for it to come back).
+- `planNextRetry(state, nowMs)` returns the new state and the delay the TUI should arm its `setTimeout` with.
+- `recordAttemptResult(state, outcome)` steps the machine forward after the attempt resolves; `secondsUntilNextRetry(state, nowMs)` powers the footer countdown (`reconnect 4s (try 3)`).
+
+Splitting "plan" from "record" keeps the timer out of the pure layer so tests don't need fake timers. The TUI in `cli/tui.ts:attemptDaemonReconnect` wraps the real socket connect + attach around it. See PR #664.
+
+### Spawn/crash error surfacing — `tui-daemon-errors.ts`
+
+Daemon spawn failures used to render as raw `Could not start pushd (${err.message}).` lines, leaving users to crack open `~/.push/run/pushd.log` to diagnose anything.
+
+`classifyDaemonSpawnError(err)` maps a spawn-path exception to `{ code, headline, hint? }`. Currently recognized codes:
+
+| Code | Recognition | Hint |
+|---|---|---|
+| `EACCES` | errno | chmod ~/.push/run to mode 700 |
+| `EADDRINUSE` | errno | socket already bound; check existing pushd or remove stale socket |
+| `ENOENT` | errno | path missing; ensure `$HOME` is set and writable |
+| `EPERM` | errno | chown ~/.push to current user |
+| `EMFILE` | errno | raise `ulimit -n` |
+| `TSX_LOADER_MISSING` | message substring | run `npm install` or use the built binary |
+| `NODE_OOM` | message substring | raise `--max-old-space-size` |
+| `UNKNOWN` | fallback | raw message preserved |
+
+Companion helpers `readPushdLogTail(logPath)` + `formatPushdLogTail(raw)` slice the last ~12 lines of `pushd.log` into a transcript-ready block; the TUI calls them from both spawn-failure and disconnect paths so the user gets PID + exit code + log tail in one frame. The pure layer keeps the unit tests free of process spawning. See PR #667.
+
+### Why these are pure modules
+
+Each of the three helpers is deliberately side-effect-free. The TUI owns the actual socket connect, timer arming, and transcript rendering; the helpers decide *what* to do and *what to render*. This separation is what makes the schema-pin drift-detector tests (`cli/tests/tui-daemon-*.test.mjs` and `cli/tests/protocol-drift.test.mjs`) tractable — they exercise every branch without spawning a daemon or a TTY.
+
+The shared `lib/protocol-schema.ts` is the single source of truth for envelope shape and protocol version; the TUI imports the version constant directly so the handshake gate and the daemon's own request validator can never silently diverge. See `docs/cli/design/Push Runtime Protocol.md` for the wire-level contract.
 
 ## Lessons from Other Libraries
 
