@@ -21,7 +21,7 @@ import { useApprovalQueue } from '@/hooks/useApprovalQueue';
 import { useLocalDaemon } from '@/hooks/useLocalDaemon';
 import { clearPairedDevice } from '@/lib/local-pc-storage';
 import { buildLocalPcWorkspaceContext } from '@/lib/workspace-context';
-import type { LocalPcBinding } from '@/types';
+import type { LocalPcBinding, WorkspaceScreenAuthProps } from '@/types';
 
 interface LocalPcChatScreenProps {
   binding: LocalPcBinding;
@@ -29,9 +29,23 @@ interface LocalPcChatScreenProps {
   onLeave: () => void;
   /** Called after the user unpairs — caller ends the workspace session. */
   onUnpair: () => void;
+  /** GitHub auth surface, forwarded to the hub's Settings tab so the
+   * user can manage their token / installation from inside a daemon
+   * session without unpairing. Daemon sessions don't need GitHub to
+   * function, but the Settings tab includes auth management. */
+  auth: WorkspaceScreenAuthProps;
+  /** Disconnect handler from the app navigation surface. The hub's
+   * Settings → Auth section invokes it. */
+  onDisconnect: () => void;
 }
 
-export function LocalPcChatScreen({ binding, onLeave, onUnpair }: LocalPcChatScreenProps) {
+export function LocalPcChatScreen({
+  binding,
+  onLeave,
+  onUnpair,
+  auth,
+  onDisconnect,
+}: LocalPcChatScreenProps) {
   // Approval queue is owned at the screen so we can wire its
   // `handleDaemonEvent` into the daemon hook's `onEvent` callback
   // below. Rules-of-Hooks: we have to call the daemon hook at the
@@ -72,6 +86,8 @@ export function LocalPcChatScreen({ binding, onLeave, onUnpair }: LocalPcChatScr
       paramsBinding={binding}
       approvals={approvals}
       request={request}
+      auth={auth}
+      onDisconnect={onDisconnect}
     />
   );
 }

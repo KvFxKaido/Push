@@ -86,7 +86,7 @@ vi.mock('@/lib/providers', async (importOriginal) => {
 });
 
 import { RelayChatScreen } from './RelayChatScreen';
-import type { RelayBinding } from '@/types';
+import type { RelayBinding, WorkspaceScreenAuthProps } from '@/types';
 
 const binding: RelayBinding = {
   deploymentUrl: 'https://push.ishawnd.workers.dev',
@@ -95,10 +95,33 @@ const binding: RelayBinding = {
   attachTokenId: 'pdat_test',
 };
 
+// Minimal auth surface — the daemon shell forwards this into the hub
+// Settings tab. The SSR test doesn't open the hub so the values just
+// need to satisfy the type, not exercise the Settings UI.
+const auth: WorkspaceScreenAuthProps = {
+  token: null,
+  patToken: null,
+  validatedUser: null,
+  isAppAuth: false,
+  installationId: null,
+  appLoading: false,
+  appError: null,
+  connectApp: () => {},
+  installApp: () => {},
+  setInstallationIdManually: async () => false,
+};
+const onDisconnect = () => {};
+
 describe('RelayChatScreen', () => {
   it('renders the Remote chip and daemon provider/model controls', () => {
     const html = renderToStaticMarkup(
-      <RelayChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+      <RelayChatScreen
+        binding={binding}
+        onLeave={() => {}}
+        onUnpair={() => {}}
+        auth={auth}
+        onDisconnect={onDisconnect}
+      />,
     );
 
     expect(html).toContain('Remote');
