@@ -49,6 +49,22 @@ export interface SessionState {
    * any provided token for entries whose `attachToken` is falsy.
    */
   attachToken?: string;
+  /**
+   * Origin surface for the session, set at session-creation time —
+   * either by the daemon's `handleStartSession` (from the client's
+   * request payload, mirrored into the `session_started` event) or
+   * by the CLI's inline creation paths (`cli/cli.ts:initSession` for
+   * REPL/headless, `cli/tui.ts:createFreshSessionState` for TUI).
+   * Today's known values: `'tui'` (CLI full screen), `'interactive'`
+   * (CLI REPL / unspecified default), `'headless'` (`./push run`).
+   * Mobile shells will set their own tag when they begin issuing
+   * `start_session`.
+   *
+   * Optional for migration: legacy sessions written before this field
+   * existed load without it; `listSessions()` defaults to
+   * `'interactive'` for those rows so consumers can rely on the column.
+   */
+  mode?: string;
   [key: string]: unknown;
 }
 
@@ -84,6 +100,14 @@ export interface SessionListEntry {
    * the resume pickers; not truncated or sanitized — callers render.
    */
   lastUserMessage: string;
+  /**
+   * Origin surface (`'tui'` | `'interactive'` | `'headless'` | …) the
+   * session was created with. Always populated: legacy sessions whose
+   * `state.json` predates the field fall back to `'interactive'` so
+   * mobile drawers and other consumers can bucket without branching on
+   * undefined. Mirrors `SessionState.mode`.
+   */
+  mode: string;
 }
 
 export interface InterruptedSession {
@@ -755,6 +779,10 @@ export async function listSessions(): Promise<SessionListEntry[]> {
           sessionName:
             typeof stateObj.sessionName === 'string' ? (stateObj.sessionName as string).trim() : '',
           lastUserMessage,
+          mode:
+            typeof stateObj.mode === 'string' && (stateObj.mode as string).trim()
+              ? (stateObj.mode as string).trim()
+              : 'interactive',
         };
 
         const existing = byId.get(sessionId);

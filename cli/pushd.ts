@@ -1108,9 +1108,53 @@ async function handlePing(req) {
 }
 
 async function handleListSessions(req) {
-  const limit = req.payload?.limit || 20;
+  // Validate `limit` instead of accepting any truthy value via `|| 20`.
+  // Sibling handlers (e.g. `handleFetchDelegationEvents`) already
+  // type-check + bound the field; an unvalidated `limit: '50'` would
+  // get passed to `slice()` here and produce surprising results
+  // (string coercion + arithmetic vs the array index expectations).
+  // Default to 20 (the previous fallback) when the field is missing or
+  // malformed; cap at 1000 so a misbehaving client can't ask us to
+  // emit megabytes of session metadata in a single response.
+  // Floor before bounding so fractional inputs (e.g. `0.5`, which
+  // would pass a naive `> 0` but floor to `0`) don't slip through as
+  // an accidental empty-result request — anything that doesn't floor
+  // to >= 1 falls back to the default.
+  const rawLimit = req.payload?.limit;
+  const flooredLimit =
+    typeof rawLimit === 'number' && Number.isFinite(rawLimit) ? Math.floor(rawLimit) : NaN;
+  const limit =
+    Number.isFinite(flooredLimit) && flooredLimit >= 1 ? Math.min(flooredLimit, 1000) : 20;
+
+  // Optional mode filter so consumers can ask the server to omit
+  // sessions whose origin surface isn't useful in their context. The
+  // mobile drawer passes `['headless']` because `./push run` jobs
+  // aren't resumable as chats — without server-side filtering, a user
+  // with 50 consecutive headless runs would see an empty CLI section
+  // even though older interactive sessions exist. Each entry is
+  // trimmed before comparison: `handleStartSession` trims the payload
+  // before persisting and `listSessions()` trims again on read (see
+  // its `stateObj.mode` coalesce), so the listing row always carries
+  // a trimmed value. Trimming the filter entries matches that
+  // normalization — without it a client sending `' headless '` would
+  // silently fail to filter. Strings only; other values are dropped.
+  const rawExclude = req.payload?.excludeModes;
+  const excludeModes =
+    Array.isArray(rawExclude) && rawExclude.length > 0
+      ? new Set(
+          rawExclude
+            .filter((m) => typeof m === 'string')
+            .map((m) => m.trim())
+            .filter((m) => m.length > 0),
+        )
+      : null;
+
   const sessions = await listSessions();
-  const limited = sessions.slice(0, limit);
+  const filtered =
+    excludeModes && excludeModes.size > 0
+      ? sessions.filter((s) => !excludeModes.has(s.mode))
+      : sessions;
+  const limited = filtered.slice(0, limit);
 
   // Enrich with active run state
   const enriched = limited.map((s) => {
@@ -1148,6 +1192,14 @@ async function handleStartSession(req) {
   const sessionId = makeSessionId();
   const attachToken = makeAttachToken();
   const now = Date.now();
+  // Tag the session with its origin surface so `list_sessions` (and the
+  // mobile drawer that consumes it) can bucket Local PC / Remote / CLI
+  // without re-deriving the mode from local UI state. Mirrors the value
+  // that gets broadcast in the `session_started` event below; the two
+  // must stay in sync so the live event and the persisted state.json
+  // agree.
+  const mode =
+    typeof payload.mode === 'string' && payload.mode.trim() ? payload.mode.trim() : 'interactive';
 
   const state = {
     sessionId,
@@ -1167,12 +1219,13 @@ async function handleStartSession(req) {
     // the client received at start_session time instead of minting a fresh
     // one and immediately rejecting the client's original token as invalid.
     attachToken,
+    mode,
   };
 
   await appendSessionEvent(state, 'session_started', {
     sessionId,
     state: 'idle',
-    mode: payload.mode || 'interactive',
+    mode,
     provider,
     sandboxProvider: payload.sandboxProvider || 'local',
   });

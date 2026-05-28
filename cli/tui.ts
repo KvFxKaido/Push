@@ -1324,6 +1324,12 @@ export async function runTUI(options = {}) {
         completedPhases: [],
       },
       messages: [{ role: 'system', content: buildSystemPromptBase(cwd) }],
+      // Tag origin surface so `list_sessions` (and the mobile drawer
+      // that consumes it) buckets this row as TUI rather than falling
+      // back to 'interactive'. Mirrors the daemon's `handleStartSession`
+      // tagging; the `ensureSessionPersisted` callback below re-emits
+      // the matching value in the `session_started` event payload.
+      mode: 'tui',
     };
     // Start enriching the system prompt in the background — will be
     // awaited before the first LLM call in runAssistantLoop.
@@ -1403,10 +1409,19 @@ export async function runTUI(options = {}) {
   async function ensureSessionPersisted() {
     if (sessionPersisted) return;
     sessionPersisted = true;
+    // Normalize once so the condition and the emitted value can't
+    // disagree. `listSessions()` trims `state.mode` on read; emitting
+    // an untrimmed value here would make the `session_started` event
+    // drift from the `list_sessions` row by a whitespace-padding
+    // accident. Defensive fallback matches `listSessions()`'s legacy
+    // fallback ('interactive') so if `state.mode` is ever cleared by
+    // future refactors the event and the listing still agree.
+    const trimmedMode = typeof state.mode === 'string' ? state.mode.trim() : '';
+    const mode = trimmedMode || 'interactive';
     await appendSessionEvent(state, 'session_started', {
       sessionId: state.sessionId,
       state: 'idle',
-      mode: 'tui',
+      mode,
       provider: state.provider,
     });
     await saveSessionState(state);

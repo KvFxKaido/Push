@@ -558,6 +558,283 @@ describe('protocol request format', () => {
   });
 });
 
+// ─── list_sessions mode propagation (drift detector) ───────────────
+//
+// The mobile drawer's "Local PC" / "Remote" buckets read `mode` off the
+// `list_sessions` response so they can hide headless runs and tag the
+// origin surface. This test pins the daemon contract: the value passed
+// into `start_session` round-trips through `state.json` and shows up on
+// the listing payload. If a refactor drops the field on either side,
+// this test fails before the drawer silently goes back to bucketing
+// every CLI session as 'interactive'.
+//
+// The CLI-inline paths (`cli/cli.ts` REPL / headless and `cli/tui.ts`
+// TUI) tag mode at session-creation time, not through the daemon's
+// `start_session`. Round-trip coverage for those creation sites lives
+// in the session-store unit tests — this block stays scoped to the
+// daemon RPC contract so the two surfaces test independently.
+
+describe('list_sessions mode propagation', () => {
+  it('round-trips the start_session mode through to the listing row', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-list-sessions-mode-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      const startTui = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+          mode: 'tui',
+        }),
+        () => {},
+      );
+      assert.equal(startTui.ok, true);
+      const tuiSessionId = startTui.payload.sessionId;
+
+      const startDefault = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+          // `mode` intentionally omitted to confirm the default lands
+          // on the listing row (not just on the event payload).
+        }),
+        () => {},
+      );
+      assert.equal(startDefault.ok, true);
+      const defaultSessionId = startDefault.payload.sessionId;
+
+      const list = await handleRequest(makeRequest('list_sessions', { limit: 50 }), () => {});
+      assert.equal(list.ok, true);
+      const rows = list.payload.sessions;
+      const tuiRow = rows.find((s) => s.sessionId === tuiSessionId);
+      const defaultRow = rows.find((s) => s.sessionId === defaultSessionId);
+      assert.equal(tuiRow?.mode, 'tui');
+      assert.equal(defaultRow?.mode, 'interactive');
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('applies excludeModes server-side so limit slices the post-filter set', async () => {
+    // Without server-side filtering, a user with 50 consecutive
+    // headless runs would see an empty drawer CLI section even though
+    // older interactive sessions exist on disk. This test pins the
+    // post-filter behavior: `excludeModes: ['headless']` removes those
+    // rows BEFORE the `limit` slice, so the limit budget is spent on
+    // the rows the consumer actually wants.
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-list-sessions-exclude-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      const sessionIds = { headless: [], tui: [] };
+      for (let i = 0; i < 3; i++) {
+        const headless = await handleRequest(
+          makeRequest('start_session', {
+            provider: 'ollama',
+            repo: { rootPath: process.cwd() },
+            mode: 'headless',
+          }),
+          () => {},
+        );
+        sessionIds.headless.push(headless.payload.sessionId);
+        const tui = await handleRequest(
+          makeRequest('start_session', {
+            provider: 'ollama',
+            repo: { rootPath: process.cwd() },
+            mode: 'tui',
+          }),
+          () => {},
+        );
+        sessionIds.tui.push(tui.payload.sessionId);
+      }
+
+      const unfiltered = await handleRequest(makeRequest('list_sessions', { limit: 50 }), () => {});
+      const allModes = unfiltered.payload.sessions.map((s) => s.mode).sort();
+      assert.deepEqual(
+        allModes,
+        ['headless', 'headless', 'headless', 'tui', 'tui', 'tui'],
+        'baseline: every started session shows up unfiltered',
+      );
+
+      const filtered = await handleRequest(
+        makeRequest('list_sessions', { limit: 50, excludeModes: ['headless'] }),
+        () => {},
+      );
+      const filteredIds = filtered.payload.sessions.map((s) => s.sessionId).sort();
+      assert.deepEqual(
+        filteredIds,
+        [...sessionIds.tui].sort(),
+        'excludeModes drops headless rows on the server side',
+      );
+
+      // Slim-limit interaction: with limit=2 and excludeModes=['headless'],
+      // the result should be 2 TUI rows — not 2 headless rows that get
+      // dropped to 0 after client-side filtering.
+      const limited = await handleRequest(
+        makeRequest('list_sessions', { limit: 2, excludeModes: ['headless'] }),
+        () => {},
+      );
+      assert.equal(limited.payload.sessions.length, 2);
+      for (const row of limited.payload.sessions) {
+        assert.equal(row.mode, 'tui');
+      }
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('treats a missing or non-array excludeModes as no filter (back-compat)', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-list-sessions-back-compat-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+          mode: 'headless',
+        }),
+        () => {},
+      );
+      // Junk values for excludeModes should fall through to "no filter"
+      // — CLI's existing `list_sessions` callers (cli.ts diagnostic path)
+      // don't pass the param at all and must keep seeing every row.
+      for (const value of [undefined, null, 'headless', [], [42]]) {
+        const res = await handleRequest(
+          makeRequest('list_sessions', { limit: 50, excludeModes: value }),
+          () => {},
+        );
+        assert.equal(res.ok, true);
+        assert.equal(res.payload.sessions.length, 1);
+      }
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('trims whitespace on excludeModes entries before comparing', async () => {
+    // `state.mode` is trimmed by `handleStartSession` on payload
+    // normalization and by `listSessions()` on read; the filter has
+    // to trim too so a client passing `' headless '` doesn't silently
+    // fail to filter and leave headless rows in the drawer. Not every
+    // write path normalizes (`saveSessionState` writes state as-is),
+    // but every read path does.
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-list-sessions-trim-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+          mode: 'headless',
+        }),
+        () => {},
+      );
+      await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+          mode: 'tui',
+        }),
+        () => {},
+      );
+
+      const padded = await handleRequest(
+        makeRequest('list_sessions', { limit: 50, excludeModes: ['  headless  '] }),
+        () => {},
+      );
+      assert.equal(padded.payload.sessions.length, 1);
+      assert.equal(padded.payload.sessions[0].mode, 'tui');
+
+      // All-blank entries reduce to an empty filter set — back-compat
+      // with the "no array elements" case so the listing isn't
+      // accidentally over-filtered.
+      const blanks = await handleRequest(
+        makeRequest('list_sessions', { limit: 50, excludeModes: ['   ', '\t'] }),
+        () => {},
+      );
+      assert.equal(blanks.payload.sessions.length, 2);
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('validates and caps limit instead of forwarding malformed values to slice', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-list-sessions-limit-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      // Seed 3 sessions so we can observe the limit clamp.
+      for (let i = 0; i < 3; i++) {
+        await handleRequest(
+          makeRequest('start_session', {
+            provider: 'ollama',
+            repo: { rootPath: process.cwd() },
+            mode: 'interactive',
+          }),
+          () => {},
+        );
+      }
+
+      // Non-numeric truthy values previously got passed to slice via
+      // `req.payload?.limit || 20`. With validation, they fall back to
+      // the default (20) so all 3 sessions appear.
+      for (const malformed of ['2', true, {}, []]) {
+        const res = await handleRequest(
+          makeRequest('list_sessions', { limit: malformed }),
+          () => {},
+        );
+        assert.equal(res.ok, true);
+        assert.equal(res.payload.sessions.length, 3, `limit=${JSON.stringify(malformed)}`);
+      }
+
+      // Valid numeric limit clamps the result.
+      const limited = await handleRequest(makeRequest('list_sessions', { limit: 2 }), () => {});
+      assert.equal(limited.payload.sessions.length, 2);
+
+      // `limit: 0` (a previously-impossible request because of the
+      // truthy coalesce) now falls back to the default. This matches
+      // the spirit of "empty result is not a useful query" — a client
+      // who genuinely wants nothing shouldn't call the RPC at all.
+      const zero = await handleRequest(makeRequest('list_sessions', { limit: 0 }), () => {});
+      assert.equal(zero.payload.sessions.length, 3);
+
+      // Fractional positive values floor to < 1 (the `> 0` check would
+      // have admitted them, but the floor would silently produce a
+      // zero-slice). They fall back to the default instead of returning
+      // a surprising empty result. `limit: 1.5` floors to 1, which is
+      // a legitimate request.
+      const fractional = await handleRequest(
+        makeRequest('list_sessions', { limit: 0.5 }),
+        () => {},
+      );
+      assert.equal(fractional.payload.sessions.length, 3);
+      const flooredToOne = await handleRequest(
+        makeRequest('list_sessions', { limit: 1.5 }),
+        () => {},
+      );
+      assert.equal(flooredToOne.payload.sessions.length, 1);
+
+      // Negative values are non-positive — same fallback path.
+      const negative = await handleRequest(makeRequest('list_sessions', { limit: -5 }), () => {});
+      assert.equal(negative.payload.sessions.length, 3);
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 // ─── Approval ID generation ─────────────────────────────────────
 
 describe('approval ID format', () => {

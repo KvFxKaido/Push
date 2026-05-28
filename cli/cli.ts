@@ -834,10 +834,17 @@ async function runInteractive(
   async function ensureSessionPersisted() {
     if (sessionPersisted) return;
     sessionPersisted = true;
+    // Normalize once so the condition (is it set?) and the emitted
+    // value (the trimmed payload) can't disagree. `listSessions()`
+    // trims `state.mode` on read; emitting an untrimmed value here
+    // would make the `session_started` event drift from the
+    // `list_sessions` row by a whitespace-padding accident.
+    const trimmedMode = typeof state.mode === 'string' ? state.mode.trim() : '';
+    const mode = trimmedMode || 'interactive';
     await appendSessionEvent(state, 'session_started', {
       sessionId: state.sessionId,
       state: 'idle',
-      mode: 'interactive',
+      mode,
       provider: state.provider,
       sandboxProvider: process.env.PUSH_LOCAL_SANDBOX === 'true' ? 'local' : 'modal',
     });
@@ -1260,7 +1267,7 @@ async function runInteractive(
   return 0;
 }
 
-async function initSession(sessionId, provider, model, cwd) {
+async function initSession(sessionId, provider, model, cwd, mode = 'interactive') {
   if (sessionId) {
     try {
       const resumed = await loadSessionState(sessionId);
@@ -1268,6 +1275,11 @@ async function initSession(sessionId, provider, model, cwd) {
       // upgrade the CLI after starting a session that pre-dates the field.
       // ensureRepoCommandsSeeded is defensive about a missing workingMemory.
       ensureRepoCommandsSeeded(resumed);
+      // Intentionally don't overwrite a resumed session's `mode`. The
+      // tag captures the *origin* surface; if a TUI session is later
+      // resumed in the REPL, the on-disk record should keep saying
+      // `'tui'` (and a legacy session with no field stays undefined →
+      // listSessions defaults it to 'interactive').
       return resumed;
     } catch (err) {
       if (err.code === 'ENOENT' || (err.message && err.message.includes('ENOENT'))) {
@@ -1301,6 +1313,19 @@ async function initSession(sessionId, provider, model, cwd) {
       completedPhases: [],
     },
     messages: [{ role: 'system', content: buildSystemPromptBase(cwd) }],
+    // Tag the origin surface so `list_sessions` (and the mobile drawer
+    // that consumes it) can bucket without re-deriving mode from local
+    // state. Mirrors the daemon's `handleStartSession` behavior so the
+    // CLI-inline paths land alongside the daemon-spawned ones in the
+    // listing. `state.mode` is the single source of truth — the
+    // interactive REPL's `ensureSessionPersisted` (lower in this file)
+    // and the TUI's equivalent (in tui.ts) both read it into the
+    // `session_started` event payload so the event and the persisted
+    // state can't drift. The headless path (`runHeadless`) skips
+    // `session_started` entirely and starts from `user_message`; that
+    // event-log asymmetry is pre-existing and doesn't affect
+    // `list_sessions` since it reads `state.mode` from disk.
+    mode,
   };
   // Start enriching the system prompt in the background — will be
   // awaited before the first LLM call in runAssistantLoop.
@@ -3468,7 +3493,17 @@ export async function main() {
     }
   }
 
-  const state = await initSession(resumedSessionId, provider, requestedModel, cwd);
+  // Pick the origin-surface tag at dispatch time so a freshly created
+  // session lands on disk with the right `mode`. The TUI branch below
+  // requires a TTY; if that check fails the process throws before any
+  // user-visible run starts, so a `'tui'`-tagged but-aborted state on
+  // disk is acceptable (it just looks like an unused TUI session).
+  const sessionMode = runHeadlessMode
+    ? 'headless'
+    : subcommand === '' && tuiEnabled && process.stdin.isTTY
+      ? 'tui'
+      : 'interactive';
+  const state = await initSession(resumedSessionId, provider, requestedModel, cwd, sessionMode);
   if (values.model && values.model !== state.model) state.model = values.model;
   if (values.provider && values.provider !== state.provider) {
     state.provider = provider;
