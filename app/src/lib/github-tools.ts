@@ -8,7 +8,10 @@
  */
 
 import type { CICheck, CIOverallStatus, ReviewResult, ToolExecutionResult } from '@/types';
-import { getGitHubAuthHeaders as getGitHubHeaders } from './github-auth';
+import {
+  getGitHubAuthHeaders as getGitHubHeaders,
+  getGitHubAuthHeadersForToken,
+} from './github-auth';
 import {
   githubFetch,
   executeGitHubToolWithFallback,
@@ -25,6 +28,23 @@ export {
   decodeGitHubBase64Utf8,
 } from './github-tool-executor';
 export { getGitHubHeaders };
+
+// --- Auth injection ---
+
+/**
+ * Explicit GitHub auth for server-side callers that can't read the browser's
+ * localStorage token — currently the `PrReviewJob` Durable Object, which holds
+ * a short-lived installation token. Omit `auth` on the web path to use the
+ * active browser token via {@link getGitHubHeaders}.
+ */
+export interface GitHubAuth {
+  token: string;
+}
+
+/** Headers for a request: explicit token when provided, else the browser token. */
+function resolveHeaders(auth?: GitHubAuth): Record<string, string> {
+  return auth ? getGitHubAuthHeadersForToken(auth.token) : getGitHubHeaders();
+}
 
 // --- Enhanced error messages ---
 
@@ -848,8 +868,9 @@ export async function executePostPRReview(
   prNumber: number,
   commitSha: string,
   reviewResult: ReviewResult,
-): Promise<void> {
-  const headers = getGitHubHeaders();
+  auth?: GitHubAuth,
+): Promise<number> {
+  const headers = resolveHeaders(auth);
 
   const inlineComments = reviewResult.comments
     .filter((c) => typeof c.line === 'number')
@@ -890,17 +911,23 @@ export async function executePostPRReview(
     });
 
   let res = await postReview(inlineComments, buildBody(false));
+  let inlinePosted = inlineComments.length;
 
   // GitHub 422 means one or more inline comment anchors are invalid (hallucinated
   // file/line or line outside a diff hunk). Degrade: fold all inline comments into
   // the body as bullets and retry without any inline anchors.
   if (res.status === 422 && inlineComments.length > 0) {
     res = await postReview([], buildBody(true));
+    inlinePosted = 0;
   }
 
   if (!res.ok) {
     throw new Error(formatGitHubError(res.status, `posting review to PR #${prNumber}`));
   }
+
+  // Count of inline comments actually anchored on the PR (0 when folded into the
+  // body). Callers that ignore the return value are unaffected.
+  return inlinePosted;
 }
 
 /**
@@ -942,14 +969,54 @@ export async function fetchProjectInstructions(
  * Reviewer falls back to its built-in guidance). Pass `branch` to read from a
  * specific ref — the in-app reviewer reads from the base branch.
  */
-export async function fetchReviewGuidance(repo: string, branch?: string): Promise<string | null> {
+export async function fetchReviewGuidance(
+  repo: string,
+  branch?: string,
+  auth?: GitHubAuth,
+): Promise<string | null> {
   const ref = branch ? `?ref=${encodeURIComponent(branch)}` : '';
   const res = await githubFetch(`https://api.github.com/repos/${repo}/contents/REVIEW.md${ref}`, {
-    headers: getGitHubHeaders(),
+    headers: resolveHeaders(auth),
   });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`GitHub API error ${res.status} fetching REVIEW.md`);
   const data = await res.json();
   if (data.type !== 'file' || !data.content) return null;
   return decodeGitHubBase64Utf8(data.content);
+}
+
+/**
+ * Fetch the unified diff for a specific PR by number. Token-injectable so the
+ * webhook DO can fetch a PR diff with its installation token. Distinct from
+ * {@link fetchGitHubReviewDiff}, which resolves the PR from a branch name for
+ * the in-app reviewer.
+ */
+export async function fetchPullRequestDiff(
+  repo: string,
+  prNumber: number,
+  auth?: GitHubAuth,
+): Promise<string> {
+  const res = await githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}`, {
+    headers: { ...resolveHeaders(auth), Accept: 'application/vnd.github.v3.diff' },
+  });
+  if (!res.ok) throw new Error(formatGitHubError(res.status, `PR #${prNumber} diff on ${repo}`));
+  return res.text();
+}
+
+/**
+ * Fetch the current head commit SHA of a PR. Used to pin a posted review to the
+ * commit that was actually reviewed (the head can advance between a webhook
+ * delivery and the review running). Returns null when the field is absent.
+ */
+export async function fetchPullRequestHeadSha(
+  repo: string,
+  prNumber: number,
+  auth?: GitHubAuth,
+): Promise<string | null> {
+  const res = await githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}`, {
+    headers: resolveHeaders(auth),
+  });
+  if (!res.ok) throw new Error(formatGitHubError(res.status, `PR #${prNumber} head on ${repo}`));
+  const data = (await res.json()) as { head?: { sha?: string } };
+  return data.head?.sha ?? null;
 }

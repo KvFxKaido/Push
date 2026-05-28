@@ -6,8 +6,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // assertions deterministic across environments that set this var.
 vi.stubEnv('VITE_GITHUB_TOKEN', '');
 
-const { APP_TOKEN_STORAGE_KEY, OAUTH_STORAGE_KEY, getActiveGitHubToken, getGitHubAuthHeaders } =
-  await import('./github-auth');
+const {
+  APP_TOKEN_STORAGE_KEY,
+  OAUTH_STORAGE_KEY,
+  getActiveGitHubToken,
+  getGitHubAuthHeaders,
+  getGitHubAuthHeadersForToken,
+} = await import('./github-auth');
 
 function createStorageMock() {
   const store = new Map<string, string>();
@@ -113,5 +118,29 @@ describe('getGitHubAuthHeaders', () => {
     const headers = getGitHubAuthHeaders();
     expect(headers).toBeInstanceOf(Object);
     expect(headers).not.toBeInstanceOf(Headers);
+  });
+});
+
+describe('getGitHubAuthHeadersForToken', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('builds Authorization from the explicit token without touching storage', () => {
+    // No window/localStorage stubbed: this must work server-side (the DO path).
+    vi.stubGlobal('window', undefined);
+    const headers = getGitHubAuthHeadersForToken('install-token-123');
+    expect(headers.Authorization).toBe('token install-token-123');
+  });
+
+  it('includes the User-Agent and API-version headers GitHub requires server-side', () => {
+    const headers = getGitHubAuthHeadersForToken('t');
+    expect(headers['User-Agent']).toBeTruthy();
+    expect(headers['X-GitHub-Api-Version']).toBe('2022-11-28');
+    expect(headers.Accept).toBe('application/vnd.github.v3+json');
+  });
+
+  it('omits Authorization for an empty token', () => {
+    expect(getGitHubAuthHeadersForToken('').Authorization).toBeUndefined();
   });
 });
