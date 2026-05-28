@@ -47,7 +47,7 @@ PUSH_TUI_ENABLED=0 ./push --no-resume-prompt        # skip the resume-or-new pro
 
 With TUI disabled, this starts the transcript-first REPL. When resumable sessions exist for the current workspace (matched by cwd), bare `./push` prints a numbered picker of those sessions with an `n=new` choice so you can pick up where you left off without typing a second command. `--session <id>` skips the picker (explicit resume), `--no-resume-prompt` skips the picker and starts a new session, and if no sessions exist for this cwd the picker is silent. Cross-cwd resume is still available via `./push resume`. The agent streams responses, executes tools, and loops until it's done or you type `/exit`. High-risk commands (`rm -rf`, `sudo`, force-push, etc.) prompt for approval before running, with one-shot, session-trust, and saved-prefix trust options.
 
-Set `PUSH_TUI_ENABLED=0` in your shell to make the REPL the default for every invocation, or just run `./push tui` explicitly when you want the TUI for a single session.
+Set `PUSH_TUI_ENABLED=0` in your shell to make the REPL the default for every invocation. The variable is honored by every code path, including the `tui` subcommand — so if you've exported `PUSH_TUI_ENABLED=0` persistently and want to launch the TUI for a single session, temporarily override it: `PUSH_TUI_ENABLED=1 ./push tui` (or unset the variable for that one shell).
 
 ### TUI (default)
 

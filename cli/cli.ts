@@ -3444,7 +3444,7 @@ export async function main() {
   if (subcommand === 'tui') {
     if (!tuiEnabled) {
       throw new Error(
-        'TUI was disabled by PUSH_TUI_ENABLED=0. Unset the variable to re-enable it.',
+        'TUI was disabled by PUSH_TUI_ENABLED (0 / false). Unset the variable, or set it to 1 / true, to re-enable it.',
       );
     }
     if (!process.stdin.isTTY) {
