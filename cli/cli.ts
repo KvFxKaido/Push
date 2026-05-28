@@ -1310,8 +1310,13 @@ async function initSession(sessionId, provider, model, cwd, mode = 'interactive'
     // that consumes it) can bucket without re-deriving mode from local
     // state. Mirrors the daemon's `handleStartSession` behavior so the
     // CLI-inline paths land alongside the daemon-spawned ones in the
-    // listing. The lazy `appendSessionEvent('session_started')` further
-    // down the call chain emits the same value in the event payload.
+    // listing. Event-emission asymmetry: the interactive REPL
+    // (`ensureSessionPersisted` lower in this file) and the TUI (in
+    // tui.ts) emit `session_started` with the same `mode` value before
+    // their first user message; the headless path (`runHeadless`)
+    // skips `session_started` and starts straight from `user_message`.
+    // That's pre-existing and only affects the event log — `state.mode`
+    // on disk is the source of truth for list_sessions either way.
     mode,
   };
   // Start enriching the system prompt in the background — will be
