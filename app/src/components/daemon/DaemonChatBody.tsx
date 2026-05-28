@@ -694,8 +694,22 @@ export function DaemonChatBody({
           />
 
           <ChatInput
-            onSend={composerController.handleComposerSend}
-            onStop={abortStream}
+            // Gate sends on the daemon connection being open. Without
+            // this, ChatInput would still enable typing in `connecting`
+            // / `closed` / `unreachable` states (the previous textarea
+            // disabled itself on `status.state !== 'open'`) and the
+            // turn would queue against a stale binding. Returning here
+            // is enough — the reconnect banner above already tells the
+            // user why the message didn't go out.
+            onSend={(...args) => {
+              if (status.state !== 'open') return;
+              composerController.handleComposerSend(...args);
+            }}
+            // Route Stop through `handleAbort` so the daemon-side
+            // pending approval prompts get cancelled too — calling
+            // `abortStream` alone leaves the approval queued and a
+            // later Approve click would still submit it.
+            onStop={handleAbort}
             isStreaming={isStreaming}
             queuedFollowUpCount={queuedFollowUpCount}
             pendingSteerCount={pendingSteerCount}

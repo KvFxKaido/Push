@@ -52,127 +52,18 @@ vi.mock('@/lib/relay-storage', () => ({
   clearPairedRemote: vi.fn(),
 }));
 
-// See the matching helper in LocalPcChatScreen.test.tsx — daemon now
-// mounts useWorkspaceComposerState, which reads `model` for every
-// provider. Stub each provider config so SSR doesn't crash on the
-// pickers it can't reach in this test.
-function makeProviderStub(model = '') {
-  return {
-    model,
-    setModel: vi.fn(),
-    hasKey: false,
-    keyInput: '',
-    setKeyInput: vi.fn(),
-    setKey: vi.fn(),
-    clearKey: vi.fn(),
-  };
-}
-
-function makeExperimentalStub() {
-  return {
-    ...makeProviderStub(),
-    baseUrl: '',
-    baseUrlInput: '',
-    setBaseUrlInput: vi.fn(),
-    baseUrlError: null,
-    setBaseUrl: vi.fn(),
-    clearBaseUrl: vi.fn(),
-    modelInput: '',
-    setModelInput: vi.fn(),
-    clearModel: vi.fn(),
-    deployments: [],
-    activeDeploymentId: null,
-    saveDeployment: vi.fn(),
-    selectDeployment: vi.fn(),
-    removeDeployment: vi.fn(),
-    clearDeployments: vi.fn(),
-    deploymentLimitReached: false,
-    isConfigured: false,
-  };
-}
-
+// Catalog stub shape lives in test-utils so LocalPcChatScreen test
+// can share it; see that module for rationale.
 vi.mock('@/hooks/useModelCatalog', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/useModelCatalog')>();
+  const { makeDaemonModelCatalogStub } = await import('@/test-utils/model-catalog-test-stubs');
   return {
     ...actual,
-    useModelCatalog: () => ({
-      availableProviders: [
-        ['cloudflare', 'Cloudflare Workers AI', true],
-        ['openrouter', 'OpenRouter', true],
-      ] as const,
-      activeProviderLabel: 'cloudflare',
-      activeBackend: 'cloudflare',
-      setActiveBackend: vi.fn(),
-      setPreferredProvider: vi.fn(),
-      clearPreferredProvider: vi.fn(),
-      ollama: makeProviderStub(),
-      openRouter: makeProviderStub(),
-      cloudflare: {
-        ...makeProviderStub('@cf/qwen/qwen3-30b-a3b-fp8'),
-        configured: true,
-        statusLoading: false,
-        statusError: null,
-      },
-      zen: makeProviderStub(),
-      nvidia: makeProviderStub(),
-      blackbox: makeProviderStub(),
-      kilocode: makeProviderStub(),
-      openadapter: makeProviderStub(),
-      azure: makeExperimentalStub(),
-      bedrock: makeExperimentalStub(),
-      vertex: {
-        ...makeProviderStub(),
-        keyError: null,
-        region: '',
-        regionInput: '',
-        setRegionInput: vi.fn(),
-        regionError: null,
-        setRegion: vi.fn(),
-        clearRegion: vi.fn(),
-        modelInput: '',
-        setModelInput: vi.fn(),
-        modelOptions: [],
-        clearModel: vi.fn(),
-        mode: 'unconfigured',
-        transport: 'openapi',
-        projectId: null,
-        hasLegacyConfig: false,
-        isConfigured: false,
-      },
-      anthropic: makeProviderStub(),
-      openai: makeProviderStub(),
-      google: makeProviderStub(),
-      tavily: makeProviderStub(),
-      ollamaModelOptions: [],
-      openRouterModelOptions: [],
-      cloudflareModelOptions: ['@cf/qwen/qwen3-30b-a3b-fp8', '@cf/meta/llama-3-8b'],
-      zenModelOptions: [],
-      nvidiaModelOptions: [],
-      blackboxModelOptions: [],
-      kilocodeModelOptions: [],
-      openAdapterModelOptions: [],
-      anthropicModelOptions: [],
-      openaiModelOptions: [],
-      googleModelOptions: [],
-      ollamaModels: { loading: false, error: null, updatedAt: null },
-      openRouterModels: { loading: false, error: null, updatedAt: null },
-      cloudflareModels: { loading: false, error: null, updatedAt: null },
-      zenModels: { loading: false, error: null, updatedAt: null },
-      nvidiaModels: { loading: false, error: null, updatedAt: null },
-      blackboxModels: { loading: false, error: null, updatedAt: null },
-      kilocodeModels: { loading: false, error: null, updatedAt: null },
-      openAdapterModels: { loading: false, error: null, updatedAt: null },
-      refreshOllamaModels: vi.fn(),
-      refreshOpenRouterModels: vi.fn(),
-      refreshCloudflareModels: vi.fn(),
-      refreshZenModels: vi.fn(),
-      refreshNvidiaModels: vi.fn(),
-      refreshBlackboxModels: vi.fn(),
-      refreshKilocodeModels: vi.fn(),
-      refreshOpenAdapterModels: vi.fn(),
-      zenGoMode: false,
-      setZenGoMode: vi.fn(),
-    }),
+    useModelCatalog: () =>
+      makeDaemonModelCatalogStub({
+        cloudflareModel: '@cf/qwen/qwen3-30b-a3b-fp8',
+        cloudflareModelOptions: ['@cf/qwen/qwen3-30b-a3b-fp8', '@cf/meta/llama-3-8b'],
+      }),
   };
 });
 
