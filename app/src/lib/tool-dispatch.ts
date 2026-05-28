@@ -44,6 +44,7 @@ import {
 } from '@push/lib/tool-call-diagnosis';
 import { recoverNamespacedToolCalls } from '@push/lib/tool-call-namespaced-recovery';
 import { recoverXmlToolCalls } from '@push/lib/tool-call-xml-recovery';
+import { groupCallsByPhase } from '@push/lib/tool-call-grouping';
 
 // ---------------------------------------------------------------------------
 // Re-exports — the tool-call diagnosis kernel now lives in
@@ -208,7 +209,7 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
       if (allCalls.length > MAX_PARALLEL_TOOL_CALLS + MAX_FILE_MUTATION_BATCH + 1) break;
     }
     if (allCalls.length === 0) return empty;
-    return { ...classifyDetectedCalls(allCalls, empty), droppedCandidates };
+    return { ...classifyDetectedCalls(allCalls), droppedCandidates };
   }
 
   // Preserve current safety behavior: only do broad bare-object scanning
@@ -250,85 +251,26 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
   }
 
   if (allCalls.length === 0) return { ...empty, droppedCandidates };
-  return { ...classifyDetectedCalls(allCalls, empty), droppedCandidates };
+  return { ...classifyDetectedCalls(allCalls), droppedCandidates };
 }
 
 /**
  * Run the reads → fileMutations → trailing side-effect grouping over a
- * deduped, ordered list of tool calls. Extracted from `detectAllToolCalls`
- * so the namespaced-recovery branch can reuse the same classification
- * pipeline rather than duplicating it.
+ * deduped, ordered list of tool calls. Delegates to the shared kernel
+ * in `lib/tool-call-grouping.ts` so the web dispatcher and the CLI
+ * engine (`cli/engine.ts`) enforce the same per-turn contract by
+ * construction rather than via two parallel state machines.
+ *
+ * Web adds the `droppedCandidates: []` field to fit `DetectedToolCalls`;
+ * the shared kernel returns the minimal four-field shape.
  */
-function classifyDetectedCalls(
-  allCalls: AnyToolCall[],
-  empty: DetectedToolCalls,
-): DetectedToolCalls {
-  // Single call — classify directly.
-  if (allCalls.length === 1) {
-    const only = allCalls[0];
-    if (isReadOnlyToolCall(only)) return { ...empty, readOnly: [only] };
-    if (isFileMutationToolCall(only)) return { ...empty, fileMutations: [only] };
-    return { ...empty, mutating: only };
-  }
-
-  // Multi-call state machine: reads → fileMutations → trailing side-effect.
-  const readOnly: AnyToolCall[] = [];
-  const fileMutations: AnyToolCall[] = [];
-  let mutating: AnyToolCall | null = null;
-  const extraMutations: AnyToolCall[] = [];
-  let phase: 'reads' | 'mutations' | 'done' = 'reads';
-
-  for (const call of allCalls) {
-    const isRead = isReadOnlyToolCall(call);
-    const isFileMut = !isRead && isFileMutationToolCall(call);
-
-    if (phase === 'done') {
-      // A side-effect already landed — anything else is overflow.
-      extraMutations.push(call);
-      continue;
-    }
-
-    if (isRead) {
-      if (phase === 'reads') {
-        readOnly.push(call);
-        continue;
-      }
-      // Read after a mutation has started — ordering violation. Push it
-      // (and treat subsequent calls from here as overflow too) into
-      // extraMutations so the caller can surface a structured error and
-      // the model can correct on the next turn. Falling through to the
-      // `done` branch on the next iteration keeps that behavior.
-      extraMutations.push(call);
-      phase = 'done';
-      continue;
-    }
-
-    if (isFileMut) {
-      // Transition into the mutation batch. Further file mutations keep
-      // appending to it; a side-effect will terminate it.
-      phase = 'mutations';
-      fileMutations.push(call);
-      continue;
-    }
-
-    // Side-effecting call. Only one allowed per turn.
-    mutating = call;
-    phase = 'done';
-  }
-
-  // Cap parallel reads — truncate instead of bailing entirely.
-  if (readOnly.length > MAX_PARALLEL_TOOL_CALLS) {
-    readOnly.length = MAX_PARALLEL_TOOL_CALLS;
-  }
-
-  // Cap file-mutation batch — push overflow to extraMutations so the caller
-  // surfaces a clear "too many writes" error instead of silently dropping.
-  if (fileMutations.length > MAX_FILE_MUTATION_BATCH) {
-    const overflow = fileMutations.splice(MAX_FILE_MUTATION_BATCH);
-    extraMutations.unshift(...overflow);
-  }
-
-  return { readOnly, fileMutations, mutating, extraMutations, droppedCandidates: [] };
+function classifyDetectedCalls(allCalls: AnyToolCall[]): DetectedToolCalls {
+  const grouped = groupCallsByPhase<AnyToolCall>(
+    allCalls,
+    { isReadOnly: isReadOnlyToolCall, isFileMutation: isFileMutationToolCall },
+    { maxParallelReads: MAX_PARALLEL_TOOL_CALLS, maxFileMutationBatch: MAX_FILE_MUTATION_BATCH },
+  );
+  return { ...grouped, droppedCandidates: [] };
 }
 
 /** Extract the tool name from a unified tool call. */
