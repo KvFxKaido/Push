@@ -6,7 +6,8 @@ if "%ROOT_DIR:~-1%"=="\" set "ROOT_DIR=%ROOT_DIR:~0,-1%"
 set "LOCAL_TSX=%ROOT_DIR%\node_modules\.bin\tsx.cmd"
 set "COMPILED=%ROOT_DIR%\cli\dist\cli\cli.js"
 
-if not defined PUSH_TUI_ENABLED set "PUSH_TUI_ENABLED=1"
+REM TUI is the default UX in code now; set PUSH_TUI_ENABLED=0 to opt out.
+REM The launcher used to default this to 1; that's now handled in cli.ts.
 
 set "USE_COMPILED="
 if exist "%COMPILED%" (

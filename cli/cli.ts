@@ -3136,8 +3136,14 @@ export async function main() {
   }
 
   const subcommand = positionals[0] || '';
-  const tuiEnabled =
-    process.env.PUSH_TUI_ENABLED === '1' || process.env.PUSH_TUI_ENABLED === 'true';
+  // TUI is the default UX for bare `push` in a TTY. Set PUSH_TUI_ENABLED=0
+  // (or 'false') to opt back to the transcript REPL. The launcher used to
+  // export PUSH_TUI_ENABLED=1 to achieve this; that's now the in-code
+  // default so direct `node cli/cli.ts` invocations get the same UX as
+  // `./push`.
+  const tuiOptOut =
+    process.env.PUSH_TUI_ENABLED === '0' || process.env.PUSH_TUI_ENABLED === 'false';
+  const tuiEnabled = !tuiOptOut;
   if (subcommand === 'config') {
     return runConfigSubcommand(values, positionals);
   }
@@ -3437,7 +3443,9 @@ export async function main() {
 
   if (subcommand === 'tui') {
     if (!tuiEnabled) {
-      throw new Error('TUI is behind a feature flag. Set PUSH_TUI_ENABLED=1 to enable it.');
+      throw new Error(
+        'TUI was disabled by PUSH_TUI_ENABLED (0 / false). Unset the variable, or set it to 1 / true, to re-enable it.',
+      );
     }
     if (!process.stdin.isTTY) {
       throw new Error('TUI requires a TTY terminal. For scripted use, run: push run --task "..."');

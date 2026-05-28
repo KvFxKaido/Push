@@ -11,9 +11,9 @@ done
 ROOT_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
 LOCAL_TSX="$ROOT_DIR/node_modules/.bin/tsx"
 
-# Default to TUI unless explicitly overridden by caller.
-: "${PUSH_TUI_ENABLED:=1}"
-export PUSH_TUI_ENABLED
+# TUI is the default UX in code now; set PUSH_TUI_ENABLED=0 to opt out.
+# The launcher previously exported PUSH_TUI_ENABLED=1 to achieve this,
+# but that hid the default from direct `node cli/cli.ts` invocations.
 
 # Prefer compiled JS if available and fresh, then tsx for TS, then direct .mjs fallback.
 # tsc emits to cli/dist/cli/cli.js because cli/tsconfig.json uses rootDir: ".."
