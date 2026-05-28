@@ -389,6 +389,11 @@ push config show                    Show saved config
 push config init                    Interactive setup wizard
 push config set ...                 Save provider config
 
+TUI Remote flow:
+  /remote setup <deployment-url> <pushd_relay_...>
+                                    Enable relay + mint a phone bundle for this TUI session
+  /remote pair                      Mint a fresh phone bundle for this TUI session
+
 Options:
   --provider <name>       ollama | openrouter | zen | nvidia | kilocode | blackbox | openadapter | openai | anthropic | google (default: ollama)
   --model <name>          Override model

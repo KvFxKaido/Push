@@ -126,6 +126,13 @@ export interface RelayBinding {
   attachTokenId?: string;
   /** Parent device tokenId, for `push daemon revoke <tokenId>`. */
   deviceTokenId?: string;
+  /** Existing daemon session the phone should attach to, when present. */
+  targetSessionId?: string;
+  /**
+   * Bearer for `targetSessionId`. Stored with the Remote binding only
+   * when the bundle was minted from an active daemon/TUI session.
+   */
+  targetAttachToken?: string;
 }
 
 /**

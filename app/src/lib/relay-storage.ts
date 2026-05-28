@@ -34,6 +34,10 @@ export interface PairedRemoteRecord {
   attachTokenId?: string;
   /** Parent device tokenId; `push daemon revoke <tokenId>` target. */
   deviceTokenId?: string;
+  /** Existing daemon session the phone should attach to, when present. */
+  targetSessionId?: string;
+  /** Bearer for `targetSessionId`; never log or echo. */
+  targetAttachToken?: string;
   /** Wall-clock ms when the user pasted + confirmed. */
   pairedAt: number;
   /** Wall-clock ms of the last successful WS open. */

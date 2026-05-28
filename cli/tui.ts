@@ -317,6 +317,9 @@ function createTUIState() {
     // `resultPreview` on transcript tool_calls is truncated; this holds the
     // untruncated payload dispatched on the live event.
     lastToolResult: null, // { name, text, isError } | null
+    // Most recent Remote pairing bundle — used by /copy remote so users
+    // don't have to select a long bearer out of alternate-screen scrollback.
+    lastRemotePairBundle: null,
     // Wall-clock ms when the current turn started (idle → running).
     // Cleared on running → idle. Preserved across awaiting_* ↔ running
     // since those are continuations of the same turn (e.g. user
@@ -4064,6 +4067,57 @@ export async function runTUI(options = {}) {
     const parts = (arg || '').trim().split(/\s+/).filter(Boolean);
     const sub = (parts[0] || 'status').toLowerCase();
 
+    const mintPairBundleForActiveSession = async () => {
+      await ensureDaemonConnected({ announce: false });
+      if (!daemonClient?.connected) {
+        return { ok: false, code: 'DAEMON_OFFLINE', error: 'daemon not running' };
+      }
+      await ensureDaemonSession();
+      if (!daemonSessionId) {
+        return {
+          ok: false,
+          code: 'NO_DAEMON_SESSION',
+          error: 'no active daemon session',
+        };
+      }
+      return requestDaemonAdmin(
+        'mint_remote_pair_bundle',
+        {
+          targetSessionId: daemonSessionId,
+          ...(daemonAttachToken ? { targetAttachToken: daemonAttachToken } : {}),
+        },
+        { timeoutMs: 5000 },
+      );
+    };
+
+    const renderPairBundle = (payload) => {
+      const bundle = String(payload?.bundle || '');
+      const deviceTokenId = String(payload?.deviceTokenId || '');
+      const attachTokenId = String(payload?.attachTokenId || '');
+      const deploymentUrl = String(payload?.deploymentUrl || '');
+      const relaySessionId = String(payload?.sessionId || '');
+      const targetSessionId = String(payload?.targetSessionId || daemonSessionId || '');
+      tuiState.lastRemotePairBundle = bundle || null;
+      const lines = [
+        'Remote pairing bundle minted for this TUI session.',
+        `  deployment: ${deploymentUrl || 'unknown'}`,
+        `  relay route: ${relaySessionId || 'unknown'}`,
+        `  target session: ${targetSessionId || 'unknown'}`,
+        `  device id: ${deviceTokenId || 'unknown'}`,
+        `  attach id: ${attachTokenId || 'unknown'}`,
+        '',
+        'Bundle (copy now - this is the only time the bearer is shown):',
+        '',
+        `  ${bundle}`,
+        '',
+        'Copy it with: /copy remote',
+        'Paste this into the phone Remote pairing screen.',
+        deviceTokenId ? `Revoke this phone with: push daemon revoke ${deviceTokenId}` : '',
+      ].filter(Boolean);
+      addTranscriptEntry(tuiState, 'status', lines.join('\n'));
+      scheduler.flush();
+    };
+
     if (sub === 'status' || sub === 'show') {
       const response = await requestDaemonAdmin('relay_status', {}, { timeoutMs: 1500 });
       if (response.ok) {
@@ -4155,6 +4209,79 @@ export async function runTUI(options = {}) {
       return;
     }
 
+    if (sub === 'pair') {
+      const response = await mintPairBundleForActiveSession();
+      if (response.ok) {
+        renderPairBundle(response.payload);
+        return;
+      }
+      if (response.code === 'RELAY_NOT_ENABLED') {
+        addTranscriptEntry(
+          tuiState,
+          'warning',
+          'Remote relay is not enabled. Use: /remote enable <deployment-url> <pushd_relay_...>',
+        );
+      } else {
+        addTranscriptEntry(
+          tuiState,
+          'error',
+          `Remote pairing failed: ${response.error || response.code || 'unknown'}`,
+        );
+      }
+      scheduler.flush();
+      return;
+    }
+
+    if (sub === 'setup') {
+      const deploymentUrl = parts[1];
+      const token = parts[2];
+      if (!deploymentUrl || !token) {
+        addTranscriptEntry(
+          tuiState,
+          'warning',
+          'Usage: /remote setup <deployment-url> <pushd_relay_...>',
+        );
+        scheduler.flush();
+        return;
+      }
+      if (!token.startsWith('pushd_relay_')) {
+        addTranscriptEntry(tuiState, 'warning', 'Remote relay token must start with pushd_relay_');
+        scheduler.flush();
+        return;
+      }
+      const enableResponse = await requestDaemonAdmin(
+        'relay_enable',
+        { deploymentUrl, token },
+        { timeoutMs: 5000, startDaemon: true },
+      );
+      if (!enableResponse.ok) {
+        addTranscriptEntry(
+          tuiState,
+          'error',
+          `Remote relay enable failed: ${enableResponse.error || enableResponse.code || 'unknown'}`,
+        );
+        scheduler.flush();
+        return;
+      }
+      addTranscriptEntry(
+        tuiState,
+        'status',
+        `Remote relay enabled: ${deploymentUrl} (${maskSecret(token)})`,
+      );
+      const pairResponse = await mintPairBundleForActiveSession();
+      if (pairResponse.ok) {
+        renderPairBundle(pairResponse.payload);
+        return;
+      }
+      addTranscriptEntry(
+        tuiState,
+        'error',
+        `Remote pairing failed after enabling relay: ${pairResponse.error || pairResponse.code || 'unknown'}`,
+      );
+      scheduler.flush();
+      return;
+    }
+
     if (sub === 'disable') {
       const response = await requestDaemonAdmin('relay_disable', {}, { timeoutMs: 3000 });
       if (response.ok) {
@@ -4191,7 +4318,7 @@ export async function runTUI(options = {}) {
     addTranscriptEntry(
       tuiState,
       'warning',
-      'Usage: /remote status | /remote enable <deployment-url> <pushd_relay_...> | /remote disable',
+      'Usage: /remote status | /remote setup <deployment-url> <pushd_relay_...> | /remote pair | /remote enable <deployment-url> <pushd_relay_...> | /remote disable',
     );
     scheduler.flush();
   }
@@ -4610,7 +4737,7 @@ export async function runTUI(options = {}) {
             '  /config sandbox on|off  Toggle local Docker sandbox',
             '  /config explain on|off  Toggle pattern explanations',
             '  /config daemon auto|off  Toggle TUI pushd autostart',
-            '  /remote status|enable|disable  Manage Remote relay',
+            '  /remote status|setup|pair|enable|disable  Manage Remote relay + phone pairing',
             '  /daemon status       Show pushd connection, process, and log paths',
             '  /theme               Show current theme',
             '  /theme list          List available themes',
@@ -4625,7 +4752,7 @@ export async function runTUI(options = {}) {
             '  /skills reload       Reload workspace + Claude skills',
             `  /compact [turns]      Compact older context (default keep ${DEFAULT_COMPACT_TURNS} turns)`,
             '  /checkpoint           Snapshot/rollback (create | list | load | delete)',
-            '  /copy [last|code|tool]  Copy content to clipboard via OSC 52 (default: last)',
+            '  /copy [last|code|tool|remote]  Copy content to clipboard via OSC 52 (default: last)',
             '  /<skill> [args]      Run a skill (e.g. /commit, /review)',
             '  /resume              Open resumable session picker',
             '  /resume <session-id> Switch to a saved session',
@@ -4777,8 +4904,11 @@ export async function runTUI(options = {}) {
           } else {
             label = 'last tool result';
           }
+        } else if (target === 'remote' || target === 'bundle') {
+          content = tuiState.lastRemotePairBundle;
+          label = 'last Remote pairing bundle';
         } else {
-          addTranscriptEntry(tuiState, 'warning', 'Usage: /copy [last|code|tool]');
+          addTranscriptEntry(tuiState, 'warning', 'Usage: /copy [last|code|tool|remote]');
           scheduler.flush();
           return true;
         }

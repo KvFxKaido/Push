@@ -98,4 +98,14 @@ describe('encode/decodeRemotePairBundle', () => {
     assert.equal('attachTokenId' in (decoded ?? {}), false);
     assert.equal('deviceTokenId' in (decoded ?? {}), false);
   });
+
+  it('roundtrips target daemon session fields when provided', () => {
+    const targeted = {
+      ...VALID_INPUT,
+      targetSessionId: 'sess_tui_abc123',
+      targetAttachToken: 'att_tui_secret',
+    };
+    const encoded = encodeRemotePairBundle(targeted);
+    assert.deepEqual(decodeRemotePairBundle(encoded), targeted);
+  });
 });

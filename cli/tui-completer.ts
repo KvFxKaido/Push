@@ -166,7 +166,7 @@ export function createTabCompleter({
     }
 
     if (cmd === 'copy') {
-      const subs = ['last', 'code', 'tool'];
+      const subs = ['last', 'code', 'tool', 'remote'];
       const resolved = subs.filter((s: string) => s.startsWith(arg)).map((s: string) => prefix + s);
       lastResolvedText = text;
       lastResolvedCandidates = resolved;

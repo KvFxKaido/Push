@@ -127,6 +127,8 @@ export function RelayPairing({ onPaired, onCancel }: RelayPairingProps) {
       token: decoded.token,
       attachTokenId: decoded.attachTokenId,
       deviceTokenId: decoded.deviceTokenId,
+      targetSessionId: decoded.targetSessionId,
+      targetAttachToken: decoded.targetAttachToken,
     };
 
     // #530 Copilot review: createRelayDaemonBinding can throw
@@ -161,6 +163,8 @@ export function RelayPairing({ onPaired, onCancel }: RelayPairingProps) {
                   token: binding.token,
                   attachTokenId: binding.attachTokenId,
                   deviceTokenId: binding.deviceTokenId,
+                  targetSessionId: binding.targetSessionId,
+                  targetAttachToken: binding.targetAttachToken,
                   pairedAt: Date.now(),
                   lastUsedAt: Date.now(),
                 };
