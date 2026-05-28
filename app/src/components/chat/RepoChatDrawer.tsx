@@ -35,7 +35,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { HUB_MATERIAL_PILL_BUTTON_CLASS, HubControlGlow } from '@/components/chat/hub-styles';
-import { renderCliSessionRow } from '@/components/chat/drawer-cli-row';
+import { CliSessionRow } from '@/components/chat/drawer-cli-row';
 import type { RepoAppearance } from '@/lib/repo-appearance';
 import type { ActiveRepo, Conversation, DaemonCliSession, RepoWithActivity } from '@/types';
 
@@ -751,7 +751,9 @@ export function RepoChatDrawer({
                       </div>
                       <div className="space-y-1 px-0 pb-0">
                         {filteredLocalPcChats.map((chat) => renderChatRow(chat))}
-                        {localPcCliSessions.map((s) => renderCliSessionRow(s))}
+                        {localPcCliSessions.map((s) => (
+                          <CliSessionRow key={s.sessionId} session={s} />
+                        ))}
                       </div>
                     </div>
                   )}
@@ -762,7 +764,9 @@ export function RepoChatDrawer({
                       </div>
                       <div className="space-y-1 px-0 pb-0">
                         {filteredRelayChats.map((chat) => renderChatRow(chat))}
-                        {relayCliSessions.map((s) => renderCliSessionRow(s))}
+                        {relayCliSessions.map((s) => (
+                          <CliSessionRow key={s.sessionId} session={s} />
+                        ))}
                       </div>
                     </div>
                   )}

@@ -104,6 +104,17 @@ export function useDaemonCliSessions(
   const fetchNonceRef = useRef(0);
 
   const fetchOnce = useCallback(async () => {
+    // Coalesce concurrent fetches into one in-flight request so a
+    // burst of triggers (e.g. a `connecting → open` transition that
+    // races a programmatic `refresh()`) doesn't fan out into N
+    // duplicate list_sessions RPCs. The drawer's CLI section can
+    // tolerate "results match the moment the first fetch started"
+    // because each subsequent refresh trigger has its own
+    // `connecting → open` transition or explicit call ready to
+    // re-fire once this one settles. A pending-refresh queue would
+    // be the right escalation if `refresh()` becomes a UI affordance;
+    // today it's only exposed for future use and not wired to any
+    // button, so a coalesced fetch is the simpler honest choice.
     if (inFlightRef.current) return;
     inFlightRef.current = true;
     const nonce = ++fetchNonceRef.current;

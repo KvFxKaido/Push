@@ -1,9 +1,10 @@
 /**
- * Pure renderer for a CLI-originated daemon session row in the chat
- * drawer. Lives in its own file so the parent `RepoChatDrawer`
- * module satisfies the ESLint `react-refresh/only-export-components`
- * rule (can't co-locate a non-component export with a component), and
- * so the SSR test can serialize the row without instantiating the
+ * CliSessionRow — read-only drawer row for a CLI/TUI-originated
+ * daemon session surfaced via `useDaemonCliSessions`. Lives in its
+ * own file so the parent `RepoChatDrawer` module satisfies the
+ * ESLint `react-refresh/only-export-components` rule (can't
+ * co-locate a non-component export with a component), and so the SSR
+ * test can serialize the row directly without instantiating the
  * radix Sheet (its portal is dropped by `renderToStaticMarkup`).
  *
  * Read-only by design: no rename, no delete, no tap-to-resume.
@@ -14,7 +15,11 @@
 import { timeAgoCompact } from '@/lib/utils';
 import type { DaemonCliSession } from '@/types';
 
-export function renderCliSessionRow(session: DaemonCliSession) {
+interface CliSessionRowProps {
+  session: DaemonCliSession;
+}
+
+export function CliSessionRow({ session }: CliSessionRowProps) {
   const label = session.sessionName.trim() || session.lastUserMessage.trim() || session.sessionId;
   const subtitle =
     session.lastUserMessage.trim() && session.sessionName.trim()
@@ -23,7 +28,6 @@ export function renderCliSessionRow(session: DaemonCliSession) {
   const isRunning = session.state === 'running';
   return (
     <div
-      key={session.sessionId}
       className="flex items-center gap-1 rounded-xl border border-transparent"
       title={`${label}\n${session.cwd}\n${session.provider}/${session.model}\n${session.sessionId}`}
     >

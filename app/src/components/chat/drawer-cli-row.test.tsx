@@ -1,9 +1,9 @@
 /**
- * drawer-cli-row.test — SSR coverage for the CLI-session row renderer
+ * drawer-cli-row.test — SSR coverage for the CLI-session row component
  * the drawer uses alongside `useDaemonCliSessions`. The drawer body
  * sits inside a radix Sheet whose portal isn't serialized by
  * `renderToStaticMarkup` — exercising it would need a DOM test
- * runner the repo doesn't ship today. The row helper lives in its
+ * runner the repo doesn't ship today. The row component lives in its
  * own module so the SSR test can cover the visible surface (label
  * fallbacks, the live/idle badge, the title hover payload) without
  * that dependency.
@@ -13,7 +13,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import type { DaemonCliSession } from '@/types';
 
-import { renderCliSessionRow } from './drawer-cli-row';
+import { CliSessionRow } from './drawer-cli-row';
 
 function makeCliSession(overrides: Partial<DaemonCliSession> = {}): DaemonCliSession {
   return {
@@ -31,9 +31,9 @@ function makeCliSession(overrides: Partial<DaemonCliSession> = {}): DaemonCliSes
   };
 }
 
-describe('renderCliSessionRow', () => {
+describe('CliSessionRow', () => {
   it('renders the session name with the idle CLI badge', () => {
-    const html = renderToStaticMarkup(renderCliSessionRow(makeCliSession()));
+    const html = renderToStaticMarkup(<CliSessionRow session={makeCliSession()} />);
     expect(html).toContain('Review auth middleware');
     // The aria-label distinguishes idle vs running so screen readers
     // can convey the session state without parsing visual badges.
@@ -43,7 +43,7 @@ describe('renderCliSessionRow', () => {
 
   it('flips the badge to a live indicator when the session is mid-run', () => {
     const html = renderToStaticMarkup(
-      renderCliSessionRow(makeCliSession({ state: 'running', activeRunId: 'run_xyz' })),
+      <CliSessionRow session={makeCliSession({ state: 'running', activeRunId: 'run_xyz' })} />,
     );
     expect(html).toContain('CLI · live');
     expect(html).toContain('aria-label="CLI session, running"');
@@ -51,40 +51,40 @@ describe('renderCliSessionRow', () => {
 
   it('falls back to the last user message when sessionName is empty', () => {
     const html = renderToStaticMarkup(
-      renderCliSessionRow(
-        makeCliSession({
+      <CliSessionRow
+        session={makeCliSession({
           sessionId: 'sess_no_name',
           sessionName: '',
           lastUserMessage: 'investigate the segfault',
-        }),
-      ),
+        })}
+      />,
     );
     expect(html).toContain('investigate the segfault');
   });
 
   it('falls back to the sessionId when both name and last message are empty', () => {
     const html = renderToStaticMarkup(
-      renderCliSessionRow(
-        makeCliSession({
+      <CliSessionRow
+        session={makeCliSession({
           sessionId: 'sess_truly_blank',
           sessionName: '',
           lastUserMessage: '',
-        }),
-      ),
+        })}
+      />,
     );
     expect(html).toContain('sess_truly_blank');
   });
 
   it('exposes provider/model and full sessionId via the row title for hover/long-press', () => {
     const html = renderToStaticMarkup(
-      renderCliSessionRow(
-        makeCliSession({
+      <CliSessionRow
+        session={makeCliSession({
           sessionId: 'sess_inspect',
           provider: 'openrouter',
           model: 'claude-3-5-sonnet',
           cwd: '/Users/dev/proj',
-        }),
-      ),
+        })}
+      />,
     );
     expect(html).toContain('openrouter/claude-3-5-sonnet');
     expect(html).toContain('sess_inspect');
