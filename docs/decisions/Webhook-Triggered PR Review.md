@@ -146,31 +146,35 @@ model to weight findings by the repo's priorities without lowering the
 correctness/security bar. Covered by `review-guidance.test.ts` and
 `role-context.test.ts`.
 
-Two gaps keep it from being *universal* by default:
+The resolver has now been **promoted into `lib/review-guidance.ts`** (shared
+core) so every surface inherits one fail-open, working-copy-first lookup. The
+core takes injected reads — `resolveReviewGuidance({ readWorkingCopy?,
+fetchCommitted? })` — and surfaces supply the fetchers, mirroring how the
+project-instructions loader is split (shared `lib/project-instructions.ts`
+sanitizer, per-surface fetch). It emits one structured log per outcome
+(`review_guidance_resolved` ↔ `review_guidance_working_copy_failed` ↔
+`review_guidance_committed_failed` ↔ `review_guidance_absent`).
 
-1. **The webhook path** (this doc) must resolve REVIEW.md at the PR head ref.
-   The injection is already shared in `lib/role-context.ts`; only the *fetch*
-   needs a home. `resolveReviewGuidance` is currently web-shaped (takes a
-   sandbox + GitHub client). The clean move is to **promote the resolution
-   contract into `lib/`** — a `resolveReviewGuidance({ readWorkspaceFile?,
-   fetchAtRef })` shape with surface-specific fetchers injected — so web, the
-   webhook DO, and CLI share one resolver. (Mirrors how the project-instructions
-   loader is split today: shared `lib/project-instructions.ts` sanitizer, with
-   `app/src/lib/github-tools.ts` and `cli/workspace-context.ts` each supplying
-   the fetch.)
+Landed with the promotion:
 
-2. **The CLI Reviewer** does not resolve REVIEW.md today. `handleDelegateReviewer`
-   (`cli/pushd.ts:3968`) forwards whatever `context` arrives in the RPC payload
-   and no CLI client populates `reviewGuidance`, so `buildReviewerContextBlock`
-   renders the block only when the caller happened to supply it. The promoted
-   `lib/` resolver above closes this in the same stroke: the CLI engine reads
-   `REVIEW.md` from the workspace and populates `context.reviewGuidance` before
-   the `delegate_reviewer` RPC.
+1. **Web** (`app/src/lib/review-guidance.ts`) is now a thin binding over the
+   core — sandbox read as `readWorkingCopy`, GitHub-at-ref as `fetchCommitted`.
+   Public signature (`{ repoFullName, ref, sandboxId }`) unchanged, so
+   `HubReviewTab.tsx` is untouched and the existing test still passes.
 
-So "look for a REVIEW.md by default" is **done for the PWA review system** the
-user cares about; the work is generalizing the resolver so the webhook trigger
-and CLI inherit it rather than re-implementing the lookup. That generalization
-is a prerequisite of this design, not a separate feature.
+2. **CLI Reviewer** now resolves REVIEW.md by default. `handleDelegateReviewer`
+   (`cli/pushd.ts`) reads the daemon workspace's working-copy `REVIEW.md`
+   (line-capped, ENOENT→absent) via the core and populates
+   `context.reviewGuidance` before `runReviewer`. An explicit caller-supplied
+   `reviewGuidance` still wins (the RPC client may know the review ref);
+   otherwise the local working copy fills it. Closes the gap where
+   `buildReviewerContextBlock` only rendered guidance when a caller happened to
+   supply it.
+
+Remaining for **the webhook path** (this doc): supply a `fetchCommitted` that
+reads REVIEW.md at the PR ref via the installation token — resolved from the
+**base** repo ref, not a fork head (see Security checklist). No new resolver
+work; just the third binding.
 
 ## Severity → action mapping (deliberately deferred)
 

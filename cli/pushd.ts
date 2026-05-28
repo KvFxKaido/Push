@@ -623,6 +623,11 @@ import { isSensitivePath as isDaemonSensitivePath } from '../lib/sensitive-paths
 import { isPathAllowed, snapshotAllowlist } from './pushd-allowlist.js';
 import { runReviewer } from '../lib/reviewer-agent.ts';
 import { buildReviewerContextBlock } from '../lib/role-context.ts';
+import {
+  REVIEW_GUIDANCE_FILENAME,
+  REVIEW_GUIDANCE_MAX_LINES,
+  resolveReviewGuidance,
+} from '../lib/review-guidance.ts';
 import { validateTaskGraph, executeTaskGraph, formatTaskGraphResult } from '../lib/task-graph.ts';
 import { assertValidEvent, isStrictModeEnabled } from '../lib/protocol-schema.js';
 import { isV2DelegationEvent, synthesizeV1DelegationEvent } from './v1-downgrade.js';
@@ -3940,6 +3945,23 @@ async function handleDelegateCoder(req) {
 // ─── Delegate Reviewer (advisory diff review, single-turn) ──────
 
 /**
+ * Read the working-copy REVIEW.md from a daemon workspace, line-capped. The
+ * daemon reviews the local checkout, so the working copy (including unpushed
+ * edits) is the authoritative guidance. Returns null when the file is absent so
+ * `resolveReviewGuidance` treats it as "no guidance" rather than a read failure;
+ * a genuine read error (permissions, etc.) rethrows so the resolver logs it.
+ */
+async function readWorkspaceReviewGuidance(cwd) {
+  try {
+    const raw = await fs.readFile(path.join(cwd, REVIEW_GUIDANCE_FILENAME), 'utf8');
+    return raw.split('\n').slice(0, REVIEW_GUIDANCE_MAX_LINES).join('\n');
+  } catch (err) {
+    if (err && typeof err === 'object' && err.code === 'ENOENT') return null;
+    throw err;
+  }
+}
+
+/**
  * `delegate_reviewer` — daemon-side Reviewer launch.
  *
  * Wires the full delegate_reviewer RPC path from handler → runReviewer
@@ -4108,13 +4130,30 @@ async function handleDelegateReviewer(req) {
             : abortController.signal,
         });
 
+      // Default-on REVIEW.md: an explicit caller-supplied `reviewGuidance` wins
+      // (the RPC client knows the review ref); otherwise resolve the daemon
+      // workspace's working-copy REVIEW.md so the CLI Reviewer gets the same
+      // repo-specific guidance the web Reviewer already does.
+      const callerGuidance =
+        rawContext && typeof rawContext.reviewGuidance === 'string'
+          ? rawContext.reviewGuidance
+          : null;
+      const reviewGuidance =
+        callerGuidance ??
+        (await resolveReviewGuidance({
+          readWorkingCopy: () => readWorkspaceReviewGuidance(entry.state.cwd),
+        }));
+      const reviewerContext = reviewGuidance
+        ? { ...(rawContext ?? {}), reviewGuidance }
+        : rawContext;
+
       reviewResult = await runReviewer(
         diff,
         {
           provider: resolvedProvider,
           stream: signalAwareStream,
           modelId: resolvedModel,
-          context: rawContext,
+          context: reviewerContext,
           resolveRuntimeContext: async (_diff, context) => buildReviewerContextBlock(context) || '',
         },
         () => {
