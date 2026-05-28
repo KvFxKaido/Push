@@ -222,6 +222,21 @@ describe('handleGitHubWebhook', () => {
     });
   });
 
+  it('returns 502 (not 202) when the DO rejects the start', async () => {
+    const body = JSON.stringify(prPayload());
+    const stub = vi.fn<(r: Request) => Promise<Response>>(
+      async () => new Response(JSON.stringify({ error: 'MISSING_FIELDS' }), { status: 400 }),
+    );
+    const res = await handleGitHubWebhook(
+      makeRequest(body, {
+        'X-GitHub-Event': 'pull_request',
+        'X-Hub-Signature-256': await sign(body, SECRET),
+      }),
+      fakeDoEnv(stub),
+    );
+    expect(res.status).toBe(502);
+  });
+
   it('returns 503 when the DO binding is absent', async () => {
     const body = JSON.stringify(prPayload());
     const env = { GITHUB_WEBHOOK_SECRET: SECRET, GITHUB_ALLOWED_INSTALLATION_IDS: '42' } as Env;

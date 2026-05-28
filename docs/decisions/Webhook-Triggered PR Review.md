@@ -47,21 +47,29 @@ PR number" already exists.
 
 ## Architecture
 
+Prototype path (solid); PWA history is the open follow-up (dashed):
+
 ```
 GitHub  ──(pull_request: opened/synchronize)──▶  Worker  /api/github/webhook
                                                    │  verify HMAC sig (X-Hub-Signature-256)
-                                                   │  installation-id allowlist
-                                                   │  dedupe (delivery-id KV)
+                                                   │  installation-id allowlist (fail-closed)
+                                                   │  event/draft filter
                                                    ▼
                                             PrReviewJob (Durable Object)
-                                                   │  fetch diff + REVIEW.md @ PR head
-                                                   │  runDeepReviewer(diff, { reviewGuidance, … })
+                                                   │  dedupe by delivery-id, coalesce by head SHA
+                                                   │  fetch PR diff + REVIEW.md @ BASE ref
+                                                   │  runReviewer(diff, { reviewGuidance, … })
+                                                   │  re-check PR head == reviewed SHA
                                                    ▼
-                              ┌────────────────────┴────────────────────┐
-                              ▼                                          ▼
-                  postReview (COMMENT only)                  PWA review-history store
-                  inline annotations on the PR              (re-run, drill into reasoning)
+                              ┌────────────────────┴─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┐
+                              ▼                                            ▼
+        advisory review (event: 'COMMENT')              PWA review-history store  (follow-up)
+        inline annotations + 422→body fallback          (re-run, drill into reasoning)
 ```
+
+REVIEW.md is resolved from the **base** ref (never a fork head) and the
+prototype drives the single-shot `runReviewer`; `runDeepReviewer` (tool loop)
+and the PWA store are documented follow-ups, not the landed path.
 
 ### 1. Webhook receiver (the new surface)
 
@@ -253,6 +261,17 @@ Per the new-feature checklist ("one source of truth per vocabulary"):
 review tab), `runDeepReviewer` upgrade (needs DO-side GitHub tool exec), and the
 `github-tools` token-injection refactor so the DO and browser share one client
 instead of the DO's inline token-fetch helpers.
+
+**Abort propagation (follow-up).** Superseding aborts the DO's `AbortController`,
+but `runReviewer` doesn't take an `AbortSignal` and `createWebStreamAdapter`
+isn't signal-aware, so a superseded run's underlying model call keeps going
+until the reviewer's 90s timeout — the DO only checks `signal.aborted` *after*
+`runReviewer` returns and skips the post then (plus the post-time head re-check
+catches a head that advanced before our own delivery's coalescing fired). The
+wasted model time is bounded by that timeout but real. Closing it means
+threading a signal through the reviewer kernel / stream adapter (shared API
+change, same plumbing the CLI's `signalAwareStream` wrapper does for
+`delegate_reviewer`) — deferred to keep this change contained.
 
 **Out (non-goals for v1):** merge gating / `REQUEST_CHANGES`, Checks API
 annotations, Dependabot-specific logic, multi-model fallback, cross-fork

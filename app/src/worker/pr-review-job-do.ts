@@ -394,6 +394,22 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
   );
   if (signal.aborted) throw new Error('aborted');
 
+  // Pin the post to the SHA we reviewed. `fetchPrDiff` returns the PR's
+  // *current* diff; if the head advanced between the webhook delivery and now
+  // (a push whose own delivery hasn't reached this DO yet), posting against the
+  // stale `input.headSha` would attach the review to the wrong commit and risk
+  // 422s on anchors that no longer match. Skip — the newer push has its own
+  // delivery that will review the new head and coalesce this one out.
+  const currentHead = await fetchPrHeadSha(input.repoFullName, input.prNumber, token);
+  if (currentHead && currentHead !== input.headSha) {
+    log('info', 'pr_review_head_advanced', {
+      deliveryId: input.deliveryId,
+      reviewedSha: input.headSha,
+      currentSha: currentHead,
+    });
+    return { result, commentsPosted: 0 };
+  }
+
   const commentsPosted = await postAdvisoryReview(
     input.repoFullName,
     input.prNumber,
@@ -422,6 +438,25 @@ async function fetchPrDiff(repo: string, prNumber: number, token: string): Promi
   });
   if (!res.ok) throw new Error(`github ${res.status} fetching PR #${prNumber} diff on ${repo}`);
   return res.text();
+}
+
+/** Current head SHA of the PR, used to pin the review post to the reviewed commit. */
+async function fetchPrHeadSha(
+  repo: string,
+  prNumber: number,
+  token: string,
+): Promise<string | null> {
+  const res = await fetch(`${GITHUB_API}/repos/${repo}/pulls/${prNumber}`, {
+    headers: {
+      Authorization: `token ${token}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': USER_AGENT,
+    },
+  });
+  if (!res.ok) throw new Error(`github ${res.status} fetching PR #${prNumber} head on ${repo}`);
+  const data = (await res.json()) as { head?: { sha?: string } };
+  return data.head?.sha ?? null;
 }
 
 /** Returns the file's text, or null on 404 (no REVIEW.md at that ref). */

@@ -3944,20 +3944,35 @@ async function handleDelegateCoder(req) {
 
 // ─── Delegate Reviewer (advisory diff review, single-turn) ──────
 
+// Byte ceiling for the bounded REVIEW.md read below. Comfortably exceeds the
+// downstream char cap in role-context (8000) and ~600 lines of guidance, while
+// bounding memory so a pathological REVIEW.md can't be materialized whole.
+const REVIEW_GUIDANCE_MAX_BYTES = 64 * 1024;
+
 /**
- * Read the working-copy REVIEW.md from a daemon workspace, line-capped. The
- * daemon reviews the local checkout, so the working copy (including unpushed
+ * Read the working-copy REVIEW.md from a daemon workspace, byte- and line-capped.
+ * The daemon reviews the local checkout, so the working copy (including unpushed
  * edits) is the authoritative guidance. Returns null when the file is absent so
  * `resolveReviewGuidance` treats it as "no guidance" rather than a read failure;
  * a genuine read error (permissions, etc.) rethrows so the resolver logs it.
+ *
+ * Reads at most `REVIEW_GUIDANCE_MAX_BYTES` via a bounded file-handle read rather
+ * than `fs.readFile`, so the cap actually bounds memory instead of slicing a
+ * fully-materialized file after the fact.
  */
 async function readWorkspaceReviewGuidance(cwd) {
+  let handle;
   try {
-    const raw = await fs.readFile(path.join(cwd, REVIEW_GUIDANCE_FILENAME), 'utf8');
-    return raw.split('\n').slice(0, REVIEW_GUIDANCE_MAX_LINES).join('\n');
+    handle = await fs.open(path.join(cwd, REVIEW_GUIDANCE_FILENAME), 'r');
+    const buffer = Buffer.alloc(REVIEW_GUIDANCE_MAX_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, REVIEW_GUIDANCE_MAX_BYTES, 0);
+    const text = buffer.subarray(0, bytesRead).toString('utf8');
+    return text.split('\n').slice(0, REVIEW_GUIDANCE_MAX_LINES).join('\n');
   } catch (err) {
     if (err && typeof err === 'object' && err.code === 'ENOENT') return null;
     throw err;
+  } finally {
+    await handle?.close();
   }
 }
 

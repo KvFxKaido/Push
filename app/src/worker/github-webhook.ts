@@ -227,6 +227,19 @@ export async function handleGitHubWebhook(request: Request, env: Env): Promise<R
       }),
     );
     const outcome = (await doResponse.json().catch(() => ({}))) as { status?: string };
+    if (!doResponse.ok) {
+      // The DO rejected/failed the start (e.g. malformed payload, storage
+      // error). Don't ack 202 — return 502 so GitHub retries the delivery
+      // rather than dropping it as accepted.
+      log('error', 'webhook_enqueue_rejected', {
+        deliveryId,
+        repo: pr.repoFullName,
+        pr: pr.prNumber,
+        doStatus: doResponse.status,
+        outcome: outcome.status ?? 'unknown',
+      });
+      return json({ error: 'ENQUEUE_REJECTED', doStatus: doResponse.status }, 502);
+    }
     log('info', 'webhook_enqueued', {
       deliveryId,
       repo: pr.repoFullName,
