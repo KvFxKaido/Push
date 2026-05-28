@@ -1275,3 +1275,89 @@ describe('detectAllToolCalls — droppedCandidates tracking', () => {
     expect(result.droppedCandidates).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Textual-order merging across kernel + legacy fallback. Regression cases
+// flagged by Codex P1 / Copilot on PR #679: the kernel-claimed-vs-legacy
+// merge must preserve the model's intended emit order so the grouping
+// state machine sees side-effects in the right slot. Before the fix, all
+// legacy calls were appended after every kernel call regardless of their
+// textual position.
+// ---------------------------------------------------------------------------
+describe('detectAllToolCalls — textual-order merging', () => {
+  it('flat-form scratchpad emitted before a wrapped sandbox_exec lands first in the merged order', () => {
+    // Scratchpad flat-form has no `args` wrapper, so the kernel rejects it
+    // as `missing_args_object` and the legacy fallback claims it. Wrapped
+    // sandbox_exec is a clean kernel claim. The flat-form appears FIRST
+    // textually, so the merged ordering must put scratchpad before exec —
+    // otherwise the grouping state machine flips which side-effect runs as
+    // `mutating` vs which gets shoved into `extraMutations`.
+    const text = [
+      '```json',
+      '{"tool": "set_scratchpad", "content": "remember this"}',
+      '```',
+      '```json',
+      '{"tool": "sandbox_exec", "args": {"command": "echo hi"}}',
+      '```',
+    ].join('\n');
+    const result = detectAllToolCalls(text);
+    // Both are side-effecting (scratchpad mutates session state, exec is
+    // a shell side-effect), so only one fits `mutating` and the other
+    // goes to `extraMutations`. The textually-first call wins `mutating`.
+    expect(result.mutating).not.toBeNull();
+    expect(result.mutating?.source).toBe('scratchpad');
+    expect(result.extraMutations).toHaveLength(1);
+    expect(result.extraMutations[0].source).toBe('sandbox');
+    if (result.extraMutations[0].source === 'sandbox') {
+      expect(result.extraMutations[0].call.tool).toBe('sandbox_exec');
+    }
+  });
+
+  it('wrapped read followed by flat-form scratchpad keeps the read in readOnly', () => {
+    const text = [
+      '```json',
+      '{"tool": "sandbox_read_file", "args": {"path": "/workspace/README.md"}}',
+      '```',
+      '```json',
+      '{"tool": "set_scratchpad", "content": "noted"}',
+      '```',
+    ].join('\n');
+    const result = detectAllToolCalls(text);
+    expect(result.readOnly).toHaveLength(1);
+    expect(result.readOnly[0].source).toBe('sandbox');
+    expect(result.mutating?.source).toBe('scratchpad');
+    expect(result.extraMutations).toHaveLength(0);
+  });
+
+  it('namespaced recovery does not unlock bare-args inference over prose JSON examples', () => {
+    // Pre-fix: when a namespaced recovery (e.g. `functions.read_file:...`)
+    // promoted a call into `allCalls`, the legacy-fallback gate was
+    // `allCalls.length > 0 || hasExplicitWrappers`, which let bare-args
+    // inference run over a prose `{ path, content }` example and
+    // mis-detect it as a `sandbox_write_file`. The fix tightens the gate
+    // to `hasExplicitWrappers` alone so a recovered non-canonical call
+    // no longer unlocks the inference path.
+    //
+    // Namespaced-shape recovery is used here rather than XML because the
+    // XML form embeds an inner `{tool: ...}` JSON object that brace
+    // counting WOULD find — making `hasExplicitWrappers` true. The
+    // namespaced shape has no `{tool: ...}` shape to find.
+    const text = [
+      'Here is how the read tool works:',
+      '```',
+      '{ "path": "/workspace/foo.md", "content": "example content here" }',
+      '```',
+      'And here is the actual call:',
+      'functions.read_file:abc {"repo": "o/r", "path": "x"}',
+    ].join('\n');
+    const result = detectAllToolCalls(text);
+    // The namespaced-recovered read_file should land. The prose example
+    // must NOT become a sandbox_write_file via bare-args inference.
+    const tools = [
+      ...result.readOnly.map((c) => c.call.tool),
+      ...result.fileMutations.map((c) => c.call.tool),
+      ...(result.mutating ? [result.mutating.call.tool] : []),
+    ];
+    expect(tools).not.toContain('sandbox_write_file');
+  });
+});
