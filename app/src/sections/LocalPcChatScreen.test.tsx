@@ -28,6 +28,8 @@ vi.mock('@/hooks/useChat', () => ({
     messages: [],
     sendMessage: vi.fn(),
     agentStatus: { active: false, phase: '' },
+    agentEvents: [],
+    runEvents: [],
     isStreaming: false,
     abortStream: vi.fn(),
     interruptedCheckpoint: null,
@@ -35,8 +37,22 @@ vi.mock('@/hooks/useChat', () => ({
     dismissResume: vi.fn(),
     handleCardAction: vi.fn(),
     setLocalDaemonBinding: vi.fn(),
+    setWorkspaceContext: vi.fn(),
     setWorkspaceMode: vi.fn(),
+    // Multi-chat surface now consumed by the workspace-style shell
+    // (drawer renders the conversation list; useChat owns it).
+    conversations: {},
+    conversationsLoaded: true,
+    activeChatId: 'chat-1',
+    switchChat: vi.fn(),
     createNewChat: vi.fn(),
+    deleteChat: vi.fn(),
+    renameChat: vi.fn(),
+    // Provider-lock fields the picker reads to display the locked chip.
+    lockedProvider: null,
+    isProviderLocked: false,
+    lockedModel: null,
+    isModelLocked: false,
   }),
 }));
 

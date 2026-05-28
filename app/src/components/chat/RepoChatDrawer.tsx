@@ -158,8 +158,23 @@ export function RepoChatDrawer({
     () => allUnscopedChats.filter((c) => c.mode === 'chat'),
     [allUnscopedChats],
   );
+  // Daemon-backed chats (local-pc / relay) get their own labeled sections.
+  // Before splitting these out, they fell into "Unscoped" beside scratch
+  // chats — confusing when they have a stable provenance (a paired daemon)
+  // and the user is in one of those modes.
+  const localPcChats = useMemo(
+    () => allUnscopedChats.filter((c) => c.mode === 'local-pc'),
+    [allUnscopedChats],
+  );
+  const relayChats = useMemo(
+    () => allUnscopedChats.filter((c) => c.mode === 'relay'),
+    [allUnscopedChats],
+  );
   const unscopedChats = useMemo(
-    () => allUnscopedChats.filter((c) => c.mode !== 'chat'),
+    () =>
+      allUnscopedChats.filter(
+        (c) => c.mode !== 'chat' && c.mode !== 'local-pc' && c.mode !== 'relay',
+      ),
     [allUnscopedChats],
   );
   const normalizedQuery = searchQuery.trim().toLowerCase();
@@ -190,6 +205,16 @@ export function RepoChatDrawer({
     if (!isSearching) return chatModeChats;
     return chatModeChats.filter((chat) => chat.title.toLowerCase().includes(normalizedQuery));
   }, [isSearching, normalizedQuery, chatModeChats]);
+
+  const filteredLocalPcChats = useMemo(() => {
+    if (!isSearching) return localPcChats;
+    return localPcChats.filter((chat) => chat.title.toLowerCase().includes(normalizedQuery));
+  }, [isSearching, normalizedQuery, localPcChats]);
+
+  const filteredRelayChats = useMemo(() => {
+    if (!isSearching) return relayChats;
+    return relayChats.filter((chat) => chat.title.toLowerCase().includes(normalizedQuery));
+  }, [isSearching, normalizedQuery, relayChats]);
 
   const toggleRepo = (repoFullName: string, fallbackOpen: boolean) => {
     if (isSearching) return;
@@ -691,6 +716,26 @@ export function RepoChatDrawer({
                       </div>
                     </div>
                   )}
+                  {filteredLocalPcChats.length > 0 && (
+                    <div className={DRAWER_SECTION_SURFACE_CLASS}>
+                      <div className="px-1 py-2.5 text-push-xs font-medium uppercase tracking-wide text-push-link">
+                        Local PC
+                      </div>
+                      <div className="space-y-1 px-0 pb-0">
+                        {filteredLocalPcChats.map((chat) => renderChatRow(chat))}
+                      </div>
+                    </div>
+                  )}
+                  {filteredRelayChats.length > 0 && (
+                    <div className={DRAWER_SECTION_SURFACE_CLASS}>
+                      <div className="px-1 py-2.5 text-push-xs font-medium uppercase tracking-wide text-push-link">
+                        Remote
+                      </div>
+                      <div className="space-y-1 px-0 pb-0">
+                        {filteredRelayChats.map((chat) => renderChatRow(chat))}
+                      </div>
+                    </div>
+                  )}
                   {filteredUnscopedChats.length > 0 && (
                     <div className={DRAWER_SECTION_SURFACE_CLASS}>
                       <div className="px-1 py-2.5 text-push-xs font-medium uppercase tracking-wide text-push-fg-muted">
@@ -703,7 +748,9 @@ export function RepoChatDrawer({
                   )}
                   {filteredRepoRows.length === 0 &&
                     filteredUnscopedChats.length === 0 &&
-                    filteredChatModeChats.length === 0 && (
+                    filteredChatModeChats.length === 0 &&
+                    filteredLocalPcChats.length === 0 &&
+                    filteredRelayChats.length === 0 && (
                       <div className="rounded-xl border border-dashed border-push-edge/70 bg-push-surface/15 px-3 py-4 text-center text-push-sm text-push-fg-muted">
                         No repos or chats match your search.
                       </div>

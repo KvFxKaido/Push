@@ -1,13 +1,17 @@
 /**
  * DaemonChatBody — shared chat shell for daemon-backed sessions.
- * Phase 2.i extraction from `LocalPcChatScreen` / `RelayChatScreen`,
- * which were 95% identical: same `useChat(null)` mount, same
- * conversation init, same compose box, same reconnect banner, same
- * approval queue rendering. The screens become thin wrappers that
- * mount the right daemon hook (`useLocalDaemon` vs `useRelayDaemon`)
- * and pass everything else here.
  *
- * What stays in the screen, by design:
+ * Phase 2.i extracted this from `LocalPcChatScreen` / `RelayChatScreen`
+ * when they were 95% identical clones. The current pass restructures the
+ * shell so daemon sessions look like repo / chat mode: same header
+ * layout (drawer left, center pill, hub button right), same background
+ * glow capacity, same `RepoChatDrawer` (filtered to daemon-mode chats),
+ * same `WorkspaceHubSheet` (trimmed to Notes — see
+ * `WorkspaceHubSheet.tsx` for the tab gating). Daemon-only affordances —
+ * mode chip, reconnect banner, approval prompt, stop, leave, unpair —
+ * slot into the matching positions in that shell.
+ *
+ * What stays in the screen (not here), by design:
  *   - The daemon hook mount — `useLocalDaemon` and `useRelayDaemon`
  *     have divergent return shapes (the relay hook adds
  *     `replayUnavailableAt`), and Rules-of-Hooks means we can't pick
@@ -27,15 +31,18 @@
  * lives here so the screens don't drift.
  */
 import { ArrowLeft, RefreshCw, Send, Square } from 'lucide-react';
-import { NotebookPadIcon } from '@/components/icons/push-custom-icons';
+import { WorkspaceDockIcon } from '@/components/icons/push-custom-icons';
 import type { LucideIcon } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type React from 'react';
 
+import { ChatBackgroundGlow } from '@/components/chat/ChatBackgroundGlow';
 import { ChatContainer } from '@/components/chat/ChatContainer';
+import { RepoChatDrawer } from '@/components/chat/RepoChatDrawer';
+import { WorkspaceHubSheet } from '@/components/chat/WorkspaceHubSheet';
+import { HEADER_PILL_BUTTON_CLASS, HEADER_ROUND_BUTTON_CLASS } from '@/components/chat/hub-styles';
 import { ApprovalPrompt } from '@/components/daemon/ApprovalPrompt';
 import { cancelPendingApprovals } from '@/lib/daemon-cancel-pending-approvals';
-import { DaemonHubSheet } from '@/components/daemon/DaemonHubSheet';
 import { DaemonModelPicker } from '@/components/daemon/DaemonModelPicker';
 import { ModelPicker } from '@/components/ui/model-picker';
 import { useChat } from '@/hooks/useChat';
@@ -51,6 +58,7 @@ import {
   setPreferredProvider,
   type PreferredProvider,
 } from '@/lib/providers';
+import { DEFAULT_REPO_APPEARANCE, getRepoAppearanceColorHex } from '@/lib/repo-appearance';
 import type { Conversation, WorkspaceContext, WorkspaceMode } from '@/types';
 
 /**
@@ -116,6 +124,21 @@ export interface DaemonChatBodyProps {
   request: <T = unknown>(opts: RequestOptions) => Promise<SessionResponse<T>>;
 }
 
+// Daemon sessions don't have a per-session palette today. The shell
+// still renders the glow surface (so the structure matches repo / chat
+// mode); the layer stays disabled until a follow-up plumbs a per-daemon
+// appearance hook (mirroring `useChatModeAppearance`). `glowEnabled` is
+// explicitly forced false because `DEFAULT_REPO_APPEARANCE.glowEnabled`
+// defaults to true — without the override the animated glow would run
+// on every daemon session, which is a wasted compositor cost on mobile.
+const DAEMON_APPEARANCE = { ...DEFAULT_REPO_APPEARANCE, glowEnabled: false };
+const DAEMON_APPEARANCE_HEX = getRepoAppearanceColorHex(DAEMON_APPEARANCE.color);
+
+const MODE_HEADER_LABEL: Record<DaemonChatBodyProps['mode'], string> = {
+  'local-pc': 'Local PC',
+  relay: 'Remote',
+};
+
 export function DaemonChatBody({
   mode,
   daemonLabel,
@@ -139,12 +162,31 @@ export function DaemonChatBody({
   // so `getActiveProvider()` returns the new value on the next read.
   const catalog = useModelCatalog();
 
-  // Hub sheet open state + data feeds for its Notes tab. All three
-  // hooks accept `repoFullName: string | null`; daemon sessions have
-  // no repo binding, so we pass `null` to get the "global / non-repo
-  // scoped" storage key. The hub stays unmounted when closed (state
-  // lives here so toggling doesn't reset between renders).
-  const [hubOpen, setHubOpen] = useState(false);
+  // Hub + drawer open state. The hub mirrors `WorkspaceHubSheet`'s
+  // slide-in-from-right behavior; the drawer slides in from the left
+  // via `RepoChatDrawer`. The chat shell's `chatShellTransform`
+  // applies the matching opposite translate so the two surfaces feel
+  // like one connected layout, same as `ChatSurfaceScreen`.
+  //
+  // The two are mutually exclusive — the `chatShellTransform` can only
+  // express one side at a time, and overlapping sheets look wrong.
+  // Mirrors `useWorkspaceChatPanelsController`'s exclusion in repo /
+  // chat mode.
+  const [hubOpen, setHubOpenState] = useState(false);
+  const [drawerOpen, setDrawerOpenState] = useState(false);
+  const openHub = useCallback(() => {
+    setDrawerOpenState(false);
+    setHubOpenState(true);
+  }, []);
+  const handleHubOpenChange = useCallback((open: boolean) => {
+    if (open) setDrawerOpenState(false);
+    setHubOpenState(open);
+  }, []);
+  const handleDrawerOpenChange = useCallback((open: boolean) => {
+    if (open) setHubOpenState(false);
+    setDrawerOpenState(open);
+  }, []);
+
   const scratchpad = useScratchpad(null);
   const todo = useTodo(null);
   const pinnedArtifacts = usePinnedArtifacts(null);
@@ -179,6 +221,8 @@ export function DaemonChatBody({
     messages,
     sendMessage,
     agentStatus,
+    agentEvents,
+    runEvents,
     isStreaming,
     abortStream,
     interruptedCheckpoint,
@@ -193,6 +237,8 @@ export function DaemonChatBody({
     activeChatId,
     switchChat,
     createNewChat,
+    deleteChat,
+    renameChat,
     // Slice 1.d polish: once the active chat has sent its first
     // message, useChat locks the conversation to its original
     // provider. The picker reads these to render the locked
@@ -360,159 +406,285 @@ export function DaemonChatBody({
     abortStream();
   };
 
+  // Shell slide transform: drawer pushes the chat right, hub pulls it
+  // left, matching ChatSurfaceScreen / WorkspaceChatRoute. Sized at the
+  // same offsets so the visual rhythm is identical.
+  const drawerOffset = 'min(86vw, 24rem)';
+  const hubOffset = '94vw';
+  const chatShellTransform = drawerOpen
+    ? `translateX(${drawerOffset})`
+    : hubOpen
+      ? `translateX(-${hubOffset})`
+      : 'translateX(0px)';
+  const chatShellShadow = drawerOpen
+    ? 'shadow-[-24px_0_56px_rgba(0,0,0,0.42)]'
+    : hubOpen
+      ? 'shadow-[24px_0_56px_rgba(0,0,0,0.42)]'
+      : '';
+
+  // Pre-filter conversations to the active daemon mode before passing
+  // them to the drawer. The daemon screen stays mounted with the same
+  // transport binding regardless of which chat the user taps, so
+  // cross-mode picks (e.g. tapping a Remote transcript inside a Local
+  // PC session) would route the next send through the wrong daemon
+  // while displaying the picked transcript. Filtering at the source
+  // means the drawer only shows chats this daemon can faithfully
+  // resume.
+  const daemonScopedConversations = useMemo(() => {
+    const filtered: Record<string, Conversation> = {};
+    for (const [id, conv] of Object.entries(conversations)) {
+      if (conv.mode === mode) filtered[id] = conv as Conversation;
+    }
+    return filtered;
+  }, [conversations, mode]);
+
+  const drawerProps = useMemo(
+    () => ({
+      open: drawerOpen,
+      onOpenChange: handleDrawerOpenChange,
+      // Daemon sessions don't enumerate GitHub repos. Passing an empty
+      // list collapses the repo accordion section; daemon-mode chats
+      // surface in the "Local PC" / "Remote" sections (see
+      // RepoChatDrawer's filtered* memos).
+      repos: [],
+      activeRepo: null,
+      conversations: daemonScopedConversations,
+      activeChatId,
+      resolveRepoAppearance: () => DAEMON_APPEARANCE,
+      setRepoAppearance: () => {},
+      clearRepoAppearance: () => {},
+      onSelectRepo: () => {},
+      onResumeChat: (id: string) => {
+        switchChat(id);
+      },
+      onNewChat: () => {
+        createNewChat();
+      },
+      onDeleteChat: (id: string) => {
+        deleteChat(id);
+      },
+      onRenameChat: (id: string, title: string) => {
+        renameChat(id, title);
+      },
+    }),
+    [
+      drawerOpen,
+      handleDrawerOpenChange,
+      daemonScopedConversations,
+      activeChatId,
+      switchChat,
+      createNewChat,
+      deleteChat,
+      renameChat,
+    ],
+  );
+
+  const headerLabel = MODE_HEADER_LABEL[mode];
+  const composePlaceholder =
+    status.state === 'open'
+      ? `Ask the ${daemonLabel}…`
+      : status.state === 'connecting'
+        ? `Connecting to ${daemonLabel}…`
+        : `${capitalize(daemonLabel)} unreachable`;
+
   return (
-    <div className="flex h-dvh flex-col bg-[linear-gradient(180deg,rgba(4,6,10,1)_0%,rgba(2,4,8,1)_100%)] safe-area-top safe-area-bottom">
-      <header className="flex items-center justify-between gap-2 border-b border-push-edge/40 px-3 py-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <button
-            type="button"
-            onClick={onLeave}
-            aria-label={`Leave ${daemonLabel}`}
-            title={`Leave ${daemonLabel}`}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-push-edge/60 text-push-fg-secondary transition hover:border-push-fg/60 hover:text-push-fg"
-          >
-            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-          </button>
-          <div className="min-w-0 [&>*]:max-w-full">{modeChip}</div>
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          {isStreaming ? (
-            <button
-              type="button"
-              onClick={handleAbort}
-              aria-label="Stop"
-              title="Stop the in-flight turn"
-              className="inline-flex items-center gap-1.5 rounded-full border border-rose-400/40 px-3 py-1.5 text-xs text-rose-200 transition hover:border-rose-400/60 hover:bg-rose-400/10"
-            >
-              <Square className="h-3.5 w-3.5" aria-hidden="true" />
-              <span className="hidden sm:inline">Stop</span>
-            </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => setHubOpen(true)}
-            aria-label="Open hub"
-            title="Notes + pinned artifacts"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-push-edge/60 text-push-fg-secondary transition hover:border-push-fg/60 hover:text-push-fg"
-          >
-            <NotebookPadIcon className="h-4 w-4" aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            onClick={handleUnpair}
-            aria-label="Unpair"
-            className="inline-flex items-center gap-1.5 rounded-full border border-push-edge/60 px-3 py-1.5 text-xs text-push-fg-secondary transition hover:border-rose-400/40 hover:text-rose-200"
-          >
-            <UnpairIcon className="h-3.5 w-3.5" aria-hidden="true" />
-            <span className="hidden sm:inline">Unpair</span>
-          </button>
-        </div>
-      </header>
-
-      {status.state !== 'open' && status.state !== 'connecting' ? (
-        <ReconnectBanner
-          daemonLabel={daemonLabel}
-          status={status.state}
-          attempts={reconnectInfo.attempts}
-          maxAttempts={reconnectInfo.maxAttempts}
-          nextAttemptAt={reconnectInfo.nextAttemptAt}
-          exhausted={reconnectInfo.exhausted}
-          now={now}
-          onRetry={reconnect}
-        />
-      ) : null}
-
-      <ApprovalPrompt
-        pending={approvals.head}
-        queuedBehind={approvals.queuedBehind}
-        onDecide={decideApproval}
-      />
-
-      <ChatContainer
-        messages={messages}
-        agentStatus={agentStatus}
-        activeRepo={null}
-        hasSandbox={false}
-        isChat={true}
-        onCardAction={handleCardAction}
-        interruptedCheckpoint={interruptedCheckpoint}
-        onResumeRun={resumeInterruptedRun}
-        onDismissResume={dismissResume}
-        // Wire pin so chat messages get the pin action and the
-        // result lands in the hub's Kept section.
-        onPin={pinnedArtifacts.pin}
-      />
-
-      <div className="border-t border-push-edge/40 bg-push-surface-inset/80 px-3 py-2 backdrop-blur safe-area-bottom">
-        <div className="mb-2 grid grid-cols-[auto,minmax(0,1fr)] items-center gap-2">
-          <DaemonModelPicker
-            activeProvider={catalog.activeProviderLabel}
-            availableProviders={catalog.availableProviders}
-            onSelectProvider={handleSelectProvider}
-            lockedProvider={lockedProvider}
-            isProviderLocked={isProviderLocked}
-            className="max-w-[46vw]"
+    <>
+      <div className="relative flex h-dvh flex-col overflow-hidden bg-push-surface-inset safe-area-top safe-area-bottom">
+        <div
+          className={`relative z-10 isolate flex min-h-0 flex-1 flex-col bg-push-surface-inset transition-[transform,box-shadow] duration-500 ease-in-out will-change-transform ${chatShellShadow}`}
+          style={{ transform: chatShellTransform }}
+        >
+          <ChatBackgroundGlow
+            active={DAEMON_APPEARANCE.glowEnabled}
+            color={DAEMON_APPEARANCE_HEX}
           />
-          {modelControl ? (
-            <ModelPicker
-              provider={modelControl.provider}
-              value={modelControl.value}
-              options={modelControl.options}
-              onChange={handleSelectModel}
-              allowCustom={modelControl.allowCustom}
-              disabled={modelControl.loading}
-              onRefresh={modelControl.onRefresh}
-              isRefreshing={modelControl.loading}
-              refreshAriaLabel={`Refresh ${modelControl.providerLabel} models`}
-              ariaLabel="Select daemon model"
-              searchPlaceholder={`Search ${modelControl.providerLabel} models...`}
-              emptyLabel={modelControl.error ?? 'No models found.'}
-              triggerLabel={
-                <span className="truncate">
-                  {modelControl.value
-                    ? getModelDisplayLeafName(modelControl.provider, modelControl.value)
-                    : 'Select model'}
-                </span>
-              }
-              className="min-w-0"
-              triggerClassName="h-7 rounded-full border-push-edge/60 bg-push-surface px-2.5 text-xs"
-              popoverClassName="w-[min(20rem,calc(100vw-2rem))]"
+          <header className="relative z-10 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 pt-3 pb-2">
+            <div className="relative z-20 flex min-w-0 items-center gap-2">
+              <div className="flex h-[34px] min-w-0 items-center gap-1 pl-0.5 pr-1">
+                <RepoChatDrawer {...drawerProps} />
+                <div className="-ml-2.5 flex min-w-0 items-center self-stretch">
+                  <p className="truncate text-sm font-medium leading-tight text-push-fg">
+                    <span className="hidden sm:inline">{headerLabel}</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex min-w-0 justify-center">
+              <div className={`${HEADER_PILL_BUTTON_CLASS} cursor-default min-w-0 max-w-full`}>
+                <div className="relative z-10 min-w-0 [&>*]:max-w-full">{modeChip}</div>
+              </div>
+            </div>
+
+            <div className="relative z-20 flex min-w-0 items-center justify-end gap-2">
+              {isStreaming && (
+                <button
+                  type="button"
+                  onClick={handleAbort}
+                  aria-label="Stop"
+                  title="Stop the in-flight turn"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-rose-400/40 px-3 py-1.5 text-xs text-rose-200 transition hover:border-rose-400/60 hover:bg-rose-400/10"
+                >
+                  <Square className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span className="hidden sm:inline">Stop</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onLeave}
+                aria-label={`Leave ${daemonLabel}`}
+                title={`Leave ${daemonLabel}`}
+                className={HEADER_ROUND_BUTTON_CLASS}
+              >
+                <ArrowLeft className="relative z-10 h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={openHub}
+                aria-label="Open hub"
+                title="Notes + pinned artifacts"
+                className={HEADER_ROUND_BUTTON_CLASS}
+              >
+                <WorkspaceDockIcon className="relative z-10 h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={handleUnpair}
+                aria-label="Unpair"
+                title="Unpair this daemon"
+                className="inline-flex items-center gap-1.5 rounded-full border border-push-edge/60 px-3 py-1.5 text-xs text-push-fg-secondary transition hover:border-rose-400/40 hover:text-rose-200"
+              >
+                <UnpairIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                <span className="hidden sm:inline">Unpair</span>
+              </button>
+            </div>
+            <div className="pointer-events-none absolute inset-x-0 top-full h-8 bg-gradient-to-b from-black to-transparent" />
+          </header>
+
+          {status.state !== 'open' && status.state !== 'connecting' ? (
+            <ReconnectBanner
+              daemonLabel={daemonLabel}
+              status={status.state}
+              attempts={reconnectInfo.attempts}
+              maxAttempts={reconnectInfo.maxAttempts}
+              nextAttemptAt={reconnectInfo.nextAttemptAt}
+              exhausted={reconnectInfo.exhausted}
+              now={now}
+              onRetry={reconnect}
             />
           ) : null}
-        </div>
-        <div className="flex items-end gap-2">
-          <textarea
-            value={composeText}
-            onChange={(e) => setComposeText(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={
-              status.state === 'open'
-                ? `Ask the ${daemonLabel}…`
-                : status.state === 'connecting'
-                  ? `Connecting to ${daemonLabel}…`
-                  : `${capitalize(daemonLabel)} unreachable`
-            }
-            rows={1}
-            className="min-h-[40px] max-h-[160px] flex-1 resize-none rounded-2xl border border-push-edge/60 bg-push-surface-inset px-3 py-2 text-sm text-push-fg outline-none focus:border-push-edge"
-            disabled={isStreaming || status.state !== 'open'}
-            aria-label="Message"
+
+          <ApprovalPrompt
+            pending={approvals.head}
+            queuedBehind={approvals.queuedBehind}
+            onDecide={decideApproval}
           />
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={!composeText.trim() || isStreaming || status.state !== 'open'}
-            aria-label="Send"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-push-edge/60 text-push-fg-secondary transition enabled:hover:border-push-fg/60 enabled:hover:text-push-fg disabled:opacity-40"
-          >
-            <Send className="h-4 w-4" aria-hidden="true" />
-          </button>
+
+          <ChatContainer
+            messages={messages}
+            agentStatus={agentStatus}
+            activeRepo={null}
+            hasSandbox={false}
+            isChat={true}
+            onCardAction={handleCardAction}
+            interruptedCheckpoint={interruptedCheckpoint}
+            onResumeRun={resumeInterruptedRun}
+            onDismissResume={dismissResume}
+            // Wire pin so chat messages get the pin action and the
+            // result lands in the hub's Kept section.
+            onPin={pinnedArtifacts.pin}
+          />
+
+          <div className="border-t border-push-edge/40 bg-push-surface-inset/80 px-3 py-2 backdrop-blur safe-area-bottom">
+            <div className="mb-2 grid grid-cols-[auto,minmax(0,1fr)] items-center gap-2">
+              <DaemonModelPicker
+                activeProvider={catalog.activeProviderLabel}
+                availableProviders={catalog.availableProviders}
+                onSelectProvider={handleSelectProvider}
+                lockedProvider={lockedProvider}
+                isProviderLocked={isProviderLocked}
+                className="max-w-[46vw]"
+              />
+              {modelControl ? (
+                <ModelPicker
+                  provider={modelControl.provider}
+                  value={modelControl.value}
+                  options={modelControl.options}
+                  onChange={handleSelectModel}
+                  allowCustom={modelControl.allowCustom}
+                  disabled={modelControl.loading}
+                  onRefresh={modelControl.onRefresh}
+                  isRefreshing={modelControl.loading}
+                  refreshAriaLabel={`Refresh ${modelControl.providerLabel} models`}
+                  ariaLabel="Select daemon model"
+                  searchPlaceholder={`Search ${modelControl.providerLabel} models...`}
+                  emptyLabel={modelControl.error ?? 'No models found.'}
+                  triggerLabel={
+                    <span className="truncate">
+                      {modelControl.value
+                        ? getModelDisplayLeafName(modelControl.provider, modelControl.value)
+                        : 'Select model'}
+                    </span>
+                  }
+                  className="min-w-0"
+                  triggerClassName="h-7 rounded-full border-push-edge/60 bg-push-surface px-2.5 text-xs"
+                  popoverClassName="w-[min(20rem,calc(100vw-2rem))]"
+                />
+              ) : null}
+            </div>
+            <div className="flex items-end gap-2">
+              <textarea
+                value={composeText}
+                onChange={(e) => setComposeText(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={composePlaceholder}
+                rows={1}
+                className="min-h-[40px] max-h-[160px] flex-1 resize-none rounded-2xl border border-push-edge/60 bg-push-surface-inset px-3 py-2 text-sm text-push-fg outline-none focus:border-push-edge"
+                disabled={isStreaming || status.state !== 'open'}
+                aria-label="Message"
+              />
+              <button
+                type="button"
+                onClick={handleSend}
+                disabled={!composeText.trim() || isStreaming || status.state !== 'open'}
+                aria-label="Send"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-push-edge/60 text-push-fg-secondary transition enabled:hover:border-push-fg/60 enabled:hover:text-push-fg disabled:opacity-40"
+              >
+                <Send className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
-      <DaemonHubSheet
+      <WorkspaceHubSheet
         open={hubOpen}
-        onOpenChange={setHubOpen}
-        daemonLabel={daemonLabel}
+        onOpenChange={handleHubOpenChange}
+        messages={messages}
+        agentEvents={agentEvents}
+        runEvents={runEvents}
+        sandboxId={null}
+        sandboxStatus="idle"
+        sandboxError={null}
+        ensureSandbox={async () => null}
+        onStartSandbox={() => {}}
+        onRetrySandbox={() => {}}
+        onNewSandbox={() => {}}
+        reviewProviders={catalog.availableProviders}
+        reviewActiveProvider={catalog.activeProviderLabel}
+        lockedProvider={lockedProvider}
+        lockedModel={lockedModel}
+        workspaceMode={mode}
+        capabilities={{
+          canManageBranches: false,
+          canBrowsePullRequests: false,
+          canCommitAndPush: false,
+        }}
+        scratchActions={null}
+        repoName={daemonLabel}
+        projectInstructions={null}
+        protectMainEnabled={false}
+        showToolActivity={false}
         scratchpadContent={scratchpad.content}
         scratchpadMemories={scratchpad.memories}
         activeMemoryId={scratchpad.activeMemoryId}
@@ -521,13 +693,26 @@ export function DaemonChatBody({
         onScratchpadSaveMemory={scratchpad.saveMemory}
         onScratchpadLoadMemory={scratchpad.loadMemory}
         onScratchpadDeleteMemory={scratchpad.deleteMemory}
+        todos={todo.todos}
+        onTodoClear={todo.clear}
+        branchProps={{
+          currentBranch: undefined,
+          defaultBranch: undefined,
+          availableBranches: [],
+          branchesLoading: false,
+          onSwitchBranch: () => {},
+          onRefreshBranches: () => {},
+          onShowBranchCreate: () => {},
+          onShowBranchFork: () => {},
+          onShowMergeFlow: () => {},
+          onDeleteBranch: async () => false,
+        }}
+        onFixReviewFinding={() => {}}
         pinnedArtifacts={pinnedArtifacts.artifacts}
         onUnpinArtifact={pinnedArtifacts.unpin}
         onUpdateArtifactLabel={pinnedArtifacts.updateLabel}
-        todos={todo.todos}
-        onTodoClear={todo.clear}
       />
-    </div>
+    </>
   );
 }
 

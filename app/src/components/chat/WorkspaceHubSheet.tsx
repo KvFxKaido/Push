@@ -193,11 +193,17 @@ interface WorkspaceHubSheetProps {
   projectInstructions?: string | null;
   protectMainEnabled: boolean;
   showToolActivity: boolean;
-  settingsAuth: SettingsAuthProps;
-  settingsProfile: SettingsProfileProps;
-  settingsAI: SettingsAIProps;
-  settingsWorkspace: SettingsWorkspaceProps;
-  settingsData: SettingsDataProps;
+  /**
+   * Settings prop bundles. Required for repo / scratch / chat workspaces
+   * that surface the Settings tab. Daemon-backed sessions (local-pc /
+   * relay) don't have these wired today and the Settings tab is dropped
+   * for them — see the `tabs` useMemo below.
+   */
+  settingsAuth?: SettingsAuthProps;
+  settingsProfile?: SettingsProfileProps;
+  settingsAI?: SettingsAIProps;
+  settingsWorkspace?: SettingsWorkspaceProps;
+  settingsData?: SettingsDataProps;
   // Scratchpad
   scratchpadContent: string;
   scratchpadMemories: ScratchpadMemory[];
@@ -246,6 +252,11 @@ const TABS_WITH_CONSOLE: Array<{
 
 const TABS_WITHOUT_CONSOLE = TABS_WITH_CONSOLE.filter((tab) => tab.key !== 'console');
 const CHAT_MODE_TABS = new Set<HubTab>(['notes', 'settings']);
+// Daemon-backed workspaces (local-pc / relay) get the same trimmed surface
+// as chat mode for now: just Notes. Settings is included only if the daemon
+// screen plumbed the prop bundles (today none of them do — the gate stays
+// the same as the chat-mode check, just keyed off the bundles' presence).
+const DAEMON_MODE_TABS = new Set<HubTab>(['notes', 'settings']);
 
 const PHASE_LABELS: Record<CommitPhase, string> = {
   idle: '',
@@ -456,18 +467,41 @@ export function WorkspaceHubSheet({
   }, [onForgetSandboxSnapshot]);
 
   const sandboxReady = sandboxStatus === 'ready' && Boolean(sandboxId);
+  const isDaemonMode = workspaceMode === 'local-pc' || workspaceMode === 'relay';
+  // The Settings tab depends on the parent passing the full settings
+  // prop bundles. Daemon screens don't plumb these yet, so the tab is
+  // omitted there rather than crashing into `HubSettingsTab` with
+  // undefined sub-props.
+  const hasSettingsBundles = Boolean(
+    settingsAuth && settingsProfile && settingsAI && settingsWorkspace && settingsData,
+  );
   const tabs = useMemo(() => {
     if (workspaceMode === 'chat') {
-      return (showToolActivity ? TABS_WITH_CONSOLE : TABS_WITHOUT_CONSOLE).filter((tab) =>
-        CHAT_MODE_TABS.has(tab.key),
+      return (showToolActivity ? TABS_WITH_CONSOLE : TABS_WITHOUT_CONSOLE).filter(
+        (tab) => CHAT_MODE_TABS.has(tab.key) && (tab.key !== 'settings' || hasSettingsBundles),
+      );
+    }
+    if (isDaemonMode) {
+      return (showToolActivity ? TABS_WITH_CONSOLE : TABS_WITHOUT_CONSOLE).filter(
+        (tab) => DAEMON_MODE_TABS.has(tab.key) && (tab.key !== 'settings' || hasSettingsBundles),
       );
     }
     const baseTabs = showToolActivity ? TABS_WITH_CONSOLE : TABS_WITHOUT_CONSOLE;
-    return baseTabs.filter((tab) => capabilities.canBrowsePullRequests || tab.key !== 'prs');
-  }, [capabilities.canBrowsePullRequests, showToolActivity, workspaceMode]);
+    return baseTabs.filter(
+      (tab) =>
+        (capabilities.canBrowsePullRequests || tab.key !== 'prs') &&
+        (tab.key !== 'settings' || hasSettingsBundles),
+    );
+  }, [
+    capabilities.canBrowsePullRequests,
+    hasSettingsBundles,
+    isDaemonMode,
+    showToolActivity,
+    workspaceMode,
+  ]);
   const fallbackTab = (
-    workspaceMode === 'chat'
-      ? 'settings'
+    workspaceMode === 'chat' || isDaemonMode
+      ? (tabs.find((tab) => tab.key === 'notes')?.key ?? tabs[0]?.key ?? 'notes')
       : (tabs.find((tab) => tab.key === 'files')?.key ?? tabs[0]?.key ?? 'settings')
   ) as HubTab;
   const activeTabIndex = tabs.findIndex((tab) => tab.key === activeTab);
@@ -1097,11 +1131,19 @@ export function WorkspaceHubSheet({
         className="w-[94vw] rounded-l-2xl border-l border-push-edge-subtle bg-push-grad-panel p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.3)] sm:max-w-none [&>[data-slot=sheet-close]]:hidden"
       >
         <SheetHeader className="sr-only">
-          <SheetTitle>{workspaceMode === 'chat' ? 'Chat Panel' : 'Workspace Hub'}</SheetTitle>
+          <SheetTitle>
+            {workspaceMode === 'chat'
+              ? 'Chat Panel'
+              : isDaemonMode
+                ? 'Daemon Hub'
+                : 'Workspace Hub'}
+          </SheetTitle>
           <SheetDescription>
             {workspaceMode === 'chat'
               ? 'Notes and settings for chat mode.'
-              : 'Files, notes, review tools, and settings for the current workspace.'}
+              : isDaemonMode
+                ? 'Notes and pinned artifacts for the paired daemon session.'
+                : 'Files, notes, review tools, and settings for the current workspace.'}
           </SheetDescription>
         </SheetHeader>
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-16 rounded-tl-2xl bg-gradient-to-b from-white/[0.03] to-transparent" />
@@ -1112,11 +1154,11 @@ export function WorkspaceHubSheet({
               {/* Repo + Branch dropdown */}
               <div className="min-w-0 space-y-1">
                 <p className="truncate text-sm font-semibold text-push-fg">
-                  {workspaceMode === 'chat' ? 'Chat' : 'Workspace'}
+                  {workspaceMode === 'chat' ? 'Chat' : isDaemonMode ? 'Hub' : 'Workspace'}
                 </p>
                 <div className="flex items-center gap-1.5">
                   <span className="truncate text-push-xs text-push-fg-dim">
-                    {repoName || 'Workspace'}
+                    {repoName || (isDaemonMode ? 'Daemon' : 'Workspace')}
                   </span>
                   {workspaceMode === 'scratch' && <span className={HUB_TAG_CLASS}>ephemeral</span>}
                   {capabilities.canManageBranches && branchProps.currentBranch && (
@@ -1718,21 +1760,26 @@ export function WorkspaceHubSheet({
               </div>
             )}
 
-            {activeTab === 'settings' && (
-              <div className="flex h-full min-h-0 flex-col">
-                <Suspense fallback={null}>
-                  <HubSettingsTab
-                    key={`settings-${open ? 'open' : 'closed'}`}
-                    auth={settingsAuth}
-                    profile={settingsProfile}
-                    ai={settingsAI}
-                    workspace={settingsWorkspace}
-                    data={settingsData}
-                    onCloseHub={() => onOpenChange(false)}
-                  />
-                </Suspense>
-              </div>
-            )}
+            {activeTab === 'settings' &&
+              settingsAuth &&
+              settingsProfile &&
+              settingsAI &&
+              settingsWorkspace &&
+              settingsData && (
+                <div className="flex h-full min-h-0 flex-col">
+                  <Suspense fallback={null}>
+                    <HubSettingsTab
+                      key={`settings-${open ? 'open' : 'closed'}`}
+                      auth={settingsAuth}
+                      profile={settingsProfile}
+                      ai={settingsAI}
+                      workspace={settingsWorkspace}
+                      data={settingsData}
+                      onCloseHub={() => onOpenChange(false)}
+                    />
+                  </Suspense>
+                </div>
+              )}
           </div>
 
           <Sheet
