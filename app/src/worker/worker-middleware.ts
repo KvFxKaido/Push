@@ -62,6 +62,15 @@ export interface Env {
   // GitHub App OAuth (for auto-connect flow)
   GITHUB_APP_CLIENT_ID?: string;
   GITHUB_APP_CLIENT_SECRET?: string;
+  // GitHub App webhook secret — HMAC key for `/api/github/webhook` signature
+  // verification. Set via `wrangler secret put GITHUB_WEBHOOK_SECRET`; the
+  // receiver fails closed (503) when it's unset.
+  GITHUB_WEBHOOK_SECRET?: string;
+  // Provider/model the autonomous PR-review DO runs with. The webhook path has
+  // no chat lock to inherit, so these configure its default; fall back to a
+  // sensible built-in when unset.
+  PR_REVIEW_PROVIDER?: string;
+  PR_REVIEW_MODEL?: string;
   // Cloudflare Sandbox SDK Durable Object binding. Optional because local dev
   // or test envs may not bind it; the cloudflare-sandbox-provider must 503
   // gracefully when it's absent so the Modal fallback path stays safe.
@@ -71,6 +80,10 @@ export interface Env {
   // can still boot; /api/jobs/* fails closed with NOT_CONFIGURED when
   // missing so we don't half-accept background jobs that can't run.
   CoderJob?: DurableObjectNamespace;
+  // PrReviewJob Durable Object binding — autonomous webhook-triggered advisory
+  // PR reviews. Optional so envs without the migration boot; the webhook fails
+  // closed with NOT_CONFIGURED when missing.
+  PrReviewJob?: DurableObjectNamespace;
   // Remote Sessions relay — per-session DO holding the WS pair between
   // pushd and the phone client (Phase 2.b scaffold). Optional binding so
   // pre-migration deploys still boot; /api/relay/v1/* returns 503
@@ -438,7 +451,9 @@ export function isDeploymentTokenConfigured(env: Env): boolean {
 }
 
 export function isDeploymentTokenExemptPath(pathname: string): boolean {
-  return pathname === '/api/health';
+  // `/api/github/webhook` is exempt because GitHub can't attach the deployment
+  // token; the webhook authenticates with its own HMAC signature instead.
+  return pathname === '/api/health' || pathname === '/api/github/webhook';
 }
 
 function isRelayWebSocketUpgrade(request: Request, requestUrl: URL): boolean {

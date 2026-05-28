@@ -1,16 +1,17 @@
 # Webhook-Triggered PR Review
 
 Date: 2026-05-28
-Status: **Draft** — design sketch; needs a `ROADMAP.md` entry to graduate to an implementation commitment
+Status: **Draft — prototype landed** (receiver + DO + REVIEW.md base-ref binding behind unset secret / unbound DO); advisory-only, gating + PWA history still open. Needs a `ROADMAP.md` entry to graduate to a supported feature.
 Owner: Push
-Related: `lib/deep-reviewer-agent.ts` (the agent this reuses unchanged),
-`lib/reviewer-agent.ts` (quick-pass fallback),
-`lib/role-context.ts` (`buildReviewerContextBlock` — REVIEW.md injection, already shared),
-`app/src/lib/review-guidance.ts` (`resolveReviewGuidance` — web-only resolver this generalizes),
-`app/src/lib/github-tools.ts:880` (`postReview` — the PR round-trip this reuses),
+Related: `app/src/worker/github-webhook.ts` (the receiver — signature, allowlist, event-select, enqueue),
+`app/src/worker/pr-review-job-do.ts` (`PrReviewJob` DO — dedupe, coalesce, advisory post),
+`lib/reviewer-agent.ts` (the single-shot Reviewer the DO drives),
+`lib/role-context.ts` (`buildReviewerContextBlock` — REVIEW.md injection, shared),
+`lib/review-guidance.ts` (`resolveReviewGuidance` — shared resolver the DO binds at the PR base ref),
+`app/src/worker/worker-infra.ts` (`generateGitHubAppJWT` / `exchangeForInstallationToken` — token mint the DO reuses),
 `app/src/hooks/useGitHubAppAuth.ts` (the `push-agent` GitHub App this extends),
 `app/src/worker/coder-job-do.ts` (the DO-as-async-job pattern this mirrors),
-`docs/decisions/Diff and Annotation Envelope.md` (the serializable annotation taxonomy the round-trip needs)
+`docs/decisions/Diff and Annotation Envelope.md` (the serializable annotation taxonomy a richer round-trip needs)
 
 ## TL;DR
 
@@ -171,10 +172,13 @@ Landed with the promotion:
    `buildReviewerContextBlock` only rendered guidance when a caller happened to
    supply it.
 
-Remaining for **the webhook path** (this doc): supply a `fetchCommitted` that
-reads REVIEW.md at the PR ref via the installation token — resolved from the
-**base** repo ref, not a fork head (see Security checklist). No new resolver
-work; just the third binding.
+3. **Webhook DO** is now the third binding. `defaultPrReviewExecutor`
+   (`pr-review-job-do.ts`) supplies a `fetchCommitted` that reads REVIEW.md at
+   the PR **base** ref via the installation token, and skips guidance entirely
+   for cross-fork PRs (a fork head is attacker-controlled — see Security
+   checklist). No working-copy source, since there's no sandbox in the webhook
+   path. The result threads into `buildReviewerContextBlock` like every other
+   surface.
 
 ## Severity → action mapping (deliberately deferred)
 
@@ -198,12 +202,16 @@ probably the right first gating step.
 ## New vocabulary + drift tests
 
 Per the new-feature checklist ("one source of truth per vocabulary"):
-- The webhook payload subset we consume and the review-history record are new
-  envelope types. Canonical definition goes in `lib/` (extend
+- The webhook payload subset we consume (`ReviewablePullRequest`) lives in
+  `github-webhook.ts`; the prototype keeps it local. When the PWA review-history
+  record lands, its canonical definition goes in `lib/` (extend
   `lib/protocol-schema.ts` strict mode) with a drift-detector test in
   `cli/tests/protocol-drift.test.mjs` in the same PR.
-- No new *tool* is required (the DO calls `runDeepReviewer` directly, not via
-  the tool dispatcher), so `daemon-integration.test.mjs` is untouched.
+- No new *tool* is required (the DO calls the single-shot `runReviewer` directly,
+  not via the tool dispatcher), so `daemon-integration.test.mjs` is untouched.
+  The prototype uses the quick Reviewer; switching to `runDeepReviewer` (tool
+  loop, reads beyond the diff) is a follow-up that needs GitHub tool execution
+  wired into the DO.
 
 ## Security checklist (this is mostly an auth-seam feature)
 
@@ -219,24 +227,39 @@ Per the new-feature checklist ("one source of truth per vocabulary"):
   verbatim — wrap/escape. REVIEW.md fetched from a fork's head is also
   attacker-controlled on `pull_request_target`-style events; resolve it from the
   **base** repo ref, not the fork head, or skip guidance for cross-fork PRs.
-- **HTTP status classification.** The webhook handler's `if (status >= 400)`
-  arms (token exchange, diff fetch, `postReview`) each enumerate
-  auth/rate-limit/not-found/validation rather than collapsing to "unknown" —
-  see PR #656.
+- **HTTP status classification.** The DO's GitHub failures (token exchange, diff
+  fetch, review post) carry the status into `classifyError`, which maps them to
+  `auth` / `rate_limit` / `not_found` / `validation` / `upstream` on the
+  `review.failed` event rather than collapsing to "unknown" — see PR #656.
 
-## Scope / estimate
+## Scope
 
-In: webhook receiver, `PrReviewJob` DO, REVIEW.md resolver promotion to `lib/`,
-PWA review-history wiring, advisory-only posting, drift tests. Roughly 2–3 days.
+**Landed (prototype):**
 
-Out (explicit non-goals for v1): merge gating / `REQUEST_CHANGES`, Checks API
-annotations, Dependabot-specific logic, multi-model fallback (we route through
-one locked provider), cross-fork `pull_request_target` handling beyond the
-base-ref REVIEW.md guard above.
+- `github-webhook.ts` — receiver with HMAC signature verify (constant-time),
+  fail-closed on unset secret, installation allowlist (fail-closed on empty),
+  event/draft filter, fast 202 enqueue. Exempted from the deployment-token gate
+  (`isDeploymentTokenExemptPath`) since GitHub can't carry that token. 15 tests.
+- `pr-review-job-do.ts` — `PrReviewJob` DO: per-PR SQLite, replay dedupe by
+  delivery id, coalesce-by-head-SHA with abort of the superseded run, status
+  snapshot, structured event log. Advisory-only post (`event: 'COMMENT'`) with
+  the 422→body-only fallback. REVIEW.md resolved at the base ref. Model/GitHub
+  leaf behind an injectable executor seam. 5 tests.
+- Wiring: route in `EXACT_API_ROUTES`, DO export + `wrangler.jsonc` binding +
+  `v4` migration, `Env` fields (`GITHUB_WEBHOOK_SECRET`, `PrReviewJob`,
+  `PR_REVIEW_PROVIDER`/`PR_REVIEW_MODEL`).
+
+**Remaining:** PWA review-history wiring (the differentiator — DO event log →
+review tab), `runDeepReviewer` upgrade (needs DO-side GitHub tool exec), and the
+`github-tools` token-injection refactor so the DO and browser share one client
+instead of the DO's inline token-fetch helpers.
+
+**Out (non-goals for v1):** merge gating / `REQUEST_CHANGES`, Checks API
+annotations, Dependabot-specific logic, multi-model fallback, cross-fork
+`pull_request_target` handling beyond the base-ref REVIEW.md guard above.
 
 ## Graduation triggers
 
-Promote from Draft to an implementation commitment when **either**: a `ROADMAP.md`
-entry lands prioritizing autonomous PR review, **or** the REVIEW.md resolver
-needs promoting to `lib/` for an unrelated reason (CLI Reviewer guidance) — at
-which point the webhook trigger is a small increment on top.
+Promote from Draft to a supported feature when a `ROADMAP.md` entry lands
+prioritizing autonomous PR review — at which point the PWA review-history wiring
+and the deep-reviewer upgrade are the first increments on top of the prototype.

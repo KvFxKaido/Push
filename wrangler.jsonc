@@ -199,6 +199,10 @@
       {
         "name": "RELAY_SESSIONS",
         "class_name": "RelaySessionDO"
+      },
+      {
+        "name": "PrReviewJob",
+        "class_name": "PrReviewJob"
       }
     ]
   },
@@ -224,6 +228,13 @@
       // controls which storage API is available to the DO; whether
       // that API is used is a code-level decision.
       "new_sqlite_classes": ["RelaySessionDO"]
+    },
+    {
+      "tag": "v4",
+      // PrReviewJob — autonomous webhook-triggered advisory PR reviews. SQLite
+      // backend holds per-PR review status + an event log (dedupe by delivery
+      // id, coalesce by head SHA). See docs/decisions/Webhook-Triggered PR Review.md.
+      "new_sqlite_classes": ["PrReviewJob"]
     }
   ],
   // Daily snapshot index walk — emits aggregate metrics so we can size the
