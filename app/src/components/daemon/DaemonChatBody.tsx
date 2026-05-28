@@ -30,7 +30,7 @@
  * conversation init, workspace context, picker placement, layout)
  * lives here so the screens don't drift.
  */
-import { ArrowLeft, Palette, RefreshCw, Send, Square } from 'lucide-react';
+import { ArrowLeft, Palette, RefreshCw, Square } from 'lucide-react';
 import { WorkspaceDockIcon } from '@/components/icons/push-custom-icons';
 import type { LucideIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -38,31 +38,27 @@ import type React from 'react';
 
 import { ChatBackgroundGlow } from '@/components/chat/ChatBackgroundGlow';
 import { ChatContainer } from '@/components/chat/ChatContainer';
+import { ChatInput } from '@/components/chat/ChatInput';
 import { RepoChatDrawer } from '@/components/chat/RepoChatDrawer';
 import { WorkspaceHubSheet } from '@/components/chat/WorkspaceHubSheet';
 import { HEADER_PILL_BUTTON_CLASS, HEADER_ROUND_BUTTON_CLASS } from '@/components/chat/hub-styles';
 import { ApprovalPrompt } from '@/components/daemon/ApprovalPrompt';
 import { cancelPendingApprovals } from '@/lib/daemon-cancel-pending-approvals';
-import { DaemonModelPicker } from '@/components/daemon/DaemonModelPicker';
 import { RepoAppearanceSheet } from '@/components/repo/RepoAppearanceSheet';
-import { ModelPicker } from '@/components/ui/model-picker';
 import { useChat } from '@/hooks/useChat';
 import { useDaemonAppearance } from '@/hooks/useDaemonAppearance';
 import { useDaemonSettingsBundles } from '@/hooks/useDaemonSettingsBundles';
-import { useModelCatalog, buildModelControl } from '@/hooks/useModelCatalog';
+import { useModelCatalog } from '@/hooks/useModelCatalog';
 import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
 import { useProtectMain } from '@/hooks/useProtectMain';
 import { useScratchpad } from '@/hooks/useScratchpad';
 import { useTodo } from '@/hooks/useTodo';
+import { useWorkspaceChatComposerController } from '@/hooks/useWorkspaceChatComposerController';
+import { useWorkspaceComposerState } from '@/hooks/useWorkspaceComposerState';
 import { useWorkspacePreferences } from '@/hooks/useWorkspacePreferences';
 import type { ApprovalQueueHandle } from '@/hooks/useApprovalQueue';
 import type { ConnectionStatus, RequestOptions, SessionResponse } from '@/lib/local-daemon-binding';
 import type { LiveDaemonBinding, ToolDispatchBinding } from '@/lib/local-daemon-sandbox-client';
-import {
-  getModelDisplayLeafName,
-  setPreferredProvider,
-  type PreferredProvider,
-} from '@/lib/providers';
 import { getRepoAppearanceColorHex, type RepoAppearance } from '@/lib/repo-appearance';
 import type {
   Conversation,
@@ -144,6 +140,13 @@ const MODE_HEADER_LABEL: Record<DaemonChatBodyProps['mode'], string> = {
   'local-pc': 'Local PC',
   relay: 'Remote',
 };
+
+// Snapshot activity tracking is a cloud-sandbox concern (the snapshot
+// manager debounces autosaves on user activity). Daemon sessions have
+// no cloud sandbox, so the composer's `markSnapshotActivity` callback
+// is a no-op. Declared at module scope so the function identity is
+// stable and doesn't force composerController to re-memoize.
+const NOOP_MARK_SNAPSHOT_ACTIVITY = () => {};
 
 const APPEARANCE_SHEET_DESCRIPTION: Record<DaemonChatBodyProps['mode'], string> = {
   'local-pc': 'Pick a quiet accent color for local PC sessions on this device.',
@@ -289,6 +292,12 @@ export function DaemonChatBody({
     deleteChat,
     deleteAllChats,
     renameChat,
+    setChatLinkedLibraries,
+    editMessageAndResend,
+    regenerateLastResponse,
+    contextUsage,
+    queuedFollowUpCount,
+    pendingSteerCount,
     // Slice 1.d polish: once the active chat has sent its first
     // message, useChat locks the conversation to its original
     // provider. The picker reads these to render the locked
@@ -325,38 +334,58 @@ export function DaemonChatBody({
     },
   );
 
-  const handleSelectProvider = useCallback(
-    (provider: PreferredProvider) => {
-      // Order matters: persist FIRST so a re-render mid-switch sees
-      // the same value the catalog is about to report. The catalog's
-      // setActiveBackend is what actually triggers the re-render —
-      // setPreferredProvider alone wouldn't.
-      setPreferredProvider(provider);
-      catalog.setActiveBackend(provider);
-      if (isProviderLocked && provider !== lockedProvider) {
-        createNewChat();
-      }
-    },
-    [catalog, createNewChat, isProviderLocked, lockedProvider],
-  );
+  // Composer state — owns the per-chat provider/model drafts that
+  // ChatInput's picker reads. `sendMessageWithChatDraft` wraps
+  // `sendMessage` so the model + provider that the picker shows is
+  // what actually routes the turn. WorkspaceSessionScreen mounts the
+  // same hook for repo / scratch / chat modes; daemon mounts it here
+  // so ChatInput has the same draft semantics.
+  const composerState = useWorkspaceComposerState({
+    catalog,
+    conversations,
+    activeChatId,
+    isProviderLocked,
+    isModelLocked,
+    createNewChat,
+    switchChat,
+    sendMessage,
+  });
 
-  const displayedProvider =
-    (lockedProvider as PreferredProvider | null) ?? catalog.activeProviderLabel;
-  const modelControl = buildModelControl(catalog, displayedProvider, lockedModel);
-  const handleSelectModel = useCallback(
-    (model: string) => {
-      if (!modelControl || !model.trim()) return;
-      if (catalog.activeProviderLabel !== modelControl.provider) {
-        setPreferredProvider(modelControl.provider);
-        catalog.setActiveBackend(modelControl.provider);
-      }
-      modelControl.onChange(model);
-      if (isModelLocked && model !== lockedModel) {
-        createNewChat();
-      }
-    },
-    [catalog, createNewChat, isModelLocked, lockedModel, modelControl],
-  );
+  // Composer controller — projects composerState + useChat surfaces
+  // into the ~60-field `providerControls` bundle ChatInput needs.
+  // Mirrors what WorkspaceChatRoute / ChatSurfaceRoute do; the only
+  // daemon-specific bit is `markSnapshotActivity`, which is a cloud-
+  // sandbox concern and stays a no-op here.
+  const composerController = useWorkspaceChatComposerController({
+    messages,
+    sendMessage: composerState.sendMessageWithChatDraft,
+    editMessageAndResend,
+    regenerateLastResponse,
+    handleCardAction,
+    catalog,
+    selectedChatProvider: composerState.selectedChatProvider,
+    selectedChatModels: composerState.selectedChatModels,
+    handleSelectBackend: composerState.handleSelectBackend,
+    handleSelectOllamaModelFromChat: composerState.handleSelectOllamaModelFromChat,
+    handleSelectOpenRouterModelFromChat: composerState.handleSelectOpenRouterModelFromChat,
+    handleSelectCloudflareModelFromChat: composerState.handleSelectCloudflareModelFromChat,
+    handleSelectZenModelFromChat: composerState.handleSelectZenModelFromChat,
+    handleSelectNvidiaModelFromChat: composerState.handleSelectNvidiaModelFromChat,
+    handleSelectBlackboxModelFromChat: composerState.handleSelectBlackboxModelFromChat,
+    handleSelectKilocodeModelFromChat: composerState.handleSelectKilocodeModelFromChat,
+    handleSelectOpenAdapterModelFromChat: composerState.handleSelectOpenAdapterModelFromChat,
+    handleSelectAzureModelFromChat: composerState.handleSelectAzureModelFromChat,
+    handleSelectBedrockModelFromChat: composerState.handleSelectBedrockModelFromChat,
+    handleSelectVertexModelFromChat: composerState.handleSelectVertexModelFromChat,
+    handleSelectAnthropicModelFromChat: composerState.handleSelectAnthropicModelFromChat,
+    handleSelectOpenAIModelFromChat: composerState.handleSelectOpenAIModelFromChat,
+    handleSelectGoogleModelFromChat: composerState.handleSelectGoogleModelFromChat,
+    isProviderLocked,
+    lockedProvider,
+    lockedModel,
+    isModelLocked,
+    markSnapshotActivity: NOOP_MARK_SNAPSHOT_ACTIVITY,
+  });
 
   // Wire the binding into the chat's tool-dispatch context. Prefer
   // the hook-owned `liveBinding` (long-lived WS) over the raw
@@ -437,22 +466,6 @@ export function DaemonChatBody({
     const id = window.setInterval(() => setNow(Date.now()), 500);
     return () => window.clearInterval(id);
   }, [hasPendingRetry]);
-
-  const [composeText, setComposeText] = useState('');
-  const handleSend = () => {
-    const text = composeText.trim();
-    if (!text || isStreaming) return;
-    setComposeText('');
-    void sendMessage(text);
-  };
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // Enter sends, Shift+Enter inserts newline. Mirrors the cloud
-    // ChatInput conventions in spirit, intentionally simpler.
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault();
-      handleSend();
-    }
-  };
 
   const handleUnpair = async () => {
     await onUnpair();
@@ -678,67 +691,53 @@ export function DaemonChatBody({
             // Wire pin so chat messages get the pin action and the
             // result lands in the hub's Kept section.
             onPin={pinnedArtifacts.pin}
+            // Wire the composer controller's edit + regenerate
+            // handlers so daemon sessions get the same message-bubble
+            // affordances as repo / chat mode. Gated on !isStreaming
+            // because the controller writes into composer state, and
+            // editing mid-stream would race the in-flight turn. Repo /
+            // chat routes share this gating pattern.
+            onEditUserMessage={!isStreaming ? composerController.handleEditUserMessage : undefined}
+            onRegenerateLastResponse={
+              !isStreaming ? composerController.handleRegenerateLastResponse : undefined
+            }
           />
 
-          <div className="border-t border-push-edge/40 bg-push-surface-inset/80 px-3 py-2 backdrop-blur safe-area-bottom">
-            <div className="mb-2 grid grid-cols-[auto,minmax(0,1fr)] items-center gap-2">
-              <DaemonModelPicker
-                activeProvider={catalog.activeProviderLabel}
-                availableProviders={catalog.availableProviders}
-                onSelectProvider={handleSelectProvider}
-                lockedProvider={lockedProvider}
-                isProviderLocked={isProviderLocked}
-                className="max-w-[46vw]"
-              />
-              {modelControl ? (
-                <ModelPicker
-                  provider={modelControl.provider}
-                  value={modelControl.value}
-                  options={modelControl.options}
-                  onChange={handleSelectModel}
-                  allowCustom={modelControl.allowCustom}
-                  disabled={modelControl.loading}
-                  onRefresh={modelControl.onRefresh}
-                  isRefreshing={modelControl.loading}
-                  refreshAriaLabel={`Refresh ${modelControl.providerLabel} models`}
-                  ariaLabel="Select daemon model"
-                  searchPlaceholder={`Search ${modelControl.providerLabel} models...`}
-                  emptyLabel={modelControl.error ?? 'No models found.'}
-                  triggerLabel={
-                    <span className="truncate">
-                      {modelControl.value
-                        ? getModelDisplayLeafName(modelControl.provider, modelControl.value)
-                        : 'Select model'}
-                    </span>
-                  }
-                  className="min-w-0"
-                  triggerClassName="h-7 rounded-full border-push-edge/60 bg-push-surface px-2.5 text-xs"
-                  popoverClassName="w-[min(20rem,calc(100vw-2rem))]"
-                />
-              ) : null}
-            </div>
-            <div className="flex items-end gap-2">
-              <textarea
-                value={composeText}
-                onChange={(e) => setComposeText(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder={composePlaceholder}
-                rows={1}
-                className="min-h-[40px] max-h-[160px] flex-1 resize-none rounded-2xl border border-push-edge/60 bg-push-surface-inset px-3 py-2 text-sm text-push-fg outline-none focus:border-push-edge"
-                disabled={isStreaming || status.state !== 'open'}
-                aria-label="Message"
-              />
-              <button
-                type="button"
-                onClick={handleSend}
-                disabled={!composeText.trim() || isStreaming || status.state !== 'open'}
-                aria-label="Send"
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-push-edge/60 text-push-fg-secondary transition enabled:hover:border-push-fg/60 enabled:hover:text-push-fg disabled:opacity-40"
-              >
-                <Send className="h-4 w-4" aria-hidden="true" />
-              </button>
-            </div>
-          </div>
+          <ChatInput
+            onSend={composerController.handleComposerSend}
+            // Route Stop through `handleAbort` so the daemon-side
+            // pending approval prompts get cancelled too — calling
+            // `abortStream` alone leaves the approval queued and a
+            // later Approve click would still submit it.
+            onStop={handleAbort}
+            isStreaming={isStreaming}
+            // Hard-disable the composer while the daemon binding isn't
+            // open. ChatInput clears the textarea unconditionally after
+            // calling onSend, so a wrapper that just `return`-ed when
+            // status was off would silently drop the user's draft on
+            // the click. The `disabled` prop blocks `canSend` entirely
+            // so the draft survives until the daemon reconnects.
+            disabled={status.state !== 'open'}
+            queuedFollowUpCount={queuedFollowUpCount}
+            pendingSteerCount={pendingSteerCount}
+            placeholder={composePlaceholder}
+            contextUsage={contextUsage}
+            // Library is a chat-mode affordance backed by client-side
+            // attachments storage; daemon sessions inherit that
+            // ergonomics since they have no repo to act as the
+            // persistence layer.
+            libraryEnabled={true}
+            linkedLibraryIds={
+              (activeChatId && conversations[activeChatId]?.linkedLibraryIds) || undefined
+            }
+            onSetLinkedLibraries={
+              activeChatId ? (ids) => setChatLinkedLibraries(activeChatId, ids) : undefined
+            }
+            draftKey={activeChatId}
+            prefillRequest={composerController.composerPrefillRequest}
+            editState={composerController.editState}
+            providerControls={composerController.providerControls}
+          />
         </div>
       </div>
 

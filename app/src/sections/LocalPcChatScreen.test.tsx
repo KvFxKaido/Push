@@ -87,33 +87,22 @@ vi.mock('@/lib/local-pc-storage', () => ({
   clearPairedDevice: vi.fn(),
 }));
 
-// useModelCatalog touches storage + provider configs that aren't
-// available in the SSR test env. Return just the subset the local-pc
-// chat reads — `availableProviders`, `activeProviderLabel`, and
-// model-control fields — so the picker renders without booting the
-// full catalog.
+// useModelCatalog returns a 80+-field shape that the daemon shell's
+// composer state reads exhaustively. The full stub lives in
+// `test-utils/model-catalog-test-stubs.ts` so RelayChatScreen test can
+// share it.
 vi.mock('@/hooks/useModelCatalog', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/useModelCatalog')>();
+  // vi.mock is hoisted before top-level imports, so the helper has to
+  // be dynamically imported inside the factory.
+  const { makeDaemonModelCatalogStub } = await import('@/test-utils/model-catalog-test-stubs');
   return {
     ...actual,
-    useModelCatalog: () => ({
-      availableProviders: [
-        ['cloudflare', 'Cloudflare Workers AI', true],
-        ['openrouter', 'OpenRouter', true],
-      ] as const,
-      activeProviderLabel: 'cloudflare',
-      setActiveBackend: vi.fn(),
-      cloudflare: {
-        model: '@cf/meta/llama-3-8b',
-        setModel: vi.fn(),
-      },
-      cloudflareModelOptions: ['@cf/meta/llama-3-8b', '@cf/qwen/qwen3-30b-a3b-fp8'],
-      cloudflareModels: {
-        loading: false,
-        error: null,
-      },
-      refreshCloudflareModels: vi.fn(),
-    }),
+    useModelCatalog: () =>
+      makeDaemonModelCatalogStub({
+        cloudflareModel: '@cf/meta/llama-3-8b',
+        cloudflareModelOptions: ['@cf/meta/llama-3-8b', '@cf/qwen/qwen3-30b-a3b-fp8'],
+      }),
   };
 });
 
@@ -206,9 +195,12 @@ describe('LocalPcChatScreen', () => {
         onDisconnect={onDisconnect}
       />,
     );
+    // ChatInput renders a textarea (placeholder carries the daemon
+    // label) and a "Send message" round button. Pre-ChatInput the
+    // daemon had a simpler textarea + plain Send button — this is the
+    // current contract.
     expect(html).toContain('<textarea');
-    expect(html).toContain('aria-label="Message"');
-    expect(html).toContain('aria-label="Send"');
+    expect(html).toContain('aria-label="Send message"');
   });
 
   it('does NOT render a Stop button when not streaming (default mock state)', () => {
@@ -350,8 +342,9 @@ describe('LocalPcChatScreen', () => {
   });
 
   it('renders the model picker chip in the input area with the active provider', () => {
-    // The daemon input now has a provider chip plus a real model
-    // combobox. The catalog mock pins `cloudflare` +
+    // ChatInput now drives the daemon input — same provider+model
+    // affordances as repo/chat mode. The chip surfaces the active
+    // provider's model name; the catalog mock pins `cloudflare` +
     // `@cf/meta/llama-3-8b`.
     const html = renderToStaticMarkup(
       <LocalPcChatScreen
@@ -362,9 +355,7 @@ describe('LocalPcChatScreen', () => {
         onDisconnect={onDisconnect}
       />,
     );
-    expect(html).toContain('aria-label="Daemon provider"');
-    expect(html).toContain('aria-label="Select daemon model"');
-    expect(html).toContain('Cloudflare Workers AI');
+    expect(html).toContain('title="Backend and model"');
     expect(html).toContain('llama-3-8b');
   });
 

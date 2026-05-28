@@ -32,6 +32,14 @@ interface ChatInputProps {
   onSend: (message: string, attachments?: AttachmentData[], options?: ChatSendOptions) => void;
   onStop?: () => void;
   isStreaming?: boolean;
+  /**
+   * Hard-disable the composer — blocks the textarea, attachments, and
+   * send button. Used by daemon screens to gate sends while the
+   * transport binding isn't open (so the user's draft isn't silently
+   * dropped into the cleared textarea after a click that couldn't
+   * route anywhere).
+   */
+  disabled?: boolean;
   queuedFollowUpCount?: number;
   pendingSteerCount?: number;
   repoName?: string;
@@ -225,6 +233,7 @@ export function ChatInput({
   onSend,
   onStop,
   isStreaming,
+  disabled = false,
   queuedFollowUpCount = 0,
   pendingSteerCount = 0,
   repoName,
@@ -290,7 +299,7 @@ export function ChatInput({
   const hasAttachments = stagedAttachments.length > 0;
   const readyAttachments = stagedAttachments.filter((a) => a.status === 'ready');
   const hasDraftContent = value.trim().length > 0 || readyAttachments.length > 0;
-  const canSendBase = hasDraftContent && !isStreaming;
+  const canSendBase = hasDraftContent && !isStreaming && !disabled;
 
   const adjustHeight = useCallback(() => {
     const el = textareaRef.current;
@@ -536,7 +545,7 @@ export function ChatInput({
     readyImageAttachments.length > 0 && visionNotice.support === 'unknown';
   const canSend = canSendBase && !hasUnsupportedImageAttachments;
   const canStreamWithDraft =
-    Boolean(isStreaming) && hasDraftContent && !hasUnsupportedImageAttachments;
+    Boolean(isStreaming) && hasDraftContent && !hasUnsupportedImageAttachments && !disabled;
 
   const handleSend = (streamingBehavior?: ChatSendOptions['streamingBehavior']) => {
     if (!canSend && !canStreamWithDraft) return;
@@ -701,7 +710,8 @@ export function ChatInput({
               placeholder ?? (repoName ? `Ask about ${repoName}...` : 'Ask about code...')
             }
             rows={1}
-            className="w-full resize-none overflow-y-auto bg-transparent px-1 pb-2 text-push-lg leading-6 text-push-fg placeholder:text-push-fg-dim focus:outline-none"
+            disabled={disabled}
+            className="w-full resize-none overflow-y-auto bg-transparent px-1 pb-2 text-push-lg leading-6 text-push-fg placeholder:text-push-fg-dim focus:outline-none disabled:opacity-60"
           />
         </div>
 

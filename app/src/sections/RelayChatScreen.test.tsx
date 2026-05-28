@@ -52,28 +52,18 @@ vi.mock('@/lib/relay-storage', () => ({
   clearPairedRemote: vi.fn(),
 }));
 
+// Catalog stub shape lives in test-utils so LocalPcChatScreen test
+// can share it; see that module for rationale.
 vi.mock('@/hooks/useModelCatalog', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/useModelCatalog')>();
+  const { makeDaemonModelCatalogStub } = await import('@/test-utils/model-catalog-test-stubs');
   return {
     ...actual,
-    useModelCatalog: () => ({
-      availableProviders: [
-        ['cloudflare', 'Cloudflare Workers AI', true],
-        ['openrouter', 'OpenRouter', true],
-      ] as const,
-      activeProviderLabel: 'cloudflare',
-      setActiveBackend: vi.fn(),
-      cloudflare: {
-        model: '@cf/qwen/qwen3-30b-a3b-fp8',
-        setModel: vi.fn(),
-      },
-      cloudflareModelOptions: ['@cf/qwen/qwen3-30b-a3b-fp8', '@cf/meta/llama-3-8b'],
-      cloudflareModels: {
-        loading: false,
-        error: null,
-      },
-      refreshCloudflareModels: vi.fn(),
-    }),
+    useModelCatalog: () =>
+      makeDaemonModelCatalogStub({
+        cloudflareModel: '@cf/qwen/qwen3-30b-a3b-fp8',
+        cloudflareModelOptions: ['@cf/qwen/qwen3-30b-a3b-fp8', '@cf/meta/llama-3-8b'],
+      }),
   };
 });
 
@@ -127,9 +117,11 @@ describe('RelayChatScreen', () => {
     expect(html).toContain('Remote');
     expect(html).toContain('push.ishawnd.workers.dev');
     expect(html).toContain('aria-label="Leave remote daemon"');
-    expect(html).toContain('aria-label="Daemon provider"');
-    expect(html).toContain('aria-label="Select daemon model"');
-    expect(html).toContain('Cloudflare Workers AI');
+    // ChatInput now drives the daemon input — same provider+model
+    // affordances as repo/chat mode. The chip surfaces the active
+    // provider's model name; the catalog mock pins `cloudflare` +
+    // `@cf/qwen/qwen3-30b-a3b-fp8`.
+    expect(html).toContain('title="Backend and model"');
     expect(html).toContain('qwen3-30b-a3b-fp8');
   });
 });
