@@ -199,6 +199,14 @@ export function useRelayDaemon(
   // lets the DO replay buffered events instead of starting fresh
   // each reconnect.
   const lastSeqRef = useRef<number | null>(null);
+  // Tracks the `targetSessionId` the current `hydratedMessages` belongs
+  // to. The connection effect re-runs on every dial — including plain WS
+  // reconnects (driven by `effectiveKey`) — but the transcript only goes
+  // stale when the *target session* changes. Gating the clear on this ref
+  // stops a mobile reconnect from blanking the history for a frame before
+  // re-hydration repaints it (the #688 flicker). `undefined` is the
+  // "never hydrated" sentinel so a genuine `null` target still clears.
+  const hydratedTargetRef = useRef<string | null | undefined>(undefined);
   useEffect(() => {
     onMalformedRef.current = options.onMalformed;
   }, [options.onMalformed]);
@@ -245,10 +253,17 @@ export function useRelayDaemon(
       if (cancelled) return;
       setAttachStatus(hasTarget ? 'attaching' : 'idle');
       setAttachError(null);
-      // Hydration is one-shot — clear it on every new dial so a
-      // stale transcript from a previous session can't leak into
-      // a re-paired binding.
-      setHydratedMessages(null);
+      // Hydration is one-shot *per target session*. Clear it only when
+      // the target actually changes (re-pair, unpair) so a stale
+      // transcript can't leak into a different session — but NOT on a
+      // plain reconnect to the same target, which previously blanked the
+      // history for a frame on mobile (#688). The compare+update lives in
+      // the microtask so a cancelled dial leaves the ref untouched and a
+      // genuine target change that follows still triggers the clear.
+      if (hydratedTargetRef.current !== targetSessionId) {
+        setHydratedMessages(null);
+        hydratedTargetRef.current = targetSessionId;
+      }
     });
     let handle: ReturnType<typeof createRelayDaemonBinding>;
     try {
