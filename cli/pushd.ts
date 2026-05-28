@@ -1116,11 +1116,15 @@ async function handleListSessions(req) {
   // Default to 20 (the previous fallback) when the field is missing or
   // malformed; cap at 1000 so a misbehaving client can't ask us to
   // emit megabytes of session metadata in a single response.
+  // Floor before bounding so fractional inputs (e.g. `0.5`, which
+  // would pass a naive `> 0` but floor to `0`) don't slip through as
+  // an accidental empty-result request — anything that doesn't floor
+  // to >= 1 falls back to the default.
   const rawLimit = req.payload?.limit;
+  const flooredLimit =
+    typeof rawLimit === 'number' && Number.isFinite(rawLimit) ? Math.floor(rawLimit) : NaN;
   const limit =
-    typeof rawLimit === 'number' && Number.isFinite(rawLimit) && rawLimit > 0
-      ? Math.min(Math.floor(rawLimit), 1000)
-      : 20;
+    Number.isFinite(flooredLimit) && flooredLimit >= 1 ? Math.min(flooredLimit, 1000) : 20;
 
   // Optional mode filter so consumers can ask the server to omit
   // sessions whose origin surface isn't useful in their context. The

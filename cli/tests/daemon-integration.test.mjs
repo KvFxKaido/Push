@@ -719,10 +719,12 @@ describe('list_sessions mode propagation', () => {
   });
 
   it('trims whitespace on excludeModes entries before comparing', async () => {
-    // `state.mode` is trimmed on read and write, so the filter has to
-    // trim too — otherwise a client passing `' headless '` would
-    // silently fail to filter and the drawer would still show
-    // headless rows.
+    // `state.mode` is trimmed by `handleStartSession` on payload
+    // normalization and by `listSessions()` on read; the filter has
+    // to trim too so a client passing `' headless '` doesn't silently
+    // fail to filter and leave headless rows in the drawer. Not every
+    // write path normalizes (`saveSessionState` writes state as-is),
+    // but every read path does.
     const originalSessionDir = process.env.PUSH_SESSION_DIR;
     const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-list-sessions-trim-'));
     process.env.PUSH_SESSION_DIR = tmpRoot;
@@ -805,6 +807,26 @@ describe('list_sessions mode propagation', () => {
       // who genuinely wants nothing shouldn't call the RPC at all.
       const zero = await handleRequest(makeRequest('list_sessions', { limit: 0 }), () => {});
       assert.equal(zero.payload.sessions.length, 3);
+
+      // Fractional positive values floor to < 1 (the `> 0` check would
+      // have admitted them, but the floor would silently produce a
+      // zero-slice). They fall back to the default instead of returning
+      // a surprising empty result. `limit: 1.5` floors to 1, which is
+      // a legitimate request.
+      const fractional = await handleRequest(
+        makeRequest('list_sessions', { limit: 0.5 }),
+        () => {},
+      );
+      assert.equal(fractional.payload.sessions.length, 3);
+      const flooredToOne = await handleRequest(
+        makeRequest('list_sessions', { limit: 1.5 }),
+        () => {},
+      );
+      assert.equal(flooredToOne.payload.sessions.length, 1);
+
+      // Negative values are non-positive — same fallback path.
+      const negative = await handleRequest(makeRequest('list_sessions', { limit: -5 }), () => {});
+      assert.equal(negative.payload.sessions.length, 3);
     } finally {
       if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
       else process.env.PUSH_SESSION_DIR = originalSessionDir;

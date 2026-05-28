@@ -834,16 +834,17 @@ async function runInteractive(
   async function ensureSessionPersisted() {
     if (sessionPersisted) return;
     sessionPersisted = true;
+    // Normalize once so the condition (is it set?) and the emitted
+    // value (the trimmed payload) can't disagree. `listSessions()`
+    // trims `state.mode` on read; emitting an untrimmed value here
+    // would make the `session_started` event drift from the
+    // `list_sessions` row by a whitespace-padding accident.
+    const trimmedMode = typeof state.mode === 'string' ? state.mode.trim() : '';
+    const mode = trimmedMode || 'interactive';
     await appendSessionEvent(state, 'session_started', {
       sessionId: state.sessionId,
       state: 'idle',
-      // Read from state instead of hardcoding so the persisted
-      // `state.mode` (set at initSession time per the request's
-      // dispatch) is the single source of truth — the event payload
-      // can never drift from what `list_sessions` returns. Defaults
-      // mirror the legacy-fallback used by `listSessions()` for rows
-      // that predate the field.
-      mode: typeof state.mode === 'string' && state.mode.trim() ? state.mode : 'interactive',
+      mode,
       provider: state.provider,
       sandboxProvider: process.env.PUSH_LOCAL_SANDBOX === 'true' ? 'local' : 'modal',
     });
