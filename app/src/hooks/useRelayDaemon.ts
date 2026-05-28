@@ -325,6 +325,14 @@ export function useRelayDaemon(
           } else {
             setAttachStatus('attach_failed');
             setAttachError({ code: result.error.code, message: result.error.message });
+            // Attach failed — the target session was revoked, expired, or
+            // dropped by the daemon. Since the same-target gate above no
+            // longer clears the transcript on every dial, drop it here so
+            // the attach-failed banner ("continue with a fresh Remote
+            // chat") isn't shown alongside a stale prepended TUI history.
+            // Reset the ref too so a later successful reattach re-hydrates.
+            setHydratedMessages(null);
+            hydratedTargetRef.current = undefined;
           }
         },
         onStatus: (next) => {
