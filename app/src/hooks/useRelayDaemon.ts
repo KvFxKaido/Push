@@ -34,7 +34,7 @@ import {
   type SessionEvent,
   type SessionResponse,
 } from '@/lib/local-daemon-binding';
-import { createRelayDaemonBinding } from '@/lib/relay-daemon-binding';
+import { type AttachResult, createRelayDaemonBinding } from '@/lib/relay-daemon-binding';
 import type { LiveDaemonBinding } from '@/lib/local-daemon-sandbox-client';
 import type { RelayBinding } from '@/types';
 
@@ -85,6 +85,18 @@ export interface UseRelayDaemonResult {
    * shouldn't lingering after the user has re-attached cleanly.
    */
   replayUnavailableAt: number | null;
+  /**
+   * Lifecycle of the targeted `attach_session` issued when the bundle
+   * carries `targetSessionId` + `targetAttachToken` (PR #686). `idle`
+   * for bundles with no target. `attaching` from WS-open until the
+   * daemon ack arrives; flips to `attached` on success or
+   * `attach_failed` on error. `attachError` carries the daemon error
+   * code/message when failed so a banner can surface the cause
+   * (`SESSION_NOT_FOUND` / `INVALID_TOKEN` / etc.) without forcing
+   * a re-pair.
+   */
+  attachStatus: 'idle' | 'attaching' | 'attached' | 'attach_failed';
+  attachError: { code: string; message: string } | null;
 }
 
 interface UseRelayDaemonOptions {
@@ -108,6 +120,10 @@ export function useRelayDaemon(
   const [wsEvents, setWsEvents] = useState<SessionEvent[]>([]);
   const [localReconnectKey, setLocalReconnectKey] = useState(0);
   const [replayUnavailableAt, setReplayUnavailableAt] = useState<number | null>(null);
+  const [attachStatus, setAttachStatus] = useState<
+    'idle' | 'attaching' | 'attached' | 'attach_failed'
+  >('idle');
+  const [attachError, setAttachError] = useState<{ code: string; message: string } | null>(null);
 
   const reconnectReducer = useCallback(
     (prev: ReconnectInfo, action: ReconnectAction): ReconnectInfo => {
@@ -176,6 +192,9 @@ export function useRelayDaemon(
   const deploymentUrl = binding?.deploymentUrl ?? null;
   const sessionId = binding?.sessionId ?? null;
   const token = binding?.token ?? null;
+  const targetSessionId = binding?.targetSessionId ?? null;
+  const targetAttachToken = binding?.targetAttachToken ?? null;
+  const hasTarget = targetSessionId !== null && targetAttachToken !== null;
 
   useEffect(() => {
     if (deploymentUrl === null || sessionId === null || token === null) {
@@ -189,13 +208,36 @@ export function useRelayDaemon(
     // crash the whole chat screen on mount. Wrap and route the
     // throw into a terminal `unreachable` so the ReconnectBanner
     // surfaces a recoverable Retry button.
+    // Reset attach lifecycle on every new dial. `attaching` reflects
+    // the moment we issue `attach_session` over the freshly-opened
+    // WS; without a target the state stays `idle` for the binding's
+    // lifetime. Defer via `queueMicrotask` so the setters don't run
+    // synchronously inside the effect body — the
+    // `react-hooks/set-state-in-effect` rule catches direct setState
+    // here. Same pattern as the createRelayDaemonBinding throw path
+    // a few lines below.
+    queueMicrotask(() => {
+      setAttachStatus(hasTarget ? 'attaching' : 'idle');
+      setAttachError(null);
+    });
     let handle: ReturnType<typeof createRelayDaemonBinding>;
     try {
       handle = createRelayDaemonBinding({
         deploymentUrl,
         sessionId,
         token,
+        ...(targetSessionId !== null ? { targetSessionId } : {}),
+        ...(targetAttachToken !== null ? { targetAttachToken } : {}),
         lastSeq: lastSeqRef.current,
+        onAttachComplete: (result: AttachResult) => {
+          if (result.ok) {
+            setAttachStatus('attached');
+            setAttachError(null);
+          } else {
+            setAttachStatus('attach_failed');
+            setAttachError({ code: result.error.code, message: result.error.message });
+          }
+        },
         onStatus: (next) => {
           setWsStatus(next);
           if (next.state === 'open') {
@@ -258,7 +300,15 @@ export function useRelayDaemon(
       bindingRef.current = null;
       handle.close();
     };
-  }, [deploymentUrl, sessionId, token, effectiveKey]);
+  }, [
+    deploymentUrl,
+    sessionId,
+    token,
+    targetSessionId,
+    targetAttachToken,
+    hasTarget,
+    effectiveKey,
+  ]);
 
   useEffect(() => {
     if (deploymentUrl === null || sessionId === null || token === null) return;
@@ -315,5 +365,15 @@ export function useRelayDaemon(
     setLocalReconnectKey((k) => k + 1);
   }, []);
 
-  return { status, events, request, liveBinding, reconnect, reconnectInfo, replayUnavailableAt };
+  return {
+    status,
+    events,
+    request,
+    liveBinding,
+    reconnect,
+    reconnectInfo,
+    replayUnavailableAt,
+    attachStatus,
+    attachError,
+  };
 }

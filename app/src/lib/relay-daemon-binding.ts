@@ -49,7 +49,13 @@ import {
 
 const SUBPROTOCOL_SELECTOR = 'push.relay.v1';
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const ATTACH_REQUEST_TIMEOUT_MS = 10_000;
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
+
+/** Outcome of the targeted `attach_session` issued on WS open. */
+export type AttachResult =
+  | { ok: true; sessionId: string }
+  | { ok: false; error: { code: string; message: string; retryable: boolean } };
 
 export interface RelayDaemonBindingOptions {
   /**
@@ -71,10 +77,31 @@ export interface RelayDaemonBindingOptions {
    * Omit (or pass `null`) for a fresh attach with no replay.
    */
   lastSeq?: number | null;
+  /**
+   * Daemon session this binding should attach to, when present. The
+   * pair bundle plumbs this from a TUI session via PR #686; the
+   * binding issues `attach_session` automatically once the WS is open
+   * so the consumer doesn't have to fire the RPC by hand. Omit for
+   * bundles that don't carry a target.
+   */
+  targetSessionId?: string;
+  /**
+   * Bearer for `targetSessionId`. Required alongside `targetSessionId`;
+   * the binding will not attempt the targeted attach without both.
+   */
+  targetAttachToken?: string;
   /** Called on every status transition (same shape as loopback). */
   onStatus?: (status: ConnectionStatus) => void;
   /** Called once per validated incoming event envelope. */
   onEvent?: (event: SessionEvent) => void;
+  /**
+   * Fired once after the targeted `attach_session` resolves. `ok: true`
+   * means the daemon accepted the attach + began replaying buffered
+   * events through `onEvent`; `ok: false` carries the daemon's error
+   * code so the consumer can route it into a banner. Never fires when
+   * `targetSessionId` / `targetAttachToken` are absent.
+   */
+  onAttachComplete?: (result: AttachResult) => void;
   /**
    * Called when the relay tells us replay isn't possible (gap >
    * buffer). The consumer should fall back to `attach_session` to
@@ -177,6 +204,45 @@ export function createRelayDaemonBinding(opts: RelayDaemonBindingOptions): Local
 
   const ws = new WebSocket(url, protocols);
 
+  // Shared request impl. The public `request()` adds a "must be open"
+  // guard so external callers can't fire RPCs before the WS is ready;
+  // the WS-open handler bypasses that guard so it can issue
+  // `attach_session` as part of the open sequence itself (status was
+  // flipped to 'open' a few lines above the call site).
+  const sendInternalRequest = <T = unknown>(
+    reqOpts: RequestOptions,
+  ): Promise<SessionResponse<T>> => {
+    return new Promise<SessionResponse<T>>((resolve, reject) => {
+      const requestId = makeRequestId();
+      const envelope = {
+        v: PROTOCOL_VERSION,
+        kind: 'request' as const,
+        requestId,
+        type: reqOpts.type,
+        sessionId: reqOpts.sessionId ?? null,
+        payload: reqOpts.payload ?? {},
+      };
+      const timeoutMs = reqOpts.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+      const timer = setTimeout(() => {
+        pending.delete(requestId);
+        reject(new Error(`request ${reqOpts.type} timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      pending.set(requestId, {
+        resolve: resolve as (response: SessionResponse) => void,
+        reject,
+        timer,
+        type: reqOpts.type,
+      });
+      try {
+        ws.send(`${JSON.stringify(envelope)}\n`);
+      } catch (err) {
+        pending.delete(requestId);
+        clearTimeout(timer);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
+  };
+
   ws.addEventListener('open', () => {
     everOpened = true;
     setStatus({ state: 'open' });
@@ -199,6 +265,59 @@ export function createRelayDaemonBinding(opts: RelayDaemonBindingOptions): Local
     } catch {
       // If the send fails the close handler will fire — no
       // additional path needed here.
+    }
+
+    // Targeted `attach_session`: when the pair bundle was minted from
+    // an active TUI session (PR #686), the daemon is already running
+    // a chat for `targetSessionId`. Issue `attach_session` over the
+    // now-open WS so the daemon adds this client to the session's
+    // fan-out and replays its event history. Both ID + token must
+    // be present — the daemon enforces the same in
+    // `handleAttachSession`, so partial inputs can never succeed.
+    if (
+      typeof opts.targetSessionId === 'string' &&
+      opts.targetSessionId.length > 0 &&
+      typeof opts.targetAttachToken === 'string' &&
+      opts.targetAttachToken.length > 0
+    ) {
+      // `lastSeenSeq: 0` triggers full transcript replay — the web's
+      // chat state has never seen this daemon session before. A
+      // future PR that persists per-session lastSeq on the web can
+      // pass it through here for incremental replay on reconnect.
+      sendInternalRequest({
+        type: 'attach_session',
+        sessionId: opts.targetSessionId,
+        payload: { attachToken: opts.targetAttachToken, lastSeenSeq: 0 },
+        timeoutMs: ATTACH_REQUEST_TIMEOUT_MS,
+      })
+        .then((response) => {
+          try {
+            opts.onAttachComplete?.({
+              ok: true,
+              sessionId:
+                typeof response.sessionId === 'string'
+                  ? response.sessionId
+                  : (opts.targetSessionId ?? ''),
+            });
+          } catch {
+            // Consumer hooks must not crash the adapter.
+          }
+        })
+        .catch((err: unknown) => {
+          const error =
+            err instanceof DaemonRequestError
+              ? { code: err.code, message: err.message, retryable: err.retryable }
+              : {
+                  code: 'UNKNOWN',
+                  message: err instanceof Error ? err.message : String(err),
+                  retryable: false,
+                };
+          try {
+            opts.onAttachComplete?.({ ok: false, error });
+          } catch {
+            // see above
+          }
+        });
     }
   });
 
@@ -319,39 +438,10 @@ export function createRelayDaemonBinding(opts: RelayDaemonBindingOptions): Local
   });
 
   const request = <T = unknown>(reqOpts: RequestOptions): Promise<SessionResponse<T>> => {
-    return new Promise<SessionResponse<T>>((resolve, reject) => {
-      if (status.state !== 'open') {
-        reject(new Error(`not open (state=${status.state})`));
-        return;
-      }
-      const requestId = makeRequestId();
-      const envelope = {
-        v: PROTOCOL_VERSION,
-        kind: 'request' as const,
-        requestId,
-        type: reqOpts.type,
-        sessionId: reqOpts.sessionId ?? null,
-        payload: reqOpts.payload ?? {},
-      };
-      const timeoutMs = reqOpts.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-      const timer = setTimeout(() => {
-        pending.delete(requestId);
-        reject(new Error(`request ${reqOpts.type} timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-      pending.set(requestId, {
-        resolve: resolve as (response: SessionResponse) => void,
-        reject,
-        timer,
-        type: reqOpts.type,
-      });
-      try {
-        ws.send(`${JSON.stringify(envelope)}\n`);
-      } catch (err) {
-        pending.delete(requestId);
-        clearTimeout(timer);
-        reject(err instanceof Error ? err : new Error(String(err)));
-      }
-    });
+    if (status.state !== 'open') {
+      return Promise.reject(new Error(`not open (state=${status.state})`));
+    }
+    return sendInternalRequest<T>(reqOpts);
   };
 
   const close = (): void => {
