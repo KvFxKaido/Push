@@ -126,13 +126,30 @@ vi.mock('@/lib/providers', async (importOriginal) => {
 });
 
 import { LocalPcChatScreen } from './LocalPcChatScreen';
-import type { LocalPcBinding } from '@/types';
+import type { LocalPcBinding, WorkspaceScreenAuthProps } from '@/types';
 
 const binding: LocalPcBinding = {
   port: 49152,
   token: 'pushd_test_token_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
   boundOrigin: 'http://localhost:5173',
 };
+
+// Minimal auth surface — the daemon shell forwards this into the hub
+// Settings tab. The SSR tests don't open the hub so the values just
+// need to satisfy the type, not exercise the Settings UI.
+const auth: WorkspaceScreenAuthProps = {
+  token: null,
+  patToken: null,
+  validatedUser: null,
+  isAppAuth: false,
+  installationId: null,
+  appLoading: false,
+  appError: null,
+  connectApp: () => {},
+  installApp: () => {},
+  setInstallationIdManually: async () => false,
+};
+const onDisconnect = () => {};
 
 describe('LocalPcChatScreen', () => {
   beforeEach(() => {
@@ -150,7 +167,13 @@ describe('LocalPcChatScreen', () => {
 
   it('renders the mode chip with the binding port', () => {
     const html = renderToStaticMarkup(
-      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+      <LocalPcChatScreen
+        binding={binding}
+        onLeave={() => {}}
+        onUnpair={() => {}}
+        auth={auth}
+        onDisconnect={onDisconnect}
+      />,
     );
     // LocalPcModeChip renders the port — verify it's wired in.
     expect(html).toContain(':49152');
@@ -160,7 +183,13 @@ describe('LocalPcChatScreen', () => {
 
   it('renders an Unpair button with an accessible label', () => {
     const html = renderToStaticMarkup(
-      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+      <LocalPcChatScreen
+        binding={binding}
+        onLeave={() => {}}
+        onUnpair={() => {}}
+        auth={auth}
+        onDisconnect={onDisconnect}
+      />,
     );
     expect(html).toContain('aria-label="Leave local daemon"');
     expect(html).toContain('aria-label="Unpair"');
@@ -169,7 +198,13 @@ describe('LocalPcChatScreen', () => {
 
   it('renders the compose textarea and send button', () => {
     const html = renderToStaticMarkup(
-      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+      <LocalPcChatScreen
+        binding={binding}
+        onLeave={() => {}}
+        onUnpair={() => {}}
+        auth={auth}
+        onDisconnect={onDisconnect}
+      />,
     );
     expect(html).toContain('<textarea');
     expect(html).toContain('aria-label="Message"');
@@ -180,14 +215,26 @@ describe('LocalPcChatScreen', () => {
     // The Stop button is conditional on isStreaming. Default mock returns
     // false, so it should be absent — Unpair is the only header button.
     const html = renderToStaticMarkup(
-      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+      <LocalPcChatScreen
+        binding={binding}
+        onLeave={() => {}}
+        onUnpair={() => {}}
+        auth={auth}
+        onDisconnect={onDisconnect}
+      />,
     );
     expect(html).not.toContain('aria-label="Stop"');
   });
 
   it('shows an "Ask the local daemon" placeholder when the WS is open', () => {
     const html = renderToStaticMarkup(
-      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+      <LocalPcChatScreen
+        binding={binding}
+        onLeave={() => {}}
+        onUnpair={() => {}}
+        auth={auth}
+        onDisconnect={onDisconnect}
+      />,
     );
     expect(html).toContain('Ask the local daemon');
   });
@@ -197,7 +244,13 @@ describe('LocalPcChatScreen', () => {
     // chrome. If a future refactor accidentally routes a sandbox-aware
     // component through here, the mention of these terms surfaces it.
     const html = renderToStaticMarkup(
-      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+      <LocalPcChatScreen
+        binding={binding}
+        onLeave={() => {}}
+        onUnpair={() => {}}
+        auth={auth}
+        onDisconnect={onDisconnect}
+      />,
     );
     expect(html).not.toContain('FileBrowser');
     expect(html).not.toContain('Snapshot');
@@ -217,7 +270,13 @@ describe('LocalPcChatScreen', () => {
       maxAttempts: 6,
     };
     const html = renderToStaticMarkup(
-      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+      <LocalPcChatScreen
+        binding={binding}
+        onLeave={() => {}}
+        onUnpair={() => {}}
+        auth={auth}
+        onDisconnect={onDisconnect}
+      />,
     );
     expect(html).toMatch(/Reconnecting to local daemon in \ds/);
     expect(html).toContain('attempt 1 of 6');
@@ -237,7 +296,13 @@ describe('LocalPcChatScreen', () => {
       maxAttempts: 6,
     };
     const html = renderToStaticMarkup(
-      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+      <LocalPcChatScreen
+        binding={binding}
+        onLeave={() => {}}
+        onUnpair={() => {}}
+        auth={auth}
+        onDisconnect={onDisconnect}
+      />,
     );
     expect(html).toContain('Reconnecting to local daemon');
     expect(html).toContain('attempt 2 of 6');
@@ -256,7 +321,13 @@ describe('LocalPcChatScreen', () => {
       maxAttempts: 6,
     };
     const html = renderToStaticMarkup(
-      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+      <LocalPcChatScreen
+        binding={binding}
+        onLeave={() => {}}
+        onUnpair={() => {}}
+        auth={auth}
+        onDisconnect={onDisconnect}
+      />,
     );
     expect(html).toContain('aria-label="Retry connection"');
     expect(html).toContain('after 6 attempts');
@@ -266,7 +337,13 @@ describe('LocalPcChatScreen', () => {
     // Default `status: open` — no banner, no extra chrome. The header
     // is the only thing above the chat container.
     const html = renderToStaticMarkup(
-      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+      <LocalPcChatScreen
+        binding={binding}
+        onLeave={() => {}}
+        onUnpair={() => {}}
+        auth={auth}
+        onDisconnect={onDisconnect}
+      />,
     );
     expect(html).not.toContain('Reconnecting to local daemon');
     expect(html).not.toContain('aria-label="Retry connection"');
@@ -277,7 +354,13 @@ describe('LocalPcChatScreen', () => {
     // combobox. The catalog mock pins `cloudflare` +
     // `@cf/meta/llama-3-8b`.
     const html = renderToStaticMarkup(
-      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+      <LocalPcChatScreen
+        binding={binding}
+        onLeave={() => {}}
+        onUnpair={() => {}}
+        auth={auth}
+        onDisconnect={onDisconnect}
+      />,
     );
     expect(html).toContain('aria-label="Daemon provider"');
     expect(html).toContain('aria-label="Select daemon model"');
@@ -293,7 +376,13 @@ describe('LocalPcChatScreen', () => {
     // callback would assert the populated path; SSR can't drive
     // useState updates from outside the component tree.
     const html = renderToStaticMarkup(
-      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+      <LocalPcChatScreen
+        binding={binding}
+        onLeave={() => {}}
+        onUnpair={() => {}}
+        auth={auth}
+        onDisconnect={onDisconnect}
+      />,
     );
     expect(html).not.toContain('role="dialog"');
     expect(html).not.toContain('aria-label="Approve"');

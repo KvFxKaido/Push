@@ -21,7 +21,7 @@ import { useApprovalQueue } from '@/hooks/useApprovalQueue';
 import { useRelayDaemon } from '@/hooks/useRelayDaemon';
 import { clearPairedRemote } from '@/lib/relay-storage';
 import { buildLocalPcWorkspaceContext } from '@/lib/workspace-context';
-import type { RelayBinding } from '@/types';
+import type { RelayBinding, WorkspaceScreenAuthProps } from '@/types';
 
 interface RelayChatScreenProps {
   binding: RelayBinding;
@@ -29,9 +29,23 @@ interface RelayChatScreenProps {
   onLeave: () => void;
   /** Called after the user unpairs — caller ends the workspace session. */
   onUnpair: () => void;
+  /** GitHub auth surface, forwarded to the hub's Settings tab so the
+   * user can manage their token / installation from inside a daemon
+   * session without unpairing. Daemon sessions don't need GitHub to
+   * function, but the Settings tab includes auth management. */
+  auth: WorkspaceScreenAuthProps;
+  /** Disconnect handler from the app navigation surface. The hub's
+   * Settings → Auth section invokes it. */
+  onDisconnect: () => void;
 }
 
-export function RelayChatScreen({ binding, onLeave, onUnpair }: RelayChatScreenProps) {
+export function RelayChatScreen({
+  binding,
+  onLeave,
+  onUnpair,
+  auth,
+  onDisconnect,
+}: RelayChatScreenProps) {
   const approvals = useApprovalQueue();
   const { status, reconnect, reconnectInfo, request, liveBinding, replayUnavailableAt } =
     useRelayDaemon(binding, {
@@ -74,6 +88,8 @@ export function RelayChatScreen({ binding, onLeave, onUnpair }: RelayChatScreenP
       paramsBinding={binding}
       approvals={approvals}
       request={request}
+      auth={auth}
+      onDisconnect={onDisconnect}
     />
   );
 }

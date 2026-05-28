@@ -28,6 +28,8 @@ export function WorkspaceScreen(props: WorkspaceScreenProps) {
           binding={workspaceSession.binding}
           onLeave={props.navigation.onEndWorkspace}
           onUnpair={props.navigation.onEndWorkspace}
+          auth={props.auth}
+          onDisconnect={props.navigation.onDisconnect}
         />
       </Suspense>
     );
@@ -44,6 +46,8 @@ export function WorkspaceScreen(props: WorkspaceScreenProps) {
           binding={workspaceSession.binding}
           onLeave={props.navigation.onEndWorkspace}
           onUnpair={props.navigation.onEndWorkspace}
+          auth={props.auth}
+          onDisconnect={props.navigation.onDisconnect}
         />
       </Suspense>
     );

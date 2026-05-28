@@ -48,10 +48,13 @@ import { RepoAppearanceSheet } from '@/components/repo/RepoAppearanceSheet';
 import { ModelPicker } from '@/components/ui/model-picker';
 import { useChat } from '@/hooks/useChat';
 import { useDaemonAppearance } from '@/hooks/useDaemonAppearance';
+import { useDaemonSettingsBundles } from '@/hooks/useDaemonSettingsBundles';
 import { useModelCatalog, buildModelControl } from '@/hooks/useModelCatalog';
 import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
+import { useProtectMain } from '@/hooks/useProtectMain';
 import { useScratchpad } from '@/hooks/useScratchpad';
 import { useTodo } from '@/hooks/useTodo';
+import { useWorkspacePreferences } from '@/hooks/useWorkspacePreferences';
 import type { ApprovalQueueHandle } from '@/hooks/useApprovalQueue';
 import type { ConnectionStatus, RequestOptions, SessionResponse } from '@/lib/local-daemon-binding';
 import type { LiveDaemonBinding, ToolDispatchBinding } from '@/lib/local-daemon-sandbox-client';
@@ -61,7 +64,12 @@ import {
   type PreferredProvider,
 } from '@/lib/providers';
 import { getRepoAppearanceColorHex, type RepoAppearance } from '@/lib/repo-appearance';
-import type { Conversation, WorkspaceContext, WorkspaceMode } from '@/types';
+import type {
+  Conversation,
+  WorkspaceContext,
+  WorkspaceMode,
+  WorkspaceScreenAuthProps,
+} from '@/types';
 
 /**
  * The reconnect surface the daemon hooks share. Both
@@ -124,6 +132,12 @@ export interface DaemonChatBodyProps {
    * the body can't know which hook the screen mounted.
    */
   request: <T = unknown>(opts: RequestOptions) => Promise<SessionResponse<T>>;
+
+  /** GitHub auth, forwarded into the hub's Settings → Auth section so
+   *  the user can manage their token without leaving the daemon. */
+  auth: WorkspaceScreenAuthProps;
+  /** Disconnect handler routed from app navigation. */
+  onDisconnect: () => void;
 }
 
 const MODE_HEADER_LABEL: Record<DaemonChatBodyProps['mode'], string> = {
@@ -151,6 +165,8 @@ export function DaemonChatBody({
   paramsBinding,
   approvals,
   request,
+  auth,
+  onDisconnect,
 }: DaemonChatBodyProps) {
   // Provider/model picker plumbing — identical between the two
   // screens. The catalog hook owns reactive `activeBackend` state;
@@ -158,6 +174,22 @@ export function DaemonChatBody({
   // preference (via providers.ts) AND the catalog's reactive state
   // so `getActiveProvider()` returns the new value on the next read.
   const catalog = useModelCatalog();
+
+  // Workspace preferences (profile drafts, approval/context/sandbox
+  // modes, install ID input, show-tool-activity flag, allowlist
+  // command). Mounting this hook here keeps the daemon screen
+  // self-contained: WorkspaceSessionScreen mounts its own instance
+  // for repo / scratch / chat modes, and only one of them is mounted
+  // at a time (the routing in WorkspaceScreen branches on session
+  // kind). Persistence rides through `safeStorage`, so updates made
+  // in one mode are visible in the other on remount.
+  const workspacePrefs = useWorkspacePreferences(auth.validatedUser?.login ?? null);
+
+  // Protect-main config — global default only; daemon has no per-repo
+  // override since there's no active repo. WorkspaceSessionScreen
+  // mounts its own instance scoped to the active repo; for daemon we
+  // omit the repo argument so only the global toggle is wired.
+  const protectMain = useProtectMain();
 
   // Hub + drawer open state. The hub mirrors `WorkspaceHubSheet`'s
   // slide-in-from-right behavior; the drawer slides in from the left
@@ -172,12 +204,21 @@ export function DaemonChatBody({
   const [hubOpen, setHubOpenState] = useState(false);
   const [drawerOpen, setDrawerOpenState] = useState(false);
   const [appearanceSheetOpen, setAppearanceSheetOpen] = useState(false);
+  // Sticky flag: settings bundles are expensive to compute (the AI
+  // bundle alone projects ~60 catalog fields). Defer construction
+  // until the hub is opened at least once, then keep it built so
+  // re-opens are instant. See `useDaemonSettingsBundles({ enabled })`.
+  const [hubEverOpen, setHubEverOpen] = useState(false);
   const openHub = useCallback(() => {
     setDrawerOpenState(false);
     setHubOpenState(true);
+    setHubEverOpen(true);
   }, []);
   const handleHubOpenChange = useCallback((open: boolean) => {
-    if (open) setDrawerOpenState(false);
+    if (open) {
+      setDrawerOpenState(false);
+      setHubEverOpen(true);
+    }
     setHubOpenState(open);
   }, []);
   const handleDrawerOpenChange = useCallback((open: boolean) => {
@@ -246,6 +287,7 @@ export function DaemonChatBody({
     switchChat,
     createNewChat,
     deleteChat,
+    deleteAllChats,
     renameChat,
     // Slice 1.d polish: once the active chat has sent its first
     // message, useChat locks the conversation to its original
@@ -363,6 +405,26 @@ export function DaemonChatBody({
       createNewChat();
     }
   }, [conversationsLoaded, conversations, activeChatId, switchChat, createNewChat, mode]);
+
+  // Settings prop bundles for WorkspaceHubSheet's Settings tab. With
+  // these wired, the daemon hub's tab filter (see
+  // `WorkspaceHubSheet.tsx` `hasSettingsBundles`) flips Settings on
+  // and the user can manage auth / profile / AI / workspace / data
+  // from inside a daemon session without unpairing.
+  const { settingsAuth, settingsProfile, settingsAI, settingsWorkspace, settingsData } =
+    useDaemonSettingsBundles({
+      auth,
+      onDisconnect,
+      prefs: workspacePrefs,
+      catalog,
+      protectMain,
+      isProviderLocked,
+      lockedProvider,
+      isModelLocked,
+      lockedModel,
+      deleteAllChats,
+      enabled: hubEverOpen,
+    });
 
   // Live countdown for the reconnect banner. When a retry is
   // scheduled (`nextAttemptAt` is set), tick the clock every 500ms
@@ -706,8 +768,13 @@ export function DaemonChatBody({
         scratchActions={null}
         repoName={daemonLabel}
         projectInstructions={null}
-        protectMainEnabled={false}
-        showToolActivity={false}
+        protectMainEnabled={protectMain.isProtected}
+        showToolActivity={workspacePrefs.showToolActivity}
+        settingsAuth={settingsAuth}
+        settingsProfile={settingsProfile}
+        settingsAI={settingsAI}
+        settingsWorkspace={settingsWorkspace}
+        settingsData={settingsData}
         scratchpadContent={scratchpad.content}
         scratchpadMemories={scratchpad.memories}
         activeMemoryId={scratchpad.activeMemoryId}
