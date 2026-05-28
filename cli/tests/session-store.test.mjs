@@ -239,9 +239,73 @@ describe('listSessions', () => {
       assert.ok(s.provider);
       assert.ok(s.model);
       assert.equal(typeof s.sessionName, 'string');
+      // Mode column must be populated for every row so consumers
+      // (mobile drawer, picker UIs) can bucket without branching on
+      // undefined. Legacy state.json without the field falls back to
+      // 'interactive' inside listSessions().
+      assert.equal(typeof s.mode, 'string');
+      assert.ok(s.mode.length > 0);
     }
     const named = sessions.find((s) => s.sessionId === id2);
     assert.equal(named?.sessionName, 'Review auth middleware');
+  });
+
+  it('surfaces the persisted mode on the list row', async () => {
+    const idTui = makeSessionId();
+    const idHeadless = makeSessionId();
+    await saveSessionState({
+      sessionId: idTui,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      provider: 'ollama',
+      model: 'a',
+      cwd: '/tmp',
+      rounds: 0,
+      eventSeq: 0,
+      messages: [],
+      mode: 'tui',
+    });
+    await saveSessionState({
+      sessionId: idHeadless,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      provider: 'ollama',
+      model: 'a',
+      cwd: '/tmp',
+      rounds: 0,
+      eventSeq: 0,
+      messages: [],
+      mode: 'headless',
+    });
+
+    const sessions = await listSessions();
+    const tuiRow = sessions.find((s) => s.sessionId === idTui);
+    const headlessRow = sessions.find((s) => s.sessionId === idHeadless);
+    assert.equal(tuiRow?.mode, 'tui');
+    assert.equal(headlessRow?.mode, 'headless');
+  });
+
+  it('defaults legacy sessions without a mode field to interactive', async () => {
+    // Simulate a session whose state.json predates the mode field
+    // by writing one directly (saveSessionState would carry `mode`
+    // through if it was set).
+    const id = makeSessionId();
+    await saveSessionState({
+      sessionId: id,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      provider: 'ollama',
+      model: 'a',
+      cwd: '/tmp',
+      rounds: 0,
+      eventSeq: 0,
+      messages: [],
+      // mode intentionally omitted
+    });
+
+    const sessions = await listSessions();
+    const row = sessions.find((s) => s.sessionId === id);
+    assert.equal(row?.mode, 'interactive');
   });
 });
 

@@ -1148,6 +1148,14 @@ async function handleStartSession(req) {
   const sessionId = makeSessionId();
   const attachToken = makeAttachToken();
   const now = Date.now();
+  // Tag the session with its origin surface so `list_sessions` (and the
+  // mobile drawer that consumes it) can bucket Local PC / Remote / CLI
+  // without re-deriving the mode from local UI state. Mirrors the value
+  // that gets broadcast in the `session_started` event below; the two
+  // must stay in sync so the live event and the persisted state.json
+  // agree.
+  const mode =
+    typeof payload.mode === 'string' && payload.mode.trim() ? payload.mode.trim() : 'interactive';
 
   const state = {
     sessionId,
@@ -1167,12 +1175,13 @@ async function handleStartSession(req) {
     // the client received at start_session time instead of minting a fresh
     // one and immediately rejecting the client's original token as invalid.
     attachToken,
+    mode,
   };
 
   await appendSessionEvent(state, 'session_started', {
     sessionId,
     state: 'idle',
-    mode: payload.mode || 'interactive',
+    mode,
     provider,
     sandboxProvider: payload.sandboxProvider || 'local',
   });

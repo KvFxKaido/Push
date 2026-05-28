@@ -558,6 +558,60 @@ describe('protocol request format', () => {
   });
 });
 
+// ─── list_sessions mode propagation (drift detector) ───────────────
+//
+// The mobile drawer's "Local PC" / "Remote" buckets read `mode` off the
+// `list_sessions` response so they can hide headless runs and tag the
+// origin surface. This test pins the daemon contract: the value passed
+// into `start_session` round-trips through `state.json` and shows up on
+// the listing payload. If a refactor drops the field on either side,
+// this test fails before the drawer silently goes back to bucketing
+// every CLI session as 'interactive'.
+
+describe('list_sessions mode propagation', () => {
+  it('round-trips the start_session mode through to the listing row', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-list-sessions-mode-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      const startTui = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+          mode: 'tui',
+        }),
+        () => {},
+      );
+      assert.equal(startTui.ok, true);
+      const tuiSessionId = startTui.payload.sessionId;
+
+      const startDefault = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+          // `mode` intentionally omitted to confirm the default lands
+          // on the listing row (not just on the event payload).
+        }),
+        () => {},
+      );
+      assert.equal(startDefault.ok, true);
+      const defaultSessionId = startDefault.payload.sessionId;
+
+      const list = await handleRequest(makeRequest('list_sessions', { limit: 50 }), () => {});
+      assert.equal(list.ok, true);
+      const rows = list.payload.sessions;
+      const tuiRow = rows.find((s) => s.sessionId === tuiSessionId);
+      const defaultRow = rows.find((s) => s.sessionId === defaultSessionId);
+      assert.equal(tuiRow?.mode, 'tui');
+      assert.equal(defaultRow?.mode, 'interactive');
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 // ─── Approval ID generation ─────────────────────────────────────
 
 describe('approval ID format', () => {
