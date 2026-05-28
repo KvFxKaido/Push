@@ -27,7 +27,7 @@ import { FileAwarenessLedger, type EditGuardVerdict } from '../lib/file-awarenes
 import { recordMalformedToolCall } from './tool-call-metrics.js';
 import { recordWriteFile } from './edit-metrics.js';
 import { recordContextTrim } from './context-metrics.js';
-import { groupCallsByPhase, UNCAPPED_GROUPING } from '../lib/tool-call-grouping.ts';
+import { groupCallsByPhase, UNCAPPED_GROUPING } from '../lib/tool-call-grouping.js';
 import { computeAdaptation } from './harness-adaptation.js';
 import {
   buildWorkspaceSnapshot,

@@ -7,9 +7,13 @@
  *
  * Stub call type with explicit read/mutation/side-effect tags so the
  * tests don't need to import the web or CLI ToolCall unions.
+ *
+ * Runner note: this file uses Vitest because `app/vitest.config.ts`
+ * picks up sibling lib test files (`../lib/...test.ts`) and treats them
+ * as part of the app test suite. A node:test runner here would silently
+ * not register the cases and CI would report "No test suite found".
  */
-import { strict as assert } from 'node:assert';
-import { describe, it } from 'node:test';
+import { describe, expect, it } from 'vitest';
 
 import {
   groupCallsByPhase,
@@ -34,7 +38,7 @@ const s = (id: string): StubCall => ({ id, kind: 'side' });
 describe('groupCallsByPhase — empty + single-call paths', () => {
   it('empty input returns the empty shape', () => {
     const result = groupCallsByPhase<StubCall>([], predicates, UNCAPPED_GROUPING);
-    assert.deepEqual(result, {
+    expect(result).toEqual({
       readOnly: [],
       fileMutations: [],
       mutating: null,
@@ -44,24 +48,24 @@ describe('groupCallsByPhase — empty + single-call paths', () => {
 
   it('single read classifies directly into readOnly', () => {
     const result = groupCallsByPhase([r('a')], predicates, UNCAPPED_GROUPING);
-    assert.deepEqual(result.readOnly, [r('a')]);
-    assert.equal(result.fileMutations.length, 0);
-    assert.equal(result.mutating, null);
-    assert.equal(result.extraMutations.length, 0);
+    expect(result.readOnly).toEqual([r('a')]);
+    expect(result.fileMutations).toHaveLength(0);
+    expect(result.mutating).toBeNull();
+    expect(result.extraMutations).toHaveLength(0);
   });
 
   it('single file mutation classifies directly into fileMutations', () => {
     const result = groupCallsByPhase([f('a')], predicates, UNCAPPED_GROUPING);
-    assert.deepEqual(result.fileMutations, [f('a')]);
-    assert.equal(result.readOnly.length, 0);
-    assert.equal(result.mutating, null);
+    expect(result.fileMutations).toEqual([f('a')]);
+    expect(result.readOnly).toHaveLength(0);
+    expect(result.mutating).toBeNull();
   });
 
   it('single side-effect classifies directly into mutating', () => {
     const result = groupCallsByPhase([s('a')], predicates, UNCAPPED_GROUPING);
-    assert.deepEqual(result.mutating, s('a'));
-    assert.equal(result.readOnly.length, 0);
-    assert.equal(result.fileMutations.length, 0);
+    expect(result.mutating).toEqual(s('a'));
+    expect(result.readOnly).toHaveLength(0);
+    expect(result.fileMutations).toHaveLength(0);
   });
 });
 
@@ -72,16 +76,10 @@ describe('groupCallsByPhase — multi-call state machine', () => {
       predicates,
       UNCAPPED_GROUPING,
     );
-    assert.deepEqual(
-      result.readOnly.map((c) => c.id),
-      ['1', '2'],
-    );
-    assert.deepEqual(
-      result.fileMutations.map((c) => c.id),
-      ['3', '4'],
-    );
-    assert.equal(result.mutating?.id, '5');
-    assert.equal(result.extraMutations.length, 0);
+    expect(result.readOnly.map((c) => c.id)).toEqual(['1', '2']);
+    expect(result.fileMutations.map((c) => c.id)).toEqual(['3', '4']);
+    expect(result.mutating?.id).toBe('5');
+    expect(result.extraMutations).toHaveLength(0);
   });
 
   it('side-effect terminates the turn — anything after is extra', () => {
@@ -90,24 +88,15 @@ describe('groupCallsByPhase — multi-call state machine', () => {
       predicates,
       UNCAPPED_GROUPING,
     );
-    assert.deepEqual(
-      result.readOnly.map((c) => c.id),
-      ['1'],
-    );
-    assert.equal(result.mutating?.id, '2');
-    assert.deepEqual(
-      result.extraMutations.map((c) => c.id),
-      ['3', '4'],
-    );
+    expect(result.readOnly.map((c) => c.id)).toEqual(['1']);
+    expect(result.mutating?.id).toBe('2');
+    expect(result.extraMutations.map((c) => c.id)).toEqual(['3', '4']);
   });
 
   it('second side-effect lands in extraMutations', () => {
     const result = groupCallsByPhase([s('a'), s('b')], predicates, UNCAPPED_GROUPING);
-    assert.equal(result.mutating?.id, 'a');
-    assert.deepEqual(
-      result.extraMutations.map((c) => c.id),
-      ['b'],
-    );
+    expect(result.mutating?.id).toBe('a');
+    expect(result.extraMutations.map((c) => c.id)).toEqual(['b']);
   });
 
   it('read after mutations started → ordering violation, rest spills to extra', () => {
@@ -116,31 +105,19 @@ describe('groupCallsByPhase — multi-call state machine', () => {
       predicates,
       UNCAPPED_GROUPING,
     );
-    assert.deepEqual(
-      result.readOnly.map((c) => c.id),
-      ['1'],
-    );
-    assert.deepEqual(
-      result.fileMutations.map((c) => c.id),
-      ['2'],
-    );
-    assert.equal(result.mutating, null);
+    expect(result.readOnly.map((c) => c.id)).toEqual(['1']);
+    expect(result.fileMutations.map((c) => c.id)).toEqual(['2']);
+    expect(result.mutating).toBeNull();
     // r('3') triggered the violation and flipped phase to 'done',
     // then f('4') was caught in the done branch.
-    assert.deepEqual(
-      result.extraMutations.map((c) => c.id),
-      ['3', '4'],
-    );
+    expect(result.extraMutations.map((c) => c.id)).toEqual(['3', '4']);
   });
 
   it('file mutation followed by side-effect is valid (file batch + trailing exec)', () => {
     const result = groupCallsByPhase([f('1'), f('2'), s('3')], predicates, UNCAPPED_GROUPING);
-    assert.deepEqual(
-      result.fileMutations.map((c) => c.id),
-      ['1', '2'],
-    );
-    assert.equal(result.mutating?.id, '3');
-    assert.equal(result.extraMutations.length, 0);
+    expect(result.fileMutations.map((c) => c.id)).toEqual(['1', '2']);
+    expect(result.mutating?.id).toBe('3');
+    expect(result.extraMutations).toHaveLength(0);
   });
 });
 
@@ -151,12 +128,9 @@ describe('groupCallsByPhase — caps', () => {
       maxParallelReads: 6,
       maxFileMutationBatch: null,
     });
-    assert.deepEqual(
-      result.readOnly.map((c) => c.id),
-      ['1', '2', '3', '4', '5', '6'],
-    );
+    expect(result.readOnly.map((c) => c.id)).toEqual(['1', '2', '3', '4', '5', '6']);
     // Reads beyond the cap are dropped, not pushed to extra.
-    assert.equal(result.extraMutations.length, 0);
+    expect(result.extraMutations).toHaveLength(0);
   });
 
   it('file-mutation cap pushes overflow to extraMutations (prepended)', () => {
@@ -165,14 +139,8 @@ describe('groupCallsByPhase — caps', () => {
       maxParallelReads: null,
       maxFileMutationBatch: 8,
     });
-    assert.deepEqual(
-      result.fileMutations.map((c) => c.id),
-      ['1', '2', '3', '4', '5', '6', '7', '8'],
-    );
-    assert.deepEqual(
-      result.extraMutations.map((c) => c.id),
-      ['9'],
-    );
+    expect(result.fileMutations.map((c) => c.id)).toEqual(['1', '2', '3', '4', '5', '6', '7', '8']);
+    expect(result.extraMutations.map((c) => c.id)).toEqual(['9']);
   });
 
   it('null caps disable both limits (CLI behavior)', () => {
@@ -196,9 +164,9 @@ describe('groupCallsByPhase — caps', () => {
       f('17'),
     ];
     const result = groupCallsByPhase(calls, predicates, UNCAPPED_GROUPING);
-    assert.equal(result.readOnly.length, 8);
-    assert.equal(result.fileMutations.length, 9);
-    assert.equal(result.extraMutations.length, 0);
+    expect(result.readOnly).toHaveLength(8);
+    expect(result.fileMutations).toHaveLength(9);
+    expect(result.extraMutations).toHaveLength(0);
   });
 
   it('file overflow lands before any post-cap calls in extraMutations', () => {
@@ -224,14 +192,8 @@ describe('groupCallsByPhase — caps', () => {
       maxParallelReads: null,
       maxFileMutationBatch: 8,
     });
-    assert.deepEqual(
-      result.fileMutations.map((c) => c.id),
-      ['1', '2', '3', '4', '5', '6', '7', '8'],
-    );
-    assert.equal(result.mutating?.id, '11');
-    assert.deepEqual(
-      result.extraMutations.map((c) => c.id),
-      ['9', '10'],
-    );
+    expect(result.fileMutations.map((c) => c.id)).toEqual(['1', '2', '3', '4', '5', '6', '7', '8']);
+    expect(result.mutating?.id).toBe('11');
+    expect(result.extraMutations.map((c) => c.id)).toEqual(['9', '10']);
   });
 });
