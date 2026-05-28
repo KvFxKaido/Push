@@ -483,12 +483,26 @@ export function buildRepoChatDrawerProps(args: {
 }): RepoChatDrawerProps {
   const activeRepoFullName = args.activeRepo?.full_name;
 
+  // ChatSurfaceRoute and WorkspaceChatRoute route taps through
+  // `App.handleResumeChatFromDrawer`, which only handles chat / scratch
+  // / repo conversations. local-pc / relay chats fall through to a
+  // no-op there, so surfacing them in these drawers would render dead
+  // rows (the tap closes the drawer but the workspace doesn't switch
+  // and the chat doesn't resume). Filter them out at the builder so
+  // both routes share the guard. DaemonChatBody constructs its own
+  // drawer props and isn't affected.
+  const conversationsForDrawer: typeof args.conversations = {};
+  for (const [id, conv] of Object.entries(args.conversations)) {
+    if (conv.mode === 'local-pc' || conv.mode === 'relay') continue;
+    conversationsForDrawer[id] = conv;
+  }
+
   return {
     open: args.open,
     onOpenChange: args.setOpen,
     repos: args.repos,
     activeRepo: args.activeRepo,
-    conversations: args.conversations,
+    conversations: conversationsForDrawer,
     activeChatId: args.activeChatId ?? '',
     resolveRepoAppearance: args.resolveRepoAppearance,
     setRepoAppearance: args.setRepoAppearance,

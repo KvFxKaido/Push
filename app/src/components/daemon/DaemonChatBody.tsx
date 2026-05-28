@@ -124,12 +124,14 @@ export interface DaemonChatBodyProps {
   request: <T = unknown>(opts: RequestOptions) => Promise<SessionResponse<T>>;
 }
 
-// Empty appearance — daemon sessions don't have a per-session palette
-// today. The shell still renders the glow surface (so the structure
-// matches repo / chat mode); the layer is disabled and painted in the
-// default accent. A future PR can plumb a per-daemon appearance hook
-// (mirroring `useChatModeAppearance`) without touching the layout.
-const DAEMON_APPEARANCE = DEFAULT_REPO_APPEARANCE;
+// Daemon sessions don't have a per-session palette today. The shell
+// still renders the glow surface (so the structure matches repo / chat
+// mode); the layer stays disabled until a follow-up plumbs a per-daemon
+// appearance hook (mirroring `useChatModeAppearance`). `glowEnabled` is
+// explicitly forced false because `DEFAULT_REPO_APPEARANCE.glowEnabled`
+// defaults to true — without the override the animated glow would run
+// on every daemon session, which is a wasted compositor cost on mobile.
+const DAEMON_APPEARANCE = { ...DEFAULT_REPO_APPEARANCE, glowEnabled: false };
 const DAEMON_APPEARANCE_HEX = getRepoAppearanceColorHex(DAEMON_APPEARANCE.color);
 
 const MODE_HEADER_LABEL: Record<DaemonChatBodyProps['mode'], string> = {
@@ -165,8 +167,25 @@ export function DaemonChatBody({
   // via `RepoChatDrawer`. The chat shell's `chatShellTransform`
   // applies the matching opposite translate so the two surfaces feel
   // like one connected layout, same as `ChatSurfaceScreen`.
-  const [hubOpen, setHubOpen] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  //
+  // The two are mutually exclusive — the `chatShellTransform` can only
+  // express one side at a time, and overlapping sheets look wrong.
+  // Mirrors `useWorkspaceChatPanelsController`'s exclusion in repo /
+  // chat mode.
+  const [hubOpen, setHubOpenState] = useState(false);
+  const [drawerOpen, setDrawerOpenState] = useState(false);
+  const openHub = useCallback(() => {
+    setDrawerOpenState(false);
+    setHubOpenState(true);
+  }, []);
+  const handleHubOpenChange = useCallback((open: boolean) => {
+    if (open) setDrawerOpenState(false);
+    setHubOpenState(open);
+  }, []);
+  const handleDrawerOpenChange = useCallback((open: boolean) => {
+    if (open) setHubOpenState(false);
+    setDrawerOpenState(open);
+  }, []);
 
   const scratchpad = useScratchpad(null);
   const todo = useTodo(null);
@@ -403,17 +422,33 @@ export function DaemonChatBody({
       ? 'shadow-[24px_0_56px_rgba(0,0,0,0.42)]'
       : '';
 
+  // Pre-filter conversations to the active daemon mode before passing
+  // them to the drawer. The daemon screen stays mounted with the same
+  // transport binding regardless of which chat the user taps, so
+  // cross-mode picks (e.g. tapping a Remote transcript inside a Local
+  // PC session) would route the next send through the wrong daemon
+  // while displaying the picked transcript. Filtering at the source
+  // means the drawer only shows chats this daemon can faithfully
+  // resume.
+  const daemonScopedConversations = useMemo(() => {
+    const filtered: Record<string, Conversation> = {};
+    for (const [id, conv] of Object.entries(conversations)) {
+      if (conv.mode === mode) filtered[id] = conv as Conversation;
+    }
+    return filtered;
+  }, [conversations, mode]);
+
   const drawerProps = useMemo(
     () => ({
       open: drawerOpen,
-      onOpenChange: setDrawerOpen,
+      onOpenChange: handleDrawerOpenChange,
       // Daemon sessions don't enumerate GitHub repos. Passing an empty
       // list collapses the repo accordion section; daemon-mode chats
       // surface in the "Local PC" / "Remote" sections (see
       // RepoChatDrawer's filtered* memos).
       repos: [],
       activeRepo: null,
-      conversations,
+      conversations: daemonScopedConversations,
       activeChatId,
       resolveRepoAppearance: () => DAEMON_APPEARANCE,
       setRepoAppearance: () => {},
@@ -432,7 +467,16 @@ export function DaemonChatBody({
         renameChat(id, title);
       },
     }),
-    [drawerOpen, conversations, activeChatId, switchChat, createNewChat, deleteChat, renameChat],
+    [
+      drawerOpen,
+      handleDrawerOpenChange,
+      daemonScopedConversations,
+      activeChatId,
+      switchChat,
+      createNewChat,
+      deleteChat,
+      renameChat,
+    ],
   );
 
   const headerLabel = MODE_HEADER_LABEL[mode];
@@ -496,7 +540,7 @@ export function DaemonChatBody({
               </button>
               <button
                 type="button"
-                onClick={() => setHubOpen(true)}
+                onClick={openHub}
                 aria-label="Open hub"
                 title="Notes + pinned artifacts"
                 className={HEADER_ROUND_BUTTON_CLASS}
@@ -615,7 +659,7 @@ export function DaemonChatBody({
 
       <WorkspaceHubSheet
         open={hubOpen}
-        onOpenChange={setHubOpen}
+        onOpenChange={handleHubOpenChange}
         messages={messages}
         agentEvents={agentEvents}
         runEvents={runEvents}
