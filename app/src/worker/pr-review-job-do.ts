@@ -65,6 +65,15 @@ export interface PrReviewStatusSnapshot {
   error: string | null;
 }
 
+/**
+ * A review with its persisted findings, returned by the `list` action that the
+ * PWA review-history surface polls. Extends the status snapshot with the full
+ * `ReviewResult` (null until a review completes / for failed/superseded runs).
+ */
+export interface PrReviewListItem extends PrReviewStatusSnapshot {
+  result: ReviewResult | null;
+}
+
 /** Outcome the executor returns to the lifecycle. */
 export interface PrReviewOutcome {
   result: ReviewResult;
@@ -108,6 +117,7 @@ CREATE TABLE IF NOT EXISTS review (
   is_cross_fork INTEGER NOT NULL,
   status TEXT NOT NULL,
   comments_posted INTEGER,
+  result_json TEXT,
   error_text TEXT,
   created_at INTEGER NOT NULL,
   started_at INTEGER,
@@ -135,6 +145,7 @@ interface ReviewRow {
   is_cross_fork: number;
   status: PrReviewStatusSnapshot['status'];
   comments_posted: number | null;
+  result_json: string | null;
   error_text: string | null;
   created_at: number;
   started_at: number | null;
@@ -150,6 +161,22 @@ export class PrReviewJob {
     this.ctx = ctx;
     this.env = env;
     this.ctx.storage.sql.exec(SCHEMA_SQL);
+    this.ensureResultColumn();
+  }
+
+  /**
+   * Add `result_json` to a `review` table created before this column existed.
+   * SQLite has no ADD COLUMN IF NOT EXISTS, so probe via PRAGMA and ALTER only
+   * when missing — mirrors CoderJob's `do_resume_count` migration. Probing
+   * avoids swallowing real storage errors in a try/catch.
+   */
+  private ensureResultColumn(): void {
+    const cols = this.ctx.storage.sql.exec('PRAGMA table_info(review)').toArray() as Array<{
+      name: string;
+    }>;
+    if (!cols.some((c) => c.name === 'result_json')) {
+      this.ctx.storage.sql.exec('ALTER TABLE review ADD COLUMN result_json TEXT');
+    }
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -161,6 +188,8 @@ export class PrReviewJob {
           return await this.handleStart((await request.json()) as PrReviewStartInput);
         case 'status':
           return this.handleStatus(url.searchParams.get('deliveryId') ?? '');
+        case 'list':
+          return this.handleList();
         default:
           return json({ error: 'UNKNOWN_ACTION', action }, 404);
       }
@@ -258,8 +287,9 @@ export class PrReviewJob {
         return;
       }
       this.ctx.storage.sql.exec(
-        "UPDATE review SET status = 'completed', comments_posted = ?, finished_at = ? WHERE delivery_id = ?",
+        "UPDATE review SET status = 'completed', comments_posted = ?, result_json = ?, finished_at = ? WHERE delivery_id = ?",
         outcome.commentsPosted,
+        JSON.stringify(outcome.result),
         Date.now(),
         input.deliveryId,
       );
@@ -302,19 +332,19 @@ export class PrReviewJob {
   private handleStatus(deliveryId: string): Response {
     const row = this.reviewRow(deliveryId);
     if (!row) return json({ error: 'NOT_FOUND', deliveryId }, 404);
-    const snapshot: PrReviewStatusSnapshot = {
-      deliveryId: row.delivery_id,
-      repo: row.repo,
-      prNumber: row.pr_number,
-      headSha: row.head_sha,
-      status: row.status,
-      createdAt: row.created_at,
-      startedAt: row.started_at,
-      finishedAt: row.finished_at,
-      commentsPosted: row.comments_posted,
-      error: row.error_text,
-    };
-    return json(snapshot, 200);
+    return json(rowToListItem(row), 200);
+  }
+
+  /**
+   * All reviews this DO has handled for its PR, newest first. The DO is named
+   * `repo#prNumber`, so its rows *are* the PR's review history. Powers the PWA
+   * review-history surface (polled while a review is non-terminal).
+   */
+  private handleList(): Response {
+    const rows = this.ctx.storage.sql
+      .exec('SELECT * FROM review ORDER BY created_at DESC')
+      .toArray() as unknown as ReviewRow[];
+    return json({ reviews: rows.map(rowToListItem) }, 200);
   }
 
   private reviewRow(deliveryId: string): ReviewRow | null {
@@ -438,6 +468,32 @@ function classifyError(message: string): string {
   if (status === '429') return 'rate_limit';
   if (status.startsWith('5')) return 'upstream';
   return 'unknown';
+}
+
+function rowToListItem(row: ReviewRow): PrReviewListItem {
+  let result: ReviewResult | null = null;
+  if (row.result_json) {
+    try {
+      result = JSON.parse(row.result_json) as ReviewResult;
+    } catch {
+      // A corrupt result blob shouldn't drop the row from history — surface the
+      // review with its status/error and a null result.
+      result = null;
+    }
+  }
+  return {
+    deliveryId: row.delivery_id,
+    repo: row.repo,
+    prNumber: row.pr_number,
+    headSha: row.head_sha,
+    status: row.status,
+    createdAt: row.created_at,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    commentsPosted: row.comments_posted,
+    error: row.error_text,
+    result,
+  };
 }
 
 function json(body: unknown, status = 200): Response {
