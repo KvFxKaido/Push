@@ -5,7 +5,10 @@
  * The `RelayBinding` type lives in `@/types` next to `LocalPcBinding`
  * so the workspace-session union shape stays one read away. This
  * module holds the feature flag, the pair-bundle decoder, and the
- * `WorkspaceSession` type guard.
+ * `WorkspaceSession` type guard. Bundles minted from an active TUI
+ * session may also carry target daemon session credentials; the
+ * decoder preserves them so the phone-side attach flow can consume
+ * them instead of silently degrading to a fresh Remote chat.
  */
 import type { RelayBinding, WorkspaceSession } from '@/types';
 
@@ -63,7 +66,13 @@ export function parseRemotePairBundle(
   raw: string,
 ): Pick<
   RelayBinding,
-  'deploymentUrl' | 'sessionId' | 'token' | 'attachTokenId' | 'deviceTokenId'
+  | 'deploymentUrl'
+  | 'sessionId'
+  | 'token'
+  | 'attachTokenId'
+  | 'deviceTokenId'
+  | 'targetSessionId'
+  | 'targetAttachToken'
 > | null {
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();
@@ -98,6 +107,8 @@ export function parseRemotePairBundle(
     token?: unknown;
     attachTokenId?: unknown;
     deviceTokenId?: unknown;
+    targetSessionId?: unknown;
+    targetAttachToken?: unknown;
   };
   if (
     typeof obj.deploymentUrl !== 'string' ||
@@ -118,6 +129,12 @@ export function parseRemotePairBundle(
       : {}),
     ...(typeof obj.deviceTokenId === 'string' && obj.deviceTokenId.length > 0
       ? { deviceTokenId: obj.deviceTokenId }
+      : {}),
+    ...(typeof obj.targetSessionId === 'string' && obj.targetSessionId.length > 0
+      ? { targetSessionId: obj.targetSessionId }
+      : {}),
+    ...(typeof obj.targetAttachToken === 'string' && obj.targetAttachToken.length > 0
+      ? { targetAttachToken: obj.targetAttachToken }
       : {}),
   };
 }

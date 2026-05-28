@@ -5141,6 +5141,54 @@ async function handleMintRemotePairBundle(req, _emitEvent, context) {
       'Relay is not enabled. Run `push daemon relay enable --url <…> --token <…>` first.',
     );
   }
+  const targetSessionId =
+    typeof req.payload?.targetSessionId === 'string' && req.payload.targetSessionId.length > 0
+      ? req.payload.targetSessionId
+      : null;
+  const targetAttachToken =
+    typeof req.payload?.targetAttachToken === 'string' && req.payload.targetAttachToken.length > 0
+      ? req.payload.targetAttachToken
+      : null;
+  if (!targetSessionId && targetAttachToken) {
+    return makeErrorResponse(
+      req.requestId,
+      'mint_remote_pair_bundle',
+      'INVALID_REQUEST',
+      'targetAttachToken requires targetSessionId.',
+    );
+  }
+  let resolvedTargetAttachToken = targetAttachToken;
+  if (targetSessionId && targetAttachToken) {
+    const entry = activeSessions.get(targetSessionId);
+    if (!entry || entry.attachToken !== targetAttachToken) {
+      return makeErrorResponse(
+        req.requestId,
+        'mint_remote_pair_bundle',
+        'INVALID_TOKEN',
+        'Target daemon session is not active or its attach token did not match.',
+      );
+    }
+  }
+  if (targetSessionId && !targetAttachToken) {
+    const entry = activeSessions.get(targetSessionId);
+    if (!entry) {
+      return makeErrorResponse(
+        req.requestId,
+        'mint_remote_pair_bundle',
+        'SESSION_NOT_FOUND',
+        'Target daemon session is not active.',
+      );
+    }
+    if (!entry.attachToken) {
+      return makeErrorResponse(
+        req.requestId,
+        'mint_remote_pair_bundle',
+        'MISSING_ATTACH_TOKEN',
+        'Target daemon session does not have an attach token.',
+      );
+    }
+    resolvedTargetAttachToken = entry.attachToken;
+  }
   // Mint a fresh device token first (durable identity for this
   // remote phone), then a child attach token (the actual bearer the
   // phone carries to the relay). Both writes go through the existing
@@ -5176,6 +5224,9 @@ async function handleMintRemotePairBundle(req, _emitEvent, context) {
     // PR #530 GH Actions review.
     attachTokenId: attach.tokenId,
     deviceTokenId: device.tokenId,
+    ...(targetSessionId && resolvedTargetAttachToken
+      ? { targetSessionId, targetAttachToken: resolvedTargetAttachToken }
+      : {}),
   });
   void appendAuditEvent({
     type: 'auth.mint_attach',
@@ -5185,6 +5236,7 @@ async function handleMintRemotePairBundle(req, _emitEvent, context) {
       parentTokenId: device.tokenId,
       ttlMs: attach.ttlMs,
       remote: true,
+      targetSessionId: targetSessionId ?? undefined,
     },
   });
   // Audit logs the tokenIds but NEVER the bundle (which carries the
@@ -5196,6 +5248,7 @@ async function handleMintRemotePairBundle(req, _emitEvent, context) {
     deviceTokenId: device.tokenId,
     attachTokenId: attach.tokenId,
     sessionId,
+    targetSessionId,
     deploymentUrl: config.deploymentUrl,
     ttlMs: attach.ttlMs,
   });

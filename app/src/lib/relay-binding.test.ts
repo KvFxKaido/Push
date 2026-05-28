@@ -23,7 +23,7 @@ const VALID_INPUT = {
   token: 'pushd_da_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 };
 
-function makeBundle(input: typeof VALID_INPUT): string {
+function makeBundle(input: typeof VALID_INPUT & Record<string, string>): string {
   // Browser-safe base64url encode without Node's Buffer.
   const json = JSON.stringify({ v: __test__.PAIR_BUNDLE_VERSION, ...input });
   const utf8 = new TextEncoder().encode(json);
@@ -121,5 +121,18 @@ describe('parseRemotePairBundle', () => {
     for (const b of utf8) bin += String.fromCharCode(b);
     const b64 = btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     expect(parseRemotePairBundle(`${__test__.PAIR_BUNDLE_PREFIX}${b64}`)).toBeNull();
+  });
+
+  it('preserves target daemon session fields when present', () => {
+    const bundle = makeBundle({
+      ...VALID_INPUT,
+      targetSessionId: 'sess_tui_abc123',
+      targetAttachToken: 'att_tui_secret',
+    });
+    expect(parseRemotePairBundle(bundle)).toEqual({
+      ...VALID_INPUT,
+      targetSessionId: 'sess_tui_abc123',
+      targetAttachToken: 'att_tui_secret',
+    });
   });
 });

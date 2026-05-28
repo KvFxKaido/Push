@@ -5,7 +5,14 @@
  *
  * Shape:
  *
- *   push-remote.<base64url(JSON.stringify({ v: 1, deploymentUrl, sessionId, token }))>
+ *   push-remote.<base64url(JSON.stringify({
+ *     v: 1,
+ *     deploymentUrl,
+ *     sessionId,
+ *     token,
+ *     targetSessionId?,
+ *     targetAttachToken?
+ *   }))>
  *
  * The `push-remote.` prefix is a visual / structural marker — paste
  * panels can refuse anything that doesn't start with it without
@@ -42,6 +49,22 @@ export interface RemotePairBundle {
    * `push daemon revoke <id>` hint. Optional for back-compat.
    */
   deviceTokenId?: string;
+  /**
+   * Existing daemon chat session the phone should attach to after it
+   * reaches pushd through the relay. Optional for back-compat with
+   * the original Remote flow, which only paired a transport and let
+   * the phone start independent web-side chat state.
+   */
+  targetSessionId?: string;
+  /**
+   * Attach token for `targetSessionId`. This is bearer material and
+   * is intentionally bundled only when the operator explicitly mints
+   * a Remote bundle from an already-running daemon/TUI session. The
+   * TUI does not have to provide this to the daemon when minting over
+   * the local admin socket; pushd may resolve it from its active
+   * session table.
+   */
+  targetAttachToken?: string;
 }
 
 /**
@@ -66,6 +89,10 @@ export function encodeRemotePairBundle(input: RemotePairBundle): string {
     token: input.token,
     ...(input.attachTokenId !== undefined ? { attachTokenId: input.attachTokenId } : {}),
     ...(input.deviceTokenId !== undefined ? { deviceTokenId: input.deviceTokenId } : {}),
+    ...(input.targetSessionId !== undefined ? { targetSessionId: input.targetSessionId } : {}),
+    ...(input.targetAttachToken !== undefined
+      ? { targetAttachToken: input.targetAttachToken }
+      : {}),
   });
   const encoded = Buffer.from(payload, 'utf8').toString('base64url');
   return `${PREFIX}${encoded}`;
@@ -119,6 +146,12 @@ export function decodeRemotePairBundle(raw: string): RemotePairBundle | null {
       : {}),
     ...(typeof obj.deviceTokenId === 'string' && obj.deviceTokenId.length > 0
       ? { deviceTokenId: obj.deviceTokenId }
+      : {}),
+    ...(typeof obj.targetSessionId === 'string' && obj.targetSessionId.length > 0
+      ? { targetSessionId: obj.targetSessionId }
+      : {}),
+    ...(typeof obj.targetAttachToken === 'string' && obj.targetAttachToken.length > 0
+      ? { targetAttachToken: obj.targetAttachToken }
       : {}),
   };
 }
