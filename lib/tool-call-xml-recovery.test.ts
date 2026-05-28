@@ -266,8 +266,12 @@ describe('recoverXmlToolCalls — Shape C (Anthropic function_calls/invoke/param
       "<function_calls><invoke name='read'><parameter name=path>/a</parameter></invoke></function_calls>",
     ].join('\n');
     const recovered = recoverXmlToolCalls(text);
+    // `<invoke>` is at position 16 (after the opening `<function_calls>`
+    // tag) — pre-PR #683 fix this would have asserted `offset: 0` which
+    // pinned the off-by-N bug Copilot caught.
+    const expectedOffset = text.indexOf('<invoke');
     expect(recovered).toEqual([
-      expect.objectContaining({ tool: 'read', args: { path: '/a' }, offset: 0 }),
+      expect.objectContaining({ tool: 'read', args: { path: '/a' }, offset: expectedOffset }),
     ]);
   });
 
@@ -380,8 +384,17 @@ describe('recoverXmlToolCalls — endOffset', () => {
       '</function_calls>',
     ].join('\n');
     const [read, write] = recoverXmlToolCalls(text);
-    // Each invoke child has its own region; they don't overlap and
-    // neither extends to cover the outer `</function_calls>` close tag.
+    // ABSOLUTE positions — text.indexOf nails the actual `<invoke` /
+    // `</invoke>` positions in the source string, so a bug that
+    // shifted offsets earlier (Copilot review on PR #683 caught this:
+    // `m.blockStart + invoke.innerOffset` undercounted by the opening
+    // `<function_calls>` tag's length) would fail these assertions.
+    // Pre-fix, this test passed with relative-only checks.
+    expect(read.offset).toBe(text.indexOf('<invoke name="read"'));
+    expect(read.endOffset).toBe(text.indexOf('</invoke>', read.offset) + '</invoke>'.length);
+    expect(write.offset).toBe(text.indexOf('<invoke name="write"'));
+    expect(write.endOffset).toBe(text.indexOf('</invoke>', write.offset) + '</invoke>'.length);
+    // Sanity invariants — also caught the absolute bug in isolation.
     expect(read.offset).toBeLessThan(read.endOffset);
     expect(read.endOffset).toBeLessThanOrEqual(write.offset);
     expect(write.endOffset).toBeLessThan(text.length);

@@ -149,8 +149,26 @@ export function recoverXmlToolCalls(text: string): RecoveredXmlCall[] {
     kind: 'tool_call' | 'function_calls';
     blockStart: number;
     blockEnd: number;
+    /**
+     * Absolute offset (in the outer `text`) at which the captured
+     * inner content begins — i.e., one past the close of the opening
+     * tag. `match[1]` is the capture group; `innerStart` is where
+     * that capture begins in the source. Used by `function_calls`
+     * expansion to re-anchor invoke child offsets correctly. For
+     * `tool_call` matches we don't currently re-anchor (the outer
+     * `[blockStart, blockEnd)` is the call's region), but the field
+     * is populated uniformly for both kinds.
+     */
+    innerStart: number;
     inner: string;
   }> = [];
+  // Helper: the regex shapes use `[^>]*` for the opening tag's
+  // attribute set, so the FIRST `>` after `match.index` always closes
+  // the opening tag — no `>`-containing string values to confuse it.
+  const findInnerStart = (m: RegExpExecArray): number => {
+    const closeIdx = text.indexOf('>', m.index);
+    return closeIdx === -1 ? m.index + m[0].length : closeIdx + 1;
+  };
   const toolCallRegex = new RegExp(TOOL_CALL_TAG_REGEX.source, TOOL_CALL_TAG_REGEX.flags);
   let match: RegExpExecArray | null;
   while ((match = toolCallRegex.exec(text)) !== null) {
@@ -158,6 +176,7 @@ export function recoverXmlToolCalls(text: string): RecoveredXmlCall[] {
       kind: 'tool_call',
       blockStart: match.index,
       blockEnd: match.index + match[0].length,
+      innerStart: findInnerStart(match),
       inner: match[1],
     });
   }
@@ -170,6 +189,7 @@ export function recoverXmlToolCalls(text: string): RecoveredXmlCall[] {
       kind: 'function_calls',
       blockStart: match.index,
       blockEnd: match.index + match[0].length,
+      innerStart: findInnerStart(match),
       inner: match[1],
     });
   }
@@ -225,15 +245,18 @@ export function recoverXmlToolCalls(text: string): RecoveredXmlCall[] {
       continue;
     }
     // `<function_calls>` wrapper — expand each `<invoke>` child into its
-    // own recovered call. The wrapper itself only contributes the offset
-    // anchor; the inner content is the structured payload. Each invoke
-    // carries its own start/end offsets re-anchored to the outer text.
+    // own recovered call. Re-anchor each invoke's offsets to the outer
+    // text by adding `m.innerStart` (where the capture group begins),
+    // NOT `m.blockStart` — the latter would undercount by the opening
+    // tag's length and shift recovery regions backward, which lets the
+    // legacy bare-object skip miss objects inside the recovered
+    // invoke. Copilot review on PR #683.
     for (const invoke of parseFunctionCallsInner(m.inner)) {
       out.push({
         tool: invoke.tool,
         args: invoke.args,
-        offset: m.blockStart + invoke.innerOffset,
-        endOffset: m.blockStart + invoke.innerEnd,
+        offset: m.innerStart + invoke.innerOffset,
+        endOffset: m.innerStart + invoke.innerEnd,
       });
     }
   }
