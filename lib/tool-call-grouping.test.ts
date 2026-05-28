@@ -16,7 +16,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  DEFAULT_GROUPING_CAPS,
   groupCallsByPhase,
+  MAX_FILE_MUTATION_BATCH,
+  MAX_PARALLEL_TOOL_CALLS,
   UNCAPPED_GROUPING,
   type GroupingPredicates,
 } from './tool-call-grouping.js';
@@ -195,5 +198,25 @@ describe('groupCallsByPhase — caps', () => {
     expect(result.fileMutations.map((c) => c.id)).toEqual(['1', '2', '3', '4', '5', '6', '7', '8']);
     expect(result.mutating?.id).toBe('11');
     expect(result.extraMutations.map((c) => c.id)).toEqual(['9', '10']);
+  });
+});
+
+describe('canonical cap constants', () => {
+  // Drift detector: both surfaces import these from this module.
+  // Changing the values is a deliberate behavior change that should
+  // touch this test, not a casual edit.
+  it('MAX_PARALLEL_TOOL_CALLS pinned at 6', () => {
+    expect(MAX_PARALLEL_TOOL_CALLS).toBe(6);
+  });
+
+  it('MAX_FILE_MUTATION_BATCH pinned at 8', () => {
+    expect(MAX_FILE_MUTATION_BATCH).toBe(8);
+  });
+
+  it('DEFAULT_GROUPING_CAPS matches the two pinned constants', () => {
+    expect(DEFAULT_GROUPING_CAPS).toEqual({
+      maxParallelReads: MAX_PARALLEL_TOOL_CALLS,
+      maxFileMutationBatch: MAX_FILE_MUTATION_BATCH,
+    });
   });
 });

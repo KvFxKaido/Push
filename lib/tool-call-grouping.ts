@@ -49,21 +49,45 @@ export interface GroupingPredicates<T> {
 export interface GroupingCaps {
   /**
    * Maximum parallel read calls per turn. Overflow is **truncated**
-   * (silently dropped) — matches the existing web behavior, which
-   * documents this as "truncate instead of bailing entirely" on the
-   * theory that the model can ask for the tail on the next turn.
-   *
-   * `null` disables the cap entirely (CLI default).
+   * (silently dropped) — the model can ask for the tail on the next
+   * turn. `null` disables the cap entirely.
    */
   readonly maxParallelReads: number | null;
   /**
    * Maximum file mutations per turn. Overflow is **prepended to
    * `extraMutations`** so the caller can surface an overflow error
    * to the model instead of silently dropping. `null` disables the
-   * cap entirely (CLI default).
+   * cap entirely.
    */
   readonly maxFileMutationBatch: number | null;
 }
+
+/**
+ * Per-turn cap on parallel read-only calls. Sized for a realistic
+ * exploration burst (open a handful of related files, scan a search,
+ * read a dir listing) without letting a runaway plan execute dozens
+ * of reads in one turn.
+ */
+export const MAX_PARALLEL_TOOL_CALLS = 6;
+
+/**
+ * Per-turn cap on file-mutation calls. Generous enough to cover
+ * realistic scaffolds (a handful of new docs, a coordinated multi-file
+ * config update) but bounded so a runaway tool-call loop surfaces a
+ * clear overflow error instead of executing thousands of writes
+ * sequentially.
+ */
+export const MAX_FILE_MUTATION_BATCH = 8;
+
+/**
+ * Canonical caps used by both web (`app/src/lib/tool-dispatch.ts`) and
+ * CLI (`cli/engine.ts`). Matches the web defaults shipped 2026-03 and
+ * adopted by CLI on the parser-convergence followup (PR after #679).
+ */
+export const DEFAULT_GROUPING_CAPS: GroupingCaps = {
+  maxParallelReads: MAX_PARALLEL_TOOL_CALLS,
+  maxFileMutationBatch: MAX_FILE_MUTATION_BATCH,
+};
 
 export interface GroupedCalls<T> {
   /** Contiguous prefix of read-only calls (parallel-safe). */

@@ -44,7 +44,11 @@ import {
 } from '@push/lib/tool-call-diagnosis';
 import { recoverNamespacedToolCalls } from '@push/lib/tool-call-namespaced-recovery';
 import { recoverXmlToolCalls } from '@push/lib/tool-call-xml-recovery';
-import { groupCallsByPhase } from '@push/lib/tool-call-grouping';
+import {
+  groupCallsByPhase,
+  MAX_FILE_MUTATION_BATCH,
+  MAX_PARALLEL_TOOL_CALLS,
+} from '@push/lib/tool-call-grouping';
 import {
   createToolDispatcher,
   type ParsedToolObject,
@@ -82,15 +86,11 @@ export const PARALLEL_READ_ONLY_SANDBOX_TOOLS = new Set(
   getToolCanonicalNames({ source: 'sandbox', readOnly: true }),
 );
 
-export const MAX_PARALLEL_TOOL_CALLS = 6;
-/**
- * Cap on the number of file mutations the dispatcher will execute as a
- * single batch in one turn. Generous enough to cover realistic scaffolds
- * (a handful of new docs, a coordinated multi-file config update) but
- * bounded so a runaway tool-call loop still surfaces a clear overflow
- * error instead of executing thousands of writes sequentially.
- */
-export const MAX_FILE_MUTATION_BATCH = 8;
+// Canonical caps live in `@push/lib/tool-call-grouping` so the CLI engine
+// (`cli/engine.ts`) and the web dispatcher pull from the same source.
+// Re-exported here so existing imports (`@/lib/tool-dispatch`) keep
+// working without churn.
+export { MAX_PARALLEL_TOOL_CALLS, MAX_FILE_MUTATION_BATCH };
 const KNOWN_CAPABILITIES = new Set<Capability>(ALL_CAPABILITIES);
 
 function asTrimmedString(value: unknown): string | undefined {
