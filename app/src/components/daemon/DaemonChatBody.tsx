@@ -691,26 +691,33 @@ export function DaemonChatBody({
             // Wire pin so chat messages get the pin action and the
             // result lands in the hub's Kept section.
             onPin={pinnedArtifacts.pin}
+            // Wire the composer controller's edit + regenerate
+            // handlers so daemon sessions get the same message-bubble
+            // affordances as repo / chat mode. Gated on !isStreaming
+            // because the controller writes into composer state, and
+            // editing mid-stream would race the in-flight turn. Repo /
+            // chat routes share this gating pattern.
+            onEditUserMessage={!isStreaming ? composerController.handleEditUserMessage : undefined}
+            onRegenerateLastResponse={
+              !isStreaming ? composerController.handleRegenerateLastResponse : undefined
+            }
           />
 
           <ChatInput
-            // Gate sends on the daemon connection being open. Without
-            // this, ChatInput would still enable typing in `connecting`
-            // / `closed` / `unreachable` states (the previous textarea
-            // disabled itself on `status.state !== 'open'`) and the
-            // turn would queue against a stale binding. Returning here
-            // is enough — the reconnect banner above already tells the
-            // user why the message didn't go out.
-            onSend={(...args) => {
-              if (status.state !== 'open') return;
-              composerController.handleComposerSend(...args);
-            }}
+            onSend={composerController.handleComposerSend}
             // Route Stop through `handleAbort` so the daemon-side
             // pending approval prompts get cancelled too — calling
             // `abortStream` alone leaves the approval queued and a
             // later Approve click would still submit it.
             onStop={handleAbort}
             isStreaming={isStreaming}
+            // Hard-disable the composer while the daemon binding isn't
+            // open. ChatInput clears the textarea unconditionally after
+            // calling onSend, so a wrapper that just `return`-ed when
+            // status was off would silently drop the user's draft on
+            // the click. The `disabled` prop blocks `canSend` entirely
+            // so the draft survives until the daemon reconnects.
+            disabled={status.state !== 'open'}
             queuedFollowUpCount={queuedFollowUpCount}
             pendingSteerCount={pendingSteerCount}
             placeholder={composePlaceholder}
