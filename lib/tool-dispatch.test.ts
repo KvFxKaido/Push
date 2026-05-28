@@ -853,6 +853,96 @@ describe('createToolDispatcher — namespaced fallback diagnostics', () => {
 });
 
 // ---------------------------------------------------------------------------
+// `enableInternalRecovery: false` — opt-out for callers that run their
+// own gated recovery layer over the source text. The web dispatcher uses
+// this so the kernel can't promote a namespaced/XML recovery when a
+// canonical wrapper was present but failed the structural gate (e.g.
+// flat-form scratchpad). Codex P2 review on PR #679.
+// ---------------------------------------------------------------------------
+
+describe('createToolDispatcher — enableInternalRecovery: false', () => {
+  it('does NOT promote namespaced recovery when phases 1+2 are empty', () => {
+    const dispatcher = createToolDispatcher([PASS_THROUGH_CLI_SOURCE], {
+      enableInternalRecovery: false,
+    });
+    const text = 'functions.read_file:1 {"path":"a.txt"}';
+    const result = dispatcher.detectAllToolCalls(text);
+    // Default behavior (enableInternalRecovery: true) would have
+    // promoted this into `calls`; opt-out leaves it for the outer
+    // layer to handle.
+    expect(result.calls).toEqual([]);
+    // The recovery shape still surfaces as `unknown_tool` so the
+    // OpenCode silent-failure diagnostic fires either way.
+    expect(result.malformed).toHaveLength(1);
+    expect(result.malformed[0].reason).toBe('unknown_tool');
+    expect(result.malformed[0].sample).toContain('functions.read_file');
+  });
+
+  it('does NOT promote XML recovery when phases 1+2 are empty', () => {
+    const dispatcher = createToolDispatcher([PASS_THROUGH_CLI_SOURCE], {
+      enableInternalRecovery: false,
+    });
+    const text = '<tool_call>{"name": "read_file", "arguments": {"path": "a.txt"}}</tool_call>';
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toEqual([]);
+    expect(result.malformed).toHaveLength(1);
+    expect(result.malformed[0].reason).toBe('unknown_tool');
+  });
+
+  it('does NOT promote recovery when a fenced canonical wrapper was rejected by the structural gate', () => {
+    // The specific regression Codex P2 flagged: a model emits a
+    // canonical {tool} wrapper that fails the kernel's structural
+    // gate (no `args` field) AND a non-canonical recovery shape. With
+    // `enableInternalRecovery: true`, the kernel's candidate list is
+    // empty (the canonical wrapper was rejected), so recovery fires
+    // and promotes the trace into `calls` — bypassing any outer gate
+    // that would have suppressed recovery in the presence of a
+    // canonical wrapper.
+    const dispatcher = createToolDispatcher([PASS_THROUGH_CLI_SOURCE], {
+      enableInternalRecovery: false,
+    });
+    const text = [
+      '```json',
+      '{"tool": "set_scratchpad", "content": "flat-form, no args"}',
+      '```',
+      'functions.read_file:1 {"path":"a.txt"}',
+    ].join('\n');
+    const result = dispatcher.detectAllToolCalls(text);
+    // No promotion: the recovery shape stays out of `calls` so the
+    // outer layer's gate (web's `hasExplicitWrappers` check) gets to
+    // decide whether to fire recovery itself.
+    expect(result.calls).toEqual([]);
+    // The kernel still emits diagnostics for both: `missing_args_object`
+    // for the fenced flat-form wrapper, `unknown_tool` for the
+    // recovery trace.
+    const reasons = result.malformed.map((m) => m.reason);
+    expect(reasons).toContain('missing_args_object');
+    expect(reasons).toContain('unknown_tool');
+  });
+
+  it('still works normally for fenced + bare candidates (the opt-out only affects recovery promotion)', () => {
+    const dispatcher = createToolDispatcher([PASS_THROUGH_CLI_SOURCE], {
+      enableInternalRecovery: false,
+    });
+    const text = ['```json', '{"tool":"read_file","args":{"path":"a.txt"}}', '```'].join('\n');
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toEqual([{ tool: 'read_file', args: { path: 'a.txt' } }]);
+    expect(result.malformed).toEqual([]);
+  });
+
+  it('default (no option) still promotes recovery — preserves existing CLI behavior', () => {
+    const dispatcher = createToolDispatcher([PASS_THROUGH_CLI_SOURCE]);
+    const text = 'functions.read_file:1 {"path":"a.txt"}';
+    const result = dispatcher.detectAllToolCalls(text);
+    // Same behavior as the equivalent test in the
+    // `namespaced fallback diagnostics` suite above — pinning that
+    // the default didn't change.
+    expect(result.calls).toEqual([{ tool: 'read_file', args: { path: 'a.txt' } }]);
+    expect(result.malformed).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // XML-wrapper recovery — `<tool_call>…</tool_call>` shape emitted by
 // Hermes / Qwen / Nous-style finetunes. The mobile-app screenshot bug
 // that motivated phase 4: the model emitted the Shape B variant and the

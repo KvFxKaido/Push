@@ -219,7 +219,16 @@ const WEB_DISPATCH_SOURCE: ToolSource<AnyToolCall> = {
   },
 };
 
-const webDispatcher = createToolDispatcher<AnyToolCall>([WEB_DISPATCH_SOURCE]);
+// `enableInternalRecovery: false` defers namespaced/XML recovery to the
+// web layer's outer pass (gated on `!hasExplicitWrappers`). Otherwise the
+// kernel's internal recovery would fire whenever its candidate list is
+// empty — including when canonical wrappers were present but failed the
+// kernel's structural gate (e.g. scratchpad flat-form) — and a recovered
+// call would land in `calls` even though web's own gate would have
+// suppressed it. Codex P2 review on PR #679.
+const webDispatcher = createToolDispatcher<AnyToolCall>([WEB_DISPATCH_SOURCE], {
+  enableInternalRecovery: false,
+});
 
 /** Internal: a call paired with its textual start offset in the source. */
 interface OffsetCall {
