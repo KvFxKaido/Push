@@ -27,6 +27,7 @@ import { FileAwarenessLedger, type EditGuardVerdict } from '../lib/file-awarenes
 import { recordMalformedToolCall } from './tool-call-metrics.js';
 import { recordWriteFile } from './edit-metrics.js';
 import { recordContextTrim } from './context-metrics.js';
+import { groupCallsByPhase, UNCAPPED_GROUPING } from '../lib/tool-call-grouping.js';
 import { computeAdaptation } from './harness-adaptation.js';
 import {
   buildWorkspaceSnapshot,
@@ -1812,59 +1813,37 @@ async function runAssistantLoopImpl(
     }
 
     // --- Per-turn mutation transaction grouping (state machine) ---
-    // Walk the ordered tool-call list exactly once so we preserve the
+    // Delegates to the shared kernel in `lib/tool-call-grouping.ts`
+    // so this surface and the web dispatcher
+    // (`app/src/lib/tool-dispatch.ts:classifyDetectedCalls`) enforce
+    // the same per-turn contract by construction — preserving the
     // model's intended ordering (reads first, then the file-mutation
-    // batch, then at most one trailing side-effect). This mirrors the
-    // web dispatcher (`detectAllToolCalls` in app/src/lib/tool-dispatch.ts)
-    // and the daemon wrapper (`wrapCliDetectAllToolCalls` in cli/pushd.ts)
-    // so all three runtimes enforce the same contract.
+    // batch, then at most one trailing side-effect).
     //
-    //   - `readCalls`: contiguous prefix of read-only calls, parallel
-    //   - `fileMutationBatch`: contiguous file mutations (write/edit/undo),
+    //   - `readOnly`: contiguous prefix of read-only calls, parallel
+    //   - `fileMutations`: contiguous file mutations (write/edit/undo),
     //     executed sequentially with fail-fast on the first error
-    //   - `trailingSideEffect`: at most one trailing side-effecting call
+    //   - `mutating`: at most one trailing side-effecting call
     //     (exec, git_commit, save_memory, etc.)
-    //   - `rejectedMutations`: overflow — a second side-effect, a read
+    //   - `extraMutations`: overflow — a second side-effect, a read
     //     emitted after the mutation transaction started, or any call
     //     that arrived after the trailing side-effect. Surfaced as
     //     `MULTI_MUTATION_NOT_ALLOWED` below.
-    const readCalls: ToolCall[] = [];
-    const fileMutationBatch: ToolCall[] = [];
-    let trailingSideEffect: ToolCall | null = null;
-    const rejectedMutations: ToolCall[] = [];
-    let groupingPhase: 'reads' | 'mutations' | 'done' = 'reads';
-    for (const call of toolCalls) {
-      const isRead = isReadOnlyToolCall(call);
-      const isFileMut = !isRead && isFileMutationToolCall(call);
-
-      if (groupingPhase === 'done') {
-        rejectedMutations.push(call);
-        continue;
-      }
-
-      if (isRead) {
-        if (groupingPhase === 'reads') {
-          readCalls.push(call);
-          continue;
-        }
-        // Read after the mutation transaction started — ordering
-        // violation. Push into rejectedMutations and flip to `done` so
-        // remaining calls land there too.
-        rejectedMutations.push(call);
-        groupingPhase = 'done';
-        continue;
-      }
-
-      if (isFileMut) {
-        groupingPhase = 'mutations';
-        fileMutationBatch.push(call);
-        continue;
-      }
-
-      // Side-effecting call. Only one allowed per turn.
-      trailingSideEffect = call;
-      groupingPhase = 'done';
-    }
+    //
+    // CLI passes `UNCAPPED_GROUPING` because the inline state machine
+    // historically did not enforce caps. The web side caps at 6/8 and
+    // pushes overflow into `extraMutations`. The divergence is
+    // documented in `docs/decisions/Tool-Call Parser Convergence Gap.md`
+    // and remains an open follow-up.
+    const grouped = groupCallsByPhase<ToolCall>(
+      toolCalls,
+      { isReadOnly: isReadOnlyToolCall, isFileMutation: isFileMutationToolCall },
+      UNCAPPED_GROUPING,
+    );
+    const readCalls: ToolCall[] = grouped.readOnly;
+    const fileMutationBatch: ToolCall[] = grouped.fileMutations;
+    const trailingSideEffect: ToolCall | null = grouped.mutating;
+    const rejectedMutations: ToolCall[] = grouped.extraMutations;
     const mutateCalls: ToolCall[] = [
       ...fileMutationBatch,
       ...(trailingSideEffect ? [trailingSideEffect] : []),
