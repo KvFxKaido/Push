@@ -129,9 +129,12 @@ export async function processAssistantTurn(
     );
   }
 
-  // --- Multiple-mutations error: model emitted >1 mutating call in one turn.
-  // Surface a structured error to the assistant and continue without execution.
-  if (detected.extraMutations.length > 0) {
+  // --- Mutation-transaction violation: file-mutation batch overflow OR
+  // ordering violation (or both). Pre-PR #680 kernel split, batch overflow
+  // was lumped into extraMutations; post-split, web has to check both
+  // lists or batch overflow (e.g. 9+ file mutations in one turn) would
+  // silently drop the overflow without surfacing a model-facing error.
+  if (detected.batchOverflow.length > 0 || detected.extraMutations.length > 0) {
     const errorAction = handleMultipleMutationsError(
       detected,
       accumulated,
