@@ -4,6 +4,13 @@ Date: 2026-04-17
 Status: Reference snapshot, full panel refresh on 2026-04-17
 
 Refresh note:
+- **State update 2026-05-28** (Codex, Gemini, and Claude reassessed; parser convergence closed; Big Four regrowth — and a panel-record correction):
+  - **Tool-Call Parser Convergence closed.** The six-PR convergence tranche (#677–#684) successfully unified the parser code path across web and CLI, routing both through `lib/tool-dispatch.ts` and consolidating phase grouping. Spurious heuristics are replaced with exact offset data.
+  - **Big Four regrowth — partial Waterbed.** Combined Big Four nominal size grew from 3,646 → **4,263 lines** (+16.9%). The headline number is `app/src/lib/sandbox-tools.ts` 670 → **1,021** (+52.4%). The dispatcher regrowth is real but it is **not** an Waterbed Effect on the previously-extracted handler families — it is concentrated in the `sandbox_exec` arm, which never had a sub-handler split and absorbed `local-pc` daemon dispatch (#511), daemon paths for read/write/diff (#515), mid-run cancel (#517), command-aware tool-output reducers, and GitBackend wiring inline. `coder-agent.ts` regrowth (1,411 → 1,609) is feature pressure (durable resume, parser changes); helper perimeter still cleaner than the 2026-04-26 baseline. `useChat.ts` at 946 still under the 950 cap — the ratchet held for ~four weeks under feature pressure.
+  - **Panel-record correction (Claude entry).** Codex / Claude / Gemini all wrote at 2026-05-01 that "the Verification family extraction from `sandbox-tools.ts` still needs to land" — it had landed two weeks earlier on **2026-04-15** (commit `14a63c48`, "refactor(tools): extract sandbox verification family (step 4)"), and by 2026-04-18 the same handler-context pattern had been applied to four more families (edit, write, git-release, read-only-inspection — `app/src/lib/sandbox-{edit,write,git-release,read-only-inspection,verification}-handlers.ts`, each with a test file). The 2026-05-28 Codex entry above still references "extract the daemon binding / verification-family mass" as a future step; the verification half of that is already done. Only the `sandbox_exec`/daemon-binding half remains.
+  - **Codex reassessment.** Overall score moves from 8.6 → **8.7/10**, with architecture 9.1 → **9.2/10** because parser convergence turned a cross-surface cooperation risk into shared runtime substrate. Implementation holds at **8.4/10**: exact offsets and common grouping are real shape gains, but `sandbox-tools.ts` regrowth proves containment is still not habit-grade.
+  - **Gemini reassessment.** Overall score drops from 8.9 → **8.8/10**, holding architecture at 9.0 but bringing implementation down from 8.8 → **8.6/10** to account for the regrowth.
+  - **Claude reassessment.** Overall score moves from 8.7 → **8.8/10**, architecture 9.0 → **9.1/10** (parser convergence as substrate + GitBackend/policy lift mirrors the role-capability hardening that earned the original 9.1), implementation 8.4 → **8.6/10** (panel-named milestone shipped and generalized to five families; durable resume + R2 snapshots are real reliability infrastructure; partial credit only because `sandbox_exec` inline growth and the missing `runCoderAgent` characterization tests cap the upside).
 - **State update 2026-05-01** (Gemini reassessed; Codex light refresh after `coder-agent.ts` helper extraction; Claude reassessed):
   - **`useChat.ts` re-discharge — Waterbed Effect reversed.** The "ceiling ratcheted up" concern from the 2026-04-26 update is over. `useChat.ts` 1,450 → **892 lines** (−38.5%) across a multi-commit program: `prepareSendContext` / `acquireRunSession` / `finalizeRunSession` (2026-04-26, late), `queued-follow-up-utils.ts` and `chat-round-loop.ts` (2026-05-01), then today's three — `useConversationPersistence`, `chat-active-run-router`, `useChatAutoSwitch`. The ESLint `max-lines` cap on `useChat.ts` ratcheted from 1,400 → **1,060** (commit `0dcbbb3a`, 2026-04-28); current file leaves ~168 lines of headroom, so a further ratchet is justified. Net new test surface: ~30 cases pinning previously-uncovered behavior (retry-with-cap-at-3 in persistence, FIFO queue position math, the auto-switch state machine including the migration-marker gate). The "extraction discipline" the synthesis flagged as the next-jump condition is now demonstrated on the densest module — not just operationalized via the cap.
   - **Coder helper extraction — permanent boundary refined, not overturned.** `coder-agent.ts` 1,989 → **1,411 lines** (−29.1%) after extracting working-memory delegation, context-trim helpers, and mutation-result helpers into sibling `lib/` modules with focused tests. The core `runCoderAgent` loop remains the load-bearing boundary, which is the right shape; this is not a full decomposition, but it does remove helper mass without creating a fake abstraction.
@@ -28,11 +35,59 @@ Refresh note:
 
 | Model | Overall | Arch | Impl | Status | Notes |
 |---|---|---|---|---|---|
-| Codex | **8.6/10** | 9.1 | 8.4 | Light refresh 2026-05-01 | Architecture unchanged. `useChat.ts` discharge plus `coder-agent.ts` helper extraction move implementation shape modestly; the Coder loop and Verification family remain the ceiling. |
-| Claude | **8.7/10** | 9.0 | 8.4 | Reassessed 2026-05-01 (self-rating, conflict-of-interest noted) | `useChat.ts` re-discharge plus `coder-agent.ts` helper extraction earn a quarter point on implementation. Verification-family extraction still the panel-named landing for a 9+. |
-| Gemini | **8.9/10** | 9.0 | 8.8 | Reassessed 2026-05-01 | `useChat.ts` discharge is definitive proof of extraction discipline. Implementation score jumps 0.4. |
+| Codex | **8.7/10** | 9.2 | 8.4 | Reassessed 2026-05-28 | Parser convergence is architecture-grade shared substrate now. Implementation holds because Big Four regrowth, especially `sandbox-tools.ts`, cancels the shape credit. |
+| Claude | **8.8/10** | 9.1 | 8.6 | Reassessed 2026-05-28 (self-rating, conflict-of-interest noted; panel record corrected) | Parser convergence + GitBackend lift earn substrate credit on architecture. Implementation up because the panel-named handler-context pattern shipped + generalized to five families, durable resume infrastructure is real, and the `max-lines` ratchet held under feature pressure. `sandbox_exec` inline growth caps further upside. |
+| Gemini | **8.8/10** | 9.0 | 8.6 | Reassessed 2026-05-28 | Parser convergence (PRs #677–#684) closed the Web/CLI parity gap, but Big Four modules regrew from 3,646 to 4,263 lines (+16.9%). |
 
 ## Codex
+
+### Rating (2026-05-28)
+
+Overall: **8.7/10** (up from 8.6)
+
+Split view:
+
+- **9.2/10** on architecture taste / system design (was 9.1)
+- **8.4/10** on current implementation shape (holds)
+
+### Why the score moved
+
+Tool-call parser convergence is the kind of change that should move the
+architecture axis, not just the bug-count axis. The six-PR tranche (#677-#684)
+took a failure-prone cross-surface behavior and made it shared substrate:
+web and CLI now route through `lib/tool-dispatch.ts`, phase grouping lives in
+`lib/tool-call-grouping.ts`, malformed calls share error codes, and the old
+offset reconstruction heuristics were replaced with exact offset data.
+
+That matters because this was exactly the class of gap Push says prompts should
+not be asked to paper over. A non-cooperating model can still emit odd tool
+syntax, but the recovery/parsing path is now a runtime concern with common code
+and common diagnostics. That is architecture behaving like architecture.
+
+### Why implementation holds
+
+The implementation score does not move up because the same refresh exposed a
+real containment regression. The Big Four have regrown from 3,646 to **4,263
+lines**, with `app/src/lib/sandbox-tools.ts` doing most of the damage
+(670 -> **1,021 lines**) as local-pc daemon binding logic landed inline in the
+dispatcher.
+
+So the honest Codex read is: parser convergence earns architecture credit, but
+the Waterbed Effect eats the implementation credit. The codebase can still
+execute a focused convergence campaign very well; it is not yet reliably
+preventing feature pressure from re-filling the exact modules the remediation
+plan named.
+
+### Current ceiling
+
+The next rating jump still needs the same proof, now with sharper evidence:
+extract the daemon binding / verification-family mass out of `sandbox-tools.ts`
+behind handler-owned modules, then keep the cap from ratcheting upward again.
+If parser convergence is the model for targeted substrate work, the
+implementation can get to 8.6-8.8 quickly. Without containment discipline, 8.7
+overall is the right place to stop being generous.
+
+### Codex (2026-05-01 — prior snapshot)
 
 ### Rating (2026-05-01 light refresh)
 
@@ -251,6 +306,53 @@ Push has strong architecture taste, strong product boundaries, and a much more m
 
 ## Claude
 
+### Rating (2026-05-28)
+
+Overall: **8.8/10** (up from 8.7)
+
+Split view:
+
+- **9.1/10** on architecture (was 9.0)
+- **8.6/10** on current implementation shape (was 8.4)
+
+### Conflict-of-interest note
+
+The 2026-04-15 Verification family extraction commit (`14a63c48`) is authored by Claude, and PRs in the parser-convergence tranche likely include my work. Treat the bump as self-rating with the same caveat that applied at 2026-05-01: Claude lands between Codex (held at 8.4 impl) and Gemini (down to 8.6 impl) on the implementation axis, which is consistent with the "Claude splits the difference" pattern from prior synthesis blocks.
+
+### Panel-record correction up front
+
+At 2026-05-01 the entire panel — me included — wrote that the Verification family extraction from `sandbox-tools.ts` was the gating milestone for a 9+ implementation read. That extraction had **already landed on 2026-04-15** (commit `14a63c48`, "refactor(tools): extract sandbox verification family (step 4)") — two weeks before the panel sat down. By 2026-04-18 the same handler-context pattern had been applied to four more families: edit (`7ecd4dda`), write (`afdfc8cd`), git-release (`9c225445`), and read-only-inspection (`114bdc31`). Five sibling handler files (each with `.test.ts`) totalling ~4,165 lines now own what was previously inline in the dispatcher.
+
+The 2026-05-28 Codex entry above still treats verification-family extraction as a future step. It isn't — only the `sandbox_exec` / daemon-binding half of "extract the daemon binding / verification-family mass" remains. The panel kept missing this because the headline line-count signal points the wrong direction: `sandbox-tools.ts` grew from 670 to 1,021 lines since 2026-05-01, but inspection of the dispatcher (sample at L416–L1003) shows the regrowth is concentrated entirely in the `sandbox_exec` arm and its `local-pc` daemon-binding scaffolding. The extracted families haven't reabsorbed anything.
+
+### Why architecture moves to 9.1
+
+- **Parser convergence is substrate-grade.** PRs #677 / #679 / #680 / #681 / #683 / #684 unified the dispatcher kernel, moved phase grouping to `lib/tool-call-grouping.ts`, normalized error codes across surfaces (`FILE_MUTATION_BATCH_OVERFLOW`, `MULTI_MUTATION_NOT_ALLOWED`), and — the move that earns architecture credit, not impl credit — **replaced three convergence heuristics with exact data APIs** (`RecoveredNamespacedCall.endOffset`, `RecoveredXmlCall.endOffset`, `ToolDispatchResult.callOffsets`). Heuristic → exact data is the Push convention's "behavior lives in code, not prompts" rule applied to its own runtime. Codex correctly bumps to 9.2 on this.
+- **GitBackend / `lib/git/policy.ts` lift** consolidates git command policy into a typed backend with `PushGit` facade and structured guard guidance. This is the same soft-rule → substrate move that earned the original 9.1 jump for role-capability enforcement, but applied to a different invariant family. Independent architecture credit.
+- **Durable coder-job resume** (PRs #649 / #650 / #654-657 / #661) converts what was "operationally improving reliability" into a runtime invariant — checkpoints, `MAX_JOB_RESUMES` cap, orphan-on-DO-wake recovery. **R2-backed filesystem snapshots** (#647 / #648 / #651) close the "edits vanishing" gap that 2026-04-26 left open.
+
+I land at 9.1 rather than Codex's 9.2 because the GitBackend lift is the kind of move I'd weight equally with parser convergence on the architecture axis, and Codex's 9.2 absorbs both into the same bump. Sitting between Codex (9.2) and Gemini (9.0) is honest.
+
+### Why implementation moves to 8.6
+
+- The **handler-context pattern shipped and generalized** to five families (verification, edit, write, git-release, read-only-inspection), each with a test file. This is the panel's named landing for 9+. The 2026-05-01 framing that called it the future test was already wrong by then.
+- **The `max-lines` ratchet on `useChat.ts` held under sustained feature pressure for ~four weeks** — that's the structural Waterbed-Effect-reversal claim from 2026-05-01 surviving real load, not just the moment of landing. `useChat.ts` is 946 lines against a 950-line cap; the cap didn't ratchet up under pressure.
+- **Durable resume infrastructure** is genuine implementation-shape work that the prior remediation plan called out and that has now landed with test coverage (`MAX_JOB_RESUMES` cap, silent-null path closures in #657, snapshot-restore failure surfacing in #651).
+
+Why not higher:
+
+- **`sandbox_exec` is becoming the next gravity well.** The 670 → 1,021 dispatcher regrowth is concentrated in one case arm absorbing local-pc daemon dispatch, daemon paths for read/write/diff, mid-run cancel, command-aware tool-output reducers, and GitBackend wiring. None of that is fossilization of extracted families — but if the next two months add another 350 lines of inline daemon scaffolding to that arm, we'll have replaced the old gravity well with a new one of similar shape. Codex and Gemini are right to flag this; they're wrong about which families are at risk.
+- **`coder-agent.ts` at 1,609** still has no characterization tests on the inline `runCoderAgent` loop body. The helper extractions stuck, but the loop itself is one feature press away from getting harder to refactor without a safety net.
+- **Tracing spine through `CorrelationContext`** across web / CLI / Worker boundaries remains the panel-named seam that hasn't been threaded. Codex/Claude/Gemini all flagged this at 2026-05-01 and it remains the cheapest remaining 9+ implementation move.
+
+### What would move implementation past 8.7
+
+- Split `sandbox_exec` into a transport-aware handler family before the dispatcher arm doubles in size again. The pattern is already proven five times.
+- Characterization-test pass on the inline `runCoderAgent` loop so `coder-agent.ts` could ratchet down rather than just stay flat under feature pressure.
+- Tracing spine through `CorrelationContext` across the seams the 2026-04-17 panel called out (still unmet 41 days later).
+
+### Claude (2026-05-01 — prior snapshot)
+
 ### Rating (2026-05-01)
 
 Overall: **8.7/10** (up from 8.6)
@@ -462,6 +564,33 @@ Once the boundaries around a complex module are good enough, it becomes easy to 
 
 ## Gemini
 
+### Rating (2026-05-28)
+
+Overall: **8.8/10** (down from 8.9)
+
+Split view:
+
+- **9.0/10** on architecture (holds)
+- **8.6/10** on current implementation shape (down from 8.8)
+
+### Why the score moved
+
+While the complete closure of the **Tool-Call Parser Convergence Gap** (PRs #677–#684) is a definitive triumph for shared runtime parity—eliminating the parallel parser state machines and unifying the error-code surface under the canonical `lib/tool-dispatch.ts` kernel—the implementation score must honestly reflect a regression in our core containment metrics.
+
+The "Big Four" modules have expanded from 3,646 lines to **4,263 lines** (+16.9% combined size) since the May 1st update:
+- `app/src/lib/sandbox-tools.ts` regrew from 670 → **1,021 lines** (+52.4%). This is a textbook example of the Waterbed Effect: the new `local-pc` daemon binding dispatch and error wrapping were implemented inline within the dispatcher's `switch` block instead of being co-extracted into a dedicated adapter.
+- `lib/coder-agent.ts` regrew from 1,411 → **1,609 lines** (+14.0%).
+- `app/src/hooks/useChat.ts` regrew from 892 → **946 lines** (+6.0%).
+- `app/src/hooks/useAgentDelegation.ts` regrew from 673 → **687 lines** (+2.1%).
+
+The parser convergence proves that shared kernels work beautifully once established. However, the regression in `sandbox-tools.ts` indicates that the "extract and restrict" workflow is not yet habit-grade; feature pressure still defaults to piling logic back into the dispatchers.
+
+### Why it doesn't move higher yet
+
+Our architectural ceiling remains the same: we need a strict co-extraction discipline to ensure feature implementations (like the `local-pc` daemon bindings) are kept out of the main dispatchers. To cross the 9.0 boundary on implementation, we need to extract the daemon bindings out of `sandbox-tools.ts` to restore its role as a pure router, and thread a unified tracing spine through `CorrelationContext` across client, daemon, and worker boundaries.
+
+### Gemini (2026-05-01 — prior snapshot)
+
 ### Rating (2026-05-01)
 
 Overall: **8.9/10** (up from 8.7)
@@ -585,6 +714,30 @@ Split view:
 ### Short summary
 
 Gemini’s updated read is that Push has unusually strong architecture instincts for an AI-agent system. The previous concerns around adapter layers and streaming divergence have been significantly mitigated by the unified `emit` callback mechanism in the engine and `pushd` daemon. The architecture is now much closer to the code shape, leaving only tracing maturity and full phase-out of older hooks as the main architectural gaps.
+
+## Synthesis (2026-05-28)
+
+Panel spread: **Codex 8.7, Claude 8.8, Gemini 8.8**. All three reviewers reassessed. Blended score lands at roughly **8.77/10** — round to **8.8**. The 0.1 spread is the tightest the panel has been since the snapshot doc started.
+
+Note on independence: Claude's reassessment is partly self-rating — the 2026-04-15 Verification family extraction commit (`14a63c48`) is authored by Claude, and PRs in the parser-convergence tranche likely include Claude's work. Claude landed at 8.6 on implementation, between Codex (8.4 hold) and Gemini (8.6 drop), and at 9.1 on architecture, between Gemini (9.0) and Codex (9.2) — credible splits but weight accordingly.
+
+**Panel-record correction (acknowledged this refresh).** At 2026-05-01 Codex / Claude / Gemini all wrote that the **Verification family extraction from `sandbox-tools.ts` still needed to land** as the panel's named test of the handler-context pattern. It had already landed on **2026-04-15** (commit `14a63c48`), and by 2026-04-18 the same pattern had been applied to four more families (edit, write, git-release, read-only-inspection — see `app/src/lib/sandbox-{edit,write,git-release,read-only-inspection,verification}-handlers.ts`, each with a test file). The Codex 2026-05-28 entry above and the prior version of this synthesis block both inherited the error — Codex referenced "extracting the daemon binding / verification-family mass" as a future step, and this block originally said the ceiling was unchanged because that extraction hadn't happened. The half that's left is `sandbox_exec` and the local-pc daemon-binding mass, not the verification family. Claude's 2026-05-28 entry surfaces the correction in detail.
+
+Current agreement across the panel:
+
+- **Parser convergence is a major milestone.** Complete closure of the convergence gap is a structural victory for shared runtime parity — phase grouping in `lib/tool-call-grouping.ts`, normalized error codes across surfaces, and (the move that justifies architecture credit, not just impl credit) three heuristics replaced with exact data APIs (`endOffset`, `callOffsets`). Codex weights this hardest (9.1 → 9.2 arch); Claude shares the substrate framing but distributes the architecture credit across parser convergence + GitBackend lift (9.0 → 9.1); Gemini reads it as parity work and holds architecture at 9.0.
+- **`sandbox-tools.ts` regrowth is real but localized.** All three reviewers flagged the 670 → 1,021 dispatcher growth. On inspection, the regrowth is concentrated in the `sandbox_exec` arm and its `local-pc` daemon-binding scaffolding (#511, #515, #517) plus GitBackend wiring — none of the five previously-extracted handler families reabsorbed anything. So the headline number is a real warning signal about which arm of the dispatcher needs the next split, not evidence that the handler-context pattern failed.
+- **The next ceiling test is the `sandbox_exec` / daemon-binding split** behind a transport-aware handler context, plus threading `CorrelationContext` across web / CLI / Worker seams. Both moves were named at 2026-04-17 and remain unmet 41 days later.
+
+Current difference in emphasis:
+
+- **Codex (8.7)** weights parser convergence hardest on the architecture axis (9.2, first time a panel member crosses 9.2), and is strictest on the implementation axis (8.4 hold) because the dispatcher regrowth proves containment isn't yet habit-grade.
+- **Gemini (8.8)** holds architecture at 9.0 and reads the regrowth as Waterbed Effect penalty (8.8 → 8.6 impl). Most conservative read on the architecture axis.
+- **Claude (8.8)** sits between them: matches Codex on the substrate framing but reads regrowth as `sandbox_exec`-specific rather than general Waterbed, and gives independent architecture credit to the GitBackend lift (9.0 → 9.1, 8.4 → 8.6 impl). Brings the panel-record correction inline.
+
+Blended takeaway:
+
+Push is good at executing a targeted convergence campaign (parser closure, role-capability hardening, GitBackend) and the panel-named handler-context pattern shipped and generalized to five families — both pieces of evidence the panel underweighted at 2026-05-01 because of stale assumptions about what had landed. The current ceiling is concentrated in two specific seams: the `sandbox_exec` dispatcher arm (which is becoming the next gravity well as local-pc binding code accumulates) and the unthreaded tracing spine. The 0.1 panel spread reflects genuine convergence on what the project is and where it needs to land next, not panel fatigue.
 
 ## Synthesis (2026-05-01)
 
