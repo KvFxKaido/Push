@@ -36,14 +36,31 @@ export function getActiveGitHubToken(): string {
   );
 }
 
-/** Build standard GitHub REST API headers using the active token. */
-export function getGitHubAuthHeaders(): Record<string, string> {
-  const token = getActiveGitHubToken();
+/**
+ * Build standard GitHub REST API headers for an explicit token.
+ *
+ * Server-side callers (e.g. the PrReviewJob Durable Object, which can't read the
+ * browser's localStorage token) pass an installation token here. The browser
+ * default `getGitHubAuthHeaders` delegates to this with the active token.
+ *
+ * `User-Agent` and `X-GitHub-Api-Version` are required/expected by the GitHub
+ * API from a Worker `fetch` (a UA-less request is rejected). Browsers treat
+ * `User-Agent` as a forbidden header and silently drop it, so including it here
+ * is harmless on the web path and correct on the server path.
+ */
+export function getGitHubAuthHeadersForToken(token: string): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github.v3+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+    'User-Agent': 'Push-App/1.0.0',
   };
   if (token) {
     headers['Authorization'] = `token ${token}`;
   }
   return headers;
+}
+
+/** Build standard GitHub REST API headers using the active (browser) token. */
+export function getGitHubAuthHeaders(): Record<string, string> {
+  return getGitHubAuthHeadersForToken(getActiveGitHubToken());
 }

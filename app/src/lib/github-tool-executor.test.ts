@@ -122,6 +122,18 @@ describe('githubFetch — retry/backoff', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('does not retry a 500 when retry is disabled (non-idempotent POST)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('', { status: 500 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await githubFetch(
+      'https://api.github.com/foo',
+      { method: 'POST' },
+      { retry: false },
+    );
+    expect(res.status).toBe(500);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('retries on 500 until it succeeds', async () => {
     vi.useFakeTimers();
     const fetchMock = vi

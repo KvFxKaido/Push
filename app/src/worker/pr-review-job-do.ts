@@ -31,13 +31,16 @@ import type {
 import { resolveReviewGuidance } from '@push/lib/review-guidance';
 import { buildReviewerContextBlock } from '@push/lib/role-context';
 import { runReviewer } from '@push/lib/reviewer-agent';
+import {
+  executePostPRReview,
+  fetchPullRequestDiff,
+  fetchPullRequestHeadSha,
+  fetchReviewGuidance,
+} from '@/lib/github-tools';
 import type { Env } from './worker-middleware';
 import { exchangeForInstallationToken, generateGitHubAppJWT } from './worker-infra';
 import { createWebStreamAdapter } from './coder-job-stream-adapter';
 import type { ReviewablePullRequest } from './github-webhook';
-
-const GITHUB_API = 'https://api.github.com';
-const USER_AGENT = 'Push-App/1.0.0';
 
 const DEFAULT_PROVIDER: AIProviderType = 'anthropic';
 const DEFAULT_MODEL = 'claude-sonnet-4-6';
@@ -340,11 +343,10 @@ export class PrReviewJob {
  * Mint an installation token, fetch the PR diff, resolve REVIEW.md at the **base**
  * ref, run the (single-shot) Reviewer, and post an advisory review.
  *
- * NOTE: this path uses inline token-injected GitHub fetches rather than the
- * browser `github-tools` helpers, which read the token from localStorage
- * (`github-auth.ts`) and can't run in a DO. Productionizing should refactor
- * `github-tools` to accept an injected token so the browser review path and this
- * DO share one client — tracked as a follow-up in the design doc.
+ * Uses the shared `github-tools` client with an injected installation token, so
+ * the webhook path and the browser reviewer post through one code path (same
+ * review body format, same 422→body-only degradation). The DO can't use the
+ * browser default token (localStorage), hence the explicit `{ token }` auth.
  */
 export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, signal) => {
   if (!env.GITHUB_APP_ID || !env.GITHUB_APP_PRIVATE_KEY) {
@@ -352,8 +354,9 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
   }
   const jwt = await generateGitHubAppJWT(env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY);
   const { token } = await exchangeForInstallationToken(jwt, input.installationId);
+  const auth = { token };
 
-  const diff = await fetchPrDiff(input.repoFullName, input.prNumber, token);
+  const diff = await fetchPullRequestDiff(input.repoFullName, input.prNumber, auth);
 
   // REVIEW.md from the BASE ref, never the head — a fork's head is
   // attacker-controlled (design doc Security checklist). For same-repo PRs the
@@ -362,7 +365,7 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
     fetchCommitted: () =>
       input.isCrossFork
         ? Promise.resolve(null)
-        : fetchReviewMdAtRef(input.repoFullName, input.baseRef, token),
+        : fetchReviewGuidance(input.repoFullName, input.baseRef, auth),
   });
 
   const provider = (env.PR_REVIEW_PROVIDER as AIProviderType | undefined) ?? DEFAULT_PROVIDER;
@@ -394,13 +397,13 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
   );
   if (signal.aborted) throw new Error('aborted');
 
-  // Pin the post to the SHA we reviewed. `fetchPrDiff` returns the PR's
+  // Pin the post to the SHA we reviewed. `fetchPullRequestDiff` returns the PR's
   // *current* diff; if the head advanced between the webhook delivery and now
   // (a push whose own delivery hasn't reached this DO yet), posting against the
   // stale `input.headSha` would attach the review to the wrong commit and risk
   // 422s on anchors that no longer match. Skip — the newer push has its own
   // delivery that will review the new head and coalesce this one out.
-  const currentHead = await fetchPrHeadSha(input.repoFullName, input.prNumber, token);
+  const currentHead = await fetchPullRequestHeadSha(input.repoFullName, input.prNumber, auth);
   if (currentHead && currentHead !== input.headSha) {
     log('info', 'pr_review_head_advanced', {
       deliveryId: input.deliveryId,
@@ -410,142 +413,24 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
     return { result, commentsPosted: 0 };
   }
 
-  const commentsPosted = await postAdvisoryReview(
+  const commentsPosted = await executePostPRReview(
     input.repoFullName,
     input.prNumber,
     input.headSha,
-    token,
     result,
+    auth,
   );
   return { result, commentsPosted };
 };
 
-const SEVERITY_LABEL: Record<ReviewResult['comments'][number]['severity'], string> = {
-  critical: '🔴 Critical',
-  warning: '🟠 Warning',
-  suggestion: '🟡 Suggestion',
-  note: '🟢 Note',
-};
-
-async function fetchPrDiff(repo: string, prNumber: number, token: string): Promise<string> {
-  const res = await fetch(`${GITHUB_API}/repos/${repo}/pulls/${prNumber}`, {
-    headers: {
-      Authorization: `token ${token}`,
-      Accept: 'application/vnd.github.v3.diff',
-      'X-GitHub-Api-Version': '2022-11-28',
-      'User-Agent': USER_AGENT,
-    },
-  });
-  if (!res.ok) throw new Error(`github ${res.status} fetching PR #${prNumber} diff on ${repo}`);
-  return res.text();
-}
-
-/** Current head SHA of the PR, used to pin the review post to the reviewed commit. */
-async function fetchPrHeadSha(
-  repo: string,
-  prNumber: number,
-  token: string,
-): Promise<string | null> {
-  const res = await fetch(`${GITHUB_API}/repos/${repo}/pulls/${prNumber}`, {
-    headers: {
-      Authorization: `token ${token}`,
-      Accept: 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28',
-      'User-Agent': USER_AGENT,
-    },
-  });
-  if (!res.ok) throw new Error(`github ${res.status} fetching PR #${prNumber} head on ${repo}`);
-  const data = (await res.json()) as { head?: { sha?: string } };
-  return data.head?.sha ?? null;
-}
-
-/** Returns the file's text, or null on 404 (no REVIEW.md at that ref). */
-async function fetchReviewMdAtRef(
-  repo: string,
-  ref: string,
-  token: string,
-): Promise<string | null> {
-  const res = await fetch(
-    `${GITHUB_API}/repos/${repo}/contents/REVIEW.md?ref=${encodeURIComponent(ref)}`,
-    {
-      headers: {
-        Authorization: `token ${token}`,
-        Accept: 'application/vnd.github.raw',
-        'X-GitHub-Api-Version': '2022-11-28',
-        'User-Agent': USER_AGENT,
-      },
-    },
-  );
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`github ${res.status} fetching REVIEW.md@${ref} on ${repo}`);
-  return res.text();
-}
-
 /**
- * Post an advisory review (`event: 'COMMENT'`). Inline anchors for comments that
- * targeted a specific added line; everything else folds into the body. On a 422
- * (stale/invalid anchors) we retry body-only — same graceful degradation as the
- * browser `executePostPRReview`. Returns the count of inline comments posted.
+ * Map a thrown GitHub error to a coarse type for the `review.failed` event. The
+ * shared `github-tools` errors embed the status either parenthesized
+ * (`(429)`, `(403)`) or as a "Not found" phrase (404), so match both.
  */
-async function postAdvisoryReview(
-  repo: string,
-  prNumber: number,
-  commitSha: string,
-  token: string,
-  result: ReviewResult,
-): Promise<number> {
-  const inline = result.comments
-    .filter((c) => typeof c.line === 'number')
-    .map((c) => ({
-      path: c.file,
-      line: c.line as number,
-      side: 'RIGHT' as const,
-      body: `**${SEVERITY_LABEL[c.severity]}** — ${c.comment}`,
-    }));
-  const bodyOnly = result.comments.filter((c) => typeof c.line !== 'number');
-
-  const lines = [
-    '## Push advisory review',
-    '',
-    result.summary,
-    result.truncated
-      ? `\n_Coverage is partial — reviewed ${result.filesReviewed}/${result.totalFiles} files._`
-      : '',
-  ];
-  for (const c of bodyOnly) {
-    lines.push(`\n- **${SEVERITY_LABEL[c.severity]}** \`${c.file}\` — ${c.comment}`);
-  }
-  const bodyText = lines.filter(Boolean).join('\n');
-
-  const post = (comments: typeof inline, body: string) =>
-    fetch(`${GITHUB_API}/repos/${repo}/pulls/${prNumber}/reviews`, {
-      method: 'POST',
-      headers: {
-        Authorization: `token ${token}`,
-        Accept: 'application/vnd.github+json',
-        'Content-Type': 'application/json',
-        'X-GitHub-Api-Version': '2022-11-28',
-        'User-Agent': USER_AGENT,
-      },
-      body: JSON.stringify({ commit_id: commitSha, body, event: 'COMMENT', comments }),
-    });
-
-  let res = await post(inline, bodyText);
-  if (res.status === 422 && inline.length) {
-    // Invalid inline anchors — fold them into the body and retry without them.
-    const folded = [bodyText, ...inline.map((c) => `\n- \`${c.path}:${c.line}\` — ${c.body}`)].join(
-      '\n',
-    );
-    res = await post([], folded);
-    if (res.ok) return 0;
-  }
-  if (!res.ok) throw new Error(`github ${res.status} posting review on ${repo}#${prNumber}`);
-  return inline.length;
-}
-
-/** Map an error message to a coarse type for the failed event. */
 function classifyError(message: string): string {
-  const status = message.match(/github (\d{3})/)?.[1];
+  if (/not found/i.test(message)) return 'not_found';
+  const status = message.match(/\b(\d{3})\b/)?.[1];
   if (!status) return 'unknown';
   if (status === '401' || status === '403') return 'auth';
   if (status === '404') return 'not_found';

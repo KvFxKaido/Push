@@ -62,10 +62,21 @@ function getRetryDelay(response: Response | undefined, attempt: number): number 
   return BASE_DELAY_MS * Math.pow(2, attempt - 1);
 }
 
-async function fetchWithRetry(url: string, options?: RequestInit): Promise<Response> {
-  let lastError: Error | undefined;
+/** Options for {@link githubFetch} beyond the standard `RequestInit`. */
+export interface GitHubFetchOptions {
+  /**
+   * Whether to retry on 429/5xx/timeout. Defaults to true. Set false for
+   * **non-idempotent** requests (e.g. `POST /pulls/{n}/reviews`) where a retry
+   * after a timeout could duplicate a side effect the server already applied.
+   */
+  retry?: boolean;
+}
 
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+async function fetchWithRetry(url: string, options?: RequestInit, retry = true): Promise<Response> {
+  let lastError: Error | undefined;
+  const maxRetries = retry ? MAX_RETRIES : 0;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), GITHUB_TIMEOUT_MS);
 
@@ -73,10 +84,10 @@ async function fetchWithRetry(url: string, options?: RequestInit): Promise<Respo
       const response = await fetch(url, { ...options, signal: controller.signal });
 
       if (!response.ok && isRetryableError(null, response.status)) {
-        if (attempt < MAX_RETRIES) {
+        if (attempt < maxRetries) {
           const delay = getRetryDelay(response, attempt + 1);
           console.log(
-            `[Push] GitHub API retry ${attempt + 1}/${MAX_RETRIES}: ${response.status} ${response.statusText}, waiting ${delay}ms`,
+            `[Push] GitHub API retry ${attempt + 1}/${maxRetries}: ${response.status} ${response.statusText}, waiting ${delay}ms`,
           );
           await new Promise((resolve) => setTimeout(resolve, delay));
           continue;
@@ -94,10 +105,10 @@ async function fetchWithRetry(url: string, options?: RequestInit): Promise<Respo
 
       lastError = new Error(errorMsg);
 
-      if (attempt < MAX_RETRIES && isRetryableError(err)) {
+      if (attempt < maxRetries && isRetryableError(err)) {
         const delay = BASE_DELAY_MS * Math.pow(2, attempt);
         console.log(
-          `[Push] GitHub API retry ${attempt + 1}/${MAX_RETRIES}: ${errorMsg}, waiting ${delay}ms`,
+          `[Push] GitHub API retry ${attempt + 1}/${maxRetries}: ${errorMsg}, waiting ${delay}ms`,
         );
         await new Promise((resolve) => setTimeout(resolve, delay));
         continue;
@@ -109,11 +120,15 @@ async function fetchWithRetry(url: string, options?: RequestInit): Promise<Respo
     }
   }
 
-  throw lastError || new Error(`GitHub API failed after ${MAX_RETRIES} retries`);
+  throw lastError || new Error(`GitHub API failed after ${maxRetries} retries`);
 }
 
-export async function githubFetch(url: string, options?: RequestInit): Promise<Response> {
-  return fetchWithRetry(url, options);
+export async function githubFetch(
+  url: string,
+  options?: RequestInit,
+  fetchOptions?: GitHubFetchOptions,
+): Promise<Response> {
+  return fetchWithRetry(url, options, fetchOptions?.retry ?? true);
 }
 
 // --- Local runtime ---
