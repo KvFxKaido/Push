@@ -52,6 +52,45 @@ vi.mock('@/lib/relay-storage', () => ({
   clearPairedRemote: vi.fn(),
 }));
 
+// See the matching helper in LocalPcChatScreen.test.tsx — daemon now
+// mounts useWorkspaceComposerState, which reads `model` for every
+// provider. Stub each provider config so SSR doesn't crash on the
+// pickers it can't reach in this test.
+function makeProviderStub(model = '') {
+  return {
+    model,
+    setModel: vi.fn(),
+    hasKey: false,
+    keyInput: '',
+    setKeyInput: vi.fn(),
+    setKey: vi.fn(),
+    clearKey: vi.fn(),
+  };
+}
+
+function makeExperimentalStub() {
+  return {
+    ...makeProviderStub(),
+    baseUrl: '',
+    baseUrlInput: '',
+    setBaseUrlInput: vi.fn(),
+    baseUrlError: null,
+    setBaseUrl: vi.fn(),
+    clearBaseUrl: vi.fn(),
+    modelInput: '',
+    setModelInput: vi.fn(),
+    clearModel: vi.fn(),
+    deployments: [],
+    activeDeploymentId: null,
+    saveDeployment: vi.fn(),
+    selectDeployment: vi.fn(),
+    removeDeployment: vi.fn(),
+    clearDeployments: vi.fn(),
+    deploymentLimitReached: false,
+    isConfigured: false,
+  };
+}
+
 vi.mock('@/hooks/useModelCatalog', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/useModelCatalog')>();
   return {
@@ -62,17 +101,77 @@ vi.mock('@/hooks/useModelCatalog', async (importOriginal) => {
         ['openrouter', 'OpenRouter', true],
       ] as const,
       activeProviderLabel: 'cloudflare',
+      activeBackend: 'cloudflare',
       setActiveBackend: vi.fn(),
+      setPreferredProvider: vi.fn(),
+      clearPreferredProvider: vi.fn(),
+      ollama: makeProviderStub(),
+      openRouter: makeProviderStub(),
       cloudflare: {
-        model: '@cf/qwen/qwen3-30b-a3b-fp8',
-        setModel: vi.fn(),
+        ...makeProviderStub('@cf/qwen/qwen3-30b-a3b-fp8'),
+        configured: true,
+        statusLoading: false,
+        statusError: null,
       },
+      zen: makeProviderStub(),
+      nvidia: makeProviderStub(),
+      blackbox: makeProviderStub(),
+      kilocode: makeProviderStub(),
+      openadapter: makeProviderStub(),
+      azure: makeExperimentalStub(),
+      bedrock: makeExperimentalStub(),
+      vertex: {
+        ...makeProviderStub(),
+        keyError: null,
+        region: '',
+        regionInput: '',
+        setRegionInput: vi.fn(),
+        regionError: null,
+        setRegion: vi.fn(),
+        clearRegion: vi.fn(),
+        modelInput: '',
+        setModelInput: vi.fn(),
+        modelOptions: [],
+        clearModel: vi.fn(),
+        mode: 'unconfigured',
+        transport: 'openapi',
+        projectId: null,
+        hasLegacyConfig: false,
+        isConfigured: false,
+      },
+      anthropic: makeProviderStub(),
+      openai: makeProviderStub(),
+      google: makeProviderStub(),
+      tavily: makeProviderStub(),
+      ollamaModelOptions: [],
+      openRouterModelOptions: [],
       cloudflareModelOptions: ['@cf/qwen/qwen3-30b-a3b-fp8', '@cf/meta/llama-3-8b'],
-      cloudflareModels: {
-        loading: false,
-        error: null,
-      },
+      zenModelOptions: [],
+      nvidiaModelOptions: [],
+      blackboxModelOptions: [],
+      kilocodeModelOptions: [],
+      openAdapterModelOptions: [],
+      anthropicModelOptions: [],
+      openaiModelOptions: [],
+      googleModelOptions: [],
+      ollamaModels: { loading: false, error: null, updatedAt: null },
+      openRouterModels: { loading: false, error: null, updatedAt: null },
+      cloudflareModels: { loading: false, error: null, updatedAt: null },
+      zenModels: { loading: false, error: null, updatedAt: null },
+      nvidiaModels: { loading: false, error: null, updatedAt: null },
+      blackboxModels: { loading: false, error: null, updatedAt: null },
+      kilocodeModels: { loading: false, error: null, updatedAt: null },
+      openAdapterModels: { loading: false, error: null, updatedAt: null },
+      refreshOllamaModels: vi.fn(),
+      refreshOpenRouterModels: vi.fn(),
       refreshCloudflareModels: vi.fn(),
+      refreshZenModels: vi.fn(),
+      refreshNvidiaModels: vi.fn(),
+      refreshBlackboxModels: vi.fn(),
+      refreshKilocodeModels: vi.fn(),
+      refreshOpenAdapterModels: vi.fn(),
+      zenGoMode: false,
+      setZenGoMode: vi.fn(),
     }),
   };
 });
@@ -127,9 +226,11 @@ describe('RelayChatScreen', () => {
     expect(html).toContain('Remote');
     expect(html).toContain('push.ishawnd.workers.dev');
     expect(html).toContain('aria-label="Leave remote daemon"');
-    expect(html).toContain('aria-label="Daemon provider"');
-    expect(html).toContain('aria-label="Select daemon model"');
-    expect(html).toContain('Cloudflare Workers AI');
+    // ChatInput now drives the daemon input — same provider+model
+    // affordances as repo/chat mode. The chip surfaces the active
+    // provider's model name; the catalog mock pins `cloudflare` +
+    // `@cf/qwen/qwen3-30b-a3b-fp8`.
+    expect(html).toContain('title="Backend and model"');
     expect(html).toContain('qwen3-30b-a3b-fp8');
   });
 });

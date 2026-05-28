@@ -92,6 +92,45 @@ vi.mock('@/lib/local-pc-storage', () => ({
 // chat reads — `availableProviders`, `activeProviderLabel`, and
 // model-control fields — so the picker renders without booting the
 // full catalog.
+// Stub a single provider config in shape — the daemon shell now mounts
+// `useWorkspaceComposerState` which reads `model` for every provider,
+// not just the active one. Returning a thin stub for each provider is
+// enough for SSR (the test doesn't open the picker).
+function makeProviderStub(model = '') {
+  return {
+    model,
+    setModel: vi.fn(),
+    hasKey: false,
+    keyInput: '',
+    setKeyInput: vi.fn(),
+    setKey: vi.fn(),
+    clearKey: vi.fn(),
+  };
+}
+
+function makeExperimentalStub() {
+  return {
+    ...makeProviderStub(),
+    baseUrl: '',
+    baseUrlInput: '',
+    setBaseUrlInput: vi.fn(),
+    baseUrlError: null,
+    setBaseUrl: vi.fn(),
+    clearBaseUrl: vi.fn(),
+    modelInput: '',
+    setModelInput: vi.fn(),
+    clearModel: vi.fn(),
+    deployments: [],
+    activeDeploymentId: null,
+    saveDeployment: vi.fn(),
+    selectDeployment: vi.fn(),
+    removeDeployment: vi.fn(),
+    clearDeployments: vi.fn(),
+    deploymentLimitReached: false,
+    isConfigured: false,
+  };
+}
+
 vi.mock('@/hooks/useModelCatalog', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/useModelCatalog')>();
   return {
@@ -102,17 +141,77 @@ vi.mock('@/hooks/useModelCatalog', async (importOriginal) => {
         ['openrouter', 'OpenRouter', true],
       ] as const,
       activeProviderLabel: 'cloudflare',
+      activeBackend: 'cloudflare',
       setActiveBackend: vi.fn(),
+      setPreferredProvider: vi.fn(),
+      clearPreferredProvider: vi.fn(),
+      ollama: makeProviderStub(),
+      openRouter: makeProviderStub(),
       cloudflare: {
-        model: '@cf/meta/llama-3-8b',
-        setModel: vi.fn(),
+        ...makeProviderStub('@cf/meta/llama-3-8b'),
+        configured: true,
+        statusLoading: false,
+        statusError: null,
       },
+      zen: makeProviderStub(),
+      nvidia: makeProviderStub(),
+      blackbox: makeProviderStub(),
+      kilocode: makeProviderStub(),
+      openadapter: makeProviderStub(),
+      azure: makeExperimentalStub(),
+      bedrock: makeExperimentalStub(),
+      vertex: {
+        ...makeProviderStub(),
+        keyError: null,
+        region: '',
+        regionInput: '',
+        setRegionInput: vi.fn(),
+        regionError: null,
+        setRegion: vi.fn(),
+        clearRegion: vi.fn(),
+        modelInput: '',
+        setModelInput: vi.fn(),
+        modelOptions: [],
+        clearModel: vi.fn(),
+        mode: 'unconfigured',
+        transport: 'openapi',
+        projectId: null,
+        hasLegacyConfig: false,
+        isConfigured: false,
+      },
+      anthropic: makeProviderStub(),
+      openai: makeProviderStub(),
+      google: makeProviderStub(),
+      tavily: makeProviderStub(),
+      ollamaModelOptions: [],
+      openRouterModelOptions: [],
       cloudflareModelOptions: ['@cf/meta/llama-3-8b', '@cf/qwen/qwen3-30b-a3b-fp8'],
-      cloudflareModels: {
-        loading: false,
-        error: null,
-      },
+      zenModelOptions: [],
+      nvidiaModelOptions: [],
+      blackboxModelOptions: [],
+      kilocodeModelOptions: [],
+      openAdapterModelOptions: [],
+      anthropicModelOptions: [],
+      openaiModelOptions: [],
+      googleModelOptions: [],
+      ollamaModels: { loading: false, error: null, updatedAt: null },
+      openRouterModels: { loading: false, error: null, updatedAt: null },
+      cloudflareModels: { loading: false, error: null, updatedAt: null },
+      zenModels: { loading: false, error: null, updatedAt: null },
+      nvidiaModels: { loading: false, error: null, updatedAt: null },
+      blackboxModels: { loading: false, error: null, updatedAt: null },
+      kilocodeModels: { loading: false, error: null, updatedAt: null },
+      openAdapterModels: { loading: false, error: null, updatedAt: null },
+      refreshOllamaModels: vi.fn(),
+      refreshOpenRouterModels: vi.fn(),
       refreshCloudflareModels: vi.fn(),
+      refreshZenModels: vi.fn(),
+      refreshNvidiaModels: vi.fn(),
+      refreshBlackboxModels: vi.fn(),
+      refreshKilocodeModels: vi.fn(),
+      refreshOpenAdapterModels: vi.fn(),
+      zenGoMode: false,
+      setZenGoMode: vi.fn(),
     }),
   };
 });
@@ -206,9 +305,12 @@ describe('LocalPcChatScreen', () => {
         onDisconnect={onDisconnect}
       />,
     );
+    // ChatInput renders a textarea (placeholder carries the daemon
+    // label) and a "Send message" round button. Pre-ChatInput the
+    // daemon had a simpler textarea + plain Send button — this is the
+    // current contract.
     expect(html).toContain('<textarea');
-    expect(html).toContain('aria-label="Message"');
-    expect(html).toContain('aria-label="Send"');
+    expect(html).toContain('aria-label="Send message"');
   });
 
   it('does NOT render a Stop button when not streaming (default mock state)', () => {
@@ -350,8 +452,9 @@ describe('LocalPcChatScreen', () => {
   });
 
   it('renders the model picker chip in the input area with the active provider', () => {
-    // The daemon input now has a provider chip plus a real model
-    // combobox. The catalog mock pins `cloudflare` +
+    // ChatInput now drives the daemon input — same provider+model
+    // affordances as repo/chat mode. The chip surfaces the active
+    // provider's model name; the catalog mock pins `cloudflare` +
     // `@cf/meta/llama-3-8b`.
     const html = renderToStaticMarkup(
       <LocalPcChatScreen
@@ -362,9 +465,7 @@ describe('LocalPcChatScreen', () => {
         onDisconnect={onDisconnect}
       />,
     );
-    expect(html).toContain('aria-label="Daemon provider"');
-    expect(html).toContain('aria-label="Select daemon model"');
-    expect(html).toContain('Cloudflare Workers AI');
+    expect(html).toContain('title="Backend and model"');
     expect(html).toContain('llama-3-8b');
   });
 
