@@ -119,8 +119,8 @@ export function RelayModeChip({ deploymentUrl, status, replayUnavailableAt }: Re
       >
         <Globe className="h-3.5 w-3.5" aria-hidden="true" />
         <span>Remote</span>
-        <span className="text-sky-300/70">·</span>
-        <span className="max-w-[180px] truncate text-sky-100">{host}</span>
+        <span className="hidden text-sky-300/70 sm:inline">·</span>
+        <span className="hidden max-w-[180px] truncate text-sky-100 sm:inline">{host}</span>
         <span className="text-sky-300/70">·</span>
         <span className="inline-flex items-center gap-1">
           <span className={`h-1.5 w-1.5 rounded-full ${dotClass(status.state)}`} />
