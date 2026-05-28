@@ -112,7 +112,18 @@ export function useDaemonCliSessions(
     try {
       const res = await request<{ sessions?: unknown }>({
         type: 'list_sessions',
-        payload: { limit: options.limit ?? DEFAULT_LIST_LIMIT },
+        payload: {
+          limit: options.limit ?? DEFAULT_LIST_LIMIT,
+          // Ask the daemon to drop headless rows BEFORE the limit
+          // slice so a user with 50 consecutive `./push run` jobs
+          // doesn't end up with an empty drawer section even though
+          // older interactive sessions exist on disk. The
+          // parseListSessionsPayload filter below stays as defense
+          // in depth (older daemons predating the param ignore it
+          // silently — the strict-mode envelope schema accepts
+          // additive payload fields).
+          excludeModes: ['headless'],
+        },
       });
       if (fetchNonceRef.current !== nonce) return;
       setSessions(parseListSessionsPayload(res?.payload));
