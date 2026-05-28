@@ -45,6 +45,12 @@ import {
 import { recoverNamespacedToolCalls } from '@push/lib/tool-call-namespaced-recovery';
 import { recoverXmlToolCalls } from '@push/lib/tool-call-xml-recovery';
 import { groupCallsByPhase } from '@push/lib/tool-call-grouping';
+import {
+  createToolDispatcher,
+  type ParsedToolObject,
+  type ToolMalformedReport,
+  type ToolSource,
+} from '@push/lib/tool-dispatch';
 
 // ---------------------------------------------------------------------------
 // Re-exports — the tool-call diagnosis kernel now lives in
@@ -173,64 +179,77 @@ export type { DroppedToolCallCandidate } from '@push/lib/deep-reviewer-agent';
  *
  * Falls back cleanly when only one call is present.
  */
-export function detectAllToolCalls(text: string): DetectedToolCalls {
-  const empty: DetectedToolCalls = {
-    readOnly: [],
-    fileMutations: [],
-    mutating: null,
-    extraMutations: [],
-    droppedCandidates: [],
-  };
+/**
+ * Web's single-source `ToolSource` adapter: hands a kernel-extracted
+ * `ParsedToolObject` to the existing `detectAnyToolCall` cascade by
+ * re-stringifying. Collapses the per-source typing the kernel was
+ * designed for back into the cascade-based detection web has always
+ * done — fine, because web's runtime dispatch (`executeAnyToolCall`)
+ * branches on `AnyToolCall.source` rather than caring whether the
+ * kernel routed it to a typed source.
+ *
+ * The re-stringify cost is microseconds per detection. The win is that
+ * web inherits the kernel's fenced-block + bare-object extraction
+ * pipeline — including the fenced-array support, the four
+ * 2026-04-18 silent-drop variants, and the `repairToolJson` /
+ * `applyJsonTextRepairs` recovery passes — for free.
+ *
+ * Note: the kernel's structural gate requires `parsed.args` to be a
+ * plain object before any source sees it. Tool shapes that don't carry
+ * `args` at the top level (notably scratchpad's flat
+ * `{tool, content}` form) are rejected by the kernel as
+ * `missing_args_object` and never reach this adapter. Those still flow
+ * through the legacy fallback below — see `detectFromLegacyScan`.
+ */
+const WEB_DISPATCH_SOURCE: ToolSource<AnyToolCall> = {
+  name: 'web-cascade',
+  detect: (parsed: ParsedToolObject) => {
+    const serialized = JSON.stringify({ tool: parsed.tool, args: parsed.args });
+    return detectAnyToolCall(serialized);
+  },
+};
 
-  const explicitToolObjects = extractBareToolJsonObjects(text);
-  const allCalls: AnyToolCall[] = [];
-  const seen = new Set<string>();
-  const droppedCandidates: DroppedToolCallCandidate[] = [];
+const webDispatcher = createToolDispatcher<AnyToolCall>([WEB_DISPATCH_SOURCE]);
 
-  // OpenAI-style namespaced fallback (`functions.<name>:<id>  <args>`)
-  // and XML-wrapped fallback (`<tool_call>...</tool_call>`). Models
-  // like Kimi-via-Blackbox emit the namespaced shape; Hermes / Qwen /
-  // Nous finetunes emit the XML shape. Neither carries the canonical
-  // `{tool, args}` wrapper, so the existing precondition below would
-  // have dropped them silently. Only fires when there are zero
-  // explicit wrappers — once a real tool block exists, trust the
-  // model's primary intent and let the standard scan handle it.
-  if (explicitToolObjects.length === 0) {
-    const recoveries = [...recoverNamespacedToolCalls(text), ...recoverXmlToolCalls(text)].sort(
-      (a, b) => a.offset - b.offset,
-    );
-    for (const recovered of recoveries) {
-      const call = wrapRecoveredCallToAny(recovered.tool, recovered.args);
-      if (!call) continue;
-      const key = getCanonicalInvocationKey(call);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      allCalls.push(call);
-      if (allCalls.length > MAX_PARALLEL_TOOL_CALLS + MAX_FILE_MUTATION_BATCH + 1) break;
-    }
-    if (allCalls.length === 0) return empty;
-    return { ...classifyDetectedCalls(allCalls), droppedCandidates };
-  }
-
-  // Preserve current safety behavior: only do broad bare-object scanning
-  // when the response already contains at least one explicit tool wrapper.
+/**
+ * Legacy fallback: brace-count extraction + cascade detection over every
+ * parsed bare JSON object. Catches three things the kernel can't:
+ *
+ *   1. **Scratchpad flat-form** — `{tool, content}` without an `args`
+ *      wrapper. The kernel's structural gate rejects it pre-source.
+ *   2. **Bare-args inference** — `{repo, path, start_line, end_line}`
+ *      with no `tool` field at all. The kernel's bare-object phase
+ *      only extracts objects WITH a `tool` field, so these never
+ *      reach a source. `detectAnyToolCall`'s `tryRecoverBareToolArgs`
+ *      path can still claim them.
+ *   3. **Failed bare-block-eligibility** — when one bare object in a
+ *      sequence lacks a `tool` field, the kernel's contiguity gate
+ *      rejects the whole sequence, including the well-formed sibling.
+ *      Legacy picks up the well-formed one here.
+ *
+ * Dedup against kernel-claimed calls happens via `alreadySeen` keyed
+ * by `getCanonicalInvocationKey`. Drops dedup against kernel-reported
+ * malformed rawToolNames at the call site.
+ */
+function detectFromLegacyScan(
+  text: string,
+  alreadySeen: ReadonlySet<string>,
+): {
+  calls: AnyToolCall[];
+  droppedCandidates: DroppedToolCallCandidate[];
+} {
   const parsedObjects = extractAllBareJsonObjects(text);
-  if (parsedObjects.length === 0) return empty;
-
+  if (parsedObjects.length === 0) return { calls: [], droppedCandidates: [] };
+  const calls: AnyToolCall[] = [];
+  const droppedCandidates: DroppedToolCallCandidate[] = [];
+  const seen = new Set<string>(alreadySeen);
   for (const parsed of parsedObjects) {
+    const parsedRecord = asRecord(parsed);
     const serialized = JSON.stringify(parsed);
     const call = detectAnyToolCall(serialized);
     if (!call) {
-      // Track candidates that carried a `tool` key but no source claimed.
-      // Plain bare-args objects (no `tool` field, recoverable by inference)
-      // would have been promoted by `detectAnyToolCall`'s bare-args fallback,
-      // so anything that survives `extractAllBareJsonObjects` AND has a
-      // string `tool` field AND wasn't promoted is a real silent drop.
-      const candidateRecord = asRecord(parsed);
       const rawToolName =
-        candidateRecord && typeof candidateRecord.tool === 'string'
-          ? candidateRecord.tool.trim()
-          : null;
+        parsedRecord && typeof parsedRecord.tool === 'string' ? parsedRecord.tool.trim() : null;
       if (rawToolName) {
         droppedCandidates.push({
           rawToolName,
@@ -243,11 +262,113 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
     const key = getCanonicalInvocationKey(call);
     if (seen.has(key)) continue;
     seen.add(key);
+    calls.push(call);
+    if (calls.length > MAX_PARALLEL_TOOL_CALLS + MAX_FILE_MUTATION_BATCH + 1) break;
+  }
+  return { calls, droppedCandidates };
+}
+
+/**
+ * Map a kernel `ToolMalformedReport` into web's `DroppedToolCallCandidate`
+ * shape. The kernel only reports `{reason, sample}`; web needs raw +
+ * resolved tool name. We do a best-effort parse of the sample to
+ * extract the tool name; if that fails, the candidate is dropped silently
+ * (matching pre-migration behavior where unparseable malformed text
+ * never reached `droppedCandidates` either).
+ */
+function mapMalformedToDropped(report: ToolMalformedReport): DroppedToolCallCandidate | null {
+  try {
+    const parsed = JSON.parse(report.sample);
+    const record = asRecord(parsed);
+    const rawToolName = record && typeof record.tool === 'string' ? record.tool.trim() : null;
+    if (!rawToolName) return null;
+    return {
+      rawToolName,
+      resolvedToolName: resolveToolName(rawToolName),
+      sample: report.sample.length > 200 ? `${report.sample.slice(0, 200)}…` : report.sample,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function detectAllToolCalls(text: string): DetectedToolCalls {
+  const empty: DetectedToolCalls = {
+    readOnly: [],
+    fileMutations: [],
+    mutating: null,
+    extraMutations: [],
+    droppedCandidates: [],
+  };
+
+  // Phase 1: kernel-driven fenced + bare-object extraction. Inherits
+  // the Gemini-3-Flash fenced-array fix and the four 2026-04-18
+  // silent-drop variants for free.
+  const kernelResult = webDispatcher.detectAllToolCalls(text);
+  const allCalls: AnyToolCall[] = [];
+  const seen = new Set<string>();
+  const droppedCandidates: DroppedToolCallCandidate[] = [];
+
+  for (const call of kernelResult.calls) {
+    const key = getCanonicalInvocationKey(call);
+    if (seen.has(key)) continue;
+    seen.add(key);
     allCalls.push(call);
-    // Soft cap: leave headroom for the batch + trailing side-effect. We
-    // don't want to parse an unbounded number of calls — the tail beyond
-    // the cap falls out on the next round if the model really needs it.
     if (allCalls.length > MAX_PARALLEL_TOOL_CALLS + MAX_FILE_MUTATION_BATCH + 1) break;
+  }
+
+  // Track which dropped candidates we've already surfaced so the legacy
+  // fallback below doesn't double-report shapes the kernel already
+  // claimed. Key on rawToolName because the two paths emit different
+  // samples (kernel: raw fenced text; legacy: re-stringified parsed
+  // object), so sample-based deduplication doesn't work.
+  const droppedSeen = new Set<string>();
+  for (const malformed of kernelResult.malformed) {
+    // `missing_args_object` cases are shapes the kernel's structural
+    // gate rejected pre-source. The legacy fallback owns the verdict
+    // for those (it cascades through detectors that accept `args`-less
+    // shapes like scratchpad-flat-form). Skip them here so legacy can
+    // report them exactly once.
+    if (malformed.reason === 'missing_args_object') continue;
+    const dropped = mapMalformedToDropped(malformed);
+    if (!dropped) continue;
+    if (droppedSeen.has(dropped.rawToolName)) continue;
+    droppedSeen.add(dropped.rawToolName);
+    droppedCandidates.push(dropped);
+  }
+
+  // Phase 2: namespaced + XML recovery (Kimi/Blackbox + Hermes/Qwen/Nous
+  // finetunes). Only fires when the kernel saw zero explicit wrappers
+  // AND none of those wrappers parsed into a real call — otherwise the
+  // model's primary intent already landed and recovery would duplicate.
+  if (allCalls.length === 0) {
+    const recoveries = [...recoverNamespacedToolCalls(text), ...recoverXmlToolCalls(text)].sort(
+      (a, b) => a.offset - b.offset,
+    );
+    for (const recovered of recoveries) {
+      const call = wrapRecoveredCallToAny(recovered.tool, recovered.args);
+      if (!call) continue;
+      const key = getCanonicalInvocationKey(call);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      allCalls.push(call);
+      if (allCalls.length > MAX_PARALLEL_TOOL_CALLS + MAX_FILE_MUTATION_BATCH + 1) break;
+    }
+  }
+
+  // Phase 3: legacy fallback for shapes the kernel's structural gate
+  // rejects (notably scratchpad's flat `{tool, content}` form). Runs
+  // unconditionally so shapes that miss the kernel's gate but still
+  // resolve through the cascade aren't silently dropped.
+  const legacyResult = detectFromLegacyScan(text, seen);
+  for (const call of legacyResult.calls) {
+    allCalls.push(call);
+    if (allCalls.length > MAX_PARALLEL_TOOL_CALLS + MAX_FILE_MUTATION_BATCH + 1) break;
+  }
+  for (const dropped of legacyResult.droppedCandidates) {
+    if (droppedSeen.has(dropped.rawToolName)) continue;
+    droppedSeen.add(dropped.rawToolName);
+    droppedCandidates.push(dropped);
   }
 
   if (allCalls.length === 0) return { ...empty, droppedCandidates };
