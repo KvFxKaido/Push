@@ -1108,22 +1108,47 @@ async function handlePing(req) {
 }
 
 async function handleListSessions(req) {
-  const limit = req.payload?.limit || 20;
+  // Validate `limit` instead of accepting any truthy value via `|| 20`.
+  // Sibling handlers (e.g. `handleFetchDelegationEvents`) already
+  // type-check + bound the field; an unvalidated `limit: '50'` would
+  // get passed to `slice()` here and produce surprising results
+  // (string coercion + arithmetic vs the array index expectations).
+  // Default to 20 (the previous fallback) when the field is missing or
+  // malformed; cap at 1000 so a misbehaving client can't ask us to
+  // emit megabytes of session metadata in a single response.
+  const rawLimit = req.payload?.limit;
+  const limit =
+    typeof rawLimit === 'number' && Number.isFinite(rawLimit) && rawLimit > 0
+      ? Math.min(Math.floor(rawLimit), 1000)
+      : 20;
+
   // Optional mode filter so consumers can ask the server to omit
   // sessions whose origin surface isn't useful in their context. The
   // mobile drawer passes `['headless']` because `./push run` jobs
   // aren't resumable as chats — without server-side filtering, a user
   // with 50 consecutive headless runs would see an empty CLI section
-  // even though older interactive sessions exist. Strings only; other
-  // values are silently dropped.
+  // even though older interactive sessions exist. Each entry is
+  // trimmed before comparison because `state.mode` is trimmed on read
+  // and write (see `cli/session-store.ts:listSessions` and
+  // `handleStartSession`) — without matching that normalization a
+  // client sending `' headless '` would silently fail to filter.
+  // Strings only; other values are dropped.
   const rawExclude = req.payload?.excludeModes;
   const excludeModes =
     Array.isArray(rawExclude) && rawExclude.length > 0
-      ? new Set(rawExclude.filter((m) => typeof m === 'string' && m.length > 0))
+      ? new Set(
+          rawExclude
+            .filter((m) => typeof m === 'string')
+            .map((m) => m.trim())
+            .filter((m) => m.length > 0),
+        )
       : null;
 
   const sessions = await listSessions();
-  const filtered = excludeModes ? sessions.filter((s) => !excludeModes.has(s.mode)) : sessions;
+  const filtered =
+    excludeModes && excludeModes.size > 0
+      ? sessions.filter((s) => !excludeModes.has(s.mode))
+      : sessions;
   const limited = filtered.slice(0, limit);
 
   // Enrich with active run state

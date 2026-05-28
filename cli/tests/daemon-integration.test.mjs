@@ -717,6 +717,100 @@ describe('list_sessions mode propagation', () => {
       await fs.rm(tmpRoot, { recursive: true, force: true });
     }
   });
+
+  it('trims whitespace on excludeModes entries before comparing', async () => {
+    // `state.mode` is trimmed on read and write, so the filter has to
+    // trim too — otherwise a client passing `' headless '` would
+    // silently fail to filter and the drawer would still show
+    // headless rows.
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-list-sessions-trim-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+          mode: 'headless',
+        }),
+        () => {},
+      );
+      await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+          mode: 'tui',
+        }),
+        () => {},
+      );
+
+      const padded = await handleRequest(
+        makeRequest('list_sessions', { limit: 50, excludeModes: ['  headless  '] }),
+        () => {},
+      );
+      assert.equal(padded.payload.sessions.length, 1);
+      assert.equal(padded.payload.sessions[0].mode, 'tui');
+
+      // All-blank entries reduce to an empty filter set — back-compat
+      // with the "no array elements" case so the listing isn't
+      // accidentally over-filtered.
+      const blanks = await handleRequest(
+        makeRequest('list_sessions', { limit: 50, excludeModes: ['   ', '\t'] }),
+        () => {},
+      );
+      assert.equal(blanks.payload.sessions.length, 2);
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('validates and caps limit instead of forwarding malformed values to slice', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-list-sessions-limit-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      // Seed 3 sessions so we can observe the limit clamp.
+      for (let i = 0; i < 3; i++) {
+        await handleRequest(
+          makeRequest('start_session', {
+            provider: 'ollama',
+            repo: { rootPath: process.cwd() },
+            mode: 'interactive',
+          }),
+          () => {},
+        );
+      }
+
+      // Non-numeric truthy values previously got passed to slice via
+      // `req.payload?.limit || 20`. With validation, they fall back to
+      // the default (20) so all 3 sessions appear.
+      for (const malformed of ['2', true, {}, []]) {
+        const res = await handleRequest(
+          makeRequest('list_sessions', { limit: malformed }),
+          () => {},
+        );
+        assert.equal(res.ok, true);
+        assert.equal(res.payload.sessions.length, 3, `limit=${JSON.stringify(malformed)}`);
+      }
+
+      // Valid numeric limit clamps the result.
+      const limited = await handleRequest(makeRequest('list_sessions', { limit: 2 }), () => {});
+      assert.equal(limited.payload.sessions.length, 2);
+
+      // `limit: 0` (a previously-impossible request because of the
+      // truthy coalesce) now falls back to the default. This matches
+      // the spirit of "empty result is not a useful query" — a client
+      // who genuinely wants nothing shouldn't call the RPC at all.
+      const zero = await handleRequest(makeRequest('list_sessions', { limit: 0 }), () => {});
+      assert.equal(zero.payload.sessions.length, 3);
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 // ─── Approval ID generation ─────────────────────────────────────

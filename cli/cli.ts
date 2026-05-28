@@ -837,7 +837,13 @@ async function runInteractive(
     await appendSessionEvent(state, 'session_started', {
       sessionId: state.sessionId,
       state: 'idle',
-      mode: 'interactive',
+      // Read from state instead of hardcoding so the persisted
+      // `state.mode` (set at initSession time per the request's
+      // dispatch) is the single source of truth — the event payload
+      // can never drift from what `list_sessions` returns. Defaults
+      // mirror the legacy-fallback used by `listSessions()` for rows
+      // that predate the field.
+      mode: typeof state.mode === 'string' && state.mode.trim() ? state.mode : 'interactive',
       provider: state.provider,
       sandboxProvider: process.env.PUSH_LOCAL_SANDBOX === 'true' ? 'local' : 'modal',
     });
@@ -1310,13 +1316,14 @@ async function initSession(sessionId, provider, model, cwd, mode = 'interactive'
     // that consumes it) can bucket without re-deriving mode from local
     // state. Mirrors the daemon's `handleStartSession` behavior so the
     // CLI-inline paths land alongside the daemon-spawned ones in the
-    // listing. Event-emission asymmetry: the interactive REPL
-    // (`ensureSessionPersisted` lower in this file) and the TUI (in
-    // tui.ts) emit `session_started` with the same `mode` value before
-    // their first user message; the headless path (`runHeadless`)
-    // skips `session_started` and starts straight from `user_message`.
-    // That's pre-existing and only affects the event log — `state.mode`
-    // on disk is the source of truth for list_sessions either way.
+    // listing. `state.mode` is the single source of truth — the
+    // interactive REPL's `ensureSessionPersisted` (lower in this file)
+    // and the TUI's equivalent (in tui.ts) both read it into the
+    // `session_started` event payload so the event and the persisted
+    // state can't drift. The headless path (`runHeadless`) skips
+    // `session_started` entirely and starts from `user_message`; that
+    // event-log asymmetry is pre-existing and doesn't affect
+    // `list_sessions` since it reads `state.mode` from disk.
     mode,
   };
   // Start enriching the system prompt in the background — will be

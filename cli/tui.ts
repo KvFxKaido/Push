@@ -1412,7 +1412,13 @@ export async function runTUI(options = {}) {
     await appendSessionEvent(state, 'session_started', {
       sessionId: state.sessionId,
       state: 'idle',
-      mode: 'tui',
+      // Read from state so the persisted `state.mode` (set in
+      // `createFreshSessionState` to 'tui' for fresh sessions, or
+      // carried over from disk on resume) is the single source of
+      // truth — the event payload can never drift from what
+      // `list_sessions` returns. Default mirrors `listSessions()`'s
+      // legacy-fallback for rows that predate the field.
+      mode: typeof state.mode === 'string' && state.mode.trim() ? state.mode : 'tui',
       provider: state.provider,
     });
     await saveSessionState(state);
