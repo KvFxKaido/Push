@@ -47,7 +47,7 @@ async function makeUniqueTestEnv() {
 }
 
 async function runCli(args, options = {}) {
-  const { env: extraEnv, input: _input, ...execOpts } = options;
+  const { env: extraEnv, input, timeout = 5000 } = options;
   const testEnv = await makeUniqueTestEnv();
   const env = {
     ...process.env,
@@ -55,24 +55,48 @@ async function runCli(args, options = {}) {
     ...extraEnv,
   };
   try {
-    try {
-      const { stdout, stderr } = await execFileAsync(
-        process.execPath,
-        ['--import', 'tsx', CLI_PATH, ...args],
-        {
-          timeout: 5000,
-          env,
-          ...execOpts,
-        },
-      );
-      return { code: 0, stdout, stderr };
-    } catch (err) {
-      return {
-        code: typeof err.code === 'number' ? err.code : 1,
-        stdout: err.stdout || '',
-        stderr: err.stderr || String(err.message || err),
-      };
-    }
+    // `spawn` (rather than `execFile`) so we can actually close the
+    // child's stdin — `execFile` silently ignores the `input` option
+    // and leaves the child's stdin pipe open forever, which blocks any
+    // CLI path that drains piped stdin (the non-TTY task fallback).
+    return await new Promise((resolve) => {
+      const child = spawn(process.execPath, ['--import', 'tsx', CLI_PATH, ...args], {
+        env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          // ignore
+        }
+      }, timeout);
+      child.stdout.on('data', (c) => {
+        stdout += String(c);
+      });
+      child.stderr.on('data', (c) => {
+        stderr += String(c);
+      });
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        resolve({ code: 1, stdout, stderr: stderr || String(err.message || err) });
+      });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        if (timedOut) {
+          stderr += (stderr.endsWith('\n') ? '' : '\n') + 'Timed out.';
+        }
+        resolve({ code: typeof code === 'number' ? code : 1, stdout, stderr });
+      });
+      if (input !== undefined) {
+        child.stdin.write(input);
+      }
+      child.stdin.end();
+    });
   } finally {
     await testEnv.cleanup();
   }
@@ -263,14 +287,19 @@ describe('unknown flag warning', needsChildStdout, () => {
 // ─── non-TTY stdin guard ─────────────────────────────────────────
 
 describe('non-TTY stdin guard', needsChildStdout, () => {
-  it('rejects interactive mode when stdin is not a TTY', async () => {
-    // Pipe /dev/null as stdin to ensure !isTTY
+  it('prints friendly fallback hint when stdin is empty and not a TTY', async () => {
+    // Pipe /dev/null (empty) as stdin to ensure !isTTY and no piped data.
     const { code, stderr } = await runCli([], {
       input: '',
       env: { PUSH_PROVIDER: 'ollama' },
     });
     assert.equal(code, 1);
-    assert.ok(stderr.includes('Interactive mode requires a TTY'));
+    assert.ok(
+      stderr.includes('no TTY available'),
+      `expected friendly non-TTY hint, got: ${stderr}`,
+    );
+    assert.ok(stderr.includes('push run --task'));
+    assert.ok(stderr.includes('cat task.md | push'));
   });
 
   it('treats sentinel PUSH_PROVIDER values as unset', async () => {
@@ -279,8 +308,23 @@ describe('non-TTY stdin guard', needsChildStdout, () => {
       env: { PUSH_PROVIDER: 'undefined', PUSH_TUI_ENABLED: '0' },
     });
     assert.equal(code, 1);
-    assert.ok(stderr.includes('Interactive mode requires a TTY'));
+    assert.ok(stderr.includes('no TTY available'));
     assert.ok(!stderr.includes('Unsupported provider'));
+  });
+
+  it('reads piped stdin as the task when no --task is given', async () => {
+    // With piped content on stdin, bare `push` should fall through to the
+    // headless path instead of erroring. We can't run a full headless
+    // turn without a provider key, so we assert the negative: the
+    // friendly non-TTY hint must NOT fire, proving the fallback took.
+    const { stderr } = await runCli([], {
+      input: 'investigate the failing test',
+      env: { PUSH_PROVIDER: 'ollama', PUSH_TUI_ENABLED: '0' },
+    });
+    assert.ok(
+      !stderr.includes('no TTY available'),
+      `expected piped stdin to bypass non-TTY hint, got: ${stderr}`,
+    );
   });
 });
 
@@ -322,14 +366,28 @@ describe('--session validation', needsChildStdout, () => {
   });
 });
 
-// ─── mode-specific flag warnings ─────────────────────────────────
+// ─── mode-specific flag handling ────────────────────────────────
 
-describe('mode-specific flag warnings', needsChildStdout, () => {
-  it('warns when --task is used without run subcommand', async () => {
-    // This will also hit the TTY guard, but the warning should appear before it
-    const { stderr } = await runCli(['--task', 'something'], { input: '' });
-    assert.ok(stderr.includes('--task'));
-    assert.ok(stderr.includes('ignored in interactive mode'));
+describe('mode-specific flag handling', needsChildStdout, () => {
+  it('honors --task on bare push when no TTY (falls through to headless)', async () => {
+    // Pre-existing behavior: `push --task X` (no `run`) without a TTY
+    // warned that --task was "ignored in interactive mode" and then
+    // hard-errored on the missing TTY. The non-TTY fallback now treats
+    // `push --task X` as `push run --task X`, so neither the warning
+    // nor the friendly non-TTY hint should appear — the user's task is
+    // taken seriously.
+    const { stderr } = await runCli(['--task', 'something'], {
+      input: '',
+      env: { PUSH_PROVIDER: 'ollama' },
+    });
+    assert.ok(
+      !stderr.includes('ignored in interactive mode'),
+      `expected no ignored-flag warning, got: ${stderr}`,
+    );
+    assert.ok(
+      !stderr.includes('no TTY available'),
+      `expected no non-TTY hint when --task was provided, got: ${stderr}`,
+    );
   });
 });
 
@@ -918,10 +976,7 @@ describe('bare push resume prompt', needsChildStdout, () => {
       env: { PUSH_SESSION_DIR: sessionRoot, PUSH_PROVIDER: 'ollama' },
     });
     assert.equal(code, 1);
-    assert.ok(
-      stderr.includes('Interactive mode requires a TTY'),
-      `expected TTY guard, stderr=${stderr}`,
-    );
+    assert.ok(stderr.includes('no TTY available'), `expected non-TTY hint, stderr=${stderr}`);
     assert.ok(
       !/Resumable sessions for this workspace:/.test(stdout),
       `picker must not render on non-TTY, stdout=${stdout}`,
@@ -933,9 +988,9 @@ describe('bare push resume prompt', needsChildStdout, () => {
     const { code, stderr } = await runCli(['--no-resume-prompt'], {
       env: { PUSH_SESSION_DIR: sessionRoot, PUSH_PROVIDER: 'ollama' },
     });
-    assert.equal(code, 1); // still hits TTY guard in non-TTY
+    assert.equal(code, 1); // still hits the non-TTY exit in non-TTY
     assert.ok(!stderr.includes('unknown flag --no-resume-prompt'));
-    assert.ok(stderr.includes('Interactive mode requires a TTY'));
+    assert.ok(stderr.includes('no TTY available'));
   });
 
   it('cancels cleanly when user types q at the bare-push prompt', async () => {

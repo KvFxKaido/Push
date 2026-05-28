@@ -2976,6 +2976,58 @@ async function runAttach(sessionId, options = {}) {
   return exitCode;
 }
 
+/**
+ * Read piped stdin to completion when stdin is not a TTY. Returns the
+ * trimmed payload, or null when the stream is empty / actually a TTY.
+ * Capped at `maxBytes` so a runaway pipe can't OOM the process; the cap
+ * is generous (1 MiB) since piped tasks are prose, not binaries.
+ *
+ * Uses async iteration rather than `'data'`/`'end'` listeners so the
+ * common "stdin closed before we attached" race resolves immediately
+ * instead of hanging — the iterator reads from the stream's internal
+ * state, which already knows the stream ended.
+ */
+async function readPipedStdin(maxBytes = 1024 * 1024): Promise<string | null> {
+  if (process.stdin.isTTY) return null;
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of process.stdin) {
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    const remaining = maxBytes - total;
+    if (buf.length > remaining) {
+      chunks.push(buf.subarray(0, remaining));
+      total = maxBytes;
+      break;
+    }
+    chunks.push(buf);
+    total += buf.length;
+  }
+  const text = Buffer.concat(chunks).toString('utf8').trim();
+  return text || null;
+}
+
+/**
+ * Friendly exit for non-TTY invocations of bare `push` when no task was
+ * given and stdin had nothing to read. Tells the caller exactly how to
+ * use the headless path or pipe a prompt instead of leaving them with
+ * the historical "requires a TTY" wall.
+ */
+function exitNonInteractiveNoTask(): never {
+  const lines = [
+    `${fmt.error('push:')} no TTY available and no task was provided.`,
+    '',
+    'For scripted or CI use, pass a task explicitly:',
+    '  push run --task "describe the task"',
+    '',
+    'Or pipe a prompt on stdin:',
+    '  echo "fix the failing test" | push',
+    '  cat task.md | push',
+    '',
+  ];
+  process.stderr.write(lines.join('\n'));
+  process.exit(1);
+}
+
 export async function main() {
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
@@ -3388,7 +3440,7 @@ export async function main() {
       throw new Error('TUI is behind a feature flag. Set PUSH_TUI_ENABLED=1 to enable it.');
     }
     if (!process.stdin.isTTY) {
-      throw new Error('TUI requires a TTY terminal.');
+      throw new Error('TUI requires a TTY terminal. For scripted use, run: push run --task "..."');
     }
     const { runTUI } = await import('./tui.js');
     return runTUI({
@@ -3436,7 +3488,24 @@ export async function main() {
 
   const positionalTask = subcommand === 'run' ? positionals.slice(1).join(' ').trim() : '';
   let task = (values.task || positionalTask).trim();
-  const runHeadlessMode = values.headless || subcommand === 'run';
+  let runHeadlessMode = values.headless || subcommand === 'run';
+
+  // Non-TTY fallback for bare `push`. If we'd otherwise enter the
+  // interactive REPL / TUI without a TTY, fall through to headless: use
+  // --task when provided, else read piped stdin as the task. Without
+  // this, `cat task.md | push` and `push --task "..." </dev/null`
+  // both hard-error on "requires a TTY" further down. Skipped when the
+  // user already chose a non-interactive path (`run`, `--headless`),
+  // since they don't need a fallback.
+  if (subcommand === '' && !runHeadlessMode && !process.stdin.isTTY) {
+    if (!task) {
+      const piped = await readPipedStdin();
+      if (piped) task = piped;
+    }
+    if (task) {
+      runHeadlessMode = true;
+    }
+  }
 
   // --skill: expand skill template into the task
   if (values.skill) {
@@ -3570,9 +3639,12 @@ export async function main() {
   }
 
   // Default UX: bare "push" opens TUI when enabled.
+  // Non-TTY callers were already redirected to headless above when they
+  // had a task or piped stdin; reaching here without a TTY means there
+  // was nothing to fall back to, so print the friendly hint and exit.
   if (subcommand === '' && tuiEnabled) {
     if (!process.stdin.isTTY) {
-      throw new Error('TUI requires a TTY terminal.');
+      exitNonInteractiveNoTask();
     }
     const { runTUI } = await import('./tui.js');
     return runTUI({
@@ -3582,9 +3654,7 @@ export async function main() {
   }
 
   if (!process.stdin.isTTY) {
-    throw new Error(
-      'Interactive mode requires a TTY. For scripted use, run: push run --task "your task here"',
-    );
+    exitNonInteractiveNoTask();
   }
 
   const apiKey = resolveApiKey(providerConfig);
