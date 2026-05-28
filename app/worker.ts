@@ -65,6 +65,7 @@ import {
 } from './src/worker/worker-infra';
 import { handleCloudflareSandbox } from './src/worker/worker-cf-sandbox';
 import { handleGitHubTools } from './src/worker/worker-github-tools';
+import { handleGitHubWebhook } from './src/worker/github-webhook';
 import { sanitizeUrlForLogging } from './src/worker/worker-log-utils';
 import { summarizeSnapshotIndex, reapOrphanedSnapshots } from './src/worker/snapshot-index';
 import { SNAPSHOT_KEY_PREFIX } from './src/worker/worker-cf-sandbox';
@@ -97,6 +98,10 @@ export { Sandbox } from '@cloudflare/sandbox';
 
 // Background-jobs DO — Phase 1 of Background Coder Tasks.
 export { CoderJob } from './src/worker/coder-job-do';
+
+// PR review DO — autonomous webhook-triggered advisory reviews. Bound as
+// `PrReviewJob` in wrangler.jsonc; the receiver lives in github-webhook.ts.
+export { PrReviewJob } from './src/worker/pr-review-job-do';
 
 // Remote Sessions relay DO — Phase 2.b scaffold. Bound as `RELAY_SESSIONS`
 // in wrangler.jsonc; routes live in `relay-routes.ts`.
@@ -404,6 +409,10 @@ const EXACT_API_ROUTES: ExactApiRoute[] = [
   { path: '/api/github/app-oauth', method: 'POST', handler: handleGitHubAppOAuth },
   { path: '/api/github/app-logout', method: 'POST', handler: handleGitHubAppLogout },
   { path: '/api/github/tools', method: 'POST', handler: handleGitHubTools },
+  // GitHub App webhook — autonomous PR-review trigger. Authenticated by HMAC
+  // signature (not the deployment token — see isDeploymentTokenExemptPath), so
+  // it does no origin check and forwards to the PrReviewJob DO.
+  { path: '/api/github/webhook', method: 'POST', handler: handleGitHubWebhook },
   // Artifacts — all POST so scope + args ride in the JSON body. See
   // app/src/worker/worker-artifacts.ts for the request/response shape.
   { path: '/api/artifacts/create', method: 'POST', handler: handleArtifactsCreate },

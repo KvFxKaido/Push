@@ -623,6 +623,11 @@ import { isSensitivePath as isDaemonSensitivePath } from '../lib/sensitive-paths
 import { isPathAllowed, snapshotAllowlist } from './pushd-allowlist.js';
 import { runReviewer } from '../lib/reviewer-agent.ts';
 import { buildReviewerContextBlock } from '../lib/role-context.ts';
+import {
+  REVIEW_GUIDANCE_FILENAME,
+  REVIEW_GUIDANCE_MAX_LINES,
+  resolveReviewGuidance,
+} from '../lib/review-guidance.ts';
 import { validateTaskGraph, executeTaskGraph, formatTaskGraphResult } from '../lib/task-graph.ts';
 import { assertValidEvent, isStrictModeEnabled } from '../lib/protocol-schema.js';
 import { isV2DelegationEvent, synthesizeV1DelegationEvent } from './v1-downgrade.js';
@@ -3939,6 +3944,38 @@ async function handleDelegateCoder(req) {
 
 // ─── Delegate Reviewer (advisory diff review, single-turn) ──────
 
+// Byte ceiling for the bounded REVIEW.md read below. Comfortably exceeds the
+// downstream char cap in role-context (8000) and ~600 lines of guidance, while
+// bounding memory so a pathological REVIEW.md can't be materialized whole.
+const REVIEW_GUIDANCE_MAX_BYTES = 64 * 1024;
+
+/**
+ * Read the working-copy REVIEW.md from a daemon workspace, byte- and line-capped.
+ * The daemon reviews the local checkout, so the working copy (including unpushed
+ * edits) is the authoritative guidance. Returns null when the file is absent so
+ * `resolveReviewGuidance` treats it as "no guidance" rather than a read failure;
+ * a genuine read error (permissions, etc.) rethrows so the resolver logs it.
+ *
+ * Reads at most `REVIEW_GUIDANCE_MAX_BYTES` via a bounded file-handle read rather
+ * than `fs.readFile`, so the cap actually bounds memory instead of slicing a
+ * fully-materialized file after the fact.
+ */
+async function readWorkspaceReviewGuidance(cwd) {
+  let handle;
+  try {
+    handle = await fs.open(path.join(cwd, REVIEW_GUIDANCE_FILENAME), 'r');
+    const buffer = Buffer.alloc(REVIEW_GUIDANCE_MAX_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, REVIEW_GUIDANCE_MAX_BYTES, 0);
+    const text = buffer.subarray(0, bytesRead).toString('utf8');
+    return text.split('\n').slice(0, REVIEW_GUIDANCE_MAX_LINES).join('\n');
+  } catch (err) {
+    if (err && typeof err === 'object' && err.code === 'ENOENT') return null;
+    throw err;
+  } finally {
+    await handle?.close();
+  }
+}
+
 /**
  * `delegate_reviewer` — daemon-side Reviewer launch.
  *
@@ -4108,13 +4145,30 @@ async function handleDelegateReviewer(req) {
             : abortController.signal,
         });
 
+      // Default-on REVIEW.md: an explicit caller-supplied `reviewGuidance` wins
+      // (the RPC client knows the review ref); otherwise resolve the daemon
+      // workspace's working-copy REVIEW.md so the CLI Reviewer gets the same
+      // repo-specific guidance the web Reviewer already does.
+      const callerGuidance =
+        rawContext && typeof rawContext.reviewGuidance === 'string'
+          ? rawContext.reviewGuidance
+          : null;
+      const reviewGuidance =
+        callerGuidance ??
+        (await resolveReviewGuidance({
+          readWorkingCopy: () => readWorkspaceReviewGuidance(entry.state.cwd),
+        }));
+      const reviewerContext = reviewGuidance
+        ? { ...(rawContext ?? {}), reviewGuidance }
+        : rawContext;
+
       reviewResult = await runReviewer(
         diff,
         {
           provider: resolvedProvider,
           stream: signalAwareStream,
           modelId: resolvedModel,
-          context: rawContext,
+          context: reviewerContext,
           resolveRuntimeContext: async (_diff, context) => buildReviewerContextBlock(context) || '',
         },
         () => {
