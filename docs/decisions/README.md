@@ -1,6 +1,6 @@
 # Decisions Folder
 
-Status reviewed: 2026-05-14 (secondary doc sweep — refreshed Remote Sessions, protocol-schema ownership, and post-2026-05 decision entries)
+Status reviewed: 2026-05-28 (CLI/TUI/daemon sweep after PRs #662–#673 — refreshed Remote Sessions Phase 2.j, added Subprocess Env Scrubbing entry)
 
 This folder contains architecture decisions, research, analysis, and shipped design references.
 

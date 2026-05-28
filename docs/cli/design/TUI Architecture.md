@@ -375,11 +375,10 @@ The TUI's default mode is **daemon-attached**: `cli/tui.ts` spawns or connects t
 
 The TUI used to treat any successful `hello` reply as proof the link was good. That hid version skew: an upgraded daemon emitting `push.runtime.v2` to an older TUI would connect cleanly and then drop every event into the transcript as "unknown" with no hint why.
 
-`evaluateHelloResponse(payload)` now reads the reply, compares its `protocolVersion` against the shared `PROTOCOL_VERSION` constant imported from `lib/protocol-schema.ts`, and returns a typed `HandshakeResult`:
+`evaluateHelloResponse(payload)` now reads the reply, compares its `protocolVersion` against the shared `PROTOCOL_VERSION` constant imported from `lib/protocol-schema.ts`, and returns a binary discriminated `HandshakeResult`:
 
-- `accepted` — versions match; TUI proceeds, status line shows `runtimeVersion` informationally.
-- `rejected` — protocol version mismatch; TUI raises an actionable warning naming both sides instead of silently degrading.
-- `unparseable` — reply missing required fields; same warning surface, different headline.
+- `{ accepted: true; runtimeVersion; capabilities; warnings }` — versions match. The TUI proceeds and dumps any non-fatal entries from `warnings[]` into the transcript (e.g. "daemon did not advertise a runtimeVersion — older binary"). `runtimeVersion` is captured but currently informational only; the TUI does not pin or display it.
+- `{ accepted: false; reason }` — covers all hard fails: non-object payload, missing/empty `protocolVersion`, or `protocolVersion` mismatch. The TUI dumps `reason` as a `warning` transcript entry naming both expected and advertised versions, then closes the client instead of silently degrading to inline mode.
 
 The pinned constant lives in `lib/protocol-schema.ts` so the daemon's request gate and the TUI's handshake compare against the same value by construction — bumping the version lifts both sides at once. See PR #665.
 
