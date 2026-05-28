@@ -211,9 +211,117 @@ const WEB_DISPATCH_SOURCE: ToolSource<AnyToolCall> = {
 
 const webDispatcher = createToolDispatcher<AnyToolCall>([WEB_DISPATCH_SOURCE]);
 
+/** Internal: a call paired with its textual start offset in the source. */
+interface OffsetCall {
+  call: AnyToolCall;
+  offset: number;
+}
+
+/**
+ * Brace-counted scan that returns every top-level JSON object in `text`
+ * together with its starting offset. Mirrors `extractAllBareJsonObjects`
+ * from `@push/lib/tool-call-diagnosis` (which discards offsets), but
+ * keeps the position so the legacy fallback can be merged with kernel
+ * results by textual order. Includes the JSON-repair fallback for
+ * objects that don't parse cleanly, matching the shared helper.
+ */
+interface BareObjectAtOffset {
+  parsed: Record<string, unknown>;
+  start: number;
+}
+function scanBareObjectsWithOffsets(text: string): BareObjectAtOffset[] {
+  const results: BareObjectAtOffset[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const braceIdx = text.indexOf('{', i);
+    if (braceIdx === -1) break;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let end = -1;
+    for (let j = braceIdx; j < text.length; j++) {
+      const ch = text[j];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\' && inString) {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+      if (ch === '{') depth++;
+      if (ch === '}') {
+        depth--;
+        if (depth === 0) {
+          end = j;
+          break;
+        }
+      }
+    }
+    if (end === -1) {
+      i = braceIdx + 1;
+      continue;
+    }
+    const candidate = text.slice(braceIdx, end + 1);
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        results.push({ parsed: parsed as Record<string, unknown>, start: braceIdx });
+      }
+    } catch {
+      // Not valid JSON. The shared helper attempts `repairToolJson`
+      // here for the well-formed tool-name path; we skip the repair
+      // because the legacy fallback only needs to catch the shapes
+      // the kernel already missed, and repair-needing shapes will
+      // have come through the kernel's malformed channel instead.
+    }
+    i = end + 1;
+  }
+  return results;
+}
+
+/**
+ * Best-effort: find the textual offset of each kernel-claimed call by
+ * searching for its `"tool":"<name>"` pattern. Kernel calls are
+ * guaranteed to be in textual order (`createToolDispatcher` sorts by
+ * offset internally), so we scan forward incrementally — the next
+ * call's offset is always >= the previous one's. Failures fall back
+ * to the current search cursor so ordering relative to other kernel
+ * calls is preserved even if the exact offset can't be located.
+ *
+ * Used to merge kernel calls with legacy-fallback calls in textual
+ * order so the grouping state machine sees them in the same sequence
+ * the model emitted (Codex P1 / Copilot review on PR #679).
+ */
+function assignKernelCallOffsets(text: string, calls: readonly AnyToolCall[]): OffsetCall[] {
+  const out: OffsetCall[] = [];
+  let searchFrom = 0;
+  for (const call of calls) {
+    const name = call.call.tool;
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`["']tool["']\\s*:\\s*["']${escaped}["']`);
+    const slice = text.slice(searchFrom);
+    const match = re.exec(slice);
+    const offset = match ? searchFrom + match.index : searchFrom;
+    out.push({ call, offset });
+    // Advance past this match so subsequent kernel calls don't
+    // re-find this position (matters when two calls share a tool
+    // name in different fenced blocks).
+    searchFrom = offset + 1;
+  }
+  return out;
+}
+
 /**
  * Legacy fallback: brace-count extraction + cascade detection over every
- * parsed bare JSON object. Catches three things the kernel can't:
+ * parsed bare JSON object. Returns each call with its source-text
+ * start offset so the caller can merge with kernel calls in textual
+ * order. Catches three things the kernel can't:
  *
  *   1. **Scratchpad flat-form** — `{tool, content}` without an `args`
  *      wrapper. The kernel's structural gate rejects it pre-source.
@@ -227,29 +335,22 @@ const webDispatcher = createToolDispatcher<AnyToolCall>([WEB_DISPATCH_SOURCE]);
  *      rejects the whole sequence, including the well-formed sibling.
  *      Legacy picks up the well-formed one here.
  *
- * Dedup against kernel-claimed calls happens via `alreadySeen` keyed
- * by `getCanonicalInvocationKey`. Drops dedup against kernel-reported
- * malformed rawToolNames at the call site.
+ * Dedup against kernel-claimed calls happens at the call site via
+ * canonical invocation key over the merged offset-sorted list.
  */
-function detectFromLegacyScan(
-  text: string,
-  alreadySeen: ReadonlySet<string>,
-): {
-  calls: AnyToolCall[];
+function detectFromLegacyScan(text: string): {
+  entries: OffsetCall[];
   droppedCandidates: DroppedToolCallCandidate[];
 } {
-  const parsedObjects = extractAllBareJsonObjects(text);
-  if (parsedObjects.length === 0) return { calls: [], droppedCandidates: [] };
-  const calls: AnyToolCall[] = [];
+  const parsedObjects = scanBareObjectsWithOffsets(text);
+  if (parsedObjects.length === 0) return { entries: [], droppedCandidates: [] };
+  const entries: OffsetCall[] = [];
   const droppedCandidates: DroppedToolCallCandidate[] = [];
-  const seen = new Set<string>(alreadySeen);
-  for (const parsed of parsedObjects) {
-    const parsedRecord = asRecord(parsed);
+  for (const { parsed, start } of parsedObjects) {
     const serialized = JSON.stringify(parsed);
     const call = detectAnyToolCall(serialized);
     if (!call) {
-      const rawToolName =
-        parsedRecord && typeof parsedRecord.tool === 'string' ? parsedRecord.tool.trim() : null;
+      const rawToolName = typeof parsed.tool === 'string' ? parsed.tool.trim() : null;
       if (rawToolName) {
         droppedCandidates.push({
           rawToolName,
@@ -259,13 +360,9 @@ function detectFromLegacyScan(
       }
       continue;
     }
-    const key = getCanonicalInvocationKey(call);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    calls.push(call);
-    if (calls.length > MAX_PARALLEL_TOOL_CALLS + MAX_FILE_MUTATION_BATCH + 1) break;
+    entries.push({ call, offset: start });
   }
-  return { calls, droppedCandidates };
+  return { entries, droppedCandidates };
 }
 
 /**
@@ -305,17 +402,8 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
   // the Gemini-3-Flash fenced-array fix and the four 2026-04-18
   // silent-drop variants for free.
   const kernelResult = webDispatcher.detectAllToolCalls(text);
-  const allCalls: AnyToolCall[] = [];
-  const seen = new Set<string>();
+  const kernelEntries = assignKernelCallOffsets(text, kernelResult.calls);
   const droppedCandidates: DroppedToolCallCandidate[] = [];
-
-  for (const call of kernelResult.calls) {
-    const key = getCanonicalInvocationKey(call);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    allCalls.push(call);
-    if (allCalls.length > MAX_PARALLEL_TOOL_CALLS + MAX_FILE_MUTATION_BATCH + 1) break;
-  }
 
   // Track which dropped candidates we've already surfaced so the legacy
   // fallback below doesn't double-report shapes the kernel already
@@ -337,59 +425,71 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
     droppedCandidates.push(dropped);
   }
 
-  // Compute explicit-wrapper presence once — used by both Phase 2 and
-  // Phase 3 gates. The pre-kernel code keyed every gate on this value,
-  // so we preserve it here to match prior behavior exactly.
   // `extractBareToolJsonObjects` requires a string `tool` field, so
   // `hasExplicitWrappers` is the same signal the old code used as
-  // `extractBareToolJsonObjects(text).length > 0`.
+  // `extractBareToolJsonObjects(text).length > 0`. Used to gate both
+  // Phase 2 (namespaced/XML recovery — only when zero canonical
+  // wrappers exist) and Phase 3 (legacy fallback — only when at least
+  // one canonical wrapper exists, so prose JSON examples like
+  // `{ path: "...", content: "..." }` aren't mis-inferred as tool
+  // calls). Matches pre-kernel behavior exactly.
   const hasExplicitWrappers = extractBareToolJsonObjects(text).length > 0;
 
   // Phase 2: namespaced + XML recovery (Kimi/Blackbox + Hermes/Qwen/Nous
   // finetunes). Only fires when the model emitted ZERO canonical
-  // `{tool: ...}` wrappers in the text — same gate the pre-kernel
-  // code used. A wrapper that exists but fails source-claiming (kernel
-  // reports `unknown_tool` malformed) still suppresses recovery: the
-  // model signaled intent in canonical form, and a heuristic
-  // recovery competing with that intent would override it
-  // unpredictably. Copilot review on PR #678.
-  if (!hasExplicitWrappers && allCalls.length === 0) {
+  // `{tool: ...}` wrappers in the text. A wrapper that exists but
+  // fails source-claiming still suppresses recovery: the canonical
+  // signal trumps heuristic recovery. Copilot review on PR #678.
+  const recoveryEntries: OffsetCall[] = [];
+  if (!hasExplicitWrappers && kernelEntries.length === 0) {
     const recoveries = [...recoverNamespacedToolCalls(text), ...recoverXmlToolCalls(text)].sort(
       (a, b) => a.offset - b.offset,
     );
     for (const recovered of recoveries) {
       const call = wrapRecoveredCallToAny(recovered.tool, recovered.args);
       if (!call) continue;
-      const key = getCanonicalInvocationKey(call);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      allCalls.push(call);
-      if (allCalls.length > MAX_PARALLEL_TOOL_CALLS + MAX_FILE_MUTATION_BATCH + 1) break;
+      recoveryEntries.push({ call, offset: recovered.offset });
     }
   }
 
   // Phase 3: legacy fallback for shapes the kernel's structural gate
-  // rejects (notably scratchpad's flat `{tool, content}` form, plus
-  // bare-args inference). Gated on the same condition the pre-kernel
-  // code used — at least one `{tool: string}`-shaped object must
-  // exist in the text — so we don't mis-detect documentation
-  // examples like `{ path: "...", content: "..." }` in a tutorial as
-  // real tool calls (Codex review on PR #678). The `allCalls.length`
-  // check is belt-and-suspenders for the Phase 2 recovery branch
-  // above: if recovery promoted a call, we still want Phase 3 to
-  // sweep up any flat-form shapes the recovered text might contain.
-  const hasExplicitToolIntent = allCalls.length > 0 || hasExplicitWrappers;
-  if (hasExplicitToolIntent) {
-    const legacyResult = detectFromLegacyScan(text, seen);
-    for (const call of legacyResult.calls) {
-      allCalls.push(call);
-      if (allCalls.length > MAX_PARALLEL_TOOL_CALLS + MAX_FILE_MUTATION_BATCH + 1) break;
-    }
+  // rejects (scratchpad flat-form, bare-args inference, failed
+  // bare-block-eligibility). Gated on `hasExplicitWrappers` ONLY —
+  // not on `kernelEntries.length > 0 || hasExplicitWrappers` — so a
+  // recovered namespaced/XML call from Phase 2 doesn't enable
+  // bare-args inference over a prose `{ path: ... }` example. That
+  // false-positive risk is exactly what the pre-kernel
+  // `extractBareToolJsonObjects(text).length > 0` gate prevented.
+  // Copilot review on PR #679.
+  let legacyEntries: OffsetCall[] = [];
+  if (hasExplicitWrappers) {
+    const legacyResult = detectFromLegacyScan(text);
+    legacyEntries = legacyResult.entries;
     for (const dropped of legacyResult.droppedCandidates) {
       if (droppedSeen.has(dropped.rawToolName)) continue;
       droppedSeen.add(dropped.rawToolName);
       droppedCandidates.push(dropped);
     }
+  }
+
+  // Merge all three sources by textual offset and dedup by canonical
+  // invocation key. Preserves the model's intended ordering so the
+  // grouping state machine sees calls in emit order — critical when
+  // a flat-form call precedes a kernel-claimed wrapped call, since
+  // the order determines which side-effect runs vs lands in
+  // extraMutations. Codex P1 / Copilot review on PR #679.
+  const merged: OffsetCall[] = [...kernelEntries, ...recoveryEntries, ...legacyEntries].sort(
+    (a, b) => a.offset - b.offset,
+  );
+  const allCalls: AnyToolCall[] = [];
+  const seen = new Set<string>();
+  for (const entry of merged) {
+    const key = getCanonicalInvocationKey(entry.call);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    allCalls.push(entry.call);
+    // Soft cap: leave headroom for the batch + trailing side-effect.
+    if (allCalls.length > MAX_PARALLEL_TOOL_CALLS + MAX_FILE_MUTATION_BATCH + 1) break;
   }
 
   if (allCalls.length === 0) return { ...empty, droppedCandidates };
