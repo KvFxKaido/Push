@@ -944,6 +944,34 @@ export interface ConversationRunState {
   verificationState?: VerificationRuntimeState;
 }
 
+/**
+ * A CLI/TUI-originated session discovered via the daemon's
+ * `list_sessions` RPC. Not a `Conversation` — these rows are server-
+ * side state with no IndexedDB message log on this device. The
+ * drawer surfaces them in the daemon-mode sections so the user can
+ * see what's already on the paired daemon; resume-into-mobile is a
+ * separate flow that has to attach + replay events, intentionally
+ * out of scope for the visibility-first iteration that introduced
+ * this type.
+ */
+export interface DaemonCliSession {
+  sessionId: string;
+  updatedAt: number;
+  provider: string;
+  model: string;
+  cwd: string;
+  /** Optional human-set label (`./push resume rename`). Empty when unnamed. */
+  sessionName: string;
+  /** First non-envelope user message preview from the session log. May be empty. */
+  lastUserMessage: string;
+  /** Origin surface — `'tui'` / `'interactive'` / `'headless'` / …. */
+  mode: string;
+  /** Live state at the time of the listing fetch. */
+  state: 'idle' | 'running';
+  /** When `state === 'running'`, the run id. Otherwise null. */
+  activeRunId: string | null;
+}
+
 export interface Conversation {
   id: string;
   title: string;
