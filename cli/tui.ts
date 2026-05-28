@@ -1409,18 +1409,19 @@ export async function runTUI(options = {}) {
   async function ensureSessionPersisted() {
     if (sessionPersisted) return;
     sessionPersisted = true;
+    // Normalize once so the condition and the emitted value can't
+    // disagree. `listSessions()` trims `state.mode` on read; emitting
+    // an untrimmed value here would make the `session_started` event
+    // drift from the `list_sessions` row by a whitespace-padding
+    // accident. Defensive fallback matches `listSessions()`'s legacy
+    // fallback ('interactive') so if `state.mode` is ever cleared by
+    // future refactors the event and the listing still agree.
+    const trimmedMode = typeof state.mode === 'string' ? state.mode.trim() : '';
+    const mode = trimmedMode || 'interactive';
     await appendSessionEvent(state, 'session_started', {
       sessionId: state.sessionId,
       state: 'idle',
-      // Read from state so the persisted `state.mode` (set by
-      // `createFreshSessionState` to 'tui' for fresh sessions, or
-      // carried over from disk on resume) is the single source of
-      // truth — the event payload can never drift from what
-      // `list_sessions` returns. Defensive fallback matches
-      // `listSessions()`'s legacy fallback ('interactive') so if
-      // `state.mode` is ever cleared by future refactors the event
-      // and the listing still agree on the same value.
-      mode: typeof state.mode === 'string' && state.mode.trim() ? state.mode : 'interactive',
+      mode,
       provider: state.provider,
     });
     await saveSessionState(state);
