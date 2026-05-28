@@ -1324,6 +1324,12 @@ export async function runTUI(options = {}) {
         completedPhases: [],
       },
       messages: [{ role: 'system', content: buildSystemPromptBase(cwd) }],
+      // Tag origin surface so `list_sessions` (and the mobile drawer
+      // that consumes it) buckets this row as TUI rather than falling
+      // back to 'interactive'. Mirrors the daemon's `handleStartSession`
+      // tagging; the `ensureSessionPersisted` callback below re-emits
+      // the matching value in the `session_started` event payload.
+      mode: 'tui',
     };
     // Start enriching the system prompt in the background — will be
     // awaited before the first LLM call in runAssistantLoop.
