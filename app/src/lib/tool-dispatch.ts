@@ -219,7 +219,16 @@ const WEB_DISPATCH_SOURCE: ToolSource<AnyToolCall> = {
   },
 };
 
-const webDispatcher = createToolDispatcher<AnyToolCall>([WEB_DISPATCH_SOURCE]);
+// `enableInternalRecovery: false` defers namespaced/XML recovery to the
+// web layer's outer pass (gated on `!hasExplicitWrappers`). Otherwise the
+// kernel's internal recovery would fire whenever its candidate list is
+// empty — including when canonical wrappers were present but failed the
+// kernel's structural gate (e.g. scratchpad flat-form) — and a recovered
+// call would land in `calls` even though web's own gate would have
+// suppressed it. Codex P2 review on PR #679.
+const webDispatcher = createToolDispatcher<AnyToolCall>([WEB_DISPATCH_SOURCE], {
+  enableInternalRecovery: false,
+});
 
 /** Internal: a call paired with its textual start offset in the source. */
 interface OffsetCall {
@@ -328,6 +337,29 @@ function assignKernelCallOffsets(text: string, calls: readonly AnyToolCall[]): O
 }
 
 /**
+ * True if the text region immediately preceding `objectStart` ends with
+ * a namespaced-call prefix (`functions.<name>:<id>` + optional
+ * whitespace) or an XML `<tool_call>` open tag. These shapes embed a
+ * JSON args object that `scanBareObjectsWithOffsets` would otherwise
+ * surface as a candidate for bare-args inference — letting
+ * `tryRecoverBareToolArgs` re-infer the args as a tool call would
+ * double-process the same intent (the recovery functions already
+ * model the call themselves). Codex P2 review on PR #681.
+ *
+ * Lookback window is 80 chars — covers
+ * `<tool_call>\n  ` and `functions.<longname>:<longid>  ` with
+ * headroom. Tighter than the 64-char `MAX_PREFIX_TO_ARGS_GAP` used
+ * inside the namespaced recovery itself; the extra slack is for the
+ * XML tag plus possible newline/whitespace formatting.
+ */
+const NAMESPACED_PREFIX_LOOKBACK = /functions\.[a-zA-Z_][a-zA-Z0-9_]*\s*:\s*[a-zA-Z0-9_]+\s*$/;
+const XML_TOOL_CALL_LOOKBACK = /<tool_call\b[^>]*>\s*$/;
+function isInsideRecoveryArgsRegion(text: string, objectStart: number): boolean {
+  const lookback = text.slice(Math.max(0, objectStart - 80), objectStart);
+  return NAMESPACED_PREFIX_LOOKBACK.test(lookback) || XML_TOOL_CALL_LOOKBACK.test(lookback);
+}
+
+/**
  * Legacy fallback: brace-count extraction + cascade detection over every
  * parsed bare JSON object. Returns each call with its source-text
  * start offset so the caller can merge with kernel calls in textual
@@ -345,6 +377,14 @@ function assignKernelCallOffsets(text: string, calls: readonly AnyToolCall[]): O
  *      rejects the whole sequence, including the well-formed sibling.
  *      Legacy picks up the well-formed one here.
  *
+ * Bare-args inference (#2) is gated on `isInsideRecoveryArgsRegion`
+ * to avoid double-claiming the args portion of a namespaced/XML
+ * recovery shape — the recovery functions already model those calls,
+ * and inferring them again would let a single recovery trace land
+ * BOTH as a recovered call (via the outer recovery pass) AND as a
+ * bare-args inference (via this scan), executing twice in the worst
+ * case. Codex P2 review on PR #681.
+ *
  * Dedup against kernel-claimed calls happens at the call site via
  * canonical invocation key over the merged offset-sorted list.
  */
@@ -357,6 +397,13 @@ function detectFromLegacyScan(text: string): {
   const entries: OffsetCall[] = [];
   const droppedCandidates: DroppedToolCallCandidate[] = [];
   for (const { parsed, start } of parsedObjects) {
+    // Skip bare-args inference when the object is the args portion of
+    // a namespaced/XML recovery shape. Objects WITH a `tool` field
+    // still pass through so flat-form scratchpad/todo via the cascade
+    // (purpose #1 above) keeps working.
+    if (typeof parsed.tool !== 'string' && isInsideRecoveryArgsRegion(text, start)) {
+      continue;
+    }
     const serialized = JSON.stringify(parsed);
     const call = detectAnyToolCall(serialized);
     if (!call) {

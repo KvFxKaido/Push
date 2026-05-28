@@ -110,6 +110,35 @@ export interface ToolDispatcher<TCall> {
   detectAllToolCalls(text: string): ToolDispatchResult<TCall>;
 }
 
+export interface ToolDispatcherOptions {
+  /**
+   * When `true` (default), and Phases 1+2 produced zero candidates,
+   * the dispatcher promotes namespaced/XML recovery shapes into the
+   * candidate list — covers the case where a model emits a non-canonical
+   * tool form (Kimi/Blackbox namespaced, Hermes/Qwen XML) without any
+   * canonical wrapper.
+   *
+   * When `false`, the dispatcher still REPORTS non-duplicate recovery
+   * matches as `unknown_tool` malformed (so the OpenCode silent-failure
+   * diagnostic still fires), but does NOT promote them into `calls`.
+   * The caller is expected to run its own gated recovery pass over the
+   * source text.
+   *
+   * Web (`app/src/lib/tool-dispatch.ts:webDispatcher`) sets this to
+   * `false` because it runs its own recovery wrapped in an outer
+   * `!hasExplicitWrappers` gate — letting both fire means a message
+   * with a kernel-rejected canonical wrapper (e.g. flat-form scratchpad)
+   * plus a non-canonical trace would still execute the recovered call
+   * even though the canonical wrapper signals "don't fall back to
+   * heuristic recovery." Codex P2 review on PR #679.
+   *
+   * CLI (`cli/tools.ts` via `PASS_THROUGH_CLI_SOURCE`) leaves this at
+   * the default — the CLI has no separate recovery layer and relies
+   * on the kernel.
+   */
+  readonly enableInternalRecovery?: boolean;
+}
+
 /**
  * Create a tool dispatcher from a list of source detectors.
  *
@@ -145,7 +174,9 @@ export interface ToolDispatcher<TCall> {
  */
 export function createToolDispatcher<TCall>(
   sources: readonly ToolSource<TCall>[],
+  options: ToolDispatcherOptions = {},
 ): ToolDispatcher<TCall> {
+  const enableInternalRecovery = options.enableInternalRecovery !== false;
   return {
     detectAllToolCalls(text: string): ToolDispatchResult<TCall> {
       const malformed: ToolMalformedReport[] = [];
@@ -279,7 +310,10 @@ export function createToolDispatcher<TCall>(
         })),
       ].sort((a, b) => a.offset - b.offset);
 
-      if (candidates.length === 0) {
+      if (candidates.length === 0 && enableInternalRecovery) {
+        // Caller relies on the kernel's recovery layer (CLI default).
+        // Promote every recovery shape into the candidate list so the
+        // model's non-canonical traces still execute.
         for (const recovered of recoveries) {
           candidates.push({
             kind: recovered.kind,
@@ -293,6 +327,13 @@ export function createToolDispatcher<TCall>(
           });
         }
       } else {
+        // Either (a) Phases 1+2 produced candidates and we're surfacing
+        // divergent recoveries as `unknown_tool` diagnostic, OR (b)
+        // `enableInternalRecovery` is false and the caller runs its own
+        // gated recovery. In both cases, recovery shapes do NOT get
+        // promoted to `calls` from this branch; non-duplicate matches
+        // are reported as malformed so the OpenCode silent-failure
+        // diagnostic still fires.
         const existingKeys = new Set<string>();
         for (const c of candidates) {
           existingKeys.add(canonicalKey(c.parsed));

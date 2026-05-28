@@ -1363,4 +1363,54 @@ describe('detectAllToolCalls — textual-order merging', () => {
     ];
     expect(tools).not.toContain('sandbox_write_file');
   });
+
+  it('does not infer the args portion of a namespaced trace as a separate bare-args call', () => {
+    // Codex P2 regression on PR #681. Scenario: a canonical wrapper
+    // that the kernel rejects (e.g. flat-form scratchpad) sets
+    // hasExplicitWrappers=true, so Phase 3 (legacy fallback) runs.
+    // The legacy scan would then extract the JSON args object of a
+    // `functions.<tool>:<id> {<args>}` namespaced trace as a bare
+    // JSON object and run it through bare-args inference, claiming
+    // the args as a separate tool call even though the recovery
+    // functions already model that namespaced call themselves.
+    const text = [
+      '{"tool": "set_scratchpad", "content": "flat-form claim"}',
+      'functions.read_file:1 {"path":"a.txt"}',
+    ].join('\n');
+    const result = detectAllToolCalls(text);
+    // scratchpad still lands via Phase 3 cascade (flat-form has a
+    // tool field, so it's not in a recovery args region). The
+    // namespaced args object MUST NOT also land as a bare-args read.
+    const allTools = [
+      ...result.readOnly.map((c) => c.call.tool),
+      ...result.fileMutations.map((c) => c.call.tool),
+      ...(result.mutating ? [result.mutating.call.tool] : []),
+    ];
+    expect(allTools).toContain('set_scratchpad');
+    expect(allTools).not.toContain('read_file');
+    expect(allTools).not.toContain('sandbox_read_file');
+  });
+
+  it('does not infer the args portion of an XML <tool_call> as a separate bare-args call', () => {
+    // Same shape as above but with XML recovery: a flat-form
+    // canonical wrapper rejected by the kernel + an XML tool_call
+    // block whose inner args object would otherwise be picked up by
+    // bare-args inference. The XML recovery already models the call
+    // (and is correctly suppressed when the canonical wrapper exists
+    // — see the !hasExplicitWrappers gate), so the bare-args path
+    // must also skip it.
+    const text = [
+      '{"tool": "set_scratchpad", "content": "flat-form claim"}',
+      '<tool_call>{"name": "read_file", "arguments": {"path": "a.txt"}}</tool_call>',
+    ].join('\n');
+    const result = detectAllToolCalls(text);
+    const allTools = [
+      ...result.readOnly.map((c) => c.call.tool),
+      ...result.fileMutations.map((c) => c.call.tool),
+      ...(result.mutating ? [result.mutating.call.tool] : []),
+    ];
+    expect(allTools).toContain('set_scratchpad');
+    expect(allTools).not.toContain('read_file');
+    expect(allTools).not.toContain('sandbox_read_file');
+  });
 });
