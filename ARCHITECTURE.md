@@ -111,7 +111,7 @@ The web app and CLI still keep shell-specific coordinators local. The target is 
 
 ## CLI
 
-Local coding agent for the terminal. It shares the same role-based architecture and increasingly the same runtime semantics as the web app, while keeping terminal-specific coordination local. Current terminal work is focused on transcript-first CLI ergonomics and TUI-lite improvements; the `push` wrapper still enables the full-screen TUI by default today, while `PUSH_TUI_ENABLED=0 ./push` runs the transcript REPL. The target is a stronger shared runtime contract across web and CLI, not identical UX across surfaces.
+Local coding agent for the terminal. It shares the same role-based architecture and increasingly the same runtime semantics as the web app, while keeping terminal-specific coordination local. Current terminal work is focused on transcript-first CLI ergonomics and TUI-lite improvements; bare `./push` (or `node cli/cli.ts`) opens the full-screen TUI by default — set `PUSH_TUI_ENABLED=0` to opt back to the transcript REPL. The target is a stronger shared runtime contract across web and CLI, not identical UX across surfaces.
 
 ## Android
 
