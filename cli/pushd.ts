@@ -1128,11 +1128,12 @@ async function handleListSessions(req) {
   // aren't resumable as chats — without server-side filtering, a user
   // with 50 consecutive headless runs would see an empty CLI section
   // even though older interactive sessions exist. Each entry is
-  // trimmed before comparison because `state.mode` is trimmed on read
-  // and write (see `cli/session-store.ts:listSessions` and
-  // `handleStartSession`) — without matching that normalization a
-  // client sending `' headless '` would silently fail to filter.
-  // Strings only; other values are dropped.
+  // trimmed before comparison: `handleStartSession` trims the payload
+  // before persisting and `listSessions()` trims again on read (see
+  // its `stateObj.mode` coalesce), so the listing row always carries
+  // a trimmed value. Trimming the filter entries matches that
+  // normalization — without it a client sending `' headless '` would
+  // silently fail to filter. Strings only; other values are dropped.
   const rawExclude = req.payload?.excludeModes;
   const excludeModes =
     Array.isArray(rawExclude) && rawExclude.length > 0
