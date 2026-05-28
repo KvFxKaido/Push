@@ -357,18 +357,27 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
   }
 
   // Phase 3: legacy fallback for shapes the kernel's structural gate
-  // rejects (notably scratchpad's flat `{tool, content}` form). Runs
-  // unconditionally so shapes that miss the kernel's gate but still
-  // resolve through the cascade aren't silently dropped.
-  const legacyResult = detectFromLegacyScan(text, seen);
-  for (const call of legacyResult.calls) {
-    allCalls.push(call);
-    if (allCalls.length > MAX_PARALLEL_TOOL_CALLS + MAX_FILE_MUTATION_BATCH + 1) break;
-  }
-  for (const dropped of legacyResult.droppedCandidates) {
-    if (droppedSeen.has(dropped.rawToolName)) continue;
-    droppedSeen.add(dropped.rawToolName);
-    droppedCandidates.push(dropped);
+  // rejects (notably scratchpad's flat `{tool, content}` form, plus
+  // bare-args inference). Gated on the same condition the pre-kernel
+  // code used — at least one `{tool: string}`-shaped object must
+  // exist in the text — so we don't mis-detect documentation
+  // examples like `{ path: "...", content: "..." }` in a tutorial as
+  // real tool calls. `extractBareToolJsonObjects` requires a string
+  // `tool` field, so if it returns empty AND the kernel claimed
+  // nothing, the model didn't signal tool intent and bare-args
+  // recovery would be a false positive (Codex review on PR #678).
+  const hasExplicitToolIntent = allCalls.length > 0 || extractBareToolJsonObjects(text).length > 0;
+  if (hasExplicitToolIntent) {
+    const legacyResult = detectFromLegacyScan(text, seen);
+    for (const call of legacyResult.calls) {
+      allCalls.push(call);
+      if (allCalls.length > MAX_PARALLEL_TOOL_CALLS + MAX_FILE_MUTATION_BATCH + 1) break;
+    }
+    for (const dropped of legacyResult.droppedCandidates) {
+      if (droppedSeen.has(dropped.rawToolName)) continue;
+      droppedSeen.add(dropped.rawToolName);
+      droppedCandidates.push(dropped);
+    }
   }
 
   if (allCalls.length === 0) return { ...empty, droppedCandidates };
