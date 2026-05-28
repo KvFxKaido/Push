@@ -34,9 +34,22 @@ export interface RecoveredXmlCall {
   tool: string;
   /** Parsed args object. `{}` for tag bodies with no recoverable args. */
   args: Record<string, unknown>;
-  /** Offset of the opening `<tool_call>` tag. Lets the dispatcher merge
-   *  these candidates into its textual-order ordering. */
+  /** Offset of the opening `<tool_call>` (or `<function_calls>`) tag.
+   *  Lets the dispatcher merge these candidates into its textual-order
+   *  ordering. For a `<function_calls>` wrapper expanded into multiple
+   *  `<invoke>` children, each child carries the offset of its own
+   *  `<invoke>` tag, not the wrapper's. */
   offset: number;
+  /** Exclusive end offset — one past the last character of the
+   *  enclosing tag. For `<tool_call>` blocks this is `</tool_call>` + 1.
+   *  For `<invoke>` children expanded from a `<function_calls>` wrapper,
+   *  this is `</invoke>` + 1.
+   *
+   *  Lets callers detect when a bare JSON object found by their own
+   *  scanner is actually the args portion of a recovered call —
+   *  without that signal, bare-args inference would double-claim the
+   *  same intent. */
+  endOffset: number;
 }
 
 // Match a `<tool_call>` element. The `\b[^>]*` allows attributes the
@@ -208,17 +221,19 @@ export function recoverXmlToolCalls(text: string): RecoveredXmlCall[] {
     if (m.kind === 'tool_call') {
       const parsed = parseToolCallInner(m.inner);
       if (!parsed) continue;
-      out.push({ ...parsed, offset: m.blockStart });
+      out.push({ ...parsed, offset: m.blockStart, endOffset: m.blockEnd });
       continue;
     }
     // `<function_calls>` wrapper — expand each `<invoke>` child into its
     // own recovered call. The wrapper itself only contributes the offset
-    // anchor; the inner content is the structured payload.
+    // anchor; the inner content is the structured payload. Each invoke
+    // carries its own start/end offsets re-anchored to the outer text.
     for (const invoke of parseFunctionCallsInner(m.inner)) {
       out.push({
         tool: invoke.tool,
         args: invoke.args,
         offset: m.blockStart + invoke.innerOffset,
+        endOffset: m.blockStart + invoke.innerEnd,
       });
     }
   }
@@ -323,10 +338,18 @@ function coerceArgValue(raw: string): unknown {
  * helper also emit them would either duplicate the call or pre-empt
  * the diagnosis.
  */
-function parseFunctionCallsInner(
-  inner: string,
-): Array<{ tool: string; args: Record<string, unknown>; innerOffset: number }> {
-  const out: Array<{ tool: string; args: Record<string, unknown>; innerOffset: number }> = [];
+function parseFunctionCallsInner(inner: string): Array<{
+  tool: string;
+  args: Record<string, unknown>;
+  innerOffset: number;
+  innerEnd: number;
+}> {
+  const out: Array<{
+    tool: string;
+    args: Record<string, unknown>;
+    innerOffset: number;
+    innerEnd: number;
+  }> = [];
   const invokeRegex = new RegExp(INVOKE_TAG_REGEX.source, INVOKE_TAG_REGEX.flags);
   let invoke: RegExpExecArray | null;
   while ((invoke = invokeRegex.exec(inner)) !== null) {
@@ -340,7 +363,12 @@ function parseFunctionCallsInner(
       if (!key || !ARG_KEY_REGEX.test(key)) continue;
       args[key] = coerceArgValue(param[2].trim());
     }
-    out.push({ tool: toolName, args, innerOffset: invoke.index });
+    out.push({
+      tool: toolName,
+      args,
+      innerOffset: invoke.index,
+      innerEnd: invoke.index + invoke[0].length,
+    });
   }
   return out;
 }

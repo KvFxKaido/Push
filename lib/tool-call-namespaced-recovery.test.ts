@@ -26,12 +26,16 @@ describe('recoverNamespacedToolCalls', () => {
 
   it('treats empty `{}` as empty args (zero-arg tools like git_status)', () => {
     const recovered = recoverNamespacedToolCalls('functions.git_status:0  {}');
-    expect(recovered).toEqual([{ tool: 'git_status', args: {}, offset: 0 }]);
+    expect(recovered).toEqual([
+      expect.objectContaining({ tool: 'git_status', args: {}, offset: 0 }),
+    ]);
   });
 
   it('treats `null` after the prefix as empty args', () => {
     const recovered = recoverNamespacedToolCalls('functions.git_status:0  null');
-    expect(recovered).toEqual([{ tool: 'git_status', args: {}, offset: 0 }]);
+    expect(recovered).toEqual([
+      expect.objectContaining({ tool: 'git_status', args: {}, offset: 0 }),
+    ]);
   });
 
   it('does not recover prose mentions of the prefix without trailing JSON', () => {
@@ -54,14 +58,16 @@ describe('recoverNamespacedToolCalls', () => {
   it('ignores nested braces inside string values when finding the object end', () => {
     const text = 'functions.exec:0  {"command": "echo \\"} hi\\""}';
     const recovered = recoverNamespacedToolCalls(text);
-    expect(recovered).toEqual([{ tool: 'exec', args: { command: 'echo "} hi"' }, offset: 0 }]);
+    expect(recovered).toEqual([
+      expect.objectContaining({ tool: 'exec', args: { command: 'echo "} hi"' }, offset: 0 }),
+    ]);
   });
 
   it('recovers consecutive calls without leaking the first into the second', () => {
     const text = 'functions.read_file:0  {"path": "a"}  functions.read_file:1  {"path": "b"}';
     const recovered = recoverNamespacedToolCalls(text);
     expect(recovered).toEqual([
-      { tool: 'read_file', args: { path: 'a' }, offset: 0 },
+      expect.objectContaining({ tool: 'read_file', args: { path: 'a' }, offset: 0 }),
       expect.objectContaining({ tool: 'read_file', args: { path: 'b' } }),
     ]);
     expect(recovered[1].offset).toBeGreaterThan(recovered[0].offset);
@@ -94,7 +100,9 @@ describe('recoverNamespacedToolCalls', () => {
   it('repairs args with trailing commas via shape-agnostic repair', () => {
     const text = 'functions.read_file:0 {"path": "TODO.md",}';
     const recovered = recoverNamespacedToolCalls(text);
-    expect(recovered).toEqual([{ tool: 'read_file', args: { path: 'TODO.md' }, offset: 0 }]);
+    expect(recovered).toEqual([
+      expect.objectContaining({ tool: 'read_file', args: { path: 'TODO.md' }, offset: 0 }),
+    ]);
   });
 
   it('rejects an args object that itself carries a "tool" key', () => {
@@ -111,14 +119,18 @@ describe('recoverNamespacedToolCalls', () => {
   it('recovers a truncated args object missing one closing brace', () => {
     const text = 'functions.read_file:0 {"path": "TODO.md"';
     expect(recoverNamespacedToolCalls(text)).toEqual([
-      { tool: 'read_file', args: { path: 'TODO.md' }, offset: 0 },
+      expect.objectContaining({ tool: 'read_file', args: { path: 'TODO.md' }, offset: 0 }),
     ]);
   });
 
   it('recovers a truncated args object with nested braces missing closers', () => {
     const text = 'functions.exec:0 {"command": "ls", "env": {"DEBUG": "1"';
     expect(recoverNamespacedToolCalls(text)).toEqual([
-      { tool: 'exec', args: { command: 'ls', env: { DEBUG: '1' } }, offset: 0 },
+      expect.objectContaining({
+        tool: 'exec',
+        args: { command: 'ls', env: { DEBUG: '1' } },
+        offset: 0,
+      }),
     ]);
   });
 
@@ -149,7 +161,11 @@ describe('recoverNamespacedToolCalls', () => {
     const text = 'functions.read_file:0 {"path": "TODO.md" functions.list_dir:1 {"path": "."}';
     const recovered = recoverNamespacedToolCalls(text);
     expect(recovered).toEqual([
-      { tool: 'list_dir', args: { path: '.' }, offset: expect.any(Number) },
+      expect.objectContaining({
+        tool: 'list_dir',
+        args: { path: '.' },
+        offset: expect.any(Number),
+      }),
     ]);
   });
 
@@ -171,14 +187,60 @@ describe('recoverNamespacedToolCalls', () => {
       'functions.read_file:0 {"path": "docs/examples.md", "note": "see functions.foo:1 for an example"';
     const recovered = recoverNamespacedToolCalls(text);
     expect(recovered).toEqual([
-      {
+      expect.objectContaining({
         tool: 'read_file',
         args: {
           path: 'docs/examples.md',
           note: 'see functions.foo:1 for an example',
         },
         offset: 0,
-      },
+      }),
     ]);
+  });
+
+  // ---------------------------------------------------------------------------
+  // endOffset — exact `[offset, endOffset)` region for the recovered call,
+  // so callers can detect when a bare JSON object found by their own scan
+  // is actually the args portion of this recovery. Replaces the regex
+  // lookback that PR #681 used. PR #683 follow-up.
+  // ---------------------------------------------------------------------------
+
+  it('endOffset for `{}` args ends one past the closing brace', () => {
+    const text = 'functions.git_status:0  {}';
+    const [r] = recoverNamespacedToolCalls(text);
+    expect(r.offset).toBe(0);
+    // `{` at index 24, `}` at index 25, so endOffset = 26 (== text.length).
+    expect(r.endOffset).toBe(26);
+    expect(r.endOffset).toBe(text.length);
+  });
+
+  it('endOffset for `null` args ends one past the literal', () => {
+    const text = 'functions.git_status:0  null';
+    const [r] = recoverNamespacedToolCalls(text);
+    expect(r.offset).toBe(0);
+    // `null` starts at 24, ends at 28 — same as text.length here.
+    expect(r.endOffset).toBe(28);
+  });
+
+  it('endOffset for object args ends past the closing brace, not past trailing whitespace', () => {
+    const text = 'functions.read_file:0 {"path": "TODO.md"}   ';
+    const [r] = recoverNamespacedToolCalls(text);
+    // `}` lives at index 40, so endOffset = 41 — the trailing 3 spaces
+    // are NOT included.
+    expect(r.endOffset).toBe(41);
+    expect(r.endOffset).toBeLessThan(text.length);
+  });
+
+  it('endOffset for a truncated args extends to end-of-message', () => {
+    const text = 'functions.read_file:0 {"path": "TODO.md"';
+    const [r] = recoverNamespacedToolCalls(text);
+    expect(r.endOffset).toBe(text.length);
+  });
+
+  it('endOffset for consecutive calls bounds each one independently', () => {
+    const text = 'functions.read_file:0  {"path": "a"}  functions.read_file:1  {"path": "b"}';
+    const [first, second] = recoverNamespacedToolCalls(text);
+    expect(first.endOffset).toBeLessThan(second.offset);
+    expect(second.endOffset).toBe(text.length);
   });
 });

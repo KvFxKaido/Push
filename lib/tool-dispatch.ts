@@ -63,6 +63,20 @@ import { recoverXmlToolCalls } from './tool-call-xml-recovery.js';
  */
 export interface ToolDispatchResult<TCall> {
   calls: TCall[];
+  /**
+   * Parallel to `calls`: the textual start offset of each call's source
+   * candidate in the input `text`. Same length and order as `calls`.
+   *
+   * Useful when the caller needs to merge kernel calls with their own
+   * textual-order parses (e.g. web's `detectAllToolCalls` interleaves
+   * kernel calls with a legacy bare-args scan and needs offsets to
+   * sort the merged list). Pre-`callOffsets`, web had to re-derive
+   * offsets via `text.indexOf` — a heuristic that could misorder when
+   * the same tool name appeared more than once. PR #683 surfaced this
+   * as a follow-up to the parser convergence track; this field
+   * replaces the heuristic with exact data.
+   */
+  callOffsets: number[];
   malformed: ToolMalformedReport[];
 }
 
@@ -358,6 +372,7 @@ export function createToolDispatcher<TCall>(
 
       const seen = new Set<string>();
       const calls: TCall[] = [];
+      const callOffsets: number[] = [];
       for (const candidate of candidates) {
         const key = canonicalKey(candidate.parsed);
         if (seen.has(key)) continue;
@@ -365,6 +380,10 @@ export function createToolDispatcher<TCall>(
         const matched = matchSources(sources, candidate.parsed);
         if (matched.ok) {
           calls.push(matched.call);
+          // Mirror the candidate's textual offset alongside the call so
+          // callers can sort/merge with their own textual-order parses
+          // without re-deriving offsets via `text.indexOf` heuristics.
+          callOffsets.push(candidate.offset);
           continue;
         }
         // Fenced, bare, or namespaced object parsed as a tool-shaped
@@ -385,7 +404,7 @@ export function createToolDispatcher<TCall>(
         }
       }
 
-      return { calls, malformed };
+      return { calls, callOffsets, malformed };
     },
   };
 }

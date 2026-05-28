@@ -32,6 +32,16 @@ export interface RecoveredNamespacedCall {
   /** Offset of the `functions.` prefix in the source text. Lets the
    *  dispatcher merge these candidates into its textual-order ordering. */
   offset: number;
+  /** Exclusive end offset — one past the last character of the args
+   *  payload. For object args, this is `}` + 1. For `null` args, this is
+   *  the position right after `null`. For truncated args at EOF, this
+   *  is `text.length`.
+   *
+   *  Lets callers (e.g. web's `detectFromLegacyScan`) detect when a
+   *  bare JSON object found by their own scanner is actually the args
+   *  portion of a recovered call — without that signal, the bare-args
+   *  inference would double-claim the same intent. */
+  endOffset: number;
 }
 
 // Captures the tool name from `functions.<name>:<call-id>`. The call-id
@@ -109,7 +119,9 @@ export function recoverNamespacedToolCalls(text: string): RecoveredNamespacedCal
         if (containsNamespacedPrefixOutsideStrings(text, cursor + 1)) continue;
         const parsed = tryParseTruncatedArgs(text.slice(cursor));
         if (!parsed) continue;
-        out.push({ tool, args: parsed, offset: match.index });
+        // Truncated args extend through end-of-message by definition —
+        // `text.length` is the exclusive end for this branch.
+        out.push({ tool, args: parsed, offset: match.index, endOffset: text.length });
         // Truncation always extends to end-of-message, so there's
         // nothing left for further regex iterations to find.
         break;
@@ -118,7 +130,7 @@ export function recoverNamespacedToolCalls(text: string): RecoveredNamespacedCal
       const candidate = text.slice(cursor, objectEnd + 1);
       const parsed = tryParseArgsObject(candidate);
       if (!parsed) continue;
-      out.push({ tool, args: parsed, offset: match.index });
+      out.push({ tool, args: parsed, offset: match.index, endOffset: objectEnd + 1 });
       regex.lastIndex = objectEnd + 1;
       continue;
     }
@@ -126,7 +138,7 @@ export function recoverNamespacedToolCalls(text: string): RecoveredNamespacedCal
     if (text.slice(cursor, cursor + 4).toLowerCase() === 'null') {
       const nullEnd = cursor + 4;
       if (!hasRecoverableTrailingContext(text, nullEnd)) continue;
-      out.push({ tool, args: {}, offset: match.index });
+      out.push({ tool, args: {}, offset: match.index, endOffset: nullEnd });
       regex.lastIndex = nullEnd;
       continue;
     }
