@@ -567,6 +567,12 @@ describe('protocol request format', () => {
 // the listing payload. If a refactor drops the field on either side,
 // this test fails before the drawer silently goes back to bucketing
 // every CLI session as 'interactive'.
+//
+// The CLI-inline paths (`cli/cli.ts` REPL / headless and `cli/tui.ts`
+// TUI) tag mode at session-creation time, not through the daemon's
+// `start_session`. Round-trip coverage for those creation sites lives
+// in the session-store unit tests — this block stays scoped to the
+// daemon RPC contract so the two surfaces test independently.
 
 describe('list_sessions mode propagation', () => {
   it('round-trips the start_session mode through to the listing row', async () => {

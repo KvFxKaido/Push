@@ -1260,7 +1260,7 @@ async function runInteractive(
   return 0;
 }
 
-async function initSession(sessionId, provider, model, cwd) {
+async function initSession(sessionId, provider, model, cwd, mode = 'interactive') {
   if (sessionId) {
     try {
       const resumed = await loadSessionState(sessionId);
@@ -1268,6 +1268,11 @@ async function initSession(sessionId, provider, model, cwd) {
       // upgrade the CLI after starting a session that pre-dates the field.
       // ensureRepoCommandsSeeded is defensive about a missing workingMemory.
       ensureRepoCommandsSeeded(resumed);
+      // Intentionally don't overwrite a resumed session's `mode`. The
+      // tag captures the *origin* surface; if a TUI session is later
+      // resumed in the REPL, the on-disk record should keep saying
+      // `'tui'` (and a legacy session with no field stays undefined →
+      // listSessions defaults it to 'interactive').
       return resumed;
     } catch (err) {
       if (err.code === 'ENOENT' || (err.message && err.message.includes('ENOENT'))) {
@@ -1301,6 +1306,13 @@ async function initSession(sessionId, provider, model, cwd) {
       completedPhases: [],
     },
     messages: [{ role: 'system', content: buildSystemPromptBase(cwd) }],
+    // Tag the origin surface so `list_sessions` (and the mobile drawer
+    // that consumes it) can bucket without re-deriving mode from local
+    // state. Mirrors the daemon's `handleStartSession` behavior so the
+    // CLI-inline paths land alongside the daemon-spawned ones in the
+    // listing. The lazy `appendSessionEvent('session_started')` further
+    // down the call chain emits the same value in the event payload.
+    mode,
   };
   // Start enriching the system prompt in the background — will be
   // awaited before the first LLM call in runAssistantLoop.
@@ -3468,7 +3480,17 @@ export async function main() {
     }
   }
 
-  const state = await initSession(resumedSessionId, provider, requestedModel, cwd);
+  // Pick the origin-surface tag at dispatch time so a freshly created
+  // session lands on disk with the right `mode`. The TUI branch below
+  // requires a TTY; if that check fails the process throws before any
+  // user-visible run starts, so a `'tui'`-tagged but-aborted state on
+  // disk is acceptable (it just looks like an unused TUI session).
+  const sessionMode = runHeadlessMode
+    ? 'headless'
+    : subcommand === '' && tuiEnabled && process.stdin.isTTY
+      ? 'tui'
+      : 'interactive';
+  const state = await initSession(resumedSessionId, provider, requestedModel, cwd, sessionMode);
   if (values.model && values.model !== state.model) state.model = values.model;
   if (values.provider && values.provider !== state.provider) {
     state.provider = provider;

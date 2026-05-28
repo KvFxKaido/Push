@@ -286,9 +286,10 @@ describe('listSessions', () => {
   });
 
   it('defaults legacy sessions without a mode field to interactive', async () => {
-    // Simulate a session whose state.json predates the mode field
-    // by writing one directly (saveSessionState would carry `mode`
-    // through if it was set).
+    // Simulate a session whose state.json predates the mode field by
+    // omitting it from the saveSessionState payload — the slim-state
+    // writer drops fields that are undefined, so the resulting state.json
+    // matches what a pre-mode CLI version would have left on disk.
     const id = makeSessionId();
     await saveSessionState({
       sessionId: id,
