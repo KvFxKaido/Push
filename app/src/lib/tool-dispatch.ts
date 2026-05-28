@@ -337,11 +337,23 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
     droppedCandidates.push(dropped);
   }
 
+  // Compute explicit-wrapper presence once — used by both Phase 2 and
+  // Phase 3 gates. The pre-kernel code keyed every gate on this value,
+  // so we preserve it here to match prior behavior exactly.
+  // `extractBareToolJsonObjects` requires a string `tool` field, so
+  // `hasExplicitWrappers` is the same signal the old code used as
+  // `extractBareToolJsonObjects(text).length > 0`.
+  const hasExplicitWrappers = extractBareToolJsonObjects(text).length > 0;
+
   // Phase 2: namespaced + XML recovery (Kimi/Blackbox + Hermes/Qwen/Nous
-  // finetunes). Only fires when the kernel saw zero explicit wrappers
-  // AND none of those wrappers parsed into a real call — otherwise the
-  // model's primary intent already landed and recovery would duplicate.
-  if (allCalls.length === 0) {
+  // finetunes). Only fires when the model emitted ZERO canonical
+  // `{tool: ...}` wrappers in the text — same gate the pre-kernel
+  // code used. A wrapper that exists but fails source-claiming (kernel
+  // reports `unknown_tool` malformed) still suppresses recovery: the
+  // model signaled intent in canonical form, and a heuristic
+  // recovery competing with that intent would override it
+  // unpredictably. Copilot review on PR #678.
+  if (!hasExplicitWrappers && allCalls.length === 0) {
     const recoveries = [...recoverNamespacedToolCalls(text), ...recoverXmlToolCalls(text)].sort(
       (a, b) => a.offset - b.offset,
     );
@@ -362,11 +374,11 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
   // code used — at least one `{tool: string}`-shaped object must
   // exist in the text — so we don't mis-detect documentation
   // examples like `{ path: "...", content: "..." }` in a tutorial as
-  // real tool calls. `extractBareToolJsonObjects` requires a string
-  // `tool` field, so if it returns empty AND the kernel claimed
-  // nothing, the model didn't signal tool intent and bare-args
-  // recovery would be a false positive (Codex review on PR #678).
-  const hasExplicitToolIntent = allCalls.length > 0 || extractBareToolJsonObjects(text).length > 0;
+  // real tool calls (Codex review on PR #678). The `allCalls.length`
+  // check is belt-and-suspenders for the Phase 2 recovery branch
+  // above: if recovery promoted a call, we still want Phase 3 to
+  // sweep up any flat-form shapes the recovered text might contain.
+  const hasExplicitToolIntent = allCalls.length > 0 || hasExplicitWrappers;
   if (hasExplicitToolIntent) {
     const legacyResult = detectFromLegacyScan(text, seen);
     for (const call of legacyResult.calls) {
