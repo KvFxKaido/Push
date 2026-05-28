@@ -97,6 +97,23 @@ export interface UseRelayDaemonResult {
    */
   attachStatus: 'idle' | 'attaching' | 'attached' | 'attach_failed';
   attachError: { code: string; message: string } | null;
+  /**
+   * Conversation history fetched from the daemon's `state.messages`
+   * after `attach_session` succeeds. Null until hydration completes;
+   * one-shot — the hook does not re-fetch on subsequent reconnects.
+   * `DaemonChatBody` projects this into `ChatMessage[]` and seeds the
+   * conversation. Hydration failure is non-fatal: this stays null,
+   * the chat works as a fresh Remote chat, but a console warn surfaces
+   * the cause for ops triage.
+   */
+  hydratedMessages: DaemonHydratedMessage[] | null;
+}
+
+/** Shape returned by the daemon's `get_session_messages` RPC. */
+export interface DaemonHydratedMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
 }
 
 interface UseRelayDaemonOptions {
@@ -124,6 +141,7 @@ export function useRelayDaemon(
     'idle' | 'attaching' | 'attached' | 'attach_failed'
   >('idle');
   const [attachError, setAttachError] = useState<{ code: string; message: string } | null>(null);
+  const [hydratedMessages, setHydratedMessages] = useState<DaemonHydratedMessage[] | null>(null);
 
   const reconnectReducer = useCallback(
     (prev: ReconnectInfo, action: ReconnectAction): ReconnectInfo => {
@@ -219,6 +237,10 @@ export function useRelayDaemon(
     queueMicrotask(() => {
       setAttachStatus(hasTarget ? 'attaching' : 'idle');
       setAttachError(null);
+      // Hydration is one-shot — clear it on every new dial so a
+      // stale transcript from a previous session can't leak into
+      // a re-paired binding.
+      setHydratedMessages(null);
     });
     let handle: ReturnType<typeof createRelayDaemonBinding>;
     try {
@@ -233,6 +255,39 @@ export function useRelayDaemon(
           if (result.ok) {
             setAttachStatus('attached');
             setAttachError(null);
+            // Kick off transcript hydration so the phone shows the
+            // TUI session's conversation history. Hydration failure
+            // is non-fatal: the attach succeeded, the chat surface
+            // works, but the user starts from an empty transcript.
+            // Logged via console.warn so ops can spot the regression.
+            const handle = bindingRef.current;
+            if (handle && targetSessionId !== null && targetAttachToken !== null) {
+              void handle
+                .request<{ messages: DaemonHydratedMessage[] }>({
+                  type: 'get_session_messages',
+                  sessionId: targetSessionId,
+                  payload: { attachToken: targetAttachToken },
+                  timeoutMs: 10_000,
+                })
+                .then((response) => {
+                  if (response.ok && Array.isArray(response.payload?.messages)) {
+                    setHydratedMessages(response.payload.messages);
+                  }
+                })
+                .catch((err: unknown) => {
+                  const msg = err instanceof Error ? err.message : String(err);
+                  // Symmetric structured log so ops can distinguish a
+                  // hydration miss from an attach miss; the chat surface
+                  // intentionally stays usable on this path.
+                  console.warn(
+                    JSON.stringify({
+                      level: 'warn',
+                      event: 'relay_hydration_failed',
+                      reason: msg,
+                    }),
+                  );
+                });
+            }
           } else {
             setAttachStatus('attach_failed');
             setAttachError({ code: result.error.code, message: result.error.message });
@@ -375,5 +430,6 @@ export function useRelayDaemon(
     replayUnavailableAt,
     attachStatus,
     attachError,
+    hydratedMessages,
   };
 }

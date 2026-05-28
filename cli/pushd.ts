@@ -869,6 +869,16 @@ export function __evictActiveSessionForTesting(sessionId) {
   return activeSessions.delete(sessionId);
 }
 
+/**
+ * Insert a synthetic active session. Test seam for handlers that read
+ * `activeSessions` directly — e.g. `handleGetSessionMessages` (PR #687).
+ * Returns the entry so callers can hold a ref for assertions.
+ */
+export function __setActiveSessionForTesting(sessionId, entry) {
+  activeSessions.set(sessionId, entry);
+  return entry;
+}
+
 // Test-only seam for deterministic delegate_explorer race coverage.
 const delegateExplorerTestHooks = {
   beforeTerminalClaim: null,
@@ -1542,6 +1552,83 @@ async function handleAttachSession(req, emitEvent) {
       completed: true,
       gap: fromSeq > currentSeq + 1,
     },
+  });
+}
+
+/**
+ * handleGetSessionMessages — return the conversation transcript for an
+ * existing session so a freshly attaching web client can hydrate its
+ * chat surface from the daemon's source of truth.
+ *
+ * Why this exists (PR #687): `attach_session` returns session metadata
+ * (provider/model/roleRouting) and replays missed events, but the
+ * `user_message` event only carries `{ chars, preview: text.slice(0, 280) }`
+ * — the full user message body lives in `state.messages`. So a
+ * web-side hydrator built purely from replayed events would surface
+ * truncated user messages. This RPC fills that gap by returning the
+ * already-persisted user/assistant pairs from `state.messages`.
+ *
+ * Auth identical to `attach_session`: requires `attachToken` to match
+ * the session's stored token. System + tool messages are filtered —
+ * the web's `ChatContainer` renders only the human-visible dialogue.
+ */
+export async function handleGetSessionMessages(req) {
+  const { sessionId, attachToken: providedToken } = req.payload || {};
+  if (!sessionId) {
+    return makeErrorResponse(
+      req.requestId,
+      'get_session_messages',
+      'INVALID_REQUEST',
+      'sessionId is required',
+    );
+  }
+
+  let entry = activeSessions.get(sessionId);
+  if (!entry) {
+    try {
+      const state = await loadSessionState(sessionId);
+      entry = { state, attachToken: state.attachToken };
+      activeSessions.set(sessionId, entry);
+    } catch {
+      return makeErrorResponse(
+        req.requestId,
+        'get_session_messages',
+        'SESSION_NOT_FOUND',
+        `Session not found: ${sessionId}`,
+      );
+    }
+  }
+
+  if (!validateAttachToken(entry, providedToken)) {
+    return makeErrorResponse(
+      req.requestId,
+      'get_session_messages',
+      'INVALID_TOKEN',
+      'Invalid or missing attach token',
+    );
+  }
+
+  // Filter to user/assistant pairs and coerce content to string. Some
+  // providers represent multimodal content as an array of blocks; for
+  // hydration we only carry the text channel — `''` for messages we
+  // can't render as plain text. Indices supply stable IDs so the
+  // web's React lists are stable across re-fetches.
+  const allMessages = Array.isArray(entry.state.messages) ? entry.state.messages : [];
+  const messages = [];
+  for (let i = 0; i < allMessages.length; i++) {
+    const msg = allMessages[i];
+    if (!msg || (msg.role !== 'user' && msg.role !== 'assistant')) continue;
+    const content = typeof msg.content === 'string' ? msg.content : '';
+    messages.push({
+      id: `daemon-${sessionId}-${i}`,
+      role: msg.role,
+      content,
+    });
+  }
+
+  return makeResponse(req.requestId, 'get_session_messages', sessionId, true, {
+    sessionId,
+    messages,
   });
 }
 
@@ -5330,6 +5417,7 @@ const HANDLERS = {
   start_session: handleStartSession,
   send_user_message: handleSendUserMessage,
   attach_session: handleAttachSession,
+  get_session_messages: handleGetSessionMessages,
   update_session: handleUpdateSession,
   submit_approval: handleSubmitApproval,
   cancel_run: handleCancelRun,

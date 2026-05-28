@@ -25,7 +25,9 @@ import {
   makeDaemonExplorerToolExec,
   __getActiveSessionForTesting,
   __evictActiveSessionForTesting,
+  __setActiveSessionForTesting,
   __setDelegateExplorerHooksForTesting,
+  handleGetSessionMessages,
 } from '../pushd.ts';
 import {
   PROTOCOL_VERSION,
@@ -309,6 +311,92 @@ describe('NDJSON protocol compliance', () => {
 });
 
 // ─── validateAttachToken ────────────────────────────────────────
+
+describe('handleGetSessionMessages (#687 transcript hydration)', () => {
+  const sessionId = 'sess_test_get_messages';
+
+  after(() => {
+    __evictActiveSessionForTesting(sessionId);
+  });
+
+  it('returns user + assistant pairs, filters system/tool, generates stable IDs', async () => {
+    __setActiveSessionForTesting(sessionId, {
+      state: {
+        attachToken: 'att_test',
+        messages: [
+          { role: 'system', content: 'you are a helpful assistant' },
+          { role: 'user', content: 'hi' },
+          { role: 'assistant', content: 'hello' },
+          { role: 'tool', content: 'tool_result_payload' },
+          { role: 'user', content: 'another question' },
+        ],
+      },
+      attachToken: 'att_test',
+    });
+    const response = await handleGetSessionMessages({
+      requestId: 'req_1',
+      payload: { sessionId, attachToken: 'att_test' },
+    });
+    assert.equal(response.ok, true);
+    assert.equal(response.payload.sessionId, sessionId);
+    assert.deepEqual(response.payload.messages, [
+      { id: `daemon-${sessionId}-1`, role: 'user', content: 'hi' },
+      { id: `daemon-${sessionId}-2`, role: 'assistant', content: 'hello' },
+      { id: `daemon-${sessionId}-4`, role: 'user', content: 'another question' },
+    ]);
+  });
+
+  it('rejects missing sessionId with INVALID_REQUEST', async () => {
+    const response = await handleGetSessionMessages({
+      requestId: 'req_2',
+      payload: { attachToken: 'att_test' },
+    });
+    assert.equal(response.ok, false);
+    assert.equal(response.error.code, 'INVALID_REQUEST');
+  });
+
+  it('rejects unknown sessionId with SESSION_NOT_FOUND', async () => {
+    const response = await handleGetSessionMessages({
+      requestId: 'req_3',
+      payload: { sessionId: 'sess_never_existed', attachToken: 'att_any' },
+    });
+    assert.equal(response.ok, false);
+    assert.equal(response.error.code, 'SESSION_NOT_FOUND');
+  });
+
+  it('rejects wrong attach token with INVALID_TOKEN', async () => {
+    __setActiveSessionForTesting(sessionId, {
+      state: { attachToken: 'att_correct', messages: [{ role: 'user', content: 'hi' }] },
+      attachToken: 'att_correct',
+    });
+    const response = await handleGetSessionMessages({
+      requestId: 'req_4',
+      payload: { sessionId, attachToken: 'att_wrong' },
+    });
+    assert.equal(response.ok, false);
+    assert.equal(response.error.code, 'INVALID_TOKEN');
+  });
+
+  it('coerces non-string message content to empty string', async () => {
+    __setActiveSessionForTesting(sessionId, {
+      state: {
+        attachToken: 'att_test',
+        messages: [
+          { role: 'user', content: [{ type: 'text', text: 'multimodal' }] },
+          { role: 'assistant', content: 'reply' },
+        ],
+      },
+      attachToken: 'att_test',
+    });
+    const response = await handleGetSessionMessages({
+      requestId: 'req_5',
+      payload: { sessionId, attachToken: 'att_test' },
+    });
+    assert.equal(response.ok, true);
+    assert.equal(response.payload.messages[0].content, '');
+    assert.equal(response.payload.messages[1].content, 'reply');
+  });
+});
 
 describe('validateAttachToken', () => {
   it('rejects missing token when entry has one', () => {

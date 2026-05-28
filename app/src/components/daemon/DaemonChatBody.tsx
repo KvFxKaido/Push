@@ -46,6 +46,7 @@ import { ApprovalPrompt } from '@/components/daemon/ApprovalPrompt';
 import { cancelPendingApprovals } from '@/lib/daemon-cancel-pending-approvals';
 import { RepoAppearanceSheet } from '@/components/repo/RepoAppearanceSheet';
 import { useChat } from '@/hooks/useChat';
+import type { DaemonHydratedMessage } from '@/hooks/useRelayDaemon';
 import { useDaemonAppearance } from '@/hooks/useDaemonAppearance';
 import { useDaemonCliSessions } from '@/hooks/useDaemonCliSessions';
 import { useDaemonSettingsBundles } from '@/hooks/useDaemonSettingsBundles';
@@ -62,6 +63,7 @@ import type { ConnectionStatus, RequestOptions, SessionResponse } from '@/lib/lo
 import type { LiveDaemonBinding, ToolDispatchBinding } from '@/lib/local-daemon-sandbox-client';
 import { getRepoAppearanceColorHex, type RepoAppearance } from '@/lib/repo-appearance';
 import type {
+  ChatMessage,
   Conversation,
   WorkspaceContext,
   WorkspaceMode,
@@ -135,6 +137,22 @@ export interface DaemonChatBodyProps {
   auth: WorkspaceScreenAuthProps;
   /** Disconnect handler routed from app navigation. */
   onDisconnect: () => void;
+
+  /**
+   * Targeted-attach lifecycle from the relay hook (PR #687). `idle`
+   * for local-PC mode and untargeted Remote bundles; relay screens
+   * with `targetSessionId` thread through the actual state. Drives
+   * the attach-failure banner.
+   */
+  attachStatus?: 'idle' | 'attaching' | 'attached' | 'attach_failed';
+  attachError?: { code: string; message: string } | null;
+  /**
+   * Conversation history fetched from the daemon's `state.messages`
+   * after `attach_session` succeeds. Null for local-PC mode and for
+   * Remote bundles without a target. When present, prepended to the
+   * chat transcript so the phone sees the TUI session's history.
+   */
+  hydratedMessages?: DaemonHydratedMessage[] | null;
 }
 
 const MODE_HEADER_LABEL: Record<DaemonChatBodyProps['mode'], string> = {
@@ -171,6 +189,9 @@ export function DaemonChatBody({
   request,
   auth,
   onDisconnect,
+  attachStatus = 'idle',
+  attachError = null,
+  hydratedMessages = null,
 }: DaemonChatBodyProps) {
   // Provider/model picker plumbing — identical between the two
   // screens. The catalog hook owns reactive `activeBackend` state;
@@ -340,6 +361,33 @@ export function DaemonChatBody({
       clear: todo.clear,
     },
   );
+
+  // Hydrated transcript projection (PR #687, Shape A). When the relay
+  // hook reports `hydratedMessages` from `get_session_messages`, we
+  // prepend them to the visible transcript so the phone surfaces the
+  // TUI session's history. The hydrated entries get monotonically
+  // increasing timestamps starting at 0 so ChatContainer renders
+  // them in source order — the absolute timestamp doesn't matter,
+  // only relative ordering does, and using `Date.now()` here trips
+  // the `react-hooks/purity` rule (useMemo must be pure). Hydration
+  // is one-shot and non-persistent: a subsequent web-side message
+  // goes through useChat's normal path and lives in IndexedDB; the
+  // hydrated history re-fetches from the daemon on the next relay
+  // attach. Known limitation: tool-call / tool-result bubbles aren't
+  // carried over (the daemon's state.messages exposes role+content
+  // only), and reasoning blocks are dropped. Both land in a follow-up
+  // if the bare transcript proves insufficient.
+  const displayMessages = useMemo<ChatMessage[]>(() => {
+    if (!hydratedMessages || hydratedMessages.length === 0) return messages;
+    const prefix: ChatMessage[] = hydratedMessages.map((m, i) => ({
+      id: m.id,
+      role: m.role,
+      content: m.content,
+      timestamp: i,
+      status: 'done' as const,
+    }));
+    return [...prefix, ...messages];
+  }, [hydratedMessages, messages]);
 
   // Composer state — owns the per-chat provider/model drafts that
   // ChatInput's picker reads. `sendMessageWithChatDraft` wraps
@@ -683,6 +731,18 @@ export function DaemonChatBody({
             />
           ) : null}
 
+          {attachStatus === 'attach_failed' && attachError ? (
+            <div className="border-b border-rose-400/30 bg-rose-950/30 px-4 py-3 text-sm">
+              <p className="font-medium text-rose-200">
+                Couldn't attach to the TUI session ({attachError.code})
+              </p>
+              <p className="mt-1 break-words text-rose-200/80">{attachError.message}</p>
+              <p className="mt-1 text-xs text-rose-200/60">
+                You can keep using this as a fresh Remote chat. Re-pair from the TUI to retry.
+              </p>
+            </div>
+          ) : null}
+
           <ApprovalPrompt
             pending={approvals.head}
             queuedBehind={approvals.queuedBehind}
@@ -690,7 +750,7 @@ export function DaemonChatBody({
           />
 
           <ChatContainer
-            messages={messages}
+            messages={displayMessages}
             agentStatus={agentStatus}
             activeRepo={null}
             hasSandbox={false}

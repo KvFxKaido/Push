@@ -47,10 +47,19 @@ export function RelayChatScreen({
   onDisconnect,
 }: RelayChatScreenProps) {
   const approvals = useApprovalQueue();
-  const { status, reconnect, reconnectInfo, request, liveBinding, replayUnavailableAt } =
-    useRelayDaemon(binding, {
-      onEvent: approvals.handleDaemonEvent,
-    });
+  const {
+    status,
+    reconnect,
+    reconnectInfo,
+    request,
+    liveBinding,
+    replayUnavailableAt,
+    attachStatus,
+    attachError,
+    hydratedMessages,
+  } = useRelayDaemon(binding, {
+    onEvent: approvals.handleDaemonEvent,
+  });
 
   const workspaceContext = useMemo(
     () => ({
@@ -90,6 +99,9 @@ export function RelayChatScreen({
       request={request}
       auth={auth}
       onDisconnect={onDisconnect}
+      attachStatus={attachStatus}
+      attachError={attachError}
+      hydratedMessages={hydratedMessages}
     />
   );
 }
