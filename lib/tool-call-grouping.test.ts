@@ -45,6 +45,7 @@ describe('groupCallsByPhase — empty + single-call paths', () => {
       readOnly: [],
       fileMutations: [],
       mutating: null,
+      batchOverflow: [],
       extraMutations: [],
     });
   });
@@ -136,14 +137,19 @@ describe('groupCallsByPhase — caps', () => {
     expect(result.extraMutations).toHaveLength(0);
   });
 
-  it('file-mutation cap pushes overflow to extraMutations (prepended)', () => {
+  it('file-mutation cap pushes overflow to batchOverflow (not extraMutations)', () => {
     const calls = [f('1'), f('2'), f('3'), f('4'), f('5'), f('6'), f('7'), f('8'), f('9')];
     const result = groupCallsByPhase(calls, predicates, {
       maxParallelReads: null,
       maxFileMutationBatch: 8,
     });
     expect(result.fileMutations.map((c) => c.id)).toEqual(['1', '2', '3', '4', '5', '6', '7', '8']);
-    expect(result.extraMutations.map((c) => c.id)).toEqual(['9']);
+    // Overflow file mutations land in batchOverflow, not extraMutations.
+    // Callers distinguish "split the batch" hint (batchOverflow) from
+    // "ordering violation" hint (extraMutations). Copilot review on
+    // PR #680.
+    expect(result.batchOverflow.map((c) => c.id)).toEqual(['9']);
+    expect(result.extraMutations).toHaveLength(0);
   });
 
   it('null caps disable both limits (CLI behavior)', () => {
@@ -172,12 +178,15 @@ describe('groupCallsByPhase — caps', () => {
     expect(result.extraMutations).toHaveLength(0);
   });
 
-  it('file overflow lands before any post-cap calls in extraMutations', () => {
-    // If the model emits 10 file mutations and then a side-effect, the
-    // overflow (positions 9, 10) should land in extraMutations BEFORE
-    // any other extras (none here, but the unshift semantics matter
-    // for downstream messaging — the user-facing "too many writes"
-    // error keys off the front of extraMutations).
+  it('batchOverflow stays separate from ordering violations when a side-effect arrives after the cap', () => {
+    // The model emits 10 file mutations and then a side-effect.
+    // Overflow (positions 9, 10) belong in `batchOverflow` (split the
+    // batch hint). The trailing exec lands as `mutating` (it didn't
+    // exceed its own cap). `extraMutations` remains empty.
+    //
+    // Pre-fix this test asserted `extraMutations = ['9', '10']` because
+    // overflow was being prepended to extras. Splitting the two cases
+    // makes the caller's correction hint precise.
     const calls = [
       f('1'),
       f('2'),
@@ -197,7 +206,25 @@ describe('groupCallsByPhase — caps', () => {
     });
     expect(result.fileMutations.map((c) => c.id)).toEqual(['1', '2', '3', '4', '5', '6', '7', '8']);
     expect(result.mutating?.id).toBe('11');
-    expect(result.extraMutations.map((c) => c.id)).toEqual(['9', '10']);
+    expect(result.batchOverflow.map((c) => c.id)).toEqual(['9', '10']);
+    expect(result.extraMutations).toHaveLength(0);
+  });
+
+  it('a file mutation arriving after a side-effect lands in extraMutations, not batchOverflow', () => {
+    // Pre-fix this was the wrong-hint bug: exec followed by write_file
+    // was an ordering violation (not batch overflow), but the global
+    // `batchOverflowed` flag in the CLI rejection handler would have
+    // labeled it FILE_MUTATION_BATCH_OVERFLOW. The kernel now keeps the
+    // two lists distinct so the caller can emit the right hint.
+    const calls = [f('1'), f('2'), f('3'), s('4'), f('5')];
+    const result = groupCallsByPhase(calls, predicates, {
+      maxParallelReads: null,
+      maxFileMutationBatch: 8,
+    });
+    expect(result.fileMutations.map((c) => c.id)).toEqual(['1', '2', '3']);
+    expect(result.mutating?.id).toBe('4');
+    expect(result.batchOverflow).toHaveLength(0);
+    expect(result.extraMutations.map((c) => c.id)).toEqual(['5']);
   });
 });
 

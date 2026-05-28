@@ -1850,6 +1850,12 @@ async function runAssistantLoopImpl(
     const readCalls: ToolCall[] = grouped.readOnly;
     const fileMutationBatch: ToolCall[] = grouped.fileMutations;
     const trailingSideEffect: ToolCall | null = grouped.mutating;
+    // `batchOverflow` and `extraMutations` are kept distinct by the
+    // kernel — see the per-list rejection handlers below. The grouper's
+    // contract: overflow file mutations that exceeded the cap go in
+    // `batchOverflow`; ordering violations (post-side-effect calls,
+    // reads after the mutation batch started) go in `extraMutations`.
+    const batchOverflow: ToolCall[] = grouped.batchOverflow;
     const rejectedMutations: ToolCall[] = grouped.extraMutations;
     const mutateCalls: ToolCall[] = [
       ...fileMutationBatch,
@@ -1982,49 +1988,56 @@ async function runAssistantLoopImpl(
       }
 
       // Overflow calls are rejected with a structured error so the model
-      // can correct on the next turn. Two distinct failure shapes land
-      // here, distinguished by reason (not just call kind) so the model
-      // sees the right correction hint:
+      // can correct on the next turn. The kernel separates the two
+      // failure shapes into distinct lists, so each gets its own error
+      // code and correction hint:
       //
-      //   - `FILE_MUTATION_BATCH_OVERFLOW`: the file-mutation batch
-      //     filled to MAX_FILE_MUTATION_BATCH and additional file
-      //     mutations spilled into `extraMutations`. Tell the model to
-      //     split the batch across turns.
-      //   - `MULTI_MUTATION_NOT_ALLOWED`: ordering violation — a second
-      //     side-effect, any call after a side-effect, OR a file
-      //     mutation that didn't reach the batch because the
-      //     transaction was already done (exec → write_file, or
-      //     write_file → read → write_file). Tell the model to reorder.
+      //   - `batchOverflow` → `FILE_MUTATION_BATCH_OVERFLOW`: the
+      //     model emitted more than MAX_FILE_MUTATION_BATCH file
+      //     mutations in one turn. Tell the model to split the batch
+      //     across turns.
+      //   - `extraMutations` → `MULTI_MUTATION_NOT_ALLOWED`: ordering
+      //     violation — a second side-effect, any call after a
+      //     side-effect, a read emitted after the mutation batch
+      //     started, OR a file mutation that didn't reach the batch
+      //     because the transaction was already done (exec →
+      //     write_file). Tell the model to reorder.
       //
-      // Key the choice on whether the batch actually overflowed
-      // (`fileMutationBatch.length >= MAX_FILE_MUTATION_BATCH`), NOT
-      // just on whether the call is a file mutation. A file mutation
-      // rejected for ordering reasons gets the ordering error, not the
-      // batch-overflow error. Codex P2 review on PR #680.
-      const batchOverflowed = fileMutationBatch.length >= MAX_FILE_MUTATION_BATCH;
+      // Pre-fix (PR #680 Copilot review) the two cases were mixed in a
+      // single `extraMutations` list and a global `batchOverflowed`
+      // flag misclassified ordering-violation file mutations as batch
+      // overflow. The kernel split keeps each list precise.
+      const skippedCalls: Array<{ call: ToolCall; result: ToolResult }> = [];
+      for (const call of batchOverflow) {
+        skippedCalls.push({
+          call,
+          result: {
+            ok: false,
+            text: `Skipped file mutation ${call.tool}: at most ${MAX_FILE_MUTATION_BATCH} file mutations allowed per turn. Continue the batch on the next turn.`,
+            structuredError: {
+              code: 'FILE_MUTATION_BATCH_OVERFLOW',
+              message: `File mutation batch exceeds ${MAX_FILE_MUTATION_BATCH} per turn`,
+              retryable: true,
+            },
+          },
+        });
+      }
       for (const call of rejectedMutations) {
-        const isFileMut = isFileMutationToolCall(call);
-        const result: ToolResult =
-          isFileMut && batchOverflowed
-            ? {
-                ok: false,
-                text: `Skipped file mutation ${call.tool}: at most ${MAX_FILE_MUTATION_BATCH} file mutations allowed per turn. Continue the batch on the next turn.`,
-                structuredError: {
-                  code: 'FILE_MUTATION_BATCH_OVERFLOW',
-                  message: `File mutation batch exceeds ${MAX_FILE_MUTATION_BATCH} per turn`,
-                  retryable: true,
-                },
-              }
-            : {
-                ok: false,
-                text: `Skipped tool call ${call.tool}: a turn may emit reads in parallel, then a single batch of file mutations, then at most one trailing side-effect (exec, commit, save_memory). Reorder or split across turns.`,
-                structuredError: {
-                  code: 'MULTI_MUTATION_NOT_ALLOWED',
-                  message: 'Tool call violates per-turn mutation ordering',
-                  retryable: true,
-                },
-              };
+        skippedCalls.push({
+          call,
+          result: {
+            ok: false,
+            text: `Skipped tool call ${call.tool}: a turn may emit reads in parallel, then a single batch of file mutations, then at most one trailing side-effect (exec, commit, save_memory). Reorder or split across turns.`,
+            structuredError: {
+              code: 'MULTI_MUTATION_NOT_ALLOWED',
+              message: 'Tool call violates per-turn mutation ordering',
+              retryable: true,
+            },
+          },
+        });
+      }
 
+      for (const { call, result } of skippedCalls) {
         const executionId = nextToolExecutionId(round);
         const skippedSource = call.source || 'sandbox';
         const preview = summarizeToolResultPreview(result.text);

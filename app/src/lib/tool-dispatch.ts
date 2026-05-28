@@ -140,11 +140,21 @@ export interface DetectedToolCalls {
    */
   mutating: AnyToolCall | null;
   /**
-   * Overflow calls that the turn couldn't accommodate. Sources include:
-   * a second side-effect, any call after a side-effect, a read emitted
-   * after the mutation transaction began, and file-mutation batch
-   * overflow (more than MAX_FILE_MUTATION_BATCH). Callers reject these
-   * with a structured error so the model can correct on the next turn.
+   * File-mutation calls that exceeded MAX_FILE_MUTATION_BATCH. Distinct
+   * from `extraMutations` so callers can give the model a "split the
+   * batch across turns" hint specifically for this case, instead of a
+   * generic ordering-violation message. PR #680 (CLI cap adoption +
+   * Copilot review on hint shape).
+   */
+  batchOverflow: AnyToolCall[];
+  /**
+   * Ordering-violation calls the turn couldn't accommodate. Sources
+   * include: a second side-effect, any call after a side-effect, a
+   * read emitted after the mutation transaction began, and a file
+   * mutation that didn't reach the batch because the transaction was
+   * already done (exec → write_file). File-mutation batch overflow
+   * lives in `batchOverflow`, NOT here. Callers reject these with a
+   * structured error so the model can correct on the next turn.
    */
   extraMutations: AnyToolCall[];
   /**
@@ -394,6 +404,7 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
     readOnly: [],
     fileMutations: [],
     mutating: null,
+    batchOverflow: [],
     extraMutations: [],
     droppedCandidates: [],
   };
