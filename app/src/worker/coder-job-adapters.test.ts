@@ -990,7 +990,13 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
     expect(req.url).toBe('https://push.example.test/api/zen/chat');
   });
 
-  it('fails loud for an Anthropic-transport Go model (pump is OpenAI-shaped only)', async () => {
+  it('routes an Anthropic-transport Go model through the Go handler (it translates to OpenAI SSE)', async () => {
+    // handleZenGoChat detects anthropic-transport models (minimax-*) and wraps
+    // the upstream in createAnthropicTranslatedStream, so the stream reaching
+    // the pump is already OpenAI-shaped — the adapter must not block them.
+    providerHandlerMocks.handleZenGoChat.mockResolvedValue(
+      sseResponse(['data: {"choices":[{"delta":{"content":"ok"}}]}\n\n', 'data: [DONE]\n\n']),
+    );
     const stream = createWebStreamAdapter({
       env: env(),
       origin: 'https://push.example.test',
@@ -999,9 +1005,9 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
       jobId: 'job-zen-go-anthropic',
       zenGo: true,
     });
-    const { errors } = await drainAs(stream, 'zen', 'minimax-m2.5');
-    expect(errors.length).toBe(1);
-    expect(errors[0]!.message).toMatch(/Anthropic transport/i);
-    expect(providerHandlerMocks.handleZenGoChat).not.toHaveBeenCalled();
+    const { tokens, errors } = await drainAs(stream, 'zen', 'minimax-m2.5');
+    expect(errors).toEqual([]);
+    expect(tokens.join('')).toBe('ok');
+    expect(providerHandlerMocks.handleZenGoChat).toHaveBeenCalledTimes(1);
   });
 });

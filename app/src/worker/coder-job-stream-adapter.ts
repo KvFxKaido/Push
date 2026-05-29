@@ -25,7 +25,6 @@
 
 import type { AIProviderType, PushStream, PushStreamEvent } from '@push/lib/provider-contract';
 import type { ChatMessage } from '@/types';
-import { getZenGoTransport } from '@/lib/zen-go';
 import type { Env } from './worker-middleware';
 import {
   handleAnthropicChat,
@@ -113,18 +112,6 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
         throw new Error(
           `Background Coder jobs don't yet support provider "${args.provider}". ` +
             `Supported: openrouter, ollama, cloudflare, zen, nvidia, blackbox, kilocode, openadapter, anthropic, openai, google.`,
-        );
-      }
-
-      // The Zen "Go" endpoint serves some models over an Anthropic-shaped
-      // SSE stream (minimax-*). `pumpSseBody` only parses OpenAI-shaped
-      // `choices[0].delta.content`, so an Anthropic-transport model would
-      // silently yield zero tokens through this adapter. Fail loud instead.
-      if (zenGo && getZenGoTransport(req.model || args.modelId) === 'anthropic') {
-        throw new Error(
-          `Zen Go model "${req.model || args.modelId}" uses the Anthropic transport, ` +
-            `which this background-job stream adapter can't parse (OpenAI-shaped SSE only). ` +
-            `Use an OpenAI-transport Zen Go model (e.g. kimi-k2.6, glm-5.1).`,
         );
       }
 

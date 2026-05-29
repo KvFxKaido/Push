@@ -27,8 +27,8 @@
     // here in plain sight rather than as opaque secrets — the matching API key
     // (ZEN_API_KEY) and the HMAC webhook secret (GITHUB_WEBHOOK_SECRET) stay in
     // the secret store. PR_REVIEW_ZEN_GO routes the reviewer through the
-    // OpenCode Zen "Go" endpoint (kimi-k2.6 is OpenAI-transport, so it streams
-    // through the DO's OpenAI-shaped SSE pump).
+    // OpenCode Zen "Go" endpoint; the Worker's Go handler translates any
+    // Anthropic-transport Go models to OpenAI-shaped SSE for the DO pump.
     "PR_REVIEW_PROVIDER": "zen",
     "PR_REVIEW_MODEL": "kimi-k2.6",
     "PR_REVIEW_ZEN_GO": "1"

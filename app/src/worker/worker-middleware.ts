@@ -74,7 +74,8 @@ export interface Env {
   // When truthy and PR_REVIEW_PROVIDER is `zen`, route the reviewer through the
   // OpenCode Zen "Go" endpoint (`/zen/go/v1/...`). The browser selects Go via a
   // `localStorage` flag the Worker can't read, so the server-side DO opts in
-  // explicitly here. Only OpenAI-transport Go models are supported on this path.
+  // explicitly here. handleZenGoChat translates Anthropic-transport Go models
+  // (minimax-*) to OpenAI-shaped SSE, so all Go models work on this path.
   PR_REVIEW_ZEN_GO?: string;
   // Opt-in gating allowlist for autonomous PR review: comma/space-separated
   // `owner/name` repos. For a listed repo the DO posts a GitHub Checks API run
