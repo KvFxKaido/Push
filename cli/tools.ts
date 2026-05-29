@@ -536,7 +536,15 @@ function pruneExecSessions() {
 // `alwaysAllow` enforcement consistent regardless of which name the model
 // emits. The web/lib registry has its own aliasing (`lib/tool-registry.ts`)
 // but uses different canonical names; this map is intentionally CLI-local.
-const CLI_TOOL_ALIASES = new Map([['artifact', 'create_artifact']]);
+const CLI_TOOL_ALIASES = new Map([
+  ['artifact', 'create_artifact'],
+  // Accept the registry/web public name `switch_branch` (and the long-form
+  // sandbox alias) as synonyms for the CLI-native `git_switch_branch`, so
+  // models trained on the web vocabulary resolve to the CLI tool. Mirrors how
+  // `git_create_branch` is the CLI-native creation tool.
+  ['switch_branch', 'git_switch_branch'],
+  ['sandbox_switch_branch', 'git_switch_branch'],
+]);
 
 function canonicalizeCliToolName(name) {
   if (typeof name !== 'string') return '';
@@ -899,6 +907,7 @@ Available tools:
 - git_diff(path?, staged?) — show git diff (optionally for a specific file, optionally staged)
 - git_commit(message, paths?) — stage and commit files (all files if paths not specified)
 - git_create_branch(name, from?) — create a new git branch and switch to it. Optional 'from' branches off a specific ref instead of HEAD.
+- git_switch_branch(branch) — switch to an existing branch (fetches it for shallow clones if not present locally). Use git_create_branch for new branches.
 - undo_edit(path) — restore a file from its most recent backup (created before each write/edit)
 - lsp_diagnostics(path?) — run type-checker for the workspace; optional path filters results to a specific file. Supported: TypeScript (tsc), Python (pyright/ruff), Rust (cargo check), Go (go vet).
 - save_memory(content) — persist learnings across sessions (stored in .push/memory.md). Save project patterns, build commands, conventions. Keep concise — this is loaded into every future session. Structured form: save_memory(type, content, tags?, files?) where type is decision|task|next|fact|blocker — stored in .push/memory.json as typed entries.
@@ -2807,6 +2816,65 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         };
       }
 
+      // `switch_branch` (registry/web public name) and `sandbox_switch_branch`
+      // (long-form alias) fall through to the CLI-native handler — mirrors the
+      // `artifact` / `create_artifact` pairing. The capability gate already
+      // canonicalized these via CLI_TOOL_ALIASES.
+      case 'switch_branch':
+      case 'sandbox_switch_branch':
+      case 'git_switch_branch': {
+        const branch = asString(call.args.branch, 'branch').trim();
+
+        // Same ref validation as git_create_branch — execFileAsync passes argv
+        // without a shell, but a leading '-' would still be read by git as a
+        // flag. Branch-only (no path operand), so the syntactic ambiguity that
+        // makes raw `git checkout <x>` dangerous doesn't apply here.
+        const isInvalidRef = (ref) =>
+          !/^[A-Za-z0-9._/-]+$/.test(ref) ||
+          ref.startsWith('-') ||
+          ref.startsWith('/') ||
+          ref.endsWith('/') ||
+          ref.includes('..');
+
+        if (isInvalidRef(branch)) {
+          return {
+            ok: false,
+            text: `Invalid branch name "${branch}". Branch refs may contain letters, digits, ".", "_", "/", "-"; no leading "-" or "/", no trailing "/", and no ".." allowed.`,
+            structuredError: {
+              code: 'INVALID_ARG',
+              message: 'Invalid branch name',
+              retryable: false,
+            },
+          };
+        }
+
+        // Sanctioned switch via the shared backend. `switchBranch` uses
+        // `git switch` (branch-only — a path collision fails fast rather than a
+        // silent path-mode checkout) with a depth-1 fetch fallback for shallow
+        // clones that don't have the target branch locally yet. Unbounded
+        // timeout so a slow fetch on a large/shallow repo isn't killed.
+        const switchResult = await createLocalGitBackend(workspaceRoot, {
+          timeoutMs: 0,
+        }).switchBranch(branch);
+        if (!switchResult.ok) {
+          const detail =
+            switchResult.stderr ||
+            switchResult.stdout ||
+            switchResult.error ||
+            'git switch_branch failed';
+          return {
+            ok: false,
+            text: `git switch_branch failed: ${detail}`,
+            structuredError: { code: 'GIT_ERROR', message: detail, retryable: false },
+          };
+        }
+        return {
+          ok: true,
+          text: `Switched to ${branch}.`,
+          meta: { branch },
+        };
+      }
+
       case 'undo_edit': {
         const filePath = await ensureInsideWorkspace(
           workspaceRoot,
@@ -3074,7 +3142,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       default:
         return {
           ok: false,
-          text: `Unknown tool: ${call.tool}. Available: read_file, list_dir, search_files, web_search, exec, exec_start, exec_poll, exec_write, exec_stop, exec_list_sessions, write_file, edit_file, undo_edit, read_symbols, read_symbol, git_status, git_diff, git_commit, git_create_branch, save_memory, lsp_diagnostics${hasEnvGitHubToken() ? `, and GitHub tools (${[...GITHUB_PUBLIC_TOOL_NAMES].join(', ')})` : ''}`,
+          text: `Unknown tool: ${call.tool}. Available: read_file, list_dir, search_files, web_search, exec, exec_start, exec_poll, exec_write, exec_stop, exec_list_sessions, write_file, edit_file, undo_edit, read_symbols, read_symbol, git_status, git_diff, git_commit, git_create_branch, git_switch_branch, save_memory, lsp_diagnostics${hasEnvGitHubToken() ? `, and GitHub tools (${[...GITHUB_PUBLIC_TOOL_NAMES].join(', ')})` : ''}`,
           structuredError: {
             code: 'UNKNOWN_TOOL',
             message: `Unknown tool: ${call.tool}`,

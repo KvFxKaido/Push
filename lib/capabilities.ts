@@ -178,6 +178,10 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
   git_diff: ['repo:read'],
   git_commit: ['git:commit'],
   git_create_branch: ['git:branch'],
+  // CLI-native switch tool — same capability as create. The CLI gate
+  // canonicalizes the `switch_branch` / `sandbox_switch_branch` aliases to
+  // this name before the lookup (see CLI_TOOL_ALIASES in cli/tools.ts).
+  git_switch_branch: ['git:branch'],
   lsp_diagnostics: ['repo:read'],
   save_memory: ['scratchpad'],
   write_file: ['repo:write'],
