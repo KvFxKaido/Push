@@ -92,6 +92,9 @@ export function useCommitPush(
   providerOverride?: ActiveProvider | null,
   modelOverride?: string | null,
   onSandboxExpired?: () => Promise<string | null>,
+  // Active repo, so the Auditor gate honors a per-repo Always/Never override
+  // (not just the global default). Optional — scratch workspaces have none.
+  repoFullName?: string | null,
 ) {
   const [state, setState] = useState<CommitPushState>({
     phase: 'idle',
@@ -171,10 +174,10 @@ export function useCommitPush(
 
     // Auditor commit gate (opt-out, default on — see useAuditorGate). When the
     // user has disabled it, skip the provider requirement and the audit
-    // entirely and commit straight through. The standalone getter reads the
-    // global default (the per-repo override applies on surfaces that pass a
-    // repoFullName; this hook is sandbox-scoped without one).
-    const auditorEnabled = getIsAuditorGateEnabled();
+    // entirely and commit straight through. Keyed by repo so a per-repo
+    // Always/Never override is honored, consistent with the other web commit
+    // surfaces (WorkspaceHubSheet / MergeFlowSheet).
+    const auditorEnabled = getIsAuditorGateEnabled(repoFullName ?? undefined);
 
     if (auditorEnabled && effectiveAuditorProvider === 'demo') {
       setState((s) => ({
@@ -346,7 +349,14 @@ export function useCommitPush(
       const msg = err instanceof Error ? err.message : String(err);
       setState((s) => ({ ...s, phase: 'error', error: msg }));
     }
-  }, [state.commitMessage, state.diff, providerOverride, modelOverride, onSandboxExpired]);
+  }, [
+    state.commitMessage,
+    state.diff,
+    providerOverride,
+    modelOverride,
+    onSandboxExpired,
+    repoFullName,
+  ]);
 
   return {
     phase: state.phase,

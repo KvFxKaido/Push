@@ -2,12 +2,13 @@
  * Auditor gate policy — the single source of truth for the cross-surface
  * "should commits go through the Auditor SAFE/UNSAFE gate?" setting.
  *
- * The Auditor (lib/auditor-agent.ts) is a pre-commit safety gate. Running it
- * costs an extra LLM call per commit, so it is **opt-in**: off by default,
- * enabled per-surface via config or the shared env var. Keeping the vocabulary
- * (env var name, default, parser, resolution precedence) here means both the
- * CLI/daemon and the web/worker resolve the toggle identically — no per-surface
- * drift. See cli/tests/auditor-policy.test.mjs for the pinned contract.
+ * The Auditor (lib/auditor-agent.ts) is a pre-commit safety gate. It is a
+ * documented required gate (ARCHITECTURE.md), so it is **opt-out**: on by
+ * default, disabled per-surface via config or the shared env var. Keeping the
+ * vocabulary (env var name, default, parser, resolution precedence) here means
+ * both the CLI/daemon and the web/worker resolve the toggle identically — no
+ * per-surface drift. See cli/tests/auditor-policy.test.mjs for the pinned
+ * contract.
  *
  * Resolution precedence (highest wins):
  *   1. env var (operator override — `PUSH_AUDITOR_GATE`)

@@ -501,6 +501,7 @@ export function WorkspaceSessionScreen({
             onBack={() => setShowFileBrowser(false)}
             lockedProvider={lockedProvider}
             lockedModel={lockedModel}
+            repoFullName={workspaceRepo?.full_name ?? null}
             onSandboxExpired={handleCommitSandboxExpired}
             accentHex={fileBrowserAccentHex}
             glowEnabled={fileBrowserAppearance?.glowEnabled ?? false}

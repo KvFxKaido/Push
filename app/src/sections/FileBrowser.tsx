@@ -48,6 +48,8 @@ interface FileBrowserProps {
   onBack: () => void;
   lockedProvider?: AIProviderType | null;
   lockedModel?: string | null;
+  /** Active repo, threaded to the commit gate so per-repo overrides apply. */
+  repoFullName?: string | null;
   /** Recovery callback for the commit/push pipeline when the sandbox dies. */
   onSandboxExpired?: () => Promise<string | null>;
   /**
@@ -69,6 +71,7 @@ export function FileBrowser({
   onBack,
   lockedProvider,
   lockedModel,
+  repoFullName,
   onSandboxExpired,
   accentHex,
   glowEnabled = false,
@@ -428,6 +431,7 @@ export function FileBrowser({
           onOpenChange={setCommitSheetOpen}
           lockedProvider={lockedProvider}
           lockedModel={lockedModel}
+          repoFullName={repoFullName}
           onSandboxExpired={onSandboxExpired}
           onSuccess={() => {
             toast.success('Committed and pushed!');

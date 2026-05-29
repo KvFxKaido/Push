@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
+import { AUDITOR_GATE_DEFAULT } from '@push/lib/auditor-policy';
 
 /**
  * Auditor commit-gate toggle — the web half of the cross-surface setting that
@@ -8,11 +9,12 @@ import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-st
  * gate is the other commit-safety gate and users reason about them the same
  * way.
  *
- * Difference from Protect Main: the gate DEFAULTS ON. The Auditor SAFE/UNSAFE
- * review is a documented required gate (ARCHITECTURE.md), so absent any stored
- * preference the gate is active. Disabling is a deliberate opt-out. That makes
- * the persisted vocabulary an explicit `'true'`/`'false'` string (not
- * presence/absence) so we can tell "user turned it off" from "never set".
+ * Difference from Protect Main: the gate DEFAULTS ON (`AUDITOR_GATE_DEFAULT`,
+ * shared with the CLI/daemon resolver in `lib/auditor-policy.ts`). The Auditor
+ * SAFE/UNSAFE review is a documented required gate (ARCHITECTURE.md), so absent
+ * any stored preference the gate is active. Disabling is a deliberate opt-out.
+ * That makes the persisted vocabulary an explicit `'true'`/`'false'` string
+ * (not presence/absence) so we can tell "user turned it off" from "never set".
  */
 
 const GLOBAL_DEFAULT_KEY = 'auditor_gate_default';
@@ -25,9 +27,11 @@ function repoKey(repoFullName: string): string {
 
 function loadGlobalDefault(): boolean {
   const raw = safeStorageGet(GLOBAL_DEFAULT_KEY);
-  // Default ON: only an explicit 'false' disables it. Any other value
-  // (including unset) means enabled.
-  return raw !== 'false';
+  // Explicit stored preference wins; otherwise fall back to the shared
+  // cross-surface default so web stays in lockstep with the CLI/daemon resolver.
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  return AUDITOR_GATE_DEFAULT;
 }
 
 function loadRepoOverride(repoFullName?: string): RepoOverride {

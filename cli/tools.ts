@@ -2560,7 +2560,11 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             sha: sha ?? 'unknown',
             message,
             filesStaged: resolvedPaths.length || 'all',
-            ...(gateEnabled ? { auditorGate: 'safe' } : {}),
+            // The gate ran for this commit. We don't assert 'safe' here: the
+            // commit may have proceeded via an interactive UNSAFE override or
+            // an empty-diff skip. The per-branch verdict lives in the
+            // structured logs (auditor_gate_safe / _unsafe_overridden / etc.).
+            ...(gateEnabled ? { auditorGate: 'enabled' } : {}),
           },
         };
       }

@@ -30,6 +30,8 @@ interface CommitPushSheetProps {
   onSuccess?: () => void;
   lockedProvider?: AIProviderType | null;
   lockedModel?: string | null;
+  /** Active repo, so the Auditor commit gate honors a per-repo override. */
+  repoFullName?: string | null;
   /**
    * Called when the sandbox dies mid-commit/push. Should mint a fresh sandbox
    * for the same repo+branch and return its id, or null if recovery isn't
@@ -168,6 +170,7 @@ export function CommitPushSheet({
   onSuccess,
   lockedProvider,
   lockedModel,
+  repoFullName,
   onSandboxExpired,
 }: CommitPushSheetProps) {
   const {
@@ -180,7 +183,7 @@ export function CommitPushSheet({
     fetchDiff,
     commitAndPush,
     reset,
-  } = useCommitPush(sandboxId, lockedProvider, lockedModel, onSandboxExpired);
+  } = useCommitPush(sandboxId, lockedProvider, lockedModel, onSandboxExpired, repoFullName);
 
   const keyboardHeight = useKeyboardHeight();
 
