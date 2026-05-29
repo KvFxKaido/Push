@@ -48,6 +48,15 @@ import {
 
 const MAX_DEEP_REVIEW_ROUNDS = 7;
 const DEEP_REVIEW_ROUND_TIMEOUT_MS = 60_000;
+// Wall-clock backstop for verbose-but-progressing models. The activity timer
+// above resets on every `text_delta`, so a model that streams content
+// continuously without ever terminating (no `[DONE]`, connection held open —
+// what small models like kimi-k2.6 do when they loop) never trips it, and the
+// round's `for await` hangs forever. The wall-clock timer fires once per round
+// regardless of activity. Without it the autonomous webhook PrReviewJob DO sat
+// `status: running` indefinitely on a runaway stream. Mirrors
+// EXPLORER_ROUND_WALL_CLOCK_MS in explorer-agent.ts.
+const DEEP_REVIEW_ROUND_WALL_CLOCK_MS = 120_000;
 const REVIEW_COMPLETE_MARKER = '[REVIEW_COMPLETE]';
 const MAX_PROJECT_INSTRUCTIONS_SIZE = 12_000;
 const DIFF_LIMIT = 40_000;
@@ -532,6 +541,8 @@ export async function runDeepReviewer<TCall, TCard>(
       },
       DEEP_REVIEW_ROUND_TIMEOUT_MS,
       `Deep review round ${roundNum} timed out after ${DEEP_REVIEW_ROUND_TIMEOUT_MS / 1000}s.`,
+      DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
+      `Deep review round ${roundNum} exceeded ${DEEP_REVIEW_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap — model is verbose but unproductive.`,
     );
     if (streamError) {
       if (callbacks.signal?.aborted) {
@@ -760,6 +771,8 @@ export async function runDeepReviewer<TCall, TCard>(
     },
     DEEP_REVIEW_ROUND_TIMEOUT_MS,
     'Deep review final output timed out.',
+    DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
+    `Deep review final output exceeded ${DEEP_REVIEW_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap.`,
   );
   const finalAccumulated = rawFinalAccumulated.trim();
 

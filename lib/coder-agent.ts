@@ -86,6 +86,12 @@ export type { DetectedToolCalls } from './deep-reviewer-agent.js';
 // ---------------------------------------------------------------------------
 
 const CODER_ROUND_TIMEOUT_MS = 60_000; // 60s of inactivity (activity-based — resets on each token)
+// Wall-clock backstop per round. The activity timer above resets on every
+// `text_delta`, so a model streaming content continuously without terminating
+// never trips it and the round's `for await` hangs forever. Background coder
+// jobs run unattended, so bound each round by wall-clock too. Mirrors
+// EXPLORER_ROUND_WALL_CLOCK_MS / DEEP_REVIEW_ROUND_WALL_CLOCK_MS.
+const CODER_ROUND_WALL_CLOCK_MS = 180_000;
 const MAX_CODER_ROUNDS = 30; // Circuit breaker — prevent runaway delegation
 const MAX_CHECKPOINTS = 3; // Max interactive checkpoint pauses per task
 const CHECKPOINT_ANSWER_TIMEOUT_MS = 30_000; // 30s for Orchestrator checkpoint response
@@ -912,6 +918,8 @@ export async function runCoderAgent<TCall, TCard>(
       },
       CODER_ROUND_TIMEOUT_MS,
       `Coder round ${rounds} timed out after ${CODER_ROUND_TIMEOUT_MS / 1000}s — model may be unresponsive.`,
+      CODER_ROUND_WALL_CLOCK_MS,
+      `Coder round ${rounds} exceeded ${CODER_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap — model is verbose but unproductive.`,
     );
 
     if (streamError) {
