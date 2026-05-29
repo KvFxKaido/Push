@@ -772,7 +772,7 @@ export async function runDeepReviewer<TCall, TCard>(
     DEEP_REVIEW_ROUND_TIMEOUT_MS,
     'Deep review final output timed out.',
     DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
-    `Deep review final output exceeded ${DEEP_REVIEW_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap.`,
+    `Deep review final forced output exceeded ${DEEP_REVIEW_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap.`,
   );
   const finalAccumulated = rawFinalAccumulated.trim();
 
