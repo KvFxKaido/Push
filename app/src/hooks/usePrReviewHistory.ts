@@ -10,6 +10,23 @@ const IDLE_POLL_MS = 30_000;
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'superseded', 'duplicate']);
 
+/**
+ * Trigger a fresh review for a PR now (manual re-run). The worker resolves the
+ * installation server-side from the repo, so the client only sends repo + pr.
+ * Throws on a non-2xx so callers can surface the failure. The deployment-token
+ * header is attached by the global fetch wrapper.
+ */
+export async function triggerPrReview(repoFullName: string, prNumber: number): Promise<void> {
+  const res = await fetch(resolveApiUrl('/api/pr-reviews/run'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ repo: repoFullName, pr: prNumber }),
+  });
+  if (!res.ok) {
+    throw new Error(`pr-review run failed (${res.status})`);
+  }
+}
+
 export interface PrReviewHistoryState {
   reviews: PrReviewListItem[];
   loading: boolean;
