@@ -538,12 +538,13 @@ function pruneExecSessions() {
 // but uses different canonical names; this map is intentionally CLI-local.
 const CLI_TOOL_ALIASES = new Map([
   ['artifact', 'create_artifact'],
-  // Accept the registry/web public name `switch_branch` (and the long-form
-  // sandbox alias) as synonyms for the CLI-native `git_switch_branch`, so
-  // models trained on the web vocabulary resolve to the CLI tool. Mirrors how
-  // `git_create_branch` is the CLI-native creation tool.
+  // Accept the registry/web public names (and long-form sandbox aliases) as
+  // synonyms for the CLI-native branch tools, so models trained on the web
+  // vocabulary resolve to the CLI tool regardless of which name they emit.
   ['switch_branch', 'git_switch_branch'],
   ['sandbox_switch_branch', 'git_switch_branch'],
+  ['create_branch', 'git_create_branch'],
+  ['sandbox_create_branch', 'git_create_branch'],
 ]);
 
 function canonicalizeCliToolName(name) {
@@ -1077,6 +1078,26 @@ function asString(value, field) {
   if (typeof value !== 'string') throw new Error(`${field} must be a string`);
   return value;
 }
+
+// Shared git-ref validation for the branch tools (git_create_branch /
+// git_switch_branch). execFileAsync passes argv without a shell so there's no
+// injection surface, but a leading '-' would still be parsed by git as a flag,
+// and the other shapes reject refs git itself would refuse. Centralized so
+// create + switch validate identically and can be hardened in one place.
+export function isInvalidGitRef(ref) {
+  return (
+    typeof ref !== 'string' ||
+    !/^[A-Za-z0-9._/-]+$/.test(ref) ||
+    ref.startsWith('-') ||
+    ref.startsWith('/') ||
+    ref.endsWith('/') ||
+    ref.includes('..')
+  );
+}
+
+/** Human-facing description of the valid-ref rules, reused in error messages. */
+const GIT_REF_DETAIL =
+  'Branch refs may contain letters, digits, ".", "_", "/", "-"; no leading "-" or "/", no trailing "/", and no ".." allowed.';
 
 function asOptionalNumber(value) {
   if (value === undefined || value === null || value === '') return undefined;
@@ -2751,27 +2772,20 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         };
       }
 
+      // `create_branch` / `sandbox_create_branch` (registry/web names) fall
+      // through to the CLI-native handler — mirrors the switch_branch aliases.
+      case 'create_branch':
+      case 'sandbox_create_branch':
       case 'git_create_branch': {
         const name = asString(call.args.name, 'name').trim();
         const from = typeof call.args.from === 'string' ? call.args.from.trim() : '';
 
-        // Apply the same ref validation to both name and from. shellEscape is
-        // not in play here (execFileAsync passes args without a shell), but
-        // a leading '-' would still be parsed by git as a flag.
-        const isInvalidRef = (ref) =>
-          !/^[A-Za-z0-9._/-]+$/.test(ref) ||
-          ref.startsWith('-') ||
-          ref.startsWith('/') ||
-          ref.endsWith('/') ||
-          ref.includes('..');
-
-        const refDetail =
-          'Branch refs may contain letters, digits, ".", "_", "/", "-"; no leading "-" or "/", no trailing "/", and no ".." allowed.';
-
-        if (isInvalidRef(name)) {
+        // Validate name + optional base ref via the shared helper (see
+        // isInvalidGitRef). Both create and switch validate identically.
+        if (isInvalidGitRef(name)) {
           return {
             ok: false,
-            text: `Invalid branch name "${name}". ${refDetail}`,
+            text: `Invalid branch name "${name}". ${GIT_REF_DETAIL}`,
             structuredError: {
               code: 'INVALID_ARG',
               message: 'Invalid branch name',
@@ -2779,10 +2793,10 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             },
           };
         }
-        if (from && isInvalidRef(from)) {
+        if (from && isInvalidGitRef(from)) {
           return {
             ok: false,
-            text: `Invalid base ref "${from}". ${refDetail}`,
+            text: `Invalid base ref "${from}". ${GIT_REF_DETAIL}`,
             structuredError: {
               code: 'INVALID_ARG',
               message: 'Invalid base ref',
@@ -2825,21 +2839,13 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       case 'git_switch_branch': {
         const branch = asString(call.args.branch, 'branch').trim();
 
-        // Same ref validation as git_create_branch — execFileAsync passes argv
-        // without a shell, but a leading '-' would still be read by git as a
-        // flag. Branch-only (no path operand), so the syntactic ambiguity that
-        // makes raw `git checkout <x>` dangerous doesn't apply here.
-        const isInvalidRef = (ref) =>
-          !/^[A-Za-z0-9._/-]+$/.test(ref) ||
-          ref.startsWith('-') ||
-          ref.startsWith('/') ||
-          ref.endsWith('/') ||
-          ref.includes('..');
-
-        if (isInvalidRef(branch)) {
+        // Shared ref validation (see isInvalidGitRef). Branch-only (no path
+        // operand), so the syntactic ambiguity that makes raw `git checkout
+        // <x>` dangerous doesn't apply here.
+        if (isInvalidGitRef(branch)) {
           return {
             ok: false,
-            text: `Invalid branch name "${branch}". Branch refs may contain letters, digits, ".", "_", "/", "-"; no leading "-" or "/", no trailing "/", and no ".." allowed.`,
+            text: `Invalid branch name "${branch}". ${GIT_REF_DETAIL}`,
             structuredError: {
               code: 'INVALID_ARG',
               message: 'Invalid branch name',

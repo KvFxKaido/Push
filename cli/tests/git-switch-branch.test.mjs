@@ -71,6 +71,22 @@ describe('git_switch_branch', () => {
     assert.equal(await currentBranch(repo), 'main');
   });
 
+  it('git_create_branch accepts the create_branch / sandbox_create_branch aliases', async () => {
+    let result = await executeToolCall(
+      { tool: 'create_branch', args: { name: 'feature/alpha' } },
+      repo,
+    );
+    assert.equal(result.ok, true, result.text);
+    assert.equal(await currentBranch(repo), 'feature/alpha');
+
+    result = await executeToolCall(
+      { tool: 'sandbox_create_branch', args: { name: 'feature/beta', from: 'main' } },
+      repo,
+    );
+    assert.equal(result.ok, true, result.text);
+    assert.equal(await currentBranch(repo), 'feature/beta');
+  });
+
   it('rejects an invalid branch ref without touching git', async () => {
     const result = await executeToolCall(
       { tool: 'git_switch_branch', args: { branch: '--evil' } },
@@ -96,10 +112,8 @@ describe('git_switch_branch', () => {
   });
 
   it('requires git:branch — same grant matrix as git_create_branch', () => {
-    // Branch ops on the CLI go through the coder (which grants git:branch); the
-    // orchestrator delegates mutations and is NOT granted git:branch in
-    // local-daemon mode. git_switch_branch must mirror git_create_branch
-    // exactly, so any future grant change moves them together.
+    // git_switch_branch must mirror git_create_branch exactly, so any future
+    // grant change moves them together.
     for (const role of ['coder', 'orchestrator', 'explorer']) {
       assert.equal(
         roleCanUseTool(role, 'git_switch_branch', 'local-daemon'),
@@ -107,9 +121,11 @@ describe('git_switch_branch', () => {
         `git_switch_branch grant for ${role} should match git_create_branch`,
       );
     }
-    // Concretely: coder yes, orchestrator/explorer no.
+    // Both coder and orchestrator can branch in local-daemon (local working
+    // tree — see capabilities.ts; the CLI inline loop runs as orchestrator).
+    // Explorer is read-only.
     assert.equal(roleCanUseTool('coder', 'git_switch_branch', 'local-daemon'), true);
-    assert.equal(roleCanUseTool('orchestrator', 'git_switch_branch', 'local-daemon'), false);
+    assert.equal(roleCanUseTool('orchestrator', 'git_switch_branch', 'local-daemon'), true);
     assert.equal(roleCanUseTool('explorer', 'git_switch_branch', 'local-daemon'), false);
   });
 

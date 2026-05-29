@@ -73,15 +73,19 @@ describe('GitHub tool capability gating (token-presence)', () => {
     assert.equal(roleCanUseTool('explorer', 'list_prs', 'local-daemon'), true);
   });
 
-  it('the remote flag does NOT widen other stripped caps (orchestrator git remains local-only)', () => {
+  it('the remote flag widens only pr:write/workflow:trigger, not git:push', () => {
     const caps = getEffectiveCapabilities('orchestrator', 'local-daemon', {
       remoteGitHubAvailable: true,
     });
-    // git:commit/push are stripped by the orchestrator-specific rule, not the
-    // remote-only set — the flag must not resurrect them.
-    assert.equal(caps.has('git:commit'), false);
+    // git:push is stripped by the orchestrator-specific remote-git rule, NOT
+    // the remoteGitHub flag's remote-only set — so the flag must not resurrect
+    // it (push needs a configured git remote, not a GitHub API token).
     assert.equal(caps.has('git:push'), false);
-    // But pr:write / workflow:trigger ARE restored.
+    // git:commit / git:branch are LOCAL ops kept in local-daemon regardless of
+    // the flag (real working tree — PR #700).
+    assert.equal(caps.has('git:commit'), true);
+    assert.equal(caps.has('git:branch'), true);
+    // pr:write / workflow:trigger ARE restored by the GitHub-remote flag.
     assert.equal(caps.has('pr:write'), true);
     assert.equal(caps.has('workflow:trigger'), true);
   });
