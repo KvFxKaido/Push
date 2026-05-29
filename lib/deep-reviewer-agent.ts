@@ -177,20 +177,35 @@ export interface DeepReviewerOptions<TCall, TCard> extends ReviewerOptions {
 
   /** Web search tool protocol prompt block. Kept as a plain string so the lib kernel does not couple to `./web-search-tools`. */
   webSearchToolProtocol: string;
+
+  /**
+   * Whether a web-search backend is wired. Defaults to true (web/in-app path).
+   * Set false (e.g. the webhook PrReviewJob DO) to omit the Web tool from the
+   * prompt entirely — neither listed in the Tool Protocol nor described — so the
+   * model doesn't attempt an unavailable tool.
+   */
+  webSearchAvailable?: boolean;
 }
 
 // ---------------------------------------------------------------------------
 // System prompt — hybrid Explorer investigation + Reviewer criteria
 // ---------------------------------------------------------------------------
 
-const EXPLORER_TOOL_PROTOCOL_FOR_REVIEWER = `
+function buildReviewerToolProtocol(webSearchAvailable: boolean): string {
+  const toolLines = [
+    `- GitHub: ${REVIEWER_GITHUB_TOOL_NAMES}`,
+    `- Sandbox: ${REVIEWER_SANDBOX_TOOL_NAMES}`,
+    // Omit the Web tool entirely when no web-search backend is wired (e.g. the
+    // webhook PrReviewJob DO), so the model doesn't burn a round attempting an
+    // unavailable tool.
+    ...(webSearchAvailable ? [`- Web: ${REVIEWER_WEB_TOOL_NAME}`] : []),
+  ].join('\n');
+  return `
 ## Tool Protocol
 
 You may use only these read-only tools:
 
-- GitHub: ${REVIEWER_GITHUB_TOOL_NAMES}
-- Sandbox: ${REVIEWER_SANDBOX_TOOL_NAMES}
-- Web: ${REVIEWER_WEB_TOOL_NAME}
+${toolLines}
 
 Usage:
 \`\`\`json
@@ -204,8 +219,12 @@ Rules:
 - Prefer search/symbol tools before large file reads.
 - If no sandbox is available, skip sandbox tools and investigate via GitHub tools instead.
 `.trim();
+}
 
-function buildDeepReviewerSystemPrompt(webSearchToolProtocol: string): string {
+function buildDeepReviewerSystemPrompt(
+  webSearchToolProtocol: string,
+  webSearchAvailable: boolean,
+): string {
   return [
     `You are the Deep Reviewer agent for Push, a mobile AI coding assistant.
 
@@ -262,8 +281,10 @@ Added lines in the diff are annotated with [Lxxx] indicating their line number i
 ${REVIEWER_CRITERIA_BLOCK}
 
 Keep comments specific and actionable. Prefer 0-8 high-signal comments total. Your investigation should inform every comment — cite what you found. One precise comment backed by evidence is worth more than three vague ones.`,
-    EXPLORER_TOOL_PROTOCOL_FOR_REVIEWER,
-    webSearchToolProtocol,
+    buildReviewerToolProtocol(webSearchAvailable),
+    // Drop the web-search protocol block when web search isn't available, so the
+    // tool is neither listed nor described.
+    ...(webSearchAvailable ? [webSearchToolProtocol] : []),
   ].join('\n\n');
 }
 
@@ -384,12 +405,13 @@ export async function runDeepReviewer<TCall, TCard>(
     detectAllToolCalls,
     detectAnyToolCall,
     webSearchToolProtocol,
+    webSearchAvailable = true,
   } = options;
 
   const activeProvider: AIProviderType = provider;
 
   // Build system prompt
-  let systemPrompt = buildDeepReviewerSystemPrompt(webSearchToolProtocol);
+  let systemPrompt = buildDeepReviewerSystemPrompt(webSearchToolProtocol, webSearchAvailable);
   const identityBlock = buildUserIdentityBlock(userProfile ?? undefined);
   if (identityBlock) {
     systemPrompt += `\n\n${identityBlock}`;
