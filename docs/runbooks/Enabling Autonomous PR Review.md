@@ -86,10 +86,18 @@ controlled), not as secrets:
 ```jsonc
 "vars": {
   "PR_REVIEW_PROVIDER": "zen",
-  "PR_REVIEW_MODEL": "kimi-k2.6",
+  "PR_REVIEW_MODEL": "glm-5.1",
   "PR_REVIEW_ZEN_GO": "1"   // route `zen` through the OpenCode Zen "Go" endpoint
 }
 ```
+
+**Model fit matters for this task.** The reviewer runs a multi-round
+investigate-then-report loop; the model must emit fenced tool-call JSON and a
+terminal `[REVIEW_COMPLETE]` marker. `glm-5.1` does this reliably. `kimi-k2.6`
+was tried and **does not work** here — it streams continuously without emitting
+a tool call or the completion marker, so every round trips the wall-clock cap
+(`model is verbose but unproductive`) and no review is produced. Prefer a
+strongly instruction-following model.
 
 Make sure the matching provider **key** is set as a secret (e.g.
 `ZEN_API_KEY` for OpenCode Zen, `OPENROUTER_API_KEY` for OpenRouter).
