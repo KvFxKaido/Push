@@ -32,11 +32,13 @@ import { resolveReviewGuidance } from '@push/lib/review-guidance';
 import { buildReviewerContextBlock } from '@push/lib/role-context';
 import { runDeepReviewer } from '@push/lib/deep-reviewer-agent';
 import {
+  createReviewCheckRun,
   executePostPRReview,
   executeReadOnlyGitHubToolWithToken,
   fetchPullRequestDiff,
   fetchPullRequestHeadSha,
   fetchReviewGuidance,
+  type ReviewCheckConclusion,
 } from '@/lib/github-tools';
 import type { Env } from './worker-middleware';
 import { exchangeForInstallationToken, generateGitHubAppJWT } from './worker-infra';
@@ -80,6 +82,22 @@ export interface PrReviewListItem extends PrReviewStatusSnapshot {
 export interface PrReviewOutcome {
   result: ReviewResult;
   commentsPosted: number;
+  /** True when a failing gating check was posted (critical finding on a gated repo). */
+  gated?: boolean;
+}
+
+/**
+ * Whether a repo opted into review gating via `PR_REVIEW_GATING_REPOS`
+ * (comma/space-separated `owner/name`, case-insensitive). Default off.
+ */
+export function repoGatingEnabled(repo: string, gatingReposEnv: string | undefined): boolean {
+  const allowed = new Set(
+    (gatingReposEnv ?? '')
+      .split(/[\s,]+/)
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  return allowed.has(repo.toLowerCase());
 }
 
 /** Injectable model/network leaf — see `__setPrReviewExecutorOverride`. */
@@ -299,6 +317,7 @@ export class PrReviewJob {
         commentsPosted: outcome.commentsPosted,
         filesReviewed: outcome.result.filesReviewed,
         truncated: outcome.result.truncated,
+        gated: outcome.gated ?? false,
       });
       log('info', 'pr_review_completed', {
         deliveryId: input.deliveryId,
@@ -488,7 +507,45 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
     result,
     auth,
   );
-  return { result, commentsPosted };
+
+  // Opt-in gating: post a Checks API run reflecting the verdict (critical →
+  // failure, else success) on the reviewed commit, alongside the advisory
+  // comment. A check-run failure (e.g. missing `checks: write`) is logged but
+  // never aborts the already-posted review.
+  let gated = false;
+  if (repoGatingEnabled(input.repoFullName, env.PR_REVIEW_GATING_REPOS)) {
+    const hasCritical = result.comments.some((c) => c.severity === 'critical');
+    const conclusion: ReviewCheckConclusion = hasCritical ? 'failure' : 'success';
+    try {
+      await createReviewCheckRun(
+        input.repoFullName,
+        input.headSha,
+        conclusion,
+        {
+          title: hasCritical ? 'Critical findings' : 'No blocking findings',
+          summary:
+            result.summary || (hasCritical ? 'Critical issues found.' : 'No blocking issues.'),
+        },
+        auth,
+      );
+      // Only true once a failing check actually posted — so the recorded
+      // outcome matches reality if the POST throws (e.g. missing checks:write).
+      gated = hasCritical;
+      log('info', 'pr_review_check_run_posted', {
+        deliveryId: input.deliveryId,
+        repo: input.repoFullName,
+        conclusion,
+      });
+    } catch (err) {
+      log('warn', 'pr_review_check_run_failed', {
+        deliveryId: input.deliveryId,
+        repo: input.repoFullName,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return { result, commentsPosted, gated };
 };
 
 /**

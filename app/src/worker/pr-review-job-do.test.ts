@@ -10,6 +10,7 @@ import type { ReviewResult } from '@push/lib/provider-contract';
 import {
   PrReviewJob,
   __setPrReviewExecutorOverride,
+  repoGatingEnabled,
   type PrReviewStartInput,
 } from './pr-review-job-do';
 import type { Env } from './worker-middleware';
@@ -189,6 +190,16 @@ function startRequest(input: PrReviewStartInput): Request {
   });
 }
 
+describe('repoGatingEnabled', () => {
+  it('matches case-insensitively, defaults off, and ignores blanks', () => {
+    expect(repoGatingEnabled('octo/repo', 'octo/repo')).toBe(true);
+    expect(repoGatingEnabled('Octo/Repo', 'octo/repo, other/x')).toBe(true);
+    expect(repoGatingEnabled('octo/repo', 'other/x')).toBe(false);
+    expect(repoGatingEnabled('octo/repo', undefined)).toBe(false);
+    expect(repoGatingEnabled('octo/repo', '')).toBe(false);
+  });
+});
+
 describe('PrReviewJob', () => {
   it('runs a review to completion and logs lifecycle events', async () => {
     const mock = createMockCtx();
@@ -246,6 +257,29 @@ describe('PrReviewJob', () => {
     expect(byId.d1).toMatchObject({ status: 'completed', commentsPosted: 1 });
     expect(byId.d1.result?.summary).toBe('looks fine');
     expect(byId.d2.result?.summary).toBe('second review');
+  });
+
+  it('emits gated on review.completed (true when set, false when omitted)', async () => {
+    const gatedMock = createMockCtx();
+    const gatedDo = new PrReviewJob(gatedMock.ctx as never, {} as Env);
+    __setPrReviewExecutorOverride('d1', async () => ({
+      result: RESULT,
+      commentsPosted: 0,
+      gated: true,
+    }));
+    await gatedDo.fetch(startRequest(startInput({ deliveryId: 'd1' })));
+    await Promise.allSettled(gatedMock.pending);
+    const gatedEvent = gatedMock.events.find((e) => e.type === 'review.completed');
+    expect(JSON.parse(gatedEvent!.payload_json).gated).toBe(true);
+
+    const plainMock = createMockCtx();
+    const plainDo = new PrReviewJob(plainMock.ctx as never, {} as Env);
+    // Override omits `gated` — the event should default it to false.
+    __setPrReviewExecutorOverride('d2', async () => ({ result: RESULT, commentsPosted: 0 }));
+    await plainDo.fetch(startRequest(startInput({ deliveryId: 'd2' })));
+    await Promise.allSettled(plainMock.pending);
+    const plainEvent = plainMock.events.find((e) => e.type === 'review.completed');
+    expect(JSON.parse(plainEvent!.payload_json).gated).toBe(false);
   });
 
   it('dedupes a redelivered delivery id', async () => {

@@ -1,7 +1,7 @@
 # Webhook-Triggered PR Review
 
 Date: 2026-05-28
-Status: **Current** — ROADMAP-tracked (`Autonomous Webhook PR Review`). Shipped: receiver + DO + REVIEW.md base-ref binding (#690), shared token-injectable client (#691), and the PWA read-only review-history surface (DO `list` + polling). Advisory-only; severity→gating, re-run-from-PWA, `runDeepReviewer`, and abort propagation remain. Not live in prod until the `v4` DO migration is applied via a one-time non-versioned `wrangler deploy`.
+Status: **Current** — ROADMAP-tracked (`Autonomous Webhook PR Review`). Shipped: receiver + DO + REVIEW.md base-ref binding (#690), shared token-injectable client (#691), PWA read-only review-history surface (#692), web-tool suppression (#694), deep + cancellable reviews (#693), manual re-run from the PWA (#695), and opt-in Checks-API gating (`PR_REVIEW_GATING_REPOS`, critical-only). Feature-complete for v1. Not live in prod until the `v4` DO migration is applied via a one-time non-versioned `wrangler deploy`; gating additionally needs the App's `checks: write` permission. Open: PWA gating-status surfacing and the multi-tenant read-authz caveat (both documented).
 Owner: Push
 Related: `app/src/worker/github-webhook.ts` (the receiver — signature, allowlist, event-select, enqueue),
 `app/src/worker/pr-review-job-do.ts` (`PrReviewJob` DO — dedupe, coalesce, advisory post, `list` history),
@@ -190,24 +190,25 @@ Landed with the promotion:
    path. The result threads into `buildReviewerContextBlock` like every other
    surface.
 
-## Severity → action mapping (deliberately deferred)
+## Severity → action mapping (shipped — opt-in gating)
 
-baloo maps CRITICAL/HIGH → request-changes, MEDIUM → Checks annotations,
-LOW → dropped. Push's REVIEW.md already defines the severity scale
-(🔴/🟠/🟡/🟢). For v1 we **render** severity in the posted comments but take no
-gating action — `event: 'COMMENT'` only. Reasons:
+Advisory comments stay the **default** for every repo. Gating is **opt-in per
+repo** via `PR_REVIEW_GATING_REPOS` (comma/space-separated `owner/name`,
+case-insensitive). For a listed repo the DO posts a **GitHub Checks API run** on
+the reviewed commit alongside the advisory comment:
 
-- It inverts Push's posture. Our model is advisory Reviewer + gating Auditor +
-  human-in-loop delivery. A bot that auto-requests-changes on every PR is a
-  different product decision, not a config tweak.
-- False positives on `REQUEST_CHANGES` are high-friction (they block merge and
-  require a human dismiss). Advisory comments degrade gracefully.
+- any 🔴 **critical** finding → check `conclusion: failure`
+- otherwise → `conclusion: success`
 
-Phase 2 opt-in (per-repo, off by default): map 🔴 → `REQUEST_CHANGES`, optionally
-run the Auditor as the false-positive verifier baloo bolts on as a second LLM
-pass — we already have that agent. The Checks API annotation path
-(neutral/failure on the PR's checks tab) is the lower-friction middle ground and
-probably the right first gating step.
+We deliberately chose the **Checks API** over `event: 'REQUEST_CHANGES'`: it's
+lower-friction (only blocks merge if the repo *requires* that check, and the
+next review's check supersedes it — no human dismissal needed) and doesn't
+invert Push's advisory-Reviewer posture for repos that don't opt in. The
+threshold is **critical-only** to minimize false blocks. The GitHub App needs
+the `checks: write` permission; a check-run post failure is logged
+(`pr_review_check_run_failed`) but never aborts the already-posted advisory
+review. `REQUEST_CHANGES` and the Auditor-as-false-positive-verifier remain
+possible future escalations, not part of this opt-in.
 
 ## New vocabulary + drift tests
 

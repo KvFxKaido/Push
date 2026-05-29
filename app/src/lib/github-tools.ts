@@ -1080,3 +1080,37 @@ export async function fetchPullRequestRefs(
     draft: Boolean(data.draft),
   };
 }
+
+export type ReviewCheckConclusion = 'success' | 'failure' | 'neutral';
+
+/**
+ * Create a GitHub Checks API run reflecting an automated review's verdict, on the
+ * reviewed commit. Used by the gating opt-in: `failure` when the review found a
+ * blocking finding, else `success`. Requires the `checks: write` permission on
+ * the installation token. Non-idempotent POST (not retried). Throws on failure
+ * so the caller can log without aborting the already-posted advisory review.
+ */
+export async function createReviewCheckRun(
+  repo: string,
+  headSha: string,
+  conclusion: ReviewCheckConclusion,
+  output: { title: string; summary: string },
+  auth?: GitHubAuth,
+): Promise<void> {
+  const res = await githubFetch(
+    `https://api.github.com/repos/${repo}/check-runs`,
+    {
+      method: 'POST',
+      headers: { ...resolveHeaders(auth), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Push review',
+        head_sha: headSha,
+        status: 'completed',
+        conclusion,
+        output: { title: output.title, summary: output.summary },
+      }),
+    },
+    { retry: false },
+  );
+  if (!res.ok) throw new Error(formatGitHubError(res.status, `check run on ${repo}@${headSha}`));
+}
