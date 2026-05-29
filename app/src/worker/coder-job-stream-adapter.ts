@@ -25,6 +25,7 @@
 
 import type { AIProviderType, PushStream, PushStreamEvent } from '@push/lib/provider-contract';
 import type { ChatMessage } from '@/types';
+import { getZenGoTransport } from '@/lib/zen-go';
 import type { Env } from './worker-middleware';
 import {
   handleAnthropicChat,
@@ -38,6 +39,7 @@ import {
   handleOpenAIChat,
   handleOpenRouterChat,
   handleZenChat,
+  handleZenGoChat,
 } from './worker-providers';
 
 export interface CoderJobStreamAdapterArgs {
@@ -50,11 +52,17 @@ export interface CoderJobStreamAdapterArgs {
    * collapse into the global `'unknown'` IP bucket and spuriously 429
    * other jobs. */
   jobId: string;
+  /** Route the `zen` provider through the OpenCode Zen "Go" endpoint
+   * (`/zen/go/v1/...`) instead of the regular `/zen/v1/...`. The browser
+   * path selects Go via a `localStorage` flag (`getZenGoMode`), which the
+   * Worker can't read — so server-side callers (the PR-review DO) opt in
+   * explicitly. Ignored for non-`zen` providers. */
+  zenGo?: boolean;
 }
 
 type ProviderHandler = (request: Request, env: Env) => Promise<Response>;
 
-function resolveProviderHandler(provider: AIProviderType): ProviderHandler | null {
+function resolveProviderHandler(provider: AIProviderType, zenGo: boolean): ProviderHandler | null {
   switch (provider) {
     case 'openrouter':
       return handleOpenRouterChat as unknown as ProviderHandler;
@@ -63,7 +71,7 @@ function resolveProviderHandler(provider: AIProviderType): ProviderHandler | nul
     case 'cloudflare':
       return handleCloudflareChat as unknown as ProviderHandler;
     case 'zen':
-      return handleZenChat as unknown as ProviderHandler;
+      return (zenGo ? handleZenGoChat : handleZenChat) as unknown as ProviderHandler;
     case 'nvidia':
       return handleNvidiaChat as unknown as ProviderHandler;
     case 'blackbox':
@@ -96,7 +104,8 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
   // Strip trailing slash so URL construction can't produce double
   // slashes (`https://host//api/...`).
   const origin = args.origin.replace(/\/$/, '');
-  const handler = resolveProviderHandler(args.provider);
+  const zenGo = args.provider === 'zen' && Boolean(args.zenGo);
+  const handler = resolveProviderHandler(args.provider, zenGo);
 
   return (req) =>
     (async function* () {
@@ -104,6 +113,18 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
         throw new Error(
           `Background Coder jobs don't yet support provider "${args.provider}". ` +
             `Supported: openrouter, ollama, cloudflare, zen, nvidia, blackbox, kilocode, openadapter, anthropic, openai, google.`,
+        );
+      }
+
+      // The Zen "Go" endpoint serves some models over an Anthropic-shaped
+      // SSE stream (minimax-*). `pumpSseBody` only parses OpenAI-shaped
+      // `choices[0].delta.content`, so an Anthropic-transport model would
+      // silently yield zero tokens through this adapter. Fail loud instead.
+      if (zenGo && getZenGoTransport(req.model || args.modelId) === 'anthropic') {
+        throw new Error(
+          `Zen Go model "${req.model || args.modelId}" uses the Anthropic transport, ` +
+            `which this background-job stream adapter can't parse (OpenAI-shaped SSE only). ` +
+            `Use an OpenAI-transport Zen Go model (e.g. kimi-k2.6, glm-5.1).`,
         );
       }
 
@@ -130,20 +151,23 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
         stream: true,
       });
 
-      const request = new Request(`${origin}/api/${providerSlug(args.provider)}/chat`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          Origin: origin,
-          // Stable per-job rate-limit key. Without this, the preamble's
-          // `getClientIp(req)` falls back to 'unknown' for every
-          // synthetic internal Request and all background jobs share one
-          // bucket — a single burst can 429 every other running job.
-          'X-Forwarded-For': `job:${args.jobId}`,
+      const request = new Request(
+        `${origin}/api/${zenGo ? 'zen/go' : providerSlug(args.provider)}/chat`,
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            Origin: origin,
+            // Stable per-job rate-limit key. Without this, the preamble's
+            // `getClientIp(req)` falls back to 'unknown' for every
+            // synthetic internal Request and all background jobs share one
+            // bucket — a single burst can 429 every other running job.
+            'X-Forwarded-For': `job:${args.jobId}`,
+          },
+          body,
+          signal,
         },
-        body,
-        signal,
-      });
+      );
 
       const response = (await handler(
         request as unknown as Request,
