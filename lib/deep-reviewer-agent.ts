@@ -185,6 +185,25 @@ export interface DeepReviewerOptions<TCall, TCard> extends ReviewerOptions {
    * model doesn't attempt an unavailable tool.
    */
   webSearchAvailable?: boolean;
+
+  /**
+   * Optional override for the read-only tool-protocol block. When provided it
+   * REPLACES the built-in `buildReviewerToolProtocol(...)` block (which lists
+   * the web-side public tool names — `repo_read`, `search`, …). Callers whose
+   * runtime recognizes a different tool vocabulary pass their own protocol so
+   * the names advertised to the model match what their `detectAllToolCalls` /
+   * `toolExec` actually accept.
+   *
+   * This is the deep-reviewer analogue of `runExplorerAgent` /
+   * `runCoderAgent`'s `sandboxToolProtocol` slot. The CLI daemon passes its
+   * CLI-native `READ_ONLY_TOOL_PROTOCOL` here; without it the model would emit
+   * web public names the CLI detector drops, wasting investigation rounds (the
+   * Explorer P1 from PR #284, avoided here by construction).
+   *
+   * Omitted → the built-in web-name protocol is used (web/in-app path
+   * unchanged).
+   */
+  sandboxToolProtocol?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -224,6 +243,7 @@ Rules:
 function buildDeepReviewerSystemPrompt(
   webSearchToolProtocol: string,
   webSearchAvailable: boolean,
+  sandboxToolProtocol?: string,
 ): string {
   return [
     `You are the Deep Reviewer agent for Push, a mobile AI coding assistant.
@@ -281,10 +301,20 @@ Added lines in the diff are annotated with [Lxxx] indicating their line number i
 ${REVIEWER_CRITERIA_BLOCK}
 
 Keep comments specific and actionable. Prefer 0-8 high-signal comments total. Your investigation should inform every comment — cite what you found. One precise comment backed by evidence is worth more than three vague ones.`,
-    buildReviewerToolProtocol(webSearchAvailable),
-    // Drop the web-search protocol block when web search isn't available, so the
-    // tool is neither listed nor described.
-    ...(webSearchAvailable ? [webSearchToolProtocol] : []),
+    // Tool protocol: a caller-supplied override (e.g. the CLI daemon's
+    // CLI-native READ_ONLY_TOOL_PROTOCOL) wins and is used verbatim — it
+    // already enumerates the runtime's read-only tools (web search included
+    // where supported), so the separate webSearchToolProtocol block is NOT
+    // appended in that case. Otherwise fall back to the built-in web-name
+    // protocol plus the web-search block when available.
+    ...(sandboxToolProtocol
+      ? [sandboxToolProtocol]
+      : [
+          buildReviewerToolProtocol(webSearchAvailable),
+          // Drop the web-search protocol block when web search isn't available,
+          // so the tool is neither listed nor described.
+          ...(webSearchAvailable ? [webSearchToolProtocol] : []),
+        ]),
   ].join('\n\n');
 }
 
@@ -406,12 +436,17 @@ export async function runDeepReviewer<TCall, TCard>(
     detectAnyToolCall,
     webSearchToolProtocol,
     webSearchAvailable = true,
+    sandboxToolProtocol,
   } = options;
 
   const activeProvider: AIProviderType = provider;
 
   // Build system prompt
-  let systemPrompt = buildDeepReviewerSystemPrompt(webSearchToolProtocol, webSearchAvailable);
+  let systemPrompt = buildDeepReviewerSystemPrompt(
+    webSearchToolProtocol,
+    webSearchAvailable,
+    sandboxToolProtocol,
+  );
   const identityBlock = buildUserIdentityBlock(userProfile ?? undefined);
   if (identityBlock) {
     systemPrompt += `\n\n${identityBlock}`;

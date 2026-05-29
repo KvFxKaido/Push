@@ -326,6 +326,7 @@ export const SUBAGENT_AGENTS = [
   'coder',
   'explorer',
   'reviewer',
+  'deep_reviewer',
   'auditor',
   'task_graph',
 ] as const;

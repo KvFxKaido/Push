@@ -260,6 +260,10 @@ export type RunEventSubagent =
   | 'coder'
   | 'explorer'
   | 'reviewer'
+  // Deep Reviewer — the multi-round investigation reviewer. Runs under the
+  // reviewer role but tagged distinctly in events so clients can tell a deep
+  // review from a single-shot one (CLI delegate_deep_reviewer).
+  | 'deep_reviewer'
   | 'auditor'
   | 'task_graph';
 
