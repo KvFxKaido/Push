@@ -6,7 +6,10 @@
  */
 
 import type { BranchListCardData, ToolExecutionResult } from '@/types';
-import { getGitHubAuthHeaders as getGitHubHeaders } from './github-auth';
+import {
+  getGitHubAuthHeaders as getGitHubHeaders,
+  getGitHubAuthHeadersForToken,
+} from './github-auth';
 import {
   formatSensitivePathToolError,
   isSensitivePath,
@@ -152,6 +155,66 @@ function createLocalGitHubToolRuntime(): GitHubToolCoreRuntime {
 async function executeGitHubToolLocally(call: GitHubToolCoreCall): Promise<ToolExecutionResult> {
   const result = await executeGitHubToolCore(createLocalGitHubToolRuntime(), call);
   return result as unknown as ToolExecutionResult;
+}
+
+/**
+ * GitHub tool runtime backed by an explicit token rather than the browser's
+ * localStorage token. For server-side callers (the PrReviewJob deep reviewer)
+ * that hold a short-lived installation token.
+ */
+function createInjectedTokenRuntime(token: string): GitHubToolCoreRuntime {
+  return {
+    githubFetch,
+    buildHeaders: (accept = 'application/vnd.github.v3+json') => {
+      const headers = getGitHubAuthHeadersForToken(token);
+      headers.Accept = accept;
+      return headers;
+    },
+    buildApiUrl: (path) => `https://api.github.com${path.startsWith('/') ? path : `/${path}`}`,
+    decodeBase64: decodeGitHubBase64Utf8,
+    isSensitivePath,
+    redactSensitiveText,
+    formatSensitivePathToolError,
+  };
+}
+
+/**
+ * Execute a single read-only GitHub tool with an injected token, gated to
+ * `allowedRepo`. For server-side agents (the webhook deep reviewer) that can't
+ * use the browser token. Rejects repo mismatches and non-GitHub tools with a
+ * `[Tool Error]` string the model can read and recover from, rather than
+ * throwing — mirrors `executeToolCallLegacy`'s gating, minus the Worker path.
+ */
+export async function executeReadOnlyGitHubToolWithToken(
+  call: ToolCall,
+  allowedRepo: string,
+  token: string,
+): Promise<ToolExecutionResult> {
+  // `call.args` is a union; GitHub tools carry `repo`, delegations don't. This
+  // read-only path only runs GitHub tools, so read `repo` through a narrow cast.
+  const requestedRepo = (call.args as { repo?: string }).repo ?? '';
+  const allowedNormalized = normalizeRepoName(allowedRepo || '');
+  const requestedNormalized = normalizeRepoName(requestedRepo);
+  if (!allowedNormalized || !requestedNormalized || requestedNormalized !== allowedNormalized) {
+    return {
+      text: `[Tool Error] Access denied — can only query the active repo "${allowedRepo || 'none'}" (requested: "${requestedRepo || 'none'}")`,
+    };
+  }
+  if (!isWorkerGitHubToolCall(call)) {
+    return {
+      text: `[Tool Error] Unsupported tool for automated review: ${String((call as { tool?: unknown }).tool ?? 'unknown')}`,
+    };
+  }
+  try {
+    const result = await executeGitHubToolCore(
+      createInjectedTokenRuntime(token),
+      call as unknown as GitHubToolCoreCall,
+    );
+    return result as unknown as ToolExecutionResult;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { text: `[Tool Error] ${msg}` };
+  }
 }
 
 async function fetchRepoBranchesLocally(

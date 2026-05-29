@@ -30,9 +30,10 @@ import type {
 } from '@push/lib/provider-contract';
 import { resolveReviewGuidance } from '@push/lib/review-guidance';
 import { buildReviewerContextBlock } from '@push/lib/role-context';
-import { runReviewer } from '@push/lib/reviewer-agent';
+import { runDeepReviewer } from '@push/lib/deep-reviewer-agent';
 import {
   executePostPRReview,
+  executeReadOnlyGitHubToolWithToken,
   fetchPullRequestDiff,
   fetchPullRequestHeadSha,
   fetchReviewGuidance,
@@ -40,6 +41,7 @@ import {
 import type { Env } from './worker-middleware';
 import { exchangeForInstallationToken, generateGitHubAppJWT } from './worker-infra';
 import { createWebStreamAdapter } from './coder-job-stream-adapter';
+import { createWebDetectorAdapter, type AnyToolCall } from './coder-job-detector-adapter';
 import type { ReviewablePullRequest } from './github-webhook';
 
 const DEFAULT_PROVIDER: AIProviderType = 'anthropic';
@@ -371,12 +373,17 @@ export class PrReviewJob {
 
 /**
  * Mint an installation token, fetch the PR diff, resolve REVIEW.md at the **base**
- * ref, run the (single-shot) Reviewer, and post an advisory review.
+ * ref, run the agentic **deep reviewer** (reads beyond the diff via GitHub tools),
+ * and post an advisory review.
  *
  * Uses the shared `github-tools` client with an injected installation token, so
  * the webhook path and the browser reviewer post through one code path (same
  * review body format, same 422→body-only degradation). The DO can't use the
  * browser default token (localStorage), hence the explicit `{ token }` auth.
+ *
+ * Cancellation: the deep reviewer composes `callbacks.signal` into its model
+ * stream and tool loop, so the DO's `signal` (aborted on supersede) stops an
+ * in-flight review mid-round rather than running to the per-round timeout.
  */
 export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, signal) => {
   if (!env.GITHUB_APP_ID || !env.GITHUB_APP_PRIVATE_KEY) {
@@ -408,7 +415,8 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
     jobId: input.deliveryId,
   });
 
-  const result = await runReviewer(
+  const detectors = createWebDetectorAdapter();
+  const result = await runDeepReviewer<AnyToolCall, unknown>(
     diff,
     {
       provider,
@@ -421,9 +429,37 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
         source: 'pr-diff',
         reviewGuidance,
       },
+      allowedRepo: input.repoFullName,
+      branchContext: {
+        activeBranch: input.headRef,
+        defaultBranch: input.baseRef,
+        protectMain: false,
+      },
+      userProfile: null,
       resolveRuntimeContext: async (_diff, context) => buildReviewerContextBlock(context) || '',
+      // Read-only GitHub tools only, gated to this repo with the installation
+      // token. The deep reviewer never emits mutations (it only executes the
+      // detected read-only set); web search has no backend here, so reject it
+      // with a model-readable note rather than failing the run.
+      toolExec: async (toolCall) => {
+        if (toolCall.source !== 'github') {
+          return {
+            resultText: `[Tool Error] ${toolCall.call.tool} is unavailable in automated PR review (GitHub read tools only).`,
+          };
+        }
+        const r = await executeReadOnlyGitHubToolWithToken(
+          toolCall.call,
+          input.repoFullName,
+          token,
+        );
+        return { resultText: r.text };
+      },
+      detectAllToolCalls: detectors.detectAllToolCalls,
+      detectAnyToolCall: detectors.detectAnyToolCall,
+      // No web-search backend in the webhook DO — don't advertise the tool.
+      webSearchToolProtocol: '',
     },
-    () => {},
+    { onStatus: () => {}, signal },
   );
   if (signal.aborted) throw new Error('aborted');
 

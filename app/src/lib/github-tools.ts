@@ -25,6 +25,7 @@ export {
   githubFetch,
   fetchRepoBranches,
   executeToolCall,
+  executeReadOnlyGitHubToolWithToken,
   decodeGitHubBase64Utf8,
 } from './github-tool-executor';
 export { getGitHubHeaders };
