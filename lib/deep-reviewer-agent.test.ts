@@ -105,6 +105,54 @@ describe('runDeepReviewer (PushStream consumer)', () => {
     expect(req0.systemPromptOverride).toContain('Deep Reviewer agent');
   });
 
+  it('omits the Web tool from the prompt when webSearchAvailable is false', async () => {
+    const reportJson = JSON.stringify({ summary: 'ok', comments: [] });
+    const rounds = (): PushStreamEvent[][] => [
+      [
+        { type: 'text_delta', text: 'Investigating...' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', text: `[REVIEW_COMPLETE]\n${reportJson}` },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ];
+    // Returns one tool call (to clear the no-investigation guard), then null.
+    const oneTool = () => {
+      let next: Call | null = { call: { tool: 'sandbox_read_file', args: {} } };
+      return () => {
+        const v = next;
+        next = null;
+        return v;
+      };
+    };
+
+    const enabled = makePushStream(rounds());
+    await runDeepReviewer(
+      makeAddedFileDiff('src/a.ts', 'const x = 1;'),
+      baseOptions({ stream: enabled.stream, detectAnyToolCall: oneTool() }),
+      { onStatus: () => {} },
+    );
+    const enabledPrompt = (enabled.capturedRequests[0] as { systemPromptOverride?: string })
+      .systemPromptOverride;
+    expect(enabledPrompt).toContain('- Web:');
+
+    const disabled = makePushStream(rounds());
+    await runDeepReviewer(
+      makeAddedFileDiff('src/a.ts', 'const x = 1;'),
+      {
+        ...baseOptions({ stream: disabled.stream, detectAnyToolCall: oneTool() }),
+        webSearchAvailable: false,
+      },
+      { onStatus: () => {} },
+    );
+    const disabledPrompt = (disabled.capturedRequests[0] as { systemPromptOverride?: string })
+      .systemPromptOverride;
+    expect(disabledPrompt).not.toContain('- Web:');
+    // GitHub tools still listed — only the Web tool is dropped.
+    expect(disabledPrompt).toContain('- GitHub:');
+  });
+
   it('throws AbortError when callbacks.signal aborts before round 1', async () => {
     const controller = new AbortController();
     controller.abort();

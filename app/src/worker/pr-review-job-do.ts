@@ -456,12 +456,10 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
       },
       detectAllToolCalls: detectors.detectAllToolCalls,
       detectAnyToolCall: detectors.detectAnyToolCall,
-      // No web-search backend in the webhook DO. Empty protocol doesn't fully
-      // suppress the deep reviewer's base Web-tool prompt section, so the model
-      // may still attempt a web_search; the toolExec above rejects it with a
-      // model-readable note and the loop continues. Fully hiding it needs a
-      // prompt-builder flag in the shared deep reviewer — deferred follow-up.
+      // No web-search backend in the webhook DO — omit the Web tool from the
+      // prompt entirely so the model never attempts an unavailable tool.
       webSearchToolProtocol: '',
+      webSearchAvailable: false,
     },
     { onStatus: () => {}, signal },
   );
