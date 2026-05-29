@@ -10,7 +10,15 @@
   "compatibility_date": "2026-04-20",
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
-    "directory": "./app/dist"
+    "directory": "./app/dist",
+    // Bind the assets layer so the Worker can call `env.ASSETS.fetch()` in its
+    // SPA fallback (worker.ts). Without this binding `env.ASSETS` is undefined,
+    // and any Worker-reached path that matches no route (e.g. a browser GET on
+    // a POST-only API route, or /favicon.ico) crashes the fallback with
+    // "Cannot read properties of undefined (reading 'fetch')" → 500. Normal
+    // navigation never hit this because the assets layer serves the SPA
+    // directly without invoking the Worker.
+    "binding": "ASSETS"
   },
   // Sandbox backend selector — read by worker.ts to route /api/sandbox/*
   // POST requests to either handleSandbox (Modal) or handleCloudflareSandbox.
