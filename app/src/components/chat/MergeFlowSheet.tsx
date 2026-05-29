@@ -40,6 +40,7 @@ import {
 } from '@/lib/github-tools';
 import { getSandboxDiff, readFromSandbox } from '@/lib/sandbox-client';
 import { runAuditor } from '@/lib/auditor-agent';
+import { getIsAuditorGateEnabled } from '@/hooks/useAuditorGate';
 import { fetchAuditorFileContexts, type AuditorFileContext } from '@/lib/auditor-file-context';
 import { parseDiffStats } from '@/lib/diff-utils';
 import type { AIProviderType, ActiveRepo, AuditVerdictCardData } from '@/types';
@@ -439,6 +440,20 @@ function MergeFlowSheet({
           setAuditCard({
             verdict: 'safe',
             summary: 'No changes to review — empty diff.',
+            risks: [],
+            filesReviewed: 0,
+          });
+          setStep('merge');
+          return;
+        }
+
+        // Auditor commit gate disabled for this repo (opt-out, default on) —
+        // skip the review and proceed to merge. Mirrors the empty-diff skip.
+        if (!getIsAuditorGateEnabled(repo)) {
+          setAuditVerdict('safe');
+          setAuditCard({
+            verdict: 'safe',
+            summary: 'Auditor gate disabled — review skipped.',
             risks: [],
             filesReviewed: 0,
           });

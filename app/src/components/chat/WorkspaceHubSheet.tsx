@@ -32,6 +32,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { runAuditor } from '@/lib/auditor-agent';
+import { getIsAuditorGateEnabled } from '@/hooks/useAuditorGate';
 import { fetchAuditorFileContexts, type AuditorFileContext } from '@/lib/auditor-file-context';
 import type { ForkBranchInWorkspaceResult } from '@/lib/fork-branch-in-workspace';
 import {
@@ -712,44 +713,47 @@ export function WorkspaceHubSheet({
           return;
         }
 
-        // Phase: Auditing
-        setCommitPhase('auditing');
-        let fileContexts: AuditorFileContext[] = [];
-        try {
-          const filePaths = parseDiffStats(diffResult.diff).fileNames;
-          fileContexts = await fetchAuditorFileContexts(filePaths, async (path) => {
-            const result = await readFromSandbox(sandboxId, `/workspace/${path}`);
-            if (result.error) return null;
-            return { content: result.content, truncated: result.truncated };
-          });
-        } catch {
-          // Degrade gracefully — proceed with diff-only
-        }
-        const auditResult = await runAuditor(
-          diffResult.diff,
-          () => {},
-          {
-            repoFullName,
-            activeBranch: targetBranchName,
-            defaultBranch: branchProps.defaultBranch,
-            source: 'working-tree-commit',
-            sourceLabel:
-              target.mode === 'new'
-                ? `Working tree commit after branching to ${targetBranchName}`
-                : `Working tree commit on ${targetBranchName}`,
-            projectInstructions,
-          },
-          undefined,
-          {
-            providerOverride: lockedProvider || undefined,
-            modelOverride: lockedModel || undefined,
-          },
-          fileContexts,
-        );
-        if (auditResult.verdict === 'unsafe') {
-          setCommitPhase('error');
-          setCommitError(`Commit blocked by Auditor: ${auditResult.card.summary}`);
-          return;
+        // Phase: Auditing — opt-out, default on (see useAuditorGate). When the
+        // gate is disabled for this repo, skip the review and commit directly.
+        if (getIsAuditorGateEnabled(repoFullName)) {
+          setCommitPhase('auditing');
+          let fileContexts: AuditorFileContext[] = [];
+          try {
+            const filePaths = parseDiffStats(diffResult.diff).fileNames;
+            fileContexts = await fetchAuditorFileContexts(filePaths, async (path) => {
+              const result = await readFromSandbox(sandboxId, `/workspace/${path}`);
+              if (result.error) return null;
+              return { content: result.content, truncated: result.truncated };
+            });
+          } catch {
+            // Degrade gracefully — proceed with diff-only
+          }
+          const auditResult = await runAuditor(
+            diffResult.diff,
+            () => {},
+            {
+              repoFullName,
+              activeBranch: targetBranchName,
+              defaultBranch: branchProps.defaultBranch,
+              source: 'working-tree-commit',
+              sourceLabel:
+                target.mode === 'new'
+                  ? `Working tree commit after branching to ${targetBranchName}`
+                  : `Working tree commit on ${targetBranchName}`,
+              projectInstructions,
+            },
+            undefined,
+            {
+              providerOverride: lockedProvider || undefined,
+              modelOverride: lockedModel || undefined,
+            },
+            fileContexts,
+          );
+          if (auditResult.verdict === 'unsafe') {
+            setCommitPhase('error');
+            setCommitError(`Commit blocked by Auditor: ${auditResult.card.summary}`);
+            return;
+          }
         }
 
         // Phase: Committing

@@ -435,6 +435,9 @@ async function runHeadless(
     // explicit `[]` is an opt-out and is preserved.
     disabledTools,
     alwaysAllow,
+    // Auditor commit gate (opt-out, default on). `undefined` → the tool layer
+    // resolves it against `PUSH_AUDITOR_GATE` then the default.
+    auditorGate,
   } = {},
 ) {
   const taskPrompt = buildHeadlessTaskBrief(task, acceptanceChecks);
@@ -460,6 +463,7 @@ async function runHeadless(
       execMode,
       disabledTools,
       alwaysAllow,
+      auditorGate,
     });
     await saveSessionState(state);
 
@@ -828,6 +832,7 @@ async function runInteractive(
   // applies. An explicit empty array is an opt-out and would mask the env.
   const disabledTools = Array.isArray(config.disabledTools) ? config.disabledTools : undefined;
   const alwaysAllow = Array.isArray(config.alwaysAllow) ? config.alwaysAllow : undefined;
+  const auditorGate = typeof config.auditorGate === 'boolean' ? config.auditorGate : undefined;
 
   // Lazy session creation: defer disk writes until first user message.
   let sessionPersisted = alreadyPersisted;
@@ -1171,6 +1176,7 @@ async function runInteractive(
                 execMode,
                 disabledTools,
                 alwaysAllow,
+                auditorGate,
               },
             );
             await saveSessionState(state);
@@ -1222,6 +1228,7 @@ async function runInteractive(
           execMode,
           disabledTools,
           alwaysAllow,
+          auditorGate,
         });
         await saveSessionState(state);
         if (result.outcome === 'aborted') {
@@ -3614,12 +3621,17 @@ export async function main() {
       ? persistedConfig.alwaysAllow
       : undefined;
     const headlessExecMode = process.env.PUSH_EXEC_MODE || 'auto';
+    // Raw (not pre-resolved) so PUSH_AUDITOR_GATE can still override at the
+    // tool layer. Default on when unset.
+    const headlessAuditorGate =
+      typeof persistedConfig.auditorGate === 'boolean' ? persistedConfig.auditorGate : undefined;
     const headlessRunOpts = {
       allowExec,
       safeExecPatterns: headlessSafePatterns,
       execMode: headlessExecMode,
       disabledTools: headlessDisabledTools,
       alwaysAllow: headlessAlwaysAllow,
+      auditorGate: headlessAuditorGate,
     };
     if (values.delegate) {
       const { runDelegatedHeadless } = await import('./delegation-entry.js');

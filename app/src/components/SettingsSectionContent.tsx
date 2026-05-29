@@ -28,6 +28,7 @@ import {
   type SettingsWorkspaceProps,
 } from '@/components/SettingsSheet';
 import { formatModelDisplayName, type PreferredProvider } from '@/lib/providers';
+import { useAuditorGate } from '@/hooks/useAuditorGate';
 import type { AIProviderType } from '@/types';
 
 const SECTION_CARD_CLASS =
@@ -83,6 +84,11 @@ export function SettingsSectionContent({
   const tcMetrics = getMalformedToolCallMetrics();
   const ctxMetrics = getContextMetrics();
   const guardMetrics = fileLedger.getMetrics();
+  // Auditor commit gate — consumed directly (not threaded through the workspace
+  // bundle like Protect Main) because it has no cross-system side-effect: the
+  // commit call sites read it on demand via `getIsAuditorGateEnabled`. Keyed by
+  // the active repo so the per-repo override matches what those call sites read.
+  const auditorGate = useAuditorGate(workspace.activeRepoFullName ?? undefined);
   const [expandedBuiltInProviders, setExpandedBuiltInProviders] = useState<
     Record<BuiltInSettingsProviderId, boolean>
   >(() => {
@@ -775,6 +781,90 @@ export function SettingsSectionContent({
                     className={`rounded-lg border px-2 py-2 text-xs font-medium transition-colors ${
                       workspace.protectMainRepoOverride === 'never'
                         ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
+                        : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
+                    }`}
+                  >
+                    Never
+                  </button>
+                </div>
+                <p className="text-push-xs text-push-fg-dim">
+                  Inherit follows your global default. Always or Never only affects this repo.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Auditor Gate */}
+          <div className={SECTION_CARD_CLASS}>
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-push-fg">Auditor commit gate</label>
+              <span className="text-xs text-push-fg-secondary">
+                {auditorGate.globalDefault ? 'On' : 'Off'}
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => auditorGate.setGlobalDefault(false)}
+                className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                  !auditorGate.globalDefault
+                    ? 'border-amber-500/50 bg-amber-500/10 text-amber-400'
+                    : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
+                }`}
+              >
+                Off
+              </button>
+              <button
+                type="button"
+                onClick={() => auditorGate.setGlobalDefault(true)}
+                className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                  auditorGate.globalDefault
+                    ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
+                    : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
+                }`}
+              >
+                On
+              </button>
+            </div>
+            <p className="text-push-xs text-push-fg-secondary">
+              Review each commit for safety (secrets, injection, disabled security) before it lands.
+              On by default — turning it off skips the SAFE/UNSAFE check.
+            </p>
+
+            {workspace.activeRepoFullName && (
+              <div className="space-y-2 pt-1">
+                <label className="text-xs font-medium text-push-fg-secondary">
+                  Override for {workspace.activeRepoFullName.split('/').pop()}
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => auditorGate.setRepoOverride('inherit')}
+                    className={`rounded-lg border px-2 py-2 text-xs font-medium transition-colors ${
+                      auditorGate.repoOverride === 'inherit'
+                        ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
+                        : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
+                    }`}
+                  >
+                    Inherit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => auditorGate.setRepoOverride('always')}
+                    className={`rounded-lg border px-2 py-2 text-xs font-medium transition-colors ${
+                      auditorGate.repoOverride === 'always'
+                        ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
+                        : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
+                    }`}
+                  >
+                    Always
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => auditorGate.setRepoOverride('never')}
+                    className={`rounded-lg border px-2 py-2 text-xs font-medium transition-colors ${
+                      auditorGate.repoOverride === 'never'
+                        ? 'border-amber-500/50 bg-amber-500/10 text-amber-400'
                         : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
                     }`}
                   >

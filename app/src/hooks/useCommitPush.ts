@@ -21,6 +21,7 @@ import {
   writeToSandbox,
 } from '@/lib/sandbox-client';
 import { runAuditor } from '@/lib/auditor-agent';
+import { getIsAuditorGateEnabled } from '@/hooks/useAuditorGate';
 import { createSandboxPushGit } from '@/lib/git-backend';
 import { fetchAuditorFileContexts, type AuditorFileContext } from '@/lib/auditor-file-context';
 import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
@@ -168,7 +169,14 @@ export function useCommitPush(
     const effectiveAuditorProvider = providerOverride || getActiveProvider();
     const effectiveAuditorModel = modelOverride?.trim() || undefined;
 
-    if (effectiveAuditorProvider === 'demo') {
+    // Auditor commit gate (opt-out, default on — see useAuditorGate). When the
+    // user has disabled it, skip the provider requirement and the audit
+    // entirely and commit straight through. The standalone getter reads the
+    // global default (the per-repo override applies on surfaces that pass a
+    // repoFullName; this hook is sandbox-scoped without one).
+    const auditorEnabled = getIsAuditorGateEnabled();
+
+    if (auditorEnabled && effectiveAuditorProvider === 'demo') {
       setState((s) => ({
         ...s,
         phase: 'error',
@@ -186,43 +194,45 @@ export function useCommitPush(
         return;
       }
 
-      // Fetch file context for richer Auditor review (graceful — failures degrade to diff-only)
-      let fileContexts: AuditorFileContext[] = [];
-      try {
-        const filePaths = parseDiffStats(diffText).fileNames;
-        fileContexts = await fetchAuditorFileContexts(filePaths, async (path) => {
-          const result = await readFromSandbox(sandboxIdRef.current, `/workspace/${path}`);
-          if (result.error) return null;
-          return { content: result.content, truncated: result.truncated };
-        });
-      } catch {
-        // Degrade gracefully — proceed with diff-only
-      }
+      if (auditorEnabled) {
+        // Fetch file context for richer Auditor review (graceful — failures degrade to diff-only)
+        let fileContexts: AuditorFileContext[] = [];
+        try {
+          const filePaths = parseDiffStats(diffText).fileNames;
+          fileContexts = await fetchAuditorFileContexts(filePaths, async (path) => {
+            const result = await readFromSandbox(sandboxIdRef.current, `/workspace/${path}`);
+            if (result.error) return null;
+            return { content: result.content, truncated: result.truncated };
+          });
+        } catch {
+          // Degrade gracefully — proceed with diff-only
+        }
 
-      const auditResult = await runAuditor(
-        diffText,
-        () => {},
-        {
-          source: 'working-tree-commit',
-          sourceLabel: 'Working tree diff before commit/push',
-        },
-        undefined,
-        {
-          providerOverride: effectiveAuditorProvider,
-          modelOverride: effectiveAuditorModel,
-        },
-        fileContexts,
-      );
+        const auditResult = await runAuditor(
+          diffText,
+          () => {},
+          {
+            source: 'working-tree-commit',
+            sourceLabel: 'Working tree diff before commit/push',
+          },
+          undefined,
+          {
+            providerOverride: effectiveAuditorProvider,
+            modelOverride: effectiveAuditorModel,
+          },
+          fileContexts,
+        );
 
-      setState((s) => ({ ...s, auditVerdict: auditResult.card }));
+        setState((s) => ({ ...s, auditVerdict: auditResult.card }));
 
-      if (auditResult.verdict === 'unsafe') {
-        setState((s) => ({
-          ...s,
-          phase: 'error',
-          error: `Commit blocked by Auditor: ${auditResult.card.summary}`,
-        }));
-        return;
+        if (auditResult.verdict === 'unsafe') {
+          setState((s) => ({
+            ...s,
+            phase: 'error',
+            error: `Commit blocked by Auditor: ${auditResult.card.summary}`,
+          }));
+          return;
+        }
       }
 
       const attemptCommitAndPush = async (

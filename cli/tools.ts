@@ -5,7 +5,7 @@ import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { applyHashlineEdits, calculateContentVersion, renderAnchoredRange } from './hashline.js';
 import { runDiagnostics } from './diagnostics.js';
-import { createLocalGitBackend } from './git-backend.js';
+import { createLocalGitBackend, createLocalPushGit } from './git-backend.js';
 import { runCommandInResolvedShell, spawnCommandInResolvedShell } from './shell.js';
 import { scrubEnv } from './env-scrub.js';
 import {
@@ -26,6 +26,9 @@ import type { AgentRole } from '../lib/runtime-contract.ts';
 import { deriveProtocolVersion } from '../lib/tool-registry.ts';
 import { evaluatePreHooks } from '../lib/tool-hooks.ts';
 import { reduceToolOutput } from '../lib/tool-output-reducers.ts';
+import { runAuditor } from '../lib/auditor-agent.ts';
+import { resolveAuditorGateEnabled, AUDITOR_GATE_ENV_VAR } from '../lib/auditor-policy.ts';
+import { PROVIDER_CONFIGS, resolveApiKey, createProviderStream } from './provider.js';
 
 /**
  * CLI tool execution is the pushd daemon surface — the daemon IS the
@@ -1510,11 +1513,117 @@ export async function backupFile(filePath, workspaceRoot) {
 }
 
 /**
+ * Build a `PreCommitGate` (the `lib/git/push-git.ts` seam) that runs the
+ * Auditor SAFE/UNSAFE review over the staged diff before a commit lands.
+ *
+ * The gate is the CLI half of the cross-surface Auditor commit gate. It runs
+ * the shared `runAuditor` kernel through the CLI's existing provider
+ * `PushStream` (`createProviderStream`) — no provider adapter needed.
+ *
+ * Fail-closed (mirrors the Auditor's own default-to-UNSAFE stance):
+ * - When the gate is enabled but no provider/model/key is resolvable, deny —
+ *   the operator must fix provider config or disable the gate to commit.
+ * - `runAuditor` itself returns UNSAFE on any stream/parse error.
+ *
+ * UNSAFE → an interactive `approvalFn` (when present) may override; headless
+ * runs (no approvalFn) stay blocked. Every branch emits a structured log line
+ * (symmetric safe ↔ unsafe ↔ overridden ↔ unavailable) so an operator can see
+ * why a commit was gated, allowed, or refused.
+ *
+ * `getStagedDiff` lets the caller read the staged diff after `PushGit` has run
+ * `git add` — the gate is invoked by `PushGit.commit` *after* staging, so the
+ * diff reflects exactly what will be committed.
+ */
+function makeAuditorPreCommitGate({ providerId, model, getStagedDiff, approvalFn, signal }) {
+  return async () => {
+    const cliProvider = providerId ? PROVIDER_CONFIGS[providerId] : null;
+    let apiKey = '';
+    if (cliProvider) {
+      try {
+        apiKey = resolveApiKey(cliProvider);
+      } catch {
+        apiKey = '';
+      }
+    }
+    if (!cliProvider || !model || !apiKey) {
+      const reason = !cliProvider
+        ? `unknown provider "${providerId}"`
+        : !model
+          ? 'no model available'
+          : 'no API key available';
+      console.log(JSON.stringify({ level: 'error', event: 'auditor_gate_unavailable', reason }));
+      return {
+        ok: false,
+        reason: `Auditor commit gate is enabled but could not run (${reason}). Disable it (config auditorGate / ${AUDITOR_GATE_ENV_VAR}) or fix provider config to commit.`,
+      };
+    }
+
+    const stagedDiff = await getStagedDiff();
+    // Empty diff → nothing to audit; let the commit proceed (it will no-op /
+    // fail on its own if there's truly nothing staged).
+    if (!stagedDiff || !stagedDiff.trim()) {
+      console.log(JSON.stringify({ level: 'info', event: 'auditor_gate_empty_diff' }));
+      return { ok: true };
+    }
+
+    const stream = createProviderStream(cliProvider, apiKey);
+    let auditResult;
+    try {
+      auditResult = await runAuditor(
+        stagedDiff,
+        {
+          provider: providerId,
+          stream: (req) => stream(signal ? { ...req, signal: req.signal ?? signal } : req),
+          modelId: model,
+          resolveRuntimeContext: async () => '',
+        },
+        () => {},
+      );
+    } catch (err) {
+      // runAuditor is itself fail-safe, but guard the call site too.
+      const message = err instanceof Error ? err.message : String(err);
+      console.log(JSON.stringify({ level: 'error', event: 'auditor_gate_error', message }));
+      return { ok: false, reason: `Auditor errored: ${message} (defaulting to blocked)` };
+    }
+
+    if (auditResult.verdict === 'safe') {
+      console.log(JSON.stringify({ level: 'info', event: 'auditor_gate_safe' }));
+      return { ok: true };
+    }
+
+    // UNSAFE — allow an interactive approval override; headless stays blocked.
+    const summary = auditResult.card?.summary || 'auditor returned unsafe';
+    const risks = Array.isArray(auditResult.card?.risks) ? auditResult.card.risks : [];
+    if (typeof approvalFn === 'function') {
+      const riskLines = risks.map((r) => `- [${r.level}] ${r.description}`).join('\n');
+      const detail = `Auditor flagged this commit UNSAFE:\n${summary}${riskLines ? `\n${riskLines}` : ''}\nCommit anyway?`;
+      let overridden = false;
+      try {
+        overridden = await approvalFn('auditor', detail);
+      } catch {
+        overridden = false;
+      }
+      if (overridden) {
+        console.log(
+          JSON.stringify({ level: 'warn', event: 'auditor_gate_unsafe_overridden', summary }),
+        );
+        return { ok: true };
+      }
+    }
+    console.log(JSON.stringify({ level: 'warn', event: 'auditor_gate_unsafe_blocked', summary }));
+    return { ok: false, reason: `Auditor blocked commit (UNSAFE): ${summary}` };
+  };
+}
+
+/**
  * Execute a tool call. Options:
  * - approvalFn(tool, detail): async fn that returns true to proceed, false to deny.
  *   If not provided, all calls proceed (headless default: deny high-risk).
  * - providerId: active provider id ('ollama' | 'openrouter' | 'zen' | 'nvidia') for provider-aware tools.
  * - providerApiKey: resolved provider API key for provider-aware tools.
+ * - model: active model id — used by the Auditor commit gate's verdict call.
+ * - auditorGate: opt-out/in for the Auditor commit gate (resolved against
+ *   PUSH_AUDITOR_GATE via `lib/auditor-policy.ts`; default on).
  * - disabledTools: CLI tool names blocked at dispatch (config: `disabledTools`).
  * - alwaysAllow: CLI tool names that bypass approval (config: `alwaysAllow`).
  *   Both fall back to `PUSH_DISABLED_TOOLS` / `PUSH_ALWAYS_ALLOW` env (comma-
@@ -2380,14 +2489,60 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         // backend write.
         const addArgs =
           resolvedPaths.length > 0 ? ['--', ...resolvedPaths] : ['-A', '--', '.', ':!.push'];
+
+        // Auditor commit gate (opt-out, default on). Resolved against the
+        // per-surface setting (`options.auditorGate`) with `PUSH_AUDITOR_GATE`
+        // override via the shared `lib/auditor-policy.ts` resolver, so CLI,
+        // daemon, and web agree. When enabled, the gate runs the Auditor over
+        // the staged diff before the commit lands (via PushGit's PreCommitGate
+        // seam); UNSAFE blocks (interactive approval may override). When off,
+        // the PushGit facade commits with no gate — same behavior as before.
+        const gateEnabled = resolveAuditorGateEnabled({
+          explicit: options.auditorGate,
+          env: process.env[AUDITOR_GATE_ENV_VAR],
+        });
+        const preCommit = gateEnabled
+          ? makeAuditorPreCommitGate({
+              providerId: typeof options.providerId === 'string' ? options.providerId : '',
+              model: typeof options.model === 'string' ? options.model : '',
+              approvalFn: options.approvalFn,
+              signal: options.signal,
+              // Stage exactly what the commit will stage, then read the staged
+              // diff. PushGit.commit re-runs `git add` with the same addArgs
+              // (idempotent) before committing the index this produced.
+              getStagedDiff: async () => {
+                await execFileAsync('git', ['add', ...addArgs], { cwd: workspaceRoot });
+                const { stdout } = await execFileAsync('git', ['diff', '--cached'], {
+                  cwd: workspaceRoot,
+                  maxBuffer: 16_000_000,
+                });
+                return stdout;
+              },
+            })
+          : undefined;
+
         // No timeout for commit writes: slow pre-commit hooks, large staging
         // sets, or busy disks must not be killed (the prior direct execFile
         // flow was unbounded).
-        const backend = createLocalGitBackend(workspaceRoot, { timeoutMs: 0 });
-        const commitResult = await backend.commit(message, { addArgs });
-        if (!commitResult.ok) {
+        const pushGit = createLocalPushGit(workspaceRoot, { timeoutMs: 0, preCommit });
+        const commitOutcome = await pushGit.commit({ message, addArgs });
+
+        if (commitOutcome.blocked) {
+          const reason = commitOutcome.reason || 'commit blocked by pre-commit gate';
+          return {
+            ok: false,
+            text: `[Auditor] Commit blocked. ${reason}\nChanges remain staged — address the issues and retry, or have the operator approve.`,
+            structuredError: { code: 'AUDITOR_UNSAFE', message: reason, retryable: false },
+          };
+        }
+
+        const commitResult = commitOutcome.result;
+        if (!commitOutcome.ok || !commitResult) {
           const detail =
-            commitResult.stderr || commitResult.stdout || commitResult.error || 'git commit failed';
+            commitResult?.stderr ||
+            commitResult?.stdout ||
+            commitResult?.error ||
+            'git commit failed';
           return {
             ok: false,
             text: `git commit failed: ${detail}`,
@@ -2395,11 +2550,18 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           };
         }
 
-        const sha = await backend.headSha({ short: true });
+        const sha = await createLocalGitBackend(workspaceRoot, { timeoutMs: 0 }).headSha({
+          short: true,
+        });
         return {
           ok: true,
           text: commitResult.stdout.trim(),
-          meta: { sha: sha ?? 'unknown', message, filesStaged: resolvedPaths.length || 'all' },
+          meta: {
+            sha: sha ?? 'unknown',
+            message,
+            filesStaged: resolvedPaths.length || 'all',
+            ...(gateEnabled ? { auditorGate: 'safe' } : {}),
+          },
         };
       }
 
