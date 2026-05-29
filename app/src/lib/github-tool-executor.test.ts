@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./github-auth', () => ({
   getGitHubAuthHeaders: vi.fn(() => ({ Authorization: 'Bearer TEST_TOKEN' })),
+  getGitHubAuthHeadersForToken: vi.fn((token: string) => ({ Authorization: `token ${token}` })),
 }));
 
 vi.mock('./sensitive-data-guard', () => ({
@@ -37,6 +38,7 @@ vi.mock('@push/lib/github-tool-core', () => ({
 import {
   decodeGitHubBase64Utf8,
   executeGitHubToolWithFallback,
+  executeReadOnlyGitHubToolWithToken,
   executeToolCall,
   fetchRepoBranches,
   githubFetch,
@@ -257,6 +259,58 @@ describe('executeGitHubToolWithFallback', () => {
 // ---------------------------------------------------------------------------
 // executeToolCall — top-level dispatch
 // ---------------------------------------------------------------------------
+
+describe('executeReadOnlyGitHubToolWithToken', () => {
+  it('rejects a repo mismatch without invoking the core tool', async () => {
+    const result = await executeReadOnlyGitHubToolWithToken(
+      { tool: 'read_file', args: { repo: 'other/repo', path: 'a.ts' } } as never,
+      'owner/repo',
+      'tok-123',
+    );
+    expect(result.text).toContain('Access denied');
+    expect(executeGitHubCoreToolMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-GitHub tool', async () => {
+    supportsWorkerGitHubToolMock.mockReturnValue(false);
+    const result = await executeReadOnlyGitHubToolWithToken(
+      { tool: 'frobnicate', args: { repo: 'owner/repo' } } as never,
+      'owner/repo',
+      'tok-123',
+    );
+    expect(result.text).toContain('Unsupported');
+    expect(executeGitHubCoreToolMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a mutating GitHub tool even when worker-supported (read-only enforcement)', async () => {
+    // Simulate production where mutators ARE worker-supported; the read-only
+    // registry check must still reject them so the installation token can't write.
+    supportsWorkerGitHubToolMock.mockReturnValue(true);
+    for (const tool of ['merge_pr', 'create_pr', 'delete_branch', 'trigger_workflow']) {
+      const result = await executeReadOnlyGitHubToolWithToken(
+        { tool, args: { repo: 'owner/repo', number: 7 } } as never,
+        'owner/repo',
+        'tok-123',
+      );
+      expect(result.text).toContain('non-read-only');
+    }
+    expect(executeGitHubCoreToolMock).not.toHaveBeenCalled();
+  });
+
+  it('runs a gated read tool through the core runtime carrying the injected token', async () => {
+    executeGitHubCoreToolMock.mockResolvedValue({ text: 'file body' });
+    const result = await executeReadOnlyGitHubToolWithToken(
+      { tool: 'read_file', args: { repo: 'owner/repo', path: 'a.ts' } } as never,
+      'owner/repo',
+      'tok-123',
+    );
+    expect(result.text).toBe('file body');
+    const runtime = executeGitHubCoreToolMock.mock.calls[0]![0] as {
+      buildHeaders: () => Record<string, string>;
+    };
+    expect(runtime.buildHeaders().Authorization).toBe('token tok-123');
+  });
+});
 
 describe('executeToolCall — dispatch', () => {
   it('routes delegate_coder / delegate_explorer to the tool-dispatch layer', async () => {
