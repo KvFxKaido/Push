@@ -4481,9 +4481,18 @@ async function handleDelegateDeepReviewer(req) {
           modelId: resolvedModel,
           context: reviewerContext,
           resolveRuntimeContext: async (_diff, context) => buildReviewerContextBlock(context) || '',
-          // No cloud sandbox on the daemon — investigation runs against the
-          // local working tree via the CLI read tools.
-          sandboxId: undefined,
+          // The daemon investigates the LOCAL working tree, not a cloud
+          // sandbox. We still pass a truthy sandboxId (the workspace path) so
+          // the kernel does NOT inject its "No sandbox available — use GitHub
+          // tools instead" guidance: that guidance is wrong here because (a)
+          // our sandboxToolProtocol override advertises the local read tools
+          // (read_file / search_files / …) the executor actually runs, and
+          // (b) no GitHub tools are wired on this path. Without a truthy id the
+          // model would be steered away from the only tools it has (Codex P2).
+          // `sandboxId` is informational in the kernel (prompt guidance +
+          // hasSandbox flag) — it's never used as a real sandbox handle; all
+          // tool calls route through `toolExec` above.
+          sandboxId: entry.state.cwd || 'local',
           allowedRepo: '',
           userProfile: null,
           toolExec,

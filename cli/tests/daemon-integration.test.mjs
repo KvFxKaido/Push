@@ -3898,6 +3898,79 @@ describe('delegate_deep_reviewer', needsLoopback, () => {
       await fs.rm(tmpRoot, { recursive: true, force: true });
     }
   });
+
+  it('investigates via a local CLI read tool before reviewing (tool loop)', async () => {
+    // Proves the deep reviewer is steered toward the LOCAL CLI read tools its
+    // executor can actually run — the Codex P2 fix (truthy sandboxId suppresses
+    // the "no sandbox, use GitHub tools" guidance). Round 1 emits a CLI-native
+    // read_file call; round 2 (after the real tool result) emits the verdict.
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-deepreview-loop-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    // A real file in the workspace the reviewer will "read" during investigation.
+    const workRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-deepreview-ws-'));
+    await fs.writeFile(path.join(workRoot, 'a.ts'), 'export const answer = 42;\n');
+
+    const responses = [
+      // Round 1: investigate — emit a CLI-native read_file tool call.
+      [
+        'Let me read the changed file first.\n',
+        '```json\n{"tool": "read_file", "args": {"path": "a.ts"}}\n```',
+      ],
+      // Round 2: now produce the verdict.
+      [
+        '[REVIEW_COMPLETE]\n',
+        '{"summary": "MOCK_DEEP_LOOP: investigated a.ts before reviewing.",',
+        ' "comments": []}',
+      ],
+    ];
+    const mock = await startMockProviderServer({ responses });
+    const restoreConfig = patchProviderConfig('ollama', { url: mock.url, apiKey: 'test-mock-key' });
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', { provider: 'ollama', repo: { rootPath: workRoot } }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      const response = await handleRequest(
+        makeRequest(
+          'delegate_deep_reviewer',
+          { sessionId, attachToken, diff: MINIMAL_REVIEWER_DIFF },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(response.ok, true);
+      const { subagentId } = response.payload;
+      const entry = __getActiveSessionForTesting(sessionId);
+      await waitForDelegationComplete(entry, subagentId, sessionId);
+
+      // The kernel ran at least two provider rounds: the investigation round
+      // (tool call) and the verdict round. A single round would mean the tool
+      // loop never engaged.
+      assert.ok(
+        mock.requestCount() >= 2,
+        `expected >=2 provider rounds (investigate + verdict), got ${mock.requestCount()}`,
+      );
+
+      const events = await loadSessionEvents(sessionId);
+      const completed = events.find(
+        (e) => e.type === 'subagent.completed' && e.payload.subagentId === subagentId,
+      );
+      assert.ok(completed, 'expected subagent.completed');
+      assert.ok(completed.payload.reviewResult.summary.includes('MOCK_DEEP_LOOP'));
+    } finally {
+      restoreConfig();
+      await mock.stop();
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+      await fs.rm(workRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 // ─── cancel_delegation ──────────────────────────────────────────
