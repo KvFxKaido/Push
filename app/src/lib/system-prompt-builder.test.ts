@@ -142,6 +142,7 @@ describe('SystemPromptBuilder', () => {
     expect(PROMPT_SECTION_IDS).toContain('capabilities');
     expect(PROMPT_SECTION_IDS).toContain('environment');
     expect(PROMPT_SECTION_IDS).toContain('tool_instructions');
+    expect(PROMPT_SECTION_IDS).toContain('github_tool_instructions');
     expect(PROMPT_SECTION_IDS).toContain('delegation');
     expect(PROMPT_SECTION_IDS).toContain('guidelines');
     expect(PROMPT_SECTION_IDS).toContain('project_context');
@@ -151,7 +152,7 @@ describe('SystemPromptBuilder', () => {
     expect(PROMPT_SECTION_IDS).toContain('state');
     expect(PROMPT_SECTION_IDS).toContain('custom');
     expect(PROMPT_SECTION_IDS).toContain('last_instructions');
-    expect(PROMPT_SECTION_IDS).toHaveLength(16);
+    expect(PROMPT_SECTION_IDS).toHaveLength(17);
   });
 
   // --- Volatility classification ---

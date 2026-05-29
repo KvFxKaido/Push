@@ -222,6 +222,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_TAVILY_API_KEY` | Optional Tavily key for premium web search (`web_search`) |
 | `PUSH_WEB_SEARCH_BACKEND` | Web search backend: `auto` (default), `tavily`, `ollama`, `duckduckgo` |
 | `PUSH_AUDITOR_GATE` | `0`/`false` to disable the Auditor commit gate, `1`/`true` to force it on (default: on). Overrides the `auditorGate` config setting. |
+| `PUSH_GITHUB_TOKEN` | GitHub token enabling the GitHub tools (PRs, checks, repo browse, create/merge PR, workflows). Falls back to `GITHUB_TOKEN`, then `GH_TOKEN`, then `gh auth token`. |
 | `PUSH_LOCAL_SANDBOX` | `true` to run exec commands in a Docker container |
 | `PUSH_SHELL` | Override the shell used for `exec` / acceptance checks. Useful on Windows if you want to force Git Bash, WSL bash, PowerShell, etc. |
 | `PUSH_SESSION_DIR` | Override session storage location (default: `~/.push/sessions`) |
@@ -281,6 +282,24 @@ Available tools:
 | `ask_user` | control | Pause for operator clarification when a critical ambiguity would waste work |
 
 **Read/mutate split:** The CLI groups each turn as read-only calls first, then a sequential file-mutation batch (`write_file`, `edit_file`, `undo_edit`), then at most one trailing side-effect (`exec`, `git_commit`, `save_memory`, etc.). Reads run in parallel; file mutations run sequentially with fail-fast; extra side effects or reads after mutation starts are rejected with `MULTI_MUTATION_NOT_ALLOWED`. Memory/control tools do not modify workspace files.
+
+### GitHub tools
+
+When a GitHub token is configured (`PUSH_GITHUB_TOKEN` / `GITHUB_TOKEN` / `GH_TOKEN`, or a logged-in `gh` CLI), the CLI also exposes GitHub tools that operate over the GitHub API — the same surface the web app uses, sharing the runtime-agnostic core in `lib/github-tool-core.ts`. They're advertised under their public names (`pr`, `prs`, `repo_read`, `pr_create`, …) and only appear in the prompt when a token is present; without one they return `GITHUB_NO_TOKEN`.
+
+| Tool | Type | Purpose |
+|---|---|---|
+| `pr` / `prs` / `commits` | read | Fetch a PR (with diff + comments) / list PRs / list recent commits |
+| `repo_read` / `repo_grep` / `repo_ls` / `repo_search` | read | Read a file / grep a file / list a directory / code-search, over the GitHub API |
+| `branches` / `checks` / `commit_files` | read | List branches / CI status for a ref / files changed in a commit |
+| `pr_check` / `pr_find` | read | Check PR mergeability + CI / find an open PR for a branch |
+| `workflow_runs` / `workflow_logs` | read | List workflow runs / fetch run job+step details |
+| `pr_create` | mutate | Open a pull request |
+| `pr_merge` | mutate | Merge a PR (`merge`/`squash`/`rebase`) |
+| `branch_delete` | mutate | Delete a branch |
+| `workflow_run` | mutate | Trigger a `workflow_dispatch` |
+
+Read-only GitHub tools parallelize alongside the CLI's other reads; the write tools (`pr_create`, `pr_merge`, `branch_delete`, `workflow_run`) are side-effecting and follow the one-trailing-side-effect-per-turn budget. **Merges go through the PR flow** — open a PR and merge it; the CLI never merges locally. Write tools require both a configured token and a role that grants `pr:write` (orchestrator/coder); the read-only Explorer is denied them at the capability gate.
 
 ### Hashline edits
 

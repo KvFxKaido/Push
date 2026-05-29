@@ -274,6 +274,22 @@ export function isCapabilityMapped(canonicalName: string): boolean {
 export type ExecutionMode = 'cloud' | 'local-daemon';
 
 /**
+ * Optional inputs that refine the effective grant within a mode without being
+ * a new mode. Passed alongside `mode` to `getEffectiveCapabilities` /
+ * `roleCanUseTool` / `roleHasCapability` / `enforceRoleCapability`.
+ *
+ * - `remoteGitHubAvailable`: in `local-daemon` mode, signals that a real
+ *   GitHub remote is reachable (the CLI resolved a token and talks to
+ *   api.github.com directly), so the remote-only strip (`pr:write`,
+ *   `workflow:trigger`) should NOT apply. "No remote" is a property of the
+ *   sandbox daemon path, not of local-daemon mode itself. Defaults to false,
+ *   preserving the historical strip for every caller that doesn't opt in.
+ */
+export interface CapabilityModeOpts {
+  remoteGitHubAvailable?: boolean;
+}
+
+/**
  * Canonical mapping from a workspace mode (`'repo' | 'scratch' | 'chat'
  * | 'local-pc' | 'relay'`) to the `ExecutionMode` policy input.
  *
@@ -421,9 +437,17 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
  * `local-daemon` mode:
  *
  *   - Every role drops the remote-only caps (`pr:write`,
- *     `workflow:trigger`) — the paired session has no GitHub remote, so
+ *     `workflow:trigger`) — a paired sandbox session has no GitHub remote, so
  *     these would fail at the transport layer for any role. Enforced at
  *     the capability boundary, not as a runtime network error.
+ *
+ *     **Exception:** when `opts.remoteGitHubAvailable` is set (the CLI has a
+ *     GitHub token and talks to api.github.com directly — see
+ *     `cli/github-runtime.ts`), the remote-only strip is skipped. The "no
+ *     remote" assumption is a property of the *sandbox* daemon path, not of
+ *     `local-daemon` mode per se; a token-bearing CLI genuinely has a remote.
+ *     Default (`false`) preserves the historical strip for every existing
+ *     caller, so sandbox-backed local-daemon sessions are unaffected.
  *   - The orchestrator additionally picks up the daemon-orchestrator
  *     extras (exec, write, test, download) so it can wield sandbox tools
  *     directly (no Coder hop on the paired pushd path), and drops the
@@ -439,13 +463,17 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
 export function getEffectiveCapabilities(
   role: AgentRole,
   mode: ExecutionMode = 'cloud',
+  opts: { remoteGitHubAvailable?: boolean } = {},
 ): ReadonlySet<Capability> {
   const base = ROLE_CAPABILITIES[role];
   if (!base) return new Set<Capability>();
   if (mode !== 'local-daemon') return base;
   const result = new Set<Capability>();
   for (const cap of base) {
-    if (!LOCAL_DAEMON_REMOTE_ONLY_CAPS.has(cap)) result.add(cap);
+    // The remote-only strip is skipped when a real GitHub remote is reachable
+    // (token-bearing CLI). Otherwise pr:write / workflow:trigger are dropped.
+    if (!opts.remoteGitHubAvailable && LOCAL_DAEMON_REMOTE_ONLY_CAPS.has(cap)) continue;
+    result.add(cap);
   }
   if (role === 'orchestrator') {
     for (const cap of LOCAL_DAEMON_ORCHESTRATOR_EXTRA) result.add(cap);
@@ -463,8 +491,9 @@ export function roleHasCapability(
   role: AgentRole,
   capability: Capability,
   mode: ExecutionMode = 'cloud',
+  opts: CapabilityModeOpts = {},
 ): boolean {
-  return getEffectiveCapabilities(role, mode).has(capability);
+  return getEffectiveCapabilities(role, mode, opts).has(capability);
 }
 
 /**
@@ -476,10 +505,11 @@ export function roleCanUseTool(
   role: AgentRole,
   canonicalToolName: string,
   mode: ExecutionMode = 'cloud',
+  opts: CapabilityModeOpts = {},
 ): boolean {
   const required = getToolCapabilities(canonicalToolName);
   if (required.length === 0) return true; // Unknown tool — fail-open
-  const granted = getEffectiveCapabilities(role, mode);
+  const granted = getEffectiveCapabilities(role, mode, opts);
   if (granted.size === 0) return false;
   return required.every((cap) => granted.has(cap));
 }
@@ -546,6 +576,7 @@ export function enforceRoleCapability(
   role: unknown,
   canonicalToolName: string,
   mode: ExecutionMode = 'cloud',
+  opts: CapabilityModeOpts = {},
 ): RoleCapabilityCheck {
   if (role === undefined || role === null || role === '') {
     return {
@@ -565,9 +596,9 @@ export function enforceRoleCapability(
       detail: `Recognized roles: ${Array.from(KNOWN_AGENT_ROLES).join(', ')}. A typo or stale enum value in a JS caller usually causes this; TypeScript callers are protected by the AgentRole type.`,
     };
   }
-  if (!roleCanUseTool(role, canonicalToolName, mode)) {
+  if (!roleCanUseTool(role, canonicalToolName, mode, opts)) {
     const required = getToolCapabilities(canonicalToolName);
-    const granted = Array.from(getEffectiveCapabilities(role, mode));
+    const granted = Array.from(getEffectiveCapabilities(role, mode, opts));
     return {
       ok: false,
       type: 'ROLE_CAPABILITY_DENIED',

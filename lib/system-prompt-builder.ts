@@ -16,6 +16,7 @@ export const PROMPT_SECTION_IDS = [
   'capabilities',
   'environment',
   'tool_instructions',
+  'github_tool_instructions',
   'delegation',
   'guidelines',
   'project_context',
@@ -37,6 +38,11 @@ const SECTION_CONFIG: Record<PromptSectionId, { priority: number; volatile: bool
   capabilities: { priority: 25, volatile: true },
   environment: { priority: 30, volatile: true },
   tool_instructions: { priority: 40, volatile: false },
+  // GitHub tool protocol — appended right after the core tool protocol.
+  // Stable: presence depends only on whether a GitHub token is configured,
+  // which is fixed for the life of a session (CLI surface; the web app
+  // composes GitHub tools through its own prompt path).
+  github_tool_instructions: { priority: 45, volatile: false },
   delegation: { priority: 50, volatile: false },
   guidelines: { priority: 60, volatile: false },
   project_context: { priority: 70, volatile: true },
