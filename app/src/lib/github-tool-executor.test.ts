@@ -278,7 +278,22 @@ describe('executeReadOnlyGitHubToolWithToken', () => {
       'owner/repo',
       'tok-123',
     );
-    expect(result.text).toContain('Unsupported tool');
+    expect(result.text).toContain('Unsupported');
+    expect(executeGitHubCoreToolMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a mutating GitHub tool even when worker-supported (read-only enforcement)', async () => {
+    // Simulate production where mutators ARE worker-supported; the read-only
+    // registry check must still reject them so the installation token can't write.
+    supportsWorkerGitHubToolMock.mockReturnValue(true);
+    for (const tool of ['merge_pr', 'create_pr', 'delete_branch', 'trigger_workflow']) {
+      const result = await executeReadOnlyGitHubToolWithToken(
+        { tool, args: { repo: 'owner/repo', number: 7 } } as never,
+        'owner/repo',
+        'tok-123',
+      );
+      expect(result.text).toContain('non-read-only');
+    }
     expect(executeGitHubCoreToolMock).not.toHaveBeenCalled();
   });
 

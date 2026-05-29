@@ -21,6 +21,7 @@ import {
   type GitHubCoreRuntime as GitHubToolCoreRuntime,
   type GitHubCoreToolCall as GitHubToolCoreCall,
 } from '@push/lib/github-tool-core';
+import { isReadOnlyToolName } from '@push/lib/tool-registry';
 import {
   executeGitHubToolViaWorker,
   fetchRepoBranchesViaWorker,
@@ -200,9 +201,14 @@ export async function executeReadOnlyGitHubToolWithToken(
       text: `[Tool Error] Access denied — can only query the active repo "${allowedRepo || 'none'}" (requested: "${requestedRepo || 'none'}")`,
     };
   }
-  if (!isWorkerGitHubToolCall(call)) {
+  // Defense-in-depth: enforce read-only at the execution layer, not just via the
+  // prompt. `supportsWorkerGitHubTool` includes mutators (create_pr, merge_pr,
+  // delete_branch, trigger_workflow), and runDeepReviewer can forward a trailing
+  // *mutating* tool call to `toolExec` — so a model-emitted mutation must be
+  // rejected here before it runs with the installation token.
+  if (!isWorkerGitHubToolCall(call) || !isReadOnlyToolName(call.tool)) {
     return {
-      text: `[Tool Error] Unsupported tool for automated review: ${String((call as { tool?: unknown }).tool ?? 'unknown')}`,
+      text: `[Tool Error] Unsupported or restricted (non-read-only) tool for automated review: ${String((call as { tool?: unknown }).tool ?? 'unknown')}`,
     };
   }
   try {
