@@ -25,6 +25,7 @@ const providerHandlerMocks = vi.hoisted(() => ({
   handleOpenRouterChat: vi.fn(),
   handleOllamaChat: vi.fn(),
   handleZenChat: vi.fn(),
+  handleZenGoChat: vi.fn(),
   handleNvidiaChat: vi.fn(),
   handleBlackboxChat: vi.fn(),
   handleKiloCodeChat: vi.fn(),
@@ -37,6 +38,7 @@ import { createWebStreamAdapter } from './coder-job-stream-adapter';
 import type { SandboxToolCall } from './coder-job-detector-adapter';
 import type { Env } from './worker-middleware';
 import type { ChatMessage } from '@/types';
+import type { AIProviderType } from '@push/lib/provider-contract';
 
 function env(): Env {
   return {
@@ -924,5 +926,88 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
     await drain(stream);
     const req = providerHandlerMocks.handleOpenRouterChat.mock.calls[0]![0] as Request;
     expect(req.url).toBe('https://push.example.test/api/openrouter/chat');
+  });
+
+  // --- Zen "Go" routing (server-side opt-in; browser uses a localStorage flag) ---
+
+  /** Drain a stream with an explicit provider+model (the shared `drain`
+   * hardcodes openrouter/sonnet, which the Zen Go cases need to override). */
+  async function drainAs(
+    stream: ReturnType<typeof createWebStreamAdapter>,
+    provider: AIProviderType,
+    model: string,
+  ): Promise<{ tokens: string[]; errors: Error[] }> {
+    const tokens: string[] = [];
+    const errors: Error[] = [];
+    try {
+      for await (const event of stream({
+        provider,
+        model,
+        messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }],
+      })) {
+        if (event.type === 'text_delta') tokens.push(event.text);
+      }
+    } catch (err) {
+      errors.push(err instanceof Error ? err : new Error(String(err)));
+    }
+    return { tokens, errors };
+  }
+
+  it('routes zen→Go handler (and not the regular zen handler) when zenGo is set', async () => {
+    providerHandlerMocks.handleZenGoChat.mockResolvedValue(
+      sseResponse(['data: {"choices":[{"delta":{"content":"hi"}}]}\n\n', 'data: [DONE]\n\n']),
+    );
+    const stream = createWebStreamAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      provider: 'zen',
+      modelId: 'kimi-k2.6',
+      jobId: 'job-zen-go',
+      zenGo: true,
+    });
+    const { tokens, errors } = await drainAs(stream, 'zen', 'kimi-k2.6');
+    expect(errors).toEqual([]);
+    expect(tokens.join('')).toBe('hi');
+    expect(providerHandlerMocks.handleZenGoChat).toHaveBeenCalledTimes(1);
+    expect(providerHandlerMocks.handleZenChat).not.toHaveBeenCalled();
+    const req = providerHandlerMocks.handleZenGoChat.mock.calls[0]![0] as Request;
+    expect(req.url).toBe('https://push.example.test/api/zen/go/chat');
+  });
+
+  it('routes zen→regular handler when zenGo is unset', async () => {
+    providerHandlerMocks.handleZenChat.mockResolvedValue(sseResponse(['data: [DONE]\n\n']));
+    const stream = createWebStreamAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      provider: 'zen',
+      modelId: 'kimi-k2.6',
+      jobId: 'job-zen-regular',
+    });
+    await drainAs(stream, 'zen', 'kimi-k2.6');
+    expect(providerHandlerMocks.handleZenChat).toHaveBeenCalledTimes(1);
+    expect(providerHandlerMocks.handleZenGoChat).not.toHaveBeenCalled();
+    const req = providerHandlerMocks.handleZenChat.mock.calls[0]![0] as Request;
+    expect(req.url).toBe('https://push.example.test/api/zen/chat');
+  });
+
+  it('routes an Anthropic-transport Go model through the Go handler (it translates to OpenAI SSE)', async () => {
+    // handleZenGoChat detects anthropic-transport models (minimax-*) and wraps
+    // the upstream in createAnthropicTranslatedStream, so the stream reaching
+    // the pump is already OpenAI-shaped — the adapter must not block them.
+    providerHandlerMocks.handleZenGoChat.mockResolvedValue(
+      sseResponse(['data: {"choices":[{"delta":{"content":"ok"}}]}\n\n', 'data: [DONE]\n\n']),
+    );
+    const stream = createWebStreamAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      provider: 'zen',
+      modelId: 'minimax-m2.5',
+      jobId: 'job-zen-go-anthropic',
+      zenGo: true,
+    });
+    const { tokens, errors } = await drainAs(stream, 'zen', 'minimax-m2.5');
+    expect(errors).toEqual([]);
+    expect(tokens.join('')).toBe('ok');
+    expect(providerHandlerMocks.handleZenGoChat).toHaveBeenCalledTimes(1);
   });
 });

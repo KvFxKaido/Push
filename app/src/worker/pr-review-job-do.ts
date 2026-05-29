@@ -426,12 +426,15 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
 
   const provider = (env.PR_REVIEW_PROVIDER as AIProviderType | undefined) ?? DEFAULT_PROVIDER;
   const modelId = env.PR_REVIEW_MODEL ?? DEFAULT_MODEL;
+  const zenGo =
+    provider === 'zen' && ['1', 'true', 'yes'].includes((env.PR_REVIEW_ZEN_GO ?? '').toLowerCase());
   const stream = createWebStreamAdapter({
     env,
     origin: input.origin,
     provider,
     modelId,
     jobId: input.deliveryId,
+    zenGo,
   });
 
   const detectors = createWebDetectorAdapter();

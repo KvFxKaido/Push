@@ -9,6 +9,7 @@ describe('zen-go', () => {
         'glm-5',
         'glm-5.1',
         'kimi-k2.5',
+        'kimi-k2.6',
         'mimo-v2-omni',
         'mimo-v2-pro',
         'minimax-m2.5',
@@ -17,7 +18,7 @@ describe('zen-go', () => {
         'qwen3.6-plus',
       ]),
     );
-    expect(ZEN_GO_MODELS).toHaveLength(9);
+    expect(ZEN_GO_MODELS).toHaveLength(10);
   });
 
   it('exposes an explicit default model', () => {
@@ -28,6 +29,7 @@ describe('zen-go', () => {
     expect(getZenGoTransport('glm-5')).toBe('openai');
     expect(getZenGoTransport('glm-5.1')).toBe('openai');
     expect(getZenGoTransport('kimi-k2.5')).toBe('openai');
+    expect(getZenGoTransport('kimi-k2.6')).toBe('openai');
     expect(getZenGoTransport('mimo-v2-pro')).toBe('openai');
     expect(getZenGoTransport('mimo-v2-omni')).toBe('openai');
     expect(getZenGoTransport('qwen3.6-plus')).toBe('openai');

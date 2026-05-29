@@ -6,6 +6,7 @@ export const ZEN_GO_MODELS = [
   'glm-5',
   'glm-5.1',
   'kimi-k2.5',
+  'kimi-k2.6',
   'mimo-v2-omni',
   'mimo-v2-pro',
   'minimax-m2.5',
