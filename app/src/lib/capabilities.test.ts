@@ -318,17 +318,22 @@ describe('ExecutionMode — orchestrator capability widening for local-daemon', 
       expect(roleCanUseTool('orchestrator', 'sandbox_run_tests', 'local-daemon')).toBe(true);
     });
 
-    it('orchestrator does NOT gain remote-bound git or PR capabilities', () => {
-      // Local-daemon sessions have no remote wired up; the prompt
-      // already advertises commit/push/pr as unavailable. Capability
-      // grant matches.
-      expect(roleHasCapability('orchestrator', 'git:commit', 'local-daemon')).toBe(false);
+    it('orchestrator gains LOCAL git ops (commit/branch) but not remote-bound ones', () => {
+      // local-daemon operates on a real local working tree (CLI, or web
+      // relay/local-pc paired to a real machine), so local git ops are
+      // grantable without a remote. Only genuinely remote-bound ops stay
+      // stripped. This is what lets a non-delegated CLI orchestrator use the
+      // git_commit / git_create_branch / git_switch_branch tools that
+      // TOOL_PROTOCOL advertises (PR #700 / Codex P2).
+      expect(roleHasCapability('orchestrator', 'git:commit', 'local-daemon')).toBe(true);
+      expect(roleHasCapability('orchestrator', 'git:branch', 'local-daemon')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'sandbox_prepare_commit', 'local-daemon')).toBe(true);
+
+      // Remote-bound ops remain stripped (no remote in a paired session).
       expect(roleHasCapability('orchestrator', 'git:push', 'local-daemon')).toBe(false);
-      expect(roleHasCapability('orchestrator', 'git:branch', 'local-daemon')).toBe(false);
       expect(roleHasCapability('orchestrator', 'git:draft', 'local-daemon')).toBe(false);
       expect(roleHasCapability('orchestrator', 'pr:write', 'local-daemon')).toBe(false);
       expect(roleHasCapability('orchestrator', 'workflow:trigger', 'local-daemon')).toBe(false);
-      expect(roleCanUseTool('orchestrator', 'sandbox_prepare_commit', 'local-daemon')).toBe(false);
       expect(roleCanUseTool('orchestrator', 'sandbox_push', 'local-daemon')).toBe(false);
       expect(roleCanUseTool('orchestrator', 'create_pr', 'local-daemon')).toBe(false);
       expect(roleCanUseTool('orchestrator', 'merge_pr', 'local-daemon')).toBe(false);
@@ -389,48 +394,57 @@ describe('ExecutionMode — orchestrator capability widening for local-daemon', 
       expect(effective).toEqual(ROLE_CAPABILITIES.orchestrator);
     });
 
-    it('local-daemon orchestrator adds sandbox extras and removes remote-only caps', () => {
+    it('local-daemon orchestrator adds sandbox + local-branch extras and removes remote-only caps', () => {
       const cloudCaps = getEffectiveCapabilities('orchestrator', 'cloud');
       const daemonCaps = getEffectiveCapabilities('orchestrator', 'local-daemon');
-      // Sandbox extras present only in daemon mode (repo:write is shared —
-      // cloud has it too via the direct-edit lane).
-      for (const cap of ['sandbox:exec', 'sandbox:test', 'sandbox:download'] as const) {
+      // Sandbox extras + local git:branch present only in daemon mode
+      // (repo:write is shared — cloud has it too via the direct-edit lane).
+      for (const cap of [
+        'sandbox:exec',
+        'sandbox:test',
+        'sandbox:download',
+        'git:branch',
+      ] as const) {
         expect(daemonCaps.has(cap)).toBe(true);
         expect(cloudCaps.has(cap)).toBe(false);
       }
       expect(cloudCaps.has('repo:write')).toBe(true);
       expect(daemonCaps.has('repo:write')).toBe(true);
+      // git:commit is a LOCAL op — kept in daemon mode (and cloud).
+      expect(cloudCaps.has('git:commit')).toBe(true);
+      expect(daemonCaps.has('git:commit')).toBe(true);
       // Remote-bound caps present only in cloud (no remote in daemon): the
-      // PR/workflow ops plus the direct-edit lane's git:commit/git:push.
-      for (const cap of ['pr:write', 'workflow:trigger', 'git:commit', 'git:push'] as const) {
+      // PR/workflow ops plus git:push.
+      for (const cap of ['pr:write', 'workflow:trigger', 'git:push'] as const) {
         expect(cloudCaps.has(cap)).toBe(true);
         expect(daemonCaps.has(cap)).toBe(false);
       }
     });
 
-    it('local-daemon orchestrator extras are exactly exec/test/download', () => {
+    it('local-daemon orchestrator extras are exactly exec/test/download/branch', () => {
       const cloudCaps = getEffectiveCapabilities('orchestrator', 'cloud');
       const daemonCaps = getEffectiveCapabilities('orchestrator', 'local-daemon');
       const extras = new Set<Capability>();
       for (const cap of daemonCaps) {
         if (!cloudCaps.has(cap)) extras.add(cap);
       }
-      // repo:write is no longer a daemon-only extra — cloud has it too.
+      // repo:write is shared (not daemon-only); git:branch is a daemon-only
+      // local op the orchestrator picks up (PR #700).
       expect(extras).toEqual(
-        new Set<Capability>(['sandbox:exec', 'sandbox:test', 'sandbox:download']),
+        new Set<Capability>(['sandbox:exec', 'sandbox:test', 'sandbox:download', 'git:branch']),
       );
     });
 
-    it('cloud-only orchestrator caps are the remote-bound PR/workflow + git ops', () => {
+    it('cloud-only orchestrator caps are the remote-bound PR/workflow + git:push', () => {
       const cloudCaps = getEffectiveCapabilities('orchestrator', 'cloud');
       const daemonCaps = getEffectiveCapabilities('orchestrator', 'local-daemon');
       const cloudOnly = new Set<Capability>();
       for (const cap of cloudCaps) {
         if (!daemonCaps.has(cap)) cloudOnly.add(cap);
       }
-      expect(cloudOnly).toEqual(
-        new Set<Capability>(['pr:write', 'workflow:trigger', 'git:commit', 'git:push']),
-      );
+      // git:commit is NO LONGER cloud-only (local op kept in daemon); only the
+      // genuinely remote-bound ops remain cloud-only.
+      expect(cloudOnly).toEqual(new Set<Capability>(['pr:write', 'workflow:trigger', 'git:push']));
     });
   });
 

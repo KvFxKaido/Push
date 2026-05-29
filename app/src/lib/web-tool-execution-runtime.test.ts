@@ -476,14 +476,11 @@ describe('WebToolExecutionRuntime — runtime-level role capability invariant', 
     });
 
     it('local-daemon orchestrator: remote-bound git ops are STILL denied (no remote wired)', async () => {
-      // The widening explicitly skips commit/push/branch/PR ops — the
-      // local-pc protocol declares those unavailable (no remote). The
-      // grant must match.
+      // The widening grants LOCAL git ops (commit/branch — real working tree)
+      // but still skips genuinely remote-bound ops: push/PR/workflow have no
+      // remote in a paired session. The grant must match. (sandbox_prepare_commit
+      // requires only git:commit, so it is now allowed — see the allowed test.)
       const stillDenied: AnyToolCall[] = [
-        {
-          source: 'sandbox',
-          call: { tool: 'sandbox_prepare_commit', args: { message: 'x' } },
-        },
         {
           source: 'sandbox',
           call: { tool: 'sandbox_push', args: {} },
@@ -498,6 +495,28 @@ describe('WebToolExecutionRuntime — runtime-level role capability invariant', 
           localDaemonBinding: {} as unknown,
         });
         expect(result.structuredError?.type).toBe('ROLE_CAPABILITY_DENIED');
+      }
+    });
+
+    it('local-daemon orchestrator: LOCAL git ops (commit/branch) pass the gate', async () => {
+      // The real working tree means local commit + branch ops are grantable
+      // without a remote — this is what unblocks the non-delegated CLI
+      // orchestrator's git_commit / git_create_branch / git_switch_branch
+      // tools (PR #700). Only git:push and PR/workflow ops stay denied.
+      const localGitCalls: AnyToolCall[] = [
+        { source: 'sandbox', call: { tool: 'sandbox_prepare_commit', args: { message: 'x' } } },
+        { source: 'sandbox', call: { tool: 'sandbox_create_branch', args: { name: 'feat/x' } } },
+        { source: 'sandbox', call: { tool: 'sandbox_switch_branch', args: { branch: 'main' } } },
+      ];
+      for (const call of localGitCalls) {
+        const result = await runtime.execute(call, {
+          allowedRepo: 'owner/repo',
+          sandboxId: null,
+          isMainProtected: false,
+          role: 'orchestrator',
+          localDaemonBinding: {} as unknown,
+        });
+        expect(result.structuredError?.type).not.toBe('ROLE_CAPABILITY_DENIED');
       }
     });
   });

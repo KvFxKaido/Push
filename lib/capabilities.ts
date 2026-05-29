@@ -178,6 +178,10 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
   git_diff: ['repo:read'],
   git_commit: ['git:commit'],
   git_create_branch: ['git:branch'],
+  // CLI-native switch tool — same capability as create. The CLI gate
+  // canonicalizes the `switch_branch` / `sandbox_switch_branch` aliases to
+  // this name before the lookup (see CLI_TOOL_ALIASES in cli/tools.ts).
+  git_switch_branch: ['git:branch'],
   lsp_diagnostics: ['repo:read'],
   save_memory: ['scratchpad'],
   write_file: ['repo:write'],
@@ -306,27 +310,36 @@ export function workspaceModeToExecutionMode(mode: string | null | undefined): E
 /**
  * Capabilities the orchestrator picks up *only* in `local-daemon` mode, on
  * top of the shared base grant. `repo:write` is already in the base grant
- * (the cloud direct-edit lane), so it isn't repeated here — these are the
- * truly daemon-only additions: shell/exec + test + download. The base
- * grant's remote-bound git ops (commit/push) are stripped back out
- * separately via `LOCAL_DAEMON_ORCHESTRATOR_REMOTE_GIT` (no remote in a
- * paired session).
+ * (the cloud direct-edit lane), so it isn't repeated here.
+ *
+ * Daemon-only additions:
+ *   - `sandbox:exec` / `sandbox:test` / `sandbox:download` — the orchestrator
+ *     wields sandbox tools directly on the paired pushd path (no Coder hop).
+ *   - `git:branch` — the CLI/daemon operates on the user's REAL local working
+ *     tree (not an ephemeral sandbox), so creating/switching branches locally
+ *     is a no-remote operation the orchestrator can do directly. This is what
+ *     makes the inline (non-delegated) CLI session able to use
+ *     `git_create_branch` / `git_switch_branch` that `TOOL_PROTOCOL` advertises
+ *     (Codex P2 on PR #700). `git:commit` stays in the base grant for the same
+ *     reason — only the genuinely remote-bound `git:push` is stripped below.
  */
 const LOCAL_DAEMON_ORCHESTRATOR_EXTRA: ReadonlySet<Capability> = new Set<Capability>([
   'sandbox:exec',
   'sandbox:test',
   'sandbox:download',
+  'git:branch',
 ]);
 
 /**
  * Remote-bound git ops the orchestrator carries in `cloud` mode (its
- * direct-edit lane) but must drop in `local-daemon` mode: the paired pushd
- * session has no GitHub remote, so the local-pc tool protocol already
- * declares commit/push unavailable. Stripped only for the orchestrator —
- * the coder keeps its git grant in local-daemon (see the function doc).
+ * direct-edit lane) but must drop in `local-daemon` mode: a paired session
+ * cannot push without a remote, so the local-pc tool protocol declares push
+ * unavailable. Only `git:push` is remote-bound — `git:commit` and `git:branch`
+ * operate on the local working tree and are KEPT (commit via the base grant,
+ * branch via `LOCAL_DAEMON_ORCHESTRATOR_EXTRA`). Stripped only for the
+ * orchestrator — the coder keeps its full git grant in local-daemon.
  */
 const LOCAL_DAEMON_ORCHESTRATOR_REMOTE_GIT: ReadonlySet<Capability> = new Set<Capability>([
-  'git:commit',
   'git:push',
 ]);
 
@@ -367,8 +380,9 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
     // of always hopping to the Coder. Deliberately NO `sandbox:exec` — the
     // missing exec grant is the code-enforced boundary: anything needing
     // tests/build/install can't be verified directly and must delegate.
-    // `git:commit`/`git:push` are stripped back out in local-daemon mode
-    // (no remote wired up); see `getEffectiveCapabilities`.
+    // In local-daemon mode only `git:push` is stripped (no remote); `git:commit`
+    // is kept (local working tree) and `git:branch` is added back via the
+    // daemon-orchestrator extras. See `getEffectiveCapabilities`.
     'repo:write',
     'git:commit',
     'git:push',
@@ -449,10 +463,11 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
  *     Default (`false`) preserves the historical strip for every existing
  *     caller, so sandbox-backed local-daemon sessions are unaffected.
  *   - The orchestrator additionally picks up the daemon-orchestrator
- *     extras (exec, write, test, download) so it can wield sandbox tools
- *     directly (no Coder hop on the paired pushd path), and drops the
- *     cloud direct-edit lane's `git:commit`/`git:push` (no remote wired
- *     up in a paired session).
+ *     extras (exec, test, download, branch) so it can wield sandbox tools
+ *     and local branch ops directly (no Coder hop on the paired pushd path),
+ *     and drops only the remote-bound `git:push` from the cloud direct-edit
+ *     lane. `git:commit` + `git:branch` are local working-tree ops the daemon
+ *     can do without a remote, so they're kept.
  *
  * Reviewer/auditor have no remote-only caps to drop, so their effective
  * grant matches their static grant in both modes. Coder's grant changes

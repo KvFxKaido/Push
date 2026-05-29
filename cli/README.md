@@ -276,6 +276,8 @@ Available tools:
 | `edit_file` | mutate | Surgical hashline edits with context preview (auto-backed up) |
 | `undo_edit` | mutate | Restore a file from the most recent tool-created backup |
 | `git_commit` | mutate | Stage and commit files |
+| `git_create_branch` | mutate | Create a new branch and switch to it (optionally from a ref); aliases: `create_branch`, `sandbox_create_branch` |
+| `git_switch_branch` | mutate | Switch to an existing branch (fetches it for shallow clones); aliases: `switch_branch`, `sandbox_switch_branch` |
 | `lsp_diagnostics` | read | Run workspace diagnostics/type-check output |
 | `save_memory` | memory | Persist concise project learnings across sessions (`.push/memory.md`) |
 | `coder_update_state` | memory | Update working memory (plan, tasks, etc.) |
