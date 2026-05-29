@@ -38,7 +38,7 @@
     // OpenCode Zen "Go" endpoint; the Worker's Go handler translates any
     // Anthropic-transport Go models to OpenAI-shaped SSE for the DO pump.
     "PR_REVIEW_PROVIDER": "zen",
-    "PR_REVIEW_MODEL": "kimi-k2.6",
+    "PR_REVIEW_MODEL": "glm-5.1",
     "PR_REVIEW_ZEN_GO": "1"
   },
   // Optional private-deployment gate for personal production testing. Do not
