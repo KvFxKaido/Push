@@ -983,13 +983,27 @@ export const GITHUB_TOOL_PROTOCOL = `[GitHub tool schema version: ${deriveProtoc
 ${GITHUB_TOOL_PROTOCOL_BODY}`;
 
 /**
- * Returns the GitHub tool protocol block when a GitHub token is configured
- * (env only — the async `gh` fallback isn't consulted at prompt-build time),
- * else empty string. Callers concatenate it onto the base TOOL_PROTOCOL so
- * models only see GitHub tools when they can actually be used.
+ * Synchronous GitHub protocol block — env tokens only. Used for the instant
+ * (pre-enrichment) base prompt so we don't spawn `gh` on the fast path.
+ * Returns '' when no env token is set. The async enrichment step
+ * (`getGitHubToolProtocolAsync`) is the authoritative advertise-time check and
+ * additionally honors the `gh auth token` fallback.
  */
 export function getGitHubToolProtocol(): string {
   return hasEnvGitHubToken() ? GITHUB_TOOL_PROTOCOL : '';
+}
+
+/**
+ * Authoritative advertise-time GitHub protocol block. Consults the FULL token
+ * resolution chain (env → `gh auth token`), so a user authenticated only via
+ * `gh auth login` still sees the GitHub tools in the enriched system prompt
+ * that actually reaches the model — matching what dispatch will accept at
+ * execution time. Returns '' when no token resolves. Async because the `gh`
+ * fallback spawns a subprocess (memoized in cli/github-runtime.ts).
+ */
+export async function getGitHubToolProtocolAsync(): Promise<string> {
+  const token = await resolveGitHubToken();
+  return token ? GITHUB_TOOL_PROTOCOL : '';
 }
 
 export function truncateText(text, max = MAX_TOOL_OUTPUT_CHARS) {
@@ -1859,11 +1873,26 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       };
     }
     const runtime = createCliGitHubRuntime(resolvedGitHubToken);
-    const result = await executeGitHubCoreTool(runtime, githubCall);
-    // The core returns { text, card? }. Surface text to the model; treat
-    // `[Tool Error` / `Not found` style cores as ok:true (they're informative
-    // tool results, not dispatch failures) — same as the web transport, which
-    // doesn't reclassify core text into errors.
+    // Wrap the core call: several executeGitHubCoreTool paths throw on 404/403/
+    // timeouts. This GitHub dispatch runs BEFORE the switch's try/catch, so a
+    // throw here would reject executeToolCall — the engine would treat a single
+    // GitHub failure as a fatal run error instead of a recoverable tool result.
+    // Convert to a structured tool result so the model can react (same contract
+    // as every other CLI tool).
+    let result;
+    try {
+      result = await executeGitHubCoreTool(runtime, githubCall);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        ok: false,
+        text: `[GitHub — ${call.tool}] ${message}`,
+        structuredError: classifyToolError(err),
+      };
+    }
+    // The core returns { text, card? }. Surface text to the model; informative
+    // core text (e.g. "Not found") stays ok:true — same as the web transport,
+    // which doesn't reclassify core text into errors.
     return {
       ok: true,
       text: result.text,

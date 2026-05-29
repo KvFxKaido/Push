@@ -6,6 +6,7 @@ import {
   ensureInsideWorkspace,
   executeToolCall,
   getGitHubToolProtocol,
+  getGitHubToolProtocolAsync,
   isFileMutationToolCall,
   isReadOnlyToolCall,
   truncateText,
@@ -484,10 +485,12 @@ function buildCliBaseBuilder(workspaceRoot: string): SystemPromptBuilder {
     .set('identity', buildCliIdentity(workspaceRoot))
     .set('guidelines', buildCliGuidelines())
     .set('tool_instructions', TOOL_PROTOCOL);
-  // Advertise GitHub tools only when a token is configured (env-level check;
-  // resolved at build time). Empty string when absent, so models never see
-  // tools they can't use. Lives in its own section so the schema-version
-  // marker stays attached to the core protocol.
+  // Advertise GitHub tools when an env token is configured. This is the
+  // instant (sync) base prompt; the async enrichment step
+  // (`enrichCliBuilder`) re-checks via the full token chain (incl. `gh auth
+  // token`), so a gh-only user still gets the tools in the prompt that
+  // reaches the model. Own section so the schema-version marker stays on the
+  // core protocol.
   const githubProtocol = getGitHubToolProtocol();
   if (githubProtocol) {
     builder.set('github_tool_instructions', githubProtocol);
@@ -499,14 +502,28 @@ async function enrichCliBuilder(
   builder: SystemPromptBuilder,
   workspaceRoot: string,
 ): Promise<void> {
-  const [snapshot, instructions, memory] = await Promise.all([
+  const [snapshot, instructions, memory, githubProtocol] = await Promise.all([
     buildWorkspaceSnapshot(workspaceRoot).catch((): string => ''),
     loadProjectInstructions(workspaceRoot).catch((): null => null),
     loadMemory(workspaceRoot).catch((): null => null),
+    // Authoritative GitHub advertise-time check — honors the `gh auth token`
+    // fallback, not just env vars, so gh-only auth surfaces the tools in the
+    // enriched prompt. Best-effort: a `gh` spawn failure degrades to no
+    // GitHub section rather than failing prompt construction.
+    getGitHubToolProtocolAsync().catch((): string => ''),
   ]);
 
   if (snapshot) {
     builder.set('environment', snapshot);
+  }
+  // Set (or clear) the GitHub section based on the full token resolution. The
+  // sync base builder may have set it from an env token; if the full check now
+  // disagrees (neither env nor gh), remove it so we don't advertise unusable
+  // tools. When gh supplies a token the env check missed, this adds it.
+  if (githubProtocol) {
+    builder.set('github_tool_instructions', githubProtocol);
+  } else {
+    builder.remove('github_tool_instructions');
   }
   if (instructions) {
     builder.set(

@@ -6,6 +6,7 @@ import {
   isGitHubToolName,
   isReadOnlyToolCall,
   getGitHubToolProtocol,
+  getGitHubToolProtocolAsync,
   GITHUB_PUBLIC_TOOL_NAMES,
   GITHUB_READ_ONLY_PUBLIC_TOOL_NAMES,
 } from '../tools.ts';
@@ -117,6 +118,13 @@ describe('GitHub tool dispatch (no token)', () => {
     assert.match(proto, /pr_create/);
   });
 
+  it('getGitHubToolProtocolAsync advertises when only env supplies the token', async () => {
+    assert.equal(await getGitHubToolProtocolAsync(), '');
+    process.env.PUSH_GITHUB_TOKEN = 'ghp_env';
+    const proto = await getGitHubToolProtocolAsync();
+    assert.match(proto, /GITHUB TOOLS/);
+  });
+
   it('resolveGitHubToken prefers PUSH_GITHUB_TOKEN over GITHUB_TOKEN', async () => {
     process.env.GITHUB_TOKEN = 'ghp_generic';
     process.env.PUSH_GITHUB_TOKEN = 'ghp_push';
@@ -182,6 +190,23 @@ describe('GitHub tool dispatch (with token, mocked fetch)', () => {
     assert.equal(result.ok, false);
     assert.equal(result.structuredError?.code, 'ROLE_CAPABILITY_DENIED');
     assert.equal(fetched, false, 'must not hit the API when capability-denied');
+  });
+
+  it('converts a thrown GitHub core error into a structured tool result (no rejection)', async () => {
+    // A network-layer throw (timeout / DNS) must not reject executeToolCall —
+    // the engine would treat it as a fatal run error instead of a recoverable
+    // tool result the model can react to.
+    globalThis.fetch = async () => {
+      throw new Error('GitHub API timed out after 15s');
+    };
+    // Use a read tool so capability gating is not in play.
+    const result = await executeToolCall(
+      { tool: 'pr', args: { repo: 'owner/repo', pr: 1 } },
+      process.cwd(),
+    );
+    assert.equal(result.ok, false);
+    assert.ok(result.structuredError, 'expected a structured error');
+    assert.match(result.text, /GitHub — pr/);
   });
 
   it('allows a write GitHub tool (pr_create) for orchestrator when a token is present', async () => {
