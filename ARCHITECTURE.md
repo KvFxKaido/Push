@@ -69,7 +69,7 @@ Role-based agent system. Models are replaceable. Roles are locked. Backend/model
 
 ## Delivery and Review Rules
 
-- Standard commits go through the Auditor as a required SAFE/UNSAFE gate.
+- Standard commits go through the Auditor as a SAFE/UNSAFE gate on both surfaces (web client-side before commit/push; CLI/daemon via the `PreCommitGate` seam in `git_commit`). On by default and opt-out — the toggle resolves identically across surfaces through `lib/auditor-policy.ts` (`PUSH_AUDITOR_GATE` / `auditorGate` config on CLI; the Auditor-gate setting in the web app). The gate fails closed: enabled-but-unrunnable refuses the commit.
 - Reviewer is advisory and can review the branch diff, last commit, or working tree.
 - Only PR-backed branch diff reviews can be posted back to GitHub as PR reviews.
 - Standard merges happen through the GitHub pull request flow only.

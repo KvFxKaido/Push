@@ -18,8 +18,8 @@
  *   cancel_run       — abort active run
  *   configure_role_routing — set per-role provider/model routing
  *   submit_task_graph      — scaffold for future task graph execution
- *   delegate_explorer      — launch read-only Explorer sub-agent (real streamFn via daemon-provider-stream; toolExec still stubbed)
- *   delegate_coder         — launch mutating Coder sub-agent (real streamFn via daemon-provider-stream; toolExec still stubbed)
+ *   delegate_explorer      — launch read-only Explorer sub-agent (real streamFn + real read-only toolExec via makeDaemonExplorerToolExec)
+ *   delegate_coder         — launch mutating Coder sub-agent (real streamFn + real full-surface toolExec via makeDaemonCoderToolExec)
  *   delegate_reviewer      — launch advisory Reviewer sub-agent (real streamFn, single-turn JSON review; no tool loop)
  *   cancel_delegation      — cancel active sub-agent delegation
  *   fetch_delegation_events — replay delegation event stream
@@ -2281,6 +2281,14 @@ export function makeDaemonCoderToolExec({ sessionId, entry, runId, signal }) {
         // artifact would default to `role: 'orchestrator'` and
         // misattribute.
         role: 'coder',
+        // Provider + model for the Auditor commit gate. The gate is
+        // default-on (`lib/auditor-policy.ts`), so a delegated Coder that
+        // emits git_commit needs these to run the verdict — without them the
+        // gate fails closed and blocks the commit. The env var
+        // (`PUSH_AUDITOR_GATE`, forwarded from config by `applyConfigToEnv`)
+        // still governs whether the gate runs at all.
+        providerId: entry.state.provider,
+        model: entry.state.model,
         runId,
       });
       const resultText = typeof result?.text === 'string' ? result.text : '';

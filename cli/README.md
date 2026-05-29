@@ -128,6 +128,22 @@ When `--accept` is present, Push also frames the task using the shared delegatio
 
 Per-provider settings (model, endpoint URL, API key) are stored under the provider name. The config file is chmod 0600.
 
+### Auditor commit gate
+
+`git_commit` is routed through the **Auditor** — a binary SAFE/UNSAFE review of the staged diff (secrets, injection vectors, disabled security controls) — before the commit lands. It is **on by default**. On UNSAFE the commit is blocked and the changes stay staged; in an interactive session you can approve the override at the prompt, while headless / daemon runs stay blocked. The gate fails closed: if it's enabled but no provider/model/key is available, the commit is refused rather than waved through.
+
+Turn it off per-config or via env:
+
+```json
+{ "auditorGate": false }
+```
+
+```bash
+PUSH_AUDITOR_GATE=0 ./push run --task "..."   # env overrides the config setting
+```
+
+The toggle resolves identically across CLI, daemon, and the web app (shared resolver in `lib/auditor-policy.ts`): `PUSH_AUDITOR_GATE` wins, then the per-surface setting, then the default (on). The setting is forwarded to the `pushd` daemon as `PUSH_AUDITOR_GATE` so delegated Coder commits gate the same way.
+
 ### Tool allow / deny lists
 
 Two arrays in `~/.push/config.json` shape what tools the agent can run:
@@ -205,6 +221,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_GOOGLE_MODEL` | Google Gemini model (default: `gemini-3.5-flash`) |
 | `PUSH_TAVILY_API_KEY` | Optional Tavily key for premium web search (`web_search`) |
 | `PUSH_WEB_SEARCH_BACKEND` | Web search backend: `auto` (default), `tavily`, `ollama`, `duckduckgo` |
+| `PUSH_AUDITOR_GATE` | `0`/`false` to disable the Auditor commit gate, `1`/`true` to force it on (default: on). Overrides the `auditorGate` config setting. |
 | `PUSH_LOCAL_SANDBOX` | `true` to run exec commands in a Docker container |
 | `PUSH_SHELL` | Override the shell used for `exec` / acceptance checks. Useful on Windows if you want to force Git Bash, WSL bash, PowerShell, etc. |
 | `PUSH_SESSION_DIR` | Override session storage location (default: `~/.push/sessions`) |

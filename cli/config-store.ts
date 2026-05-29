@@ -3,6 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 
+import { AUDITOR_GATE_ENV_VAR } from '../lib/auditor-policy.js';
+
 export interface ProviderConfig {
   url?: string;
   apiKey?: string;
@@ -45,6 +47,13 @@ export interface PushConfig {
   alwaysAllow?: string[];
   disabledTools?: string[];
   safeExecPatterns?: string[];
+  /**
+   * Auditor commit gate. When true (the default — see `lib/auditor-policy.ts`),
+   * `git_commit` is routed through the Auditor SAFE/UNSAFE gate before the
+   * commit lands. Set false to opt out. Forwarded to child processes (the
+   * pushd daemon) as `PUSH_AUDITOR_GATE` by `applyConfigToEnv`.
+   */
+  auditorGate?: boolean;
   scrub?: ScrubConfig;
   ollama?: ProviderConfig;
   openrouter?: ProviderConfig;
@@ -117,6 +126,13 @@ export function applyConfigToEnv(config: PushConfig): void {
   }
   setEnvIfMissing('PUSH_TAVILY_API_KEY', config.tavilyApiKey);
   setEnvIfMissing('PUSH_WEB_SEARCH_BACKEND', config.webSearchBackend);
+  // Forward the Auditor commit-gate toggle so child processes (notably the
+  // pushd daemon's delegated coder tool executor) resolve the same opt-out
+  // without re-reading config. Only an explicit setting is forwarded — when
+  // unset, the daemon's own resolver applies the default-on.
+  if (config.auditorGate !== undefined) {
+    setEnvIfMissing(AUDITOR_GATE_ENV_VAR, String(config.auditorGate));
+  }
   setEnvIfMissing('PUSH_EXEC_MODE', config.execMode);
   setEnvIfMissing('PUSH_THEME', config.theme);
   setEnvIfMissing('PUSH_SPINNER', config.spinner);

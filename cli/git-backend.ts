@@ -11,7 +11,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { SandboxPlumbingBackend, type GitBackend, type GitExec } from '../lib/git/backend.js';
-import { PushGit } from '../lib/git/push-git.js';
+import { PushGit, type PreCommitGate } from '../lib/git/push-git.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -44,7 +44,18 @@ export function createLocalGitBackend(cwd: string, opts?: { timeoutMs?: number }
   return new SandboxPlumbingBackend(exec);
 }
 
-/** Build a PushGit facade over the local working tree at `cwd`. */
-export function createLocalPushGit(cwd: string, opts?: { timeoutMs?: number }): PushGit {
-  return new PushGit({ backend: createLocalGitBackend(cwd, opts) });
+/**
+ * Build a PushGit facade over the local working tree at `cwd`. An optional
+ * `preCommit` gate is run by `PushGit.commit` before the commit lands — the
+ * CLI uses this to wire the Auditor commit gate (see `makeAuditorPreCommitGate`
+ * in `cli/tools.ts`).
+ */
+export function createLocalPushGit(
+  cwd: string,
+  opts?: { timeoutMs?: number; preCommit?: PreCommitGate },
+): PushGit {
+  return new PushGit({
+    backend: createLocalGitBackend(cwd, { timeoutMs: opts?.timeoutMs }),
+    preCommit: opts?.preCommit,
+  });
 }

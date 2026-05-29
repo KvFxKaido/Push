@@ -109,6 +109,11 @@ export interface RunOptions {
   // CLI tool names that bypass approval prompts in their gate
   // (today: `exec`, `exec_start`).
   alwaysAllow?: string[];
+  // Opt-out for the Auditor commit gate. Passed raw (not pre-resolved) to
+  // `executeToolCall`, where the `git_commit` case resolves it against
+  // `PUSH_AUDITOR_GATE` via the shared `lib/auditor-policy.ts` resolver
+  // (default on). `undefined` → resolver falls back to env, then the default.
+  auditorGate?: boolean;
   // Skip the terminal `run_complete` append + dispatch. Callers that run
   // `runAssistantLoop` as a sub-step of a larger turn (delegation per-node)
   // set this so the parent scope is the only writer of `run_complete` —
@@ -767,6 +772,7 @@ async function runAssistantLoopImpl(
     execMode,
     disabledTools,
     alwaysAllow,
+    auditorGate,
     suppressRunComplete = false,
     suppressEventPersist = false,
   } = options;
@@ -965,8 +971,12 @@ async function runAssistantLoopImpl(
           execMode,
           disabledTools,
           alwaysAllow,
+          auditorGate,
           providerId: providerConfig?.id,
           providerApiKey: apiKey,
+          // Active model for the Auditor commit-gate verdict call. Only read
+          // when the gate is enabled and the model emits git_commit.
+          model: state.model,
           runId,
           // Shared PreToolUse hooks (see `lib/default-pre-hooks.ts`).
           // The default CLI registry registers Protect Main; the hook
