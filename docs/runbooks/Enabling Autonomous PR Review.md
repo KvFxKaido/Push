@@ -79,14 +79,26 @@ Reviewable deliveries are `pull_request` with action `opened` / `synchronize` /
 
 ## 4. (Optional) Tune the reviewer model
 
-Defaults to `anthropic` / `claude-sonnet-4-6`. Override per deployment:
+Defaults to `anthropic` / `claude-sonnet-4-6`. Provider/model are **non-secret
+config**, so they live as `vars` in `wrangler.jsonc` (visible + version
+controlled), not as secrets:
 
-```bash
-npx wrangler secret put PR_REVIEW_PROVIDER   # e.g. openrouter
-npx wrangler secret put PR_REVIEW_MODEL      # e.g. a specific model id
+```jsonc
+"vars": {
+  "PR_REVIEW_PROVIDER": "zen",
+  "PR_REVIEW_MODEL": "kimi-k2.6",
+  "PR_REVIEW_ZEN_GO": "1"   // route `zen` through the OpenCode Zen "Go" endpoint
+}
 ```
 
-Make sure the matching provider key secret is set (e.g. `OPENROUTER_API_KEY`).
+Make sure the matching provider **key** is set as a secret (e.g.
+`ZEN_API_KEY` for OpenCode Zen, `OPENROUTER_API_KEY` for OpenRouter).
+
+`PR_REVIEW_ZEN_GO` (truthy `1`/`true`/`yes`) only applies when
+`PR_REVIEW_PROVIDER=zen`; it switches the upstream from `/zen/v1` to
+`/zen/go/v1`. Only **OpenAI-transport** Go models work on the webhook path
+(the DO's SSE pump is OpenAI-shaped) — `kimi-k2.6` and `glm-5.1` are fine;
+the Anthropic-transport `minimax-*` models fail loud with a clear error.
 
 ## 5. (Optional) Add repo review guidance
 
@@ -140,7 +152,9 @@ The advisory review should appear on the PR; the PWA review tab should list it.
 |---|---|---|
 | `GITHUB_WEBHOOK_SECRET` | Worker secret | HMAC key; unset → receiver 503 |
 | `GITHUB_ALLOWED_INSTALLATION_IDS` | Worker secret/var | Installation allowlist (fail-closed on empty) |
-| `PR_REVIEW_PROVIDER` / `PR_REVIEW_MODEL` | Worker secret/var | Reviewer model (default anthropic / claude-sonnet-4-6) |
+| `PR_REVIEW_PROVIDER` / `PR_REVIEW_MODEL` | `wrangler.jsonc` vars | Reviewer model (default anthropic / claude-sonnet-4-6) |
+| `PR_REVIEW_ZEN_GO` | `wrangler.jsonc` var | Route `zen` through the Go endpoint (`/zen/go/v1`); OpenAI-transport models only |
+| `ZEN_API_KEY` | Worker secret | OpenCode Zen API key (required when `PR_REVIEW_PROVIDER=zen`) |
 | `PR_REVIEW_GATING_REPOS` | Worker secret | Gating opt-in allowlist (default off) |
 | `PrReviewJob` | `wrangler.jsonc` DO binding + `v4` migration | The review runner |
 
