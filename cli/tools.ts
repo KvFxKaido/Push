@@ -23,12 +23,19 @@ import {
   type ExecutionMode,
 } from '../lib/capabilities.ts';
 import type { AgentRole } from '../lib/runtime-contract.ts';
-import { deriveProtocolVersion } from '../lib/tool-registry.ts';
+import {
+  deriveProtocolVersion,
+  getToolProtocolEntries,
+  resolveToolName,
+} from '../lib/tool-registry.ts';
 import { evaluatePreHooks } from '../lib/tool-hooks.ts';
 import { reduceToolOutput } from '../lib/tool-output-reducers.ts';
 import { runAuditor } from '../lib/auditor-agent.ts';
 import { resolveAuditorGateEnabled, AUDITOR_GATE_ENV_VAR } from '../lib/auditor-policy.ts';
 import { PROVIDER_CONFIGS, resolveApiKey, createProviderStream } from './provider.js';
+import { executeGitHubCoreTool } from '../lib/github-tool-core.ts';
+import { parseGitHubCoreToolCall } from '../lib/github-tool-parser.ts';
+import { createCliGitHubRuntime, hasEnvGitHubToken, resolveGitHubToken } from './github-runtime.js';
 
 /**
  * CLI tool execution is the pushd daemon surface — the daemon IS the
@@ -775,7 +782,11 @@ async function startExecSession(command, workspaceRoot, timeoutMs, ttyRequested 
 }
 
 export function isReadOnlyToolCall(call) {
-  return Boolean(call && READ_ONLY_TOOLS.has(call.tool));
+  if (!call) return false;
+  // Read-only GitHub tools (public names) parallelize alongside CLI read-only
+  // tools. Write GitHub tools fall through as side-effecting.
+  if (GITHUB_READ_ONLY_PUBLIC_TOOL_NAMES.has(call.tool)) return true;
+  return READ_ONLY_TOOLS.has(call.tool);
 }
 
 /**
@@ -910,6 +921,76 @@ Rules:
 export const TOOL_PROTOCOL = `[Tool schema version: ${deriveProtocolVersion(TOOL_PROTOCOL_BODY)}]
 
 ${TOOL_PROTOCOL_BODY}`;
+
+// ── GitHub tools ────────────────────────────────────────────────────
+//
+// GitHub tools reuse the shared, runtime-agnostic core (lib/github-tool-core)
+// exactly like the web Worker and the MCP server. The CLI injects its own
+// runtime (cli/github-runtime.ts) backed by a GITHUB_TOKEN (env or `gh auth
+// token`) hitting api.github.com directly.
+//
+// They are advertised to models under their **public** registry names
+// (`pr`, `prs`, `repo_read`, `pr_create`, …) — NOT their canonical names —
+// because several canonical GitHub names (`read_file`, `list_directory`,
+// `search_files`) collide with CLI-native tools. The public names are the
+// same ones the web orchestrator prompt uses, so model behavior is
+// consistent across surfaces. `resolveToolName` maps the public name back to
+// the canonical the parser/dispatcher expect.
+//
+// Derived from the shared registry (`getToolProtocolEntries('github')`) so the
+// advertised surface can't drift from the canonical tool specs.
+const GITHUB_PROTOCOL_ENTRIES = getToolProtocolEntries('github');
+
+// Public-name set the dispatcher recognizes as GitHub tools. Built from the
+// registry so it stays in lockstep with what's advertised.
+export const GITHUB_PUBLIC_TOOL_NAMES: ReadonlySet<string> = new Set(
+  GITHUB_PROTOCOL_ENTRIES.map((spec) => spec.publicName),
+);
+
+// Public names of the read-only GitHub tools — folded into the CLI's
+// READ_ONLY_TOOLS-style parallelization bucket at dispatch time.
+export const GITHUB_READ_ONLY_PUBLIC_TOOL_NAMES: ReadonlySet<string> = new Set(
+  GITHUB_PROTOCOL_ENTRIES.filter((spec) => spec.readOnly).map((spec) => spec.publicName),
+);
+
+export function isGitHubToolName(name: unknown): boolean {
+  return typeof name === 'string' && GITHUB_PUBLIC_TOOL_NAMES.has(name);
+}
+
+const GITHUB_TOOL_PROTOCOL_BODY = `GITHUB TOOLS
+
+These operate on GitHub repositories over the GitHub API (not the local
+workspace). \`repo\` is always "owner/name". Available when a GitHub token is
+configured (PUSH_GITHUB_TOKEN / GITHUB_TOKEN / GH_TOKEN, or \`gh auth token\`);
+otherwise they return GITHUB_NO_TOKEN.
+
+Available tools:
+${GITHUB_PROTOCOL_ENTRIES.map((spec) => `- ${spec.protocolSignature} — ${spec.protocolDescription}`).join('\n')}
+
+Rules:
+- Read-only GitHub tools (pr, prs, commits, repo_read, repo_grep, repo_ls, branches, checks, repo_search, commit_files, pr_check, pr_find, workflow_runs, workflow_logs) may run in parallel with other read-only calls.
+- Write GitHub tools (pr_create, pr_merge, branch_delete, workflow_run) are side-effecting — at most one trailing side-effect per turn, same budget as exec/git_commit.
+- Merges happen through the PR flow: open a PR (pr_create) and merge it (pr_merge); never merge locally.
+- Do not describe tool calls in prose. Emit only JSON blocks for tool calls.`;
+
+/**
+ * GitHub tool protocol block, appended to the system prompt only when a GitHub
+ * token is configured. Schema-versioned off its own body so changes to the
+ * GitHub surface bump the marker independently of the core protocol.
+ */
+export const GITHUB_TOOL_PROTOCOL = `[GitHub tool schema version: ${deriveProtocolVersion(GITHUB_TOOL_PROTOCOL_BODY)}]
+
+${GITHUB_TOOL_PROTOCOL_BODY}`;
+
+/**
+ * Returns the GitHub tool protocol block when a GitHub token is configured
+ * (env only — the async `gh` fallback isn't consulted at prompt-build time),
+ * else empty string. Callers concatenate it onto the base TOOL_PROTOCOL so
+ * models only see GitHub tools when they can actually be used.
+ */
+export function getGitHubToolProtocol(): string {
+  return hasEnvGitHubToken() ? GITHUB_TOOL_PROTOCOL : '';
+}
 
 export function truncateText(text, max = MAX_TOOL_OUTPUT_CHARS) {
   if (text.length <= max) return text;
@@ -1663,9 +1744,25 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
   // as defense-in-depth. Raw `options.role` is passed through (not
   // coerced to undefined) so the helper can distinguish missing from
   // invalid and surface the right diagnostic.
+  // GitHub tools are advertised under public names (`pr`, `repo_read`, …);
+  // the capability table + parser/dispatcher are keyed by canonical names.
+  const callIsGitHubTool = isGitHubToolName(call?.tool);
+  // Resolve a GitHub token once for GitHub tool calls (env, then `gh auth
+  // token`; memoized). Presence both lifts the local-daemon remote-only
+  // capability strip (write tools become grantable) and is reused by the
+  // GitHub dispatch below — so the gate and execution agree on "is there a
+  // remote." Non-GitHub calls never pay the resolution cost.
+  let resolvedGitHubToken = '';
+  if (callIsGitHubTool) {
+    resolvedGitHubToken = await resolveGitHubToken();
+  }
   {
-    const canonicalForCheck = callCanonical || (typeof call?.tool === 'string' ? call.tool : '');
-    const check = enforceRoleCapability(options.role, canonicalForCheck, CLI_EXECUTION_MODE);
+    const canonicalForCheck = callIsGitHubTool
+      ? (resolveToolName(call.tool) ?? call.tool)
+      : callCanonical || (typeof call?.tool === 'string' ? call.tool : '');
+    const check = enforceRoleCapability(options.role, canonicalForCheck, CLI_EXECUTION_MODE, {
+      remoteGitHubAvailable: resolvedGitHubToken.length > 0,
+    });
     if (!check.ok) {
       return {
         ok: false,
@@ -1727,6 +1824,53 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
   if (alwaysAllowList.size > 0) {
     options = { ...options, alwaysAllow: [...alwaysAllowList] };
   }
+
+  // GitHub tools route to the shared core dispatcher, NOT the CLI switch — the
+  // capability gate above already cleared them. Handled here (before the
+  // switch) because several canonical GitHub names collide with CLI-native
+  // switch cases (`read_file`, `list_directory`/`list_dir`, `search_files`).
+  if (callIsGitHubTool) {
+    if (!resolvedGitHubToken) {
+      return {
+        ok: false,
+        text: `[GitHub — ${call.tool}] No GitHub token configured. Set PUSH_GITHUB_TOKEN / GITHUB_TOKEN / GH_TOKEN, or log in with \`gh auth login\`, to use GitHub tools.`,
+        structuredError: {
+          code: 'GITHUB_NO_TOKEN',
+          message: 'No GitHub token configured for GitHub tools',
+          retryable: false,
+        },
+      };
+    }
+    // Map public → canonical, then parse args into the typed core call.
+    const canonicalName = resolveToolName(call.tool) ?? call.tool;
+    const githubCall = parseGitHubCoreToolCall(
+      canonicalName,
+      (call.args as Record<string, unknown>) ?? {},
+    );
+    if (!githubCall) {
+      return {
+        ok: false,
+        text: `[GitHub — ${call.tool}] Invalid or missing arguments. Check the tool signature and required fields (repo is always required).`,
+        structuredError: {
+          code: 'INVALID_ARGS',
+          message: `Could not parse arguments for GitHub tool "${call.tool}"`,
+          retryable: false,
+        },
+      };
+    }
+    const runtime = createCliGitHubRuntime(resolvedGitHubToken);
+    const result = await executeGitHubCoreTool(runtime, githubCall);
+    // The core returns { text, card? }. Surface text to the model; treat
+    // `[Tool Error` / `Not found` style cores as ok:true (they're informative
+    // tool results, not dispatch failures) — same as the web transport, which
+    // doesn't reclassify core text into errors.
+    return {
+      ok: true,
+      text: result.text,
+      meta: result.card ? { card: result.card } : undefined,
+    };
+  }
+
   try {
     switch (call.tool) {
       case 'read_file': {
@@ -2901,7 +3045,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       default:
         return {
           ok: false,
-          text: `Unknown tool: ${call.tool}. Available: read_file, list_dir, search_files, web_search, exec, exec_start, exec_poll, exec_write, exec_stop, exec_list_sessions, write_file, edit_file, undo_edit, read_symbols, read_symbol, git_status, git_diff, git_commit, git_create_branch, save_memory, lsp_diagnostics`,
+          text: `Unknown tool: ${call.tool}. Available: read_file, list_dir, search_files, web_search, exec, exec_start, exec_poll, exec_write, exec_stop, exec_list_sessions, write_file, edit_file, undo_edit, read_symbols, read_symbol, git_status, git_diff, git_commit, git_create_branch, save_memory, lsp_diagnostics${hasEnvGitHubToken() ? `, and GitHub tools (${[...GITHUB_PUBLIC_TOOL_NAMES].join(', ')})` : ''}`,
           structuredError: {
             code: 'UNKNOWN_TOOL',
             message: `Unknown tool: ${call.tool}`,

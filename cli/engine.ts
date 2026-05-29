@@ -5,6 +5,7 @@ import {
   detectAllToolCalls,
   ensureInsideWorkspace,
   executeToolCall,
+  getGitHubToolProtocol,
   isFileMutationToolCall,
   isReadOnlyToolCall,
   truncateText,
@@ -479,10 +480,19 @@ function buildCliGuidelines(): string {
 }
 
 function buildCliBaseBuilder(workspaceRoot: string): SystemPromptBuilder {
-  return new SystemPromptBuilder()
+  const builder = new SystemPromptBuilder()
     .set('identity', buildCliIdentity(workspaceRoot))
     .set('guidelines', buildCliGuidelines())
     .set('tool_instructions', TOOL_PROTOCOL);
+  // Advertise GitHub tools only when a token is configured (env-level check;
+  // resolved at build time). Empty string when absent, so models never see
+  // tools they can't use. Lives in its own section so the schema-version
+  // marker stays attached to the core protocol.
+  const githubProtocol = getGitHubToolProtocol();
+  if (githubProtocol) {
+    builder.set('github_tool_instructions', githubProtocol);
+  }
+  return builder;
 }
 
 async function enrichCliBuilder(
