@@ -1037,6 +1037,9 @@ export interface PullRequestRefs {
   headRef: string;
   baseRef: string;
   isCrossFork: boolean;
+  /** PR state; `'open'` is the only reviewable state (mirrors the webhook gate). */
+  state: string;
+  draft: boolean;
 }
 
 /**
@@ -1054,6 +1057,8 @@ export async function fetchPullRequestRefs(
   });
   if (!res.ok) throw new Error(formatGitHubError(res.status, `PR #${prNumber} on ${repo}`));
   const data = (await res.json()) as {
+    state?: string;
+    draft?: boolean;
     head?: { sha?: string; ref?: string; repo?: { full_name?: string } };
     base?: { ref?: string };
   };
@@ -1063,5 +1068,15 @@ export async function fetchPullRequestRefs(
   if (!headSha || !headRef || !baseRef) {
     throw new Error(`PR #${prNumber} on ${repo} is missing head/base refs`);
   }
-  return { headSha, headRef, baseRef, isCrossFork: data.head?.repo?.full_name !== repo };
+  // owner/repo names are case-insensitive on GitHub; compare case-folded so a
+  // client casing difference doesn't misclassify a same-repo PR as a fork.
+  const headRepo = data.head?.repo?.full_name ?? '';
+  return {
+    headSha,
+    headRef,
+    baseRef,
+    isCrossFork: headRepo.toLowerCase() !== repo.toLowerCase(),
+    state: data.state ?? 'unknown',
+    draft: Boolean(data.draft),
+  };
 }

@@ -20,12 +20,16 @@ const { fetchRefsMock } = vi.hoisted(() => ({
       headRef: string;
       baseRef: string;
       isCrossFork: boolean;
+      state: string;
+      draft: boolean;
     }>
   >(async () => ({
     headSha: 'sha-1',
     headRef: 'feature/x',
     baseRef: 'main',
     isCrossFork: false,
+    state: 'open',
+    draft: false,
   })),
 }));
 vi.mock('@/lib/github-tools', () => ({
@@ -209,6 +213,35 @@ describe('handlePrReviewRoute — run', () => {
       'run',
     );
     expect(res.status).toBe(503);
+  });
+
+  it('rejects a draft or closed PR (409) without enqueueing', async () => {
+    fetchRefsMock.mockResolvedValueOnce({
+      headSha: 'sha-1',
+      headRef: 'feature/x',
+      baseRef: 'main',
+      isCrossFork: false,
+      state: 'open',
+      draft: true,
+    });
+    const stub = makeFakeStub();
+    const res = await handlePrReviewRoute(
+      makePost('/api/pr-reviews/run', { repo: 'octo/repo', pr: 7 }),
+      runEnv({ PrReviewJob: makePrReviewNamespace(stub) }),
+      'run',
+    );
+    expect(res.status).toBe(409);
+    expect(stub.fetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects a repo with URL-delimiter characters (400)', async () => {
+    const res = await handlePrReviewRoute(
+      makePost('/api/pr-reviews/run', { repo: 'octo/re?po', pr: 7 }),
+      runEnv(),
+      'run',
+    );
+    // Rejected at validation (tightened REPO_RE) before any GitHub work.
+    expect(res.status).toBe(400);
   });
 
   it('rejects a malformed body (400)', async () => {

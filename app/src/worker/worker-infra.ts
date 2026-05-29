@@ -999,7 +999,11 @@ export async function exchangeForInstallationToken(
  * asserted by the client. Throws on lookup failure (e.g. app not installed).
  */
 export async function resolveRepoInstallationId(jwt: string, repo: string): Promise<string> {
-  const response = await fetch(`https://api.github.com/repos/${repo}/installation`, {
+  // Encode owner/name path segments so a crafted repo string can't alter the
+  // endpoint (e.g. `?`/`#` dropping `/installation`).
+  const [owner, name] = repo.split('/');
+  const encodedRepo = `${encodeURIComponent(owner ?? '')}/${encodeURIComponent(name ?? '')}`;
+  const response = await fetch(`https://api.github.com/repos/${encodedRepo}/installation`, {
     headers: {
       Authorization: `Bearer ${jwt}`,
       Accept: 'application/vnd.github+json',

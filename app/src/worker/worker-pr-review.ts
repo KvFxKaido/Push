@@ -32,8 +32,20 @@ import { fetchPullRequestRefs } from '@/lib/github-tools';
 const LIST_PATH = '/api/pr-reviews';
 const RUN_PATH = '/api/pr-reviews/run';
 
-/** owner/name — exactly one slash, no path-traversal into the DO name. */
-const REPO_RE = /^[^/\s]+\/[^/\s]+$/;
+/**
+ * owner/name with GitHub-valid characters only (alphanumeric, `.`, `_`, `-`).
+ * Forbids `/`, whitespace, and URL delimiters (`?`, `#`) so the value can't
+ * traverse the DO name or alter an interpolated GitHub API path.
+ */
+const REPO_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+
+function log(
+  level: 'debug' | 'info' | 'warn' | 'error',
+  event: string,
+  ctx: Record<string, unknown> = {},
+): void {
+  console.log(JSON.stringify({ level, event, ...ctx }));
+}
 
 export type PrReviewRouteAction = 'list' | 'run';
 
@@ -69,7 +81,7 @@ export async function handlePrReviewRoute(
     });
   }
 
-  return action === 'run' ? handleRun(request, env) : handleList(request, env);
+  return action === 'run' ? handleRun(request, env, requestUrl) : handleList(env, requestUrl);
 }
 
 /** Validate an owner/name + positive-integer PR, returning them or null. */
@@ -86,9 +98,11 @@ function parseRepoPr(repo: string, prRaw: string): { repo: string; prNumber: num
   return { repo, prNumber };
 }
 
-async function handleList(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
-  const parsed = parseRepoPr(url.searchParams.get('repo') ?? '', url.searchParams.get('pr') ?? '');
+async function handleList(env: Env, requestUrl: URL): Promise<Response> {
+  const parsed = parseRepoPr(
+    requestUrl.searchParams.get('repo') ?? '',
+    requestUrl.searchParams.get('pr') ?? '',
+  );
   if (!parsed) {
     return json(
       {
@@ -106,8 +120,9 @@ async function handleList(request: Request, env: Env): Promise<Response> {
   );
 }
 
-async function handleRun(request: Request, env: Env): Promise<Response> {
+async function handleRun(request: Request, env: Env, requestUrl: URL): Promise<Response> {
   if (!env.GITHUB_APP_ID || !env.GITHUB_APP_PRIVATE_KEY) {
+    log('error', 'pr_review_run_not_configured', {});
     return json({ error: 'NOT_CONFIGURED', message: 'GitHub App is not configured.' }, 503);
   }
 
@@ -115,11 +130,16 @@ async function handleRun(request: Request, env: Env): Promise<Response> {
   try {
     body = await request.json();
   } catch {
+    log('warn', 'pr_review_run_invalid_body', {});
     return json({ error: 'INVALID_BODY', message: 'POST body must be JSON.' }, 400);
   }
   const { repo: rawRepo, pr } = (body ?? {}) as { repo?: unknown; pr?: unknown };
   const parsed = parseRepoPr(typeof rawRepo === 'string' ? rawRepo : '', String(pr ?? ''));
   if (!parsed) {
+    log('warn', 'pr_review_run_invalid_request', {
+      repo: String(rawRepo ?? ''),
+      pr: String(pr ?? ''),
+    });
     return json(
       {
         error: 'INVALID_REQUEST',
@@ -137,6 +157,7 @@ async function handleRun(request: Request, env: Env): Promise<Response> {
   try {
     installationId = await resolveRepoInstallationId(jwt, repo);
   } catch {
+    log('warn', 'pr_review_run_installation_lookup_failed', { repo });
     return json(
       { error: 'INSTALLATION_LOOKUP_FAILED', message: `No app installation for ${repo}.` },
       502,
@@ -148,6 +169,7 @@ async function handleRun(request: Request, env: Env): Promise<Response> {
       parseInstallationAllowlist(env.GITHUB_ALLOWED_INSTALLATION_IDS),
     )
   ) {
+    log('warn', 'pr_review_run_installation_denied', { repo, installationId });
     return json({ error: 'INSTALLATION_NOT_ALLOWED' }, 403);
   }
 
@@ -156,9 +178,27 @@ async function handleRun(request: Request, env: Env): Promise<Response> {
     const { token } = await exchangeForInstallationToken(jwt, installationId);
     refs = await fetchPullRequestRefs(repo, prNumber, { token });
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log('warn', 'pr_review_run_pr_lookup_failed', { repo, pr: prNumber, message });
+    return json({ error: 'PR_LOOKUP_FAILED', message }, 502);
+  }
+
+  // Mirror the webhook's reviewability gate: only open, non-draft PRs. A stale
+  // tab or direct call shouldn't spend a review on a PR the autonomous path
+  // intentionally ignores.
+  if (refs.state !== 'open' || refs.draft) {
+    log('info', 'pr_review_run_not_reviewable', {
+      repo,
+      pr: prNumber,
+      state: refs.state,
+      draft: refs.draft,
+    });
     return json(
-      { error: 'PR_LOOKUP_FAILED', message: err instanceof Error ? err.message : String(err) },
-      502,
+      {
+        error: 'NOT_REVIEWABLE',
+        message: `PR #${prNumber} is ${refs.draft ? 'a draft' : refs.state} — only open, non-draft PRs are reviewed.`,
+      },
+      409,
     );
   }
 
@@ -171,7 +211,7 @@ async function handleRun(request: Request, env: Env): Promise<Response> {
     baseRef: refs.baseRef,
     installationId,
     isCrossFork: refs.isCrossFork,
-    origin: requestUrlOrigin(request),
+    origin: requestUrl.origin,
   });
   const doResponse = await forwardToDo(
     env,
@@ -188,13 +228,20 @@ async function handleRun(request: Request, env: Env): Promise<Response> {
     .json()
     .catch(() => ({}))) as { status?: string };
   if (!doResponse.ok) {
+    log('error', 'pr_review_run_enqueue_failed', {
+      repo,
+      pr: prNumber,
+      doStatus: doResponse.status,
+    });
     return json({ error: 'ENQUEUE_FAILED', status: outcome.status }, 502);
   }
+  log('info', 'pr_review_run_enqueued', {
+    repo,
+    pr: prNumber,
+    headSha: refs.headSha,
+    status: outcome.status ?? 'queued',
+  });
   return json({ ok: true, status: outcome.status ?? 'queued' }, 202);
-}
-
-function requestUrlOrigin(request: Request): string {
-  return new URL(request.url).origin;
 }
 
 async function forwardToDo(
