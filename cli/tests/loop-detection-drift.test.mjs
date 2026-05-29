@@ -11,10 +11,15 @@ import {
 } from '../../lib/loop-detection.ts';
 
 const engineSource = readFileSync(new URL('../engine.ts', import.meta.url), 'utf8');
-const webSendSource = readFileSync(
-  new URL('../../app/src/hooks/chat-send.ts', import.meta.url),
-  'utf8',
-);
+// The web round loop spans two modules: chat-send.ts (calls handleLoopVerdict)
+// and chat-send-helpers.ts (which owns checkLoopBreaker + handleLoopVerdict and
+// consumes buildLoopSteeringText). Treat both as the "web surface" so the
+// drift check tracks the implementation wherever the max-lines extraction puts
+// it.
+const webSendSource =
+  readFileSync(new URL('../../app/src/hooks/chat-send.ts', import.meta.url), 'utf8') +
+  '\n' +
+  readFileSync(new URL('../../app/src/hooks/chat-send-helpers.ts', import.meta.url), 'utf8');
 const coderSource = readFileSync(new URL('../../lib/coder-agent.ts', import.meta.url), 'utf8');
 const oracleSource = readFileSync(new URL('../../lib/loop-detection.ts', import.meta.url), 'utf8');
 
@@ -85,7 +90,7 @@ describe('CLI loop-detection drift — preserved abort semantics', () => {
 describe('graded loop enforcement — shared steering vocabulary', () => {
   for (const [name, source] of [
     ['cli/engine.ts', engineSource],
-    ['app/src/hooks/chat-send.ts', webSendSource],
+    ['app/src/hooks/chat-send{,-helpers}.ts', webSendSource],
     ['lib/coder-agent.ts', coderSource],
   ]) {
     it(`${name} consumes the shared buildLoopSteeringText builder`, () => {

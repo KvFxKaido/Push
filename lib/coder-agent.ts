@@ -59,7 +59,6 @@ import {
   buildLoopSteeringText,
   createSimilarityLoopDetector,
   evaluateLoopState,
-  EXACT_REPEAT_LIMIT,
   isSimilarityLoopDetectionEnabled,
   writeTargetOf,
 } from './loop-detection.js';
@@ -832,12 +831,15 @@ export async function runCoderAgent<TCall, TCard>(
 
   // --- Loop-detection state (shared lib/loop-detection oracle) ---
   // The autonomous Coder loop is the highest-value site for near-duplicate
-  // rewrites, so it runs the same exact-match + near-duplicate ladder as the
-  // CLI engine / web round loop. Dark unless PUSH_LOOP_DETECTION=1; the
-  // exact-match abort is always enforced. Detector windows + ladder counters
-  // are per-run (reset on resume, matching the other surfaces).
+  // *rewrites*, so it runs the near-duplicate (similarity) ladder from the
+  // shared oracle. Scoped to the similarity signal only — the Coder keeps its
+  // existing mutation-failure breaker (`mutationFailures` above) and the
+  // orchestrator's delegation circuit breaker; it deliberately does NOT take
+  // the always-on exact-repeat abort the CLI/web round loops carry, because the
+  // Coder legitimately re-reads the same files across many rounds and an
+  // always-on exact-batch abort would cut those runs short. Dark unless
+  // PUSH_LOOP_DETECTION=1; windows + counters are per-run (reset on resume).
   const loopDetector = createSimilarityLoopDetector();
-  const loopRepeatedCalls = new Map<string, number>();
   let loopBlocksIssued = 0;
   let loopCompactsIssued = 0;
 
@@ -1041,25 +1043,20 @@ export async function runCoderAgent<TCall, TCard>(
       continue;
     }
 
-    // --- Loop detection: exact-repeat + near-duplicate ladder (shared oracle).
-    // Mirrors the CLI engine / web round loop; the calls are read via the same
-    // `call.call.{tool,args}` structural cast the mutation path uses below.
-    // `abort` ends the run; warn/block/compact inject a steering note and skip
-    // this round's tool batch so the model retries differently. Guarded on a
-    // non-empty batch: this block runs before the no-tool-call/completion path
-    // below, and counting empty (text-only) rounds against the exact-repeat key
-    // would falsely trip the abort. The CLI sits after its empty-batch guard;
-    // here we gate explicitly.
+    // --- Loop detection: near-duplicate (similarity) ladder from the shared
+    // oracle. The write calls are read via the same `call.call.{tool,args}`
+    // structural cast the mutation path uses below; non-write calls have no
+    // `writeTargetOf` and never feed the window (so re-reads can't trip it).
+    // `abort` ends the run (only reachable post-compact, under enforcement);
+    // warn/block/compact inject a steering note and skip this round's tool
+    // batch so the model retries differently. With PUSH_LOOP_DETECTION unset
+    // every verdict is `none` — purely dark.
     const loopCalls = [
       ...detected.readOnly,
       ...detected.fileMutations,
       ...(detected.mutating ? [detected.mutating] : []),
     ].map((c) => (c as unknown as { call: { tool: string; args: Record<string, unknown> } }).call);
     if (loopCalls.length > 0) {
-      const callKey = JSON.stringify(loopCalls);
-      const exactRepeatCount = (loopRepeatedCalls.get(callKey) || 0) + 1;
-      loopRepeatedCalls.set(callKey, exactRepeatCount);
-
       let worstSimilarity: { value: number; streak: number } | undefined;
       for (const call of loopCalls) {
         const target = writeTargetOf(call.args);
@@ -1071,7 +1068,6 @@ export async function runCoderAgent<TCall, TCard>(
       }
 
       const loopVerdict = evaluateLoopState({
-        exactRepeat: { count: exactRepeatCount, limit: EXACT_REPEAT_LIMIT },
         similarity: worstSimilarity,
         blocksIssued: loopBlocksIssued,
         compactsIssued: loopCompactsIssued,
