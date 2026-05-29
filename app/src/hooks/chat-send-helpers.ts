@@ -23,6 +23,7 @@
 import type { MutableRefObject } from 'react';
 import { isReadOnlyToolCall, type AnyToolCall, type DetectedToolCalls } from '@/lib/tool-dispatch';
 import {
+  buildLoopSteerInjection,
   executeTool,
   handleDroppedCandidatesError,
   type ToolExecRunContext,
@@ -43,8 +44,10 @@ import {
 } from '@/lib/verification-runtime';
 import { getToolInvocationKey, type MutationFailureTracker } from '@push/lib/agent-loop-utils';
 import {
+  buildLoopSteeringText,
   evaluateLoopState,
   isSimilarityLoopDetectionEnabled,
+  type LoopVerdict,
   type SimilarityLoopDetector,
   writeTargetOf,
 } from '@push/lib/loop-detection';
@@ -720,13 +723,37 @@ function delegateAgentForToolName(toolName: string): 'coder' | 'explorer' | null
  */
 const MAX_REPEATED_TOOL_CALLS = 3;
 
+/**
+ * Run-level escalation state for the near-duplicate ladder. Created once per
+ * run alongside the `SimilarityLoopDetector` and threaded into every
+ * `checkLoopBreaker` call so block → compact → abort can advance across turns
+ * (the oracle is stateless; the counts live here). Mirrors the CLI engine's
+ * `loopBlocksIssued` / `loopCompactsIssued` locals.
+ */
+export interface LoopLadderState {
+  blocksIssued: number;
+  compactsIssued: number;
+}
+
+export function createLoopLadderState(): LoopLadderState {
+  return { blocksIssued: 0, compactsIssued: 0 };
+}
+
+/**
+ * Evaluate the per-turn loop verdict and advance run-level ladder state.
+ * Returns the full `LoopVerdict` (was a bare boolean) so the caller can act on
+ * the graded `action` — warn/block/compact inject a steering note and skip the
+ * turn's tool batch, abort terminates. Side effects: increments `ladder`
+ * counters and, on `compact`, clears the detector windows for a clean restart.
+ */
 export function checkLoopBreaker(
   detected: DetectedToolCalls,
   tracker: MutationFailureTracker,
   detector: SimilarityLoopDetector,
   round: number,
+  ladder: LoopLadderState,
   scope?: string,
-): boolean {
+): LoopVerdict {
   const allIncomingCalls = [
     ...detected.readOnly,
     ...detected.fileMutations,
@@ -785,6 +812,8 @@ export function checkLoopBreaker(
   const verdict = evaluateLoopState({
     exactBreakers,
     similarity: worstSimilarity,
+    blocksIssued: ladder.blocksIssued,
+    compactsIssued: ladder.compactsIssued,
     similarityEnforced: isSimilarityLoopDetectionEnabled(),
   });
 
@@ -805,5 +834,92 @@ export function checkLoopBreaker(
     );
   }
 
-  return verdict.action === 'abort';
+  // Advance run-level ladder state so the next near-duplicate verdict can
+  // escalate. `compact` clears the detector windows for a clean restart (an
+  // actual *context* compaction is deferred — see the decision doc).
+  if (verdict.action === 'block') {
+    ladder.blocksIssued += 1;
+  } else if (verdict.action === 'compact') {
+    ladder.compactsIssued += 1;
+    detector.clear();
+  }
+
+  return verdict;
+}
+
+/**
+ * Evaluate the loop verdict for a turn and, if it fires, produce the
+ * `AssistantTurnResult` that ends the turn — `abort` breaks the run; a graded
+ * warn/block/compact injects the shared steering note (via
+ * `buildLoopSteerInjection`) and skips the turn's tool batch (`continue`).
+ * Returns null when nothing fired so the caller proceeds to normal dispatch.
+ *
+ * Lives here (not inline in `processAssistantTurn`) to keep `chat-send.ts`
+ * under its `max-lines` guard — the feature-hook-as-sibling rule.
+ */
+export function handleLoopVerdict(
+  detected: DetectedToolCalls,
+  tracker: MutationFailureTracker,
+  loopDetector: SimilarityLoopDetector,
+  loopLadder: LoopLadderState,
+  round: number,
+  accumulated: string,
+  thinkingAccumulated: string,
+  reasoningBlocks: ReasoningBlock[],
+  apiMessages: ChatMessage[],
+  recoveryState: ToolCallRecoveryState,
+  ctx: SendLoopContext,
+): AssistantTurnResult | null {
+  const { chatId, lockedProvider, setConversations, appendRunEvent } = ctx;
+  const loopVerdict = checkLoopBreaker(detected, tracker, loopDetector, round, loopLadder, chatId);
+  if (loopVerdict.action === 'abort') {
+    return {
+      nextApiMessages: apiMessages,
+      nextRecoveryState: recoveryState,
+      loopAction: 'break',
+      loopCompletedNormally: false,
+    };
+  }
+  // Graded near-duplicate enforcement (warn/block/compact) — non-`none` only
+  // when PUSH_LOOP_DETECTION=1 makes the similarity ladder enforceable. All
+  // three skip this turn's tool batch and hand a steering note back so the
+  // model retries differently instead of executing the next near-duplicate
+  // write; the run-level counters (advanced inside `checkLoopBreaker`) drive
+  // escalation toward abort.
+  if (loopVerdict.action === 'none') return null;
+  const steeringText = buildLoopSteeringText(loopVerdict);
+  if (!steeringText) return null;
+
+  const steerAction = buildLoopSteerInjection(
+    steeringText,
+    accumulated,
+    thinkingAccumulated,
+    reasoningBlocks,
+    apiMessages,
+    lockedProvider,
+  );
+  appendRunEvent(chatId, {
+    type: 'tool.call_malformed',
+    round,
+    reason: `loop_${loopVerdict.action}`,
+    toolName: 'loop_detected',
+    preview: summarizeToolResultPreview(steerAction.errorMessage.content),
+  });
+  setConversations((prev) => {
+    const conv = prev[chatId];
+    if (!conv) return prev;
+    const msgs = markLastAssistantToolCall(conv.messages, {
+      content: steerAction.assistantUpdate.content,
+      thinking: steerAction.assistantUpdate.thinking,
+      malformed: true,
+      toolMeta: steerAction.assistantUpdate.toolMeta,
+    });
+    return { ...prev, [chatId]: { ...conv, messages: [...msgs, steerAction.errorMessage] } };
+  });
+  return {
+    nextApiMessages: steerAction.apiMessages,
+    nextRecoveryState: recoveryState,
+    loopAction: 'continue',
+    loopCompletedNormally: false,
+  };
 }

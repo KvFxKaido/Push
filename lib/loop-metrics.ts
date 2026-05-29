@@ -37,7 +37,7 @@ export const MAX_RECENT_LOOP_VERDICTS = 50;
 const GLOBAL_SCOPE = '__loop_metrics_aggregate__';
 
 export interface LoopVerdictSample {
-  surface: 'web' | 'cli';
+  surface: 'web' | 'cli' | 'coder';
   level: LoopLevel;
   action: LoopLevel;
   /**

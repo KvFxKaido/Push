@@ -713,3 +713,60 @@ export function handleMultipleMutationsError(
     },
   };
 }
+
+/**
+ * Build the injection for a graded loop-detection verdict (warn/block/compact).
+ * Mirrors `handleMultipleMutationsError`'s shape so the web round loop can route
+ * loop steering through the same conversation + apiMessages plumbing: the
+ * model's tool-call turn is recorded, then a `[TOOL_RESULT]`-enveloped steering
+ * note is appended so the model sees why its batch was skipped. The steering
+ * copy comes from `buildLoopSteeringText` (shared kernel); this helper only
+ * handles web message construction.
+ */
+export function buildLoopSteerInjection(
+  steeringText: string,
+  accumulated: string,
+  thinkingAccumulated: string,
+  reasoningBlocks: ReasoningBlock[],
+  apiMessages: readonly ChatMessage[],
+  provider: ActiveProvider,
+): MultipleMutationsErrorAction {
+  const toolMeta = buildToolMeta({
+    toolName: 'loop_detected',
+    source: 'sandbox',
+    provider,
+    durationMs: 0,
+    isError: true,
+  });
+
+  const errorMessage: ChatMessage = {
+    id: createId(),
+    role: 'user',
+    content: formatToolResultEnvelope(steeringText),
+    timestamp: Date.now(),
+    status: 'done',
+    isToolResult: true,
+    toolMeta,
+  };
+
+  return {
+    errorMessage,
+    apiMessages: [
+      ...apiMessages,
+      {
+        id: createId(),
+        role: 'assistant' as const,
+        content: accumulated,
+        timestamp: Date.now(),
+        status: 'done' as const,
+        ...(reasoningBlocks.length > 0 ? { reasoningBlocks: [...reasoningBlocks] } : {}),
+      },
+      errorMessage,
+    ],
+    assistantUpdate: {
+      content: accumulated,
+      thinking: thinkingAccumulated,
+      toolMeta,
+    },
+  };
+}

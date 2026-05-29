@@ -55,6 +55,15 @@ import {
   MAX_TOOL_RESULT_SIZE as LIB_MAX_TOOL_RESULT_SIZE,
 } from './agent-loop-utils.js';
 import { buildToolCallParseErrorBlock, formatToolResultEnvelope } from './tool-call-recovery.js';
+import {
+  buildLoopSteeringText,
+  createSimilarityLoopDetector,
+  evaluateLoopState,
+  EXACT_REPEAT_LIMIT,
+  isSimilarityLoopDetectionEnabled,
+  writeTargetOf,
+} from './loop-detection.js';
+import { recordLoopVerdict } from './loop-metrics.js';
 import { SystemPromptBuilder } from './system-prompt-builder.js';
 import {
   SHARED_SAFETY_SECTION,
@@ -821,6 +830,17 @@ export async function runCoderAgent<TCall, TCard>(
   // --- Mutation failure guardrail state ---
   const mutationFailures = new Map<string, MutationFailureEntry>();
 
+  // --- Loop-detection state (shared lib/loop-detection oracle) ---
+  // The autonomous Coder loop is the highest-value site for near-duplicate
+  // rewrites, so it runs the same exact-match + near-duplicate ladder as the
+  // CLI engine / web round loop. Dark unless PUSH_LOOP_DETECTION=1; the
+  // exact-match abort is always enforced. Detector windows + ladder counters
+  // are per-run (reset on resume, matching the other surfaces).
+  const loopDetector = createSimilarityLoopDetector();
+  const loopRepeatedCalls = new Map<string, number>();
+  let loopBlocksIssued = 0;
+  let loopCompactsIssued = 0;
+
   // Wrap the host toolExec so a genuinely-gone sandbox — SANDBOX_UNREACHABLE
   // across SANDBOX_LOSS_THRESHOLD consecutive calls — throws
   // SandboxUnreachableError. The host catches it to restore a checkpoint and
@@ -1019,6 +1039,108 @@ export async function runCoderAgent<TCall, TCard>(
         isToolResult: true,
       });
       continue;
+    }
+
+    // --- Loop detection: exact-repeat + near-duplicate ladder (shared oracle).
+    // Mirrors the CLI engine / web round loop; the calls are read via the same
+    // `call.call.{tool,args}` structural cast the mutation path uses below.
+    // `abort` ends the run; warn/block/compact inject a steering note and skip
+    // this round's tool batch so the model retries differently. Guarded on a
+    // non-empty batch: this block runs before the no-tool-call/completion path
+    // below, and counting empty (text-only) rounds against the exact-repeat key
+    // would falsely trip the abort. The CLI sits after its empty-batch guard;
+    // here we gate explicitly.
+    const loopCalls = [
+      ...detected.readOnly,
+      ...detected.fileMutations,
+      ...(detected.mutating ? [detected.mutating] : []),
+    ].map((c) => (c as unknown as { call: { tool: string; args: Record<string, unknown> } }).call);
+    if (loopCalls.length > 0) {
+      const callKey = JSON.stringify(loopCalls);
+      const exactRepeatCount = (loopRepeatedCalls.get(callKey) || 0) + 1;
+      loopRepeatedCalls.set(callKey, exactRepeatCount);
+
+      let worstSimilarity: { value: number; streak: number } | undefined;
+      for (const call of loopCalls) {
+        const target = writeTargetOf(call.args);
+        if (!target) continue;
+        const obs = loopDetector.observeWrite(target.path, target.content);
+        if (!worstSimilarity || obs.streak > worstSimilarity.streak) {
+          worstSimilarity = { value: obs.similarity, streak: obs.streak };
+        }
+      }
+
+      const loopVerdict = evaluateLoopState({
+        exactRepeat: { count: exactRepeatCount, limit: EXACT_REPEAT_LIMIT },
+        similarity: worstSimilarity,
+        blocksIssued: loopBlocksIssued,
+        compactsIssued: loopCompactsIssued,
+        similarityEnforced: isSimilarityLoopDetectionEnabled(),
+      });
+      recordLoopVerdict({
+        surface: 'coder',
+        round,
+        level: loopVerdict.level,
+        action: loopVerdict.action,
+        enforced: loopVerdict.enforced,
+        reasons: loopVerdict.reasons,
+        similarity: loopVerdict.similarity,
+      });
+      if (loopVerdict.level !== 'none') {
+        console.log(
+          JSON.stringify({
+            level: 'warn',
+            event: 'coder_loop_verdict',
+            round,
+            verdict: loopVerdict.level,
+            action: loopVerdict.action,
+            reasons: loopVerdict.reasons,
+          }),
+        );
+      }
+
+      if (loopVerdict.action === 'abort') {
+        callbacks.onStatus('Coder stopped', 'Repeated tool-call loop — halted');
+        const loopText = `Detected repeated tool call loop (${loopCalls
+          .map((c) => c.tool)
+          .join(', ')}). Stopping run.`;
+        messages.push({
+          id: `coder-loop-abort-${round}`,
+          role: 'user',
+          content: formatToolResultEnvelope(loopText),
+          timestamp: Date.now(),
+          isToolResult: true,
+        });
+        const sandboxState = (await callbacks.fetchSandboxStateSummary?.()) ?? '';
+        return {
+          summary: loopText + sandboxState,
+          cards: allCards,
+          rounds,
+          checkpoints: checkpointCount,
+        };
+      }
+
+      if (loopVerdict.action !== 'none') {
+        const steeringText = buildLoopSteeringText(loopVerdict);
+        if (steeringText) {
+          callbacks.onStatus('Coder loop', loopVerdict.action);
+          messages.push({
+            id: `coder-loop-${loopVerdict.action}-${round}`,
+            role: 'user',
+            content: formatToolResultEnvelope(steeringText),
+            timestamp: Date.now(),
+            isToolResult: true,
+          });
+          if (loopVerdict.action === 'block') {
+            loopBlocksIssued += 1;
+          }
+          if (loopVerdict.action === 'compact') {
+            loopCompactsIssued += 1;
+            loopDetector.clear();
+          }
+          continue;
+        }
+      }
     }
 
     const parallelCalls = detected.readOnly;
