@@ -515,7 +515,6 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
   let gated = false;
   if (repoGatingEnabled(input.repoFullName, env.PR_REVIEW_GATING_REPOS)) {
     const hasCritical = result.comments.some((c) => c.severity === 'critical');
-    gated = hasCritical;
     const conclusion: ReviewCheckConclusion = hasCritical ? 'failure' : 'success';
     try {
       await createReviewCheckRun(
@@ -529,6 +528,9 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
         },
         auth,
       );
+      // Only true once a failing check actually posted — so the recorded
+      // outcome matches reality if the POST throws (e.g. missing checks:write).
+      gated = hasCritical;
       log('info', 'pr_review_check_run_posted', {
         deliveryId: input.deliveryId,
         repo: input.repoFullName,
