@@ -126,9 +126,11 @@ The advisory review should appear on the PR; the PWA review tab should list it.
 
 ## Disable / roll back
 
-- **Pause reviews:** remove `GITHUB_WEBHOOK_SECRET` (`wrangler secret delete`) or
-  unsubscribe the App from `Pull requests` — deliveries then fail closed / stop.
-- **Drop gating only:** delete `PR_REVIEW_GATING_REPOS` (back to advisory-only).
+- **Pause reviews:** remove `GITHUB_WEBHOOK_SECRET`
+  (`wrangler secret delete GITHUB_WEBHOOK_SECRET`) or unsubscribe the App from
+  `Pull requests` — deliveries then fail closed / stop.
+- **Drop gating only:** delete `PR_REVIEW_GATING_REPOS`
+  (`wrangler secret delete PR_REVIEW_GATING_REPOS`) — back to advisory-only.
 - The DO + routes are inert without an authenticated delivery; no teardown
   needed beyond the secret.
 
