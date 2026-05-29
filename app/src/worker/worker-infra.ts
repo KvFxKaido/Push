@@ -992,6 +992,35 @@ export async function exchangeForInstallationToken(
   return (await response.json()) as { token: string; expires_at: string };
 }
 
+/**
+ * Resolve the GitHub App installation id for a repo, authoritatively, via the
+ * app JWT (`GET /repos/{repo}/installation`). Used by the manual PR-review
+ * trigger so the installation is derived from the repo server-side rather than
+ * asserted by the client. Throws on lookup failure (e.g. app not installed).
+ */
+export async function resolveRepoInstallationId(jwt: string, repo: string): Promise<string> {
+  // Encode owner/name path segments so a crafted repo string can't alter the
+  // endpoint (e.g. `?`/`#` dropping `/installation`).
+  const [owner, name] = repo.split('/');
+  const encodedRepo = `${encodeURIComponent(owner ?? '')}/${encodeURIComponent(name ?? '')}`;
+  const response = await fetch(`https://api.github.com/repos/${encodedRepo}/installation`, {
+    headers: {
+      Authorization: `Bearer ${jwt}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'Push-App/1.0.0',
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`GitHub API ${response.status} resolving installation for ${repo}`);
+  }
+  const data = (await response.json()) as { id?: number };
+  if (typeof data.id !== 'number') {
+    throw new Error(`No installation id returned for ${repo}`);
+  }
+  return String(data.id);
+}
+
 export async function fetchInstallationMetadata(
   jwt: string,
   installationId: string,

@@ -177,10 +177,11 @@ export default {
         );
       }
 
-      // PR review history — read-only list from the PrReviewJob DO.
-      if (matchPrReviewRoute(url.pathname, request.method)) {
+      // PR review history + manual re-run — forward to the PrReviewJob DO.
+      const prReviewAction = matchPrReviewRoute(url.pathname, request.method);
+      if (prReviewAction) {
         return withRequestIdOnResponse(
-          await handlePrReviewRoute(requestWithId, env),
+          await handlePrReviewRoute(requestWithId, env, prReviewAction),
           requestId,
           requestWithId,
           env,

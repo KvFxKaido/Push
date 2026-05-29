@@ -1,8 +1,16 @@
 import { useEffect, useState } from 'react';
-import { CheckCircle, ChevronDown, ChevronRight, Clock, Loader2, XCircle } from 'lucide-react';
+import {
+  CheckCircle,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  Loader2,
+  RefreshCw,
+  XCircle,
+} from 'lucide-react';
 import type { ReviewComment } from '@/types';
 import { findOpenPRForBranch } from '@/lib/github-tools';
-import { usePrReviewHistory } from '@/hooks/usePrReviewHistory';
+import { triggerPrReview, usePrReviewHistory } from '@/hooks/usePrReviewHistory';
 import type { PrReviewListItem } from '@/worker/pr-review-job-do';
 import { HUB_PANEL_SUBTLE_SURFACE_CLASS } from '@/components/chat/hub-styles';
 
@@ -171,16 +179,44 @@ export function PrReviewHistorySection({
     };
   }, [repoFullName, activeBranch]);
 
-  const { reviews } = usePrReviewHistory(repoFullName ?? null, prNumber);
+  const { reviews, refresh } = usePrReviewHistory(repoFullName ?? null, prNumber);
+  const [rerunning, setRerunning] = useState(false);
+  const [rerunError, setRerunError] = useState<string | null>(null);
+
+  const handleRerun = async () => {
+    if (!repoFullName || !prNumber || rerunning) return;
+    setRerunning(true);
+    setRerunError(null);
+    try {
+      await triggerPrReview(repoFullName, prNumber);
+      refresh(); // start polling immediately so the queued review shows up
+    } catch (err) {
+      setRerunError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRerunning(false);
+    }
+  };
 
   if (!prNumber || reviews.length === 0) return null;
 
   return (
     <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3.5 py-3`}>
-      <div className="mb-2 flex items-center gap-2">
-        <span className="text-xs font-medium text-push-fg">Automated PR reviews</span>
-        <span className="text-push-2xs text-push-fg-dim">#{prNumber}</span>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="flex items-center gap-2">
+          <span className="text-xs font-medium text-push-fg">Automated PR reviews</span>
+          <span className="text-push-2xs text-push-fg-dim">#{prNumber}</span>
+        </span>
+        <button
+          type="button"
+          onClick={handleRerun}
+          disabled={rerunning}
+          className="inline-flex items-center gap-1 text-push-2xs text-push-fg-dim hover:text-push-fg disabled:opacity-50"
+        >
+          <RefreshCw className={`h-3 w-3 ${rerunning ? 'animate-spin' : ''}`} />
+          {rerunning ? 'Starting…' : 'Re-run'}
+        </button>
       </div>
+      {rerunError && <p className="mb-1.5 text-push-2xs text-red-400">{rerunError}</p>}
       <div className="space-y-2">
         {reviews.map((review) => (
           <ReviewRow key={review.deliveryId} review={review} />

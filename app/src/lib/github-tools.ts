@@ -1029,3 +1029,54 @@ export async function fetchPullRequestHeadSha(
   const data = (await res.json()) as { head?: { sha?: string } };
   return data.head?.sha ?? null;
 }
+
+/** Head/base refs + fork status for a PR — everything the PrReviewJob DO needs to
+ * start a manual (re-run) review for an existing PR. */
+export interface PullRequestRefs {
+  headSha: string;
+  headRef: string;
+  baseRef: string;
+  isCrossFork: boolean;
+  /** PR state; `'open'` is the only reviewable state (mirrors the webhook gate). */
+  state: string;
+  draft: boolean;
+}
+
+/**
+ * Fetch a PR's head SHA, head/base refs, and fork status in one call. Used by
+ * the manual re-run trigger to construct a `PrReviewStartInput` for a PR that
+ * didn't arrive via a webhook delivery. Throws when required fields are missing.
+ */
+export async function fetchPullRequestRefs(
+  repo: string,
+  prNumber: number,
+  auth?: GitHubAuth,
+): Promise<PullRequestRefs> {
+  const res = await githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}`, {
+    headers: resolveHeaders(auth),
+  });
+  if (!res.ok) throw new Error(formatGitHubError(res.status, `PR #${prNumber} on ${repo}`));
+  const data = (await res.json()) as {
+    state?: string;
+    draft?: boolean;
+    head?: { sha?: string; ref?: string; repo?: { full_name?: string } };
+    base?: { ref?: string };
+  };
+  const headSha = data.head?.sha;
+  const headRef = data.head?.ref;
+  const baseRef = data.base?.ref;
+  if (!headSha || !headRef || !baseRef) {
+    throw new Error(`PR #${prNumber} on ${repo} is missing head/base refs`);
+  }
+  // owner/repo names are case-insensitive on GitHub; compare case-folded so a
+  // client casing difference doesn't misclassify a same-repo PR as a fork.
+  const headRepo = data.head?.repo?.full_name ?? '';
+  return {
+    headSha,
+    headRef,
+    baseRef,
+    isCrossFork: headRepo.toLowerCase() !== repo.toLowerCase(),
+    state: data.state ?? 'unknown',
+    draft: Boolean(data.draft),
+  };
+}
