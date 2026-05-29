@@ -10,6 +10,7 @@ import type { ReviewResult } from '@push/lib/provider-contract';
 import {
   PrReviewJob,
   __setPrReviewExecutorOverride,
+  repoGatingEnabled,
   type PrReviewStartInput,
 } from './pr-review-job-do';
 import type { Env } from './worker-middleware';
@@ -188,6 +189,16 @@ function startRequest(input: PrReviewStartInput): Request {
     body: JSON.stringify(input),
   });
 }
+
+describe('repoGatingEnabled', () => {
+  it('matches case-insensitively, defaults off, and ignores blanks', () => {
+    expect(repoGatingEnabled('octo/repo', 'octo/repo')).toBe(true);
+    expect(repoGatingEnabled('Octo/Repo', 'octo/repo, other/x')).toBe(true);
+    expect(repoGatingEnabled('octo/repo', 'other/x')).toBe(false);
+    expect(repoGatingEnabled('octo/repo', undefined)).toBe(false);
+    expect(repoGatingEnabled('octo/repo', '')).toBe(false);
+  });
+});
 
 describe('PrReviewJob', () => {
   it('runs a review to completion and logs lifecycle events', async () => {

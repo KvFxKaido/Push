@@ -71,6 +71,12 @@ export interface Env {
   // sensible built-in when unset.
   PR_REVIEW_PROVIDER?: string;
   PR_REVIEW_MODEL?: string;
+  // Opt-in gating allowlist for autonomous PR review: comma/space-separated
+  // `owner/name` repos. For a listed repo the DO posts a GitHub Checks API run
+  // (failure on a critical finding, else success) alongside the advisory
+  // comment. Unset/absent → advisory-only (the default for every repo). The
+  // GitHub App needs the `checks: write` permission for the check run to post.
+  PR_REVIEW_GATING_REPOS?: string;
   // Cloudflare Sandbox SDK Durable Object binding. Optional because local dev
   // or test envs may not bind it; the cloudflare-sandbox-provider must 503
   // gracefully when it's absent so the Modal fallback path stays safe.
