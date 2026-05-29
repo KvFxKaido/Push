@@ -21,6 +21,7 @@
  *   delegate_explorer      — launch read-only Explorer sub-agent (real streamFn + real read-only toolExec via makeDaemonExplorerToolExec)
  *   delegate_coder         — launch mutating Coder sub-agent (real streamFn + real full-surface toolExec via makeDaemonCoderToolExec)
  *   delegate_reviewer      — launch advisory Reviewer sub-agent (real streamFn, single-turn JSON review; no tool loop)
+ *   delegate_deep_reviewer — launch Deep Reviewer sub-agent (real streamFn + read-only tool loop via makeDaemonExplorerToolExec; investigates then reviews)
  *   cancel_delegation      — cancel active sub-agent delegation
  *   fetch_delegation_events — replay delegation event stream
  */
@@ -157,7 +158,8 @@ function emitDispatcherAudit(req: any, response: any, context: any): void {
     }
     case 'delegate_coder':
     case 'delegate_explorer':
-    case 'delegate_reviewer': {
+    case 'delegate_reviewer':
+    case 'delegate_deep_reviewer': {
       // delegate.* events are coarse — they fire as soon as the
       // handler returns, regardless of how long the delegation
       // itself runs. That's fine for "did this device kick off a
@@ -622,6 +624,7 @@ import { runCoderAgent } from '../lib/coder-agent.ts';
 import { isSensitivePath as isDaemonSensitivePath } from '../lib/sensitive-paths.ts';
 import { isPathAllowed, snapshotAllowlist } from './pushd-allowlist.js';
 import { runReviewer } from '../lib/reviewer-agent.ts';
+import { runDeepReviewer } from '../lib/deep-reviewer-agent.ts';
 import { buildReviewerContextBlock } from '../lib/role-context.ts';
 import {
   REVIEW_GUIDANCE_FILENAME,
@@ -652,6 +655,13 @@ const CAPABILITIES = [
   'role_routing',
   'delegation_explorer_v1',
   'delegation_reviewer_v1',
+  // `delegation_deep_reviewer_v1`: `delegate_deep_reviewer` RPC runs the
+  // multi-round investigation kernel (`runDeepReviewer`) with a REAL read-only
+  // CLI-native tool loop (`makeDaemonExplorerToolExec({ role: 'reviewer' })` +
+  // `wrapCliDetect*` + `READ_ONLY_TOOL_PROTOCOL`). The reviewer reads
+  // surrounding code/callers/tests before forming its opinion, then returns the
+  // same `ReviewResult` as the simple reviewer.
+  'delegation_deep_reviewer_v1',
   // `delegation_coder_v1`: `delegate_coder` RPC + task-graph coder nodes
   // run through `runCoderAgent` with a REAL daemon tool executor
   // (`makeDaemonCoderToolExec`) that routes through `executeToolCall`
@@ -2362,8 +2372,13 @@ export function makeDaemonCoderToolExec({ sessionId, entry, runId, signal }) {
  * Non-goals (same as Coder): no sandbox layer, no OTel spans, no
  * `CapabilityLedger` gating, no `TurnPolicyRegistry`.
  */
-export function makeDaemonExplorerToolExec({ entry, signal }) {
+export function makeDaemonExplorerToolExec({ entry, signal, role = 'explorer' }) {
   const workspaceRoot = entry.state.cwd;
+  // Read-only roles that share this executor (Explorer, Deep Reviewer). The
+  // gate + executor case-dispatch run under this role so capability-gated
+  // cases attribute correctly. Defaults to 'explorer' so the two existing
+  // call sites are unchanged; the deep-reviewer handler passes 'reviewer'.
+  const roleLabel = role === 'reviewer' ? 'Deep Reviewer' : 'Explorer';
   return async (toolCall, _execCtx) => {
     // Unwrap the `{ source, call: { tool, args } }` shape produced by
     // `wrapCliDetectAllToolCalls` / `wrapCliDetectAnyToolCall`. Tests
@@ -2404,7 +2419,7 @@ export function makeDaemonExplorerToolExec({ entry, signal }) {
     // `isCapabilityMapped` belt-and-braces the same concern at the
     // gate. Codex review on PR #331.
     const toolName = typeof rawCall?.tool === 'string' ? rawCall.tool : null;
-    if (!toolName || !isCapabilityMapped(toolName) || !roleCanUseTool('explorer', toolName)) {
+    if (!toolName || !isCapabilityMapped(toolName) || !roleCanUseTool(role, toolName)) {
       // Phrasing note: we deliberately do NOT name `delegate_coder`
       // here because Explorer cannot invoke it from inside the kernel
       // (delegation is an RPC initiated by the orchestrator / client,
@@ -2419,14 +2434,14 @@ export function makeDaemonExplorerToolExec({ entry, signal }) {
       // error at `web-tool-execution-runtime.ts:152`.
       if (toolName) {
         const required = getToolCapabilities(toolName);
-        const granted = Array.from(ROLE_CAPABILITIES.explorer ?? []);
+        const granted = Array.from(ROLE_CAPABILITIES[role] ?? []);
         try {
           console.warn(
             JSON.stringify({
               level: 'warn',
               event: 'role_capability_denied',
               type: 'ROLE_CAPABILITY_DENIED',
-              role: 'explorer',
+              role,
               tool: toolName,
               required,
               granted,
@@ -2439,7 +2454,7 @@ export function makeDaemonExplorerToolExec({ entry, signal }) {
         }
       }
       return {
-        resultText: `[pushd] tool "${toolName ?? '(unknown)'}" is not available to Explorer. Explorer is read-only; if mutation is needed, report it in your summary and the orchestrator will request a Coder delegation after you finish.`,
+        resultText: `[pushd] tool "${toolName ?? '(unknown)'}" is not available to ${roleLabel}. ${roleLabel} is read-only; if mutation is needed, report it in your summary and the orchestrator will request a Coder delegation after you finish.`,
       };
     }
 
@@ -2457,7 +2472,10 @@ export function makeDaemonExplorerToolExec({ entry, signal }) {
         // Same rationale as the Coder wrapper above: pass the actual
         // role so capability-gated executor cases (artifact dispatch
         // etc.) deny correctly rather than defaulting to orchestrator.
-        role: 'explorer',
+        // Written `role: role` (not shorthand) so the role-required drift
+        // detector (cli/tests/role-required-drift.test.mjs) sees the `role:`
+        // key it scans for.
+        role: role,
       });
       const resultText = typeof result?.text === 'string' ? result.text : '';
       return { resultText };
@@ -2468,7 +2486,7 @@ export function makeDaemonExplorerToolExec({ entry, signal }) {
       // crashing the delegation. Matches Coder's "don't spin forever"
       // stance.
       const message = err instanceof Error ? err.message : String(err);
-      return { resultText: `[pushd] Explorer tool executor error: ${message}` };
+      return { resultText: `[pushd] ${roleLabel} tool executor error: ${message}` };
     }
   };
 }
@@ -4267,6 +4285,314 @@ async function handleDelegateReviewer(req) {
   return ack;
 }
 
+/**
+ * `delegate_deep_reviewer` — daemon-side Deep Reviewer launch.
+ *
+ * Same RPC/persistence/event shape as `handleDelegateReviewer`, but routes
+ * through the multi-round investigation kernel (`runDeepReviewer`) instead of
+ * the single-shot `runReviewer`. The deep reviewer reads surrounding code,
+ * callers, and tests via a read-only tool loop before forming its opinion,
+ * then returns the same `ReviewResult`.
+ *
+ * Tool loop wiring (the only structural difference from the simple reviewer):
+ *   - `toolExec: makeDaemonExplorerToolExec({ role: 'reviewer' })` — the same
+ *     read-only CLI-native executor the Explorer uses, gated on the reviewer
+ *     role (which grants repo:read / pr:read / web:search — exactly the
+ *     read-only surface).
+ *   - `detectAllToolCalls` / `detectAnyToolCall: wrapCliDetect*` — the CLI
+ *     detectors that produce the `DetectedToolCalls` shape the kernel expects.
+ *   - `sandboxToolProtocol: READ_ONLY_TOOL_PROTOCOL` — overrides the kernel's
+ *     built-in web-public-name tool block with the CLI-native names the
+ *     detector + executor actually recognize. Without this the model would
+ *     emit `repo_read` / `search` and the CLI detector would drop them, wasting
+ *     rounds (the Explorer P1 from PR #284, avoided by construction here).
+ *
+ * Provider / model resolution honors `roleRouting.reviewer` (shared with the
+ * simple reviewer); results persist to `reviewOutcomes` and surface through the
+ * same `subagent.*` lifecycle, tagged `agent: 'deep_reviewer'`.
+ *
+ * Capability flag: `delegation_deep_reviewer_v1`.
+ */
+async function handleDelegateDeepReviewer(req) {
+  const sessionId = req.sessionId || req.payload?.sessionId;
+  const providedToken = req.payload?.attachToken;
+  const diff = typeof req.payload?.diff === 'string' ? req.payload.diff : '';
+  const parentRunIdPayload =
+    typeof req.payload?.parentRunId === 'string' ? req.payload.parentRunId : null;
+  const rawContext =
+    req.payload?.context && typeof req.payload.context === 'object'
+      ? req.payload.context
+      : undefined;
+
+  if (!sessionId) {
+    return makeErrorResponse(
+      req.requestId,
+      'delegate_deep_reviewer',
+      'INVALID_REQUEST',
+      'sessionId is required',
+    );
+  }
+
+  if (!diff || typeof diff !== 'string' || !diff.trim()) {
+    return makeErrorResponse(
+      req.requestId,
+      'delegate_deep_reviewer',
+      'INVALID_REQUEST',
+      'diff is required and must be a non-empty string',
+    );
+  }
+
+  let entry = activeSessions.get(sessionId);
+  if (!entry) {
+    try {
+      const state = await loadSessionState(sessionId);
+      entry = { state, attachToken: state.attachToken };
+      activeSessions.set(sessionId, entry);
+    } catch {
+      return makeErrorResponse(
+        req.requestId,
+        'delegate_deep_reviewer',
+        'SESSION_NOT_FOUND',
+        `Session not found: ${sessionId}`,
+      );
+    }
+  }
+
+  if (!validateAttachToken(entry, providedToken)) {
+    return makeErrorResponse(
+      req.requestId,
+      'delegate_deep_reviewer',
+      'INVALID_TOKEN',
+      'Invalid or missing attach token',
+    );
+  }
+
+  // Provider/model routing — shared with the simple reviewer (roleRouting.reviewer).
+  const reviewerRoute = entry.state.roleRouting?.reviewer;
+  const routedProvider = normalizeProviderInput(reviewerRoute?.provider);
+  if (routedProvider && !PROVIDER_CONFIGS[routedProvider]) {
+    return makeErrorResponse(
+      req.requestId,
+      'delegate_deep_reviewer',
+      'PROVIDER_NOT_CONFIGURED',
+      `Unknown provider "${routedProvider}" for reviewer role routing`,
+    );
+  }
+  const sessionProvider = normalizeProviderInput(entry.state.provider);
+  if (!routedProvider && (!sessionProvider || !PROVIDER_CONFIGS[sessionProvider])) {
+    return makeErrorResponse(
+      req.requestId,
+      'delegate_deep_reviewer',
+      'PROVIDER_NOT_CONFIGURED',
+      `Unknown provider "${sessionProvider || '(missing)'}" in session state`,
+    );
+  }
+  const resolvedProvider = routedProvider || sessionProvider;
+  const resolvedModel =
+    (typeof reviewerRoute?.model === 'string' && reviewerRoute.model.trim()) ||
+    (typeof entry.state.model === 'string' && entry.state.model.trim()) ||
+    PROVIDER_CONFIGS[resolvedProvider].defaultModel;
+
+  ensureRuntimeState(entry);
+
+  const subagentId = `sub_deepreviewer_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}`;
+  const childRunId = makeRunId();
+  const parentRunId = parentRunIdPayload || entry.activeRunId || null;
+  const abortController = new AbortController();
+  const startedAt = Date.now();
+
+  entry.activeDelegations.set(subagentId, {
+    role: 'reviewer',
+    agent: 'deep_reviewer',
+    parentRunId,
+    childRunId,
+    abortController,
+    startedAt,
+    task: 'deep-review-diff',
+  });
+
+  const detail = `deep review diff (${diff.length} chars)`;
+  const startEventPayload = {
+    executionId: subagentId,
+    subagentId,
+    ...(parentRunId ? { parentRunId } : {}),
+    childRunId,
+    agent: 'deep_reviewer',
+    role: 'reviewer',
+    detail,
+  };
+  await appendSessionEvent(entry.state, 'subagent.started', startEventPayload, childRunId);
+  await saveSessionState(entry.state);
+  broadcastEvent(sessionId, {
+    v: PROTOCOL_VERSION,
+    kind: 'event',
+    sessionId,
+    runId: childRunId,
+    seq: entry.state.eventSeq,
+    ts: Date.now(),
+    type: 'subagent.started',
+    payload: startEventPayload,
+  });
+
+  const ack = makeResponse(req.requestId, 'delegate_deep_reviewer', sessionId, true, {
+    subagentId,
+    childRunId,
+    accepted: true,
+  });
+
+  (async () => {
+    let reviewResult = null;
+    let runError = null;
+    try {
+      const baseStream = createDaemonProviderStream(resolvedProvider, sessionId);
+      const signalAwareStream = (req) =>
+        baseStream({
+          ...req,
+          signal: req.signal
+            ? AbortSignal.any([req.signal, abortController.signal])
+            : abortController.signal,
+        });
+
+      const callerGuidance =
+        rawContext && typeof rawContext.reviewGuidance === 'string'
+          ? rawContext.reviewGuidance
+          : null;
+      const reviewGuidance =
+        callerGuidance ??
+        (await resolveReviewGuidance({
+          readWorkingCopy: () => readWorkspaceReviewGuidance(entry.state.cwd),
+        }));
+      const reviewerContext = reviewGuidance
+        ? { ...(rawContext ?? {}), reviewGuidance }
+        : rawContext;
+
+      // Read-only CLI-native tool loop, gated on the reviewer role.
+      const toolExec = makeDaemonExplorerToolExec({
+        entry,
+        signal: abortController.signal,
+        role: 'reviewer',
+      });
+
+      reviewResult = await runDeepReviewer(
+        diff,
+        {
+          provider: resolvedProvider,
+          stream: signalAwareStream,
+          modelId: resolvedModel,
+          context: reviewerContext,
+          resolveRuntimeContext: async (_diff, context) => buildReviewerContextBlock(context) || '',
+          // The daemon investigates the LOCAL working tree, not a cloud
+          // sandbox. We still pass a truthy sandboxId (the workspace path) so
+          // the kernel does NOT inject its "No sandbox available — use GitHub
+          // tools instead" guidance: that guidance is wrong here because (a)
+          // our sandboxToolProtocol override advertises the local read tools
+          // (read_file / search_files / …) the executor actually runs, and
+          // (b) no GitHub tools are wired on this path. Without a truthy id the
+          // model would be steered away from the only tools it has (Codex P2).
+          // `sandboxId` is informational in the kernel (prompt guidance +
+          // hasSandbox flag) — it's never used as a real sandbox handle; all
+          // tool calls route through `toolExec` above.
+          sandboxId: entry.state.cwd || 'local',
+          allowedRepo: '',
+          userProfile: null,
+          toolExec,
+          detectAllToolCalls: wrapCliDetectAllToolCalls,
+          detectAnyToolCall: wrapCliDetectAnyToolCall,
+          // Advertise the CLI-native read-only tool names (matches the
+          // detector + executor); see the handler doc above. The block already
+          // lists web_search, so the separate webSearchToolProtocol is unused.
+          sandboxToolProtocol: READ_ONLY_TOOL_PROTOCOL,
+          webSearchToolProtocol: '',
+        },
+        {
+          onStatus: () => {
+            // Quiet for now — later slices can emit agent_status events.
+          },
+          signal: abortController.signal,
+        },
+      );
+    } catch (err) {
+      runError = err;
+    }
+
+    if (reviewResult) {
+      if (!Array.isArray(entry.state.reviewOutcomes)) {
+        entry.state.reviewOutcomes = [];
+      }
+      entry.state.reviewOutcomes.push({ subagentId, result: reviewResult });
+    }
+
+    const activeDelegation = entry.activeDelegations?.get(subagentId);
+    if (!activeDelegation) {
+      await saveSessionState(entry.state);
+      return;
+    }
+    entry.activeDelegations.delete(subagentId);
+
+    if (runError || !reviewResult) {
+      const err = runError;
+      const isAbort =
+        err &&
+        ((err instanceof Error && err.name === 'AbortError') ||
+          (typeof err?.message === 'string' && err.message.includes('cancelled')));
+      const message =
+        err instanceof Error ? err.message : String(err ?? 'unknown deep reviewer error');
+      const failPayload = {
+        executionId: subagentId,
+        subagentId,
+        ...(parentRunId ? { parentRunId } : {}),
+        childRunId,
+        agent: 'deep_reviewer',
+        role: 'reviewer',
+        error: message,
+        errorDetails: {
+          code: isAbort ? 'CANCELLED' : 'REVIEWER_FAILED',
+          message,
+          retryable: false,
+        },
+      };
+      await appendSessionEvent(entry.state, 'subagent.failed', failPayload, childRunId);
+      await saveSessionState(entry.state);
+      broadcastEvent(sessionId, {
+        v: PROTOCOL_VERSION,
+        kind: 'event',
+        sessionId,
+        runId: childRunId,
+        seq: entry.state.eventSeq,
+        ts: Date.now(),
+        type: 'subagent.failed',
+        payload: failPayload,
+      });
+    } else {
+      const summary = typeof reviewResult.summary === 'string' ? reviewResult.summary : '';
+      const completePayload = {
+        executionId: subagentId,
+        subagentId,
+        ...(parentRunId ? { parentRunId } : {}),
+        childRunId,
+        agent: 'deep_reviewer',
+        role: 'reviewer',
+        summary: summary.slice(0, 280),
+        reviewResult,
+      };
+      await appendSessionEvent(entry.state, 'subagent.completed', completePayload, childRunId);
+      await saveSessionState(entry.state);
+      broadcastEvent(sessionId, {
+        v: PROTOCOL_VERSION,
+        kind: 'event',
+        sessionId,
+        runId: childRunId,
+        seq: entry.state.eventSeq,
+        ts: Date.now(),
+        type: 'subagent.completed',
+        payload: completePayload,
+      });
+    }
+  })();
+
+  return ack;
+}
+
 // ─── Remote-sessions handlers (web app drives daemon over WS) ────
 //
 // These are reachable via the WS transport added in PR #507 and used
@@ -5488,6 +5814,7 @@ const HANDLERS = {
   delegate_explorer: handleDelegateExplorer,
   delegate_coder: handleDelegateCoder,
   delegate_reviewer: handleDelegateReviewer,
+  delegate_deep_reviewer: handleDelegateDeepReviewer,
   cancel_delegation: handleCancelDelegation,
   fetch_delegation_events: handleFetchDelegationEvents,
   sandbox_exec: handleSandboxExec,

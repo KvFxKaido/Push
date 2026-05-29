@@ -1042,6 +1042,7 @@ describe('daemon version', () => {
       'delegate_explorer',
       'delegate_coder',
       'delegate_reviewer',
+      'delegate_deep_reviewer',
       'cancel_delegation',
       'fetch_delegation_events',
     ];
@@ -3695,6 +3696,279 @@ describe('delegate_reviewer', needsLoopback, () => {
       if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
       else process.env.PUSH_SESSION_DIR = originalSessionDir;
       await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── delegate_deep_reviewer ─────────────────────────────────────
+
+describe('delegate_deep_reviewer', needsLoopback, () => {
+  it('rejects missing sessionId', async () => {
+    const response = await handleRequest(
+      makeRequest('delegate_deep_reviewer', { diff: MINIMAL_REVIEWER_DIFF }),
+      () => {},
+    );
+    assert.equal(response.ok, false);
+    assert.equal(response.error.code, 'INVALID_REQUEST');
+    assert.ok(response.error.message.includes('sessionId'));
+  });
+
+  it('rejects missing diff', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-deepreview-nodiff-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', { provider: 'ollama', repo: { rootPath: process.cwd() } }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+      const response = await handleRequest(
+        makeRequest('delegate_deep_reviewer', { sessionId, attachToken }, sessionId),
+        () => {},
+      );
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'INVALID_REQUEST');
+      assert.ok(response.error.message.includes('diff'));
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects invalid attach token', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-deepreview-badtok-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', { provider: 'ollama', repo: { rootPath: process.cwd() } }),
+        () => {},
+      );
+      const { sessionId } = start.payload;
+      const response = await handleRequest(
+        makeRequest(
+          'delegate_deep_reviewer',
+          { sessionId, attachToken: 'att_wrong', diff: MINIMAL_REVIEWER_DIFF },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'INVALID_TOKEN');
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('honors reviewer role routing and rejects a stale unknown provider before acking', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-deepreview-stale-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', { provider: 'ollama', repo: { rootPath: process.cwd() } }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+      const entry = __getActiveSessionForTesting(sessionId);
+      assert.ok(entry);
+      entry.state.roleRouting = { reviewer: { provider: 'not-a-real-provider' } };
+
+      const response = await handleRequest(
+        makeRequest(
+          'delegate_deep_reviewer',
+          { sessionId, attachToken, diff: MINIMAL_REVIEWER_DIFF },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'PROVIDER_NOT_CONFIGURED');
+      assert.ok(response.error.message.includes('not-a-real-provider'));
+      assert.equal(entry.activeDelegations?.size ?? 0, 0);
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('runs the deep-reviewer kernel end-to-end and persists a ReviewResult', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-deepreview-happy-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    // The deep reviewer emits the [REVIEW_COMPLETE] marker, then JSON. A
+    // round-1 response with no tool call + the marker exits the loop
+    // immediately (no investigation needed for this deterministic case).
+    const MOCK_DEEP_TOKENS = [
+      'I reviewed the diff directly.\n[REVIEW_COMPLETE]\n',
+      '{"summary": "MOCK_DEEP_SUMMARY: single added line looks fine.",',
+      ' "comments": [',
+      '{"file": "src/a.ts", "line": 3, "severity": "note",',
+      ' "comment": "MOCK_DEEP_COMMENT: consider a test for this line"}',
+      ']}',
+    ];
+    const mock = await startMockProviderServer({ tokens: MOCK_DEEP_TOKENS });
+    const restoreConfig = patchProviderConfig('ollama', { url: mock.url, apiKey: 'test-mock-key' });
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', { provider: 'ollama', repo: { rootPath: process.cwd() } }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      const broadcasted = [];
+      const attached = await handleRequest(
+        makeRequest(
+          'attach_session',
+          { sessionId, attachToken, capabilities: ['event_v2'] },
+          sessionId,
+        ),
+        (event) => broadcasted.push(event),
+      );
+      assert.equal(attached.ok, true);
+      broadcasted.length = 0;
+
+      const response = await handleRequest(
+        makeRequest(
+          'delegate_deep_reviewer',
+          { sessionId, attachToken, diff: MINIMAL_REVIEWER_DIFF },
+          sessionId,
+        ),
+        () => {},
+      );
+
+      assert.equal(response.ok, true);
+      assert.equal(response.payload.accepted, true);
+      assert.ok(response.payload.subagentId.startsWith('sub_deepreviewer_'));
+      assert.ok(response.payload.childRunId.startsWith('run_'));
+
+      const { subagentId, childRunId } = response.payload;
+      const entry = __getActiveSessionForTesting(sessionId);
+      assert.ok(entry);
+
+      await waitForDelegationComplete(entry, subagentId, sessionId);
+      assert.equal(entry.activeDelegations.has(subagentId), false);
+
+      const events = await loadSessionEvents(sessionId);
+      const started = events.find(
+        (e) => e.type === 'subagent.started' && e.payload.subagentId === subagentId,
+      );
+      const completed = events.find(
+        (e) => e.type === 'subagent.completed' && e.payload.subagentId === subagentId,
+      );
+      assert.ok(started, 'expected subagent.started event');
+      assert.ok(completed, 'expected subagent.completed event');
+      // Deep reviewer tags its agent distinctly but runs under the reviewer role.
+      assert.equal(started.payload.agent, 'deep_reviewer');
+      assert.equal(started.payload.role, 'reviewer');
+      assert.equal(completed.payload.agent, 'deep_reviewer');
+      assert.equal(completed.runId, childRunId);
+
+      const reviewResult = completed.payload.reviewResult;
+      assert.ok(reviewResult, 'expected reviewResult payload');
+      assert.ok(reviewResult.summary.includes('MOCK_DEEP_SUMMARY'));
+      assert.equal(reviewResult.comments.length, 1);
+      assert.equal(reviewResult.comments[0].file, 'src/a.ts');
+      assert.equal(reviewResult.comments[0].severity, 'note');
+      assert.equal(reviewResult.provider, 'ollama');
+
+      const loaded = await loadSessionState(sessionId);
+      const record = loaded.reviewOutcomes?.find((r) => r.subagentId === subagentId);
+      assert.ok(record, 'expected reviewOutcome record in session state');
+      assert.ok(record.result.summary.includes('MOCK_DEEP_SUMMARY'));
+
+      const broadcastCompleted = await waitForBroadcast(
+        broadcasted,
+        (e) => e.type === 'subagent.completed' && e.payload.subagentId === subagentId,
+        { message: 'expected subagent.completed broadcast' },
+      );
+      assert.ok(broadcastCompleted.payload.reviewResult);
+    } finally {
+      restoreConfig();
+      await mock.stop();
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('investigates via a local CLI read tool before reviewing (tool loop)', async () => {
+    // Proves the deep reviewer is steered toward the LOCAL CLI read tools its
+    // executor can actually run — the Codex P2 fix (truthy sandboxId suppresses
+    // the "no sandbox, use GitHub tools" guidance). Round 1 emits a CLI-native
+    // read_file call; round 2 (after the real tool result) emits the verdict.
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-deepreview-loop-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    // A real file in the workspace the reviewer will "read" during investigation.
+    const workRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-deepreview-ws-'));
+    await fs.writeFile(path.join(workRoot, 'a.ts'), 'export const answer = 42;\n');
+
+    const responses = [
+      // Round 1: investigate — emit a CLI-native read_file tool call.
+      [
+        'Let me read the changed file first.\n',
+        '```json\n{"tool": "read_file", "args": {"path": "a.ts"}}\n```',
+      ],
+      // Round 2: now produce the verdict.
+      [
+        '[REVIEW_COMPLETE]\n',
+        '{"summary": "MOCK_DEEP_LOOP: investigated a.ts before reviewing.",',
+        ' "comments": []}',
+      ],
+    ];
+    const mock = await startMockProviderServer({ responses });
+    const restoreConfig = patchProviderConfig('ollama', { url: mock.url, apiKey: 'test-mock-key' });
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', { provider: 'ollama', repo: { rootPath: workRoot } }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      const response = await handleRequest(
+        makeRequest(
+          'delegate_deep_reviewer',
+          { sessionId, attachToken, diff: MINIMAL_REVIEWER_DIFF },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(response.ok, true);
+      const { subagentId } = response.payload;
+      const entry = __getActiveSessionForTesting(sessionId);
+      await waitForDelegationComplete(entry, subagentId, sessionId);
+
+      // The kernel ran at least two provider rounds: the investigation round
+      // (tool call) and the verdict round. A single round would mean the tool
+      // loop never engaged.
+      assert.ok(
+        mock.requestCount() >= 2,
+        `expected >=2 provider rounds (investigate + verdict), got ${mock.requestCount()}`,
+      );
+
+      const events = await loadSessionEvents(sessionId);
+      const completed = events.find(
+        (e) => e.type === 'subagent.completed' && e.payload.subagentId === subagentId,
+      );
+      assert.ok(completed, 'expected subagent.completed');
+      assert.ok(completed.payload.reviewResult.summary.includes('MOCK_DEEP_LOOP'));
+    } finally {
+      restoreConfig();
+      await mock.stop();
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+      await fs.rm(workRoot, { recursive: true, force: true });
     }
   });
 });
