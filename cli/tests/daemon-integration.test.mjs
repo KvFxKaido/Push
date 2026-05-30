@@ -1014,6 +1014,41 @@ describe('addressable child sessions — list_children + get_child_session', () 
     assert.equal(rv.source, 'events');
     assert.equal(rv.terminalType, 'subagent.failed');
   });
+
+  it('includeEventDerived does NOT surface task-graph executions (no subagentId)', async () => {
+    const { sessionId, token } = await makeSession();
+    const entry = __getActiveSessionForTesting(sessionId);
+    // Task-graph events are keyed by executionId and carry NO subagentId — they
+    // are a separate concept and must not be reconstructed as children.
+    await appendSessionEvent(
+      entry.state,
+      'task_graph.task_started',
+      { executionId: 'exec_graph_1', taskId: 'n1' },
+      'run_graph',
+    );
+    await appendSessionEvent(
+      entry.state,
+      'task_graph.graph_completed',
+      { executionId: 'exec_graph_1' },
+      'run_graph',
+    );
+    await saveSessionState(entry.state);
+
+    const inc = await handleRequest(
+      makeRequest('list_children', { sessionId, attachToken: token, includeEventDerived: true }),
+      () => {},
+    );
+    assert.equal(inc.ok, true);
+    assert.equal(
+      inc.payload.eventDerivedCount,
+      0,
+      'task-graph executions must not become children',
+    );
+    assert.equal(
+      inc.payload.children.some((c) => c.subagentId === 'exec_graph_1'),
+      false,
+    );
+  });
 });
 
 // ─── abort sugar verb (Addressable Session Verbs phase 2b) ──────

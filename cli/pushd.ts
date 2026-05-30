@@ -3512,7 +3512,9 @@ function buildCompletedChildDescriptor(subagentId, outcome) {
  * `status` is `'completed'`; `terminalType` records which terminal event was
  * seen (`subagent.completed` / `subagent.failed`), or null if the run ended
  * without one (e.g. a daemon crash mid-run). `events` must already be filtered
- * to this child.
+ * to this child and is expected to contain a `subagent.started` (both call
+ * sites guarantee it); if it doesn't, metadata fields degrade to null/empty
+ * rather than throwing.
  */
 function buildEventDerivedChildDescriptor(subagentId, events) {
   const started = events.find((e) => e.type === 'subagent.started');
@@ -3638,19 +3640,18 @@ async function handleListChildren(req) {
     const allEvents = await loadSessionEvents(sessionId);
     for (const e of allEvents) {
       const p = e.payload && typeof e.payload === 'object' ? e.payload : {};
-      const sid =
-        typeof p.subagentId === 'string'
-          ? p.subagentId
-          : typeof p.executionId === 'string'
-            ? p.executionId
-            : null;
+      // Group by the REAL delegation id only — every `subagent.*` event carries
+      // `subagentId`. No `executionId` fallback: task-graph executions are keyed
+      // by executionId and are a separate concept (their own `task_graph.*`
+      // events), so this keeps their pseudo-subagents out of the children list.
+      const sid = typeof p.subagentId === 'string' ? p.subagentId : null;
       if (!sid || known.has(sid)) continue;
       if (!byChild.has(sid)) byChild.set(sid, []);
       byChild.get(sid).push(e);
     }
     for (const [sid, evs] of byChild) {
-      // Require a started event so task-graph executions (task_graph.* only,
-      // keyed by executionId) aren't mistaken for child delegations.
+      // Require a started event so a stray subagentId-tagged event without a
+      // real delegation start isn't mistaken for a child.
       if (!evs.some((e) => e.type === 'subagent.started')) continue;
       eventDerived.push(buildEventDerivedChildDescriptor(sid, evs));
     }
