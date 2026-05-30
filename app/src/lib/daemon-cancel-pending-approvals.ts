@@ -76,15 +76,26 @@ export function cancelPendingApprovals(
   pending: readonly PendingApproval[],
   request: DaemonRequestFn,
   popMatching: PopMatchingFn,
+  attachToken?: string | null,
 ): void {
   for (const approval of pending) {
     // Session-scoped — omit `runId` because the daemon rejects
     // child-run ids against `entry.activeRunId` (parent for
     // delegations). See file-level doc.
+    //
+    // `attachToken` is required by the daemon's bearer-gated `cancel_run`
+    // (Addressable Session Verbs phase 2). The relay binding holds the
+    // session token (`targetAttachToken`) and threads it here; local-PC mode
+    // never attached to a daemon session, so it has no token and its cancel
+    // resolves to a benign SESSION_NOT_FOUND (the gate sits after the
+    // existence check), which the `.catch` already swallows.
     void request({
       type: 'cancel_run',
       sessionId: approval.sessionId,
-      payload: { sessionId: approval.sessionId },
+      payload: {
+        sessionId: approval.sessionId,
+        ...(typeof attachToken === 'string' && attachToken.length > 0 ? { attachToken } : {}),
+      },
       timeoutMs: 5_000,
     }).catch(() => {
       // Intentional swallow — see file-level doc.

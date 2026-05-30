@@ -578,6 +578,82 @@ describe('resolveOrMintTargetAttachToken', () => {
   });
 });
 
+// ─── cancel_run bearer gate (Addressable Session Verbs phase 2) ──
+//
+// Closes the auth gap the Universal Session Bearer sweep missed: the
+// session-ful cancel_run path aborted a run from sessionId alone with no
+// validateAttachToken. The gate sits AFTER the existence check so a cancel
+// for a session the daemon doesn't have still returns SESSION_NOT_FOUND (the
+// benign local-PC best-effort path), and BEFORE the run-state check so an
+// unauthenticated caller can't probe run state.
+describe('cancel_run bearer gate', () => {
+  const sessionId = 'sess_cancelgate_aabbcc';
+  after(() => __evictActiveSessionForTesting(sessionId));
+
+  // Seed a live session with an active run and a fake abort controller.
+  function seedActiveRun(token) {
+    let aborted = false;
+    __setActiveSessionForTesting(sessionId, {
+      state: { sessionId, attachToken: token },
+      attachToken: token,
+      activeRunId: 'run_cancelgate',
+      abortController: {
+        abort: () => {
+          aborted = true;
+        },
+      },
+    });
+    return () => aborted;
+  }
+
+  it('rejects a session-ful cancel with NO token (gap closed)', async () => {
+    seedActiveRun('att_cancelgate');
+    const res = await handleRequest(makeRequest('cancel_run', { sessionId }), () => {});
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'INVALID_TOKEN');
+  });
+
+  it('rejects a wrong token', async () => {
+    seedActiveRun('att_cancelgate');
+    const res = await handleRequest(
+      makeRequest('cancel_run', { sessionId, attachToken: 'att_wrong' }),
+      () => {},
+    );
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'INVALID_TOKEN');
+  });
+
+  it('accepts the correct token and aborts the run', async () => {
+    const wasAborted = seedActiveRun('att_cancelgate');
+    const res = await handleRequest(
+      makeRequest('cancel_run', { sessionId, attachToken: 'att_cancelgate' }),
+      () => {},
+    );
+    assert.equal(res.ok, true, `expected accept, got ${JSON.stringify(res.error)}`);
+    assert.equal(wasAborted(), true, 'the run controller should have been aborted');
+  });
+
+  it('checks auth BEFORE run-state — no NO_ACTIVE_RUN leak to an unauthenticated caller', async () => {
+    // Entry with NO activeRunId: a tokenless cancel must still see
+    // INVALID_TOKEN, not NO_ACTIVE_RUN (which would leak run state).
+    __setActiveSessionForTesting(sessionId, {
+      state: { sessionId, attachToken: 'att_cancelgate' },
+      attachToken: 'att_cancelgate',
+    });
+    const res = await handleRequest(makeRequest('cancel_run', { sessionId }), () => {});
+    assert.equal(res.error.code, 'INVALID_TOKEN');
+  });
+
+  it('unknown session still returns SESSION_NOT_FOUND (gate after existence; local-PC benign path unchanged)', async () => {
+    const res = await handleRequest(
+      makeRequest('cancel_run', { sessionId: 'sess_cancelgone_ddeeff', attachToken: 'whatever' }),
+      () => {},
+    );
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'SESSION_NOT_FOUND');
+  });
+});
+
 // ─── Daemon client library ──────────────────────────────────────
 
 describe('daemon-client module', () => {

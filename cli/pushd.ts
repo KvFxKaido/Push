@@ -1863,6 +1863,27 @@ async function handleCancelRun(req, _emitEvent, context) {
     );
   }
 
+  // Bearer-gate the session-ful cancel (Addressable Session Verbs phase 2 —
+  // the 12th enforcement site, missed by the Universal Session Bearer sweep).
+  // Without this a relay-authenticated client could abort a run on a session it
+  // does not hold the bearer for, just by knowing the sessionId. Placed AFTER
+  // the existence check so a cancel for a session the daemon doesn't have still
+  // returns SESSION_NOT_FOUND (the benign local-PC best-effort path), not a
+  // token error. The runId-only path above stays WS-connection-scoped and is
+  // intentionally not token-gated.
+  const providedToken = req.payload?.attachToken;
+  if (!validateAttachToken(entry, providedToken)) {
+    process.stderr.write(
+      `${JSON.stringify({ level: 'warn', event: 'cancel_run_unauthenticated_rejected', sessionId, hadToken: typeof providedToken === 'string' && providedToken.length > 0 })}\n`,
+    );
+    return makeErrorResponse(
+      req.requestId,
+      'cancel_run',
+      'INVALID_TOKEN',
+      'Invalid or missing attach token',
+    );
+  }
+
   if (!entry.activeRunId) {
     return makeErrorResponse(
       req.requestId,

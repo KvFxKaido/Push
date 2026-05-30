@@ -132,6 +132,15 @@ export interface DaemonChatBodyProps {
    */
   request: <T = unknown>(opts: RequestOptions) => Promise<SessionResponse<T>>;
 
+  /**
+   * Session attach token for the bound daemon session, threaded into the
+   * bearer-gated `cancel_run` fired on Stop (Addressable Session Verbs phase 2).
+   * Present in relay mode (the pair-bundle `targetAttachToken`); `null` in
+   * local-PC mode, which never attaches to a daemon session — its cancel
+   * resolves to a benign SESSION_NOT_FOUND, so no token is needed.
+   */
+  sessionAttachToken?: string | null;
+
   /** GitHub auth, forwarded into the hub's Settings → Auth section so
    *  the user can manage their token without leaving the daemon. */
   auth: WorkspaceScreenAuthProps;
@@ -187,6 +196,7 @@ export function DaemonChatBody({
   paramsBinding,
   approvals,
   request,
+  sessionAttachToken = null,
   auth,
   onDisconnect,
   attachStatus = 'idle',
@@ -540,7 +550,12 @@ export function DaemonChatBody({
   // can't statically analyze the `approvals.headRef.current` access.
   // Stop is a low-frequency click; a per-render closure is fine.
   const handleAbort = () => {
-    cancelPendingApprovals(approvals.headRef.current, request, approvals.popMatching);
+    cancelPendingApprovals(
+      approvals.headRef.current,
+      request,
+      approvals.popMatching,
+      sessionAttachToken,
+    );
     abortStream();
   };
 
