@@ -601,8 +601,9 @@ import {
   READ_ONLY_TOOL_PROTOCOL,
 } from './tools.js';
 import {
-  makeSessionId,
   makeRunId,
+  makeAttachToken,
+  createSessionState,
   saveSessionState,
   appendSessionEvent,
   loadSessionState,
@@ -781,9 +782,10 @@ function makeRequestId() {
   return `req_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}`;
 }
 
-function makeAttachToken() {
-  return `att_${randomBytes(8).toString('hex')}`;
-}
+// `makeAttachToken` is now imported from `./session-store` so every session
+// creation path (daemon + TUI + CLI) mints through one helper. Re-exported
+// below alongside the other token utilities for callers/tests that import it
+// from the daemon module.
 
 function makeApprovalId() {
   return `appr_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}`;
@@ -1215,8 +1217,6 @@ async function handleStartSession(req) {
   const restartPolicy = VALID_RESTART_POLICIES.has(payload.restartPolicy)
     ? payload.restartPolicy
     : DEFAULT_RESTART_POLICY;
-  const sessionId = makeSessionId();
-  const attachToken = makeAttachToken();
   const now = Date.now();
   // Tag the session with its origin surface so `list_sessions` (and the
   // mobile drawer that consumes it) can bucket Local PC / Remote / CLI
@@ -1227,26 +1227,25 @@ async function handleStartSession(req) {
   const mode =
     typeof payload.mode === 'string' && payload.mode.trim() ? payload.mode.trim() : 'interactive';
 
+  // Route through the shared factory so the attach token is minted at birth
+  // by the same helper the TUI/CLI use (Universal Session Bearer). The
+  // persisted token lets disk-reload paths (daemon restart, session eviction,
+  // cross-handler lazy load) restore the SAME token the client received here
+  // instead of minting a fresh one and rejecting the client's original.
   const state = {
-    sessionId,
-    createdAt: now,
-    updatedAt: now,
-    provider,
-    model,
-    cwd,
+    ...createSessionState({
+      provider,
+      model,
+      cwd,
+      mode,
+      now,
+      messages: [{ role: 'system', content: await buildSystemPrompt(cwd) }],
+    }),
     restartPolicy,
     roleRouting: {},
     delegationOutcomes: [],
-    rounds: 0,
-    eventSeq: 0,
-    messages: [{ role: 'system', content: await buildSystemPrompt(cwd) }],
-    // Persist the attach token so that disk-reload paths (daemon restart,
-    // session eviction, cross-handler lazy load) can restore the SAME token
-    // the client received at start_session time instead of minting a fresh
-    // one and immediately rejecting the client's original token as invalid.
-    attachToken,
-    mode,
   };
+  const { sessionId, attachToken } = state;
 
   await appendSessionEvent(state, 'session_started', {
     sessionId,

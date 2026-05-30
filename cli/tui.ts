@@ -103,7 +103,7 @@ import {
 import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.js';
 import { getCuratedModels, fetchModels } from './model-catalog.js';
 import {
-  makeSessionId,
+  createSessionState,
   saveSessionState,
   appendSessionEvent,
   loadSessionState,
@@ -1306,17 +1306,22 @@ export async function runTUI(options = {}) {
   async function createFreshSessionState(providerName, requestedModel, cwd) {
     const providerConfig = PROVIDER_CONFIGS[providerName];
     if (!providerConfig) throw new Error(`Unknown provider: ${providerName}`);
-    const sessionId = makeSessionId();
-    const now = Date.now();
+    // Route through the shared factory so the attach token is minted at birth
+    // (Universal Session Bearer) — the TUI's inline session is no longer born
+    // tokenless, so when the daemon later lazy-loads it (a TUI attaches to its
+    // own persisted `state.sessionId`) there's nothing to backfill and no
+    // stale-`undefined` reconnect lockout. `mode: 'tui'` tags origin surface
+    // so `list_sessions` (and the mobile drawer) bucket this row as TUI;
+    // `ensureSessionPersisted` re-emits the matching value in the
+    // `session_started` event payload.
     const nextState = {
-      sessionId,
-      createdAt: now,
-      updatedAt: now,
-      provider: providerName,
-      model: requestedModel,
-      cwd,
-      rounds: 0,
-      eventSeq: 0,
+      ...createSessionState({
+        provider: providerName,
+        model: requestedModel,
+        cwd,
+        mode: 'tui',
+        messages: [{ role: 'system', content: buildSystemPromptBase(cwd) }],
+      }),
       workingMemory: {
         plan: '',
         openTasks: [],
@@ -1326,13 +1331,6 @@ export async function runTUI(options = {}) {
         currentPhase: '',
         completedPhases: [],
       },
-      messages: [{ role: 'system', content: buildSystemPromptBase(cwd) }],
-      // Tag origin surface so `list_sessions` (and the mobile drawer
-      // that consumes it) buckets this row as TUI rather than falling
-      // back to 'interactive'. Mirrors the daemon's `handleStartSession`
-      // tagging; the `ensureSessionPersisted` callback below re-emits
-      // the matching value in the `session_started` event payload.
-      mode: 'tui',
     };
     // Start enriching the system prompt in the background — will be
     // awaited before the first LLM call in runAssistantLoop.

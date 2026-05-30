@@ -11,7 +11,7 @@ import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.js'
 import { matchingRiskPatternIndex, suggestApprovalPrefix } from './tools.js';
 import { getCuratedModels, DEFAULT_MODELS } from './model-catalog.js';
 import {
-  makeSessionId,
+  createSessionState,
   saveSessionState,
   appendSessionEvent,
   loadSessionState,
@@ -1298,18 +1298,27 @@ async function initSession(sessionId, provider, model, cwd, mode = 'interactive'
     }
   }
 
-  const providerConfig = PROVIDER_CONFIGS[provider];
-  const newSessionId = makeSessionId();
-  const now = Date.now();
+  // Route through the shared factory so the attach token is minted at birth
+  // (Universal Session Bearer) — the CLI's inline session is no longer born
+  // tokenless, so disk-load by the daemon has nothing to backfill. `mode`
+  // tags the origin surface so `list_sessions` (and the mobile drawer) bucket
+  // without re-deriving from local state; it mirrors the daemon's
+  // `handleStartSession` behavior. `state.mode` is the single source of
+  // truth — the interactive REPL's `ensureSessionPersisted` (lower in this
+  // file) and the TUI's equivalent (in tui.ts) both read it into the
+  // `session_started` event payload so the event and the persisted state
+  // can't drift. The headless path (`runHeadless`) skips `session_started`
+  // entirely and starts from `user_message`; that event-log asymmetry is
+  // pre-existing and doesn't affect `list_sessions` since it reads
+  // `state.mode` from disk.
   const state = {
-    sessionId: newSessionId,
-    createdAt: now,
-    updatedAt: now,
-    provider,
-    model,
-    cwd,
-    rounds: 0,
-    eventSeq: 0,
+    ...createSessionState({
+      provider,
+      model,
+      cwd,
+      mode,
+      messages: [{ role: 'system', content: buildSystemPromptBase(cwd) }],
+    }),
     workingMemory: {
       plan: '',
       openTasks: [],
@@ -1319,20 +1328,6 @@ async function initSession(sessionId, provider, model, cwd, mode = 'interactive'
       currentPhase: '',
       completedPhases: [],
     },
-    messages: [{ role: 'system', content: buildSystemPromptBase(cwd) }],
-    // Tag the origin surface so `list_sessions` (and the mobile drawer
-    // that consumes it) can bucket without re-deriving mode from local
-    // state. Mirrors the daemon's `handleStartSession` behavior so the
-    // CLI-inline paths land alongside the daemon-spawned ones in the
-    // listing. `state.mode` is the single source of truth — the
-    // interactive REPL's `ensureSessionPersisted` (lower in this file)
-    // and the TUI's equivalent (in tui.ts) both read it into the
-    // `session_started` event payload so the event and the persisted
-    // state can't drift. The headless path (`runHeadless`) skips
-    // `session_started` entirely and starts from `user_message`; that
-    // event-log asymmetry is pre-existing and doesn't affect
-    // `list_sessions` since it reads `state.mode` from disk.
-    mode,
   };
   // Start enriching the system prompt in the background — will be
   // awaited before the first LLM call in runAssistantLoop.
