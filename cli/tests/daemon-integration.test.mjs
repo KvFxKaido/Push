@@ -449,6 +449,48 @@ describe('validateAttachToken', () => {
       else process.env.PUSHD_OPEN_ATTACH = original;
     }
   });
+
+  it('emits open_attach_used once per entry with precise source attribution', () => {
+    const originalEnv = process.env.PUSHD_OPEN_ATTACH;
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    const lines = [];
+    process.stderr.write = (chunk) => {
+      lines.push(String(chunk));
+      return true;
+    };
+    try {
+      // session-only (env off): two calls on the SAME entry → one log (deduped).
+      delete process.env.PUSHD_OPEN_ATTACH;
+      const sessionEntry = { state: { sessionId: 's_sess' }, openAttach: true };
+      validateAttachToken(sessionEntry, undefined);
+      validateAttachToken(sessionEntry, undefined);
+      // env-only: a tokened entry forced open purely by the env flag.
+      process.env.PUSHD_OPEN_ATTACH = '1';
+      validateAttachToken({ state: { sessionId: 's_env' }, attachToken: 'att_x' }, undefined);
+      // both: per-session flag AND env set → combined attribution.
+      validateAttachToken({ state: { sessionId: 's_both' }, openAttach: true }, undefined);
+    } finally {
+      process.stderr.write = originalWrite;
+      if (originalEnv === undefined) delete process.env.PUSHD_OPEN_ATTACH;
+      else process.env.PUSHD_OPEN_ATTACH = originalEnv;
+    }
+    const events = lines
+      .map((l) => {
+        try {
+          return JSON.parse(l);
+        } catch {
+          return null;
+        }
+      })
+      .filter((e) => e && e.event === 'open_attach_used');
+    const bySession = Object.fromEntries(events.map((e) => [e.sessionId, e]));
+    // Deduped to one per entry.
+    assert.equal(events.filter((e) => e.sessionId === 's_sess').length, 1);
+    assert.equal(bySession.s_sess.level, 'warn');
+    assert.equal(bySession.s_sess.source, 'session');
+    assert.equal(bySession.s_env.source, 'env');
+    assert.equal(bySession.s_both.source, 'session+env');
+  });
 });
 
 // ─── resolveOrMintTargetAttachToken (remote-pair tokenless fix) ──
