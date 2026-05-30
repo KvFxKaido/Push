@@ -1932,7 +1932,23 @@ export async function runTUI(options = {}) {
         1500,
       );
       daemonSessionId = state.sessionId;
-      daemonAttachToken = state.attachToken || null;
+      // Adopt the attach token from the response (Universal Session Bearer).
+      // For a legacy tokenless session we attached with `undefined`; the
+      // daemon's bootstrap grace claimed it and returned the freshly minted
+      // token here. Adopt it into both the in-memory daemon token and
+      // `state.attachToken` so the NEXT reconnect (which re-reads
+      // `state.attachToken`) presents the real token instead of `undefined`
+      // and is accepted — without this, the very next reconnect after a claim
+      // would be rejected (the lockout the audit flagged). For an already-
+      // tokened session the response echoes the same token we sent, so this
+      // is a no-op. Fall back to the prior in-memory token if the daemon
+      // (older build) omits it from the response.
+      const adoptedToken =
+        (typeof res.payload?.attachToken === 'string' && res.payload.attachToken) ||
+        state.attachToken ||
+        null;
+      if (adoptedToken) state.attachToken = adoptedToken;
+      daemonAttachToken = adoptedToken;
       // Daemon is the source of truth for session-scoped state. Hydrate
       // the local view from the attach response so a mid-session switch
       // from another client (or a stale state.json on disk) doesn't
