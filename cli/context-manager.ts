@@ -88,7 +88,7 @@ export function isParseErrorMessage(msg: Message): boolean {
   return msg.role === 'user' && toContentString(msg.content).includes('[TOOL_CALL_PARSE_ERROR]');
 }
 
-function isFirstUserMessage(msg: Message): boolean {
+export function isFirstUserMessage(msg: Message): boolean {
   return msg.role === 'user' && !isToolResultMessage(msg) && !isParseErrorMessage(msg);
 }
 
