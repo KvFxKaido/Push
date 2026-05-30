@@ -1,6 +1,25 @@
 import { describe, it, expect } from 'vitest';
-import { runDeepReviewer, type DeepReviewerOptions } from './deep-reviewer-agent.js';
+import {
+  containsToolCallShape,
+  runDeepReviewer,
+  stripToolScaffolding,
+  type DeepReviewerOptions,
+} from './deep-reviewer-agent.js';
 import type { PushStream, PushStreamEvent } from './provider-contract.js';
+
+const FENCE = '```';
+// The exact shape of the leaked turn: narration + two fenced {tool,args} blocks,
+// where the first block's closing fence is immediately followed by prose (no
+// newline) — the boundary that defeats naive fence handling.
+const LEAKED_TURN =
+  'Let me check one more thing — whether the scratchpad/todo exampleJson fields use the args wrapper:' +
+  FENCE +
+  'json\n{"tool": "repo_grep", "args": {"repo": "a/b", "path": "x", "pattern": "y"}}' +
+  FENCE +
+  'Also check usage:' +
+  FENCE +
+  'json\n{"tool": "repo_search", "args": {"repo": "a/b", "query": "z"}}' +
+  FENCE;
 
 type Call = { call: { tool: string; args: Record<string, unknown> } };
 
@@ -62,7 +81,148 @@ function baseOptions(overrides: {
   };
 }
 
+describe('stripToolScaffolding', () => {
+  it('removes fenced tool-call blocks even at an odd closing-fence boundary', () => {
+    const out = stripToolScaffolding(LEAKED_TURN);
+    expect(out).not.toContain(FENCE);
+    expect(out).not.toMatch(/"tool"\s*:/);
+    expect(out).not.toContain('repo_grep');
+    // Genuine narration survives.
+    expect(out).toContain('Let me check one more thing');
+  });
+
+  it('strips infrastructure markers (including orchestrator/agent ones)', () => {
+    const out = stripToolScaffolding(
+      'Result: [TOOL_RESULT] noise [/TOOL_RESULT] [REVIEW_COMPLETE] [SCRATCHPAD] [SANDBOX_ENVIRONMENT] [PROJECT_INSTRUCTIONS source="AGENTS.md"] done',
+    );
+    expect(out).not.toContain('TOOL_RESULT');
+    expect(out).not.toContain('REVIEW_COMPLETE');
+    expect(out).not.toContain('SCRATCHPAD');
+    expect(out).not.toContain('SANDBOX_ENVIRONMENT');
+    expect(out).not.toContain('PROJECT_INSTRUCTIONS');
+    expect(out).toContain('Result:');
+    expect(out).toContain('done');
+  });
+
+  it('over-strips a fenced tool-shaped block by design (cannot tell call from quoted example)', () => {
+    // Deliberate trade-off on the fallback path: a fenced block whose body is
+    // tool-call-shaped is removed even if a cooperating model meant it as a
+    // quoted example. Losing a quoted snippet beats leaking a real call.
+    const out = stripToolScaffolding(
+      'Here is the protocol:\n```json\n{"tool": "read", "args": {"path": "a.ts"}}\n```\nThat is the shape.',
+    );
+    expect(out).not.toMatch(/"tool"\s*:/);
+    expect(out).toContain('Here is the protocol:');
+    expect(out).toContain('That is the shape.');
+  });
+
+  it('preserves a legitimate NON-tool code fence', () => {
+    const review = 'Looks good. Example:\n```ts\nconst x = 1;\n```\nShip it.';
+    expect(stripToolScaffolding(review)).toContain('const x = 1;');
+  });
+
+  it('leaves a clean prose review untouched (minus the completion marker)', () => {
+    const prose = 'Summary: looks correct.\nFindings: no blocking issues.';
+    expect(stripToolScaffolding(`${prose} [REVIEW_COMPLETE]`)).toBe(prose);
+  });
+});
+
+describe('containsToolCallShape', () => {
+  it('detects bare, nested, and pretty-printed tool-call JSON the stripper leaves behind', () => {
+    expect(containsToolCallShape('Result: {"tool": "read", "args": {"path": "a.ts"}}')).toBe(true);
+    // Nested args — the case the old non-greedy excision regex mangled.
+    expect(containsToolCallShape('{"tool": "plan_tasks", "args": {"tasks": [{"id": "a"}]}}')).toBe(
+      true,
+    );
+    // Pretty-printed across lines.
+    expect(
+      containsToolCallShape('{\n  "tool": "read",\n  "args": {\n    "path": "a"\n  }\n}'),
+    ).toBe(true);
+  });
+
+  it('does not flag prose that merely mentions tool and args far apart', () => {
+    expect(
+      containsToolCallShape('The tool ran fine. Separately, the args to the function were valid.'),
+    ).toBe(false);
+  });
+});
+
 describe('runDeepReviewer (PushStream consumer)', () => {
+  it('does not post the final forced-output turn when it is still tool calls', async () => {
+    // Loop to the round cap: every round emits two read-only calls so the
+    // parallel-execution branch runs and the loop continues. The 8th stream
+    // invocation is the forced-output turn, where the model ignores the
+    // [REVIEW_COMPLETE] prompt and emits the leaked narration + tool JSON.
+    const rounds: PushStreamEvent[][] = [];
+    for (let i = 0; i < 7; i++) {
+      rounds.push([
+        { type: 'text_delta', text: `investigating ${i}` },
+        { type: 'done', finishReason: 'stop' },
+      ]);
+    }
+    rounds.push([
+      { type: 'text_delta', text: LEAKED_TURN },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+    const { stream } = makePushStream(rounds);
+
+    const twoReads = (): ReturnType<DeepReviewerOptions<Call, never>['detectAllToolCalls']> => ({
+      readOnly: [
+        { call: { tool: 'repo_grep', args: {} } },
+        { call: { tool: 'repo_search', args: {} } },
+      ],
+      mutating: null,
+      fileMutations: [],
+      extraMutations: [],
+      droppedCandidates: [],
+    });
+
+    const result = await runDeepReviewer(
+      makeAddedFileDiff('src/app.ts', 'const x = 1;'),
+      baseOptions({ stream, detectAllToolCalls: twoReads }),
+      { onStatus: () => {} },
+    );
+
+    // The leak: the raw tool-call turn must never reach the posted summary.
+    expect(result.summary).not.toContain(FENCE);
+    expect(result.summary).not.toMatch(/"tool"\s*:/);
+    expect(result.summary).not.toContain('repo_grep');
+    // Still-investigating final turn → neutral fallback, not sliced narration.
+    expect(result.summary).toBe('Deep review did not produce structured output.');
+  });
+
+  it('refuses to post residual tool-call JSON even when detection misses it', async () => {
+    // Simulate detection missing the call (default detectAllToolCalls returns
+    // empty): each round nudges to the cap, then the forced-output turn emits
+    // *bare* nested tool JSON the block-stripper can't excise. The
+    // containsToolCallShape guard must catch the residue and post the neutral
+    // summary instead of mangled/leaked JSON.
+    const nestedToolJson = '{"tool": "plan_tasks", "args": {"tasks": [{"id": "a", "task": "x"}]}}';
+    const rounds: PushStreamEvent[][] = [];
+    for (let i = 0; i < 7; i++) {
+      rounds.push([
+        { type: 'text_delta', text: `thinking ${i}` },
+        { type: 'done', finishReason: 'stop' },
+      ]);
+    }
+    rounds.push([
+      { type: 'text_delta', text: `Let me run one more check: ${nestedToolJson}` },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+    const { stream } = makePushStream(rounds);
+
+    const result = await runDeepReviewer(
+      makeAddedFileDiff('src/app.ts', 'const x = 1;'),
+      // Default detectAllToolCalls returns empty → simulates a detection miss.
+      baseOptions({ stream }),
+      { onStatus: () => {} },
+    );
+
+    expect(result.summary).not.toMatch(/"tool"\s*:/);
+    expect(result.summary).not.toContain('plan_tasks');
+    expect(result.summary).toBe('Deep review did not produce structured output.');
+  });
+
   it('parses the structured review JSON when the model emits the completion marker', async () => {
     const reportJson = JSON.stringify({
       summary: 'Looks reasonable.',
