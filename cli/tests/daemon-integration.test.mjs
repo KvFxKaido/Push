@@ -654,6 +654,275 @@ describe('cancel_run bearer gate', () => {
   });
 });
 
+// ─── Addressable child sessions (Addressable Session Verbs phase 3) ──
+//
+// list_children enumerates a session's delegated runs (active from the
+// in-memory map, completed from persisted delegationOutcomes); get_child_session
+// returns one as a structured descriptor + event summary, recovering metadata
+// for completed children from their subagent.started event. Both are bearer-
+// gated reads over the PARENT session's attach token (13th + 14th enforcement
+// sites).
+describe('addressable child sessions — list_children + get_child_session', () => {
+  let originalSessionDir;
+  let tmpRoot;
+  before(async () => {
+    originalSessionDir = process.env.PUSH_SESSION_DIR;
+    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-children-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+  });
+  after(async () => {
+    if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+    else process.env.PUSH_SESSION_DIR = originalSessionDir;
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  });
+
+  async function makeSession() {
+    const start = await handleRequest(
+      makeRequest('start_session', { provider: 'ollama', repo: { rootPath: process.cwd() } }),
+      () => {},
+    );
+    return { sessionId: start.payload.sessionId, token: start.payload.attachToken };
+  }
+
+  it('list_children rejects a tokenless read (13th enforcement site)', async () => {
+    const { sessionId } = await makeSession();
+    const res = await handleRequest(makeRequest('list_children', { sessionId }), () => {});
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'INVALID_TOKEN');
+  });
+
+  it('list_children returns active + completed children with a status discriminator', async () => {
+    const { sessionId, token } = await makeSession();
+    const entry = __getActiveSessionForTesting(sessionId);
+    entry.activeDelegations = new Map([
+      [
+        'sub_explorer_aaa',
+        {
+          role: 'explorer',
+          agent: 'explorer',
+          parentRunId: 'run_p',
+          childRunId: 'run_c1',
+          startedAt: 1000,
+          task: 'explore the auth flow',
+        },
+      ],
+    ]);
+    entry.state.delegationOutcomes = [
+      {
+        subagentId: 'sub_coder_bbb',
+        outcome: {
+          agent: 'coder',
+          status: 'completed',
+          summary: 'did the thing',
+          rounds: 3,
+          checkpoints: 1,
+          elapsedMs: 4200,
+        },
+      },
+    ];
+    const res = await handleRequest(
+      makeRequest('list_children', { sessionId, attachToken: token }),
+      () => {},
+    );
+    assert.equal(res.ok, true);
+    assert.equal(res.payload.activeCount, 1);
+    assert.equal(res.payload.completedCount, 1);
+    const byId = Object.fromEntries(res.payload.children.map((c) => [c.subagentId, c]));
+    assert.equal(byId.sub_explorer_aaa.status, 'active');
+    assert.equal(byId.sub_explorer_aaa.task, 'explore the auth flow');
+    assert.equal(byId.sub_explorer_aaa.childRunId, 'run_c1');
+    assert.equal(byId.sub_coder_bbb.status, 'completed');
+    assert.equal(byId.sub_coder_bbb.outcomeStatus, 'completed');
+    assert.equal(byId.sub_coder_bbb.summary, 'did the thing');
+  });
+
+  it('list_children returns empty for a session with no delegations', async () => {
+    const { sessionId, token } = await makeSession();
+    const res = await handleRequest(
+      makeRequest('list_children', { sessionId, attachToken: token }),
+      () => {},
+    );
+    assert.equal(res.ok, true);
+    assert.deepEqual(res.payload.children, []);
+    assert.equal(res.payload.activeCount, 0);
+    assert.equal(res.payload.completedCount, 0);
+  });
+
+  it('list_children returns SESSION_NOT_FOUND for an unknown session', async () => {
+    const res = await handleRequest(
+      makeRequest('list_children', { sessionId: 'sess_nochild_aabbcc', attachToken: 'x' }),
+      () => {},
+    );
+    assert.equal(res.error.code, 'SESSION_NOT_FOUND');
+  });
+
+  it('list_children dedups a completed child appended more than once (crash/retry)', async () => {
+    const { sessionId, token } = await makeSession();
+    const entry = __getActiveSessionForTesting(sessionId);
+    const outcome = {
+      agent: 'coder',
+      status: 'completed',
+      summary: 's',
+      rounds: 1,
+      checkpoints: 0,
+      elapsedMs: 1,
+    };
+    entry.state.delegationOutcomes = [
+      { subagentId: 'sub_coder_dup', outcome },
+      { subagentId: 'sub_coder_dup', outcome },
+    ];
+    const res = await handleRequest(
+      makeRequest('list_children', { sessionId, attachToken: token }),
+      () => {},
+    );
+    assert.equal(res.ok, true);
+    assert.equal(res.payload.completedCount, 1, 'duplicate subagentId must surface once');
+    assert.equal(res.payload.children.filter((c) => c.subagentId === 'sub_coder_dup').length, 1);
+  });
+
+  it('get_child_session returns an active child descriptor + event summary', async () => {
+    const { sessionId, token } = await makeSession();
+    const entry = __getActiveSessionForTesting(sessionId);
+    entry.activeDelegations = new Map([
+      [
+        'sub_explorer_ccc',
+        {
+          role: 'explorer',
+          agent: 'explorer',
+          parentRunId: 'run_p',
+          childRunId: 'run_c2',
+          startedAt: 2000,
+          task: 'trace the bug',
+        },
+      ],
+    ]);
+    await appendSessionEvent(
+      entry.state,
+      'subagent.started',
+      {
+        subagentId: 'sub_explorer_ccc',
+        childRunId: 'run_c2',
+        parentRunId: 'run_p',
+        detail: 'trace the bug',
+        agent: 'explorer',
+        role: 'explorer',
+      },
+      'run_c2',
+    );
+    await appendSessionEvent(
+      entry.state,
+      'subagent.completed',
+      { subagentId: 'sub_explorer_ccc', childRunId: 'run_c2' },
+      'run_c2',
+    );
+    await saveSessionState(entry.state);
+
+    const res = await handleRequest(
+      makeRequest('get_child_session', {
+        sessionId,
+        attachToken: token,
+        subagentId: 'sub_explorer_ccc',
+      }),
+      () => {},
+    );
+    assert.equal(res.ok, true, `expected ok, got ${JSON.stringify(res.error)}`);
+    assert.equal(res.payload.child.status, 'active');
+    assert.equal(res.payload.child.childRunId, 'run_c2');
+    assert.equal(res.payload.child.task, 'trace the bug');
+    assert.ok(res.payload.eventSummary.eventCount >= 2, 'child events should be summarized');
+    assert.equal(typeof res.payload.eventSummary.firstSeq, 'number');
+  });
+
+  it('get_child_session recovers metadata for a completed child from its started event', async () => {
+    const { sessionId, token } = await makeSession();
+    const entry = __getActiveSessionForTesting(sessionId);
+    // Completed: the outcome record carries no task/childRunId, but the
+    // subagent.started event is on disk and the handler recovers from it.
+    entry.state.delegationOutcomes = [
+      {
+        subagentId: 'sub_coder_ddd',
+        outcome: {
+          agent: 'coder',
+          status: 'completed',
+          summary: 'implemented X',
+          rounds: 2,
+          checkpoints: 0,
+          elapsedMs: 999,
+        },
+      },
+    ];
+    await appendSessionEvent(
+      entry.state,
+      'subagent.started',
+      {
+        subagentId: 'sub_coder_ddd',
+        childRunId: 'run_c3',
+        parentRunId: 'run_p2',
+        detail: 'implement X',
+        agent: 'coder',
+        role: 'coder',
+      },
+      'run_c3',
+    );
+    await saveSessionState(entry.state);
+
+    const res = await handleRequest(
+      makeRequest('get_child_session', {
+        sessionId,
+        attachToken: token,
+        subagentId: 'sub_coder_ddd',
+      }),
+      () => {},
+    );
+    assert.equal(res.ok, true, `expected ok, got ${JSON.stringify(res.error)}`);
+    assert.equal(res.payload.child.status, 'completed');
+    assert.equal(res.payload.child.summary, 'implemented X');
+    // Recovered from the started event:
+    assert.equal(res.payload.child.childRunId, 'run_c3');
+    assert.equal(res.payload.child.parentRunId, 'run_p2');
+    assert.equal(res.payload.child.task, 'implement X');
+  });
+
+  it('get_child_session returns CHILD_NOT_FOUND for an unknown subagentId', async () => {
+    const { sessionId, token } = await makeSession();
+    const res = await handleRequest(
+      makeRequest('get_child_session', {
+        sessionId,
+        attachToken: token,
+        subagentId: 'sub_explorer_nope',
+      }),
+      () => {},
+    );
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'CHILD_NOT_FOUND');
+  });
+
+  it('get_child_session rejects a tokenless read (14th enforcement site)', async () => {
+    const { sessionId } = await makeSession();
+    const entry = __getActiveSessionForTesting(sessionId);
+    entry.activeDelegations = new Map([
+      [
+        'sub_explorer_eee',
+        { role: 'explorer', agent: 'explorer', childRunId: 'run_c4', startedAt: 3000, task: 't' },
+      ],
+    ]);
+    const res = await handleRequest(
+      makeRequest('get_child_session', { sessionId, subagentId: 'sub_explorer_eee' }),
+      () => {},
+    );
+    assert.equal(res.error.code, 'INVALID_TOKEN');
+  });
+
+  it('get_child_session requires a subagentId', async () => {
+    const { sessionId, token } = await makeSession();
+    const res = await handleRequest(
+      makeRequest('get_child_session', { sessionId, attachToken: token }),
+      () => {},
+    );
+    assert.equal(res.error.code, 'INVALID_REQUEST');
+  });
+});
+
 // ─── Daemon client library ──────────────────────────────────────
 
 describe('daemon-client module', () => {
