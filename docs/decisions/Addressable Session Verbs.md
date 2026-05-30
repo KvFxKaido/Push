@@ -58,9 +58,9 @@ it stands after the audit.
 | **Abort (parent run)** | `cancel_run` | `session.abort` | `handleCancelRun` | shipped — **auth gap, see below** |
 | **Abort (child run)** | `cancel_delegation` | child `session.abort` | `handleCancelDelegation` | shipped |
 | Permission respond | `submit_approval` | `permissions/{id}/respond` | `handleSubmitApproval` + `approval_*` events | shipped (Push is *ahead* — already a request/respond pair) |
-| **Children — list** | `list_children` | `session.children` | `activeDelegations` map + `state.delegationOutcomes` | **phase: children** |
-| **Children — read** | `get_child_session` | child `session.get` | filter parent log by `childRunId` (`fetch_delegation_events`) | **phase: children** |
-| **Children — attach** | `attach_child_session` | (n/a) | broadcast child events by `childRunId` | **phase: children** |
+| **Children — list** | `list_children` | `session.children` | `activeDelegations` map + `state.delegationOutcomes` | **shipped (phase 3a)** |
+| **Children — read** | `get_child_session` | child `session.get` | descriptor + event summary; recovers completed-child metadata from `subagent.started`; shares the child-event predicate with `fetch_delegation_events` | **shipped (phase 3a)** |
+| **Children — attach** | `attach_child_session` | (n/a) | broadcast child events by `childRunId` | **phase 3b** |
 | **Summarize** | `session_summarize` | `session.summarize` | compaction (`compactContext`, CLI-only today) | **phase: summarize** |
 | **Revert / unrevert** | `session_revert` / `session_unrevert` | `session.revert` / `unrevert` | *none daemon-reachable* | **phase: revert (real build)** |
 | Abort verb sugar | `abort` (alias) | `session.abort` | routes to `cancel_run` / `cancel_delegation` by id shape | **phase: abort (after the gap fix)** |
@@ -130,11 +130,13 @@ It does **not** get its own `state.json`; it is a *view* over the parent session
 - `list_children(sessionId)` → active delegations (`activeDelegations` keys +
   role/task/startedAt) plus completed `state.delegationOutcomes`. Read-only,
   bearer-gated.
-- `get_child_session(sessionId, subagentId)` → the child's transcript,
-  reconstructed by filtering the parent message/event log on `childRunId` (reuse
-  the `fetch_delegation_events` filter).
+- `get_child_session(sessionId, subagentId)` → the child as a structured
+  descriptor (status/role/task/childRunId/parentRunId) plus an event *summary*
+  (count + seq range); recovers a completed child's metadata from its
+  `subagent.started` event. The full transcript stays on `fetch_delegation_events`
+  (the two share one `eventBelongsToChild` predicate so they can't drift).
 - `attach_child_session(sessionId, subagentId)` → live child events, scoped by
-  `childRunId`.
+  `childRunId` (phase 3b).
 - Child abort = `cancel_delegation(sessionId, subagentId)` (already shipped).
 
 This keeps the branch-as-session-target model intact (children are sub-views, not
@@ -149,23 +151,25 @@ routes by id shape: a `subagentId` (`sub_*`) → `cancel_delegation`; otherwise 
 
 ## Symmetric logs
 
-- `child_session_listed` / `child_session_attached` (info) on the children verbs.
-- `cancel_run_unauthenticated_rejected` (warn) once the gap is closed — pairs with
-  the existing accept path so the new rejection is visible to ops.
+- `cancel_run_unauthenticated_rejected` (warn) — shipped with the phase-2 gate;
+  surfaces a cancel that arrives without the bearer during the migration.
+- `child_session_attached` (info) on the phase-3b live-attach verb (a notable
+  action). `list_children` / `get_child_session` are plain bearer-gated reads and
+  follow the codebase convention of not logging read RPCs.
 
 ## Implementation sequence (phased)
 
 Each phase re-verifies the vocabulary table and ships its drift test in-PR, per
 the AGENTS.md "one source of truth per vocabulary + drift-detector" rule.
 
-1. **This doc** — pin the vocabulary; record the audit + the `cancel_run` gap.
-2. **`cancel_run` auth gap + `abort` verb.** Gate `handleCancelRun`'s session-ful
-   path with `validateAttachToken` (making it the 12th enforcement site); update
-   the two session-ful callers to send the bearer — TUI (`cli/tui.ts:~3015`) and
-   web pending-approval cancel (`app/src/lib/daemon-cancel-pending-approvals.ts:~85`);
-   then register the `abort` alias. Ship the lockout/auth tests in-PR.
-3. **Children.** `list_children` → `get_child_session` → `attach_child_session`,
-   reusing the delegation seams. Read verbs first (safe, additive).
+1. ✅ **This doc** — pin the vocabulary; record the audit + the `cancel_run` gap.
+2. ✅ **`cancel_run` auth gap** (#723) — gated `handleCancelRun`'s session-ful path
+   with `validateAttachToken` (the 12th enforcement site); the two session-ful
+   callers (TUI, web pending-approval cancel) now send the bearer. The `abort`
+   alias was split to **phase 2b** (deferred) to keep that PR purely the fix.
+3. **Children** — `list_children` + `get_child_session` shipped (**phase 3a**,
+   the 13th + 14th enforcement sites; read verbs, reuse the delegation seams).
+   `attach_child_session` (live streaming) is **phase 3b**.
 4. **`session_summarize`.** Promote `compactContext` to `lib/`; add the on-demand
    verb emitting `context_compacted`.
 5. **`session_revert`.** Run-scoped checkpoint marker + message-log truncate.

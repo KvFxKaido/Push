@@ -3375,14 +3375,7 @@ async function handleFetchDelegationEvents(req) {
 
   const allEvents = await loadSessionEvents(sessionId);
 
-  let filtered = allEvents.filter((e) => {
-    const p = e.payload && typeof e.payload === 'object' ? e.payload : {};
-    if (subagentId && p.subagentId === subagentId) return true;
-    if (subagentId && p.executionId === subagentId) return true;
-    if (childRunId && p.childRunId === childRunId) return true;
-    if (childRunId && e.runId === childRunId) return true;
-    return false;
-  });
+  let filtered = allEvents.filter((e) => eventBelongsToChild(e, { subagentId, childRunId }));
 
   if (typeof sinceSeq === 'number' && Number.isFinite(sinceSeq)) {
     filtered = filtered.filter((e) => e.seq > sinceSeq);
@@ -3403,6 +3396,244 @@ async function handleFetchDelegationEvents(req) {
       toSeq,
       completed: true,
     },
+  });
+}
+
+// ─── Addressable child sessions (Addressable Session Verbs phase 3) ──
+//
+// A delegated Coder/Explorer run is addressed by its `subagentId` — the stable
+// id minted at delegation time. It is NOT a separate session on disk: a child
+// is a *view* over the parent session (its events filtered by childRunId).
+// `list_children` enumerates them; `get_child_session` returns one as a
+// structured descriptor + an event summary. Both are bearer-gated reads over
+// the PARENT session's attach token (the 13th + 14th enforcement sites). Live
+// streaming (`attach_child_session`) and the `abort` alias are follow-ups;
+// child abort already exists as `cancel_delegation`.
+
+/**
+ * Does this event belong to the given child run? Membership is by subagentId
+ * (`payload.subagentId` / `payload.executionId`) or childRunId
+ * (`payload.childRunId` / envelope `runId`). Single source of truth shared by
+ * `fetch_delegation_events`, `list_children`, and `get_child_session` so the
+ * three can't drift on "which events are this child's".
+ */
+function eventBelongsToChild(event, { subagentId, childRunId }) {
+  const p = event && event.payload && typeof event.payload === 'object' ? event.payload : {};
+  if (subagentId && p.subagentId === subagentId) return true;
+  if (subagentId && p.executionId === subagentId) return true;
+  if (childRunId && p.childRunId === childRunId) return true;
+  if (childRunId && event.runId === childRunId) return true;
+  return false;
+}
+
+/**
+ * Descriptor for an ACTIVE child (still in `entry.activeDelegations`). Rich:
+ * the in-memory record carries role/agent/task/parent/childRunId/startedAt.
+ */
+function buildActiveChildDescriptor(subagentId, record) {
+  return {
+    subagentId,
+    status: 'active',
+    role: record.role || record.agent || 'subagent',
+    agent: record.agent || record.role || 'subagent',
+    task: typeof record.task === 'string' ? record.task : '',
+    childRunId: typeof record.childRunId === 'string' ? record.childRunId : null,
+    parentRunId: typeof record.parentRunId === 'string' ? record.parentRunId : null,
+    startedAt: typeof record.startedAt === 'number' ? record.startedAt : null,
+  };
+}
+
+/**
+ * Descriptor for a COMPLETED child (in `state.delegationOutcomes`). The
+ * persisted `DelegationOutcome` carries agent/status/summary/rounds/etc. but
+ * NOT the original task or childRunId (those lived on the in-memory record,
+ * dropped at completion) — `get_child_session` recovers them from the child's
+ * `subagent.started` event when a single-child event scan is affordable.
+ */
+function buildCompletedChildDescriptor(subagentId, outcome) {
+  const o = outcome && typeof outcome === 'object' ? outcome : {};
+  return {
+    subagentId,
+    status: 'completed',
+    role: o.agent || 'subagent',
+    agent: o.agent || 'subagent',
+    outcomeStatus: typeof o.status === 'string' ? o.status : null,
+    summary: typeof o.summary === 'string' ? o.summary : '',
+    rounds: typeof o.rounds === 'number' ? o.rounds : null,
+    checkpoints: typeof o.checkpoints === 'number' ? o.checkpoints : null,
+    elapsedMs: typeof o.elapsedMs === 'number' ? o.elapsedMs : null,
+  };
+}
+
+/**
+ * Lazy-load + bearer-validate a session entry for the child read verbs. Mirrors
+ * the `cancel_delegation` / `fetch_delegation_events` preamble (lazy disk-load
+ * restores the persisted token; a legacy tokenless session is claimed only by
+ * `attach_session`, so a tokenless read here is rejected — bypass is gone).
+ * Returns `{ entry, sessionId }` on success or `{ error }` ready to return.
+ */
+async function loadAndAuthSession(req, type) {
+  const sessionId = req.sessionId || req.payload?.sessionId;
+  const providedToken = req.payload?.attachToken;
+  if (!sessionId) {
+    return {
+      error: makeErrorResponse(req.requestId, type, 'INVALID_REQUEST', 'sessionId is required'),
+    };
+  }
+  let entry = activeSessions.get(sessionId);
+  if (!entry) {
+    try {
+      const state = await loadSessionState(sessionId);
+      entry = { state, attachToken: state.attachToken };
+      activeSessions.set(sessionId, entry);
+    } catch {
+      return {
+        error: makeErrorResponse(
+          req.requestId,
+          type,
+          'SESSION_NOT_FOUND',
+          `Session not found: ${sessionId}`,
+        ),
+      };
+    }
+  }
+  if (!validateAttachToken(entry, providedToken)) {
+    return {
+      error: makeErrorResponse(
+        req.requestId,
+        type,
+        'INVALID_TOKEN',
+        'Invalid or missing attach token',
+      ),
+    };
+  }
+  return { entry, sessionId };
+}
+
+/**
+ * `list_children` — enumerate the delegated child runs of a session. Active
+ * children come from the in-memory `activeDelegations` map (lost on daemon
+ * restart, like the runs themselves); completed children come from the
+ * persisted `state.delegationOutcomes`. Read-only, bearer-gated. Task-graph
+ * executions are a separate concept (their own `task_graph.*` events) and are
+ * intentionally not listed here.
+ */
+async function handleListChildren(req) {
+  const auth = await loadAndAuthSession(req, 'list_children');
+  if (auth.error) return auth.error;
+  const { entry, sessionId } = auth;
+  ensureRuntimeState(entry);
+
+  const active = [];
+  for (const [subagentId, record] of entry.activeDelegations) {
+    active.push(buildActiveChildDescriptor(subagentId, record));
+  }
+  const activeIds = new Set(active.map((c) => c.subagentId));
+
+  const completed = [];
+  const outcomes = Array.isArray(entry.state?.delegationOutcomes)
+    ? entry.state.delegationOutcomes
+    : [];
+  for (const rec of outcomes) {
+    if (!rec || typeof rec.subagentId !== 'string') continue;
+    // Prefer the live 'active' view if the same id is somehow still in flight.
+    if (activeIds.has(rec.subagentId)) continue;
+    completed.push(buildCompletedChildDescriptor(rec.subagentId, rec.outcome));
+  }
+
+  return makeResponse(req.requestId, 'list_children', sessionId, true, {
+    children: [...active, ...completed],
+    activeCount: active.length,
+    completedCount: completed.length,
+  });
+}
+
+/**
+ * `get_child_session` — return one delegated child as a structured descriptor
+ * plus a summary of its event stream (count + seq range). For a completed
+ * child, recovers childRunId/task/parentRunId/startedAt from its
+ * `subagent.started` event. Read-only, bearer-gated. The full transcript is
+ * available via `fetch_delegation_events`.
+ */
+async function handleGetChildSession(req) {
+  const subagentId = req.payload?.subagentId;
+  if (!subagentId || typeof subagentId !== 'string') {
+    return makeErrorResponse(
+      req.requestId,
+      'get_child_session',
+      'INVALID_REQUEST',
+      'subagentId is required',
+    );
+  }
+  const auth = await loadAndAuthSession(req, 'get_child_session');
+  if (auth.error) return auth.error;
+  const { entry, sessionId } = auth;
+  ensureRuntimeState(entry);
+
+  let descriptor;
+  const activeRecord = entry.activeDelegations.get(subagentId);
+  if (activeRecord) {
+    descriptor = buildActiveChildDescriptor(subagentId, activeRecord);
+  } else {
+    const outcomes = Array.isArray(entry.state?.delegationOutcomes)
+      ? entry.state.delegationOutcomes
+      : [];
+    const rec = outcomes.find((o) => o && o.subagentId === subagentId);
+    if (!rec) {
+      return makeErrorResponse(
+        req.requestId,
+        'get_child_session',
+        'CHILD_NOT_FOUND',
+        `No child delegation with subagentId: ${subagentId}`,
+      );
+    }
+    descriptor = buildCompletedChildDescriptor(subagentId, rec.outcome);
+  }
+
+  // Scan the child's events once. Recover childRunId from the started event
+  // first (a completed child's descriptor has none), then re-filter with both
+  // ids so events carrying only the envelope runId are included too.
+  const allEvents = await loadSessionEvents(sessionId);
+  let childRunId = descriptor.childRunId || null;
+  if (!childRunId) {
+    const started0 = allEvents.find(
+      (e) =>
+        e.type === 'subagent.started' && eventBelongsToChild(e, { subagentId, childRunId: null }),
+    );
+    if (started0?.payload && typeof started0.payload === 'object') {
+      const p = started0.payload;
+      if (typeof p.childRunId === 'string') childRunId = p.childRunId;
+    }
+  }
+  const events = allEvents.filter((e) => eventBelongsToChild(e, { subagentId, childRunId }));
+
+  const started = events.find((e) => e.type === 'subagent.started');
+  if (started?.payload && typeof started.payload === 'object') {
+    const p = started.payload;
+    if (descriptor.childRunId == null && typeof p.childRunId === 'string') {
+      descriptor.childRunId = p.childRunId;
+    }
+    if (descriptor.parentRunId == null && typeof p.parentRunId === 'string') {
+      descriptor.parentRunId = p.parentRunId;
+    }
+    if (descriptor.startedAt == null && typeof started.ts === 'number') {
+      descriptor.startedAt = started.ts;
+    }
+    if ((!descriptor.task || descriptor.task.length === 0) && typeof p.detail === 'string') {
+      descriptor.task = p.detail;
+    }
+  }
+
+  const eventSummary = {
+    eventCount: events.length,
+    firstSeq: events.length > 0 ? events[0].seq : null,
+    lastSeq: events.length > 0 ? events[events.length - 1].seq : null,
+    lastType: events.length > 0 ? events[events.length - 1].type : null,
+  };
+
+  return makeResponse(req.requestId, 'get_child_session', sessionId, true, {
+    child: descriptor,
+    eventSummary,
   });
 }
 
@@ -6018,6 +6249,8 @@ const HANDLERS = {
   delegate_deep_reviewer: handleDelegateDeepReviewer,
   cancel_delegation: handleCancelDelegation,
   fetch_delegation_events: handleFetchDelegationEvents,
+  list_children: handleListChildren,
+  get_child_session: handleGetChildSession,
   sandbox_exec: handleSandboxExec,
   sandbox_read_file: handleSandboxReadFile,
   sandbox_write_file: handleSandboxWriteFile,
