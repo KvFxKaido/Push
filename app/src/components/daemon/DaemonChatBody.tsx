@@ -651,9 +651,11 @@ export function DaemonChatBody({
               <div className="flex h-[34px] min-w-0 items-center gap-1 pl-0.5 pr-1">
                 <RepoChatDrawer {...drawerProps} />
                 <div className="-ml-2.5 flex min-w-0 items-center self-stretch">
-                  <p className="truncate text-sm font-medium leading-tight text-push-fg">
-                    <span className="hidden sm:inline">{headerLabel}</span>
-                  </p>
+                  {/* Brand label, always visible — matches repo/chat mode's
+                      "Push" / repo name. The mode (Remote / Local PC) and its
+                      connection status live in the center session pill, so we
+                      don't repeat it here. */}
+                  <p className="truncate text-sm font-medium leading-tight text-push-fg">Push</p>
                 </div>
               </div>
             </div>
@@ -671,10 +673,9 @@ export function DaemonChatBody({
                   onClick={handleAbort}
                   aria-label="Stop"
                   title="Stop the in-flight turn"
-                  className="inline-flex items-center gap-1.5 rounded-full border border-rose-400/40 px-3 py-1.5 text-xs text-rose-200 transition hover:border-rose-400/60 hover:bg-rose-400/10"
+                  className={`${HEADER_ROUND_BUTTON_CLASS} text-rose-300 hover:text-rose-200`}
                 >
-                  <Square className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span className="hidden sm:inline">Stop</span>
+                  <Square className="relative z-10 h-3.5 w-3.5" aria-hidden="true" />
                 </button>
               )}
               <button
@@ -709,10 +710,9 @@ export function DaemonChatBody({
                 onClick={handleUnpair}
                 aria-label="Unpair"
                 title="Unpair this daemon"
-                className="inline-flex items-center gap-1.5 rounded-full border border-push-edge/60 px-3 py-1.5 text-xs text-push-fg-secondary transition hover:border-rose-400/40 hover:text-rose-200"
+                className={`${HEADER_ROUND_BUTTON_CLASS} hover:text-rose-200`}
               >
-                <UnpairIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                <span className="hidden sm:inline">Unpair</span>
+                <UnpairIcon className="relative z-10 h-3.5 w-3.5" aria-hidden="true" />
               </button>
             </div>
             <div className="pointer-events-none absolute inset-x-0 top-full h-8 bg-gradient-to-b from-black to-transparent" />

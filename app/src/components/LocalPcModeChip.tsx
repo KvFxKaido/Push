@@ -45,19 +45,22 @@ function statusLabel(state: ConnectionStatus['state']): string {
 
 export function LocalPcModeChip({ port, status }: LocalPcModeChipProps) {
   return (
+    // Chrome-less so it sits inside the header's launcher-pill frame and reads
+    // like the branch pill in repo mode — icon + label + a status dot. Port
+    // and status text appear only on wider screens.
     <div
       aria-label={`Local PC mode on port ${port}, ${statusLabel(status.state)}`}
-      className="inline-flex min-w-0 items-center gap-2 rounded-full border border-amber-400/30 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-200"
+      className="inline-flex min-w-0 items-center gap-1.5 text-xs font-medium text-push-fg-secondary"
     >
-      <Monitor className="h-3.5 w-3.5" aria-hidden="true" />
+      <Monitor className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
       <span>Local PC</span>
-      <span className="text-amber-300/70">·</span>
-      <span className="tabular-nums text-amber-100">:{port}</span>
-      <span className="text-amber-300/70">·</span>
-      <span className="inline-flex items-center gap-1">
-        <span className={`h-1.5 w-1.5 rounded-full ${dotClass(status.state)}`} />
-        <span className="text-amber-200/80">{statusLabel(status.state)}</span>
-      </span>
+      <span className="hidden text-push-fg-dim sm:inline">·</span>
+      <span className="hidden tabular-nums text-push-fg-dim sm:inline">:{port}</span>
+      <span
+        className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass(status.state)}`}
+        aria-hidden="true"
+      />
+      <span className="hidden text-push-fg-dim sm:inline">{statusLabel(status.state)}</span>
     </div>
   );
 }
