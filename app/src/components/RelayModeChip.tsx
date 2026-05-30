@@ -92,40 +92,38 @@ export function RelayModeChip({ deploymentUrl, status, replayUnavailableAt }: Re
           React state setters in effects trip the
           react-hooks/set-state-in-effect rule. */}
       <style>{`
+        /* Only the amber flash start is specified; the implicit 100% resolves
+           to the element's own color (the text-push-fg-secondary token class),
+           so the steady-state color stays token-driven and can't drift from a
+           hardcoded hex. No fill-mode: after the flash, color reverts to the
+           class value (which equals the implicit 100%, so there's no snap). */
         @keyframes relay-replay-flash {
-          0% {
-            background-color: rgba(245, 158, 11, 0.30);
-            border-color: rgba(251, 191, 36, 0.80);
-            color: rgb(254, 243, 199);
-          }
-          100% {
-            background-color: rgba(14, 165, 233, 0.10);
-            border-color: rgba(56, 189, 248, 0.30);
-            color: rgb(186, 230, 253);
-          }
+          0% { color: rgb(251, 191, 36); }
         }
       `}</style>
+      {/* Chrome-less so it sits inside the header's launcher-pill frame and
+          reads like the branch pill in repo mode — icon + label + a status
+          dot. Host and status text appear only on wider screens. The
+          replay-unavailable signal flashes the text amber → steady. */}
       <div
         key={flashKey}
         aria-label={`Remote relay mode at ${host}, ${statusLabel(status.state)}${isReplayEvent ? ' (replay unavailable signal active)' : ''}`}
-        className="inline-flex min-w-0 items-center gap-2 rounded-full border border-sky-400/30 bg-sky-500/10 px-3 py-1 text-xs font-medium text-sky-200"
+        className="inline-flex min-w-0 items-center gap-1.5 text-xs font-medium text-push-fg-secondary"
         style={
           isReplayEvent
-            ? {
-                animation: `relay-replay-flash ${FLASH_DURATION_MS}ms ease-out forwards`,
-              }
+            ? { animation: `relay-replay-flash ${FLASH_DURATION_MS}ms ease-out` }
             : undefined
         }
       >
-        <Globe className="h-3.5 w-3.5" aria-hidden="true" />
+        <Globe className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         <span>Remote</span>
-        <span className="hidden text-sky-300/70 sm:inline">·</span>
-        <span className="hidden max-w-[180px] truncate text-sky-100 sm:inline">{host}</span>
-        <span className="text-sky-300/70">·</span>
-        <span className="inline-flex items-center gap-1">
-          <span className={`h-1.5 w-1.5 rounded-full ${dotClass(status.state)}`} />
-          <span className="text-sky-200/80">{statusLabel(status.state)}</span>
-        </span>
+        <span className="hidden text-push-fg-dim sm:inline">·</span>
+        <span className="hidden max-w-[140px] truncate text-push-fg-dim sm:inline">{host}</span>
+        <span
+          className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass(status.state)}`}
+          aria-hidden="true"
+        />
+        <span className="hidden text-push-fg-dim sm:inline">{statusLabel(status.state)}</span>
       </div>
     </>
   );
