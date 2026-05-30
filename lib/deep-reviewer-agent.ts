@@ -386,14 +386,40 @@ function parseReviewResult(
   };
 }
 
+/**
+ * Strip tool-call scaffolding from text destined to be posted as a review
+ * summary. The reviewer prompt asks the model not to echo infrastructure, but a
+ * non-cooperating model — or a forced-output turn it ignored — can still emit
+ * fenced `{tool, args}` JSON, bare tool-call JSON, or `[TOOL_*]` markers, and
+ * the fallback path would otherwise slice that raw text straight into a posted
+ * GitHub review (the observed scratchpad-leak bug). Detection-independent on
+ * purpose: this is the last line before the text reaches GitHub, so it must
+ * hold even if `detectAllToolCalls` failed to recognize the call (e.g. an odd
+ * fence boundary like a closing ``` immediately followed by prose).
+ */
+export function stripToolScaffolding(text: string): string {
+  return text
+    .replace(/```[^\n]*\n?[\s\S]*?```/g, (block) =>
+      /"tool"\s*:/.test(block) && /"args"\s*:/.test(block) ? '' : block,
+    )
+    .replace(/\{\s*"tool"\s*:\s*"[^"]*"\s*,\s*"args"\s*:\s*\{[\s\S]*?\}\s*\}/g, '')
+    .replace(
+      /\[\/?(?:TOOL_RESULT|TOOL_CALL_PARSE_ERROR|meta|pulse|SESSION_CAPABILITIES|POSTCONDITIONS|REVIEW_COMPLETE|CODER_STATE|USER_GOAL)[^\]]*\]/gi,
+      '',
+    )
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 function buildFallbackResult(
   accumulated: string,
   provider: string,
   modelId: string,
   coverage: Pick<ReviewResult, 'filesReviewed' | 'totalFiles' | 'truncated'>,
 ): ReviewResult {
+  const cleaned = stripToolScaffolding(accumulated);
   return {
-    summary: accumulated.slice(0, 500) || 'Deep review did not produce structured output.',
+    summary: cleaned.slice(0, 500) || 'Deep review did not produce structured output.',
     comments: [],
     filesReviewed: coverage.filesReviewed,
     totalFiles: coverage.totalFiles,
@@ -790,6 +816,23 @@ export async function runDeepReviewer<TCall, TCard>(
     } catch {
       // Parse failed — return fallback
     }
+  }
+
+  // If the model spent its final forced-output turn still calling tools (it
+  // ignored the "emit [REVIEW_COMPLETE]" prompt and kept investigating), that
+  // turn is not a review — don't slice the mid-investigation narration into a
+  // posted GitHub review. Return a neutral summary instead. `buildFallbackResult`
+  // also strips any residual scaffolding as defense-in-depth, in case detection
+  // missed an oddly-fenced call.
+  const finalDetected = detectAllToolCalls(finalAccumulated);
+  const finalStillInvestigating =
+    finalDetected.readOnly.length > 0 ||
+    finalDetected.fileMutations.length > 0 ||
+    finalDetected.mutating !== null ||
+    finalDetected.extraMutations.length > 0 ||
+    finalDetected.droppedCandidates.length > 0;
+  if (finalStillInvestigating) {
+    return buildFallbackResult('', activeProvider, modelId, coverage);
   }
 
   return buildFallbackResult(finalAccumulated || allAccumulated, activeProvider, modelId, coverage);
