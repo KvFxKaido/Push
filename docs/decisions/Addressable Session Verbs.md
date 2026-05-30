@@ -61,7 +61,7 @@ it stands after the audit.
 | **Children — list** | `list_children` | `session.children` | `activeDelegations` + `delegationOutcomes`; opt-in `includeEventDerived` reconstructs reviewer children from the log | **shipped (3a + 3b)** |
 | **Children — read** | `get_child_session` | child `session.get` | descriptor + event summary; resolves active → outcome → event-derived; shares the child-event predicate with `fetch_delegation_events` | **shipped (3a + 3b)** |
 | **Children — attach (live)** | `attach_child_session` | (n/a) | broadcast child events by `childRunId` | **deferred — redundant; see 3b note** |
-| **Summarize** | `session_summarize` | `session.summarize` | compaction (`compactContext`, CLI-only today) | **phase: summarize** |
+| **Summarize** | `session_summarize` | `session.summarize` | on-demand `compactContext` (`cli/context-manager.ts`); persists + emits `context_compacted` | **shipped (phase 4)** |
 | **Revert / unrevert** | `session_revert` / `session_unrevert` | `session.revert` / `unrevert` | *none daemon-reachable* | **phase: revert (real build)** |
 | Abort verb sugar | `abort` (alias) | `session.abort` | routes to `cancel_run` / `cancel_delegation` by id shape; re-stamps response `type` to `abort` | **shipped (phase 2b)** |
 
@@ -98,12 +98,13 @@ The premise that the pinned verbs are thin wrappers over reachable machinery
   invariant the bearer set.) **Formalizing `abort` as a public verb must not
   spread this** — close the gap first.
 
-- **`session_summarize` — not thin.** On-demand compaction (`compactSessionContext`
-  → `compactContext`) lives in the CLI REPL (`cli/cli.ts:~885`), **not in `lib/`**,
-  so it is not daemon-reachable. Automatic compaction *is* reachable (the
-  `manageContext` callback in `cli/engine.ts` trims on every round), but there is
-  no on-demand entry point. Thin-ness requires first promoting `compactContext`
-  into `lib/`.
+- **`session_summarize` — turned out thin (correction).** The original audit
+  said `compactContext` was CLI-REPL-only and needed a `lib/` promotion. In fact
+  the pure `compactContext` already lives in **`cli/context-manager.ts`** (used by
+  both `/compact` in `cli.ts` and `tui.ts`); since `pushd.ts` is CLI-side it
+  imports it directly — no `lib/` move needed. The REPL-only part was just the
+  `compactSessionContext` *wrapper* (parse turns → compact → emit → rewrite),
+  which the daemon handler re-implements. Shipped in phase 4.
 
 - **`session_revert` — a real build, not a wrapper.** There is **no**
   daemon-reachable rollback. Coder checkpoint/resume is web-Durable-Object-only
@@ -187,8 +188,10 @@ the AGENTS.md "one source of truth per vocabulary + drift-detector" rule.
    active→outcome→event-derived; `list_children includeEventDerived`) to surface
    completed reviewer/deep_reviewer children — the live `attach_child_session` was
    deferred as redundant (live child events already ride the session stream).
-4. **`session_summarize`.** Promote `compactContext` to `lib/`; add the on-demand
-   verb emitting `context_compacted`.
+4. ✅ **`session_summarize`** — on-demand `compactContext` as a bearer-gated daemon
+   verb (the 15th enforcement site). Persists via `rewriteMessagesLog`, emits +
+   broadcasts `context_compacted`, rejected while a run is active. No `lib/`
+   promotion needed (`compactContext` already lives in `cli/context-manager.ts`).
 5. **`session_revert`.** Run-scoped checkpoint marker + message-log truncate.
    Its own mini-design first.
 

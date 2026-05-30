@@ -1163,6 +1163,118 @@ describe('abort sugar verb', () => {
   });
 });
 
+// ─── session_summarize (Addressable Session Verbs phase 4) ──────
+//
+// On-demand context compaction via the shared `compactContext`, reachable as a
+// bearer-gated daemon verb (the 15th enforcement site). Compacts the message
+// log, persists it (rewriteMessagesLog), emits context_compacted, and is
+// rejected while a run is active.
+describe('session_summarize verb', () => {
+  let originalSessionDir;
+  let tmpRoot;
+  before(async () => {
+    originalSessionDir = process.env.PUSH_SESSION_DIR;
+    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-summarize-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+  });
+  after(async () => {
+    if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+    else process.env.PUSH_SESSION_DIR = originalSessionDir;
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  });
+
+  async function makeSession() {
+    const start = await handleRequest(
+      makeRequest('start_session', { provider: 'ollama', repo: { rootPath: process.cwd() } }),
+      () => {},
+    );
+    return { sessionId: start.payload.sessionId, token: start.payload.attachToken };
+  }
+
+  // Seed N real user turns (system + N×[user, assistant]).
+  function seedTurns(entry, n) {
+    const msgs = [{ role: 'system', content: 'sys' }];
+    for (let i = 0; i < n; i += 1) {
+      msgs.push({ role: 'user', content: `user message ${i}` });
+      msgs.push({ role: 'assistant', content: `assistant reply ${i}` });
+    }
+    entry.state.messages = msgs;
+  }
+
+  it('rejects a tokenless summarize (15th enforcement site)', async () => {
+    const { sessionId } = await makeSession();
+    const res = await handleRequest(makeRequest('session_summarize', { sessionId }), () => {});
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'INVALID_TOKEN');
+  });
+
+  it('compacts when turns exceed preserveTurns, persists, and emits context_compacted', async () => {
+    const { sessionId, token } = await makeSession();
+    const entry = __getActiveSessionForTesting(sessionId);
+    seedTurns(entry, 6);
+
+    const res = await handleRequest(
+      makeRequest('session_summarize', { sessionId, attachToken: token, preserveTurns: 2 }),
+      () => {},
+    );
+    assert.equal(res.ok, true, `expected ok, got ${JSON.stringify(res.error)}`);
+    assert.equal(res.payload.compacted, true);
+    assert.equal(res.payload.preserveTurns, 2);
+    assert.equal(res.payload.totalTurns, 6);
+    assert.ok(res.payload.compactedCount > 0);
+
+    // Persisted: the on-disk transcript is the compacted one.
+    const reloaded = await loadSessionState(sessionId);
+    assert.ok(
+      reloaded.messages.length < 1 + 6 * 2,
+      'transcript should be shorter after compaction',
+    );
+    // The context_compacted event landed in the log.
+    const events = await loadSessionEvents(sessionId);
+    assert.ok(
+      events.some((e) => e.type === 'context_compacted'),
+      'a context_compacted event should be persisted',
+    );
+  });
+
+  it('is a no-op (compacted:false) when turns do not exceed preserveTurns', async () => {
+    const { sessionId, token } = await makeSession();
+    const entry = __getActiveSessionForTesting(sessionId);
+    seedTurns(entry, 2);
+
+    const res = await handleRequest(
+      makeRequest('session_summarize', { sessionId, attachToken: token, preserveTurns: 6 }),
+      () => {},
+    );
+    assert.equal(res.ok, true);
+    assert.equal(res.payload.compacted, false);
+  });
+
+  it('rejects while a run is active (RUN_IN_PROGRESS)', async () => {
+    const { sessionId, token } = await makeSession();
+    const entry = __getActiveSessionForTesting(sessionId);
+    seedTurns(entry, 6);
+    entry.activeRunId = 'run_busy';
+
+    const res = await handleRequest(
+      makeRequest('session_summarize', { sessionId, attachToken: token }),
+      () => {},
+    );
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'RUN_IN_PROGRESS');
+  });
+
+  it('rejects a non-positive preserveTurns (INVALID_REQUEST)', async () => {
+    const { sessionId, token } = await makeSession();
+    const res = await handleRequest(
+      makeRequest('session_summarize', { sessionId, attachToken: token, preserveTurns: 0 }),
+      () => {},
+    );
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'INVALID_REQUEST');
+  });
+});
+
 // ─── Daemon client library ──────────────────────────────────────
 
 describe('daemon-client module', () => {
