@@ -1,0 +1,363 @@
+/**
+ * protocol-json-schema.ts — Publishable JSON Schema for the
+ * `push.runtime.v1` event envelope.
+ *
+ * Why this exists: `lib/protocol-schema.ts` is the *runtime* contract —
+ * hand-rolled, zero-dependency validators that the daemon broadcaster
+ * and the relay enforce in strict mode. Those validators are
+ * TypeScript-only, so nothing off-surface (a Go/Python client, a
+ * Stainless/quicktype codegen step, an external dashboard) can consume
+ * the contract without re-deriving it by hand.
+ *
+ * This module is the machine-readable *description* of that same
+ * contract: a Draft 2020-12 JSON Schema for the `kind: 'event'`
+ * envelope plus a `$def` per payload type in
+ * `SCHEMA_VALIDATED_EVENT_TYPES`. It is built — not hand-authored —
+ * from the canonical constants exported by `protocol-schema.ts`
+ * (`PROTOCOL_VERSION`, `SUBAGENT_AGENTS`, `RUN_COMPLETE_OUTCOMES`, …)
+ * so the schema's enums literally cannot drift from the validators'
+ * enums. Coverage drift (a validator without a schema def, or vice
+ * versa) is caught by `cli/tests/protocol-json-schema.test.mjs`, which
+ * also probes that every schema-required field is a field the matching
+ * validator actually requires.
+ *
+ * Scope: the unidirectional `kind: 'event'` broadcast envelope only.
+ * The relay-control envelopes (`relay_attach`, `relay_phone_allow`, …)
+ * are a separate `kind` family documented in `protocol-schema.ts`; they
+ * are intentionally out of scope here so the published event schema
+ * stays a clean single-kind document.
+ *
+ * Forward-compat: every object is left open (`additionalProperties`
+ * unset → permitted), matching the validators' "permissive about extra
+ * fields" rule. Adding an optional field to a payload should never
+ * break a consumer pinned to this schema.
+ *
+ * This file is pure data + a builder; it imports no Node globals so it
+ * compiles under the browser tsconfig too.
+ */
+
+import {
+  COMPACTION_CAUSES,
+  COMPACTION_PHASES,
+  PROMPT_SNAPSHOT_ROLES,
+  PROTOCOL_VERSION,
+  RUN_COMPLETE_OUTCOMES,
+  SUBAGENT_AGENTS,
+  TASK_GRAPH_AGENTS,
+} from './protocol-schema.ts';
+
+/** A JSON Schema node. Loose by design — this is data, not a place to
+ *  re-encode the JSON Schema meta-schema in TypeScript. */
+export type JsonSchemaNode = Record<string, unknown>;
+
+// ---------------------------------------------------------------------------
+// Leaf builders — each mirrors a check in protocol-schema.ts.
+// ---------------------------------------------------------------------------
+
+/** `typeof x === 'string'`, empty allowed (e.g. streamed `text`, an
+ *  empty `summary`). */
+const str = (): JsonSchemaNode => ({ type: 'string' });
+/** `isNonEmptyString` — required, non-empty. */
+const nestr = (): JsonSchemaNode => ({ type: 'string', minLength: 1 });
+/** `isFiniteNonNegativeInt`. */
+const uint = (): JsonSchemaNode => ({ type: 'integer', minimum: 0 });
+/** Finite number (e.g. optional `elapsedMs`/`durationMs`). */
+const num = (): JsonSchemaNode => ({ type: 'number' });
+const bool = (): JsonSchemaNode => ({ type: 'boolean' });
+/** `expectAgentValue(..., allowed)` — non-empty string from a fixed set.
+ *  Built straight from the canonical constant so the enum can't drift. */
+const enumOf = (allowed: readonly string[]): JsonSchemaNode => ({
+  type: 'string',
+  enum: [...allowed],
+});
+
+/** Build an object node. `required` lists the always-present keys;
+ *  `properties` documents both required and optional keys. Left open to
+ *  extra fields to match the validators' forward-compat stance. */
+function objectNode(
+  required: readonly string[],
+  properties: Record<string, JsonSchemaNode>,
+): JsonSchemaNode {
+  return { type: 'object', required: [...required], properties };
+}
+
+// ---------------------------------------------------------------------------
+// Payload `$defs` — one per distinct validator. Aliased event types
+// (e.g. `tool_call` and `tool.execution_start` share `validateToolCall`)
+// point at the same def via TYPE_TO_DEF below.
+// ---------------------------------------------------------------------------
+
+const PAYLOAD_DEFS: Record<string, JsonSchemaNode> = {
+  AssistantPromptSnapshot: objectNode(['round', 'role', 'totalChars', 'sections'], {
+    round: uint(),
+    role: enumOf(PROMPT_SNAPSHOT_ROLES),
+    totalChars: uint(),
+    sections: {
+      type: 'object',
+      additionalProperties: objectNode(['hash', 'size', 'volatile'], {
+        hash: num(),
+        size: uint(),
+        volatile: bool(),
+      }),
+    },
+  }),
+
+  ContextCompaction: objectNode(
+    ['round', 'phase', 'beforeTokens', 'afterTokens', 'messagesDropped'],
+    {
+      round: uint(),
+      phase: enumOf(COMPACTION_PHASES),
+      beforeTokens: uint(),
+      afterTokens: uint(),
+      messagesDropped: uint(),
+      provider: str(),
+      cause: enumOf(COMPACTION_CAUSES),
+    },
+  ),
+
+  SessionStateChanged: objectNode(['provider', 'model'], {
+    provider: nestr(),
+    model: nestr(),
+    roleRouting: { type: 'object' },
+  }),
+
+  SubagentStarted: objectNode(['executionId', 'agent'], {
+    executionId: nestr(),
+    agent: enumOf(SUBAGENT_AGENTS),
+    detail: str(),
+  }),
+
+  SubagentCompleted: objectNode(['executionId', 'agent', 'summary'], {
+    executionId: nestr(),
+    agent: enumOf(SUBAGENT_AGENTS),
+    summary: nestr(),
+    orchestratorBytes: uint(),
+  }),
+
+  SubagentFailed: objectNode(['executionId', 'agent', 'error'], {
+    executionId: nestr(),
+    agent: enumOf(SUBAGENT_AGENTS),
+    error: nestr(),
+  }),
+
+  // `task_graph.task_ready` and `task_graph.task_started` share a
+  // validator (`validateTaskGraphTaskEvent`).
+  TaskGraphTaskReadyOrStarted: objectNode(['executionId', 'taskId', 'agent'], {
+    executionId: nestr(),
+    taskId: nestr(),
+    agent: enumOf(TASK_GRAPH_AGENTS),
+    detail: str(),
+  }),
+
+  TaskGraphTaskCompleted: objectNode(['executionId', 'taskId', 'agent', 'summary'], {
+    executionId: nestr(),
+    taskId: nestr(),
+    agent: enumOf(TASK_GRAPH_AGENTS),
+    summary: str(),
+    elapsedMs: num(),
+  }),
+
+  TaskGraphTaskFailed: objectNode(['executionId', 'taskId', 'agent', 'error'], {
+    executionId: nestr(),
+    taskId: nestr(),
+    agent: enumOf(TASK_GRAPH_AGENTS),
+    error: nestr(),
+    elapsedMs: num(),
+  }),
+
+  TaskGraphTaskCancelled: objectNode(['executionId', 'taskId', 'agent', 'reason'], {
+    executionId: nestr(),
+    taskId: nestr(),
+    agent: enumOf(TASK_GRAPH_AGENTS),
+    reason: nestr(),
+    elapsedMs: num(),
+  }),
+
+  TaskGraphGraphCompleted: objectNode(
+    ['executionId', 'summary', 'success', 'aborted', 'nodeCount', 'totalRounds', 'wallTimeMs'],
+    {
+      executionId: nestr(),
+      summary: str(),
+      success: bool(),
+      aborted: bool(),
+      nodeCount: uint(),
+      totalRounds: uint(),
+      wallTimeMs: uint(),
+    },
+  ),
+
+  // `assistant_token` + `assistant_thinking_token`. `text` may be empty
+  // (provider streams emit zero-length deltas at the content/reasoning
+  // boundary) but must be present and a string.
+  AssistantTextChunk: objectNode(['text'], {
+    text: str(),
+  }),
+
+  // `tool_call` + `tool.execution_start`. `args` is any JSON object;
+  // per-tool arg schemas live in lib/tool-registry.ts, not here.
+  ToolCall: objectNode(['toolName', 'args'], {
+    toolName: nestr(),
+    args: { type: 'object' },
+  }),
+
+  // `tool_result` + `tool.execution_complete`.
+  ToolResult: objectNode(['toolName', 'isError'], {
+    toolName: nestr(),
+    isError: bool(),
+    text: str(),
+    preview: str(),
+    durationMs: num(),
+  }),
+
+  ToolCallMalformed: objectNode(['reason'], {
+    reason: nestr(),
+  }),
+
+  ErrorEvent: objectNode(['message'], {
+    message: nestr(),
+    code: nestr(),
+    retryable: bool(),
+  }),
+
+  // `warning` requires at least one of message/code (each, when
+  // present, non-empty). Modeled with anyOf because neither field is
+  // unconditionally required.
+  WarningEvent: {
+    type: 'object',
+    properties: {
+      message: nestr(),
+      code: nestr(),
+    },
+    anyOf: [{ required: ['message'] }, { required: ['code'] }],
+  },
+
+  // `status` requires at least one of detail/phase.
+  StatusEvent: {
+    type: 'object',
+    properties: {
+      detail: nestr(),
+      phase: nestr(),
+    },
+    anyOf: [{ required: ['detail'] }, { required: ['phase'] }],
+  },
+
+  ApprovalRequired: objectNode(['approvalId', 'kind', 'title', 'summary', 'options'], {
+    approvalId: nestr(),
+    kind: nestr(),
+    title: nestr(),
+    summary: str(),
+    options: { type: 'array', minItems: 1, items: nestr() },
+  }),
+
+  ApprovalReceived: objectNode(['approvalId', 'decision'], {
+    approvalId: nestr(),
+    decision: { type: 'string', enum: ['approve', 'deny'] },
+    by: nestr(),
+  }),
+
+  RunComplete: objectNode(['outcome'], {
+    outcome: enumOf(RUN_COMPLETE_OUTCOMES),
+    summary: str(),
+    runId: str(),
+  }),
+
+  SessionStarted: objectNode(['sessionId', 'state'], {
+    sessionId: nestr(),
+    state: { type: 'string', enum: ['idle', 'running'] },
+    mode: str(),
+    provider: str(),
+    sandboxProvider: str(),
+  }),
+
+  UserMessage: objectNode(['chars', 'preview'], {
+    chars: uint(),
+    preview: str(),
+  }),
+};
+
+/**
+ * Maps each schema-validated event type → its `$def` name. The key set
+ * here is the published surface; the drift test pins it to equal
+ * `SCHEMA_VALIDATED_EVENT_TYPES` from `protocol-schema.ts`, so a new
+ * validator without a schema entry (or an entry for a removed
+ * validator) fails CI.
+ */
+export const TYPE_TO_DEF: Record<string, string> = {
+  'assistant.prompt_snapshot': 'AssistantPromptSnapshot',
+  'context.compaction': 'ContextCompaction',
+  session_state_changed: 'SessionStateChanged',
+  'subagent.started': 'SubagentStarted',
+  'subagent.completed': 'SubagentCompleted',
+  'subagent.failed': 'SubagentFailed',
+  'task_graph.task_ready': 'TaskGraphTaskReadyOrStarted',
+  'task_graph.task_started': 'TaskGraphTaskReadyOrStarted',
+  'task_graph.task_completed': 'TaskGraphTaskCompleted',
+  'task_graph.task_failed': 'TaskGraphTaskFailed',
+  'task_graph.task_cancelled': 'TaskGraphTaskCancelled',
+  'task_graph.graph_completed': 'TaskGraphGraphCompleted',
+  assistant_token: 'AssistantTextChunk',
+  assistant_thinking_token: 'AssistantTextChunk',
+  tool_call: 'ToolCall',
+  'tool.execution_start': 'ToolCall',
+  tool_result: 'ToolResult',
+  'tool.execution_complete': 'ToolResult',
+  'tool.call_malformed': 'ToolCallMalformed',
+  error: 'ErrorEvent',
+  warning: 'WarningEvent',
+  status: 'StatusEvent',
+  approval_required: 'ApprovalRequired',
+  approval_received: 'ApprovalReceived',
+  run_complete: 'RunComplete',
+  session_started: 'SessionStarted',
+  user_message: 'UserMessage',
+};
+
+// ---------------------------------------------------------------------------
+// Envelope + discriminator assembly.
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the `allOf` discriminator: for each event `type`, when
+ * `payload`'s sibling `type` equals that literal, the `payload` must
+ * match the corresponding `$def`. Types not listed fall through with
+ * only the base `payload: object` constraint (the validators treat
+ * unknown types as envelope-only too).
+ */
+function buildDiscriminator(): JsonSchemaNode[] {
+  return Object.entries(TYPE_TO_DEF).map(([type, def]) => ({
+    if: { properties: { type: { const: type } }, required: ['type'] },
+    then: { properties: { payload: { $ref: `#/$defs/${def}` } } },
+  }));
+}
+
+/**
+ * The canonical `push.runtime.v1` event-envelope schema. Mirrors
+ * `validateEventEnvelope` in `protocol-schema.ts`: `v`/`kind` are
+ * pinned constants, `runId` is optional-but-non-empty, `ts` is a
+ * positive number (ms since epoch), everything else required.
+ */
+export const PUSH_RUNTIME_EVENT_SCHEMA: JsonSchemaNode = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  $id: `https://push.dev/schema/${PROTOCOL_VERSION}.event.schema.json`,
+  title: `Push runtime event envelope (${PROTOCOL_VERSION})`,
+  description:
+    'Unidirectional broadcast envelope emitted by the pushd daemon and the ' +
+    'Worker relay. Generated from lib/protocol-schema.ts validators; do not ' +
+    'hand-edit. Relay-control envelopes (other `kind` values) are out of scope.',
+  type: 'object',
+  required: ['v', 'kind', 'sessionId', 'seq', 'ts', 'type', 'payload'],
+  properties: {
+    v: { const: PROTOCOL_VERSION },
+    kind: { const: 'event' },
+    sessionId: nestr(),
+    // Optional, but when present must be a non-empty string — serializing
+    // `runId: null` is an active regression the validator rejects.
+    runId: nestr(),
+    seq: uint(),
+    ts: { type: 'number', exclusiveMinimum: 0 },
+    type: nestr(),
+    payload: { type: 'object' },
+  },
+  $defs: PAYLOAD_DEFS,
+  allOf: buildDiscriminator(),
+};
