@@ -416,6 +416,14 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
     const fireTerminalOnce = (code: number, reason: string, isFatal = false): void => {
       if (terminalFired) return;
       terminalFired = true;
+      // `ws` does NOT auto-close the socket on `unexpected-response`, and a
+      // terminal close/error leaves nothing to reuse — terminate so the
+      // underlying TCP socket can't leak across the (now dead) dial.
+      try {
+        if (socket.readyState !== socket.CLOSED) socket.terminate();
+      } catch {
+        // best-effort
+      }
       if (isFatal) setFatalTerminal(code, reason);
       else handleTerminal(code, reason);
     };
@@ -429,12 +437,12 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
       fireTerminalOnce(1006, 'connection error');
     });
     // Non-101 upgrade response (the Worker rejected the dial). `ws` hands us
-    // the raw HTTP response — read its status + `{error:{code,message}}` body
-    // and surface the actual reason instead of the generic 1006 the
-    // close/error path would otherwise report. Listening here also suppresses
-    // `ws`'s default "Unexpected server response" error emit, so we own the
-    // terminal. Body is bounded + the handler always fires terminal (on end,
-    // error, or abort) so a half-open response can't hang the dial.
+    // the raw HTTP response — read its status + JSON error body and surface the
+    // actual reason instead of the generic 1006 the close/error path would
+    // otherwise report. Listening here also suppresses `ws`'s default
+    // "Unexpected server response" error emit, so we own the terminal. Body is
+    // bounded + the handler always fires terminal (on end, error, or close) so
+    // a half-open response can't hang the dial.
     socket.on('unexpected-response', (_req, res) => {
       const statusCode = typeof res.statusCode === 'number' ? res.statusCode : 0;
       const chunks: Buffer[] = [];
@@ -450,13 +458,22 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
         let errorCode: string | null = null;
         let message: string | null = null;
         try {
+          // `relay-routes.ts` jsonError emits a FLAT envelope:
+          //   { "error": "<CODE>", "message": "<text>" }
+          // (the `error` field IS the code). Tolerate a nested
+          // `{ error: { code, message } }` too in case the shape ever changes.
           const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
-            error?: { code?: unknown; message?: unknown };
+            error?: unknown;
+            message?: unknown;
           };
-          const e = parsed?.error;
-          if (e && typeof e === 'object') {
+          if (typeof parsed?.error === 'string') {
+            errorCode = parsed.error;
+            if (typeof parsed.message === 'string') message = parsed.message;
+          } else if (parsed?.error && typeof parsed.error === 'object') {
+            const e = parsed.error as { code?: unknown; message?: unknown };
             if (typeof e.code === 'string') errorCode = e.code;
             if (typeof e.message === 'string') message = e.message;
+            else if (typeof parsed.message === 'string') message = parsed.message;
           }
         } catch {
           // Non-JSON body (e.g. an HTML error page) — fall back to status-only.
@@ -470,7 +487,9 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
       };
       res.on('end', finish);
       res.on('error', finish);
-      res.on('aborted', finish);
+      // `close` covers the finished-or-aborted cases ('aborted' is deprecated
+      // in newer Node). `fireTerminalOnce` dedupes, so an end→close pair is safe.
+      res.on('close', finish);
     });
   };
 

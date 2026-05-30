@@ -450,7 +450,10 @@ describe('pushd-relay-client — upgrade-rejection legibility', () => {
     const server = await makeServer({
       rejectWithHttp: {
         status: 401,
-        body: { error: { code: 'BEARER_REJECTED', message: 'Invalid relay bearer.' } },
+        // The real worker envelope (relay-routes.ts jsonError): FLAT, `error`
+        // is the code string. This is the regression guard for the nested-vs-
+        // flat parse bug Codex caught on #715.
+        body: { error: 'BEARER_REJECTED', message: 'Invalid relay bearer.' },
       },
     });
     try {
@@ -482,7 +485,7 @@ describe('pushd-relay-client — upgrade-rejection legibility', () => {
   it('reconnect() clears the fatal latch and re-dials', async () => {
     // First server rejects fatally; swap in an accepting one and reconnect.
     const rejecting = await makeServer({
-      rejectWithHttp: { status: 401, body: { error: { code: 'BEARER_REJECTED' } } },
+      rejectWithHttp: { status: 401, body: { error: 'BEARER_REJECTED' } },
     });
     let client;
     try {
