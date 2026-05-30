@@ -923,6 +923,118 @@ describe('addressable child sessions — list_children + get_child_session', () 
   });
 });
 
+// ─── abort sugar verb (Addressable Session Verbs phase 2b) ──────
+//
+// `abort` routes by id shape: a subagentId in the payload → cancel_delegation
+// (child run); otherwise → cancel_run (parent run). It is registered in
+// HANDLERS and re-stamps the response/error `type` to 'abort'. No new auth
+// surface — it inherits the bearer gate from both targets.
+describe('abort sugar verb', () => {
+  let originalSessionDir;
+  let tmpRoot;
+  before(async () => {
+    originalSessionDir = process.env.PUSH_SESSION_DIR;
+    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-abort-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+  });
+  after(async () => {
+    if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+    else process.env.PUSH_SESSION_DIR = originalSessionDir;
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  });
+
+  async function makeSession() {
+    const start = await handleRequest(
+      makeRequest('start_session', { provider: 'ollama', repo: { rootPath: process.cwd() } }),
+      () => {},
+    );
+    return { sessionId: start.payload.sessionId, token: start.payload.attachToken };
+  }
+
+  it('routes a parent abort to cancel_run, aborts the run, re-stamps type=abort', async () => {
+    const { sessionId, token } = await makeSession();
+    const entry = __getActiveSessionForTesting(sessionId);
+    let aborted = false;
+    entry.activeRunId = 'run_abort';
+    entry.abortController = {
+      abort: () => {
+        aborted = true;
+      },
+    };
+    const res = await handleRequest(
+      makeRequest('abort', { sessionId, attachToken: token }),
+      () => {},
+    );
+    assert.equal(res.ok, true, `expected ok, got ${JSON.stringify(res.error)}`);
+    assert.equal(res.type, 'abort', 'response type must be re-stamped to abort');
+    assert.equal(aborted, true, 'the parent run controller should have been aborted');
+  });
+
+  it('inherits the bearer gate on the parent path (tokenless → INVALID_TOKEN, type=abort)', async () => {
+    const { sessionId } = await makeSession();
+    const entry = __getActiveSessionForTesting(sessionId);
+    entry.activeRunId = 'run_abort2';
+    entry.abortController = { abort: () => {} };
+    const res = await handleRequest(makeRequest('abort', { sessionId }), () => {});
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'INVALID_TOKEN');
+    assert.equal(res.type, 'abort');
+  });
+
+  it('routes a child abort (subagentId present) to cancel_delegation', async () => {
+    const { sessionId, token } = await makeSession();
+    const entry = __getActiveSessionForTesting(sessionId);
+    let childAborted = false;
+    entry.activeDelegations = new Map([
+      [
+        'sub_coder_x',
+        {
+          role: 'coder',
+          agent: 'coder',
+          childRunId: 'run_c',
+          parentRunId: 'run_p',
+          startedAt: 1,
+          task: 't',
+          abortController: {
+            abort: () => {
+              childAborted = true;
+            },
+          },
+        },
+      ],
+    ]);
+    const res = await handleRequest(
+      makeRequest('abort', { sessionId, attachToken: token, subagentId: 'sub_coder_x' }),
+      () => {},
+    );
+    assert.equal(res.ok, true, `expected ok, got ${JSON.stringify(res.error)}`);
+    assert.equal(res.type, 'abort');
+    assert.equal(childAborted, true, 'the child delegation should have been aborted');
+  });
+
+  it('child abort surfaces DELEGATION_NOT_FOUND for an unknown subagentId (type=abort)', async () => {
+    const { sessionId, token } = await makeSession();
+    const res = await handleRequest(
+      makeRequest('abort', { sessionId, attachToken: token, subagentId: 'sub_nope' }),
+      () => {},
+    );
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'DELEGATION_NOT_FOUND');
+    assert.equal(res.type, 'abort');
+  });
+
+  it('inherits the bearer gate on the child path (tokenless → INVALID_TOKEN)', async () => {
+    const { sessionId } = await makeSession();
+    const res = await handleRequest(
+      makeRequest('abort', { sessionId, subagentId: 'sub_coder_x' }),
+      () => {},
+    );
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'INVALID_TOKEN');
+    assert.equal(res.type, 'abort');
+  });
+});
+
 // ─── Daemon client library ──────────────────────────────────────
 
 describe('daemon-client module', () => {
