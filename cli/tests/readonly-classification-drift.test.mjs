@@ -1,14 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-  GITHUB_READ_ONLY_PUBLIC_TOOL_NAMES,
-  isReadOnlyToolCall,
-} from '../tools.ts';
-import {
-  getToolPublicNames,
-  isReadOnlyToolName,
-} from '../../lib/tool-registry.ts';
+import { GITHUB_READ_ONLY_PUBLIC_TOOL_NAMES, isReadOnlyToolCall } from '../tools.ts';
+import { getToolPublicNames, isReadOnlyToolName } from '../../lib/tool-registry.ts';
 
 // Drift detector for the one cross-surface seam in read-only tool
 // classification (see CLAUDE.md "one source of truth per vocabulary").
