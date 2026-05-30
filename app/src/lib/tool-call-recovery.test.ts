@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildToolCallParseErrorBlock,
+  buildToolSchemaHint,
   buildUnimplementedToolErrorText,
+  buildValidationFailedHint,
   formatToolResultEnvelope,
   MAX_TOOL_CALL_DIAGNOSIS_RETRIES,
   resolveToolCallRecovery,
@@ -32,6 +34,34 @@ describe('tool-call-recovery', () => {
         'problem: Missing required command arg.\n' +
         'hint: Wrap the command under args.command.',
     );
+  });
+
+  it('builds a concrete schema hint for a known tool', () => {
+    const hint = buildToolSchemaHint('sandbox_write_file');
+    expect(hint).not.toBeNull();
+    // Signature names the args; example shows the canonical shape.
+    expect(hint).toContain('write(');
+    expect(hint).toContain('args marked ? are optional');
+    expect(hint).toContain('Example:');
+  });
+
+  it('returns null schema hint for unknown / missing tools', () => {
+    expect(buildToolSchemaHint('sandbox_not_real')).toBeNull();
+    expect(buildToolSchemaHint(null)).toBeNull();
+    expect(buildToolSchemaHint(undefined)).toBeNull();
+  });
+
+  it('folds the schema into the validation_failed hint for a known tool', () => {
+    const hint = buildValidationFailedHint('sandbox_write_file');
+    expect(hint).toContain('Each tool call must be');
+    expect(hint).toContain('Expected:');
+    expect(hint).toContain('write(');
+  });
+
+  it('falls back to the generic validation_failed hint for an unknown tool', () => {
+    const hint = buildValidationFailedHint('sandbox_not_real');
+    expect(hint).toContain('Each tool call must be');
+    expect(hint).not.toContain('Expected:');
   });
 
   it('builds configurable unimplemented-tool messages', () => {

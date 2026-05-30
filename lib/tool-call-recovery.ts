@@ -17,7 +17,7 @@ import {
   PUBLIC_SANDBOX_TOOL_NAMES,
   type ToolCallDiagnosis,
 } from './tool-call-diagnosis.js';
-import { getToolPublicName, type ToolRegistrySource } from './tool-registry.js';
+import { getToolPublicName, getToolSpec, type ToolRegistrySource } from './tool-registry.js';
 import { escapeToolResultBoundaries } from './untrusted-content.js';
 
 export const MAX_TOOL_CALL_DIAGNOSIS_RETRIES = 2;
@@ -131,6 +131,38 @@ export function buildUnimplementedToolErrorText(
   ].join('\n');
 }
 
+/**
+ * Build a concrete arg-schema hint for a *known* tool: its protocol signature
+ * (args marked `?` are optional) plus a canonical example. Surfaced on
+ * `validation_failed`/parse-error observations so the model sees the exact arg
+ * shape it got wrong, rather than a generic "check the signature" nudge — the
+ * structured-observation analogue of exposing the allowed schema at the tool
+ * boundary. Returns null for unknown tools; the unimplemented-tool path owns
+ * those (it lists the available tools instead).
+ */
+export function buildToolSchemaHint(toolName: string | null | undefined): string | null {
+  const spec = getToolSpec(toolName);
+  if (!spec) return null;
+  return `${spec.protocolSignature} — args marked ? are optional. Example: ${spec.exampleJson}`;
+}
+
+/**
+ * The shared `validation_failed` correction hint: the generic envelope rule
+ * plus, when the offending tool is known, its concrete signature + example.
+ * Single source of truth so the web (`handleDroppedCandidatesError`) and Coder
+ * dropped-candidate paths can't drift in their wording.
+ */
+export function buildValidationFailedHint(toolName: string | null | undefined): string {
+  const schemaHint = buildToolSchemaHint(toolName);
+  return [
+    'Each tool call must be `{"tool": "<name>", "args": {...}}` with required fields nested under args.',
+    schemaHint ? `Expected: ${schemaHint}` : null,
+    'Re-emit only the calls you intend to run.',
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
 export function buildToolCallRecoveryText(
   toolName: string,
   maxRetries = MAX_TOOL_CALL_DIAGNOSIS_RETRIES,
@@ -193,6 +225,9 @@ export function resolveToolCallRecovery(
             errorType: diagnosis.reason,
             detectedTool: diagnosis.toolName,
             problem: diagnosis.errorMessage,
+            // Surface the intended tool's signature + example when it's known,
+            // so a retry has the exact arg shape rather than guessing.
+            hint: buildToolSchemaHint(diagnosis.toolName) ?? undefined,
           }),
         ),
         markMalformed: true,
