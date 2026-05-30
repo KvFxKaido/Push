@@ -100,15 +100,27 @@ describe('validateAttachToken', () => {
     assert.equal(validateAttachToken(entry, 'att_abc123'), true);
   });
 
-  it('passes when no token set on entry (legacy/internal)', () => {
-    assert.equal(validateAttachToken({ state: {} }, undefined), true);
-    assert.equal(validateAttachToken({ state: {}, attachToken: '' }, 'anything'), true);
-    assert.equal(validateAttachToken({ state: {}, attachToken: null }, undefined), true);
+  it('REJECTS a tokenless entry — the !entry.attachToken bypass is removed (Universal Session Bearer)', () => {
+    assert.equal(validateAttachToken({ state: {} }, undefined), false);
+    assert.equal(validateAttachToken({ state: {}, attachToken: '' }, 'anything'), false);
+    assert.equal(validateAttachToken({ state: {}, attachToken: null }, undefined), false);
   });
 
-  it('rejects when entry is null/undefined', () => {
-    // null entry should return true (no entry = no token requirement)
+  it('allows when entry is null/undefined (no entry = nothing to gate)', () => {
     assert.equal(validateAttachToken(null, 'token'), true);
     assert.equal(validateAttachToken(undefined, 'token'), true);
+  });
+
+  it('honors the explicit openAttach opt-out (flag + PUSHD_OPEN_ATTACH=1)', () => {
+    assert.equal(validateAttachToken({ state: {}, openAttach: true }, undefined), true);
+    assert.equal(validateAttachToken({ state: { openAttach: true } }, undefined), true);
+    const original = process.env.PUSHD_OPEN_ATTACH;
+    process.env.PUSHD_OPEN_ATTACH = '1';
+    try {
+      assert.equal(validateAttachToken({ state: {}, attachToken: 'att_x' }, undefined), true);
+    } finally {
+      if (original === undefined) delete process.env.PUSHD_OPEN_ATTACH;
+      else process.env.PUSHD_OPEN_ATTACH = original;
+    }
   });
 });
