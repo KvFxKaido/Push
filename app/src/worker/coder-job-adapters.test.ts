@@ -813,6 +813,73 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
     expect(body.messages).toEqual([{ role: 'user', content: 'hi' }]);
   });
 
+  it('requests usage (stream_options.include_usage) and emits it on the terminal done event', async () => {
+    // OpenAI-compatible sequence: content chunk, a finish_reason chunk, THEN a
+    // trailing usage chunk (`choices: []`), then `[DONE]`. The pump must read
+    // past finish_reason to capture the usage chunk.
+    providerHandlerMocks.handleOpenRouterChat.mockResolvedValue(
+      sseResponse([
+        'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+        'data: {"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":34,"total_tokens":154}}\n\n',
+        'data: [DONE]\n\n',
+      ]),
+    );
+    const stream = createWebStreamAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      provider: 'openrouter',
+      modelId: 'sonnet-4.6',
+      jobId: 'job-usage-1',
+    });
+
+    let doneUsage: { inputTokens: number; outputTokens: number; totalTokens: number } | undefined;
+    let text = '';
+    for await (const event of stream({
+      provider: 'openrouter',
+      model: 'sonnet-4.6',
+      messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }],
+    })) {
+      if (event.type === 'text_delta') text += event.text;
+      else if (event.type === 'done') doneUsage = event.usage;
+    }
+
+    expect(text).toBe('hi');
+    expect(doneUsage).toEqual({ inputTokens: 120, outputTokens: 34, totalTokens: 154 });
+
+    const req = providerHandlerMocks.handleOpenRouterChat.mock.calls[0]![0] as Request;
+    const body = JSON.parse(await req.text()) as { stream_options?: { include_usage?: boolean } };
+    expect(body.stream_options).toEqual({ include_usage: true });
+  });
+
+  it('emits done with undefined usage when the provider reports none', async () => {
+    providerHandlerMocks.handleOpenRouterChat.mockResolvedValue(
+      sseResponse(['data: {"choices":[{"delta":{"content":"hi"}}]}\n\n', 'data: [DONE]\n\n']),
+    );
+    const stream = createWebStreamAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      provider: 'openrouter',
+      modelId: 'sonnet-4.6',
+      jobId: 'job-usage-2',
+    });
+
+    let sawDone = false;
+    let doneUsage: unknown = 'unset';
+    for await (const event of stream({
+      provider: 'openrouter',
+      model: 'sonnet-4.6',
+      messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }],
+    })) {
+      if (event.type === 'done') {
+        sawDone = true;
+        doneUsage = event.usage;
+      }
+    }
+    expect(sawDone).toBe(true);
+    expect(doneUsage).toBeUndefined();
+  });
+
   it('throws when the provider handler returns a non-2xx status', async () => {
     providerHandlerMocks.handleOpenRouterChat.mockResolvedValue(
       new Response('upstream went boom', { status: 502 }),

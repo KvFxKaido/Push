@@ -23,7 +23,12 @@
  *   always valid JSON); `[DONE]` sentinels close the stream cleanly.
  */
 
-import type { AIProviderType, PushStream, PushStreamEvent } from '@push/lib/provider-contract';
+import type {
+  AIProviderType,
+  PushStream,
+  PushStreamEvent,
+  StreamUsage,
+} from '@push/lib/provider-contract';
 import type { ChatMessage } from '@/types';
 import type { Env } from './worker-middleware';
 import {
@@ -136,6 +141,12 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
         model: req.model || args.modelId,
         messages: payloadMessages,
         stream: true,
+        // Ask OpenAI-compatible upstreams to emit a final usage chunk
+        // (`choices: []` + `usage`). Providers that don't support it ignore
+        // the field; the Anthropic-transport bridge rebuilds the body and
+        // emits usage natively. `validateAndNormalizeChatRequest` spreads the
+        // original body, so this survives normalization to the upstream.
+        stream_options: { include_usage: true },
       });
 
       const request = new Request(
@@ -196,6 +207,12 @@ async function* pumpSseBody(
   };
   signal?.addEventListener('abort', onAbort);
 
+  // Usage arrives in a trailing chunk (`choices: []` + `usage`) that an
+  // OpenAI-compatible provider emits AFTER the `finish_reason` chunk and
+  // before `[DONE]`. So we record finishReason/usage as we see them and only
+  // terminate on `[DONE]` (or stream close) — bailing on the first
+  // finish_reason, as the old loop did, dropped the usage chunk entirely.
+  let pendingUsage: StreamUsage | undefined;
   try {
     while (true) {
       if (signal?.aborted) {
@@ -213,8 +230,13 @@ async function* pumpSseBody(
         for (const ev of yielded.events) {
           yield ev;
         }
+        if (yielded.usage) pendingUsage = yielded.usage;
         if (yielded.done) {
-          yield { type: 'done', finishReason: 'stop' };
+          yield {
+            type: 'done',
+            finishReason: 'stop',
+            ...(pendingUsage && { usage: pendingUsage }),
+          };
           return;
         }
         delimiterIdx = buffer.indexOf('\n\n');
@@ -225,8 +247,9 @@ async function* pumpSseBody(
       for (const ev of yielded.events) {
         yield ev;
       }
+      if (yielded.usage) pendingUsage = yielded.usage;
     }
-    yield { type: 'done', finishReason: 'stop' };
+    yield { type: 'done', finishReason: 'stop', ...(pendingUsage && { usage: pendingUsage }) };
   } finally {
     signal?.removeEventListener('abort', onAbort);
     try {
@@ -238,7 +261,11 @@ async function* pumpSseBody(
   }
 }
 
-function parseSseEvent(rawEvent: string): { events: PushStreamEvent[]; done: boolean } {
+function parseSseEvent(rawEvent: string): {
+  events: PushStreamEvent[];
+  done: boolean;
+  usage?: StreamUsage;
+} {
   const lines = rawEvent.split('\n');
   const dataParts: string[] = [];
   for (const line of lines) {
@@ -249,21 +276,45 @@ function parseSseEvent(rawEvent: string): { events: PushStreamEvent[]; done: boo
   }
   if (dataParts.length === 0) return { events: [], done: false };
   const data = dataParts.join('\n');
+  // `[DONE]` is the only terminal sentinel. A `finish_reason` chunk is NOT
+  // terminal here — the usage chunk follows it, so the pump keeps reading.
   if (data === '[DONE]') return { events: [], done: true };
   try {
     const parsed = JSON.parse(data) as {
       choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+      };
     };
     const events: PushStreamEvent[] = [];
     const delta = parsed.choices?.[0]?.delta?.content;
     if (typeof delta === 'string' && delta.length > 0) {
       events.push({ type: 'text_delta', text: delta });
     }
-    const done = Boolean(parsed.choices?.[0]?.finish_reason);
-    return { events, done };
+    const usage = parseUsage(parsed.usage);
+    return { events, done: false, ...(usage && { usage }) };
   } catch {
     // Malformed chunk — skip quietly. Don't surface errors: providers
     // occasionally interleave heartbeats and non-JSON control frames.
     return { events: [], done: false };
   }
+}
+
+/**
+ * Map an OpenAI-shaped usage object to the portable `StreamUsage`. Returns
+ * null when no usage fields are present (the common per-content chunk), so the
+ * pump only records a value for the real usage chunk.
+ */
+function parseUsage(
+  usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined,
+): StreamUsage | null {
+  if (!usage) return null;
+  const inputTokens = typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : 0;
+  const outputTokens = typeof usage.completion_tokens === 'number' ? usage.completion_tokens : 0;
+  const totalTokens =
+    typeof usage.total_tokens === 'number' ? usage.total_tokens : inputTokens + outputTokens;
+  if (inputTokens === 0 && outputTokens === 0 && totalTokens === 0) return null;
+  return { inputTokens, outputTokens, totalTokens };
 }

@@ -24,6 +24,7 @@ import type {
   PushStream,
   ReviewComment,
   ReviewResult,
+  StreamUsage,
 } from './provider-contract.js';
 import type { ReviewerOptions } from './reviewer-agent.js';
 import { annotateDiffWithLineNumbers, REVIEWER_CRITERIA_BLOCK } from './reviewer-agent.js';
@@ -346,6 +347,7 @@ function parseReviewResult(
   provider: string,
   modelId: string,
   coverage: Pick<ReviewResult, 'filesReviewed' | 'totalFiles' | 'truncated'>,
+  usage?: StreamUsage,
 ): ReviewResult {
   const parsed = asRecord(JSON.parse(jsonStr));
 
@@ -383,6 +385,7 @@ function parseReviewResult(
     provider,
     model: modelId || provider,
     reviewedAt: Date.now(),
+    ...(usage && { usage }),
   };
 }
 
@@ -440,6 +443,7 @@ function buildFallbackResult(
   provider: string,
   modelId: string,
   coverage: Pick<ReviewResult, 'filesReviewed' | 'totalFiles' | 'truncated'>,
+  usage?: StreamUsage,
 ): ReviewResult {
   const cleaned = stripToolScaffolding(accumulated);
   // Detect-and-refuse safety net: if tool-call-shaped JSON survived best-effort
@@ -456,6 +460,7 @@ function buildFallbackResult(
     provider,
     model: modelId || provider,
     reviewedAt: Date.now(),
+    ...(usage && { usage }),
   };
 }
 
@@ -578,6 +583,22 @@ export async function runDeepReviewer<TCall, TCard>(
   let totalToolCalls = 0;
   let allAccumulated = '';
 
+  // Sum token usage across every model round (and the final forced-output
+  // call). Stays all-zero when the provider stream reports no usage; in that
+  // case `finalizeUsage()` returns undefined so the ReviewResult omits the
+  // field rather than claiming a misleading 0.
+  const usageAcc: StreamUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  const addUsage = (u?: StreamUsage) => {
+    if (!u) return;
+    usageAcc.inputTokens += u.inputTokens;
+    usageAcc.outputTokens += u.outputTokens;
+    usageAcc.totalTokens += u.totalTokens;
+  };
+  const finalizeUsage = (): StreamUsage | undefined =>
+    usageAcc.inputTokens > 0 || usageAcc.outputTokens > 0 || usageAcc.totalTokens > 0
+      ? usageAcc
+      : undefined;
+
   for (let round = 0; round < MAX_DEEP_REVIEW_ROUNDS; round++) {
     if (callbacks.signal?.aborted) {
       throw new DOMException('Deep review cancelled by user.', 'AbortError');
@@ -586,7 +607,11 @@ export async function runDeepReviewer<TCall, TCard>(
     const roundNum = round + 1;
     callbacks.onStatus('Deep review investigating...', `Round ${roundNum}`);
 
-    const { error: streamError, text: rawAccumulated } = await iteratePushStreamText(
+    const {
+      error: streamError,
+      text: rawAccumulated,
+      usage: roundUsage,
+    } = await iteratePushStreamText(
       cancellableStream,
       {
         provider,
@@ -600,6 +625,7 @@ export async function runDeepReviewer<TCall, TCard>(
       DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
       `Deep review round ${roundNum} exceeded ${DEEP_REVIEW_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap — model is verbose but unproductive.`,
     );
+    addUsage(roundUsage);
     if (streamError) {
       if (callbacks.signal?.aborted) {
         throw new DOMException('Deep review cancelled by user.', 'AbortError');
@@ -643,7 +669,7 @@ export async function runDeepReviewer<TCall, TCard>(
       // Parse the review result
       callbacks.onStatus('Parsing deep review findings...');
       try {
-        return parseReviewResult(reviewJson, activeProvider, modelId, coverage);
+        return parseReviewResult(reviewJson, activeProvider, modelId, coverage, finalizeUsage());
       } catch {
         // JSON parse failed — try to salvage on the next round or fall through to fallback
         messages.push({
@@ -818,7 +844,11 @@ export async function runDeepReviewer<TCall, TCard>(
     timestamp: Date.now(),
   });
 
-  const { error: finalError, text: rawFinalAccumulated } = await iteratePushStreamText(
+  const {
+    error: finalError,
+    text: rawFinalAccumulated,
+    usage: finalUsage,
+  } = await iteratePushStreamText(
     cancellableStream,
     {
       provider,
@@ -832,16 +862,17 @@ export async function runDeepReviewer<TCall, TCard>(
     DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
     `Deep review final forced output exceeded ${DEEP_REVIEW_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap.`,
   );
+  addUsage(finalUsage);
   const finalAccumulated = rawFinalAccumulated.trim();
 
   if (finalError) {
-    return buildFallbackResult(allAccumulated, activeProvider, modelId, coverage);
+    return buildFallbackResult(allAccumulated, activeProvider, modelId, coverage, finalizeUsage());
   }
 
   const finalJson = extractReviewJson(finalAccumulated);
   if (finalJson) {
     try {
-      return parseReviewResult(finalJson, activeProvider, modelId, coverage);
+      return parseReviewResult(finalJson, activeProvider, modelId, coverage, finalizeUsage());
     } catch {
       // Parse failed — return fallback
     }
@@ -861,8 +892,14 @@ export async function runDeepReviewer<TCall, TCard>(
     finalDetected.extraMutations.length > 0 ||
     finalDetected.droppedCandidates.length > 0;
   if (finalStillInvestigating) {
-    return buildFallbackResult('', activeProvider, modelId, coverage);
+    return buildFallbackResult('', activeProvider, modelId, coverage, finalizeUsage());
   }
 
-  return buildFallbackResult(finalAccumulated || allAccumulated, activeProvider, modelId, coverage);
+  return buildFallbackResult(
+    finalAccumulated || allAccumulated,
+    activeProvider,
+    modelId,
+    coverage,
+    finalizeUsage(),
+  );
 }

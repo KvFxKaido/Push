@@ -265,6 +265,81 @@ describe('runDeepReviewer (PushStream consumer)', () => {
     expect(req0.systemPromptOverride).toContain('Deep Reviewer agent');
   });
 
+  it('accumulates token usage across rounds into ReviewResult.usage', async () => {
+    const reportJson = JSON.stringify({ summary: 'Fine.', comments: [] });
+    const { stream } = makePushStream([
+      [
+        { type: 'text_delta', text: 'Investigating...' },
+        {
+          type: 'done',
+          finishReason: 'stop',
+          usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 },
+        },
+      ],
+      [
+        { type: 'text_delta', text: `[REVIEW_COMPLETE]\n${reportJson}` },
+        {
+          type: 'done',
+          finishReason: 'stop',
+          usage: { inputTokens: 200, outputTokens: 30, totalTokens: 230 },
+        },
+      ],
+    ]);
+
+    let toolCallReturn: { call: { tool: string; args: Record<string, unknown> } } | null = {
+      call: { tool: 'sandbox_read_file', args: {} },
+    };
+
+    const result = await runDeepReviewer(
+      makeAddedFileDiff('src/auth.ts', 'const x = 1;'),
+      baseOptions({
+        stream,
+        detectAnyToolCall: () => {
+          const next = toolCallReturn;
+          toolCallReturn = null;
+          return next;
+        },
+      }),
+      { onStatus: () => {} },
+    );
+
+    // Summed across both rounds, not just the final one.
+    expect(result.usage).toEqual({ inputTokens: 300, outputTokens: 50, totalTokens: 350 });
+  });
+
+  it('omits ReviewResult.usage when the stream reports no usage', async () => {
+    const reportJson = JSON.stringify({ summary: 'Fine.', comments: [] });
+    const { stream } = makePushStream([
+      [
+        { type: 'text_delta', text: 'Investigating...' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', text: `[REVIEW_COMPLETE]\n${reportJson}` },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+
+    let toolCallReturn: { call: { tool: string; args: Record<string, unknown> } } | null = {
+      call: { tool: 'sandbox_read_file', args: {} },
+    };
+
+    const result = await runDeepReviewer(
+      makeAddedFileDiff('src/auth.ts', 'const x = 1;'),
+      baseOptions({
+        stream,
+        detectAnyToolCall: () => {
+          const next = toolCallReturn;
+          toolCallReturn = null;
+          return next;
+        },
+      }),
+      { onStatus: () => {} },
+    );
+
+    expect(result.usage).toBeUndefined();
+  });
+
   it('omits the Web tool from the prompt when webSearchAvailable is false', async () => {
     const reportJson = JSON.stringify({ summary: 'ok', comments: [] });
     const rounds = (): PushStreamEvent[][] => [

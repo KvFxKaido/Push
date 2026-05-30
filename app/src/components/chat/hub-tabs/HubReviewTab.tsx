@@ -536,13 +536,17 @@ export function HubReviewTab({
         reviewContext.pr.number,
         reviewContext.pr.commitSha,
         result,
+        undefined,
+        // Reviewed diff — on a 422 it salvages the valid inline anchors rather
+        // than folding every comment into the body.
+        reviewDiffData?.diff,
       );
       setPostState('posted');
     } catch (err) {
       setPostState('error');
       setPostError(err instanceof Error ? err.message : 'Failed to post review.');
     }
-  }, [result, repoFullName, reviewContext]);
+  }, [result, repoFullName, reviewContext, reviewDiffData]);
 
   const handleOpenCommentInDiff = useCallback(
     (file: string, line?: number) => {
