@@ -952,10 +952,11 @@ ${TOOL_PROTOCOL_BODY}`;
 // advertised surface can't drift from the canonical tool specs.
 const GITHUB_PROTOCOL_ENTRIES = getToolProtocolEntries('github');
 
-// Public-name set the dispatcher recognizes as GitHub tools. Built from the
-// registry so it stays in lockstep with what's advertised.
+// Public-name set the dispatcher recognizes as GitHub tools. Sourced from the
+// shared registry helper (same single source of truth as the read-only set
+// below) so it stays in lockstep with what's advertised.
 export const GITHUB_PUBLIC_TOOL_NAMES: ReadonlySet<string> = new Set(
-  GITHUB_PROTOCOL_ENTRIES.map((spec) => spec.publicName),
+  getToolPublicNames({ source: 'github' }),
 );
 
 // Public names of the read-only GitHub tools — folded into the CLI's
