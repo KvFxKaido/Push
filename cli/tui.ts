@@ -4170,8 +4170,13 @@ export async function runTUI(options = {}) {
         scheduler.flush();
         return;
       }
-      if (!token.startsWith('pushd_relay_')) {
-        addTranscriptEntry(tuiState, 'warning', 'Remote relay token must start with pushd_relay_');
+      const { isValidRelayToken } = await import('./pushd-relay-config.js');
+      if (!isValidRelayToken(token)) {
+        addTranscriptEntry(
+          tuiState,
+          'warning',
+          'Remote relay token must start with pushd_relay_ and include a token body (yours looks truncated)',
+        );
         scheduler.flush();
         return;
       }
@@ -4254,8 +4259,13 @@ export async function runTUI(options = {}) {
         scheduler.flush();
         return;
       }
-      if (!token.startsWith('pushd_relay_')) {
-        addTranscriptEntry(tuiState, 'warning', 'Remote relay token must start with pushd_relay_');
+      const { isValidRelayToken } = await import('./pushd-relay-config.js');
+      if (!isValidRelayToken(token)) {
+        addTranscriptEntry(
+          tuiState,
+          'warning',
+          'Remote relay token must start with pushd_relay_ and include a token body (yours looks truncated)',
+        );
         scheduler.flush();
         return;
       }

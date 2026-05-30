@@ -67,6 +67,7 @@ import {
   readRelayConfig,
   writeRelayConfig,
   deleteRelayConfig,
+  isValidRelayToken,
   type RelayConfig,
 } from './pushd-relay-config.js';
 import {
@@ -5480,12 +5481,12 @@ async function handleRelayEnable(req, _emitEvent, context) {
       'deploymentUrl is required',
     );
   }
-  if (!token.startsWith('pushd_relay_')) {
+  if (!isValidRelayToken(token)) {
     return makeErrorResponse(
       req.requestId,
       'relay_enable',
       'INVALID_REQUEST',
-      'token must start with pushd_relay_',
+      'token must start with pushd_relay_ and include a token body (yours looks truncated)',
     );
   }
   let persisted: RelayConfig;

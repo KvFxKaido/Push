@@ -2537,8 +2537,11 @@ async function runDaemonRelay(
       );
       return 1;
     }
-    if (!token.startsWith('pushd_relay_')) {
-      process.stderr.write('relay enable failed: token must start with pushd_relay_\n');
+    const { isValidRelayToken } = await import('./pushd-relay-config.js');
+    if (!isValidRelayToken(token)) {
+      process.stderr.write(
+        'relay enable failed: token must start with pushd_relay_ and include a token body (yours looks truncated)\n',
+      );
       return 1;
     }
     // Try the live admin RPC first — change takes effect immediately

@@ -11,6 +11,7 @@ import {
   readRelayConfig,
   writeRelayConfig,
   deleteRelayConfig,
+  isValidRelayToken,
   __test__,
 } from '../pushd-relay-config.ts';
 import {
@@ -61,6 +62,22 @@ describe('pushd-relay-config', () => {
     );
   });
 
+  it('rejects a bare-prefix token with no body (the truncated-paste footgun)', async () => {
+    await assert.rejects(
+      () => writeRelayConfig({ deploymentUrl: 'https://x.example', token: 'pushd_relay_' }),
+      /truncated/,
+    );
+  });
+
+  it('returns null when a persisted token is the bare prefix with no body', async () => {
+    await fs.writeFile(
+      __test__.getRelayConfigPath(),
+      JSON.stringify({ deploymentUrl: 'https://x.example', token: 'pushd_relay_', enabledAt: 1 }),
+      { mode: 0o600 },
+    );
+    assert.equal(await readRelayConfig(), null);
+  });
+
   it('writes the file with mode 0600', async () => {
     if (process.platform === 'win32') return; // POSIX-only assertion
     await writeRelayConfig({
@@ -94,6 +111,29 @@ describe('pushd-relay-config', () => {
     assert.equal(await deleteRelayConfig(), true);
     assert.equal(await deleteRelayConfig(), false);
     assert.equal(await readRelayConfig(), null);
+  });
+});
+
+describe('isValidRelayToken', () => {
+  it('accepts a prefixed token with a non-empty body', () => {
+    assert.equal(isValidRelayToken('pushd_relay_abcd1234'), true);
+    assert.equal(isValidRelayToken('pushd_relay_x'), true);
+  });
+
+  it('rejects the bare prefix with no body', () => {
+    assert.equal(isValidRelayToken('pushd_relay_'), false);
+  });
+
+  it('rejects a missing/wrong prefix', () => {
+    assert.equal(isValidRelayToken('relay_abcd'), false);
+    assert.equal(isValidRelayToken('abcd'), false);
+    assert.equal(isValidRelayToken(''), false);
+  });
+
+  it('rejects non-string input', () => {
+    assert.equal(isValidRelayToken(undefined), false);
+    assert.equal(isValidRelayToken(null), false);
+    assert.equal(isValidRelayToken(123), false);
   });
 });
 

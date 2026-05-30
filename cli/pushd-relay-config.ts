@@ -32,6 +32,24 @@ export interface RelayConfig {
 
 const TOKEN_PREFIX = 'pushd_relay_';
 
+/**
+ * A relay token is structurally valid only with the `pushd_relay_` prefix AND
+ * a non-empty body after it. The empty-body case (`pushd_relay_` alone) is the
+ * truncated-paste footgun: it passes a naive `startsWith` check, persists, and
+ * then silently 401s on every relay dial because the bare prefix can never
+ * match the worker's full `PUSH_RELAY_TOKEN`. Rejecting it at every enable seam
+ * (and at config read/write) turns a silent forever-401 into a loud failure at
+ * input time. This is a structural check, not an auth check — the worker's
+ * exact-match comparison is the real authority.
+ */
+export function isValidRelayToken(token: unknown): token is string {
+  return (
+    typeof token === 'string' &&
+    token.startsWith(TOKEN_PREFIX) &&
+    token.length > TOKEN_PREFIX.length
+  );
+}
+
 export function getRelayConfigPath(): string {
   if (process.env.PUSHD_RELAY_CONFIG_PATH) return process.env.PUSHD_RELAY_CONFIG_PATH;
   return path.join(os.homedir(), '.push', 'run', 'pushd.relay.json');
@@ -69,8 +87,7 @@ export async function readRelayConfig(): Promise<RelayConfig | null> {
     if (
       typeof parsed.deploymentUrl === 'string' &&
       parsed.deploymentUrl.length > 0 &&
-      typeof parsed.token === 'string' &&
-      parsed.token.startsWith(TOKEN_PREFIX) &&
+      isValidRelayToken(parsed.token) &&
       typeof parsed.enabledAt === 'number' &&
       Number.isFinite(parsed.enabledAt)
     ) {
@@ -94,8 +111,10 @@ export async function writeRelayConfig(cfg: Omit<RelayConfig, 'enabledAt'>): Pro
   if (typeof cfg.deploymentUrl !== 'string' || cfg.deploymentUrl.length === 0) {
     throw new Error('deploymentUrl is required');
   }
-  if (typeof cfg.token !== 'string' || !cfg.token.startsWith(TOKEN_PREFIX)) {
-    throw new Error(`token must start with ${TOKEN_PREFIX}`);
+  if (!isValidRelayToken(cfg.token)) {
+    throw new Error(
+      `token must start with ${TOKEN_PREFIX} and include a non-empty body (yours looks truncated)`,
+    );
   }
   await ensureRelayConfigDir();
   const targetPath = getRelayConfigPath();
