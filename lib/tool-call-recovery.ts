@@ -132,13 +132,28 @@ export function buildUnimplementedToolErrorText(
 }
 
 /**
+ * The bare protocol signature for a *known* tool (args marked `?` are
+ * optional), without the example. Use where the surrounding `problem` already
+ * shows an example (e.g. the `resolveToolCallRecovery` retry path, whose
+ * `diagnosis.errorMessage` embeds `getToolArgHint`'s example) so the signature
+ * adds the full arg list — including optionals the example omits — without
+ * double-printing the example. Returns null for unknown tools.
+ */
+export function buildToolSignatureHint(toolName: string | null | undefined): string | null {
+  const spec = getToolSpec(toolName);
+  if (!spec) return null;
+  return `${spec.protocolSignature} — args marked ? are optional`;
+}
+
+/**
  * Build a concrete arg-schema hint for a *known* tool: its protocol signature
  * (args marked `?` are optional) plus a canonical example. Surfaced on
- * `validation_failed`/parse-error observations so the model sees the exact arg
- * shape it got wrong, rather than a generic "check the signature" nudge — the
- * structured-observation analogue of exposing the allowed schema at the tool
- * boundary. Returns null for unknown tools; the unimplemented-tool path owns
- * those (it lists the available tools instead).
+ * `validation_failed`/parse-error observations whose surrounding `problem` does
+ * NOT already carry an example (the dropped-candidate paths) so the model sees
+ * the exact arg shape it got wrong, rather than a generic "check the signature"
+ * nudge — the structured-observation analogue of exposing the allowed schema at
+ * the tool boundary. Returns null for unknown tools; the unimplemented-tool
+ * path owns those (it lists the available tools instead).
  */
 export function buildToolSchemaHint(toolName: string | null | undefined): string | null {
   const spec = getToolSpec(toolName);
@@ -225,9 +240,11 @@ export function resolveToolCallRecovery(
             errorType: diagnosis.reason,
             detectedTool: diagnosis.toolName,
             problem: diagnosis.errorMessage,
-            // Surface the intended tool's signature + example when it's known,
-            // so a retry has the exact arg shape rather than guessing.
-            hint: buildToolSchemaHint(diagnosis.toolName) ?? undefined,
+            // Signature-only: `diagnosis.errorMessage` already embeds the
+            // example for known tools, so adding the full schema (with example)
+            // would double-print it. The signature still adds the complete arg
+            // list, including optionals the example omits.
+            hint: buildToolSignatureHint(diagnosis.toolName) ?? undefined,
           }),
         ),
         markMalformed: true,

@@ -34,6 +34,7 @@ import { getToolPublicName, getToolPublicNames } from './tool-registry.js';
 import { detectUnimplementedToolCall, diagnoseToolCallFailure } from './tool-call-diagnosis.js';
 import {
   buildToolCallParseErrorBlock,
+  buildValidationFailedHint,
   buildUnimplementedToolErrorText,
 } from './tool-call-recovery.js';
 import {
@@ -629,7 +630,9 @@ export async function runDeepReviewer<TCall, TCard>(
             errorType: 'validation_failed',
             detectedTool: primary?.resolvedToolName || primary?.rawToolName || null,
             problem: `Tool call${dropped.length === 1 ? '' : 's'} failed validation: ${summary}. None of the calls this turn were executed.`,
-            hint: 'Each tool call must be `{"tool": "<name>", "args": {...}}` with required fields nested under args. Re-emit only the calls you intend to run.',
+            hint: buildValidationFailedHint(
+              primary?.resolvedToolName || primary?.rawToolName || null,
+            ),
           }),
         ),
         timestamp: Date.now(),

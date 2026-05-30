@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildToolCallParseErrorBlock,
   buildToolSchemaHint,
+  buildToolSignatureHint,
   buildUnimplementedToolErrorText,
   buildValidationFailedHint,
   formatToolResultEnvelope,
@@ -49,6 +50,16 @@ describe('tool-call-recovery', () => {
     expect(buildToolSchemaHint('sandbox_not_real')).toBeNull();
     expect(buildToolSchemaHint(null)).toBeNull();
     expect(buildToolSchemaHint(undefined)).toBeNull();
+  });
+
+  it('builds a signature-only hint (no example) for paths that already show one', () => {
+    const sig = buildToolSignatureHint('sandbox_write_file');
+    expect(sig).toContain('write(');
+    expect(sig).toContain('args marked ? are optional');
+    // The signature-only variant must NOT carry the example — that's the
+    // retry-path redundancy it exists to avoid.
+    expect(sig).not.toContain('Example:');
+    expect(buildToolSignatureHint('sandbox_not_real')).toBeNull();
   });
 
   it('folds the schema into the validation_failed hint for a known tool', () => {
