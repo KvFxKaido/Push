@@ -4097,6 +4097,16 @@ export async function runTUI(options = {}) {
       const deploymentUrl = String(payload?.deploymentUrl || '');
       const relaySessionId = String(payload?.sessionId || '');
       const targetSessionId = String(payload?.targetSessionId || daemonSessionId || '');
+      // If the daemon minted a fresh attach token for this (previously
+      // tokenless) session, adopt it: update the live token and the in-memory
+      // session state so a reconnect carries the now-required bearer. The
+      // daemon already persisted it to the shared session-store, so no
+      // TUI-side write is needed (and skipping it avoids racing that write).
+      const mintedTargetAttachToken = String(payload?.mintedTargetAttachToken || '');
+      if (mintedTargetAttachToken) {
+        daemonAttachToken = mintedTargetAttachToken;
+        if (state && typeof state === 'object') state.attachToken = mintedTargetAttachToken;
+      }
       tuiState.lastRemotePairBundle = bundle || null;
       const lines = [
         'Remote pairing bundle minted for this TUI session.',

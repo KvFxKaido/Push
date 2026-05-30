@@ -5587,6 +5587,29 @@ async function handleRelayStatus(req, _emitEvent, context) {
 }
 
 /**
+ * Resolve the attach token for a target daemon session, minting one if it has
+ * none. Sessions created via the TUI/session-store — or adopted "open" by the
+ * daemon — never went through `start_session`, the only path that mints an
+ * attach token, so they're tokenless (and `validateAttachToken` treats that as
+ * "open": local attach needs no bearer). Remote pairing, though, must hand the
+ * phone a bearer, so we mint one here and pin it to the session in memory. The
+ * caller persists `entry.state` (where the new token is also written) and
+ * surfaces `minted` so the live TUI can adopt the token before its next
+ * reconnect — otherwise pinning a token would lock the TUI out of its own
+ * session. Kept I/O-free (random token + entry mutation only) so it's unit-
+ * testable without a session dir on disk.
+ */
+export function resolveOrMintTargetAttachToken(entry) {
+  if (entry?.attachToken) return { token: entry.attachToken, minted: false };
+  const token = makeAttachToken();
+  entry.attachToken = token;
+  if (entry.state && typeof entry.state === 'object') {
+    entry.state.attachToken = token;
+  }
+  return { token, minted: true };
+}
+
+/**
  * Phase 2.f: mint a one-shot pairing bundle for a remote phone.
  * Reads the relay config (errors if `relay enable` hasn't been run),
  * mints a fresh device token + child attach token, populates the
@@ -5633,6 +5656,9 @@ async function handleMintRemotePairBundle(req, _emitEvent, context) {
     );
   }
   let resolvedTargetAttachToken = targetAttachToken;
+  // When set, the session attach token was minted on demand below — surfaced
+  // in the response so the calling TUI can adopt it (see the handler doc).
+  let mintedSessionAttachToken = null;
   if (targetSessionId && targetAttachToken) {
     const entry = activeSessions.get(targetSessionId);
     if (!entry || entry.attachToken !== targetAttachToken) {
@@ -5654,15 +5680,29 @@ async function handleMintRemotePairBundle(req, _emitEvent, context) {
         'Target daemon session is not active.',
       );
     }
-    if (!entry.attachToken) {
-      return makeErrorResponse(
-        req.requestId,
-        'mint_remote_pair_bundle',
-        'MISSING_ATTACH_TOKEN',
-        'Target daemon session does not have an attach token.',
-      );
+    // Tokenless target (TUI/session-store session adopted "open"): mint a
+    // bearer now so the phone can attach. The caller-side TUI adopts the
+    // returned token; persistence below keeps it across daemon restarts.
+    const resolved = resolveOrMintTargetAttachToken(entry);
+    resolvedTargetAttachToken = resolved.token;
+    if (resolved.minted) {
+      mintedSessionAttachToken = resolved.token;
+      if (entry.state && typeof entry.state === 'object') {
+        try {
+          await saveSessionState(entry.state);
+          process.stderr.write(
+            `${JSON.stringify({ level: 'info', event: 'pair_bundle_minted_session_token', targetSessionId })}\n`,
+          );
+        } catch (err) {
+          // Persist failed: the in-memory token still works for this run, but
+          // a daemon restart would lose it. Surface it instead of failing the
+          // pairing — the bundle is already usable for the live session.
+          process.stderr.write(
+            `${JSON.stringify({ level: 'warn', event: 'pair_bundle_mint_persist_failed', targetSessionId, error: err instanceof Error ? err.message : String(err) })}\n`,
+          );
+        }
+      }
     }
-    resolvedTargetAttachToken = entry.attachToken;
   }
   // Mint a fresh device token first (durable identity for this
   // remote phone), then a child attach token (the actual bearer the
@@ -5726,6 +5766,11 @@ async function handleMintRemotePairBundle(req, _emitEvent, context) {
     targetSessionId,
     deploymentUrl: config.deploymentUrl,
     ttlMs: attach.ttlMs,
+    // Present only when we minted a fresh attach token for a previously
+    // tokenless target session. The TUI adopts it so its own future
+    // reconnects carry the now-required bearer. Same trust domain (unix
+    // socket → local admin); never written to the audit log.
+    ...(mintedSessionAttachToken ? { mintedTargetAttachToken: mintedSessionAttachToken } : {}),
   });
 }
 
