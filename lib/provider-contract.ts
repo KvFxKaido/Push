@@ -242,4 +242,10 @@ export interface ReviewResult {
   provider: string;
   model: string;
   reviewedAt: number;
+  /** Token usage accumulated across the review's model rounds. Optional —
+   * present only when the provider stream reported usage (OpenAI-compatible
+   * endpoints with `stream_options.include_usage`, or the Anthropic-transport
+   * bridge). Absent when the upstream emitted no usage, so consumers should
+   * treat a missing value as "unknown" (render `—`), not zero. */
+  usage?: StreamUsage;
 }

@@ -66,6 +66,16 @@ export interface PrReviewStatusSnapshot {
   startedAt: number | null;
   finishedAt: number | null;
   commentsPosted: number | null;
+  /**
+   * Whether an advisory review was actually POSTed to the PR. Distinguishes a
+   * genuine completion (`true` — a review landed, even a "looks clean" summary
+   * with zero inline anchors) from a head-advanced skip (`false` — a newer push
+   * arrived mid-review, so this run posted nothing and a fresh delivery covers
+   * the new head). `null` until the run reaches a terminal state. Without this,
+   * the UI can't tell "posted a body-only review" from "skipped" — both show
+   * `commentsPosted: 0` (which counts inline anchors only).
+   */
+  posted: boolean | null;
   error: string | null;
 }
 
@@ -82,6 +92,12 @@ export interface PrReviewListItem extends PrReviewStatusSnapshot {
 export interface PrReviewOutcome {
   result: ReviewResult;
   commentsPosted: number;
+  /**
+   * Whether an advisory review was actually POSTed. `false` only on the
+   * head-advanced skip path (the review ran but a newer push superseded the
+   * SHA before posting). Defaults to `true` for a normal completion.
+   */
+  posted: boolean;
   /** True when a failing gating check was posted (critical finding on a gated repo). */
   gated?: boolean;
 }
@@ -137,6 +153,7 @@ CREATE TABLE IF NOT EXISTS review (
   is_cross_fork INTEGER NOT NULL,
   status TEXT NOT NULL,
   comments_posted INTEGER,
+  posted INTEGER,
   result_json TEXT,
   error_text TEXT,
   created_at INTEGER NOT NULL,
@@ -165,6 +182,7 @@ interface ReviewRow {
   is_cross_fork: number;
   status: PrReviewStatusSnapshot['status'];
   comments_posted: number | null;
+  posted: number | null;
   result_json: string | null;
   error_text: string | null;
   created_at: number;
@@ -181,21 +199,25 @@ export class PrReviewJob {
     this.ctx = ctx;
     this.env = env;
     this.ctx.storage.sql.exec(SCHEMA_SQL);
-    this.ensureResultColumn();
+    this.ensureColumns();
   }
 
   /**
-   * Add `result_json` to a `review` table created before this column existed.
-   * SQLite has no ADD COLUMN IF NOT EXISTS, so probe via PRAGMA and ALTER only
-   * when missing — mirrors CoderJob's `do_resume_count` migration. Probing
-   * avoids swallowing real storage errors in a try/catch.
+   * Add columns to a `review` table created before they existed. SQLite has no
+   * ADD COLUMN IF NOT EXISTS, so probe via PRAGMA and ALTER only the missing
+   * ones — mirrors CoderJob's `do_resume_count` migration. Probing avoids
+   * swallowing real storage errors in a try/catch.
    */
-  private ensureResultColumn(): void {
+  private ensureColumns(): void {
     const cols = this.ctx.storage.sql.exec('PRAGMA table_info(review)').toArray() as Array<{
       name: string;
     }>;
-    if (!cols.some((c) => c.name === 'result_json')) {
+    const have = new Set(cols.map((c) => c.name));
+    if (!have.has('result_json')) {
       this.ctx.storage.sql.exec('ALTER TABLE review ADD COLUMN result_json TEXT');
+    }
+    if (!have.has('posted')) {
+      this.ctx.storage.sql.exec('ALTER TABLE review ADD COLUMN posted INTEGER');
     }
   }
 
@@ -307,16 +329,20 @@ export class PrReviewJob {
         return;
       }
       this.ctx.storage.sql.exec(
-        "UPDATE review SET status = 'completed', comments_posted = ?, result_json = ?, finished_at = ? WHERE delivery_id = ?",
+        "UPDATE review SET status = 'completed', comments_posted = ?, posted = ?, result_json = ?, finished_at = ? WHERE delivery_id = ?",
         outcome.commentsPosted,
+        outcome.posted ? 1 : 0,
         JSON.stringify(outcome.result),
         Date.now(),
         input.deliveryId,
       );
       this.emit(input.deliveryId, 'review.completed', {
         commentsPosted: outcome.commentsPosted,
+        posted: outcome.posted,
+        findings: outcome.result.comments.length,
         filesReviewed: outcome.result.filesReviewed,
         truncated: outcome.result.truncated,
+        usage: outcome.result.usage ?? null,
         gated: outcome.gated ?? false,
       });
       log('info', 'pr_review_completed', {
@@ -324,6 +350,11 @@ export class PrReviewJob {
         repo: input.repoFullName,
         pr: input.prNumber,
         commentsPosted: outcome.commentsPosted,
+        posted: outcome.posted,
+        findings: outcome.result.comments.length,
+        // Surface token usage in ops logs when the provider reported it; null
+        // keeps the field present (and greppable) when it didn't.
+        totalTokens: outcome.result.usage?.totalTokens ?? null,
       });
     } catch (err) {
       if (controller.signal.aborted) {
@@ -500,7 +531,7 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
       reviewedSha: input.headSha,
       currentSha: currentHead,
     });
-    return { result, commentsPosted: 0 };
+    return { result, commentsPosted: 0, posted: false };
   }
 
   const commentsPosted = await executePostPRReview(
@@ -548,7 +579,7 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
     }
   }
 
-  return { result, commentsPosted, gated };
+  return { result, commentsPosted, posted: true, gated };
 };
 
 /**
@@ -589,6 +620,7 @@ function rowToListItem(row: ReviewRow): PrReviewListItem {
     startedAt: row.started_at,
     finishedAt: row.finished_at,
     commentsPosted: row.comments_posted,
+    posted: row.posted === null ? null : row.posted === 1,
     error: row.error_text,
     result,
   };

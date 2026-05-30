@@ -58,6 +58,48 @@ describe('iteratePushStreamText', () => {
     expect(text).toBe('hello world');
   });
 
+  it('returns usage captured from the done event', async () => {
+    const stream = makePushStream([
+      { type: 'text_delta', text: 'hi' },
+      {
+        type: 'done',
+        finishReason: 'stop',
+        usage: { inputTokens: 90, outputTokens: 12, totalTokens: 102 },
+      },
+    ]);
+
+    const promise = iteratePushStreamText(
+      stream,
+      { provider: 'openrouter', model: 'm', messages: [] },
+      100,
+      'timed out',
+    );
+    await vi.runAllTimersAsync();
+    const { error, text, usage } = await promise;
+
+    expect(error).toBeNull();
+    expect(text).toBe('hi');
+    expect(usage).toEqual({ inputTokens: 90, outputTokens: 12, totalTokens: 102 });
+  });
+
+  it('returns undefined usage when the done event omits it', async () => {
+    const stream = makePushStream([
+      { type: 'text_delta', text: 'hi' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+
+    const promise = iteratePushStreamText(
+      stream,
+      { provider: 'openrouter', model: 'm', messages: [] },
+      100,
+      'timed out',
+    );
+    await vi.runAllTimersAsync();
+    const { usage } = await promise;
+
+    expect(usage).toBeUndefined();
+  });
+
   it('does NOT reset the activity timer on reasoning_delta — long-thinking streams time out', async () => {
     // 60ms gaps with a 50ms timeout. If reasoning_delta reset the timer,
     // the stream would reach text_delta successfully. With text-only reset

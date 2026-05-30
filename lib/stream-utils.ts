@@ -6,7 +6,12 @@
  * `app/src/lib/utils.ts` re-exports these so existing call sites don't churn.
  */
 
-import type { LlmMessage, PushStream, PushStreamRequest } from './provider-contract.js';
+import type {
+  LlmMessage,
+  PushStream,
+  PushStreamRequest,
+  StreamUsage,
+} from './provider-contract.js';
 
 // ---------------------------------------------------------------------------
 // JSON helpers
@@ -115,7 +120,7 @@ export async function iteratePushStreamText<M extends LlmMessage>(
   timeoutMessage: string,
   wallClockTimeoutMs?: number,
   wallClockTimeoutMessage?: string,
-): Promise<{ error: Error | null; text: string }> {
+): Promise<{ error: Error | null; text: string; usage?: StreamUsage }> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let wallClockTimer: ReturnType<typeof setTimeout> | undefined;
@@ -125,6 +130,7 @@ export async function iteratePushStreamText<M extends LlmMessage>(
   let timeoutKind: 'activity' | 'wallClock' | null = null;
   let text = '';
   let error: Error | null = null;
+  let usage: StreamUsage | undefined;
 
   const resetTimer = () => {
     clearTimeout(timer);
@@ -160,6 +166,9 @@ export async function iteratePushStreamText<M extends LlmMessage>(
         resetTimer();
         text += event.text;
       } else if (event.type === 'done') {
+        // Capture usage if the adapter reported it. Absent on most non-final
+        // events; the terminal `done` is the only place it arrives.
+        if (event.usage) usage = event.usage;
         break;
       }
       // reasoning_delta / reasoning_end / tool_call_delta intentionally do
@@ -180,7 +189,7 @@ export async function iteratePushStreamText<M extends LlmMessage>(
     error = new Error(timeoutMessage);
   }
 
-  return { error, text };
+  return { error, text, usage };
 }
 
 // Re-export event type for callers that want to narrow.

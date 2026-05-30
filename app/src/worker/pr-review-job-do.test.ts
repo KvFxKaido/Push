@@ -26,6 +26,7 @@ interface ReviewRow {
   is_cross_fork: number;
   status: string;
   comments_posted: number | null;
+  posted: number | null;
   result_json: string | null;
   error_text: string | null;
   created_at: number;
@@ -91,6 +92,7 @@ function createMockCtx() {
         is_cross_fork,
         status: 'queued',
         comments_posted: null,
+        posted: null,
         result_json: null,
         error_text: null,
         created_at,
@@ -121,11 +123,12 @@ function createMockCtx() {
       return [];
     }
     if (/^UPDATE review SET status = 'completed'/i.test(sql)) {
-      setStatus(p[3] as string, {
+      setStatus(p[4] as string, {
         status: 'completed',
         comments_posted: p[0] as number,
-        result_json: p[1] as string,
-        finished_at: p[2] as number,
+        posted: p[1] as number,
+        result_json: p[2] as string,
+        finished_at: p[3] as number,
       });
       return [];
     }
@@ -204,7 +207,7 @@ describe('PrReviewJob', () => {
   it('runs a review to completion and logs lifecycle events', async () => {
     const mock = createMockCtx();
     const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
-    const executor = vi.fn(async () => ({ result: RESULT, commentsPosted: 1 }));
+    const executor = vi.fn(async () => ({ result: RESULT, commentsPosted: 1, posted: true }));
     __setPrReviewExecutorOverride('d1', executor);
 
     const res = await do_.fetch(startRequest(startInput()));
@@ -228,10 +231,15 @@ describe('PrReviewJob', () => {
   it('persists the full ReviewResult and lists reviews for the PR', async () => {
     const mock = createMockCtx();
     const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
-    __setPrReviewExecutorOverride('d1', async () => ({ result: RESULT, commentsPosted: 1 }));
+    __setPrReviewExecutorOverride('d1', async () => ({
+      result: RESULT,
+      commentsPosted: 1,
+      posted: true,
+    }));
     __setPrReviewExecutorOverride('d2', async () => ({
       result: { ...RESULT, summary: 'second review' },
       commentsPosted: 0,
+      posted: true,
     }));
 
     await do_.fetch(startRequest(startInput({ deliveryId: 'd1', headSha: 'shaA' })));
@@ -265,6 +273,7 @@ describe('PrReviewJob', () => {
     __setPrReviewExecutorOverride('d1', async () => ({
       result: RESULT,
       commentsPosted: 0,
+      posted: true,
       gated: true,
     }));
     await gatedDo.fetch(startRequest(startInput({ deliveryId: 'd1' })));
@@ -275,7 +284,11 @@ describe('PrReviewJob', () => {
     const plainMock = createMockCtx();
     const plainDo = new PrReviewJob(plainMock.ctx as never, {} as Env);
     // Override omits `gated` — the event should default it to false.
-    __setPrReviewExecutorOverride('d2', async () => ({ result: RESULT, commentsPosted: 0 }));
+    __setPrReviewExecutorOverride('d2', async () => ({
+      result: RESULT,
+      commentsPosted: 0,
+      posted: true,
+    }));
     await plainDo.fetch(startRequest(startInput({ deliveryId: 'd2' })));
     await Promise.allSettled(plainMock.pending);
     const plainEvent = plainMock.events.find((e) => e.type === 'review.completed');
@@ -285,7 +298,7 @@ describe('PrReviewJob', () => {
   it('dedupes a redelivered delivery id', async () => {
     const mock = createMockCtx();
     const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
-    const executor = vi.fn(async () => ({ result: RESULT, commentsPosted: 0 }));
+    const executor = vi.fn(async () => ({ result: RESULT, commentsPosted: 0, posted: true }));
     __setPrReviewExecutorOverride('d1', executor);
 
     await do_.fetch(startRequest(startInput()));
@@ -312,7 +325,11 @@ describe('PrReviewJob', () => {
           });
         }),
     );
-    __setPrReviewExecutorOverride('d2', async () => ({ result: RESULT, commentsPosted: 1 }));
+    __setPrReviewExecutorOverride('d2', async () => ({
+      result: RESULT,
+      commentsPosted: 1,
+      posted: true,
+    }));
 
     await do_.fetch(startRequest(startInput({ deliveryId: 'd1', headSha: 'shaA' })));
     await do_.fetch(startRequest(startInput({ deliveryId: 'd2', headSha: 'shaB' })));

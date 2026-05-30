@@ -29,6 +29,25 @@ function relativeTime(ts: number): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
+/** Compact token count: 942 → "942", 12_345 → "12.3k". */
+function formatTokens(n: number): string {
+  if (n < 1000) return `${n}`;
+  return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
+}
+
+/**
+ * Human outcome for a completed review's collapsed row. The DO's
+ * `commentsPosted` counts only inline-anchored comments, so a body-only or
+ * "looks clean" review reports 0 even though it posted — we lead with the
+ * `posted` flag and the real finding count (`result.comments.length`) instead.
+ */
+function completedOutcome(review: PrReviewListItem): string {
+  if (review.posted === false) return 'Skipped — newer commit';
+  const findings = review.result?.comments.length ?? 0;
+  if (findings === 0) return 'Posted · looks clean';
+  return `Posted · ${findings} finding${findings !== 1 ? 's' : ''}`;
+}
+
 function StatusBadge({ status }: { status: PrReviewListItem['status'] }) {
   switch (status) {
     case 'queued':
@@ -115,10 +134,8 @@ function ReviewFindings({ review }: { review: PrReviewListItem }) {
 
 function ReviewRow({ review }: { review: PrReviewListItem }) {
   const [open, setOpen] = useState(review.status === 'running' || review.status === 'completed');
-  const postedNote =
-    review.status === 'completed' && typeof review.commentsPosted === 'number'
-      ? ` · ${review.commentsPosted} comment${review.commentsPosted !== 1 ? 's' : ''} posted`
-      : '';
+  const outcomeNote = review.status === 'completed' ? ` · ${completedOutcome(review)}` : '';
+  const usage = review.result?.usage;
   return (
     <div className="border-t border-push-border/40 pt-2 first:border-t-0 first:pt-0">
       <button
@@ -139,10 +156,23 @@ function ReviewRow({ review }: { review: PrReviewListItem }) {
         </span>
         <span className="text-push-2xs text-push-fg-dim">
           {relativeTime(review.finishedAt ?? review.startedAt ?? review.createdAt)}
-          {postedNote}
+          {outcomeNote}
         </span>
       </button>
-      {open && <ReviewFindings review={review} />}
+      {open && (
+        <>
+          <ReviewFindings review={review} />
+          {usage && (
+            <p className="mt-1 text-push-2xs text-push-fg-dim">
+              {formatTokens(usage.totalTokens)} tokens
+              <span className="opacity-60">
+                {' '}
+                ({formatTokens(usage.inputTokens)} in · {formatTokens(usage.outputTokens)} out)
+              </span>
+            </p>
+          )}
+        </>
+      )}
     </div>
   );
 }
