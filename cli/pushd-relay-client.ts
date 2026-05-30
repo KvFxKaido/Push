@@ -53,8 +53,70 @@ const SEND_QUEUE_MAX = 64;
 export type RelayConnectionStatus =
   | { state: 'connecting'; attempt: number }
   | { state: 'open' }
-  | { state: 'unreachable'; code: number; reason: string; attempt: number; exhausted: boolean }
-  | { state: 'closed'; code: number; reason: string; attempt: number; exhausted: boolean };
+  | {
+      state: 'unreachable';
+      code: number;
+      reason: string;
+      attempt: number;
+      exhausted: boolean;
+      /** True when the failure won't self-heal (auth/origin config) so the
+       *  client stopped retrying — fix the cause and re-enable. */
+      fatal?: boolean;
+    }
+  | {
+      state: 'closed';
+      code: number;
+      reason: string;
+      attempt: number;
+      exhausted: boolean;
+      fatal?: boolean;
+    };
+
+/**
+ * Turn a relay-upgrade rejection (a non-101 HTTP response on the WS upgrade)
+ * into a human reason + whether it's fatal (won't self-heal, so retrying is
+ * pointless). The `ws` client exposes the failed upgrade's HTTP status + body
+ * via the `unexpected-response` event; the worker answers with
+ * `{ error: { code, message } }` (see app/src/worker/relay-routes.ts). This is
+ * what turns an opaque "1006 connection error" into the actual cause — the
+ * thing that took a `wrangler tail` to discover.
+ */
+export function describeRelayUpgradeRejection(
+  statusCode: number,
+  errorCode: string | null,
+  message: string | null,
+): { reason: string; fatal: boolean } {
+  switch (errorCode) {
+    case 'RELAY_TOKEN_NOT_CONFIGURED':
+      return { reason: `worker has no PUSH_RELAY_TOKEN set (HTTP ${statusCode})`, fatal: true };
+    case 'BEARER_REJECTED':
+      return {
+        reason: `relay token rejected — the daemon's token doesn't match the worker's PUSH_RELAY_TOKEN (HTTP ${statusCode})`,
+        fatal: true,
+      };
+    case 'ORIGIN_REJECTED':
+      return { reason: `origin rejected by the worker (HTTP ${statusCode})`, fatal: true };
+    case 'UPGRADE_REQUIRED':
+      return {
+        reason: `worker did not accept the WebSocket upgrade (HTTP ${statusCode})`,
+        fatal: false,
+      };
+  }
+  // No / unknown structured code. 401 & 403 are config-shaped — retrying won't
+  // fix a bad token or a blocked origin, so go fatal. A 404 means the relay
+  // route isn't there (old deploy / routes unbound) — let it retry briefly in
+  // case a deploy is mid-flight. 5xx and the rest are treated as transient.
+  if (statusCode === 401 || statusCode === 403) {
+    return { reason: `${message || 'rejected'} (HTTP ${statusCode})`, fatal: true };
+  }
+  if (statusCode === 404) {
+    return {
+      reason: `relay route not found — worker may be an old deploy or relay routes aren't bound (HTTP 404)`,
+      fatal: false,
+    };
+  }
+  return { reason: `${message || 'upgrade rejected'} (HTTP ${statusCode})`, fatal: false };
+}
 
 export interface PushdRelayClientOptions {
   /**
@@ -178,6 +240,11 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
   // PR #529 Copilot review: the previous per-dial `everOpened` reset
   // mis-classified post-success reconnect failures as `unreachable`.
   let hasEverOpened = false;
+  // Set when an upgrade rejection is classified non-self-healing (bad token,
+  // blocked origin). Suppresses further auto-retries — a fatal config error
+  // would just burn the backoff ladder and end "exhausted" with no new info.
+  // Cleared by `reconnect()` so the operator can retry after fixing the cause.
+  let fatal = false;
   // `openedThisDial` tracks whether the CURRENT dial's WS reached
   // 'open' — used only for internal flow (the open handler swaps a
   // status without needing to query the socket). Reset at every dial
@@ -211,8 +278,25 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
     }
   };
 
+  /**
+   * Terminal status for a non-self-healing failure: surface the reason and
+   * stop retrying (no timer scheduled). `reconnect()` clears `fatal` to allow
+   * a manual retry after the operator fixes the cause.
+   */
+  const setFatalTerminal = (code: number, reason: string): void => {
+    fatal = true;
+    setStatus({
+      state: hasEverOpened ? 'closed' : 'unreachable',
+      code,
+      reason,
+      attempt,
+      exhausted: true,
+      fatal: true,
+    });
+  };
+
   const scheduleReconnect = (terminalCode: number, terminalReason: string): void => {
-    if (clientClosed) return;
+    if (clientClosed || fatal) return;
     // `attempt` is 0-indexed before this call: attempt 0 was the
     // initial dial, attempt 1 is the first retry. The N-th retry
     // (1-based) uses schedule[N-1].
@@ -329,10 +413,19 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
     };
 
     let terminalFired = false;
-    const fireTerminalOnce = (code: number, reason: string): void => {
+    const fireTerminalOnce = (code: number, reason: string, isFatal = false): void => {
       if (terminalFired) return;
       terminalFired = true;
-      handleTerminal(code, reason);
+      // `ws` does NOT auto-close the socket on `unexpected-response`, and a
+      // terminal close/error leaves nothing to reuse — terminate so the
+      // underlying TCP socket can't leak across the (now dead) dial.
+      try {
+        if (socket.readyState !== socket.CLOSED) socket.terminate();
+      } catch {
+        // best-effort
+      }
+      if (isFatal) setFatalTerminal(code, reason);
+      else handleTerminal(code, reason);
     };
     socket.on('close', (code: number, reason: Buffer) => {
       fireTerminalOnce(code, reason?.toString('utf8') ?? '');
@@ -342,6 +435,61 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
       // beats the error handler to the punch on most paths. Route both
       // through `fireTerminalOnce` so we don't double-schedule.
       fireTerminalOnce(1006, 'connection error');
+    });
+    // Non-101 upgrade response (the Worker rejected the dial). `ws` hands us
+    // the raw HTTP response — read its status + JSON error body and surface the
+    // actual reason instead of the generic 1006 the close/error path would
+    // otherwise report. Listening here also suppresses `ws`'s default
+    // "Unexpected server response" error emit, so we own the terminal. Body is
+    // bounded + the handler always fires terminal (on end, error, or close) so
+    // a half-open response can't hang the dial.
+    socket.on('unexpected-response', (_req, res) => {
+      const statusCode = typeof res.statusCode === 'number' ? res.statusCode : 0;
+      const chunks: Buffer[] = [];
+      let size = 0;
+      const MAX_BODY = 4096;
+      res.on('data', (c: Buffer) => {
+        if (size < MAX_BODY) {
+          chunks.push(c);
+          size += c.length;
+        }
+      });
+      const finish = (): void => {
+        let errorCode: string | null = null;
+        let message: string | null = null;
+        try {
+          // `relay-routes.ts` jsonError emits a FLAT envelope:
+          //   { "error": "<CODE>", "message": "<text>" }
+          // (the `error` field IS the code). Tolerate a nested
+          // `{ error: { code, message } }` too in case the shape ever changes.
+          const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
+            error?: unknown;
+            message?: unknown;
+          };
+          if (typeof parsed?.error === 'string') {
+            errorCode = parsed.error;
+            if (typeof parsed.message === 'string') message = parsed.message;
+          } else if (parsed?.error && typeof parsed.error === 'object') {
+            const e = parsed.error as { code?: unknown; message?: unknown };
+            if (typeof e.code === 'string') errorCode = e.code;
+            if (typeof e.message === 'string') message = e.message;
+            else if (typeof parsed.message === 'string') message = parsed.message;
+          }
+        } catch {
+          // Non-JSON body (e.g. an HTML error page) — fall back to status-only.
+        }
+        const { reason, fatal: isFatal } = describeRelayUpgradeRejection(
+          statusCode,
+          errorCode,
+          message,
+        );
+        fireTerminalOnce(statusCode, reason, isFatal);
+      };
+      res.on('end', finish);
+      res.on('error', finish);
+      // `close` covers the finished-or-aborted cases ('aborted' is deprecated
+      // in newer Node). `fireTerminalOnce` dedupes, so an end→close pair is safe.
+      res.on('close', finish);
     });
   };
 
@@ -385,6 +533,9 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
       // doesn't race the old connection.
       clearReconnectTimer();
       attempt = 0;
+      // Manual retry clears a fatal classification — the operator presumably
+      // fixed the token/origin and wants another dial.
+      fatal = false;
       const existing = ws;
       ws = null;
       if (existing && existing.readyState !== existing.CLOSED) {

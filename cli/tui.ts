@@ -3955,6 +3955,9 @@ export async function runTUI(options = {}) {
       if (live.closeCode !== null && live.closeCode !== undefined) {
         lines.push(`  last close: ${live.closeCode} ${live.closeReason || ''}`.trimEnd());
       }
+      if (live.fatal) {
+        lines.push("  ⚠ won't retry — fix the cause above, then re-run `/remote enable`");
+      }
       if (typeof live.allowlistSize === 'number') {
         lines.push(`  allowlist: ${live.allowlistSize} attach token(s)`);
       }

@@ -2641,6 +2641,11 @@ async function runDaemonRelay(
             `  last close:  ${live.closeCode} ${String(live.closeReason ?? '')}\n`,
           );
         }
+        if (live.fatal) {
+          process.stdout.write(
+            "  ⚠ won't retry — fix the cause above, then re-run `push daemon relay enable`\n",
+          );
+        }
         if (typeof live.allowlistSize === 'number') {
           process.stdout.write(`  allowlist:   ${live.allowlistSize} attach token(s)\n`);
         }

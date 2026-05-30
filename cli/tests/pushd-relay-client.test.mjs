@@ -11,7 +11,11 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
-import { buildRelayUrl, startPushdRelayClient } from '../pushd-relay-client.ts';
+import {
+  buildRelayUrl,
+  startPushdRelayClient,
+  describeRelayUpgradeRejection,
+} from '../pushd-relay-client.ts';
 
 const RELAY_TOKEN = 'pushd_relay_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
@@ -21,7 +25,11 @@ const RELAY_TOKEN = 'pushd_relay_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
  * close on the first message. Returns the bound URL plus an inspector
  * to assert on what the server saw.
  */
-async function makeServer({ rejectFirstN = 0, captureSubprotocols = [] } = {}) {
+async function makeServer({
+  rejectFirstN = 0,
+  rejectWithHttp = null,
+  captureSubprotocols = [],
+} = {}) {
   const httpServer = http.createServer();
   const wss = new WebSocketServer({ noServer: true });
   let upgrades = 0;
@@ -31,6 +39,24 @@ async function makeServer({ rejectFirstN = 0, captureSubprotocols = [] } = {}) {
   httpServer.on('upgrade', (req, socket, head) => {
     upgrades += 1;
     captureSubprotocols.push(req.headers['sec-websocket-protocol'] ?? '');
+    if (rejectWithHttp) {
+      // Write a real non-101 HTTP response on the upgrade socket so the `ws`
+      // client fires `unexpected-response` (the path a Worker auth rejection
+      // takes), not a bare 1006. Body mirrors relay-routes.ts's jsonError.
+      const body =
+        typeof rejectWithHttp.body === 'string'
+          ? rejectWithHttp.body
+          : JSON.stringify(rejectWithHttp.body ?? {});
+      socket.write(
+        `HTTP/1.1 ${rejectWithHttp.status} Rejected\r\n` +
+          `Content-Type: application/json\r\n` +
+          `Content-Length: ${Buffer.byteLength(body)}\r\n` +
+          `Connection: close\r\n\r\n` +
+          body,
+      );
+      socket.destroy();
+      return;
+    }
     if (upgrades <= rejectFirstN) {
       // Closing the raw socket without an HTTP response gives the client
       // a pre-open 1006 — same shape as a Worker rejecting on auth.
@@ -379,6 +405,107 @@ describe('pushd-relay-client', () => {
       client.close();
     } finally {
       await server.close();
+    }
+  });
+});
+
+describe('describeRelayUpgradeRejection', () => {
+  it('maps BEARER_REJECTED to a token-mismatch reason and marks it fatal', () => {
+    const r = describeRelayUpgradeRejection(401, 'BEARER_REJECTED', 'Invalid relay bearer.');
+    assert.match(r.reason, /doesn't match the worker's PUSH_RELAY_TOKEN/);
+    assert.equal(r.fatal, true);
+  });
+
+  it('maps RELAY_TOKEN_NOT_CONFIGURED to fatal', () => {
+    const r = describeRelayUpgradeRejection(401, 'RELAY_TOKEN_NOT_CONFIGURED', null);
+    assert.match(r.reason, /PUSH_RELAY_TOKEN/);
+    assert.equal(r.fatal, true);
+  });
+
+  it('maps ORIGIN_REJECTED to fatal', () => {
+    assert.equal(describeRelayUpgradeRejection(403, 'ORIGIN_REJECTED', null).fatal, true);
+  });
+
+  it('treats a bare 401/403 (no structured code) as fatal', () => {
+    assert.equal(describeRelayUpgradeRejection(401, null, 'nope').fatal, true);
+    assert.equal(describeRelayUpgradeRejection(403, null, 'nope').fatal, true);
+  });
+
+  it('treats a 404 as non-fatal (old deploy / routes unbound, may be mid-deploy)', () => {
+    const r = describeRelayUpgradeRejection(404, null, null);
+    assert.equal(r.fatal, false);
+    assert.match(r.reason, /route not found/);
+  });
+
+  it('falls back to status + message for unknown 5xx (transient)', () => {
+    const r = describeRelayUpgradeRejection(503, null, 'upstream down');
+    assert.equal(r.fatal, false);
+    assert.match(r.reason, /upstream down/);
+    assert.match(r.reason, /503/);
+  });
+});
+
+describe('pushd-relay-client — upgrade-rejection legibility', () => {
+  it('surfaces a 401 rejection as a fatal status with the worker reason and stops retrying', async () => {
+    const server = await makeServer({
+      rejectWithHttp: {
+        status: 401,
+        // The real worker envelope (relay-routes.ts jsonError): FLAT, `error`
+        // is the code string. This is the regression guard for the nested-vs-
+        // flat parse bug Codex caught on #715.
+        body: { error: 'BEARER_REJECTED', message: 'Invalid relay bearer.' },
+      },
+    });
+    try {
+      const client = startPushdRelayClient({
+        deploymentUrl: server.url,
+        sessionId: 'sess-1',
+        token: RELAY_TOKEN,
+        backoffScheduleMs: [20, 20, 20],
+        maxReconnectAttempts: 6,
+      });
+      const status = await awaitStatus(
+        client,
+        (s) => s.state === 'unreachable' && s.fatal === true,
+        2000,
+      );
+      assert.equal(status.fatal, true);
+      assert.equal(status.exhausted, true);
+      assert.equal(status.code, 401);
+      assert.match(status.reason, /PUSH_RELAY_TOKEN/);
+      // Fatal means no auto-retry: the dial count must stay at 1.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      assert.equal(server.inspect().upgrades, 1);
+      client.close();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('reconnect() clears the fatal latch and re-dials', async () => {
+    // First server rejects fatally; swap in an accepting one and reconnect.
+    const rejecting = await makeServer({
+      rejectWithHttp: { status: 401, body: { error: 'BEARER_REJECTED' } },
+    });
+    let client;
+    try {
+      client = startPushdRelayClient({
+        deploymentUrl: rejecting.url,
+        sessionId: 'sess-1',
+        token: RELAY_TOKEN,
+        backoffScheduleMs: [20],
+        maxReconnectAttempts: 3,
+      });
+      await awaitStatus(client, (s) => s.fatal === true, 2000);
+      // reconnect() against the same (still-rejecting) server should clear
+      // fatal and attempt at least one more dial (proving the latch lifted).
+      const before = rejecting.inspect().upgrades;
+      client.reconnect();
+      await awaitStatus(client, () => rejecting.inspect().upgrades > before, 2000);
+      assert.ok(rejecting.inspect().upgrades > before);
+    } finally {
+      client?.close();
+      await rejecting.close();
     }
   });
 });
