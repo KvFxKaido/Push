@@ -17,9 +17,10 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { PUSH_RUNTIME_EVENT_SCHEMA } from '../lib/protocol-json-schema.ts';
+import { PROTOCOL_VERSION } from '../lib/protocol-schema.ts';
 
 const outDir = path.join(import.meta.dirname, '..', 'schema');
-const outPath = path.join(outDir, 'push.runtime.v1.event.schema.json');
+const outPath = path.join(outDir, `${PROTOCOL_VERSION}.event.schema.json`);
 
 mkdirSync(outDir, { recursive: true });
 writeFileSync(outPath, `${JSON.stringify(PUSH_RUNTIME_EVENT_SCHEMA, null, 2)}\n`);

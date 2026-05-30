@@ -131,8 +131,21 @@ function sampleFromNode(node) {
       return false;
     case 'array':
       return [sampleFromNode(node.items ?? { type: 'string', minLength: 1 })];
-    case 'object':
-      return {};
+    case 'object': {
+      // Recurse into structured objects so a nested required object with
+      // its own fixed required sub-properties produces a value that is
+      // genuinely valid against the published JSON Schema — not just the
+      // TS validator. Objects without declared `properties` (e.g.
+      // `additionalProperties` maps like prompt_snapshot `sections`)
+      // stay `{}`, which validates fine.
+      const obj = {};
+      if (node.properties) {
+        for (const key of effectiveRequired(node)) {
+          obj[key] = sampleFromNode(node.properties[key]);
+        }
+      }
+      return obj;
+    }
     default:
       return 'x';
   }
@@ -195,13 +208,13 @@ describe('JSON schema required fields agree with the validators', () => {
 // ---------------------------------------------------------------------------
 
 describe('committed schema artifact', () => {
-  it('schema/push.runtime.v1.event.schema.json equals the builder output', () => {
+  it('schema/<version>.event.schema.json equals the builder output', () => {
     const artifactPath = path.join(
       import.meta.dirname,
       '..',
       '..',
       'schema',
-      'push.runtime.v1.event.schema.json',
+      `${PROTOCOL_VERSION}.event.schema.json`,
     );
     const onDisk = readFileSync(artifactPath, 'utf8');
     const expected = `${JSON.stringify(PUSH_RUNTIME_EVENT_SCHEMA, null, 2)}\n`;
