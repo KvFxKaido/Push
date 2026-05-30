@@ -11,6 +11,8 @@ process.env.PUSH_SESSION_DIR = tmpDir;
 const {
   makeSessionId,
   makeRunId,
+  makeAttachToken,
+  createSessionState,
   saveSessionState,
   appendSessionEvent,
   loadSessionState,
@@ -40,6 +42,95 @@ describe('makeSessionId', () => {
   it('produces unique ids', () => {
     const ids = new Set(Array.from({ length: 20 }, () => makeSessionId()));
     assert.equal(ids.size, 20);
+  });
+});
+
+// ─── makeAttachToken ─────────────────────────────────────────────
+
+describe('makeAttachToken', () => {
+  it('produces an att_-prefixed token', () => {
+    const token = makeAttachToken();
+    assert.match(token, /^att_[0-9a-f]{16}$/);
+  });
+
+  it('produces unique tokens', () => {
+    const tokens = new Set(Array.from({ length: 50 }, () => makeAttachToken()));
+    assert.equal(tokens.size, 50);
+  });
+});
+
+// ─── createSessionState (Universal Session Bearer factory) ────────
+//
+// The factory is the single mint point for the attach token across all
+// three creation surfaces (daemon `handleStartSession`, TUI
+// `createFreshSessionState`, CLI `initSession`). These assert the invariant
+// the whole bearer design rests on: a session is NEVER born tokenless,
+// regardless of what the caller passes.
+
+describe('createSessionState', () => {
+  const baseOpts = () => ({
+    provider: 'ollama',
+    model: 'test-model',
+    cwd: '/tmp/test',
+    messages: [{ role: 'system', content: 'hi' }],
+  });
+
+  it('always mints an att_ attach token at birth', () => {
+    const state = createSessionState(baseOpts());
+    assert.match(state.attachToken, /^att_[0-9a-f]{16}$/);
+  });
+
+  it('mints a fresh token even when the caller passes an empty/whitespace token', () => {
+    for (const empty of ['', '   ', undefined]) {
+      const state = createSessionState({ ...baseOpts(), attachToken: empty });
+      assert.ok(
+        typeof state.attachToken === 'string' && state.attachToken.startsWith('att_'),
+        `tokenless-by-construction must be unreachable; got ${JSON.stringify(state.attachToken)}`,
+      );
+    }
+  });
+
+  it('honors an explicit non-empty attach token override', () => {
+    const state = createSessionState({ ...baseOpts(), attachToken: 'att_pinned' });
+    assert.equal(state.attachToken, 'att_pinned');
+  });
+
+  it('mints a session id when none is supplied, and honors one when given', () => {
+    const minted = createSessionState(baseOpts());
+    assert.match(minted.sessionId, SESSION_ID_RE);
+    const fixedId = makeSessionId();
+    const pinned = createSessionState({ ...baseOpts(), sessionId: fixedId });
+    assert.equal(pinned.sessionId, fixedId);
+  });
+
+  it('produces unique tokens and ids across calls', () => {
+    const states = Array.from({ length: 25 }, () => createSessionState(baseOpts()));
+    assert.equal(new Set(states.map((s) => s.attachToken)).size, 25);
+    assert.equal(new Set(states.map((s) => s.sessionId)).size, 25);
+  });
+
+  it('defaults mode to interactive and honors an explicit mode', () => {
+    assert.equal(createSessionState(baseOpts()).mode, 'interactive');
+    assert.equal(createSessionState({ ...baseOpts(), mode: 'tui' }).mode, 'tui');
+  });
+
+  it('carries the caller fields and a deterministic timestamp when `now` is given', () => {
+    const now = 1_700_000_000_000;
+    const state = createSessionState({ ...baseOpts(), now, mode: 'headless' });
+    assert.equal(state.createdAt, now);
+    assert.equal(state.updatedAt, now);
+    assert.equal(state.provider, 'ollama');
+    assert.equal(state.model, 'test-model');
+    assert.equal(state.cwd, '/tmp/test');
+    assert.equal(state.rounds, 0);
+    assert.equal(state.eventSeq, 0);
+  });
+
+  it('round-trips a minted token through save/load (persisted at birth)', async () => {
+    const state = createSessionState(baseOpts());
+    await saveSessionState(state);
+    const loaded = await loadSessionState(state.sessionId);
+    assert.equal(loaded.attachToken, state.attachToken);
   });
 });
 

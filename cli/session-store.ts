@@ -141,6 +141,108 @@ export function makeRunId(): string {
   return `run_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}`;
 }
 
+/**
+ * Mint a per-session attach token — the bearer a client presents to attach
+ * to a daemon session (loopback WS locally, relay/phone remotely).
+ *
+ * Promoted here from `cli/pushd.ts` so that ALL session-creation paths can
+ * mint at birth (Universal Session Bearer, docs/decisions). Previously this
+ * lived only in the daemon and was called only by `start_session`, which is
+ * why TUI/CLI-created sessions were born tokenless. Centralizing the mint is
+ * what makes "every session carries a token from birth" an invariant by
+ * construction rather than a per-call-site convention.
+ */
+export function makeAttachToken(): string {
+  return `att_${randomBytes(8).toString('hex')}`;
+}
+
+/**
+ * Options accepted by {@link createSessionState}. Each creation site passes
+ * the fields it owns; the factory supplies the identity + the attach token.
+ * Site-specific fields (workingMemory, restartPolicy, roleRouting, …) are
+ * intentionally NOT modeled here — callers spread them onto the returned base
+ * so the factory stays the single source of truth for the token without
+ * having to absorb every per-surface shape difference.
+ */
+export interface CreateSessionStateOptions {
+  provider: string;
+  model: string;
+  cwd: string;
+  /** Pre-built message log — daemon uses async `buildSystemPrompt`, TUI/CLI use the sync base builder, so the caller builds it. */
+  messages: unknown[];
+  /** Origin surface tag (`'tui'` | `'interactive'` | `'headless'` | …); defaults to `'interactive'`. */
+  mode?: string;
+  /** Override the generated session id (e.g. tests, or a caller that pre-minted one). */
+  sessionId?: string;
+  /** Override the creation/update timestamp (tests / deterministic fixtures). */
+  now?: number;
+  /**
+   * Explicit attach-token override. Defaults to a freshly minted token. An
+   * empty/whitespace string is treated as "unset" and still mints — a caller
+   * cannot accidentally birth a tokenless session through this factory.
+   */
+  attachToken?: string;
+}
+
+/**
+ * The base shape returned by {@link createSessionState}. Deliberately omits
+ * `sessionName` and `workingMemory`: no creation site sets `sessionName` at
+ * birth (the loader/`listSessions` default it to `''`), and `workingMemory`
+ * is site-specific (TUI/CLI seed it; the daemon does not). Callers spread the
+ * base and add their own fields, exactly as the pre-factory literals did — so
+ * routing through the factory is shape-preserving, not a behavior change.
+ */
+export type NewSessionBaseState = Pick<
+  SessionState,
+  | 'sessionId'
+  | 'updatedAt'
+  | 'provider'
+  | 'model'
+  | 'cwd'
+  | 'rounds'
+  | 'eventSeq'
+  | 'messages'
+  | 'mode'
+> & {
+  createdAt: number;
+  // Required (not the optional `SessionState.attachToken`): the factory always
+  // mints, so the return type ENFORCES the bearer-at-birth invariant this whole
+  // change rests on — a caller can't observe a factory-built state without one.
+  attachToken: string;
+};
+
+/**
+ * Build the base state for a brand-new session, ALWAYS carrying a freshly
+ * minted attach token (Universal Session Bearer). The three creation points —
+ * `handleStartSession` (daemon), `createFreshSessionState` (TUI) and
+ * `initSession` (CLI) — route through here so no session is ever born
+ * tokenless. Callers spread their site-specific fields onto the result.
+ *
+ * The factory never mints a session id when one is supplied, and never
+ * returns a falsy `attachToken`: passing `attachToken: ''` (or omitting it)
+ * mints, so "tokenless by construction" is unreachable from this path.
+ */
+export function createSessionState(opts: CreateSessionStateOptions): NewSessionBaseState {
+  const now = typeof opts.now === 'number' ? opts.now : Date.now();
+  const attachToken =
+    typeof opts.attachToken === 'string' && opts.attachToken.trim()
+      ? opts.attachToken
+      : makeAttachToken();
+  return {
+    sessionId: opts.sessionId ?? makeSessionId(),
+    createdAt: now,
+    updatedAt: now,
+    provider: opts.provider,
+    model: opts.model,
+    cwd: opts.cwd,
+    rounds: 0,
+    eventSeq: 0,
+    messages: opts.messages,
+    attachToken,
+    mode: opts.mode ?? 'interactive',
+  };
+}
+
 export function getSessionRoot(): string {
   return process.env.PUSH_SESSION_DIR || path.join(os.homedir(), '.push', 'sessions');
 }
