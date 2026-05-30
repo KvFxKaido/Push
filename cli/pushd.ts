@@ -3797,8 +3797,19 @@ async function handleSessionSummarize(req, _emitEvent) {
   const rawTurns = req.payload?.preserveTurns;
   let preserveTurns = 6;
   if (rawTurns !== undefined) {
-    const n = typeof rawTurns === 'number' ? rawTurns : Number.parseInt(String(rawTurns), 10);
-    if (!Number.isFinite(n) || n < 1) {
+    // Strict, like the CLI `/compact`: a plain positive integer (or its exact
+    // digit string). Reject malformed input ("2abc", "1e2", fractionals) rather
+    // than coercing — the handler is the boundary; don't lean on
+    // `compactContext`'s internal clamp to launder bad input.
+    let n;
+    if (typeof rawTurns === 'number') {
+      n = rawTurns;
+    } else if (typeof rawTurns === 'string' && /^\d+$/.test(rawTurns.trim())) {
+      n = Number.parseInt(rawTurns.trim(), 10);
+    } else {
+      n = Number.NaN;
+    }
+    if (!Number.isInteger(n) || n < 1) {
       return makeErrorResponse(
         req.requestId,
         'session_summarize',
@@ -3806,7 +3817,7 @@ async function handleSessionSummarize(req, _emitEvent) {
         'preserveTurns must be a positive integer',
       );
     }
-    preserveTurns = Math.max(1, Math.min(64, Math.floor(n)));
+    preserveTurns = Math.min(64, n);
   }
 
   const messages = Array.isArray(entry.state?.messages) ? entry.state.messages : [];

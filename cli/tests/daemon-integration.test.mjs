@@ -1264,14 +1264,30 @@ describe('session_summarize verb', () => {
     assert.equal(res.error.code, 'RUN_IN_PROGRESS');
   });
 
-  it('rejects a non-positive preserveTurns (INVALID_REQUEST)', async () => {
+  it('rejects a non-positive or malformed preserveTurns (INVALID_REQUEST)', async () => {
     const { sessionId, token } = await makeSession();
+    // Non-positive, fractional, and malformed strings must all be rejected
+    // (not coerced like a lax parseInt would) — matches the CLI /compact.
+    for (const bad of [0, -1, 2.7, '2abc', '1e2', 'abc', '']) {
+      const res = await handleRequest(
+        makeRequest('session_summarize', { sessionId, attachToken: token, preserveTurns: bad }),
+        () => {},
+      );
+      assert.equal(res.ok, false, `preserveTurns=${JSON.stringify(bad)} should reject`);
+      assert.equal(res.error.code, 'INVALID_REQUEST');
+    }
+  });
+
+  it('accepts a digit-string preserveTurns', async () => {
+    const { sessionId, token } = await makeSession();
+    const entry = __getActiveSessionForTesting(sessionId);
+    seedTurns(entry, 6);
     const res = await handleRequest(
-      makeRequest('session_summarize', { sessionId, attachToken: token, preserveTurns: 0 }),
+      makeRequest('session_summarize', { sessionId, attachToken: token, preserveTurns: '2' }),
       () => {},
     );
-    assert.equal(res.ok, false);
-    assert.equal(res.error.code, 'INVALID_REQUEST');
+    assert.equal(res.ok, true, `expected ok, got ${JSON.stringify(res.error)}`);
+    assert.equal(res.payload.preserveTurns, 2);
   });
 });
 
