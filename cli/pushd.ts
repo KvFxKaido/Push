@@ -1497,8 +1497,8 @@ async function handleAttachSession(req, emitEvent) {
       // handler that lazy-loads a session from disk (including after a
       // daemon crash + restart), because `validateAttachToken` would
       // compare the caller's original token against a freshly minted one.
-      // Legacy sessions without a persisted token fall through the bypass
-      // in `validateAttachToken` (`!entry.attachToken → return true`).
+      // Legacy sessions without a persisted token are claimed by the
+      // bootstrap-grace block below on their first tokenless attach.
       entry = { state, attachToken: state.attachToken };
       activeSessions.set(sessionId, entry);
     } catch {
@@ -1511,7 +1511,42 @@ async function handleAttachSession(req, emitEvent) {
     }
   }
 
-  if (!validateAttachToken(entry, providedToken)) {
+  // Bootstrap grace (Universal Session Bearer legacy cutover): a session
+  // created before the bearer factory existed is tokenless on disk. On its
+  // FIRST attach where the client ALSO presents no token, claim it — mint +
+  // persist + accept this one attach — and return the token so the client
+  // adopts it (see the response payload below + the TUI/CLI adopt paths).
+  // Every subsequent attach then requires it: the session is tokened forever.
+  // New sessions never reach here tokenless — the factory mints them at
+  // birth. Rationale: the 0600 unix socket is already the local boundary, so
+  // a single unauthenticated local claim-attach per legacy session is an
+  // acceptable migration affordance (docs/decisions/Universal Session Bearer.md).
+  // Any OTHER combination (token on disk, or client presented a token) flows
+  // through `validateAttachToken` and enforces normally.
+  const clientPresentedToken = typeof providedToken === 'string' && providedToken.trim().length > 0;
+  if (!entry.attachToken && !clientPresentedToken) {
+    const claimedToken = makeAttachToken();
+    entry.attachToken = claimedToken;
+    entry.state.attachToken = claimedToken;
+    let persisted = true;
+    try {
+      await saveSessionState(entry.state);
+    } catch (err) {
+      // The in-memory claim still authorizes this run, but a daemon restart
+      // would lose it and re-trigger the grace on the next attach. Surface it
+      // rather than failing the attach — the session is already usable live.
+      persisted = false;
+      process.stderr.write(
+        `${JSON.stringify({ level: 'warn', event: 'legacy_claim_persist_failed', sessionId, error: err instanceof Error ? err.message : String(err) })}\n`,
+      );
+    }
+    // The claim IS the auth for this one attach — fall through (no validate).
+    // A `legacy_claim` count trending to zero is the signal the migration is
+    // complete; new sessions are born tokened and never emit it.
+    process.stderr.write(
+      `${JSON.stringify({ level: 'info', event: 'legacy_claim', sessionId, persisted })}\n`,
+    );
+  } else if (!validateAttachToken(entry, providedToken)) {
     return makeErrorResponse(
       req.requestId,
       'attach_session',
@@ -1557,6 +1592,14 @@ async function handleAttachSession(req, emitEvent) {
     sessionId,
     state: entry.activeRunId ? 'running' : 'idle',
     activeRunId: entry.activeRunId || null,
+    // Return the session's attach token so the client can ADOPT it into its
+    // in-memory token (TUI `state.attachToken` / `daemonAttachToken`). This is
+    // what closes the legacy-claim staleness loop: a TUI that attached with a
+    // stale `undefined` (legacy tokenless session) gets the just-claimed token
+    // here and presents it on the next reconnect instead of being locked out.
+    // For an already-tokened session this just echoes the token the client
+    // already holds (no new exposure — the caller already authenticated).
+    attachToken: entry.attachToken,
     // Session-scoped truth: the daemon is the source. Clients (TUI, web)
     // hydrate from these on attach instead of loading state.json
     // directly, which keeps the two views in lock-step after a
