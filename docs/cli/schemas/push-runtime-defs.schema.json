@@ -9,34 +9,91 @@
     },
     "requestType": {
       "type": "string",
+      "description": "Full daemon request vocabulary, kept in sync with the HANDLERS map in cli/pushd.ts (the runtime source of truth). Per-type payload shapes in the request-envelope schema cover only the original MVP subset — see the README's scope note.",
       "enum": [
         "hello",
-        "start_session",
+        "ping",
         "list_sessions",
-        "attach_session",
-        "resume_session",
+        "start_session",
         "send_user_message",
+        "attach_session",
+        "get_session_messages",
+        "update_session",
         "submit_approval",
         "cancel_run",
-        "ping"
+        "abort",
+        "configure_role_routing",
+        "submit_task_graph",
+        "delegate_explorer",
+        "delegate_coder",
+        "delegate_reviewer",
+        "delegate_deep_reviewer",
+        "cancel_delegation",
+        "fetch_delegation_events",
+        "list_children",
+        "get_child_session",
+        "session_summarize",
+        "session_revert",
+        "session_unrevert",
+        "sandbox_exec",
+        "sandbox_read_file",
+        "sandbox_write_file",
+        "sandbox_list_dir",
+        "sandbox_diff",
+        "daemon_identify",
+        "revoke_device_token",
+        "list_devices",
+        "mint_device_attach_token",
+        "revoke_device_attach_token",
+        "list_attach_tokens",
+        "relay_enable",
+        "relay_disable",
+        "relay_status",
+        "mint_remote_pair_bundle"
       ]
     },
     "eventType": {
       "type": "string",
+      "description": "Wire event vocabulary broadcast on kind:'event' envelopes. Authoritative per-payload validators live in lib/protocol-schema.ts (PAYLOAD_VALIDATORS); lifecycle/observability markers without a per-payload schema are still listed here so consumers don't treat them as drift.",
       "enum": [
         "session_started",
-        "session_snapshot",
+        "session_state_changed",
         "status",
-        "thinking_token",
         "assistant_token",
+        "assistant_thinking_token",
+        "assistant_thinking_done",
         "assistant_done",
+        "user_message",
         "tool_call",
         "tool_result",
+        "tool.execution_start",
+        "tool.execution_complete",
+        "tool.call_malformed",
         "approval_required",
         "approval_received",
         "warning",
         "error",
-        "run_complete"
+        "run_complete",
+        "run_recovered",
+        "recovery_skipped",
+        "context_compacted",
+        "session_reverted",
+        "session_unreverted",
+        "delegation_interrupted",
+        "assistant.prompt_snapshot",
+        "assistant.turn_start",
+        "assistant.turn_end",
+        "harness.adaptation",
+        "context.compaction",
+        "subagent.started",
+        "subagent.completed",
+        "subagent.failed",
+        "task_graph.task_ready",
+        "task_graph.task_started",
+        "task_graph.task_completed",
+        "task_graph.task_failed",
+        "task_graph.task_cancelled",
+        "task_graph.graph_completed"
       ]
     },
     "sessionState": {
@@ -331,23 +388,9 @@
       },
       "additionalProperties": false
     },
-    "resumeSessionRequestPayload": {
-      "type": "object",
-      "required": ["sessionId", "lastSeenSeq"],
-      "properties": {
-        "sessionId": {
-          "$ref": "#/$defs/sessionId"
-        },
-        "lastSeenSeq": {
-          "type": "integer",
-          "minimum": 0
-        }
-      },
-      "additionalProperties": false
-    },
     "sendUserMessageRequestPayload": {
       "type": "object",
-      "required": ["sessionId", "clientMessageId", "text"],
+      "required": ["sessionId", "text"],
       "properties": {
         "sessionId": {
           "$ref": "#/$defs/sessionId"
@@ -358,6 +401,19 @@
         "text": {
           "type": "string",
           "minLength": 1
+        },
+        "attachToken": {
+          "$ref": "#/$defs/attachToken",
+          "description": "Session bearer threaded by attached clients (TUI/relay) for the bearer-gated send path."
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "description": "Client-advertised tool capabilities for this turn (e.g. the TUI's daemon capability set)."
         },
         "acceptanceCriteria": {
           "type": "array",
@@ -370,13 +426,10 @@
     },
     "submitApprovalRequestPayload": {
       "type": "object",
-      "required": ["sessionId", "runId", "approvalId", "decision"],
+      "required": ["sessionId", "approvalId", "decision"],
       "properties": {
         "sessionId": {
           "$ref": "#/$defs/sessionId"
-        },
-        "runId": {
-          "$ref": "#/$defs/runId"
         },
         "approvalId": {
           "$ref": "#/$defs/approvalId"
@@ -384,15 +437,17 @@
         "decision": {
           "$ref": "#/$defs/approvalDecision"
         },
-        "comment": {
-          "type": "string"
+        "attachToken": {
+          "$ref": "#/$defs/attachToken",
+          "description": "Session bearer. Required by the daemon for the session-ful approval (matches cancel_run); the relay client threads it, local-PC omits it."
         }
       },
       "additionalProperties": false
     },
     "cancelRunRequestPayload": {
       "type": "object",
-      "required": ["sessionId", "runId"],
+      "description": "At least one of sessionId / runId is required: the session-ful path (sessionId + attachToken) aborts the session's active run; the sessionless path (runId only) aborts a run registered on the same WS connection.",
+      "anyOf": [{ "required": ["sessionId"] }, { "required": ["runId"] }],
       "properties": {
         "sessionId": {
           "$ref": "#/$defs/sessionId"
@@ -400,8 +455,9 @@
         "runId": {
           "$ref": "#/$defs/runId"
         },
-        "reason": {
-          "type": "string"
+        "attachToken": {
+          "$ref": "#/$defs/attachToken",
+          "description": "Session bearer. Required on the session-ful path (#723); omitted on the sessionless WS-scoped path."
         }
       },
       "additionalProperties": false
@@ -548,52 +604,6 @@
         },
         "sandboxProvider": {
           "$ref": "#/$defs/sandboxProvider"
-        }
-      },
-      "additionalProperties": false
-    },
-    "sessionSnapshotEventPayload": {
-      "type": "object",
-      "required": ["state", "pendingApproval", "meta"],
-      "properties": {
-        "state": {
-          "$ref": "#/$defs/sessionState"
-        },
-        "activeRunId": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/runId"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "lastAssistantText": {
-          "type": "string"
-        },
-        "pendingApproval": {
-          "anyOf": [
-            {
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "meta": {
-          "type": "object",
-          "required": ["provider", "sandboxProvider"],
-          "properties": {
-            "provider": {
-              "$ref": "#/$defs/provider"
-            },
-            "sandboxProvider": {
-              "$ref": "#/$defs/sandboxProvider"
-            }
-          },
-          "additionalProperties": false
         }
       },
       "additionalProperties": false

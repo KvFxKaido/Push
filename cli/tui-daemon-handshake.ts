@@ -73,14 +73,12 @@ export const TUI_KNOWN_NOOP_EVENT_TYPES: ReadonlySet<string> = new Set([
   // role for them today.
   'assistant.prompt_snapshot',
   'context.compaction',
-  // Addressable Session Verbs lifecycle events broadcast when another
-  // attached client compacts (`session_summarize`) or rewinds
-  // (`session_revert`/`session_unrevert`) the transcript. The TUI has no
-  // transcript role for them today (re-sync of its local view is future work);
-  // listed here so they don't flood "unknown event" warnings.
-  'context_compacted',
-  'session_reverted',
-  'session_unreverted',
+  // NB: the Addressable Session Verbs lifecycle events — `context_compacted`
+  // (`session_summarize`), `session_reverted` (`session_revert`), and
+  // `session_unreverted` (`session_unrevert`) — are deliberately NOT here:
+  // they now drive a real transcript resync via explicit cases in
+  // `handleEngineEvent` (`resyncDaemonTranscript`), so they must not be
+  // treated as silent no-ops. See lib/session-transcript-events.ts.
   // Engine round-lifecycle markers fired by `cli/engine.ts` on every
   // assistant turn. The TUI tracks the same lifecycle implicitly
   // (`tuiState.runState` flips on `assistant_token` / `run_complete`)

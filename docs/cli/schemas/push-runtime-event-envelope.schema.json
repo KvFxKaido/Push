@@ -54,23 +54,6 @@
       "if": {
         "properties": {
           "type": {
-            "const": "session_snapshot"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "payload": {
-            "$ref": "./push-runtime-defs.schema.json#/$defs/sessionSnapshotEventPayload"
-          }
-        }
-      }
-    },
-
-    {
-      "if": {
-        "properties": {
-          "type": {
             "const": "status"
           }
         }
@@ -88,7 +71,7 @@
       "if": {
         "properties": {
           "type": {
-            "const": "thinking_token"
+            "const": "assistant_thinking_token"
           }
         }
       },

@@ -37,6 +37,7 @@ import {
 import { type AttachResult, createRelayDaemonBinding } from '@/lib/relay-daemon-binding';
 import type { LiveDaemonBinding } from '@/lib/local-daemon-sandbox-client';
 import type { RelayBinding } from '@/types';
+import { isTranscriptMutationEvent } from '@push/lib/session-transcript-events';
 
 const EVENT_LOG_CAP = 50;
 
@@ -265,6 +266,53 @@ export function useRelayDaemon(
         hydratedTargetRef.current = targetSessionId;
       }
     });
+    // Refetch the daemon's user/assistant history and replace the local
+    // copy. Called once on attach-complete (initial hydration) and again
+    // whenever a transcript-mutation event (`session_revert` /
+    // `session_unrevert` / `session_summarize`) tells us the daemon rewrote
+    // `state.messages` out from under us — without the refetch the phone keeps
+    // rendering the pre-mutation transcript. Reason-tagged so ops can tell an
+    // initial-hydration miss from a resync miss.
+    const hydrateTranscript = (reason: 'attach' | 'resync') => {
+      const handle = bindingRef.current;
+      if (!handle || targetSessionId === null || targetAttachToken === null) return;
+      // `sessionId` lives in payload AND envelope — the daemon's
+      // `handleGetSessionMessages` reads it from `req.payload` (same as
+      // `handleAttachSession`); without the payload copy the call returns
+      // `INVALID_REQUEST` — Codex P2 on #687.
+      void handle
+        .request<{ messages: DaemonHydratedMessage[] }>({
+          type: 'get_session_messages',
+          sessionId: targetSessionId,
+          payload: {
+            sessionId: targetSessionId,
+            attachToken: targetAttachToken,
+          },
+          timeoutMs: 10_000,
+        })
+        .then((response) => {
+          if (cancelled) return;
+          if (response.ok && Array.isArray(response.payload?.messages)) {
+            setHydratedMessages(response.payload.messages);
+          }
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          const msg = err instanceof Error ? err.message : String(err);
+          // Symmetric structured log so ops can distinguish a hydration miss
+          // from an attach miss; the chat surface intentionally stays usable
+          // on this path.
+          console.warn(
+            JSON.stringify({
+              level: 'warn',
+              event:
+                reason === 'resync' ? 'relay_transcript_resync_failed' : 'relay_hydration_failed',
+              reason: msg,
+            }),
+          );
+        });
+    };
+
     let handle: ReturnType<typeof createRelayDaemonBinding>;
     try {
       handle = createRelayDaemonBinding({
@@ -284,44 +332,7 @@ export function useRelayDaemon(
             // is non-fatal: the attach succeeded, the chat surface
             // works, but the user starts from an empty transcript.
             // Logged via console.warn so ops can spot the regression.
-            const handle = bindingRef.current;
-            if (handle && targetSessionId !== null && targetAttachToken !== null) {
-              // `sessionId` lives in payload AND envelope — the
-              // daemon's `handleGetSessionMessages` reads it from
-              // `req.payload` (same as `handleAttachSession`); without
-              // the payload copy the call returns `INVALID_REQUEST` —
-              // Codex P2 on #687.
-              void handle
-                .request<{ messages: DaemonHydratedMessage[] }>({
-                  type: 'get_session_messages',
-                  sessionId: targetSessionId,
-                  payload: {
-                    sessionId: targetSessionId,
-                    attachToken: targetAttachToken,
-                  },
-                  timeoutMs: 10_000,
-                })
-                .then((response) => {
-                  if (cancelled) return;
-                  if (response.ok && Array.isArray(response.payload?.messages)) {
-                    setHydratedMessages(response.payload.messages);
-                  }
-                })
-                .catch((err: unknown) => {
-                  if (cancelled) return;
-                  const msg = err instanceof Error ? err.message : String(err);
-                  // Symmetric structured log so ops can distinguish a
-                  // hydration miss from an attach miss; the chat surface
-                  // intentionally stays usable on this path.
-                  console.warn(
-                    JSON.stringify({
-                      level: 'warn',
-                      event: 'relay_hydration_failed',
-                      reason: msg,
-                    }),
-                  );
-                });
-            }
+            hydrateTranscript('attach');
           } else {
             setAttachStatus('attach_failed');
             setAttachError({ code: result.error.code, message: result.error.message });
@@ -349,6 +360,17 @@ export function useRelayDaemon(
             if (current === null || event.seq > current) {
               lastSeqRef.current = event.seq;
             }
+          }
+          // The daemon rewrote `state.messages` (revert / unrevert /
+          // summarize) — our hydrated copy is now stale, so refetch it.
+          // Gated on `hasTarget` because untargeted Remote bundles never
+          // hydrate a transcript and have nothing to resync.
+          if (
+            hasTarget &&
+            typeof event.type === 'string' &&
+            isTranscriptMutationEvent(event.type)
+          ) {
+            hydrateTranscript('resync');
           }
           setWsEvents((prev) => {
             const next =

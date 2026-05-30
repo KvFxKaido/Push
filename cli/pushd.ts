@@ -1777,6 +1777,27 @@ async function handleSubmitApproval(req, _emitEvent, context) {
     );
   }
 
+  // Bearer-gate the approval decision (Addressable Session Verbs follow-up —
+  // the gap the cancel_run fix in #723 left open). An approval decision
+  // executes or denies a paused tool call; without this any relay-authenticated
+  // client that learns a live sessionId + approvalId could approve/deny a tool
+  // run on a session whose bearer it does not hold. Placed AFTER the existence
+  // check (mirroring handleCancelRun) so an unknown session still returns
+  // SESSION_NOT_FOUND, and BEFORE the pending-approval lookup so a stolen
+  // approvalId can't even probe whether one is outstanding.
+  const providedToken = req.payload?.attachToken;
+  if (!validateAttachToken(entry, providedToken)) {
+    process.stderr.write(
+      `${JSON.stringify({ level: 'warn', event: 'submit_approval_unauthenticated_rejected', sessionId, hadToken: typeof providedToken === 'string' && providedToken.length > 0 })}\n`,
+    );
+    return makeErrorResponse(
+      req.requestId,
+      'submit_approval',
+      'INVALID_TOKEN',
+      'Invalid or missing attach token',
+    );
+  }
+
   const pending = entry.pendingApproval;
   if (!pending || pending.approvalId !== approvalId) {
     return makeErrorResponse(
