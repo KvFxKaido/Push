@@ -884,7 +884,10 @@ export function validateAttachToken(entry, providedToken) {
   if (isOpenAttach(entry)) {
     if (!openAttachWarnedEntries.has(entry)) {
       openAttachWarnedEntries.add(entry);
-      const source = process.env.PUSHD_OPEN_ATTACH === '1' ? 'env' : 'session';
+      // Attribute precisely — both can be on at once, so don't collapse to one.
+      const envOn = process.env.PUSHD_OPEN_ATTACH === '1';
+      const flagOn = entry?.openAttach === true || entry?.state?.openAttach === true;
+      const source = flagOn && envOn ? 'session+env' : flagOn ? 'session' : 'env';
       process.stderr.write(
         `${JSON.stringify({ level: 'warn', event: 'open_attach_used', sessionId: entry?.state?.sessionId, source })}\n`,
       );

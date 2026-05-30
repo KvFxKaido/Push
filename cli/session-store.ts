@@ -44,9 +44,11 @@ export interface SessionState {
    * this value into the in-memory entry instead of generating a fresh
    * token (which would invalidate the caller's stored token).
    *
-   * Optional for migration: sessions created before this field existed
-   * will load without it, and `validateAttachToken`'s legacy bypass accepts
-   * any provided token for entries whose `attachToken` is falsy.
+   * Optional for migration: sessions created before this field existed load
+   * without it. Such a legacy session is claimed on its first `attach_session`
+   * (bootstrap grace) — the implicit "tokenless = open" bypass is gone
+   * (Universal Session Bearer), so a tokenless session is no longer open by
+   * accident; "open" is now an explicit opt-out (`openAttach` / `PUSHD_OPEN_ATTACH`).
    */
   attachToken?: string;
   /**
