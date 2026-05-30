@@ -3867,9 +3867,9 @@ async function handleSessionSummarize(req, _emitEvent) {
  * matches the CLI `/compact` strictness; the handler turns `null` into an
  * INVALID_REQUEST rather than coercing bad input.
  */
-function parsePositiveIntField(raw, fallback, max) {
+function parsePositiveIntField(raw: unknown, fallback: number, max: number): number | null {
   if (raw === undefined) return fallback;
-  let n;
+  let n: number;
   if (typeof raw === 'number') n = raw;
   else if (typeof raw === 'string' && /^\d+$/.test(raw.trim())) n = Number.parseInt(raw.trim(), 10);
   else n = Number.NaN;
@@ -3928,6 +3928,11 @@ async function handleSessionRevert(req) {
     });
   }
 
+  // Critical section: read `messages` → mutate `state.messages` + `revertedTail`
+  // with NO `await` in between, so it runs atomically on Node's single-threaded
+  // loop — a concurrent revert/unrevert can't interleave a read-modify-write
+  // here (the first `await` below is the only yield point). Same concurrency
+  // posture as every other session-mutating handler; no extra lock is taken.
   const effectiveTurns = Math.min(turns, totalTurns);
   const cutIndex = turnStarts[totalTurns - effectiveTurns];
   const removed = messages.slice(cutIndex);
@@ -3995,6 +4000,8 @@ async function handleSessionUnrevert(req) {
     );
   }
 
+  // Await-free critical section (see the note in handleSessionRevert): the
+  // read→restore→clear runs atomically before the first await below.
   const restoredCount = tail.length;
   const messages = Array.isArray(entry.state?.messages) ? entry.state.messages : [];
   entry.state.messages = [...messages, ...tail];
