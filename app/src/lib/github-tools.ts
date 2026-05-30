@@ -7,7 +7,14 @@
  * PR review, branch diff, project instructions, and PR data for the hub.
  */
 
-import type { CICheck, CIOverallStatus, ReviewResult, ToolExecutionResult } from '@/types';
+import type {
+  CICheck,
+  CIOverallStatus,
+  ReviewComment,
+  ReviewResult,
+  ToolExecutionResult,
+} from '@/types';
+import { parseDiffIntoFiles } from './diff-utils';
 import {
   getGitHubAuthHeaders as getGitHubHeaders,
   getGitHubAuthHeadersForToken,
@@ -870,27 +877,33 @@ export async function executePostPRReview(
   commitSha: string,
   reviewResult: ReviewResult,
   auth?: GitHubAuth,
+  /**
+   * The unified diff that was reviewed. When provided, a 422 (bad inline
+   * anchor) triggers a pinpoint salvage: anchors that land on a real RIGHT-side
+   * hunk line are kept inline and only the unanchorable findings fold into the
+   * body — instead of dropping ALL inline comments. Omit it to keep the blunt
+   * all-or-nothing fallback.
+   */
+  diff?: string,
 ): Promise<number> {
   const headers = resolveHeaders(auth);
 
-  const inlineComments = reviewResult.comments
-    .filter((c) => typeof c.line === 'number')
-    .map((c) => ({
-      path: c.file,
-      line: c.line,
-      side: 'RIGHT' as const,
-      body: `**${c.severity.toUpperCase()}**: ${c.comment}`,
-    }));
+  const withLine = reviewResult.comments.filter((c) => typeof c.line === 'number');
+  const noLine = reviewResult.comments.filter((c) => typeof c.line !== 'number');
 
-  function buildBody(includeInlineAsbullets: boolean): string {
-    const allComments = includeInlineAsbullets
-      ? reviewResult.comments
-      : reviewResult.comments.filter((c) => typeof c.line !== 'number');
+  const toInline = (c: ReviewComment) => ({
+    path: c.file,
+    line: c.line,
+    side: 'RIGHT' as const,
+    body: `**${c.severity.toUpperCase()}**: ${c.comment}`,
+  });
 
+  /** Render `bulletComments` as a "Findings" section under the summary. */
+  function buildBody(bulletComments: ReviewComment[]): string {
     let b = reviewResult.summary;
-    if (allComments.length > 0) {
+    if (bulletComments.length > 0) {
       b += '\n\n---\n\n**Findings:**\n';
-      for (const c of allComments) {
+      for (const c of bulletComments) {
         const loc = typeof c.line === 'number' ? ` L${c.line}` : '';
         b += `\n- **${c.file}${loc}** (${c.severity}): ${c.comment}`;
       }
@@ -899,7 +912,7 @@ export async function executePostPRReview(
     return b;
   }
 
-  const postReview = async (comments: typeof inlineComments, bodyText: string) =>
+  const postReview = async (comments: ReturnType<typeof toInline>[], bodyText: string) =>
     githubFetch(
       `https://api.github.com/repos/${repo}/pulls/${prNumber}/reviews`,
       {
@@ -915,28 +928,87 @@ export async function executePostPRReview(
       // Don't retry: POSTing a review is non-idempotent, so a retry after a
       // timeout (where GitHub may have already created the review) would
       // duplicate the advisory review. A failed post surfaces as an error the
-      // caller can handle instead.
+      // caller can handle instead. (A 422 creates nothing, so our own
+      // application-level fallbacks below are safe — they can't duplicate.)
       { retry: false },
     );
 
-  let res = await postReview(inlineComments, buildBody(false));
-  let inlinePosted = inlineComments.length;
+  // Optimistic first attempt: send every anchored finding inline and let GitHub
+  // adjudicate. We don't pre-filter against our own diff parse — that risks
+  // demoting an anchor GitHub would have accepted.
+  let res = await postReview(withLine.map(toInline), buildBody(noLine));
+  let inlinePosted = withLine.length;
 
-  // GitHub 422 means one or more inline comment anchors are invalid (hallucinated
-  // file/line or line outside a diff hunk). Degrade: fold all inline comments into
-  // the body as bullets and retry without any inline anchors.
-  if (res.status === 422 && inlineComments.length > 0) {
-    res = await postReview([], buildBody(true));
-    inlinePosted = 0;
+  // GitHub 422 means one or more inline anchors are invalid (hallucinated
+  // file/line or a line outside a diff hunk).
+  if (res.status === 422 && withLine.length > 0) {
+    // Pinpoint salvage: keep the anchors that fall on a real RIGHT-side hunk
+    // line, fold the rest into the body. Only worth a retry when we can
+    // actually identify a strict, non-empty subset to keep.
+    if (diff) {
+      const anchorable = collectAnchorableLines(diff);
+      const valid = withLine.filter((c) => anchorable.get(c.file)?.has(c.line as number));
+      const invalid = withLine.filter((c) => !anchorable.get(c.file)?.has(c.line as number));
+      if (valid.length > 0 && valid.length < withLine.length) {
+        res = await postReview(valid.map(toInline), buildBody([...noLine, ...invalid]));
+        inlinePosted = res.ok ? valid.length : 0;
+      }
+    }
+
+    // Last resort — no diff to salvage with, nothing salvageable, or the
+    // salvage retry itself 422'd: fold every finding into the body and post
+    // with zero inline anchors.
+    if (res.status === 422) {
+      res = await postReview([], buildBody(reviewResult.comments));
+      inlinePosted = 0;
+    }
   }
 
   if (!res.ok) {
     throw new Error(formatGitHubError(res.status, `posting review to PR #${prNumber}`));
   }
 
-  // Count of inline comments actually anchored on the PR (0 when folded into the
-  // body). Callers that ignore the return value are unaffected.
+  // Count of inline comments actually anchored on the PR (0 when all folded into
+  // the body). Callers that ignore the return value are unaffected.
   return inlinePosted;
+}
+
+/**
+ * Map each file in a unified diff to the set of new-file ("RIGHT" side) line
+ * numbers that can carry an inline review comment — i.e. added (`+`) and
+ * context lines inside a hunk. Deleted lines live on the LEFT side and
+ * pre-hunk header lines (`diff --git`, `index`, `---`, `+++`) are excluded.
+ * Mirrors the new-file line counting in `annotateDiffWithLineNumbers`.
+ */
+function collectAnchorableLines(diff: string): Map<string, Set<number>> {
+  const map = new Map<string, Set<number>>();
+  for (const file of parseDiffIntoFiles(diff)) {
+    const lines = new Set<number>();
+    let newLine = 0;
+    let inHunk = false;
+    for (const raw of file.hunks.split('\n')) {
+      if (raw.startsWith('@@')) {
+        // @@ -old_start[,old_count] +new_start[,new_count] @@
+        const m = raw.match(/\+(\d+)/);
+        if (m) newLine = parseInt(m[1], 10) - 1;
+        inHunk = true;
+      } else if (!inHunk) {
+        // File header lines before the first hunk (including `+++`/`---`).
+        continue;
+      } else if (raw.startsWith('+')) {
+        newLine++;
+        lines.add(newLine);
+      } else if (raw.startsWith('-') || raw.startsWith('\\')) {
+        // Removed line (LEFT side) or "\ No newline" marker — not anchorable.
+      } else {
+        // Context line — advances the new-file counter and is anchorable.
+        newLine++;
+        lines.add(newLine);
+      }
+    }
+    map.set(file.path, lines);
+  }
+  return map;
 }
 
 /**

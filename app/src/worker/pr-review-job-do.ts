@@ -540,6 +540,10 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
     input.headSha,
     result,
     auth,
+    // The reviewed diff — lets a 422 salvage the valid inline anchors instead
+    // of dropping all of them to the body. Safe to pass: the head-advanced
+    // guard above ensures this diff matches `input.headSha`.
+    diff,
   );
 
   // Opt-in gating: post a Checks API run reflecting the verdict (critical →

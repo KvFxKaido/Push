@@ -10,8 +10,10 @@ import {
   createReviewCheckRun,
   decodeGitHubBase64Utf8,
   detectToolCall,
+  executePostPRReview,
   fetchReviewGuidance,
 } from './github-tools';
+import type { ReviewResult } from '@/types';
 
 describe('detectToolCall delegation validation', () => {
   it('trims delegation strings and drops blank entries', () => {
@@ -87,5 +89,156 @@ describe('createReviewCheckRun', () => {
     await expect(
       createReviewCheckRun('octo/repo', 'sha-1', 'success', { title: 't', summary: 's' }),
     ).rejects.toThrow();
+  });
+});
+
+describe('executePostPRReview — 422 inline-anchor salvage', () => {
+  // Hunk: new-file lines 8 (context), 9 & 10 (added), 11 (context) are
+  // anchorable on the RIGHT side; everything else (e.g. line 99) is not.
+  const DIFF = [
+    'diff --git a/src/app.ts b/src/app.ts',
+    'index 1111111..2222222 100644',
+    '--- a/src/app.ts',
+    '+++ b/src/app.ts',
+    '@@ -8,2 +8,4 @@',
+    ' const a = 1;',
+    '+const b = 2;',
+    '+const c = 3;',
+    ' const d = 4;',
+  ].join('\n');
+
+  const result = (comments: ReviewResult['comments']): ReviewResult => ({
+    summary: 'Summary text.',
+    comments,
+    filesReviewed: 1,
+    totalFiles: 1,
+    truncated: false,
+    provider: 'zen',
+    model: 'glm-5.1',
+    reviewedAt: 0,
+  });
+
+  const bodyOf = (callIndex: number) =>
+    JSON.parse((githubFetchMock.mock.calls[callIndex][1] as RequestInit).body as string) as {
+      body: string;
+      comments: Array<{ path: string; line: number }>;
+    };
+
+  it('posts all anchors in one request when none are rejected', async () => {
+    githubFetchMock.mockReset();
+    githubFetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+    const posted = await executePostPRReview(
+      'octo/repo',
+      1,
+      'sha',
+      result([
+        { file: 'src/app.ts', line: 9, severity: 'warning', comment: 'real bug' },
+        { file: 'src/app.ts', line: 10, severity: 'note', comment: 'nit' },
+      ]),
+      { token: 'tkn' },
+      DIFF,
+    );
+
+    expect(posted).toBe(2);
+    expect(githubFetchMock).toHaveBeenCalledTimes(1);
+    expect(bodyOf(0).comments).toHaveLength(2);
+  });
+
+  it('on 422, retries with only the valid anchors and folds the rest into the body', async () => {
+    githubFetchMock.mockReset();
+    githubFetchMock
+      .mockResolvedValueOnce(new Response('line must be part of the diff', { status: 422 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+    const posted = await executePostPRReview(
+      'octo/repo',
+      1,
+      'sha',
+      result([
+        { file: 'src/app.ts', line: 9, severity: 'warning', comment: 'real bug' },
+        { file: 'src/app.ts', line: 99, severity: 'note', comment: 'hallucinated line' },
+      ]),
+      { token: 'tkn' },
+      DIFF,
+    );
+
+    // Only the in-hunk anchor survives inline; the bad one is reported in body.
+    expect(posted).toBe(1);
+    expect(githubFetchMock).toHaveBeenCalledTimes(2);
+    const retry = bodyOf(1);
+    expect(retry.comments).toEqual([expect.objectContaining({ path: 'src/app.ts', line: 9 })]);
+    expect(retry.body).toContain('hallucinated line');
+    expect(retry.body).not.toContain('real bug'); // stayed inline, not duplicated to body
+  });
+
+  it('folds everything into the body when no anchor is salvageable', async () => {
+    githubFetchMock.mockReset();
+    githubFetchMock
+      .mockResolvedValueOnce(new Response('nope', { status: 422 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+    const posted = await executePostPRReview(
+      'octo/repo',
+      1,
+      'sha',
+      result([
+        { file: 'src/app.ts', line: 99, severity: 'warning', comment: 'bad anchor one' },
+        { file: 'src/app.ts', line: 100, severity: 'note', comment: 'bad anchor two' },
+      ]),
+      { token: 'tkn' },
+      DIFF,
+    );
+
+    expect(posted).toBe(0);
+    expect(githubFetchMock).toHaveBeenCalledTimes(2);
+    const fallback = bodyOf(1);
+    expect(fallback.comments).toEqual([]);
+    expect(fallback.body).toContain('bad anchor one');
+    expect(fallback.body).toContain('bad anchor two');
+  });
+
+  it('without a diff, keeps the blunt all-to-body fallback on 422', async () => {
+    githubFetchMock.mockReset();
+    githubFetchMock
+      .mockResolvedValueOnce(new Response('nope', { status: 422 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+    const posted = await executePostPRReview(
+      'octo/repo',
+      1,
+      'sha',
+      result([{ file: 'src/app.ts', line: 9, severity: 'warning', comment: 'real bug' }]),
+      { token: 'tkn' },
+      // no diff
+    );
+
+    expect(posted).toBe(0);
+    expect(githubFetchMock).toHaveBeenCalledTimes(2);
+    expect(bodyOf(1).comments).toEqual([]);
+  });
+
+  it('falls back to body-only when the salvage retry itself 422s', async () => {
+    githubFetchMock.mockReset();
+    githubFetchMock
+      .mockResolvedValueOnce(new Response('nope', { status: 422 }))
+      .mockResolvedValueOnce(new Response('still bad', { status: 422 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+    const posted = await executePostPRReview(
+      'octo/repo',
+      1,
+      'sha',
+      result([
+        { file: 'src/app.ts', line: 9, severity: 'warning', comment: 'real bug' },
+        { file: 'src/app.ts', line: 99, severity: 'note', comment: 'bad anchor' },
+      ]),
+      { token: 'tkn' },
+      DIFF,
+    );
+
+    expect(posted).toBe(0);
+    expect(githubFetchMock).toHaveBeenCalledTimes(3);
+    expect(bodyOf(2).comments).toEqual([]);
   });
 });
