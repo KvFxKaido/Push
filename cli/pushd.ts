@@ -5576,6 +5576,10 @@ async function handleRelayStatus(req, _emitEvent, context) {
           status && (status.state === 'closed' || status.state === 'unreachable')
             ? status.reason
             : null,
+        fatal:
+          status && (status.state === 'closed' || status.state === 'unreachable')
+            ? (status.fatal ?? false)
+            : false,
         allowlistSize: relayAllowlist.size(),
       }
     : { running: false };
