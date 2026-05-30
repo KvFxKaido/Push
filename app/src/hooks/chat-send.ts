@@ -36,9 +36,11 @@ import {
 } from '@push/lib/loop-detection';
 import type { ChatMessage, ReasoningBlock } from '@/types';
 import {
-  checkLoopBreaker,
+  createLoopLadderState,
   createTurnRunContext,
   dispatchDroppedCandidatesError,
+  handleLoopVerdict,
+  type LoopLadderState,
 } from './chat-send-helpers';
 import type { AssistantTurnResult, SendLoopContext } from './chat-send-types';
 import { executeBatchedToolCalls } from './chat-batched-execution';
@@ -62,6 +64,14 @@ export type {
 } from './chat-send-types';
 
 export { streamAssistantRound } from './chat-stream-round';
+
+// Re-export the loop-ladder run-state helpers through this module so consumers
+// (chat-round-loop.ts) import them across the same boundary as
+// `processAssistantTurn`. Importing them directly from './chat-send-helpers'
+// would pull the real module past test mocks of './chat-send' and load its
+// heavy `tool-dispatch` → `web-search-tools` transitive graph.
+export { createLoopLadderState } from './chat-send-helpers';
+export type { LoopLadderState } from './chat-send-helpers';
 
 // ---------------------------------------------------------------------------
 // processAssistantTurn — router across the three branch handlers
@@ -92,6 +102,7 @@ export async function processAssistantTurn(
     clear: () => {},
   },
   loopDetector: SimilarityLoopDetector = createSimilarityLoopDetector(),
+  loopLadder: LoopLadderState = createLoopLadderState(),
 ): Promise<AssistantTurnResult> {
   const { chatId, lockedProvider, setConversations, appendRunEvent } = ctx;
 
@@ -99,18 +110,25 @@ export async function processAssistantTurn(
   const detected = detectAllToolCalls(accumulated);
   const parallelToolCalls = detected.readOnly;
 
-  // --- Circuit breaker: short-circuit on three independent loop shapes
-  // (per-args failure budget, consecutive identical calls, and
-  // per-agent delegation-outcome streaks). See `checkLoopBreaker` for
-  // the trip rules and rationale.
-  if (checkLoopBreaker(detected, tracker, loopDetector, round, chatId)) {
-    return {
-      nextApiMessages: apiMessages,
-      nextRecoveryState: recoveryState,
-      loopAction: 'break',
-      loopCompletedNormally: false,
-    };
-  }
+  // --- Circuit breaker: evaluate the per-turn loop verdict (exact-match
+  // breakers + graded near-duplicate ladder). `handleLoopVerdict` returns a
+  // turn result when the loop fires (abort → break; warn/block/compact →
+  // inject steering + skip the batch), else null to proceed. See
+  // `checkLoopBreaker` for the trip rules.
+  const loopResult = handleLoopVerdict(
+    detected,
+    tracker,
+    loopDetector,
+    loopLadder,
+    round,
+    accumulated,
+    thinkingAccumulated,
+    reasoningBlocks,
+    apiMessages,
+    recoveryState,
+    ctx,
+  );
+  if (loopResult) return loopResult;
 
   // --- Dropped-candidate error: model emitted one or more `{tool, args}`-
   // shaped calls that failed source validation. Runs before the extra-

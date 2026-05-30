@@ -199,6 +199,13 @@ export interface LoopSignals {
   similarity?: { value: number; streak: number };
   /** How many `block`s have already been issued this run (for compact escalation). */
   blocksIssued?: number;
+  /**
+   * How many `compact`s have already fired this run. Once a compaction has run
+   * and the model is *still* producing near-duplicate writes at block strength,
+   * the ladder has exhausted its softer rungs — a further block-level signal
+   * escalates straight to `abort`. Defaults to 0 (no compaction yet).
+   */
+  compactsIssued?: number;
   /** When false (default), similarity-derived levels are computed but NOT enforced. */
   similarityEnforced?: boolean;
 }
@@ -244,8 +251,19 @@ export function evaluateLoopState(signals: LoopSignals): LoopVerdict {
     const { value, streak } = signals.similarity;
     let simLevel: LoopLevel = 'warn';
     if (streak >= SIMILARITY_BLOCK_HITS) {
+      // Run-level escalation: count this block-strength event against the
+      // prior `blocksIssued`. Compact is the third strike; but if a compaction
+      // has *already* fired this run (`compactsIssued >= 1`) and the model is
+      // still writing near-duplicates at block strength, the softer rungs are
+      // spent — escalate straight to abort.
       const blocks = (signals.blocksIssued ?? 0) + 1;
-      simLevel = blocks >= BLOCKS_BEFORE_COMPACT ? 'compact' : 'block';
+      if ((signals.compactsIssued ?? 0) >= 1) {
+        simLevel = 'abort';
+      } else if (blocks >= BLOCKS_BEFORE_COMPACT) {
+        simLevel = 'compact';
+      } else {
+        simLevel = 'block';
+      }
     }
     reasons.push(
       `near-duplicate writes streak ${streak} at ${Math.round(value * 100)}% similarity`,
@@ -260,6 +278,40 @@ export function evaluateLoopState(signals: LoopSignals): LoopVerdict {
     similarity: signals.similarity?.value,
     enforced,
   };
+}
+
+/**
+ * Map an enforced verdict to the steering text injected back to the model.
+ * Centralizing the copy here keeps the three round loops (CLI `engine.ts`, web
+ * `checkLoopBreaker`, Coder `coder-agent.ts`) from drifting into per-surface
+ * wording — the same guardrail that pushed the *decision* into
+ * `evaluateLoopState`. The caller wraps this in its surface's tool-result
+ * envelope and owns flow control, which follows from `action`:
+ *
+ *   - `warn`    → execute the turn, then inject this text (a nudge).
+ *   - `block`   → skip the turn's tool batch, inject this text, continue.
+ *   - `compact` → skip the batch, force a compaction next turn, inject this text.
+ *   - `abort`   → terminate the run (handled by the caller's existing abort path).
+ *
+ * Returns null for `none`/`abort` so callers treat "no steering text to inject"
+ * uniformly — `none` because there's nothing to say, `abort` because the
+ * terminal path owns its own message. Driven by `action` (the enforceable
+ * level), so a dark verdict (`action: 'none'`) injects nothing automatically.
+ */
+export function buildLoopSteeringText(
+  verdict: Pick<LoopVerdict, 'action' | 'reasons'>,
+): string | null {
+  const detail = verdict.reasons.length > 0 ? verdict.reasons.join('; ') : 'repeated tool activity';
+  switch (verdict.action) {
+    case 'warn':
+      return `[LOOP_DETECTED] You appear to be repeating the same work without making progress (${detail}). The previous attempt did not change the situation. Re-read the current state, change your approach, or stop and report what is blocking you.`;
+    case 'block':
+      return `[LOOP_BLOCKED] Your tool call(s) this turn were skipped because they repeat work that is not making progress (${detail}). Do not retry the same call — choose a different approach or stop and report the blocker.`;
+    case 'compact':
+      return `[LOOP_COMPACT] Repeated near-identical work detected (${detail}). The conversation context is being compacted to clear the loop. Re-read the relevant state from scratch and take a materially different approach.`;
+    default:
+      return null;
+  }
 }
 
 // ---------------------------------------------------------------------------

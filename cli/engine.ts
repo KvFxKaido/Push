@@ -56,6 +56,7 @@ import { deriveUserGoalAnchor } from '../lib/user-goal-anchor.ts';
 import { loadUserGoalFile, seedUserGoalFile, extractDigestBody } from './user-goal-file.ts';
 import { escapeToolResultBoundaries } from '../lib/untrusted-content.ts';
 import {
+  buildLoopSteeringText,
   createSimilarityLoopDetector,
   evaluateLoopState,
   EXACT_REPEAT_LIMIT,
@@ -827,9 +828,15 @@ async function runAssistantLoopImpl(
   let finalAssistantText: string = '';
   const repeatedCalls: Map<string, number> = new Map();
   // Per-run near-duplicate detector — feeds the shared loop-detection oracle
-  // (lib/loop-detection.ts). Dark by default: its verdict is logged for
-  // measurement but only the exact-match branch drives the abort below.
+  // (lib/loop-detection.ts). The exact-match branch always drives the abort
+  // below; the near-duplicate ladder (warn → block → compact → abort) is
+  // enforced only under PUSH_LOOP_DETECTION=1, else computed dark for metrics.
   const similarityDetector = createSimilarityLoopDetector();
+  // Run-level ladder state: how many block-strength and compact verdicts have
+  // already fired this run. Fed back into the oracle so it can escalate
+  // block → compact → abort across turns (see evaluateLoopState).
+  let loopBlocksIssued = 0;
+  let loopCompactsIssued = 0;
   const toolsUsed: Set<string> = new Set();
   // The CLI runs two complementary ledgers per turn:
   //   - promptLedger (cli/file-ledger.ts): owns prompt budgeting, search-hit
@@ -1808,6 +1815,8 @@ async function runAssistantLoopImpl(
     const loopVerdict = evaluateLoopState({
       exactRepeat: { count: exactRepeatCount, limit: EXACT_REPEAT_LIMIT },
       similarity: worstSimilarity,
+      blocksIssued: loopBlocksIssued,
+      compactsIssued: loopCompactsIssued,
       similarityEnforced: isSimilarityLoopDetectionEnabled(),
     });
     recordLoopVerdict({
@@ -1851,6 +1860,56 @@ async function runAssistantLoopImpl(
       );
       dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'error' });
       return { outcome: 'error', finalAssistantText: loopText, rounds: round, runId };
+    }
+
+    // Graded near-duplicate enforcement (warn → block → compact). Only reached
+    // when PUSH_LOOP_DETECTION=1 makes the similarity ladder enforceable; dark
+    // verdicts resolve to action `none` and fall straight through. Steering copy
+    // is shared via `buildLoopSteeringText` so every surface phrases it the same.
+    if (
+      loopVerdict.action === 'warn' ||
+      loopVerdict.action === 'block' ||
+      loopVerdict.action === 'compact'
+    ) {
+      const steer = buildLoopSteeringText(loopVerdict);
+      if (steer) {
+        (state.messages as Message[]).push({
+          role: 'user',
+          content: `[TOOL_RESULT]\n${JSON.stringify({ tool: 'tool_loop', ok: false, output: steer })}\n[/TOOL_RESULT]`,
+        });
+      }
+      dispatchEvent('status', {
+        source: 'loop',
+        phase: loopVerdict.action,
+        detail: loopVerdict.reasons.join('; ').slice(0, 100),
+      });
+
+      // All enforced non-abort levels skip this turn's tool batch and hand the
+      // steering note back, so the model retries differently instead of
+      // executing the (N+1)th near-duplicate write — the waste the ladder
+      // exists to stop. Escalation still advances because `observeWrite`
+      // already ran above (the streak grows whether or not we execute).
+      // `block` counts toward the compact threshold; `compact` additionally
+      // clears the detector windows for a clean restart — forcing an actual
+      // *context* compaction is deferred (the CLI runs `manageContext` every
+      // round but exposes no force-gate; see
+      // docs/decisions/Loop Detection — Near-Duplicate Layer.md).
+      if (loopVerdict.action === 'block') {
+        loopBlocksIssued += 1;
+      }
+      if (loopVerdict.action === 'compact') {
+        loopCompactsIssued += 1;
+        similarityDetector.clear();
+      }
+      await appendSessionEvent(
+        state,
+        'assistant.turn_end',
+        { round: turnIndex, outcome: 'continued' },
+        runId,
+      );
+      dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'continued' });
+      await saveSessionState(state);
+      continue;
     }
 
     // --- Per-turn mutation transaction grouping (state machine) ---

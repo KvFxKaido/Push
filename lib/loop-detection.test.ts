@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BLOCKS_BEFORE_COMPACT,
+  buildLoopSteeringText,
   createSimilarityLoopDetector,
   EXACT_REPEAT_LIMIT,
   evaluateLoopState,
@@ -236,6 +237,92 @@ describe('evaluateLoopState — near-duplicate ladder (gated)', () => {
       similarityEnforced: true,
     });
     expect(v.action).toBe('compact');
+  });
+
+  it('escalates to abort when the loop persists after a compaction', () => {
+    // A compaction already fired this run; the model is still writing
+    // near-duplicates at block strength — the ladder is exhausted.
+    const v = evaluateLoopState({
+      similarity: { value: 0.9, streak: SIMILARITY_BLOCK_HITS },
+      blocksIssued: 0,
+      compactsIssued: 1,
+      similarityEnforced: true,
+    });
+    expect(v.action).toBe('abort');
+  });
+
+  it('does not abort post-compact below block strength (warn still warns)', () => {
+    const v = evaluateLoopState({
+      similarity: { value: 0.9, streak: SIMILARITY_WARN_HITS },
+      compactsIssued: 1,
+      similarityEnforced: true,
+    });
+    expect(v.action).toBe('warn');
+  });
+
+  it('walks the full ladder warn → block → compact → abort as run state advances', () => {
+    const sim = { value: 0.9, streak: SIMILARITY_BLOCK_HITS };
+    const warn = evaluateLoopState({
+      similarity: { value: 0.9, streak: SIMILARITY_WARN_HITS },
+      similarityEnforced: true,
+    });
+    const block = evaluateLoopState({ similarity: sim, blocksIssued: 0, similarityEnforced: true });
+    const compact = evaluateLoopState({
+      similarity: sim,
+      blocksIssued: BLOCKS_BEFORE_COMPACT - 1,
+      similarityEnforced: true,
+    });
+    const abort = evaluateLoopState({
+      similarity: sim,
+      compactsIssued: 1,
+      similarityEnforced: true,
+    });
+    expect([warn.action, block.action, compact.action, abort.action]).toEqual([
+      'warn',
+      'block',
+      'compact',
+      'abort',
+    ]);
+  });
+});
+
+describe('buildLoopSteeringText', () => {
+  it('returns null for non-acting actions (none, abort)', () => {
+    // `none` has nothing to say; `abort` is owned by the terminal path.
+    expect(buildLoopSteeringText({ action: 'none', reasons: [] })).toBeNull();
+    expect(buildLoopSteeringText({ action: 'abort', reasons: ['x'] })).toBeNull();
+  });
+
+  it('emits a distinct tagged message per enforced level', () => {
+    const warn = buildLoopSteeringText({ action: 'warn', reasons: ['r1'] });
+    const block = buildLoopSteeringText({ action: 'block', reasons: ['r2'] });
+    const compact = buildLoopSteeringText({ action: 'compact', reasons: ['r3'] });
+    expect(warn).toContain('[LOOP_DETECTED]');
+    expect(block).toContain('[LOOP_BLOCKED]');
+    expect(compact).toContain('[LOOP_COMPACT]');
+  });
+
+  it('folds the verdict reasons into the message', () => {
+    const text = buildLoopSteeringText({
+      action: 'block',
+      reasons: ['near-duplicate writes streak 6 at 90% similarity'],
+    });
+    expect(text).toContain('near-duplicate writes streak 6 at 90% similarity');
+  });
+
+  it('falls back to a generic detail when reasons are empty', () => {
+    const text = buildLoopSteeringText({ action: 'warn', reasons: [] });
+    expect(text).toContain('repeated tool activity');
+  });
+
+  it('injects nothing for a dark verdict (action none drives the copy)', () => {
+    // A would-warn verdict that stays dark resolves to action `none`, so the
+    // builder is silent — enforcement copy can never leak while dark.
+    const v = evaluateLoopState({
+      similarity: { value: 0.95, streak: SIMILARITY_WARN_HITS },
+      similarityEnforced: false,
+    });
+    expect(buildLoopSteeringText(v)).toBeNull();
   });
 });
 

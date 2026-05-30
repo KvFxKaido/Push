@@ -2,9 +2,26 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { EXACT_REPEAT_LIMIT, evaluateLoopState } from '../../lib/loop-detection.ts';
+import {
+  BLOCKS_BEFORE_COMPACT,
+  EXACT_REPEAT_LIMIT,
+  evaluateLoopState,
+  SIMILARITY_BLOCK_HITS,
+  SIMILARITY_WARN_HITS,
+} from '../../lib/loop-detection.ts';
 
 const engineSource = readFileSync(new URL('../engine.ts', import.meta.url), 'utf8');
+// The web round loop spans two modules: chat-send.ts (calls handleLoopVerdict)
+// and chat-send-helpers.ts (which owns checkLoopBreaker + handleLoopVerdict and
+// consumes buildLoopSteeringText). Treat both as the "web surface" so the
+// drift check tracks the implementation wherever the max-lines extraction puts
+// it.
+const webSendSource =
+  readFileSync(new URL('../../app/src/hooks/chat-send.ts', import.meta.url), 'utf8') +
+  '\n' +
+  readFileSync(new URL('../../app/src/hooks/chat-send-helpers.ts', import.meta.url), 'utf8');
+const coderSource = readFileSync(new URL('../../lib/coder-agent.ts', import.meta.url), 'utf8');
+const oracleSource = readFileSync(new URL('../../lib/loop-detection.ts', import.meta.url), 'utf8');
 
 // Drift detector: the CLI must NOT re-grow a bespoke repeated-call breaker.
 // The loop *decision* lives in lib/loop-detection.ts and the CLI must route
@@ -64,5 +81,77 @@ describe('CLI loop-detection drift — preserved abort semantics', () => {
       similarityEnforced: false,
     });
     assert.equal(verdict.action, 'abort');
+  });
+});
+
+// Graded enforcement drift: all three surfaces must route the warn/block/compact
+// steering through the shared `buildLoopSteeringText` builder and must NOT
+// re-inline the [LOOP_*] copy. The tags live in exactly one place (the oracle).
+describe('graded loop enforcement — shared steering vocabulary', () => {
+  for (const [name, source] of [
+    ['cli/engine.ts', engineSource],
+    ['app/src/hooks/chat-send{,-helpers}.ts', webSendSource],
+    ['lib/coder-agent.ts', coderSource],
+  ]) {
+    it(`${name} consumes the shared buildLoopSteeringText builder`, () => {
+      assert.ok(
+        source.includes('buildLoopSteeringText'),
+        `${name} must build steering copy via buildLoopSteeringText`,
+      );
+    });
+
+    it(`${name} does not re-inline the [LOOP_*] steering tags`, () => {
+      assert.doesNotMatch(
+        source,
+        /\[LOOP_(DETECTED|BLOCKED|COMPACT)\]/,
+        `${name} must not hard-code loop steering copy — it belongs in lib/loop-detection.ts`,
+      );
+    });
+  }
+
+  it('the [LOOP_*] steering tags are defined exactly once, in the oracle', () => {
+    for (const tag of ['[LOOP_DETECTED]', '[LOOP_BLOCKED]', '[LOOP_COMPACT]']) {
+      assert.ok(oracleSource.includes(tag), `oracle must define ${tag}`);
+    }
+  });
+});
+
+// Behavioral pin: the full graded ladder advances warn → block → compact → abort
+// as run-level state accrues. Locks the cross-surface escalation contract so a
+// future edit can't silently collapse a rung.
+describe('graded loop enforcement — full ladder', () => {
+  const sim = { value: 0.9, streak: SIMILARITY_BLOCK_HITS };
+  it('warns at the warn boundary when enforced', () => {
+    assert.equal(
+      evaluateLoopState({
+        similarity: { value: 0.9, streak: SIMILARITY_WARN_HITS },
+        similarityEnforced: true,
+      }).action,
+      'warn',
+    );
+  });
+  it('blocks, then compacts after enough blocks, then aborts post-compact', () => {
+    assert.equal(
+      evaluateLoopState({ similarity: sim, blocksIssued: 0, similarityEnforced: true }).action,
+      'block',
+    );
+    assert.equal(
+      evaluateLoopState({
+        similarity: sim,
+        blocksIssued: BLOCKS_BEFORE_COMPACT - 1,
+        similarityEnforced: true,
+      }).action,
+      'compact',
+    );
+    assert.equal(
+      evaluateLoopState({ similarity: sim, compactsIssued: 1, similarityEnforced: true }).action,
+      'abort',
+    );
+  });
+  it('keeps the entire near-duplicate ladder dark when not enforced', () => {
+    assert.equal(
+      evaluateLoopState({ similarity: sim, blocksIssued: BLOCKS_BEFORE_COMPACT - 1 }).action,
+      'none',
+    );
   });
 });

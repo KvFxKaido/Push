@@ -42,7 +42,13 @@ import {
 import { createId } from '@push/lib/id-utils';
 import { type ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import type { ChatMessage, ReasoningBlock, RunEventInput } from '@/types';
-import { processAssistantTurn, streamAssistantRound, type SendLoopContext } from './chat-send';
+import {
+  createLoopLadderState,
+  type LoopLadderState,
+  processAssistantTurn,
+  streamAssistantRound,
+  type SendLoopContext,
+} from './chat-send';
 import { buildRuntimeUserMessage } from './chat-prepare-send';
 import type { PendingSteersByChat } from './usePendingSteer';
 
@@ -301,6 +307,10 @@ export async function runRoundLoop(
   // per-path window survives across rounds. Feeds the shared loop-detection
   // oracle in `checkLoopBreaker`.
   const loopDetector: SimilarityLoopDetector = createSimilarityLoopDetector();
+  // Run-level escalation state for the near-duplicate ladder (block → compact →
+  // abort across turns). Threaded into `processAssistantTurn` → `checkLoopBreaker`
+  // alongside the detector so its counters survive the round loop.
+  const loopLadder: LoopLadderState = createLoopLadderState();
   let loopCompletedNormally = false;
 
   // Track events fired during the current round so the workspace-patch
@@ -422,6 +432,7 @@ export async function runRoundLoop(
       toolCallRecoveryState,
       tracker,
       loopDetector,
+      loopLadder,
     );
 
     apiMessages = turnResult.nextApiMessages;
