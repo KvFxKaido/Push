@@ -88,7 +88,7 @@ So Push is not missing a *contract*. It is missing a **published, language-agnos
 ## What's Worth Borrowing
 
 1. **Publish a machine-readable description of `push.runtime.v1`.** A JSON-Schema for the event envelope + payload union (and, secondarily, an OpenAPI doc for the Worker's existing handlers). This is additive, topology-neutral, and converts the drift tests from "TS matches TS" into "runtime matches spec." Highest leverage, lowest risk.
-2. **Pin the session-verb and child-session vocabulary now**, even if unimplemented — `abort`/`revert`/`summarize`/`children` — so a future session API doesn't invent a third spelling for things Push already does internally.
+2. **Pin the session-verb and child-session vocabulary now**, even if unimplemented — `abort`/`revert`/`summarize`/`children` — so a future session API doesn't invent a third spelling for things Push already does internally. Note that opencode-style *addressable* sessions are only safe to expose once every session has auth by construction — which is exactly what [Universal Session Bearer](Universal%20Session%20Bearer.md) establishes. The bearer is the prerequisite; this verb vocabulary is the layer above it. They're one sequence (bearer → addressable verbs → optional session API), not two unrelated borrows.
 3. **Treat the approval pair as a first-class request/response in any spec**, not two unrelated broadcast events — Push is already shaped for this (`approvalId` round-trip).
 
 ## What's Not Worth Borrowing
@@ -121,5 +121,4 @@ Push counterparts:
 - `app/src/worker/relay-routes.ts` — ring-buffer replay
 - `cli/tests/protocol-drift.test.mjs`, `cli/tests/protocol-schema.test.mjs`, `cli/tests/daemon-integration.test.mjs` — drift guards
 - [Web and CLI Runtime Contract](Web%20and%20CLI%20Runtime%20Contract.md) — "same brain, different shells"; Phase 7 out of scope
-</content>
-</invoke>
+- [Universal Session Bearer](Universal%20Session%20Bearer.md) — the auth prerequisite for ever exposing addressable sessions (see suggested-priority #2 above)

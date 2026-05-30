@@ -1,7 +1,7 @@
 # Universal Session Bearer
 
 Date: 2026-05-30
-Status: **Draft** — design complete, decisions made; needs a `ROADMAP.md` entry to graduate to implementation
+Status: **Draft, ROADMAP-tracked** (Session Continuity & Stability) — design complete, decisions made; implementation not yet started
 Owner: Push
 
 Every daemon session should carry an attach token **from birth**, and every
@@ -132,16 +132,29 @@ session until restart. This is the wholesale version of the
   wrong envelope shape. Tests here must assert against the *real* on-disk and
   wire shapes, not assumed ones.
 
+## Relation to addressable sessions
+
+This is also the **auth prerequisite** for the session-verb / addressable-session
+direction in [`opencode SDK Review.md`](opencode%20SDK%20Review.md) (suggested-
+priority #2). opencode-style addressable sessions (`abort`/`revert`/`summarize`/
+`children`, or any exposed session API) are only safe once every session has
+auth *by construction* — which is exactly the invariant this doc establishes.
+The sequence is: **bearer (this doc) → addressable session verbs → optional
+session API**, not three unrelated efforts. Pinning the bearer first is what
+makes the later layers cheap and safe.
+
 ## Out of scope
 
 - Rotating/expiring attach tokens (separate concern from "always present").
 - The remote relay shared-secret model (`PUSH_RELAY_TOKEN`) — that is the
   separate "enroll / no copy-paste drift" track (direction ② from the
   2026-05-30 brainstorm).
+- Exposing an addressable session API (the layer *above* this — see above).
 
 ## Graduation
 
-Needs a `ROADMAP.md` entry before implementation. Suggested sequence:
-factory (1) → adopt-from-response (2) → bootstrap grace (4) → drop bypass +
-opt-out (3) → retire patch (5), each with the audit table re-verified and the
-drift/lockout tests in the same PR.
+ROADMAP-tracked under **Session Continuity & Stability** (the first-priority
+item, 2026-05-30). Suggested implementation sequence: factory (1) →
+adopt-from-response (2) → bootstrap grace (4) → drop bypass + opt-out (3) →
+retire patch (5), each with the audit table re-verified and the drift/lockout
+tests in the same PR.
