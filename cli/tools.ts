@@ -26,6 +26,7 @@ import type { AgentRole } from '../lib/runtime-contract.ts';
 import {
   deriveProtocolVersion,
   getToolProtocolEntries,
+  getToolPublicNames,
   resolveToolName,
 } from '../lib/tool-registry.ts';
 import { evaluatePreHooks } from '../lib/tool-hooks.ts';
@@ -958,9 +959,13 @@ export const GITHUB_PUBLIC_TOOL_NAMES: ReadonlySet<string> = new Set(
 );
 
 // Public names of the read-only GitHub tools — folded into the CLI's
-// READ_ONLY_TOOLS-style parallelization bucket at dispatch time.
+// READ_ONLY_TOOLS-style parallelization bucket at dispatch time. Sourced from
+// the shared registry helper (the single source of truth, also consumed by the
+// web surface via `isReadOnlyToolName`) so the CLI's parallelization decision
+// can't drift from the canonical `readOnly` flags. `readonly-classification-
+// drift.test.mjs` pins this equivalence across surfaces.
 export const GITHUB_READ_ONLY_PUBLIC_TOOL_NAMES: ReadonlySet<string> = new Set(
-  GITHUB_PROTOCOL_ENTRIES.filter((spec) => spec.readOnly).map((spec) => spec.publicName),
+  getToolPublicNames({ source: 'github', readOnly: true }),
 );
 
 export function isGitHubToolName(name: unknown): boolean {
