@@ -853,8 +853,44 @@ export { getRestartPolicy, shouldRecover, DEFAULT_RESTART_POLICY, VALID_AGENT_RO
 // promotion into `./session-store`.
 export { makeAttachToken };
 
+// Dedup `open_attach_used` to one warn per session entry — the opt-out is a
+// deliberate dev mode, so we want visibility, but not a line per RPC. Keyed by
+// the registry entry object (WeakSet so evicted entries don't leak).
+const openAttachWarnedEntries = new WeakSet();
+
+/**
+ * Is this session explicitly opted into open (bearer-less) attach? The escape
+ * hatch the Universal Session Bearer leaves for deliberate dev use: a
+ * per-session `openAttach: true` flag (on the entry or its persisted state) or
+ * the process-wide `PUSHD_OPEN_ATTACH=1`. Anything else requires a matching
+ * bearer — there is no longer an implicit "tokenless = open" bypass.
+ */
+function isOpenAttach(entry) {
+  return (
+    entry?.openAttach === true ||
+    entry?.state?.openAttach === true ||
+    process.env.PUSHD_OPEN_ATTACH === '1'
+  );
+}
+
 export function validateAttachToken(entry, providedToken) {
-  if (!entry || !entry.attachToken) return true;
+  // No session object = nothing to gate here. Handlers check existence
+  // (SESSION_NOT_FOUND) before they ever reach validation, so a null entry is
+  // never a real auth decision — it can't be reached with a live session.
+  if (!entry) return true;
+  // Explicit opt-out only. The former `!entry.attachToken → true` bypass is
+  // GONE (Universal Session Bearer): a tokenless session is no longer open by
+  // accident. "Open" survives solely as this deliberate, logged choice.
+  if (isOpenAttach(entry)) {
+    if (!openAttachWarnedEntries.has(entry)) {
+      openAttachWarnedEntries.add(entry);
+      const source = process.env.PUSHD_OPEN_ATTACH === '1' ? 'env' : 'session';
+      process.stderr.write(
+        `${JSON.stringify({ level: 'warn', event: 'open_attach_used', sessionId: entry?.state?.sessionId, source })}\n`,
+      );
+    }
+    return true;
+  }
   if (typeof providedToken !== 'string' || !providedToken) return false;
   return entry.attachToken === providedToken;
 }
@@ -5643,30 +5679,23 @@ async function handleRelayStatus(req, _emitEvent, context) {
  */
 type MintableSessionEntry = {
   attachToken?: string | null;
-  state?: { attachToken?: string | null } | null;
+  state?: { attachToken?: string | null; sessionId?: string } | null;
 };
 
 /**
- * Resolve the attach token for a target daemon session, minting one if it has
- * none. Sessions created via the TUI/session-store — or adopted "open" by the
- * daemon — never went through `start_session`, the only path that mints an
- * attach token, so they're tokenless (and `validateAttachToken` treats that as
- * "open": local attach needs no bearer). Remote pairing, though, must hand the
- * phone a bearer, so we mint one here and pin it to the session in memory. The
- * caller persists `entry.state` (where the new token is also written) and
- * surfaces `minted` so the live TUI can adopt the token before its next
- * reconnect — otherwise pinning a token would lock the TUI out of its own
- * session. Kept I/O-free (random token + entry mutation only) so it's unit-
- * testable without a session dir on disk.
+ * Resolve the attach token for a target daemon session. Under the Universal
+ * Session Bearer this is now a plain resolve: every session is tokened at
+ * birth (the `createSessionState` factory) or on first attach (the
+ * bootstrap-grace legacy claim), so `entry.attachToken` is always present and
+ * the `minted: false` branch is the only one real traffic takes.
  *
- * BEHAVIOR CHANGE on mint: the session flips from "open attach" (no bearer
- * required) to "bearer required" for ALL clients, since `validateAttachToken`
- * keys off `entry.attachToken`. This is intentional — a session being exposed
- * to a remote phone should require a bearer — and benign locally: the
- * unix-socket admin surface is already 0600, so any local client can read the
- * minted token from persisted state. The only edge is a *second* concurrent
- * local open-attach client to the same sessionId, which would then need the
- * token (the pairing TUI itself adopts it from the response).
+ * The defensive mint below is RETIRED to a TRIPWIRE — if it ever fires, a
+ * session creation path slipped past the factory (a regression), so it logs
+ * `attach_token_minted_unexpectedly` (warn) loudly while still minting so
+ * remote pairing keeps working rather than hard-failing. Kept I/O-free (random
+ * token + entry mutation only) so it's unit-testable without a session dir.
+ * The caller persists `entry.state` and surfaces `minted` so a live TUI can
+ * adopt the token before its next reconnect.
  *
  * Throws on a missing/non-object entry — the caller (`handleMintRemotePairBundle`)
  * already rejects an absent session with SESSION_NOT_FOUND, but the export must
@@ -5677,7 +5706,13 @@ export function resolveOrMintTargetAttachToken(entry: MintableSessionEntry) {
     throw new Error('resolveOrMintTargetAttachToken requires a session entry object');
   }
   if (entry.attachToken) return { token: entry.attachToken, minted: false };
+  // TRIPWIRE: reaching here means a session reached remote-pairing without a
+  // bearer — i.e. a creation path bypassed the factory and the bootstrap grace
+  // never claimed it. Mint defensively so pairing still works, but log loudly.
   const token = makeAttachToken();
+  process.stderr.write(
+    `${JSON.stringify({ level: 'warn', event: 'attach_token_minted_unexpectedly', sessionId: entry.state?.sessionId })}\n`,
+  );
   entry.attachToken = token;
   if (entry.state && typeof entry.state === 'object') {
     entry.state.attachToken = token;
@@ -5761,9 +5796,11 @@ async function handleMintRemotePairBundle(req, _emitEvent, context) {
         'Target daemon session is not active.',
       );
     }
-    // Tokenless target (TUI/session-store session adopted "open"): mint a
-    // bearer now so the phone can attach. The caller-side TUI adopts the
-    // returned token; persistence below keeps it across daemon restarts.
+    // Universal Session Bearer: the target is tokened at birth (factory) or on
+    // first attach (grace), so this resolves to the existing token and
+    // `minted` is false. The mint branch is now a tripwire — if it fires, a
+    // creation path slipped past the factory (see resolveOrMintTargetAttachToken).
+    // The persist + adopt plumbing below is kept for that defensive case.
     const resolved = resolveOrMintTargetAttachToken(entry);
     resolvedTargetAttachToken = resolved.token;
     if (resolved.minted) {

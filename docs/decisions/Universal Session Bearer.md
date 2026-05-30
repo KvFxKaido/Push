@@ -1,7 +1,9 @@
 # Universal Session Bearer
 
 Date: 2026-05-30
-Status: **Draft, ROADMAP-tracked** (Session Continuity & Stability) — design complete, decisions made; implementation not yet started
+Status: **Current** (Session Continuity & Stability) — shipped across three PRs:
+(1) creation factory, (2+4) bootstrap grace + adopt-from-response, (3+5) drop
+the bypass + explicit opt-out + retire the patch to a tripwire.
 Owner: Push
 
 Every daemon session should carry an attach token **from birth**, and every

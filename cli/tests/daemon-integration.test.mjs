@@ -417,15 +417,37 @@ describe('validateAttachToken', () => {
     assert.equal(validateAttachToken(entry, 'att_abc123'), true);
   });
 
-  it('passes when no token set on entry (legacy/internal)', () => {
-    assert.equal(validateAttachToken({ state: {} }, undefined), true);
-    assert.equal(validateAttachToken({ state: {}, attachToken: '' }, 'anything'), true);
-    assert.equal(validateAttachToken({ state: {}, attachToken: null }, undefined), true);
+  it('REJECTS a tokenless entry — the !entry.attachToken bypass is removed (Universal Session Bearer)', () => {
+    assert.equal(validateAttachToken({ state: {} }, undefined), false);
+    assert.equal(validateAttachToken({ state: {}, attachToken: '' }, 'anything'), false);
+    assert.equal(validateAttachToken({ state: {}, attachToken: null }, undefined), false);
   });
 
-  it('allows when entry is null/undefined (no entry = no token requirement)', () => {
+  it('allows when entry is null/undefined (no entry = nothing to gate; existence checked separately)', () => {
     assert.equal(validateAttachToken(null, 'token'), true);
     assert.equal(validateAttachToken(undefined, 'token'), true);
+  });
+
+  it('honors the explicit openAttach opt-out (per-session flag, on entry or state)', () => {
+    assert.equal(validateAttachToken({ state: {}, openAttach: true }, undefined), true);
+    assert.equal(validateAttachToken({ state: { openAttach: true } }, undefined), true);
+    // A tokened session can still be force-opened by the flag.
+    assert.equal(
+      validateAttachToken({ state: {}, attachToken: 'att_x', openAttach: true }, ''),
+      true,
+    );
+  });
+
+  it('honors the process-wide PUSHD_OPEN_ATTACH=1 opt-out', () => {
+    const original = process.env.PUSHD_OPEN_ATTACH;
+    process.env.PUSHD_OPEN_ATTACH = '1';
+    try {
+      assert.equal(validateAttachToken({ state: {}, attachToken: 'att_x' }, undefined), true);
+      assert.equal(validateAttachToken({ state: {} }, undefined), true);
+    } finally {
+      if (original === undefined) delete process.env.PUSHD_OPEN_ATTACH;
+      else process.env.PUSHD_OPEN_ATTACH = original;
+    }
   });
 });
 
@@ -476,6 +498,41 @@ describe('resolveOrMintTargetAttachToken', () => {
     assert.throws(() => resolveOrMintTargetAttachToken(null), /requires a session entry/);
     assert.throws(() => resolveOrMintTargetAttachToken(undefined), /requires a session entry/);
     assert.throws(() => resolveOrMintTargetAttachToken('nope'), /requires a session entry/);
+  });
+
+  it('logs the attach_token_minted_unexpectedly tripwire on the mint branch, silent on resolve', () => {
+    // Under Universal Session Bearer the mint branch is a tripwire: reaching it
+    // means a creation path slipped past the factory. Capture stderr to assert
+    // the warn fires exactly once (mint), never on the resolve (tokened) path.
+    const original = process.stderr.write.bind(process.stderr);
+    const lines = [];
+    process.stderr.write = (chunk) => {
+      lines.push(String(chunk));
+      return true;
+    };
+    try {
+      // Resolve branch (tokened): no tripwire.
+      resolveOrMintTargetAttachToken({
+        state: { sessionId: 's_ok', attachToken: 'att_ok' },
+        attachToken: 'att_ok',
+      });
+      // Mint branch (tokenless): tripwire fires.
+      resolveOrMintTargetAttachToken({ state: { sessionId: 's_trip' } });
+    } finally {
+      process.stderr.write = original;
+    }
+    const tripwires = lines
+      .map((l) => {
+        try {
+          return JSON.parse(l);
+        } catch {
+          return null;
+        }
+      })
+      .filter((e) => e && e.event === 'attach_token_minted_unexpectedly');
+    assert.equal(tripwires.length, 1, 'tripwire must fire exactly once (mint branch only)');
+    assert.equal(tripwires[0].level, 'warn');
+    assert.equal(tripwires[0].sessionId, 's_trip');
   });
 });
 
@@ -4786,14 +4843,14 @@ describe('attach token persistence', () => {
     }
   });
 
-  it('legacy session without persisted attachToken falls through the bypass', async () => {
+  it('legacy session without persisted attachToken is now REJECTED on a non-attach handler (bypass removed)', async () => {
     const originalSessionDir = process.env.PUSH_SESSION_DIR;
     const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-attach-legacy-'));
     process.env.PUSH_SESSION_DIR = tmpRoot;
     try {
-      // Create a session the normal way, then manually strip the
-      // attachToken field from its persisted state to simulate a session
-      // created before this field existed.
+      // Create a session the normal way, then strip the attachToken field
+      // from its persisted state to simulate a session created before the
+      // bearer field existed.
       const start = await handleRequest(
         makeRequest('start_session', {
           provider: 'ollama',
@@ -4808,9 +4865,11 @@ describe('attach token persistence', () => {
       delete raw.attachToken;
       await saveSessionState(raw);
 
-      // With no persisted token, the disk-load path leaves
-      // entry.attachToken undefined, and validateAttachToken's bypass
-      // accepts any caller-provided token (including empty/missing).
+      // Universal Session Bearer: the `!entry.attachToken → true` bypass is
+      // gone. A tokenless session hitting a NON-attach handler (no bootstrap
+      // grace lives there — grace is attach-only) with no token is now
+      // rejected. The migration path for such a session is to attach first
+      // (which claims it via grace); only `attach_session` claims.
       const response = await handleRequest(
         makeRequest(
           'configure_role_routing',
@@ -4822,16 +4881,54 @@ describe('attach token persistence', () => {
         ),
         () => {},
       );
+      assert.equal(response.ok, false, 'tokenless legacy session must no longer bypass auth');
+      assert.equal(response.error.code, 'INVALID_TOKEN');
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('PUSHD_OPEN_ATTACH=1 re-opens a tokenless session as the explicit dev opt-out', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const originalOpenAttach = process.env.PUSHD_OPEN_ATTACH;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-open-attach-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId } = start.payload;
+      __evictActiveSessionForTesting(sessionId);
+      const raw = await loadSessionState(sessionId);
+      delete raw.attachToken;
+      await saveSessionState(raw);
+
+      // Opt-out engaged: the bearerless call is accepted again, but only
+      // because the operator deliberately set the env flag (logged once as
+      // `open_attach_used`).
+      process.env.PUSHD_OPEN_ATTACH = '1';
+      const response = await handleRequest(
+        makeRequest(
+          'configure_role_routing',
+          { sessionId, routing: { explorer: { provider: 'ollama' } } },
+          sessionId,
+        ),
+        () => {},
+      );
       assert.equal(
         response.ok,
         true,
-        `expected legacy bypass success, got ${JSON.stringify(response.error)}`,
+        `expected open-attach opt-out to accept, got ${JSON.stringify(response.error)}`,
       );
-
-      const reloaded = __getActiveSessionForTesting(sessionId);
-      assert.ok(reloaded);
-      assert.equal(reloaded.attachToken, undefined);
     } finally {
+      if (originalOpenAttach === undefined) delete process.env.PUSHD_OPEN_ATTACH;
+      else process.env.PUSHD_OPEN_ATTACH = originalOpenAttach;
       if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
       else process.env.PUSH_SESSION_DIR = originalSessionDir;
       await fs.rm(tmpRoot, { recursive: true, force: true });

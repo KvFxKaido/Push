@@ -168,29 +168,26 @@ describe('attach_session bootstrap grace (legacy cutover)', () => {
     });
   });
 
-  it('does NOT claim a legacy tokenless session attached WITH a token (enforces normally)', async () => {
+  it('does NOT claim a legacy tokenless session attached WITH a token, and rejects it (bypass removed)', async () => {
     await withTempSessionDir('push-grace-clienttoken-', async () => {
       const sessionId = await makeLegacyTokenlessSession();
 
       // tokenless on disk + client presents a token → "any other combination
-      // enforces normally". The validateAttachToken bypass still accepts it in
-      // this PR (PR3 flips it to a reject). Either way grace must NOT fire.
+      // enforces normally". Grace does NOT fire (client presented a token), and
+      // with the bypass removed (Universal Session Bearer) the mismatch
+      // (undefined session token vs the client's token) is now rejected.
       const res = await handleRequest(
         makeRequest('attach_session', { sessionId, attachToken: 'att_clientheld' }),
         noop,
       );
-      assert.equal(res.ok, true, 'bypass should still accept a tokenless session in this PR');
+      assert.equal(res.ok, false, 'tokenless session + client token must be rejected, not claimed');
+      assert.equal(res.error.code, 'INVALID_TOKEN');
 
       const entry = __getActiveSessionForTesting(sessionId);
       assert.equal(
         entry.attachToken,
         undefined,
         'grace must not mint when the client presented a token',
-      );
-      assert.equal(
-        res.payload.attachToken,
-        undefined,
-        'no token to adopt when the session stays tokenless',
       );
     });
   });
