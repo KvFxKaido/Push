@@ -92,9 +92,13 @@ export function RelayModeChip({ deploymentUrl, status, replayUnavailableAt }: Re
           React state setters in effects trip the
           react-hooks/set-state-in-effect rule. */}
       <style>{`
+        /* Only the amber flash start is specified; the implicit 100% resolves
+           to the element's own color (the text-push-fg-secondary token class),
+           so the steady-state color stays token-driven and can't drift from a
+           hardcoded hex. No fill-mode: after the flash, color reverts to the
+           class value (which equals the implicit 100%, so there's no snap). */
         @keyframes relay-replay-flash {
           0% { color: rgb(251, 191, 36); }
-          100% { color: #b4becf; }
         }
       `}</style>
       {/* Chrome-less so it sits inside the header's launcher-pill frame and
@@ -107,7 +111,7 @@ export function RelayModeChip({ deploymentUrl, status, replayUnavailableAt }: Re
         className="inline-flex min-w-0 items-center gap-1.5 text-xs font-medium text-push-fg-secondary"
         style={
           isReplayEvent
-            ? { animation: `relay-replay-flash ${FLASH_DURATION_MS}ms ease-out forwards` }
+            ? { animation: `relay-replay-flash ${FLASH_DURATION_MS}ms ease-out` }
             : undefined
         }
       >
