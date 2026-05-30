@@ -471,6 +471,12 @@ describe('resolveOrMintTargetAttachToken', () => {
     assert.equal(result.minted, true);
     assert.equal(entry.attachToken, result.token);
   });
+
+  it('throws loudly on a missing/non-object entry instead of a cryptic assignment error', () => {
+    assert.throws(() => resolveOrMintTargetAttachToken(null), /requires a session entry/);
+    assert.throws(() => resolveOrMintTargetAttachToken(undefined), /requires a session entry/);
+    assert.throws(() => resolveOrMintTargetAttachToken('nope'), /requires a session entry/);
+  });
 });
 
 // ─── Daemon client library ──────────────────────────────────────

@@ -5588,6 +5588,16 @@ async function handleRelayStatus(req, _emitEvent, context) {
 }
 
 /**
+ * Minimal shape of an `activeSessions` entry this helper reads/mutates. The
+ * registry Map is untyped (`new Map()`), so this narrow type documents the
+ * contract for the exported helper and its isolation tests.
+ */
+type MintableSessionEntry = {
+  attachToken?: string | null;
+  state?: { attachToken?: string | null } | null;
+};
+
+/**
  * Resolve the attach token for a target daemon session, minting one if it has
  * none. Sessions created via the TUI/session-store — or adopted "open" by the
  * daemon — never went through `start_session`, the only path that mints an
@@ -5599,9 +5609,25 @@ async function handleRelayStatus(req, _emitEvent, context) {
  * reconnect — otherwise pinning a token would lock the TUI out of its own
  * session. Kept I/O-free (random token + entry mutation only) so it's unit-
  * testable without a session dir on disk.
+ *
+ * BEHAVIOR CHANGE on mint: the session flips from "open attach" (no bearer
+ * required) to "bearer required" for ALL clients, since `validateAttachToken`
+ * keys off `entry.attachToken`. This is intentional — a session being exposed
+ * to a remote phone should require a bearer — and benign locally: the
+ * unix-socket admin surface is already 0600, so any local client can read the
+ * minted token from persisted state. The only edge is a *second* concurrent
+ * local open-attach client to the same sessionId, which would then need the
+ * token (the pairing TUI itself adopts it from the response).
+ *
+ * Throws on a missing/non-object entry — the caller (`handleMintRemotePairBundle`)
+ * already rejects an absent session with SESSION_NOT_FOUND, but the export must
+ * fail loudly rather than throw a cryptic "cannot set property of null".
  */
-export function resolveOrMintTargetAttachToken(entry) {
-  if (entry?.attachToken) return { token: entry.attachToken, minted: false };
+export function resolveOrMintTargetAttachToken(entry: MintableSessionEntry) {
+  if (!entry || typeof entry !== 'object') {
+    throw new Error('resolveOrMintTargetAttachToken requires a session entry object');
+  }
+  if (entry.attachToken) return { token: entry.attachToken, minted: false };
   const token = makeAttachToken();
   entry.attachToken = token;
   if (entry.state && typeof entry.state === 'object') {
@@ -5628,6 +5654,11 @@ export function resolveOrMintTargetAttachToken(entry) {
  * already has filesystem-level admin authority over the daemon
  * config; the pair bundle conveys exactly that authority to one
  * remote phone.
+ *
+ * NOTE: pairing a *tokenless* target session mints an attach token for it
+ * (see `resolveOrMintTargetAttachToken`), which flips that session from "open
+ * attach" to "bearer required" for all clients. Intentional and benign — see
+ * that helper's doc for the rationale and the one local-client edge case.
  */
 async function handleMintRemotePairBundle(req, _emitEvent, context) {
   if (context?.record || context?.auth) return refuseFromWs(req, 'mint_remote_pair_bundle');
