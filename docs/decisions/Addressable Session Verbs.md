@@ -58,9 +58,9 @@ it stands after the audit.
 | **Abort (parent run)** | `cancel_run` | `session.abort` | `handleCancelRun` | shipped — **auth gap, see below** |
 | **Abort (child run)** | `cancel_delegation` | child `session.abort` | `handleCancelDelegation` | shipped |
 | Permission respond | `submit_approval` | `permissions/{id}/respond` | `handleSubmitApproval` + `approval_*` events | shipped (Push is *ahead* — already a request/respond pair) |
-| **Children — list** | `list_children` | `session.children` | `activeDelegations` map + `state.delegationOutcomes` | **shipped (phase 3a)** |
-| **Children — read** | `get_child_session` | child `session.get` | descriptor + event summary; recovers completed-child metadata from `subagent.started`; shares the child-event predicate with `fetch_delegation_events` | **shipped (phase 3a)** |
-| **Children — attach** | `attach_child_session` | (n/a) | broadcast child events by `childRunId` | **phase 3b** |
+| **Children — list** | `list_children` | `session.children` | `activeDelegations` + `delegationOutcomes`; opt-in `includeEventDerived` reconstructs reviewer children from the log | **shipped (3a + 3b)** |
+| **Children — read** | `get_child_session` | child `session.get` | descriptor + event summary; resolves active → outcome → event-derived; shares the child-event predicate with `fetch_delegation_events` | **shipped (3a + 3b)** |
+| **Children — attach (live)** | `attach_child_session` | (n/a) | broadcast child events by `childRunId` | **deferred — redundant; see 3b note** |
 | **Summarize** | `session_summarize` | `session.summarize` | compaction (`compactContext`, CLI-only today) | **phase: summarize** |
 | **Revert / unrevert** | `session_revert` / `session_unrevert` | `session.revert` / `unrevert` | *none daemon-reachable* | **phase: revert (real build)** |
 | Abort verb sugar | `abort` (alias) | `session.abort` | routes to `cancel_run` / `cancel_delegation` by id shape; re-stamps response `type` to `abort` | **shipped (phase 2b)** |
@@ -129,18 +129,26 @@ It does **not** get its own `state.json`; it is a *view* over the parent session
 
 - `list_children(sessionId)` → active delegations (`activeDelegations` keys +
   role/task/startedAt) plus completed `state.delegationOutcomes`. Read-only,
-  bearer-gated, and cheap (no event-log scan). **Boundary:** only `delegate_coder`
-  / `delegate_explorer` persist a `DelegationOutcome`; reviewer / deep_reviewer
-  runs are advisory and persist none, so they appear only while *active* and drop
-  off once finished. Event-derived enumeration of completed reviewer children is
-  deferred to phase 3b (it would add the full-log scan this call avoids).
+  bearer-gated, and cheap by default (no event-log scan). Only `delegate_coder` /
+  `delegate_explorer` persist a `DelegationOutcome`, so reviewer / deep_reviewer
+  runs would otherwise drop off once finished. **Closed in 3b:** pass
+  `includeEventDerived: true` to reconstruct those completed children from the log
+  (one O(n) scan, opt-in so the default stays O(children)).
 - `get_child_session(sessionId, subagentId)` → the child as a structured
   descriptor (status/role/task/childRunId/parentRunId) plus an event *summary*
-  (count + seq range); recovers a completed child's metadata from its
-  `subagent.started` event. The full transcript stays on `fetch_delegation_events`
-  (the two share one `eventBelongsToChild` predicate so they can't drift).
-- `attach_child_session(sessionId, subagentId)` → live child events, scoped by
-  `childRunId` (phase 3b).
+  (count + seq range). Resolves **active → persisted outcome → event-derived**:
+  it already scans the child's events, so a completed reviewer child (in the log
+  but not in outcomes) is reconstructed for free with `source: 'events'` and a
+  `terminalType`. The full transcript stays on `fetch_delegation_events` (the two
+  share one `eventBelongsToChild` predicate so they can't drift).
+- `attach_child_session` (live child stream) — **deferred.** Live child events
+  already broadcast to every session-attached client (the delegation handlers
+  call `broadcastEvent` with `subagent.*`), so a client gets a live child view by
+  filtering a session attach with the same `eventBelongsToChild` predicate. A
+  dedicated filtered fan-out is largely redundant and would need a wrapped emit
+  fn plus lifecycle cleanup in `handleConnection` (socket) and the relay path. Not
+  worth that surgery for marginal value; revisit only if a focused child-only
+  stream (without a parent attach) is actually needed.
 - Child abort = `cancel_delegation(sessionId, subagentId)` (already shipped).
 
 This keeps the branch-as-session-target model intact (children are sub-views, not
@@ -157,9 +165,10 @@ routes by id shape: a `subagentId` (`sub_*`) → `cancel_delegation`; otherwise 
 
 - `cancel_run_unauthenticated_rejected` (warn) — shipped with the phase-2 gate;
   surfaces a cancel that arrives without the bearer during the migration.
-- `child_session_attached` (info) on the phase-3b live-attach verb (a notable
-  action). `list_children` / `get_child_session` are plain bearer-gated reads and
-  follow the codebase convention of not logging read RPCs.
+- The children verbs (`list_children` / `get_child_session`) are plain bearer-gated
+  reads and follow the codebase convention of not logging read RPCs.
+  (`child_session_attached` would have paired with the live-attach verb — dropped
+  with that verb's deferral.)
 
 ## Implementation sequence (phased)
 
@@ -173,9 +182,11 @@ the AGENTS.md "one source of truth per vocabulary + drift-detector" rule.
    ✅ **2b — `abort` sugar verb** — routes by id shape (subagentId → `cancel_delegation`,
    else → `cancel_run`), re-stamps the response `type` to `abort`, and mirrors the
    `session.cancel_run` audit for the parent case. Inherits both targets' bearer gate.
-3. **Children** — `list_children` + `get_child_session` shipped (**phase 3a**,
-   the 13th + 14th enforcement sites; read verbs, reuse the delegation seams).
-   `attach_child_session` (live streaming) is **phase 3b**.
+3. ✅ **Children** — `list_children` + `get_child_session` (**3a**, #724; the 13th +
+   14th enforcement sites). **3b** added event-derived discovery (`get_child_session`
+   active→outcome→event-derived; `list_children includeEventDerived`) to surface
+   completed reviewer/deep_reviewer children — the live `attach_child_session` was
+   deferred as redundant (live child events already ride the session stream).
 4. **`session_summarize`.** Promote `compactContext` to `lib/`; add the on-demand
    verb emitting `context_compacted`.
 5. **`session_revert`.** Run-scoped checkpoint marker + message-log truncate.

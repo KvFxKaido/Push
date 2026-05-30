@@ -3504,6 +3504,44 @@ function buildCompletedChildDescriptor(subagentId, outcome) {
 }
 
 /**
+ * Descriptor reconstructed from the EVENT LOG for a child that is neither in
+ * `activeDelegations` nor `delegationOutcomes` — i.e. a completed reviewer /
+ * deep_reviewer run (those emit `subagent.started` + a terminal event but
+ * persist no `DelegationOutcome`, whose `agent` type is only `'coder' |
+ * 'explorer'`). Event-derived ⟹ not in the active map ⟹ historical, so
+ * `status` is `'completed'`; `terminalType` records which terminal event was
+ * seen (`subagent.completed` / `subagent.failed`), or null if the run ended
+ * without one (e.g. a daemon crash mid-run). `events` must already be filtered
+ * to this child and is expected to contain a `subagent.started` (both call
+ * sites guarantee it); if it doesn't, metadata fields degrade to null/empty
+ * rather than throwing.
+ */
+function buildEventDerivedChildDescriptor(subagentId, events) {
+  const started = events.find((e) => e.type === 'subagent.started');
+  const sp = started?.payload && typeof started.payload === 'object' ? started.payload : {};
+  const terminal = events.find(
+    (e) => e.type === 'subagent.completed' || e.type === 'subagent.failed',
+  );
+  return {
+    subagentId,
+    status: 'completed',
+    source: 'events',
+    role: sp.role || sp.agent || 'subagent',
+    agent: sp.agent || sp.role || 'subagent',
+    task: typeof sp.detail === 'string' ? sp.detail : '',
+    childRunId:
+      typeof sp.childRunId === 'string'
+        ? sp.childRunId
+        : typeof started?.runId === 'string'
+          ? started.runId
+          : null,
+    parentRunId: typeof sp.parentRunId === 'string' ? sp.parentRunId : null,
+    startedAt: typeof started?.ts === 'number' ? started.ts : null,
+    terminalType: terminal ? terminal.type : null,
+  };
+}
+
+/**
  * Lazy-load + bearer-validate a session entry for the child read verbs. Mirrors
  * the `cancel_delegation` / `fetch_delegation_events` preamble (lazy disk-load
  * restores the persisted token; a legacy tokenless session is claimed only by
@@ -3555,12 +3593,19 @@ async function loadAndAuthSession(req, type) {
  * persisted `state.delegationOutcomes`. Read-only, bearer-gated. Task-graph
  * executions are a separate concept (their own `task_graph.*` events) and are
  * intentionally not listed here.
+ *
+ * Default is cheap (no event-log scan). Pass `includeEventDerived: true` to also
+ * surface children reconstructed from the event log — completed reviewer /
+ * deep_reviewer runs that emit `subagent.*` events but persist no
+ * `DelegationOutcome` (its `agent` type is only `'coder' | 'explorer'`). That
+ * path loads the full log (O(n)); it is opt-in so the default stays O(children).
  */
 async function handleListChildren(req) {
   const auth = await loadAndAuthSession(req, 'list_children');
   if (auth.error) return auth.error;
   const { entry, sessionId } = auth;
   ensureRuntimeState(entry);
+  const includeEventDerived = req.payload?.includeEventDerived === true;
 
   const active = [];
   for (const [subagentId, record] of entry.activeDelegations) {
@@ -3568,13 +3613,8 @@ async function handleListChildren(req) {
   }
   const activeIds = new Set(active.map((c) => c.subagentId));
 
-  // Completed children come from persisted outcomes. NOTE: only `delegate_coder`
-  // and `delegate_explorer` push a `DelegationOutcome` (its `agent` type is
-  // `'coder' | 'explorer'`); reviewer / deep_reviewer runs are advisory and
-  // persist no outcome, so they appear here only while ACTIVE and drop off once
-  // finished. Event-derived enumeration of completed reviewer children is a
-  // phase-3b follow-up (it pairs with the event-streaming work and would add the
-  // full-log scan this cheap list call intentionally avoids).
+  // Completed children from persisted outcomes (coder/explorer only — see the
+  // event-derived path below for reviewer/deep_reviewer).
   const completed = [];
   const seenCompleted = new Set();
   const outcomes = Array.isArray(entry.state?.delegationOutcomes)
@@ -3591,10 +3631,37 @@ async function handleListChildren(req) {
     completed.push(buildCompletedChildDescriptor(rec.subagentId, rec.outcome));
   }
 
+  // Opt-in: reconstruct children present in the event log but not in the
+  // active map or persisted outcomes (the reviewer / deep_reviewer case).
+  const eventDerived = [];
+  if (includeEventDerived) {
+    const known = new Set([...activeIds, ...seenCompleted]);
+    const byChild = new Map();
+    const allEvents = await loadSessionEvents(sessionId);
+    for (const e of allEvents) {
+      const p = e.payload && typeof e.payload === 'object' ? e.payload : {};
+      // Group by the REAL delegation id only — every `subagent.*` event carries
+      // `subagentId`. No `executionId` fallback: task-graph executions are keyed
+      // by executionId and are a separate concept (their own `task_graph.*`
+      // events), so this keeps their pseudo-subagents out of the children list.
+      const sid = typeof p.subagentId === 'string' ? p.subagentId : null;
+      if (!sid || known.has(sid)) continue;
+      if (!byChild.has(sid)) byChild.set(sid, []);
+      byChild.get(sid).push(e);
+    }
+    for (const [sid, evs] of byChild) {
+      // Require a started event so a stray subagentId-tagged event without a
+      // real delegation start isn't mistaken for a child.
+      if (!evs.some((e) => e.type === 'subagent.started')) continue;
+      eventDerived.push(buildEventDerivedChildDescriptor(sid, evs));
+    }
+  }
+
   return makeResponse(req.requestId, 'list_children', sessionId, true, {
-    children: [...active, ...completed],
+    children: [...active, ...completed, ...eventDerived],
     activeCount: active.length,
     completedCount: completed.length,
+    eventDerivedCount: eventDerived.length,
   });
 }
 
@@ -3620,37 +3687,25 @@ async function handleGetChildSession(req) {
   const { entry, sessionId } = auth;
   ensureRuntimeState(entry);
 
-  let descriptor;
   const activeRecord = entry.activeDelegations.get(subagentId);
-  if (activeRecord) {
-    descriptor = buildActiveChildDescriptor(subagentId, activeRecord);
-  } else {
-    const outcomes = Array.isArray(entry.state?.delegationOutcomes)
-      ? entry.state.delegationOutcomes
-      : [];
-    const rec = outcomes.find((o) => o && o.subagentId === subagentId);
-    if (!rec) {
-      return makeErrorResponse(
-        req.requestId,
-        'get_child_session',
-        'CHILD_NOT_FOUND',
-        `No child delegation with subagentId: ${subagentId}`,
-      );
-    }
-    descriptor = buildCompletedChildDescriptor(subagentId, rec.outcome);
-  }
+  const outcomes = Array.isArray(entry.state?.delegationOutcomes)
+    ? entry.state.delegationOutcomes
+    : [];
+  const outcomeRec = activeRecord ? null : outcomes.find((o) => o && o.subagentId === subagentId);
 
-  // Scan the child's events once to build the summary and recover metadata.
-  // This loads the full parent event log (O(n) per call) — the same cost
-  // `fetch_delegation_events` already pays; acceptable for a single-child read,
-  // not the cheap `list_children` enumeration. Recover childRunId from the
-  // started event first (a completed child's descriptor has none), then
-  // re-filter with both ids so events carrying only the envelope runId are
-  // included too. Best-effort: if no `subagent.started` event is on disk (e.g.
-  // a very old session, or log truncation), the recovered fields stay
-  // null/empty and the descriptor degrades gracefully rather than failing.
+  // Scan the child's events once to build the summary, recover metadata, and
+  // (when the child is neither active nor a persisted outcome) reconstruct an
+  // event-derived descriptor — this is what surfaces completed reviewer /
+  // deep_reviewer children, which emit subagent.* events but persist no
+  // DelegationOutcome. Loading the full parent log is O(n) per call — the same
+  // cost `fetch_delegation_events` already pays; acceptable for a single-child
+  // read, not the cheap `list_children` enumeration. childRunId is recovered
+  // from the started event (a completed child's descriptor has none), then the
+  // log is re-filtered with both ids so events carrying only the envelope runId
+  // are included too.
   const allEvents = await loadSessionEvents(sessionId);
-  let childRunId = descriptor.childRunId || null;
+  let childRunId =
+    activeRecord && typeof activeRecord.childRunId === 'string' ? activeRecord.childRunId : null;
   if (!childRunId) {
     const started0 = allEvents.find(
       (e) =>
@@ -3662,9 +3717,29 @@ async function handleGetChildSession(req) {
     }
   }
   const events = allEvents.filter((e) => eventBelongsToChild(e, { subagentId, childRunId }));
-
   const started = events.find((e) => e.type === 'subagent.started');
-  if (started?.payload && typeof started.payload === 'object') {
+
+  // Resolve the descriptor: active > persisted outcome > event-derived > not found.
+  let descriptor;
+  if (activeRecord) {
+    descriptor = buildActiveChildDescriptor(subagentId, activeRecord);
+  } else if (outcomeRec) {
+    descriptor = buildCompletedChildDescriptor(subagentId, outcomeRec.outcome);
+  } else if (started) {
+    descriptor = buildEventDerivedChildDescriptor(subagentId, events);
+  } else {
+    return makeErrorResponse(
+      req.requestId,
+      'get_child_session',
+      'CHILD_NOT_FOUND',
+      `No child delegation with subagentId: ${subagentId}`,
+    );
+  }
+
+  // Enrich the active / persisted-outcome descriptors from the started event
+  // (best-effort: missing fields degrade to null/empty). The event-derived
+  // descriptor is already built straight from the events.
+  if (descriptor.source !== 'events' && started?.payload && typeof started.payload === 'object') {
     const p = started.payload;
     if (descriptor.childRunId == null && typeof p.childRunId === 'string') {
       descriptor.childRunId = p.childRunId;
