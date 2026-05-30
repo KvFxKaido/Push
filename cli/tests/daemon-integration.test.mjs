@@ -921,6 +921,99 @@ describe('addressable child sessions — list_children + get_child_session', () 
     );
     assert.equal(res.error.code, 'INVALID_REQUEST');
   });
+
+  it('get_child_session reconstructs a completed reviewer child from events (event-derived)', async () => {
+    const { sessionId, token } = await makeSession();
+    const entry = __getActiveSessionForTesting(sessionId);
+    // Reviewer children emit subagent.* events but persist NO DelegationOutcome
+    // (its agent type is only coder|explorer), so they exist only in the log.
+    await appendSessionEvent(
+      entry.state,
+      'subagent.started',
+      {
+        subagentId: 'sub_reviewer_z',
+        childRunId: 'run_rv',
+        parentRunId: 'run_pr',
+        detail: 'review the diff',
+        agent: 'reviewer',
+        role: 'reviewer',
+      },
+      'run_rv',
+    );
+    await appendSessionEvent(
+      entry.state,
+      'subagent.completed',
+      { subagentId: 'sub_reviewer_z', childRunId: 'run_rv' },
+      'run_rv',
+    );
+    await saveSessionState(entry.state);
+
+    const res = await handleRequest(
+      makeRequest('get_child_session', {
+        sessionId,
+        attachToken: token,
+        subagentId: 'sub_reviewer_z',
+      }),
+      () => {},
+    );
+    assert.equal(res.ok, true, `expected ok, got ${JSON.stringify(res.error)}`);
+    assert.equal(res.payload.child.status, 'completed');
+    assert.equal(res.payload.child.source, 'events');
+    assert.equal(res.payload.child.terminalType, 'subagent.completed');
+    assert.equal(res.payload.child.childRunId, 'run_rv');
+    assert.equal(res.payload.child.task, 'review the diff');
+    assert.equal(res.payload.child.role, 'reviewer');
+  });
+
+  it('list_children omits event-derived children by default, surfaces them on opt-in', async () => {
+    const { sessionId, token } = await makeSession();
+    const entry = __getActiveSessionForTesting(sessionId);
+    await appendSessionEvent(
+      entry.state,
+      'subagent.started',
+      {
+        subagentId: 'sub_reviewer_w',
+        childRunId: 'run_rw',
+        parentRunId: 'run_pw',
+        detail: 'review',
+        agent: 'reviewer',
+        role: 'reviewer',
+      },
+      'run_rw',
+    );
+    await appendSessionEvent(
+      entry.state,
+      'subagent.failed',
+      { subagentId: 'sub_reviewer_w', childRunId: 'run_rw' },
+      'run_rw',
+    );
+    await saveSessionState(entry.state);
+
+    // Default: cheap, no event scan — the reviewer child is absent.
+    const def = await handleRequest(
+      makeRequest('list_children', { sessionId, attachToken: token }),
+      () => {},
+    );
+    assert.equal(def.ok, true);
+    assert.equal(def.payload.eventDerivedCount, 0);
+    assert.equal(
+      def.payload.children.some((c) => c.subagentId === 'sub_reviewer_w'),
+      false,
+    );
+
+    // Opt-in: the event-derived reviewer child is reconstructed.
+    const inc = await handleRequest(
+      makeRequest('list_children', { sessionId, attachToken: token, includeEventDerived: true }),
+      () => {},
+    );
+    assert.equal(inc.ok, true);
+    assert.equal(inc.payload.eventDerivedCount, 1);
+    const rv = inc.payload.children.find((c) => c.subagentId === 'sub_reviewer_w');
+    assert.ok(rv, 'event-derived child surfaces on opt-in');
+    assert.equal(rv.status, 'completed');
+    assert.equal(rv.source, 'events');
+    assert.equal(rv.terminalType, 'subagent.failed');
+  });
 });
 
 // ─── abort sugar verb (Addressable Session Verbs phase 2b) ──────
