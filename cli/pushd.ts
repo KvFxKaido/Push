@@ -198,6 +198,23 @@ function emitDispatcherAudit(req: any, response: any, context: any): void {
       });
       return;
     }
+    case 'abort': {
+      // `abort` sugar routes to cancel_run (parent) or cancel_delegation
+      // (child). Child aborts aren't dispatcher-audited (parity with a direct
+      // cancel_delegation); for the parent case, mirror the cancel_run audit so
+      // an abort-routed cancel keeps its session.cancel_run trail.
+      if (typeof req.payload?.subagentId === 'string' && req.payload.subagentId) return;
+      const abortRunId =
+        typeof req.payload?.runId === 'string' && req.payload.runId ? req.payload.runId : undefined;
+      void appendAuditEvent({
+        type: 'session.cancel_run',
+        ...prov,
+        sessionId,
+        runId: abortRunId,
+        payload: { ok, errorCode },
+      });
+      return;
+    }
     case 'cancel_run': {
       const runId =
         typeof req.payload?.runId === 'string' && req.payload.runId ? req.payload.runId : undefined;
@@ -1917,6 +1934,27 @@ async function handleCancelRun(req, _emitEvent, context) {
   return makeResponse(req.requestId, 'cancel_run', sessionId, true, {
     accepted: true,
   });
+}
+
+/**
+ * `abort` — sugar verb (Addressable Session Verbs phase 2b). Routes by id shape
+ * to the existing, uniformly bearer-gated cancel handlers: a `subagentId` in the
+ * payload means a child run → `cancel_delegation`; otherwise the parent run →
+ * `cancel_run`. The response/error `type` is re-stamped to `abort` so the client
+ * sees the verb it dispatched, not the delegate target. No new auth surface:
+ * both targets validate the session bearer (`cancel_run` since the phase-2 gate,
+ * `cancel_delegation` always). Dispatcher audit for the parent case is mirrored
+ * in `emitDispatcherAudit`'s `abort` case so an abort-routed cancel keeps its
+ * `session.cancel_run` trail.
+ */
+async function handleAbort(req, emitEvent, context) {
+  const isChild = typeof req.payload?.subagentId === 'string' && req.payload.subagentId.length > 0;
+  const underlying = isChild
+    ? await handleCancelDelegation(req, emitEvent, context)
+    : await handleCancelRun(req, emitEvent, context);
+  return underlying && typeof underlying === 'object'
+    ? { ...underlying, type: 'abort' }
+    : underlying;
 }
 
 // ─── Role routing ───────────────────────────────────────────────
@@ -6259,6 +6297,7 @@ const HANDLERS = {
   update_session: handleUpdateSession,
   submit_approval: handleSubmitApproval,
   cancel_run: handleCancelRun,
+  abort: handleAbort,
   configure_role_routing: handleConfigureRoleRouting,
   submit_task_graph: handleSubmitTaskGraph,
   delegate_explorer: handleDelegateExplorer,

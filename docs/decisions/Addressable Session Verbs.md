@@ -63,7 +63,7 @@ it stands after the audit.
 | **Children — attach** | `attach_child_session` | (n/a) | broadcast child events by `childRunId` | **phase 3b** |
 | **Summarize** | `session_summarize` | `session.summarize` | compaction (`compactContext`, CLI-only today) | **phase: summarize** |
 | **Revert / unrevert** | `session_revert` / `session_unrevert` | `session.revert` / `unrevert` | *none daemon-reachable* | **phase: revert (real build)** |
-| Abort verb sugar | `abort` (alias) | `session.abort` | routes to `cancel_run` / `cancel_delegation` by id shape | **phase: abort (after the gap fix)** |
+| Abort verb sugar | `abort` (alias) | `session.abort` | routes to `cancel_run` / `cancel_delegation` by id shape; re-stamps response `type` to `abort` | **shipped (phase 2b)** |
 
 Names recorded but **out of scope** (no Push equivalent, or a deliberate
 divergence): `share` / `unshare` (Push relay pairing is device-level, not
@@ -169,8 +169,10 @@ the AGENTS.md "one source of truth per vocabulary + drift-detector" rule.
 1. ✅ **This doc** — pin the vocabulary; record the audit + the `cancel_run` gap.
 2. ✅ **`cancel_run` auth gap** (#723) — gated `handleCancelRun`'s session-ful path
    with `validateAttachToken` (the 12th enforcement site); the two session-ful
-   callers (TUI, web pending-approval cancel) now send the bearer. The `abort`
-   alias was split to **phase 2b** (deferred) to keep that PR purely the fix.
+   callers (TUI, web pending-approval cancel) now send the bearer.
+   ✅ **2b — `abort` sugar verb** — routes by id shape (subagentId → `cancel_delegation`,
+   else → `cancel_run`), re-stamps the response `type` to `abort`, and mirrors the
+   `session.cancel_run` audit for the parent case. Inherits both targets' bearer gate.
 3. **Children** — `list_children` + `get_child_session` shipped (**phase 3a**,
    the 13th + 14th enforcement sites; read verbs, reuse the delegation seams).
    `attach_child_session` (live streaming) is **phase 3b**.
