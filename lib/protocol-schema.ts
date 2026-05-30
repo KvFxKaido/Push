@@ -521,7 +521,13 @@ function validateTaskGraphGraphCompleted(payload: unknown, basePath: string): Va
   return issues;
 }
 
-const PROMPT_SNAPSHOT_ROLES = ['orchestrator', 'explorer', 'coder', 'reviewer', 'auditor'] as const;
+export const PROMPT_SNAPSHOT_ROLES = [
+  'orchestrator',
+  'explorer',
+  'coder',
+  'reviewer',
+  'auditor',
+] as const;
 
 function validateAssistantPromptSnapshot(payload: unknown, basePath: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
@@ -581,8 +587,8 @@ function validateAssistantPromptSnapshot(payload: unknown, basePath: string): Va
   return issues;
 }
 
-const COMPACTION_PHASES = ['summarization', 'digest_drop', 'hard_trim'] as const;
-const COMPACTION_CAUSES = ['tool_output', 'long_message', 'mixed'] as const;
+export const COMPACTION_PHASES = ['summarization', 'digest_drop', 'hard_trim'] as const;
+export const COMPACTION_CAUSES = ['tool_output', 'long_message', 'mixed'] as const;
 
 function validateContextCompaction(payload: unknown, basePath: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
@@ -929,7 +935,13 @@ function validateApprovalReceived(payload: unknown, basePath: string): Validatio
  * fallback in `cli/pushd.ts:handleSendUserMessage`). Kept narrow so a
  * typo at emit time fails strict-mode loudly; expand here when a new
  * outcome ships. */
-const RUN_COMPLETE_OUTCOMES = ['success', 'completed', 'failed', 'aborted', 'max_rounds'] as const;
+export const RUN_COMPLETE_OUTCOMES = [
+  'success',
+  'completed',
+  'failed',
+  'aborted',
+  'max_rounds',
+] as const;
 
 /** Run-end event. */
 function validateRunComplete(payload: unknown, basePath: string): ValidationIssue[] {

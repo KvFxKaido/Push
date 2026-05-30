@@ -20,7 +20,8 @@
       "!.push/**",
       "!.wrangler/**",
       "!app/src/components/ui/**",
-      "!sandbox/**"
+      "!sandbox/**",
+      "!schema/**"
     ]
   },
   "formatter": {

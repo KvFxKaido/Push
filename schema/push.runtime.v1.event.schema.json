@@ -1,0 +1,1201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://push.dev/schema/push.runtime.v1.event.schema.json",
+  "title": "Push runtime event envelope (push.runtime.v1)",
+  "description": "Unidirectional broadcast envelope emitted by the pushd daemon and the Worker relay. Generated from lib/protocol-schema.ts validators; do not hand-edit. Relay-control envelopes (other `kind` values) are out of scope.",
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "sessionId",
+    "seq",
+    "ts",
+    "type",
+    "payload"
+  ],
+  "properties": {
+    "v": {
+      "const": "push.runtime.v1"
+    },
+    "kind": {
+      "const": "event"
+    },
+    "sessionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "ts": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "$defs": {
+    "AssistantPromptSnapshot": {
+      "type": "object",
+      "required": [
+        "round",
+        "role",
+        "totalChars",
+        "sections"
+      ],
+      "properties": {
+        "round": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "orchestrator",
+            "explorer",
+            "coder",
+            "reviewer",
+            "auditor"
+          ]
+        },
+        "totalChars": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sections": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "hash",
+              "size",
+              "volatile"
+            ],
+            "properties": {
+              "hash": {
+                "type": "number"
+              },
+              "size": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "volatile": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    },
+    "ContextCompaction": {
+      "type": "object",
+      "required": [
+        "round",
+        "phase",
+        "beforeTokens",
+        "afterTokens",
+        "messagesDropped"
+      ],
+      "properties": {
+        "round": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "summarization",
+            "digest_drop",
+            "hard_trim"
+          ]
+        },
+        "beforeTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "afterTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "messagesDropped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "provider": {
+          "type": "string"
+        },
+        "cause": {
+          "type": "string",
+          "enum": [
+            "tool_output",
+            "long_message",
+            "mixed"
+          ]
+        }
+      }
+    },
+    "SessionStateChanged": {
+      "type": "object",
+      "required": [
+        "provider",
+        "model"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "roleRouting": {
+          "type": "object"
+        }
+      }
+    },
+    "SubagentStarted": {
+      "type": "object",
+      "required": [
+        "executionId",
+        "agent"
+      ],
+      "properties": {
+        "executionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agent": {
+          "type": "string",
+          "enum": [
+            "planner",
+            "coder",
+            "explorer",
+            "reviewer",
+            "deep_reviewer",
+            "auditor",
+            "task_graph"
+          ]
+        },
+        "detail": {
+          "type": "string"
+        }
+      }
+    },
+    "SubagentCompleted": {
+      "type": "object",
+      "required": [
+        "executionId",
+        "agent",
+        "summary"
+      ],
+      "properties": {
+        "executionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agent": {
+          "type": "string",
+          "enum": [
+            "planner",
+            "coder",
+            "explorer",
+            "reviewer",
+            "deep_reviewer",
+            "auditor",
+            "task_graph"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "orchestratorBytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "SubagentFailed": {
+      "type": "object",
+      "required": [
+        "executionId",
+        "agent",
+        "error"
+      ],
+      "properties": {
+        "executionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agent": {
+          "type": "string",
+          "enum": [
+            "planner",
+            "coder",
+            "explorer",
+            "reviewer",
+            "deep_reviewer",
+            "auditor",
+            "task_graph"
+          ]
+        },
+        "error": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "TaskGraphTaskReadyOrStarted": {
+      "type": "object",
+      "required": [
+        "executionId",
+        "taskId",
+        "agent"
+      ],
+      "properties": {
+        "executionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agent": {
+          "type": "string",
+          "enum": [
+            "explorer",
+            "coder"
+          ]
+        },
+        "detail": {
+          "type": "string"
+        }
+      }
+    },
+    "TaskGraphTaskCompleted": {
+      "type": "object",
+      "required": [
+        "executionId",
+        "taskId",
+        "agent",
+        "summary"
+      ],
+      "properties": {
+        "executionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agent": {
+          "type": "string",
+          "enum": [
+            "explorer",
+            "coder"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "elapsedMs": {
+          "type": "number"
+        }
+      }
+    },
+    "TaskGraphTaskFailed": {
+      "type": "object",
+      "required": [
+        "executionId",
+        "taskId",
+        "agent",
+        "error"
+      ],
+      "properties": {
+        "executionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agent": {
+          "type": "string",
+          "enum": [
+            "explorer",
+            "coder"
+          ]
+        },
+        "error": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsedMs": {
+          "type": "number"
+        }
+      }
+    },
+    "TaskGraphTaskCancelled": {
+      "type": "object",
+      "required": [
+        "executionId",
+        "taskId",
+        "agent",
+        "reason"
+      ],
+      "properties": {
+        "executionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agent": {
+          "type": "string",
+          "enum": [
+            "explorer",
+            "coder"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsedMs": {
+          "type": "number"
+        }
+      }
+    },
+    "TaskGraphGraphCompleted": {
+      "type": "object",
+      "required": [
+        "executionId",
+        "summary",
+        "success",
+        "aborted",
+        "nodeCount",
+        "totalRounds",
+        "wallTimeMs"
+      ],
+      "properties": {
+        "executionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "aborted": {
+          "type": "boolean"
+        },
+        "nodeCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "totalRounds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "wallTimeMs": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "AssistantTextChunk": {
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    "ToolCall": {
+      "type": "object",
+      "required": [
+        "toolName",
+        "args"
+      ],
+      "properties": {
+        "toolName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "args": {
+          "type": "object"
+        }
+      }
+    },
+    "ToolResult": {
+      "type": "object",
+      "required": [
+        "toolName",
+        "isError"
+      ],
+      "properties": {
+        "toolName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "isError": {
+          "type": "boolean"
+        },
+        "text": {
+          "type": "string"
+        },
+        "preview": {
+          "type": "string"
+        },
+        "durationMs": {
+          "type": "number"
+        }
+      }
+    },
+    "ToolCallMalformed": {
+      "type": "object",
+      "required": [
+        "reason"
+      ],
+      "properties": {
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ErrorEvent": {
+      "type": "object",
+      "required": [
+        "message"
+      ],
+      "properties": {
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      }
+    },
+    "WarningEvent": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "message"
+          ]
+        },
+        {
+          "required": [
+            "code"
+          ]
+        }
+      ]
+    },
+    "StatusEvent": {
+      "type": "object",
+      "properties": {
+        "detail": {
+          "type": "string",
+          "minLength": 1
+        },
+        "phase": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "detail"
+          ]
+        },
+        {
+          "required": [
+            "phase"
+          ]
+        }
+      ]
+    },
+    "ApprovalRequired": {
+      "type": "object",
+      "required": [
+        "approvalId",
+        "kind",
+        "title",
+        "summary",
+        "options"
+      ],
+      "properties": {
+        "approvalId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "ApprovalReceived": {
+      "type": "object",
+      "required": [
+        "approvalId",
+        "decision"
+      ],
+      "properties": {
+        "approvalId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "decision": {
+          "type": "string",
+          "enum": [
+            "approve",
+            "deny"
+          ]
+        },
+        "by": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "RunComplete": {
+      "type": "object",
+      "required": [
+        "outcome"
+      ],
+      "properties": {
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "success",
+            "completed",
+            "failed",
+            "aborted",
+            "max_rounds"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "runId": {
+          "type": "string"
+        }
+      }
+    },
+    "SessionStarted": {
+      "type": "object",
+      "required": [
+        "sessionId",
+        "state"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "idle",
+            "running"
+          ]
+        },
+        "mode": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "sandboxProvider": {
+          "type": "string"
+        }
+      }
+    },
+    "UserMessage": {
+      "type": "object",
+      "required": [
+        "chars",
+        "preview"
+      ],
+      "properties": {
+        "chars": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "preview": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "assistant.prompt_snapshot"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/AssistantPromptSnapshot"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "context.compaction"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/ContextCompaction"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "session_state_changed"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/SessionStateChanged"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "subagent.started"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/SubagentStarted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "subagent.completed"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/SubagentCompleted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "subagent.failed"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/SubagentFailed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "task_graph.task_ready"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/TaskGraphTaskReadyOrStarted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "task_graph.task_started"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/TaskGraphTaskReadyOrStarted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "task_graph.task_completed"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/TaskGraphTaskCompleted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "task_graph.task_failed"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/TaskGraphTaskFailed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "task_graph.task_cancelled"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/TaskGraphTaskCancelled"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "task_graph.graph_completed"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/TaskGraphGraphCompleted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "assistant_token"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/AssistantTextChunk"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "assistant_thinking_token"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/AssistantTextChunk"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "tool_call"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/ToolCall"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "tool.execution_start"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/ToolCall"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "tool_result"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/ToolResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "tool.execution_complete"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/ToolResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "tool.call_malformed"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/ToolCallMalformed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "error"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/ErrorEvent"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "warning"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/WarningEvent"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "status"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/StatusEvent"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "approval_required"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/ApprovalRequired"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "approval_received"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/ApprovalReceived"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "run_complete"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/RunComplete"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "session_started"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/SessionStarted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "user_message"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/UserMessage"
+          }
+        }
+      }
+    }
+  ]
+}

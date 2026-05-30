@@ -1,6 +1,8 @@
 # opencode SDK Review
 
-Status: Reference, added 2026-05-30 — comparative review, no implementation commitment (graduation needs a `ROADMAP.md` entry)
+Status: Reference, added 2026-05-30 — comparative review; suggested-priority #1 prototyped 2026-05-30 (see Update below). Broader graduation still needs a `ROADMAP.md` entry.
+
+> **Update 2026-05-30** — Suggested-priority #1 landed as a prototype: `lib/protocol-json-schema.ts` builds a Draft 2020-12 JSON Schema for the `push.runtime.v1` event envelope from the canonical constants in `lib/protocol-schema.ts`; `schema/push.runtime.v1.event.schema.json` is the committed publishable artifact (regen via `npm run gen:schema`); `cli/tests/protocol-json-schema.test.mjs` is the drift guard (coverage == `SCHEMA_VALIDATED_EVENT_TYPES`, enums built from source constants, schema-required ⊆ validator-required, committed artifact == builder output). Validators remain the runtime enforcement; the schema is the parallel machine-readable description. Suggested-priority #2/#3 (session-verb vocabulary, parts model) remain unstarted.
 Origin: [Web and CLI Runtime Contract](Web%20and%20CLI%20Runtime%20Contract.md), [Remote Sessions via pushd Relay](Remote%20Sessions%20via%20pushd%20Relay.md), [push-runtime-v2](push-runtime-v2.md)
 
 Comparative analysis of the [opencode Go SDK](https://github.com/anomalyco/opencode-sdk-go) and the opencode server contract it wraps, against Push's runtime/protocol surface. This is a contract-shape review, not a feature wishlist — opencode's deployment model (a local `opencode serve` daemon as the center of gravity) is **not** a fit for Push's Cloudflare-Worker + remote-sandbox + multi-surface design, so the borrows here are about the *contract*, not the topology.
@@ -98,7 +100,7 @@ So Push is not missing a *contract*. It is missing a **published, language-agnos
 
 ## Suggested Priority
 
-1. **JSON-Schema for the `push.runtime.v1` envelope + the `SCHEMA_VALIDATED_EVENT_TYPES` payloads**, emitted from (or checked against) `lib/protocol-schema.ts`. Wire it into the existing protocol-drift suite so the schema and the validators can't diverge. This is the concrete "smallest useful step" — it commits to nothing beyond writing down what the runtime already enforces.
+1. **JSON-Schema for the `push.runtime.v1` envelope + the `SCHEMA_VALIDATED_EVENT_TYPES` payloads**, emitted from (or checked against) `lib/protocol-schema.ts`. Wire it into the existing protocol-drift suite so the schema and the validators can't diverge. This is the concrete "smallest useful step" — it commits to nothing beyond writing down what the runtime already enforces. **(Prototyped 2026-05-30 — see Update above.)**
 2. Pin the session-verb vocabulary (doc-only) so future work has one spelling.
 3. Defer the parts-model and any session REST API until a consumer (resumable-sessions growth, a third surface, an external client) actually forces it — capture the shape here so the decision is cheap when the trigger arrives.
 
@@ -111,6 +113,8 @@ opencode:
 
 Push counterparts:
 - `lib/protocol-schema.ts` — `PROTOCOL_VERSION`, `validateEventEnvelope`, `SCHEMA_VALIDATED_EVENT_TYPES`, relay envelopes, `lastSeq` replay primitive
+- `lib/protocol-json-schema.ts` + `schema/push.runtime.v1.event.schema.json` — the prototyped published schema (suggested-priority #1)
+- `cli/tests/protocol-json-schema.test.mjs` — schema↔validator drift guard; `npm run gen:schema` regenerates the artifact
 - `lib/runtime-contract.ts` — `RunEventInput` union (event source of truth), `DelegationOutcome`, `TaskGraphNode`
 - `cli/session-store.ts` — `SessionEvent` envelope definition, session/run id formats
 - `cli/daemon-client.ts` — NDJSON request/response/event client (internal)
