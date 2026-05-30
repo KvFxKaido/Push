@@ -625,12 +625,14 @@ import {
   appendSessionEvent,
   loadSessionState,
   loadSessionEvents,
+  rewriteMessagesLog,
   listSessions,
   writeRunMarker,
   clearRunMarker,
   scanInterruptedSessions,
   PROTOCOL_VERSION,
 } from './session-store.js';
+import { compactContext } from './context-manager.js';
 import {
   buildSystemPrompt,
   runAssistantLoop,
@@ -3768,6 +3770,108 @@ async function handleGetChildSession(req) {
   });
 }
 
+/**
+ * `session_summarize` — on-demand context compaction (Addressable Session Verbs
+ * phase 4; opencode's `session.summarize`). Replaces the older turns with a
+ * digest, keeping the system prompt, first user turn, and the last
+ * `preserveTurns` turns — the same `compactContext` the CLI `/compact` command
+ * uses, now reachable as a bearer-gated daemon verb. Persists the compacted
+ * transcript (`rewriteMessagesLog`, since the length-only fast path can skip a
+ * same-length swap) and emits `context_compacted`. Rejected while a run is
+ * active (compacting mid-run would corrupt the in-flight context).
+ */
+async function handleSessionSummarize(req, _emitEvent) {
+  const auth = await loadAndAuthSession(req, 'session_summarize');
+  if (auth.error) return auth.error;
+  const { entry, sessionId } = auth;
+
+  if (entry.activeRunId) {
+    return makeErrorResponse(
+      req.requestId,
+      'session_summarize',
+      'RUN_IN_PROGRESS',
+      `Cannot summarize while run ${entry.activeRunId} is active`,
+    );
+  }
+
+  const rawTurns = req.payload?.preserveTurns;
+  let preserveTurns = 6;
+  if (rawTurns !== undefined) {
+    // Strict, like the CLI `/compact`: a plain positive integer (or its exact
+    // digit string). Reject malformed input ("2abc", "1e2", fractionals) rather
+    // than coercing — the handler is the boundary; don't lean on
+    // `compactContext`'s internal clamp to launder bad input.
+    let n;
+    if (typeof rawTurns === 'number') {
+      n = rawTurns;
+    } else if (typeof rawTurns === 'string' && /^\d+$/.test(rawTurns.trim())) {
+      n = Number.parseInt(rawTurns.trim(), 10);
+    } else {
+      n = Number.NaN;
+    }
+    if (!Number.isInteger(n) || n < 1) {
+      return makeErrorResponse(
+        req.requestId,
+        'session_summarize',
+        'INVALID_REQUEST',
+        'preserveTurns must be a positive integer',
+      );
+    }
+    preserveTurns = Math.min(64, n);
+  }
+
+  const messages = Array.isArray(entry.state?.messages) ? entry.state.messages : [];
+  const result = compactContext(messages, { preserveTurns });
+
+  // "Nothing to compact" is a valid no-op outcome, not an error.
+  if (!result.compacted) {
+    return makeResponse(req.requestId, 'session_summarize', sessionId, true, {
+      compacted: false,
+      preserveTurns: result.preserveTurns,
+      totalTurns: result.totalTurns,
+      beforeTokens: result.beforeTokens,
+      afterTokens: result.afterTokens,
+      removedCount: 0,
+      compactedCount: 0,
+    });
+  }
+
+  entry.state.messages = result.messages;
+  const compactedPayload = {
+    preserveTurns: result.preserveTurns,
+    totalTurns: result.totalTurns,
+    compactedMessages: result.compactedCount,
+    removedCount: result.removedCount,
+    beforeTokens: result.beforeTokens,
+    afterTokens: result.afterTokens,
+  };
+  await appendSessionEvent(entry.state, 'context_compacted', compactedPayload);
+  // Explicit rewrite: compaction can produce a same-length messages array
+  // (drop one, insert digest), which `saveSessionState`'s length-only fast path
+  // would skip — leaving the on-disk transcript out of sync with memory.
+  await rewriteMessagesLog(entry.state);
+  // Notify live clients so an attached transcript view doesn't go stale.
+  broadcastEvent(sessionId, {
+    v: PROTOCOL_VERSION,
+    kind: 'event',
+    sessionId,
+    seq: entry.state.eventSeq,
+    ts: Date.now(),
+    type: 'context_compacted',
+    payload: compactedPayload,
+  });
+
+  return makeResponse(req.requestId, 'session_summarize', sessionId, true, {
+    compacted: true,
+    preserveTurns: result.preserveTurns,
+    totalTurns: result.totalTurns,
+    compactedCount: result.compactedCount,
+    removedCount: result.removedCount,
+    beforeTokens: result.beforeTokens,
+    afterTokens: result.afterTokens,
+  });
+}
+
 // ─── Delegate Explorer (scaffold + real lib-kernel integration) ─
 
 /**
@@ -6383,6 +6487,7 @@ const HANDLERS = {
   fetch_delegation_events: handleFetchDelegationEvents,
   list_children: handleListChildren,
   get_child_session: handleGetChildSession,
+  session_summarize: handleSessionSummarize,
   sandbox_exec: handleSandboxExec,
   sandbox_read_file: handleSandboxReadFile,
   sandbox_write_file: handleSandboxWriteFile,
