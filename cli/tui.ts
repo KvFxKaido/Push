@@ -4097,6 +4097,16 @@ export async function runTUI(options = {}) {
       const deploymentUrl = String(payload?.deploymentUrl || '');
       const relaySessionId = String(payload?.sessionId || '');
       const targetSessionId = String(payload?.targetSessionId || daemonSessionId || '');
+      // If the daemon minted a fresh attach token for this (previously
+      // tokenless) session, adopt it: update the live token and the in-memory
+      // session state so a reconnect carries the now-required bearer. The
+      // daemon already persisted it to the shared session-store, so no
+      // TUI-side write is needed (and skipping it avoids racing that write).
+      const mintedTargetAttachToken = String(payload?.mintedTargetAttachToken || '');
+      if (mintedTargetAttachToken) {
+        daemonAttachToken = mintedTargetAttachToken;
+        if (state && typeof state === 'object') state.attachToken = mintedTargetAttachToken;
+      }
       tuiState.lastRemotePairBundle = bundle || null;
       const lines = [
         'Remote pairing bundle minted for this TUI session.',
@@ -4160,8 +4170,13 @@ export async function runTUI(options = {}) {
         scheduler.flush();
         return;
       }
-      if (!token.startsWith('pushd_relay_')) {
-        addTranscriptEntry(tuiState, 'warning', 'Remote relay token must start with pushd_relay_');
+      const { isValidRelayToken } = await import('./pushd-relay-config.js');
+      if (!isValidRelayToken(token)) {
+        addTranscriptEntry(
+          tuiState,
+          'warning',
+          'Remote relay token must start with pushd_relay_ and include a token body (yours looks truncated)',
+        );
         scheduler.flush();
         return;
       }
@@ -4244,8 +4259,13 @@ export async function runTUI(options = {}) {
         scheduler.flush();
         return;
       }
-      if (!token.startsWith('pushd_relay_')) {
-        addTranscriptEntry(tuiState, 'warning', 'Remote relay token must start with pushd_relay_');
+      const { isValidRelayToken } = await import('./pushd-relay-config.js');
+      if (!isValidRelayToken(token)) {
+        addTranscriptEntry(
+          tuiState,
+          'warning',
+          'Remote relay token must start with pushd_relay_ and include a token body (yours looks truncated)',
+        );
         scheduler.flush();
         return;
       }

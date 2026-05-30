@@ -67,6 +67,7 @@ import {
   readRelayConfig,
   writeRelayConfig,
   deleteRelayConfig,
+  isValidRelayToken,
   type RelayConfig,
 } from './pushd-relay-config.js';
 import {
@@ -5480,12 +5481,12 @@ async function handleRelayEnable(req, _emitEvent, context) {
       'deploymentUrl is required',
     );
   }
-  if (!token.startsWith('pushd_relay_')) {
+  if (!isValidRelayToken(token)) {
     return makeErrorResponse(
       req.requestId,
       'relay_enable',
       'INVALID_REQUEST',
-      'token must start with pushd_relay_',
+      'token must start with pushd_relay_ and include a token body (yours looks truncated)',
     );
   }
   let persisted: RelayConfig;
@@ -5587,6 +5588,55 @@ async function handleRelayStatus(req, _emitEvent, context) {
 }
 
 /**
+ * Minimal shape of an `activeSessions` entry this helper reads/mutates. The
+ * registry Map is untyped (`new Map()`), so this narrow type documents the
+ * contract for the exported helper and its isolation tests.
+ */
+type MintableSessionEntry = {
+  attachToken?: string | null;
+  state?: { attachToken?: string | null } | null;
+};
+
+/**
+ * Resolve the attach token for a target daemon session, minting one if it has
+ * none. Sessions created via the TUI/session-store — or adopted "open" by the
+ * daemon — never went through `start_session`, the only path that mints an
+ * attach token, so they're tokenless (and `validateAttachToken` treats that as
+ * "open": local attach needs no bearer). Remote pairing, though, must hand the
+ * phone a bearer, so we mint one here and pin it to the session in memory. The
+ * caller persists `entry.state` (where the new token is also written) and
+ * surfaces `minted` so the live TUI can adopt the token before its next
+ * reconnect — otherwise pinning a token would lock the TUI out of its own
+ * session. Kept I/O-free (random token + entry mutation only) so it's unit-
+ * testable without a session dir on disk.
+ *
+ * BEHAVIOR CHANGE on mint: the session flips from "open attach" (no bearer
+ * required) to "bearer required" for ALL clients, since `validateAttachToken`
+ * keys off `entry.attachToken`. This is intentional — a session being exposed
+ * to a remote phone should require a bearer — and benign locally: the
+ * unix-socket admin surface is already 0600, so any local client can read the
+ * minted token from persisted state. The only edge is a *second* concurrent
+ * local open-attach client to the same sessionId, which would then need the
+ * token (the pairing TUI itself adopts it from the response).
+ *
+ * Throws on a missing/non-object entry — the caller (`handleMintRemotePairBundle`)
+ * already rejects an absent session with SESSION_NOT_FOUND, but the export must
+ * fail loudly rather than throw a cryptic "cannot set property of null".
+ */
+export function resolveOrMintTargetAttachToken(entry: MintableSessionEntry) {
+  if (!entry || typeof entry !== 'object') {
+    throw new Error('resolveOrMintTargetAttachToken requires a session entry object');
+  }
+  if (entry.attachToken) return { token: entry.attachToken, minted: false };
+  const token = makeAttachToken();
+  entry.attachToken = token;
+  if (entry.state && typeof entry.state === 'object') {
+    entry.state.attachToken = token;
+  }
+  return { token, minted: true };
+}
+
+/**
  * Phase 2.f: mint a one-shot pairing bundle for a remote phone.
  * Reads the relay config (errors if `relay enable` hasn't been run),
  * mints a fresh device token + child attach token, populates the
@@ -5604,6 +5654,11 @@ async function handleRelayStatus(req, _emitEvent, context) {
  * already has filesystem-level admin authority over the daemon
  * config; the pair bundle conveys exactly that authority to one
  * remote phone.
+ *
+ * NOTE: pairing a *tokenless* target session mints an attach token for it
+ * (see `resolveOrMintTargetAttachToken`), which flips that session from "open
+ * attach" to "bearer required" for all clients. Intentional and benign — see
+ * that helper's doc for the rationale and the one local-client edge case.
  */
 async function handleMintRemotePairBundle(req, _emitEvent, context) {
   if (context?.record || context?.auth) return refuseFromWs(req, 'mint_remote_pair_bundle');
@@ -5633,6 +5688,9 @@ async function handleMintRemotePairBundle(req, _emitEvent, context) {
     );
   }
   let resolvedTargetAttachToken = targetAttachToken;
+  // When set, the session attach token was minted on demand below — surfaced
+  // in the response so the calling TUI can adopt it (see the handler doc).
+  let mintedSessionAttachToken = null;
   if (targetSessionId && targetAttachToken) {
     const entry = activeSessions.get(targetSessionId);
     if (!entry || entry.attachToken !== targetAttachToken) {
@@ -5654,15 +5712,29 @@ async function handleMintRemotePairBundle(req, _emitEvent, context) {
         'Target daemon session is not active.',
       );
     }
-    if (!entry.attachToken) {
-      return makeErrorResponse(
-        req.requestId,
-        'mint_remote_pair_bundle',
-        'MISSING_ATTACH_TOKEN',
-        'Target daemon session does not have an attach token.',
-      );
+    // Tokenless target (TUI/session-store session adopted "open"): mint a
+    // bearer now so the phone can attach. The caller-side TUI adopts the
+    // returned token; persistence below keeps it across daemon restarts.
+    const resolved = resolveOrMintTargetAttachToken(entry);
+    resolvedTargetAttachToken = resolved.token;
+    if (resolved.minted) {
+      mintedSessionAttachToken = resolved.token;
+      if (entry.state && typeof entry.state === 'object') {
+        try {
+          await saveSessionState(entry.state);
+          process.stderr.write(
+            `${JSON.stringify({ level: 'info', event: 'pair_bundle_minted_session_token', targetSessionId })}\n`,
+          );
+        } catch (err) {
+          // Persist failed: the in-memory token still works for this run, but
+          // a daemon restart would lose it. Surface it instead of failing the
+          // pairing — the bundle is already usable for the live session.
+          process.stderr.write(
+            `${JSON.stringify({ level: 'warn', event: 'pair_bundle_mint_persist_failed', targetSessionId, error: err instanceof Error ? err.message : String(err) })}\n`,
+          );
+        }
+      }
     }
-    resolvedTargetAttachToken = entry.attachToken;
   }
   // Mint a fresh device token first (durable identity for this
   // remote phone), then a child attach token (the actual bearer the
@@ -5726,6 +5798,11 @@ async function handleMintRemotePairBundle(req, _emitEvent, context) {
     targetSessionId,
     deploymentUrl: config.deploymentUrl,
     ttlMs: attach.ttlMs,
+    // Present only when we minted a fresh attach token for a previously
+    // tokenless target session. The TUI adopts it so its own future
+    // reconnects carry the now-required bearer. Same trust domain (unix
+    // socket → local admin); never written to the audit log.
+    ...(mintedSessionAttachToken ? { mintedTargetAttachToken: mintedSessionAttachToken } : {}),
   });
 }
 

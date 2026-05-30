@@ -28,6 +28,7 @@ import {
   __setActiveSessionForTesting,
   __setDelegateExplorerHooksForTesting,
   handleGetSessionMessages,
+  resolveOrMintTargetAttachToken,
 } from '../pushd.ts';
 import {
   PROTOCOL_VERSION,
@@ -425,6 +426,56 @@ describe('validateAttachToken', () => {
   it('allows when entry is null/undefined (no entry = no token requirement)', () => {
     assert.equal(validateAttachToken(null, 'token'), true);
     assert.equal(validateAttachToken(undefined, 'token'), true);
+  });
+});
+
+// ─── resolveOrMintTargetAttachToken (remote-pair tokenless fix) ──
+
+describe('resolveOrMintTargetAttachToken', () => {
+  it('returns the existing token without minting when the session has one', () => {
+    const entry = {
+      state: { sessionId: 's1', attachToken: 'att_existing' },
+      attachToken: 'att_existing',
+    };
+    const result = resolveOrMintTargetAttachToken(entry);
+    assert.equal(result.token, 'att_existing');
+    assert.equal(result.minted, false);
+    // Untouched.
+    assert.equal(entry.attachToken, 'att_existing');
+    assert.equal(entry.state.attachToken, 'att_existing');
+  });
+
+  it('mints and pins a token for a tokenless session (the TUI/session-store case)', () => {
+    const entry = { state: { sessionId: 's2' } };
+    const result = resolveOrMintTargetAttachToken(entry);
+    assert.equal(result.minted, true);
+    assert.equal(typeof result.token, 'string');
+    assert.ok(result.token.length > 0);
+    // Pinned both in-memory (entry) and on the state object the caller persists.
+    assert.equal(entry.attachToken, result.token);
+    assert.equal(entry.state.attachToken, result.token);
+  });
+
+  it('treats empty-string / null attach tokens as tokenless and mints', () => {
+    for (const empty of ['', null, undefined]) {
+      const entry = { state: { sessionId: 's3' }, attachToken: empty };
+      const result = resolveOrMintTargetAttachToken(entry);
+      assert.equal(result.minted, true);
+      assert.equal(entry.attachToken, result.token);
+    }
+  });
+
+  it('mints even when state is absent, without throwing (token still pinned on entry)', () => {
+    const entry = {};
+    const result = resolveOrMintTargetAttachToken(entry);
+    assert.equal(result.minted, true);
+    assert.equal(entry.attachToken, result.token);
+  });
+
+  it('throws loudly on a missing/non-object entry instead of a cryptic assignment error', () => {
+    assert.throws(() => resolveOrMintTargetAttachToken(null), /requires a session entry/);
+    assert.throws(() => resolveOrMintTargetAttachToken(undefined), /requires a session entry/);
+    assert.throws(() => resolveOrMintTargetAttachToken('nope'), /requires a session entry/);
   });
 });
 
