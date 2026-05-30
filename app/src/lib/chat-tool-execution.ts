@@ -28,6 +28,7 @@ import type { ActiveProvider } from '@/lib/orchestrator';
 import { createId } from '@push/lib/id-utils';
 import {
   buildToolCallParseErrorBlock,
+  buildValidationFailedHint,
   formatToolResultEnvelope,
   MAX_TOOL_CALL_DIAGNOSIS_RETRIES,
   type ToolCallRecoveryResult,
@@ -525,7 +526,7 @@ export function handleDroppedCandidatesError(
     errorType: 'validation_failed',
     detectedTool: primary?.resolvedToolName || primary?.rawToolName || null,
     problem: `Tool call${dropped.length === 1 ? '' : 's'} failed validation and ${dropped.length === 1 ? 'was' : 'were'} not executed: ${summary}. No other calls ran this turn so the surviving result would not mislead the next step.`,
-    hint: 'Each tool call must be `{"tool": "<name>", "args": {...}}` with the args object wrapping required fields. Re-emit only the calls you intend to run and confirm the args match the tool signature.',
+    hint: buildValidationFailedHint(primary?.resolvedToolName || primary?.rawToolName || null),
   });
 
   // Derive the tool's source from the resolved canonical name so toolMeta

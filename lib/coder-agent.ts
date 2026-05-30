@@ -54,7 +54,11 @@ import {
   truncateAgentContent,
   MAX_TOOL_RESULT_SIZE as LIB_MAX_TOOL_RESULT_SIZE,
 } from './agent-loop-utils.js';
-import { buildToolCallParseErrorBlock, formatToolResultEnvelope } from './tool-call-recovery.js';
+import {
+  buildToolCallParseErrorBlock,
+  buildValidationFailedHint,
+  formatToolResultEnvelope,
+} from './tool-call-recovery.js';
 import {
   buildLoopSteeringText,
   createSimilarityLoopDetector,
@@ -1031,7 +1035,7 @@ export async function runCoderAgent<TCall, TCard>(
         errorType: 'validation_failed',
         detectedTool: primary?.resolvedToolName || primary?.rawToolName || null,
         problem: `Tool call${dropped.length === 1 ? '' : 's'} failed validation and ${dropped.length === 1 ? 'was' : 'were'} not executed: ${summary}. No other calls ran this turn so the next round can correct without partial state.`,
-        hint: 'Each tool call must be `{"tool": "<name>", "args": {...}}` with required fields nested under args. Re-emit only the calls you intend to run and confirm the args match the tool signature.',
+        hint: buildValidationFailedHint(primary?.resolvedToolName || primary?.rawToolName || null),
       });
       messages.push({
         id: `coder-parse-error-${round}`,
