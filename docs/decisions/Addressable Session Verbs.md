@@ -129,7 +129,11 @@ It does **not** get its own `state.json`; it is a *view* over the parent session
 
 - `list_children(sessionId)` → active delegations (`activeDelegations` keys +
   role/task/startedAt) plus completed `state.delegationOutcomes`. Read-only,
-  bearer-gated.
+  bearer-gated, and cheap (no event-log scan). **Boundary:** only `delegate_coder`
+  / `delegate_explorer` persist a `DelegationOutcome`; reviewer / deep_reviewer
+  runs are advisory and persist none, so they appear only while *active* and drop
+  off once finished. Event-derived enumeration of completed reviewer children is
+  deferred to phase 3b (it would add the full-log scan this call avoids).
 - `get_child_session(sessionId, subagentId)` → the child as a structured
   descriptor (status/role/task/childRunId/parentRunId) plus an event *summary*
   (count + seq range); recovers a completed child's metadata from its

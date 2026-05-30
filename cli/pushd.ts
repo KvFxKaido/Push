@@ -3422,7 +3422,7 @@ function eventBelongsToChild(event, { subagentId, childRunId }) {
   if (subagentId && p.subagentId === subagentId) return true;
   if (subagentId && p.executionId === subagentId) return true;
   if (childRunId && p.childRunId === childRunId) return true;
-  if (childRunId && event.runId === childRunId) return true;
+  if (childRunId && event?.runId === childRunId) return true;
   return false;
 }
 
@@ -3530,7 +3530,15 @@ async function handleListChildren(req) {
   }
   const activeIds = new Set(active.map((c) => c.subagentId));
 
+  // Completed children come from persisted outcomes. NOTE: only `delegate_coder`
+  // and `delegate_explorer` push a `DelegationOutcome` (its `agent` type is
+  // `'coder' | 'explorer'`); reviewer / deep_reviewer runs are advisory and
+  // persist no outcome, so they appear here only while ACTIVE and drop off once
+  // finished. Event-derived enumeration of completed reviewer children is a
+  // phase-3b follow-up (it pairs with the event-streaming work and would add the
+  // full-log scan this cheap list call intentionally avoids).
   const completed = [];
+  const seenCompleted = new Set();
   const outcomes = Array.isArray(entry.state?.delegationOutcomes)
     ? entry.state.delegationOutcomes
     : [];
@@ -3538,6 +3546,10 @@ async function handleListChildren(req) {
     if (!rec || typeof rec.subagentId !== 'string') continue;
     // Prefer the live 'active' view if the same id is somehow still in flight.
     if (activeIds.has(rec.subagentId)) continue;
+    // Dedup: a crash/retry path could append the same subagentId more than once;
+    // surface each child exactly once (the first/authoritative outcome record).
+    if (seenCompleted.has(rec.subagentId)) continue;
+    seenCompleted.add(rec.subagentId);
     completed.push(buildCompletedChildDescriptor(rec.subagentId, rec.outcome));
   }
 
@@ -3590,9 +3602,15 @@ async function handleGetChildSession(req) {
     descriptor = buildCompletedChildDescriptor(subagentId, rec.outcome);
   }
 
-  // Scan the child's events once. Recover childRunId from the started event
-  // first (a completed child's descriptor has none), then re-filter with both
-  // ids so events carrying only the envelope runId are included too.
+  // Scan the child's events once to build the summary and recover metadata.
+  // This loads the full parent event log (O(n) per call) — the same cost
+  // `fetch_delegation_events` already pays; acceptable for a single-child read,
+  // not the cheap `list_children` enumeration. Recover childRunId from the
+  // started event first (a completed child's descriptor has none), then
+  // re-filter with both ids so events carrying only the envelope runId are
+  // included too. Best-effort: if no `subagent.started` event is on disk (e.g.
+  // a very old session, or log truncation), the recovered fields stay
+  // null/empty and the descriptor degrades gracefully rather than failing.
   const allEvents = await loadSessionEvents(sessionId);
   let childRunId = descriptor.childRunId || null;
   if (!childRunId) {

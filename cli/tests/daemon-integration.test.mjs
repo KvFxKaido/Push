@@ -756,6 +756,30 @@ describe('addressable child sessions — list_children + get_child_session', () 
     assert.equal(res.error.code, 'SESSION_NOT_FOUND');
   });
 
+  it('list_children dedups a completed child appended more than once (crash/retry)', async () => {
+    const { sessionId, token } = await makeSession();
+    const entry = __getActiveSessionForTesting(sessionId);
+    const outcome = {
+      agent: 'coder',
+      status: 'completed',
+      summary: 's',
+      rounds: 1,
+      checkpoints: 0,
+      elapsedMs: 1,
+    };
+    entry.state.delegationOutcomes = [
+      { subagentId: 'sub_coder_dup', outcome },
+      { subagentId: 'sub_coder_dup', outcome },
+    ];
+    const res = await handleRequest(
+      makeRequest('list_children', { sessionId, attachToken: token }),
+      () => {},
+    );
+    assert.equal(res.ok, true);
+    assert.equal(res.payload.completedCount, 1, 'duplicate subagentId must surface once');
+    assert.equal(res.payload.children.filter((c) => c.subagentId === 'sub_coder_dup').length, 1);
+  });
+
   it('get_child_session returns an active child descriptor + event summary', async () => {
     const { sessionId, token } = await makeSession();
     const entry = __getActiveSessionForTesting(sessionId);
