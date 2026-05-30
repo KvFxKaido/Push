@@ -1327,8 +1327,10 @@ async function handleSendUserMessage(req, emitEvent) {
       // handler that lazy-loads a session from disk (including after a
       // daemon crash + restart), because `validateAttachToken` would
       // compare the caller's original token against a freshly minted one.
-      // Legacy sessions without a persisted token fall through the bypass
-      // in `validateAttachToken` (`!entry.attachToken → return true`).
+      // Legacy sessions without a persisted token load with attachToken
+      // undefined; they are claimed on first `attach_session` (bootstrap
+      // grace). A non-attach handler reached before that claim now rejects —
+      // the implicit tokenless bypass is gone (Universal Session Bearer).
       entry = { state, attachToken: state.attachToken };
       activeSessions.set(sessionId, entry);
     } catch {
@@ -1926,8 +1928,10 @@ async function handleConfigureRoleRouting(req) {
       // handler that lazy-loads a session from disk (including after a
       // daemon crash + restart), because `validateAttachToken` would
       // compare the caller's original token against a freshly minted one.
-      // Legacy sessions without a persisted token fall through the bypass
-      // in `validateAttachToken` (`!entry.attachToken → return true`).
+      // Legacy sessions without a persisted token load with attachToken
+      // undefined; they are claimed on first `attach_session` (bootstrap
+      // grace). A non-attach handler reached before that claim now rejects —
+      // the implicit tokenless bypass is gone (Universal Session Bearer).
       entry = { state, attachToken: state.attachToken };
       activeSessions.set(sessionId, entry);
     } catch {
@@ -2890,8 +2894,10 @@ async function handleSubmitTaskGraph(req) {
       // handler that lazy-loads a session from disk (including after a
       // daemon crash + restart), because `validateAttachToken` would
       // compare the caller's original token against a freshly minted one.
-      // Legacy sessions without a persisted token fall through the bypass
-      // in `validateAttachToken` (`!entry.attachToken → return true`).
+      // Legacy sessions without a persisted token load with attachToken
+      // undefined; they are claimed on first `attach_session` (bootstrap
+      // grace). A non-attach handler reached before that claim now rejects —
+      // the implicit tokenless bypass is gone (Universal Session Bearer).
       entry = { state, attachToken: state.attachToken };
       activeSessions.set(sessionId, entry);
     } catch {
@@ -3190,8 +3196,10 @@ async function handleCancelDelegation(req) {
       // handler that lazy-loads a session from disk (including after a
       // daemon crash + restart), because `validateAttachToken` would
       // compare the caller's original token against a freshly minted one.
-      // Legacy sessions without a persisted token fall through the bypass
-      // in `validateAttachToken` (`!entry.attachToken → return true`).
+      // Legacy sessions without a persisted token load with attachToken
+      // undefined; they are claimed on first `attach_session` (bootstrap
+      // grace). A non-attach handler reached before that claim now rejects —
+      // the implicit tokenless bypass is gone (Universal Session Bearer).
       entry = { state, attachToken: state.attachToken };
       activeSessions.set(sessionId, entry);
     } catch {
@@ -3316,8 +3324,10 @@ async function handleFetchDelegationEvents(req) {
       // handler that lazy-loads a session from disk (including after a
       // daemon crash + restart), because `validateAttachToken` would
       // compare the caller's original token against a freshly minted one.
-      // Legacy sessions without a persisted token fall through the bypass
-      // in `validateAttachToken` (`!entry.attachToken → return true`).
+      // Legacy sessions without a persisted token load with attachToken
+      // undefined; they are claimed on first `attach_session` (bootstrap
+      // grace). A non-attach handler reached before that claim now rejects —
+      // the implicit tokenless bypass is gone (Universal Session Bearer).
       entry = { state, attachToken: state.attachToken };
       activeSessions.set(sessionId, entry);
     } catch {
@@ -3428,8 +3438,10 @@ async function handleDelegateExplorer(req) {
       // handler that lazy-loads a session from disk (including after a
       // daemon crash + restart), because `validateAttachToken` would
       // compare the caller's original token against a freshly minted one.
-      // Legacy sessions without a persisted token fall through the bypass
-      // in `validateAttachToken` (`!entry.attachToken → return true`).
+      // Legacy sessions without a persisted token load with attachToken
+      // undefined; they are claimed on first `attach_session` (bootstrap
+      // grace). A non-attach handler reached before that claim now rejects —
+      // the implicit tokenless bypass is gone (Universal Session Bearer).
       entry = { state, attachToken: state.attachToken };
       activeSessions.set(sessionId, entry);
     } catch {
@@ -4142,8 +4154,10 @@ async function handleDelegateReviewer(req) {
       // handler that lazy-loads a session from disk (including after a
       // daemon crash + restart), because `validateAttachToken` would
       // compare the caller's original token against a freshly minted one.
-      // Legacy sessions without a persisted token fall through the bypass
-      // in `validateAttachToken` (`!entry.attachToken → return true`).
+      // Legacy sessions without a persisted token load with attachToken
+      // undefined; they are claimed on first `attach_session` (bootstrap
+      // grace). A non-attach handler reached before that claim now rejects —
+      // the implicit tokenless bypass is gone (Universal Session Bearer).
       entry = { state, attachToken: state.attachToken };
       activeSessions.set(sessionId, entry);
     } catch {
@@ -6320,8 +6334,9 @@ async function recoverInterruptedRuns() {
     const abortController = new AbortController();
     // Restore the persisted attach token so a client that had the session
     // open before the crash can successfully re-attach with the SAME token
-    // they originally received from `start_session`. Legacy sessions that
-    // have no persisted token fall through `validateAttachToken`'s bypass.
+    // they originally received from `start_session`. A legacy session with no
+    // persisted token is claimed on its first `attach_session` (bootstrap
+    // grace); the implicit tokenless bypass is gone (Universal Session Bearer).
     const attachToken = state.attachToken;
 
     // Register in-memory
