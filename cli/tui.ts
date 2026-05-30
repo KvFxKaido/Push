@@ -128,6 +128,7 @@ import {
   getCurrentSkillPlatform,
 } from './skill-loader.js';
 import { ALL_CAPABILITIES } from '../lib/capabilities.js';
+import { isTranscriptMutationEvent } from '../lib/session-transcript-events.js';
 import { matchingRiskPatternIndex, suggestApprovalPrefix } from './tools.js';
 import { ensureRepoCommandsSeeded } from './repo-commands.js';
 import { createTabCompleter } from './tui-completer.js';
@@ -2503,6 +2504,69 @@ export async function runTUI(options = {}) {
     tuiState.streamBuf = '';
   }
 
+  // Rebuild the daemon-mode transcript from the daemon's persisted
+  // `state.messages` after a transcript-mutation event (revert / unrevert /
+  // summarize) tells us the local copy is stale. The daemon's
+  // `get_session_messages` returns the user/assistant history only, so the
+  // rebuilt view drops this session's tool-call / status decoration — the same
+  // fidelity the web shows on attach-time hydration, and consistent across
+  // surfaces by construction. Bearer-gated like every session-ful verb. A
+  // failed/empty fetch leaves the existing transcript untouched (and logs)
+  // rather than blanking it. `triggerType` is the event that prompted the
+  // resync, surfaced in the status line so the user knows the history changed
+  // under them rather than seeing it silently rewritten.
+  function resyncDaemonTranscript(triggerType) {
+    if (!daemonClient?.connected || !daemonSessionId) return;
+    daemonClient
+      .request(
+        'get_session_messages',
+        { sessionId: daemonSessionId, attachToken: daemonAttachToken },
+        daemonSessionId,
+      )
+      .then((res) => {
+        if (!res.ok || !Array.isArray(res.payload?.messages)) {
+          // Symmetric structured log — a resync miss must be distinguishable
+          // from "still in sync" for ops; the transcript stays as-is.
+          process.stderr.write(
+            `${JSON.stringify({ level: 'warn', event: 'tui_transcript_resync_failed', triggerType, reason: res.ok ? 'no_messages' : res.error?.code || 'request_failed' })}\n`,
+          );
+          return;
+        }
+        // Replace in place so the array reference (and MAX_TRANSCRIPT splice
+        // invariant) is preserved. Drop any half-streamed buffer so a rebuild
+        // mid-stream doesn't strand a partial assistant line.
+        tuiState.streamBuf = '';
+        tuiState.transcript.length = 0;
+        for (const msg of res.payload.messages) {
+          if (!msg || (msg.role !== 'user' && msg.role !== 'assistant')) continue;
+          pushTranscriptEntry(
+            tuiState,
+            {
+              role: msg.role,
+              text: typeof msg.content === 'string' ? msg.content : '',
+              timestamp: Date.now(),
+            },
+            { autoScroll: false },
+          );
+        }
+        const label =
+          triggerType === 'session_reverted'
+            ? 'Conversation reverted on the daemon — transcript resynced.'
+            : triggerType === 'session_unreverted'
+              ? 'Conversation restored on the daemon — transcript resynced.'
+              : 'Conversation compacted on the daemon — transcript resynced.';
+        addTranscriptEntry(tuiState, 'status', label);
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+      })
+      .catch((err) => {
+        const reason = err instanceof Error ? err.message : String(err);
+        process.stderr.write(
+          `${JSON.stringify({ level: 'warn', event: 'tui_transcript_resync_failed', triggerType, reason })}\n`,
+        );
+      });
+  }
+
   function handleEngineEvent(event) {
     // Track the highest daemon-emitted seq we've seen so the next
     // attach (after a disconnect / reconnect) asks for events strictly
@@ -2688,6 +2752,10 @@ export async function runTUI(options = {}) {
                   sessionId: daemonSessionId,
                   approvalId,
                   decision: approved ? 'approve' : 'deny',
+                  // Bearer required since submit_approval is now session-gated
+                  // (matches cancel_run). Without this the daemon rejects the
+                  // decision with INVALID_TOKEN.
+                  attachToken: daemonAttachToken,
                 },
                 daemonSessionId,
               )
@@ -2706,6 +2774,18 @@ export async function runTUI(options = {}) {
         // client switching provider/model is visible here without
         // polling).
         hydrateSessionStateFromDaemon(event.payload);
+        break;
+
+      case 'context_compacted':
+      case 'session_reverted':
+      case 'session_unreverted':
+        // Another client (or this one via a session verb) rewrote the
+        // daemon's persisted transcript. Refetch it so the local view stops
+        // showing turns the daemon dropped / summarized away. The event
+        // payload carries only metadata (counts / a summary marker), not the
+        // new transcript, so a refetch is the only way to converge — see
+        // lib/session-transcript-events.ts.
+        resyncDaemonTranscript(event.type);
         break;
 
       case 'approval_received':

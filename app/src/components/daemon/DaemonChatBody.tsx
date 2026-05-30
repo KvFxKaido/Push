@@ -296,6 +296,13 @@ export function DaemonChatBody({
           sessionId: head.sessionId,
           approvalId: head.approvalId,
           decision,
+          // Bearer required since submit_approval is now session-gated (matches
+          // cancel_run). Relay mode threads the pair-bundle token; local-PC mode
+          // never attached, so it has no token and the gate's post-existence
+          // placement lets its decision resolve normally on a session it owns.
+          ...(typeof sessionAttachToken === 'string' && sessionAttachToken.length > 0
+            ? { attachToken: sessionAttachToken }
+            : {}),
         },
       }).catch(() => {
         // Errors surface in the daemon's audit log; the user has
@@ -304,7 +311,7 @@ export function DaemonChatBody({
       });
       approvals.popMatching(head.approvalId);
     },
-    [request, approvals],
+    [request, approvals, sessionAttachToken],
   );
 
   const {

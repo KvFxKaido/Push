@@ -128,7 +128,7 @@
             "const": true
           },
           "type": {
-            "enum": ["attach_session", "resume_session"]
+            "enum": ["attach_session"]
           }
         }
       },

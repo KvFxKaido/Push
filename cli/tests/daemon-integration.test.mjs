@@ -654,6 +654,124 @@ describe('cancel_run bearer gate', () => {
   });
 });
 
+// ─── submit_approval bearer gate (Addressable Session Verbs follow-up) ──
+//
+// Closes the auth gap the cancel_run fix (#723) left open: handleSubmitApproval
+// resolved a paused tool call from sessionId + approvalId alone with no
+// validateAttachToken. Same shape as the cancel_run gate — AFTER the existence
+// check (unknown session → SESSION_NOT_FOUND, the benign local-PC path) and
+// BEFORE the pending-approval lookup (a stolen approvalId can't even probe
+// whether one is outstanding).
+describe('submit_approval bearer gate', () => {
+  let originalSessionDir;
+  let tmpRoot;
+  const sessionId = 'sess_apvgate_aabbcc';
+  before(async () => {
+    originalSessionDir = process.env.PUSH_SESSION_DIR;
+    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-apvgate-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+  });
+  after(async () => {
+    __evictActiveSessionForTesting(sessionId);
+    if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+    else process.env.PUSH_SESSION_DIR = originalSessionDir;
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  });
+
+  // Seed a live session carrying a pending approval. The resolve spy lets the
+  // accept test prove the paused call was actually released; the timer is
+  // unref'd so a rejection path that never clears it can't keep the process
+  // alive.
+  function seedPendingApproval(token) {
+    let resolvedWith = null;
+    const timer = setTimeout(() => {}, 60_000);
+    timer.unref?.();
+    __setActiveSessionForTesting(sessionId, {
+      state: { sessionId, attachToken: token, eventSeq: 0, updatedAt: 0 },
+      attachToken: token,
+      activeRunId: 'run_apvgate',
+      pendingApproval: {
+        approvalId: 'apv_gate',
+        runId: 'run_apvgate',
+        timer,
+        resolve: (decision) => {
+          resolvedWith = decision;
+        },
+      },
+    });
+    return () => resolvedWith;
+  }
+
+  it('rejects a tokenless approval decision (gap closed)', async () => {
+    seedPendingApproval('att_apvgate');
+    const res = await handleRequest(
+      makeRequest('submit_approval', { sessionId, approvalId: 'apv_gate', decision: 'approve' }),
+      () => {},
+    );
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'INVALID_TOKEN');
+  });
+
+  it('rejects a wrong token', async () => {
+    seedPendingApproval('att_apvgate');
+    const res = await handleRequest(
+      makeRequest('submit_approval', {
+        sessionId,
+        approvalId: 'apv_gate',
+        decision: 'approve',
+        attachToken: 'att_wrong',
+      }),
+      () => {},
+    );
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'INVALID_TOKEN');
+  });
+
+  it('checks auth BEFORE the approval lookup — no APPROVAL_NOT_FOUND leak', async () => {
+    // Session has NO pending approval. A tokenless caller must still see
+    // INVALID_TOKEN, not APPROVAL_NOT_FOUND (which would confirm/deny that an
+    // approval is outstanding to a client that doesn't hold the bearer).
+    __setActiveSessionForTesting(sessionId, {
+      state: { sessionId, attachToken: 'att_apvgate', eventSeq: 0, updatedAt: 0 },
+      attachToken: 'att_apvgate',
+    });
+    const res = await handleRequest(
+      makeRequest('submit_approval', { sessionId, approvalId: 'apv_gate', decision: 'approve' }),
+      () => {},
+    );
+    assert.equal(res.error.code, 'INVALID_TOKEN');
+  });
+
+  it('accepts the correct token and resolves the pending approval', async () => {
+    const decidedWith = seedPendingApproval('att_apvgate');
+    const res = await handleRequest(
+      makeRequest('submit_approval', {
+        sessionId,
+        approvalId: 'apv_gate',
+        decision: 'approve',
+        attachToken: 'att_apvgate',
+      }),
+      () => {},
+    );
+    assert.equal(res.ok, true, `expected accept, got ${JSON.stringify(res.error)}`);
+    assert.equal(decidedWith(), 'approve', 'the paused tool call should have been released');
+  });
+
+  it('unknown session still returns SESSION_NOT_FOUND (gate after existence)', async () => {
+    const res = await handleRequest(
+      makeRequest('submit_approval', {
+        sessionId: 'sess_apvgone_ddeeff',
+        approvalId: 'apv_x',
+        decision: 'approve',
+        attachToken: 'whatever',
+      }),
+      () => {},
+    );
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'SESSION_NOT_FOUND');
+  });
+});
+
 // ─── Addressable child sessions (Addressable Session Verbs phase 3) ──
 //
 // list_children enumerates a session's delegated runs (active from the

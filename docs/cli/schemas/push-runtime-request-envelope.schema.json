@@ -95,23 +95,6 @@
       "if": {
         "properties": {
           "type": {
-            "const": "resume_session"
-          }
-        }
-      },
-      "then": {
-        "required": ["sessionId"],
-        "properties": {
-          "payload": {
-            "$ref": "./push-runtime-defs.schema.json#/$defs/resumeSessionRequestPayload"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "type": {
             "const": "send_user_message"
           }
         }
