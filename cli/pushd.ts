@@ -784,8 +784,7 @@ function makeRequestId() {
 
 // `makeAttachToken` is now imported from `./session-store` so every session
 // creation path (daemon + TUI + CLI) mints through one helper. Re-exported
-// below alongside the other token utilities for callers/tests that import it
-// from the daemon module.
+// below so callers/tests that import it from the daemon module keep working.
 
 function makeApprovalId() {
   return `appr_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}`;
@@ -849,6 +848,10 @@ function shouldRecover(policy, marker) {
 // ─── Token validation ─────────────────────────────────────────────
 
 export { getRestartPolicy, shouldRecover, DEFAULT_RESTART_POLICY, VALID_AGENT_ROLES };
+// Re-export the session-store mint helper from the daemon module so existing
+// importers (and tests) that reach for it here keep resolving after the
+// promotion into `./session-store`.
+export { makeAttachToken };
 
 export function validateAttachToken(entry, providedToken) {
   if (!entry || !entry.attachToken) return true;

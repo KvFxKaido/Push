@@ -202,9 +202,14 @@ export type NewSessionBaseState = Pick<
   | 'rounds'
   | 'eventSeq'
   | 'messages'
-  | 'attachToken'
   | 'mode'
-> & { createdAt: number };
+> & {
+  createdAt: number;
+  // Required (not the optional `SessionState.attachToken`): the factory always
+  // mints, so the return type ENFORCES the bearer-at-birth invariant this whole
+  // change rests on — a caller can't observe a factory-built state without one.
+  attachToken: string;
+};
 
 /**
  * Build the base state for a brand-new session, ALWAYS carrying a freshly
