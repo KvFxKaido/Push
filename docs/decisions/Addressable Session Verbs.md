@@ -1,10 +1,12 @@
 # Addressable Session Verbs
 
 Date: 2026-05-30
-Status: **Draft, ROADMAP-tracked** (Session Continuity & Stability) — vocabulary
-pinned; phased implementation. This is suggested-priority #2 from
-[`opencode SDK Review.md`](opencode%20SDK%20Review.md), unblocked now that the
-[`Universal Session Bearer`](Universal%20Session%20Bearer.md) shipped.
+Status: **Current** (Session Continuity & Stability) — all phases shipped (the
+verb vocabulary is pinned and the executable surface landed). This is
+suggested-priority #2 from [`opencode SDK Review.md`](opencode%20SDK%20Review.md),
+unblocked once the [`Universal Session Bearer`](Universal%20Session%20Bearer.md)
+shipped. The one deliberate non-build is the live `attach_child_session` fan-out
+(deferred as redundant — see the children section).
 Owner: Push
 
 Pin **one canonical spelling** for the session-lifecycle verbs Push already
@@ -62,7 +64,7 @@ it stands after the audit.
 | **Children — read** | `get_child_session` | child `session.get` | descriptor + event summary; resolves active → outcome → event-derived; shares the child-event predicate with `fetch_delegation_events` | **shipped (3a + 3b)** |
 | **Children — attach (live)** | `attach_child_session` | (n/a) | broadcast child events by `childRunId` | **deferred — redundant; see 3b note** |
 | **Summarize** | `session_summarize` | `session.summarize` | on-demand `compactContext` (`cli/context-manager.ts`); persists + emits `context_compacted` | **shipped (phase 4)** |
-| **Revert / unrevert** | `session_revert` / `session_unrevert` | `session.revert` / `unrevert` | *none daemon-reachable* | **phase: revert (real build)** |
+| **Revert / unrevert** | `session_revert` / `session_unrevert` | `session.revert` / `unrevert` | transcript revert: truncate `state.messages` by last-N user turns + stash for unrevert (shares `isFirstUserMessage` with compaction); git/sandbox untouched | **shipped (phase 5)** |
 | Abort verb sugar | `abort` (alias) | `session.abort` | routes to `cancel_run` / `cancel_delegation` by id shape; re-stamps response `type` to `abort` | **shipped (phase 2b)** |
 
 Names recorded but **out of scope** (no Push equivalent, or a deliberate
@@ -106,13 +108,15 @@ The premise that the pinned verbs are thin wrappers over reachable machinery
   `compactSessionContext` *wrapper* (parse turns → compact → emit → rewrite),
   which the daemon handler re-implements. Shipped in phase 4.
 
-- **`session_revert` — a real build, not a wrapper.** There is **no**
-  daemon-reachable rollback. Coder checkpoint/resume is web-Durable-Object-only
-  (`app/src/worker/coder-job-do.ts`); git-level revert only reachable indirectly
-  via `delegate_coder`; `rewriteMessagesLog` (`cli/session-store.ts`) can rewrite
-  the message log but there is no checkpoint/marker index to *find* a revert
-  target. A real `session_revert` needs a run-scoped checkpoint marker + a
-  message-log truncate handler. Heaviest phase; may warrant its own mini-design.
+- **`session_revert` — a real build, not a wrapper (shipped, phase 5).** There
+  was **no** daemon-reachable rollback. The mini-design (user-confirmed) scoped it
+  to **transcript revert by last-N user turns** — no run-scoped checkpoint marker
+  needed: the turn boundaries come from the same `isFirstUserMessage` detector
+  compaction uses, so `session_revert({ turns })` truncates `state.messages` and
+  stashes the removed tail; `session_unrevert` restores it. Sandbox/git rollback
+  stays out of scope (separate concern; Push has typed branch tools). The stash is
+  in-memory (durable unrevert across a daemon restart is a possible follow-up) and
+  cleared by the next `send_user_message` (a new message commits the fork).
 
 - **`children` — ~80% there.** Delegated runs already mint stable ids
   (`sub_explorer_*` / `sub_coder_*`) paired with a `childRunId`, tracked in the
@@ -192,8 +196,12 @@ the AGENTS.md "one source of truth per vocabulary + drift-detector" rule.
    verb (the 15th enforcement site). Persists via `rewriteMessagesLog`, emits +
    broadcasts `context_compacted`, rejected while a run is active. No `lib/`
    promotion needed (`compactContext` already lives in `cli/context-manager.ts`).
-5. **`session_revert`.** Run-scoped checkpoint marker + message-log truncate.
-   Its own mini-design first.
+5. ✅ **`session_revert` / `session_unrevert`** — transcript revert by last-N user
+   turns (16th + 17th enforcement sites). Mini-design (user-confirmed) chose
+   transcript-only + last-N-turns: truncate `state.messages`, stash the removed
+   tail for `unrevert` (accumulates across reverts, cleared on next send), persist
+   + broadcast `session_reverted` / `session_unreverted`, rejected mid-run. No
+   checkpoint-marker infra needed — turn boundaries come from `isFirstUserMessage`.
 
 ## Out of scope
 

@@ -1291,6 +1291,179 @@ describe('session_summarize verb', () => {
   });
 });
 
+// ─── session_revert / session_unrevert (Addressable Session Verbs phase 5) ──
+//
+// Transcript revert: undo the last N user turns (truncate state.messages,
+// persist, stash the removed tail) + unrevert restores it. Bearer-gated (16th +
+// 17th enforcement sites), rejected mid-run; the stash is cleared by the next
+// send_user_message.
+describe('session_revert / session_unrevert', () => {
+  let originalSessionDir;
+  let tmpRoot;
+  before(async () => {
+    originalSessionDir = process.env.PUSH_SESSION_DIR;
+    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-revert-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+  });
+  after(async () => {
+    if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+    else process.env.PUSH_SESSION_DIR = originalSessionDir;
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  });
+
+  async function makeSession() {
+    const start = await handleRequest(
+      makeRequest('start_session', { provider: 'ollama', repo: { rootPath: process.cwd() } }),
+      () => {},
+    );
+    return { sessionId: start.payload.sessionId, token: start.payload.attachToken };
+  }
+
+  function seedTurns(entry, n) {
+    const msgs = [{ role: 'system', content: 'sys' }];
+    for (let i = 0; i < n; i += 1) {
+      msgs.push({ role: 'user', content: `user ${i}` });
+      msgs.push({ role: 'assistant', content: `assistant ${i}` });
+    }
+    entry.state.messages = msgs;
+  }
+
+  it('rejects a tokenless revert (16th enforcement site)', async () => {
+    const { sessionId } = await makeSession();
+    const res = await handleRequest(makeRequest('session_revert', { sessionId }), () => {});
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'INVALID_TOKEN');
+  });
+
+  it('reverts the last N turns, truncates + persists the transcript', async () => {
+    const { sessionId, token } = await makeSession();
+    const entry = __getActiveSessionForTesting(sessionId);
+    seedTurns(entry, 4); // [sys, u0,a0, u1,a1, u2,a2, u3,a3] = 9 messages, 4 turns
+
+    const res = await handleRequest(
+      makeRequest('session_revert', { sessionId, attachToken: token, turns: 2 }),
+      () => {},
+    );
+    assert.equal(res.ok, true, `expected ok, got ${JSON.stringify(res.error)}`);
+    assert.equal(res.payload.reverted, true);
+    assert.equal(res.payload.turns, 2);
+    assert.equal(res.payload.removedCount, 4); // u2,a2,u3,a3
+    assert.equal(res.payload.remainingTurns, 2);
+    assert.equal(entry.state.messages.length, 5); // sys + 2 turns
+
+    const reloaded = await loadSessionState(sessionId);
+    assert.equal(reloaded.messages.length, 5, 'truncation must be persisted');
+  });
+
+  it('unrevert restores exactly what revert removed', async () => {
+    const { sessionId, token } = await makeSession();
+    const entry = __getActiveSessionForTesting(sessionId);
+    seedTurns(entry, 3);
+    const before = entry.state.messages.length;
+
+    await handleRequest(
+      makeRequest('session_revert', { sessionId, attachToken: token, turns: 2 }),
+      () => {},
+    );
+    const un = await handleRequest(
+      makeRequest('session_unrevert', { sessionId, attachToken: token }),
+      () => {},
+    );
+    assert.equal(un.ok, true, `expected ok, got ${JSON.stringify(un.error)}`);
+    assert.equal(un.payload.unreverted, true);
+    assert.equal(entry.state.messages.length, before, 'transcript fully restored');
+    const reloaded = await loadSessionState(sessionId);
+    assert.equal(reloaded.messages.length, before);
+  });
+
+  it('accumulates consecutive reverts so unrevert restores all of them', async () => {
+    const { sessionId, token } = await makeSession();
+    const entry = __getActiveSessionForTesting(sessionId);
+    seedTurns(entry, 4);
+    const before = entry.state.messages.length;
+
+    await handleRequest(
+      makeRequest('session_revert', { sessionId, attachToken: token, turns: 2 }),
+      () => {},
+    );
+    await handleRequest(
+      makeRequest('session_revert', { sessionId, attachToken: token, turns: 1 }),
+      () => {},
+    );
+    const un = await handleRequest(
+      makeRequest('session_unrevert', { sessionId, attachToken: token }),
+      () => {},
+    );
+    assert.equal(un.ok, true);
+    assert.equal(entry.state.messages.length, before, 'two reverts fully undone by one unrevert');
+  });
+
+  it('unrevert with nothing pending returns NOTHING_TO_UNREVERT', async () => {
+    const { sessionId, token } = await makeSession();
+    const res = await handleRequest(
+      makeRequest('session_unrevert', { sessionId, attachToken: token }),
+      () => {},
+    );
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'NOTHING_TO_UNREVERT');
+  });
+
+  it('a new send commits the fork — unrevert is no longer possible', async () => {
+    const { sessionId, token } = await makeSession();
+    const entry = __getActiveSessionForTesting(sessionId);
+    seedTurns(entry, 3);
+    await handleRequest(
+      makeRequest('session_revert', { sessionId, attachToken: token, turns: 1 }),
+      () => {},
+    );
+    // Simulate what send_user_message does to the stash on a new message.
+    entry.revertedTail = null;
+    const un = await handleRequest(
+      makeRequest('session_unrevert', { sessionId, attachToken: token }),
+      () => {},
+    );
+    assert.equal(un.ok, false);
+    assert.equal(un.error.code, 'NOTHING_TO_UNREVERT');
+  });
+
+  it('reverting an empty conversation is a no-op (reverted:false)', async () => {
+    const { sessionId, token } = await makeSession();
+    const entry = __getActiveSessionForTesting(sessionId);
+    entry.state.messages = [{ role: 'system', content: 'sys' }]; // no user turns
+    const res = await handleRequest(
+      makeRequest('session_revert', { sessionId, attachToken: token }),
+      () => {},
+    );
+    assert.equal(res.ok, true);
+    assert.equal(res.payload.reverted, false);
+  });
+
+  it('rejects revert while a run is active (RUN_IN_PROGRESS)', async () => {
+    const { sessionId, token } = await makeSession();
+    const entry = __getActiveSessionForTesting(sessionId);
+    seedTurns(entry, 3);
+    entry.activeRunId = 'run_busy';
+    const res = await handleRequest(
+      makeRequest('session_revert', { sessionId, attachToken: token, turns: 1 }),
+      () => {},
+    );
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'RUN_IN_PROGRESS');
+  });
+
+  it('rejects a malformed turns value (INVALID_REQUEST)', async () => {
+    const { sessionId, token } = await makeSession();
+    for (const bad of [0, -1, 1.5, '2abc']) {
+      const res = await handleRequest(
+        makeRequest('session_revert', { sessionId, attachToken: token, turns: bad }),
+        () => {},
+      );
+      assert.equal(res.ok, false, `turns=${JSON.stringify(bad)} should reject`);
+      assert.equal(res.error.code, 'INVALID_REQUEST');
+    }
+  });
+});
+
 // ─── Daemon client library ──────────────────────────────────────
 
 describe('daemon-client module', () => {
