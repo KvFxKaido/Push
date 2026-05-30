@@ -3016,6 +3016,10 @@ export async function runTUI(options = {}) {
                       {
                         sessionId: daemonSessionId,
                         runId,
+                        // Bearer required since cancel_run gates the session-ful
+                        // path (Addressable Session Verbs phase 2). Without this
+                        // the daemon rejects the cancel with INVALID_TOKEN.
+                        attachToken: daemonAttachToken,
                       },
                       daemonSessionId,
                     )

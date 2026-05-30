@@ -65,6 +65,43 @@ describe('cancelPendingApprovals', () => {
     });
   });
 
+  it('threads the session attach token into the payload when provided (bearer-gated cancel_run)', () => {
+    // Addressable Session Verbs phase 2: the daemon now bearer-gates the
+    // session-ful cancel_run. The relay binding holds the session token and
+    // passes it here so the cancel is accepted instead of INVALID_TOKEN.
+    const request = vi.fn().mockResolvedValue({ ok: true });
+    const popMatching = vi.fn();
+    const pending = [makeApproval({ approvalId: 'a1', sessionId: 'sess-1', runId: 'run-1' })];
+
+    cancelPendingApprovals(pending, request, popMatching, 'att_relaytoken');
+
+    expect(request).toHaveBeenCalledWith({
+      type: 'cancel_run',
+      sessionId: 'sess-1',
+      payload: { sessionId: 'sess-1', attachToken: 'att_relaytoken' },
+      timeoutMs: 5_000,
+    });
+  });
+
+  it('omits attachToken when none is provided (local-PC: cancel is a benign SESSION_NOT_FOUND)', () => {
+    // Local-PC mode never attached to a daemon session, so it has no token;
+    // its cancel resolves to SESSION_NOT_FOUND (the gate sits after the
+    // existence check) and is swallowed. Empty/null must not leak an
+    // `attachToken: undefined` key into the payload.
+    const request = vi.fn().mockResolvedValue({ ok: true });
+    const popMatching = vi.fn();
+    const pending = [makeApproval({ approvalId: 'a1', sessionId: 'sess-1', runId: 'run-1' })];
+
+    cancelPendingApprovals(pending, request, popMatching, null);
+
+    expect(request).toHaveBeenCalledWith({
+      type: 'cancel_run',
+      sessionId: 'sess-1',
+      payload: { sessionId: 'sess-1' },
+      timeoutMs: 5_000,
+    });
+  });
+
   it('pops each pending approval from the local queue (cancel_run does not emit approval_received)', () => {
     // The daemon's `cancel_run` handler resolves
     // `entry.pendingApproval` locally and returns a response but
