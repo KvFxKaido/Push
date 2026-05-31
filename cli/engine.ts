@@ -617,20 +617,28 @@ export async function buildSystemPrompt(workspaceRoot: string): Promise<string> 
  * ran. The promise itself is deduped per-state so concurrent callers
  * see the same outcome.
  *
- * Per-state consume-on-peek storage: the snapshot is also stashed in
- * `_pendingEnrichmentSnapshots` so `consumeEnrichmentSnapshot` can
- * hand it to a single emitter even when multiple `runAssistantLoop`
- * calls concurrently await the same enrichment promise. Without this,
- * each awaiter would receive the same `PromptSnapshot` from the shared
- * promise and emit a duplicate `assistant.prompt_snapshot` event.
+ * Per-state consume-on-peek storage: the enrichment result is also stashed in
+ * `_pendingEnrichment` so `consumeEnrichment` can hand it to a single emitter
+ * even when multiple `runAssistantLoop` calls concurrently await the same
+ * enrichment promise. Without this, each awaiter would receive the same result
+ * from the shared promise and emit a duplicate `assistant.prompt_snapshot`
+ * event.
  */
 const _enrichmentMap: WeakMap<SessionState, Promise<PromptSnapshot | null>> = new WeakMap();
-const _pendingEnrichmentSnapshots: WeakMap<SessionState, PromptSnapshot> = new WeakMap();
-// Parallel to `_pendingEnrichmentSnapshots`: the per-section byte/token cost
-// for the same fresh enrichment, consumed once alongside the snapshot to emit
-// `prompt_composition_cost`. The snapshot carries sizes but not section text,
-// so token estimates can't be recovered at the emit site — they ride here.
-const _pendingEnrichmentCosts: WeakMap<SessionState, PromptCompositionCost> = new WeakMap();
+
+/**
+ * One carrier for all per-enrichment metadata consumed once per fresh build.
+ * The snapshot carries section sizes/hashes; the cost carries the per-section
+ * byte/token breakdown (which can't be recovered from the snapshot, since it
+ * holds sizes but not the section text). Both ride together so a new datum
+ * extends this shape rather than spawning another parallel WeakMap.
+ */
+interface PendingEnrichment {
+  snapshot: PromptSnapshot;
+  cost: PromptCompositionCost;
+}
+const _pendingEnrichment: WeakMap<SessionState, PendingEnrichment> = new WeakMap();
+
 export function ensureSystemPromptReady(state: SessionState): Promise<PromptSnapshot | null> {
   const sysMsg = (state.messages as Message[])[0];
   if (
@@ -653,8 +661,7 @@ export function ensureSystemPromptReady(state: SessionState): Promise<PromptSnap
     }): PromptSnapshot => {
       sysMsg.content = prompt;
       _enrichmentMap.delete(state);
-      _pendingEnrichmentSnapshots.set(state, snapshot);
-      _pendingEnrichmentCosts.set(state, cost);
+      _pendingEnrichment.set(state, { snapshot, cost });
       return snapshot;
     },
   );
@@ -663,31 +670,19 @@ export function ensureSystemPromptReady(state: SessionState): Promise<PromptSnap
 }
 
 /**
- * Consume the most recent enrichment snapshot for this state, returning
- * it exactly once. Subsequent calls (and calls for a state whose
- * enrichment hasn't completed yet, or which was already resumed) return
- * null. Used by `runAssistantLoop` to emit `assistant.prompt_snapshot`
- * exactly once per session even when multiple loops concurrently await
- * the same enrichment promise.
+ * Consume the most recent enrichment result for this state, returning it
+ * exactly once. Subsequent calls (and calls for a state whose enrichment
+ * hasn't completed yet, or which was already resumed) return null. Used by
+ * `runAssistantLoop` to emit `assistant.prompt_snapshot` and
+ * `prompt_composition_cost` exactly once per session — even when multiple
+ * loops concurrently await the same enrichment promise, only the first peek
+ * gets the result, so the events are never double-counted.
  */
-export function consumeEnrichmentSnapshot(state: SessionState): PromptSnapshot | null {
-  const snap = _pendingEnrichmentSnapshots.get(state);
-  if (!snap) return null;
-  _pendingEnrichmentSnapshots.delete(state);
-  return snap;
-}
-
-/**
- * Consume the most recent enrichment cost for this state, returning it
- * exactly once. Pairs with `consumeEnrichmentSnapshot` — same once-per-state
- * semantics — so the `prompt_composition_cost` ops log is emitted exactly
- * once per fresh build and never double-counted across concurrent loops.
- */
-export function consumeEnrichmentCost(state: SessionState): PromptCompositionCost | null {
-  const cost = _pendingEnrichmentCosts.get(state);
-  if (!cost) return null;
-  _pendingEnrichmentCosts.delete(state);
-  return cost;
+export function consumeEnrichment(state: SessionState): PendingEnrichment | null {
+  const pending = _pendingEnrichment.get(state);
+  if (!pending) return null;
+  _pendingEnrichment.delete(state);
+  return pending;
 }
 
 // ─── Tool Result Messages ────────────────────────────────────────
@@ -913,38 +908,35 @@ async function runAssistantLoopImpl(
   // tagged with `round: 0`; per-turn granularity belongs to the web
   // orchestrator where the prompt rebuilds on each round.
   //
-  // `consumeEnrichmentSnapshot` returns the snapshot exactly once per
-  // state — protects against concurrent `runAssistantLoop` calls for
-  // the same state both receiving the same snapshot from the shared
-  // enrichment promise and emitting duplicate events.
+  // `consumeEnrichment` returns the result exactly once per state — protects
+  // against concurrent `runAssistantLoop` calls for the same state both
+  // receiving the same result from the shared enrichment promise and emitting
+  // duplicate events.
   await ensureSystemPromptReady(state);
-  const enrichmentSnapshot = consumeEnrichmentSnapshot(state);
-  if (enrichmentSnapshot) {
+  const enrichment = consumeEnrichment(state);
+  if (enrichment) {
     const sysMsg = (state.messages as Message[])[0];
     const totalChars = sysMsg && typeof sysMsg.content === 'string' ? sysMsg.content.length : 0;
     await appendSessionEvent(
       state,
       'assistant.prompt_snapshot',
-      { round: 0, role: 'orchestrator', totalChars, sections: enrichmentSnapshot },
+      { round: 0, role: 'orchestrator', totalChars, sections: enrichment.snapshot },
       runId,
     );
     dispatchEvent('assistant.prompt_snapshot', {
       round: 0,
       role: 'orchestrator',
       totalChars,
-      sections: enrichmentSnapshot,
+      sections: enrichment.snapshot,
     });
     // Measurement pass for the schema-deferral decision: one
     // `prompt_composition_cost` line per fresh build (round 0 — the CLI prompt
     // is built once and reused across rounds). Resumed sessions skip this, like
-    // the snapshot event above, since no fresh cost was computed.
-    const cost = consumeEnrichmentCost(state);
-    if (cost) {
-      emitPromptCompositionCost(
-        { surface: 'cli', scopeId: state.sessionId, round: 0, mode: state.mode ?? 'cli' },
-        cost,
-      );
-    }
+    // the snapshot event above, since no fresh enrichment ran.
+    emitPromptCompositionCost(
+      { surface: 'cli', scopeId: state.sessionId, round: 0, mode: state.mode ?? 'cli' },
+      enrichment.cost,
+    );
   }
   // Whether this run advertised GitHub tools — derived from the (now enriched)
   // system prompt so it holds for both fresh and resumed sessions. Gates the
