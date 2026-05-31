@@ -169,7 +169,30 @@ source-preferring launcher logic, or apply the staleness check before spawning a
 warn/rebuild. Low priority, but worth a `log()` at minimum so the skew isn't
 silent.
 
-### 7. `attach_child_session` live fan-out — deferred (not a gap)
+### 7. Transcript-event payloads are untyped across the daemon↔TUI seam
+
+**Confidence: high (verified while scoping #1's tests).**
+
+`lib/session-transcript-events.ts` exports only the event *type names*
+(`TRANSCRIPT_MUTATION_EVENT_TYPES` + `isTranscriptMutationEvent`) — not the
+payload shapes. The counts those events carry (`removedCount`, `restoredCount`,
+`turns`, `beforeTokens`, `afterTokens`) are built ad-hoc in the daemon handlers
+(`handleSessionRevert` / `handleSessionUnrevert` / `handleSessionSummarize`) and
+read **untyped** in the TUI (`p.removedCount`, etc. in `resyncDaemonTranscript`).
+
+The failure mode: a daemon-side field rename silently degrades the TUI's resync
+label to its bare form (no error, no compile failure, just less information).
+This is also why a unit test of #1's label formatter would be theater — it'd
+supply its own payloads and pass forever, never catching the cross-surface drift.
+
+**The fix is a type, not a test.** Promote the per-event payload shapes into
+`lib/session-transcript-events.ts` as exported interfaces, have the daemon
+handlers construct them and the TUI consumer read them, and TS catches a rename
+at compile time across both surfaces for free. Separate, broader change (touches
+the daemon handler bodies) — explicitly *not* part of #1. Low priority at
+single-user blast radius; the right move if the payload contract grows.
+
+### 8. `attach_child_session` live fan-out — deferred (not a gap)
 
 `list_children` + `get_child_session` are read/summary verbs; there's no focused
 live-tail of a *specific* child over the wire (`cli/pushd.ts:3474`). This is a
@@ -191,6 +214,8 @@ Ordered by value / cost, not committed (needs a `ROADMAP.md` entry to become wor
    anyone touches `handleDelegate*`.
 4. **Cross-phone cancel scoping (#3)** and **delegate.complete audit (#4)** —
    hardening; fold into the next relay/audit-touching PR.
+5. **Type the transcript-event payloads (#7)** — compile-time guard against
+   daemon↔TUI field drift; do it if/when the payload contract grows.
 
 ## Cross-references
 
