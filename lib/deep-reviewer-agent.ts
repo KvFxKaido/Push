@@ -38,11 +38,8 @@ import {
   buildValidationFailedHint,
   buildUnimplementedToolErrorText,
 } from './tool-call-recovery.js';
-import {
-  truncateAgentContent,
-  formatAgentToolResult,
-  formatAgentParseError,
-} from './agent-loop-utils.js';
+import { formatProjectInstructionsBlock } from './project-instructions.js';
+import { formatAgentToolResult, formatAgentParseError } from './agent-loop-utils.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -522,12 +519,12 @@ export async function runDeepReviewer<TCall, TCard>(
     systemPrompt += `\n\n${identityBlock}`;
   }
   if (projectInstructions) {
-    const truncatedInstructions = truncateAgentContent(
-      projectInstructions,
-      MAX_PROJECT_INSTRUCTIONS_SIZE,
-      'project instructions',
-    );
-    systemPrompt += `\n\nPROJECT INSTRUCTIONS — Repository instructions and built-in app context:\n${truncatedInstructions}`;
+    // Canonical sanitized envelope shared with the orchestrators and the other
+    // delegated agents.
+    systemPrompt += `\n\n${formatProjectInstructionsBlock(projectInstructions, {
+      source: instructionFilename || 'AGENTS.md',
+      maxSize: MAX_PROJECT_INSTRUCTIONS_SIZE,
+    })}`;
     if (projectInstructions.length > MAX_PROJECT_INSTRUCTIONS_SIZE) {
       systemPrompt += `\n\nFull file available at /workspace/${instructionFilename || 'AGENTS.md'} if you need more detail.`;
     }

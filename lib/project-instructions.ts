@@ -18,15 +18,29 @@ export const PROJECT_INSTRUCTIONS_CLOSE = '[/PROJECT_INSTRUCTIONS]';
 /**
  * Sanitize project instructions before injection into prompts. Truncates to a
  * bounded size and escapes delimiter sequences so the content cannot break out
- * of its labeled block.
+ * of its labeled block. `maxSize` lets each consumer keep its own budget (the
+ * orchestrators use the 8000 default; the delegated-role agents pass tighter or
+ * looser caps) while sharing the one escaping implementation.
  */
-export function sanitizeProjectInstructions(raw: string): string {
+export function sanitizeProjectInstructions(
+  raw: string,
+  maxSize: number = MAX_PROJECT_INSTRUCTIONS_SIZE,
+): string {
+  // Defensive clamp on the public injection-defense boundary. Floor first, then
+  // require a strictly-positive integer — otherwise fall back to the default
+  // budget so the cap stays predictable. This rejects the whole degenerate
+  // class in one check: NaN/±Infinity (disable truncation, `len > NaN` is
+  // always false), negatives (negative-index slice), and anything that floors
+  // to 0 — explicit 0/-0 *and* fractions like 0.5 — which would otherwise
+  // collapse every input to an empty "truncated" block.
+  const flooredMax = Number.isFinite(maxSize) ? Math.floor(maxSize) : 0;
+  const cap = flooredMax > 0 ? flooredMax : MAX_PROJECT_INSTRUCTIONS_SIZE;
   let content = raw;
 
-  if (content.length > MAX_PROJECT_INSTRUCTIONS_SIZE) {
+  if (content.length > cap) {
     content =
-      content.slice(0, MAX_PROJECT_INSTRUCTIONS_SIZE) +
-      `\n\n[Project instructions truncated — ${raw.length - MAX_PROJECT_INSTRUCTIONS_SIZE} chars omitted]`;
+      content.slice(0, cap) +
+      `\n\n[Project instructions truncated — ${raw.length - cap} chars omitted]`;
   }
 
   // Break any block boundary the content tries to forge — both the canonical
@@ -55,14 +69,16 @@ function sanitizeSourceLabel(source: string | null | undefined): string | null {
  * content sanitized (size-capped + delimiter-escaped). The single formatter
  * shared by the web and CLI orchestrators so both emit an identical, equally
  * defended block — previously the CLI wrapped raw content in the underscore
- * marker without escaping, while the web used a different (space) marker.
- * `source` records provenance (e.g. "AGENTS.md") when known.
+ * marker without escaping, while the web used a different (space) marker and
+ * the delegated-role agents used a bespoke prose header with no escaping at all.
+ * `source` records provenance (e.g. "AGENTS.md") when known; `maxSize` overrides
+ * the default sanitizer budget for consumers with their own cap.
  */
 export function formatProjectInstructionsBlock(
   rawContent: string,
-  options: { source?: string | null } = {},
+  options: { source?: string | null; maxSize?: number } = {},
 ): string {
-  const safe = sanitizeProjectInstructions(rawContent);
+  const safe = sanitizeProjectInstructions(rawContent, options.maxSize);
   const source = sanitizeSourceLabel(options.source);
   const open = source
     ? `${PROJECT_INSTRUCTIONS_OPEN_PREFIX} source="${source}"]`
