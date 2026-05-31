@@ -96,26 +96,52 @@ with `err.code`), so `NOTHING_TO_UNREVERT` renders as a status, not an error.
 Verified end-to-end against a live daemon (revert/unrevert/compact-noop/children
 list+inspect+not-found). `cancel_run` was already TUI-initiable (Ctrl+C).
 
-### 2. PR delivery is dead in local-daemon mode
+### 2. PR delivery in local-daemon mode — ~~dead~~ mostly works; the gap is prompt copy
 
-**Confidence: high (explicit capability strip).**
+**Original claim (2026-05-31): "dead in local-daemon mode." Corrected same day
+after tracing the full path — the original read only the static strip and missed
+the `remoteGitHubAvailable` escape hatch.** Kept here as a worked example of why
+you trace the consumer before believing a capability-table comment.
 
-`LOCAL_DAEMON_REMOTE_ONLY_CAPS` at `lib/capabilities.ts:365` strips `pr:write` and
-`workflow:trigger` from **every** role in `local-daemon` mode, because "the paired
-pushd session has no GitHub remote wired up." So `create_pr` / `merge_pr` /
-`delete_branch` / `trigger_workflow` all deny at the capability gate.
+The strip *looks* fatal: `LOCAL_DAEMON_REMOTE_ONLY_CAPS` (`lib/capabilities.ts:365`)
+drops `pr:write` / `workflow:trigger` in `local-daemon` mode "because the paired
+pushd session has no GitHub remote wired up." But that comment is stale — the
+mechanism to ship is **already fully present** for the CLI/TUI→daemon path:
 
-Consequence: a remote-controlled local daemon can code, commit, and raw-`git push`
-via `sandbox_exec`, but **cannot use the typed PR-delivery tools** — and Push's
-entire delivery model is "PR flow only, never local merge" (see root `CLAUDE.md`
-→ Delivery rules). Remote control on a local daemon can build but can't ship
-through the sanctioned path.
+1. **Token resolves locally** — `cli/github-runtime.ts`: `PUSH_GITHUB_TOKEN` →
+   `GITHUB_TOKEN` → `GH_TOKEN` → `gh auth token`. Same machine as the daemon.
+2. **Caps grant it with a token** — the strip has an escape hatch,
+   `getEffectiveCapabilities(role, mode, { remoteGitHubAvailable })`
+   (`lib/capabilities.ts:490`), and `cli/tools.ts:1821` threads
+   `remoteGitHubAvailable: resolvedGitHubToken.length > 0` into the execution gate.
+   So `pr:write` is *granted* in local-daemon mode whenever a token exists.
+   (Orchestrator still loses `git:push` via `LOCAL_DAEMON_ORCHESTRATOR_REMOTE_GIT`,
+   which is coherent: it opens/merges via `pr_create`/`pr_merge`, pushes via the
+   typed `sandbox_push` — never a raw remote push.)
+3. **The write tools are advertised** — `cli/engine.ts:504`/`:523` append
+   `GITHUB_TOOL_PROTOCOL` whenever a token resolves; it lists
+   `pr_create`/`pr_merge`/`branch_delete`/`workflow_run` and the exact rule
+   "Merges happen through the PR flow … never merge locally."
 
-This is distinct from the deferred cloud-sandbox git-credential-proxy work; here
-it's specifically the *local-daemon* runtime having no GitHub API token plumbed
-in. Closing it means deciding how a GitHub token reaches the local-daemon runtime
-(reuse the user's `gh` auth? a scoped token in `~/.push/`?), then removing the
-strip for that path.
+So `pr_create`/`pr_merge` are resolvable, granted, and advertised the moment a
+`gh auth login` (or env token) is present on the daemon machine.
+
+**The actual residual gap is contradictory prompt copy.** `OrchestratorPromptOptions`
+has a single knob — `isLocalDaemon` — that conflates "I'm on the user's machine"
+with "I have no remote." So the orchestrator routing block
+(`lib/orchestrator-prompt-builder.ts:162`) still asserts "commit/push shipping is
+cloud-only … (no remote)" even when a token resolves, while the GitHub-tools
+section in the same prompt says "ship via `pr_create`/`pr_merge`." Mixed signal.
+
+**Fix (bounded):** split the conflated knob — add `remoteGitHubAvailable` to
+`OrchestratorPromptOptions`, thread the already-resolved token signal, and stop the
+routing copy from claiming "no remote" when a token is present. Prompt-layer change
++ a builder test; not an architecture project.
+
+**Confidence:** mechanism present = high (traced); "works end-to-end" = inference,
+not yet exercised by creating a real PR from a daemon session. **Less traced:** the
+web→relay→local-daemon path, where the orchestrator may run on the web side with
+the browser token rather than the daemon's `gh` auth — a separate path.
 
 ### 3. Cross-phone cancel is not identity-scoped
 
@@ -207,9 +233,12 @@ Ordered by value / cost, not committed (needs a `ROADMAP.md` entry to become wor
 1. **TUI verb exposure (#1)** — ✅ **done 2026-05-31.** `/revert`, `/unrevert`,
    `/children`, and daemon-aware `/compact` now drive the existing bearer-gated
    verbs; verified live.
-2. **PR delivery in local-daemon (#2)** — the one architectural decision. Scope a
-   GitHub-token path for the local-daemon runtime, then narrow the capability
-   strip. Bigger than the rest; warrants its own decision doc.
+2. **PR delivery in local-daemon (#2)** — ~~the one architectural decision~~
+   **re-scoped 2026-05-31:** the runtime already supports it with a token; the
+   only gap is the orchestrator routing copy conflating `isLocalDaemon` with "no
+   remote." Bounded prompt fix (split the knob + a builder test), gated on an
+   empirical check that the copy actually misleads the model. Not an architecture
+   project after all.
 3. **Doc-drift cleanup (#5)** — five-minute fix, do it opportunistically next time
    anyone touches `handleDelegate*`.
 4. **Cross-phone cancel scoping (#3)** and **delegate.complete audit (#4)** —
