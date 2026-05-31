@@ -40,6 +40,7 @@ import {
   createTurnRunContext,
   dispatchDroppedCandidatesError,
   handleLoopVerdict,
+  recordGithubToolTurnUsage,
   type LoopLadderState,
 } from './chat-send-helpers';
 import type { AssistantTurnResult, SendLoopContext } from './chat-send-types';
@@ -109,6 +110,10 @@ export async function processAssistantTurn(
   // --- Detect all tool calls in one pass ---
   const detected = detectAllToolCalls(accumulated);
   const parallelToolCalls = detected.readOnly;
+
+  // Measurement pass for the schema-deferral decision: record whether this
+  // protocol-paying turn actually called a GitHub tool. See the helper.
+  recordGithubToolTurnUsage(detected, ctx, round);
 
   // --- Circuit breaker: evaluate the per-turn loop verdict (exact-match
   // breakers + graded near-duplicate ladder). `handleLoopVerdict` returns a

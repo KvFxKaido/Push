@@ -13,6 +13,7 @@
  */
 
 import { streamChat, peekLastPromptSnapshot } from '@/lib/orchestrator';
+import { emitPromptCompositionCost } from '@push/lib/prompt-cost-telemetry';
 import { drainRecentContextMetrics } from '@/lib/context-metrics';
 import { assertReadyForAssistantTurn } from '@push/lib/llm-message-invariants';
 import {
@@ -309,6 +310,22 @@ export async function streamAssistantRound(
       totalChars: snapshotEntry.totalChars,
       sections: snapshotEntry.snapshot,
     });
+
+    // Measurement pass for the schema-deferral decision: one structured
+    // `prompt_composition_cost` line per orchestrator prompt build, keyed by
+    // chatId+round so it joins the github_tool_turn_* usage line emitted from
+    // chat-send. Gated on the same consume-on-peek entry as the snapshot event
+    // so an aborted round that never rebuilt the prompt doesn't re-emit a
+    // stale cost against the wrong round.
+    emitPromptCompositionCost(
+      {
+        surface: 'web',
+        scopeId: chatId,
+        round,
+        mode: workspaceContextRef.current?.mode ?? 'unknown',
+      },
+      snapshotEntry.cost,
+    );
   }
 
   // Drain any context-compaction events that fired during this turn's

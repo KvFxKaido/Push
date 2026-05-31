@@ -11,6 +11,7 @@ import {
   isReadOnlyToolCall,
   truncateText,
   TOOL_PROTOCOL,
+  GITHUB_TOOL_PROTOCOL,
 } from './tools.js';
 import {
   appendSessionEvent as appendSessionEventRaw,
@@ -44,10 +45,17 @@ import {
   trimContext,
   distillContext,
   estimateContextTokens,
+  estimateTokens,
   getContextBudget,
   isToolResultMessage,
   isParseErrorMessage,
 } from './context-manager.js';
+import { getToolSourceFromName } from '../lib/tool-registry.ts';
+import {
+  emitPromptCompositionCost,
+  emitGithubToolTurnUsage,
+  type PromptCompositionCost,
+} from '../lib/prompt-cost-telemetry.ts';
 import { transformContextBeforeLLM, type DistillResult } from '../lib/context-transformer.ts';
 import { getDefaultMemoryStore } from '../lib/context-memory-store.ts';
 import { isSyntheticDigestMessage, parseSessionDigest } from '../lib/session-digest.ts';
@@ -559,15 +567,29 @@ function logPromptBuilderDebug(
 
 async function buildEnrichedCliPrompt(
   workspaceRoot: string,
-): Promise<{ prompt: string; snapshot: PromptSnapshot }> {
+): Promise<{ prompt: string; snapshot: PromptSnapshot; cost: PromptCompositionCost }> {
   const builder = buildCliBaseBuilder(workspaceRoot);
   const baseSnapshot = builder.snapshot();
   await enrichCliBuilder(builder, workspaceRoot);
   logPromptBuilderDebug(workspaceRoot, builder, baseSnapshot);
-  return {
-    prompt: builder.build(),
-    snapshot: builder.snapshot(),
+  const prompt = builder.build();
+  // Isolate the cost of the two always-injected blocks the schema-deferral
+  // decision (Claude Code In-App Patterns §5) is weighing. Read the section
+  // text straight off the builder — cleaner than the web side's marker
+  // extraction, which has to recover the project block from a composite
+  // environment section. The CLI prompt is built once per run, so this cost is
+  // run-level (emitted with round 0).
+  const githubText = builder.get('github_tool_instructions') ?? '';
+  const projectText = builder.get('project_context') ?? '';
+  const cost: PromptCompositionCost = {
+    systemPromptBytes: prompt.length,
+    githubProtocolBytes: githubText.length,
+    projectInstructionsBytes: projectText.length,
+    systemPromptTokens: estimateTokens(prompt),
+    githubProtocolTokens: githubText ? estimateTokens(githubText) : 0,
+    projectInstructionsTokens: projectText ? estimateTokens(projectText) : 0,
   };
+  return { prompt, snapshot: builder.snapshot(), cost };
 }
 
 /**
@@ -604,6 +626,11 @@ export async function buildSystemPrompt(workspaceRoot: string): Promise<string> 
  */
 const _enrichmentMap: WeakMap<SessionState, Promise<PromptSnapshot | null>> = new WeakMap();
 const _pendingEnrichmentSnapshots: WeakMap<SessionState, PromptSnapshot> = new WeakMap();
+// Parallel to `_pendingEnrichmentSnapshots`: the per-section byte/token cost
+// for the same fresh enrichment, consumed once alongside the snapshot to emit
+// `prompt_composition_cost`. The snapshot carries sizes but not section text,
+// so token estimates can't be recovered at the emit site — they ride here.
+const _pendingEnrichmentCosts: WeakMap<SessionState, PromptCompositionCost> = new WeakMap();
 export function ensureSystemPromptReady(state: SessionState): Promise<PromptSnapshot | null> {
   const sysMsg = (state.messages as Message[])[0];
   if (
@@ -615,10 +642,19 @@ export function ensureSystemPromptReady(state: SessionState): Promise<PromptSnap
   }
   if (_enrichmentMap.has(state)) return _enrichmentMap.get(state)!;
   const promise: Promise<PromptSnapshot | null> = buildEnrichedCliPrompt(state.cwd).then(
-    ({ prompt, snapshot }: { prompt: string; snapshot: PromptSnapshot }): PromptSnapshot => {
+    ({
+      prompt,
+      snapshot,
+      cost,
+    }: {
+      prompt: string;
+      snapshot: PromptSnapshot;
+      cost: PromptCompositionCost;
+    }): PromptSnapshot => {
       sysMsg.content = prompt;
       _enrichmentMap.delete(state);
       _pendingEnrichmentSnapshots.set(state, snapshot);
+      _pendingEnrichmentCosts.set(state, cost);
       return snapshot;
     },
   );
@@ -639,6 +675,33 @@ export function consumeEnrichmentSnapshot(state: SessionState): PromptSnapshot |
   if (!snap) return null;
   _pendingEnrichmentSnapshots.delete(state);
   return snap;
+}
+
+/**
+ * Consume the most recent enrichment cost for this state, returning it
+ * exactly once. Pairs with `consumeEnrichmentSnapshot` — same once-per-state
+ * semantics — so the `prompt_composition_cost` ops log is emitted exactly
+ * once per fresh build and never double-counted across concurrent loops.
+ */
+export function consumeEnrichmentCost(state: SessionState): PromptCompositionCost | null {
+  const cost = _pendingEnrichmentCosts.get(state);
+  if (!cost) return null;
+  _pendingEnrichmentCosts.delete(state);
+  return cost;
+}
+
+/**
+ * Best-effort: does a malformed tool-call candidate look like an attempted
+ * GitHub call? The CLI detector reports malformed calls as `{reason, sample}`
+ * without a structured tool name (unlike the web kernel's `resolvedToolName`),
+ * but a malformed `{"tool":"pr"}` is still intent to use the GitHub schema —
+ * which the deferral measurement counts as "used". Pulls the `tool` name out of
+ * the (possibly truncated) sample and resolves its source. Never throws;
+ * returns false when no GitHub tool name is recoverable.
+ */
+export function malformedSampleTargetsGithub(sample: string): boolean {
+  const match = /"tool"\s*:\s*"([a-zA-Z0-9_]+)"/.exec(sample);
+  return match ? getToolSourceFromName(match[1]) === 'github' : false;
 }
 
 // ─── Tool Result Messages ────────────────────────────────────────
@@ -885,7 +948,25 @@ async function runAssistantLoopImpl(
       totalChars,
       sections: enrichmentSnapshot,
     });
+    // Measurement pass for the schema-deferral decision: one
+    // `prompt_composition_cost` line per fresh build (round 0 — the CLI prompt
+    // is built once and reused across rounds). Resumed sessions skip this, like
+    // the snapshot event above, since no fresh cost was computed.
+    const cost = consumeEnrichmentCost(state);
+    if (cost) {
+      emitPromptCompositionCost(
+        { surface: 'cli', scopeId: state.sessionId, round: 0, mode: state.mode ?? 'cli' },
+        cost,
+      );
+    }
   }
+  // Whether this run advertised GitHub tools — derived from the (now enriched)
+  // system prompt so it holds for both fresh and resumed sessions. Gates the
+  // per-turn github_tool_turn_* usage emit so the idle denominator only counts
+  // turns that actually carried the protocol.
+  const sysContent = (state.messages as Message[])[0]?.content;
+  const githubAdvertised =
+    typeof sysContent === 'string' && sysContent.includes(GITHUB_TOOL_PROTOCOL);
   // Long-session distillation now runs through the per-round pipeline
   // below (see the `length > 40` clause). state.messages is no longer
   // mutated at session entry — distillation is a per-hop transformation,
@@ -1514,6 +1595,24 @@ async function runAssistantLoopImpl(
     dispatchEvent('assistant_done', { messageId });
 
     const detected: DetectedToolCalls = detectAllToolCalls(assistantText);
+
+    // Measurement pass (schema-deferral decision): on runs that paid for the
+    // GitHub protocol, record per turn whether the model actually called a
+    // GitHub tool. The CLI detector doesn't tag source, so it resolves through
+    // the registry by tool name. Malformed GitHub JSON lands in
+    // `detected.malformed` (not `detected.calls`), but a malformed
+    // `{"tool":"pr"}` is still intent to use the GitHub schema — counted as
+    // "used" so the used/idle split isn't corrupted by the malformed/early
+    // branch this measurement specifically cares about.
+    if (githubAdvertised) {
+      const githubCalls =
+        detected.calls.filter((call) => getToolSourceFromName(call.tool) === 'github').length +
+        detected.malformed.filter((entry) => malformedSampleTargetsGithub(entry.sample)).length;
+      emitGithubToolTurnUsage(
+        { surface: 'cli', scopeId: state.sessionId, round: turnIndex, mode: state.mode ?? 'cli' },
+        { githubCalls, totalCalls: detected.calls.length + detected.malformed.length },
+      );
+    }
 
     if (detected.malformed.length > 0) {
       // Single source of truth for the malformed report → run-event mapping

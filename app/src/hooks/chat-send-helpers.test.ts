@@ -1,6 +1,14 @@
-import { describe, expect, it } from 'vitest';
-import type { AnyToolCall } from '@/lib/tool-dispatch';
-import { shouldSkipDelegationOutcomeRecording } from './chat-send-helpers';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { AnyToolCall, DetectedToolCalls } from '@/lib/tool-dispatch';
+import {
+  recordGithubToolTurnUsage,
+  shouldSkipDelegationOutcomeRecording,
+} from './chat-send-helpers';
+import type { SendLoopContext } from './chat-send-types';
+import {
+  GITHUB_TOOL_TURN_IDLE_EVENT,
+  GITHUB_TOOL_TURN_USED_EVENT,
+} from '@push/lib/prompt-cost-telemetry';
 
 // Pins the Codex P1 contract from PR #603: `plan_tasks` wrapper
 // outcomes carry agent='coder' or 'explorer' but the inner per-task
@@ -40,5 +48,93 @@ describe('shouldSkipDelegationOutcomeRecording', () => {
       call: { tool: 'sandbox_read_file', args: { path: '/a' } },
     } as unknown as AnyToolCall;
     expect(shouldSkipDelegationOutcomeRecording(call)).toBe(false);
+  });
+});
+
+// Pins the schema-deferral measurement contract: a malformed GitHub call lands
+// in `droppedCandidates` (not the classified arrays) but is still intent to use
+// the GitHub schema, so it must count the turn as "used" — otherwise the
+// used/idle split undercounts the deferral tax in exactly the malformed case.
+
+function emptyDetected(overrides: Partial<DetectedToolCalls> = {}): DetectedToolCalls {
+  return {
+    readOnly: [],
+    fileMutations: [],
+    mutating: null,
+    batchOverflow: [],
+    extraMutations: [],
+    droppedCandidates: [],
+    ...overrides,
+  };
+}
+
+function ctxWithGitHub(includeGitHubTools: boolean): SendLoopContext {
+  return {
+    chatId: 'chat-1',
+    workspaceContextRef: { current: { includeGitHubTools, mode: 'repo', description: '' } },
+  } as unknown as SendLoopContext;
+}
+
+function loggedEvent(spy: ReturnType<typeof vi.spyOn>): Record<string, unknown> {
+  expect(spy).toHaveBeenCalledTimes(1);
+  return JSON.parse(spy.mock.calls[0]?.[0] as string);
+}
+
+describe('recordGithubToolTurnUsage', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('counts a malformed (dropped) GitHub call as "used" via its resolved name', () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    recordGithubToolTurnUsage(
+      emptyDetected({
+        droppedCandidates: [
+          { rawToolName: 'pr', resolvedToolName: 'fetch_pr', sample: '{"tool":"pr"}' },
+        ],
+      }),
+      ctxWithGitHub(true),
+      2,
+    );
+    const event = loggedEvent(spy);
+    expect(event.event).toBe(GITHUB_TOOL_TURN_USED_EVENT);
+    expect(event.githubCalls).toBe(1);
+    // Dropped candidates fold into totalCalls so githubCalls <= totalCalls.
+    expect(event.totalCalls).toBe(1);
+  });
+
+  it('does not let a dropped non-GitHub candidate flip the turn to "used"', () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    recordGithubToolTurnUsage(
+      emptyDetected({
+        droppedCandidates: [
+          {
+            rawToolName: 'write_file',
+            resolvedToolName: 'write_file',
+            sample: '{"tool":"write_file"}',
+          },
+        ],
+      }),
+      ctxWithGitHub(true),
+      3,
+    );
+    const event = loggedEvent(spy);
+    expect(event.event).toBe(GITHUB_TOOL_TURN_IDLE_EVENT);
+    expect(event.githubCalls).toBe(0);
+    expect(event.totalCalls).toBe(1);
+  });
+
+  it('skips emission entirely when the turn did not carry the GitHub protocol', () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    recordGithubToolTurnUsage(
+      emptyDetected({
+        droppedCandidates: [
+          { rawToolName: 'pr', resolvedToolName: 'fetch_pr', sample: '{"tool":"pr"}' },
+        ],
+      }),
+      ctxWithGitHub(false),
+      1,
+    );
+    expect(spy).not.toHaveBeenCalled();
   });
 });

@@ -52,6 +52,8 @@ import {
   writeTargetOf,
 } from '@push/lib/loop-detection';
 import { recordLoopVerdict } from '@push/lib/loop-metrics';
+import { emitGithubToolTurnUsage } from '@push/lib/prompt-cost-telemetry';
+import { getToolSourceFromName } from '@push/lib/tool-registry';
 import { createId } from '@push/lib/id-utils';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import type { ChatMessage, ToolExecutionResult } from '@/types';
@@ -66,6 +68,50 @@ const TOOL_RESULT_PULSE_INTERVAL = 3;
 
 export function shouldEmitPeriodicPulse(round: number): boolean {
   return (round + 1) % TOOL_RESULT_PULSE_INTERVAL === 0;
+}
+
+/**
+ * Measurement pass for the schema-deferral decision (Claude Code In-App
+ * Patterns §5): on turns that paid for the always-injected GitHub protocol,
+ * record whether the model actually called a GitHub tool. Called before the
+ * turn's early-return branches so a malformed/over-budget turn that still
+ * *intended* a GitHub call counts as "used" — intent is what proves the schema
+ * was needed. Gated on `includeGitHubTools` so the `idle` denominator only
+ * counts turns that carried the protocol. Delegation tools are a separate
+ * `delegate` source and are intentionally not counted.
+ */
+export function recordGithubToolTurnUsage(
+  detected: DetectedToolCalls,
+  ctx: SendLoopContext,
+  round: number,
+): void {
+  const workspace = ctx.workspaceContextRef.current;
+  if (!workspace?.includeGitHubTools) return;
+  const allCalls = [
+    ...detected.readOnly,
+    ...detected.fileMutations,
+    ...detected.batchOverflow,
+    ...detected.extraMutations,
+    ...(detected.mutating ? [detected.mutating] : []),
+  ];
+  // A malformed GitHub call (e.g. `{"tool":"pr"}` with bad args) lands in
+  // `droppedCandidates`, not the classified arrays — but it's still intent to
+  // use the GitHub schema, which is exactly what the deferral measurement
+  // cares about. Count it as "used" via the candidate's resolved name so the
+  // used/idle split isn't corrupted by malformed attempts. `totalCalls`
+  // includes dropped candidates too, keeping `githubCalls <= totalCalls`.
+  const githubClassified = allCalls.filter((call) => call.source === 'github').length;
+  const githubDropped = detected.droppedCandidates.filter(
+    (candidate) =>
+      candidate.resolvedToolName && getToolSourceFromName(candidate.resolvedToolName) === 'github',
+  ).length;
+  emitGithubToolTurnUsage(
+    { surface: 'web', scopeId: ctx.chatId, round, mode: workspace.mode },
+    {
+      githubCalls: githubClassified + githubDropped,
+      totalCalls: allCalls.length + detected.droppedCandidates.length,
+    },
+  );
 }
 
 export function delegateCallNeedsSandbox(call: AnyToolCall): boolean {
