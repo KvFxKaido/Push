@@ -104,7 +104,7 @@ describe('highlightCode: category colouring', () => {
     assert.ok(out.includes(styled('state.success', '"hi"')), 'string coloured');
   });
 
-  it('shell special parameters are each a single variable token', () => {
+  it('shell variables (special, positional, braced) are each a single token', () => {
     const out = highlightCode(theme, 'echo $? $$ $@ $! $# $1 ${HOME}', 'shell').join('\n');
     for (const v of ['$?', '$$', '$@', '$!', '$#', '$1', '${HOME}']) {
       assert.ok(out.includes(styled('accent.secondary', v)), `expected ${v} as one variable token`);
