@@ -9,6 +9,7 @@
  */
 
 import { formatToolResultEnvelope } from './tool-call-recovery.js';
+import { SIZE_BUDGETS } from './size-budgets.js';
 import type { DelegationStatus } from './runtime-contract.js';
 
 /**
@@ -129,7 +130,7 @@ export function getToolInvocationKey(toolName: string, args: unknown): string {
 }
 
 /** Max size before agent tool results get truncated (matches Web's limit). */
-export const MAX_TOOL_RESULT_SIZE = 8_000;
+export const MAX_TOOL_RESULT_SIZE = SIZE_BUDGETS.toolResultReadOnly;
 
 /** Truncate content with a descriptive tail marker. */
 export function truncateAgentContent(content: string, maxLen: number, label = 'content'): string {
