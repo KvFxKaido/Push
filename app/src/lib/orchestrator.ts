@@ -24,6 +24,7 @@ import { transformContextBeforeLLM } from '@push/lib/context-transformer';
 import { deriveUserGoalAnchor } from '@push/lib/user-goal-anchor';
 import { estimateContextTokens } from './orchestrator-context';
 import { estimateTokens as estimateRawTokens } from '@push/lib/context-budget';
+import { extractMarkedBlock, type PromptCompositionCost } from '@push/lib/prompt-cost-telemetry';
 import { isSyntheticDigestMessage, parseSessionDigest } from '@push/lib/session-digest';
 import { getZenGoTransport } from './zen-go';
 import { getVertexModelTransport } from './vertex-provider';
@@ -127,19 +128,31 @@ const MAX_PROMPT_SNAPSHOT_ENTRIES = 64;
 interface PromptSnapshotEntry {
   snapshot: PromptSnapshot;
   totalChars: number;
+  /** Byte/token breakdown of the always-on prompt blocks under cost
+   *  scrutiny (GitHub protocol + project instructions). Carried alongside
+   *  the snapshot so `chat-stream-round` — which owns `round`/`chatId` —
+   *  can emit the `prompt_composition_cost` ops log via the same
+   *  consume-on-peek path that guards the prompt_snapshot event from
+   *  stale-round misattribution. */
+  cost: PromptCompositionCost;
   consumed: boolean;
 }
 
 const _lastPromptSnapshots = new Map<string, PromptSnapshotEntry>();
 
-function recordPromptSnapshot(key: string, snapshot: PromptSnapshot, totalChars: number): void {
+function recordPromptSnapshot(
+  key: string,
+  snapshot: PromptSnapshot,
+  totalChars: number,
+  cost: PromptCompositionCost,
+): void {
   if (_lastPromptSnapshots.has(key)) {
     _lastPromptSnapshots.delete(key);
   } else if (_lastPromptSnapshots.size >= MAX_PROMPT_SNAPSHOT_ENTRIES) {
     const oldestKey = _lastPromptSnapshots.keys().next().value;
     if (oldestKey !== undefined) _lastPromptSnapshots.delete(oldestKey);
   }
-  _lastPromptSnapshots.set(key, { snapshot, totalChars, consumed: false });
+  _lastPromptSnapshots.set(key, { snapshot, totalChars, cost, consumed: false });
 }
 
 function getPromptSnapshotKey(
@@ -172,12 +185,12 @@ function getPromptSnapshotKey(
 export function peekLastPromptSnapshot(
   messages: ChatMessage[],
   workspaceContext?: WorkspaceContext,
-): { snapshot: PromptSnapshot; totalChars: number } | null {
+): { snapshot: PromptSnapshot; totalChars: number; cost: PromptCompositionCost } | null {
   const key = getPromptSnapshotKey(messages, workspaceContext);
   const entry = _lastPromptSnapshots.get(key);
   if (!entry || entry.consumed) return null;
   entry.consumed = true;
-  return { snapshot: entry.snapshot, totalChars: entry.totalChars };
+  return { snapshot: entry.snapshot, totalChars: entry.totalChars, cost: entry.cost };
 }
 
 // Multimodal content types (OpenAI-compatible)
@@ -480,7 +493,31 @@ export function toLLMMessages(
     // it so the DEV diff log still shows previous-vs-current sections.
     const currentSnap = builder.snapshot();
     const previousEntry = _lastPromptSnapshots.get(promptSnapshotKey);
-    recordPromptSnapshot(promptSnapshotKey, currentSnap, systemContent.length);
+
+    // Isolate the cost of the two always-injected blocks the schema-deferral
+    // decision (Claude Code In-App Patterns §5) is weighing. The GitHub
+    // protocol is a constant block gated on `includeGitHubTools`; the project-
+    // instructions block is folded into the environment section upstream and
+    // recovered here by its markers. Both bytes are exact; tokens are the
+    // provider-agnostic estimate (same heuristic the budget uses).
+    const githubProtocolText = workspaceContext?.includeGitHubTools ? TOOL_PROTOCOL : '';
+    const projectInstructionsText =
+      extractMarkedBlock(
+        workspaceContext?.description ?? '',
+        '[PROJECT INSTRUCTIONS]',
+        '[/PROJECT INSTRUCTIONS]',
+      ) ?? '';
+    const cost: PromptCompositionCost = {
+      systemPromptBytes: systemContent.length,
+      githubProtocolBytes: githubProtocolText.length,
+      projectInstructionsBytes: projectInstructionsText.length,
+      systemPromptTokens: estimateRawTokens(systemContent),
+      githubProtocolTokens: githubProtocolText ? estimateRawTokens(githubProtocolText) : 0,
+      projectInstructionsTokens: projectInstructionsText
+        ? estimateRawTokens(projectInstructionsText)
+        : 0,
+    };
+    recordPromptSnapshot(promptSnapshotKey, currentSnap, systemContent.length, cost);
 
     // --- Log prompt-size breakdown and section diffs (dev only) ---
     if (import.meta.env.DEV) {
