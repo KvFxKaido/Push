@@ -26,12 +26,18 @@ export function sanitizeProjectInstructions(
   raw: string,
   maxSize: number = MAX_PROJECT_INSTRUCTIONS_SIZE,
 ): string {
+  // Defensive clamp on the public injection-defense boundary: a non-finite or
+  // negative cap would silently disable truncation (`len > NaN` is always
+  // false) or produce a negative-index slice with a nonsense omit-count. Fall
+  // back to the default budget so the cap stays predictable regardless of input.
+  const cap =
+    Number.isFinite(maxSize) && maxSize >= 0 ? Math.floor(maxSize) : MAX_PROJECT_INSTRUCTIONS_SIZE;
   let content = raw;
 
-  if (content.length > maxSize) {
+  if (content.length > cap) {
     content =
-      content.slice(0, maxSize) +
-      `\n\n[Project instructions truncated — ${raw.length - maxSize} chars omitted]`;
+      content.slice(0, cap) +
+      `\n\n[Project instructions truncated — ${raw.length - cap} chars omitted]`;
   }
 
   // Break any block boundary the content tries to forge — both the canonical
