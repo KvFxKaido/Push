@@ -50,10 +50,8 @@ import type { AcceptanceCriterion, RunEventInput } from './runtime-contract.js';
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
 import { iteratePushStreamText, asRecord } from './stream-utils.js';
 import { detectToolFromText } from './tool-call-parsing.js';
-import {
-  truncateAgentContent,
-  MAX_TOOL_RESULT_SIZE as LIB_MAX_TOOL_RESULT_SIZE,
-} from './agent-loop-utils.js';
+import { MAX_TOOL_RESULT_SIZE as LIB_MAX_TOOL_RESULT_SIZE } from './agent-loop-utils.js';
+import { formatProjectInstructionsBlock } from './project-instructions.js';
 import {
   buildToolCallParseErrorBlock,
   buildValidationFailedHint,
@@ -742,14 +740,13 @@ export async function runCoderAgent<TCall, TCard>(
     promptBuilder.append('user_context', identityBlock);
   }
 
-  // Project instructions (AGENTS.md etc.)
+  // Project instructions (AGENTS.md etc.) — canonical sanitized envelope shared
+  // with the orchestrators and the other delegated agents.
   if (projectInstructions) {
-    const truncatedAgentsMd = truncateAgentContent(
-      projectInstructions,
-      MAX_AGENTS_MD_SIZE,
-      'project instructions',
-    );
-    let projectContent = `PROJECT INSTRUCTIONS — Repository instructions and built-in app context:\n${truncatedAgentsMd}`;
+    let projectContent = formatProjectInstructionsBlock(projectInstructions, {
+      source: instructionFilename || 'AGENTS.md',
+      maxSize: MAX_AGENTS_MD_SIZE,
+    });
     if (projectInstructions.length > MAX_AGENTS_MD_SIZE) {
       const filename = instructionFilename || 'AGENTS.md';
       projectContent += `\n\nFull file available at /workspace/${filename} — use ${getToolPublicName('sandbox_read_file')} if you need details not shown above.`;

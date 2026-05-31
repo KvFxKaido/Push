@@ -36,6 +36,15 @@ describe('formatProjectInstructionsBlock', () => {
     const block = formatProjectInstructionsBlock('x', { source: 'a"]evil' });
     expect(block.startsWith('[PROJECT_INSTRUCTIONS source="aevil"]')).toBe(true);
   });
+
+  it('honors a caller-supplied maxSize so delegated agents keep their own cap', () => {
+    const long = 'x'.repeat(50);
+    const block = formatProjectInstructionsBlock(long, { source: 'AGENTS.md', maxSize: 10 });
+    expect(block).toContain('xxxxxxxxxx\n\n[Project instructions truncated — 40 chars omitted]');
+    // Still a well-formed envelope around the truncated body.
+    expect(block.startsWith('[PROJECT_INSTRUCTIONS source="AGENTS.md"]')).toBe(true);
+    expect(block.endsWith(PROJECT_INSTRUCTIONS_CLOSE)).toBe(true);
+  });
 });
 
 describe('sanitizeProjectInstructions', () => {
