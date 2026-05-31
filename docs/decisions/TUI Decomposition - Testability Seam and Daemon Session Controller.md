@@ -1,0 +1,138 @@
+# TUI Decomposition — Testability Seam and Daemon Session Controller
+
+Date: 2026-05-31
+Status: **Draft** (design-in-motion; not ROADMAP-tracked yet — implementation
+commitment needs a `ROADMAP.md` entry per `docs/decisions/README.md`).
+Owner: Push
+
+Sketch for decomposing the `runTUI` monolith. Came out of PR #740 (TUI addressable
+session verbs), where a reviewer asked to extract the new verb handlers out of the
+closure. That extraction was declined *as a piecemeal move* — this doc is the
+"do it properly" plan it pointed at. Companion to
+[`Remote Control Surface Audit — TUI and Daemon Exposure.md`](Remote%20Control%20Surface%20Audit%20%E2%80%94%20TUI%20and%20Daemon%20Exposure.md).
+
+## The problem, precisely
+
+`cli/tui.ts` `runTUI()` is a ~6,500-line async closure. Crucially, the *leaf*
+concerns are already extracted into `cli/tui-*` modules — rendering
+(`tui-renderer`, `tui-render-frame`, `tui-framers`, `tui-transcript-window`,
+`tui-widgets`), input parsing (`tui-input`, `tui-modal-input`, `tui-completer`),
+daemon helpers (`tui-daemon-reconnect`, `-errors`, `-handshake`), and display
+(`tui-theme`, `-spinner`, `-status`, `-delegation-events`, `-copy`, `-fuzzy`,
+`-approval-pane`). What remains inline in the closure is **orchestration**:
+
+- ~11 command handlers (`handleSlashCommand` + `handle*Command`)
+- the **daemon-session lifecycle** — `daemonClient` / `daemonSessionId` /
+  `daemonAttachToken` are read/written across **~90 sites**, assigned at **12**
+  (connect, reconnect backoff, attach, start, send, teardown, remote-pairing)
+- the run loop, approval flow, and the IO wiring
+
+Two consequences:
+
+1. **Untestable.** `runTUI` grabs `process.stdin`/`process.stdout` directly (raw
+   mode, `data`/`resize` listeners) — there is no headless entry. `options` today
+   is config-only (`sessionId`/`provider`/`model`/`cwd`/`maxRounds`); no IO or
+   dependency injection. So every behavior in the closure — including the new
+   daemon verbs — is verifiable only by manually driving a live terminal (which is
+   exactly what we did for #740, via the terminal MCP).
+2. **No home for cohesive state.** The daemon-session state has no owner; it's
+   12 scattered assignments and ~90 reads. Any new daemon verb (or surface) has to
+   reach into that ambient state, which is why the #740 handlers landed inline.
+
+This isn't *new* debt — `tui.ts` has always followed an inline-handler convention
+(no `max-lines` guard, unlike the web's `useChat.ts`). But it's the thing blocking
+both safe refactoring and real unit coverage.
+
+## Goal & ordering
+
+**Testability seam first, then the controller.** Decomposing a 6,500-line
+interactive file with zero automated coverage is flying blind — so the net comes
+before the cut. The verbs land in a real home as a *byproduct* of Phase 1, not as
+the goal.
+
+```
+Phase 0  IO/dep injection + headless test driver + characterization tests   ← net
+Phase 1  Extract DaemonSessionController (owns state + lifecycle + verbs)    ← payoff
+Phase 2  (optional) Command-handler module                                   ← polish
+```
+
+### Phase 0 — Testability seam (highest value, lowest risk)
+
+**The cut:** thread IO + injectable dependencies through the existing `options`
+param instead of reaching for `process.*` and constructing collaborators inline.
+
+- Add `options.io = { stdin, stdout, isTTY, setRawMode }` defaulting to `process.*`,
+  and `options.deps = { connectDaemon, loadConfig, … }` for the few hard-to-fake
+  collaborators (notably the daemon client factory). Production call sites
+  (`cli/cli.ts:3464`, `:3673`) pass nothing and behave identically.
+- Build a `cli/tests/tui-driver.mjs` harness: a fake stdin (`EventEmitter`) to feed
+  keystrokes/lines, a capture stdout, and accessors over `tuiState.transcript` to
+  assert what rendered. Inject a **stub daemon client** that records the
+  `{type, payload}` of every `request()` and returns canned envelopes.
+- **Characterization tests** pin current behavior so Phase 1 is provably
+  behavior-preserving. First targets: the #740 verbs — assert `/revert 3` sends
+  `session_revert {turns:3}`, `/unrevert` → `session_unrevert`, `/children` →
+  `list_children {includeEventDerived:true}`, `/compact` (daemon) →
+  `session_summarize`, and that a rejected `NOTHING_TO_UNREVERT` renders as a
+  status not an error. **This retroactively closes the "no automated test" gap we
+  consciously punted in #740** — and unlike a formatter unit test, it exercises the
+  real dispatch→send path, so it *would* catch a wiring regression.
+
+**Stop-early value:** Phase 0 alone is a standalone win — headless TUI tests +
+coverage of the verbs — even if Phases 1–2 never happen.
+
+**Risk:** low. Additive (new optional params + a test file); no production path
+changes when `options.io`/`options.deps` are omitted.
+
+### Phase 1 — DaemonSessionController (the structural payoff)
+
+**The cut:** extract `cli/tui-daemon-session.ts` owning the daemon-session state
+and lifecycle. It holds `client` / `sessionId` / `attachToken` privately and
+exposes:
+
+- lifecycle: `connect()`, `attachOrStart()`, `ensureReady()`, reconnect wiring
+  (folding in `tui-daemon-reconnect` usage), teardown
+- transport: `sendVerb(type, payload)` (the bearer-attaching helper), `client`
+  accessor, `onEvent` passthrough
+- the verb methods: `revert(n)`, `unrevert()`, `summarize(turns)`,
+  `listChildren()` / `getChild(id)` — pure logic returning data; the TUI keeps the
+  transcript-rendering side
+
+`runTUI` holds one `const daemon = createDaemonSession({ deps, onEvent })`. The ~90
+ambient reads collapse to `daemon.*`; the 12 scattered assignments become internal
+state transitions with one owner — the genuine ownership/seam win the new-feature
+checklist ("name the coordinator's home first") asks for.
+
+**Ride-along:** finding #7 from the audit doc (typed transcript-event payloads)
+fits naturally here — the controller's verb methods are the typed boundary.
+
+**Risk:** medium-high — it touches the connect/reconnect/send/teardown/pairing
+machinery (~90 sites). **Only viable with Phase 0's net in place.** Land it as one
+focused PR, re-verify live (terminal MCP) against the Phase 0 characterization
+suite.
+
+### Phase 2 — Command-handler module (optional polish)
+
+With daemon state behind the controller, the remaining `handle*Command` functions
+mostly touch `tuiState` / `scheduler` / `addTranscriptEntry` / `daemon`, so they
+become cleanly extractable into `cli/tui-commands.ts` taking a small context. Do
+this **only if the file is still unwieldy** after Phase 1 — and wholesale (all
+handlers), never piecemeal, to preserve consistency. Lowest priority.
+
+## What this is *not*
+
+- Not a `lib/` promotion. These are TUI-shell-specific (they touch `tuiState` /
+  rendering); per `CLAUDE.md` "shell-specific coordinators stay local." The shared
+  contract is the daemon *verbs*, which already live daemon-side. Home is `cli/`.
+- Not urgent. `tui.ts` isn't on fire; this earns its place as a deliberate track,
+  not a reflexive cleanup. Single-user blast radius makes the risk tolerable *when*
+  the net exists, but it competes with product levers like audit finding #2
+  (local-daemon PR delivery).
+
+## Cross-references
+
+- [`Remote Control Surface Audit — TUI and Daemon Exposure.md`](Remote%20Control%20Surface%20Audit%20%E2%80%94%20TUI%20and%20Daemon%20Exposure.md)
+  — the audit this track descends from; finding #7 (typed payloads) rides Phase 1.
+- PR #740 — shipped the verbs inline; the reviewer extraction note is the seed.
+- Root `CLAUDE.md` — "shell-specific coordinators local"; new-feature checklist
+  ("name the coordinator's home first").
