@@ -633,7 +633,7 @@ const _enrichmentMap: WeakMap<SessionState, Promise<PromptSnapshot | null>> = ne
  * holds sizes but not the section text). Both ride together so a new datum
  * extends this shape rather than spawning another parallel WeakMap.
  */
-interface PendingEnrichment {
+export interface PendingEnrichment {
   snapshot: PromptSnapshot;
   cost: PromptCompositionCost;
 }
