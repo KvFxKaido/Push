@@ -36,7 +36,7 @@ export interface PromptCompositionCost {
   /** Size of the injected GitHub tool protocol block, 0 when absent
    *  (chat/scratch mode, or GitHub tools disabled). */
   githubProtocolBytes: number;
-  /** Size of the `[PROJECT INSTRUCTIONS]…[/PROJECT INSTRUCTIONS]` block
+  /** Size of the `[PROJECT_INSTRUCTIONS …]…[/PROJECT_INSTRUCTIONS]` block
    *  folded into the environment section, 0 when no instructions loaded. */
   projectInstructionsBytes: number;
   systemPromptTokens: number;
@@ -55,7 +55,7 @@ export const GITHUB_TOOL_TURN_IDLE_EVENT = 'github_tool_turn_idle' as const;
  * themselves (that's the real injected cost). Returns null when either
  * marker is absent or they're mis-ordered.
  *
- * Used to isolate the `[PROJECT INSTRUCTIONS]` block from the rest of the
+ * Used to isolate the `[PROJECT_INSTRUCTIONS …]` block from the rest of the
  * environment section without threading its length through the caller —
  * the block is composed upstream (web: `useProjectInstructions`) and folded
  * into the workspace description before the prompt builder sees it. Returning
