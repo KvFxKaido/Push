@@ -377,7 +377,7 @@ export function createToolDispatcher<TCall>(
           malformed.push({
             reason: 'unknown_tool',
             sample: truncateSample(recovered.sample),
-            rawToolName: recovered.tool,
+            rawToolName: recovered.tool.trim(),
           });
         }
       }
@@ -419,7 +419,7 @@ export function createToolDispatcher<TCall>(
           malformed.push({
             reason: 'unknown_tool',
             sample: truncateSample(candidate.sample),
-            rawToolName: candidate.parsed.tool,
+            rawToolName: candidate.parsed.tool.trim(),
           });
         }
       }
@@ -712,7 +712,12 @@ type ParseOutcome =
  * surfaces, which is exactly the regex the CLI used to do per-surface.
  */
 function extractRawToolName(text: string): string | undefined {
-  const match = /"tool"\s*:\s*"([A-Za-z0-9_]+)"/.exec(text);
+  // Accept single- or double-quoted `tool`/value: the repair pass normalizes
+  // quote style only when it can fully reparse, so a single-quoted call that
+  // breaks elsewhere reaches here with its original quotes. The value stays
+  // quoted-and-identifier-bounded on purpose — matching a bare unquoted value
+  // would risk capturing a nested `"tool"` key from args or prose.
+  const match = /['"]tool['"]\s*:\s*['"]([A-Za-z0-9_]+)['"]/.exec(text);
   return match ? match[1] : undefined;
 }
 
@@ -850,7 +855,7 @@ function shapeParsedObject(parsed: Record<string, unknown>): ParseOutcome {
     // The model named a tool but botched `args` (e.g. `{"tool":"pr"}`). The
     // name is still intent to use that tool, so surface it for diagnostics
     // and usage telemetry.
-    return { ok: false, reason: 'missing_args_object', rawToolName: parsed.tool };
+    return { ok: false, reason: 'missing_args_object', rawToolName: parsed.tool.trim() };
   }
   return {
     ok: true,

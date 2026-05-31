@@ -45,4 +45,16 @@ describe('detectAllToolCalls — malformed rawToolName', () => {
     assert.equal(detected.malformed[0].rawToolName, 'repo_read');
     assert.equal(getToolSourceFromName(detected.malformed[0].rawToolName), 'github');
   });
+
+  it('recovers a single-quoted tool name that the repair pass could not fully fix', () => {
+    const detected = detectAllToolCalls(fenced("{'tool':'repo_read', 'args': }"));
+    assert.equal(detected.malformed.length, 1);
+    assert.equal(detected.malformed[0].rawToolName, 'repo_read');
+  });
+
+  it('trims a whitespace-padded tool name at the origin', () => {
+    const detected = detectAllToolCalls(fenced('{"tool":" pr "}'));
+    assert.equal(detected.malformed.length, 1);
+    assert.equal(detected.malformed[0].rawToolName, 'pr');
+  });
 });
