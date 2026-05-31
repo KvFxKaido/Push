@@ -33,24 +33,22 @@ export async function* geminiStream(
   req: PushStreamRequest<ChatMessage>,
 ): AsyncIterable<PushStreamEvent> {
   const workspaceContext = req.workspaceContext as WorkspaceContext | undefined;
-  const llmMessages = toLLMMessages(
-    req.messages,
+  const llmMessages = toLLMMessages(req.messages, {
     workspaceContext,
-    req.hasSandbox,
-    req.systemPromptOverride,
-    req.scratchpadContent,
-    'google',
-    req.model,
-    req.onPreCompact,
-    undefined,
-    req.todoContent,
-    {
+    hasSandbox: req.hasSandbox,
+    systemPromptOverride: req.systemPromptOverride,
+    scratchpadContent: req.scratchpadContent,
+    providerType: 'google',
+    providerModel: req.model,
+    onPreCompact: req.onPreCompact,
+    todoContent: req.todoContent,
+    sessionDigestOptions: {
       records: req.sessionDigestRecords,
       prior: req.priorSessionDigest,
       onEmit: req.onSessionDigestEmitted,
     },
-    req.linkedLibraryContent,
-  );
+    linkedLibraryContent: req.linkedLibraryContent,
+  });
 
   // Per-request flag wins; otherwise the Web Search menu's mode decides.
   // `'auto'` (the default) enables grounding so Gemini chats get their

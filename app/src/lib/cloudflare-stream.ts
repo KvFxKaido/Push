@@ -39,24 +39,22 @@ export async function* cloudflareStream(
   // 1. Compose messages via the shared prompt builder. Runtime context flows
   //    through the adapter as opaque passthrough fields — cast locally.
   const workspaceContext = req.workspaceContext as WorkspaceContext | undefined;
-  const llmMessages = toLLMMessages(
-    req.messages,
+  const llmMessages = toLLMMessages(req.messages, {
     workspaceContext,
-    req.hasSandbox,
-    req.systemPromptOverride,
-    req.scratchpadContent,
-    'cloudflare',
-    req.model,
-    req.onPreCompact,
-    undefined,
-    req.todoContent,
-    {
+    hasSandbox: req.hasSandbox,
+    systemPromptOverride: req.systemPromptOverride,
+    scratchpadContent: req.scratchpadContent,
+    providerType: 'cloudflare',
+    providerModel: req.model,
+    onPreCompact: req.onPreCompact,
+    todoContent: req.todoContent,
+    sessionDigestOptions: {
       records: req.sessionDigestRecords,
       prior: req.priorSessionDigest,
       onEmit: req.onSessionDigestEmitted,
     },
-    req.linkedLibraryContent,
-  );
+    linkedLibraryContent: req.linkedLibraryContent,
+  });
 
   // 2. Plain OpenAI-compatible request body. The Worker normalizes the
   //    upstream `env.AI.run` events back into this shape before responding.

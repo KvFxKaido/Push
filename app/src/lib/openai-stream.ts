@@ -30,24 +30,22 @@ export async function* openaiStream(
   req: PushStreamRequest<ChatMessage>,
 ): AsyncIterable<PushStreamEvent> {
   const workspaceContext = req.workspaceContext as WorkspaceContext | undefined;
-  const llmMessages = toLLMMessages(
-    req.messages,
+  const llmMessages = toLLMMessages(req.messages, {
     workspaceContext,
-    req.hasSandbox,
-    req.systemPromptOverride,
-    req.scratchpadContent,
-    'openai',
-    req.model,
-    req.onPreCompact,
-    undefined,
-    req.todoContent,
-    {
+    hasSandbox: req.hasSandbox,
+    systemPromptOverride: req.systemPromptOverride,
+    scratchpadContent: req.scratchpadContent,
+    providerType: 'openai',
+    providerModel: req.model,
+    onPreCompact: req.onPreCompact,
+    todoContent: req.todoContent,
+    sessionDigestOptions: {
       records: req.sessionDigestRecords,
       prior: req.priorSessionDigest,
       onEmit: req.onSessionDigestEmitted,
     },
-    req.linkedLibraryContent,
-  );
+    linkedLibraryContent: req.linkedLibraryContent,
+  });
 
   const body: Record<string, unknown> = {
     model: req.model,

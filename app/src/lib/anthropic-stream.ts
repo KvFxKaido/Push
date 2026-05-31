@@ -32,24 +32,22 @@ export async function* anthropicStream(
   req: PushStreamRequest<ChatMessage>,
 ): AsyncIterable<PushStreamEvent> {
   const workspaceContext = req.workspaceContext as WorkspaceContext | undefined;
-  const llmMessages = toLLMMessages(
-    req.messages,
+  const llmMessages = toLLMMessages(req.messages, {
     workspaceContext,
-    req.hasSandbox,
-    req.systemPromptOverride,
-    req.scratchpadContent,
-    'anthropic',
-    req.model,
-    req.onPreCompact,
-    undefined,
-    req.todoContent,
-    {
+    hasSandbox: req.hasSandbox,
+    systemPromptOverride: req.systemPromptOverride,
+    scratchpadContent: req.scratchpadContent,
+    providerType: 'anthropic',
+    providerModel: req.model,
+    onPreCompact: req.onPreCompact,
+    todoContent: req.todoContent,
+    sessionDigestOptions: {
       records: req.sessionDigestRecords,
       prior: req.priorSessionDigest,
       onEmit: req.onSessionDigestEmitted,
     },
-    req.linkedLibraryContent,
-  );
+    linkedLibraryContent: req.linkedLibraryContent,
+  });
 
   // Per-request flag wins; otherwise the Web Search menu's mode decides.
   // `'auto'` (the default) enables Anthropic's native `web_search_20250305`

@@ -157,15 +157,7 @@ describe('toLLMMessages reasoning_blocks round-trip', () => {
     provider: 'zen' | 'azure' | undefined = anthropicRoute[0],
     model: string | undefined = anthropicRoute[1],
   ) {
-    return toLLMMessages(
-      messages,
-      undefined, // workspaceContext
-      undefined, // hasSandbox
-      undefined, // systemPromptOverride
-      undefined, // scratchpadContent
-      provider,
-      model,
-    );
+    return toLLMMessages(messages, { providerType: provider, providerModel: model });
   }
 
   it('forwards reasoningBlocks from a prior assistant turn as the wire reasoning_blocks sidecar', () => {
@@ -305,15 +297,7 @@ describe('toLLMMessages — aborted assistant message leakage', () => {
       makeMessage({ id: 'u2', role: 'user', content: 'Actually nevermind, summarize instead.' }),
     ];
 
-    const llm = toLLMMessages(
-      messages,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      'zen',
-      'minimax-m2.7',
-    );
+    const llm = toLLMMessages(messages, { providerType: 'zen', providerModel: 'minimax-m2.7' });
 
     // Concatenate every assistant message's text content and assert
     // the partial tool-call signature didn't survive. The
@@ -343,15 +327,7 @@ describe('toLLMMessages — aborted assistant message leakage', () => {
       }),
       makeMessage({ id: 'u2', role: 'user', content: 'Add another.' }),
     ];
-    const llm = toLLMMessages(
-      messages,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      'zen',
-      'minimax-m2.7',
-    );
+    const llm = toLLMMessages(messages, { providerType: 'zen', providerModel: 'minimax-m2.7' });
     const assistant = llm.find((m) => m.role === 'assistant');
     expect(assistant?.content).toContain('Four');
   });
@@ -365,12 +341,14 @@ describe('chat-mode web-search gating', () => {
   it('keeps the "You have one tool: web_search" hint in the environment when mode is auto', () => {
     webSearchModeForTest = 'auto';
     const llm = toLLMMessages(buildChatMessages(), {
-      description:
-        'You are in chat mode — a plain conversation with no repository context and no sandbox.' +
-        ' You have one tool: web_search, for looking up current information when the user asks about fresh topics, recent releases, or real-time facts.' +
-        ' Focus on being a helpful conversational partner: answer questions, brainstorm ideas, explain concepts, and think through problems together.',
-      includeGitHubTools: false,
-      mode: 'chat',
+      workspaceContext: {
+        description:
+          'You are in chat mode — a plain conversation with no repository context and no sandbox.' +
+          ' You have one tool: web_search, for looking up current information when the user asks about fresh topics, recent releases, or real-time facts.' +
+          ' Focus on being a helpful conversational partner: answer questions, brainstorm ideas, explain concepts, and think through problems together.',
+        includeGitHubTools: false,
+        mode: 'chat',
+      },
     });
     const system = llm.find((m) => m.role === 'system');
     expect(system?.content).toContain('You have one tool: web_search');
@@ -380,12 +358,14 @@ describe('chat-mode web-search gating', () => {
     webSearchModeForTest = 'off';
     try {
       const llm = toLLMMessages(buildChatMessages(), {
-        description:
-          'You are in chat mode — a plain conversation with no repository context and no sandbox.' +
-          ' You have one tool: web_search, for looking up current information when the user asks about fresh topics, recent releases, or real-time facts.' +
-          ' Focus on being a helpful conversational partner: answer questions, brainstorm ideas, explain concepts, and think through problems together.',
-        includeGitHubTools: false,
-        mode: 'chat',
+        workspaceContext: {
+          description:
+            'You are in chat mode — a plain conversation with no repository context and no sandbox.' +
+            ' You have one tool: web_search, for looking up current information when the user asks about fresh topics, recent releases, or real-time facts.' +
+            ' Focus on being a helpful conversational partner: answer questions, brainstorm ideas, explain concepts, and think through problems together.',
+          includeGitHubTools: false,
+          mode: 'chat',
+        },
       });
       const system = llm.find((m) => m.role === 'system');
       expect(system?.content).not.toContain('You have one tool: web_search');
@@ -402,20 +382,11 @@ describe('toLLMMessages — linked-library context injection (v2b)', () => {
   }
 
   it('injects linkedLibraryContent into the system message when provided', () => {
-    const llm = toLLMMessages(
-      buildChatMessages(),
-      { description: 'chat mode', includeGitHubTools: false, mode: 'chat' },
-      undefined, // hasSandbox
-      undefined, // systemPromptOverride
-      undefined, // scratchpadContent
-      undefined, // providerType
-      undefined, // providerModel
-      undefined, // onPreCompact
-      undefined, // intentHint
-      undefined, // todoContent
-      undefined, // sessionDigestOptions
-      '# Linked libraries\n\n## Library: Project ZERO\n\n[Files]\n\nFile: timeline.md\n```\n# Timeline\n```',
-    );
+    const llm = toLLMMessages(buildChatMessages(), {
+      workspaceContext: { description: 'chat mode', includeGitHubTools: false, mode: 'chat' },
+      linkedLibraryContent:
+        '# Linked libraries\n\n## Library: Project ZERO\n\n[Files]\n\nFile: timeline.md\n```\n# Timeline\n```',
+    });
     const system = llm.find((m) => m.role === 'system');
     // System content may be plain string (most providers) or a
     // structured array (Anthropic with cache_control). Normalise to a
@@ -432,20 +403,9 @@ describe('toLLMMessages — linked-library context injection (v2b)', () => {
   });
 
   it('does not include the library_context section when linkedLibraryContent is undefined', () => {
-    const llm = toLLMMessages(
-      buildChatMessages(),
-      { description: 'chat mode', includeGitHubTools: false, mode: 'chat' },
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-    );
+    const llm = toLLMMessages(buildChatMessages(), {
+      workspaceContext: { description: 'chat mode', includeGitHubTools: false, mode: 'chat' },
+    });
     const system = llm.find((m) => m.role === 'system');
     const text =
       typeof system?.content === 'string'
@@ -457,20 +417,10 @@ describe('toLLMMessages — linked-library context injection (v2b)', () => {
   });
 
   it('does not include the library_context section when linkedLibraryContent is empty string', () => {
-    const llm = toLLMMessages(
-      buildChatMessages(),
-      { description: 'chat mode', includeGitHubTools: false, mode: 'chat' },
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      '',
-    );
+    const llm = toLLMMessages(buildChatMessages(), {
+      workspaceContext: { description: 'chat mode', includeGitHubTools: false, mode: 'chat' },
+      linkedLibraryContent: '',
+    });
     const system = llm.find((m) => m.role === 'system');
     const text =
       typeof system?.content === 'string'
