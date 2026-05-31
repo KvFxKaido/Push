@@ -1,14 +1,15 @@
 import { classifyIntent } from './intent-classifier.js';
 import { sanitizeProjectInstructions } from './project-instructions.js';
+import { SIZE_BUDGETS } from './size-budgets.js';
 
 // Keep role-level policy hints compact so Reviewer/Auditor get the essentials
 // without crowding out the diff itself.
-const MAX_ROLE_PROJECT_HINTS_CHARS = 2500;
+const MAX_ROLE_PROJECT_HINTS_CHARS = SIZE_BUDGETS.roleProjectHints;
 
 // REVIEW.md is the Reviewer's primary repo-specific guidance (not a side hint
 // like project instructions), so it gets the full sanitizer budget before
 // truncation rather than the compact policy-hints budget.
-const MAX_REVIEW_GUIDANCE_CHARS = 8000;
+const MAX_REVIEW_GUIDANCE_CHARS = SIZE_BUDGETS.reviewGuidance;
 
 export type ReviewerPromptSource = 'branch-diff' | 'pr-diff' | 'last-commit' | 'working-tree';
 export type AuditorPromptSource = 'working-tree-commit' | 'pr-merge' | 'sandbox-prepare-commit';

@@ -45,6 +45,7 @@ import {
 import { formatAgentToolResult, formatAgentParseError } from './agent-loop-utils.js';
 import { SystemPromptBuilder } from './system-prompt-builder.js';
 import { formatProjectInstructionsBlock } from './project-instructions.js';
+import { SIZE_BUDGETS } from './size-budgets.js';
 import {
   SHARED_OPERATIONAL_CONSTRAINTS,
   CANONICAL_DOCS_GUIDANCE,
@@ -67,7 +68,7 @@ export const EXPLORER_ROUND_TIMEOUT_MS = 60_000;
 // writing essay-length preambles between tool calls. The wall-clock timer
 // fires once per round regardless of activity, bounding unproductive loops.
 export const EXPLORER_ROUND_WALL_CLOCK_MS = 120_000;
-export const MAX_PROJECT_INSTRUCTIONS_SIZE = 12_000;
+export const MAX_PROJECT_INSTRUCTIONS_SIZE = SIZE_BUDGETS.projectInstructionsAgent;
 
 export const EXPLORER_GITHUB_TOOL_NAMES = getToolPublicNames({
   source: 'github',

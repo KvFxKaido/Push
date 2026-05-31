@@ -39,6 +39,7 @@ import {
   buildUnimplementedToolErrorText,
 } from './tool-call-recovery.js';
 import { formatProjectInstructionsBlock } from './project-instructions.js';
+import { SIZE_BUDGETS } from './size-budgets.js';
 import { formatAgentToolResult, formatAgentParseError } from './agent-loop-utils.js';
 
 // ---------------------------------------------------------------------------
@@ -57,7 +58,7 @@ const DEEP_REVIEW_ROUND_TIMEOUT_MS = 60_000;
 // EXPLORER_ROUND_WALL_CLOCK_MS in explorer-agent.ts.
 const DEEP_REVIEW_ROUND_WALL_CLOCK_MS = 120_000;
 const REVIEW_COMPLETE_MARKER = '[REVIEW_COMPLETE]';
-const MAX_PROJECT_INSTRUCTIONS_SIZE = 12_000;
+const MAX_PROJECT_INSTRUCTIONS_SIZE = SIZE_BUDGETS.projectInstructionsAgent;
 const DIFF_LIMIT = 40_000;
 
 const REVIEWER_GITHUB_TOOL_NAMES = getToolPublicNames({

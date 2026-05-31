@@ -20,6 +20,7 @@ import type { AIProviderType, LlmMessage, PushStream } from './provider-contract
 import type { MemoryScope, RunEventInput } from './runtime-contract.js';
 import type { AuditorPromptContext } from './role-context.js';
 import { formatCoderState, type CoderWorkingMemory } from './working-memory.js';
+import { SIZE_BUDGETS } from './size-budgets.js';
 import { asRecord, iteratePushStreamText } from './stream-utils.js';
 import { parseDiffStats, chunkDiffByFile, classifyFilePath } from './diff-utils.js';
 import { detectAiCommentPatterns, formatCommentCheckBlock } from './comment-check.js';
@@ -556,7 +557,9 @@ export async function runAuditorEvaluation(
 
   if (diff) {
     const truncatedDiff =
-      diff.length > 15_000 ? diff.slice(0, 15_000) + '\n[diff truncated]' : diff;
+      diff.length > SIZE_BUDGETS.auditorDiff
+        ? diff.slice(0, SIZE_BUDGETS.auditorDiff) + '\n[diff truncated]'
+        : diff;
     sections.push(
       `[SANDBOX DIFF]\n\`\`\`diff\n${truncatedDiff.replace(/`/g, '\\`')}\n\`\`\`\n[/SANDBOX DIFF]`,
     );

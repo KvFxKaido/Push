@@ -50,7 +50,7 @@ import type { AcceptanceCriterion, RunEventInput } from './runtime-contract.js';
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
 import { iteratePushStreamText, asRecord } from './stream-utils.js';
 import { detectToolFromText } from './tool-call-parsing.js';
-import { MAX_TOOL_RESULT_SIZE as LIB_MAX_TOOL_RESULT_SIZE } from './agent-loop-utils.js';
+import { SIZE_BUDGETS } from './size-budgets.js';
 import { formatProjectInstructionsBlock } from './project-instructions.js';
 import {
   buildToolCallParseErrorBlock,
@@ -114,8 +114,8 @@ const CHECKPOINT_ANSWER_TIMEOUT_MS = 30_000; // 30s for Orchestrator checkpoint 
 const CODER_CHECKPOINT_CADENCE_ROUNDS = 5;
 
 // Size limits to prevent 413 errors from provider APIs
-const MAX_TOOL_RESULT_SIZE = 24_000; // Max chars per tool result (~400 lines visible per read)
-const MAX_AGENTS_MD_SIZE = 4000; // Max chars for AGENTS.md
+const MAX_TOOL_RESULT_SIZE = SIZE_BUDGETS.toolResultCoder; // ~400 lines visible per read
+const MAX_AGENTS_MD_SIZE = SIZE_BUDGETS.agentsMdCoder;
 const MAX_TOTAL_CONTEXT_SIZE = 120_000; // Rough limit for total message content
 const CODER_STATE_REINJECTION_PRESSURE_PCT = 60;
 const CODER_STATE_REINJECTION_CADENCE_ROUNDS = 6;
@@ -127,9 +127,6 @@ const MAX_CONSECUTIVE_MUTATION_FAILURES = 3; // Hard failure threshold for same 
 // SandboxUnreachableError so the host can restore a checkpoint and resume,
 // rather than burning rounds against a dead sandbox.
 const SANDBOX_LOSS_THRESHOLD = 2;
-
-// Silence lint on the unused re-export alias when tree-shaken in some builds.
-void LIB_MAX_TOOL_RESULT_SIZE;
 
 /**
  * Thrown by the Coder loop when the sandbox is confirmed unreachable across

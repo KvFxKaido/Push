@@ -2,7 +2,9 @@
 // We apply the same defense-in-depth as scratchpad and user bio:
 //   1. Size cap — prevents context bloat / 413 errors
 //   2. Delimiter escaping — zero-width space breaks block boundaries
-const MAX_PROJECT_INSTRUCTIONS_SIZE = 8000;
+import { SIZE_BUDGETS } from './size-budgets.js';
+
+const MAX_PROJECT_INSTRUCTIONS_SIZE = SIZE_BUDGETS.projectInstructionsDefault;
 
 /**
  * Canonical project-instructions block boundaries — the single source of truth
