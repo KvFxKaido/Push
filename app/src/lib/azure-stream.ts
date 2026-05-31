@@ -38,24 +38,22 @@ export async function* azureStream(
   // 1. Compose messages via the shared prompt builder. Runtime context flows
   //    through the adapter as opaque passthrough fields — cast locally.
   const workspaceContext = req.workspaceContext as WorkspaceContext | undefined;
-  const llmMessages = toLLMMessages(
-    req.messages,
+  const llmMessages = toLLMMessages(req.messages, {
     workspaceContext,
-    req.hasSandbox,
-    req.systemPromptOverride,
-    req.scratchpadContent,
-    'azure',
-    req.model,
-    req.onPreCompact,
-    undefined,
-    req.todoContent,
-    {
+    hasSandbox: req.hasSandbox,
+    systemPromptOverride: req.systemPromptOverride,
+    scratchpadContent: req.scratchpadContent,
+    providerType: 'azure',
+    providerModel: req.model,
+    onPreCompact: req.onPreCompact,
+    todoContent: req.todoContent,
+    sessionDigestOptions: {
       records: req.sessionDigestRecords,
       prior: req.priorSessionDigest,
       onEmit: req.onSessionDigestEmitted,
     },
-    req.linkedLibraryContent,
-  );
+    linkedLibraryContent: req.linkedLibraryContent,
+  });
 
   // 2. Plain OpenAI-compatible request body. The Worker forwards verbatim.
   const body: Record<string, unknown> = {

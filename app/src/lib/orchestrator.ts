@@ -281,20 +281,41 @@ export interface SessionDigestOptions {
   onEmit?: (digest: import('@push/lib/session-digest').SessionDigest | null) => void;
 }
 
+/** Optional inputs for {@link toLLMMessages}. Bagged into one object so adding
+ *  a per-turn input is a named field rather than another trailing positional
+ *  (the signature had grown to a dozen). All fields are optional; the gateways
+ *  forward the matching `PushStreamRequest` fields verbatim. */
+export interface ToLLMMessagesOptions {
+  workspaceContext?: WorkspaceContext;
+  hasSandbox?: boolean;
+  systemPromptOverride?: string;
+  scratchpadContent?: string;
+  providerType?: Exclude<ActiveProvider, 'demo'>;
+  providerModel?: string;
+  onPreCompact?: (event: import('@/types').PreCompactEvent) => void;
+  intentHint?: string | null;
+  todoContent?: string;
+  sessionDigestOptions?: SessionDigestOptions;
+  linkedLibraryContent?: string;
+}
+
 export function toLLMMessages(
   messages: ChatMessage[],
-  workspaceContext?: WorkspaceContext,
-  hasSandbox?: boolean,
-  systemPromptOverride?: string,
-  scratchpadContent?: string,
-  providerType?: Exclude<ActiveProvider, 'demo'>,
-  providerModel?: string,
-  onPreCompact?: (event: import('@/types').PreCompactEvent) => void,
-  intentHint?: string | null,
-  todoContent?: string,
-  sessionDigestOptions?: SessionDigestOptions,
-  linkedLibraryContent?: string,
+  options: ToLLMMessagesOptions = {},
 ): LLMMessage[] {
+  const {
+    workspaceContext,
+    hasSandbox,
+    systemPromptOverride,
+    scratchpadContent,
+    providerType,
+    providerModel,
+    onPreCompact,
+    intentHint,
+    todoContent,
+    sessionDigestOptions,
+    linkedLibraryContent,
+  } = options;
   // When a systemPromptOverride is provided (Auditor, Coder), the caller has already
   // composed a complete system prompt — don't append Orchestrator-specific protocols.
   let systemContent: string;
