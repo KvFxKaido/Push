@@ -53,7 +53,7 @@ describe('sanitizeProjectInstructions', () => {
     // None of these may bypass the cap, slice on a negative index, or collapse
     // the body to an empty block — they all fall back to the 8000 default, so a
     // 9000-char input is truncated with a 1000-char omit-count.
-    for (const bad of [-1, 0, -0, Number.NaN, Number.POSITIVE_INFINITY]) {
+    for (const bad of [-1, 0, -0, 0.5, 0.999, Number.NaN, Number.POSITIVE_INFINITY]) {
       const out = sanitizeProjectInstructions(long, bad);
       expect(out).toContain('[Project instructions truncated — 1000 chars omitted]');
       expect(out).not.toContain(long); // full 9000-char body did not survive

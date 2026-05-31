@@ -26,13 +26,15 @@ export function sanitizeProjectInstructions(
   raw: string,
   maxSize: number = MAX_PROJECT_INSTRUCTIONS_SIZE,
 ): string {
-  // Defensive clamp on the public injection-defense boundary. Anything that
-  // isn't a finite, strictly-positive number falls back to the default budget
-  // so the cap stays predictable: NaN/-0/negative would disable truncation
-  // (`len > NaN` is always false) or produce a negative-index slice, and an
-  // explicit 0 would collapse every input to an empty "truncated" block.
-  const cap =
-    Number.isFinite(maxSize) && maxSize > 0 ? Math.floor(maxSize) : MAX_PROJECT_INSTRUCTIONS_SIZE;
+  // Defensive clamp on the public injection-defense boundary. Floor first, then
+  // require a strictly-positive integer — otherwise fall back to the default
+  // budget so the cap stays predictable. This rejects the whole degenerate
+  // class in one check: NaN/±Infinity (disable truncation, `len > NaN` is
+  // always false), negatives (negative-index slice), and anything that floors
+  // to 0 — explicit 0/-0 *and* fractions like 0.5 — which would otherwise
+  // collapse every input to an empty "truncated" block.
+  const flooredMax = Number.isFinite(maxSize) ? Math.floor(maxSize) : 0;
+  const cap = flooredMax > 0 ? flooredMax : MAX_PROJECT_INSTRUCTIONS_SIZE;
   let content = raw;
 
   if (content.length > cap) {
