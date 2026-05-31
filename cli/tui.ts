@@ -1541,10 +1541,16 @@ export async function runTUI(options = {}) {
   // `refMs`, skipping build/dep/test trees. Early-exits on the first hit (we
   // only need existence, not the full set). Bounded — `cli/` + `lib/` are
   // small — and best-effort: any I/O error on a subtree is skipped.
+  //
+  // Termination is guaranteed two ways since this runs on every reuse connect:
+  // symlinked dirs are never descended (`isSymbolicLink` skip), and a hard
+  // entry budget caps total work so even a bind-mount real-dir cycle can't hang
+  // TUI startup (it bails to `null` = no warning).
   async function firstSourceFileNewerThan(refMs, dirs) {
     const SKIP = new Set(['node_modules', 'dist', 'tests', '.git']);
     const stack = [...dirs];
-    while (stack.length > 0) {
+    let budget = 10000;
+    while (stack.length > 0 && budget > 0) {
       const dir = stack.pop();
       let entries;
       try {
@@ -1553,6 +1559,8 @@ export async function runTUI(options = {}) {
         continue;
       }
       for (const ent of entries) {
+        if (--budget <= 0) break;
+        if (ent.isSymbolicLink()) continue;
         if (ent.isDirectory()) {
           if (!SKIP.has(ent.name)) stack.push(path.join(dir, ent.name));
           continue;
@@ -1613,21 +1621,27 @@ export async function runTUI(options = {}) {
   // (`unchecked`) isn't recorded as a verified-current daemon, and a stale
   // reuse is never silent.
   async function warnIfReusedDaemonStale() {
-    const result = await reusedDaemonStaleness();
-    if (result.status !== 'stale') {
+    // This is pure diagnostics on the connect fast path — it must never crash
+    // TUI init (cf. `appendDaemonLogTail`). Any failure degrades to silence.
+    try {
+      const result = await reusedDaemonStaleness();
+      if (result.status !== 'stale') {
+        process.stderr.write(
+          `${JSON.stringify({ level: 'debug', event: `tui_daemon_reuse_${result.status}` })}\n`,
+        );
+        return;
+      }
       process.stderr.write(
-        `${JSON.stringify({ level: 'debug', event: `tui_daemon_reuse_${result.status}` })}\n`,
+        `${JSON.stringify({ level: 'warn', event: 'tui_daemon_reuse_stale', pid: result.pid, daemonStartedAtMs: result.daemonStartedAtMs, newerFile: result.newerFile })}\n`,
       );
-      return;
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        `Reused a running pushd daemon${result.pid ? ` (pid ${result.pid})` : ''} started before your latest source edit (${result.newerFile}). It keeps old code in memory — stop it and relaunch so this session runs your current changes.`,
+      );
+    } catch {
+      /* diagnostic path must never crash TUI init */
     }
-    process.stderr.write(
-      `${JSON.stringify({ level: 'warn', event: 'tui_daemon_reuse_stale', pid: result.pid, daemonStartedAtMs: result.daemonStartedAtMs, newerFile: result.newerFile })}\n`,
-    );
-    addTranscriptEntry(
-      tuiState,
-      'warning',
-      `Reused a running pushd daemon${result.pid ? ` (pid ${result.pid})` : ''} started before your latest source edit (${result.newerFile}). It keeps old code in memory — stop it and relaunch so this session runs your current changes.`,
-    );
   }
 
   async function startDaemonForTui() {
