@@ -4,7 +4,10 @@ import { MANIFEST_PARSERS, type GitInfo } from '@push/lib/repo-awareness';
 import { listDirectory, readFromSandbox } from './sandbox-client';
 import { createSandboxGitBackend } from './git-backend';
 
-export { sanitizeProjectInstructions } from '@push/lib/project-instructions';
+export {
+  sanitizeProjectInstructions,
+  formatProjectInstructionsBlock,
+} from '@push/lib/project-instructions';
 
 export interface SandboxWorkspaceContext {
   cwd: string;

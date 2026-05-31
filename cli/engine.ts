@@ -41,6 +41,7 @@ import {
   loadProjectInstructions,
   loadMemory,
 } from './workspace-context.js';
+import { formatProjectInstructionsBlock } from '../lib/project-instructions.ts';
 import {
   trimContext,
   distillContext,
@@ -537,7 +538,7 @@ async function enrichCliBuilder(
   if (instructions) {
     builder.set(
       'project_context',
-      `[PROJECT_INSTRUCTIONS source="${instructions.file}"]\n${instructions.content}\n[/PROJECT_INSTRUCTIONS]`,
+      formatProjectInstructionsBlock(instructions.content, { source: instructions.file }),
     );
   }
   if (memory) {

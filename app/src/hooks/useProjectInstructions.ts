@@ -5,7 +5,7 @@ import { fileLedger } from '@/lib/file-awareness-ledger';
 import { fetchProjectInstructions } from '@/lib/github-tools';
 import { syncProjectInstructionsFromSandbox } from '@/lib/project-instructions-utils';
 import { buildEffectiveProjectInstructions } from '@/lib/push-built-in-context';
-import { buildWorkspaceContext, sanitizeProjectInstructions } from '@/lib/workspace-context';
+import { buildWorkspaceContext, formatProjectInstructionsBlock } from '@/lib/workspace-context';
 import type { ActiveRepo, RepoWithActivity, WorkspaceContext, WorkspaceSession } from '@/types';
 import type { SandboxStatus } from '@/hooks/useSandbox';
 
@@ -223,14 +223,21 @@ export function useProjectInstructions(
     if (repos.length > 0) {
       let description = buildWorkspaceContext(repos, activeRepo);
       if (agentsMdContent) {
-        const safe = sanitizeProjectInstructions(agentsMdContent);
-        description += '\n\n[PROJECT INSTRUCTIONS]\n' + safe + '\n[/PROJECT INSTRUCTIONS]';
+        description +=
+          '\n\n' + formatProjectInstructionsBlock(agentsMdContent, { source: instructionFilename });
       }
       setWorkspaceContext({ description, includeGitHubTools: true, mode: 'repo' });
     } else {
       setWorkspaceContext(null);
     }
-  }, [repos, activeRepo, agentsMdContent, workspaceSession, setWorkspaceContext]);
+  }, [
+    repos,
+    activeRepo,
+    agentsMdContent,
+    instructionFilename,
+    workspaceSession,
+    setWorkspaceContext,
+  ]);
 
   // Create template AGENTS.md
   const handleCreateAgentsMd = useCallback(async () => {

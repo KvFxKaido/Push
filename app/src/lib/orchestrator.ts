@@ -25,6 +25,10 @@ import { deriveUserGoalAnchor } from '@push/lib/user-goal-anchor';
 import { estimateContextTokens } from './orchestrator-context';
 import { estimateTokens as estimateRawTokens } from '@push/lib/context-budget';
 import { extractMarkedBlock, type PromptCompositionCost } from '@push/lib/prompt-cost-telemetry';
+import {
+  PROJECT_INSTRUCTIONS_OPEN_PREFIX,
+  PROJECT_INSTRUCTIONS_CLOSE,
+} from '@push/lib/project-instructions';
 import { isSyntheticDigestMessage, parseSessionDigest } from '@push/lib/session-digest';
 import { getZenGoTransport } from './zen-go';
 import { getVertexModelTransport } from './vertex-provider';
@@ -525,8 +529,8 @@ export function toLLMMessages(
     const projectInstructionsText =
       extractMarkedBlock(
         workspaceContext?.description ?? '',
-        '[PROJECT INSTRUCTIONS]',
-        '[/PROJECT INSTRUCTIONS]',
+        PROJECT_INSTRUCTIONS_OPEN_PREFIX,
+        PROJECT_INSTRUCTIONS_CLOSE,
       ) ?? '';
     const cost: PromptCompositionCost = {
       systemPromptBytes: systemContent.length,
