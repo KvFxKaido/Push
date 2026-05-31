@@ -1565,7 +1565,7 @@ export async function runTUI(options = {}) {
           if (!SKIP.has(ent.name)) stack.push(path.join(dir, ent.name));
           continue;
         }
-        if (!/\.m?ts$/.test(ent.name)) continue;
+        if (!/\.m?ts$/i.test(ent.name)) continue;
         const full = path.join(dir, ent.name);
         try {
           const st = await fs.stat(full);
@@ -1593,7 +1593,7 @@ export async function runTUI(options = {}) {
     // before reading the extension — an anchored match on the raw URL would
     // miss `…/tui.ts?v=123` and silently skip the check.
     const cleanUrl = import.meta.url.replace(/[?#].*$/, '');
-    const ext = path.extname(cleanUrl).slice(1);
+    const ext = path.extname(cleanUrl).slice(1).toLowerCase();
     if (ext !== 'ts' && ext !== 'mts') return { status: 'unchecked' };
     try {
       const { getPidPath } = await import('./pushd.js');
