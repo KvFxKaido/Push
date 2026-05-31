@@ -48,11 +48,12 @@ describe('formatProjectInstructionsBlock', () => {
 });
 
 describe('sanitizeProjectInstructions', () => {
-  it('clamps a non-finite or negative maxSize back to the default budget', () => {
+  it('clamps a non-positive or non-finite maxSize back to the default budget', () => {
     const long = 'y'.repeat(9000);
-    // Negative / NaN must not bypass the cap or produce a negative-index slice;
-    // they fall back to the 8000 default, so a 9000-char input is truncated.
-    for (const bad of [-1, Number.NaN]) {
+    // None of these may bypass the cap, slice on a negative index, or collapse
+    // the body to an empty block — they all fall back to the 8000 default, so a
+    // 9000-char input is truncated with a 1000-char omit-count.
+    for (const bad of [-1, 0, -0, Number.NaN, Number.POSITIVE_INFINITY]) {
       const out = sanitizeProjectInstructions(long, bad);
       expect(out).toContain('[Project instructions truncated — 1000 chars omitted]');
       expect(out).not.toContain(long); // full 9000-char body did not survive
