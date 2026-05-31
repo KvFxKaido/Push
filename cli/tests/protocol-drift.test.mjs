@@ -394,6 +394,14 @@ describe('protocol drift characterization — tool events', () => {
     );
   });
 
+  it('accepts tool.call_malformed with the optional toolName hint', () => {
+    // toolName is populated from the kernel's recovered rawToolName (PR #733);
+    // pin that the hint-bearing event still passes strict broadcast validation.
+    assertStrictBroadcastPass(
+      makeEnvelope('tool.call_malformed', { reason: 'missing_args_object', toolName: 'pr' }),
+    );
+  });
+
   it('rejects tool.call_malformed without a reason', () => {
     assertStrictBroadcastFail(makeEnvelope('tool.call_malformed', {}));
   });

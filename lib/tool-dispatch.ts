@@ -717,10 +717,17 @@ function extractRawToolName(text: string): string | undefined {
   // breaks elsewhere reaches here with its original quotes. The value stays
   // quoted-and-identifier-bounded on purpose — matching a bare unquoted value
   // would risk capturing a nested `"tool"` key from args or prose.
-  // `\s*` inside the quotes mirrors the `.trim()` applied at the parsed-tool
-  // origins, so a padded name (`{"tool":" pr "}`) recovers cleanly here too.
-  const match = /['"]tool['"]\s*:\s*['"]\s*([A-Za-z0-9_]+)\s*['"]/.exec(text);
-  return match ? match[1] : undefined;
+  // Backreferenced quotes (\1 / \2) require matching open/close so we don't
+  // extract from mismatched-quote noise; `\s*` inside the value quotes mirrors
+  // the `.trim()` applied at the parsed-tool origins, so a padded name
+  // (`{"tool":" pr "}`) recovers cleanly here too. `.exec` returns the first
+  // `tool` occurrence — in the rare case a nested `"tool"` inside `args`
+  // precedes the top-level key (only when the model writes `args` first AND the
+  // JSON is broken), that nested name wins. Accepted as a best-effort limit on
+  // already-broken JSON; anchoring to the first key instead would drop the
+  // common `args`-after-`tool` case.
+  const match = /(['"])tool\1\s*:\s*(['"])\s*([A-Za-z0-9_]+)\s*\2/.exec(text);
+  return match ? match[3] : undefined;
 }
 
 function parseToolCandidate(candidate: string): ParseOutcome {

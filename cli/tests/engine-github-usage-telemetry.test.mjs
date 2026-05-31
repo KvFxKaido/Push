@@ -64,4 +64,22 @@ describe('detectAllToolCalls — malformed rawToolName', () => {
     assert.equal(detected.malformed[0].reason, 'json_parse_error');
     assert.equal(detected.malformed[0].rawToolName, 'repo_read');
   });
+
+  it('does not extract from a mismatched-quote value', () => {
+    // Backreferenced quotes reject `"pr'` so we don't recover names from
+    // quote-corrupted noise.
+    const detected = detectAllToolCalls(fenced('{"tool":"pr\', "args": }'));
+    assert.equal(detected.malformed.length, 1);
+    assert.equal(detected.malformed[0].rawToolName, undefined);
+  });
+
+  it('documents the nested-tool first-match limitation', () => {
+    // Known best-effort limit: when `args` (with a nested `"tool"`) precedes the
+    // top-level key AND the JSON is broken, the nested name wins. Anchoring to
+    // the first key would instead drop the common `args`-after-`tool` case, so
+    // we accept this on an already-broken-JSON recovery path.
+    const detected = detectAllToolCalls(fenced('{"args":{"tool":"mismatch"}, "tool": }'));
+    assert.equal(detected.malformed.length, 1);
+    assert.equal(detected.malformed[0].rawToolName, 'mismatch');
+  });
 });
