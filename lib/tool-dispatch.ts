@@ -717,7 +717,9 @@ function extractRawToolName(text: string): string | undefined {
   // breaks elsewhere reaches here with its original quotes. The value stays
   // quoted-and-identifier-bounded on purpose — matching a bare unquoted value
   // would risk capturing a nested `"tool"` key from args or prose.
-  const match = /['"]tool['"]\s*:\s*['"]([A-Za-z0-9_]+)['"]/.exec(text);
+  // `\s*` inside the quotes mirrors the `.trim()` applied at the parsed-tool
+  // origins, so a padded name (`{"tool":" pr "}`) recovers cleanly here too.
+  const match = /['"]tool['"]\s*:\s*['"]\s*([A-Za-z0-9_]+)\s*['"]/.exec(text);
   return match ? match[1] : undefined;
 }
 

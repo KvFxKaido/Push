@@ -57,4 +57,11 @@ describe('detectAllToolCalls — malformed rawToolName', () => {
     assert.equal(detected.malformed.length, 1);
     assert.equal(detected.malformed[0].rawToolName, 'pr');
   });
+
+  it('recovers a padded tool name on the json_parse_error extraction path', () => {
+    const detected = detectAllToolCalls(fenced('{"tool":" repo_read ", "args": }'));
+    assert.equal(detected.malformed.length, 1);
+    assert.equal(detected.malformed[0].reason, 'json_parse_error');
+    assert.equal(detected.malformed[0].rawToolName, 'repo_read');
+  });
 });
