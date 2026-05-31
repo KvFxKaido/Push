@@ -3217,6 +3217,9 @@ export async function runTUI(options = {}) {
         scheduler.flush();
         return;
       }
+      // Clamp mirrors the daemon's own cap (session_summarize:
+      // parsePositiveIntField(preserveTurns, 6, 64)); the client bound is a UX
+      // hint, the daemon enforces.
       preserveTurns = Math.max(1, Math.min(64, Number.parseInt(arg, 10)));
     }
 
@@ -3237,8 +3240,8 @@ export async function runTUI(options = {}) {
           addTranscriptEntry(
             tuiState,
             'status',
-            `Nothing to compact (turns: ${res.payload.totalTurns ?? '?'}, preserve: ${
-              res.payload.preserveTurns ?? preserveTurns
+            `Nothing to compact (turns: ${res.payload?.totalTurns ?? '?'}, preserve: ${
+              res.payload?.preserveTurns ?? preserveTurns
             }).`,
           );
         }
@@ -3323,6 +3326,9 @@ export async function runTUI(options = {}) {
         scheduler.flush();
         return;
       }
+      // Clamp mirrors the daemon's own cap (session_revert:
+      // parsePositiveIntField(turns, 1, 1024)) — higher than /compact's 64
+      // because turns-to-revert and turns-to-preserve are different limits.
       turns = Math.max(1, Math.min(1024, Number.parseInt(arg, 10)));
     }
     if (!(await ensureDaemonSessionReady())) {
@@ -3403,10 +3409,15 @@ export async function runTUI(options = {}) {
         const res = await sendDaemonSessionVerb('get_child_session', { subagentId: arg });
         const c = res?.payload?.child || {};
         const ev = res?.payload?.eventSummary || {};
-        const lines = [`child ${c.subagentId} — ${c.agent || 'subagent'} (${c.status || '?'})`];
-        if (c.task) lines.push(`  task: ${c.task.slice(0, 200)}`);
+        const lines = [
+          `child ${c.subagentId ?? '?'} — ${c.agent || 'subagent'} (${c.status || '?'})`,
+        ];
+        // typeof-string guards (not just truthy) — these fields are untyped
+        // across the daemon↔TUI seam (finding #7), so a non-string drift value
+        // would reach .slice and throw rather than degrade gracefully.
+        if (typeof c.task === 'string') lines.push(`  task: ${c.task.slice(0, 200)}`);
         if (c.outcomeStatus) lines.push(`  outcome: ${c.outcomeStatus}`);
-        if (c.summary) lines.push(`  summary: ${c.summary.slice(0, 200)}`);
+        if (typeof c.summary === 'string') lines.push(`  summary: ${c.summary.slice(0, 200)}`);
         if (typeof c.rounds === 'number') lines.push(`  rounds: ${c.rounds}`);
         if (c.terminalType) lines.push(`  terminal: ${c.terminalType}`);
         lines.push(
@@ -3420,14 +3431,14 @@ export async function runTUI(options = {}) {
           addTranscriptEntry(tuiState, 'status', 'No delegated children for this session.');
         } else {
           const lines = [
-            `Children: ${children.length} (${res.payload.activeCount ?? 0} active, ${
-              res.payload.completedCount ?? 0
+            `Children: ${children.length} (${res.payload?.activeCount ?? 0} active, ${
+              res.payload?.completedCount ?? 0
             } completed)`,
           ];
           for (const c of children) {
             const tag = c.outcomeStatus ? `${c.status}/${c.outcomeStatus}` : c.status;
-            const task = c.task ? ` — ${c.task.slice(0, 60)}` : '';
-            lines.push(`  ${c.subagentId}  [${c.agent || 'subagent'} ${tag}]${task}`);
+            const task = typeof c.task === 'string' ? ` — ${c.task.slice(0, 60)}` : '';
+            lines.push(`  ${c.subagentId ?? '?'}  [${c.agent || 'subagent'} ${tag}]${task}`);
           }
           lines.push('Inspect one with /children <subagentId>.');
           addTranscriptEntry(tuiState, 'status', lines.join('\n'));
