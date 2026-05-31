@@ -21,7 +21,7 @@ const SAMPLES = {
   python: `def greet(name):\n    """multi\n    line"""\n    return f"hi {name}"  # comment`,
   go: `package main\nfunc main() {\n\tx := 42\n\treturn\n}`,
   rust: `fn main() {\n    let mut v: Vec<i32> = vec![1, 2];\n}`,
-  shell: `#!/bin/bash\nfor f in *.ts; do\n  echo "$f \${HOME}"\ndone`,
+  shell: `#!/bin/bash\nfor f in *.ts; do\n  echo "$f \${HOME}"\n  echo $? $$ $@ $1\ndone`,
   json: `{\n  "tool": "Read",\n  "n": 42,\n  "ok": true\n}`,
 };
 
@@ -102,6 +102,13 @@ describe('highlightCode: category colouring', () => {
     const out = highlightCode(theme, 'const s = "hi";', 'js').join('\n');
     assert.ok(out.includes(styled('accent.primary', 'const')), 'keyword coloured');
     assert.ok(out.includes(styled('state.success', '"hi"')), 'string coloured');
+  });
+
+  it('shell variables (special, positional, braced) are each a single token', () => {
+    const out = highlightCode(theme, 'echo $? $$ $@ $! $# $1 ${HOME}', 'shell').join('\n');
+    for (const v of ['$?', '$$', '$@', '$!', '$#', '$1', '${HOME}']) {
+      assert.ok(out.includes(styled('accent.secondary', v)), `expected ${v} as one variable token`);
+    }
   });
 
   it('diff +/- lines → success/error, @@ → link', () => {

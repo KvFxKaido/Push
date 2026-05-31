@@ -558,6 +558,10 @@ const isIdentStart = (c: string): boolean => /[A-Za-z_$]/.test(c);
 const isIdentPart = (c: string): boolean => /[A-Za-z0-9_$]/.test(c);
 const isWs = (c: string): boolean => c === ' ' || c === '\t' || c === '\n' || c === '\r';
 
+// Shell special parameters that are a single non-identifier char: $? $$ $! $# $@ $* $-.
+// (Positional params like $1 and $name are handled by the isIdentPart scan instead.)
+const SHELL_SPECIAL_PARAMS = '?$!#@*-';
+
 function tokenize(code: string, spec: LangSpec): Seg[] {
   const segs: Seg[] = [];
   const n = code.length;
@@ -646,12 +650,15 @@ function tokenize(code: string, spec: LangSpec): Seg[] {
       continue;
     }
 
-    // Variable sigil ($VAR, ${VAR}).
+    // Variable sigil: ${...}, $name, $1, and the SHELL_SPECIAL_PARAMS
+    // single-char parameters.
     if (spec.variableSigil && c === spec.variableSigil) {
       let j = i + 1;
       if (code[j] === '{') {
         const end = code.indexOf('}', j);
         j = end === -1 ? n : end + 1;
+      } else if (j < n && SHELL_SPECIAL_PARAMS.includes(code[j])) {
+        j++;
       } else {
         while (j < n && isIdentPart(code[j])) j++;
       }
