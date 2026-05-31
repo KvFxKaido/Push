@@ -114,8 +114,8 @@ const CHECKPOINT_ANSWER_TIMEOUT_MS = 30_000; // 30s for Orchestrator checkpoint 
 const CODER_CHECKPOINT_CADENCE_ROUNDS = 5;
 
 // Size limits to prevent 413 errors from provider APIs
-const MAX_TOOL_RESULT_SIZE = SIZE_BUDGETS.toolResultCoder; // ~400 lines visible per read
-const MAX_AGENTS_MD_SIZE = SIZE_BUDGETS.agentsMdCoder;
+const MAX_TOOL_RESULT_SIZE = SIZE_BUDGETS.toolResultCoder; // tool result cap, ~400 lines/read
+const MAX_AGENTS_MD_SIZE = SIZE_BUDGETS.agentsMdCoder; // AGENTS.md cap (rationale: lib/size-budgets.ts)
 const MAX_TOTAL_CONTEXT_SIZE = 120_000; // Rough limit for total message content
 const CODER_STATE_REINJECTION_PRESSURE_PCT = 60;
 const CODER_STATE_REINJECTION_CADENCE_ROUNDS = 6;

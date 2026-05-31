@@ -17,7 +17,7 @@
  *
  * Pure module — no imports, no I/O. Safe for both Web and CLI.
  */
-export const SIZE_BUDGETS = {
+export const SIZE_BUDGETS = Object.freeze({
   /** Default cap for the shared project-instructions sanitizer when a caller
    *  passes no explicit budget (the web + CLI orchestrators). */
   projectInstructionsDefault: 8_000,
@@ -38,4 +38,4 @@ export const SIZE_BUDGETS = {
   toolResultCoder: 24_000,
   /** Auditor sandbox-diff display cap. */
   auditorDiff: 15_000,
-} as const;
+} as const);
