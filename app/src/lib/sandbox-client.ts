@@ -1882,7 +1882,13 @@ export interface SandboxDiffCapture {
 export async function fetchSandboxDiffWithMeta(sandboxId: string): Promise<SandboxDiffCapture> {
   const result = await execInSandbox(sandboxId, SANDBOX_DIFF_CAPTURE_COMMAND);
   const raw = result.stdout || '';
-  if (raw.length <= DIFF_MAX_BYTES) return { diff: raw, truncated: false };
+  // Honor the exec layer's own truncation flag, not just our byte cap. Backend
+  // exec-stdout caps differ and can sit *below* DIFF_MAX_BYTES (Modal caps at
+  // 10k, Cloudflare at 500k), so a diff can be silently cut upstream while
+  // still landing under our 30KB check. Reporting truncated:false there would
+  // let the commit-replay guard (useCommitPush.ts:unreplayableDiffReason) treat
+  // an incomplete patch as safe to replay.
+  if (raw.length <= DIFF_MAX_BYTES) return { diff: raw, truncated: result.truncated };
   return {
     diff:
       raw.slice(0, Math.max(0, DIFF_MAX_BYTES - DIFF_TRUNCATION_SUFFIX.length)) +
