@@ -34,10 +34,15 @@ describe('detectAllToolCalls — malformed rawToolName', () => {
     assert.notEqual(getToolSourceFromName(detected.malformed[0].rawToolName), 'github');
   });
 
-  it('leaves rawToolName undefined when the JSON never parsed (name unrecoverable)', () => {
-    const detected = detectAllToolCalls(fenced('{"tool":"pr", "args": }'));
+  it('recovers the GitHub tool name even when the JSON fails to parse', () => {
+    // Regression guard: a malformed-but-named call that fails JSON parsing
+    // (not just missing `args`) must still attribute to GitHub. The kernel
+    // best-effort-extracts the name from the sample, so this no longer needs a
+    // per-surface regex.
+    const detected = detectAllToolCalls(fenced('{"tool":"repo_read", "args": }'));
     assert.equal(detected.malformed.length, 1);
     assert.equal(detected.malformed[0].reason, 'json_parse_error');
-    assert.equal(detected.malformed[0].rawToolName, undefined);
+    assert.equal(detected.malformed[0].rawToolName, 'repo_read');
+    assert.equal(getToolSourceFromName(detected.malformed[0].rawToolName), 'github');
   });
 });

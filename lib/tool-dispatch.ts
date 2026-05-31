@@ -241,7 +241,11 @@ export function createToolDispatcher<TCall>(
           if (!/\{\s*['"]?tool['"]?\s*:/.test(trimmed)) continue;
           const arrayResult = parseToolArrayCandidate(trimmed);
           if (!arrayResult.ok) {
-            malformed.push({ reason: arrayResult.reason, sample: truncateSample(trimmed) });
+            malformed.push({
+              reason: arrayResult.reason,
+              sample: truncateSample(trimmed),
+              rawToolName: extractRawToolName(trimmed),
+            });
             continue;
           }
           // Per-element malformed reports surface the same way single
@@ -698,13 +702,29 @@ type ParseOutcome =
   | { ok: true; value: ParsedToolObject }
   | { ok: false; reason: ToolMalformedReason; rawToolName?: string };
 
+/**
+ * Best-effort extraction of the attempted `tool` name from candidate text that
+ * never parsed as JSON (e.g. an unclosed `{"tool":"repo_read","args":{`).
+ * Bounded to identifier characters so it can't capture trailing garbage. This
+ * keeps `rawToolName` populated on the `json_parse_error` path — without it, a
+ * malformed-but-named call that fails JSON parsing (rather than just missing
+ * `args`) would drop out of source attribution / usage telemetry on both
+ * surfaces, which is exactly the regex the CLI used to do per-surface.
+ */
+function extractRawToolName(text: string): string | undefined {
+  const match = /"tool"\s*:\s*"([A-Za-z0-9_]+)"/.exec(text);
+  return match ? match[1] : undefined;
+}
+
 function parseToolCandidate(candidate: string): ParseOutcome {
   let parsed: unknown;
   try {
     parsed = JSON.parse(candidate);
   } catch {
     const repaired = repairToolJson(candidate);
-    if (!repaired) return { ok: false, reason: 'json_parse_error' };
+    if (!repaired) {
+      return { ok: false, reason: 'json_parse_error', rawToolName: extractRawToolName(candidate) };
+    }
     parsed = repaired;
   }
   if (!isRecord(parsed)) return { ok: false, reason: 'invalid_shape' };
