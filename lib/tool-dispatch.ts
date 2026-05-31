@@ -85,6 +85,13 @@ export interface ToolMalformedReport {
   reason: ToolMalformedReason;
   /** First ~120 chars of the failing candidate, for diagnostics. */
   sample: string;
+  /** Raw `tool` name as the model wrote it, when the candidate parsed far
+   *  enough to expose one (`missing_args_object`, `unknown_tool`, recovery).
+   *  Absent for `json_parse_error` / `invalid_shape` / `missing_tool`, where
+   *  no usable name exists. Carries the name to BOTH surfaces so neither has
+   *  to re-derive it from the (truncated) sample — the web wrapper previously
+   *  re-parsed `sample`, the CLI dropped the name entirely. */
+  rawToolName?: string;
 }
 
 export type ToolMalformedReason =
@@ -234,7 +241,11 @@ export function createToolDispatcher<TCall>(
           if (!/\{\s*['"]?tool['"]?\s*:/.test(trimmed)) continue;
           const arrayResult = parseToolArrayCandidate(trimmed);
           if (!arrayResult.ok) {
-            malformed.push({ reason: arrayResult.reason, sample: truncateSample(trimmed) });
+            malformed.push({
+              reason: arrayResult.reason,
+              sample: truncateSample(trimmed),
+              rawToolName: extractRawToolName(trimmed),
+            });
             continue;
           }
           // Per-element malformed reports surface the same way single
@@ -261,7 +272,11 @@ export function createToolDispatcher<TCall>(
         if (!trimmed.startsWith('{')) continue;
         const parsed = parseToolCandidate(trimmed);
         if (!parsed.ok) {
-          malformed.push({ reason: parsed.reason, sample: truncateSample(trimmed) });
+          malformed.push({
+            reason: parsed.reason,
+            sample: truncateSample(trimmed),
+            rawToolName: parsed.rawToolName,
+          });
           continue;
         }
         candidates.push({
@@ -362,6 +377,7 @@ export function createToolDispatcher<TCall>(
           malformed.push({
             reason: 'unknown_tool',
             sample: truncateSample(recovered.sample),
+            rawToolName: recovered.tool.trim(),
           });
         }
       }
@@ -400,7 +416,11 @@ export function createToolDispatcher<TCall>(
           candidate.kind === 'namespaced' ||
           candidate.kind === 'xml'
         ) {
-          malformed.push({ reason: 'unknown_tool', sample: truncateSample(candidate.sample) });
+          malformed.push({
+            reason: 'unknown_tool',
+            sample: truncateSample(candidate.sample),
+            rawToolName: candidate.parsed.tool.trim(),
+          });
         }
       }
 
@@ -680,7 +700,35 @@ function formatXmlRecoverySample(tool: string, args: Record<string, unknown>): s
 
 type ParseOutcome =
   | { ok: true; value: ParsedToolObject }
-  | { ok: false; reason: ToolMalformedReason };
+  | { ok: false; reason: ToolMalformedReason; rawToolName?: string };
+
+/**
+ * Best-effort extraction of the attempted `tool` name from candidate text that
+ * never parsed as JSON (e.g. an unclosed `{"tool":"repo_read","args":{`).
+ * Bounded to identifier characters so it can't capture trailing garbage. This
+ * keeps `rawToolName` populated on the `json_parse_error` path — without it, a
+ * malformed-but-named call that fails JSON parsing (rather than just missing
+ * `args`) would drop out of source attribution / usage telemetry on both
+ * surfaces, which is exactly the regex the CLI used to do per-surface.
+ */
+function extractRawToolName(text: string): string | undefined {
+  // Accept single- or double-quoted `tool`/value: the repair pass normalizes
+  // quote style only when it can fully reparse, so a single-quoted call that
+  // breaks elsewhere reaches here with its original quotes. The value stays
+  // quoted-and-identifier-bounded on purpose — matching a bare unquoted value
+  // would risk capturing a nested `"tool"` key from args or prose.
+  // Backreferenced quotes (\1 / \2) require matching open/close so we don't
+  // extract from mismatched-quote noise; `\s*` inside the value quotes mirrors
+  // the `.trim()` applied at the parsed-tool origins, so a padded name
+  // (`{"tool":" pr "}`) recovers cleanly here too. `.exec` returns the first
+  // `tool` occurrence — in the rare case a nested `"tool"` inside `args`
+  // precedes the top-level key (only when the model writes `args` first AND the
+  // JSON is broken), that nested name wins. Accepted as a best-effort limit on
+  // already-broken JSON; anchoring to the first key instead would drop the
+  // common `args`-after-`tool` case.
+  const match = /(['"])tool\1\s*:\s*(['"])\s*([A-Za-z0-9_]+)\s*\2/.exec(text);
+  return match ? match[3] : undefined;
+}
 
 function parseToolCandidate(candidate: string): ParseOutcome {
   let parsed: unknown;
@@ -688,7 +736,9 @@ function parseToolCandidate(candidate: string): ParseOutcome {
     parsed = JSON.parse(candidate);
   } catch {
     const repaired = repairToolJson(candidate);
-    if (!repaired) return { ok: false, reason: 'json_parse_error' };
+    if (!repaired) {
+      return { ok: false, reason: 'json_parse_error', rawToolName: extractRawToolName(candidate) };
+    }
     parsed = repaired;
   }
   if (!isRecord(parsed)) return { ok: false, reason: 'invalid_shape' };
@@ -766,6 +816,7 @@ function parseToolArrayCandidate(candidate: string): ArrayParseResult {
       perElementMalformed.push({
         reason: shaped.reason,
         sample: truncateSample(safeStringifySample(element)),
+        rawToolName: shaped.rawToolName,
       });
       continue;
     }
@@ -810,7 +861,10 @@ function shapeParsedObject(parsed: Record<string, unknown>): ParseOutcome {
     return { ok: false, reason: 'missing_tool' };
   }
   if (!isRecord(parsed.args)) {
-    return { ok: false, reason: 'missing_args_object' };
+    // The model named a tool but botched `args` (e.g. `{"tool":"pr"}`). The
+    // name is still intent to use that tool, so surface it for diagnostics
+    // and usage telemetry.
+    return { ok: false, reason: 'missing_args_object', rawToolName: parsed.tool.trim() };
   }
   return {
     ok: true,

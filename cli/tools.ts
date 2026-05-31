@@ -1138,7 +1138,7 @@ const cliToolDispatcher = createToolDispatcher([PASS_THROUGH_CLI_SOURCE]);
 
 export function detectAllToolCalls(text: string): {
   calls: { tool: string; args: Record<string, unknown> }[];
-  malformed: { reason: string; sample: string }[];
+  malformed: { reason: string; sample: string; rawToolName?: string }[];
 } {
   return cliToolDispatcher.detectAllToolCalls(text);
 }

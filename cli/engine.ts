@@ -169,7 +169,7 @@ interface ToolResult {
 
 interface DetectedToolCalls {
   calls: ToolCall[];
-  malformed: { reason: string; sample: string }[];
+  malformed: { reason: string; sample: string; rawToolName?: string }[];
 }
 
 interface MetaEnvelope {
@@ -688,20 +688,6 @@ export function consumeEnrichmentCost(state: SessionState): PromptCompositionCos
   if (!cost) return null;
   _pendingEnrichmentCosts.delete(state);
   return cost;
-}
-
-/**
- * Best-effort: does a malformed tool-call candidate look like an attempted
- * GitHub call? The CLI detector reports malformed calls as `{reason, sample}`
- * without a structured tool name (unlike the web kernel's `resolvedToolName`),
- * but a malformed `{"tool":"pr"}` is still intent to use the GitHub schema —
- * which the deferral measurement counts as "used". Pulls the `tool` name out of
- * the (possibly truncated) sample and resolves its source. Never throws;
- * returns false when no GitHub tool name is recoverable.
- */
-export function malformedSampleTargetsGithub(sample: string): boolean {
-  const match = /"tool"\s*:\s*"([a-zA-Z0-9_]+)"/.exec(sample);
-  return match ? getToolSourceFromName(match[1]) === 'github' : false;
 }
 
 // ─── Tool Result Messages ────────────────────────────────────────
@@ -1601,13 +1587,16 @@ async function runAssistantLoopImpl(
     // GitHub tool. The CLI detector doesn't tag source, so it resolves through
     // the registry by tool name. Malformed GitHub JSON lands in
     // `detected.malformed` (not `detected.calls`), but a malformed
-    // `{"tool":"pr"}` is still intent to use the GitHub schema — counted as
-    // "used" so the used/idle split isn't corrupted by the malformed/early
-    // branch this measurement specifically cares about.
+    // `{"tool":"pr"}` is still intent to use the GitHub schema — the kernel now
+    // surfaces the attempted name as `rawToolName`, so it counts as "used" and
+    // the used/idle split isn't corrupted by the malformed/early branch.
     if (githubAdvertised) {
       const githubCalls =
         detected.calls.filter((call) => getToolSourceFromName(call.tool) === 'github').length +
-        detected.malformed.filter((entry) => malformedSampleTargetsGithub(entry.sample)).length;
+        detected.malformed.filter(
+          (entry) =>
+            entry.rawToolName != null && getToolSourceFromName(entry.rawToolName) === 'github',
+        ).length;
       emitGithubToolTurnUsage(
         { surface: 'cli', scopeId: state.sessionId, round: turnIndex, mode: state.mode ?? 'cli' },
         { githubCalls, totalCalls: detected.calls.length + detected.malformed.length },

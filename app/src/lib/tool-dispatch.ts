@@ -409,26 +409,23 @@ function detectFromLegacyScan(text: string): {
 
 /**
  * Map a kernel `ToolMalformedReport` into web's `DroppedToolCallCandidate`
- * shape. The kernel only reports `{reason, sample}`; web needs raw +
- * resolved tool name. We do a best-effort parse of the sample to
- * extract the tool name; if that fails, the candidate is dropped silently
- * (matching pre-migration behavior where unparseable malformed text
- * never reached `droppedCandidates` either).
+ * shape. The kernel now carries the attempted `tool` name as `rawToolName`,
+ * so we resolve the canonical name from it directly. When the kernel couldn't
+ * recover a name (e.g. `json_parse_error` with no `tool` substring), the
+ * candidate is dropped silently — matching prior behavior where unparseable
+ * malformed text never reached `droppedCandidates` either.
  */
 function mapMalformedToDropped(report: ToolMalformedReport): DroppedToolCallCandidate | null {
-  try {
-    const parsed = JSON.parse(report.sample);
-    const record = asRecord(parsed);
-    const rawToolName = record && typeof record.tool === 'string' ? record.tool.trim() : null;
-    if (!rawToolName) return null;
-    return {
-      rawToolName,
-      resolvedToolName: resolveToolName(rawToolName),
-      sample: report.sample.length > 200 ? `${report.sample.slice(0, 200)}…` : report.sample,
-    };
-  } catch {
-    return null;
-  }
+  // The kernel now carries the parsed `tool` name on the report, so we resolve
+  // the canonical name directly instead of re-parsing `report.sample` — the
+  // sample is truncated, which made the old JSON.parse lossy on longer calls.
+  const rawToolName = report.rawToolName?.trim();
+  if (!rawToolName) return null;
+  return {
+    rawToolName,
+    resolvedToolName: resolveToolName(rawToolName),
+    sample: report.sample.length > 200 ? `${report.sample.slice(0, 200)}…` : report.sample,
+  };
 }
 
 export function detectAllToolCalls(text: string): DetectedToolCalls {
