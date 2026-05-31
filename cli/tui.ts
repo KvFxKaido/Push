@@ -1537,6 +1537,113 @@ export async function runTUI(options = {}) {
     }
   }
 
+  // Walk `dirs` for the first .ts/.mts source file with an mtime newer than
+  // `refMs`, skipping build/dep/test trees. Early-exits on the first hit (we
+  // only need existence, not the full set). Bounded — `cli/` + `lib/` are
+  // small — and best-effort: any I/O error on a subtree is skipped.
+  //
+  // Termination is guaranteed two ways since this runs on every reuse connect:
+  // symlinked dirs are never descended (`isSymbolicLink` skip), and a hard
+  // entry budget caps total work so even a bind-mount real-dir cycle can't hang
+  // TUI startup (it bails to `null` = no warning).
+  async function firstSourceFileNewerThan(refMs, dirs) {
+    const SKIP = new Set(['node_modules', 'dist', 'tests', '.git']);
+    const stack = [...dirs];
+    let budget = 10000;
+    while (stack.length > 0 && budget > 0) {
+      const dir = stack.pop();
+      let entries;
+      try {
+        entries = await fs.readdir(dir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const ent of entries) {
+        if (--budget <= 0) break;
+        if (ent.isSymbolicLink()) continue;
+        if (ent.isDirectory()) {
+          if (!SKIP.has(ent.name)) stack.push(path.join(dir, ent.name));
+          continue;
+        }
+        if (!/\.m?ts$/i.test(ent.name)) continue;
+        const full = path.join(dir, ent.name);
+        try {
+          const st = await fs.stat(full);
+          if (st.mtimeMs > refMs) return full;
+        } catch {
+          /* skip unreadable file */
+        }
+      }
+    }
+    return null;
+  }
+
+  // Dev-only staleness check for a daemon we connected to but did NOT just
+  // spawn (a pre-existing process reused via the fast probe / pidfile). A
+  // long-lived daemon keeps its code in memory — neither dist nor tsx hot-
+  // reloads — so source edited after it started silently runs old code (the
+  // footgun that made #740's new verbs 404 against a stale daemon). Signal:
+  // pidfile mtime (daemon-start proxy) vs the newest `cli/`/`lib/` source.
+  // Scoped to a source-running TUI (tsx); a dist/installed TUI has no live
+  // .ts tree to compare, so it reports `unchecked` (no false alarms in prod).
+  // Returns one of three states: `stale` (+ descriptor), `current` (checked,
+  // up to date), or `unchecked` (not source-run, or an I/O error).
+  async function reusedDaemonStaleness() {
+    // Strip any query/hash a loader may append (tsx can suffix import URLs)
+    // before reading the extension — an anchored match on the raw URL would
+    // miss `…/tui.ts?v=123` and silently skip the check.
+    const cleanUrl = import.meta.url.replace(/[?#].*$/, '');
+    const ext = path.extname(cleanUrl).slice(1).toLowerCase();
+    if (ext !== 'ts' && ext !== 'mts') return { status: 'unchecked' };
+    try {
+      const { getPidPath } = await import('./pushd.js');
+      const pidPath = getPidPath();
+      const pidStat = await fs.stat(pidPath);
+      const cliDir = path.dirname(fileURLToPath(cleanUrl));
+      const libDir = path.join(cliDir, '..', 'lib');
+      const newer = await firstSourceFileNewerThan(pidStat.mtimeMs, [cliDir, libDir]);
+      if (!newer) return { status: 'current' };
+      const pid = await readDaemonPidFile(pidPath);
+      const rootDir = path.join(cliDir, '..');
+      return {
+        status: 'stale',
+        pid,
+        daemonStartedAtMs: pidStat.mtimeMs,
+        newerFile: path.relative(rootDir, newer),
+      };
+    } catch {
+      return { status: 'unchecked' };
+    }
+  }
+
+  // Surface the staleness warning + a structured log on the reuse path. All
+  // three states are logged with distinct events so a dist-mode reuse
+  // (`unchecked`) isn't recorded as a verified-current daemon, and a stale
+  // reuse is never silent.
+  async function warnIfReusedDaemonStale() {
+    // This is pure diagnostics on the connect fast path — it must never crash
+    // TUI init (cf. `appendDaemonLogTail`). Any failure degrades to silence.
+    try {
+      const result = await reusedDaemonStaleness();
+      if (result.status !== 'stale') {
+        process.stderr.write(
+          `${JSON.stringify({ level: 'debug', event: `tui_daemon_reuse_${result.status}` })}\n`,
+        );
+        return;
+      }
+      process.stderr.write(
+        `${JSON.stringify({ level: 'warn', event: 'tui_daemon_reuse_stale', pid: result.pid, daemonStartedAtMs: result.daemonStartedAtMs, newerFile: result.newerFile })}\n`,
+      );
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        `Reused a running pushd daemon${result.pid ? ` (pid ${result.pid})` : ''} started before your latest source edit (${result.newerFile}). It keeps old code in memory — stop it and relaunch so this session runs your current changes.`,
+      );
+    } catch {
+      /* diagnostic path must never crash TUI init */
+    }
+  }
+
   async function startDaemonForTui() {
     const { getPidPath, getSocketPath, getLogPath } = await import('./pushd.js');
     const pidPath = getPidPath();
@@ -2000,6 +2107,9 @@ export async function runTUI(options = {}) {
           'Connected to pushd daemon. Sessions persist in background.',
         );
       }
+      // Reused a pre-existing daemon (not spawned here) — flag if its code
+      // predates the current source so a stale daemon isn't silently in use.
+      await warnIfReusedDaemonStale();
       return true;
     }
 
@@ -2019,6 +2129,9 @@ export async function runTUI(options = {}) {
             `${verb} pushd daemon. Sessions persist in background.`,
           );
         }
+        // Only the reuse path can be stale; a fresh spawn matches current
+        // source by construction.
+        if (started.status === 'already-running') await warnIfReusedDaemonStale();
         return true;
       }
       // Spawn succeeded but the socket never answered. Show the log

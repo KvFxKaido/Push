@@ -195,22 +195,32 @@ nobody re-implements them:
   on a real daemon-side tool executor." **False:** `multi_agent` is in the
   advertised `CAPABILITIES` list (`cli/pushd.ts:719`) and both executors are real.
 
-### 6. TUI daemon autostart spawns stale compiled `dist` with no staleness guard
+### 6. TUI silently reuses a stale daemon — ✅ fixed 2026-05-31
 
-**Confidence: high (observed live during #1 verification).**
+**Confidence: high (observed live during #1, root-caused + fixed after).**
 
-`./push` checks whether any `cli/`/`lib/` source is newer than
-`cli/dist/cli/cli.js` and falls back to `tsx` (running from source) with a warning
-when it is. The TUI's daemon **autostart** has no equivalent guard: it spawns
-`node cli/dist/cli/pushd.js` unconditionally. With a stale `dist`, the daemon runs
-old code while the TUI runs fresh source via `tsx` — a silent version skew. During
-#1's verification this surfaced as every new verb returning `Unknown request type`
-because the on-disk `dist` predated the addressable verbs entirely (`grep -c
-list_children cli/dist/cli/pushd.js` → 0). Pre-existing and orthogonal to #1, but
-it's a genuine dev-experience footgun: either spawn the daemon via the same
-source-preferring launcher logic, or apply the staleness check before spawning and
-warn/rebuild. Low priority, but worth a `log()` at minimum so the skew isn't
-silent.
+**Original framing ("autostart spawns stale compiled `dist`") was imprecise.**
+The spawn path (`startDaemonForTui`, `cli/tui.ts`) actually derives `pushd.<ext>`
+from the *running TUI module's* extension and adds the `tsx` loader for `.ts` — so
+a fresh spawn already **mirrors the TUI's own surface** (tsx TUI → `pushd.ts` via
+tsx; dist TUI → `pushd.js`). A fresh spawn is never stale.
+
+The real mechanism is **reuse**: `ensureDaemonConnected` probes (`tryDaemonConnect`)
+and connects to *any* already-running daemon before the spawn path is reached. A
+long-lived daemon (dist or tsx — neither hot-reloads) keeps its code in memory, so
+when source is edited after it started, the session silently runs old code. That's
+what made #1's new verbs return `Unknown request type` against a daemon left over
+from an earlier run.
+
+**Fix:** on a connect we did *not* just spawn (probe reuse + the `already-running`
+branch), `warnIfReusedDaemonStale()` compares the pidfile mtime (daemon-start
+proxy) against the newest `cli/`/`lib/` source mtime; if source is newer it warns
+in the transcript (pid + offending file + "stop it and relaunch") and emits a
+structured log (`tui_daemon_reuse_stale` ↔ `tui_daemon_reuse_current`, both
+branches per the symmetric-logs convention). Scoped to a source-running (tsx) TUI
+— a dist/installed TUI has no live `.ts` tree to compare, so it never false-alarms
+in prod. Verified live: fires on a daemon started before a source edit, silent on
+a current one.
 
 ### 7. Transcript-event payloads are untyped across the daemon↔TUI seam
 
