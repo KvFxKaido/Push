@@ -59,7 +59,7 @@ const DEEP_REVIEW_ROUND_TIMEOUT_MS = 60_000;
 const DEEP_REVIEW_ROUND_WALL_CLOCK_MS = 120_000;
 const REVIEW_COMPLETE_MARKER = '[REVIEW_COMPLETE]';
 const MAX_PROJECT_INSTRUCTIONS_SIZE = SIZE_BUDGETS.projectInstructionsAgent;
-const DIFF_LIMIT = 40_000;
+const DIFF_LIMIT = SIZE_BUDGETS.reviewerDiffChunk;
 
 const REVIEWER_GITHUB_TOOL_NAMES = getToolPublicNames({
   source: 'github',

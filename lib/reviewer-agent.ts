@@ -29,6 +29,7 @@ import {
   chunkDiffByFile,
   classifyFilePath,
 } from './diff-utils.js';
+import { SIZE_BUDGETS } from './size-budgets.js';
 
 const REVIEWER_TIMEOUT_MS = 90_000; // 90s — reviews can be thorough
 const REVIEWER_FILE_STRUCTURE_LIMIT = 2_000;
@@ -379,7 +380,7 @@ async function runReviewerCore(
   runtimeContext: string,
   onStatus: (phase: string) => void,
 ): Promise<ReviewResult> {
-  const DIFF_LIMIT = 40_000;
+  const DIFF_LIMIT = SIZE_BUDGETS.reviewerDiffChunk;
   const annotatedDiff = annotateDiffWithLineNumbers(diff);
   const chunkedDiff = chunkDiffByFile(annotatedDiff, DIFF_LIMIT, classifyFilePath);
   const totalFiles = parseDiffStats(diff).filesChanged;

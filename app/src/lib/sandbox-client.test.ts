@@ -615,6 +615,48 @@ describe('fetchSandboxDiff', () => {
   });
 });
 
+describe('fetchSandboxDiffWithMeta', () => {
+  it('honors the exec-layer truncation flag even when stdout is under the byte cap', async () => {
+    // Modal caps exec stdout at 10k — below DIFF_MAX_BYTES (30k). A diff cut
+    // there arrives under our byte check but must still report truncated:true
+    // so the commit-replay guard refuses to replay the incomplete patch.
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          stdout: 'x'.repeat(10_000),
+          stderr: '',
+          exit_code: 0,
+          truncated: true,
+        }),
+    });
+
+    const { fetchSandboxDiffWithMeta } = await import('./sandbox-client');
+    const result = await fetchSandboxDiffWithMeta('sb-123');
+
+    expect(result.diff.length).toBe(10_000);
+    expect(result.truncated).toBe(true);
+  });
+
+  it('reports truncated:false for a complete under-cap diff', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          stdout: 'diff --git a/file.ts b/file.ts\n',
+          stderr: '',
+          exit_code: 0,
+          truncated: false,
+        }),
+    });
+
+    const { fetchSandboxDiffWithMeta } = await import('./sandbox-client');
+    const result = await fetchSandboxDiffWithMeta('sb-123');
+
+    expect(result.truncated).toBe(false);
+  });
+});
+
 describe('findReferencesInSandbox', () => {
   it('executes the ripgrep helper and parses structured output', async () => {
     mockFetch.mockResolvedValue({
