@@ -126,22 +126,39 @@ mechanism to ship is **already fully present** for the CLI/TUI→daemon path:
 So `pr_create`/`pr_merge` are resolvable, granted, and advertised the moment a
 `gh auth login` (or env token) is present on the daemon machine.
 
-**The actual residual gap is contradictory prompt copy.** `OrchestratorPromptOptions`
-has a single knob — `isLocalDaemon` — that conflates "I'm on the user's machine"
-with "I have no remote." So the orchestrator routing block
-(`lib/orchestrator-prompt-builder.ts:162`) still asserts "commit/push shipping is
-cloud-only … (no remote)" even when a token resolves, while the GitHub-tools
-section in the same prompt says "ship via `pr_create`/`pr_merge`." Mixed signal.
+**The residual gap is softer than first written — and an earlier draft of this
+doc overstated it.** A 2026-05-31 revision claimed the orchestrator prompt
+"contradicts itself" by asserting shipping is "cloud-only / no remote." That was
+wrong: those phrases live in *code comments* in `orchestrator-prompt-builder.ts`,
+not in the emitted prompt. Dumping the actual local-daemon orchestrator prompt
+(empirical check, same day) shows **no anti-shipping text at all**. What it shows:
 
-**Fix (bounded):** split the conflated knob — add `remoteGitHubAvailable` to
-`OrchestratorPromptOptions`, thread the already-resolved token signal, and stop the
-routing copy from claiming "no remote" when a token is present. Prompt-layer change
-+ a builder test; not an architecture project.
+- The GitHub-tools section (appended by `engine.ts` when a token resolves)
+  advertises `pr_create`/`pr_merge` + "Merges happen through the PR flow … never
+  merge locally." ✅
+- The orchestrator *routing* copy frames GitHub tools as "remote repo **metadata**"
+  (read-flavored) and points shipping at the sandbox `commit` + `push` flow —
+  without spelling out the PR-flow completion (`…→ sandbox_push → pr_create →
+  pr_merge`).
 
-**Confidence:** mechanism present = high (traced); "works end-to-end" = inference,
-not yet exercised by creating a real PR from a daemon session. **Less traced:** the
-web→relay→local-daemon path, where the orchestrator may run on the web side with
-the browser token rather than the daemon's `gh` auth — a separate path.
+So it's **under-guidance, not contradiction**: the model *can* ship (caps +
+tools + token all present, verified deterministically — see below) but isn't
+explicitly walked through the full local-daemon ship sequence; it has to connect
+the GitHub-tools section's "PR flow" rule to its shipping intent itself.
+
+**Fix (optional, soft):** strengthen the orchestrator routing/delegation copy to
+name the local-daemon ship sequence explicitly. Prompt-copy only — *not* a
+capability or plumbing change. Whether it's even needed depends on whether a real
+model fails to ship without it (the next empirical step).
+
+**Verification status (2026-05-31):**
+- **Confirmed deterministically** (`roleCanUseTool` / prompt-builder dump): with a
+  token, `create_pr`/`pr:write`/`workflow:trigger` are *granted* in local-daemon
+  (`false` without the token, `true` with), and the write tools are *advertised*.
+- **Not yet run end-to-end:** no real PR created from a daemon session (external
+  side effect — needs a throwaway target + opt-in).
+- **Less traced:** the web→relay→local-daemon path, where the orchestrator may run
+  web-side with the browser token rather than the daemon's `gh` auth.
 
 ### 3. Cross-phone cancel is not identity-scoped
 
@@ -234,11 +251,13 @@ Ordered by value / cost, not committed (needs a `ROADMAP.md` entry to become wor
    `/children`, and daemon-aware `/compact` now drive the existing bearer-gated
    verbs; verified live.
 2. **PR delivery in local-daemon (#2)** — ~~the one architectural decision~~
-   **re-scoped 2026-05-31:** the runtime already supports it with a token; the
-   only gap is the orchestrator routing copy conflating `isLocalDaemon` with "no
-   remote." Bounded prompt fix (split the knob + a builder test), gated on an
-   empirical check that the copy actually misleads the model. Not an architecture
-   project after all.
+   **re-scoped twice on 2026-05-31:** (1) not an architecture project — the
+   runtime grants + advertises PR delivery with a `gh`/env token (verified
+   deterministically); (2) not even a contradiction — the "no remote" text was
+   code comments, not emitted prompt. Residual is soft *under-guidance* (routing
+   calls GitHub tools "metadata," doesn't name the ship sequence). Optional
+   prompt-copy strengthening, gated on whether a real model actually fails to ship
+   without it. Effectively de-prioritized.
 3. **Doc-drift cleanup (#5)** — five-minute fix, do it opportunistically next time
    anyone touches `handleDelegate*`.
 4. **Cross-phone cancel scoping (#3)** and **delegate.complete audit (#4)** —
