@@ -1537,6 +1537,88 @@ export async function runTUI(options = {}) {
     }
   }
 
+  // Walk `dirs` for the first .ts/.mts source file with an mtime newer than
+  // `refMs`, skipping build/dep/test trees. Early-exits on the first hit (we
+  // only need existence, not the full set). Bounded — `cli/` + `lib/` are
+  // small — and best-effort: any I/O error on a subtree is skipped.
+  async function firstSourceFileNewerThan(refMs, dirs) {
+    const SKIP = new Set(['node_modules', 'dist', 'tests', '.git']);
+    const stack = [...dirs];
+    while (stack.length > 0) {
+      const dir = stack.pop();
+      let entries;
+      try {
+        entries = await fs.readdir(dir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const ent of entries) {
+        if (ent.isDirectory()) {
+          if (!SKIP.has(ent.name)) stack.push(path.join(dir, ent.name));
+          continue;
+        }
+        if (!/\.m?ts$/.test(ent.name)) continue;
+        const full = path.join(dir, ent.name);
+        try {
+          const st = await fs.stat(full);
+          if (st.mtimeMs > refMs) return full;
+        } catch {
+          /* skip unreadable file */
+        }
+      }
+    }
+    return null;
+  }
+
+  // Dev-only staleness check for a daemon we connected to but did NOT just
+  // spawn (a pre-existing process reused via the fast probe / pidfile). A
+  // long-lived daemon keeps its code in memory — neither dist nor tsx hot-
+  // reloads — so source edited after it started silently runs old code (the
+  // footgun that made #740's new verbs 404 against a stale daemon). Signal:
+  // pidfile mtime (daemon-start proxy) vs the newest `cli/`/`lib/` source.
+  // Scoped to a source-running TUI (tsx); a dist/installed TUI has no live
+  // .ts tree to compare, so it returns null (no false alarms in prod).
+  // Returns a descriptor to warn on, or null when not stale / undeterminable.
+  async function reusedDaemonStaleness() {
+    const ext = import.meta.url.match(/\.(m?ts)$/)?.[1];
+    if (ext !== 'ts' && ext !== 'mts') return null;
+    try {
+      const { getPidPath } = await import('./pushd.js');
+      const pidPath = getPidPath();
+      const pidStat = await fs.stat(pidPath);
+      const cliDir = path.dirname(fileURLToPath(import.meta.url));
+      const libDir = path.join(cliDir, '..', 'lib');
+      const newer = await firstSourceFileNewerThan(pidStat.mtimeMs, [cliDir, libDir]);
+      if (!newer) return null;
+      const pid = await readDaemonPidFile(pidPath);
+      const rootDir = path.join(cliDir, '..');
+      return { pid, daemonStartedAtMs: pidStat.mtimeMs, newerFile: path.relative(rootDir, newer) };
+    } catch {
+      return null;
+    }
+  }
+
+  // Surface the staleness warning + a structured log on the reuse path. Both
+  // branches (warn / clean) are logged so "reused a current daemon" is
+  // distinguishable from "reused a stale one" in ops, not silent.
+  async function warnIfReusedDaemonStale() {
+    const stale = await reusedDaemonStaleness();
+    if (!stale) {
+      process.stderr.write(
+        `${JSON.stringify({ level: 'debug', event: 'tui_daemon_reuse_current' })}\n`,
+      );
+      return;
+    }
+    process.stderr.write(
+      `${JSON.stringify({ level: 'warn', event: 'tui_daemon_reuse_stale', pid: stale.pid, daemonStartedAtMs: stale.daemonStartedAtMs, newerFile: stale.newerFile })}\n`,
+    );
+    addTranscriptEntry(
+      tuiState,
+      'warning',
+      `Reused a running pushd daemon${stale.pid ? ` (pid ${stale.pid})` : ''} started before your latest source edit (${stale.newerFile}). It keeps old code in memory — stop it and relaunch so this session runs your current changes.`,
+    );
+  }
+
   async function startDaemonForTui() {
     const { getPidPath, getSocketPath, getLogPath } = await import('./pushd.js');
     const pidPath = getPidPath();
@@ -2000,6 +2082,9 @@ export async function runTUI(options = {}) {
           'Connected to pushd daemon. Sessions persist in background.',
         );
       }
+      // Reused a pre-existing daemon (not spawned here) — flag if its code
+      // predates the current source so a stale daemon isn't silently in use.
+      await warnIfReusedDaemonStale();
       return true;
     }
 
@@ -2019,6 +2104,9 @@ export async function runTUI(options = {}) {
             `${verb} pushd daemon. Sessions persist in background.`,
           );
         }
+        // Only the reuse path can be stale; a fresh spawn matches current
+        // source by construction.
+        if (started.status === 'already-running') await warnIfReusedDaemonStale();
         return true;
       }
       // Spawn succeeded but the socket never answered. Show the log
