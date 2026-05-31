@@ -10,6 +10,15 @@
  * and the rationale lives here next to the number rather than in scattered
  * inline comments.
  *
+ * Scope: per-block content *truncation* caps. Intentionally excluded —
+ *   (a) aggregate budgets like coder's `MAX_TOTAL_CONTEXT_SIZE` (a whole-message
+ *       size limit / context meter, not a single-block cap); and
+ *   (b) diff-chunking limits (`DIFF_LIMIT` feeding `chunkDiffByFile` in the
+ *       reviewer / deep-reviewer / auditor) — their own family with its own
+ *       duplication (40k appears in two agents), a good standalone follow-up.
+ *   The `auditorDiff` entry below is the auditor's single-block diff *display*
+ *   truncation, which is this category; the chunking `DIFF_LIMIT`s are not.
+ *
  * Lib-owned only for now. The web `app/src/lib/agent-loop-utils.ts` copy already
  * imports the read-only tool-result cap from here transitively; the CLI's own
  * instruction/memory caps in `cli/workspace-context.ts` are a deliberate
