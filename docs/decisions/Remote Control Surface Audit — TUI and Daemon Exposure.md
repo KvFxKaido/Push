@@ -160,15 +160,37 @@ model fails to ship without it (the next empirical step).
 - **Less traced:** the web→relay→local-daemon path, where the orchestrator may run
   web-side with the browser token rather than the daemon's `gh` auth.
 
-### 3. Cross-phone cancel is not identity-scoped
+### 3. Cross-phone cancel is not identity-scoped — ✅ fixed 2026-05-31
 
-**Confidence: high (flagged follow-up).**
+**Confidence: high (flagged follow-up, then closed with an owner-token gate).**
 
-`cli/pushd.ts:363` — the relay path shares one `activeRelayWsState`, so a
+`cli/pushd.ts` — the relay path shares one `activeRelayWsState`, so a
 `sandbox_exec`'s AbortController and a later `cancel_run` from *any* relay-paired
-phone land in the same map. One phone can cancel another phone's run by guessing
-the `runId`. Documented as a post-#530 hardening follow-up; still open. Low blast
-radius at single-user, but it's a real multi-client correctness gap.
+phone land in the same map. One phone could cancel another phone's run by guessing
+the `runId`.
+
+**Why connection-scoping alone couldn't fix it:** the relay DO forwards
+phone→pushd frames byte-for-byte with *no sender identity*
+(`app/src/worker/relay-do.ts` `forwardData`), so pushd structurally can't tell two
+paired phones apart — that's *why* the relay uses one shared `wsState`. The
+loopback WS, by contrast, gives each connection its own `wsState`, so its
+runId-only cancel was already isolated.
+
+**Fix (owner-token binding):** each run now records the session attach bearer it
+was registered under (`ActiveRun.ownerToken` in `cli/pushd-ws.ts`).
+`handleSandboxExec` captures `payload.attachToken`; the sessionless `cancel_run`
+branch requires a matching `attachToken` before aborting a token-owned run, and
+reports a mismatch as `NO_ACTIVE_RUN` (not `INVALID_TOKEN`) so the runId↔token
+binding can't be oracle'd. Runs registered with no owner token (loopback callers
+that thread none) stay purely connection-scoped — unchanged. The web client
+threads the relay session's `targetAttachToken` into the exec + cancel envelopes
+on the relay transport only (`app/src/lib/local-daemon-sandbox-client.ts`).
+Covered by new cases in `cli/tests/pushd-sandbox-exec-cancel.test.mjs` and
+`app/src/lib/local-daemon-sandbox-client.test.ts`.
+
+A *true* per-phone identity (the DO stamping a sender id into forwarded frames)
+remains the bigger, separate build; this gate closes the practical leak without a
+cross-component protocol change.
 
 ### 4. Delegation audit is coarse
 
@@ -180,20 +202,22 @@ the run actually finishes. The audit log can't distinguish a kicked-off
 delegation from a completed one. A `delegate.complete` emitted from the agent
 bindings on terminal return would close it.
 
-### 5. Stale capability docblocks (cosmetic, but actively misleading)
+### 5. Stale capability docblocks (cosmetic, but actively misleading) — ✅ fixed 2026-05-31
 
-**Confidence: high (comments contradict shipped code in the same file).**
+**Confidence: high (comments contradicted shipped code in the same file).**
 
-These read as "missing" but are **already shipped** — worth fixing in place so
+These read as "missing" but were **already shipped** — corrected in place so
 nobody re-implements them:
 
-- `cli/pushd.ts:4416` — "Explorer still runs through the scaffold executor — its
-  real tool wiring is a follow-up." **False:** `handleDelegateExplorer` runs
-  `runExplorerAgent` with `makeDaemonExplorerToolExec` → real `executeToolCall`
-  (`cli/pushd.ts:4211`, `:4636`).
-- `cli/pushd.ts:4067-4068` and `:4423-4425` — "flipping `multi_agent` still blocks
-  on a real daemon-side tool executor." **False:** `multi_agent` is in the
-  advertised `CAPABILITIES` list (`cli/pushd.ts:719`) and both executors are real.
+- `handleDelegateCoder` docblock — "Explorer still runs through the scaffold
+  executor — its real tool wiring is a follow-up." **Was false:**
+  `handleDelegateExplorer` runs `runExplorerAgent` with
+  `makeDaemonExplorerToolExec` → real `executeToolCall`. Now states it's wired.
+- `handleDelegateExplorer` and `handleDelegateCoder` docblocks — "flipping
+  `multi_agent` still blocks on a real daemon-side tool executor." **Was false:**
+  `multi_agent` is in the advertised `CAPABILITIES` list and both executors are
+  real. Both docblocks now say so and point at the CAPABILITIES entry +
+  `cli/v1-downgrade.ts`.
 
 ### 6. TUI daemon autostart spawns stale compiled `dist` with no staleness guard
 
@@ -258,10 +282,11 @@ Ordered by value / cost, not committed (needs a `ROADMAP.md` entry to become wor
    calls GitHub tools "metadata," doesn't name the ship sequence). Optional
    prompt-copy strengthening, gated on whether a real model actually fails to ship
    without it. Effectively de-prioritized.
-3. **Doc-drift cleanup (#5)** — five-minute fix, do it opportunistically next time
-   anyone touches `handleDelegate*`.
-4. **Cross-phone cancel scoping (#3)** and **delegate.complete audit (#4)** —
-   hardening; fold into the next relay/audit-touching PR.
+3. **Doc-drift cleanup (#5)** — ✅ **done 2026-05-31.** Corrected the two stale
+   `handleDelegate*` docblocks in place.
+4. **Cross-phone cancel scoping (#3)** — ✅ **done 2026-05-31** via the owner-token
+   gate (see #3 above). **delegate.complete audit (#4)** — still open hardening;
+   fold into the next audit-touching PR.
 5. **Type the transcript-event payloads (#7)** — compile-time guard against
    daemon↔TUI field drift; do it if/when the payload contract grows.
 

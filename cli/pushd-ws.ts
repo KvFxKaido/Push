@@ -28,18 +28,37 @@ import { verifyDeviceAttachToken, type AttachTokenRecord } from './pushd-attach-
 import { appendAuditEvent } from './pushd-audit-log.js';
 
 /**
- * Per-WS-connection mutable state. Today it tracks AbortControllers
- * for in-flight `sandbox_exec` runs so `cancel_run` arriving on the
- * SAME WS can kill the child mid-run (Phase 1.f daemon-side cancel).
+ * Per-WS-connection mutable state. Today it tracks in-flight
+ * `sandbox_exec` runs so `cancel_run` arriving on the SAME WS can kill
+ * the child mid-run (Phase 1.f daemon-side cancel).
  *
  * Scoping by connection — not globally — is deliberate: it guarantees
  * a stolen-runId attempt from a different paired client can't reach
  * across to abort someone else's run, even though the bearer would
  * have authorized either upgrade. The map lives only for the
  * connection's lifetime and is dropped on close.
+ *
+ * The relay transport breaks the one-connection-per-client assumption:
+ * every paired phone shares ONE module-level wsState (`activeRelayWsState`
+ * in pushd.ts), so connection-scoping alone can't isolate them. Each run
+ * therefore carries the `ownerToken` (the session attach bearer) it was
+ * registered under; the sessionless `cancel_run` path requires a matching
+ * token before it will abort a token-owned run. Runs registered with no
+ * owner token (loopback callers that don't thread one) keep the legacy
+ * connection-scoped behavior.
  */
+export interface ActiveRun {
+  controller: AbortController;
+  /**
+   * Session attach bearer the run was registered under, or null when the
+   * caller threaded none. A non-null value gates the sessionless cancel
+   * path so a relay-shared wsState can't be used to abort across phones.
+   */
+  ownerToken: string | null;
+}
+
 export interface PushdWsConnectionState {
-  activeRuns: Map<string, AbortController>;
+  activeRuns: Map<string, ActiveRun>;
 }
 
 /**
@@ -551,9 +570,9 @@ export async function startPushdWs(
       // Without this, a client that drops mid-run leaves the child
       // burning CPU/disk until its 60s timeout fires. The signal lets
       // `runCommandInResolvedShell` SIGTERM the child cleanly.
-      for (const controller of wsState.activeRuns.values()) {
+      for (const run of wsState.activeRuns.values()) {
         try {
-          controller.abort();
+          run.controller.abort();
         } catch {
           /* ignore */
         }
