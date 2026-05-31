@@ -75,12 +75,20 @@ export function extractMarkedBlock(
   return text.slice(start, end + closeMarker.length);
 }
 
-/** Context shared by both emitters so cost and usage join per turn. */
+/** Context shared by both emitters so cost and usage join per turn, and so a
+ *  single consumer can aggregate across surfaces. */
 export interface PromptTurnRef {
-  chatId: string;
+  /** Which surface emitted this — disambiguates how `scopeId` and `mode` are
+   *  interpreted (web caps project instructions at 5k, CLI at 8k, so the
+   *  byte-cost question is surface-sensitive). */
+  surface: 'web' | 'cli';
+  /** Durable per-conversation/run identifier to group by. Web passes the
+   *  `chatId`; CLI passes the `sessionId`. */
+  scopeId: string;
   round: number;
-  /** Workspace mode (`repo` / `chat` / `scratch` / `local-pc` / `relay`).
-   *  Disambiguates which turns carried the GitHub protocol. */
+  /** Workspace mode. Web: `repo` / `chat` / `scratch` / `local-pc` / `relay`.
+   *  CLI: the local workspace mode label. Disambiguates which turns carried
+   *  the GitHub protocol. */
   mode: string;
 }
 
@@ -94,7 +102,8 @@ export function emitPromptCompositionCost(ref: PromptTurnRef, cost: PromptCompos
     JSON.stringify({
       level: 'info',
       event: PROMPT_COST_EVENT,
-      chatId: ref.chatId,
+      surface: ref.surface,
+      scopeId: ref.scopeId,
       round: ref.round,
       mode: ref.mode,
       systemPromptBytes: cost.systemPromptBytes,
@@ -126,7 +135,8 @@ export function emitGithubToolTurnUsage(
     JSON.stringify({
       level: 'info',
       event: counts.githubCalls > 0 ? GITHUB_TOOL_TURN_USED_EVENT : GITHUB_TOOL_TURN_IDLE_EVENT,
-      chatId: ref.chatId,
+      surface: ref.surface,
+      scopeId: ref.scopeId,
       round: ref.round,
       mode: ref.mode,
       githubCalls: counts.githubCalls,

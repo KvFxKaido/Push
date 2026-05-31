@@ -95,7 +95,7 @@ export function recordGithubToolTurnUsage(
   ];
   const githubCalls = allCalls.filter((call) => call.source === 'github').length;
   emitGithubToolTurnUsage(
-    { chatId: ctx.chatId, round, mode: workspace.mode },
+    { surface: 'web', scopeId: ctx.chatId, round, mode: workspace.mode },
     { githubCalls, totalCalls: allCalls.length },
   );
 }

@@ -318,7 +318,12 @@ export async function streamAssistantRound(
     // so an aborted round that never rebuilt the prompt doesn't re-emit a
     // stale cost against the wrong round.
     emitPromptCompositionCost(
-      { chatId, round, mode: workspaceContextRef.current?.mode ?? 'unknown' },
+      {
+        surface: 'web',
+        scopeId: chatId,
+        round,
+        mode: workspaceContextRef.current?.mode ?? 'unknown',
+      },
       snapshotEntry.cost,
     );
   }

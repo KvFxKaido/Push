@@ -55,11 +55,12 @@ describe('emitPromptCompositionCost', () => {
 
   it('emits one structured line under the pinned event name with the full breakdown', () => {
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    emitPromptCompositionCost({ chatId: 'chat-1', round: 3, mode: 'repo' }, cost);
+    emitPromptCompositionCost({ surface: 'web', scopeId: 'chat-1', round: 3, mode: 'repo' }, cost);
     expect(loggedObject(spy)).toEqual({
       level: 'info',
       event: PROMPT_COST_EVENT,
-      chatId: 'chat-1',
+      surface: 'web',
+      scopeId: 'chat-1',
       round: 3,
       mode: 'repo',
       ...cost,
@@ -69,7 +70,7 @@ describe('emitPromptCompositionCost', () => {
   it('still emits (with zeros) when the always-on blocks are absent', () => {
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     emitPromptCompositionCost(
-      { chatId: 'chat-2', round: 0, mode: 'chat' },
+      { surface: 'cli', scopeId: 'session-2', round: 0, mode: 'cli' },
       {
         systemPromptBytes: 800,
         githubProtocolBytes: 0,
@@ -89,13 +90,14 @@ describe('emitGithubToolTurnUsage', () => {
   it('emits the "used" event when the model called at least one GitHub tool', () => {
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     emitGithubToolTurnUsage(
-      { chatId: 'chat-1', round: 2, mode: 'repo' },
+      { surface: 'web', scopeId: 'chat-1', round: 2, mode: 'repo' },
       { githubCalls: 2, totalCalls: 3 },
     );
     expect(loggedObject(spy)).toEqual({
       level: 'info',
       event: GITHUB_TOOL_TURN_USED_EVENT,
-      chatId: 'chat-1',
+      surface: 'web',
+      scopeId: 'chat-1',
       round: 2,
       mode: 'repo',
       githubCalls: 2,
@@ -106,7 +108,7 @@ describe('emitGithubToolTurnUsage', () => {
   it('emits the symmetric "idle" event when no GitHub tool was called', () => {
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     emitGithubToolTurnUsage(
-      { chatId: 'chat-1', round: 4, mode: 'repo' },
+      { surface: 'cli', scopeId: 'session-1', round: 4, mode: 'cli' },
       { githubCalls: 0, totalCalls: 1 },
     );
     const obj = loggedObject(spy);
