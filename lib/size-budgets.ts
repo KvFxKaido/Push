@@ -15,7 +15,8 @@
  *       size limit / context meter, not a single-block cap); and
  *   (b) diff-chunking limits (`DIFF_LIMIT` feeding `chunkDiffByFile` in the
  *       reviewer / deep-reviewer / auditor) — their own family with its own
- *       duplication (40k appears in two agents), a good standalone follow-up.
+ *       duplication: 40k in both reviewer-agent.ts and deep-reviewer-agent.ts,
+ *       30k in auditor-agent.ts. TODO(size-budgets): consolidate in a follow-up.
  *   The `auditorDiff` entry below is the auditor's single-block diff *display*
  *   truncation, which is this category; the chunking `DIFF_LIMIT`s are not.
  *
