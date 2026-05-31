@@ -416,19 +416,16 @@ function detectFromLegacyScan(text: string): {
  * never reached `droppedCandidates` either).
  */
 function mapMalformedToDropped(report: ToolMalformedReport): DroppedToolCallCandidate | null {
-  try {
-    const parsed = JSON.parse(report.sample);
-    const record = asRecord(parsed);
-    const rawToolName = record && typeof record.tool === 'string' ? record.tool.trim() : null;
-    if (!rawToolName) return null;
-    return {
-      rawToolName,
-      resolvedToolName: resolveToolName(rawToolName),
-      sample: report.sample.length > 200 ? `${report.sample.slice(0, 200)}…` : report.sample,
-    };
-  } catch {
-    return null;
-  }
+  // The kernel now carries the parsed `tool` name on the report, so we resolve
+  // the canonical name directly instead of re-parsing `report.sample` — the
+  // sample is truncated, which made the old JSON.parse lossy on longer calls.
+  const rawToolName = report.rawToolName?.trim();
+  if (!rawToolName) return null;
+  return {
+    rawToolName,
+    resolvedToolName: resolveToolName(rawToolName),
+    sample: report.sample.length > 200 ? `${report.sample.slice(0, 200)}…` : report.sample,
+  };
 }
 
 export function detectAllToolCalls(text: string): DetectedToolCalls {

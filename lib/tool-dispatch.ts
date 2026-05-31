@@ -85,6 +85,13 @@ export interface ToolMalformedReport {
   reason: ToolMalformedReason;
   /** First ~120 chars of the failing candidate, for diagnostics. */
   sample: string;
+  /** Raw `tool` name as the model wrote it, when the candidate parsed far
+   *  enough to expose one (`missing_args_object`, `unknown_tool`, recovery).
+   *  Absent for `json_parse_error` / `invalid_shape` / `missing_tool`, where
+   *  no usable name exists. Carries the name to BOTH surfaces so neither has
+   *  to re-derive it from the (truncated) sample — the web wrapper previously
+   *  re-parsed `sample`, the CLI dropped the name entirely. */
+  rawToolName?: string;
 }
 
 export type ToolMalformedReason =
@@ -261,7 +268,11 @@ export function createToolDispatcher<TCall>(
         if (!trimmed.startsWith('{')) continue;
         const parsed = parseToolCandidate(trimmed);
         if (!parsed.ok) {
-          malformed.push({ reason: parsed.reason, sample: truncateSample(trimmed) });
+          malformed.push({
+            reason: parsed.reason,
+            sample: truncateSample(trimmed),
+            rawToolName: parsed.rawToolName,
+          });
           continue;
         }
         candidates.push({
@@ -362,6 +373,7 @@ export function createToolDispatcher<TCall>(
           malformed.push({
             reason: 'unknown_tool',
             sample: truncateSample(recovered.sample),
+            rawToolName: recovered.tool,
           });
         }
       }
@@ -400,7 +412,11 @@ export function createToolDispatcher<TCall>(
           candidate.kind === 'namespaced' ||
           candidate.kind === 'xml'
         ) {
-          malformed.push({ reason: 'unknown_tool', sample: truncateSample(candidate.sample) });
+          malformed.push({
+            reason: 'unknown_tool',
+            sample: truncateSample(candidate.sample),
+            rawToolName: candidate.parsed.tool,
+          });
         }
       }
 
@@ -680,7 +696,7 @@ function formatXmlRecoverySample(tool: string, args: Record<string, unknown>): s
 
 type ParseOutcome =
   | { ok: true; value: ParsedToolObject }
-  | { ok: false; reason: ToolMalformedReason };
+  | { ok: false; reason: ToolMalformedReason; rawToolName?: string };
 
 function parseToolCandidate(candidate: string): ParseOutcome {
   let parsed: unknown;
@@ -766,6 +782,7 @@ function parseToolArrayCandidate(candidate: string): ArrayParseResult {
       perElementMalformed.push({
         reason: shaped.reason,
         sample: truncateSample(safeStringifySample(element)),
+        rawToolName: shaped.rawToolName,
       });
       continue;
     }
@@ -810,7 +827,10 @@ function shapeParsedObject(parsed: Record<string, unknown>): ParseOutcome {
     return { ok: false, reason: 'missing_tool' };
   }
   if (!isRecord(parsed.args)) {
-    return { ok: false, reason: 'missing_args_object' };
+    // The model named a tool but botched `args` (e.g. `{"tool":"pr"}`). The
+    // name is still intent to use that tool, so surface it for diagnostics
+    // and usage telemetry.
+    return { ok: false, reason: 'missing_args_object', rawToolName: parsed.tool };
   }
   return {
     ok: true,

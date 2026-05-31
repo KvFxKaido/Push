@@ -1,4 +1,5 @@
 import type { RunEvent, RunEventInput } from './runtime-contract.js';
+import { resolveToolName } from './tool-registry.js';
 
 export const MAX_RUN_EVENTS_PER_CHAT = 400;
 
@@ -64,21 +65,34 @@ const MALFORMED_PREVIEW_MAX_CHARS = 500;
 export interface MalformedReportLike {
   reason: string;
   sample: string;
+  /** Raw `tool` name the model wrote, when the kernel could expose one. Used
+   *  to populate the event's optional `toolName` so the model gets a "which
+   *  tool you botched" hint — previously the CLI surfaced only `reason` +
+   *  `sample`. */
+  rawToolName?: string;
 }
 
 export function buildMalformedToolCallEvents(
   reports: readonly MalformedReportLike[],
   round: number,
 ): Array<Extract<RunEventInput, { type: 'tool.call_malformed' }>> {
-  return reports.map((report) => ({
-    type: 'tool.call_malformed' as const,
-    round,
-    reason: report.reason,
-    preview:
-      report.sample.length > MALFORMED_PREVIEW_MAX_CHARS
-        ? report.sample.slice(0, MALFORMED_PREVIEW_MAX_CHARS)
-        : report.sample,
-  }));
+  return reports.map((report) => {
+    // Prefer the canonical name so the hint matches the tool protocol the
+    // model was given; fall back to the raw name when it's unrecognized.
+    const toolName = report.rawToolName
+      ? (resolveToolName(report.rawToolName) ?? report.rawToolName)
+      : undefined;
+    return {
+      type: 'tool.call_malformed' as const,
+      round,
+      reason: report.reason,
+      ...(toolName ? { toolName } : {}),
+      preview:
+        report.sample.length > MALFORMED_PREVIEW_MAX_CHARS
+          ? report.sample.slice(0, MALFORMED_PREVIEW_MAX_CHARS)
+          : report.sample,
+    };
+  });
 }
 
 export function summarizeToolResultPreview(text: string, maxLength = 220): string {
