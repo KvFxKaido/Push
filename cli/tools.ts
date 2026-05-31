@@ -138,10 +138,18 @@ export const READ_ONLY_TOOLS = new Set([
 ]);
 
 // CLI-side classification of pure file-mutation tools (safe to batch in one
-// turn). Mirrors the `FILE_MUTATION_CANONICAL_NAMES` set in
-// `lib/tool-registry.ts`, but named with CLI tool names. The daemon dispatch
-// uses this to group contiguous file mutations into a single mutation batch
-// before any trailing side-effecting call (exec, git_commit, etc.).
+// turn). These are the *local CLI executor's* mutation tools — a distinct
+// vocabulary from the sandbox tools in `FILE_MUTATION_CANONICAL_NAMES`
+// (`lib/tool-registry.ts`). Membership intentionally differs: the local
+// executor exposes `undo_edit` and does its editing through `write_file` /
+// `edit_file` (hashline), and never registers
+// `sandbox_edit_range`/`_search_replace`/`_apply_patchset`. Do NOT try to
+// "sync" the two sets — `sandbox_*` names never reach this classifier (those
+// route through the registry path in `app/src/lib/tool-dispatch.ts`), so
+// adding them here would be dead membership. Both the local engine
+// (`cli/engine.ts`) and the daemon dispatch (`wrapCliDetectAllToolCalls`) use
+// this to group contiguous file mutations into a single batch before any
+// trailing side-effecting call (exec, git_commit, etc.).
 export const FILE_MUTATION_TOOLS = new Set(['write_file', 'edit_file', 'undo_edit']);
 
 export function isFileMutationToolCall(call) {
