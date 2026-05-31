@@ -1577,45 +1577,56 @@ export async function runTUI(options = {}) {
   // footgun that made #740's new verbs 404 against a stale daemon). Signal:
   // pidfile mtime (daemon-start proxy) vs the newest `cli/`/`lib/` source.
   // Scoped to a source-running TUI (tsx); a dist/installed TUI has no live
-  // .ts tree to compare, so it returns null (no false alarms in prod).
-  // Returns a descriptor to warn on, or null when not stale / undeterminable.
+  // .ts tree to compare, so it reports `unchecked` (no false alarms in prod).
+  // Returns one of three states: `stale` (+ descriptor), `current` (checked,
+  // up to date), or `unchecked` (not source-run, or an I/O error).
   async function reusedDaemonStaleness() {
-    const ext = import.meta.url.match(/\.(m?ts)$/)?.[1];
-    if (ext !== 'ts' && ext !== 'mts') return null;
+    // Strip any query/hash a loader may append (tsx can suffix import URLs)
+    // before reading the extension — an anchored match on the raw URL would
+    // miss `…/tui.ts?v=123` and silently skip the check.
+    const cleanUrl = import.meta.url.replace(/[?#].*$/, '');
+    const ext = path.extname(cleanUrl).slice(1);
+    if (ext !== 'ts' && ext !== 'mts') return { status: 'unchecked' };
     try {
       const { getPidPath } = await import('./pushd.js');
       const pidPath = getPidPath();
       const pidStat = await fs.stat(pidPath);
-      const cliDir = path.dirname(fileURLToPath(import.meta.url));
+      const cliDir = path.dirname(fileURLToPath(cleanUrl));
       const libDir = path.join(cliDir, '..', 'lib');
       const newer = await firstSourceFileNewerThan(pidStat.mtimeMs, [cliDir, libDir]);
-      if (!newer) return null;
+      if (!newer) return { status: 'current' };
       const pid = await readDaemonPidFile(pidPath);
       const rootDir = path.join(cliDir, '..');
-      return { pid, daemonStartedAtMs: pidStat.mtimeMs, newerFile: path.relative(rootDir, newer) };
+      return {
+        status: 'stale',
+        pid,
+        daemonStartedAtMs: pidStat.mtimeMs,
+        newerFile: path.relative(rootDir, newer),
+      };
     } catch {
-      return null;
+      return { status: 'unchecked' };
     }
   }
 
-  // Surface the staleness warning + a structured log on the reuse path. Both
-  // branches (warn / clean) are logged so "reused a current daemon" is
-  // distinguishable from "reused a stale one" in ops, not silent.
+  // Surface the staleness warning + a structured log on the reuse path. All
+  // three states are logged with distinct events so a dist-mode reuse
+  // (`unchecked`) isn't recorded as a verified-current daemon, and a stale
+  // reuse is never silent.
   async function warnIfReusedDaemonStale() {
-    const stale = await reusedDaemonStaleness();
-    if (!stale) {
+    const result = await reusedDaemonStaleness();
+    if (result.status !== 'stale') {
       process.stderr.write(
-        `${JSON.stringify({ level: 'debug', event: 'tui_daemon_reuse_current' })}\n`,
+        `${JSON.stringify({ level: 'debug', event: `tui_daemon_reuse_${result.status}` })}\n`,
       );
       return;
     }
     process.stderr.write(
-      `${JSON.stringify({ level: 'warn', event: 'tui_daemon_reuse_stale', pid: stale.pid, daemonStartedAtMs: stale.daemonStartedAtMs, newerFile: stale.newerFile })}\n`,
+      `${JSON.stringify({ level: 'warn', event: 'tui_daemon_reuse_stale', pid: result.pid, daemonStartedAtMs: result.daemonStartedAtMs, newerFile: result.newerFile })}\n`,
     );
     addTranscriptEntry(
       tuiState,
       'warning',
-      `Reused a running pushd daemon${stale.pid ? ` (pid ${stale.pid})` : ''} started before your latest source edit (${stale.newerFile}). It keeps old code in memory — stop it and relaunch so this session runs your current changes.`,
+      `Reused a running pushd daemon${result.pid ? ` (pid ${result.pid})` : ''} started before your latest source edit (${result.newerFile}). It keeps old code in memory — stop it and relaunch so this session runs your current changes.`,
     );
   }
 
