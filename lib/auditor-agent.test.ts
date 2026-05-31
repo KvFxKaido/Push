@@ -126,6 +126,53 @@ describe('runAuditor (PushStream consumer)', () => {
     expect(result.card.summary).toMatch(/invalid response/i);
   });
 
+  it('forces UNSAFE in code when the pre-commit hook exits non-zero, even if the model says SAFE', async () => {
+    const { stream } = makePushStream([
+      { type: 'text_delta', text: '{"verdict":"safe","summary":"looks clean","risks":[]}' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+
+    const result = await runAuditor(
+      makeAddedFileDiff('src/app.ts', 'const x = 1;'),
+      {
+        provider: 'openrouter',
+        modelId: 'test-model',
+        stream,
+        hookResult: { exitCode: 1, output: 'lint failed' },
+        resolveRuntimeContext: noopRuntime,
+      },
+      () => {},
+    );
+
+    // Model returned SAFE, but the runtime gate overrides it — enforcement
+    // lives in code, not in the prompt instruction.
+    expect(result.verdict).toBe('unsafe');
+    expect(result.card.risks[0]?.level).toBe('high');
+    expect(result.card.risks[0]?.description).toMatch(/pre-commit hook failed \(exit code 1\)/i);
+  });
+
+  it('keeps the model SAFE verdict when the pre-commit hook exits zero', async () => {
+    const { stream } = makePushStream([
+      { type: 'text_delta', text: '{"verdict":"safe","summary":"OK","risks":[]}' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+
+    const result = await runAuditor(
+      makeAddedFileDiff('src/app.ts', 'const x = 1;'),
+      {
+        provider: 'openrouter',
+        modelId: 'test-model',
+        stream,
+        hookResult: { exitCode: 0, output: 'all checks passed' },
+        resolveRuntimeContext: noopRuntime,
+      },
+      () => {},
+    );
+
+    expect(result.verdict).toBe('safe');
+    expect(result.card.risks).toHaveLength(0);
+  });
+
   it('strips a fenced code block wrapper around the JSON', async () => {
     const { stream } = makePushStream([
       {

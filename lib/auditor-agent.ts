@@ -386,7 +386,7 @@ async function runAuditorCore(
     const parsedSummary = parsed?.summary;
     const parsedRisks = parsed?.risks;
 
-    const verdict: 'safe' | 'unsafe' = parsedVerdict === 'safe' ? 'safe' : 'unsafe';
+    const modelVerdict: 'safe' | 'unsafe' = parsedVerdict === 'safe' ? 'safe' : 'unsafe';
     const summary = typeof parsedSummary === 'string' ? parsedSummary : 'No summary provided';
     const risks = Array.isArray(parsedRisks)
       ? parsedRisks.map((risk) => {
@@ -402,9 +402,26 @@ async function runAuditorCore(
         })
       : [];
 
+    // Runtime-enforced gate: a non-zero pre-commit hook exit code forces
+    // UNSAFE regardless of the model's verdict. The prompt instructs the
+    // model to do this, but enforcement must live in code — a non-cooperating
+    // model could otherwise return SAFE past a failing hook.
+    const hookExitCode = options.hookResult?.exitCode ?? 0;
+    const hookFailed = hookExitCode !== 0;
+    const verdict: 'safe' | 'unsafe' = hookFailed ? 'unsafe' : modelVerdict;
+    const cardRisks = hookFailed
+      ? [
+          {
+            level: 'high' as const,
+            description: `Pre-commit hook failed (exit code ${hookExitCode}) — blocking commit`,
+          },
+          ...risks,
+        ]
+      : risks;
+
     return {
       verdict,
-      card: { verdict, summary, risks, filesReviewed },
+      card: { verdict, summary, risks: cardRisks, filesReviewed },
     };
   } catch {
     // Invalid JSON → fail-safe to unsafe
