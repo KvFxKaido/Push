@@ -646,12 +646,15 @@ function tokenize(code: string, spec: LangSpec): Seg[] {
       continue;
     }
 
-    // Variable sigil ($VAR, ${VAR}).
+    // Variable sigil: ${...}, $name, $1, and shell special parameters
+    // ($?, $$, $!, $#, $@, $*, $-) which are a single non-identifier char.
     if (spec.variableSigil && c === spec.variableSigil) {
       let j = i + 1;
       if (code[j] === '{') {
         const end = code.indexOf('}', j);
         j = end === -1 ? n : end + 1;
+      } else if (j < n && '?$!#@*-'.includes(code[j])) {
+        j++;
       } else {
         while (j < n && isIdentPart(code[j])) j++;
       }
