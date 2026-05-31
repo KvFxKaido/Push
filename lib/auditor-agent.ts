@@ -317,7 +317,7 @@ async function runAuditorCore(
   onStatus('Auditor reviewing...');
 
   // Chunk diff by file, prioritizing production files
-  const DIFF_LIMIT = 30_000;
+  const DIFF_LIMIT = SIZE_BUDGETS.auditorDiffChunk;
   const chunkedDiff = chunkDiffByFile(diff, DIFF_LIMIT, classifyFilePath);
 
   // Build [FILE HINTS] block from the chunked diff (not the raw diff) so the

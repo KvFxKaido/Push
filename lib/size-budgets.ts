@@ -10,15 +10,15 @@
  * and the rationale lives here next to the number rather than in scattered
  * inline comments.
  *
- * Scope: per-block content *truncation* caps. Intentionally excluded —
- *   (a) aggregate budgets like coder's `MAX_TOTAL_CONTEXT_SIZE` (a whole-message
- *       size limit / context meter, not a single-block cap); and
- *   (b) diff-chunking limits (`DIFF_LIMIT` feeding `chunkDiffByFile` in the
- *       reviewer / deep-reviewer / auditor) — their own family with its own
- *       duplication: 40k in both reviewer-agent.ts and deep-reviewer-agent.ts,
- *       30k in auditor-agent.ts. TODO(size-budgets): consolidate in a follow-up.
- *   The `auditorDiff` entry below is the auditor's single-block diff *display*
- *   truncation, which is this category; the chunking `DIFF_LIMIT`s are not.
+ * Scope: per-block content *truncation* caps, plus the diff-chunking limits
+ * (`DIFF_LIMIT` feeding `chunkDiffByFile` in the reviewer / deep-reviewer /
+ * auditor — see `reviewerDiffChunk` / `auditorDiffChunk` below). Intentionally
+ * excluded: aggregate budgets like coder's `MAX_TOTAL_CONTEXT_SIZE` (a
+ * whole-message size limit / context meter, not a single-block cap).
+ *
+ * Two distinct diff families live here, don't conflate them: `auditorDiff` is
+ * the auditor's single-block diff *display* truncation; the `*DiffChunk`
+ * entries are the per-file chunking caps fed to `chunkDiffByFile`.
  *
  * Lib-owned only for now. The web `app/src/lib/agent-loop-utils.ts` copy already
  * imports the read-only tool-result cap from here transitively; the CLI's own
@@ -48,4 +48,13 @@ export const SIZE_BUDGETS = Object.freeze({
   toolResultCoder: 24_000,
   /** Auditor sandbox-diff display cap. */
   auditorDiff: 15_000,
+  /** Reviewer + Deep Reviewer diff-chunking cap fed to `chunkDiffByFile` (the
+   *  per-file budget before later hunks are dropped). Looser than the
+   *  auditor's — a full advisory review wants more of the diff than a binary
+   *  safety gate does. */
+  reviewerDiffChunk: 40_000,
+  /** Auditor diff-chunking cap fed to `chunkDiffByFile`. Tighter than the
+   *  reviewers': the auditor also carries per-file context blocks and a
+   *  security-focused prompt, so it trades diff breadth for prompt headroom. */
+  auditorDiffChunk: 30_000,
 } as const);

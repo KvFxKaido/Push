@@ -14,6 +14,8 @@ describe('SIZE_BUDGETS', () => {
       toolResultReadOnly: 8_000,
       toolResultCoder: 24_000,
       auditorDiff: 15_000,
+      reviewerDiffChunk: 40_000,
+      auditorDiffChunk: 30_000,
     });
   });
 
@@ -25,6 +27,10 @@ describe('SIZE_BUDGETS', () => {
     // The Coder's tool-result window is the largest; side hints get the smallest budget.
     expect(SIZE_BUDGETS.toolResultCoder).toBeGreaterThan(SIZE_BUDGETS.toolResultReadOnly);
     expect(SIZE_BUDGETS.roleProjectHints).toBeLessThan(SIZE_BUDGETS.projectInstructionsDefault);
+    // The auditor's diff-chunking cap is intentionally tighter than the
+    // reviewers' — it trades diff breadth for prompt headroom (file context +
+    // security prompt). Keep this ordering if the values are ever retuned.
+    expect(SIZE_BUDGETS.auditorDiffChunk).toBeLessThan(SIZE_BUDGETS.reviewerDiffChunk);
     // Every budget is a positive integer.
     for (const value of Object.values(SIZE_BUDGETS)) {
       expect(Number.isInteger(value) && value > 0).toBe(true);
