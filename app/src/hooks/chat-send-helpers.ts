@@ -53,6 +53,7 @@ import {
 } from '@push/lib/loop-detection';
 import { recordLoopVerdict } from '@push/lib/loop-metrics';
 import { emitGithubToolTurnUsage } from '@push/lib/prompt-cost-telemetry';
+import { getToolSourceFromName } from '@push/lib/tool-registry';
 import { createId } from '@push/lib/id-utils';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import type { ChatMessage, ToolExecutionResult } from '@/types';
@@ -93,10 +94,23 @@ export function recordGithubToolTurnUsage(
     ...detected.extraMutations,
     ...(detected.mutating ? [detected.mutating] : []),
   ];
-  const githubCalls = allCalls.filter((call) => call.source === 'github').length;
+  // A malformed GitHub call (e.g. `{"tool":"pr"}` with bad args) lands in
+  // `droppedCandidates`, not the classified arrays — but it's still intent to
+  // use the GitHub schema, which is exactly what the deferral measurement
+  // cares about. Count it as "used" via the candidate's resolved name so the
+  // used/idle split isn't corrupted by malformed attempts. `totalCalls`
+  // includes dropped candidates too, keeping `githubCalls <= totalCalls`.
+  const githubClassified = allCalls.filter((call) => call.source === 'github').length;
+  const githubDropped = detected.droppedCandidates.filter(
+    (candidate) =>
+      candidate.resolvedToolName && getToolSourceFromName(candidate.resolvedToolName) === 'github',
+  ).length;
   emitGithubToolTurnUsage(
     { surface: 'web', scopeId: ctx.chatId, round, mode: workspace.mode },
-    { githubCalls, totalCalls: allCalls.length },
+    {
+      githubCalls: githubClassified + githubDropped,
+      totalCalls: allCalls.length + detected.droppedCandidates.length,
+    },
   );
 }
 

@@ -690,6 +690,20 @@ export function consumeEnrichmentCost(state: SessionState): PromptCompositionCos
   return cost;
 }
 
+/**
+ * Best-effort: does a malformed tool-call candidate look like an attempted
+ * GitHub call? The CLI detector reports malformed calls as `{reason, sample}`
+ * without a structured tool name (unlike the web kernel's `resolvedToolName`),
+ * but a malformed `{"tool":"pr"}` is still intent to use the GitHub schema —
+ * which the deferral measurement counts as "used". Pulls the `tool` name out of
+ * the (possibly truncated) sample and resolves its source. Never throws;
+ * returns false when no GitHub tool name is recoverable.
+ */
+export function malformedSampleTargetsGithub(sample: string): boolean {
+  const match = /"tool"\s*:\s*"([a-zA-Z0-9_]+)"/.exec(sample);
+  return match ? getToolSourceFromName(match[1]) === 'github' : false;
+}
+
 // ─── Tool Result Messages ────────────────────────────────────────
 
 export function buildToolResultMessage(
@@ -941,7 +955,7 @@ async function runAssistantLoopImpl(
     const cost = consumeEnrichmentCost(state);
     if (cost) {
       emitPromptCompositionCost(
-        { surface: 'cli', scopeId: state.sessionId, round: 0, mode: 'cli' },
+        { surface: 'cli', scopeId: state.sessionId, round: 0, mode: state.mode ?? 'cli' },
         cost,
       );
     }
@@ -1584,17 +1598,19 @@ async function runAssistantLoopImpl(
 
     // Measurement pass (schema-deferral decision): on runs that paid for the
     // GitHub protocol, record per turn whether the model actually called a
-    // GitHub tool. Emitted before the malformed/early branches below so a turn
-    // that *intended* a GitHub call still counts as "used" — intent is what
-    // proves the schema was needed. The CLI detector doesn't tag source, so it
-    // resolves through the registry by tool name.
+    // GitHub tool. The CLI detector doesn't tag source, so it resolves through
+    // the registry by tool name. Malformed GitHub JSON lands in
+    // `detected.malformed` (not `detected.calls`), but a malformed
+    // `{"tool":"pr"}` is still intent to use the GitHub schema — counted as
+    // "used" so the used/idle split isn't corrupted by the malformed/early
+    // branch this measurement specifically cares about.
     if (githubAdvertised) {
-      const githubCalls = detected.calls.filter(
-        (call) => getToolSourceFromName(call.tool) === 'github',
-      ).length;
+      const githubCalls =
+        detected.calls.filter((call) => getToolSourceFromName(call.tool) === 'github').length +
+        detected.malformed.filter((entry) => malformedSampleTargetsGithub(entry.sample)).length;
       emitGithubToolTurnUsage(
-        { surface: 'cli', scopeId: state.sessionId, round: turnIndex, mode: 'cli' },
-        { githubCalls, totalCalls: detected.calls.length },
+        { surface: 'cli', scopeId: state.sessionId, round: turnIndex, mode: state.mode ?? 'cli' },
+        { githubCalls, totalCalls: detected.calls.length + detected.malformed.length },
       );
     }
 
