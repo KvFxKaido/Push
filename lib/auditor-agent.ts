@@ -330,6 +330,26 @@ async function runAuditorCore(
 
   const fileContextBlock = formatFileContextBlock(options.fileContexts ?? []);
 
+  // Pre-compute the pre-commit hook signal once so every return path can
+  // surface it — the gate must be visible whether the model verdict parses,
+  // the stream errors, or the JSON is malformed. All three paths already
+  // return UNSAFE; this keeps a failing hook from being masked behind a
+  // generic "Auditor error" card (an operator would otherwise retry, reading
+  // it as a transient stream blip rather than their broken hook).
+  const hookExitCode = options.hookResult?.exitCode ?? 0;
+  const hookFailed = hookExitCode !== 0;
+  const hookRisk: { level: 'high'; description: string }[] = hookFailed
+    ? [
+        {
+          level: 'high',
+          description: `Pre-commit hook failed (exit code ${hookExitCode}) — blocking commit`,
+        },
+      ]
+    : [];
+  const hookSummarySuffix = hookFailed
+    ? ` Pre-commit hook failed (exit code ${hookExitCode}).`
+    : '';
+
   // Deterministic pre-pass — flags AI comment noise on added lines. Findings
   // are rendered as a [COMMENT CHECK] block the Auditor mirrors as low-risk
   // items without flipping the verdict.
@@ -365,8 +385,11 @@ async function runAuditorCore(
       verdict: 'unsafe',
       card: {
         verdict: 'unsafe',
-        summary: `Auditor error: ${streamError.message}`,
-        risks: [{ level: 'high', description: 'Auditor failed — defaulting to UNSAFE' }],
+        summary: `Auditor error: ${streamError.message}${hookSummarySuffix}`,
+        risks: [
+          ...hookRisk,
+          { level: 'high', description: 'Auditor failed — defaulting to UNSAFE' },
+        ],
         filesReviewed,
       },
     };
@@ -403,21 +426,12 @@ async function runAuditorCore(
       : [];
 
     // Runtime-enforced gate: a non-zero pre-commit hook exit code forces
-    // UNSAFE regardless of the model's verdict. The prompt instructs the
-    // model to do this, but enforcement must live in code — a non-cooperating
-    // model could otherwise return SAFE past a failing hook.
-    const hookExitCode = options.hookResult?.exitCode ?? 0;
-    const hookFailed = hookExitCode !== 0;
+    // UNSAFE regardless of the model's verdict (hookFailed/hookRisk computed
+    // above). The prompt instructs the model to do this, but enforcement must
+    // live in code — a non-cooperating model could otherwise return SAFE past
+    // a failing hook.
     const verdict: 'safe' | 'unsafe' = hookFailed ? 'unsafe' : modelVerdict;
-    const cardRisks = hookFailed
-      ? [
-          {
-            level: 'high' as const,
-            description: `Pre-commit hook failed (exit code ${hookExitCode}) — blocking commit`,
-          },
-          ...risks,
-        ]
-      : risks;
+    const cardRisks = [...hookRisk, ...risks];
 
     return {
       verdict,
@@ -429,8 +443,9 @@ async function runAuditorCore(
       verdict: 'unsafe',
       card: {
         verdict: 'unsafe',
-        summary: 'Auditor returned invalid response. Defaulting to UNSAFE.',
+        summary: `Auditor returned invalid response. Defaulting to UNSAFE.${hookSummarySuffix}`,
         risks: [
+          ...hookRisk,
           { level: 'high', description: 'Could not parse Auditor verdict — blocking commit' },
         ],
         filesReviewed,

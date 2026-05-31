@@ -173,6 +173,52 @@ describe('runAuditor (PushStream consumer)', () => {
     expect(result.card.risks).toHaveLength(0);
   });
 
+  it('surfaces the hook failure on the stream-error path, not just the success path', async () => {
+    const stream: PushStream = () =>
+      (async function* () {
+        throw new Error('upstream went away');
+      })();
+
+    const result = await runAuditor(
+      makeAddedFileDiff('src/app.ts', 'const x = 1;'),
+      {
+        provider: 'openrouter',
+        modelId: 'test-model',
+        stream,
+        hookResult: { exitCode: 1, output: 'lint failed' },
+        resolveRuntimeContext: noopRuntime,
+      },
+      () => {},
+    );
+
+    expect(result.verdict).toBe('unsafe');
+    // The generic auditor-error card must not mask why the commit is blocked.
+    expect(result.card.summary).toMatch(/pre-commit hook failed \(exit code 1\)/i);
+    expect(result.card.risks.some((r) => /pre-commit hook failed/i.test(r.description))).toBe(true);
+  });
+
+  it('surfaces the hook failure on the malformed-JSON path', async () => {
+    const { stream } = makePushStream([
+      { type: 'text_delta', text: 'not json at all' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+
+    const result = await runAuditor(
+      makeAddedFileDiff('src/app.ts', 'const x = 1;'),
+      {
+        provider: 'openrouter',
+        modelId: 'test-model',
+        stream,
+        hookResult: { exitCode: 2, output: 'tests failed' },
+        resolveRuntimeContext: noopRuntime,
+      },
+      () => {},
+    );
+
+    expect(result.verdict).toBe('unsafe');
+    expect(result.card.risks[0]?.description).toMatch(/pre-commit hook failed \(exit code 2\)/i);
+  });
+
   it('strips a fenced code block wrapper around the JSON', async () => {
     const { stream } = makePushStream([
       {
