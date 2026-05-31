@@ -229,6 +229,9 @@ describe('RESERVED_COMMANDS', () => {
       'provider',
       'skills',
       'compact',
+      'revert',
+      'unrevert',
+      'children',
     ]) {
       assert.ok(RESERVED_COMMANDS.has(cmd), `Should contain "${cmd}"`);
     }

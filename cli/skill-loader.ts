@@ -51,6 +51,9 @@ export const RESERVED_COMMANDS: Set<string> = new Set([
   'theme',
   'spinner',
   'checkpoint',
+  'revert',
+  'unrevert',
+  'children',
 ]);
 
 type SkillSource = 'builtin' | 'workspace' | 'claude';

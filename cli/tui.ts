@@ -2515,7 +2515,7 @@ export async function runTUI(options = {}) {
   // rather than blanking it. `triggerType` is the event that prompted the
   // resync, surfaced in the status line so the user knows the history changed
   // under them rather than seeing it silently rewritten.
-  function resyncDaemonTranscript(triggerType) {
+  function resyncDaemonTranscript(triggerType, payload = null) {
     if (!daemonClient?.connected || !daemonSessionId) return;
     daemonClient
       .request(
@@ -2549,12 +2549,31 @@ export async function runTUI(options = {}) {
             { autoScroll: false },
           );
         }
-        const label =
-          triggerType === 'session_reverted'
-            ? 'Conversation reverted on the daemon — transcript resynced.'
-            : triggerType === 'session_unreverted'
-              ? 'Conversation restored on the daemon — transcript resynced.'
-              : 'Conversation compacted on the daemon — transcript resynced.';
+        // Enrich the status with the counts the daemon already put in the
+        // event payload, so a TUI-initiated verb (and a phone-initiated one
+        // this client merely observes) both report specifics rather than a
+        // bare "resynced". Fields degrade to a plain label when absent.
+        const p = payload && typeof payload === 'object' ? payload : {};
+        let label;
+        if (triggerType === 'session_reverted') {
+          const detail =
+            typeof p.removedCount === 'number'
+              ? ` (${p.turns ?? '?'} turn(s), ${p.removedCount} message(s) dropped${
+                  typeof p.remainingTurns === 'number' ? `, ${p.remainingTurns} remaining` : ''
+                })`
+              : '';
+          label = `Conversation reverted on the daemon${detail} — transcript resynced. /unrevert to restore.`;
+        } else if (triggerType === 'session_unreverted') {
+          const detail =
+            typeof p.restoredCount === 'number' ? ` (${p.restoredCount} message(s) restored)` : '';
+          label = `Conversation restored on the daemon${detail} — transcript resynced.`;
+        } else {
+          const detail =
+            typeof p.beforeTokens === 'number' && typeof p.afterTokens === 'number'
+              ? ` (~${p.beforeTokens} -> ~${p.afterTokens} tokens)`
+              : '';
+          label = `Conversation compacted on the daemon${detail} — transcript resynced.`;
+        }
         addTranscriptEntry(tuiState, 'status', label);
         tuiState.dirty.add('all');
         scheduler.schedule();
@@ -2784,8 +2803,9 @@ export async function runTUI(options = {}) {
         // showing turns the daemon dropped / summarized away. The event
         // payload carries only metadata (counts / a summary marker), not the
         // new transcript, so a refetch is the only way to converge — see
-        // lib/session-transcript-events.ts.
-        resyncDaemonTranscript(event.type);
+        // lib/session-transcript-events.ts. The payload carries the counts the
+        // resync surfaces in its status line.
+        resyncDaemonTranscript(event.type, event.payload);
         break;
 
       case 'approval_received':
@@ -3200,6 +3220,39 @@ export async function runTUI(options = {}) {
       preserveTurns = Math.max(1, Math.min(64, Number.parseInt(arg, 10)));
     }
 
+    // Daemon mode: the daemon owns the authoritative transcript (this client's
+    // `state.messages` is never appended to over the socket — see the
+    // send_user_message path), so compacting the local mirror is a no-op that
+    // the next resync would overwrite. Route to the bearer-gated
+    // `session_summarize` verb instead. The `context_compacted` broadcast it
+    // emits drives `resyncDaemonTranscript`, which renders the success status;
+    // we only surface the no-op / error outcomes here (they emit no broadcast).
+    if (await ensureDaemonSessionReady()) {
+      // A successful compaction converges via the `context_compacted` broadcast
+      // → resync; only the ok-but-no-op outcome is surfaced here. Error
+      // envelopes (RUN_IN_PROGRESS, etc.) reject into catch.
+      try {
+        const res = await sendDaemonSessionVerb('session_summarize', { preserveTurns });
+        if (res?.payload?.compacted === false) {
+          addTranscriptEntry(
+            tuiState,
+            'status',
+            `Nothing to compact (turns: ${res.payload.totalTurns ?? '?'}, preserve: ${
+              res.payload.preserveTurns ?? preserveTurns
+            }).`,
+          );
+        }
+      } catch (err) {
+        addTranscriptEntry(
+          tuiState,
+          'error',
+          `Summarize failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      scheduler.flush();
+      return;
+    }
+
     const result = compactContext(state.messages, { preserveTurns });
     if (!result.compacted) {
       addTranscriptEntry(
@@ -3230,6 +3283,163 @@ export async function runTUI(options = {}) {
       'status',
       `Compacted context: ${result.compactedCount} messages -> 1 summary (kept last ${result.preserveTurns} turns, ~${result.beforeTokens} -> ~${result.afterTokens} tokens).`,
     );
+    scheduler.flush();
+  }
+
+  // Send a bearer-gated session verb to the daemon for the current session.
+  // Returns the response envelope, or `null` when there is no daemon session
+  // (the caller prints mode-specific guidance). `sessionId` + `attachToken` are
+  // attached uniformly — every session-ful daemon verb requires both.
+  async function sendDaemonSessionVerb(type, extraPayload = {}) {
+    if (!daemonClient?.connected || !daemonSessionId) return null;
+    return daemonClient.request(
+      type,
+      { sessionId: daemonSessionId, attachToken: daemonAttachToken, ...extraPayload },
+      daemonSessionId,
+    );
+  }
+
+  // True when a daemon-backed session is available to address. The session id is
+  // populated lazily — a fresh connect (e.g. after /resume) has `daemonClient`
+  // connected but `daemonSessionId` still null until the first send. The
+  // session-verb commands need it eagerly, so attach/start here the same way the
+  // send path does (`ensureDaemonSession` is a no-op once the id is set).
+  async function ensureDaemonSessionReady() {
+    if (!daemonClient?.connected) return false;
+    if (!daemonSessionId) await ensureDaemonSession();
+    return Boolean(daemonSessionId);
+  }
+
+  // `/revert [n]` — undo the last N user turns on the daemon (default 1).
+  // Transcript-only; sandbox/git state is untouched (use the typed branch tools
+  // for code rollback). Success converges via the `session_reverted` broadcast →
+  // `resyncDaemonTranscript`; only the no-op / error outcomes are surfaced here.
+  async function revertDaemonSession(rawArg) {
+    const arg = String(rawArg || '').trim();
+    let turns = 1;
+    if (arg) {
+      if (!/^\d+$/.test(arg)) {
+        addTranscriptEntry(tuiState, 'warning', 'Usage: /revert [turns] (positive integer)');
+        scheduler.flush();
+        return;
+      }
+      turns = Math.max(1, Math.min(1024, Number.parseInt(arg, 10)));
+    }
+    if (!(await ensureDaemonSessionReady())) {
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        '/revert needs a daemon session. Use /checkpoint for local rollback.',
+      );
+      scheduler.flush();
+      return;
+    }
+    // `request()` rejects on an error envelope (RUN_IN_PROGRESS, etc.) — those
+    // land in catch. A successful revert (reverted:true) converges via the
+    // `session_reverted` broadcast → resync, so only the ok-but-no-op outcome
+    // (no user turns) is surfaced here.
+    try {
+      const res = await sendDaemonSessionVerb('session_revert', { turns });
+      if (res?.payload?.reverted === false) {
+        addTranscriptEntry(tuiState, 'status', 'Nothing to revert (no user turns yet).');
+      }
+    } catch (err) {
+      addTranscriptEntry(
+        tuiState,
+        'error',
+        `Revert failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    scheduler.flush();
+  }
+
+  // `/unrevert` — restore the messages dropped by the most recent run of
+  // /revert(s). Fails if a new message already committed the fork. Success
+  // converges via the `session_unreverted` broadcast → `resyncDaemonTranscript`.
+  async function unrevertDaemonSession() {
+    if (!(await ensureDaemonSessionReady())) {
+      addTranscriptEntry(tuiState, 'warning', '/unrevert needs a daemon session.');
+      scheduler.flush();
+      return;
+    }
+    // Success converges via the `session_unreverted` broadcast → resync. The
+    // daemon rejects with NOTHING_TO_UNREVERT when no revert is pending (a new
+    // message committed the fork) — that's an expected outcome, not an error,
+    // so it renders as a status; every other rejection is a real error.
+    try {
+      await sendDaemonSessionVerb('session_unrevert', {});
+    } catch (err) {
+      const code =
+        err && typeof err === 'object' && 'code' in err
+          ? (err as { code?: unknown }).code
+          : undefined;
+      addTranscriptEntry(
+        tuiState,
+        code === 'NOTHING_TO_UNREVERT' ? 'status' : 'error',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+    scheduler.flush();
+  }
+
+  // `/children` — list delegated child runs for the current daemon session;
+  // `/children <subagentId>` inspects one (descriptor + event summary). Pure
+  // read verbs, so the result is rendered directly (no broadcast / resync).
+  async function inspectDaemonChildren(rawArg) {
+    const arg = String(rawArg || '').trim();
+    if (!(await ensureDaemonSessionReady())) {
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        '/children needs a daemon session (delegations route through pushd).',
+      );
+      scheduler.flush();
+      return;
+    }
+    // Pure reads: render the result directly (no broadcast / resync). An error
+    // envelope (CHILD_NOT_FOUND, etc.) rejects into catch.
+    try {
+      if (arg) {
+        const res = await sendDaemonSessionVerb('get_child_session', { subagentId: arg });
+        const c = res?.payload?.child || {};
+        const ev = res?.payload?.eventSummary || {};
+        const lines = [`child ${c.subagentId} — ${c.agent || 'subagent'} (${c.status || '?'})`];
+        if (c.task) lines.push(`  task: ${c.task.slice(0, 200)}`);
+        if (c.outcomeStatus) lines.push(`  outcome: ${c.outcomeStatus}`);
+        if (c.summary) lines.push(`  summary: ${c.summary.slice(0, 200)}`);
+        if (typeof c.rounds === 'number') lines.push(`  rounds: ${c.rounds}`);
+        if (c.terminalType) lines.push(`  terminal: ${c.terminalType}`);
+        lines.push(
+          `  events: ${ev.eventCount ?? 0} (seq ${ev.firstSeq ?? '-'}..${ev.lastSeq ?? '-'})`,
+        );
+        addTranscriptEntry(tuiState, 'status', lines.join('\n'));
+      } else {
+        const res = await sendDaemonSessionVerb('list_children', { includeEventDerived: true });
+        const children = Array.isArray(res?.payload?.children) ? res.payload.children : [];
+        if (children.length === 0) {
+          addTranscriptEntry(tuiState, 'status', 'No delegated children for this session.');
+        } else {
+          const lines = [
+            `Children: ${children.length} (${res.payload.activeCount ?? 0} active, ${
+              res.payload.completedCount ?? 0
+            } completed)`,
+          ];
+          for (const c of children) {
+            const tag = c.outcomeStatus ? `${c.status}/${c.outcomeStatus}` : c.status;
+            const task = c.task ? ` — ${c.task.slice(0, 60)}` : '';
+            lines.push(`  ${c.subagentId}  [${c.agent || 'subagent'} ${tag}]${task}`);
+          }
+          lines.push('Inspect one with /children <subagentId>.');
+          addTranscriptEntry(tuiState, 'status', lines.join('\n'));
+        }
+      }
+    } catch (err) {
+      addTranscriptEntry(
+        tuiState,
+        'error',
+        `Children query failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     scheduler.flush();
   }
 
@@ -4871,7 +5081,10 @@ export async function runTUI(options = {}) {
             '  /debug runtime       Show runtime path/provider/session diagnostics',
             '  /skills              List available skills',
             '  /skills reload       Reload workspace + Claude skills',
-            `  /compact [turns]      Compact older context (default keep ${DEFAULT_COMPACT_TURNS} turns)`,
+            `  /compact [turns]      Compact older context (default keep ${DEFAULT_COMPACT_TURNS} turns; daemon: session_summarize)`,
+            '  /revert [n]           Daemon: undo last n user turns (default 1; transcript only)',
+            '  /unrevert             Daemon: restore the messages a /revert dropped',
+            '  /children [id]        Daemon: list delegated child runs (or inspect one by subagentId)',
             '  /checkpoint           Snapshot/rollback (create | list | load | delete)',
             '  /copy [last|code|tool|remote]  Copy content to clipboard via OSC 52 (default: last)',
             '  /<skill> [args]      Run a skill (e.g. /commit, /review)',
@@ -5005,6 +5218,18 @@ export async function runTUI(options = {}) {
 
       case 'checkpoint':
         await handleCheckpointCommand(arg || null);
+        return true;
+
+      case 'revert':
+        await revertDaemonSession(arg || null);
+        return true;
+
+      case 'unrevert':
+        await unrevertDaemonSession();
+        return true;
+
+      case 'children':
+        await inspectDaemonChildren(arg || null);
         return true;
 
       case 'copy': {
