@@ -18,6 +18,7 @@
  */
 import type { Theme, TokenName } from './tui-theme.js';
 import { truncate, visibleWidth, wordWrap } from './tui-renderer.js';
+import { highlightCode } from './tui-highlight.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -186,8 +187,15 @@ export function renderAssistantEntryLines(
     pushAssistant(summary, (s) => theme.style('accent.secondary', s));
   };
 
-  const pushCodeLine = (line: string): void => {
-    pushAssistant(line, (s) => theme.style('fg.secondary', s));
+  // Syntax-highlight a code fence and push it line by line. Lines come back
+  // pre-styled into balanced per-word ANSI, so we push with an identity
+  // styleFn — wrapping a styled run is safe because no colour is ever left
+  // open across a space (see tui-highlight.ts). Highlighting never changes
+  // visible width, so the existing wrap/layout math is untouched.
+  const pushHighlightedFence = (lang: string): void => {
+    for (const hl of highlightCode(theme, fenceBuf.join('\n'), lang)) {
+      pushAssistant(hl, (s) => s);
+    }
   };
 
   const lines = String(text ?? '').split('\n');
@@ -219,9 +227,7 @@ export function renderAssistantEntryLines(
         });
 
         if (expanded) {
-          for (const codeLine of fenceBuf) {
-            pushCodeLine(codeLine);
-          }
+          pushHighlightedFence('json');
         } else {
           for (const call of toolCalls) {
             const preview = summarizeToolArgs(call.args, Math.max(10, width - 28));
@@ -253,9 +259,7 @@ export function renderAssistantEntryLines(
     if (body) {
       const label = lang ? `code (${lang})` : 'code';
       pushAssistant(label, (s) => theme.style('fg.dim', s));
-      for (const codeLine of fenceBuf) {
-        pushCodeLine(codeLine);
-      }
+      pushHighlightedFence(lang);
     }
 
     fenceLang = null;
