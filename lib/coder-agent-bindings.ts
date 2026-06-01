@@ -222,6 +222,18 @@ export interface CoderBindingServices<
     opts: { auditorProviderOverride: string; auditorModelOverride: string | undefined },
   ) => Promise<SandboxToolExecResult<TCard>>;
   executeWebSearch: (query: string, provider: string) => Promise<SandboxToolExecResult<TCard>>;
+  /**
+   * Execute a memory tool (`memory_grep` / `memory_expand`). Optional — when
+   * omitted, memory calls are denied (older callers that don't thread a scope).
+   * The CALLER bakes the read scope (repo / branch / chat) into this closure
+   * from session context; the model's args never carry scope, so a Coder
+   * can't reach another repo's memory (LCM security invariant). Mirrors the
+   * `memory` case in `WebToolExecutionRuntime`.
+   */
+  executeMemory?: (
+    toolName: string,
+    args: Record<string, unknown>,
+  ) => Promise<SandboxToolExecResult<TCard>>;
   sandboxStatus: (sandboxId: string) => Promise<SandboxStatusResult>;
 
   // --- detectors ---
@@ -257,7 +269,11 @@ export function buildCoderDetectors<
 } {
   const detectAllToolCalls = (text: string): DetectedToolCalls<TCoderCall> => {
     const raw = services.detectAllToolCalls(text);
-    const sandboxReads = raw.readOnly.filter((c) => c.source === 'sandbox');
+    // Memory reads (`memory_grep`/`memory_expand`) are read-only and ride the
+    // parallel-reads path alongside sandbox reads (LCM web-Coder support).
+    const sandboxReads = raw.readOnly.filter(
+      (c) => c.source === 'sandbox' || c.source === 'memory',
+    );
     const sandboxFileMutations = raw.fileMutations.filter((c) => c.source === 'sandbox');
     const sandboxMutating = raw.mutating?.source === 'sandbox' ? raw.mutating : null;
     return {
@@ -290,7 +306,11 @@ export function buildCoderDetectors<
     if (webSearchCall) return services.tagWebSearchCall(webSearchCall);
 
     const recovered = services.detectAnyToolCall(text);
-    if (recovered?.source === 'sandbox' || recovered?.source === 'web-search') {
+    if (
+      recovered?.source === 'sandbox' ||
+      recovered?.source === 'web-search' ||
+      recovered?.source === 'memory'
+    ) {
       return recovered;
     }
     return null;
@@ -355,6 +375,7 @@ export function buildCoderToolExec<
     tracing,
     executeSandboxToolCall,
     executeWebSearch,
+    executeMemory,
     sandboxStatus,
   } = services;
 
@@ -365,10 +386,19 @@ export function buildCoderToolExec<
     turnCtx.round = execCtx.round;
     turnCtx.phase = execCtx.phase;
 
-    if (call.source !== 'sandbox' && call.source !== 'web-search') {
+    if (call.source !== 'sandbox' && call.source !== 'web-search' && call.source !== 'memory') {
       return {
         kind: 'denied',
-        reason: `Coder can only execute sandbox and web_search tools. "${call.call.tool}" is not available to Coder.`,
+        reason: `Coder can only execute sandbox, web_search, and memory tools. "${call.call.tool}" is not available to Coder.`,
+      };
+    }
+    if (call.source === 'memory' && !executeMemory) {
+      // No scope was threaded by this caller — deny rather than run an
+      // unscoped memory read. Symmetric with the web runtime's NO_ACTIVE_REPO
+      // guard; surfaced as a denial the model can see.
+      return {
+        kind: 'denied',
+        reason: `Memory tools are not available in this run (no memory scope). "${call.call.tool}" cannot be executed.`,
       };
     }
 
@@ -478,6 +508,80 @@ export function buildCoderToolExec<
         resultText: wsResult.text,
         card: wsResult.card,
         errorType: wsResult.structuredError?.type,
+        policyPost,
+      };
+    }
+
+    // --- Memory path (memory_grep / memory_expand) ---
+    if (call.source === 'memory') {
+      const memTool = call.call.tool;
+      const memArgs = (call.call.args ?? {}) as Record<string, unknown>;
+      const memResult = await tracing.withActiveSpan(
+        'tool.execute',
+        {
+          scope: 'push.coder',
+          kind: tracing.spanKindInternal,
+          attributes: {
+            ...correlationToSpanAttributes(correlation ?? EMPTY_CORRELATION_CONTEXT),
+            'push.agent.role': 'coder',
+            'push.round': execCtx.round,
+            'push.tool.name': memTool,
+            'push.tool.source': 'memory',
+            'push.provider': activeProvider,
+            'push.model': activeModel,
+          },
+        },
+        async (span) => {
+          if (!capabilityLedger.isToolAllowed(memTool)) {
+            const missing = capabilityLedger.getMissingCapabilities(memTool);
+            return {
+              text: `[Tool Blocked — ${memTool}] This tool requires capabilities not declared for this run: ${missing.join(', ')}. The delegation must include these capabilities to use this tool.`,
+              structuredError: {
+                type: 'APPROVAL_GATE_BLOCKED',
+                retryable: false,
+                message: `Capability violation: ${missing.join(', ')} not declared`,
+              },
+            } satisfies SandboxToolExecResult<TCard>;
+          }
+          // executeMemory is guaranteed defined here: the source gate above
+          // denies memory calls when no scope was threaded.
+          const inner = await executeMemory!(memTool, memArgs);
+          capabilityLedger.recordToolUse(memTool);
+          tracing.setSpanAttributes(span, {
+            'push.tool.error_type': inner.structuredError?.type,
+            'push.tool.retryable': inner.structuredError?.retryable,
+          });
+          if (inner.structuredError) {
+            span.setStatus({
+              code: tracing.spanStatusError,
+              message: inner.structuredError.message,
+            });
+          } else {
+            span.setStatus({ code: tracing.spanStatusOk });
+          }
+          return inner;
+        },
+      );
+
+      const afterToolResult = await policy.evaluateAfterTool(
+        memTool,
+        memArgs,
+        memResult.text,
+        Boolean(memResult.structuredError),
+        turnCtx,
+      );
+      const policyPost =
+        afterToolResult?.action === 'inject'
+          ? { kind: 'inject' as const, content: afterToolResult.message.content }
+          : afterToolResult?.action === 'halt'
+            ? { kind: 'halt' as const, summary: afterToolResult.summary }
+            : undefined;
+
+      return {
+        kind: 'executed',
+        resultText: memResult.text,
+        card: memResult.card,
+        errorType: memResult.structuredError?.type,
         policyPost,
       };
     }

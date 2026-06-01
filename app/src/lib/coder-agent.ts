@@ -56,6 +56,7 @@ import {
   invalidateObservationDependencies,
 } from '@push/lib/working-memory';
 import { normalizeTrimmedRoleAlternation } from '@push/lib/coder-context-trim';
+import { createMemoryToolExecutor } from '@push/lib/memory-tool-exec';
 import {
   buildCoderDetectors,
   buildCoderEvaluateAfterModel,
@@ -79,6 +80,7 @@ import {
   WEB_SEARCH_TOOL_PROTOCOL,
   type WebSearchToolCall,
 } from './web-search-tools';
+import { MEMORY_TOOL_PROTOCOL } from './memory-tools';
 import { CapabilityLedger, ROLE_CAPABILITIES } from './capabilities';
 import { detectAllToolCalls, detectAnyToolCall, type AnyToolCall } from './tool-dispatch';
 import { fileLedger } from './file-awareness-ledger';
@@ -192,6 +194,17 @@ export async function runCoderAgent(
     knownContext?: string[];
     constraints?: string[];
     branchContext?: { activeBranch: string; defaultBranch: string; protectMain: boolean };
+    /**
+     * Repo/chat scope for the delegated Coder's memory tools (LCM). Threaded
+     * from the orchestrator's session context — NOT the model — so the Coder's
+     * `memory_grep`/`memory_expand` reads are bounded to this repo/branch/chat
+     * and can't reach another repo's memory. When `repoFullName` is absent,
+     * memory tools are not wired (the kernel denies them). Note this is the
+     * memory READ scope only; the Coder still runs with `allowedRepo: ''` for
+     * GitHub tools by design.
+     */
+    repoFullName?: string;
+    chatId?: string;
     instructionFilename?: string;
     harnessSettings?: HarnessProfileSettings;
     plannerBrief?: string;
@@ -388,6 +401,18 @@ export async function runCoderAgent(
         auditorModelOverride: opts.auditorModelOverride,
       }),
     executeWebSearch: (query, provider) => executeWebSearch(query, provider as ActiveProvider),
+    // Memory tools (LCM) — only wired when the orchestrator threaded a repo
+    // scope; the scope is captured from session context here, never from model
+    // args. Branch is best-effort (the delegation's active branch); when no
+    // sandbox/branch is known the chatId still bounds reads (chats are
+    // branch-scoped). Absent repo scope → undefined → kernel denies memory.
+    executeMemory: effectiveDelegationContext?.repoFullName
+      ? createMemoryToolExecutor({
+          repoFullName: effectiveDelegationContext.repoFullName,
+          branch: effectiveDelegationContext.branchContext?.activeBranch,
+          chatId: effectiveDelegationContext.chatId,
+        })
+      : undefined,
     sandboxStatus,
     detectSandboxToolCall,
     detectWebSearchToolCall,
@@ -420,6 +445,9 @@ export async function runCoderAgent(
     detectAnyToolCall: detectCoderToolCall,
     webSearchToolProtocol: WEB_SEARCH_TOOL_PROTOCOL,
     sandboxToolProtocol: getSandboxToolProtocol(),
+    // Advertise memory tools only when scope was threaded (so executeMemory is
+    // wired) — keeps advertising aligned with executor support (LCM).
+    memoryToolProtocol: effectiveDelegationContext?.repoFullName ? MEMORY_TOOL_PROTOCOL : undefined,
     verificationPolicyBlock,
     approvalModeBlock,
     evaluateAfterModel,

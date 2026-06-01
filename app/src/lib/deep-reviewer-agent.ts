@@ -29,6 +29,7 @@ import { createExplorerToolHooks } from './explorer-agent';
 import { buildReviewerRuntimeContext } from './role-memory-context';
 import { executeReadOnlyTool } from './agent-loop-utils';
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
+import { MEMORY_TOOL_PROTOCOL } from './memory-tools';
 import type { LlmMessage, PushStream } from '@push/lib/provider-contract';
 import { getProviderPushStream, type ActiveProvider } from './orchestrator';
 import type { ReviewerPromptContext } from './role-context';
@@ -85,6 +86,9 @@ export async function runDeepReviewer(
     detectAllToolCalls,
     detectAnyToolCall,
     webSearchToolProtocol: WEB_SEARCH_TOOL_PROTOCOL,
+    // The web reviewer's executor (WebToolExecutionRuntime) supports the
+    // `memory` source and `reviewer` holds `memory:read`, so advertise it (LCM).
+    memoryToolProtocol: MEMORY_TOOL_PROTOCOL,
   };
 
   return runDeepReviewerLib(diff, libOptions, callbacks);

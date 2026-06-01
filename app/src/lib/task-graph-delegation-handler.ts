@@ -496,6 +496,10 @@ export async function handleTaskGraphDelegation(
                   instructionFilename: ctx.instructionFilenameRef.current || undefined,
                   harnessSettings: harnessSettings || undefined,
                   verificationPolicy,
+                  // Memory read-scope for the delegated Coder (LCM) — session
+                  // context, never the model. See coder-delegation-handler.
+                  repoFullName: ctx.repoRef.current || undefined,
+                  chatId,
                   correlation: nodeCorrelation,
                   onRunEvent: (event) => ctx.appendRunEvent(chatId, event),
                 },

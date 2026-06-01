@@ -631,6 +631,14 @@ export interface CoderAgentOptions<TCall, TCard> {
   /** Sandbox tool protocol prompt block — pre-built by the shim. */
   sandboxToolProtocol: string;
 
+  /**
+   * Memory tool protocol prompt block (`memory_grep`/`memory_expand`), or
+   * undefined when memory tools aren't wired for this run. Only set it when the
+   * caller also threads `executeMemory` into the bindings, so advertising
+   * matches executor support (no advertised-but-denied tools — LCM).
+   */
+  memoryToolProtocol?: string;
+
   /** Pre-built verification-policy block, or null when no policy applies. */
   verificationPolicyBlock: string | null;
 
@@ -697,6 +705,7 @@ export async function runCoderAgent<TCall, TCard>(
     detectAnyToolCall,
     webSearchToolProtocol,
     sandboxToolProtocol,
+    memoryToolProtocol,
     verificationPolicyBlock,
     approvalModeBlock,
     evaluateAfterModel,
@@ -761,6 +770,13 @@ export async function runCoderAgent<TCall, TCard>(
 
   // Web search protocol — stable tool instructions
   promptBuilder.append('tool_instructions', webSearchToolProtocol);
+
+  // Memory tool protocol — only present when memory tools are wired for this
+  // run (caller gates it on `executeMemory`), keeping advertising aligned with
+  // executor support (LCM).
+  if (memoryToolProtocol) {
+    promptBuilder.append('tool_instructions', memoryToolProtocol);
+  }
 
   // Symbol cache — volatile memory derived from workspace
   if (symbolSummary) {
