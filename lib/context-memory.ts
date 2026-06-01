@@ -282,6 +282,17 @@ export {
   createInMemoryStore,
 } from './context-memory-store.js';
 export { scoreRecord, retrieveRecords } from './context-memory-retrieval.js';
+export { expandMemoryRecords, grepMemory } from './context-memory-expand.js';
+export type {
+  ExpandedMemoryRecord,
+  MemoryExpandInput,
+  MemoryExpandResult,
+  MemoryGrepInput,
+  MemoryGrepMatch,
+  MemoryGrepResult,
+  MemoryGrepField,
+  MemoryScopeGuard,
+} from './context-memory-expand.js';
 export {
   packRetrievedMemory,
   DEFAULT_MEMORY_PACK_BUDGET_CHARS,
