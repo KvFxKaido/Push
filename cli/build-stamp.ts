@@ -39,11 +39,18 @@ async function captureGitSha(): Promise<string | null> {
     });
     const sha = stdout.trim();
     return sha.length > 0 ? sha : null;
-  } catch {
+  } catch (err) {
     // Not a git checkout (published install) or git missing — fall back to a
     // version-only stamp. Two such installs are indistinguishable, which is
     // acceptable: a non-git install doesn't shift under you mid-session the
-    // way a working tree does.
+    // way a working tree does. Emit one structured line so an UNEXPECTED nogit
+    // (git broken in an environment that should have it) is explainable rather
+    // than silent — operators can't otherwise tell it apart from a real
+    // published install.
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(
+      `${JSON.stringify({ level: 'debug', event: 'build_stamp_nogit', reason: message })}\n`,
+    );
     return null;
   }
 }

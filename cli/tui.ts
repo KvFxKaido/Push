@@ -1758,25 +1758,38 @@ export async function runTUI(options = {}) {
         daemonStale = false;
         return;
       }
+      // Tell the close handler to respawn fresh rather than reconnect-loop.
+      // Armed BEFORE the request so that even if the ack times out, a daemon
+      // that did accept the drain (and will exit) still triggers a respawn on
+      // close rather than a reconnect loop against the dying socket.
+      pendingDaemonRespawn = true;
       let drainRes;
       try {
-        drainRes = await client.request('drain', { reason: reason ?? null }, null, 2000);
+        // Generous timeout: the daemon acks promptly, but a busy daemon that's
+        // mid-flush shouldn't trip a spurious "could not drain" while it's
+        // actually on its way out.
+        drainRes = await client.request('drain', { reason: reason ?? null }, null, 5000);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        // Keep pendingDaemonRespawn armed: the daemon may have accepted the
+        // drain and be exiting now, in which case the close handler respawns.
+        // Unblock new runs so the user isn't stranded if it did NOT drain.
         addTranscriptEntry(
           tuiState,
           'warning',
-          `Could not drain the stale daemon (${msg}). Run /daemon restart to retry, or stop pushd manually.`,
+          `Drain request to the stale daemon did not ack (${msg}); if it exits it will be replaced, otherwise run /daemon restart.`,
         );
         daemonStale = false;
         return;
       }
       const idle = Boolean(drainRes?.payload?.idle);
-      const pending = Array.isArray(drainRes?.payload?.pendingRuns)
-        ? drainRes.payload.pendingRuns
-        : [];
-      // Tell the close handler to respawn fresh rather than reconnect-loop.
-      pendingDaemonRespawn = true;
+      // Total tracked work blocking the refresh — runs + delegations + graphs —
+      // so the message can't claim "0 active runs" while a delegation holds it.
+      const pendingWork = Number.isFinite(drainRes?.payload?.pendingWork)
+        ? drainRes.payload.pendingWork
+        : Array.isArray(drainRes?.payload?.pendingRuns)
+          ? drainRes.payload.pendingRuns.length
+          : 0;
       if (idle) {
         addTranscriptEntry(
           tuiState,
@@ -1787,7 +1800,7 @@ export async function runTUI(options = {}) {
         addTranscriptEntry(
           tuiState,
           'warning',
-          `Stale daemon has ${pending.length} active run(s) in flight; new runs are paused. It will refresh automatically once they finish.`,
+          `Stale daemon has ${pendingWork} active work item(s) in flight; new runs are paused. It will refresh automatically once they finish.`,
         );
       }
       // No proactive respawn here: the daemon self-exits when idle (now, or

@@ -71,6 +71,43 @@ describe('pushd drain', () => {
     assert.equal(exitCalls, 1, 'should self-exit once the daemon goes idle');
   });
 
+  it('self-exits on background work (delegation) settling, with no noteRunSettled call', async () => {
+    // Regression for the three-reviewer CRITICAL: a drain blocked solely on a
+    // delegation/task graph (no activeRunId). The delegation-cleanup paths do
+    // NOT call noteRunSettled(), so the drain idle watcher is what guarantees
+    // the eventual self-exit. This test deliberately never calls noteRunSettled.
+    __setActiveSessionForTesting(SID, {
+      state: { sessionId: SID },
+      attachToken: 't',
+      activeRunId: null,
+      activeDelegations: new Map([['sub-1', { kind: 'explorer' }]]),
+      activeGraphs: new Map(),
+    });
+    assert.equal(isDaemonIdle(), false);
+
+    const res = await handleDrain({ requestId: 'r-bg', payload: {} });
+    assert.equal(res.payload.idle, false);
+    // The response reports the background work, not "0 runs".
+    assert.equal(res.payload.pendingRuns.length, 0);
+    assert.equal(res.payload.pendingDelegations, 1);
+    assert.equal(res.payload.pendingWork, 1);
+
+    await delay(EXIT_SETTLE_MS);
+    assert.equal(exitCalls, 0, 'must not exit while the delegation is active');
+
+    // Delegation completes (cleanup deletes from the map) — no notifier call.
+    __setActiveSessionForTesting(SID, {
+      state: { sessionId: SID },
+      attachToken: 't',
+      activeRunId: null,
+      activeDelegations: new Map(),
+      activeGraphs: new Map(),
+    });
+    // Wait past at least one watcher poll tick (250ms) + the 50ms exit timer.
+    await delay(450);
+    assert.equal(exitCalls, 1, 'watcher should self-exit once background work clears');
+  });
+
   it('rejects a relay-originated drain but allows a loopback drain', async () => {
     // Denied path: a relay sender (paired phone) must not be able to drain.
     const denied = await handleDrain({ requestId: 'r-relay', payload: {} }, () => {}, {

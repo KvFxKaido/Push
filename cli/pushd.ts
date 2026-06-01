@@ -695,7 +695,7 @@ import { setDefaultMemoryStore } from '../lib/context-memory-store.ts';
 import { createFileMemoryStore, getMemoryStoreBaseDir } from './context-memory-file-store.ts';
 import { resolveWorkspaceIdentity } from '../lib/workspace-identity.js';
 import { buildTypedMemoryBlockForNode, writeTaskGraphResultMemory } from './task-graph-memory.ts';
-import { getBuildStamp, peekBuildStamp, RUNTIME_VERSION } from './build-stamp.ts';
+import { getBuildStamp, peekBuildStamp, RUNTIME_VERSION } from './build-stamp.js';
 
 const VERSION = RUNTIME_VERSION;
 const DAEMON_STARTED_AT_MS = Date.now();
@@ -1226,19 +1226,29 @@ function isDaemonIdle() {
 }
 
 /**
- * Collect the run ids still in flight — surfaced in the drain response so the
+ * Summarize the work still in flight — surfaced in the drain response so the
  * requesting client can tell the user exactly what it's waiting on before the
- * stale daemon respawns.
+ * stale daemon respawns. Reports ALL tracked work types (assistant runs,
+ * delegations, task graphs), not just top-level runs, so the client never says
+ * "0 active runs" while the daemon is actually blocked on background work.
  */
-function activeRunIds() {
-  const ids = [];
+function pendingWorkSummary() {
+  const runs = [];
+  let delegations = 0;
+  let graphs = 0;
   for (const [sessionId, entry] of activeSessions) {
-    if (entry.activeRunId) ids.push({ sessionId, runId: entry.activeRunId });
+    if (entry.activeRunId) runs.push({ sessionId, runId: entry.activeRunId });
+    if (entry.activeDelegations) delegations += entry.activeDelegations.size;
+    if (entry.activeGraphs) graphs += entry.activeGraphs.size;
   }
-  return ids;
+  return { runs, delegations, graphs, total: runs.length + delegations + graphs };
 }
 
 let drainExitScheduled = false;
+let drainIdleWatcher = null;
+// Poll cadence for the drain idle watcher. A daemon refresh isn't latency-
+// sensitive, so a coarse poll keeps the catch-all cheap.
+const DRAIN_IDLE_POLL_MS = 250;
 // Injectable so tests can assert the drain self-exit decision without actually
 // SIGTERM-ing the test runner. Production raises SIGTERM so the existing
 // `main()` shutdown closure runs the full teardown.
@@ -1251,13 +1261,46 @@ let drainExitFn = () => {
  * in-flight drain ack (or final run_complete) flushes to the socket first.
  * Idempotent: only the first idle transition schedules the exit.
  */
+function clearDrainIdleWatcher() {
+  if (drainIdleWatcher) {
+    clearTimeout(drainIdleWatcher);
+    drainIdleWatcher = null;
+  }
+}
+
 function scheduleDrainExit() {
   if (drainExitScheduled) return;
   drainExitScheduled = true;
+  clearDrainIdleWatcher();
   console.log(JSON.stringify({ level: 'info', event: 'pushd_drain_exit_scheduled' }));
   setTimeout(() => {
     drainExitFn();
   }, 50);
+}
+
+/**
+ * Catch-all idle watcher for the drain self-exit. `noteRunSettled()` fires the
+ * exit immediately when an assistant run completes, but background work
+ * (delegations, task graphs) settles on cleanup paths that don't call it — and
+ * `isDaemonIdle()` counts that work, so a drain blocked solely on a delegation
+ * would otherwise never self-exit. While draining, this polls idle so the
+ * refresh completes for ALL work types in one place, instead of hooking every
+ * `activeDelegations`/`activeGraphs` delete site (which must stay in sync and
+ * would still miss future trackers).
+ */
+function startDrainIdleWatcher() {
+  if (drainIdleWatcher || drainExitScheduled) return;
+  const tick = () => {
+    drainIdleWatcher = null;
+    if (!draining || drainExitScheduled) return;
+    if (isDaemonIdle()) {
+      console.log(JSON.stringify({ level: 'info', event: 'pushd_drain_idle_reached' }));
+      scheduleDrainExit();
+      return;
+    }
+    drainIdleWatcher = setTimeout(tick, DRAIN_IDLE_POLL_MS);
+  };
+  drainIdleWatcher = setTimeout(tick, DRAIN_IDLE_POLL_MS);
 }
 
 /**
@@ -1269,14 +1312,17 @@ export function __setDrainExitForTesting(fn) {
   drainExitFn = typeof fn === 'function' ? fn : () => process.kill(process.pid, 'SIGTERM');
   draining = false;
   drainExitScheduled = false;
+  clearDrainIdleWatcher();
 }
 
 export { handleDrain, noteRunSettled, isDaemonIdle };
 
 /**
- * Called whenever an assistant run settles (activeRunId cleared). If a drain is
- * pending and the daemon has gone fully idle, trigger the deferred self-exit.
- * Symmetric-log both branches so "draining but still busy" is observable.
+ * Called when an assistant run settles (activeRunId cleared) — the 0-latency
+ * path to the drain self-exit. Background work relies on the idle watcher
+ * instead. If a drain is pending and the daemon has gone fully idle, trigger
+ * the deferred self-exit. Symmetric-log both branches so "draining but still
+ * busy" is observable.
  */
 function noteRunSettled() {
   if (!draining) return;
@@ -1285,7 +1331,11 @@ function noteRunSettled() {
     scheduleDrainExit();
   } else {
     console.log(
-      JSON.stringify({ event: 'pushd_drain_awaiting_idle', pendingRuns: activeRunIds().length }),
+      JSON.stringify({
+        level: 'info',
+        event: 'pushd_drain_awaiting_idle',
+        pendingWork: pendingWorkSummary().total,
+      }),
     );
   }
 }
@@ -1313,24 +1363,33 @@ async function handleDrain(req, _emitEvent, context = null) {
   }
   const reason = typeof req.payload?.reason === 'string' ? req.payload.reason : null;
   draining = true;
-  const pending = activeRunIds();
-  const idle = pending.length === 0 && isDaemonIdle();
+  const work = pendingWorkSummary();
+  const idle = work.total === 0;
   console.log(
     JSON.stringify({
       level: 'info',
       event: 'pushd_drain_requested',
       idle,
-      pendingRuns: pending.length,
+      pendingRuns: work.runs.length,
+      pendingDelegations: work.delegations,
+      pendingGraphs: work.graphs,
       reason,
     }),
   );
   if (idle) {
     scheduleDrainExit();
+  } else {
+    // Block solely on background work (delegation/task graph) settles on paths
+    // that don't call noteRunSettled(); the watcher guarantees the eventual exit.
+    startDrainIdleWatcher();
   }
   return makeResponse(req.requestId, 'drain', null, true, {
     draining: true,
     idle,
-    pendingRuns: pending,
+    pendingRuns: work.runs,
+    pendingDelegations: work.delegations,
+    pendingGraphs: work.graphs,
+    pendingWork: work.total,
   });
 }
 
