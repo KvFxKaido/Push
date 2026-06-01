@@ -877,7 +877,7 @@ Available tools (all read-only — Explorer has no filesystem or exec mutation s
 - git_diff(path?, staged?) — show git diff (optionally for a specific file, optionally staged)
 - lsp_diagnostics(path?) — run type-checker for the workspace; optional path filters results to a specific file. Supported: TypeScript (tsc), Python (pyright/ruff), Rust (cargo check), Go (go vet).
 - web_search(query, max_results?) — search the public web (backend: auto|tavily|ollama|duckduckgo via PUSH_WEB_SEARCH_BACKEND)
-- memory_grep(pattern, kinds?, limit?) — search persisted memory records (prior decisions/findings/verification) by case-insensitive substring; returns matches with their [mem_…] id and verbatim text
+- memory_grep(pattern, kinds?, limit?) — search persisted memory records (prior decisions/findings/verification) by case-insensitive substring; returns matches with their [mem_…] id and a text snippet (use memory_expand for the full record)
 - memory_expand(ids) — recall the full verbatim text of memory records by id (ids come from memory_grep results)
 
 Rules:

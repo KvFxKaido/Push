@@ -580,7 +580,8 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     protocolSignature: 'memory_grep(pattern, kinds?, limit?)',
     protocolDescription:
       'Search persisted memory records (prior decisions, findings, verification output) ' +
-      'by case-insensitive substring; returns matches with their record id and verbatim text',
+      'by case-insensitive substring; returns matches with their record id and a text ' +
+      'snippet — use memory_expand on an id for the full record',
     exampleJson: '{"tool": "memory_grep", "args": {"pattern": "auth refresh"}}',
   },
   {

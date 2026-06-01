@@ -473,7 +473,10 @@ export class WebToolExecutionRuntime
           }
           // Scope reads to the active repo/branch/chat from session context —
           // never from model args — so the model can't reach another repo's
-          // memory. Branch is best-effort (null when no sandbox is warm yet).
+          // memory. Branch is best-effort (null when no sandbox is warm yet, or
+          // for local-daemon sessions); in that case the `chatId` filter still
+          // bounds reads, because chats are branch-scoped (see CLAUDE.md repo/
+          // session model) — so an undefined branch is not a cross-branch leak.
           const memBranch = context.sandboxId
             ? await this.getSandboxBranch(context.sandboxId)
             : null;

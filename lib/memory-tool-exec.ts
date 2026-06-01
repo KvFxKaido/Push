@@ -17,7 +17,7 @@
 import { grepMemory, expandMemoryRecords } from './context-memory.js';
 import type { ContextMemoryStore } from './context-memory-store.js';
 import type { ExpandedMemoryRecord, MemoryGrepMatch } from './context-memory-expand.js';
-import type { MemoryRecordKind } from './runtime-contract.js';
+import { MEMORY_RECORD_KINDS, type MemoryRecordKind } from './runtime-contract.js';
 
 export interface MemoryToolScope {
   repoFullName: string;
@@ -35,16 +35,9 @@ export interface MemoryToolContext {
   store?: ContextMemoryStore;
 }
 
-const VALID_KINDS: ReadonlySet<string> = new Set<MemoryRecordKind>([
-  'fact',
-  'finding',
-  'decision',
-  'task_outcome',
-  'verification_result',
-  'file_change',
-  'symbol_trace',
-  'dependency_trace',
-]);
+// Validation whitelist derives from the canonical contract list, so a new kind
+// added to `runtime-contract.ts` is automatically accepted here (no manual sync).
+const VALID_KINDS: ReadonlySet<string> = new Set<MemoryRecordKind>(MEMORY_RECORD_KINDS);
 
 const GREP_DETAIL_SNIPPET_CAP = 400;
 const EXPAND_DETAIL_CAP = 2000;
@@ -109,7 +102,17 @@ export async function runMemoryGrep(
     return errorResult('memory_grep', 'pattern must be a non-empty string');
   }
 
-  const { kinds } = normalizeKinds(args.kinds);
+  const suppliedKinds = args.kinds !== undefined && args.kinds !== null;
+  const { kinds, rejected } = normalizeKinds(args.kinds);
+  // A non-empty kinds filter whose entries are *all* invalid must not silently
+  // widen the search to every kind — reject it so the model can correct itself.
+  if (suppliedKinds && !kinds) {
+    return errorResult(
+      'memory_grep',
+      `no valid kinds in [${rejected.join(', ')}]. Valid kinds: ${MEMORY_RECORD_KINDS.join(', ')}`,
+    );
+  }
+
   let limit = DEFAULT_GREP_LIMIT;
   if (typeof args.limit === 'number' && Number.isFinite(args.limit)) {
     limit = Math.max(1, Math.min(MAX_GREP_LIMIT, Math.floor(args.limit)));
@@ -131,13 +134,19 @@ export async function runMemoryGrep(
     matches: result.matches.length,
     scanned: result.scanned,
     truncated: result.truncated,
+    rejectedKinds: rejected.length,
   };
-  const meta = { pattern, ...logCtx, kinds: kinds ?? null, limit };
+  const meta = { pattern, ...logCtx, kinds: kinds ?? null, rejected, limit };
+
+  // Surface partially-rejected kinds so the model learns the vocabulary.
+  const kindsNote = kinds ? ` in kinds [${kinds.join(', ')}]` : '';
+  const rejectedNote =
+    rejected.length > 0 ? `\n\n(Ignored unknown kinds: ${rejected.join(', ')})` : '';
 
   if (result.matches.length === 0) {
     log('memory_grep_empty', logCtx);
     return {
-      text: `[Tool Result — memory_grep]\nNo memory records match "${pattern}" (scanned ${result.scanned}).`,
+      text: `[Tool Result — memory_grep]\nNo memory records match "${pattern}"${kindsNote} (scanned ${result.scanned}).${rejectedNote}`,
       meta,
     };
   }
@@ -150,8 +159,8 @@ export async function runMemoryGrep(
   return {
     text:
       `[Tool Result — memory_grep]\n` +
-      `Pattern: "${pattern}" — ${result.matches.length} match${result.matches.length === 1 ? '' : 'es'} (scanned ${result.scanned}):\n\n` +
-      `${body}${footer}`,
+      `Pattern: "${pattern}"${kindsNote} — ${result.matches.length} match${result.matches.length === 1 ? '' : 'es'} (scanned ${result.scanned}):\n\n` +
+      `${body}${footer}${rejectedNote}`,
     meta,
   };
 }

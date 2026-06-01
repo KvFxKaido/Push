@@ -53,9 +53,11 @@ ${getToolArgHint('memory_expand')}
 
 **Rules:**
 - \`${getToolPublicName('memory_grep')}\` takes a case-insensitive substring \`pattern\`
-  (optional \`kinds\`, \`limit\`); it returns matches with their \`[mem_…]\` id.
-- \`${getToolPublicName('memory_expand')}\` takes \`ids\` (from a grep result or a
-  \`[mem_…]\` tag in a retrieved-memory block) and returns the full verbatim records.
+  (optional \`kinds\`, \`limit\`); it returns matches with their \`[mem_…]\` id and a
+  short text **snippet** — not the whole record.
+- To read a record in full, call \`${getToolPublicName('memory_expand')}\` with its
+  \`ids\` (from a grep result or a \`[mem_…]\` tag in a retrieved-memory block); it
+  returns the full verbatim records.
 - These are read-only and scoped to the current repo/branch automatically.
 `;
 

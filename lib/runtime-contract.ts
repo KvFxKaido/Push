@@ -159,15 +159,24 @@ export interface TaskGraphResult {
 // Context memory — typed, scoped artifact memory
 // ---------------------------------------------------------------------------
 
-export type MemoryRecordKind =
-  | 'fact'
-  | 'finding'
-  | 'decision'
-  | 'task_outcome'
-  | 'verification_result'
-  | 'file_change'
-  | 'symbol_trace'
-  | 'dependency_trace';
+/**
+ * Canonical list of memory record kinds — the single source of truth. The
+ * `MemoryRecordKind` type derives from it, and runtime consumers that need to
+ * validate model-supplied kinds (e.g. `lib/memory-tool-exec.ts`) iterate it
+ * rather than re-hardcoding the literals.
+ */
+export const MEMORY_RECORD_KINDS = [
+  'fact',
+  'finding',
+  'decision',
+  'task_outcome',
+  'verification_result',
+  'file_change',
+  'symbol_trace',
+  'dependency_trace',
+] as const;
+
+export type MemoryRecordKind = (typeof MEMORY_RECORD_KINDS)[number];
 
 export type MemoryFreshness = 'fresh' | 'stale' | 'expired';
 

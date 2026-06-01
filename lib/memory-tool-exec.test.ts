@@ -90,6 +90,28 @@ describe('runMemoryGrep', () => {
     );
     expect(result.meta.matches).toBe(0);
   });
+
+  it('rejects an all-invalid kinds filter instead of silently broadening', async () => {
+    const store = createInMemoryStore();
+    seed(store);
+    const result = await runMemoryGrep(
+      { pattern: 'typecheck', kinds: ['decisions'] }, // typo — not a real kind
+      { scope: { repoFullName: repo, branch }, store },
+    );
+    expect(result.text).toContain('[Tool Error — memory_grep]');
+    expect(result.text).toContain('no valid kinds');
+  });
+
+  it('uses valid kinds and notes the ignored ones', async () => {
+    const store = createInMemoryStore();
+    seed(store);
+    const result = await runMemoryGrep(
+      { pattern: 'typecheck', kinds: ['decision', 'bogus'] },
+      { scope: { repoFullName: repo, branch }, store },
+    );
+    expect(result.meta.matches).toBe(1);
+    expect(result.text).toContain('Ignored unknown kinds: bogus');
+  });
 });
 
 describe('runMemoryExpand', () => {
