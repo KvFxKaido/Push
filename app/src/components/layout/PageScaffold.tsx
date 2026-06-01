@@ -29,6 +29,14 @@ interface PageScaffoldProps {
   className?: string;
   /** Optional className applied to the outer gradient wrapper. */
   outerClassName?: string;
+  /**
+   * Optional absolutely-positioned backdrop rendered behind the header and
+   * content (e.g. `<ChatBackgroundGlow />`). The wrapper sets `isolate` so a
+   * `-z-10` backdrop paints above the page gradient instead of disappearing
+   * behind it. Kept as a slot (not a hard glow import) so the layout
+   * primitive stays decoupled from the chat surface that owns the glow.
+   */
+  backdrop?: ReactNode;
   children: ReactNode;
 }
 
@@ -50,15 +58,17 @@ export function PageScaffold({
   align = 'start',
   className,
   outerClassName,
+  backdrop,
   children,
 }: PageScaffoldProps) {
   return (
     <div
       className={cn(
-        'relative flex h-dvh flex-col bg-push-grad-page text-push-fg safe-area-top safe-area-bottom',
+        'relative isolate flex h-dvh flex-col bg-push-grad-page text-push-fg safe-area-top safe-area-bottom',
         outerClassName,
       )}
     >
+      {backdrop}
       {header}
       <div
         className={cn(

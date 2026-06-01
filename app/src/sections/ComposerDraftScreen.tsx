@@ -22,10 +22,18 @@ import {
 import { useDraftChatComposer, type DraftChatSeed } from '@/hooks/useDraftChatComposer';
 import { useBranchManager } from '@/hooks/useBranchManager';
 import { RepoAppearanceBadge } from '@/components/repo/repo-appearance';
+import { ChatBackgroundGlow } from '@/components/chat/ChatBackgroundGlow';
 import { formatModelDisplayName, type PreferredProvider } from '@/lib/providers';
 import type { ModelCatalog } from '@/hooks/useModelCatalog';
 import type { ActiveRepo, RepoWithActivity } from '@/types';
-import type { RepoAppearance } from '@/lib/repo-appearance';
+import { getRepoAppearanceColorHex, type RepoAppearance } from '@/lib/repo-appearance';
+
+// The composer is where you pick the mode you're about to enter, so its glow
+// previews that destination: indigo for chat, emerald for scratch, and the
+// chosen repo's own accent in repo mode (respecting its glow toggle). All
+// pulled from the repo-appearance palette so no raw hex lands in the screen.
+const COMPOSER_CHAT_GLOW = getRepoAppearanceColorHex('indigo');
+const COMPOSER_SCRATCH_GLOW = getRepoAppearanceColorHex('emerald');
 
 export interface ComposerDraftCommit {
   mode: 'repo' | 'chat' | 'scratch';
@@ -308,8 +316,16 @@ export function ComposerDraftScreen({
   const modeLabel = MODE_OPTIONS.find((m) => m.mode === state.mode)?.label ?? 'Mode';
   const ModeIcon = MODE_OPTIONS.find((m) => m.mode === state.mode)?.icon ?? FolderGit2;
 
+  const glow = useMemo(() => {
+    if (state.mode === 'chat') return { active: true, color: COMPOSER_CHAT_GLOW };
+    if (state.mode === 'scratch') return { active: true, color: COMPOSER_SCRATCH_GLOW };
+    const appearance = resolveRepoAppearance(state.repoFullName);
+    return { active: appearance.glowEnabled, color: getRepoAppearanceColorHex(appearance.color) };
+  }, [resolveRepoAppearance, state.mode, state.repoFullName]);
+
   return (
-    <div className="relative flex h-dvh flex-col bg-[linear-gradient(180deg,rgba(4,6,10,1)_0%,rgba(2,4,8,1)_100%)] safe-area-top safe-area-bottom text-push-fg">
+    <div className="relative isolate flex h-dvh flex-col bg-[linear-gradient(180deg,rgba(4,6,10,1)_0%,rgba(2,4,8,1)_100%)] safe-area-top safe-area-bottom text-push-fg">
+      <ChatBackgroundGlow active={glow.active} color={glow.color} />
       <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-20 bg-gradient-to-b from-white/[0.03] to-transparent" />
 
       <header className="relative flex items-center justify-between px-4 pt-3">
