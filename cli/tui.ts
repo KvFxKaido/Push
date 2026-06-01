@@ -2049,10 +2049,11 @@ export async function runTUI(options = {}) {
     // `approval_required` event (the guards above return early if it did) —
     // i.e. the approval fell outside the replayed event tail. The snapshot's
     // `pendingApproval` now carries the same `kind`/`summary`/`title` the live
-    // event does (#746), so the pane matches the in-session one. We mirror the
-    // live handler's mapping exactly (`kind || 'action'`,
-    // `summary || title || <generic>`); the generic string is the last-resort
-    // fallback for a pre-#746 daemon that omits the display fields.
+    // event does (#746), so the pane matches the in-session one. We follow the
+    // live handler's mapping (`kind || 'action'`, `summary || title`) and
+    // additionally fall back to a generic string when those are absent — that
+    // last-resort case only arises for a pre-#746 daemon that omits the fields
+    // (the live event always carries them).
     setRunState('awaiting_approval');
     openApprovalPane({
       kind:
