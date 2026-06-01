@@ -79,6 +79,10 @@ export const EXPLORER_SANDBOX_TOOL_NAMES = getToolPublicNames({
   readOnly: true,
 }).join(', ');
 export const EXPLORER_WEB_TOOL_NAME = getToolPublicName('web_search');
+export const EXPLORER_MEMORY_TOOL_NAMES = getToolPublicNames({
+  source: 'memory',
+  readOnly: true,
+}).join(', ');
 export const EXPLORER_MUTATION_BLOCKLIST = [
   getToolPublicName('delegate_coder'),
   getToolPublicName('delegate_explorer'),
@@ -157,6 +161,7 @@ You may use only these read-only tools:
 - GitHub: ${EXPLORER_GITHUB_TOOL_NAMES}
 - Sandbox: ${EXPLORER_SANDBOX_TOOL_NAMES}
 - Web: ${EXPLORER_WEB_TOOL_NAME}
+- Memory: ${EXPLORER_MEMORY_TOOL_NAMES}
 
 Usage:
 \`\`\`json

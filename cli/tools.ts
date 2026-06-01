@@ -34,6 +34,8 @@ import { reduceToolOutput } from '../lib/tool-output-reducers.ts';
 import { runAuditor } from '../lib/auditor-agent.ts';
 import { resolveAuditorGateEnabled, AUDITOR_GATE_ENV_VAR } from '../lib/auditor-policy.ts';
 import { buildAuditorGateRuntimeContext } from './auditor-gate-memory.ts';
+import { runMemoryGrep, runMemoryExpand } from '../lib/memory-tool-exec.ts';
+import { getDefaultMemoryStore } from '../lib/context-memory-store.ts';
 import { PROVIDER_CONFIGS, resolveApiKey, createProviderStream } from './provider.js';
 import { executeGitHubCoreTool } from '../lib/github-tool-core.ts';
 import { parseGitHubCoreToolCall } from '../lib/github-tool-parser.ts';
@@ -136,6 +138,8 @@ export const READ_ONLY_TOOLS = new Set([
   'lsp_diagnostics',
   'exec_poll',
   'exec_list_sessions',
+  'memory_grep',
+  'memory_expand',
 ]);
 
 // CLI-side classification of pure file-mutation tools (safe to batch in one
@@ -873,6 +877,8 @@ Available tools (all read-only — Explorer has no filesystem or exec mutation s
 - git_diff(path?, staged?) — show git diff (optionally for a specific file, optionally staged)
 - lsp_diagnostics(path?) — run type-checker for the workspace; optional path filters results to a specific file. Supported: TypeScript (tsc), Python (pyright/ruff), Rust (cargo check), Go (go vet).
 - web_search(query, max_results?) — search the public web (backend: auto|tavily|ollama|duckduckgo via PUSH_WEB_SEARCH_BACKEND)
+- memory_grep(pattern, kinds?, limit?) — search persisted memory records (prior decisions/findings/verification) by case-insensitive substring; returns matches with their [mem_…] id and verbatim text
+- memory_expand(ids) — recall the full verbatim text of memory records by id (ids come from memory_grep results)
 
 Rules:
 - Paths are relative to workspace root unless absolute inside workspace.
@@ -1976,6 +1982,33 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
 
   try {
     switch (call.tool) {
+      case 'memory_grep':
+      case 'memory_expand': {
+        // Scope reads to the workspace's repo/branch from git — never from
+        // model args. CLI memory is branch-scoped (no chatId).
+        const identity = await resolveWorkspaceIdentity(workspaceRoot);
+        if (!identity.repoFullName) {
+          return {
+            ok: false,
+            text: `[Tool Error — ${call.tool}] Memory tools require a git repo with a known remote.`,
+            structuredError: {
+              code: 'INVALID_ARG',
+              message: 'no repo scope for memory retrieval',
+              retryable: false,
+            },
+          };
+        }
+        const memCtx = {
+          scope: { repoFullName: identity.repoFullName, branch: identity.branch ?? undefined },
+          store: getDefaultMemoryStore(),
+        };
+        const memResult =
+          call.tool === 'memory_grep'
+            ? await runMemoryGrep(call.args, memCtx)
+            : await runMemoryExpand(call.args, memCtx);
+        return { ok: true, text: memResult.text, meta: memResult.meta };
+      }
+
       case 'read_file': {
         const filePath = await ensureInsideWorkspace(
           workspaceRoot,

@@ -5,6 +5,7 @@ import { LOCAL_PC_TOOL_PROTOCOL, getSandboxToolProtocol } from './sandbox-tools'
 import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-tools';
 import { TODO_TOOL_PROTOCOL } from './todo-tools';
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
+import { MEMORY_TOOL_PROTOCOL } from './memory-tools';
 import { getWebSearchMode, isNativeWebSearchEnabled } from './web-search-mode';
 import { ASK_USER_TOOL_PROTOCOL } from './ask-user-tools';
 import { getUserProfile } from '@/hooks/useUserProfile';
@@ -474,6 +475,8 @@ export function toLLMMessages(
       toolProtocols.push(SCRATCHPAD_TOOL_PROTOCOL);
       toolProtocols.push(TODO_TOOL_PROTOCOL);
       if (promptEngineeredWebSearchEnabled) toolProtocols.push(WEB_SEARCH_TOOL_PROTOCOL);
+      // Memory recall is repo-scoped, so it only rides the non-chat branch.
+      toolProtocols.push(MEMORY_TOOL_PROTOCOL);
       toolProtocols.push(ASK_USER_TOOL_PROTOCOL);
       builder.set('tool_instructions', baseToolInstructions + '\n' + toolProtocols.join('\n'));
 

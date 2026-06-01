@@ -31,6 +31,8 @@ import { executeToolCall } from './github-tools';
 import { executeSandboxToolCall } from './sandbox-tools';
 import { executeWebSearch } from './web-search-tools';
 import { executeArtifactToolCall } from './artifact-tools';
+import { runMemoryGrep, runMemoryExpand } from '@push/lib/memory-tool-exec';
+import { getDefaultMemoryStore } from '@push/lib/context-memory-store';
 import { getActiveProvider, type ActiveProvider } from './orchestrator';
 import { type AnyToolCall } from './tool-dispatch';
 import { execInSandbox } from './sandbox-client';
@@ -452,6 +454,42 @@ export class WebToolExecutionRuntime
             createdAt: Date.now(),
           };
           result = await executeArtifactToolCall(toolCall.call.args, scope, author);
+          break;
+        }
+
+        case 'memory': {
+          if (!context.allowedRepo) {
+            const err: StructuredToolError = {
+              type: 'INVALID_ARG',
+              retryable: false,
+              message: 'Memory tools require an active repo.',
+              detail: `NO_ACTIVE_REPO — Attempted tool: ${toolCall.call.tool}`,
+            };
+            result = {
+              text: `[Tool Error — ${toolCall.call.tool}] ${err.message}`,
+              structuredError: err,
+            };
+            break;
+          }
+          // Scope reads to the active repo/branch/chat from session context —
+          // never from model args — so the model can't reach another repo's
+          // memory. Branch is best-effort (null when no sandbox is warm yet).
+          const memBranch = context.sandboxId
+            ? await this.getSandboxBranch(context.sandboxId)
+            : null;
+          const memCtx = {
+            scope: {
+              repoFullName: context.allowedRepo,
+              branch: memBranch ?? undefined,
+              chatId: context.chatId,
+            },
+            store: getDefaultMemoryStore(),
+          };
+          const memResult =
+            toolCall.call.tool === 'memory_grep'
+              ? await runMemoryGrep(toolCall.call.args, memCtx)
+              : await runMemoryExpand(toolCall.call.args, memCtx);
+          result = { text: memResult.text };
           break;
         }
 

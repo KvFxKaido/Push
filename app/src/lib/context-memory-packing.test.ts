@@ -107,6 +107,9 @@ describe('packRetrievedMemory', () => {
     expect(result.sections.taskMemory.recordCount).toBe(1);
     expect(result.sections.verification.recordCount).toBe(1);
     expect(result.packed).toHaveLength(3);
+    // Each record line leads with its id so the model can memory_expand it.
+    expect(result.block).toContain('- [a] [finding | explorer]');
+    expect(result.block).toContain('- [b] [task_outcome | explorer]');
   });
 
   it('enforces hard per-section budgets and drops overflowing records', () => {

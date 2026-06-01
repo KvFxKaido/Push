@@ -106,8 +106,10 @@ describe('Role capability grants', () => {
 
   it('Auditor has minimal capabilities', () => {
     const auditorCaps = ROLE_CAPABILITIES.auditor;
-    expect(auditorCaps.size).toBe(1);
+    // repo:read for diff inspection + memory:read to recall prior decisions/verifications.
+    expect(auditorCaps.size).toBe(2);
     expect(auditorCaps.has('repo:read')).toBe(true);
+    expect(auditorCaps.has('memory:read')).toBe(true);
   });
 });
 
