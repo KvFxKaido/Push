@@ -183,8 +183,12 @@ export async function runMemoryExpand(
 ): Promise<MemoryToolResult> {
   const rawIds = Array.isArray(args.ids) ? args.ids : args.ids === undefined ? [] : [args.ids];
   const ids = rawIds
-    .filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
-    .map((id) => id.trim())
+    .filter((id): id is string => typeof id === 'string')
+    // Tolerate the display form: retrieved-memory blocks and grep results show
+    // ids wrapped as `[mem_…]`, so a model may copy the bracketed token. Strip
+    // surrounding brackets so `[mem_x]` and `mem_x` both resolve.
+    .map((id) => id.trim().replace(/^\[+/, '').replace(/\]+$/, '').trim())
+    .filter((id) => id.length > 0)
     .slice(0, MAX_EXPAND_IDS);
 
   if (ids.length === 0) {
