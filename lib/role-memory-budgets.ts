@@ -30,3 +30,15 @@ export const ROLE_MEMORY_SECTION_BUDGETS = {
 } as const;
 
 export const MAX_ROLE_RETRIEVED_MEMORY_RECORDS = 5;
+
+/**
+ * Per-record `detail` cap for roles that opt into `MemoryPackOptions.includeTopDetail`
+ * (the Auditor today — its SAFE/UNSAFE call benefits from the verbatim verification
+ * output stored in `detail`). Chosen to sit at or below the section budgets above so
+ * surfaced detail fills the existing allocation rather than raising the prompt ceiling:
+ * enabling detail can only spend more of an already-capped budget (the packer falls
+ * back to summary-only when it would overflow), never exceed it. The visible tradeoff
+ * is a richer top record vs. fewer summary records in the same section — acceptable for
+ * the Auditor, where depth on the top verification/decision record beats breadth.
+ */
+export const AUDITOR_MEMORY_DETAIL_CAP = 400;

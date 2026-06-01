@@ -62,6 +62,9 @@ describe('role-memory-context', () => {
         sectionBudgets: expect.any(Object),
       }),
     );
+    // Reviewer stays summary-only (breadth over depth) — no verbatim detail opt-in.
+    const reviewerOptions = mockBuildRetrievedMemoryKnownContext.mock.calls[0][1];
+    expect(reviewerOptions.includeTopDetail).toBeUndefined();
   });
 
   it('builds auditor runtime context with retrieved memory when repo scope exists', async () => {
@@ -84,7 +87,10 @@ describe('role-memory-context', () => {
         role: 'auditor',
         fileHints: ['src/security.ts'],
       }),
-      expect.any(Object),
+      expect.objectContaining({
+        includeTopDetail: true,
+        detailCap: 400,
+      }),
     );
   });
 
@@ -134,7 +140,10 @@ describe('role-memory-context', () => {
         taskText: expect.stringContaining('finish the auth hardening pass'),
         fileHints: ['src/auth.ts'],
       }),
-      expect.any(Object),
+      expect.objectContaining({
+        includeTopDetail: true,
+        detailCap: 400,
+      }),
     );
   });
 });
