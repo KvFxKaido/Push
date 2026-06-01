@@ -245,6 +245,8 @@ The packer should prefer:
 - direct dependency/task-lineage matches over generic "recent" memory
 - summaries by default, `detail` only when the record is top-ranked and still fits the section budget
 
+> Implemented 2026-06-01: the summaries-by-default / top-ranked-`detail` behavior ships behind the opt-in `MemoryPackOptions.includeTopDetail` flag (`detailCap` default 600), with a summary-only fallback when detail would overflow the section budget. Off by default so existing delegation-brief sizes are unchanged. See [`Lossless Verbatim Memory Retrieval (LCM).md`](Lossless%20Verbatim%20Memory%20Retrieval%20%28LCM%29.md) Phase 1.
+
 ## Write Path: Where Records Come From
 
 ### Explorer

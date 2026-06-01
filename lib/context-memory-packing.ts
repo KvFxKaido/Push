@@ -34,11 +34,23 @@ export const DEFAULT_MEMORY_PACK_BUDGET_CHARS = Object.values(
 ).reduce((sum, value) => sum + value, 0);
 
 const PER_RECORD_SUMMARY_CAP = 220;
+const PER_RECORD_DETAIL_CAP = 600;
 
 export interface MemoryPackOptions {
   budgetChars?: number;
   sectionBudgets?: Partial<MemoryPackSectionBudgets>;
   includeHints?: boolean;
+  /**
+   * When set, the top-ranked record in each section may carry its verbatim
+   * `detail` (truncated to `detailCap`) inline, provided the record still fits
+   * the section budget with it. If detail would overflow, the record falls back
+   * to summary-only rather than being dropped. Off by default — opt-in so the
+   * existing delegation-brief size stays unchanged until a caller asks for it.
+   * This is the packer half of the LCM "recall the original" path.
+   */
+  includeTopDetail?: boolean;
+  /** Max chars of `detail` surfaced per record when `includeTopDetail` is on. Defaults to 600. */
+  detailCap?: number;
 }
 
 export interface MemoryPackSectionResult {
@@ -121,13 +133,21 @@ export function classifyRetrievedMemorySection(
   }
 }
 
-function formatRecordLines(scored: ScoredMemoryRecord, includeHints: boolean): string[] {
+function formatRecordLines(
+  scored: ScoredMemoryRecord,
+  includeHints: boolean,
+  detailCap = 0,
+): string[] {
   const { record } = scored;
   const header = `- [${record.kind} | ${record.source.kind}] ${truncateSummary(record.summary)}`;
   const lines = [header];
   if (includeHints) {
     const hints = formatHints(record.relatedFiles, record.relatedSymbols);
     if (hints) lines.push(`    ${hints}`);
+  }
+  if (detailCap > 0 && record.detail) {
+    const detail = truncateSummary(record.detail, detailCap);
+    if (detail) lines.push(`    detail: ${detail}`);
   }
   return lines;
 }
@@ -137,6 +157,7 @@ function packSection(
   ranked: ScoredMemoryRecord[],
   budgetChars: number,
   includeHints: boolean,
+  detailCap = 0,
 ): MemoryPackSectionResult {
   const { open: openTag, close: closeTag } = SECTION_TAGS[key];
   const budget = Math.max(0, budgetChars);
@@ -176,8 +197,16 @@ function packSection(
   let usedChars = tagOverhead;
 
   for (const scored of ranked) {
-    const lines = formatRecordLines(scored, includeHints);
-    const cost = lines.reduce((sum, line) => sum + line.length + 1, 0);
+    // Only the first record actually packed into this section is "top-ranked"
+    // and eligible for inline detail.
+    const wantDetail = detailCap > 0 && packed.length === 0 && Boolean(scored.record.detail);
+    let lines = formatRecordLines(scored, includeHints, wantDetail ? detailCap : 0);
+    let cost = lines.reduce((sum, line) => sum + line.length + 1, 0);
+    if (wantDetail && usedChars + cost > budget) {
+      // Detail would overflow — fall back to summary-only rather than dropping.
+      lines = formatRecordLines(scored, includeHints, 0);
+      cost = lines.reduce((sum, line) => sum + line.length + 1, 0);
+    }
     if (usedChars + cost > budget) {
       dropped.push(scored);
       continue;
@@ -238,6 +267,9 @@ export function packRetrievedMemory(
   options: MemoryPackOptions = {},
 ): MemoryPackResult {
   const includeHints = options.includeHints ?? true;
+  const detailCap = options.includeTopDetail
+    ? normalizeBudget(options.detailCap, PER_RECORD_DETAIL_CAP)
+    : 0;
   const sectionBudgets = resolveSectionBudgets(options.sectionBudgets);
   const totalBudget = normalizeBudget(
     options.budgetChars,
@@ -272,7 +304,7 @@ export function packRetrievedMemory(
       0,
       Math.min(sectionBudgets[key], Math.max(0, remainingBudget - separatorCost)),
     );
-    const sectionResult = packSection(key, buckets[key], effectiveBudget, includeHints);
+    const sectionResult = packSection(key, buckets[key], effectiveBudget, includeHints, detailCap);
     sections[key] = sectionResult;
     packed.push(...sectionResult.packed);
     dropped.push(...sectionResult.dropped);

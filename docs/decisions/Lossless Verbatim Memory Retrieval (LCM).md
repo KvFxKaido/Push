@@ -48,14 +48,14 @@ Point 3 is the gap.
 
 ### The two concrete gaps
 
-1. **The packer never surfaces `detail`.** `lib/context-memory-packing.ts` formats
+1. **The packer never surfaced `detail`.** `lib/context-memory-packing.ts` formatted
    each record as a ≤220-char slice of `record.summary` (`PER_RECORD_SUMMARY_CAP`)
-   and never reads `record.detail`. So the fuller text we already store and pay to
-   persist is **write-only** from the model's runtime perspective. This directly
-   contradicts the existing decision doc, which specifies "summaries by default,
-   `detail` only when the record is top-ranked and still fits the section budget"
+   and never read `record.detail`. So the fuller text we already store and pay to
+   persist was **write-only** from the model's runtime perspective — despite the
+   existing decision doc specifying "summaries by default, `detail` only when the
+   record is top-ranked and still fits the section budget"
    ([Context Memory and Retrieval Architecture.md](Context%20Memory%20and%20Retrieval%20Architecture.md),
-   "Prompt Packing Model"). **Documented-but-unimplemented.**
+   "Prompt Packing Model"). **Closed in Phase 1 (below).**
 
 2. **No model-facing retrieval tool.** The tool registry (`lib/tool-registry.ts`)
    has no `memory` source; `lib/capabilities.ts` has no memory capability. An agent
@@ -89,14 +89,21 @@ dispatch call-site, so unit tests and the packer stay quiet.
 
 ## Remaining Phases
 
-### Phase 1 — surface `detail` in the packer (closes the documented gap)
+### Phase 1 — surface `detail` in the packer (closes the documented gap) — SHIPPED 2026-06-01
 
-Teach `lib/context-memory-packing.ts` to spend remaining section budget on the
-top-ranked record's `detail`, exactly as the existing doc already specifies. Behavior
-change to delegation briefs, so gate behind an opt-in `MemoryPackOptions` flag first
-and measure char-budget impact before defaulting on. Flip the "Prompt Packing Model"
-note in [Context Memory and Retrieval Architecture.md](Context%20Memory%20and%20Retrieval%20Architecture.md)
-from aspiration to shipped in the same PR.
+`lib/context-memory-packing.ts` now spends remaining section budget on the top-ranked
+record's `detail`, exactly as the parent doc specified. Shipped behind the opt-in
+`MemoryPackOptions.includeTopDetail` flag (`detailCap` default 600 chars), with a
+summary-only fallback when detail would overflow the section budget so a record is
+never dropped for carrying detail. **Off by default** — existing delegation-brief
+sizes are unchanged until a caller opts in. Covered by four new cases in
+`app/src/lib/context-memory-packing.test.ts` (default-off, top-ranked-only,
+custom-cap, overflow-fallback). The parent doc's "Prompt Packing Model" note is
+flipped to shipped.
+
+Remaining follow-through (separate, needs a `ROADMAP.md` entry): pick the call-sites
+that should opt in (delegation briefs via `buildRetrievedMemoryKnownContext`, Auditor)
+and measure the char-budget impact before considering a default flip.
 
 ### Phase 2 — model-facing `memory_expand` / `memory_grep` tool
 
