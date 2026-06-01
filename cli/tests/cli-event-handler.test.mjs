@@ -71,7 +71,8 @@ describe('makeCLIEventHandler delegation rendering', () => {
     });
     const clean = stripAnsi(stdout);
     assert.match(clean, /\[info\]/);
-    assert.match(clean, /subagent started: explorer/);
+    // Phase-first label from lib/role-display.ts (explorer → "Exploring").
+    assert.match(clean, /Exploring started/);
     assert.match(clean, /find the thing/);
     assert.match(clean, /^\n\[info\]/);
   });
@@ -86,7 +87,8 @@ describe('makeCLIEventHandler delegation rendering', () => {
     });
     const clean = stripAnsi(stdout);
     assert.match(clean, /\[error\]/);
-    assert.match(clean, /subagent failed: coder/);
+    // Phase-first label from lib/role-display.ts (coder → "Editing").
+    assert.match(clean, /Editing failed/);
     assert.match(clean, /boom/);
     assert.match(clean, /\n$/);
   });
@@ -107,7 +109,7 @@ describe('makeCLIEventHandler delegation rendering', () => {
     const clean = stripAnsi(stdout);
     assert.match(clean, /\[warn\]/);
     assert.match(clean, /task graph: graph_1/);
-    assert.match(clean, /\[cancelled\] explore-a \(explorer\)/);
+    assert.match(clean, /\[cancelled\] explore-a \(Exploring\)/);
     assert.match(clean, /parent aborted/);
   });
 

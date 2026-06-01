@@ -22,6 +22,7 @@ import { DiffPreviewCard } from '@/components/cards/DiffPreviewCard';
 import { AuditVerdictCard } from '@/components/cards/AuditVerdictCard';
 import { useCommitPush } from '@/hooks/useCommitPush';
 import type { AIProviderType, DiffPreviewCardData } from '@/types';
+import { getRoleDisplay } from '@push/lib/role-display';
 
 interface CommitPushSheetProps {
   sandboxId: string;
@@ -42,7 +43,7 @@ interface CommitPushSheetProps {
 
 const PHASE_LABELS: Record<string, string> = {
   'fetching-diff': 'Getting diff…',
-  auditing: 'Auditor reviewing…',
+  auditing: `${getRoleDisplay('auditor').name} verifying…`,
   committing: 'Committing…',
   pushing: 'Pushing to remote…',
   recovering: 'Recovering on new sandbox…',

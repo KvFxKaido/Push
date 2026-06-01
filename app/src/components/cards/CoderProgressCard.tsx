@@ -1,6 +1,7 @@
 import { ListTodo, FileCode, CheckCircle2, CircleDashed, ClipboardList } from 'lucide-react';
 import type { CoderWorkingMemory } from '@/types';
 import { CARD_SHELL_CLASS, CARD_PANEL_SUBTLE_CLASS, CARD_BADGE_INFO } from '@/lib/utils';
+import { getRoleDisplay } from '@push/lib/role-display';
 
 interface CoderProgressCardProps {
   data: CoderWorkingMemory;
@@ -16,7 +17,9 @@ export function CoderProgressCard({ data }: CoderProgressCardProps) {
       <div className="flex items-center justify-between gap-2 border-b border-push-edge/80 px-3 py-2.5">
         <div className="flex items-center gap-2 min-w-0">
           <ClipboardList className="h-4 w-4 text-push-accent shrink-0" />
-          <span className="text-push-base text-push-fg font-medium truncate">Coder Progress</span>
+          <span className="text-push-base text-push-fg font-medium truncate">
+            {getRoleDisplay('coder').phase} Progress
+          </span>
         </div>
         {data.currentPhase && (
           <div className="flex items-center gap-1.5">
