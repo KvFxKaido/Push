@@ -358,10 +358,18 @@ const RELAY_SYNTHETIC_AUTH: PushdWsAuthRecord = {
  * Per-relay-client `wsState`. Shared across every inbound request
  * that came through the relay, so a `sandbox_exec` registers its
  * AbortController in this map and the same connection's `cancel_run`
- * can reach it. Cross-phone cancel is possible as a known
- * limitation (one phone could cancel another phone's run if it
- * guessed the runId) — documented as a follow-up for the
- * post-#530 hardening slice.
+ * can reach it.
+ *
+ * Because this one map is shared across ALL paired phones (the relay
+ * transport has no per-phone connection on the daemon side — the DO
+ * forwards frames without sender identity), connection-scoping alone
+ * can't keep one phone from cancelling another's run by guessing the
+ * runId. Each run is therefore registered with the session attach
+ * bearer (`ownerToken`) it ran under, and the sessionless `cancel_run`
+ * path requires a matching token before aborting a token-owned run.
+ * See `handleSandboxExec` (registration) and `handleCancelRun`
+ * (the sessionless branch). Closes finding #3 of the Remote Control
+ * Surface Audit.
  */
 let activeRelayWsState: PushdWsConnectionState | null = null;
 
@@ -471,6 +479,7 @@ function startRelayClient(config: RelayConfig): RelayClientHandle {
           type?: string;
           sessionId?: string;
           payload?: { sessionId?: string; capabilities?: unknown };
+          [RELAY_SENDER_FIELD]?: string;
         };
         try {
           parsed = JSON.parse(trimmed);
@@ -485,9 +494,20 @@ function startRelayClient(config: RelayConfig): RelayClientHandle {
         if (parsed.kind !== 'request') continue;
         let response: unknown;
         try {
+          // The relay DO stamps the per-connection sender id onto every
+          // forwarded phone→pushd frame (`RELAY_SENDER_FIELD`). It's the only
+          // trustworthy phone identity here — the shared `wsState` can't tell
+          // paired phones apart — so it scopes run ownership (Audit #3). A
+          // string-typed value only; anything else (absent, forged non-string)
+          // resolves to undefined and the run registers unowned.
+          const relaySenderId =
+            typeof parsed[RELAY_SENDER_FIELD] === 'string' && parsed[RELAY_SENDER_FIELD]
+              ? parsed[RELAY_SENDER_FIELD]
+              : undefined;
           response = await handleRequest(parsed, emitToRelay, {
             auth: RELAY_SYNTHETIC_AUTH,
             wsState,
+            relaySenderId,
           });
         } catch (err) {
           const message = err instanceof Error ? err.message : 'internal error';
@@ -568,9 +588,9 @@ function stopRelayClient(opts: { clearAllowlist?: boolean } = {}): void {
   // this, a `relay disable` mid-run leaves the daemon child burning
   // CPU/disk until its own timeout fires.
   if (activeRelayWsState) {
-    for (const controller of activeRelayWsState.activeRuns.values()) {
+    for (const run of activeRelayWsState.activeRuns.values()) {
       try {
-        controller.abort();
+        run.controller.abort();
       } catch {
         /* ignore */
       }
@@ -653,7 +673,11 @@ import {
   resolveReviewGuidance,
 } from '../lib/review-guidance.ts';
 import { validateTaskGraph, executeTaskGraph, formatTaskGraphResult } from '../lib/task-graph.ts';
-import { assertValidEvent, isStrictModeEnabled } from '../lib/protocol-schema.js';
+import {
+  assertValidEvent,
+  isStrictModeEnabled,
+  RELAY_SENDER_FIELD,
+} from '../lib/protocol-schema.js';
 import { isV2DelegationEvent, synthesizeV1DelegationEvent } from './v1-downgrade.js';
 import {
   roleCanUseTool,
@@ -1864,7 +1888,17 @@ async function handleCancelRun(req, _emitEvent, context) {
   // in-flight `sandbox_exec` registered against this connection's
   // wsState. We accept this ONLY when the runId matches a registration
   // on the same WS connection — that scoping keeps a stolen runId
-  // from a different paired client out of reach.
+  // from a different paired client out of reach on the loopback WS,
+  // where each connection owns its own wsState.
+  //
+  // The relay transport defeats connection-scoping: every paired phone
+  // shares the one `activeRelayWsState`, so a guessed runId would
+  // otherwise reach across phones. When a run was registered with an
+  // `ownerId` (the relay DO's per-phone sender id), require the cancel to
+  // arrive from the SAME phone — i.e. its DO-stamped `relaySenderId` must
+  // match. Runs with a null ownerId (loopback callers, which don't ride the
+  // relay) stay purely connection-scoped, unchanged. Closes Remote Control
+  // Surface Audit #3.
   if (!sessionId) {
     if (!runId) {
       return makeErrorResponse(
@@ -1875,9 +1909,8 @@ async function handleCancelRun(req, _emitEvent, context) {
       );
     }
     const wsState = context?.wsState;
-    const controller =
-      wsState && wsState.activeRuns instanceof Map ? wsState.activeRuns.get(runId) : null;
-    if (!controller) {
+    const run = wsState && wsState.activeRuns instanceof Map ? wsState.activeRuns.get(runId) : null;
+    if (!run) {
       return makeErrorResponse(
         req.requestId,
         'cancel_run',
@@ -1885,8 +1918,28 @@ async function handleCancelRun(req, _emitEvent, context) {
         `No active run to cancel: ${runId}`,
       );
     }
+    if (run.ownerId !== null) {
+      // The cancel must come from the same phone that started the run. The
+      // sender id is DO-stamped and trusted (a phone can't forge it). A
+      // mismatch is reported as NO_ACTIVE_RUN (not a distinct auth error) so
+      // the runId↔owner binding isn't oracle'd — a different phone can't
+      // distinguish "runId exists, other owner" from "runId doesn't exist."
+      const cancelSenderId =
+        typeof context?.relaySenderId === 'string' ? context.relaySenderId : null;
+      if (cancelSenderId !== run.ownerId) {
+        process.stderr.write(
+          `${JSON.stringify({ level: 'warn', event: 'cancel_run_runid_owner_mismatch', runId, hadSender: cancelSenderId !== null })}\n`,
+        );
+        return makeErrorResponse(
+          req.requestId,
+          'cancel_run',
+          'NO_ACTIVE_RUN',
+          `No active run to cancel: ${runId}`,
+        );
+      }
+    }
     try {
-      controller.abort();
+      run.controller.abort();
     } catch {
       // ignore — handleSandboxExec's finally clears the map entry
     }
@@ -4064,9 +4117,10 @@ async function handleSessionUnrevert(req) {
  * that provider+model is used; otherwise the session-level defaults are.
  * The adapter itself stays provider-agnostic — all policy lives here.
  *
- * The capability flag is `delegation_explorer_v1`, not `multi_agent`. Flipping
- * `multi_agent` still blocks on (a) a real daemon-side tool executor and
- * (b) at least one other role (Coder) wired.
+ * The capability flag is `delegation_explorer_v1`. `multi_agent` is also
+ * advertised (see the CAPABILITIES list) — both prerequisites it once waited
+ * on are shipped: this handler runs `makeDaemonExplorerToolExec` (real
+ * `executeToolCall`) and `handleDelegateCoder` wires the second role.
  */
 async function handleDelegateExplorer(req) {
   const sessionId = req.sessionId || req.payload?.sessionId;
@@ -4412,18 +4466,19 @@ async function handleDelegateExplorer(req) {
  * `sandboxToolProtocol`, no approval/verification policy slots), and
  * the coder kernel's `CoderToolExecResult` discriminated union has its
  * own shape rules (`errorType` feeds the mutation-failure tracker,
- * `policyPost` drives the kernel's halt guard). Explorer still runs
- * through the scaffold executor — its real tool wiring is a follow-up.
+ * `policyPost` drives the kernel's halt guard). Explorer is also fully
+ * wired (`makeDaemonExplorerToolExec` → real `executeToolCall`); the two
+ * handlers stay separate for the option-shape reasons above, not because
+ * either is still a stub.
  *
  * Provider / model resolution honours `entry.state.roleRouting.coder` —
  * set via `configure_role_routing` — and falls back to session defaults
  * otherwise. The resolved values feed both the daemon stream adapter and
  * the `modelId` option on the kernel.
  *
- * Capability flag: `delegation_coder_v1`. Flipping `multi_agent` still
- * needs (a) real explorer tool execution and (b) the v1 synthetic
- * downgrade path — both are separate follow-up slices, not blockers for
- * this handler.
+ * Capability flag: `delegation_coder_v1`. `multi_agent` is advertised too —
+ * both executors (Explorer + Coder) are real and the v1 synthetic downgrade
+ * path ships in `cli/v1-downgrade.ts`, so nothing here still blocks it.
  */
 async function handleDelegateCoder(req) {
   const sessionId = req.sessionId || req.payload?.sessionId;
@@ -5436,12 +5491,24 @@ async function handleSandboxExec(req, _emitEvent, context) {
   // arriving on the same connection can find it. Unix-socket callers
   // don't carry wsState — they skip registration and behave as before
   // (cancellation isn't reachable there anyway).
+  //
+  // The run records the per-phone relay sender id it was started under
+  // (`ownerId`, from the DO-stamped `RELAY_SENDER_FIELD` on the context). On
+  // the relay transport every phone shares one wsState, so the sessionless
+  // `cancel_run` path gates on this id to stop a guessed runId from one phone
+  // aborting another's run (Remote Control Surface Audit #3). A null id
+  // (loopback callers, which don't ride the relay) keeps the legacy
+  // connection-scoped behavior.
   const runId = typeof payload.runId === 'string' && payload.runId ? payload.runId : null;
+  const runOwnerId =
+    typeof context?.relaySenderId === 'string' && context.relaySenderId
+      ? context.relaySenderId
+      : null;
   const wsState = context?.wsState;
   let abortController = null;
   if (runId && wsState && wsState.activeRuns instanceof Map) {
     abortController = new AbortController();
-    wsState.activeRuns.set(runId, abortController);
+    wsState.activeRuns.set(runId, { controller: abortController, ownerId: runOwnerId });
   }
 
   const startedAt = Date.now();

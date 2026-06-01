@@ -21,6 +21,7 @@ import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DurableObjectState, WebSocket } from '@cloudflare/workers-types';
 import { RelaySessionDO, hashBearerForAllowlist } from './relay-do';
+import { RELAY_SENDER_FIELD } from '@push/lib/protocol-schema';
 import type { Env } from './worker-middleware';
 
 const RealResponse = globalThis.Response;
@@ -250,11 +251,64 @@ describe('RelaySessionDO forwarding (pushd ↔ phones)', () => {
       data: makeEnvelope('relay_phone_allow', { tokenHashes: [PHONE_HASH_A] }),
     });
 
-    const sendPushd = vi.spyOn(pushd, 'send');
+    const sent: string[] = [];
+    vi.spyOn(pushd, 'send').mockImplementation((data?: unknown) => {
+      if (typeof data === 'string') sent.push(data);
+    });
 
     phone.dispatch('message', { data: '{"kind":"submit_approval"}' });
 
-    expect(sendPushd).toHaveBeenCalledWith('{"kind":"submit_approval"}');
+    // The frame reaches pushd, now stamped with the per-connection sender id
+    // (Audit #3). Original fields survive; a sender id is added.
+    expect(sent).toHaveLength(1);
+    const forwarded = JSON.parse(sent[0]!.trim());
+    expect(forwarded.kind).toBe('submit_approval');
+    expect(typeof forwarded[RELAY_SENDER_FIELD]).toBe('string');
+    expect(forwarded[RELAY_SENDER_FIELD].length).toBeGreaterThan(0);
+  });
+
+  it('stamps a distinct, unforgeable sender id per phone connection (Audit #3)', () => {
+    const doInstance = makeDO();
+    const pushd = new FakeWebSocket();
+    const phoneA = new FakeWebSocket();
+    const phoneB = new FakeWebSocket();
+    doInstance.acceptPushd(pushd as unknown as WebSocket);
+    doInstance.acceptPhone(phoneA as unknown as WebSocket, PHONE_HASH_A);
+    doInstance.acceptPhone(phoneB as unknown as WebSocket, PHONE_HASH_B);
+    pushd.dispatch('message', {
+      data: makeEnvelope('relay_phone_allow', { tokenHashes: [PHONE_HASH_A, PHONE_HASH_B] }),
+    });
+
+    const sent: string[] = [];
+    vi.spyOn(pushd, 'send').mockImplementation((data?: unknown) => {
+      if (typeof data === 'string') sent.push(data);
+    });
+
+    // A phone tries to forge a sender id; the DO overwrites it.
+    phoneA.dispatch('message', { data: `{"kind":"x","${RELAY_SENDER_FIELD}":"forged"}` });
+    phoneB.dispatch('message', { data: '{"kind":"x"}' });
+
+    const idA = JSON.parse(sent[0]!.trim())[RELAY_SENDER_FIELD];
+    const idB = JSON.parse(sent[1]!.trim())[RELAY_SENDER_FIELD];
+    expect(idA).not.toBe('forged'); // forgery overwritten by the DO
+    expect(idA).not.toBe(idB); // each connection gets its own id
+  });
+
+  it('forwards a non-JSON phone frame unchanged (nothing to stamp)', () => {
+    const doInstance = makeDO();
+    const pushd = new FakeWebSocket();
+    const phone = new FakeWebSocket();
+    doInstance.acceptPushd(pushd as unknown as WebSocket);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_HASH_A);
+    pushd.dispatch('message', {
+      data: makeEnvelope('relay_phone_allow', { tokenHashes: [PHONE_HASH_A] }),
+    });
+
+    const sendPushd = vi.spyOn(pushd, 'send');
+
+    phone.dispatch('message', { data: 'not json' });
+
+    expect(sendPushd).toHaveBeenCalledWith('not json');
   });
 
   it('drops phone → pushd when phone bearer is NOT in the allowlist', () => {

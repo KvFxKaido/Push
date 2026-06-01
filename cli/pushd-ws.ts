@@ -28,18 +28,40 @@ import { verifyDeviceAttachToken, type AttachTokenRecord } from './pushd-attach-
 import { appendAuditEvent } from './pushd-audit-log.js';
 
 /**
- * Per-WS-connection mutable state. Today it tracks AbortControllers
- * for in-flight `sandbox_exec` runs so `cancel_run` arriving on the
- * SAME WS can kill the child mid-run (Phase 1.f daemon-side cancel).
+ * Per-WS-connection mutable state. Today it tracks in-flight
+ * `sandbox_exec` runs so `cancel_run` arriving on the SAME WS can kill
+ * the child mid-run (Phase 1.f daemon-side cancel).
  *
  * Scoping by connection — not globally — is deliberate: it guarantees
  * a stolen-runId attempt from a different paired client can't reach
  * across to abort someone else's run, even though the bearer would
  * have authorized either upgrade. The map lives only for the
  * connection's lifetime and is dropped on close.
+ *
+ * The relay transport breaks the one-connection-per-client assumption:
+ * every paired phone shares ONE module-level wsState (`activeRelayWsState`
+ * in pushd.ts), so connection-scoping alone can't isolate them. Each run
+ * therefore carries the `ownerId` of the phone that started it — the
+ * per-connection sender id the relay DO stamps onto every forwarded frame
+ * (`RELAY_SENDER_FIELD`), which is the only trustworthy phone identity pushd
+ * has. The sessionless `cancel_run` path requires a matching `ownerId` before
+ * it will abort an owned run. Runs registered with no owner id (loopback
+ * callers, which don't ride the relay) keep the legacy connection-scoped
+ * behavior.
  */
+export interface ActiveRun {
+  controller: AbortController;
+  /**
+   * Per-phone relay sender id the run was registered under, or null when the
+   * run didn't originate from the relay (loopback). A non-null value gates the
+   * sessionless cancel path so the relay-shared wsState can't be used to abort
+   * across phones.
+   */
+  ownerId: string | null;
+}
+
 export interface PushdWsConnectionState {
-  activeRuns: Map<string, AbortController>;
+  activeRuns: Map<string, ActiveRun>;
 }
 
 /**
@@ -92,6 +114,14 @@ export interface PushdWsAdapterDeps {
       record?: DeviceTokenRecord;
       auth?: PushdWsAuthRecord;
       wsState?: PushdWsConnectionState;
+      /**
+       * Per-phone sender id the relay DO stamped onto the forwarded frame
+       * (`RELAY_SENDER_FIELD`). Present only on relay-originated requests;
+       * scopes `sandbox_exec` run ownership so a guessed runId from another
+       * paired phone can't cancel this phone's run (Audit #3). Absent on
+       * loopback, where per-connection `wsState` already isolates runs.
+       */
+      relaySenderId?: string;
     },
   ) => Promise<unknown>;
   /** Existing add/remove session client hooks. */
@@ -551,9 +581,9 @@ export async function startPushdWs(
       // Without this, a client that drops mid-run leaves the child
       // burning CPU/disk until its 60s timeout fires. The signal lets
       // `runCommandInResolvedShell` SIGTERM the child cleanly.
-      for (const controller of wsState.activeRuns.values()) {
+      for (const run of wsState.activeRuns.values()) {
         try {
-          controller.abort();
+          run.controller.abort();
         } catch {
           /* ignore */
         }

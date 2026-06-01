@@ -54,6 +54,7 @@
 import type { DurableObjectState, WebSocket } from '@cloudflare/workers-types';
 import {
   PROTOCOL_VERSION,
+  RELAY_SENDER_FIELD,
   isRelayEnvelope,
   validateRelayEnvelope,
   type RelayEnvelope,
@@ -64,7 +65,21 @@ import type { Env } from './worker-middleware';
 
 export type RelayConnectionRole = 'pushd' | 'phone';
 
-type ConnectionMeta = { role: 'pushd' } | { role: 'phone'; bearerHash: string };
+type ConnectionMeta =
+  | { role: 'pushd' }
+  | {
+      role: 'phone';
+      bearerHash: string;
+      /**
+       * Per-connection id minted at WS upgrade, unique per phone socket even
+       * when two phones present the same bearer (e.g. the same pasted pair
+       * bundle). Stamped into every phone→pushd frame as `RELAY_SENDER_FIELD`
+       * so pushd can scope run ownership to the originating phone — the relay
+       * is the only component that sees per-connection identity. See the
+       * Remote Control Surface Audit, finding #3.
+       */
+      senderId: string;
+    };
 
 /**
  * SHA-256 of a phone bearer, base64url-encoded. Matches the hash
@@ -243,7 +258,7 @@ export class RelaySessionDO {
    */
   acceptPhone(ws: WebSocket, bearerHash: string): void {
     ws.accept();
-    this.connections.set(ws, { role: 'phone', bearerHash });
+    this.connections.set(ws, { role: 'phone', bearerHash, senderId: crypto.randomUUID() });
     this.wireConnectionLifecycle(ws);
   }
 
@@ -476,7 +491,14 @@ export class RelaySessionDO {
       }
       const pushd = this.getPushdConnection();
       if (pushd && pushd !== sender && pushd.readyState === 1) {
-        pushd.send(data as string | ArrayBuffer);
+        // Stamp the trusted per-connection sender id onto JSON frames so pushd
+        // can scope run ownership to this phone (Audit #3). Only string frames
+        // carry requests; binary frames forward raw (they can't drive a run).
+        // A phone that sets the field itself is overwritten here — the DO is
+        // the sole authority for sender identity.
+        const stamped =
+          typeof data === 'string' ? stampRelaySender(data, senderMeta.senderId) : data;
+        pushd.send(stamped as string | ArrayBuffer);
       }
     }
   }
@@ -581,4 +603,26 @@ function classifyRelayFrame(text: string): RelayEnvelope | 'drop' | null {
   if (!isRelayEnvelope(parsed)) return null;
   if (validateRelayEnvelope(parsed).length > 0) return 'drop';
   return parsed;
+}
+
+/**
+ * Inject the trusted per-connection sender id into a phone→pushd JSON frame
+ * as {@link RELAY_SENDER_FIELD}, overwriting any client-supplied value so a
+ * phone can't forge another phone's identity. Non-object or unparseable
+ * frames pass through unchanged — they can't carry a run, so there's nothing
+ * to scope (and the receiver already tolerates malformed input). pushd reads
+ * the stamped field to bind `sandbox_exec` run ownership (Audit #3).
+ */
+function stampRelaySender(text: string, senderId: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return text;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return text;
+  }
+  (parsed as Record<string, unknown>)[RELAY_SENDER_FIELD] = senderId;
+  return JSON.stringify(parsed);
 }

@@ -420,6 +420,11 @@ export async function execLocalDaemon(
   if (opts.cwd) payload.cwd = opts.cwd;
   if (opts.timeoutMs !== undefined) payload.timeoutMs = opts.timeoutMs;
 
+  // Run ownership for cross-phone cancel scoping (Remote Control Surface Audit
+  // #3) is NOT asserted by the client: the relay DO stamps a trusted
+  // per-connection sender id onto every forwarded frame, and the daemon binds
+  // the run to that. The client just sends the runId; a `cancel_run` from the
+  // same WS rides the same DO-stamped identity automatically.
   const response = await runWithBinding(
     binding,
     (request) =>

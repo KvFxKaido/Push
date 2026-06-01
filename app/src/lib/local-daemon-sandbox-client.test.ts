@@ -627,6 +627,60 @@ describe('execLocalDaemon (Phase 1.f abortSignal)', () => {
     }
   });
 
+  it('does not assert run ownership on the relay transport (DO stamps identity)', async () => {
+    // Remote Control Surface Audit #3: run ownership for cross-phone cancel
+    // scoping is established by the relay DO stamping a trusted per-connection
+    // sender id onto forwarded frames — NOT by the client. So even on a relay
+    // binding the client sends a plain runId and no attachToken; the cancel
+    // rides the same DO-stamped identity automatically.
+    const captured: { type: string; payload: Record<string, unknown> }[] = [];
+    const relayBinding: LiveDaemonBinding = {
+      params: {
+        deploymentUrl: 'https://relay.example',
+        sessionId: 'pushd-host',
+        token: 'pushd_da_relay_xxxxxxxxxxxxxxxxxxxxxxxx',
+        targetSessionId: 'sess-remote',
+        targetAttachToken: 'pushd_da_session_owner_yyyyyyyyyyyy',
+      } satisfies RelayBinding,
+      request: <T = unknown>(opts: RequestOptions): Promise<SessionResponse<T>> => {
+        captured.push({
+          type: opts.type as string,
+          payload: (opts.payload ?? {}) as Record<string, unknown>,
+        });
+        const ok = (): SessionResponse<T> =>
+          ({
+            v: PROTOCOL_VERSION,
+            kind: 'response',
+            requestId: 'r',
+            type: opts.type,
+            sessionId: null,
+            ok: true,
+            payload: { stdout: '', stderr: '', exitCode: 0, durationMs: 0, truncated: false },
+            error: null,
+          }) as unknown as SessionResponse<T>;
+        // Hold the exec response so the abort path (and its cancel_run) fires
+        // first; resolve cancel_run immediately so the close coordination lands.
+        if (opts.type === 'sandbox_exec') return new Promise<SessionResponse<T>>(() => {});
+        return Promise.resolve(ok());
+      },
+    };
+    const controller = new AbortController();
+    const promise = execLocalDaemon(relayBinding, 'sleep 30', {
+      abortSignal: controller.signal,
+      runId: 'run_relay_owned',
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    controller.abort();
+    await expect(promise).rejects.toThrow(/aborted/i);
+    await new Promise((r) => setTimeout(r, 20));
+    const execEnv = captured.find((c) => c.type === 'sandbox_exec');
+    const cancelEnv = captured.find((c) => c.type === 'cancel_run');
+    expect(execEnv?.payload.runId).toBe('run_relay_owned');
+    expect(execEnv?.payload).not.toHaveProperty('attachToken');
+    expect(cancelEnv?.payload.runId).toBe('run_relay_owned');
+    expect(cancelEnv?.payload).not.toHaveProperty('attachToken');
+  });
+
   it('dispatches cancel_run with the matching runId when the abort signal fires', async () => {
     const cs = await startCancelObservingServer();
     try {
