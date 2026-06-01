@@ -132,6 +132,49 @@ describe('evaluateHelloResponse', () => {
       assert.deepEqual(result.capabilities, []);
     }
   });
+
+  it('surfaces a present buildStamp for the freshness check', () => {
+    const result = evaluateHelloResponse({
+      protocolVersion: PROTOCOL_VERSION,
+      runtimeVersion: '0.3.0',
+      buildStamp: '0.3.0+abc123def456',
+      capabilities: ['event_v2'],
+    });
+    assert.equal(result.accepted, true);
+    if (result.accepted) {
+      assert.equal(result.buildStamp, '0.3.0+abc123def456');
+    }
+  });
+
+  it('returns buildStamp null (no extra warning) when the daemon omits it', () => {
+    // An older daemon that doesn't advertise a buildStamp can't participate in
+    // freshness self-heal. That is NOT a warnable condition on its own — the
+    // runtimeVersion warning already covers "older binary" — so buildStamp
+    // absence must add no warning of its own.
+    const result = evaluateHelloResponse({
+      protocolVersion: PROTOCOL_VERSION,
+      runtimeVersion: '0.3.0',
+      buildStamp: 42,
+      capabilities: ['event_v2'],
+    });
+    assert.equal(result.accepted, true);
+    if (result.accepted) {
+      assert.equal(result.buildStamp, null);
+      assert.deepEqual(result.warnings, []);
+    }
+  });
+
+  it('treats an empty-string buildStamp as absent', () => {
+    const result = evaluateHelloResponse({
+      protocolVersion: PROTOCOL_VERSION,
+      runtimeVersion: '0.3.0',
+      buildStamp: '',
+    });
+    assert.equal(result.accepted, true);
+    if (result.accepted) {
+      assert.equal(result.buildStamp, null);
+    }
+  });
 });
 
 describe('shouldWarnAboutUnknownEvent', () => {

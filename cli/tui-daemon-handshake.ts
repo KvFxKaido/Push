@@ -123,7 +123,18 @@ export const TUI_KNOWN_NOOP_EVENT_TYPES: ReadonlySet<string> = new Set([
  *     "daemon disconnected for unknown reason."
  */
 export type HandshakeResult =
-  | { accepted: true; runtimeVersion: string | null; capabilities: string[]; warnings: string[] }
+  | {
+      accepted: true;
+      runtimeVersion: string | null;
+      /**
+       * Code-freshness token (see cli/build-stamp.ts). Null when the daemon
+       * is too old to advertise one — in which case the caller can't compare
+       * freshness and leaves the stale-runtime self-heal disabled.
+       */
+      buildStamp: string | null;
+      capabilities: string[];
+      warnings: string[];
+    }
   | { accepted: false; reason: string };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -147,13 +158,13 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  *     advertise it. We accept and let the user keep going; the next
  *     daemon upgrade will start advertising.
  *
- * Runtime version itself is informational — the TUI doesn't pin an
- * "expected daemon runtime version" because that requires
- * coordinating two literals (TUI + daemon) that already ship from
- * the same npm package. Mismatches between the TUI and the daemon
- * built from the same source would only arise from mixing installs,
- * which is rare; if it becomes a real issue we can add the check
- * here.
+ * Runtime version itself is informational. Code freshness, however, is
+ * NOT pinned here either — `evaluateHelloResponse` stays a pure shape
+ * check. It surfaces the daemon's `buildStamp` (or null for an older
+ * daemon that doesn't advertise one) and lets the connection-lifecycle
+ * caller compare it against this process's own stamp and decide whether
+ * to drain + respawn. Keeping the policy out of this pure function is
+ * what makes the freshness decision testable without a live socket.
  */
 export function evaluateHelloResponse(payload: unknown): HandshakeResult {
   if (!isPlainObject(payload)) {
@@ -187,11 +198,19 @@ export function evaluateHelloResponse(payload: unknown): HandshakeResult {
     );
   }
 
+  let buildStamp: string | null = null;
+  if (typeof payload.buildStamp === 'string' && payload.buildStamp.length > 0) {
+    buildStamp = payload.buildStamp;
+  }
+  // No warning when buildStamp is absent: an older daemon simply can't
+  // participate in freshness self-heal, and the runtimeVersion warning above
+  // already covers "this is an older binary."
+
   const capabilities = Array.isArray(payload.capabilities)
     ? payload.capabilities.filter((c): c is string => typeof c === 'string')
     : [];
 
-  return { accepted: true, runtimeVersion, capabilities, warnings };
+  return { accepted: true, runtimeVersion, buildStamp, capabilities, warnings };
 }
 
 /**

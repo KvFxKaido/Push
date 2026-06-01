@@ -130,6 +130,7 @@ import {
 } from './skill-loader.js';
 import { ALL_CAPABILITIES } from '../lib/capabilities.js';
 import { TUI_DAEMON_CAPABILITIES } from '../lib/daemon-capabilities.js';
+import { getBuildStamp } from './build-stamp.js';
 import { isTranscriptMutationEvent } from '../lib/session-transcript-events.js';
 import { matchingRiskPatternIndex, suggestApprovalPrefix } from './tools.js';
 import { ensureRepoCommandsSeeded } from './repo-commands.js';
@@ -1522,6 +1523,16 @@ export async function runTUI(options = {}) {
   // session isn't running (cleared in `setRunState('idle')`). Audit: Codex #744.
   let daemonActiveRunId = null;
   let daemonAutoStartAttempted = false;
+  // Code-freshness self-heal state (stale-runtime detection). `daemonBuildStamp`
+  // is the connected daemon's startup stamp from the hello handshake; comparing
+  // it to this process's own stamp detects a daemon running pre-`git pull` code.
+  // `daemonStale` pauses new runs while a refresh is mid-flight; `pendingDaemonRespawn`
+  // tells the socket-close handler to respawn a fresh daemon instead of plain
+  // reconnect; `daemonRefreshInProgress` guards against overlapping refreshes.
+  let daemonBuildStamp = null;
+  let daemonStale = false;
+  let pendingDaemonRespawn = false;
+  let daemonRefreshInProgress = false;
   // Auto-reconnect state. When the daemon socket dies the TUI used to
   // permanently fall back to inline mode for the rest of the session —
   // the reconnect coordinator (`cli/tui-daemon-reconnect.ts`) replaces
@@ -1677,6 +1688,167 @@ export async function runTUI(options = {}) {
     } catch {
       /* diagnostic path must never crash TUI init */
     }
+  }
+
+  /**
+   * Code-freshness self-heal. Returns true if it detected a stale daemon (by
+   * build stamp) and kicked off a refresh — in which case the caller skips the
+   * mtime-based warn, which would be a redundant/contradictory second signal.
+   *
+   * Build-stamp drift (commit identity) is the self-heal trigger because it
+   * only flips on commit / `git pull`, not on every editor save — so it won't
+   * thrash during active local development the way the mtime check would if it
+   * drove a respawn.
+   */
+  async function maybeSelfHealStaleDaemon() {
+    try {
+      // No stamp ⇒ older daemon that can't participate; leave self-heal off and
+      // let the mtime warn cover it.
+      if (!daemonBuildStamp) return false;
+      const localStamp = await getBuildStamp();
+      if (daemonBuildStamp === localStamp) {
+        io.stderr.write(
+          `${JSON.stringify({ level: 'debug', event: 'tui_daemon_buildstamp_match', stamp: localStamp })}\n`,
+        );
+        return false;
+      }
+      io.stderr.write(
+        `${JSON.stringify({ level: 'warn', event: 'tui_daemon_buildstamp_stale', daemon: daemonBuildStamp, local: localStamp })}\n`,
+      );
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        `Stale pushd daemon detected — it is running build ${daemonBuildStamp}, but this session is build ${localStamp}. Refreshing the daemon so your work runs on current code…`,
+      );
+      await refreshDaemon({ reason: `stale buildStamp ${daemonBuildStamp} != ${localStamp}` });
+      return true;
+    } catch {
+      // Never let the freshness path crash connect — degrade to "no self-heal".
+      return false;
+    }
+  }
+
+  /** Reuse-path assessment: stamp-driven self-heal first, mtime warn as fallback. */
+  async function assessReusedDaemon() {
+    const healed = await maybeSelfHealStaleDaemon();
+    if (!healed) await warnIfReusedDaemonStale();
+  }
+
+  /**
+   * Drain the connected (stale) daemon and arrange a respawn from current code.
+   * Never kills in-flight work: the daemon self-exits only once idle, so an
+   * active run finishes on the code it started under. New runs are paused
+   * (`daemonStale`) until the fresh daemon is ready.
+   *
+   * Both the already-idle and the deferred (active-run) paths converge on the
+   * socket-close handler → `respawnFreshDaemon()`, which avoids racing the
+   * daemon's deferred self-SIGTERM.
+   */
+  async function refreshDaemon({ reason } = {}) {
+    if (daemonRefreshInProgress) return;
+    daemonRefreshInProgress = true;
+    daemonStale = true;
+    tuiState.dirty.add('footer');
+    scheduler?.schedule();
+    try {
+      const client = daemonClient;
+      if (!client?.connected) {
+        // Nothing connected to drain — e.g. it already died. Let the normal
+        // reconnect path handle it; don't strand the user in paused state.
+        daemonStale = false;
+        return;
+      }
+      let drainRes;
+      try {
+        drainRes = await client.request('drain', { reason: reason ?? null }, null, 2000);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        addTranscriptEntry(
+          tuiState,
+          'warning',
+          `Could not drain the stale daemon (${msg}). Run /daemon restart to retry, or stop pushd manually.`,
+        );
+        daemonStale = false;
+        return;
+      }
+      const idle = Boolean(drainRes?.payload?.idle);
+      const pending = Array.isArray(drainRes?.payload?.pendingRuns)
+        ? drainRes.payload.pendingRuns
+        : [];
+      // Tell the close handler to respawn fresh rather than reconnect-loop.
+      pendingDaemonRespawn = true;
+      if (idle) {
+        addTranscriptEntry(
+          tuiState,
+          'status',
+          'Draining stale daemon; respawning from current code…',
+        );
+      } else {
+        addTranscriptEntry(
+          tuiState,
+          'warning',
+          `Stale daemon has ${pending.length} active run(s) in flight; new runs are paused. It will refresh automatically once they finish.`,
+        );
+      }
+      // No proactive respawn here: the daemon self-exits when idle (now, or
+      // after the active runs settle). Its socket close fires the close
+      // handler, which drives `respawnFreshDaemon()`.
+    } finally {
+      daemonRefreshInProgress = false;
+      tuiState.dirty.add('footer');
+      scheduler?.schedule();
+    }
+  }
+
+  /**
+   * Spawn a fresh daemon from current code and reconnect, after a drained
+   * daemon has exited. Invoked from the socket-close handler when
+   * `pendingDaemonRespawn` is set. Falls back to inline (clearing `daemonStale`)
+   * if the respawn fails so the user is never stranded.
+   */
+  async function respawnFreshDaemon() {
+    pendingDaemonRespawn = false;
+    // Reset the once-only autostart guard so ensureDaemonConnected will spawn a
+    // fresh process (rather than treating autostart as already-spent).
+    daemonAutoStartAttempted = false;
+    daemonSessionId = null;
+    daemonAttachToken = null;
+    let ok = false;
+    try {
+      ok = await ensureDaemonConnected({ announce: false });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        `Fresh daemon respawn failed: ${msg}. Running inline; use /daemon restart to retry.`,
+      );
+    }
+    // Unblock either way: on success runs go to the fresh daemon; on failure
+    // they fall through to inline mode (which runs current code correctly).
+    daemonStale = false;
+    if (ok) {
+      addTranscriptEntry(
+        tuiState,
+        'status',
+        'Reconnected to a fresh pushd daemon running current code.',
+      );
+      if (sessionPersisted && state?.sessionId) {
+        try {
+          await attachExistingDaemonSession();
+        } catch {
+          /* best-effort re-attach; a fresh start_session will recover */
+        }
+      }
+    } else {
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        'Could not respawn a fresh daemon; running inline. Use /daemon restart to retry.',
+      );
+    }
+    tuiState.dirty.add('all');
+    scheduler?.schedule();
   }
 
   async function startDaemonForTui() {
@@ -1838,6 +2010,11 @@ export async function runTUI(options = {}) {
         addTranscriptEntry(tuiState, 'warning', w);
       }
 
+      // Stash the daemon's startup build stamp so the reuse-path freshness
+      // check (assessReusedDaemon) can compare it to this process's own stamp.
+      // Null for older daemons that don't advertise one — self-heal stays off.
+      daemonBuildStamp = handshake.buildStamp ?? null;
+
       daemonClient = client;
       tuiState.dirty.add('footer');
       scheduler?.schedule();
@@ -1872,6 +2049,13 @@ export async function runTUI(options = {}) {
           // on PR #664).
           daemonSessionId = null;
           daemonAttachToken = null;
+          // A drain-driven refresh exits the daemon on purpose. Respawn a
+          // fresh one from current code instead of the plain reconnect loop
+          // (which would only re-dial the now-dead socket and never spawn).
+          if (pendingDaemonRespawn) {
+            void respawnFreshDaemon();
+            return;
+          }
           scheduleDaemonReconnect({ announce: true });
           // Best-effort: tail the daemon log into the transcript so
           // the user can see why pushd died. Fire-and-forget so the
@@ -2314,9 +2498,9 @@ export async function runTUI(options = {}) {
           'Connected to pushd daemon. Sessions persist in background.',
         );
       }
-      // Reused a pre-existing daemon (not spawned here) — flag if its code
-      // predates the current source so a stale daemon isn't silently in use.
-      await warnIfReusedDaemonStale();
+      // Reused a pre-existing daemon (not spawned here). If its code predates
+      // the current source, self-heal (drain + respawn) or, failing that, warn.
+      await assessReusedDaemon();
       return true;
     }
 
@@ -2338,7 +2522,7 @@ export async function runTUI(options = {}) {
         }
         // Only the reuse path can be stale; a fresh spawn matches current
         // source by construction.
-        if (started.status === 'already-running') await warnIfReusedDaemonStale();
+        if (started.status === 'already-running') await assessReusedDaemon();
         return true;
       }
       // Spawn succeeded but the socket never answered. Show the log
@@ -3407,6 +3591,23 @@ export async function runTUI(options = {}) {
     runVisibleEmissionCount = 0;
     tuiState.dirty.add('all');
     scheduler.flush();
+
+    // ── Stale-daemon refresh in flight: pause new runs ──
+    // A drain is underway (an in-flight run is finishing on the old daemon
+    // before it refreshes). Starting a run now would land on stale code, so
+    // hold it. The daemon also rejects with DAEMON_DRAINING as a backstop.
+    if (daemonStale) {
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        'The pushd daemon is refreshing to current code; new runs are paused. Resend in a moment, once the fresh daemon is ready.',
+      );
+      setRunState('idle');
+      tuiState.activity = null;
+      tuiState.dirty.add('all');
+      scheduler.flush();
+      return;
+    }
 
     // ── Daemon mode: delegate to pushd over socket ──
     if (daemonClient?.connected) {
@@ -4700,10 +4901,36 @@ export async function runTUI(options = {}) {
       return;
     }
 
+    if (sub === 'restart' || sub === 'refresh') {
+      // Manual trigger of the same drain + respawn the stale-runtime self-heal
+      // uses. Intentionally NOT the primary path — the buildStamp check fires
+      // this automatically on a stale reuse — but useful when the user wants to
+      // force a clean daemon (e.g. after an uncommitted edit the stamp can't
+      // see, or just to be sure).
+      if (!daemonClient?.connected) {
+        // No daemon to drain. If autostart is on, spawn a fresh one; otherwise
+        // there's nothing to restart.
+        const connected = await ensureDaemonConnected({ announce: true });
+        addTranscriptEntry(
+          tuiState,
+          connected ? 'status' : 'warning',
+          connected
+            ? 'No daemon was running; started a fresh one from current code.'
+            : 'No daemon running and autostart is off. Nothing to restart.',
+        );
+        scheduler.flush();
+        return;
+      }
+      addTranscriptEntry(tuiState, 'status', 'Restarting pushd daemon…');
+      scheduler.flush();
+      await refreshDaemon({ reason: 'manual /daemon restart' });
+      return;
+    }
+
     addTranscriptEntry(
       tuiState,
       'warning',
-      `Unknown daemon subcommand: ${sub}. Try: /daemon status`,
+      `Unknown daemon subcommand: ${sub}. Try: /daemon status | /daemon restart`,
     );
     scheduler.flush();
   }
@@ -5404,6 +5631,7 @@ export async function runTUI(options = {}) {
             '  /config daemon auto|off  Toggle TUI pushd autostart',
             '  /remote status|setup|pair|enable|disable  Manage Remote relay + phone pairing',
             '  /daemon status       Show pushd connection, process, and log paths',
+            '  /daemon restart      Drain + respawn pushd from current code (auto on stale)',
             '  /theme               Show current theme',
             '  /theme list          List available themes',
             '  /theme preview [<name>]  Preview theme swatches (all themes if omitted)',
