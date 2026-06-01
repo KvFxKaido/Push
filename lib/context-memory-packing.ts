@@ -150,7 +150,9 @@ function formatRecordLines(
   detailCap = 0,
 ): string[] {
   const { record } = scored;
-  const header = `- [${record.kind} | ${record.source.kind}] ${truncateSummary(record.summary)}`;
+  // Lead with the record id so the model can `memory_expand` it straight from
+  // the packed block (the LCM recall path) without first grepping for it.
+  const header = `- [${record.id}] [${record.kind} | ${record.source.kind}] ${truncateSummary(record.summary)}`;
   const lines = [header];
   if (includeHints) {
     const hints = formatHints(record.relatedFiles, record.relatedSymbols);

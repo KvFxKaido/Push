@@ -25,6 +25,7 @@ import { detectTodoToolCall, type TodoToolCall } from './todo-tools';
 import { detectWebSearchToolCall, type WebSearchToolCall } from './web-search-tools';
 import { detectAskUserToolCall, type AskUserToolCall } from './ask-user-tools';
 import { detectArtifactToolCall, type ArtifactToolCall } from './artifact-tools';
+import { detectMemoryToolCall, type MemoryToolCall } from './memory-tools';
 import { type ActiveProvider } from './orchestrator';
 import { ALL_CAPABILITIES, type Capability } from './capabilities';
 import type { AgentRole } from '@push/lib/runtime-contract';
@@ -593,6 +594,7 @@ function getToolCallArgs(toolCall: AnyToolCall): unknown {
     case 'delegate':
     case 'web-search':
     case 'artifacts':
+    case 'memory':
       return toolCall.call.args;
     case 'scratchpad':
       return { tool: toolCall.call.tool, content: toolCall.call.content };
@@ -654,7 +656,8 @@ export type AnyToolCall =
   | { source: 'todo'; call: TodoToolCall }
   | { source: 'web-search'; call: WebSearchToolCall }
   | { source: 'ask-user'; call: AskUserToolCall }
-  | { source: 'artifacts'; call: ArtifactToolCall };
+  | { source: 'artifacts'; call: ArtifactToolCall }
+  | { source: 'memory'; call: MemoryToolCall };
 
 /**
  * Scan assistant output for any tool call (GitHub, Sandbox, Scratchpad, or delegation).
@@ -684,6 +687,10 @@ export function detectAnyToolCall(text: string): AnyToolCall | null {
   // Check create_artifact tool (artifact dispatch)
   const artifactCall = detectArtifactToolCall(text);
   if (artifactCall) return { source: 'artifacts', call: artifactCall };
+
+  // Check memory tools (memory_grep, memory_expand)
+  const memoryCall = detectMemoryToolCall(text);
+  if (memoryCall) return { source: 'memory', call: memoryCall };
 
   // Check sandbox tools (sandbox_ prefix)
   const sandboxCall = detectSandboxToolCall(text);

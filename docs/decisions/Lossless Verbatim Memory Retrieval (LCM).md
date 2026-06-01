@@ -1,6 +1,6 @@
 # Lossless Verbatim Memory Retrieval (LCM)
 
-Status: Current for Phases 0–1 (shipped 2026-06-01); Phases 2–3 Draft
+Status: Current for Phases 0–2 (shipped 2026-06-01); Phase 3 Draft
 Origin: [Context Memory and Retrieval Architecture](Context%20Memory%20and%20Retrieval%20Architecture.md) (the layer this extends), external reference: Ehrlich & Blackman, "LCM: Lossless Context Management", Voltropy PBC, arXiv 2605.04050 (Feb 2026)
 
 ## TL;DR
@@ -141,22 +141,36 @@ Remaining follow-through (separate, needs a `ROADMAP.md` entry): decide whether
 Coder/Explorer delegation briefs should also opt in once the Auditor's behavior is
 observed in production.
 
-### Phase 2 — model-facing `memory_expand` / `memory_grep` tool
+### Phase 2 — model-facing `memory_expand` / `memory_grep` tool — SHIPPED 2026-06-01
 
-Expose the kernel as read-only tools the model can call mid-turn. This is the real
-LCM escape hatch and the larger change. Required in **one PR** per the cross-surface
-guardrails:
+Read-only tools the model can call mid-turn — the real LCM escape hatch. Landed in one
+cross-surface PR:
 
-- Canonical tool spec in `lib/tool-registry.ts` (new `memory` source) + capability
-  entries in `lib/capabilities.ts`.
-- Executors on **both** surfaces (web tool-execution-runtime + CLI `tools.ts`),
-  routing through the shared kernel — trace one allowed and one denied path.
-- Read-only classification so they group in the parallel-read batch (cap 6), never
-  as a side-effecting trailing call.
-- **Symmetric structured logs** at the dispatch site:
-  `memory_expand_hit` ↔ `memory_expand_miss`, `memory_grep_hit` ↔ `memory_grep_empty`.
-- A **drift-detector test** (`cli/tests/daemon-integration.test.mjs` for
-  prompt-vs-capability sync) — a new tool without one violates the checklist.
+- **Canonical spec:** new `memory` source + `memory_grep` / `memory_expand` in
+  `lib/tool-registry.ts`; `memory:read` capability in `lib/capabilities.ts`, granted to
+  **all five roles**.
+- **Shared executor:** `lib/memory-tool-exec.ts` (`runMemoryGrep` / `runMemoryExpand`)
+  wraps the kernels, formats output, validates model args, and is the single
+  integration point both surfaces call.
+- **Both surfaces:** web detection (`app/src/lib/memory-tools.ts`) → `tool-dispatch.ts`
+  (union/cascade/arg-normalize) → `web-tool-execution-runtime.ts` `case 'memory'`; CLI
+  `cli/tools.ts` (`READ_ONLY_TOOLS` + dispatch + protocol doc). Read-only flag means
+  they auto-group in the parallel-read batch.
+- **Scope is injected from session context, never model args** — repo/branch/chat on
+  web, repo/branch via `resolveWorkspaceIdentity` on CLI — so a model can't reach
+  another repo's memory. Model args are only `pattern`/`kinds`/`limit` and `ids`.
+- **ids exposed in the packer:** `context-memory-packing.ts` now leads each record
+  line with `[mem_…]`, so any role seeing a retrieved-memory block can `memory_expand`
+  directly (the chosen design for getting ids to the model).
+- **Symmetric structured logs:** `memory_grep_hit` ↔ `memory_grep_empty`,
+  `memory_expand_hit` ↔ `memory_expand_miss`.
+- **Prompt advertising:** Orchestrator (web) + Explorer (web + CLI). The capability is
+  granted to all five roles and the packer surfaces ids in every role's memory block;
+  broadening explicit prompt advertising to Coder/Reviewer/Auditor is a noted
+  fast-follow (their prompts assemble protocols via separate per-role slots).
+- Tests: `lib/memory-tool-exec.test.ts`, `app/src/lib/memory-tools.test.ts`, packer
+  id-exposure assertion; drift test (`daemon-integration.test.mjs`) passes with the new
+  advertised==callable tools.
 
 ### Phase 3 — true verbatim immutable log (optional, the "lossless" part)
 

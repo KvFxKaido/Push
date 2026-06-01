@@ -6,7 +6,8 @@ export type ToolRegistrySource =
   | 'todo'
   | 'web-search'
   | 'ask-user'
-  | 'artifacts';
+  | 'artifacts'
+  | 'memory';
 
 export interface ToolSpec {
   canonicalName: string;
@@ -569,6 +570,31 @@ const TOOL_SPECS: readonly ToolSpec[] = [
       'Live-preview artifacts use a separate tool because they require sandbox-side orchestration.',
     exampleJson:
       '{"tool": "artifact", "args": {"kind": "static-react", "title": "Counter demo", "files": [{"path": "/App.js", "content": "export default () => <h1>Hi</h1>"}]}}',
+  },
+  {
+    canonicalName: 'memory_grep',
+    publicName: 'memory_grep',
+    source: 'memory',
+    readOnly: true,
+    statusLabel: 'Searching memory...',
+    protocolSignature: 'memory_grep(pattern, kinds?, limit?)',
+    protocolDescription:
+      'Search persisted memory records (prior decisions, findings, verification output) ' +
+      'by case-insensitive substring; returns matches with their record id and a text ' +
+      'snippet — use memory_expand on an id for the full record',
+    exampleJson: '{"tool": "memory_grep", "args": {"pattern": "auth refresh"}}',
+  },
+  {
+    canonicalName: 'memory_expand',
+    publicName: 'memory_expand',
+    source: 'memory',
+    readOnly: true,
+    statusLabel: 'Recalling memory...',
+    protocolSignature: 'memory_expand(ids)',
+    protocolDescription:
+      'Retrieve the full verbatim text of memory records by id (ids come from memory_grep ' +
+      'results or the [mem_…] tags in retrieved-memory blocks)',
+    exampleJson: '{"tool": "memory_expand", "args": {"ids": ["mem_coder_abc"]}}',
   },
 ] as const;
 

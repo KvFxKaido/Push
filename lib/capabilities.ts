@@ -44,7 +44,8 @@ export type Capability =
   | 'todo' // Read/write the model's structured todo list
   | 'web:search' // Search the web for current information
   | 'user:ask' // Ask the user a structured question
-  | 'artifacts:write'; // Create renderable artifacts (HTML/React/Mermaid/file-tree)
+  | 'artifacts:write' // Create renderable artifacts (HTML/React/Mermaid/file-tree)
+  | 'memory:read'; // Search/recall persisted typed-memory records (verbatim)
 
 /** All known capabilities (for validation/iteration). */
 export const ALL_CAPABILITIES: readonly Capability[] = [
@@ -68,6 +69,7 @@ export const ALL_CAPABILITIES: readonly Capability[] = [
   'web:search',
   'user:ask',
   'artifacts:write',
+  'memory:read',
 ];
 
 // ---------------------------------------------------------------------------
@@ -144,6 +146,11 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
 
   // Web search
   web_search: ['web:search'],
+
+  // Memory retrieval (read-only). Available to every role: the model can grep
+  // persisted records by substring and expand them to verbatim text.
+  memory_grep: ['memory:read'],
+  memory_expand: ['memory:read'],
 
   // Ask user
   ask_user: ['user:ask'],
@@ -397,6 +404,7 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
     'web:search',
     'user:ask',
     'artifacts:write',
+    'memory:read',
   ]),
 
   // Explorer is the read-only investigator. The grant is intentionally
@@ -410,7 +418,13 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
   // enforce capabilities; after the step-6 runtime invariant lands
   // the grant has to match what the registry actually exposes, or
   // PR-focused investigations fail with ROLE_CAPABILITY_DENIED.
-  explorer: new Set<Capability>(['repo:read', 'pr:read', 'workflow:read', 'web:search']),
+  explorer: new Set<Capability>([
+    'repo:read',
+    'pr:read',
+    'workflow:read',
+    'web:search',
+    'memory:read',
+  ]),
 
   coder: new Set<Capability>([
     'repo:read',
@@ -431,6 +445,7 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
     'web:search',
     'user:ask',
     'artifacts:write',
+    'memory:read',
   ]),
 
   // Reviewer grants include `web:search` because the deep-reviewer
@@ -440,9 +455,9 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
   // deep-reviewer didn't opt in to runtime role enforcement; closed
   // here so the kernel-promoted role check below can be turned on for
   // every read-only agent including deep-reviewer.
-  reviewer: new Set<Capability>(['repo:read', 'pr:read', 'web:search']),
+  reviewer: new Set<Capability>(['repo:read', 'pr:read', 'web:search', 'memory:read']),
 
-  auditor: new Set<Capability>(['repo:read']),
+  auditor: new Set<Capability>(['repo:read', 'memory:read']),
 };
 
 /**
@@ -669,6 +684,7 @@ export const CAPABILITY_LABELS: Readonly<Record<Capability, string>> = {
   'web:search': 'search the web',
   'user:ask': 'ask questions',
   'artifacts:write': 'create artifacts',
+  'memory:read': 'recall prior memory',
 };
 
 /**

@@ -11,9 +11,10 @@
 
 import { getToolCanonicalNames } from './tool-registry';
 
-/** The canonical set of tools the Explorer is allowed to use (read-only + web search). */
+/** The canonical set of tools the Explorer is allowed to use (read-only + web search + memory recall). */
 export const EXPLORER_ALLOWED_TOOLS = new Set([
   ...getToolCanonicalNames({ source: 'github', readOnly: true }),
   ...getToolCanonicalNames({ source: 'sandbox', readOnly: true }),
+  ...getToolCanonicalNames({ source: 'memory', readOnly: true }),
   'web_search',
 ]);
