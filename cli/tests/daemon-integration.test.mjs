@@ -449,7 +449,13 @@ describe('get_session_snapshot (remote session status packet)', () => {
       state,
       attachToken,
       activeRunId: 'run_parent',
-      pendingApproval: { approvalId: 'appr_snapshot', runId: 'run_parent' },
+      pendingApproval: {
+        approvalId: 'appr_snapshot',
+        runId: 'run_parent',
+        kind: 'run_shell',
+        title: 'Approve run_shell',
+        summary: 'rm -rf build/',
+      },
     });
 
     const response = await handleRequest(
@@ -481,9 +487,14 @@ describe('get_session_snapshot (remote session status packet)', () => {
       type: 'assistant_turn',
       cancellable: true,
     });
+    // #746: the snapshot surfaces the approval display context so a reconnect
+    // pane matches the live approval_required pane.
     assert.deepEqual(response.payload.pendingApproval, {
       approvalId: 'appr_snapshot',
       runId: 'run_parent',
+      kind: 'run_shell',
+      title: 'Approve run_shell',
+      summary: 'rm -rf build/',
     });
     assert.equal(response.payload.transcript.lastSeq, 2);
     assert.equal(response.payload.transcript.recentEvents.length, 1);
@@ -527,6 +538,41 @@ describe('get_session_snapshot (remote session status packet)', () => {
     // No foreground run descriptor — the in-flight work is background.
     assert.equal(response.payload.activeRun, null);
     assert.deepEqual(response.payload.session.backgroundWork, { delegations: 1, graphs: 1 });
+  });
+
+  it('returns null approval display fields when the entry lacks them (pre-#746 back-compat)', async () => {
+    const sessionId = makeSessionId();
+    const attachToken = 'pushd_test_snapshot_legacy_appr';
+    const state = createSessionState({
+      sessionId,
+      attachToken,
+      provider: 'ollama',
+      model: 'legacy-test',
+      cwd: tmpRoot,
+      messages: [{ role: 'system', content: 'system' }],
+    });
+    await saveSessionState(state);
+    // Entry shaped like an older daemon that only tracked approvalId + runId.
+    __setActiveSessionForTesting(sessionId, {
+      state,
+      attachToken,
+      activeRunId: 'run_legacy',
+      pendingApproval: { approvalId: 'appr_legacy', runId: 'run_legacy' },
+    });
+
+    const response = await handleRequest(
+      makeRequest('get_session_snapshot', { sessionId, attachToken }),
+      () => {},
+    );
+
+    assert.equal(response.ok, true);
+    assert.deepEqual(response.payload.pendingApproval, {
+      approvalId: 'appr_legacy',
+      runId: 'run_legacy',
+      kind: null,
+      title: null,
+      summary: null,
+    });
   });
 
   it('lazy-loads persisted sessions and rejects wrong attach tokens', async () => {

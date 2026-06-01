@@ -963,6 +963,12 @@ export function __setDelegateExplorerHooksForTesting(hooks = null) {
 function buildApprovalFn(sessionId, entry, runId) {
   return async (tool, detail) => {
     const approvalId = makeApprovalId();
+    // Display fields, computed once and shared between the `approval_required`
+    // event payload and the persisted `entry.pendingApproval` so a reconnect
+    // snapshot can rebuild a faithful pane (see below + handleGetSessionSnapshot).
+    const approvalKind = tool?.tool || 'tool_execution';
+    const approvalTitle = `Approve ${tool?.tool || 'action'}`;
+    const approvalSummary = typeof detail === 'string' ? detail : JSON.stringify(detail || {});
 
     const approvalPromise = new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -978,14 +984,29 @@ function buildApprovalFn(sessionId, entry, runId) {
       // (which is the parent for delegations, and null for task-graph
       // nodes), making client-side correlation impossible (codex P1
       // on PR #282).
-      entry.pendingApproval = { approvalId, resolve, reject, timer, runId };
+      //
+      // Also persist the display fields (kind/title/summary). A client that
+      // reconnects while an approval is pending — with the `approval_required`
+      // event already outside its replay window — rebuilds the pane from the
+      // snapshot's `pendingApproval`; without these it could only show a
+      // generic "waiting for approval" pane (#746).
+      entry.pendingApproval = {
+        approvalId,
+        resolve,
+        reject,
+        timer,
+        runId,
+        kind: approvalKind,
+        title: approvalTitle,
+        summary: approvalSummary,
+      };
     });
 
     const approvalPayload = {
       approvalId,
-      kind: tool?.tool || 'tool_execution',
-      title: `Approve ${tool?.tool || 'action'}`,
-      summary: typeof detail === 'string' ? detail : JSON.stringify(detail || {}),
+      kind: approvalKind,
+      title: approvalTitle,
+      summary: approvalSummary,
       options: ['approve', 'deny'],
     };
     await appendSessionEvent(entry.state, 'approval_required', approvalPayload, runId);
@@ -1805,6 +1826,22 @@ async function handleGetSessionSnapshot(req) {
         runId:
           typeof entry.pendingApproval.runId === 'string' && entry.pendingApproval.runId
             ? entry.pendingApproval.runId
+            : null,
+        // Display context so a reconnecting client renders the same pane as the
+        // live `approval_required` event, not a generic fallback (#746). Null
+        // when absent (e.g. a pre-#746 daemon's in-memory entry); the client
+        // falls back to a generic summary in that case.
+        kind:
+          typeof entry.pendingApproval.kind === 'string' && entry.pendingApproval.kind
+            ? entry.pendingApproval.kind
+            : null,
+        title:
+          typeof entry.pendingApproval.title === 'string' && entry.pendingApproval.title
+            ? entry.pendingApproval.title
+            : null,
+        summary:
+          typeof entry.pendingApproval.summary === 'string' && entry.pendingApproval.summary
+            ? entry.pendingApproval.summary
             : null,
       }
     : null;

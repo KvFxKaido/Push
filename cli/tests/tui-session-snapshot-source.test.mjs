@@ -67,6 +67,18 @@ describe('TUI session snapshot source guards', () => {
       /daemonApprovalId: approvalId/,
       'snapshot-created approval panes must stay identifiable as daemon approvals',
     );
+    // #746: the snapshot pane consumes the approval display context (kind /
+    // summary / title) the daemon now sends, instead of a hardcoded generic.
+    assert.match(
+      src,
+      /pendingApproval\.summary/,
+      'snapshot approval pane should use the daemon-provided summary (#746)',
+    );
+    assert.match(
+      src,
+      /pendingApproval\.kind/,
+      'snapshot approval pane should use the daemon-provided kind (#746)',
+    );
     assert.match(
       src,
       /'submit_approval'/,

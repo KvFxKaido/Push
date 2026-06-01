@@ -96,6 +96,13 @@ Those fields can be added once the base contract is in use.
   pendingApproval: {
     approvalId: string;
     runId: string | null;
+    // Display context mirroring the live `approval_required` event so a client
+    // that reconnects with the event outside its replay window rebuilds the
+    // same pane, not a generic one (#746). Null when a (pre-#746) daemon's
+    // in-memory entry lacks them; the client falls back to a generic summary.
+    kind: string | null;
+    title: string | null;
+    summary: string | null;
   } | null;
   transcript: {
     lastSeq: number;
