@@ -211,6 +211,38 @@ describe('packRetrievedMemory', () => {
     expect(result.sections.taskMemory.packed.map((r) => r.record.id)).toEqual(['top', 'second']);
   });
 
+  it('preserves newlines and indentation in surfaced detail', () => {
+    const multiline = 'line one\n  indented two\nline three';
+    const result = packRetrievedMemory(
+      [makeScored('a', 'verification summary', { kind: 'verification_result', detail: multiline })],
+      { includeTopDetail: true },
+    );
+
+    expect(result.block).toContain('detail: line one');
+    // Indentation and line breaks survive rather than collapsing to single spaces.
+    expect(result.block).toContain('  indented two');
+    expect(result.block).toContain('line three');
+    // charsUsed stays consistent with the rendered block (budget accounting intact).
+    expect(result.sections.verification.charsUsed).toBe(result.sections.verification.block.length);
+  });
+
+  it('does not surface detail when the top-ranked record lacks it, even if a lower record has detail', () => {
+    const result = packRetrievedMemory(
+      [
+        makeScored('top', 'Top-ranked outcome with no detail', { kind: 'task_outcome' }),
+        makeScored('second', 'Lower-ranked outcome', {
+          kind: 'task_outcome',
+          detail: 'Detail that must not be promoted to the top slot.',
+        }),
+      ],
+      { includeTopDetail: true },
+    );
+
+    expect(result.sections.taskMemory.packed.map((r) => r.record.id)).toEqual(['top', 'second']);
+    expect(result.block).not.toContain('detail:');
+    expect(result.block).not.toContain('must not be promoted');
+  });
+
   it('respects a custom detailCap', () => {
     const longDetail = 'D'.repeat(400);
     const result = packRetrievedMemory(

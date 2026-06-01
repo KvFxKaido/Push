@@ -79,6 +79,17 @@ function truncateSummary(summary: string, cap = PER_RECORD_SUMMARY_CAP): string 
   return `${trimmed.slice(0, Math.max(0, cap - 1)).trimEnd()}…`;
 }
 
+/**
+ * Cap `detail` without normalizing internal whitespace. Unlike `truncateSummary`,
+ * this preserves newlines and indentation so command output, diffs, and stack
+ * traces stay structurally readable when surfaced verbatim via `includeTopDetail`.
+ */
+function truncateDetail(detail: string, cap: number): string {
+  const trimmed = detail.trim();
+  if (trimmed.length <= cap) return trimmed;
+  return `${trimmed.slice(0, Math.max(0, cap - 1)).trimEnd()}…`;
+}
+
 function formatHints(files?: string[], symbols?: string[]): string | null {
   const parts: string[] = [];
   if (files && files.length > 0) {
@@ -146,8 +157,15 @@ function formatRecordLines(
     if (hints) lines.push(`    ${hints}`);
   }
   if (detailCap > 0 && record.detail) {
-    const detail = truncateSummary(record.detail, detailCap);
-    if (detail) lines.push(`    detail: ${detail}`);
+    const detail = truncateDetail(record.detail, detailCap);
+    if (detail) {
+      // Emit each physical line as its own array element so budget accounting
+      // (line.length + 1 per element) matches the final newline-join exactly,
+      // while preserving the detail's original line structure.
+      const [first, ...rest] = detail.split('\n');
+      lines.push(`    detail: ${first}`);
+      for (const line of rest) lines.push(`    ${line}`);
+    }
   }
   return lines;
 }
@@ -196,10 +214,12 @@ function packSection(
   const recordLines: string[] = [];
   let usedChars = tagOverhead;
 
-  for (const scored of ranked) {
-    // Only the first record actually packed into this section is "top-ranked"
-    // and eligible for inline detail.
-    const wantDetail = detailCap > 0 && packed.length === 0 && Boolean(scored.record.detail);
+  for (let i = 0; i < ranked.length; i++) {
+    const scored = ranked[i];
+    // Detail is reserved strictly for the section's single highest-ranked record
+    // (rank index 0). If that record lacks detail or doesn't fit, no lower-ranked
+    // record inherits the slot — keeping the "top-ranked" contract unambiguous.
+    const wantDetail = detailCap > 0 && i === 0 && Boolean(scored.record.detail);
     let lines = formatRecordLines(scored, includeHints, wantDetail ? detailCap : 0);
     let cost = lines.reduce((sum, line) => sum + line.length + 1, 0);
     if (wantDetail && usedChars + cost > budget) {

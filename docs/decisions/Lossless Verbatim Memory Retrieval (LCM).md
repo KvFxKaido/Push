@@ -1,6 +1,6 @@
 # Lossless Verbatim Memory Retrieval (LCM)
 
-Status: Draft, kernel prototype landed, added 2026-06-01
+Status: Current for Phases 0–1 (shipped 2026-06-01); Phases 2–3 Draft
 Origin: [Context Memory and Retrieval Architecture](Context%20Memory%20and%20Retrieval%20Architecture.md) (the layer this extends), external reference: Ehrlich & Blackman, "LCM: Lossless Context Management", Voltropy PBC, arXiv 2605.04050 (Feb 2026)
 
 ## TL;DR
@@ -96,10 +96,22 @@ record's `detail`, exactly as the parent doc specified. Shipped behind the opt-i
 `MemoryPackOptions.includeTopDetail` flag (`detailCap` default 600 chars), with a
 summary-only fallback when detail would overflow the section budget so a record is
 never dropped for carrying detail. **Off by default** — existing delegation-brief
-sizes are unchanged until a caller opts in. Covered by four new cases in
-`app/src/lib/context-memory-packing.test.ts` (default-off, top-ranked-only,
-custom-cap, overflow-fallback). The parent doc's "Prompt Packing Model" note is
-flipped to shipped.
+sizes are unchanged until a caller opts in.
+
+Two policy decisions worth pinning (both surfaced in PR #749 review):
+
+- **Strict top-ranked eligibility.** Only the section's single highest-ranked record
+  (rank index 0) may carry detail. If that record lacks `detail` or doesn't fit, no
+  lower-ranked record inherits the slot — the contract is unambiguous rather than
+  "best available record with detail".
+- **Whitespace-preserving truncation.** `detail` is capped via `truncateDetail`, which
+  preserves newlines/indentation (unlike `truncateSummary`'s `\s+`→space collapse), so
+  command output / diffs / stack traces stay structurally readable. Each physical line
+  is emitted as its own packed line to keep char-budget accounting exact.
+
+Covered by six cases in `app/src/lib/context-memory-packing.test.ts` (default-off,
+top-ranked-only, top-lacks-detail-no-inherit, whitespace-preservation, custom-cap,
+overflow-fallback). The parent doc's "Prompt Packing Model" note is flipped to shipped.
 
 Remaining follow-through (separate, needs a `ROADMAP.md` entry): pick the call-sites
 that should opt in (delegation briefs via `buildRetrievedMemoryKnownContext`, Auditor)
