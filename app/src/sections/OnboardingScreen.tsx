@@ -9,8 +9,15 @@ import {
   HubControlGlow,
 } from '@/components/chat/hub-styles';
 import { PageScaffold } from '@/components/layout';
+import { ChatBackgroundGlow } from '@/components/chat/ChatBackgroundGlow';
 import { PushMarkIcon } from '@/components/icons/push-custom-icons';
+import { DEFAULT_REPO_APPEARANCE, getRepoAppearanceColorHex } from '@/lib/repo-appearance';
 import type { GitHubUser } from '@/types';
+
+// Ambient glow for the accountless chrome surfaces. No repo context here,
+// so it borrows the default repo-appearance accent — the same cool wash the
+// chat surface uses when a repo hasn't customized its color.
+const CHROME_GLOW_COLOR = getRepoAppearanceColorHex(DEFAULT_REPO_APPEARANCE.color);
 
 interface OnboardingScreenProps {
   onConnect: (pat: string) => Promise<boolean>;
@@ -77,7 +84,12 @@ export function OnboardingScreen({
   };
 
   return (
-    <PageScaffold width="sm" align="center" className="px-6">
+    <PageScaffold
+      width="sm"
+      align="center"
+      className="px-6"
+      backdrop={<ChatBackgroundGlow active color={CHROME_GLOW_COLOR} />}
+    >
       <div className="space-y-6">
         {/* Logo + tagline */}
         <div className="text-center">
