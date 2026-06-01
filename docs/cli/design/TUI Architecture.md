@@ -180,7 +180,11 @@ function createRenderScheduler(renderFn) {
 
 ### 4. Screen Buffer Abstraction
 
-All output is collected in a buffer and flushed in one write:
+All output is collected in a buffer and flushed in one write. (This sketch is
+illustrative; the real `createScreenBuffer` in `cli/tui-renderer.ts` does
+per-cell diffing and accepts an injectable `writeOut` sink — defaulting to
+`process.stdout` — so the TUI's headless test harness can capture frames. See
+the TUI Decomposition Phase 0 seam.)
 
 ```javascript
 function createScreenBuffer() {

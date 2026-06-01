@@ -1,8 +1,8 @@
 # TUI Decomposition — Testability Seam and Daemon Session Controller
 
-Date: 2026-05-31
-Status: **Draft** (design-in-motion; not ROADMAP-tracked yet — implementation
-commitment needs a `ROADMAP.md` entry per `docs/decisions/README.md`).
+Date: 2026-05-31 (Phase 0 shipped 2026-06-01)
+Status: **Current** — Phase 0 (testability seam) shipped; now ROADMAP-tracked
+("TUI Decomposition" in the active cycle). Phases 1–2 remain planned.
 Owner: Push
 
 Sketch for decomposing the `runTUI` monolith. Came out of PR #740 (TUI addressable
@@ -56,7 +56,36 @@ Phase 1  Extract DaemonSessionController (owns state + lifecycle + verbs)    ←
 Phase 2  (optional) Command-handler module                                   ← polish
 ```
 
-### Phase 0 — Testability seam (highest value, lowest risk)
+### Phase 0 — Testability seam (highest value, lowest risk) — ✅ shipped 2026-06-01
+
+**What landed** (matches the plan below):
+
+- `cli/tui-io.ts` — a `TuiIo` seam (stdin/stdout/stderr + signal/exit hooks).
+  `runTUI` routes all 37 `process.*` references through `options.io`, defaulting
+  to `createDefaultTuiIo()` (identical prod behavior). The renderer's frame
+  flush (`createScreenBuffer` in `cli/tui-renderer.ts`) takes an injectable
+  output sink so headless frames don't spew ANSI into the test/TAP stream.
+- `options.deps` — injectable `tryConnect` (daemon-client factory) + `loadConfig`
+  / `listSessions`, so a harness supplies a stub client (no socket/spawn) and a
+  deterministic startup (no disk, no resume modal). **Scope note:** only the
+  bootstrap `listSessions` is routed through `deps`; the resume-modal session
+  ops (delete/rename, mid-closure) still use bare imports. That's intentional
+  for Phase 0 (the verb tests never open the modal) — those call sites are
+  Phase-1 grafting points, surfaced here rather than left implicit.
+- Two test-only hooks: `options.onState` (live `tuiState`/`composer` access) and
+  `options.onInputReady` (fires after the `data` listener is wired — polling the
+  earlier "Connected" status raced registration and dropped keystrokes).
+- `cli/tests/tui-driver.mjs` — the headless harness (fake stdin, capture stdout,
+  stub daemon client recording every `request()`).
+- `cli/tests/tui-session-verbs.test.mjs` — characterization tests pinning the
+  #740 verbs via the real input→dispatch→send path: `/revert n`→`session_revert
+  {turns}`, `/unrevert`→`session_unrevert`, `/children`→`list_children
+  {includeEventDerived:true}`, `/compact`→`session_summarize {preserveTurns:6}`,
+  and a `NOTHING_TO_UNREVERT` rejection rendering as a **status, not an error**.
+
+Verified: full CLI suite green (+6), cross-surface typecheck clean, and a live
+terminal-MCP smoke of the real (prod io-default) TUI — startup render,
+interactive `/children` dispatch, clean Ctrl+D teardown.
 
 **The cut:** thread IO + injectable dependencies through the existing `options`
 param instead of reaching for `process.*` and constructing collaborators inline.

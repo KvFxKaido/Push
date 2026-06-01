@@ -332,7 +332,14 @@ type Op = { kind: 'raw'; text: string } | ({ kind: 'line' } & LineEntry);
  * baseline, so an aborted partial frame still produces correct diffs on
  * the next flush.
  */
-export function createScreenBuffer(): ScreenBuffer {
+export function createScreenBuffer(
+  // Output sink for flushed frames. Defaults to the real stdout (behavior
+  // unchanged); a headless harness passes its capture stdout via the TUI's
+  // `options.io` seam so frames don't spew ANSI into the test/TAP stream.
+  writeOut: (chunk: string) => void = (chunk) => {
+    process.stdout.write(chunk);
+  },
+): ScreenBuffer {
   let ops: Op[] = [];
   let prevLines = new Map<string, LineEntry>();
 
@@ -403,7 +410,7 @@ export function createScreenBuffer(): ScreenBuffer {
       }
     }
 
-    if (out) process.stdout.write(out);
+    if (out) writeOut(out);
     prevLines = newLines;
     ops = [];
   }
