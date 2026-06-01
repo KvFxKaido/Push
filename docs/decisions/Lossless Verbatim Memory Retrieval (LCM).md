@@ -1,6 +1,8 @@
 # Lossless Verbatim Memory Retrieval (LCM)
 
-Status: Current for Phases 0–2 (shipped 2026-06-01); Phase 3 Draft
+Status: Current for Phases 0–2 + follow-through part a — web Coder (delegated) +
+Deep-Reviewer memory routing (shipped 2026-06-01). Background coder-job memory
+deferred (no Worker-side store) and Phase 3 (verbatim log) remain Draft.
 Origin: [Context Memory and Retrieval Architecture](Context%20Memory%20and%20Retrieval%20Architecture.md) (the layer this extends), external reference: Ehrlich & Blackman, "LCM: Lossless Context Management", Voltropy PBC, arXiv 2605.04050 (Feb 2026)
 
 ## TL;DR
@@ -170,11 +172,16 @@ cross-surface PR:
   backed by `cli/tools.ts`'s memory-capable `executeToolCall`. The **web Coder** and
   **web Deep-Reviewer** are now wired too (2026-06-01, follow-through part a):
   `buildCoderToolExec` accepts a `memory` source via an injected scope-bound
-  `executeMemory` (both web Coder paths thread repo/branch/chat scope — the background
-  coder-job from its inputs, the delegated Coder through the delegation envelope), and
-  the Deep-Reviewer (whose `WebToolExecutionRuntime` exec already routed `memory`) now
-  advertises it. The web Coder still runs `allowedRepo: ''` for GitHub tools by design —
-  the threaded scope is memory READ-scope only. The Auditor is
+  `executeMemory`. The **delegated** web Coder threads repo/branch/chat scope through
+  the delegation envelope (from both orchestrator handlers); the Deep-Reviewer (whose
+  `WebToolExecutionRuntime` exec already routed `memory`) advertises it when a repo
+  scope is present. The web Coder still runs `allowedRepo: ''` for GitHub tools by
+  design — the threaded scope is memory READ-scope only. The **background coder-job**
+  (Worker/DO) is *deliberately not wired*: `getDefaultMemoryStore()` is an in-memory
+  singleton populated per-runtime, and a fresh DO isolate starts empty (nothing
+  populates it the way the browser session does), so advertising there would be a
+  non-functional tool surface — deferred until a Worker-side persistent store exists.
+  Advertising is gated to match executor support on every surface. The Auditor is
   single-shot (no tool loop) so it is never advertised — it consumes memory via the
   injected retrieved-memory block (#750). Capability is granted to all five roles and
   the packer surfaces `[mem_…]` ids in every role's memory block regardless. The

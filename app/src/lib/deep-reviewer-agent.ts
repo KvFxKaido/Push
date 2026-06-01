@@ -87,8 +87,11 @@ export async function runDeepReviewer(
     detectAnyToolCall,
     webSearchToolProtocol: WEB_SEARCH_TOOL_PROTOCOL,
     // The web reviewer's executor (WebToolExecutionRuntime) supports the
-    // `memory` source and `reviewer` holds `memory:read`, so advertise it (LCM).
-    memoryToolProtocol: MEMORY_TOOL_PROTOCOL,
+    // `memory` source and `reviewer` holds `memory:read` — but the memory case
+    // requires an active repo (NO_ACTIVE_REPO otherwise). Advertise only when a
+    // repo scope is present, so a diff-only review without a repo doesn't get an
+    // advertised-but-denied tool (LCM; Codex P2 on #754).
+    memoryToolProtocol: allowedRepo ? MEMORY_TOOL_PROTOCOL : undefined,
   };
 
   return runDeepReviewerLib(diff, libOptions, callbacks);

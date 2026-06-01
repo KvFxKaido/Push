@@ -46,9 +46,6 @@ export interface BuildCoderJobServicesArgs {
   activeProvider: string;
   activeModel: string | undefined;
   sandboxId: string;
-  /** Scope-bound memory executor (LCM). Built by the caller from the job's
-   * repo/branch/chat so the model's args never carry scope. */
-  executeMemory?: (toolName: string, args: Record<string, unknown>) => Promise<{ text: string }>;
 }
 
 export function buildCoderJobServices(
@@ -66,7 +63,6 @@ export function buildCoderJobServices(
     tracing: createNoOpTracingAdapter(),
     executeSandboxToolCall: args.executor.executeSandboxToolCall,
     executeWebSearch: args.executor.executeWebSearch,
-    executeMemory: args.executeMemory,
     sandboxStatus: args.executor.sandboxStatus,
     detectSandboxToolCall: args.detectors.detectSandboxToolCall,
     detectWebSearchToolCall: args.detectors.detectWebSearchToolCall,

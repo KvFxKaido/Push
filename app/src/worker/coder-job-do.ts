@@ -44,7 +44,6 @@ import {
   type CoderTurnContext,
 } from '@push/lib/coder-agent-bindings';
 import { CapabilityLedger, ROLE_CAPABILITIES } from '@push/lib/capabilities';
-import { createMemoryToolExecutor } from '@push/lib/memory-tool-exec';
 import type {
   AcceptanceCriterion,
   AgentRole,
@@ -65,7 +64,6 @@ import { buildApprovalModeBlock } from '@/lib/approval-mode';
 import { buildCoderDelegationBrief } from '@/lib/role-context';
 import { getSandboxToolProtocol } from '@/lib/sandbox-tool-detection';
 import { WEB_SEARCH_TOOL_PROTOCOL } from '@/lib/web-search-tools';
-import { MEMORY_TOOL_PROTOCOL } from '@/lib/memory-tools';
 import type { Env } from './worker-middleware';
 import { SUPPORTED_AGENT_JOB_ROLES } from './agent-job-roles';
 import {
@@ -724,13 +722,13 @@ export class CoderJob {
         activeProvider: input.provider,
         activeModel: input.model,
         sandboxId,
-        // Memory scope is the job's repo/branch/chat from session context —
-        // never model args — so a Coder can't recall another repo's memory.
-        executeMemory: createMemoryToolExecutor({
-          repoFullName: input.repoFullName,
-          branch: input.branch,
-          chatId: input.chatId,
-        }),
+        // NOTE: memory tools are intentionally NOT wired for background jobs.
+        // `getDefaultMemoryStore()` is an in-memory singleton populated within a
+        // runtime; the browser session accumulates records and the delegated
+        // Coder reads them, but this Worker/DO isolate starts empty and nothing
+        // populates it — so advertising memory here would be a non-functional
+        // (always-empty) tool surface. Deferred until a Worker-side persistent
+        // store (KV/DO/R2) is wired — tracked under "LCM follow-through".
       });
 
       const options: CoderAgentOptions<AnyToolCall, ChatCard> = {
@@ -749,9 +747,8 @@ export class CoderJob {
         ...buildCoderDetectors(services),
         webSearchToolProtocol: WEB_SEARCH_TOOL_PROTOCOL,
         sandboxToolProtocol: getSandboxToolProtocol(),
-        // Memory is always wired for background jobs (repo/branch/chat scope in
-        // hand), so advertise it (LCM).
-        memoryToolProtocol: MEMORY_TOOL_PROTOCOL,
+        // Memory not advertised for background jobs — no Worker-side store (see
+        // the executeMemory note above). Advertising must match executor support.
         verificationPolicyBlock: formatVerificationPolicyBlock(input.verificationPolicy),
         approvalModeBlock: buildApprovalModeBlock('full-auto'),
         evaluateAfterModel: buildCoderEvaluateAfterModel(services),
