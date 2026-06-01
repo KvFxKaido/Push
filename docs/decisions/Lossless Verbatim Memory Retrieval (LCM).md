@@ -168,10 +168,13 @@ cross-surface PR:
   web Orchestrator + Explorer (#751), and the CLI Orchestrator + Coder (via
   `TOOL_PROTOCOL`) + Explorer + Deep-Reviewer (via `READ_ONLY_TOOL_PROTOCOL`) — all
   backed by `cli/tools.ts`'s memory-capable `executeToolCall`. The **web Coder** and
-  **web Deep-Reviewer** are intentionally *not* advertised yet: their executors
-  (`buildCoderToolExec`, the web reviewer exec) only route `sandbox`/`web-search`, and
-  the web Coder runs with `allowedRepo: ''`, so they need the `memory` source routed +
-  repo/branch/chat scope threaded from the delegation envelope first. The Auditor is
+  **web Deep-Reviewer** are now wired too (2026-06-01, follow-through part a):
+  `buildCoderToolExec` accepts a `memory` source via an injected scope-bound
+  `executeMemory` (both web Coder paths thread repo/branch/chat scope — the background
+  coder-job from its inputs, the delegated Coder through the delegation envelope), and
+  the Deep-Reviewer (whose `WebToolExecutionRuntime` exec already routed `memory`) now
+  advertises it. The web Coder still runs `allowedRepo: ''` for GitHub tools by design —
+  the threaded scope is memory READ-scope only. The Auditor is
   single-shot (no tool loop) so it is never advertised — it consumes memory via the
   injected retrieved-memory block (#750). Capability is granted to all five roles and
   the packer surfaces `[mem_…]` ids in every role's memory block regardless. The
