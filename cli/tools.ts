@@ -910,6 +910,8 @@ Available tools:
 - list_dir(path?) — list files/directories
 - search_files(pattern, path?, max_results?) — text search in workspace
 - web_search(query, max_results?) — search the public web (backend: auto|tavily|ollama|duckduckgo via PUSH_WEB_SEARCH_BACKEND)
+- memory_grep(pattern, kinds?, limit?) — search persisted memory records (prior decisions/findings/verification) by case-insensitive substring; returns matches with their [mem_…] id and a text snippet (use memory_expand for the full record)
+- memory_expand(ids) — recall the full verbatim text of memory records by id (ids come from memory_grep results)
 - exec(command, timeout_ms?) — run a shell command
 - exec_start(command, timeout_ms?, tty?) — start a long-running command session
 - exec_poll(session_id, from_seq?, max_chars?) — read incremental output from a running command session
