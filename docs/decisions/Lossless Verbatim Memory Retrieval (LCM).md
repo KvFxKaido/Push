@@ -113,9 +113,33 @@ Covered by six cases in `app/src/lib/context-memory-packing.test.ts` (default-of
 top-ranked-only, top-lacks-detail-no-inherit, whitespace-preservation, custom-cap,
 overflow-fallback). The parent doc's "Prompt Packing Model" note is flipped to shipped.
 
-Remaining follow-through (separate, needs a `ROADMAP.md` entry): pick the call-sites
-that should opt in (delegation briefs via `buildRetrievedMemoryKnownContext`, Auditor)
-and measure the char-budget impact before considering a default flip.
+**First consumer wired (2026-06-01):** the **Auditor** opts in on **both surfaces**,
+via a single shared override `AUDITOR_MEMORY_PACK_OVERRIDES` (`includeTopDetail` +
+`detailCap` `AUDITOR_MEMORY_DETAIL_CAP` = 400) in `lib/role-memory-budgets.ts`:
+
+- Web: `app/src/lib/role-memory-context.ts` applies it on the Auditor's
+  runtime-context and completion-evaluation paths.
+- CLI: `cli/auditor-gate-memory.ts` (`buildAuditorGateRuntimeContext`) feeds the
+  commit gate (`makeAuditorPreCommitGate`), which previously passed an empty runtime
+  context — the CLI Auditor now sees the same typed memory the web one does.
+
+The Auditor's SAFE/UNSAFE gate benefits most from the verbatim verification output
+(`check.output`) and decision rationale stored in `detail`. Reviewer/Explorer/Coder
+stay summary-only for now (breadth over depth). Retrieval is best-effort on both
+surfaces — any failure degrades to no context, never blocking the audit/commit.
+
+Measured impact: because the retrieved-memory block is already capped by
+`ROLE_MEMORY_SECTION_BUDGETS` (facts 600 / taskMemory 700 / verification 500 /
+stale 250 = 2050 chars total), enabling detail can only spend more of that existing
+allocation — it never raises the prompt ceiling, and the packer falls back to
+summary-only when detail would overflow a section. The visible tradeoff is a richer
+top record vs. fewer summary records in the same section. Characterization tests in
+`app/src/lib/context-memory-packing.test.ts` assert both (detail surfaced, and every
+section stays ≤ its budget).
+
+Remaining follow-through (separate, needs a `ROADMAP.md` entry): decide whether
+Coder/Explorer delegation briefs should also opt in once the Auditor's behavior is
+observed in production.
 
 ### Phase 2 — model-facing `memory_expand` / `memory_grep` tool
 

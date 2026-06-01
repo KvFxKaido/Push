@@ -5,6 +5,10 @@ import {
   DEFAULT_MEMORY_PACK_SECTION_BUDGETS,
   packRetrievedMemory,
 } from './context-memory-packing';
+import {
+  AUDITOR_MEMORY_DETAIL_CAP,
+  ROLE_MEMORY_SECTION_BUDGETS,
+} from '@push/lib/role-memory-budgets';
 
 function makeScored(
   id: string,
@@ -295,5 +299,65 @@ describe('packRetrievedMemory', () => {
     expect(result.sections.verification.charsUsed).toBe(result.sections.verification.block.length);
     expect(result.sections.stale.charsUsed).toBe(result.sections.stale.block.length);
     expect(result.packed).toHaveLength(4);
+  });
+});
+
+describe('includeTopDetail char-budget impact (Auditor opt-in measurement)', () => {
+  // A realistic Auditor retrieval: a decision with rationale + a failed verification
+  // whose detail is the verbatim command output the Auditor most wants to read.
+  function auditorRecords(): ScoredMemoryRecord[] {
+    return [
+      makeScored('decision', 'Gate the merge on the typecheck passing', {
+        kind: 'decision',
+        detail:
+          'Question: should Protect Main block this merge?\nAnswer: yes — the branch touches ' +
+          'the auth seam and the prior audit flagged an asymmetric allowlist check that was ' +
+          'only fixed on one path.',
+      }),
+      makeScored('verify', 'typecheck: failed (exit 2)', {
+        kind: 'verification_result',
+        detail:
+          'app/src/lib/role-memory-context.ts(37,5): error TS2554: Expected 1 arguments, but got 2.\n' +
+          'app/src/lib/auditor.ts(88,12): error TS2345: Argument of type ... is not assignable.',
+      }),
+      makeScored('finding', 'Auth refresh guarded in useAuth.ts', { kind: 'finding' }),
+    ];
+  }
+
+  const budgetSum = Object.values(ROLE_MEMORY_SECTION_BUDGETS).reduce((s, v) => s + v, 0);
+
+  it('surfaces verbatim verification + decision detail when opted in', () => {
+    const off = packRetrievedMemory(auditorRecords(), {
+      sectionBudgets: ROLE_MEMORY_SECTION_BUDGETS,
+    });
+    const on = packRetrievedMemory(auditorRecords(), {
+      sectionBudgets: ROLE_MEMORY_SECTION_BUDGETS,
+      includeTopDetail: true,
+      detailCap: AUDITOR_MEMORY_DETAIL_CAP,
+    });
+
+    // Off: no detail at all. On: the verbatim TS error output and decision rationale appear.
+    expect(off.block).not.toContain('detail:');
+    expect(on.block).toContain('error TS2554');
+    expect(on.block).toContain('asymmetric allowlist');
+    // Opting in grows the block (depth), but never beyond the existing section-budget ceiling.
+    expect(on.charsUsed).toBeGreaterThan(off.charsUsed);
+    expect(on.charsUsed).toBeLessThanOrEqual(budgetSum);
+  });
+
+  it('never exceeds any per-section budget when detail is surfaced', () => {
+    const on = packRetrievedMemory(auditorRecords(), {
+      sectionBudgets: ROLE_MEMORY_SECTION_BUDGETS,
+      includeTopDetail: true,
+      detailCap: AUDITOR_MEMORY_DETAIL_CAP,
+    });
+
+    expect(on.sections.facts.charsUsed).toBeLessThanOrEqual(ROLE_MEMORY_SECTION_BUDGETS.facts);
+    expect(on.sections.taskMemory.charsUsed).toBeLessThanOrEqual(
+      ROLE_MEMORY_SECTION_BUDGETS.taskMemory,
+    );
+    expect(on.sections.verification.charsUsed).toBeLessThanOrEqual(
+      ROLE_MEMORY_SECTION_BUDGETS.verification,
+    );
   });
 });

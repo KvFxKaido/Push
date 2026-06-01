@@ -1,8 +1,10 @@
 import { buildRetrievedMemoryKnownContext } from '@/lib/context-memory';
 import {
+  AUDITOR_MEMORY_PACK_OVERRIDES,
   MAX_ROLE_RETRIEVED_MEMORY_RECORDS as MAX_RETRIEVED_MEMORY_RECORDS,
   ROLE_MEMORY_SECTION_BUDGETS,
 } from '@push/lib/role-memory-budgets';
+import type { MemoryPackOptions } from '@push/lib/context-memory-packing';
 import type { MemoryQuery, MemoryScope } from '@/types';
 import { parseDiffStats } from './diff-utils';
 import { formatMemoryError } from './memory-context-helpers';
@@ -32,10 +34,14 @@ function buildFileHintsFromDiff(diff: string | null | undefined): string[] | und
   return fileNames.length > 0 ? fileNames : undefined;
 }
 
-async function buildRoleRetrievedMemoryBlock(query: MemoryQuery): Promise<string | null> {
+async function buildRoleRetrievedMemoryBlock(
+  query: MemoryQuery,
+  packOverrides?: Partial<MemoryPackOptions>,
+): Promise<string | null> {
   try {
     const { line } = await buildRetrievedMemoryKnownContext(query, {
       sectionBudgets: ROLE_MEMORY_SECTION_BUDGETS,
+      ...packOverrides,
     });
     return line;
   } catch (error) {
@@ -43,6 +49,15 @@ async function buildRoleRetrievedMemoryBlock(query: MemoryQuery): Promise<string
     return null;
   }
 }
+
+/**
+ * The Auditor opts into verbatim top-record detail: its SAFE/UNSAFE gate benefits
+ * from the full verification output stored in `detail`. Reviewer/Explorer/Coder stay
+ * summary-only for now (breadth over depth). The shared override
+ * (`AUDITOR_MEMORY_PACK_OVERRIDES`) is also applied by the CLI commit-gate so both
+ * surfaces stay in sync.
+ */
+const AUDITOR_PACK_OVERRIDES = AUDITOR_MEMORY_PACK_OVERRIDES;
 
 function buildTaskText(prefix: string, primary: string, fileHints?: string[]): string {
   return [prefix, primary, ...(fileHints ?? []).slice(0, 4)].filter(Boolean).join(' ').trim();
@@ -108,6 +123,7 @@ export async function buildAuditorRuntimeContext(
       buildTaskText('audit', context.sourceLabel ?? 'diff audit', fileHints),
       fileHints,
     ),
+    AUDITOR_PACK_OVERRIDES,
   );
 
   return appendRetrievedMemoryBlock(baseContext, block);
@@ -128,5 +144,6 @@ export async function buildAuditorEvaluationMemoryBlock(
       buildTaskText('evaluate completion', task, fileHints),
       fileHints,
     ),
+    AUDITOR_PACK_OVERRIDES,
   );
 }
