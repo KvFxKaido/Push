@@ -483,6 +483,45 @@ describe('get_session_snapshot (remote session status packet)', () => {
     assert.equal(response.payload.transcript.recentEvents[0].type, 'approval_required');
   });
 
+  it('reports background delegation/graph work as running even when activeRunId is null', async () => {
+    // Codex #743: the orchestrator turn that kicks off a delegation returns
+    // (clearing activeRunId) while the sub-agent work is still in flight.
+    // handleUpdateSession treats non-empty activeDelegations/activeGraphs as
+    // RUN_IN_PROGRESS; the snapshot must agree or a reconnecting client renders
+    // the session as idle mid-delegation.
+    const sessionId = makeSessionId();
+    const attachToken = 'pushd_test_snapshot_bg';
+    const state = createSessionState({
+      sessionId,
+      attachToken,
+      provider: 'ollama',
+      model: 'bg-test',
+      cwd: tmpRoot,
+      messages: [{ role: 'system', content: 'system' }],
+    });
+    await saveSessionState(state);
+
+    __setActiveSessionForTesting(sessionId, {
+      state,
+      attachToken,
+      activeRunId: null,
+      activeDelegations: new Map([['sub_a', { kind: 'explorer' }]]),
+      activeGraphs: new Map([['graph_a', { executionId: 'graph_a' }]]),
+    });
+
+    const response = await handleRequest(
+      makeRequest('get_session_snapshot', { sessionId, attachToken }),
+      () => {},
+    );
+
+    assert.equal(response.ok, true);
+    assert.equal(response.payload.session.state, 'running');
+    assert.equal(response.payload.session.activeRunId, null);
+    // No foreground run descriptor — the in-flight work is background.
+    assert.equal(response.payload.activeRun, null);
+    assert.deepEqual(response.payload.session.backgroundWork, { delegations: 1, graphs: 1 });
+  });
+
   it('lazy-loads persisted sessions and rejects wrong attach tokens', async () => {
     const sessionId = makeSessionId();
     const attachToken = 'pushd_test_snapshot_lazy';

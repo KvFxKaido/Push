@@ -66,8 +66,16 @@ Those fields can be added once the base contract is in use.
   };
   session: {
     sessionId: string;
+    // 'running' whenever a foreground run (activeRunId) OR background work
+    // (delegations / task graphs) is in flight — mirrors handleUpdateSession's
+    // RUN_IN_PROGRESS gate, which also blocks on the runtime maps. Background
+    // delegation clears activeRunId but is still live work, so keying state on
+    // activeRunId alone would mis-report 'idle' to a reconnecting client.
     state: 'idle' | 'running';
     activeRunId: string | null;
+    // Counts of in-flight sub-agent work that has no top-level run id. Lets a
+    // client distinguish foreground (activeRun set) from background running.
+    backgroundWork: { delegations: number; graphs: number };
     provider: string;
     model: string;
     mode: string;
@@ -75,6 +83,11 @@ Those fields can be added once the base contract is in use.
     eventSeq: number;
     attachTokenPresent: boolean;
   };
+  // Foreground run descriptor. type/cancellable are fixed to the assistant-turn
+  // model activeRunId represents today; when a delegation/task graph is the
+  // in-flight work, activeRunId is null (see session.backgroundWork) so this is
+  // null rather than describing a child run with different cancel semantics.
+  // Widen when the run model grows cancellable child descriptors.
   activeRun: {
     runId: string;
     type: 'assistant_turn';

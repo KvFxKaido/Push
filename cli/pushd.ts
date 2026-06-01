@@ -32,6 +32,10 @@ import path from 'node:path';
 import process from 'node:process';
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 
 import {
   startPushdWs,
@@ -1785,16 +1789,17 @@ export async function handleGetSessionMessages(req) {
 
 async function readGitBranch(cwd) {
   try {
-    const { execFile } = await import('node:child_process');
-    const { promisify } = await import('node:util');
-    const execFileAsync = promisify(execFile);
-    const { stdout } = await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+    // `branch --show-current` (not `rev-parse --abbrev-ref HEAD`) so a freshly
+    // `git init`'d repo with no commits still reports its unborn branch instead
+    // of erroring out; it prints empty only when detached. Mirrors the
+    // normalized Git backend (`lib/git/backend.ts`). Copilot review on #743.
+    const { stdout } = await execFileAsync('git', ['branch', '--show-current'], {
       cwd,
       timeout: 1_000,
       maxBuffer: 16_000,
     });
     const branch = stdout.trim();
-    return branch && branch !== 'HEAD' ? branch : null;
+    return branch ? branch : null;
   } catch {
     return null;
   }
@@ -1830,6 +1835,17 @@ async function handleGetSessionSnapshot(req) {
 
   const activeRunId =
     typeof entry.activeRunId === 'string' && entry.activeRunId ? entry.activeRunId : null;
+  // Background work (delegations / task graphs) keeps a session "running" even
+  // when `activeRunId` is null — the orchestrator turn that kicked it off has
+  // already returned, so the top-level run id is cleared while sub-agent work
+  // is still in flight. `handleUpdateSession` blocks on the same non-empty
+  // maps with RUN_IN_PROGRESS; the snapshot must agree or a reconnecting
+  // client renders the session as idle during live delegation. Codex review
+  // on #743.
+  const activeDelegations = entry.activeDelegations?.size ?? 0;
+  const activeGraphs = entry.activeGraphs?.size ?? 0;
+  const hasBackgroundWork = activeDelegations > 0 || activeGraphs > 0;
+  const isRunning = activeRunId !== null || hasBackgroundWork;
   const pendingApproval = entry.pendingApproval
     ? {
         approvalId: entry.pendingApproval.approvalId,
@@ -1854,8 +1870,13 @@ async function handleGetSessionSnapshot(req) {
     relay: await buildRelayStatusPayload(),
     session: {
       sessionId,
-      state: activeRunId ? 'running' : 'idle',
+      state: isRunning ? 'running' : 'idle',
       activeRunId,
+      // Count of in-flight sub-agent work with no top-level run id. Lets a
+      // reconnecting client distinguish "running because of a foreground turn"
+      // (activeRun set) from "running because of background delegation" — and
+      // render progress without waiting for an event-tail to reveal it.
+      backgroundWork: { delegations: activeDelegations, graphs: activeGraphs },
       provider: state.provider || null,
       model: state.model || null,
       mode: typeof state.mode === 'string' && state.mode.trim() ? state.mode.trim() : 'interactive',
@@ -1863,6 +1884,13 @@ async function handleGetSessionSnapshot(req) {
       eventSeq: currentSeq,
       attachTokenPresent: Boolean(entry.attachToken),
     },
+    // Foreground run descriptor. `type`/`cancellable` are fixed to the
+    // assistant-turn model the top-level `activeRunId` represents today — when
+    // a delegation or task graph is the in-flight work, `activeRunId` is null
+    // (see `backgroundWork` above), so this stays null rather than describing a
+    // child run with different cancel semantics. As the run model grows
+    // (task_graph_v1 / delegation_* gaining cancellable child descriptors),
+    // widen this shape in a later slice. Kilo review on #743.
     activeRun: activeRunId
       ? {
           runId: activeRunId,
