@@ -146,7 +146,7 @@ import { shouldFullRedraw } from './tui-render-frame.js';
 
 const MAX_TRANSCRIPT = 2000; // max lines in transcript buffer
 const MAX_TOOL_FEED = 200; // max items in tool feed
-const TUI_DAEMON_CAPABILITIES = Object.freeze(['event_v2']);
+const TUI_DAEMON_CAPABILITIES = Object.freeze(['event_v2', 'session_snapshot_v1']);
 
 // OSC 52 payload cap. Widely-supported terminals (Windows Terminal, iTerm2,
 // kitty, alacritty) accept at least ~100 KB; tmux historically capped lower
@@ -1486,6 +1486,12 @@ export async function runTUI(options = {}) {
   let daemonClient = null;
   let daemonSessionId = null;
   let daemonAttachToken = null;
+  // Run id of a daemon-owned run we learned about from a snapshot (reattach to
+  // a run started elsewhere) rather than from a local `runPrompt` turn. The
+  // local turn path owns `runAbort`; this is the only cancel handle for a run
+  // we didn't start locally, so Ctrl+C can still cancel it. Null whenever the
+  // session isn't running (cleared in `setRunState('idle')`). Audit: Codex #744.
+  let daemonActiveRunId = null;
   let daemonAutoStartAttempted = false;
   // Auto-reconnect state. When the daemon socket dies the TUI used to
   // permanently fall back to inline mode for the rest of the session —
@@ -1927,15 +1933,12 @@ export async function runTUI(options = {}) {
       const connected = await tryDaemonConnect();
       if (connected) {
         // `tryDaemonConnect` records the success itself (it sets
-        // `daemonEverConnected` + resets the reconnect state). If we
-        // had a session previously, re-attach so events replay.
-        if (daemonSessionId) {
-          // `attachExistingDaemonSession` short-circuits when
-          // `daemonSessionId` is already set, so clear it before
-          // calling — on success the helper restores it from
-          // `state.sessionId`.
-          const previousSessionId = daemonSessionId;
-          daemonSessionId = null;
+        // `daemonEverConnected` + resets the reconnect state). If the
+        // persisted session is addressable, re-attach so events replay.
+        // The socket close handler clears `daemonSessionId`, so the
+        // reconnect path must use `state.sessionId` as the durable handle.
+        if (sessionPersisted && state?.sessionId) {
+          const previousSessionId = state.sessionId;
           const attached = await attachExistingDaemonSession();
           if (!attached) {
             // Connected to a daemon that doesn't know our session
@@ -2016,7 +2019,170 @@ export async function runTUI(options = {}) {
     return changed;
   }
 
+  function installDaemonApprovalFromSnapshot(pendingApproval, sessionId) {
+    const approvalId =
+      pendingApproval && typeof pendingApproval.approvalId === 'string'
+        ? pendingApproval.approvalId
+        : '';
+
+    if (!approvalId) {
+      if (tuiState.approval?.daemonApprovalId) {
+        approvalResolve = null;
+        closeApprovalPane();
+        if (tuiState.runState === 'awaiting_approval') setRunState('running');
+        tuiState.dirty.add('all');
+        scheduler?.schedule();
+        return true;
+      }
+      return false;
+    }
+
+    if (tuiState.approval?.daemonApprovalId === approvalId) {
+      if (tuiState.runState !== 'awaiting_approval') setRunState('awaiting_approval');
+      return false;
+    }
+
+    // Fallback pane. This runs ONLY when replay didn't already open the rich
+    // pane from an `approval_required` event (the guards above return early if
+    // it did) — i.e. the approval fell outside the replayed event tail. The
+    // snapshot's `pendingApproval` carries just approvalId (+ optional runId),
+    // not the original event's `summary`/`kind`/`patternIndex`, so this pane is
+    // deliberately generic: enough to approve/deny and unblock the daemon, but
+    // without the concrete decision context. Enriching it means widening the
+    // snapshot packet to carry approval metadata — a follow-up on the daemon
+    // side, tracked separately. Audit: Kilo #744.
+    setRunState('awaiting_approval');
+    openApprovalPane({
+      kind: 'action',
+      summary: 'Daemon is waiting for an approval decision to continue this session.',
+      patternIndex: -1,
+      suggestedPrefix: null,
+      daemonApprovalId: approvalId,
+    });
+    approvalResolve = (approved) => {
+      daemonClient
+        ?.request(
+          'submit_approval',
+          {
+            sessionId,
+            approvalId,
+            decision: approved ? 'approve' : 'deny',
+            attachToken: daemonAttachToken,
+          },
+          sessionId,
+        )
+        .catch(() => {});
+    };
+    tuiState.dirty.add('all');
+    scheduler?.schedule();
+    return true;
+  }
+
+  function hydrateDaemonSnapshot(payload) {
+    if (!payload || typeof payload !== 'object') return false;
+    const session = payload.session;
+    if (!session || typeof session !== 'object') return false;
+
+    let changed = hydrateSessionStateFromDaemon(session);
+    const snapshotSessionId =
+      typeof session.sessionId === 'string' && session.sessionId
+        ? session.sessionId
+        : daemonSessionId;
+
+    if (session.state === 'running') {
+      // Remember the daemon's run id (preferring the richer `activeRun`
+      // descriptor, falling back to `session.activeRunId`) so Ctrl+C can cancel
+      // a run we reattached to but didn't start locally — there's no `runAbort`
+      // for it. Set this BEFORE `setRunState('running')` so it survives (the
+      // idle→running transition doesn't clear it; only →idle does).
+      const runId =
+        (payload.activeRun && typeof payload.activeRun.runId === 'string'
+          ? payload.activeRun.runId
+          : null) ||
+        (typeof session.activeRunId === 'string' && session.activeRunId
+          ? session.activeRunId
+          : null);
+      if (runId && runId !== daemonActiveRunId) daemonActiveRunId = runId;
+      if (tuiState.runState === 'idle') {
+        setRunState('running');
+        changed = true;
+      }
+    } else if (session.state === 'idle') {
+      if (tuiState.runState === 'running') {
+        setRunState('idle');
+        changed = true;
+      }
+      if (tuiState.runState === 'awaiting_approval' && tuiState.approval?.daemonApprovalId) {
+        approvalResolve = null;
+        closeApprovalPane();
+        setRunState('idle');
+        changed = true;
+      }
+    }
+
+    if (snapshotSessionId) {
+      changed =
+        installDaemonApprovalFromSnapshot(payload.pendingApproval, snapshotSessionId) || changed;
+    }
+
+    return changed;
+  }
+
+  async function refreshDaemonSessionSnapshot(reason = 'unknown') {
+    if (!daemonClient?.connected || !daemonSessionId || !daemonAttachToken) return false;
+    try {
+      const res = await daemonClient.request(
+        'get_session_snapshot',
+        {
+          sessionId: daemonSessionId,
+          attachToken: daemonAttachToken,
+          recentEventLimit: 1,
+        },
+        daemonSessionId,
+        1500,
+      );
+      // Hydration mutates UI state (run state, footer, approval pane) but
+      // doesn't own the render loop. Schedule a redraw on change so the
+      // refreshed snapshot lands even when this runs detached from the attach
+      // path (see the non-blocking `void` call site).
+      if (hydrateDaemonSnapshot(res.payload)) {
+        tuiState.dirty.add('all');
+        scheduler?.schedule();
+      }
+      return true;
+    } catch (err) {
+      // Older daemon without the verb — graceful, expected, not user-facing.
+      if (err?.code === 'UNSUPPORTED_REQUEST_TYPE') return false;
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `${JSON.stringify({ level: 'warn', event: 'tui_session_snapshot_failed', reason, message })}\n`,
+      );
+      // A failed hydrate on a user-visible moment (attach / reconnect) leaves
+      // the footer/run/approval state stale with no other signal — surface it
+      // like every other daemon warning path. Background polls stay quiet to
+      // avoid transcript spam. Audit: Kilo #744.
+      if (reason === 'attach' || reason === 'reconnect') {
+        addTranscriptEntry(
+          tuiState,
+          'warning',
+          `Could not refresh session status from the daemon (${message}); showing last-known state.`,
+        );
+        tuiState.dirty.add('footer');
+        scheduler?.schedule();
+      }
+      return false;
+    }
+  }
+
   async function attachExistingDaemonSession() {
+    // INVARIANT: the truthy-`daemonSessionId` short-circuit here is the
+    // double-attach guard — it assumes that on any disconnect the transient
+    // `daemonSessionId` was reset to null. The socket `'close'` handler is the
+    // single place that does this (it nulls `daemonSessionId`/`daemonAttachToken`
+    // before arming `scheduleDaemonReconnect`). The durable handle lives on
+    // `state.sessionId`, not here. If a future disconnect path forgets that
+    // clear, this guard will silently skip re-attach — keep the close handler's
+    // null in lockstep with this check. Audit: Kilo #744.
     if (!daemonClient || daemonSessionId || !sessionPersisted || !state?.sessionId) {
       return false;
     }
@@ -2062,6 +2228,13 @@ export async function runTUI(options = {}) {
       // from another client (or a stale state.json on disk) doesn't
       // leave the TUI showing the wrong provider/model after re-attach.
       hydrateSessionStateFromDaemon(res.payload);
+      // Fire-and-forget: the attach response already hydrated provider/model,
+      // so don't block the "Reconnected" message + transcript refresh on the
+      // snapshot RPC's blocking 1500ms window. It hydrates run/approval state a
+      // tick later and schedules its own redraw (and surfaces its own failure).
+      // Safe to leave unawaited — the helper catches and reports internally.
+      // Audit: Kilo #744.
+      void refreshDaemonSessionSnapshot('attach');
       return true;
     } catch {
       return false;
@@ -2292,6 +2465,9 @@ export async function runTUI(options = {}) {
       tuiState.turnStartedAt = Date.now();
     } else if (next === 'idle') {
       tuiState.turnStartedAt = null;
+      // A run is no longer in flight — drop the snapshot-derived daemon cancel
+      // handle so a stale id can't target a finished run.
+      daemonActiveRunId = null;
     }
     tuiState.runState = next;
     // Mark footer dirty so the activity-indicator row clears or appears
@@ -5465,6 +5641,29 @@ export async function runTUI(options = {}) {
     }
   }
 
+  // Cancel a daemon-owned run we don't have a local `runAbort` for — i.e. a run
+  // we learned about from a snapshot on reattach. Sends the same bearer-gated
+  // `cancel_run` RPC the local daemon-turn abort path sends; the resulting
+  // `run_complete` event flips the TUI back to idle. Returns true if a cancel
+  // was dispatched. Audit: Codex #744 (without this, Ctrl+C on a reattached run
+  // hit `cancelRun()`'s null-`runAbort` no-op — neither cancelling nor exiting).
+  function cancelDaemonRun() {
+    if (!daemonClient?.connected || !daemonSessionId || !daemonActiveRunId) return false;
+    daemonClient
+      .request(
+        'cancel_run',
+        {
+          sessionId: daemonSessionId,
+          runId: daemonActiveRunId,
+          attachToken: daemonAttachToken,
+        },
+        daemonSessionId,
+      )
+      .catch(() => {});
+    addTranscriptEntry(tuiState, 'status', 'Cancelling daemon run…');
+    return true;
+  }
+
   // Open / close the approval Pane in lockstep with `tuiState.approval`.
   // Hoisted as a function declaration so the set sites earlier in runTUI
   // can reference it; the action callbacks below are likewise hoisted.
@@ -6336,7 +6535,15 @@ export async function runTUI(options = {}) {
         return;
       case 'cancel_or_exit':
         if (tuiState.runState === 'running') {
-          cancelRun();
+          // Local turn → abort its controller (which also cancels the daemon
+          // run for a local daemon turn). Reattached daemon run → cancel over
+          // the socket. Neither handle available → fall through to exit so
+          // Ctrl+C is never a dead key (Codex #744).
+          if (runAbort) {
+            cancelRun();
+          } else if (!cancelDaemonRun()) {
+            exitResolve();
+          }
         } else {
           exitResolve();
         }
