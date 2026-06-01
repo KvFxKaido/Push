@@ -2362,9 +2362,26 @@ describe('multi-client fan-out', () => {
 // ─── Daemon version bump ─────────────────────────────────────────
 
 describe('daemon version', () => {
-  it('pushd version is 0.3.0 with crash recovery', async () => {
+  it('pushd version is 0.3.0, single-sourced from build-stamp', async () => {
+    // The version literal now lives in build-stamp.ts (RUNTIME_VERSION) so the
+    // daemon's advertised version and its build-stamp freshness token can't
+    // drift apart. Assert the value behaviorally via the hello payload, plus
+    // that pushd sources VERSION from RUNTIME_VERSION rather than a local copy.
+    const { RUNTIME_VERSION } = await import('../build-stamp.ts');
+    assert.equal(RUNTIME_VERSION, '0.3.0');
+    const response = await handleRequest(makeRequest('hello', { clientName: 'test' }), () => {});
+    assert.equal(response.ok, true);
+    assert.equal(response.payload.runtimeVersion, '0.3.0');
     const content = await fs.readFile(path.join(import.meta.dirname, '..', 'pushd.ts'), 'utf8');
-    assert.ok(content.includes("const VERSION = '0.3.0'"));
+    assert.ok(content.includes('const VERSION = RUNTIME_VERSION'));
+  });
+
+  it('hello advertises a code-freshness buildStamp', async () => {
+    // The stale-runtime self-heal depends on the daemon advertising a build
+    // stamp the TUI can compare against its own. Shape: `<version>+<sha|nogit>`.
+    const response = await handleRequest(makeRequest('hello', { clientName: 'test' }), () => {});
+    assert.equal(response.ok, true);
+    assert.match(response.payload.buildStamp, /^0\.3\.0\+([0-9a-f]{7,40}|nogit)$/);
   });
 
   it('hello capabilities advertise the full multi-agent stack', async () => {

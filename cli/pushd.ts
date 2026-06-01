@@ -695,9 +695,14 @@ import { setDefaultMemoryStore } from '../lib/context-memory-store.ts';
 import { createFileMemoryStore, getMemoryStoreBaseDir } from './context-memory-file-store.ts';
 import { resolveWorkspaceIdentity } from '../lib/workspace-identity.js';
 import { buildTypedMemoryBlockForNode, writeTaskGraphResultMemory } from './task-graph-memory.ts';
+import { getBuildStamp, peekBuildStamp, RUNTIME_VERSION } from './build-stamp.js';
 
-const VERSION = '0.3.0';
+const VERSION = RUNTIME_VERSION;
 const DAEMON_STARTED_AT_MS = Date.now();
+// Drain state: once set, the daemon refuses new runs (`send_user_message`) and
+// self-exits the moment it goes idle, so a client can respawn a fresh daemon
+// from current code without killing in-flight work. See `handleDrain`.
+let draining = false;
 // The daemon's advertised protocol capability set. The canonical vocabulary
 // (with per-capability docs) lives in `lib/daemon-capabilities.ts` so the
 // client surfaces that advertise subsets back can't drift from it — see #745.
@@ -1189,6 +1194,11 @@ async function handleHello(req) {
   return makeResponse(req.requestId, 'hello', null, true, {
     runtimeName: 'pushd',
     runtimeVersion: VERSION,
+    // Code-freshness token frozen at this daemon's startup. `peekBuildStamp`
+    // is non-null once `main()`'s eager capture resolves (well before the
+    // first client connect); fall back to an await so a hello that somehow
+    // races startup still advertises a real stamp instead of null.
+    buildStamp: peekBuildStamp() ?? (await getBuildStamp()),
     protocolVersion: PROTOCOL_VERSION,
     capabilities: CAPABILITIES,
   });
@@ -1198,6 +1208,188 @@ async function handlePing(req) {
   return makeResponse(req.requestId, 'ping', null, true, {
     pong: true,
     ts: Date.now(),
+  });
+}
+
+/**
+ * True when no session has an in-flight assistant run or background work
+ * (delegations / task graphs). The drain path uses this to decide whether it
+ * can self-exit immediately or must wait for active work to settle.
+ */
+function isDaemonIdle() {
+  for (const [, entry] of activeSessions) {
+    if (entry.activeRunId) return false;
+    if (entry.activeDelegations && entry.activeDelegations.size > 0) return false;
+    if (entry.activeGraphs && entry.activeGraphs.size > 0) return false;
+  }
+  return true;
+}
+
+/**
+ * Summarize the work still in flight — surfaced in the drain response so the
+ * requesting client can tell the user exactly what it's waiting on before the
+ * stale daemon respawns. Reports ALL tracked work types (assistant runs,
+ * delegations, task graphs), not just top-level runs, so the client never says
+ * "0 active runs" while the daemon is actually blocked on background work.
+ */
+function pendingWorkSummary() {
+  const runs = [];
+  let delegations = 0;
+  let graphs = 0;
+  for (const [sessionId, entry] of activeSessions) {
+    if (entry.activeRunId) runs.push({ sessionId, runId: entry.activeRunId });
+    if (entry.activeDelegations) delegations += entry.activeDelegations.size;
+    if (entry.activeGraphs) graphs += entry.activeGraphs.size;
+  }
+  return { runs, delegations, graphs, total: runs.length + delegations + graphs };
+}
+
+let drainExitScheduled = false;
+let drainIdleWatcher = null;
+// Poll cadence for the drain idle watcher. A daemon refresh isn't latency-
+// sensitive, so a coarse poll keeps the catch-all cheap.
+const DRAIN_IDLE_POLL_MS = 250;
+// Injectable so tests can assert the drain self-exit decision without actually
+// SIGTERM-ing the test runner. Production raises SIGTERM so the existing
+// `main()` shutdown closure runs the full teardown.
+let drainExitFn = () => {
+  process.kill(process.pid, 'SIGTERM');
+};
+/**
+ * Self-exit so the existing `main()` shutdown closure runs the full teardown
+ * (relay close, WS close, socket/pidfile cleanup). Deferred a tick so the
+ * in-flight drain ack (or final run_complete) flushes to the socket first.
+ * Idempotent: only the first idle transition schedules the exit.
+ */
+function clearDrainIdleWatcher() {
+  if (drainIdleWatcher) {
+    clearTimeout(drainIdleWatcher);
+    drainIdleWatcher = null;
+  }
+}
+
+function scheduleDrainExit() {
+  if (drainExitScheduled) return;
+  drainExitScheduled = true;
+  clearDrainIdleWatcher();
+  console.log(JSON.stringify({ level: 'info', event: 'pushd_drain_exit_scheduled' }));
+  setTimeout(() => {
+    drainExitFn();
+  }, 50);
+}
+
+/**
+ * Catch-all idle watcher for the drain self-exit. `noteRunSettled()` fires the
+ * exit immediately when an assistant run completes, but background work
+ * (delegations, task graphs) settles on cleanup paths that don't call it — and
+ * `isDaemonIdle()` counts that work, so a drain blocked solely on a delegation
+ * would otherwise never self-exit. While draining, this polls idle so the
+ * refresh completes for ALL work types in one place, instead of hooking every
+ * `activeDelegations`/`activeGraphs` delete site (which must stay in sync and
+ * would still miss future trackers).
+ */
+function startDrainIdleWatcher() {
+  if (drainIdleWatcher || drainExitScheduled) return;
+  const tick = () => {
+    drainIdleWatcher = null;
+    if (!draining || drainExitScheduled) return;
+    if (isDaemonIdle()) {
+      console.log(JSON.stringify({ level: 'info', event: 'pushd_drain_idle_reached' }));
+      scheduleDrainExit();
+      return;
+    }
+    drainIdleWatcher = setTimeout(tick, DRAIN_IDLE_POLL_MS);
+  };
+  drainIdleWatcher = setTimeout(tick, DRAIN_IDLE_POLL_MS);
+}
+
+/**
+ * Test seam: replace the drain self-exit and reset drain state so a test can
+ * drive `handleDrain` / `noteRunSettled` and observe the exit decision without
+ * terminating the process. Call with no args to restore the SIGTERM default.
+ */
+export function __setDrainExitForTesting(fn) {
+  drainExitFn = typeof fn === 'function' ? fn : () => process.kill(process.pid, 'SIGTERM');
+  draining = false;
+  drainExitScheduled = false;
+  clearDrainIdleWatcher();
+}
+
+export { handleDrain, noteRunSettled, isDaemonIdle };
+
+/**
+ * Called when an assistant run settles (activeRunId cleared) — the 0-latency
+ * path to the drain self-exit. Background work relies on the idle watcher
+ * instead. If a drain is pending and the daemon has gone fully idle, trigger
+ * the deferred self-exit. Symmetric-log both branches so "draining but still
+ * busy" is observable.
+ */
+function noteRunSettled() {
+  if (!draining) return;
+  if (isDaemonIdle()) {
+    console.log(JSON.stringify({ level: 'info', event: 'pushd_drain_idle_reached' }));
+    scheduleDrainExit();
+  } else {
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'pushd_drain_awaiting_idle',
+        pendingWork: pendingWorkSummary().total,
+      }),
+    );
+  }
+}
+
+/**
+ * Mark the daemon draining for a runtime refresh. Idempotent. After this:
+ *   - new `send_user_message` requests are rejected with `DAEMON_DRAINING`;
+ *   - the daemon self-exits the moment it goes idle (immediately if already
+ *     idle), letting the client respawn a fresh daemon from current code.
+ * Active runs are NOT aborted — the whole point is to let in-flight work finish
+ * on the code it started under, then refresh cleanly.
+ */
+async function handleDrain(req, _emitEvent, context = null) {
+  // Loopback-only: drain self-exits the daemon, which is a local-client
+  // lifecycle concern (the TUI refreshing stale code over the unix socket).
+  // A relay-originated request carries a `relaySenderId`; reject those so a
+  // paired phone can't churn the daemon for every local session it shares.
+  if (context?.relaySenderId) {
+    return makeErrorResponse(
+      req.requestId,
+      'drain',
+      'FORBIDDEN',
+      'drain is a loopback-only operation',
+    );
+  }
+  const reason = typeof req.payload?.reason === 'string' ? req.payload.reason : null;
+  draining = true;
+  const work = pendingWorkSummary();
+  const idle = work.total === 0;
+  console.log(
+    JSON.stringify({
+      level: 'info',
+      event: 'pushd_drain_requested',
+      idle,
+      pendingRuns: work.runs.length,
+      pendingDelegations: work.delegations,
+      pendingGraphs: work.graphs,
+      reason,
+    }),
+  );
+  if (idle) {
+    scheduleDrainExit();
+  } else {
+    // Block solely on background work (delegation/task graph) settles on paths
+    // that don't call noteRunSettled(); the watcher guarantees the eventual exit.
+    startDrainIdleWatcher();
+  }
+  return makeResponse(req.requestId, 'drain', null, true, {
+    draining: true,
+    idle,
+    pendingRuns: work.runs,
+    pendingDelegations: work.delegations,
+    pendingGraphs: work.graphs,
+    pendingWork: work.total,
   });
 }
 
@@ -1380,6 +1572,18 @@ async function handleSendUserMessage(req, emitEvent) {
     );
   }
 
+  // Refuse new runs once draining: the daemon is on its way out for a runtime
+  // refresh, so starting work here would run it on stale code. The client
+  // routes around this by respawning a fresh daemon and retrying there.
+  if (draining) {
+    return makeErrorResponse(
+      req.requestId,
+      'send_user_message',
+      'DAEMON_DRAINING',
+      'Daemon is draining for a runtime refresh; retry on the fresh daemon.',
+    );
+  }
+
   const providedToken = req.payload?.attachToken;
   if (!validateAttachToken(entry, providedToken)) {
     return makeErrorResponse(
@@ -1428,6 +1632,7 @@ async function handleSendUserMessage(req, emitEvent) {
   } catch (err) {
     entry.activeRunId = null;
     entry.abortController = null;
+    noteRunSettled();
     return makeErrorResponse(
       req.requestId,
       'send_user_message',
@@ -1534,6 +1739,9 @@ async function handleSendUserMessage(req, emitEvent) {
       }
       // Clear run marker — this run is no longer active
       clearRunMarker(sessionId).catch(() => {});
+      // If a drain is pending, this run settling may be the transition to
+      // idle that lets the daemon self-exit for a runtime refresh.
+      noteRunSettled();
     }
   })();
 
@@ -6839,6 +7047,7 @@ const HANDLERS = {
   update_session: handleUpdateSession,
   submit_approval: handleSubmitApproval,
   cancel_run: handleCancelRun,
+  drain: handleDrain,
   abort: handleAbort,
   configure_role_routing: handleConfigureRoleRouting,
   submit_task_graph: handleSubmitTaskGraph,
@@ -7337,6 +7546,13 @@ export async function main() {
   const socketPath = getSocketPath();
   await ensureSocketDir(socketPath);
   await cleanStaleSocket(socketPath);
+
+  // Freeze the build stamp at startup so it reflects the commit THIS process
+  // loaded — captured now, before any client can connect, so the first hello
+  // advertises a stamp synchronously via `peekBuildStamp()`.
+  getBuildStamp().catch(() => {
+    /* stamp falls back to <version>+nogit on failure; never fatal */
+  });
 
   // Wire a file-backed ContextMemoryStore so typed memory records
   // written by task-graph node completions (see handleSubmitTaskGraph)
