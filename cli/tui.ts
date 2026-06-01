@@ -51,6 +51,7 @@ import {
   secondsUntilNextRetry,
 } from './tui-daemon-reconnect.js';
 import { classifyDaemonSpawnError, readPushdLogTail } from './tui-daemon-errors.js';
+import { createDefaultTuiIo } from './tui-io.js';
 import {
   evaluateHelloResponse,
   formatUnknownEventWarning,
@@ -1278,9 +1279,28 @@ function renderConfigModal(buf, theme, rows, cols, modalState, config) {
  * @param {{ sessionId?, provider?, model?, cwd?, maxRounds? }} options
  */
 export async function runTUI(options = {}) {
+  // Process/IO seam (TUI Decomposition Phase 0). Production passes no
+  // `options.io` and gets the real `process` streams + signal/exit wiring —
+  // behavior identical to the prior inline `process.*` calls. A headless test
+  // harness injects a fake stdin/stdout + no-op signal/exit hooks so the
+  // closure is drivable without a real terminal and can't kill the runner.
+  const io = options.io ?? createDefaultTuiIo();
+
+  // Injectable collaborators (TUI Decomposition Phase 0). Defaults reproduce
+  // the prior inline behavior; a headless harness overrides `tryConnect` to
+  // return a stub daemon client (no real socket/spawn) and `loadConfig` /
+  // `listSessions` for deterministic startup (no disk, no resume modal).
+  const deps = {
+    loadConfig,
+    listSessions,
+    tryConnect: async (socketPath, timeoutMs) =>
+      (await import('./daemon-client.js')).tryConnect(socketPath, timeoutMs),
+    ...(options.deps ?? {}),
+  };
+
   // Load config + apply env before theme construction so PUSH_THEME (and
   // any other theme-relevant env vars) are in place when createTheme() reads them.
-  const config = await loadConfig();
+  const config = await deps.loadConfig();
   applyConfigToEnv(config);
 
   // `let` (not `const`) so /theme <name> can hot-swap the theme without
@@ -1295,8 +1315,14 @@ export async function runTUI(options = {}) {
   let theme = createTheme({});
   const tuiState = createTUIState();
   const composer = createComposer();
+
+  // Test-only seam (TUI Decomposition Phase 0): hand the headless harness a
+  // live reference to inspect `tuiState.transcript` (and the composer) without
+  // parsing rendered ANSI frames. Production never passes `options.onState`.
+  options.onState?.({ tuiState, composer });
+
   const keybinds = createKeybindMap();
-  const screenBuf = createScreenBuffer();
+  const screenBuf = createScreenBuffer((chunk) => io.stdout.write(chunk));
   const inputHistory = createInputHistory();
 
   // ── Resolve provider/session ─────────────────────────────────────
@@ -1635,12 +1661,12 @@ export async function runTUI(options = {}) {
     try {
       const result = await reusedDaemonStaleness();
       if (result.status !== 'stale') {
-        process.stderr.write(
+        io.stderr.write(
           `${JSON.stringify({ level: 'debug', event: `tui_daemon_reuse_${result.status}` })}\n`,
         );
         return;
       }
-      process.stderr.write(
+      io.stderr.write(
         `${JSON.stringify({ level: 'warn', event: 'tui_daemon_reuse_stale', pid: result.pid, daemonStartedAtMs: result.daemonStartedAtMs, newerFile: result.newerFile })}\n`,
       );
       addTranscriptEntry(
@@ -1753,10 +1779,9 @@ export async function runTUI(options = {}) {
     let client = null;
     let socketPath;
     try {
-      const { tryConnect } = await import('./daemon-client.js');
       const { getSocketPath } = await import('./pushd.js');
       socketPath = getSocketPath();
-      client = await tryConnect(socketPath, 500);
+      client = await deps.tryConnect(socketPath, 500);
       if (!client) return false;
     } catch {
       // Connection-level failures (socket not present, EACCES, etc.)
@@ -2163,7 +2188,7 @@ export async function runTUI(options = {}) {
       // Older daemon without the verb — graceful, expected, not user-facing.
       if (err?.code === 'UNSUPPORTED_REQUEST_TYPE') return false;
       const message = err instanceof Error ? err.message : String(err);
-      process.stderr.write(
+      io.stderr.write(
         `${JSON.stringify({ level: 'warn', event: 'tui_session_snapshot_failed', reason, message })}\n`,
       );
       // A failed hydrate on a user-visible moment (attach / reconnect) leaves
@@ -2521,15 +2546,15 @@ export async function runTUI(options = {}) {
 
   // ── Enter alternate screen ───────────────────────────────────────
 
-  process.stdout.write(
+  io.stdout.write(
     ESC.altScreenOn + ESC.cursorHide + ESC.clearScreen + ESC.bracketedPasteOn + ESC.mouseOn,
   );
 
-  if (process.stdin.isTTY) {
-    process.stdin.setRawMode(true);
+  if (io.stdin.isTTY) {
+    io.stdin.setRawMode(true);
   }
-  process.stdin.resume();
-  process.stdin.setEncoding(null);
+  io.stdin.resume();
+  io.stdin.setEncoding(null);
 
   let layoutCache = null; // { key, layout }
   let renderFrameMeta = {
@@ -2825,7 +2850,7 @@ export async function runTUI(options = {}) {
         if (!res.ok || !Array.isArray(res.payload?.messages)) {
           // Symmetric structured log — a resync miss must be distinguishable
           // from "still in sync" for ops; the transcript stays as-is.
-          process.stderr.write(
+          io.stderr.write(
             `${JSON.stringify({ level: 'warn', event: 'tui_transcript_resync_failed', triggerType, reason: res.ok ? 'no_messages' : res.error?.code || 'request_failed' })}\n`,
           );
           return;
@@ -2878,7 +2903,7 @@ export async function runTUI(options = {}) {
       })
       .catch((err) => {
         const reason = err instanceof Error ? err.message : String(err);
-        process.stderr.write(
+        io.stderr.write(
           `${JSON.stringify({ level: 'warn', event: 'tui_transcript_resync_failed', triggerType, reason })}\n`,
         );
       });
@@ -3149,7 +3174,7 @@ export async function runTUI(options = {}) {
         }
         runVisibleEmissionCount = 0;
         tuiState.dirty.add('all');
-        process.stdout.write('\x07'); // bell
+        io.stdout.write('\x07'); // bell
         scheduler.schedule();
         break;
       }
@@ -5577,7 +5602,7 @@ export async function runTUI(options = {}) {
           content = content.slice(0, OSC52_MAX_BYTES);
           truncated = true;
         }
-        process.stdout.write(osc52Copy(content));
+        io.stdout.write(osc52Copy(content));
         const size = formatByteSize(content.length);
         const suffix = truncated ? ` (truncated to ${size})` : ` (${size})`;
         addTranscriptEntry(tuiState, 'status', `Copied ${label}${suffix} via OSC 52.`);
@@ -5846,7 +5871,7 @@ export async function runTUI(options = {}) {
       tuiState.payloadBlocks[tuiState.payloadBlocks.length - 1] ||
       null;
     if (!fallback) {
-      process.stdout.write('\x07');
+      io.stdout.write('\x07');
       return;
     }
     setActiveOverlayModal('payload_inspector');
@@ -5974,7 +5999,7 @@ export async function runTUI(options = {}) {
   }
 
   function clearViewport() {
-    process.stdout.write(ESC.clearScreen);
+    io.stdout.write(ESC.clearScreen);
     tuiState.dirty.add('all');
     scheduler.flush();
   }
@@ -6725,7 +6750,13 @@ export async function runTUI(options = {}) {
     }
   }
 
-  process.stdin.on('data', onData);
+  io.stdin.on('data', onData);
+
+  // Test-only seam (TUI Decomposition Phase 0): the input listener is now
+  // wired, so a headless harness can begin feeding keystrokes. Polling earlier
+  // signals (e.g. the "Connected" status, emitted near the top of setup) races
+  // this registration and drops the first keystrokes. Production passes nothing.
+  options.onInputReady?.();
 
   // ── Signal handling ─────────────────────────────────────────────
 
@@ -6734,21 +6765,21 @@ export async function runTUI(options = {}) {
       const messages = sessionState?.messages ?? [];
       const userAndAssistant = messages.filter((m) => m.role === 'user' || m.role === 'assistant');
       if (userAndAssistant.length === 0) return;
-      process.stdout.write('\n─── Session transcript ───\n\n');
+      io.stdout.write('\n─── Session transcript ───\n\n');
       for (const msg of userAndAssistant) {
         if (msg.role === 'user') {
           const text = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
           // Skip synthetic system-injected messages (e.g. [SESSION_RESUMED])
           if (text.startsWith('[') && text.includes(']')) continue;
-          process.stdout.write(`> ${text.slice(0, 500)}\n\n`);
+          io.stdout.write(`> ${text.slice(0, 500)}\n\n`);
         } else if (msg.role === 'assistant') {
           const raw = typeof msg.content === 'string' ? msg.content : '';
           // Strip JSON tool call fences, keeping only prose
           const cleaned = raw.replace(/```(?:json)?\s*\n?\{[\s\S]*?\}\s*\n?```/g, '').trim();
-          if (cleaned) process.stdout.write(`${cleaned.slice(0, 800)}\n\n`);
+          if (cleaned) io.stdout.write(`${cleaned.slice(0, 800)}\n\n`);
         }
       }
-      process.stdout.write('─────────────────────────\n\n');
+      io.stdout.write('─────────────────────────\n\n');
     } catch {
       /* best-effort */
     }
@@ -6761,10 +6792,10 @@ export async function runTUI(options = {}) {
       /* best-effort */
     }
     try {
-      process.stdout.write(
+      io.stdout.write(
         ESC.mouseOff + ESC.bracketedPasteOff + ESC.cursorShow + ESC.altScreenOff + ESC.reset,
       );
-      if (process.stdin.isTTY) process.stdin.setRawMode(false);
+      if (io.stdin.isTTY) io.stdin.setRawMode(false);
     } catch {
       /* best-effort */
     }
@@ -6772,18 +6803,18 @@ export async function runTUI(options = {}) {
 
   function onSignal(sig) {
     emergencyCleanup();
-    process.exit(128 + (sig === 'SIGTERM' ? 15 : sig === 'SIGHUP' ? 1 : 2));
+    io.exit(128 + (sig === 'SIGTERM' ? 15 : sig === 'SIGHUP' ? 1 : 2));
   }
 
   function onUncaughtException(err) {
     emergencyCleanup();
-    process.stderr.write(`\nPush TUI fatal: ${err?.message || err}\n`);
-    process.exit(1);
+    io.stderr.write(`\nPush TUI fatal: ${err?.message || err}\n`);
+    io.exit(1);
   }
 
-  process.on('SIGTERM', onSignal);
-  process.on('SIGHUP', onSignal);
-  process.on('uncaughtException', onUncaughtException);
+  io.addSignalHandler('SIGTERM', onSignal);
+  io.addSignalHandler('SIGHUP', onSignal);
+  io.addSignalHandler('uncaughtException', onUncaughtException);
 
   // ── Resize handler ───────────────────────────────────────────────
 
@@ -6791,7 +6822,7 @@ export async function runTUI(options = {}) {
     tuiState.dirty.add('all');
     scheduler.flush();
   }
-  process.stdout.on('resize', onResize);
+  io.stdout.on('resize', onResize);
 
   // ── Initial render ───────────────────────────────────────────────
 
@@ -6802,7 +6833,7 @@ export async function runTUI(options = {}) {
   // session picker if previous sessions exist so the user can resume.
   if (!options.sessionId) {
     try {
-      const existingSessions = await listSessions();
+      const existingSessions = await deps.listSessions();
       if (existingSessions.length > 0) {
         await openResumeModal();
       }
@@ -6821,11 +6852,11 @@ export async function runTUI(options = {}) {
     cancelPendingReconnectTimer();
     stopFrameTicker();
     scheduler.destroy();
-    process.stdin.removeListener('data', onData);
-    process.stdout.removeListener('resize', onResize);
-    process.removeListener('SIGTERM', onSignal);
-    process.removeListener('SIGHUP', onSignal);
-    process.removeListener('uncaughtException', onUncaughtException);
+    io.stdin.removeListener('data', onData);
+    io.stdout.removeListener('resize', onResize);
+    io.removeSignalHandler('SIGTERM', onSignal);
+    io.removeSignalHandler('SIGHUP', onSignal);
+    io.removeSignalHandler('uncaughtException', onUncaughtException);
 
     if (runAbort) runAbort.abort();
 
@@ -6835,13 +6866,13 @@ export async function runTUI(options = {}) {
       daemonClient = null;
     }
 
-    process.stdout.write(
+    io.stdout.write(
       ESC.mouseOff + ESC.bracketedPasteOff + ESC.cursorShow + ESC.altScreenOff + ESC.reset,
     );
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(false);
+    if (io.stdin.isTTY) {
+      io.stdin.setRawMode(false);
     }
-    process.stdin.pause();
+    io.stdin.pause();
 
     if (sessionPersisted) {
       dumpSessionTranscript(state);
