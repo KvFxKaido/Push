@@ -160,9 +160,9 @@ model fails to ship without it (the next empirical step).
 - **Less traced:** the web→relay→local-daemon path, where the orchestrator may run
   web-side with the browser token rather than the daemon's `gh` auth.
 
-### 3. Cross-phone cancel is not identity-scoped — ✅ fixed 2026-05-31
+### 3. Cross-phone cancel is not identity-scoped — ✅ fixed 2026-05-31 (DO-stamped sender id)
 
-**Confidence: high (flagged follow-up, then closed with an owner-token gate).**
+**Confidence: high (flagged follow-up, then closed with a per-phone identity stamp).**
 
 `cli/pushd.ts` — the relay path shares one `activeRelayWsState`, so a
 `sandbox_exec`'s AbortController and a later `cancel_run` from *any* relay-paired
@@ -170,27 +170,32 @@ phone land in the same map. One phone could cancel another phone's run by guessi
 the `runId`.
 
 **Why connection-scoping alone couldn't fix it:** the relay DO forwards
-phone→pushd frames byte-for-byte with *no sender identity*
-(`app/src/worker/relay-do.ts` `forwardData`), so pushd structurally can't tell two
-paired phones apart — that's *why* the relay uses one shared `wsState`. The
-loopback WS, by contrast, gives each connection its own `wsState`, so its
-runId-only cancel was already isolated.
+phone→pushd frames with *no sender identity* (`app/src/worker/relay-do.ts`
+`forwardData`), so pushd structurally can't tell two paired phones apart — that's
+*why* the relay uses one shared `wsState`. The loopback WS, by contrast, gives
+each connection its own `wsState`, so its runId-only cancel was already isolated.
 
-**Fix (owner-token binding):** each run now records the session attach bearer it
-was registered under (`ActiveRun.ownerToken` in `cli/pushd-ws.ts`).
-`handleSandboxExec` captures `payload.attachToken`; the sessionless `cancel_run`
-branch requires a matching `attachToken` before aborting a token-owned run, and
-reports a mismatch as `NO_ACTIVE_RUN` (not `INVALID_TOKEN`) so the runId↔token
-binding can't be oracle'd. Runs registered with no owner token (loopback callers
-that thread none) stay purely connection-scoped — unchanged. The web client
-threads the relay session's `targetAttachToken` into the exec + cancel envelopes
-on the relay transport only (`app/src/lib/local-daemon-sandbox-client.ts`).
-Covered by new cases in `cli/tests/pushd-sandbox-exec-cancel.test.mjs` and
-`app/src/lib/local-daemon-sandbox-client.test.ts`.
+**Fix (per-phone identity at the only component that has it — the relay DO):**
+- The DO mints a per-connection `senderId` (`crypto.randomUUID()`) at each
+  phone's WS upgrade (`acceptPhone`) — unique per socket even when two phones
+  paste the *same* pair bundle.
+- The DO stamps it onto every forwarded phone→pushd frame as
+  `RELAY_SENDER_FIELD` (`_relaySender`, pinned in `lib/protocol-schema.ts`),
+  overwriting any client-supplied value so a phone can't forge another's id.
+- pushd reads it off the relay frame into `context.relaySenderId`;
+  `handleSandboxExec` records it as the run's `ownerId` (`ActiveRun.ownerId` in
+  `cli/pushd-ws.ts`), and the sessionless `cancel_run` requires the cancel's
+  `relaySenderId` to match before aborting. A mismatch returns `NO_ACTIVE_RUN`
+  (not a distinct auth error) so the runId↔owner binding can't be oracle'd.
+- Runs with a null `ownerId` (loopback — no relay sender) stay purely
+  connection-scoped — unchanged. The web client asserts **no** ownership token;
+  identity is established server-side by the DO, closing the earlier concern
+  that two phones sharing one session bearer were indistinguishable.
 
-A *true* per-phone identity (the DO stamping a sender id into forwarded frames)
-remains the bigger, separate build; this gate closes the practical leak without a
-cross-component protocol change.
+Covered by new cases in `cli/tests/pushd-sandbox-exec-cancel.test.mjs` (owner-id
+gate), `app/src/worker/relay-do.test.ts` (stamp is per-connection + unforgeable),
+`app/src/lib/local-daemon-sandbox-client.test.ts` (client asserts no ownership),
+and a `RELAY_SENDER_FIELD` drift pin in `cli/tests/protocol-drift.test.mjs`.
 
 ### 4. Delegation audit is coarse
 

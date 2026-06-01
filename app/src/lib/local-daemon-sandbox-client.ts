@@ -214,17 +214,7 @@ async function runWithLiveBinding<T>(
         // and swallow so a cancel_run failure doesn't poison the
         // outer rejection.
         binding
-          .request({
-            type: 'cancel_run',
-            payload: {
-              runId: opts.runId,
-              // Relay runs are token-bound on the daemon; thread the
-              // bearer so the cancel is authorized (Audit #3). Loopback
-              // omits it — those runs register no owner token.
-              ...(opts.ownerToken ? { attachToken: opts.ownerToken } : {}),
-            },
-            timeoutMs: 5_000,
-          })
+          .request({ type: 'cancel_run', payload: { runId: opts.runId }, timeoutMs: 5_000 })
           .catch(() => {});
       }
       settle(() => {
@@ -430,17 +420,11 @@ export async function execLocalDaemon(
   if (opts.cwd) payload.cwd = opts.cwd;
   if (opts.timeoutMs !== undefined) payload.timeoutMs = opts.timeoutMs;
 
-  // Relay transport only: the daemon shares one wsState across every paired
-  // phone, so it binds each run to the session bearer it was started under
-  // and gates the sessionless `cancel_run` on a token match (Remote Control
-  // Surface Audit #3). Register the run under the relay session's
-  // `targetAttachToken` so the same client's later cancel is authorized.
-  // Loopback bindings carry no such token and stay purely connection-scoped.
-  const params = bindingParams(binding);
-  const ownerToken =
-    isRelayBinding(params) && params.targetAttachToken ? params.targetAttachToken : undefined;
-  if (ownerToken) payload.attachToken = ownerToken;
-
+  // Run ownership for cross-phone cancel scoping (Remote Control Surface Audit
+  // #3) is NOT asserted by the client: the relay DO stamps a trusted
+  // per-connection sender id onto every forwarded frame, and the daemon binds
+  // the run to that. The client just sends the runId; a `cancel_run` from the
+  // same WS rides the same DO-stamped identity automatically.
   const response = await runWithBinding(
     binding,
     (request) =>
@@ -453,7 +437,7 @@ export async function execLocalDaemon(
         // timeout. Default 60s command + 5s slack.
         timeoutMs: (opts.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS) + 5_000,
       }),
-    { abortSignal: opts.abortSignal, runId, ownerToken },
+    { abortSignal: opts.abortSignal, runId },
   );
   return response.payload;
 }
@@ -624,15 +608,6 @@ export interface WithTransientBindingOptions {
   abortSignal?: AbortSignal;
   /** runId to send with the cancel envelope. Required when abortSignal is set. */
   runId?: string;
-  /**
-   * Session attach bearer to thread into the `cancel_run` envelope. On the
-   * relay transport every paired phone shares one daemon-side wsState, so the
-   * daemon binds each run to the token it was registered under and requires a
-   * match before a sessionless `cancel_run` may abort it (Remote Control
-   * Surface Audit #3). Omitted on the loopback transport, where per-connection
-   * scoping already isolates runs and no token is registered.
-   */
-  ownerToken?: string;
 }
 
 /**
@@ -724,12 +699,7 @@ export async function withTransientBinding<T>(
               const cancelPromise = handle
                 .request<{ accepted: boolean; runId?: string }>({
                   type: 'cancel_run',
-                  payload: {
-                    runId,
-                    // See runWithLiveBinding: relay runs are token-bound
-                    // on the daemon (Audit #3); loopback omits the token.
-                    ...(opts.ownerToken ? { attachToken: opts.ownerToken } : {}),
-                  },
+                  payload: { runId },
                   timeoutMs: 5_000,
                 })
                 .catch(() => {});

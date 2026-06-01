@@ -41,20 +41,23 @@ import { appendAuditEvent } from './pushd-audit-log.js';
  * The relay transport breaks the one-connection-per-client assumption:
  * every paired phone shares ONE module-level wsState (`activeRelayWsState`
  * in pushd.ts), so connection-scoping alone can't isolate them. Each run
- * therefore carries the `ownerToken` (the session attach bearer) it was
- * registered under; the sessionless `cancel_run` path requires a matching
- * token before it will abort a token-owned run. Runs registered with no
- * owner token (loopback callers that don't thread one) keep the legacy
- * connection-scoped behavior.
+ * therefore carries the `ownerId` of the phone that started it — the
+ * per-connection sender id the relay DO stamps onto every forwarded frame
+ * (`RELAY_SENDER_FIELD`), which is the only trustworthy phone identity pushd
+ * has. The sessionless `cancel_run` path requires a matching `ownerId` before
+ * it will abort an owned run. Runs registered with no owner id (loopback
+ * callers, which don't ride the relay) keep the legacy connection-scoped
+ * behavior.
  */
 export interface ActiveRun {
   controller: AbortController;
   /**
-   * Session attach bearer the run was registered under, or null when the
-   * caller threaded none. A non-null value gates the sessionless cancel
-   * path so a relay-shared wsState can't be used to abort across phones.
+   * Per-phone relay sender id the run was registered under, or null when the
+   * run didn't originate from the relay (loopback). A non-null value gates the
+   * sessionless cancel path so the relay-shared wsState can't be used to abort
+   * across phones.
    */
-  ownerToken: string | null;
+  ownerId: string | null;
 }
 
 export interface PushdWsConnectionState {
@@ -111,6 +114,14 @@ export interface PushdWsAdapterDeps {
       record?: DeviceTokenRecord;
       auth?: PushdWsAuthRecord;
       wsState?: PushdWsConnectionState;
+      /**
+       * Per-phone sender id the relay DO stamped onto the forwarded frame
+       * (`RELAY_SENDER_FIELD`). Present only on relay-originated requests;
+       * scopes `sandbox_exec` run ownership so a guessed runId from another
+       * paired phone can't cancel this phone's run (Audit #3). Absent on
+       * loopback, where per-connection `wsState` already isolates runs.
+       */
+      relaySenderId?: string;
     },
   ) => Promise<unknown>;
   /** Existing add/remove session client hooks. */

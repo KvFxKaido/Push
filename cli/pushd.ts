@@ -479,6 +479,7 @@ function startRelayClient(config: RelayConfig): RelayClientHandle {
           type?: string;
           sessionId?: string;
           payload?: { sessionId?: string; capabilities?: unknown };
+          [RELAY_SENDER_FIELD]?: string;
         };
         try {
           parsed = JSON.parse(trimmed);
@@ -493,9 +494,20 @@ function startRelayClient(config: RelayConfig): RelayClientHandle {
         if (parsed.kind !== 'request') continue;
         let response: unknown;
         try {
+          // The relay DO stamps the per-connection sender id onto every
+          // forwarded phone→pushd frame (`RELAY_SENDER_FIELD`). It's the only
+          // trustworthy phone identity here — the shared `wsState` can't tell
+          // paired phones apart — so it scopes run ownership (Audit #3). A
+          // string-typed value only; anything else (absent, forged non-string)
+          // resolves to undefined and the run registers unowned.
+          const relaySenderId =
+            typeof parsed[RELAY_SENDER_FIELD] === 'string' && parsed[RELAY_SENDER_FIELD]
+              ? parsed[RELAY_SENDER_FIELD]
+              : undefined;
           response = await handleRequest(parsed, emitToRelay, {
             auth: RELAY_SYNTHETIC_AUTH,
             wsState,
+            relaySenderId,
           });
         } catch (err) {
           const message = err instanceof Error ? err.message : 'internal error';
@@ -661,7 +673,11 @@ import {
   resolveReviewGuidance,
 } from '../lib/review-guidance.ts';
 import { validateTaskGraph, executeTaskGraph, formatTaskGraphResult } from '../lib/task-graph.ts';
-import { assertValidEvent, isStrictModeEnabled } from '../lib/protocol-schema.js';
+import {
+  assertValidEvent,
+  isStrictModeEnabled,
+  RELAY_SENDER_FIELD,
+} from '../lib/protocol-schema.js';
 import { isV2DelegationEvent, synthesizeV1DelegationEvent } from './v1-downgrade.js';
 import {
   roleCanUseTool,
@@ -1878,10 +1894,11 @@ async function handleCancelRun(req, _emitEvent, context) {
   // The relay transport defeats connection-scoping: every paired phone
   // shares the one `activeRelayWsState`, so a guessed runId would
   // otherwise reach across phones. When a run was registered with an
-  // `ownerToken` (the session attach bearer), require the cancel to
-  // present a matching `attachToken` before aborting it. Runs with a
-  // null ownerToken (loopback callers that thread no token) stay purely
-  // connection-scoped, unchanged. Closes Remote Control Surface Audit #3.
+  // `ownerId` (the relay DO's per-phone sender id), require the cancel to
+  // arrive from the SAME phone — i.e. its DO-stamped `relaySenderId` must
+  // match. Runs with a null ownerId (loopback callers, which don't ride the
+  // relay) stay purely connection-scoped, unchanged. Closes Remote Control
+  // Surface Audit #3.
   if (!sessionId) {
     if (!runId) {
       return makeErrorResponse(
@@ -1901,17 +1918,17 @@ async function handleCancelRun(req, _emitEvent, context) {
         `No active run to cancel: ${runId}`,
       );
     }
-    if (run.ownerToken !== null) {
-      const providedToken = req.payload?.attachToken;
-      // Same bearer comparison the session-ful gate uses
-      // (`validateAttachToken`): exact match on the opaque, high-entropy
-      // `pushd_da_*` token. A mismatch is reported as NO_ACTIVE_RUN (not
-      // INVALID_TOKEN) so the runId↔token binding isn't oracle'd — a
-      // wrong-token caller can't distinguish "runId exists, wrong owner"
-      // from "runId doesn't exist."
-      if (typeof providedToken !== 'string' || providedToken !== run.ownerToken) {
+    if (run.ownerId !== null) {
+      // The cancel must come from the same phone that started the run. The
+      // sender id is DO-stamped and trusted (a phone can't forge it). A
+      // mismatch is reported as NO_ACTIVE_RUN (not a distinct auth error) so
+      // the runId↔owner binding isn't oracle'd — a different phone can't
+      // distinguish "runId exists, other owner" from "runId doesn't exist."
+      const cancelSenderId =
+        typeof context?.relaySenderId === 'string' ? context.relaySenderId : null;
+      if (cancelSenderId !== run.ownerId) {
         process.stderr.write(
-          `${JSON.stringify({ level: 'warn', event: 'cancel_run_runid_owner_mismatch', runId, hadToken: typeof providedToken === 'string' && providedToken.length > 0 })}\n`,
+          `${JSON.stringify({ level: 'warn', event: 'cancel_run_runid_owner_mismatch', runId, hadSender: cancelSenderId !== null })}\n`,
         );
         return makeErrorResponse(
           req.requestId,
@@ -5475,20 +5492,23 @@ async function handleSandboxExec(req, _emitEvent, context) {
   // don't carry wsState — they skip registration and behave as before
   // (cancellation isn't reachable there anyway).
   //
-  // The run records the session attach bearer it was started under
-  // (`ownerToken`). On the relay transport every phone shares one
-  // wsState, so the sessionless `cancel_run` path gates on this token
-  // to stop a guessed runId from one phone aborting another's run
-  // (Remote Control Surface Audit #3). A null token (loopback callers
-  // that don't thread one) keeps the legacy connection-scoped behavior.
+  // The run records the per-phone relay sender id it was started under
+  // (`ownerId`, from the DO-stamped `RELAY_SENDER_FIELD` on the context). On
+  // the relay transport every phone shares one wsState, so the sessionless
+  // `cancel_run` path gates on this id to stop a guessed runId from one phone
+  // aborting another's run (Remote Control Surface Audit #3). A null id
+  // (loopback callers, which don't ride the relay) keeps the legacy
+  // connection-scoped behavior.
   const runId = typeof payload.runId === 'string' && payload.runId ? payload.runId : null;
-  const runOwnerToken =
-    typeof payload.attachToken === 'string' && payload.attachToken ? payload.attachToken : null;
+  const runOwnerId =
+    typeof context?.relaySenderId === 'string' && context.relaySenderId
+      ? context.relaySenderId
+      : null;
   const wsState = context?.wsState;
   let abortController = null;
   if (runId && wsState && wsState.activeRuns instanceof Map) {
     abortController = new AbortController();
-    wsState.activeRuns.set(runId, { controller: abortController, ownerToken: runOwnerToken });
+    wsState.activeRuns.set(runId, { controller: abortController, ownerId: runOwnerId });
   }
 
   const startedAt = Date.now();

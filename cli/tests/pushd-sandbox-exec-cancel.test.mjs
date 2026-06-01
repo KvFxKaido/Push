@@ -146,82 +146,66 @@ describe('sandbox_exec + cancel_run (Phase 1.f mid-run cancel)', () => {
   });
 });
 
-// Remote Control Surface Audit #3: on the relay transport every paired
-// phone shares ONE daemon-side wsState, so connection-scoping alone can't
-// isolate them. A run registered with an `attachToken` records it as the
-// run's ownerToken; a sessionless cancel_run must present a matching token.
-// Runs registered WITHOUT a token (loopback) stay purely connection-scoped.
-describe('sandbox_exec + cancel_run owner-token binding (Audit #3)', () => {
-  it('records the run owner token and accepts a cancel that presents it', async () => {
+// Remote Control Surface Audit #3: on the relay transport every paired phone
+// shares ONE daemon-side wsState, so connection-scoping alone can't isolate
+// them. The relay DO stamps a per-phone sender id onto each forwarded frame,
+// surfaced to handlers as `context.relaySenderId`. A run records that as its
+// `ownerId`; a sessionless cancel_run must arrive from the same sender id.
+// Runs with no owner id (loopback — no relay sender) stay connection-scoped.
+describe('sandbox_exec + cancel_run owner-id binding (Audit #3)', () => {
+  it('records the relay sender id and accepts a cancel from the same phone', async () => {
     const wsState = makeWsState();
     const runId = 'run_owned_match';
-    const ownerToken = 'pushd_da_owner_abc';
+    const senderId = 'phone-conn-aaaa';
     const execPromise = handleRequest(
-      makeRequest('sandbox_exec', {
-        command: 'sleep 30',
-        runId,
-        attachToken: ownerToken,
-        timeoutMs: 60_000,
-      }),
+      makeRequest('sandbox_exec', { command: 'sleep 30', runId, timeoutMs: 60_000 }),
       NOOP_EMIT,
-      { wsState },
+      { wsState, relaySenderId: senderId },
     );
     await new Promise((r) => setTimeout(r, 50));
-    // Registration carries the owner token alongside the controller.
-    assert.equal(wsState.activeRuns.get(runId)?.ownerToken, ownerToken);
-    const cancelRes = await handleRequest(
-      makeRequest('cancel_run', { runId, attachToken: ownerToken }),
-      NOOP_EMIT,
-      { wsState },
-    );
+    // Registration carries the owner id alongside the controller.
+    assert.equal(wsState.activeRuns.get(runId)?.ownerId, senderId);
+    const cancelRes = await handleRequest(makeRequest('cancel_run', { runId }), NOOP_EMIT, {
+      wsState,
+      relaySenderId: senderId,
+    });
     assert.equal(cancelRes.ok, true);
     assert.equal(cancelRes.payload.accepted, true);
     const execRes = await execPromise;
     assert.equal(execRes.payload.cancelled, true);
   });
 
-  it('refuses a cancel that presents the wrong token (NO_ACTIVE_RUN, no oracle)', async () => {
+  it('refuses a cancel from a different phone (NO_ACTIVE_RUN, no oracle)', async () => {
     const wsState = makeWsState();
     const runId = 'run_owned_wrong';
     const execPromise = handleRequest(
-      makeRequest('sandbox_exec', {
-        command: 'sleep 1',
-        runId,
-        attachToken: 'pushd_da_real',
-        timeoutMs: 5_000,
-      }),
+      makeRequest('sandbox_exec', { command: 'sleep 1', runId, timeoutMs: 5_000 }),
       NOOP_EMIT,
-      { wsState },
+      { wsState, relaySenderId: 'phone-conn-aaaa' },
     );
     await new Promise((r) => setTimeout(r, 50));
-    // A different phone sharing the same relay wsState guesses the runId
-    // but can't present the owner token.
-    const cancelRes = await handleRequest(
-      makeRequest('cancel_run', { runId, attachToken: 'pushd_da_guess' }),
-      NOOP_EMIT,
-      { wsState },
-    );
+    // A different phone sharing the same relay wsState guesses the runId, but
+    // its DO-stamped sender id differs.
+    const cancelRes = await handleRequest(makeRequest('cancel_run', { runId }), NOOP_EMIT, {
+      wsState,
+      relaySenderId: 'phone-conn-bbbb',
+    });
     assert.equal(cancelRes.ok, false);
     // Reported as NO_ACTIVE_RUN — same shape as a non-existent runId, so the
-    // wrong-token caller can't tell "exists, wrong owner" from "doesn't exist."
+    // other phone can't tell "exists, other owner" from "doesn't exist."
     assert.equal(cancelRes.error.code, 'NO_ACTIVE_RUN');
     const execRes = await execPromise;
-    assert.notEqual(execRes.payload.cancelled, true, 'wrong-token cancel must not abort the run');
+    assert.notEqual(execRes.payload.cancelled, true, 'other-phone cancel must not abort the run');
     assert.equal(execRes.payload.exitCode, 0);
   });
 
-  it('refuses a token-owned run cancel that presents NO token', async () => {
+  it('refuses an owned-run cancel that carries NO sender id', async () => {
     const wsState = makeWsState();
-    const runId = 'run_owned_notoken';
+    const runId = 'run_owned_nosender';
     const execPromise = handleRequest(
-      makeRequest('sandbox_exec', {
-        command: 'sleep 1',
-        runId,
-        attachToken: 'pushd_da_real',
-        timeoutMs: 5_000,
-      }),
+      makeRequest('sandbox_exec', { command: 'sleep 1', runId, timeoutMs: 5_000 }),
       NOOP_EMIT,
-      { wsState },
+      { wsState, relaySenderId: 'phone-conn-aaaa' },
     );
     await new Promise((r) => setTimeout(r, 50));
     const cancelRes = await handleRequest(makeRequest('cancel_run', { runId }), NOOP_EMIT, {
@@ -233,19 +217,19 @@ describe('sandbox_exec + cancel_run owner-token binding (Audit #3)', () => {
     assert.notEqual(execRes.payload.cancelled, true);
   });
 
-  it('a tokenless run (loopback) still cancels with only the runId', async () => {
-    // No attachToken on the exec → ownerToken is null → the legacy
-    // connection-scoped behavior is preserved (loopback gives each
-    // connection its own wsState, so the runId alone is sufficient).
+  it('an unowned run (loopback, no relay sender) still cancels with only the runId', async () => {
+    // No relaySenderId on the context → ownerId is null → the legacy
+    // connection-scoped behavior is preserved (loopback gives each connection
+    // its own wsState, so the runId alone is sufficient).
     const wsState = makeWsState();
-    const runId = 'run_loopback_notoken';
+    const runId = 'run_loopback_unowned';
     const execPromise = handleRequest(
       makeRequest('sandbox_exec', { command: 'sleep 30', runId, timeoutMs: 60_000 }),
       NOOP_EMIT,
       { wsState },
     );
     await new Promise((r) => setTimeout(r, 50));
-    assert.equal(wsState.activeRuns.get(runId)?.ownerToken, null);
+    assert.equal(wsState.activeRuns.get(runId)?.ownerId, null);
     const cancelRes = await handleRequest(makeRequest('cancel_run', { runId }), NOOP_EMIT, {
       wsState,
     });

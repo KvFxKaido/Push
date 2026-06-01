@@ -627,12 +627,12 @@ describe('execLocalDaemon (Phase 1.f abortSignal)', () => {
     }
   });
 
-  it('binds a relay run to the session bearer (exec + cancel carry attachToken)', async () => {
-    // Remote Control Surface Audit #3: relay phones share one daemon-side
-    // wsState, so the daemon binds each run to the bearer it was registered
-    // under and gates the sessionless cancel on a token match. The client
-    // must therefore thread the relay session's `targetAttachToken` into both
-    // the sandbox_exec payload (registration) and the cancel_run payload.
+  it('does not assert run ownership on the relay transport (DO stamps identity)', async () => {
+    // Remote Control Surface Audit #3: run ownership for cross-phone cancel
+    // scoping is established by the relay DO stamping a trusted per-connection
+    // sender id onto forwarded frames — NOT by the client. So even on a relay
+    // binding the client sends a plain runId and no attachToken; the cancel
+    // rides the same DO-stamped identity automatically.
     const captured: { type: string; payload: Record<string, unknown> }[] = [];
     const relayBinding: LiveDaemonBinding = {
       params: {
@@ -675,43 +675,10 @@ describe('execLocalDaemon (Phase 1.f abortSignal)', () => {
     await new Promise((r) => setTimeout(r, 20));
     const execEnv = captured.find((c) => c.type === 'sandbox_exec');
     const cancelEnv = captured.find((c) => c.type === 'cancel_run');
-    expect(execEnv?.payload.attachToken).toBe('pushd_da_session_owner_yyyyyyyyyyyy');
-    expect(cancelEnv?.payload.runId).toBe('run_relay_owned');
-    expect(cancelEnv?.payload.attachToken).toBe('pushd_da_session_owner_yyyyyyyyyyyy');
-  });
-
-  it('does NOT thread an attachToken on the loopback (local-PC) transport', async () => {
-    // Loopback gives each connection its own wsState, so runs register no
-    // owner token and stay purely connection-scoped. The client must not
-    // invent an attachToken there (a local-PC binding has no session bearer).
-    const captured: { type: string; payload: Record<string, unknown> }[] = [];
-    const localBinding: LiveDaemonBinding = {
-      params: {
-        port: 1234,
-        token: VALID_TOKEN,
-        boundOrigin: 'http://localhost:5173',
-      } satisfies LocalPcBinding,
-      request: <T = unknown>(opts: RequestOptions): Promise<SessionResponse<T>> => {
-        captured.push({
-          type: opts.type as string,
-          payload: (opts.payload ?? {}) as Record<string, unknown>,
-        });
-        return Promise.resolve({
-          v: PROTOCOL_VERSION,
-          kind: 'response',
-          requestId: 'r',
-          type: opts.type,
-          sessionId: null,
-          ok: true,
-          payload: { stdout: '', stderr: '', exitCode: 0, durationMs: 0, truncated: false },
-          error: null,
-        } as unknown as SessionResponse<T>);
-      },
-    };
-    await execLocalDaemon(localBinding, 'echo hi', { runId: 'run_loopback' });
-    const execEnv = captured.find((c) => c.type === 'sandbox_exec');
-    expect(execEnv).toBeDefined();
+    expect(execEnv?.payload.runId).toBe('run_relay_owned');
     expect(execEnv?.payload).not.toHaveProperty('attachToken');
+    expect(cancelEnv?.payload.runId).toBe('run_relay_owned');
+    expect(cancelEnv?.payload).not.toHaveProperty('attachToken');
   });
 
   it('dispatches cancel_run with the matching runId when the abort signal fires', async () => {

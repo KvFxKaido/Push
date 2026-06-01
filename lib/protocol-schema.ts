@@ -1271,9 +1271,21 @@ export function validateRelayEnvelope(env: unknown): ValidationIssue[] {
   return issues;
 }
 
-// ---------------------------------------------------------------------------
-// Persisted chat-card schemas
-// ---------------------------------------------------------------------------
+/**
+ * Reserved field name the Worker relay DO stamps onto every phone→pushd
+ * frame it forwards, carrying a per-connection sender id minted at WS upgrade
+ * (`RelaySessionDO`). It is the ONLY trustworthy phone-identity signal pushd
+ * has: the relay forwards frames without otherwise exposing which phone sent
+ * them, and a phone setting this field itself is overwritten by the DO before
+ * forwarding. pushd reads it to scope per-phone run ownership (so one paired
+ * phone can't cancel another's `sandbox_exec` by guessing its runId) — see
+ * the Remote Control Surface Audit, finding #3.
+ *
+ * Underscore-prefixed and pinned here (one source of truth per vocabulary, per
+ * AGENTS.md) so the DO writer and the pushd reader can't drift; the
+ * `cli/tests/protocol-drift.test.mjs` suite pins the value.
+ */
+export const RELAY_SENDER_FIELD = '_relaySender' as const;
 
 /**
  * Workspace-patch card — a serialized snapshot of the uncommitted working

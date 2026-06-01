@@ -826,9 +826,21 @@ describe('protocol drift characterization — v1 downgrade fidelity', () => {
 
 import {
   RELAY_ENVELOPE_KINDS,
+  RELAY_SENDER_FIELD,
   isRelayEnvelope,
   validateRelayEnvelope,
 } from '../../lib/protocol-schema.ts';
+
+describe('relay sender-id field', () => {
+  // RELAY_SENDER_FIELD is the single source of truth for the per-phone
+  // identity the relay DO stamps onto forwarded frames (writer) and pushd
+  // reads to scope run ownership (reader). Pin the literal so the DO and the
+  // daemon can't drift to different field names — a rename here forces both
+  // sides (and this assertion) to move together. AGENTS.md guardrail #3.
+  it('pins the stamped sender-id field name', () => {
+    assert.equal(RELAY_SENDER_FIELD, '_relaySender');
+  });
+});
 
 describe('relay envelope schema', () => {
   it('RELAY_ENVELOPE_KINDS is the complete set the validator accepts', () => {
