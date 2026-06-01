@@ -1,6 +1,6 @@
 import { buildRetrievedMemoryKnownContext } from '@/lib/context-memory';
 import {
-  AUDITOR_MEMORY_DETAIL_CAP,
+  AUDITOR_MEMORY_PACK_OVERRIDES,
   MAX_ROLE_RETRIEVED_MEMORY_RECORDS as MAX_RETRIEVED_MEMORY_RECORDS,
   ROLE_MEMORY_SECTION_BUDGETS,
 } from '@push/lib/role-memory-budgets';
@@ -53,12 +53,11 @@ async function buildRoleRetrievedMemoryBlock(
 /**
  * The Auditor opts into verbatim top-record detail: its SAFE/UNSAFE gate benefits
  * from the full verification output stored in `detail`. Reviewer/Explorer/Coder stay
- * summary-only for now (breadth over depth) — see `AUDITOR_MEMORY_DETAIL_CAP`.
+ * summary-only for now (breadth over depth). The shared override
+ * (`AUDITOR_MEMORY_PACK_OVERRIDES`) is also applied by the CLI commit-gate so both
+ * surfaces stay in sync.
  */
-const AUDITOR_PACK_OVERRIDES: Partial<MemoryPackOptions> = {
-  includeTopDetail: true,
-  detailCap: AUDITOR_MEMORY_DETAIL_CAP,
-};
+const AUDITOR_PACK_OVERRIDES = AUDITOR_MEMORY_PACK_OVERRIDES;
 
 function buildTaskText(prefix: string, primary: string, fileHints?: string[]): string {
   return [prefix, primary, ...(fileHints ?? []).slice(0, 4)].filter(Boolean).join(' ').trim();

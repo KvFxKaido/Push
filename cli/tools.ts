@@ -33,6 +33,7 @@ import { evaluatePreHooks } from '../lib/tool-hooks.ts';
 import { reduceToolOutput } from '../lib/tool-output-reducers.ts';
 import { runAuditor } from '../lib/auditor-agent.ts';
 import { resolveAuditorGateEnabled, AUDITOR_GATE_ENV_VAR } from '../lib/auditor-policy.ts';
+import { buildAuditorGateRuntimeContext } from './auditor-gate-memory.ts';
 import { PROVIDER_CONFIGS, resolveApiKey, createProviderStream } from './provider.js';
 import { executeGitHubCoreTool } from '../lib/github-tool-core.ts';
 import { parseGitHubCoreToolCall } from '../lib/github-tool-parser.ts';
@@ -1673,7 +1674,14 @@ export async function backupFile(filePath, workspaceRoot) {
  * `git add` — the gate is invoked by `PushGit.commit` *after* staging, so the
  * diff reflects exactly what will be committed.
  */
-function makeAuditorPreCommitGate({ providerId, model, getStagedDiff, approvalFn, signal }) {
+function makeAuditorPreCommitGate({
+  providerId,
+  model,
+  getStagedDiff,
+  approvalFn,
+  signal,
+  workspaceRoot,
+}) {
   return async () => {
     const cliProvider = providerId ? PROVIDER_CONFIGS[providerId] : null;
     let apiKey = '';
@@ -1714,7 +1722,29 @@ function makeAuditorPreCommitGate({ providerId, model, getStagedDiff, approvalFn
           provider: providerId,
           stream: (req) => stream(signal ? { ...req, signal: req.signal ?? signal } : req),
           modelId: model,
-          resolveRuntimeContext: async () => '',
+          // Retrieve Auditor-scoped typed memory (with verbatim top-record detail)
+          // so the CLI gate sees the same context the web Auditor does. Best-effort:
+          // resolve the durable scope via git, then build the memory block. Any
+          // failure degrades to '' — memory is advisory, never a commit blocker.
+          resolveRuntimeContext: async (diff) => {
+            try {
+              const identity = await resolveWorkspaceIdentity(workspaceRoot);
+              return await buildAuditorGateRuntimeContext({
+                scope: { repoFullName: identity.repoFullName, branch: identity.branch },
+                diff,
+              });
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              console.log(
+                JSON.stringify({
+                  level: 'warn',
+                  event: 'auditor_gate_scope_failed',
+                  error: message,
+                }),
+              );
+              return '';
+            }
+          },
         },
         () => {},
       );
@@ -2724,6 +2754,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
               model: typeof options.model === 'string' ? options.model : '',
               approvalFn: options.approvalFn,
               signal: options.signal,
+              workspaceRoot,
               // Stage exactly what the commit will stage, then read the staged
               // diff. PushGit.commit re-runs `git add` with the same addArgs
               // (idempotent) before committing the index this produced.

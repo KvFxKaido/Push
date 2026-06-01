@@ -22,6 +22,8 @@
  * this base.
  */
 
+import type { MemoryPackOptions } from './context-memory-packing.js';
+
 export const ROLE_MEMORY_SECTION_BUDGETS = {
   facts: 600,
   taskMemory: 700,
@@ -42,3 +44,15 @@ export const MAX_ROLE_RETRIEVED_MEMORY_RECORDS = 5;
  * the Auditor, where depth on the top verification/decision record beats breadth.
  */
 export const AUDITOR_MEMORY_DETAIL_CAP = 400;
+
+/**
+ * Pack overrides for roles that surface verbatim top-record `detail`. Shared from
+ * `lib/` so both surfaces apply the same Auditor opt-in: the web runtime
+ * (`app/src/lib/role-memory-context.ts`) and the CLI commit-gate
+ * (`cli/auditor-gate-memory.ts`). Keeping it here closes the cross-surface drift the
+ * module docstring warns about — the Auditor's detail policy lives in one place.
+ */
+export const AUDITOR_MEMORY_PACK_OVERRIDES: Partial<MemoryPackOptions> = {
+  includeTopDetail: true,
+  detailCap: AUDITOR_MEMORY_DETAIL_CAP,
+};

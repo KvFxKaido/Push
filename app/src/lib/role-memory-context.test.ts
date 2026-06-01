@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { AUDITOR_MEMORY_DETAIL_CAP } from '@push/lib/role-memory-budgets';
 
 const { mockBuildRetrievedMemoryKnownContext } = vi.hoisted(() => ({
   mockBuildRetrievedMemoryKnownContext: vi.fn(),
@@ -89,7 +90,7 @@ describe('role-memory-context', () => {
       }),
       expect.objectContaining({
         includeTopDetail: true,
-        detailCap: 400,
+        detailCap: AUDITOR_MEMORY_DETAIL_CAP,
       }),
     );
   });
@@ -142,7 +143,7 @@ describe('role-memory-context', () => {
       }),
       expect.objectContaining({
         includeTopDetail: true,
-        detailCap: 400,
+        detailCap: AUDITOR_MEMORY_DETAIL_CAP,
       }),
     );
   });
