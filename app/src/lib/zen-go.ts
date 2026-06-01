@@ -1,7 +1,19 @@
 export type ZenGoTransport = 'openai' | 'anthropic';
 
-// MiniMax models on OpenCode Go are served over the Anthropic Messages transport.
-const ZEN_GO_ANTHROPIC_MODELS = new Set(['minimax-m2.5', 'minimax-m2.7', 'minimax-m3']);
+// Models routed over the Anthropic Messages endpoint instead of the default
+// OpenAI-compatible /chat/completions path. Two reasons land a model here:
+//   - qwen3.7-max *requires* it: the live Go endpoint rejects it on the oa-compat
+//     format ("Model qwen3.7-max is not supported for format oa-compat"), so the
+//     openai transport would hard-fail on first use.
+//   - the MiniMax family is routed here to match existing behavior (m2.5/m2.7
+//     predate this change; m3 follows the family). These ids also accept oa-compat,
+//     so flipping any MiniMax id back to openai is a safe one-line change.
+const ZEN_GO_ANTHROPIC_MODELS = new Set([
+  'minimax-m2.5',
+  'minimax-m2.7',
+  'minimax-m3',
+  'qwen3.7-max',
+]);
 
 export const ZEN_GO_MODELS = [
   'deepseek-v4-flash',

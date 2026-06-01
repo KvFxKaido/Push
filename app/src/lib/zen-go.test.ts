@@ -3,6 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { getZenGoTransport, ZEN_GO_DEFAULT_MODEL, ZEN_GO_MODELS } from './zen-go';
 
 describe('zen-go', () => {
+  it('keeps the curated list in sorted order', () => {
+    expect([...ZEN_GO_MODELS]).toEqual([...ZEN_GO_MODELS].sort());
+  });
+
   it('includes all documented Go models sorted alphabetically by family', () => {
     expect([...ZEN_GO_MODELS]).toEqual(
       expect.arrayContaining([
@@ -44,11 +48,14 @@ describe('zen-go', () => {
     expect(getZenGoTransport('minimax-m2.7')).toBe('anthropic');
     expect(getZenGoTransport('minimax-m2.5')).toBe('anthropic');
     expect(getZenGoTransport('minimax-m3')).toBe('anthropic');
+    // qwen3.7-max rejects the oa-compat format on the live Go endpoint, so it
+    // must route over the Anthropic Messages transport.
+    expect(getZenGoTransport('qwen3.7-max')).toBe('anthropic');
     expect(getZenGoTransport('deepseek-v4-pro')).toBe('openai');
     expect(getZenGoTransport('deepseek-v4-flash')).toBe('openai');
     expect(getZenGoTransport('hy3-preview')).toBe('openai');
+    expect(getZenGoTransport('mimo-v2.5')).toBe('openai');
     expect(getZenGoTransport('mimo-v2.5-pro')).toBe('openai');
-    expect(getZenGoTransport('qwen3.7-max')).toBe('openai');
   });
 
   it('fails open to the default OpenAI-compatible transport for unknown ids', () => {
