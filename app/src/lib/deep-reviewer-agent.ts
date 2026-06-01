@@ -29,6 +29,7 @@ import { createExplorerToolHooks } from './explorer-agent';
 import { buildReviewerRuntimeContext } from './role-memory-context';
 import { executeReadOnlyTool } from './agent-loop-utils';
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
+import { MEMORY_TOOL_PROTOCOL } from './memory-tools';
 import type { LlmMessage, PushStream } from '@push/lib/provider-contract';
 import { getProviderPushStream, type ActiveProvider } from './orchestrator';
 import type { ReviewerPromptContext } from './role-context';
@@ -85,6 +86,12 @@ export async function runDeepReviewer(
     detectAllToolCalls,
     detectAnyToolCall,
     webSearchToolProtocol: WEB_SEARCH_TOOL_PROTOCOL,
+    // The web reviewer's executor (WebToolExecutionRuntime) supports the
+    // `memory` source and `reviewer` holds `memory:read` — but the memory case
+    // requires an active repo (NO_ACTIVE_REPO otherwise). Advertise only when a
+    // repo scope is present, so a diff-only review without a repo doesn't get an
+    // advertised-but-denied tool (LCM; Codex P2 on #754).
+    memoryToolProtocol: allowedRepo ? MEMORY_TOOL_PROTOCOL : undefined,
   };
 
   return runDeepReviewerLib(diff, libOptions, callbacks);

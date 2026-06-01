@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createInMemoryStore } from './context-memory-store';
 import { createMemoryRecord } from './context-memory';
-import { runMemoryGrep, runMemoryExpand } from './memory-tool-exec';
+import { runMemoryGrep, runMemoryExpand, createMemoryToolExecutor } from './memory-tool-exec';
 import type { ContextMemoryStore } from './context-memory-store';
 
 const repo = 'owner/repo';
@@ -167,5 +167,40 @@ describe('runMemoryExpand', () => {
     );
     expect(result.meta.found).toBe(0);
     expect(result.text).toContain('No records found');
+  });
+});
+
+describe('createMemoryToolExecutor', () => {
+  it('routes memory_grep through the shared runner with the bound scope', async () => {
+    const store = createInMemoryStore();
+    seed(store);
+    const exec = createMemoryToolExecutor({ repoFullName: repo, branch }, store);
+    const res = await exec('memory_grep', { pattern: 'typecheck' });
+    expect(res.text).toContain('memory_grep');
+    expect(res.text).toContain('typecheck');
+  });
+
+  it('routes memory_expand through the shared runner', async () => {
+    const store = createInMemoryStore();
+    const { verify } = seed(store);
+    const exec = createMemoryToolExecutor({ repoFullName: repo, branch }, store);
+    const res = await exec('memory_expand', { ids: [verify.id] });
+    expect(res.text).toContain('memory_expand');
+    expect(res.text).toContain(verify.id);
+  });
+
+  it('returns a benign error for an unknown memory tool', async () => {
+    const exec = createMemoryToolExecutor({ repoFullName: repo, branch }, createInMemoryStore());
+    const res = await exec('memory_delete', {});
+    expect(res.text).toContain('Unknown memory tool');
+  });
+
+  it('binds scope from the executor, not model args — a different repo sees no records', async () => {
+    const store = createInMemoryStore();
+    seed(store); // records live under `repo`
+    // Scope is captured at construction; the model only supplies the pattern.
+    const exec = createMemoryToolExecutor({ repoFullName: 'someone/else', branch }, store);
+    const res = await exec('memory_grep', { pattern: 'typecheck' });
+    expect(res.text).toContain('No memory records match');
   });
 });

@@ -213,6 +213,15 @@ export interface DeepReviewerOptions<TCall, TCard> extends ReviewerOptions {
    * unchanged).
    */
   sandboxToolProtocol?: string;
+
+  /**
+   * Memory tool protocol prompt block (`memory_grep`/`memory_expand`), or
+   * undefined when memory tools aren't available. The web Deep-Reviewer's
+   * executor (`WebToolExecutionRuntime`) supports the `memory` source and the
+   * `reviewer` role holds `memory:read`, so the web caller sets this; surfaces
+   * the reviewer can't execute memory leave it undefined (LCM).
+   */
+  memoryToolProtocol?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -253,6 +262,7 @@ function buildDeepReviewerSystemPrompt(
   webSearchToolProtocol: string,
   webSearchAvailable: boolean,
   sandboxToolProtocol?: string,
+  memoryToolProtocol?: string,
 ): string {
   return [
     `You are the Deep Reviewer agent for Push, a mobile AI coding assistant.
@@ -324,6 +334,9 @@ Keep comments specific and actionable. Prefer 0-8 high-signal comments total. Yo
           // so the tool is neither listed nor described.
           ...(webSearchAvailable ? [webSearchToolProtocol] : []),
         ]),
+    // Memory tools (LCM) — a distinct block, appended when the caller's
+    // executor supports the `memory` source (the web reviewer does).
+    ...(memoryToolProtocol ? [memoryToolProtocol] : []),
   ].join('\n\n');
 }
 
@@ -505,6 +518,7 @@ export async function runDeepReviewer<TCall, TCard>(
     webSearchToolProtocol,
     webSearchAvailable = true,
     sandboxToolProtocol,
+    memoryToolProtocol,
   } = options;
 
   const activeProvider: AIProviderType = provider;
@@ -514,6 +528,7 @@ export async function runDeepReviewer<TCall, TCard>(
     webSearchToolProtocol,
     webSearchAvailable,
     sandboxToolProtocol,
+    memoryToolProtocol,
   );
   const identityBlock = buildUserIdentityBlock(userProfile ?? undefined);
   if (identityBlock) {

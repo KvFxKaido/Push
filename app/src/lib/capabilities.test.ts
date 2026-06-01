@@ -111,6 +111,19 @@ describe('Role capability grants', () => {
     expect(auditorCaps.has('repo:read')).toBe(true);
     expect(auditorCaps.has('memory:read')).toBe(true);
   });
+
+  // Advertising-matches-executor drift guard (LCM): every role whose prompt
+  // advertises the memory tools (orchestrator, explorer, coder, reviewer — the
+  // canonical role key for the Deep-Reviewer) must be able to EXECUTE them, or
+  // we ship advertised-but-denied tools. If a
+  // future change strips `memory:read` from a role, this fails before the model
+  // hits a confusing ROLE_CAPABILITY_DENIED at runtime.
+  it('every memory-advertised role can execute memory_grep / memory_expand', () => {
+    for (const role of ['orchestrator', 'explorer', 'coder', 'reviewer'] as const) {
+      expect(roleCanUseTool(role, 'memory_grep')).toBe(true);
+      expect(roleCanUseTool(role, 'memory_expand')).toBe(true);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

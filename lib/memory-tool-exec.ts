@@ -15,7 +15,7 @@
  */
 
 import { grepMemory, expandMemoryRecords } from './context-memory.js';
-import type { ContextMemoryStore } from './context-memory-store.js';
+import { getDefaultMemoryStore, type ContextMemoryStore } from './context-memory-store.js';
 import type { ExpandedMemoryRecord, MemoryGrepMatch } from './context-memory-expand.js';
 import { MEMORY_RECORD_KINDS, type MemoryRecordKind } from './runtime-contract.js';
 
@@ -231,5 +231,32 @@ export async function runMemoryExpand(
       `Recalled ${result.found.length} of ${ids.length} record${ids.length === 1 ? '' : 's'}:\n\n` +
       `${body}${footer}`,
     meta,
+  };
+}
+
+/**
+ * Build a memory tool executor bound to a fixed scope — the shape the web
+ * Coder / Deep-Reviewer binding (`executeMemory` in `CoderBindingServices`)
+ * and any future caller want: `(toolName, args) => { text }`. The scope is
+ * captured here from session context and is NOT reachable by the model's
+ * args, preserving the cross-repo isolation invariant. `memory_grep` /
+ * `memory_expand` are the only recognized tools; anything else returns a
+ * benign error string (the caller's role/capability gates run upstream).
+ */
+export function createMemoryToolExecutor(
+  scope: MemoryToolScope,
+  store: ContextMemoryStore = getDefaultMemoryStore(),
+): (toolName: string, args: Record<string, unknown>) => Promise<{ text: string }> {
+  return async (toolName, args) => {
+    const ctx: MemoryToolContext = { scope, store };
+    if (toolName === 'memory_grep') {
+      const r = await runMemoryGrep(args, ctx);
+      return { text: r.text };
+    }
+    if (toolName === 'memory_expand') {
+      const r = await runMemoryExpand(args, ctx);
+      return { text: r.text };
+    }
+    return { text: `[Tool Error — ${toolName}] Unknown memory tool.` };
   };
 }

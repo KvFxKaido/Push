@@ -722,6 +722,13 @@ export class CoderJob {
         activeProvider: input.provider,
         activeModel: input.model,
         sandboxId,
+        // NOTE: memory tools are intentionally NOT wired for background jobs.
+        // `getDefaultMemoryStore()` is an in-memory singleton populated within a
+        // runtime; the browser session accumulates records and the delegated
+        // Coder reads them, but this Worker/DO isolate starts empty and nothing
+        // populates it — so advertising memory here would be a non-functional
+        // (always-empty) tool surface. Deferred until a Worker-side persistent
+        // store (KV/DO/R2) is wired — tracked under "LCM follow-through".
       });
 
       const options: CoderAgentOptions<AnyToolCall, ChatCard> = {
@@ -740,6 +747,8 @@ export class CoderJob {
         ...buildCoderDetectors(services),
         webSearchToolProtocol: WEB_SEARCH_TOOL_PROTOCOL,
         sandboxToolProtocol: getSandboxToolProtocol(),
+        // Memory not advertised for background jobs — no Worker-side store (see
+        // the executeMemory note above). Advertising must match executor support.
         verificationPolicyBlock: formatVerificationPolicyBlock(input.verificationPolicy),
         approvalModeBlock: buildApprovalModeBlock('full-auto'),
         evaluateAfterModel: buildCoderEvaluateAfterModel(services),

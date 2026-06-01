@@ -110,3 +110,51 @@ describe('buildCoderDetectors — droppedCandidates filtering', () => {
     expect(result.droppedCandidates[0].rawToolName).toBe('read');
   });
 });
+
+describe('buildCoderDetectors — memory source (LCM)', () => {
+  const memCall = { source: 'memory', call: { tool: 'memory_grep', args: { pattern: 'x' } } };
+  const sbCall = { source: 'sandbox', call: { tool: 'sandbox_read_file', args: { path: '/a' } } };
+
+  function makeServices(opts: { readOnly?: unknown[]; anyCall?: unknown }) {
+    return {
+      policy: {} as never,
+      capabilityLedger: {} as never,
+      turnCtx: {} as never,
+      onStatus: () => {},
+      activeProvider: 'openrouter',
+      activeModel: undefined,
+      sandboxId: 'sbx',
+      tracing: {} as never,
+      executeSandboxToolCall: async () => ({}) as never,
+      executeWebSearch: async () => ({}) as never,
+      sandboxStatus: async () => ({}) as never,
+      detectSandboxToolCall: () => null,
+      detectWebSearchToolCall: () => null,
+      detectAnyToolCall: () => opts.anyCall ?? null,
+      detectAllToolCalls: () => ({
+        readOnly: opts.readOnly ?? [],
+        fileMutations: [],
+        mutating: null,
+        extraMutations: [],
+        droppedCandidates: [],
+      }),
+      tagSandboxCall: (call: unknown) => ({ source: 'sandbox', call }),
+      tagWebSearchCall: (call: unknown) => ({ source: 'web-search', call }),
+    } as never;
+  }
+
+  it('keeps memory reads in the parallel-reads bucket (not filtered like other non-sandbox sources)', () => {
+    const { detectAllToolCalls } = buildCoderDetectors(
+      makeServices({ readOnly: [sbCall, memCall] }),
+    );
+    const result = detectAllToolCalls('anything');
+    // Both the sandbox read AND the memory read survive — memory is read-only.
+    expect(result.readOnly).toContainEqual(sbCall);
+    expect(result.readOnly).toContainEqual(memCall);
+  });
+
+  it('detectAnyToolCall recovers a memory-source call (single-call path)', () => {
+    const { detectAnyToolCall } = buildCoderDetectors(makeServices({ anyCall: memCall }));
+    expect(detectAnyToolCall('anything')).toEqual(memCall);
+  });
+});
