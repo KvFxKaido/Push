@@ -878,7 +878,7 @@ Available tools (all read-only — Explorer has no filesystem or exec mutation s
 - lsp_diagnostics(path?) — run type-checker for the workspace; optional path filters results to a specific file. Supported: TypeScript (tsc), Python (pyright/ruff), Rust (cargo check), Go (go vet).
 - web_search(query, max_results?) — search the public web (backend: auto|tavily|ollama|duckduckgo via PUSH_WEB_SEARCH_BACKEND)
 - memory_grep(pattern, kinds?, limit?) — search persisted memory records (prior decisions/findings/verification) by case-insensitive substring; returns matches with their [mem_…] id and a text snippet (use memory_expand for the full record)
-- memory_expand(ids) — recall the full verbatim text of memory records by id (ids come from memory_grep results)
+- memory_expand(ids) — recall the full verbatim text of memory records by id (ids come from memory_grep results or [mem_…] tags; the surrounding brackets are display-only and are accepted either way)
 
 Rules:
 - Paths are relative to workspace root unless absolute inside workspace.
@@ -910,6 +910,8 @@ Available tools:
 - list_dir(path?) — list files/directories
 - search_files(pattern, path?, max_results?) — text search in workspace
 - web_search(query, max_results?) — search the public web (backend: auto|tavily|ollama|duckduckgo via PUSH_WEB_SEARCH_BACKEND)
+- memory_grep(pattern, kinds?, limit?) — search persisted memory records (prior decisions/findings/verification) by case-insensitive substring; returns matches with their [mem_…] id and a text snippet (use memory_expand for the full record)
+- memory_expand(ids) — recall the full verbatim text of memory records by id (ids come from memory_grep results or [mem_…] tags; the surrounding brackets are display-only and are accepted either way)
 - exec(command, timeout_ms?) — run a shell command
 - exec_start(command, timeout_ms?, tty?) — start a long-running command session
 - exec_poll(session_id, from_seq?, max_chars?) — read incremental output from a running command session

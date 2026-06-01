@@ -164,10 +164,18 @@ cross-surface PR:
   directly (the chosen design for getting ids to the model).
 - **Symmetric structured logs:** `memory_grep_hit` ↔ `memory_grep_empty`,
   `memory_expand_hit` ↔ `memory_expand_miss`.
-- **Prompt advertising:** Orchestrator (web) + Explorer (web + CLI). The capability is
-  granted to all five roles and the packer surfaces ids in every role's memory block;
-  broadening explicit prompt advertising to Coder/Reviewer/Auditor is a noted
-  fast-follow (their prompts assemble protocols via separate per-role slots).
+- **Prompt advertising** is matched to executor support (no advertised-but-denied tools):
+  web Orchestrator + Explorer (#751), and the CLI Orchestrator + Coder (via
+  `TOOL_PROTOCOL`) + Explorer + Deep-Reviewer (via `READ_ONLY_TOOL_PROTOCOL`) — all
+  backed by `cli/tools.ts`'s memory-capable `executeToolCall`. The **web Coder** and
+  **web Deep-Reviewer** are intentionally *not* advertised yet: their executors
+  (`buildCoderToolExec`, the web reviewer exec) only route `sandbox`/`web-search`, and
+  the web Coder runs with `allowedRepo: ''`, so they need the `memory` source routed +
+  repo/branch/chat scope threaded from the delegation envelope first. The Auditor is
+  single-shot (no tool loop) so it is never advertised — it consumes memory via the
+  injected retrieved-memory block (#750). Capability is granted to all five roles and
+  the packer surfaces `[mem_…]` ids in every role's memory block regardless. The
+  web-executor wiring is ROADMAP-tracked ("LCM follow-through").
 - Tests: `lib/memory-tool-exec.test.ts`, `app/src/lib/memory-tools.test.ts`, packer
   id-exposure assertion; drift test (`daemon-integration.test.mjs`) passes with the new
   advertised==callable tools.

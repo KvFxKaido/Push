@@ -127,6 +127,17 @@ describe('runMemoryExpand', () => {
     expect(result.meta.found).toBe(1);
   });
 
+  it('tolerates the bracketed [mem_…] display form in ids', async () => {
+    const store = createInMemoryStore();
+    const { decision } = seed(store);
+    const result = await runMemoryExpand(
+      { ids: [`[${decision.id}]`] },
+      { scope: { repoFullName: repo, branch }, store },
+    );
+    expect(result.meta.found).toBe(1);
+    expect(result.text).toContain(decision.detail!);
+  });
+
   it('lists ids that were not found', async () => {
     const store = createInMemoryStore();
     const { decision } = seed(store);

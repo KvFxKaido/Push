@@ -54,6 +54,8 @@ import { createDelegationTranscriptRenderer, isDelegationEvent } from './tui-del
 import { runCommandInResolvedShell } from './shell.js';
 import { scrubEnv } from './env-scrub.js';
 import { ensureRepoCommandsSeeded } from './repo-commands.js';
+import { setDefaultMemoryStore } from '../lib/context-memory-store.js';
+import { createFileMemoryStore, getMemoryStoreBaseDir } from './context-memory-file-store.js';
 import {
   readClientAttachState,
   writeClientAttachState,
@@ -3109,6 +3111,14 @@ export async function main() {
     process.stdout.write(`push ${VERSION}\n`);
     return 0;
   }
+
+  // Install the file-backed ContextMemoryStore for the interactive CLI, mirroring
+  // the daemon (`cli/pushd.ts`) and headless (`cli/delegation-entry.ts`) entries.
+  // Without this the inline REPL/TUI uses a fresh in-memory store, so persisted
+  // records under ~/.push/memory are invisible to both the session-digest prefetch
+  // (cli/engine.ts) and the memory_grep/memory_expand tools. Idempotent — the
+  // daemon/headless paths re-set the same store.
+  setDefaultMemoryStore(createFileMemoryStore({ baseDir: getMemoryStoreBaseDir() }));
 
   if (values.help) {
     printHelp();
