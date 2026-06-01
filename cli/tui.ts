@@ -146,7 +146,7 @@ import { shouldFullRedraw } from './tui-render-frame.js';
 
 const MAX_TRANSCRIPT = 2000; // max lines in transcript buffer
 const MAX_TOOL_FEED = 200; // max items in tool feed
-const TUI_DAEMON_CAPABILITIES = Object.freeze(['event_v2']);
+const TUI_DAEMON_CAPABILITIES = Object.freeze(['event_v2', 'session_snapshot_v1']);
 
 // OSC 52 payload cap. Widely-supported terminals (Windows Terminal, iTerm2,
 // kitty, alacritty) accept at least ~100 KB; tmux historically capped lower
@@ -1927,15 +1927,12 @@ export async function runTUI(options = {}) {
       const connected = await tryDaemonConnect();
       if (connected) {
         // `tryDaemonConnect` records the success itself (it sets
-        // `daemonEverConnected` + resets the reconnect state). If we
-        // had a session previously, re-attach so events replay.
-        if (daemonSessionId) {
-          // `attachExistingDaemonSession` short-circuits when
-          // `daemonSessionId` is already set, so clear it before
-          // calling — on success the helper restores it from
-          // `state.sessionId`.
-          const previousSessionId = daemonSessionId;
-          daemonSessionId = null;
+        // `daemonEverConnected` + resets the reconnect state). If the
+        // persisted session is addressable, re-attach so events replay.
+        // The socket close handler clears `daemonSessionId`, so the
+        // reconnect path must use `state.sessionId` as the durable handle.
+        if (sessionPersisted && state?.sessionId) {
+          const previousSessionId = state.sessionId;
           const attached = await attachExistingDaemonSession();
           if (!attached) {
             // Connected to a daemon that doesn't know our session
@@ -2016,6 +2013,118 @@ export async function runTUI(options = {}) {
     return changed;
   }
 
+  function installDaemonApprovalFromSnapshot(pendingApproval, sessionId) {
+    const approvalId =
+      pendingApproval && typeof pendingApproval.approvalId === 'string'
+        ? pendingApproval.approvalId
+        : '';
+
+    if (!approvalId) {
+      if (tuiState.approval?.daemonApprovalId) {
+        approvalResolve = null;
+        closeApprovalPane();
+        if (tuiState.runState === 'awaiting_approval') setRunState('running');
+        tuiState.dirty.add('all');
+        scheduler?.schedule();
+        return true;
+      }
+      return false;
+    }
+
+    if (tuiState.approval?.daemonApprovalId === approvalId) {
+      if (tuiState.runState !== 'awaiting_approval') setRunState('awaiting_approval');
+      return false;
+    }
+
+    setRunState('awaiting_approval');
+    openApprovalPane({
+      kind: 'action',
+      summary: 'Daemon is waiting for an approval decision to continue this session.',
+      patternIndex: -1,
+      suggestedPrefix: null,
+      daemonApprovalId: approvalId,
+    });
+    approvalResolve = (approved) => {
+      daemonClient
+        ?.request(
+          'submit_approval',
+          {
+            sessionId,
+            approvalId,
+            decision: approved ? 'approve' : 'deny',
+            attachToken: daemonAttachToken,
+          },
+          sessionId,
+        )
+        .catch(() => {});
+    };
+    tuiState.dirty.add('all');
+    scheduler?.schedule();
+    return true;
+  }
+
+  function hydrateDaemonSnapshot(payload) {
+    if (!payload || typeof payload !== 'object') return false;
+    const session = payload.session;
+    if (!session || typeof session !== 'object') return false;
+
+    let changed = hydrateSessionStateFromDaemon(session);
+    const snapshotSessionId =
+      typeof session.sessionId === 'string' && session.sessionId
+        ? session.sessionId
+        : daemonSessionId;
+
+    if (session.state === 'running') {
+      if (tuiState.runState === 'idle') {
+        setRunState('running');
+        changed = true;
+      }
+    } else if (session.state === 'idle') {
+      if (tuiState.runState === 'running') {
+        setRunState('idle');
+        changed = true;
+      }
+      if (tuiState.runState === 'awaiting_approval' && tuiState.approval?.daemonApprovalId) {
+        approvalResolve = null;
+        closeApprovalPane();
+        setRunState('idle');
+        changed = true;
+      }
+    }
+
+    if (snapshotSessionId) {
+      changed =
+        installDaemonApprovalFromSnapshot(payload.pendingApproval, snapshotSessionId) || changed;
+    }
+
+    return changed;
+  }
+
+  async function refreshDaemonSessionSnapshot(reason = 'unknown') {
+    if (!daemonClient?.connected || !daemonSessionId || !daemonAttachToken) return false;
+    try {
+      const res = await daemonClient.request(
+        'get_session_snapshot',
+        {
+          sessionId: daemonSessionId,
+          attachToken: daemonAttachToken,
+          recentEventLimit: 1,
+        },
+        daemonSessionId,
+        1500,
+      );
+      hydrateDaemonSnapshot(res.payload);
+      return true;
+    } catch (err) {
+      if (err?.code === 'UNSUPPORTED_REQUEST_TYPE') return false;
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `${JSON.stringify({ level: 'warn', event: 'tui_session_snapshot_failed', reason, message })}\n`,
+      );
+      return false;
+    }
+  }
+
   async function attachExistingDaemonSession() {
     if (!daemonClient || daemonSessionId || !sessionPersisted || !state?.sessionId) {
       return false;
@@ -2062,6 +2171,7 @@ export async function runTUI(options = {}) {
       // from another client (or a stale state.json on disk) doesn't
       // leave the TUI showing the wrong provider/model after re-attach.
       hydrateSessionStateFromDaemon(res.payload);
+      await refreshDaemonSessionSnapshot('attach');
       return true;
     } catch {
       return false;
