@@ -2045,19 +2045,24 @@ export async function runTUI(options = {}) {
       return false;
     }
 
-    // Fallback pane. This runs ONLY when replay didn't already open the rich
-    // pane from an `approval_required` event (the guards above return early if
-    // it did) — i.e. the approval fell outside the replayed event tail. The
-    // snapshot's `pendingApproval` carries just approvalId (+ optional runId),
-    // not the original event's `summary`/`kind`/`patternIndex`, so this pane is
-    // deliberately generic: enough to approve/deny and unblock the daemon, but
-    // without the concrete decision context. Enriching it means widening the
-    // snapshot packet to carry approval metadata — a follow-up on the daemon
-    // side, tracked separately. Audit: Kilo #744.
+    // Runs when replay didn't already open the rich pane from an
+    // `approval_required` event (the guards above return early if it did) —
+    // i.e. the approval fell outside the replayed event tail. The snapshot's
+    // `pendingApproval` now carries the same `kind`/`summary`/`title` the live
+    // event does (#746), so the pane matches the in-session one. We mirror the
+    // live handler's mapping exactly (`kind || 'action'`,
+    // `summary || title || <generic>`); the generic string is the last-resort
+    // fallback for a pre-#746 daemon that omits the display fields.
     setRunState('awaiting_approval');
     openApprovalPane({
-      kind: 'action',
-      summary: 'Daemon is waiting for an approval decision to continue this session.',
+      kind:
+        typeof pendingApproval.kind === 'string' && pendingApproval.kind
+          ? pendingApproval.kind
+          : 'action',
+      summary:
+        (typeof pendingApproval.summary === 'string' && pendingApproval.summary) ||
+        (typeof pendingApproval.title === 'string' && pendingApproval.title) ||
+        'Daemon is waiting for an approval decision to continue this session.',
       patternIndex: -1,
       suggestedPrefix: null,
       daemonApprovalId: approvalId,
