@@ -15,10 +15,19 @@ const readTuiSource = () => fs.readFile(path.join(import.meta.dirname, '..', 'tu
 describe('TUI session snapshot source guards', () => {
   it('advertises and requests session_snapshot_v1 after daemon attach', async () => {
     const src = await readTuiSource();
+    // The capability profile is the canonical, drift-tested definition in
+    // lib/daemon-capabilities.ts (#745); the TUI imports it rather than
+    // redefining the literal. Its contents (incl. session_snapshot_v1) are
+    // pinned by the daemon-capabilities drift test in daemon-integration.
     assert.match(
       src,
-      /TUI_DAEMON_CAPABILITIES = Object\.freeze\(\['event_v2', 'session_snapshot_v1'\]\)/,
-      'the TUI should advertise snapshot support in daemon hello/session verbs',
+      /import \{ TUI_DAEMON_CAPABILITIES \} from '\.\.\/lib\/daemon-capabilities\.js'/,
+      'the TUI should advertise the canonical snapshot capability profile',
+    );
+    assert.match(
+      src,
+      /capabilities: \[\.\.\.TUI_DAEMON_CAPABILITIES\]/,
+      'the TUI should send its capability profile in the daemon handshake/attach',
     );
     assert.match(
       src,

@@ -683,6 +683,7 @@ import {
   isStrictModeEnabled,
   RELAY_SENDER_FIELD,
 } from '../lib/protocol-schema.js';
+import { DAEMON_CAPABILITIES, EVENT_V2 } from '../lib/daemon-capabilities.js';
 import { isV2DelegationEvent, synthesizeV1DelegationEvent } from './v1-downgrade.js';
 import {
   roleCanUseTool,
@@ -697,58 +698,10 @@ import { buildTypedMemoryBlockForNode, writeTaskGraphResultMemory } from './task
 
 const VERSION = '0.3.0';
 const DAEMON_STARTED_AT_MS = Date.now();
-const CAPABILITIES = [
-  'stream_tokens',
-  'approvals',
-  'replay_attach',
-  'session_snapshot_v1',
-  'multi_client',
-  'crash_recovery',
-  'role_routing',
-  'delegation_explorer_v1',
-  'delegation_reviewer_v1',
-  // `delegation_deep_reviewer_v1`: `delegate_deep_reviewer` RPC runs the
-  // multi-round investigation kernel (`runDeepReviewer`) with a REAL read-only
-  // CLI-native tool loop (`makeDaemonExplorerToolExec({ role: 'reviewer' })` +
-  // `wrapCliDetect*` + `READ_ONLY_TOOL_PROTOCOL`). The reviewer reads
-  // surrounding code/callers/tests before forming its opinion, then returns the
-  // same `ReviewResult` as the simple reviewer.
-  'delegation_deep_reviewer_v1',
-  // `delegation_coder_v1`: `delegate_coder` RPC + task-graph coder nodes
-  // run through `runCoderAgent` with a REAL daemon tool executor
-  // (`makeDaemonCoderToolExec`) that routes through `executeToolCall`
-  // from `cli/tools.ts` with approval gating via `buildApprovalFn`.
-  // Coder delegations actually read/write files and run shell commands
-  // under approval gating; outcomes land as `'complete'` on clean
-  // kernel returns.
-  'delegation_coder_v1',
-  // v2 task-graph execution: submit_task_graph accepts graphs, runs
-  // them through lib/task-graph.executeTaskGraph, and streams
-  // task_graph.* events. Both `agent: 'coder'` and `agent: 'explorer'`
-  // nodes route through their respective real daemon tool executors
-  // (see `delegation_coder_v1` above and `multi_agent` below).
-  'task_graph_v1',
-  // `event_v2`: the daemon emits raw `subagent.*` / `task_graph.*` envelopes
-  // to clients that advertise this cap back in `attach_session.capabilities`.
-  // Clients that omit the cap (including v1 clients that don't know to send
-  // it) receive synthesized `assistant_token` events on the parent runId
-  // instead — see `cli/v1-downgrade.ts` and the "v1 Client Handling —
-  // Option C" section of `docs/decisions/push-runtime-v2.md`.
-  'event_v2',
-  // `multi_agent`: both Explorer and Coder daemon-side tool executors
-  // are wired to real production tool surfaces (`executeToolCall` from
-  // `cli/tools.ts`). Explorer runs `makeDaemonExplorerToolExec` with
-  // `roleCanUseTool('explorer', ...)` enforcement against the shared
-  // capability table (`lib/capabilities.ts`) and no approval gating;
-  // Coder runs `makeDaemonCoderToolExec` with full tool surface +
-  // approval gating (Coder capability gate is deferred per Gap 2
-  // rollout phasing — needs its own grant audit).
-  // Delegation outcomes land as `'complete'` for both agents on clean
-  // kernel returns — the daemon can host end-to-end multi-agent flows
-  // (direct delegation RPCs + dependency-ordered task graphs).
-  // Reviewer stays single-turn JSON-only by design.
-  'multi_agent',
-];
+// The daemon's advertised protocol capability set. The canonical vocabulary
+// (with per-capability docs) lives in `lib/daemon-capabilities.ts` so the
+// client surfaces that advertise subsets back can't drift from it — see #745.
+const CAPABILITIES = DAEMON_CAPABILITIES;
 
 const VALID_AGENT_ROLES = new Set(['orchestrator', 'explorer', 'coder', 'reviewer', 'auditor']);
 
@@ -1142,7 +1095,7 @@ export function broadcastEvent(sessionId, event) {
   // was involved.
   let synthesized = null;
   for (const [emitFn, meta] of clients) {
-    if (meta.capabilities.has('event_v2')) {
+    if (meta.capabilities.has(EVENT_V2)) {
       try {
         emitFn(event);
       } catch {
@@ -1187,7 +1140,7 @@ export function broadcastEvent(sessionId, event) {
  */
 function emitEventWithDowngrade(event, emitFn, capabilities) {
   const isDelegation = isV2DelegationEvent(event.type);
-  if (!isDelegation || capabilities.has('event_v2')) {
+  if (!isDelegation || capabilities.has(EVENT_V2)) {
     try {
       emitFn(event);
     } catch {

@@ -128,6 +128,7 @@ import {
   getCurrentSkillPlatform,
 } from './skill-loader.js';
 import { ALL_CAPABILITIES } from '../lib/capabilities.js';
+import { TUI_DAEMON_CAPABILITIES } from '../lib/daemon-capabilities.js';
 import { isTranscriptMutationEvent } from '../lib/session-transcript-events.js';
 import { matchingRiskPatternIndex, suggestApprovalPrefix } from './tools.js';
 import { ensureRepoCommandsSeeded } from './repo-commands.js';
@@ -146,7 +147,9 @@ import { shouldFullRedraw } from './tui-render-frame.js';
 
 const MAX_TRANSCRIPT = 2000; // max lines in transcript buffer
 const MAX_TOOL_FEED = 200; // max items in tool feed
-const TUI_DAEMON_CAPABILITIES = Object.freeze(['event_v2', 'session_snapshot_v1']);
+// `TUI_DAEMON_CAPABILITIES` (the snapshot/event-v2 profile this client
+// advertises) is the canonical, drift-tested definition in
+// `lib/daemon-capabilities.ts` — imported above, not redefined here (#745).
 
 // OSC 52 payload cap. Widely-supported terminals (Windows Terminal, iTerm2,
 // kitty, alacritty) accept at least ~100 KB; tmux historically capped lower
