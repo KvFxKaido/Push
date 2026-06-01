@@ -45,6 +45,13 @@ import {
 } from '../session-store.ts';
 import { READ_ONLY_TOOLS, READ_ONLY_TOOL_PROTOCOL } from '../tools.ts';
 import { roleCanUseTool } from '../../lib/capabilities.ts';
+import {
+  DAEMON_CAPABILITIES,
+  TUI_DAEMON_CAPABILITIES,
+  ATTACH_CLIENT_CAPABILITIES,
+  EVENT_V2,
+  isDaemonCapability,
+} from '../../lib/daemon-capabilities.ts';
 import { getToolSpec } from '../../lib/tool-registry.ts';
 import { buildExplorerSystemPrompt } from '../../lib/explorer-agent.ts';
 import { startMockProviderServer, patchProviderConfig } from './mock-provider-server.mjs';
@@ -6991,5 +6998,71 @@ describe('update_session (daemon as source of truth for session-scoped state)', 
     const change = broadcasted.find((e) => e.type === 'session_state_changed');
     assert.ok(change, 'expected session_state_changed after configure_role_routing');
     assert.equal(change.payload.roleRouting.coder.provider, 'blackbox');
+  });
+});
+
+// Daemon protocol capability vocabulary drift (#745). The daemon advertises
+// DAEMON_CAPABILITIES in `hello`; clients advertise subsets back. These are
+// the canonical source of truth in `lib/daemon-capabilities.ts`. The TS type
+// `DaemonCapability` already makes a client profile fail to compile if it names
+// a capability the daemon doesn't advertise; these runtime pins guard the
+// vocabulary itself and the subset relationships against a literal that bypasses
+// types (cast / @ts-ignore), and document the contract.
+describe('daemon capability vocabulary drift (#745)', () => {
+  it('pins the advertised daemon capability set (removals/renames must be deliberate)', () => {
+    assert.deepEqual(
+      [...DAEMON_CAPABILITIES],
+      [
+        'stream_tokens',
+        'approvals',
+        'replay_attach',
+        'session_snapshot_v1',
+        'multi_client',
+        'crash_recovery',
+        'role_routing',
+        'delegation_explorer_v1',
+        'delegation_reviewer_v1',
+        'delegation_deep_reviewer_v1',
+        'delegation_coder_v1',
+        'task_graph_v1',
+        'event_v2',
+        'multi_agent',
+      ],
+    );
+  });
+
+  it('has no duplicate capability strings', () => {
+    assert.equal(new Set(DAEMON_CAPABILITIES).size, DAEMON_CAPABILITIES.length);
+  });
+
+  it('the daemon advertises exactly the canonical set in its hello handshake', async () => {
+    const res = await handleRequest(makeRequest('hello', {}), () => {});
+    assert.equal(res.ok, true);
+    // pushd's CAPABILITIES is the canonical array; the handshake must surface it
+    // verbatim so a client negotiates against the real set.
+    assert.deepEqual([...res.payload.capabilities], [...DAEMON_CAPABILITIES]);
+  });
+
+  it('every client-advertised profile is a subset of the daemon set', () => {
+    for (const profile of [TUI_DAEMON_CAPABILITIES, ATTACH_CLIENT_CAPABILITIES]) {
+      for (const cap of profile) {
+        assert.ok(
+          isDaemonCapability(cap),
+          `client advertises "${cap}" which the daemon does not — capability drift`,
+        );
+      }
+    }
+  });
+
+  it('keeps the named EVENT_V2 constant in sync with the vocabulary', () => {
+    assert.equal(EVENT_V2, 'event_v2');
+    assert.ok(isDaemonCapability(EVENT_V2));
+  });
+
+  it('the TUI profile opts into the reconnect snapshot + raw v2 events', () => {
+    // Guards the specific contract the TUI source-guard test asserts on the
+    // consumer side — pinned here against the canonical profile so the two
+    // can't drift apart.
+    assert.deepEqual([...TUI_DAEMON_CAPABILITIES], ['event_v2', 'session_snapshot_v1']);
   });
 });

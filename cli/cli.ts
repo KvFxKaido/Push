@@ -44,6 +44,7 @@ import {
   getCurrentSkillPlatform,
 } from './skill-loader.js';
 import { ALL_CAPABILITIES, type Capability } from '../lib/capabilities.js';
+import { ATTACH_CLIENT_CAPABILITIES } from '../lib/daemon-capabilities.js';
 import { createCompleter } from './completer.js';
 import { fmt, formatRelativeTime, Spinner } from './format.js';
 import { appendUserMessageWithFileReferences } from './file-references.js';
@@ -60,7 +61,10 @@ import {
 } from './client-attach-state.js';
 
 const VERSION = '0.1.0';
-export const ATTACH_CLIENT_CAPABILITIES = Object.freeze(['event_v2']);
+// Canonical, drift-tested definition lives in `lib/daemon-capabilities.ts`
+// (#745). Re-exported here so existing importers (and the attach path below)
+// keep their entry point.
+export { ATTACH_CLIENT_CAPABILITIES };
 
 const KNOWN_OPTIONS = new Set([
   'provider',
