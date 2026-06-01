@@ -63,7 +63,7 @@ For this repo:
 
 ```bash
 # test:
-npm run test:cli && npm run test:mcp:github
+TMPDIR=/tmp TEMP=/tmp TMP=/tmp npm run test:cli && npm run test:mcp:github
 # typecheck:
 npm run typecheck:tsgo
 # check:
