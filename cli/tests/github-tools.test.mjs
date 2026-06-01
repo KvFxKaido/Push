@@ -93,11 +93,14 @@ describe('GitHub tool capability gating (token-presence)', () => {
 
 describe('GitHub tool dispatch (no token)', () => {
   const saved = {};
+  let savedPath;
   beforeEach(() => {
     for (const k of GITHUB_TOKEN_ENV_VARS) {
       saved[k] = process.env[k];
       delete process.env[k];
     }
+    savedPath = process.env.PATH;
+    process.env.PATH = '';
     resetGhCliTokenCache();
   });
   afterEach(() => {
@@ -105,6 +108,8 @@ describe('GitHub tool dispatch (no token)', () => {
       if (saved[k] === undefined) delete process.env[k];
       else process.env[k] = saved[k];
     }
+    if (savedPath === undefined) delete process.env.PATH;
+    else process.env.PATH = savedPath;
     resetGhCliTokenCache();
   });
 

@@ -364,9 +364,9 @@ const RELAY_SYNTHETIC_AUTH: PushdWsAuthRecord = {
  * transport has no per-phone connection on the daemon side — the DO
  * forwards frames without sender identity), connection-scoping alone
  * can't keep one phone from cancelling another's run by guessing the
- * runId. Each run is therefore registered with the session attach
- * bearer (`ownerToken`) it ran under, and the sessionless `cancel_run`
- * path requires a matching token before aborting a token-owned run.
+ * runId. Each run is therefore registered with the DO-stamped per-phone
+ * sender id (`ownerId`) it arrived with, and the sessionless `cancel_run`
+ * path requires a matching sender id before aborting a relay-owned run.
  * See `handleSandboxExec` (registration) and `handleCancelRun`
  * (the sessionless branch). Closes finding #3 of the Remote Control
  * Surface Audit.
