@@ -13,6 +13,7 @@
  *   start_session    — create a new session
  *   send_user_message — start a run from user input
  *   attach_session   — attach to existing session + event replay
+ *   get_session_snapshot — read daemon-owned reconnect status for one session
  *   update_session   — mutate session-scoped state (provider/model)
  *   submit_approval  — respond to an approval_required pause
  *   cancel_run       — abort active run
@@ -691,10 +692,12 @@ import { resolveWorkspaceIdentity } from '../lib/workspace-identity.js';
 import { buildTypedMemoryBlockForNode, writeTaskGraphResultMemory } from './task-graph-memory.ts';
 
 const VERSION = '0.3.0';
+const DAEMON_STARTED_AT_MS = Date.now();
 const CAPABILITIES = [
   'stream_tokens',
   'approvals',
   'replay_attach',
+  'session_snapshot_v1',
   'multi_client',
   'crash_recovery',
   'role_routing',
@@ -1777,6 +1780,101 @@ export async function handleGetSessionMessages(req) {
   return makeResponse(req.requestId, 'get_session_messages', sessionId, true, {
     sessionId,
     messages,
+  });
+}
+
+async function readGitBranch(cwd) {
+  try {
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const execFileAsync = promisify(execFile);
+    const { stdout } = await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+      cwd,
+      timeout: 1_000,
+      maxBuffer: 16_000,
+    });
+    const branch = stdout.trim();
+    return branch && branch !== 'HEAD' ? branch : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeRecentEventLimit(rawLimit) {
+  const floored =
+    typeof rawLimit === 'number' && Number.isFinite(rawLimit) ? Math.floor(rawLimit) : NaN;
+  return Number.isFinite(floored) && floored >= 1 ? Math.min(floored, 100) : 20;
+}
+
+/**
+ * `get_session_snapshot` — one daemon-owned reconnect packet for clients that
+ * need to render "what is happening now" before/instead of reconstructing it
+ * from local state plus event replay. Read-only and bearer-gated; never returns
+ * bearer plaintext.
+ */
+async function handleGetSessionSnapshot(req) {
+  const auth = await loadAndAuthSession(req, 'get_session_snapshot');
+  if (auth.error) return auth.error;
+  const { entry, sessionId } = auth;
+  const state = entry.state || {};
+  const currentSeq = typeof state.eventSeq === 'number' ? state.eventSeq : 0;
+  const recentEventLimit = normalizeRecentEventLimit(req.payload?.recentEventLimit);
+
+  let recentEvents = [];
+  try {
+    const allEvents = await loadSessionEvents(sessionId);
+    recentEvents = allEvents.slice(-recentEventLimit);
+  } catch {
+    recentEvents = [];
+  }
+
+  const activeRunId =
+    typeof entry.activeRunId === 'string' && entry.activeRunId ? entry.activeRunId : null;
+  const pendingApproval = entry.pendingApproval
+    ? {
+        approvalId: entry.pendingApproval.approvalId,
+        runId:
+          typeof entry.pendingApproval.runId === 'string' && entry.pendingApproval.runId
+            ? entry.pendingApproval.runId
+            : null,
+      }
+    : null;
+
+  return makeResponse(req.requestId, 'get_session_snapshot', sessionId, true, {
+    host: {
+      hostname: os.hostname(),
+      daemonVersion: VERSION,
+      protocolVersion: PROTOCOL_VERSION,
+      startedAtMs: DAEMON_STARTED_AT_MS,
+    },
+    repo: {
+      rootPath: state.cwd || process.cwd(),
+      branch: await readGitBranch(state.cwd || process.cwd()),
+    },
+    relay: await buildRelayStatusPayload(),
+    session: {
+      sessionId,
+      state: activeRunId ? 'running' : 'idle',
+      activeRunId,
+      provider: state.provider || null,
+      model: state.model || null,
+      mode: typeof state.mode === 'string' && state.mode.trim() ? state.mode.trim() : 'interactive',
+      roleRouting: state.roleRouting || {},
+      eventSeq: currentSeq,
+      attachTokenPresent: Boolean(entry.attachToken),
+    },
+    activeRun: activeRunId
+      ? {
+          runId: activeRunId,
+          type: 'assistant_turn',
+          cancellable: true,
+        }
+      : null,
+    pendingApproval,
+    transcript: {
+      lastSeq: currentSeq,
+      recentEvents,
+    },
   });
 }
 
@@ -6361,16 +6459,7 @@ async function handleRelayDisable(req, _emitEvent, context) {
   });
 }
 
-/**
- * Returns both persisted config (presence + deploymentUrl, never the
- * token) AND live runtime state (connection status, reconnect
- * counter, last-error). Operators reading this need to see both —
- * "config says enabled but daemon hasn't dialled" is a real failure
- * mode worth surfacing distinctly from "no config" and "open and
- * forwarding."
- */
-async function handleRelayStatus(req, _emitEvent, context) {
-  if (context?.record || context?.auth) return refuseFromWs(req, 'relay_status');
+async function buildRelayStatusPayload() {
   let persistedDeploymentUrl: string | null = null;
   let persistedEnabledAt: number | null = null;
   try {
@@ -6380,9 +6469,9 @@ async function handleRelayStatus(req, _emitEvent, context) {
       persistedEnabledAt = cfg.enabledAt;
     }
   } catch {
-    // If the file is unreadable the operator should still get the
-    // live state back; surface the read failure as `null` config
-    // rather than a 500 — `daemon relay enable` will fix it.
+    // If the file is unreadable the operator/client should still get
+    // live state back; surface the read failure as `null` config rather
+    // than making a read-only status packet fail.
   }
   const status = activeRelayLastStatus;
   const live = activeRelayClient
@@ -6410,12 +6499,25 @@ async function handleRelayStatus(req, _emitEvent, context) {
         allowlistSize: relayAllowlist.size(),
       }
     : { running: false };
-  return makeResponse(req.requestId, 'relay_status', null, true, {
+  return {
     persisted: persistedDeploymentUrl
       ? { deploymentUrl: persistedDeploymentUrl, enabledAt: persistedEnabledAt }
       : null,
     live,
-  });
+  };
+}
+
+/**
+ * Returns both persisted config (presence + deploymentUrl, never the
+ * token) AND live runtime state (connection status, reconnect
+ * counter, last-error). Operators reading this need to see both —
+ * "config says enabled but daemon hasn't dialled" is a real failure
+ * mode worth surfacing distinctly from "no config" and "open and
+ * forwarding."
+ */
+async function handleRelayStatus(req, _emitEvent, context) {
+  if (context?.record || context?.auth) return refuseFromWs(req, 'relay_status');
+  return makeResponse(req.requestId, 'relay_status', null, true, await buildRelayStatusPayload());
 }
 
 /**
@@ -6715,6 +6817,7 @@ const HANDLERS = {
   send_user_message: handleSendUserMessage,
   attach_session: handleAttachSession,
   get_session_messages: handleGetSessionMessages,
+  get_session_snapshot: handleGetSessionSnapshot,
   update_session: handleUpdateSession,
   submit_approval: handleSubmitApproval,
   cancel_run: handleCancelRun,

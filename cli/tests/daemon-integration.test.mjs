@@ -32,6 +32,7 @@ import {
 } from '../pushd.ts';
 import {
   PROTOCOL_VERSION,
+  createSessionState,
   writeRunMarker,
   clearRunMarker,
   readRunMarker,
@@ -396,6 +397,122 @@ describe('handleGetSessionMessages (#687 transcript hydration)', () => {
     assert.equal(response.ok, true);
     assert.equal(response.payload.messages[0].content, '');
     assert.equal(response.payload.messages[1].content, 'reply');
+  });
+});
+
+describe('get_session_snapshot (remote session status packet)', () => {
+  let tmpRoot;
+  let originalSessionDir;
+
+  before(async () => {
+    originalSessionDir = process.env.PUSH_SESSION_DIR;
+    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-session-snapshot-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+  });
+
+  after(async () => {
+    if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+    else process.env.PUSH_SESSION_DIR = originalSessionDir;
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('returns daemon-owned reconnect state for an active session', async () => {
+    const sessionId = makeSessionId();
+    const attachToken = 'pushd_test_snapshot_token';
+    const state = createSessionState({
+      sessionId,
+      attachToken,
+      provider: 'ollama',
+      model: 'llama-test',
+      cwd: tmpRoot,
+      mode: 'tui',
+      messages: [{ role: 'system', content: 'system' }],
+    });
+    state.roleRouting = { coder: { provider: 'ollama', model: 'coder-test' } };
+    await saveSessionState(state);
+    await appendSessionEvent(state, 'user_message', { chars: 2, preview: 'hi' }, 'run_parent');
+    await appendSessionEvent(
+      state,
+      'approval_required',
+      { approvalId: 'appr_snapshot', title: 'Approve x', options: ['approve', 'deny'] },
+      'run_parent',
+    );
+
+    __setActiveSessionForTesting(sessionId, {
+      state,
+      attachToken,
+      activeRunId: 'run_parent',
+      pendingApproval: { approvalId: 'appr_snapshot', runId: 'run_parent' },
+    });
+
+    const response = await handleRequest(
+      makeRequest('get_session_snapshot', { sessionId, attachToken, recentEventLimit: 1 }),
+      () => {},
+    );
+
+    assert.equal(response.ok, true);
+    assert.equal(response.type, 'get_session_snapshot');
+    assert.equal(response.payload.host.daemonVersion, '0.3.0');
+    assert.equal(response.payload.host.protocolVersion, PROTOCOL_VERSION);
+    assert.equal(typeof response.payload.host.hostname, 'string');
+    assert.equal(typeof response.payload.host.startedAtMs, 'number');
+    assert.deepEqual(response.payload.repo, { rootPath: tmpRoot, branch: null });
+    assert.equal(response.payload.relay.live.running, false);
+    assert.equal(response.payload.session.sessionId, sessionId);
+    assert.equal(response.payload.session.state, 'running');
+    assert.equal(response.payload.session.activeRunId, 'run_parent');
+    assert.equal(response.payload.session.provider, 'ollama');
+    assert.equal(response.payload.session.model, 'llama-test');
+    assert.equal(response.payload.session.mode, 'tui');
+    assert.deepEqual(response.payload.session.roleRouting, {
+      coder: { provider: 'ollama', model: 'coder-test' },
+    });
+    assert.equal(response.payload.session.eventSeq, 2);
+    assert.equal(response.payload.session.attachTokenPresent, true);
+    assert.deepEqual(response.payload.activeRun, {
+      runId: 'run_parent',
+      type: 'assistant_turn',
+      cancellable: true,
+    });
+    assert.deepEqual(response.payload.pendingApproval, {
+      approvalId: 'appr_snapshot',
+      runId: 'run_parent',
+    });
+    assert.equal(response.payload.transcript.lastSeq, 2);
+    assert.equal(response.payload.transcript.recentEvents.length, 1);
+    assert.equal(response.payload.transcript.recentEvents[0].type, 'approval_required');
+  });
+
+  it('lazy-loads persisted sessions and rejects wrong attach tokens', async () => {
+    const sessionId = makeSessionId();
+    const attachToken = 'pushd_test_snapshot_lazy';
+    const state = createSessionState({
+      sessionId,
+      attachToken,
+      provider: 'ollama',
+      model: 'lazy-test',
+      cwd: tmpRoot,
+      messages: [{ role: 'system', content: 'system' }],
+    });
+    await saveSessionState(state);
+    __evictActiveSessionForTesting(sessionId);
+
+    const wrong = await handleRequest(
+      makeRequest('get_session_snapshot', { sessionId, attachToken: 'wrong' }),
+      () => {},
+    );
+    assert.equal(wrong.ok, false);
+    assert.equal(wrong.error.code, 'INVALID_TOKEN');
+
+    const ok = await handleRequest(
+      makeRequest('get_session_snapshot', { sessionId, attachToken }),
+      () => {},
+    );
+    assert.equal(ok.ok, true);
+    assert.equal(ok.payload.session.state, 'idle');
+    assert.equal(ok.payload.activeRun, null);
+    assert.equal(ok.payload.pendingApproval, null);
+    assert.equal(ok.payload.transcript.lastSeq, 0);
   });
 });
 
@@ -2169,6 +2286,7 @@ describe('daemon version', () => {
     assert.ok(response.payload.capabilities.includes('delegation_coder_v1'));
     assert.ok(response.payload.capabilities.includes('delegation_reviewer_v1'));
     assert.ok(response.payload.capabilities.includes('task_graph_v1'));
+    assert.ok(response.payload.capabilities.includes('session_snapshot_v1'));
     assert.ok(response.payload.capabilities.includes('event_v2'));
     // `multi_agent` now advertised — both Explorer and Coder daemon-side
     // tool executors are real (see `makeDaemonExplorerToolExec` +
@@ -2179,7 +2297,7 @@ describe('daemon version', () => {
     assert.ok(!response.payload.capabilities.includes('task_graph'));
   });
 
-  it('all 16 handler types are registered', async () => {
+  it('core handler types are registered', async () => {
     const content = await fs.readFile(path.join(import.meta.dirname, '..', 'pushd.ts'), 'utf8');
     const handlers = [
       'hello',
@@ -2188,6 +2306,7 @@ describe('daemon version', () => {
       'start_session',
       'send_user_message',
       'attach_session',
+      'get_session_snapshot',
       'update_session',
       'submit_approval',
       'cancel_run',
