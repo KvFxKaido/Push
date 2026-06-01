@@ -14,6 +14,7 @@ function makeScored(
     freshness?: MemoryRecord['freshness'];
     files?: string[];
     symbols?: string[];
+    detail?: string;
   } = {},
 ): ScoredMemoryRecord {
   return {
@@ -21,6 +22,7 @@ function makeScored(
       id,
       kind: overrides.kind ?? 'finding',
       summary,
+      detail: overrides.detail,
       scope: { repoFullName: 'owner/repo' },
       source: { kind: 'explorer', label: 'x', createdAt: 0 },
       freshness: overrides.freshness ?? 'fresh',
@@ -175,6 +177,102 @@ describe('packRetrievedMemory', () => {
       result.sections.verification.packed.some((record) => record.record.id === 'stale-verify'),
     ).toBe(false);
     expect(result.block).toContain('[STALE_CONTEXT]');
+  });
+
+  it('never surfaces detail by default (opt-in flag off)', () => {
+    const result = packRetrievedMemory([
+      makeScored('a', 'Auth refresh guarded in useAuth.ts', {
+        detail: 'Full verbatim detail that should not appear unless includeTopDetail is set.',
+      }),
+    ]);
+
+    expect(result.block).not.toContain('detail:');
+    expect(result.block).not.toContain('should not appear');
+  });
+
+  it('surfaces detail for the top-ranked record in a section when includeTopDetail is set', () => {
+    const result = packRetrievedMemory(
+      [
+        makeScored('top', 'Decision summary', {
+          kind: 'decision',
+          detail: 'Verbatim rationale for the decision that the summary alone would lose.',
+        }),
+        makeScored('second', 'Second task outcome', {
+          kind: 'task_outcome',
+          detail: 'Detail for a non-top record that should stay hidden.',
+        }),
+      ],
+      { includeTopDetail: true },
+    );
+
+    expect(result.block).toContain('detail: Verbatim rationale for the decision');
+    // Only the top-ranked record in the section gets detail; the second does not.
+    expect(result.block).not.toContain('should stay hidden');
+    expect(result.sections.taskMemory.packed.map((r) => r.record.id)).toEqual(['top', 'second']);
+  });
+
+  it('preserves newlines and indentation in surfaced detail', () => {
+    const multiline = 'line one\n  indented two\nline three';
+    const result = packRetrievedMemory(
+      [makeScored('a', 'verification summary', { kind: 'verification_result', detail: multiline })],
+      { includeTopDetail: true },
+    );
+
+    expect(result.block).toContain('detail: line one');
+    // Indentation and line breaks survive rather than collapsing to single spaces.
+    expect(result.block).toContain('  indented two');
+    expect(result.block).toContain('line three');
+    // charsUsed stays consistent with the rendered block (budget accounting intact).
+    expect(result.sections.verification.charsUsed).toBe(result.sections.verification.block.length);
+  });
+
+  it('does not surface detail when the top-ranked record lacks it, even if a lower record has detail', () => {
+    const result = packRetrievedMemory(
+      [
+        makeScored('top', 'Top-ranked outcome with no detail', { kind: 'task_outcome' }),
+        makeScored('second', 'Lower-ranked outcome', {
+          kind: 'task_outcome',
+          detail: 'Detail that must not be promoted to the top slot.',
+        }),
+      ],
+      { includeTopDetail: true },
+    );
+
+    expect(result.sections.taskMemory.packed.map((r) => r.record.id)).toEqual(['top', 'second']);
+    expect(result.block).not.toContain('detail:');
+    expect(result.block).not.toContain('must not be promoted');
+  });
+
+  it('respects a custom detailCap', () => {
+    const longDetail = 'D'.repeat(400);
+    const result = packRetrievedMemory(
+      [makeScored('a', 'summary', { kind: 'decision', detail: longDetail })],
+      { includeTopDetail: true, detailCap: 50 },
+    );
+
+    const detailLine = result.block.split('\n').find((line) => line.includes('detail:'));
+    expect(detailLine).toBeDefined();
+    // 'D' run is truncated to the cap (with an ellipsis), well under the original 400.
+    expect(detailLine!.length).toBeLessThan(80);
+    expect(detailLine).toContain('…');
+  });
+
+  it('falls back to summary-only when detail would overflow the section budget', () => {
+    const result = packRetrievedMemory(
+      [
+        makeScored('a', 'short summary', {
+          kind: 'decision',
+          detail: 'X'.repeat(2000),
+        }),
+      ],
+      { includeTopDetail: true, sectionBudgets: { taskMemory: 120 } },
+    );
+
+    // The record is still packed (not dropped), just without its oversized detail.
+    expect(result.sections.taskMemory.packed.map((r) => r.record.id)).toEqual(['a']);
+    expect(result.block).toContain('short summary');
+    expect(result.block).not.toContain('detail:');
+    expect(result.sections.taskMemory.charsUsed).toBeLessThanOrEqual(120);
   });
 
   it('surfaces combined and per-section metadata for prompt-cost inspection', () => {
