@@ -67,7 +67,11 @@ Phase 2  (optional) Command-handler module                                   ←
   output sink so headless frames don't spew ANSI into the test/TAP stream.
 - `options.deps` — injectable `tryConnect` (daemon-client factory) + `loadConfig`
   / `listSessions`, so a harness supplies a stub client (no socket/spawn) and a
-  deterministic startup (no disk, no resume modal).
+  deterministic startup (no disk, no resume modal). **Scope note:** only the
+  bootstrap `listSessions` is routed through `deps`; the resume-modal session
+  ops (delete/rename, mid-closure) still use bare imports. That's intentional
+  for Phase 0 (the verb tests never open the modal) — those call sites are
+  Phase-1 grafting points, surfaced here rather than left implicit.
 - Two test-only hooks: `options.onState` (live `tuiState`/`composer` access) and
   `options.onInputReady` (fires after the `data` listener is wired — polling the
   earlier "Connected" status raced registration and dropped keystrokes).

@@ -175,6 +175,12 @@ export async function startHeadlessTui(opts = {}) {
   // (the daemon client is stubbed), so any non-empty value is fine.
   process.env.PUSH_ZEN_API_KEY ||= 'test-key';
   const h = createTuiHarness(opts);
+  // Capture an async `runTUI` failure rather than letting it become an
+  // unhandled rejection: the harness attaches the promise but doesn't await it
+  // until `stop()`, so a startup/run error would otherwise be reported only as
+  // a PromiseRejectionHandledWarning. We stash it and surface it at the next
+  // gate (`stop()` re-throws; the input-ready wait short-circuits on it).
+  let runError = null;
   h.promise = runTUI({
     provider: opts.provider ?? 'zen',
     io: h.io,
@@ -182,7 +188,10 @@ export async function startHeadlessTui(opts = {}) {
     onState: h.onState,
     onInputReady: h.onInputReady,
     ...(opts.runTuiOptions ?? {}),
+  }).catch((err) => {
+    runError = err;
   });
+  h.getRunError = () => runError;
 
   async function waitFor(predicate, { timeoutMs = 4000, intervalMs = 10 } = {}) {
     const deadline = Date.now() + timeoutMs;
@@ -196,9 +205,14 @@ export async function startHeadlessTui(opts = {}) {
 
   // Gate on the input-listener registration, NOT the "Connected" status: the
   // status is emitted near the top of setup, but `io.stdin.on('data')` is wired
-  // ~4,000 lines later. Feeding before that drops the first keystrokes.
+  // ~4,000 lines later. Feeding before that drops the first keystrokes. If
+  // `runTUI` dies during startup, `h.promise` resolves early (caught) — surface
+  // the real error instead of waiting out the input-ready timeout.
   await Promise.race([
     h.inputReady,
+    h.promise.then(() => {
+      throw runError ?? new Error('headless TUI exited before signaling input-ready');
+    }),
     delay(4000).then(() => {
       throw new Error('headless TUI did not signal input-ready within timeout');
     }),
@@ -237,6 +251,7 @@ export async function startHeadlessTui(opts = {}) {
   async function stop() {
     h.io.stdin.emit('data', Buffer.from('\x04'));
     await Promise.race([h.promise, delay(2000)]);
+    if (runError) throw runError;
   }
 
   return Object.assign(h, { type, typeLine, feed, stop });

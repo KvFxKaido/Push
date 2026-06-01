@@ -39,17 +39,27 @@ export interface TuiStdin {
   removeListener: (event: string, listener: (...args: unknown[]) => void) => unknown;
 }
 
-/** The minimal stdout/stderr surface the closure uses. */
+/**
+ * The stdout surface the closure uses. `on`/`removeListener` are REQUIRED, not
+ * optional: `runTUI` wires (and tears down) a `'resize'` listener
+ * unconditionally, so a `TuiIo` implementor that omits them would crash. The
+ * type contract must match that usage.
+ */
 export interface TuiStdout {
   write: (chunk: string) => unknown;
-  on?: (event: string, listener: (...args: unknown[]) => void) => unknown;
-  removeListener?: (event: string, listener: (...args: unknown[]) => void) => unknown;
+  on: (event: string, listener: (...args: unknown[]) => void) => unknown;
+  removeListener: (event: string, listener: (...args: unknown[]) => void) => unknown;
+}
+
+/** stderr is write-only — the closure never wires events on it. */
+export interface TuiWriteStream {
+  write: (chunk: string) => unknown;
 }
 
 export interface TuiIo {
   stdin: TuiStdin;
   stdout: TuiStdout;
-  stderr: TuiStdout;
+  stderr: TuiWriteStream;
   /** Terminate the process. No-op under a headless harness. */
   exit: (code: number) => void;
   /** Register a process-level signal/uncaught handler. No-op headless. */
@@ -67,7 +77,7 @@ export function createDefaultTuiIo(): TuiIo {
   return {
     stdin: process.stdin as unknown as TuiStdin,
     stdout: process.stdout as unknown as TuiStdout,
-    stderr: process.stderr as unknown as TuiStdout,
+    stderr: process.stderr as unknown as TuiWriteStream,
     exit: (code) => process.exit(code),
     addSignalHandler: (signal, handler) => {
       process.on(signal, handler as (...args: unknown[]) => void);
