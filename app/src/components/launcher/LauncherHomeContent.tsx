@@ -204,7 +204,7 @@ export function LauncherHomeContent({
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={onDisconnect}
-              className="h-8 rounded-full border border-red-500/30 bg-[linear-gradient(180deg,rgba(84,25,25,0.72)_0%,rgba(40,13,13,0.9)_100%)] px-3 text-xs text-red-200 transition-colors hover:border-red-500/45 hover:text-red-100"
+              className="h-8 rounded-full border border-red-500/30 [background-image:var(--push-surface-error-strong)] px-3 text-xs text-red-200 transition-colors hover:border-red-500/45 hover:text-red-100"
             >
               Disconnect
             </AlertDialogAction>
