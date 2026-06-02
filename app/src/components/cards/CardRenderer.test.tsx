@@ -24,7 +24,9 @@ describe('CardRenderer', () => {
       />,
     );
 
-    expect(html).toContain('Coder');
+    // The Coder role renders as the phase-first display label (see
+    // lib/role-display.ts) rather than the internal role name.
+    expect(html).toContain('Editing');
     expect(html).toContain('Implemented the auth refresh fix.');
     expect(html).toContain('2 file');
   });

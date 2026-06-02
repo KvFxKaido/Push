@@ -191,7 +191,9 @@ describe('verbForActivity', () => {
     assert.equal(verbForActivity({ kind: 'tool', toolName: 'read_file' }), 'reading');
     assert.equal(verbForActivity({ kind: 'tool', toolName: 'edit_file' }), 'editing');
     assert.equal(verbForActivity({ kind: 'tool', toolName: 'git_commit' }), 'committing');
-    assert.equal(verbForActivity({ kind: 'tool', toolName: 'delegate_coder' }), 'coding');
+    // Delegation verbs derive from the shared display seam (lib/role-display.ts):
+    // coder → "Editing" → 'editing', explorer → "Exploring" → 'exploring'.
+    assert.equal(verbForActivity({ kind: 'tool', toolName: 'delegate_coder' }), 'editing');
     assert.equal(verbForActivity({ kind: 'tool', toolName: 'delegate_explorer' }), 'exploring');
     assert.equal(verbForActivity({ kind: 'tool', toolName: 'sandbox_exec' }), 'running');
   });

@@ -11,6 +11,7 @@ import {
   CARD_HEADER_BG_ERROR,
   CARD_PANEL_SUBTLE_CLASS,
 } from '@/lib/utils';
+import { getRoleLabel } from '@push/lib/role-display';
 
 const riskColors = {
   low: CARD_BADGE_SUCCESS,
@@ -33,7 +34,7 @@ export function AuditVerdictCard({ data }: { data: AuditVerdictCardData }) {
           <ShieldAlert className={`h-4 w-4 shrink-0 ${CARD_TEXT_ERROR}`} />
         )}
         <span className={`text-sm font-medium ${isSafe ? CARD_TEXT_SUCCESS : CARD_TEXT_ERROR}`}>
-          {isSafe ? 'SAFE' : 'UNSAFE'} — Auditor Verdict
+          {isSafe ? 'SAFE' : 'UNSAFE'} — {getRoleLabel('auditor')} Verdict
         </span>
         <span className="ml-auto text-push-xs text-push-fg-dim">
           {data.filesReviewed} file{data.filesReviewed !== 1 ? 's' : ''} reviewed

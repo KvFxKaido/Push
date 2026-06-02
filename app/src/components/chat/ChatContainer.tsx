@@ -17,6 +17,7 @@ import { AgentStatusBar } from './AgentStatusBar';
 import { CIStatusBanner } from './CIStatusBanner';
 import { getEmptyStateQuickPrompts } from '@/lib/quick-prompts';
 import { PushMarkIcon } from '@/components/icons/push-custom-icons';
+import { getRoleDisplay } from '@push/lib/role-display';
 import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_TOP_BANNER_STRIP_CLASS,
@@ -32,9 +33,9 @@ function phaseLabel(phase: LoopPhase): string {
     case 'executing_tools':
       return 'mid-tool-execution';
     case 'delegating_coder':
-      return 'during Coder delegation';
+      return `during the ${getRoleDisplay('coder').phase} phase`;
     case 'delegating_explorer':
-      return 'during Explorer delegation';
+      return `during the ${getRoleDisplay('explorer').phase} phase`;
     case 'executing_task_graph':
       return 'during task graph execution';
   }

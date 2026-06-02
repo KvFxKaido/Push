@@ -95,8 +95,10 @@ describe('HubConsoleTab', () => {
     expect(html).toContain('Turn 1 started');
     expect(html).toContain('&gt; Read file');
     expect(html).toContain('Loaded app.ts (12ms)');
-    expect(html).toContain('Coder completed');
-    expect(html).toContain('Task Graph · Coder · fix-auth completed');
+    // Subagent/task labels render phase-first via lib/role-display.ts (the
+    // Coder role surfaces as the "Editing" phase, not the internal role name).
+    expect(html).toContain('Editing completed');
+    expect(html).toContain('Task Graph · Editing · fix-auth completed');
     expect(html).toContain('Applied auth fix. (18ms)');
     expect(html).toContain('Task Graph completed');
     expect(html).toContain('All tasks completed successfully. (2 tasks, 3 rounds, 42ms)');

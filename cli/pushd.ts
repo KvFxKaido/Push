@@ -672,6 +672,7 @@ import { isPathAllowed, snapshotAllowlist } from './pushd-allowlist.js';
 import { runReviewer } from '../lib/reviewer-agent.ts';
 import { runDeepReviewer } from '../lib/deep-reviewer-agent.ts';
 import { buildReviewerContextBlock } from '../lib/role-context.ts';
+import { getSubagentLabel } from '../lib/role-display.ts';
 import {
   REVIEW_GUIDANCE_FILENAME,
   REVIEW_GUIDANCE_MAX_LINES,
@@ -2929,7 +2930,11 @@ export function makeDaemonExplorerToolExec({ entry, signal, role = 'explorer' })
   // gate + executor case-dispatch run under this role so capability-gated
   // cases attribute correctly. Defaults to 'explorer' so the two existing
   // call sites are unchanged; the deep-reviewer handler passes 'reviewer'.
-  const roleLabel = role === 'reviewer' ? 'Deep Reviewer' : 'Explorer';
+  // User-facing label comes from the shared display seam (`lib/role-display.ts`)
+  // rather than being spelled here. The deep-reviewer runs under the `reviewer`
+  // role but is tagged distinctly in events, so map it to the `deep_reviewer`
+  // subagent for display; the plain read-only role is the Explorer.
+  const roleLabel = getSubagentLabel(role === 'reviewer' ? 'deep_reviewer' : role);
   return async (toolCall, _execCtx) => {
     // Unwrap the `{ source, call: { tool, args } }` shape produced by
     // `wrapCliDetectAllToolCalls` / `wrapCliDetectAnyToolCall`. Tests

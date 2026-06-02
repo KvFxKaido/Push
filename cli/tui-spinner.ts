@@ -158,6 +158,19 @@ export type SpinnerActivity =
   | { kind: 'tool'; toolName: string }
   | null;
 
+// The delegation verbs below derive from the shared display seam
+// (`lib/role-display.ts`) rather than being spelled here, so the spinner's
+// "what is it doing" vocabulary can't drift from the rest of the UI. The seam
+// phases are title-case ('Editing', 'Verifying'); the spinner wants lowercase
+// present participles, so we downcase. Falls back to 'working' for a role with
+// no phase (only the Orchestrator, which is never a delegate target).
+import { getRoleDisplay } from '../lib/role-display.ts';
+import type { AgentRole } from '../lib/runtime-contract.ts';
+
+function roleVerb(role: AgentRole): string {
+  return getRoleDisplay(role).phase?.toLowerCase() ?? 'working';
+}
+
 // Map a tool name to a short present-participle verb. Keys are the
 // canonical tool names emitted by the engine (see `lib/tool-registry.ts`)
 // plus the CLI-local handlers from `cli/tools.ts`. Values stay short
@@ -252,10 +265,10 @@ export const VERB_BY_TOOL: Readonly<Record<string, string>> = {
   ask_user: 'asking',
 
   // ── Delegation ────────────────────────────────────────────────
-  delegate_coder: 'coding',
-  delegate_explorer: 'exploring',
-  delegate_reviewer: 'reviewing',
-  delegate_auditor: 'auditing',
+  delegate_coder: roleVerb('coder'),
+  delegate_explorer: roleVerb('explorer'),
+  delegate_reviewer: roleVerb('reviewer'),
+  delegate_auditor: roleVerb('auditor'),
 };
 
 /**

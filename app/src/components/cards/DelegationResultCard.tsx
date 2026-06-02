@@ -17,18 +17,8 @@ import {
   formatElapsedTime,
 } from '@/lib/utils';
 import { useExpandable } from '@/hooks/useExpandable';
+import { getRoleLabel, getSubagentLabel } from '@push/lib/role-display';
 import { ExpandChevron, ExpandableCardPanel } from './expandable';
-
-function getAgentLabel(agent: DelegationResultCardData['agent']): string {
-  switch (agent) {
-    case 'explorer':
-      return 'Explorer';
-    case 'coder':
-      return 'Coder';
-    case 'task_graph':
-      return 'Task Graph';
-  }
-}
 
 const AGENT_ICONS: Record<DelegationResultCardData['agent'], typeof Search> = {
   explorer: Search,
@@ -95,7 +85,7 @@ export function DelegationResultCard({ data }: { data: DelegationResultCardData 
         >
           <AgentIcon className={`h-4 w-4 shrink-0 ${status.text}`} />
           <span className={`text-push-base font-medium ${status.text}`}>
-            {getAgentLabel(data.agent)}
+            {getSubagentLabel(data.agent)}
           </span>
           <span
             className={`rounded-full px-2 py-0.5 text-push-2xs font-medium uppercase ${status.badge}`}
@@ -140,7 +130,7 @@ export function DelegationResultCard({ data }: { data: DelegationResultCardData 
                       : CARD_BADGE_WARNING
                 }`}
               >
-                Auditor: {auditorVerdict.outcome}
+                {getRoleLabel('auditor')}: {auditorVerdict.outcome}
               </span>
             )}
             <span

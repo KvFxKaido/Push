@@ -14,6 +14,7 @@
 // here; the other fields are ignored.
 
 import type { RunEventSubagent } from '../lib/runtime-contract.ts';
+import { getSubagentLabel } from '../lib/role-display.ts';
 
 export type DelegationTranscriptRole = 'status' | 'warning' | 'error';
 export type DelegationTranscriptBoundary = 'start' | 'end';
@@ -126,36 +127,36 @@ export function delegationEventToTranscript(
 
   switch (event.type) {
     case 'subagent.started': {
-      const agent = String(p.agent ?? 'subagent');
-      const text = p.detail
-        ? `--- subagent started: ${agent} --- ${p.detail}`
-        : `--- subagent started: ${agent} ---`;
+      // Display label comes from the shared seam (`lib/role-display.ts`); the
+      // raw `p.agent` role string stays in the event payload for attribution.
+      const agent = getSubagentLabel(p.agent);
+      const text = p.detail ? `--- ${agent} started --- ${p.detail}` : `--- ${agent} started ---`;
       return { role: 'status', text, boundary: 'start' };
     }
 
     case 'subagent.completed': {
-      const agent = String(p.agent ?? 'subagent');
+      const agent = getSubagentLabel(p.agent);
       const summary = p.summary ?? '(no summary)';
       return {
         role: 'status',
-        text: `--- subagent completed: ${agent} --- ${summary}`,
+        text: `--- ${agent} completed --- ${summary}`,
         boundary: 'end',
       };
     }
 
     case 'subagent.failed': {
-      const agent = String(p.agent ?? 'subagent');
+      const agent = getSubagentLabel(p.agent);
       const error = p.error ?? '(unknown error)';
       return {
         role: 'error',
-        text: `--- subagent failed: ${agent} --- ${error}`,
+        text: `--- ${agent} failed --- ${error}`,
         boundary: 'end',
       };
     }
 
     case 'task_graph.task_ready': {
       const taskId = p.taskId ?? '?';
-      const agent = String(p.agent ?? 'agent');
+      const agent = getSubagentLabel(p.agent);
       const text = p.detail
         ? `task ready: ${taskId} (${agent}) — ${p.detail}`
         : `task ready: ${taskId} (${agent})`;
@@ -164,7 +165,7 @@ export function delegationEventToTranscript(
 
     case 'task_graph.task_started': {
       const taskId = p.taskId ?? '?';
-      const agent = String(p.agent ?? 'agent');
+      const agent = getSubagentLabel(p.agent);
       const text = p.detail
         ? `task started: ${taskId} (${agent}) — ${p.detail}`
         : `task started: ${taskId} (${agent})`;
@@ -173,7 +174,7 @@ export function delegationEventToTranscript(
 
     case 'task_graph.task_completed': {
       const taskId = p.taskId ?? '?';
-      const agent = String(p.agent ?? 'agent');
+      const agent = getSubagentLabel(p.agent);
       const summary = p.summary ?? '(no summary)';
       const elapsed = typeof p.elapsedMs === 'number' ? `, ${p.elapsedMs}ms` : '';
       return {
@@ -184,7 +185,7 @@ export function delegationEventToTranscript(
 
     case 'task_graph.task_failed': {
       const taskId = p.taskId ?? '?';
-      const agent = String(p.agent ?? 'agent');
+      const agent = getSubagentLabel(p.agent);
       const error = p.error ?? '(unknown error)';
       const elapsed = typeof p.elapsedMs === 'number' ? `, ${p.elapsedMs}ms` : '';
       return {
@@ -195,7 +196,7 @@ export function delegationEventToTranscript(
 
     case 'task_graph.task_cancelled': {
       const taskId = p.taskId ?? '?';
-      const agent = String(p.agent ?? 'agent');
+      const agent = getSubagentLabel(p.agent);
       const elapsed = typeof p.elapsedMs === 'number' ? `, ${p.elapsedMs}ms` : '';
       const reason = p.reason ? ` — ${p.reason}` : '';
       return {
@@ -439,10 +440,13 @@ function renderTaskNode(node: TaskGraphTranscriptNode): string {
 }
 
 function formatNodeAgent(node: TaskGraphTranscriptNode): string {
+  // Display label comes from the shared seam (`lib/role-display.ts`); the raw
+  // `node.agent` role string is retained on the node for attribution.
+  const label = getSubagentLabel(node.agent);
   if (typeof node.elapsedMs === 'number') {
-    return `${node.agent}, ${node.elapsedMs}ms`;
+    return `${label}, ${node.elapsedMs}ms`;
   }
-  return node.agent;
+  return label;
 }
 
 function formatNodeStatus(status: TaskGraphNodeStatus): string {

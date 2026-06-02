@@ -52,7 +52,7 @@ describe('delegationEventToTranscript — subagent events', () => {
     });
     assert.deepEqual(entry, {
       role: 'status',
-      text: '--- subagent started: explorer --- auth-flow',
+      text: '--- Exploring started --- auth-flow',
       boundary: 'start',
     });
   });
@@ -64,7 +64,7 @@ describe('delegationEventToTranscript — subagent events', () => {
     });
     assert.deepEqual(entry, {
       role: 'status',
-      text: '--- subagent started: coder ---',
+      text: '--- Editing started ---',
       boundary: 'start',
     });
   });
@@ -80,7 +80,7 @@ describe('delegationEventToTranscript — subagent events', () => {
     });
     assert.deepEqual(entry, {
       role: 'status',
-      text: '--- subagent completed: explorer --- found 3 files matching auth logic',
+      text: '--- Exploring completed --- found 3 files matching auth logic',
       boundary: 'end',
     });
   });
@@ -90,7 +90,7 @@ describe('delegationEventToTranscript — subagent events', () => {
       type: 'subagent.completed',
       payload: { executionId: 'ex-1', agent: 'explorer' },
     });
-    assert.equal(entry?.text, '--- subagent completed: explorer --- (no summary)');
+    assert.equal(entry?.text, '--- Exploring completed --- (no summary)');
     assert.equal(entry?.boundary, 'end');
   });
 
@@ -101,7 +101,7 @@ describe('delegationEventToTranscript — subagent events', () => {
     });
     assert.deepEqual(entry, {
       role: 'error',
-      text: '--- subagent failed: coder --- patch conflict',
+      text: '--- Editing failed --- patch conflict',
       boundary: 'end',
     });
   });
@@ -111,7 +111,7 @@ describe('delegationEventToTranscript — subagent events', () => {
       type: 'subagent.failed',
       payload: { executionId: 'ex-1', agent: 'coder' },
     });
-    assert.equal(entry?.text, '--- subagent failed: coder --- (unknown error)');
+    assert.equal(entry?.text, '--- Editing failed --- (unknown error)');
     assert.equal(entry?.boundary, 'end');
   });
 });
@@ -131,7 +131,7 @@ describe('delegationEventToTranscript — task_graph events', () => {
     });
     assert.deepEqual(entry, {
       role: 'status',
-      text: 'task ready: investigate-auth (explorer) — auth module',
+      text: 'task ready: investigate-auth (Exploring) — auth module',
     });
   });
 
@@ -140,7 +140,7 @@ describe('delegationEventToTranscript — task_graph events', () => {
       type: 'task_graph.task_ready',
       payload: { executionId: 'ex-1', taskId: 't-1', agent: 'coder' },
     });
-    assert.equal(entry?.text, 'task ready: t-1 (coder)');
+    assert.equal(entry?.text, 'task ready: t-1 (Editing)');
   });
 
   it('maps task_graph.task_started', () => {
@@ -150,7 +150,7 @@ describe('delegationEventToTranscript — task_graph events', () => {
     });
     assert.deepEqual(entry, {
       role: 'status',
-      text: 'task started: t-1 (coder)',
+      text: 'task started: t-1 (Editing)',
     });
   });
 
@@ -167,7 +167,7 @@ describe('delegationEventToTranscript — task_graph events', () => {
     });
     assert.deepEqual(entry, {
       role: 'status',
-      text: 'task completed: t-1 (coder, 1234ms) — patch applied',
+      text: 'task completed: t-1 (Editing, 1234ms) — patch applied',
     });
   });
 
@@ -181,7 +181,7 @@ describe('delegationEventToTranscript — task_graph events', () => {
         summary: 'done',
       },
     });
-    assert.equal(entry?.text, 'task completed: t-1 (coder) — done');
+    assert.equal(entry?.text, 'task completed: t-1 (Editing) — done');
   });
 
   it('maps task_graph.task_failed to an error entry', () => {
@@ -197,7 +197,7 @@ describe('delegationEventToTranscript — task_graph events', () => {
     });
     assert.deepEqual(entry, {
       role: 'error',
-      text: 'task failed: t-1 (coder, 500ms) — compilation error',
+      text: 'task failed: t-1 (Editing, 500ms) — compilation error',
     });
   });
 
@@ -214,7 +214,7 @@ describe('delegationEventToTranscript — task_graph events', () => {
     });
     assert.deepEqual(entry, {
       role: 'warning',
-      text: 'task cancelled: t-1 (explorer, 1200ms) — budget exceeded',
+      text: 'task cancelled: t-1 (Exploring, 1200ms) — budget exceeded',
     });
   });
 
@@ -228,7 +228,7 @@ describe('delegationEventToTranscript — task_graph events', () => {
         reason: 'user aborted',
       },
     });
-    assert.equal(entry?.text, 'task cancelled: t-1 (coder) — user aborted');
+    assert.equal(entry?.text, 'task cancelled: t-1 (Editing) — user aborted');
   });
 
   it('maps task_graph.task_cancelled without reason (fallback to bare label)', () => {
@@ -239,7 +239,7 @@ describe('delegationEventToTranscript — task_graph events', () => {
       type: 'task_graph.task_cancelled',
       payload: { executionId: 'ex-1', taskId: 't-1', agent: 'explorer' },
     });
-    assert.equal(entry?.text, 'task cancelled: t-1 (explorer)');
+    assert.equal(entry?.text, 'task cancelled: t-1 (Exploring)');
   });
 });
 
@@ -347,7 +347,7 @@ describe('delegationEventToTranscript — defensive behavior', () => {
       delegationEventToTranscript({ type: 'subagent.started' });
     });
     const entry = delegationEventToTranscript({ type: 'subagent.started' });
-    assert.equal(entry?.text, '--- subagent started: subagent ---');
+    assert.equal(entry?.text, '--- Working started ---');
     assert.equal(entry?.boundary, 'start');
   });
 
@@ -356,7 +356,7 @@ describe('delegationEventToTranscript — defensive behavior', () => {
       type: 'task_graph.task_started',
       payload: { taskId: 't-1' },
     });
-    assert.equal(entry?.text, 'task started: t-1 (agent)');
+    assert.equal(entry?.text, 'task started: t-1 (Working)');
   });
 
   it('tolerates missing taskId field', () => {
@@ -364,7 +364,7 @@ describe('delegationEventToTranscript — defensive behavior', () => {
       type: 'task_graph.task_started',
       payload: { agent: 'coder' },
     });
-    assert.equal(entry?.text, 'task started: ? (coder)');
+    assert.equal(entry?.text, 'task started: ? (Editing)');
   });
 });
 
@@ -388,8 +388,8 @@ describe('createDelegationTranscriptRenderer', () => {
       entry?.text ?? '',
       /task graph: ex-1 — ready 1 \/ running 0 \/ done 0 \/ failed 0 \/ cancelled 0/,
     );
-    assert.match(entry?.text ?? '', /focus: investigate-auth \(explorer\) ready — auth module/);
-    assert.match(entry?.text ?? '', /\[ready\] investigate-auth \(explorer\) — auth module/);
+    assert.match(entry?.text ?? '', /focus: investigate-auth \(Exploring\) ready — auth module/);
+    assert.match(entry?.text ?? '', /\[ready\] investigate-auth \(Exploring\) — auth module/);
   });
 
   it('updates a node from running to done with elapsed time and summary', () => {
@@ -416,8 +416,8 @@ describe('createDelegationTranscriptRenderer', () => {
 
     assert.equal(entry?.role, 'status');
     assert.match(entry?.text ?? '', /done 1 \/ failed 0/);
-    assert.match(entry?.text ?? '', /focus: build-api \(coder, 123ms\) done — patch applied/);
-    assert.match(entry?.text ?? '', /\[done\] build-api \(coder, 123ms\) — patch applied/);
+    assert.match(entry?.text ?? '', /focus: build-api \(Editing, 123ms\) done — patch applied/);
+    assert.match(entry?.text ?? '', /\[done\] build-api \(Editing, 123ms\) — patch applied/);
   });
 
   it('preserves observed node order and renders explicit dependencies when present', () => {
@@ -439,7 +439,7 @@ describe('createDelegationTranscriptRenderer', () => {
 
     const text = entry?.text ?? '';
     assert.ok(text.indexOf('[ready] inspect-auth') < text.indexOf('[ready] patch-auth'));
-    assert.match(text, /\[ready\] patch-auth \(coder\) <- inspect-auth — apply fix/);
+    assert.match(text, /\[ready\] patch-auth \(Editing\) <- inspect-auth — apply fix/);
   });
 
   it('renders failed task events as error graph snapshots', () => {
@@ -457,8 +457,8 @@ describe('createDelegationTranscriptRenderer', () => {
 
     assert.equal(entry?.role, 'error');
     assert.match(entry?.text ?? '', /failed 1/);
-    assert.match(entry?.text ?? '', /focus: patch-auth \(coder, 500ms\) failed — test failed/);
-    assert.match(entry?.text ?? '', /\[failed\] patch-auth \(coder, 500ms\) — test failed/);
+    assert.match(entry?.text ?? '', /focus: patch-auth \(Editing, 500ms\) failed — test failed/);
+    assert.match(entry?.text ?? '', /\[failed\] patch-auth \(Editing, 500ms\) — test failed/);
   });
 
   it('renders cancelled task events as warning graph snapshots', () => {
@@ -475,7 +475,7 @@ describe('createDelegationTranscriptRenderer', () => {
 
     assert.equal(entry?.role, 'warning');
     assert.match(entry?.text ?? '', /cancelled 1/);
-    assert.match(entry?.text ?? '', /\[cancelled\] patch-auth \(coder\) — parent failed/);
+    assert.match(entry?.text ?? '', /\[cancelled\] patch-auth \(Editing\) — parent failed/);
   });
 
   it('renders graph completion with final stats and result', () => {
@@ -505,7 +505,7 @@ describe('createDelegationTranscriptRenderer', () => {
     assert.equal(entry?.role, 'status');
     assert.match(entry?.text ?? '', /task graph: ex-1 — completed — 1 nodes \/ 2 rounds \/ 345ms/);
     assert.match(entry?.text ?? '', /result: completed — all tasks succeeded/);
-    assert.match(entry?.text ?? '', /\[done\] inspect-auth \(explorer\) — found route/);
+    assert.match(entry?.text ?? '', /\[done\] inspect-auth \(Exploring\) — found route/);
   });
 
   it('maps final failure and abort severities from graph_completed', () => {
@@ -551,7 +551,7 @@ describe('createDelegationTranscriptRenderer', () => {
 
     assert.deepEqual(entry, {
       role: 'status',
-      text: '--- subagent started: explorer --- auth-flow',
+      text: '--- Exploring started --- auth-flow',
       boundary: 'start',
     });
   });
