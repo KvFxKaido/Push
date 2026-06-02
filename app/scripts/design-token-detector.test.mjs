@@ -34,8 +34,41 @@ describe('findHardcodedColors', () => {
     expect(r.inlineHex).toBe(3);
   });
 
-  it('does not flag rgba/rgb values (low-noise: hex only)', () => {
-    const r = findHardcodedColors('boxShadow: "0 2px 8px rgba(0,0,0,0.25)"');
+  it('does not flag grayscale rgba (shadows, sheens, scrims)', () => {
+    // Black/white/neutral triplets are legit (not token-able) and stay silent.
+    expect(findHardcodedColors('boxShadow: "0 2px 8px rgba(0,0,0,0.25)"').total).toBe(0);
+    expect(findHardcodedColors('background: "rgba(255,255,255,0.05)"').total).toBe(0);
+    expect(findHardcodedColors('"rgb(20, 24, 30)"').total).toBe(0); // near-neutral, spread <= 12
+  });
+
+  it('flags chromatic rgb()/rgba() triplets (legacy comma + modern slash)', () => {
+    expect(findHardcodedColors('rgba(125,211,252,0.17)').rgbTriplet).toBe(1); // Sky
+    expect(findHardcodedColors('rgb(125 211 252 / 0.17)').rgbTriplet).toBe(1);
+    expect(findHardcodedColors('rgba(17,61,42,0.18)').rgbTriplet).toBe(1); // status green tint
+  });
+
+  it('flags chromatic percent- and decimal-channel triplets', () => {
+    // 49%/83%/99% ≈ Sky on the 0–255 scale; spread well past the threshold.
+    expect(findHardcodedColors('rgb(49% 83% 99%)').rgbTriplet).toBe(1);
+    expect(findHardcodedColors('rgba(125.0, 211, 252, 0.17)').rgbTriplet).toBe(1);
+  });
+
+  it('keeps grayscale percent triplets silent (scale-invariant spread)', () => {
+    // Equal channels => zero spread, regardless of unit.
+    expect(findHardcodedColors('rgb(50% 50% 50%)').rgbTriplet).toBe(0);
+  });
+
+  it('flags the underscore form used inside Tailwind arbitrary values', () => {
+    const r = findHardcodedColors(
+      'bg-[radial-gradient(circle,rgb(125_211_252_/_0.17),transparent)]',
+    );
+    expect(r.rgbTriplet).toBe(1);
+  });
+
+  it('does NOT flag the tokenized rgb(var(--token) / a) form', () => {
+    // The whole point of the fix: using the CSS var is the correct pattern.
+    const r = findHardcodedColors('rgb(var(--push-accent-rgb) / 0.17)');
+    expect(r.rgbTriplet).toBe(0);
     expect(r.total).toBe(0);
   });
 
