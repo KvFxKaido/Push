@@ -303,8 +303,8 @@ export function RepoChatDrawer({
         key={chat.id}
         className={`flex items-center gap-1 rounded-xl border border-transparent transition-colors duration-200 ${
           isActiveChat
-            ? 'border-push-edge-subtle bg-push-surface-raised/80'
-            : 'hover:bg-push-surface-hover/60'
+            ? 'border-push-accent/40 bg-push-accent/10'
+            : 'hover:border-push-edge-subtle hover:bg-push-surface-hover/60'
         }`}
       >
         {isEditing ? (
@@ -355,7 +355,7 @@ export function RepoChatDrawer({
           <>
             <button
               onClick={() => openChat(chat.id)}
-              className="min-w-0 flex-1 px-2.5 py-2 text-left"
+              className="min-w-0 flex-1 spring-press px-3 py-2.5 text-left"
             >
               <p
                 className={`truncate text-push-sm ${isActiveChat ? 'text-push-fg' : 'text-push-fg-secondary'}`}
@@ -410,9 +410,16 @@ export function RepoChatDrawer({
           overlayClassName="bg-transparent"
           className="w-[86vw] rounded-r-2xl border-push-edge-subtle bg-push-grad-panel p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.3)] sm:max-w-sm [&>[data-slot=sheet-close]]:text-push-fg-secondary [&>[data-slot=sheet-close]]:hover:text-push-fg"
         >
-          {/* Subtle top glow */}
+          {/* Subtle top highlight */}
           <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-16 rounded-tr-2xl bg-gradient-to-b from-white/[0.03] to-transparent" />
           <div className="relative h-full overflow-hidden">
+            {/* Sky ambient wash behind the header — carries the chat's glow
+                identity into the drawer, fading out before the chat list so it
+                never competes with row legibility. */}
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-x-0 -top-20 z-0 h-48 bg-[radial-gradient(58%_100%_at_50%_0%,rgb(var(--push-accent-rgb)_/_0.17),transparent_72%)] blur-2xl"
+            />
             <div className="absolute inset-0 flex flex-col">
               <SheetHeader className="border-b border-push-edge pb-3">
                 <SheetTitle className="flex items-center gap-2 text-push-lg font-display font-semibold text-push-fg">
