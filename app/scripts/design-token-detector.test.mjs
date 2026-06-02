@@ -34,8 +34,37 @@ describe('findHardcodedColors', () => {
     expect(r.inlineHex).toBe(3);
   });
 
-  it('does not flag rgba/rgb values (low-noise: hex only)', () => {
+  it('does not flag bare rgba/rgb outside arbitrary values (low-noise)', () => {
     const r = findHardcodedColors('boxShadow: "0 2px 8px rgba(0,0,0,0.25)"');
+    expect(r.arbitraryRgb).toBe(0);
+    expect(r.total).toBe(0);
+  });
+
+  it('flags raw rgb()/rgba() triplets inside a Tailwind arbitrary gradient', () => {
+    const r = findHardcodedColors(
+      'className="bg-[radial-gradient(58%_100%_at_50%_0%,rgb(125_211_252_/_0.17),transparent_72%)]"',
+    );
+    expect(r.arbitraryRgb).toBe(1);
+    expect(r.total).toBe(1);
+  });
+
+  it('counts every raw triplet in a multi-stop arbitrary gradient', () => {
+    const r = findHardcodedColors(
+      'className="bg-[linear-gradient(90deg,rgba(56,189,248,0.5),rgb(125,211,252))]"',
+    );
+    expect(r.arbitraryRgb).toBe(2);
+  });
+
+  it('flags raw rgb() in the arbitrary-property form', () => {
+    const r = findHardcodedColors('[background:linear-gradient(rgba(13,13,13,0.6),transparent)]');
+    expect(r.arbitraryRgb).toBe(1);
+  });
+
+  it('does not flag a tokenized rgb(var(--token)) inside an arbitrary value', () => {
+    const r = findHardcodedColors(
+      'className="bg-[radial-gradient(58%_100%_at_50%_0%,rgb(var(--push-accent-rgb)_/_0.17),transparent_72%)]"',
+    );
+    expect(r.arbitraryRgb).toBe(0);
     expect(r.total).toBe(0);
   });
 
