@@ -478,6 +478,15 @@ export const handleZenChat = createStreamProxyHandler({
   keyMissingError:
     'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
   timeoutError: 'OpenCode Zen request timed out after 120 seconds',
+  // Mirror the OpenRouter handler: route the upstream body through the shared
+  // extractor (preserves the HTML 5xx guard) and tag 429s with the same
+  // structured code the other native providers emit, so a Zen quota / rate
+  // limit is classified the same way everywhere instead of falling through to
+  // the default "API error <status>" passthrough (the PR #656 pattern).
+  formatUpstreamError: (status, bodyText) => ({
+    error: `OpenCode Zen ${status}: ${extractProviderHttpErrorDetail(status, bodyText)}`,
+    code: status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
+  }),
 });
 
 export const handleZenModels = createJsonProxyHandler({
@@ -653,7 +662,12 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
         ? `HTTP ${upstream.status} (the server returned an HTML error page instead of JSON)`
         : errBody.slice(0, 200);
       return Response.json(
-        { error: `OpenCode Zen Go API error ${upstream.status}: ${errDetail}` },
+        {
+          error: `OpenCode Zen Go API error ${upstream.status}: ${errDetail}`,
+          // Tag 429s like the native providers so a Go-tier quota / rate limit
+          // is classified the same way everywhere (see handleZenChat above).
+          code: upstream.status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
+        },
         { status: upstream.status },
       );
     }
