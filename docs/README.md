@@ -1,6 +1,6 @@
 # Docs Index
 
-Status reviewed: 2026-05-15
+Status reviewed: 2026-06-01
 
 Use this file to navigate active design/planning docs versus historical references.
 The canonical architecture and design-system docs live at the repo root
@@ -9,7 +9,7 @@ The canonical architecture and design-system docs live at the repo root
 
 ## Structure
 
-- [`../ARCHITECTURE.md`](../ARCHITECTURE.md) (repo root) — tech stack, agent roles, key systems, and repo map
+- [`../ARCHITECTURE.md`](../ARCHITECTURE.md) (repo root) — tech stack, runtime roles, display vocabulary, key systems, and repo map
 - [`../DESIGN.md`](../DESIGN.md) (repo root) — visual tokens, colors, typography, spacing, and component specs
 - `decisions/` — architecture decisions, research, analysis, and shipped design references
 - `runbooks/` — active, draft, or deferred product plans
@@ -25,23 +25,23 @@ The canonical architecture and design-system docs live at the repo root
 ## Architecture
 
 - [`../ARCHITECTURE.md`](../ARCHITECTURE.md) (repo root)
-  - Status: Canonical architecture reference (tech stack, agent roles, key systems, repo map).
+  - Status: Canonical architecture reference (tech stack, runtime roles, display vocabulary, key systems, repo map).
 - [`../DESIGN.md`](../DESIGN.md) (repo root)
   - Status: Canonical design system reference (colors, typography, spacing, components, motion).
 
 ## Decisions
 
-Detailed per-doc status lives in [`decisions/README.md`](decisions/README.md). Summary by role:
+Detailed per-doc status lives in [`decisions/README.md`](decisions/README.md). Summary by status:
 
 - **Shipped design references** — `Agent Experience Wishlist.md`, `Resumable Sessions Design.md`, `Sectioned System Prompts.md`, `CLI Prompt Builder Convergence.md`, `Hashline System Review.md`, `Tool-Call Parser Convergence Gap.md`.
-- **Current working designs** — `AgentScope Architecture Review.md`, `Architecture Remediation Plan — Defusing the Big Four.md`, `Coder Bypass of WebToolExecutionRuntime.md`, `Context Memory and Retrieval Architecture.md`, `CorrelationContext Contract.md`, `Copilot SDK Research.md`, `Harness Friction — Agent Self-Report.md`, `Duplication and Structural Symmetry Analysis.md`, `Sandbox Policy Seam.md`, `Vercel Open Agents Review.md`, `Web and CLI Runtime Contract.md`.
+- **Current working designs** — `AgentScope Architecture Review.md`, `Architecture Remediation Plan — Defusing the Big Four.md`, `Coder Bypass of WebToolExecutionRuntime.md`, `Context Memory and Retrieval Architecture.md`, `CorrelationContext Contract.md`, `Copilot SDK Research.md`, `Harness Friction — Agent Self-Report.md`, `Duplication and Structural Symmetry Analysis.md`, `Role Display De-emphasis.md`, `Sandbox Policy Seam.md`, `Vercel Open Agents Review.md`, `Web and CLI Runtime Contract.md`.
 - **Shipped / historical design references** — `Cloudflare AI Gateway Integration.md`, `Cloudflare Sandbox Provider Design.md`, `phase-5-tool-runtime-brief.md`, `PushStream Gateway Migration.md`, `Remote Sessions via pushd Relay.md`, `push-runtime-v2.md`.
 - **Draft / in-motion** — `Diff and Annotation Envelope.md`, `Modal Sandbox Snapshots Design.md`, `Rerank Before Prompt Packing.md`, `Streaming UI Deltas.md`.
 - **Reference / comparative** — `Agent Tool Patterns — Claude Code Cross-Reference.md`, `Architecture Rating Snapshot.md`, `External Resource Review — Harness Engineering and Ralph Loop.md`, `Multi-Agent Orchestration Research — open-multi-agent.md`, `Oh My OpenAgent Review.md`, `OpenAI Agents SDK Evolution Review.md`.
 
 ## Runbooks
 
-Detailed per-doc status lives in [`runbooks/README.md`](runbooks/README.md). Summary by role:
+Detailed per-doc status lives in [`runbooks/README.md`](runbooks/README.md). Summary by status:
 
 - **Current** — `Chat Surface Evolution Plan.md` (Track C remaining), `Private Cloudflare Deployment.md`, `Provider Stats Endpoint.md`, `Test Coverage Plan.md` (Phases 1–5 shipped, Phase 6 outlined), `Workspace Publish to GitHub Plan.md` (follow-through).
 - **Draft spikes / plans** — `Tiered Orchestrator Routing Spike.md`, `Canonical SOP Playbooks Spike.md`, `Hashline Effectiveness Metric.md`, `Design Token Migration Plan.md`.

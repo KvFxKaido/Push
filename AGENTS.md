@@ -7,7 +7,7 @@ This is the **required entry doc** for Push. Repo instruction loaders read `PUSH
 ## Core model
 
 - Push is a mobile-first AI coding notebook with a web app, an experimental Capacitor Android shell, and a local CLI.
-- Core roles: **Orchestrator**, **Explorer**, **Coder**, **Reviewer**, **Auditor**.
+- Internal runtime roles are **Orchestrator**, **Explorer**, **Coder**, **Reviewer**, and **Auditor**. User-facing surfaces de-emphasize that org chart: Explorer/Coder render as workflow phases through `lib/role-display.ts`, while Reviewer/Auditor keep names where attribution is a trust signal.
 - Repo context is locked to the selected repo.
 - Chats are branch-scoped.
 - The **active branch** is the commit target, push target, diff base, and chat context.
@@ -29,16 +29,16 @@ This is the **required entry doc** for Push. Repo instruction loaders read `PUSH
 
 - Settings stores default backend/model picks plus the active backend preference.
 - The current chat locks the Orchestrator provider/model on first send.
-- Delegated **Coder** and **Explorer** runs inherit that chat-locked provider/model.
-- **Reviewer** keeps its own sticky provider/model selection.
-- **Auditor** follows the chat lock when available, otherwise the active backend.
+- Delegated Coder/Explorer runtime runs inherit that chat-locked provider/model.
+- Reviewer keeps its own sticky provider/model selection.
+- Auditor follows the chat lock when available, otherwise the active backend.
 
 ## Workflow rules
 
-- Use **Explorer** for read-only investigation and architecture tracing.
-- Use **Coder** for implementation in the sandbox.
-- Use **Reviewer** for advisory diffs on branch diff, last commit, or working tree.
-- Use **Auditor** for the pre-commit SAFE/UNSAFE gate on standard commits.
+- Use the Explorer runtime for read-only investigation and architecture tracing.
+- Use the Coder runtime for implementation in the sandbox.
+- Use Reviewer for advisory diffs on branch diff, last commit, or working tree.
+- Use Auditor for the pre-commit SAFE/UNSAFE gate on standard commits.
 - Standard merges go through **GitHub PR flow** only.
 - Push never runs `git merge` locally.
 - PR-backed branch diff reviews are the only reviews that can be posted back to GitHub.

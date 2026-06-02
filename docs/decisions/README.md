@@ -1,6 +1,6 @@
 # Decisions Folder
 
-Status reviewed: 2026-05-28 (CLI/TUI/daemon sweep after PRs #662–#673 — refreshed Remote Sessions Phase 2.j, added Subprocess Env Scrubbing entry; parser convergence track closed via #677/#679/#680/#681/#683/#684)
+Status reviewed: 2026-06-01 (added Role Display De-emphasis entry after PR #758; prior CLI/TUI/daemon sweep after PRs #662–#673 refreshed Remote Sessions Phase 2.j, added Subprocess Env Scrubbing entry, and closed parser convergence via #677/#679/#680/#681/#683/#684)
 
 This folder contains architecture decisions, research, analysis, and shipped design references.
 
@@ -60,6 +60,7 @@ This folder contains architecture decisions, research, analysis, and shipped des
 | `Remote Session Status Packet.md` | Current, Slice 1 shipped 2026-05-31 | Defines a bearer-gated `get_session_snapshot` daemon read RPC as the reconnect baseline for TUI/mobile/remote surfaces: host, repo, relay, session, active run, pending approval, and recent events in one daemon-owned packet. Slice 1 is daemon contract only; TUI/mobile hydration follows after the packet proves stable. |
 | `Rerank Before Prompt Packing.md` | Draft spike, added 2026-04-14 | Optional rerank stage between deterministic retrieval and sectioned packing for delegation briefs and Auditor. |
 | `Resumable Sessions Design.md` | Historical | Shipped 2026-02-19 (Phases 1–4); useful as provenance and for journal-adjacent designs like Modal Sandbox Snapshots. |
+| `Role Display De-emphasis.md` | Current, shipped 2026-06-01 in PR #758 | Records the four-layer split between internal runtime role, event/log attribution, display vocabulary, and user-facing presentation. `lib/role-display.ts` is the single source of truth for human-readable role/phase labels: Explorer/Coder render as phases, Orchestrator source attribution renders as Assistant, Reviewer/Auditor keep names where independent attribution improves trust, and raw role strings stay in runtime contracts/logs/persistence. |
 | `Sandbox Policy Seam.md` | Current, added 2026-05-11 | OpenShell-evaluation arc (#502/#503/#504). Schema + provider contract + host-side enforcement on `sandbox_exec`'s git guard. Native provider compilation deferred — open items have no consumer yet and explicit triggers documented. |
 | `Sectioned System Prompts.md` | Shipped design reference | Sectioned system prompt builder refactor. |
 | `Streaming UI Deltas.md` | Draft, scoping-validated 2026-05-01 | Proposal to extend the existing `tool.execution_start` run event with optional display metadata (icon, subtitle, approval affordance) so the chat surface can render a `pending-tool` placeholder card at dispatch and swap it for the real typed card on completion. Borrowed shape only from the third-party Claudio APK reverse-engineer; sourcing caveat documented in-doc. Estimated 2–4 hours after PR #463 review fixes simplified the design (no binding-layer plumbing, no parallel event). |

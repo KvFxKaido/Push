@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Push is a mobile-first AI coding agent with three surfaces — a web app, an experimental Capacitor Android shell, and a local CLI — all sharing a role-based runtime in root `lib/`.
+Push is a mobile-first AI coding agent with three surfaces — a web app, an experimental Capacitor Android shell, and a local CLI — all sharing runtime contracts in root `lib/`. Roles remain an internal execution/capability model; user-facing surfaces render workflow phases through `lib/role-display.ts`.
 
 > Loader order is `PUSH.md` → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md` (first found wins). `PUSH.md` is the Push-specific override when present; otherwise `AGENTS.md` carries the startup contract and overrides this file when they conflict. `ARCHITECTURE.md` is the canonical source of truth for architecture details.
 
@@ -61,7 +61,7 @@ Biome formats the entire monorepo from the root config (`biome.json`); the linte
 
 ## Architecture
 
-### Roles (locked, models replaceable)
+### Runtime roles and display vocabulary
 
 | Role | Responsibility |
 |---|---|
@@ -70,6 +70,8 @@ Biome formats the entire monorepo from the root config (`biome.json`); the linte
 | **Coder** | Autonomous implementation in the sandbox |
 | **Reviewer** | On-demand advisory diff review (branch diff / last commit / working tree) |
 | **Auditor** | Pre-commit SAFE/UNSAFE gate; defaults to UNSAFE on error |
+
+Roles are locked internally and models are replaceable. Presentation is phase-first: Explorer/Coder normally render as "Exploring" / "Editing", Orchestrator source attribution renders as "Assistant", and Reviewer/Auditor keep names where independent attribution is useful. Do not hand-spell user-facing role labels; use `lib/role-display.ts`.
 
 **Provider routing.** Settings holds defaults + the active backend pick. The current chat **locks** the Orchestrator provider/model on first send; delegated Coder and Explorer runs **inherit** that lock. Reviewer keeps its own sticky selection. Auditor follows the chat lock when present, else the active backend.
 
@@ -96,7 +98,8 @@ Cross-surface semantics live here and are consumed by both web and CLI. Don't re
 - `task-graph.ts`, `tool-dispatch.ts`, `tool-execution-runtime.ts`, `tool-protocol.ts`, `tool-registry.ts`
 - `context-memory*` (store / retrieval / packing / invalidation), `working-memory.ts`, `role-memory-budgets.ts`
 - `delegation-brief.ts`, `role-context.ts`, `runtime-contract.ts`, `run-events.ts`
-- Role agents: `coder-agent.ts`, `explorer-agent.ts`, `auditor-agent.ts`, `reviewer-agent.ts`, `deep-reviewer-agent.ts`
+- Internal role kernels: `coder-agent.ts`, `explorer-agent.ts`, `auditor-agent.ts`, `reviewer-agent.ts`, `deep-reviewer-agent.ts`
+- `role-display.ts` (single source of truth for user-facing role / phase labels)
 - `sandbox-provider.ts` (the abstraction Cloudflare and Modal both implement)
 - `capabilities.ts` (shared capability tables — extend here, not per-surface)
 

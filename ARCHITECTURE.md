@@ -6,7 +6,7 @@
 Push is built around execution-first reliability. We favor explicit state and human-in-the-loop validation over black-box automation. Key constraints:
 
 - **Repo-anchored context** — behavior is always bound to a specific branch and repository state.
-- **Role-based delegation** — distinct agents (Explorer, Coder, Auditor) provide separation of concerns and layered verification.
+- **Runtime delegation, phase-first presentation** — internal roles provide separation of concerns and layered verification, while user-facing surfaces render workflow phases through a display vocabulary seam.
 - **Surgical edits** — preference for hashline-anchored changes and patchset transactions over broad file overwrites.
 - **Audited delivery** — the Auditor role serves as a mandatory safety gate for all standard commits.
 
@@ -21,9 +21,11 @@ Push is built around execution-first reliability. We favor explicit state and hu
 - PWA with service worker and offline support
 - Experimental Android app via Capacitor, wrapping the production web bundle for native WebView testing and debug APKs
 
-## Agent Roles
+## Agent Roles and Display Vocabulary
 
-Role-based agent system. Models are replaceable. Roles are locked. Backend/model routing is hybrid: Settings stores defaults and the active backend preference, chat/review selection happens separately, and the role split stays fixed underneath.
+Role-based runtime system. Models are replaceable. Internal roles are locked. Backend/model routing is hybrid: Settings stores defaults and the active backend preference, chat/review selection happens separately, and the role split stays fixed underneath.
+
+The runtime role contract is not the user-facing vocabulary. Human-readable labels flow through `lib/role-display.ts`: Explorer/Coder read as workflow phases ("Exploring", "Editing"), Orchestrator source attribution reads as "Assistant", and Reviewer/Auditor keep names where independent attribution improves trust. Raw role strings still belong in capability checks, event payloads, logs, persisted data, and role-kernel module names.
 
 | Role | Responsibility |
 |---|---|
@@ -46,9 +48,9 @@ Role-based agent system. Models are replaceable. Roles are locked. Backend/model
 - **Tool protocol** — multi-tool dispatch and structured error reporting
 - **Sandbox execution** — scratch workspaces and web search tools via a pluggable `SandboxProvider` interface (`lib/sandbox-provider.ts`); Cloudflare Sandbox SDK and Modal coexist as sibling providers, both reached through the same `/api/sandbox/*` Worker route with server-side dispatch on `PUSH_SANDBOX_PROVIDER`
 - **Daemon-backed sessions** — experimental Local PC and Remote modes pair the web app to `pushd` over loopback or the Worker relay; chat `sandbox_*` calls route through the hook-owned daemon WebSocket for `sandbox_exec`, file read/write/list, and diff
-- **Delegation and orchestration** — direct Explorer/Coder delegation plus dependency-aware task graphs via `plan_tasks`
+- **Delegation and orchestration** — direct Explorer/Coder runtime delegation plus dependency-aware task graphs via `plan_tasks`
 - **Context and memory** — staged compaction, Coder working memory, graph-scoped task memory, typed retrieval/invalidation, and sectioned prompt packing
-- **Shared runtime contract** — canonical task-graph, memory, delegation-brief, role-context, and run-event semantics live in root `lib/` and are consumed by both web and CLI
+- **Shared runtime contract** — canonical task-graph, memory, delegation-brief, role-context, role-display, and run-event semantics live in root `lib/` and are consumed by both web and CLI
 - **Sandbox awareness** — session capability blocks expose container lifetime, creation/download events, and recent workspace lifecycle state directly to the agent
 - **Workspace Hub** — scratchpad, console, files, diff, PRs, review, and commit/push live in a single branch-scoped coding surface
 - **Renderable artifacts** — `create_artifact` accepts four kinds (`static-html`, `static-react`, `mermaid`, `file-tree`) and persists typed records under `repoFullName + branch + chatId` (web) or `repoFullName + branch` (CLI). `live-preview` is a fifth record kind in the type system but is intentionally not creatable through `create_artifact` because it needs sandbox-side dev-server orchestration; a separate `create_live_preview` tool is reserved for it (not yet implemented). Web stores in Workers KV via the `/api/artifacts/*` routes; CLI stores as flat JSON under `~/.push/artifacts/`. Renderers under `app/src/components/artifacts/` are kind-dispatched and lazy-loaded so chats only pay for what they show
@@ -90,7 +92,7 @@ Root `lib/` is now the canonical home for cross-surface runtime semantics, inclu
 - task-graph execution
 - typed context-memory storage/retrieval/invalidation/packing
 - delegation brief formatting and role-context helpers
-- run phases and event vocabulary
+- run phases, display vocabulary, and event vocabulary
 
 The web app and CLI still keep shell-specific coordinators local. The target is the same agent/runtime contract across surfaces, not identical UI or transport.
 
@@ -111,7 +113,7 @@ The web app and CLI still keep shell-specific coordinators local. The target is 
 
 ## CLI
 
-Local coding agent for the terminal. It shares the same role-based architecture and increasingly the same runtime semantics as the web app, while keeping terminal-specific coordination local. Current terminal work is focused on transcript-first CLI ergonomics and TUI-lite improvements; bare `./push` (or `node cli/cli.ts`) opens the full-screen TUI by default — set `PUSH_TUI_ENABLED=0` to opt back to the transcript REPL. The target is a stronger shared runtime contract across web and CLI, not identical UX across surfaces.
+Local coding agent for the terminal. It shares the same internal runtime contracts as the web app, while keeping terminal-specific coordination and presentation local. Current terminal work is focused on transcript-first CLI ergonomics and TUI-lite improvements; bare `./push` (or `node cli/cli.ts`) opens the full-screen TUI by default — set `PUSH_TUI_ENABLED=0` to opt back to the transcript REPL. The target is a stronger shared runtime contract across web and CLI, not identical UX across surfaces.
 
 ## Android
 
