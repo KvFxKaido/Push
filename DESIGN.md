@@ -44,13 +44,16 @@ Tokens below are Tailwind theme extensions. Use them with the appropriate utilit
 
 ### Accent & Interactive
 
+The accent is **Sky**, two-tier. Light Sky (`#7dd3fc`) is the airy identity color — accent text, icons, links, the ambient glow, focus rings, and tinted button fills. Deep Sky lives in the shadcn `--primary` var (`200 98% 39%` / `#0284c7`) for the few solid indicators (switch/checkbox) that need white-on-color contrast. There are **no solid Sky button fills** — the `Button` `default` variant is a tinted outline (`border-push-accent/40 bg-push-accent/10 text-push-accent`).
+
 | Token        | Hex       | Use                              |
 | ------------ | --------- | -------------------------------- |
-| `push-accent`| `#0070f3` | Primary blue, CTAs, glow         |
-| `push-sky`   | `#38bdf8` | Focus rings, cyan highlights     |
-| `push-link`  | `#5cb7ff` | Links, interactive text actions  |
-| `push-link-hover` | `#86ccff` | Brighter link color on hover |
+| `push-accent`| `#7dd3fc` | Sky accent — text, icons, tinted CTAs, glow |
+| `push-sky`   | `#38bdf8` | Mid sky — focus rings, highlights |
+| `push-link`  | `#7dd3fc` | Links, interactive text actions  |
+| `push-link-hover` | `#bae6fd` | Brighter sky on hover        |
 | `push-violet`| `#c4b5fd` | Chat / conversation accent       |
+| `--primary` (HSL) | `#0284c7` | Deep sky — solid shadcn indicators (white-on-color) |
 
 ### Status
 
@@ -74,29 +77,36 @@ Tokens below are Tailwind theme extensions. Use them with the appropriate utilit
 
 Applied via `data-repo-theme='active'` on `:root`. Default values:
 
-- Accent: `#58a6ff`
-- Soft: `rgba(88, 166, 255, 0.1)`
-- Border: `rgba(88, 166, 255, 0.38)`
+- Accent: `#7dd3fc` (Sky fallback; active value set per-repo at runtime)
+- Soft: `rgba(125, 211, 252, 0.1)`
+- Border: `rgba(125, 211, 252, 0.38)`
 - Glow: `rgba(88, 166, 255, 0.45)`
 
 ## Typography
 
 ### Font Stacks
 
-- **Sans:** `-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif`
+Families are defined once as CSS vars (`--font-sans`, `--font-display`, `--font-mono`) in `app/src/index.css` and exposed as Tailwind `font-sans` / `font-display` / `font-mono` utilities. Swap a face in the var and it propagates everywhere — don't hardcode font stacks in components.
+
+- **Sans / Display:** `'IBM Plex Sans'`, then `-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif`
 - **Mono:** `'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace`
 
-JetBrains Mono is loaded via Google Fonts at weights 400, 500, 600.
+IBM Plex Sans (weights 400/500/600/700) and JetBrains Mono (400/500/600) are loaded together in one Google Fonts request. IBM Plex was chosen for small-size legibility against the dense scale and an engineering-instrument character that isn't the Inter/Geist default. `display` is the same family for now; promoting it to a distinct display face is a one-var change.
 
 ### Scale
 
-| Token       | Size | Line Height | Use                    |
-| ----------- | ---- | ----------- | ---------------------- |
-| `push-2xs`  | 10px | 14px        | Micro labels, badges   |
-| `push-xs`   | 11px | 16px        | Labels, timestamps     |
-| `push-sm`   | 12px | 16px        | Secondary body text    |
-| `push-base` | 13px | 18px        | Primary body text      |
-| `push-lg`   | 15px | 20px        | Section headings       |
+Body tiers stay dense (mobile-first). The **display tier** carries hierarchy at the top end — use `font-display` with these and let the negative tracking do the "designed" work.
+
+| Token          | Size | Line Height | Tracking  | Use                          |
+| -------------- | ---- | ----------- | --------- | ---------------------------- |
+| `push-2xs`     | 10px | 14px        | —         | Micro labels, badges         |
+| `push-xs`      | 11px | 16px        | —         | Labels, timestamps           |
+| `push-sm`      | 12px | 16px        | —         | Secondary body text          |
+| `push-base`    | 13px | 18px        | —         | Primary body text            |
+| `push-lg`      | 15px | 20px        | —         | Section headings             |
+| `push-xl`      | 18px | 24px        | -0.01em   | Large headings, dialog titles|
+| `push-2xl`     | 24px | 30px        | -0.015em  | Screen titles, empty states  |
+| `push-display` | 32px | 38px        | -0.02em   | Hero / welcome moments       |
 
 ## Spacing & Radius
 
@@ -164,8 +174,8 @@ Shadows are used for overlays and floating elements (dialogs, popovers, dropdown
 - Default height: `h-9`, padding `px-4 py-2`
 - Small: `h-8 px-3`, Large: `h-10 px-6`
 - Icon-only: `size-9`, Icon-only-sm: `size-8`, Icon-only-lg: `size-10`
-- Primary fills with `push-accent` blue; use sparingly
-- Focus: 3px ring with `ring-ring/50`
+- `default` variant is a **tinted outline** (`border-push-accent/40 bg-push-accent/10 text-push-accent`) — no solid Sky fills; use it for the primary action
+- Focus: 3px ring with `ring-ring/50` (light Sky)
 
 ### Inputs
 
@@ -259,7 +269,7 @@ Common sizes: `size-3` (12px), `size-3.5` (14px), `size-4` (16px), `size-8` (32p
 
 ## Do's and Don'ts
 
-- Do use `push-accent` blue sparingly — only for the primary action or active state
+- Do use `push-accent` sky sparingly — only for the primary action or active state
 - Do keep text at `push-base` (13px) for body content; smaller sizes are for labels only
 - Do use the gradient backgrounds (`bg-push-grad-card`, `bg-push-grad-panel`) for layered surfaces instead of flat colors
 - Do respect `prefers-reduced-motion`
@@ -267,7 +277,7 @@ Common sizes: `size-3` (12px), `size-3.5` (14px), `size-4` (16px), `size-8` (32p
 - Don't use shadows to distinguish surface layers — use border and background contrast. Shadows are reserved for floating elements (dialogs, popovers, dropdowns)
 - Don't introduce light-mode colors; the app is dark-only
 - Don't hardcode colors — use the token classes with Tailwind prefixes: `text-push-fg`, `bg-push-surface`, `border-push-edge`, etc.
-- Don't use shadcn `Button` from `components/ui/button.tsx` for chrome — it carries `bg-primary` / `text-primary-foreground`, which is shadcn's neutral blue, not `push-accent`. Reach for `HUB_MATERIAL_BUTTON_CLASS` (or `HUB_MATERIAL_PILL_BUTTON_CLASS` for inline pills). The shadcn Button is fine **inside** `<Dialog>` / `<Sheet>` forms — see the composition layer notes above.
+- Don't use shadcn `Button` from `components/ui/button.tsx` for chrome — its `default` variant is now the Sky tinted-outline treatment (flat, on-accent), but chrome surfaces want the glass material, so reach for `HUB_MATERIAL_BUTTON_CLASS` (or `HUB_MATERIAL_PILL_BUTTON_CLASS` for inline pills). The shadcn Button is fine **inside** `<Dialog>` / `<Sheet>` forms — see the composition layer notes above.
 - Don't invent a new page wrapper with `min-h-dvh bg-[linear-gradient(...)]`. Use `<PageScaffold>` — it owns the gradient, the safe-area insets, and the max-width rhythm so all surfaces share them.
 - Don't invent per-screen error/warning chrome (`text-rose-200`, `text-destructive`, `bg-amber-500/15`). Use `<StatusBanner>` — one of `variant="info"`, `variant="warning"`, `variant="error"`, or `variant="success"` — so status colors live in one place.
 

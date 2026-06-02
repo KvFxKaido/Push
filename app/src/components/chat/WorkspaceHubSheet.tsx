@@ -1801,7 +1801,9 @@ export function WorkspaceHubSheet({
               className="border-t border-push-edge-subtle bg-push-grad-panel px-0 pb-6 pt-0 text-push-fg"
             >
               <SheetHeader className="border-b border-push-edge px-4 py-4">
-                <SheetTitle className="text-sm font-semibold text-push-fg">Push target</SheetTitle>
+                <SheetTitle className="text-push-lg font-display font-semibold text-push-fg">
+                  Push target
+                </SheetTitle>
                 <SheetDescription className="text-xs text-push-fg-dim">
                   Push to the current branch or fork this working tree into a new branch first.
                 </SheetDescription>

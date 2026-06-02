@@ -445,7 +445,9 @@ export function HubPRsTab({
                 <span className="text-push-xs text-push-fg-dim">#{detail.number}</span>
               </div>
 
-              <h3 className="text-base font-semibold leading-tight text-push-fg">{detail.title}</h3>
+              <h3 className="text-push-xl font-display font-semibold leading-tight text-push-fg">
+                {detail.title}
+              </h3>
 
               <div className="flex flex-wrap items-center gap-2 text-push-xs text-push-fg-dim">
                 <span>{detail.author}</span>

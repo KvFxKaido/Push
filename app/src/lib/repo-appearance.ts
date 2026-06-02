@@ -24,7 +24,10 @@ export interface RepoAppearance {
 
 export const DEFAULT_REPO_APPEARANCE: RepoAppearance = {
   icon: 'repo-ledger',
-  color: 'slate',
+  // Sky is Push's canonical accent — it drives the chrome/home ambient glow
+  // (both derive from this default) and the glow of any repo that hasn't picked
+  // its own color. Per-repo overrides still win.
+  color: 'sky',
   glowEnabled: true,
 };
 

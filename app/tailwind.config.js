@@ -38,12 +38,14 @@ module.exports = {
         'push-status-error-soft': '#f87171', // lighter red — error/removed text on dark
         'push-status-warning': '#f59e0b', // amber
 
-        // Accent
-        'push-accent': '#0070f3', // blue accent
-        'push-sky': '#38bdf8', // cyan accent (focus rings, glow)
-        'push-link': '#5cb7ff', // bright blue links, actions
-        'push-link-hover': '#86ccff', // brighter link on hover
-        'push-glow': '#0070f3', // glow color for interactive elements
+        // Accent — Sky. Light #7dd3fc is the airy identity color (accent text,
+        // icons, links, glow, tinted buttons); deep Sky lives in --primary for
+        // solid shadcn indicators that need white-on-color contrast.
+        'push-accent': '#7dd3fc', // sky accent
+        'push-sky': '#38bdf8', // mid sky (focus rings, glow)
+        'push-link': '#7dd3fc', // sky links, actions
+        'push-link-hover': '#bae6fd', // brighter sky on hover
+        'push-glow': '#7dd3fc', // glow color for interactive elements
         'push-violet': '#c4b5fd', // violet accent — chat/conversation affordances
         // ──────────────────────────────────────────────────
         border: 'hsl(var(--border))',
@@ -90,12 +92,23 @@ module.exports = {
           ring: 'hsl(var(--sidebar-ring))',
         },
       },
+      fontFamily: {
+        // Resolve to the CSS vars in index.css so the face is swappable in one place.
+        sans: ['var(--font-sans)'],
+        display: ['var(--font-display)'],
+        mono: ['var(--font-mono)'],
+      },
       fontSize: {
         'push-2xs': ['10px', { lineHeight: '14px' }], // micro labels, badges
         'push-xs': ['11px', { lineHeight: '16px' }], // labels, timestamps
         'push-sm': ['12px', { lineHeight: '16px' }], // secondary body
         'push-base': ['13px', { lineHeight: '18px' }], // primary body
         'push-lg': ['15px', { lineHeight: '20px' }], // section headings
+        // ── Display tier ── headings that get to be a statement. Negative
+        // tracking is the "designed, not defaulted" tell; pair with font-display.
+        'push-xl': ['18px', { lineHeight: '24px', letterSpacing: '-0.01em' }], // large headings, dialog titles
+        'push-2xl': ['24px', { lineHeight: '30px', letterSpacing: '-0.015em' }], // screen titles, empty-state headlines
+        'push-display': ['32px', { lineHeight: '38px', letterSpacing: '-0.02em' }], // hero / welcome moments
       },
       borderRadius: {
         xl: 'calc(var(--radius) + 4px)',
