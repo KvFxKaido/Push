@@ -73,6 +73,21 @@ The accent is **Sky**, two-tier. Light Sky (`#7dd3fc`) is the airy identity colo
 - **Input:** `linear-gradient(180deg, #0a0d13 0%, #04060a 100%)`
 - **User bubble:** border `#313b49`, fill `linear-gradient(180deg, #1e2733 0%, #17202b 100%)`
 
+### Status Surfaces
+
+Dark status-tint gradients for success/warning/error/info panels. Defined once as `--push-surface-*` CSS vars in `app/src/index.css` (the single source for the raw colors); consume via `[background-image:var(--push-surface-*)]` or the `CARD_HEADER_BG_*` class constants in `lib/utils.ts`. Pair with a matching `border-{emerald|yellow|red}-500/20` and `text-*-300`. Don't inline new status gradients — extend the var set.
+
+| Var                              | Treatment                                  | Use                                  |
+| -------------------------------- | ------------------------------------------ | ------------------------------------ |
+| `--push-surface-success`         | faint `0.18→0.34`                          | success panels / banners             |
+| `--push-surface-warning`         | faint `0.18→0.34`                          | warning panels / banners             |
+| `--push-surface-error`           | faint `0.18→0.34`                          | error panels / banners               |
+| `--push-surface-info`            | faint `0.18→0.34`                          | info panels / banners                |
+| `--push-surface-success-strong`  | prominent `~0.78`                          | emphasized success panel/control     |
+| `--push-surface-error-strong`    | prominent `~0.72`                          | emphasized error panel / danger CTA  |
+| `--push-surface-error-solid`     | near-opaque `0.96`                         | error state on an interactive control|
+| `--push-warning-bright-rgb`      | amber-400 channels (`251 191 36`)          | RelayModeChip replay-flash keyframe  |
+
 ### Repo Theme Accent (dynamic override)
 
 Applied via `data-repo-theme='active'` on `:root`. Default values:

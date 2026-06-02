@@ -668,7 +668,7 @@ export function ChatInput({
 
         {editState && (
           <div className="px-3 pt-3">
-            <div className="flex items-center justify-between gap-3 rounded-[18px] border border-amber-500/20 bg-[linear-gradient(180deg,rgba(62,45,16,0.16)_0%,rgba(22,17,7,0.3)_100%)] px-3.5 py-2.5">
+            <div className="flex items-center justify-between gap-3 rounded-[18px] border border-amber-500/20 [background-image:var(--push-surface-warning)] px-3.5 py-2.5">
               <p className="text-xs text-amber-100/90">{editState.label}</p>
               <button
                 type="button"
@@ -1420,7 +1420,7 @@ export function ChatInput({
             disabled={!isStreaming && !canSend}
             className={`flex h-10 w-10 shrink-0 items-center justify-center ${
               isStreaming && !canStreamWithDraft
-                ? `${COMPOSER_CONTROL_SURFACE_CLASS} border-red-400/50 bg-[linear-gradient(180deg,rgba(55,12,18,0.96)_0%,rgba(28,7,11,0.98)_100%)] text-red-300 ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
+                ? `${COMPOSER_CONTROL_SURFACE_CLASS} border-red-400/50 [background-image:var(--push-surface-error-solid)] text-red-300 ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
                 : canSend || canStreamWithDraft
                   ? `${COMPOSER_CONTROL_SURFACE_CLASS} text-push-fg-secondary ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
                   : 'cursor-not-allowed rounded-full border border-push-edge bg-push-surface-active text-push-fg-dimmest shadow-none'

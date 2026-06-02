@@ -69,15 +69,12 @@ export const CARD_BADGE_ERROR = 'border border-red-500/20 bg-red-500/10 text-red
 export const CARD_BADGE_WARNING = 'border border-yellow-500/20 bg-yellow-500/10 text-yellow-300';
 export const CARD_BADGE_INFO = 'border border-push-edge/70 bg-black/10 text-push-fg-secondary';
 
-/** Header background band (opacity /10) — used for card header rows. */
-export const CARD_HEADER_BG_SUCCESS =
-  'bg-[linear-gradient(180deg,rgba(17,61,42,0.18)_0%,rgba(8,28,20,0.34)_100%)]';
-export const CARD_HEADER_BG_ERROR =
-  'bg-[linear-gradient(180deg,rgba(70,23,23,0.18)_0%,rgba(31,11,11,0.34)_100%)]';
-export const CARD_HEADER_BG_WARNING =
-  'bg-[linear-gradient(180deg,rgba(68,52,16,0.18)_0%,rgba(31,23,8,0.34)_100%)]';
-export const CARD_HEADER_BG_INFO =
-  'bg-[linear-gradient(180deg,rgba(20,34,52,0.18)_0%,rgba(9,18,31,0.34)_100%)]';
+/** Status-surface tint bands — the gradients live as `--push-surface-*` CSS
+ *  vars in index.css (single source); these are the Tailwind class wrappers. */
+export const CARD_HEADER_BG_SUCCESS = '[background-image:var(--push-surface-success)]';
+export const CARD_HEADER_BG_ERROR = '[background-image:var(--push-surface-error)]';
+export const CARD_HEADER_BG_WARNING = '[background-image:var(--push-surface-warning)]';
+export const CARD_HEADER_BG_INFO = '[background-image:var(--push-surface-info)]';
 
 /** Divider list container — applies divide-y/border token in one constant. */
 export const CARD_LIST_CLASS = 'divide-y divide-push-edge/80';

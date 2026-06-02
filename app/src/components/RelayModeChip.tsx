@@ -98,7 +98,7 @@ export function RelayModeChip({ deploymentUrl, status, replayUnavailableAt }: Re
            hardcoded hex. No fill-mode: after the flash, color reverts to the
            class value (which equals the implicit 100%, so there's no snap). */
         @keyframes relay-replay-flash {
-          0% { color: rgb(251, 191, 36); }
+          0% { color: rgb(var(--push-warning-bright-rgb)); }
         }
       `}</style>
       {/* Chrome-less so it sits inside the header's launcher-pill frame and

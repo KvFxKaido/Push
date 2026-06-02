@@ -192,7 +192,7 @@ class CardErrorBoundary extends Component<CardErrorBoundaryProps, CardErrorBound
     if (this.state.hasError) {
       return (
         <div
-          className={`${CARD_PANEL_CLASS} border-amber-500/20 bg-[linear-gradient(180deg,rgba(52,40,15,0.2)_0%,rgba(24,18,7,0.4)_100%)] px-3 py-2 text-xs text-amber-300`}
+          className={`${CARD_PANEL_CLASS} border-amber-500/20 [background-image:var(--push-surface-warning)] px-3 py-2 text-xs text-amber-300`}
         >
           Card failed to load. Refresh Push to fetch the latest assets.
         </div>

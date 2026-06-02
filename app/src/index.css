@@ -45,6 +45,22 @@
        can't reach. Keep in sync with push-accent in tailwind.config.js. */
     --push-accent-rgb: 125 211 252;
 
+    /* Status-surface tints — the single source for success/warning/error/info
+       panel backgrounds. Defined here (not in components) so the raw colors
+       live in one place; consume via `[background-image:var(--push-surface-*)]`
+       or the CARD_HEADER_BG_* class constants in lib/utils.ts. Canonical set is
+       a faint 0.18→0.34 gradient; `-strong` is the prominent panel/control
+       treatment; `-solid` is the near-opaque error control state. */
+    --push-surface-success: linear-gradient(180deg, rgba(17, 61, 42, 0.18) 0%, rgba(8, 28, 20, 0.34) 100%);
+    --push-surface-warning: linear-gradient(180deg, rgba(68, 52, 16, 0.18) 0%, rgba(31, 23, 8, 0.34) 100%);
+    --push-surface-error: linear-gradient(180deg, rgba(70, 23, 23, 0.18) 0%, rgba(31, 11, 11, 0.34) 100%);
+    --push-surface-info: linear-gradient(180deg, rgba(20, 34, 52, 0.18) 0%, rgba(9, 18, 31, 0.34) 100%);
+    --push-surface-success-strong: linear-gradient(180deg, rgba(18, 64, 48, 0.78) 0%, rgba(10, 34, 27, 0.9) 100%);
+    --push-surface-error-strong: linear-gradient(180deg, rgba(78, 24, 24, 0.72) 0%, rgba(36, 12, 12, 0.88) 100%);
+    --push-surface-error-solid: linear-gradient(180deg, rgba(55, 12, 18, 0.96) 0%, rgba(28, 7, 11, 0.98) 100%);
+    /* amber-400 (#fbbf24) channels — the relay-mode replay-flash keyframe. */
+    --push-warning-bright-rgb: 251 191 36;
+
     --background: 240 6% 3.7%;
     --foreground: 0 0% 98%;
     --card: 240 5% 7.1%;

@@ -1560,9 +1560,9 @@ export function WorkspaceHubSheet({
                   }
                   className={`relative flex h-8 items-center gap-1.5 rounded-full border px-3 text-push-xs transition-all disabled:opacity-50 ${
                     commitPhase === 'success'
-                      ? 'border-emerald-500/35 bg-[linear-gradient(180deg,rgba(18,64,48,0.78)_0%,rgba(10,34,27,0.9)_100%)] text-emerald-300 shadow-[0_12px_30px_rgba(0,0,0,0.32),0_2px_8px_rgba(0,0,0,0.18)]'
+                      ? 'border-emerald-500/35 [background-image:var(--push-surface-success-strong)] text-emerald-300 shadow-[0_12px_30px_rgba(0,0,0,0.32),0_2px_8px_rgba(0,0,0,0.18)]'
                       : commitPhase === 'error'
-                        ? 'border-red-500/35 bg-[linear-gradient(180deg,rgba(78,24,24,0.72)_0%,rgba(36,12,12,0.88)_100%)] text-red-300 shadow-[0_12px_30px_rgba(0,0,0,0.32),0_2px_8px_rgba(0,0,0,0.18)]'
+                        ? 'border-red-500/35 [background-image:var(--push-surface-error-strong)] text-red-300 shadow-[0_12px_30px_rgba(0,0,0,0.32),0_2px_8px_rgba(0,0,0,0.18)]'
                         : `${HUB_MATERIAL_BUTTON_CLASS} text-push-fg-dim`
                   }`}
                 >
