@@ -69,6 +69,7 @@ export const OPENROUTER_MODELS: string[] = [
   'meta-llama/llama-4-maverick',
   'minimax/minimax-m2.5',
   'minimax/minimax-m2.7:nitro',
+  'minimax/minimax-m3',
   'mistralai/codestral-2508',
   'mistralai/devstral-2512',
   'mistralai/mistral-large-2512',
