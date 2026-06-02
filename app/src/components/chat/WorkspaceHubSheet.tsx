@@ -1152,8 +1152,15 @@ export function WorkspaceHubSheet({
         </SheetHeader>
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-16 rounded-tl-2xl bg-gradient-to-b from-white/[0.03] to-transparent" />
         <div className="relative flex h-dvh flex-col overflow-hidden rounded-l-2xl">
+          {/* Sky ambient wash behind the header — same atmosphere the chat and
+              the chats drawer use, fading out before the tab content so it never
+              competes with the dense settings cards below. */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 -top-20 z-0 h-48 bg-[radial-gradient(58%_100%_at_50%_0%,rgba(125,211,252,0.17),transparent_72%)] blur-2xl"
+          />
           {/* ---- Header ---- */}
-          <header className="border-b border-push-edge px-3 py-3">
+          <header className="relative z-10 border-b border-push-edge px-3 py-3">
             <div className="flex items-center justify-between gap-2">
               {/* Repo + Branch dropdown */}
               <div className="min-w-0 space-y-1">
