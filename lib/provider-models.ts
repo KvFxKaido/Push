@@ -111,14 +111,21 @@ export const CLOUDFLARE_MODELS: string[] = [
 // Curated coding-relevant subset of the live OpenCode Zen (standard tier)
 // catalog. Free-text entry still covers anything not seeded here. Refreshed
 // 2026-06 against the Zen dashboard model list; retired entries that left the
-// catalog: qwen3-coder, gemini-3-pro, kimi-k2.5-free, minimax-m2.5-free. Note
+// catalog: qwen3-coder, gemini-3-pro, kimi-k2.5-free, minimax-m2.5-free.
+//
+// Ids are BARE (`gpt-5.4`, not `openai/gpt-5.4`): the Zen chat API and its
+// `/v1/models` listing use a flat `owned_by: opencode` namespace. The
+// `opencode/<id>` form some docs show is only OpenCode's own config prefix —
+// Push posts straight to /zen/v1/chat/completions, so the provider prefix
+// would make the model non-routable. Free variants keep the `-free` suffix.
+//
 // MiniMax M3 is only offered free-tier (`minimax-m3-free`, rate-limited) on the
 // standard endpoint — the paid `minimax-m3` lives on the Go tier, which is
 // app/web-only (defined in app/src/lib/zen-go.ts, not in this shared module).
 export const ZEN_MODELS: string[] = [
-  'openai/gpt-5.4',
-  'openai/gpt-5.3-codex',
-  'openai/gpt-5.2-codex',
+  'gpt-5.4',
+  'gpt-5.3-codex',
+  'gpt-5.2-codex',
   'gemini-3-flash',
   'glm-5.1',
   'kimi-k2.6',
