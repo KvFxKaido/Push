@@ -131,12 +131,21 @@ select:focus-visible {
 }
 
 :root[data-repo-theme='active'] .bg-push-accent\/10,
-:root[data-repo-theme='active'] .bg-push-link\/10 {
+:root[data-repo-theme='active'] .bg-push-link\/10,
+:root[data-repo-theme='active'] .hover\:bg-push-accent\/20:hover {
   background-color: var(--repo-theme-accent-soft) !important;
 }
 
 :root[data-repo-theme='active'] .bg-push-accent\/5 {
   background-color: var(--repo-theme-accent-ultra-soft) !important;
+}
+
+/* Tinted Button default variant (border-push-accent/40 + hover/60). Keep its
+   border in sync with the active repo theme so themed primary buttons don't
+   render a Sky border over a repo-accent fill. */
+:root[data-repo-theme='active'] .border-push-accent\/40,
+:root[data-repo-theme='active'] .hover\:border-push-accent\/60:hover {
+  border-color: var(--repo-theme-accent-border) !important;
 }
 
 :root[data-repo-theme='active'] .decoration-push-accent\/30 {

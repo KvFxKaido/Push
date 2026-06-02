@@ -42,7 +42,7 @@ module.exports = {
         // icons, links, glow, tinted buttons); deep Sky lives in --primary for
         // solid shadcn indicators that need white-on-color contrast.
         'push-accent': '#7dd3fc', // sky accent
-        'push-sky': '#38bdf8', // mid sky (focus rings, glow)
+        'push-sky': '#38bdf8', // mid sky — secondary focus borders (focus:border-push-sky/50), highlights
         'push-link': '#7dd3fc', // sky links, actions
         'push-link-hover': '#bae6fd', // brighter sky on hover
         'push-glow': '#7dd3fc', // glow color for interactive elements

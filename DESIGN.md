@@ -80,7 +80,7 @@ Applied via `data-repo-theme='active'` on `:root`. Default values:
 - Accent: `#7dd3fc` (Sky fallback; active value set per-repo at runtime)
 - Soft: `rgba(125, 211, 252, 0.1)`
 - Border: `rgba(125, 211, 252, 0.38)`
-- Glow: `rgba(88, 166, 255, 0.45)`
+- Glow: `rgba(125, 211, 252, 0.45)`
 
 ## Typography
 
@@ -269,7 +269,7 @@ Common sizes: `size-3` (12px), `size-3.5` (14px), `size-4` (16px), `size-8` (32p
 
 ## Do's and Don'ts
 
-- Do use `push-accent` sky sparingly — only for the primary action or active state
+- Do use the `push-accent` Sky sparingly — only for the primary action or active state
 - Do keep text at `push-base` (13px) for body content; smaller sizes are for labels only
 - Do use the gradient backgrounds (`bg-push-grad-card`, `bg-push-grad-panel`) for layered surfaces instead of flat colors
 - Do respect `prefers-reduced-motion`
