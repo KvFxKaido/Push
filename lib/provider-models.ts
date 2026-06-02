@@ -113,7 +113,8 @@ export const CLOUDFLARE_MODELS: string[] = [
 // 2026-06 against the Zen dashboard model list; retired entries that left the
 // catalog: qwen3-coder, gemini-3-pro, kimi-k2.5-free, minimax-m2.5-free. Note
 // MiniMax M3 is only offered free-tier (`minimax-m3-free`, rate-limited) on the
-// standard endpoint — the paid `minimax-m3` lives on the Go tier (ZEN_GO_MODELS).
+// standard endpoint — the paid `minimax-m3` lives on the Go tier, which is
+// app/web-only (defined in app/src/lib/zen-go.ts, not in this shared module).
 export const ZEN_MODELS: string[] = [
   'openai/gpt-5.4',
   'openai/gpt-5.3-codex',
