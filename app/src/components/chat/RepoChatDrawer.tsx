@@ -301,9 +301,9 @@ export function RepoChatDrawer({
     return (
       <div
         key={chat.id}
-        className={`flex items-center gap-1 rounded-xl border border-transparent spring-press transition-colors duration-200 ${
+        className={`flex items-center gap-1 rounded-xl border border-transparent transition-colors duration-200 ${
           isActiveChat
-            ? 'border-push-accent/30 bg-push-accent/10'
+            ? 'border-push-accent/40 bg-push-accent/10'
             : 'hover:border-push-edge-subtle hover:bg-push-surface-hover/60'
         }`}
       >
@@ -355,7 +355,7 @@ export function RepoChatDrawer({
           <>
             <button
               onClick={() => openChat(chat.id)}
-              className="min-w-0 flex-1 px-3 py-2.5 text-left"
+              className="min-w-0 flex-1 spring-press px-3 py-2.5 text-left"
             >
               <p
                 className={`truncate text-push-sm ${isActiveChat ? 'text-push-fg' : 'text-push-fg-secondary'}`}
