@@ -63,6 +63,7 @@ const perFile = [];
 let total = 0;
 let tailwind = 0;
 let inlineHex = 0;
+let rgbTriplet = 0;
 
 for (const file of walk(SRC_ROOT)) {
   const rel = relative(APP_ROOT, file).split('\\').join('/');
@@ -81,6 +82,7 @@ for (const file of walk(SRC_ROOT)) {
   total += res.total;
   tailwind += res.tailwind;
   inlineHex += res.inlineHex;
+  rgbTriplet += res.rgbTriplet;
 }
 
 const update = process.argv.includes('--update') || process.env.UPDATE_BASELINE === '1';
@@ -99,6 +101,7 @@ console.log(
 );
 console.log(`  Tailwind arbitrary values (e.g. bg-[#000]): ${tailwind}`);
 console.log(`  Quoted hex literals (inline styles / constants): ${inlineHex}`);
+console.log(`  Chromatic rgb()/rgba() triplets (use a token): ${rgbTriplet}`);
 console.log(`  Total: ${total}  (baseline: ${baseline ? baseline.total : 'none'})`);
 if (perFile.length > 0) {
   console.log(`  Top offenders:`);
