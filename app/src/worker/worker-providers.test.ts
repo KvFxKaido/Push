@@ -23,6 +23,8 @@ import {
   handleGoogleSearch,
   handleOpenRouterChat,
   handleOpenRouterModels,
+  handleZenChat,
+  handleZenGoChat,
   parseGeminiGroundingResponse,
   translateVertexOpenApiBody,
 } from './worker-providers';
@@ -201,6 +203,90 @@ describe('handleOpenRouterChat', () => {
     expect(response.status).toBe(504);
     const body = await response.json();
     expect(body.error).toMatch(/OpenRouter request timed out/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OpenCode Zen — standard + Go tiers share the native providers' 429 tagging
+// ---------------------------------------------------------------------------
+
+describe('handleZenChat', () => {
+  it('extracts the upstream error message from a structured 401 body', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { message: 'Invalid key' } }), { status: 401 }),
+      ),
+    );
+    const response = await handleZenChat(makeChatRequest(), makeEnv({ ZEN_API_KEY: 'zen-key' }));
+    expect(response.status).toBe(401);
+    const body = await response.json();
+    expect(body.error).toBe('OpenCode Zen 401: Invalid key');
+  });
+
+  it('tags rate-limit responses with UPSTREAM_QUOTA_OR_RATE_LIMIT for the client to detect', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { message: 'rate limited' } }), {
+            status: 429,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
+    );
+    const response = await handleZenChat(makeChatRequest(), makeEnv({ ZEN_API_KEY: 'zen-key' }));
+    expect(response.status).toBe(429);
+    const body = await response.json();
+    expect(body.code).toBe('UPSTREAM_QUOTA_OR_RATE_LIMIT');
+  });
+});
+
+describe('handleZenGoChat', () => {
+  function makeZenGoRequest(model: string): Request {
+    return new Request('https://push.example.test/api/zen/go/chat', {
+      method: 'POST',
+      headers: {
+        Origin: 'https://push.example.test',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ model, messages: [{ role: 'user', content: 'hello' }] }),
+    });
+  }
+
+  it('tags a 429 from the Anthropic-transport (minimax) path with UPSTREAM_QUOTA_OR_RATE_LIMIT', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { message: 'rate limited' } }), {
+            status: 429,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
+    );
+    const response = await handleZenGoChat(
+      makeZenGoRequest('minimax-m3'),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    expect(response.status).toBe(429);
+    const body = await response.json();
+    expect(body.code).toBe('UPSTREAM_QUOTA_OR_RATE_LIMIT');
+  });
+
+  it('leaves non-429 errors unclassified', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('upstream broke', { status: 500 })),
+    );
+    const response = await handleZenGoChat(
+      makeZenGoRequest('minimax-m3'),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    expect(response.status).toBe(500);
+    const body = await response.json();
+    expect(body.code).toBeUndefined();
   });
 });
 
