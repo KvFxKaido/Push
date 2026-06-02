@@ -40,6 +40,11 @@
       Menlo, Consolas, 'Liberation Mono', monospace;
     /* ─────────────────────────────────────────────── */
 
+    /* RGB channels of push-accent (#7dd3fc) for rgb()/alpha use in raw CSS
+       gradients (e.g. the menu ambient washes), where a Tailwind token class
+       can't reach. Keep in sync with push-accent in tailwind.config.js. */
+    --push-accent-rgb: 125 211 252;
+
     --background: 240 6% 3.7%;
     --foreground: 0 0% 98%;
     --card: 240 5% 7.1%;

@@ -1157,7 +1157,7 @@ export function WorkspaceHubSheet({
               competes with the dense settings cards below. */}
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-x-0 -top-20 z-0 h-48 bg-[radial-gradient(58%_100%_at_50%_0%,rgba(125,211,252,0.17),transparent_72%)] blur-2xl"
+            className="pointer-events-none absolute inset-x-0 -top-20 z-0 h-48 bg-[radial-gradient(58%_100%_at_50%_0%,rgb(var(--push-accent-rgb)_/_0.17),transparent_72%)] blur-2xl"
           />
           {/* ---- Header ---- */}
           <header className="relative z-10 border-b border-push-edge px-3 py-3">
