@@ -94,7 +94,7 @@ export function LauncherHomeContent({
               </div>
             )}
             <div>
-              <h1 className="text-lg font-semibold tracking-tight text-push-fg">
+              <h1 className="text-push-2xl font-display font-semibold text-push-fg">
                 {isChatMode ? 'Switch context' : 'Push'}
               </h1>
               <p className="text-push-sm text-push-fg-faint">
@@ -191,7 +191,7 @@ export function LauncherHomeContent({
           className={`max-w-[calc(100%-2rem)] p-4 text-push-fg sm:max-w-sm ${HUB_PANEL_SURFACE_CLASS}`}
         >
           <AlertDialogHeader>
-            <AlertDialogTitle className="text-base text-push-fg">
+            <AlertDialogTitle className="text-push-xl font-display font-semibold text-push-fg">
               Disconnect GitHub?
             </AlertDialogTitle>
             <AlertDialogDescription className="text-xs text-push-fg-dim">

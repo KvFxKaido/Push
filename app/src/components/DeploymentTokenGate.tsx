@@ -53,7 +53,7 @@ export function DeploymentTokenGate({ children }: { children: ReactNode }) {
     <div className="min-h-dvh flex items-center justify-center p-6 bg-background text-foreground">
       <form onSubmit={onSubmit} className="w-full max-w-sm space-y-4">
         <header className="space-y-1">
-          <h1 className="text-lg font-semibold">Private deployment</h1>
+          <h1 className="text-push-2xl font-display font-semibold">Private deployment</h1>
           <p className="text-sm text-muted-foreground">
             This Push deployment is gated. Paste the deployment token to continue.
           </p>

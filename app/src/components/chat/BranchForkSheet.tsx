@@ -107,7 +107,7 @@ function BranchForkSheet({ open, onOpenChange, fromBranch, forkBranch }: BranchF
         className="max-h-[80dvh] overflow-y-auto rounded-t-2xl border-t border-push-edge bg-push-grad-panel px-5 pb-8 pt-0"
       >
         <SheetHeader className="pt-5 pb-1">
-          <SheetTitle className="text-sm font-semibold text-push-fg flex items-center gap-2">
+          <SheetTitle className="text-push-lg font-display font-semibold text-push-fg flex items-center gap-2">
             <BranchWaveIcon className="h-4 w-4 text-push-fg-dim" />
             New Branch from Here
           </SheetTitle>

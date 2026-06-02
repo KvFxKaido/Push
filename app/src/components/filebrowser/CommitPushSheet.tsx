@@ -268,7 +268,9 @@ export function CommitPushSheet({
         style={{ paddingBottom: bottomPadding > 0 ? bottomPadding : undefined }}
       >
         <SheetHeader className="pb-2">
-          <SheetTitle className="text-push-fg text-sm font-medium">Commit &amp; Push</SheetTitle>
+          <SheetTitle className="text-push-fg text-push-lg font-display font-semibold">
+            Commit &amp; Push
+          </SheetTitle>
           <SheetDescription className="sr-only">
             Review changes, enter a commit message, and push the current branch to remote.
           </SheetDescription>

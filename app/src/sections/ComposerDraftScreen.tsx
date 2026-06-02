@@ -436,7 +436,9 @@ export function ComposerDraftScreen({
           className="border-t border-push-edge bg-push-grad-panel px-0 pb-6 pt-0 text-push-fg"
         >
           <SheetHeader className="px-5 pb-2 pt-5">
-            <SheetTitle className="text-push-fg">Select mode</SheetTitle>
+            <SheetTitle className="text-push-lg font-display font-semibold text-push-fg">
+              Select mode
+            </SheetTitle>
             <SheetDescription className="text-push-fg-muted">
               Choose how this chat should be scoped.
             </SheetDescription>
@@ -480,7 +482,7 @@ export function ComposerDraftScreen({
           className="h-[80dvh] border-t border-push-edge bg-push-grad-panel px-0 pb-0 pt-0 text-push-fg"
         >
           <SheetHeader className="px-5 pb-2 pt-5">
-            <SheetTitle className="flex items-center gap-2 text-push-fg">
+            <SheetTitle className="flex items-center gap-2 text-push-lg font-display font-semibold text-push-fg">
               <Cloud className="h-4 w-4 text-push-fg-dim" />
               Select repository
             </SheetTitle>
@@ -554,7 +556,9 @@ export function ComposerDraftScreen({
           className="border-t border-push-edge bg-push-grad-panel px-0 pb-6 pt-0 text-push-fg"
         >
           <SheetHeader className="px-5 pb-2 pt-5">
-            <SheetTitle className="text-push-fg">Select branch</SheetTitle>
+            <SheetTitle className="text-push-lg font-display font-semibold text-push-fg">
+              Select branch
+            </SheetTitle>
             <SheetDescription className="text-push-fg-muted">
               {selectedRepo?.full_name ?? 'No repo selected'}
             </SheetDescription>

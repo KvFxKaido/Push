@@ -415,7 +415,7 @@ export function RepoChatDrawer({
           <div className="relative h-full overflow-hidden">
             <div className="absolute inset-0 flex flex-col">
               <SheetHeader className="border-b border-push-edge pb-3">
-                <SheetTitle className="flex items-center gap-2 text-push-fg">
+                <SheetTitle className="flex items-center gap-2 text-push-lg font-display font-semibold text-push-fg">
                   <HistoryStackIcon className="h-4 w-4 text-push-fg-dim" />
                   <span>Chats</span>
                 </SheetTitle>

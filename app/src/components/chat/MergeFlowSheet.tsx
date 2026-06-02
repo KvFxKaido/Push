@@ -724,7 +724,7 @@ function MergeFlowSheet({
         className="max-h-[85dvh] overflow-y-auto rounded-t-2xl border-t border-push-edge bg-push-grad-panel px-5 pb-8 pt-0"
       >
         <SheetHeader className="pb-1 pt-5">
-          <SheetTitle className="text-sm font-semibold text-push-fg flex items-center gap-2">
+          <SheetTitle className="text-push-lg font-display font-semibold text-push-fg flex items-center gap-2">
             <MergeShieldIcon className="h-4 w-4 text-push-fg-dim" />
             Merge {currentBranch}
           </SheetTitle>

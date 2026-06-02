@@ -239,13 +239,15 @@ function EmptyState({
                 width={22}
               />
             </button>
-            <h2 className="mb-2.5 text-lg font-semibold text-push-fg">
+            <h2 className="mb-2.5 text-push-2xl font-display font-semibold text-push-fg">
               {activeRepo ? activeRepo.name : hasSandbox ? 'Workspace' : 'Push'}
             </h2>
           </>
         )}
         {isChat && (
-          <h2 className="mb-3 text-lg font-semibold text-push-fg">Start a conversation</h2>
+          <h2 className="mb-3 text-push-2xl font-display font-semibold text-push-fg">
+            Start a conversation
+          </h2>
         )}
         <p className="text-sm leading-relaxed text-push-fg-secondary">
           {isChat

@@ -244,7 +244,9 @@ export function HubSettingsTab({
                     <SettingsCellsIcon className="h-3.5 w-3.5" />
                   </div>
                   <div className="min-w-0">
-                    <h2 className="text-base font-semibold text-push-fg">Settings</h2>
+                    <h2 className="text-push-xl font-display font-semibold text-push-fg">
+                      Settings
+                    </h2>
                     <p className="mt-1 text-push-xs leading-5 text-push-fg-muted">
                       Your profile, workspace behavior, and AI defaults live here. Pick a section to
                       tune the details without leaving the hub.

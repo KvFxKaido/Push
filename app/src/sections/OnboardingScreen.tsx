@@ -96,7 +96,7 @@ export function OnboardingScreen({
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center text-push-accent animate-fade-in-up">
             <PushMarkIcon className="h-[22px] w-[22px] text-push-accent" />
           </div>
-          <h1 className="text-2xl font-semibold text-push-fg tracking-tight mb-2">Push</h1>
+          <h1 className="text-push-display font-display font-semibold text-push-fg mb-2">Push</h1>
           <p className="text-sm text-push-fg-secondary leading-relaxed">
             AI coding agent with direct repo access.
           </p>

@@ -109,7 +109,7 @@ export function PublishToGitHubSheet({ open, onOpenChange, onSubmit }: PublishTo
         className="max-h-[84dvh] overflow-y-auto rounded-t-2xl border-t border-push-edge bg-push-grad-panel px-5 pb-8 pt-0 text-push-fg"
       >
         <SheetHeader className="pb-1 pt-5">
-          <SheetTitle className="flex items-center gap-2 text-sm font-semibold text-push-fg">
+          <SheetTitle className="flex items-center gap-2 text-push-lg font-display font-semibold text-push-fg">
             <Rocket className="h-4 w-4 text-push-fg-dim" />
             Publish to GitHub
           </SheetTitle>

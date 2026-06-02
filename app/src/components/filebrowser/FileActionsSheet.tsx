@@ -50,7 +50,9 @@ export function FileActionsSheet({
         className="bg-push-surface border-push-edge-subtle rounded-t-2xl max-h-[50dvh]"
       >
         <SheetHeader className="pb-2">
-          <SheetTitle className="text-push-fg text-sm font-medium truncate">{file.name}</SheetTitle>
+          <SheetTitle className="text-push-fg text-push-lg font-display font-semibold truncate">
+            {file.name}
+          </SheetTitle>
           <p className="text-xs text-push-fg-dimmest">
             {isDirectory ? 'Folder' : formatFileSize(file.size)}
             {editability?.warning === 'large_file' && (

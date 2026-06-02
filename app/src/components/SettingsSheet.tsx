@@ -985,7 +985,9 @@ export function SettingsSheet({
                   <p className="text-push-2xs uppercase tracking-[0.24em] text-push-fg-dim">
                     Control center
                   </p>
-                  <p className="mt-1 text-base font-semibold text-push-fg">{tabMeta.title}</p>
+                  <p className="mt-1 text-push-xl font-display font-semibold text-push-fg">
+                    {tabMeta.title}
+                  </p>
                   <p className="mt-0.5 text-push-xs text-push-fg-dim">{tabMeta.description}</p>
                 </div>
               </div>
