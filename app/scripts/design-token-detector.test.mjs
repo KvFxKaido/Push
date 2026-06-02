@@ -47,6 +47,17 @@ describe('findHardcodedColors', () => {
     expect(findHardcodedColors('rgba(17,61,42,0.18)').rgbTriplet).toBe(1); // status green tint
   });
 
+  it('flags chromatic percent- and decimal-channel triplets', () => {
+    // 49%/83%/99% ≈ Sky on the 0–255 scale; spread well past the threshold.
+    expect(findHardcodedColors('rgb(49% 83% 99%)').rgbTriplet).toBe(1);
+    expect(findHardcodedColors('rgba(125.0, 211, 252, 0.17)').rgbTriplet).toBe(1);
+  });
+
+  it('keeps grayscale percent triplets silent (scale-invariant spread)', () => {
+    // Equal channels => zero spread, regardless of unit.
+    expect(findHardcodedColors('rgb(50% 50% 50%)').rgbTriplet).toBe(0);
+  });
+
   it('flags the underscore form used inside Tailwind arbitrary values', () => {
     const r = findHardcodedColors(
       'bg-[radial-gradient(circle,rgb(125_211_252_/_0.17),transparent)]',

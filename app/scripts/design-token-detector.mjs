@@ -24,14 +24,27 @@ const QUOTED_HEX = new RegExp(`(['"\`])#${HEX}\\1`, 'g');
 // underscore form Tailwind arbitrary values use (`rgb(125_211_252...`). We
 // capture R/G/B so the caller can keep only *chromatic* triplets; grayscale
 // ones (black shadows, white sheens, gray scrims) are legitimate and not
-// token-able. The `[0-9]` first channel means `rgb(var(--token) ...)` — the
-// correct, tokenized form — never matches.
-const RGB_TRIPLET = /\brgba?\(\s*([0-9]{1,3})[\s,_]+([0-9]{1,3})[\s,_]+([0-9]{1,3})/g;
+// token-able. Channels may be integers (`125`), decimals (`125.0`), or
+// percentages (`49%`) — `normalizeChannel` folds all three onto the 0–255
+// scale so one spread threshold applies. A channel must start with a digit or
+// `.`, so `rgb(var(--token) ...)` — the correct, tokenized form — never matches.
+const RGB_TRIPLET = /\brgba?\(\s*([0-9.]+%?)[\s,_]+([0-9.]+%?)[\s,_]+([0-9.]+%?)/g;
 
 // A triplet counts as chromatic (i.e. a real hue that probably duplicates a
 // palette token) when its channel spread exceeds this. Pure black/white and
-// neutral grays sit at/near 0 spread and are skipped.
+// neutral grays sit at/near 0 spread and are skipped. 12 is the same
+// "perceptually negligible" RGB delta the migration plan uses for its
+// "Near-token drift (RGB dist ≤12)" bucket (docs/runbooks/Design Token
+// Migration Plan.md) — below it, R≈G≈B reads as neutral rather than a hue.
 const CHROMATIC_SPREAD = 12;
+
+// Fold a single rgb() channel token onto the 0–255 scale: `49%` → 124.95,
+// `125` / `125.0` → 125. Keeps the chromatic-spread test scale-invariant so
+// percent-channel triplets can't sail past the integer-only form.
+function normalizeChannel(token) {
+  const value = Number.parseFloat(token);
+  return token.endsWith('%') ? (value / 100) * 255 : value;
+}
 
 /**
  * Count hardcoded colors in a source string.
@@ -44,9 +57,9 @@ export function findHardcodedColors(source) {
 
   let rgbTriplet = 0;
   for (const m of source.matchAll(RGB_TRIPLET)) {
-    const r = Number(m[1]);
-    const g = Number(m[2]);
-    const b = Number(m[3]);
+    const r = normalizeChannel(m[1]);
+    const g = normalizeChannel(m[2]);
+    const b = normalizeChannel(m[3]);
     if (Math.max(r, g, b) - Math.min(r, g, b) > CHROMATIC_SPREAD) rgbTriplet += 1;
   }
 

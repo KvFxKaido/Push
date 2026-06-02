@@ -101,7 +101,7 @@ console.log(
 );
 console.log(`  Tailwind arbitrary values (e.g. bg-[#000]): ${tailwind}`);
 console.log(`  Quoted hex literals (inline styles / constants): ${inlineHex}`);
-console.log(`  Chromatic rgb()/rgba() triplets (use a token): ${rgbTriplet}`);
+console.log(`  Chromatic rgb()/rgba() triplets (prefer a token where one exists): ${rgbTriplet}`);
 console.log(`  Total: ${total}  (baseline: ${baseline ? baseline.total : 'none'})`);
 if (perFile.length > 0) {
   console.log(`  Top offenders:`);
