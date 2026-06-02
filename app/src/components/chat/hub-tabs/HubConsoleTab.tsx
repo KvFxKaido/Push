@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Copy, Download, Check } from 'lucide-react';
 import { detectAnyToolCall } from '@/lib/tool-dispatch';
 import { HUB_MATERIAL_PILL_BUTTON_CLASS, HubControlGlow } from '@/components/chat/hub-styles';
-import { getRoleDisplay, getSubagentLabel } from '@push/lib/role-display';
+import { getRoleDisplay, getSourceLabel, getSubagentLabel } from '@push/lib/role-display';
 import type { AgentStatusEvent, AgentStatusSource, ChatMessage, RunEvent } from '@/types';
 
 interface HubConsoleTabProps {
@@ -21,14 +21,8 @@ interface ConsoleLogItem {
 
 // User-facing labels come from the shared display seam (`lib/role-display.ts`),
 // never spelled here — so the console can't drift from the rest of the UI.
-function getSourceLabel(source: AgentStatusSource): string {
-  // `system` is not an agent role; it stays a literal source tag.
-  if (source === 'system') return 'System';
-  const display = getRoleDisplay(source);
-  if (display.showActorName && display.name) return display.name;
-  return display.phase ?? 'Working';
-}
-
+// `getSourceLabel` (source attribution, incl. orchestrator → "Assistant") and
+// `getSubagentLabel` (lifecycle lines) are imported from the seam directly.
 function getTaskGraphTaskLabel(agent: 'explorer' | 'coder', taskId: string): string {
   return `Task Graph · ${getRoleDisplay(agent).phase ?? 'Working'} · ${taskId}`;
 }

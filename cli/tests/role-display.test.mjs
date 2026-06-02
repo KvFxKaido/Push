@@ -13,6 +13,8 @@ import assert from 'node:assert/strict';
 import {
   ROLE_DISPLAY,
   getRoleDisplay,
+  getRoleLabel,
+  getSourceLabel,
   getSubagentDisplay,
   getSubagentLabel,
 } from '../../lib/role-display.ts';
@@ -68,6 +70,30 @@ describe('role-display vocabulary map', () => {
     assert.equal(bg.phase, 'Editing');
     // Background context only applies to the Coder.
     assert.equal(getRoleDisplay('explorer', { background: true }).name, null);
+  });
+
+  it('getRoleLabel always resolves to a non-null string (name → phase → Working)', () => {
+    // Trust-bearing roles surface their name; phase-first roles surface their
+    // phase; the Orchestrator (no name, no phase) and unknown roles fall back to
+    // neutral 'Working'. This is the null-safe label for direct interpolation.
+    assert.equal(getRoleLabel('auditor'), 'Auditor');
+    assert.equal(getRoleLabel('reviewer'), 'Reviewer');
+    assert.equal(getRoleLabel('coder'), 'Editing');
+    assert.equal(getRoleLabel('explorer'), 'Exploring');
+    assert.equal(getRoleLabel('orchestrator'), 'Working');
+    assert.equal(getRoleLabel('totally-unknown'), 'Working');
+    assert.equal(getRoleLabel(undefined), 'Working');
+    assert.equal(getRoleLabel('coder', { background: true }), 'Background Coder');
+  });
+
+  it('getSourceLabel names the emitter (orchestrator → Assistant, system → System)', () => {
+    assert.equal(getSourceLabel('system'), 'System');
+    assert.equal(getSourceLabel('orchestrator'), 'Assistant');
+    assert.equal(getSourceLabel('coder'), 'Editing');
+    assert.equal(getSourceLabel('explorer'), 'Exploring');
+    assert.equal(getSourceLabel('reviewer'), 'Reviewer');
+    assert.equal(getSourceLabel('auditor'), 'Auditor');
+    assert.equal(getSourceLabel('mystery'), 'Working');
   });
 
   it('maps RunEventSubagent supersets through the seam', () => {

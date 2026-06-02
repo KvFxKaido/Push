@@ -17,7 +17,7 @@ import {
   formatElapsedTime,
 } from '@/lib/utils';
 import { useExpandable } from '@/hooks/useExpandable';
-import { getRoleDisplay, getSubagentLabel } from '@push/lib/role-display';
+import { getRoleLabel, getSubagentLabel } from '@push/lib/role-display';
 import { ExpandChevron, ExpandableCardPanel } from './expandable';
 
 const AGENT_ICONS: Record<DelegationResultCardData['agent'], typeof Search> = {
@@ -130,7 +130,7 @@ export function DelegationResultCard({ data }: { data: DelegationResultCardData 
                       : CARD_BADGE_WARNING
                 }`}
               >
-                {getRoleDisplay('auditor').name}: {auditorVerdict.outcome}
+                {getRoleLabel('auditor')}: {auditorVerdict.outcome}
               </span>
             )}
             <span

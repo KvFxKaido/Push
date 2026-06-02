@@ -22,7 +22,7 @@ import { DiffPreviewCard } from '@/components/cards/DiffPreviewCard';
 import { AuditVerdictCard } from '@/components/cards/AuditVerdictCard';
 import { useCommitPush } from '@/hooks/useCommitPush';
 import type { AIProviderType, DiffPreviewCardData } from '@/types';
-import { getRoleDisplay } from '@push/lib/role-display';
+import { getRoleLabel } from '@push/lib/role-display';
 
 interface CommitPushSheetProps {
   sandboxId: string;
@@ -43,11 +43,20 @@ interface CommitPushSheetProps {
 
 const PHASE_LABELS: Record<string, string> = {
   'fetching-diff': 'Getting diff…',
-  auditing: `${getRoleDisplay('auditor').name} verifying…`,
   committing: 'Committing…',
   pushing: 'Pushing to remote…',
   recovering: 'Recovering on new sandbox…',
 };
+
+// Resolve a phase's spinner label. The `auditing` label is sourced from the
+// display seam and resolved here (lazily, per render) rather than baked into
+// the module-level PHASE_LABELS literal — so it never freezes a stale label if
+// the seam vocabulary becomes dynamic, and getRoleLabel guarantees a non-null
+// string.
+function phaseLabel(phase: string): string {
+  if (phase === 'auditing') return `${getRoleLabel('auditor')} verifying…`;
+  return PHASE_LABELS[phase] ?? 'Working…';
+}
 
 /**
  * Generate a suggested commit message from diff stats.
@@ -270,9 +279,7 @@ export function CommitPushSheet({
           {isSpinnerPhase && (
             <div className="flex flex-col items-center justify-center gap-3 py-8">
               <Loader2 className="h-5 w-5 animate-spin text-push-accent" />
-              <span className="text-sm text-push-fg-secondary">
-                {PHASE_LABELS[phase] || 'Working…'}
-              </span>
+              <span className="text-sm text-push-fg-secondary">{phaseLabel(phase)}</span>
             </div>
           )}
 

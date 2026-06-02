@@ -11,7 +11,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import type { BackgroundJobStatus, CoderJobCardData } from '@/types';
 import { resolveApiUrl } from '@/lib/api-url';
-import { getRoleDisplay } from '@push/lib/role-display';
+import { getRoleLabel } from '@push/lib/role-display';
 import {
   CARD_BADGE_ERROR,
   CARD_BADGE_INFO,
@@ -153,7 +153,7 @@ export function JobCard({ data }: { data: CoderJobCardData }) {
       >
         <Bot className={`h-4 w-4 shrink-0 ${classes.text}`} />
         <span className={`text-push-base font-medium ${classes.text}`}>
-          {getRoleDisplay('coder', { background: true }).name}
+          {getRoleLabel('coder', { background: true })}
         </span>
         <span
           className={`rounded-full px-2 py-0.5 text-push-2xs font-medium uppercase ${classes.badge}`}

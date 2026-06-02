@@ -95,6 +95,37 @@ export function getRoleDisplay(
 }
 
 /**
+ * A non-null user-facing label for a role: its trust-name when it has one,
+ * else its phase, else neutral `'Working'`.
+ *
+ * Use this anywhere a label is interpolated directly into UI text. Reaching for
+ * `.name` at a call site is a footgun — it is `string | null`, so a future
+ * vocabulary change that nulls a name would silently render an empty label
+ * (`": passed"`, `" commit gate"`). This always resolves to a string while
+ * staying seam-sourced. Accepts the same background context as `getRoleDisplay`.
+ */
+export function getRoleLabel(
+  role: AgentRole | string | null | undefined,
+  options?: RoleDisplayContext,
+): string {
+  const d = getRoleDisplay(role, options);
+  return d.name ?? d.phase ?? 'Working';
+}
+
+/**
+ * Console/log *source attribution* label. A source view names the emitter, so
+ * its needs differ from phase-first chrome: the Orchestrator reads as the
+ * "Assistant" (the user's mental model of the main loop — see the design doc),
+ * not a phase; `system` stays "System"; every other source resolves via
+ * `getRoleLabel`. Keeps the console's source vocabulary inside the seam.
+ */
+export function getSourceLabel(source: AgentRole | 'system' | string): string {
+  if (source === 'system') return 'System';
+  if (source === 'orchestrator') return 'Assistant';
+  return getRoleLabel(source);
+}
+
+/**
  * Resolve the display for a `RunEventSubagent` — a superset of `AgentRole`
  * used in run-event streams (it also carries `planner`, `deep_reviewer`, and
  * the structural `task_graph`). Keeps the subagent → vocabulary mapping in the

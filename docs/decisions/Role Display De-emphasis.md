@@ -64,7 +64,16 @@ Rules encoded in the seam:
   "Editing"), never as named actors.
 - **The Orchestrator has no user-visible phase or name.** From the user's point
   of view it is simply "the assistant"; surfacing it as a distinct actor is the
-  org-chart noise this decision removes.
+  org-chart noise this decision removes. The one exception is *source
+  attribution* (a console/log view that names which emitter produced a line):
+  there the Orchestrator reads as **"Assistant"**, since a source view must name
+  every emitter and "the assistant" is the honest identity of the main loop —
+  not an invented sub-agent.
+- **Direct interpolation uses a non-null label.** `getRoleDisplay(...).name` is
+  `string | null`; interpolating it raw is a footgun (a future null name renders
+  an empty label). `getRoleLabel(role)` resolves name → phase → `'Working'` and
+  always returns a string, so it is the helper to use anywhere a label lands
+  directly in UI text.
 - **Named attribution survives only where it is a trust signal.** Reviewer and
   Auditor keep visible names because a user genuinely benefits from knowing that
   an *independent* gate — not the same agent that wrote the code — reviewed or
@@ -86,7 +95,9 @@ Rules encoded in the seam:
 ## Surface
 
 - `lib/role-display.ts` — `ROLE_DISPLAY`, `RoleDisplay`, `RoleDisplayContext`,
-  `getRoleDisplay(role, options?)`, `getSubagentDisplay(subagent)`,
+  `getRoleDisplay(role, options?)`, `getRoleLabel(role, options?)` (non-null
+  label for direct interpolation), `getSourceLabel(source)` (console source
+  attribution, incl. orchestrator → "Assistant"), `getSubagentDisplay(subagent)`,
   `getSubagentLabel(subagent)`.
 - `cli/tests/role-display.test.mjs` — drift test pinning the vocabulary map, in
   keeping with CLAUDE.md's "one source of truth per vocabulary" rule.

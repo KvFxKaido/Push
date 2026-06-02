@@ -30,7 +30,7 @@ import {
 import { formatModelDisplayName, type PreferredProvider } from '@/lib/providers';
 import { useAuditorGate } from '@/hooks/useAuditorGate';
 import type { AIProviderType } from '@/types';
-import { getRoleDisplay } from '@push/lib/role-display';
+import { getRoleLabel } from '@push/lib/role-display';
 
 const SECTION_CARD_CLASS =
   'space-y-3 rounded-2xl border border-push-edge bg-push-surface/55 p-4 shadow-[0_14px_28px_rgba(0,0,0,0.18)]';
@@ -799,7 +799,7 @@ export function SettingsSectionContent({
           <div className={SECTION_CARD_CLASS}>
             <div className="flex items-center justify-between">
               <label className="text-sm font-medium text-push-fg">
-                {getRoleDisplay('auditor').name} commit gate
+                {getRoleLabel('auditor')} commit gate
               </label>
               <span className="text-xs text-push-fg-secondary">
                 {auditorGate.globalDefault ? 'On' : 'Off'}
