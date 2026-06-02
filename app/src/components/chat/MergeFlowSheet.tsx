@@ -43,6 +43,7 @@ import { runAuditor } from '@/lib/auditor-agent';
 import { getIsAuditorGateEnabled } from '@/hooks/useAuditorGate';
 import { fetchAuditorFileContexts, type AuditorFileContext } from '@/lib/auditor-file-context';
 import { parseDiffStats } from '@/lib/diff-utils';
+import { CARD_HEADER_BG_ERROR, CARD_HEADER_BG_SUCCESS, CARD_HEADER_BG_WARNING } from '@/lib/utils';
 import type { AIProviderType, ActiveRepo, AuditVerdictCardData } from '@/types';
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -128,12 +129,9 @@ const STEPS: { key: MergeStep; label: string }[] = [
 
 const MERGE_PANEL_CLASS = `${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3.5 py-3`;
 const MERGE_BUTTON_CLASS = `${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 text-sm text-push-fg-secondary`;
-const MERGE_SUCCESS_PANEL_CLASS =
-  'rounded-[18px] border border-emerald-500/20 bg-[linear-gradient(180deg,rgba(17,61,42,0.18)_0%,rgba(8,28,20,0.34)_100%)] px-3.5 py-3';
-const MERGE_WARNING_PANEL_CLASS =
-  'rounded-[18px] border border-yellow-500/20 bg-[linear-gradient(180deg,rgba(68,52,16,0.18)_0%,rgba(31,23,8,0.34)_100%)] px-3.5 py-3';
-const MERGE_DANGER_PANEL_CLASS =
-  'rounded-[18px] border border-red-500/20 bg-[linear-gradient(180deg,rgba(70,23,23,0.18)_0%,rgba(31,11,11,0.34)_100%)] px-3.5 py-3';
+const MERGE_SUCCESS_PANEL_CLASS = `rounded-[18px] border border-emerald-500/20 ${CARD_HEADER_BG_SUCCESS} px-3.5 py-3`;
+const MERGE_WARNING_PANEL_CLASS = `rounded-[18px] border border-yellow-500/20 ${CARD_HEADER_BG_WARNING} px-3.5 py-3`;
+const MERGE_DANGER_PANEL_CLASS = `rounded-[18px] border border-red-500/20 ${CARD_HEADER_BG_ERROR} px-3.5 py-3`;
 
 function StepIndicator({ current }: { current: MergeStep }) {
   const currentIdx = STEPS.findIndex((s) => s.key === current);

@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { executeCreateBranch } from '@/lib/github-tools';
 import { sanitizeBranchName } from '@/lib/branch-names';
+import { CARD_HEADER_BG_ERROR, CARD_HEADER_BG_SUCCESS } from '@/lib/utils';
 import {
   HUB_MATERIAL_INPUT_CLASS,
   HUB_MATERIAL_PILL_BUTTON_CLASS,
@@ -33,11 +34,9 @@ const BRANCH_ACTION_BUTTON_CLASS = `${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 flex-
 
 const BRANCH_OPTION_CLASS = `${HUB_PANEL_SUBTLE_SURFACE_CLASS} flex cursor-pointer items-start gap-3 px-3.5 py-3 transition-all duration-200`;
 
-const BRANCH_SUCCESS_PANEL_CLASS =
-  'rounded-[18px] border border-emerald-500/20 bg-[linear-gradient(180deg,rgba(17,61,42,0.18)_0%,rgba(8,28,20,0.34)_100%)] px-3.5 py-3';
+const BRANCH_SUCCESS_PANEL_CLASS = `rounded-[18px] border border-emerald-500/20 ${CARD_HEADER_BG_SUCCESS} px-3.5 py-3`;
 
-const BRANCH_DANGER_PANEL_CLASS =
-  'rounded-[18px] border border-red-500/20 bg-[linear-gradient(180deg,rgba(70,23,23,0.18)_0%,rgba(31,11,11,0.34)_100%)] px-3.5 py-3';
+const BRANCH_DANGER_PANEL_CLASS = `rounded-[18px] border border-red-500/20 ${CARD_HEADER_BG_ERROR} px-3.5 py-3`;
 
 function BranchCreateSheet({
   open,

@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { sanitizeBranchName } from '@/lib/branch-names';
+import { CARD_HEADER_BG_ERROR } from '@/lib/utils';
 import {
   HUB_MATERIAL_INPUT_CLASS,
   HUB_MATERIAL_PILL_BUTTON_CLASS,
@@ -34,8 +35,7 @@ interface BranchForkSheetProps {
 
 const BRANCH_ACTION_BUTTON_CLASS = `${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 flex-1 text-sm text-push-fg-secondary`;
 
-const BRANCH_DANGER_PANEL_CLASS =
-  'rounded-[18px] border border-red-500/20 bg-[linear-gradient(180deg,rgba(70,23,23,0.18)_0%,rgba(31,11,11,0.34)_100%)] px-3.5 py-3';
+const BRANCH_DANGER_PANEL_CLASS = `rounded-[18px] border border-red-500/20 ${CARD_HEADER_BG_ERROR} px-3.5 py-3`;
 
 function BranchForkSheet({ open, onOpenChange, fromBranch, forkBranch }: BranchForkSheetProps) {
   const [branchName, setBranchName] = useState('');

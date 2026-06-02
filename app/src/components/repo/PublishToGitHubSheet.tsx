@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { CARD_HEADER_BG_ERROR } from '@/lib/utils';
 import {
   HUB_MATERIAL_INPUT_CLASS,
   HUB_MATERIAL_PILL_BUTTON_CLASS,
@@ -28,8 +29,7 @@ const ACTION_BUTTON_CLASS = `${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 flex-1 gap-2
 
 const VISIBILITY_OPTION_CLASS = `${HUB_PANEL_SUBTLE_SURFACE_CLASS} flex cursor-pointer items-start gap-3 px-3.5 py-3 transition-all duration-200`;
 
-const ERROR_PANEL_CLASS =
-  'rounded-[18px] border border-red-500/20 bg-[linear-gradient(180deg,rgba(70,23,23,0.18)_0%,rgba(31,11,11,0.34)_100%)] px-3.5 py-3';
+const ERROR_PANEL_CLASS = `rounded-[18px] border border-red-500/20 ${CARD_HEADER_BG_ERROR} px-3.5 py-3`;
 
 function cleanToolMessage(message: string): string {
   return message
