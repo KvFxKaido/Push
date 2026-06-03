@@ -1565,6 +1565,7 @@ export interface WorkspaceScreenRepoShellProps {
 export type WorkspaceScreenAuthProps = Pick<
   GitHubAuthSession,
   | 'token'
+  | 'tokenKind'
   | 'patToken'
   | 'validatedUser'
   | 'isAppAuth'

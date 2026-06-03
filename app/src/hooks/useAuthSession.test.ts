@@ -16,7 +16,7 @@ function createPatAuth(
 ) {
   return {
     token: '',
-    tokenKind: 'none',
+    tokenKind: 'none' as GitHubTokenKind,
     logout: vi.fn(),
     loading: false,
     error: null,

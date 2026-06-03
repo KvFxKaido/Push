@@ -28,11 +28,7 @@ import {
   type SettingsWorkspaceProps,
 } from '@/components/SettingsSheet';
 import { formatModelDisplayName, type PreferredProvider } from '@/lib/providers';
-import {
-  describeGitHubTokenKind,
-  getAppTokenExpiry,
-  isDurableUserToken,
-} from '@/lib/github-auth';
+import { describeGitHubTokenKind, getAppTokenExpiry, isDurableUserToken } from '@/lib/github-auth';
 import {
   hasAcknowledgedUserTokenInjection,
   setAcknowledgedUserTokenInjection,

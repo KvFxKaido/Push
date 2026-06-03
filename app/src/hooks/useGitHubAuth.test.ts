@@ -107,8 +107,8 @@ describe('useGitHubAuth.setTokenManually', () => {
     expect(ok).toBe(true);
     expect(utils.validateGitHubToken).toHaveBeenCalledWith('ghp_abc');
     expect(storage.set).toHaveBeenCalledWith('github_access_token', 'ghp_abc', undefined);
-    // token cell (index 0) is now 'ghp_abc', validatedUser cell (index 3)
-    expect(reactState.cells[0].value).toBe('ghp_abc');
+    // token cell (index 0) now holds { token, kind }, validatedUser cell (index 3)
+    expect(reactState.cells[0].value).toEqual({ token: 'ghp_abc', kind: 'pat' });
     expect(reactState.cells[3].value).toEqual({ login: 'octocat' });
     // loading cell (index 1) returns to false
     expect(reactState.cells[1].value).toBe(false);
@@ -132,7 +132,7 @@ describe('useGitHubAuth.logout', () => {
     const auth = render();
     auth.logout();
     expect(storage.remove).toHaveBeenCalledWith('github_access_token', undefined);
-    expect(reactState.cells[0].value).toBe('');
+    expect(reactState.cells[0].value).toEqual({ token: '', kind: 'none' });
     expect(reactState.cells[3].value).toBeNull();
   });
 });

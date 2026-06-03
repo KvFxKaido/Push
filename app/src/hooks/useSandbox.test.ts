@@ -37,8 +37,8 @@ const ghAuth = vi.hoisted(() => ({
     token: '',
     kind: 'none',
   })),
-  isDurableUserToken: vi.fn((kind: string) =>
-    kind === 'oauth' || kind === 'pat' || kind === 'env' || kind === 'unknown',
+  isDurableUserToken: vi.fn(
+    (kind: string) => kind === 'oauth' || kind === 'pat' || kind === 'env' || kind === 'unknown',
   ),
   APP_TOKEN_STORAGE_KEY: 'github_app_token',
 }));

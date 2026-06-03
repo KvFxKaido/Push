@@ -3,12 +3,17 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type {
   SettingsAIProps,
   SettingsAuthProps,
+  SettingsBuiltInProvider,
   SettingsDataProps,
   SettingsProfileProps,
   SettingsWorkspaceProps,
 } from './SettingsSheet';
 import { ExperimentalProviderSection, ProviderKeySection, SettingsSheet } from './SettingsSheet';
 import { SettingsSectionContent } from './SettingsSectionContent';
+import {
+  BUILT_IN_SETTINGS_PROVIDER_ORDER,
+  type BuiltInSettingsProviderId,
+} from './settings-shared';
 
 function emptyAuth(): SettingsAuthProps {
   return {
@@ -62,7 +67,26 @@ function emptyAI(): SettingsAIProps {
     availableProviders: [],
     setPreferredProvider: vi.fn(),
     clearPreferredProvider: vi.fn(),
-    builtInProviders: {} as never,
+    builtInProviders: Object.fromEntries(
+      BUILT_IN_SETTINGS_PROVIDER_ORDER.map((providerId) => [
+        providerId,
+        {
+          hasKey: false,
+          model: '',
+          setModel: vi.fn(),
+          modelOptions: [],
+          modelsLoading: false,
+          modelsError: null,
+          modelsUpdatedAt: null,
+          isModelLocked: false,
+          refreshModels: vi.fn(),
+          keyInput: '',
+          setKeyInput: vi.fn(),
+          setKey: vi.fn(),
+          clearKey: vi.fn(),
+        } satisfies SettingsBuiltInProvider,
+      ]),
+    ) as unknown as Record<BuiltInSettingsProviderId, SettingsBuiltInProvider>,
     cloudflareProvider: {
       configured: false,
       statusLoading: false,
@@ -155,6 +179,7 @@ describe('SettingsSectionContent', () => {
         ai={emptyAI()}
         workspace={emptyWorkspace()}
         data={emptyData()}
+        onDismiss={() => {}}
       />,
     );
 
