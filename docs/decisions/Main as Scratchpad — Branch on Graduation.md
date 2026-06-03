@@ -18,17 +18,38 @@ Push's differentiator over every other mobile coding agent is that it lets you
 that keeps that differentiator coherent under load, in one line:
 
 > **We take the mandatory branch every cloud agent forces, and move it from the
-> front of the interaction to the point of intent.** You talk on `main`
-> immediately. When you *commit* — the moment you've decided some work is worth
-> keeping — Push asks once: *branch this?* "Yes" makes it durable, named, and
-> PR-bound. "No" keeps it as a best-effort checkpoint on `main`, with the
-> tradeoff stated plainly. You never branch to *start*; you branch to *persist*.
+> front of the interaction to the first commit — automatically.** You talk on
+> `main` immediately; nothing is branched while you explore. The moment a
+> *commit* happens, Push **auto-creates a branch** and the commit lands there —
+> no prompt, no choice, no commit ever lands on `main`. You never branch to
+> *start*; the branch materializes when you persist.
 
-The only things this asks us to engineer are small: a **commit-time branch
-prompt** (and the discipline to keep it quiet after the first ask), and an
-honest contract for the snapshot — **best-effort warm-reattach, not a
-durability guarantee**. The branch-carry plumbing and the honest-failure
-surface already exist.
+This is **not** the other agents' model — they branch *before your first word*,
+so you're on a branch the whole time. Auto-branch-on-commit keeps the entire
+pre-commit conversation branch-free and defers the (automatic) branch to the
+first commit. That single choice **dissolves** the three problems an interactive
+"branch this?" prompt created — see "Why auto-branch dissolves the hard
+questions" below.
+
+**The decomposition (the load-bearing decision of this doc):** split behavior
+along two independent seams, and do **not** fork the first one by platform:
+
+- **Commit-flow → `auto-branch-on-commit`, universal** (PWA + APK + cloud).
+  Simple, no prompt, keeps the differentiator. Same everywhere.
+- **Durable-storage substrate → platform-flagged.** *Where* the work durably
+  lives differs by surface because the storage reality does: APK can use
+  local git / SAF (real filesystem), PWA leans on the remote snapshot
+  (evictable local storage). This is the only thing the platform flag governs —
+  see `Scratchpad Durable Storage — Remote vs Phone-Local.md`.
+
+**Load-bearing condition:** auto-branch only buys durability if the branch
+**auto-pushes to origin**. A branch that lives only in the ephemeral sandbox is
+no more durable than a `main` checkpoint — durability would just relocate to the
+snapshot under a different ref name. So the real chain is *auto-branch →
+auto-push the branch → deterministic pre-push secret scan* (the Auditor-unbundle
+from open-Q #2, now firing at auto-push). The branch-carry plumbing
+(`create_branch`) and the honest-failure surface (`RESTORE_FAILED_MESSAGE`)
+already exist; the net-new is auto-branch + auto-push + the scan + auto-naming.
 
 ## The counterexample that anchors this
 
@@ -99,9 +120,9 @@ a consequence of the architecture rather than a hack we're rationalizing.
 - **Typed branch tools already carry the working tree on fork.** `create_branch`
   (forked) returns `branchSwitch: { kind: 'forked' }`
   (`app/src/lib/sandbox-tools.ts:859`) and the controller suppresses teardown via
-  `skipBranchTeardownRef` (`useWorkspaceSandboxController.ts`). **The graduation
-  motion's mechanics already exist** — the gap is the commit-time prompt and
-  intent, not plumbing.
+  `skipBranchTeardownRef` (`useWorkspaceSandboxController.ts`). **The branch-carry
+  mechanics already exist** — the gap is firing them automatically at commit
+  (plus auto-push + a name), not the carry plumbing itself.
 
 So Push *already is* a branch-as-container system that has simply assumed one
 stream per branch. "Work from `main`" today means "one active workspace that you
@@ -112,36 +133,68 @@ happened to name `main`."
 ### `main` = a scratchpad you start on (cloud-default)
 - You talk immediately; the main guard stays optional. (Differentiator.)
 - Continuity across chats/models lives here, on the shared workspace. (Anchor #1.)
-- You do not route to `main` or try to make `main` *guaranteed*-durable. Work
-  accumulates as uncommitted diffs and best-effort checkpoints.
+- While you explore, work stays as the **uncommitted working tree** on `main`,
+  held best-effort by the snapshot. No commit ever lands on `main`.
 
-### Commit on `main` → "branch this?" (the graduation prompt)
-- The branch decision fires at **commit time** — the moment you've signaled this
-  work is worth keeping. This is the mandatory-branch-moved-to-intent.
-- **Intercept-before, not graduate-after.** The prompt fires at the commit
-  gesture; "Yes" branches *then* commits there, so `main` never carries the
-  commit and there's no reset-`main` cleanup. (Keeps `main` pristine, matches
-  "`main` is where you start, not where commits land.")
-- **Design the silence as deliberately as the prompt.** Firing on *every*
-  main-commit re-creates branch-first by a thousand cuts. The value is the
-  *first* graduation moment — after that, a "not now / stop asking this stretch"
-  affordance, or quiet until intent changes. Get this wrong and the prompt
-  becomes the new ceremony.
+### Commit → `auto-branch-on-commit` (universal, no prompt)
+- The instant a commit happens, Push **auto-creates a branch** and the commit
+  lands *there*, not on `main`. No prompt, no "branch this?", no choice — and
+  therefore no "No" path. The differentiator survives because the *pre-commit*
+  conversation was branch-free; the branch is simply deferred to (and automated
+  at) the first commit.
+- **Auto-push is part of the gesture, or it's not durable.** Auto-branch alone
+  leaves the branch in the ephemeral sandbox — same durability as a `main`
+  checkpoint. So the commit auto-pushes the new branch to origin behind a
+  **deterministic pre-push secret scan** (the unbundled Auditor — open-Q #2).
+  That push, not the local commit, is what makes the work durable.
+- **Net-new to build:** auto-branch wiring at commit, auto-push, the secret
+  scan, and **branch auto-naming** (model-proposed topic name, or a deterministic
+  fallback). Branch-carry (`create_branch`) is reused.
 
-### "Yes" = the durable path
-- Carries the work onto a named branch (mechanics in `create_branch`), becomes
-  the commit, opens the PR on-ramp. A **pre-push safety check** runs here — but
-  *which* check is open: the current Auditor SAFE/UNSAFE gate likely unbundles
-  into a deterministic secret-scan + the existing PR reviewers rather than a
-  per-commit model-judge (see open question #2).
+### Why auto-branch dissolves the hard questions
+The interactive "branch this?" prompt we first sketched created three problems;
+auto-branch makes all three *not exist* rather than answering them:
+- **Who triggers / answers the prompt** (esp. agent-mid-run and headless
+  background coder jobs) → there is no prompt; the branch is automatic, so the
+  agent-initiated and human-initiated paths are identical.
+- **Does "No" produce a commit on ephemeral `main`** → there is no "No"; `main`
+  never carries a commit, so the awkward checkpoint-on-`main` concept is gone.
+- **`Protect Main` vs committing to `main`** → nothing commits to `main`, so the
+  collision can't occur. (`Protect Main` keeps governing *pushes to origin/main*,
+  untouched.)
 
-### "No" = an explicit, best-effort checkpoint on `main`
-- The commit stays on the sandbox's local `main`. We *try* to keep it via the
-  snapshot, but it is **not guaranteed** — and the prompt says so. Declining is a
-  visible, informed choice to treat the work as ephemeral, not a silent default.
-- Copy should call it a **checkpoint**, not a "save," so the word "commit"
-  doesn't quietly over-promise: *"committed as a checkpoint on `main`
-  (best-effort — branch to make it durable)."*
+This is also *why every other cloud agent forces branch-first* — they couldn't
+answer "who decides, and when," so they removed the decision. Auto-branch removes
+it too, but keeps the start-on-`main` differentiator the upfront version throws away.
+
+## The decomposition: flag the *storage substrate*, not the commit-flow
+
+The one thing the platform flag governs is **where durable state lives** — because
+that's the only thing that genuinely differs by surface. Commit-flow is the same
+everywhere; storage is not:
+
+- **Commit-flow → `auto-branch-on-commit`, universal** (PWA + APK + cloud). No
+  per-platform fork. Avoids a two-mental-models coherence tax and the "what does
+  commit do here?" ambiguity.
+- **Durable-storage substrate → platform-flagged:**
+  - **APK** can use **local git / SAF** (real durable filesystem) — the
+    owner-held, stateless-container bet.
+  - **PWA** leans on the **remote snapshot** (its local storage is evictable
+    OPFS/IndexedDB; not safe to own the only durable copy).
+  - Detail lives in `Scratchpad Durable Storage — Remote vs Phone-Local.md`.
+
+**Two conscious tradeoffs this flag carries — recorded, NOT yet decided:**
+1. **APK-local = re-adopting phone-local = it severs cross-surface continuity.**
+   The delta on the phone isn't visible on the WSL surface. This only holds
+   together if we accept *"the `main` scratchpad is per-device; anything you want
+   cross-surface, you graduate to a branch"* (branches ARE cross-surface via
+   GitHub). Coherent, but a real narrowing of the continuity headline — decide
+   with eyes open, don't let the flag smuggle it in.
+2. **Identity:** if PWA auto-branches and the richest scratchpad (local git)
+   lives only on the experimental/debug-only APK, the headline differentiator's
+   best form lives where almost nobody is. Pick deliberately: is the scratchpad
+   *the reason to install the APK* (power-user hook), or a niche perk while the
+   PWA is "a solid mobile agent like the others"? Don't land in the fuzzy middle.
 
 ## The snapshot's contract: best-effort warm-reattach (not a guarantee)
 
@@ -149,18 +202,19 @@ This is the key reframe versus the original draft. Treating the snapshot as a
 *durability guarantee* forces a hard SLO — never drop work, hold the line at
 every stall — which is the "marathon" that made this design feel expensive.
 
-The owner's stance ("I'd like it there when I get back, but I won't expect it")
-demotes the snapshot to **best-effort warm-reattach**: usually your declined-but-
-committed `main` work is still there; sometimes it isn't; either way the system
-*tells you which*. No SLO to defend, no marathon — because we stopped promising
-something we couldn't guarantee.
+In the auto-branch model the snapshot's job *shrinks further*: durable work lives
+on pushed branches (git), so the snapshot only holds the **uncommitted `main`
+exploration** between sessions. The owner's stance ("I'd like it there when I get
+back, but I won't expect it") fits exactly — **best-effort warm-reattach**:
+usually your in-flight `main` work is still there; sometimes it isn't; either way
+the system *tells you which*. No SLO to defend.
 
-"Best-effort + honest" is **not** "permission to be flaky." The bar just moves
-from *never lose work* to **fail loudly, never silently** — good enough that
-"No" usually works, and clear at reconnect when it didn't (the
-`RESTORE_FAILED_MESSAGE` surface already does this). The tradeoff-statement at
-the prompt and the honest-failure at reconnect are two halves of one honesty,
-and one half already ships.
+"Best-effort + honest" is **not** "permission to be flaky." The bar moves from
+*never lose work* to **fail loudly, never silently** — clear at reconnect when a
+restore failed (the `RESTORE_FAILED_MESSAGE` surface already does this). And the
+blast radius is bounded by design: anything committed has already auto-branched
+and auto-pushed to durable git, so only *uncommitted* exploration is ever at
+best-effort risk.
 
 ## Explicitly out of scope / rejected
 
@@ -168,8 +222,13 @@ and one half already ships.
   Anchor #1. Same-branch chats *should* share a workspace.
 - **Under-the-hood branch routed to `main`** — pays the branch ceremony *and*
   the routing complexity to end up pretending it's `main`. Two pairs of shoes.
-- **Committing WIP durably to `main`** — clutters history, needs the guard off,
-  and is redundant once the branch prompt is cheap.
+- **Committing WIP durably to `main`** — nothing commits to `main` at all now;
+  the first commit auto-branches off it.
+- **An interactive "branch this?" prompt** — the model we first sketched.
+  Replaced by `auto-branch-on-commit` because the prompt re-created branch-first
+  ceremony and had no good answer for agent-initiated / headless commits.
+- **Forking the commit-flow by platform** — PWA and APK both `auto-branch-on-commit`;
+  only the *storage substrate* is platform-flagged. Avoids two mental models.
 - **Daemon/remote-session as the *durable* home (for now)** — the right someday,
   but cross-network reachability is unsolved; cloud-default sidesteps it. (Anchor #3.)
 - **Making the snapshot a durability guarantee** — replaced by the best-effort
@@ -178,23 +237,30 @@ and one half already ships.
 ## Known sharp edge this reframes (not yet fixed)
 
 The per-branch snapshot key (`snapshot:<repo>:<branch>`, one slot, prior
-reclaimed) means two genuinely parallel workspaces rooted at `main` contend for
-the single `:main` slot. **This is live for this owner** — work moves on `main`
+reclaimed) means two parallel `main` *explorations* contend for the single
+`:main` slot. **This is live for this owner** — uncommitted `main` work moves
 across an Android surface *and* a local WSL surface, which is exactly two streams
-at `:main`. The original draft called this "a signal the stream wanted a name";
-that's too neat when the owner's real workflow provokes it routinely. Candidate
-fixes to weigh (deferred): a **per-device** scratchpad slot on the remote rather
-than per-branch, so two surfaces don't stomp each other; or accept last-writer-
-wins with a loud "a newer checkpoint from another device replaced this." Either
-way it's a real concurrency question, not just a graduation nudge.
+at `:main`. (Note: only the *uncommitted exploration* contends now — committed
+work has already auto-branched to its own `:<branch>` slot, so the blast radius
+is just in-flight scratch.) Candidate fixes (deferred): a **per-device** `main`
+slot on the remote rather than per-branch, so two surfaces don't stomp each
+other; or last-writer-wins with a loud "a newer `main` snapshot from another
+device replaced this." A real concurrency question, and it interacts with the
+APK-local-storage tradeoff (#1 in the decomposition) — phone-local sidesteps the
+remote collision entirely but at the cost of cross-surface visibility.
 
 ## Open questions before this graduates
 
-1. **Graduation prompt surface + silence policy.** Where does the commit-time
-   "branch this?" live in the chat UI, and what's the *don't-nag* rule (once per
-   session / stretch / until intent changes)? The silence is half the design.
-2. **Does "Yes" auto-commit, or stage-and-confirm — and does the Auditor survive
-   this model at all?** Leaning toward **unbundle and mostly retire the
+1. **Branch auto-naming + auto-push policy.** `auto-branch-on-commit` needs a
+   name with no human in the loop — model-proposed topic name, deterministic
+   fallback (timestamp/slug), or both? And does the first commit *always*
+   auto-push to origin, or is there a "stay local until I say" case (which would
+   re-introduce snapshot-dependence for that branch)? Note the scope: auto-branch
+   fires on the *first* commit while on `main`; once you're on the named branch,
+   subsequent commits are ordinary. *(This replaces the old "branch this?" prompt
+   + silence-policy question — auto-branch dissolved it.)*
+2. **Does the commit auto-push behind a scan, and does the Auditor survive this
+   model at all?** Leaning toward **unbundle and mostly retire the
    model-Auditor.** It was the v1 answer when commit-to-`main` was the primary
    path and a model-judge was the only available gate; the branch-at-commit shift
    plus the tooling that now exists relocates each of its three jobs to a
@@ -215,27 +281,33 @@ way it's a real concurrency question, not just a graduation nudge.
    territory a slimmed model-judge-at-graduation would own is "semantically
    dangerous AND must-be-caught **pre-push**, beyond secrets" — a band that looks
    empty (the deterministic scan covers catastrophic-once-pushed; the PR catches
-   the rest pre-*merge*). Keep a model-Auditor at graduation **only if that band
-   turns out non-empty.** Open: confirm the band is empty; pick the deterministic
-   scanner; decide whether "Yes" auto-commits behind the scan or stage-and-confirms.
+   the rest pre-*merge*). Keep a model-Auditor here **only if that band turns out
+   non-empty.** Open: confirm the band is empty; pick the deterministic scanner;
+   decide whether the scan runs inline on auto-push and blocks on a hit (and how
+   that failure surfaces, since there's no human in the loop at auto-push).
 3. **`:main` multi-surface contention.** Per-device slot, last-writer-wins-loud,
    or other? (See sharp edge above.)
 4. **Snapshot best-effort target.** Not an SLO, but a *felt* reliability bar —
-   how often must "No" survive for the checkpoint to feel trustworthy? Needs
-   instrumentation from the CF/Modal snapshot work to answer with numbers.
-5. **Abandon path.** Discarding a `main` exploration without graduating — explicit
+   how often must uncommitted `main` exploration survive a reclaim to feel
+   trustworthy? Needs instrumentation from the CF/Modal snapshot work for numbers.
+5. **Abandon path.** Discarding a `main` exploration before any commit — explicit
    "forget," or just snapshot TTL expiry? What's the UX?
-6. **Where the durable delta physically lives** — remote snapshot vs phone-local
-   vs hybrid — is split into
-   `docs/decisions/Scratchpad Durable Storage — Remote vs Phone-Local.md` and
-   **parked**; the best-effort contract here makes that question less urgent.
+6. **Storage substrate per platform + its two conscious tradeoffs.** The
+   decomposition *decides to platform-flag the substrate* (APK local-git/SAF vs
+   PWA remote-snapshot); still open are (a) accepting that APK-local **narrows
+   cross-surface continuity** to "graduate-to-a-branch," and (b) the **identity**
+   pick (scratchpad = APK power-user hook vs niche perk). Detail + the
+   remote-vs-local bet live in
+   `docs/decisions/Scratchpad Durable Storage — Remote vs Phone-Local.md`.
 
 ## Next step
 
 Needs a `ROADMAP.md` entry to become work. The cheapest first slice that proves
-the model is the **commit-time branch prompt + its silence logic** — the
-branch-carry plumbing (`create_branch`) and the honest-failure surface
-(`RESTORE_FAILED_MESSAGE`) already exist, so the net-new is the prompt, the
-intercept-before wiring, and the don't-nag rule. Snapshot best-effort hardening
-proceeds in parallel via the CF/Modal snapshot docs — but as warm-reattach
-quality, no longer as a durability guarantee.
+the model is **`auto-branch-on-commit` + auto-push + auto-naming** (universal,
+no platform flag yet) — the branch-carry plumbing (`create_branch`) and the
+honest-failure surface (`RESTORE_FAILED_MESSAGE`) already exist, so the net-new
+is firing the branch automatically at the first commit, auto-pushing it behind
+the secret scan, and the naming scheme. The platform-flagged storage substrate
+(APK-local vs PWA-remote) and snapshot best-effort hardening proceed in parallel
+via the storage + CF/Modal snapshot docs — the latter as warm-reattach quality,
+no longer as a durability guarantee.

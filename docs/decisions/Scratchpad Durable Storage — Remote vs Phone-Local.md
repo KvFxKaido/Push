@@ -1,22 +1,29 @@
 # Scratchpad Durable Storage — Remote vs Phone-Local
 
-Date: 2026-06-03
-Status: **Draft — Parked.** Split out of `Main as Scratchpad — Branch on Graduation.md` to keep that doc about the *principle*. Parked because the best-effort snapshot contract (below) makes "where the delta physically lives" less urgent, and because the device-owned bets depend on cross-network reachability that is currently unsolved.
+Date: 2026-06-03 (rescoped 2026-06-03)
+Status: **Draft.** Split out of `Main as Scratchpad — Branch on Graduation.md`. That doc's **decomposition decided** the *commit-flow* is `auto-branch-on-commit`, universal (no platform fork) — and that the **one thing the platform flag governs is the durable-storage substrate**, which is what THIS doc owns. So this is no longer just a parked fork: it's the open half of a settled split. Still open here: which substrate per platform, and the two conscious tradeoffs (continuity narrowing + identity) below.
 Owner: Push
 Related: `docs/decisions/Main as Scratchpad — Branch on Graduation.md` (parent — the persistence posture this serves),
 `docs/decisions/Repo Mirror Design.md` (the phone-side `MirrorTarget` storage layer a phone-local variant would build on),
 `docs/decisions/Cloudflare Native Backup Migration.md`, `docs/decisions/Modal Sandbox Snapshots Design.md` (the remote-snapshot impl)
 
-## Why this is parked, not decided
+## What this owns (post-decomposition)
 
-The parent doc demotes the snapshot from a *durability guarantee* to **best-effort
-warm-reattach**. Once "your declined-but-committed `main` work might not survive,
-and we say so" is the contract, the question of *which durable store holds the
-delta* stops being load-bearing — any of the options below satisfies a best-effort
-bar. So this is a fork in the road worth recording, not a blocker to resolve now.
-It becomes live again only if/when we want the scratchpad delta to be more than
-best-effort, or when remote-session reachability is solved well enough to make a
-device-owned store primary.
+The parent doc settled two things that scope this one:
+
+1. **Commit-flow is `auto-branch-on-commit`, universal.** Durable work lives on
+   auto-pushed branches (git), the same on every surface. So this doc is *not*
+   about how commits behave.
+2. **The platform flag governs only the storage substrate** — i.e. where the
+   *uncommitted `main` exploration* (the snapshot's now-shrunken job) durably
+   lives. That's this doc's question, and it's genuinely platform-dependent
+   because the storage reality is (APK-strong / PWA-weak, below).
+
+And the parent demotes the snapshot to **best-effort warm-reattach**, which lowers
+the stakes: any option here satisfies a best-effort bar, so this is a substrate
+*preference* per platform, not a correctness blocker. It only escalates if we ever
+want the delta to be more than best-effort, or if remote-session reachability gets
+solved well enough to make a device-owned store primary.
 
 ## The trichotomy
 
