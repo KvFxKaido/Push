@@ -8,7 +8,8 @@ Related: `app/src/hooks/useWorkspaceSandboxController.ts` (branch→sandbox tear
 `app/src/worker/snapshot-index.ts`, `app/src/worker/worker-cf-sandbox.ts` (per-branch snapshot index + reclaim),
 `app/src/lib/sandbox-tools.ts` (`create_branch` / `switch_branch` typed tools),
 `docs/decisions/Modal Sandbox Snapshots Design.md`, `docs/decisions/Cloudflare Native Backup Migration.md` (the snapshot impl this leans on),
-`docs/decisions/Scratchpad Durable Storage — Remote vs Phone-Local.md` (the parked where-does-the-delta-live fork, split out of this doc),
+`docs/decisions/Scratchpad Durable Storage — Remote vs Phone-Local.md` (the where-does-the-delta-live fork, split out of this doc),
+[`Coder Delegation Collapse — Component Audit.md`](Coder%20Delegation%20Collapse%20—%20Component%20Audit.md) (**pairs with this** — collapses the Orchestrator→Coder wrapper so the lead agent drives the engine directly; that single-agent loop is what *commits*, and auto-branch is its durability story),
 `CLAUDE.md` (repo/session/branch model)
 
 ## TL;DR
@@ -166,6 +167,8 @@ auto-branch makes all three *not exist* rather than answering them:
 This is also *why every other cloud agent forces branch-first* — they couldn't
 answer "who decides, and when," so they removed the decision. Auto-branch removes
 it too, but keeps the start-on-`main` differentiator the upfront version throws away.
+
+**Pairs with the [Coder Delegation Collapse](Coder%20Delegation%20Collapse%20—%20Component%20Audit.md) track:** that collapse makes *headless detached engine runs* (lead drives the durable job DO directly, no Orchestrator handoff) more central — and a headless run literally *cannot* answer a "branch this?" prompt. So the delegation collapse is independent evidence that auto-branch, not a prompt, is the right call; and auto-branch supplies the durability story for that collapsed single-agent loop. Pair the visions, but sequence the rollout (collapse delegation first — it has a test suite and a clean cut — then layer auto-branch, whose "who commits" answer is cleanest once the single-agent loop exists).
 
 ## The decomposition: flag the *storage substrate*, not the commit-flow
 
