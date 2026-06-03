@@ -1,7 +1,7 @@
 # Coder Delegation Collapse — Component Audit
 
 Date: 2026-06-02 (cross-linked 2026-06-03)
-Status: **Draft**
+Status: **ROADMAP-tracked (first priority, promoted 2026-06-03); implementation pending.** Sequenced *first* in the combined "Single-Agent Loop + Branch-at-Commit Persistence" item — category-2 cut goes behind a flag and is measured against the delegated path before any deletion. Flip to `Current` when the lead-drives-the-engine-inline path is the default.
 Owner: Push
 Related: [`Main as Scratchpad — Branch on Graduation.md`](Main%20as%20Scratchpad%20—%20Branch%20on%20Graduation.md) — **pairs with this track.** Same move (frontier-lead expired a scaffolding layer → cut the wrapper, keep the engine), same two durable floors (job engine + snapshot). Its `auto-branch-on-commit` is the durability story for the collapsed single-agent loop, and a *headless detached engine run* (more central after this collapse) can't answer a prompt — which is independent evidence auto-branch beats a prompt. **Note the Auditor reconciliation in Category 4 below.**
 

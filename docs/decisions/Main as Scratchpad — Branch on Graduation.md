@@ -1,7 +1,7 @@
 # Main as Scratchpad — Branch on Graduation
 
 Date: 2026-06-03 (refocused 2026-06-03)
-Status: **Draft** — design-in-motion; needs a `ROADMAP.md` entry to graduate to an implementation commitment
+Status: **ROADMAP-tracked (first priority, promoted 2026-06-03); implementation pending.** Design is committed; sequenced *after* the [Coder Delegation Collapse](Coder%20Delegation%20Collapse%20—%20Component%20Audit.md) track (step 2 of the combined roadmap item). Flip to `Current` when `auto-branch-on-commit` ships.
 Owner: Push
 Related: `app/src/hooks/useWorkspaceSandboxController.ts` (branch→sandbox teardown gate),
 `app/src/hooks/useSandbox.ts` + `app/src/lib/sandbox-session.ts` (sandbox keyed by `repo:branch`; `RESTORE_FAILED_MESSAGE`),
