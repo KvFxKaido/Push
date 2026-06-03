@@ -2,7 +2,7 @@
 
 This is the **required entry doc** for Push. Repo instruction loaders read `PUSH.md` first (Push-specific override) and fall back to `AGENTS.md` → `CLAUDE.md` → `GEMINI.md`, so this file must remain self-sufficient when no `PUSH.md` is present.
 
-[`ARCHITECTURE.md`](ARCHITECTURE.md) is the deeper canonical reference for architecture and implementation details; this file carries the minimum contract Push agents need at startup. On conflict, prefer `ARCHITECTURE.md` for detailed behavior and this file for the startup contract.
+[`ARCHITECTURE.md`](ARCHITECTURE.md) is the deeper canonical reference for architecture and implementation details; this file carries the minimum contract Push agents need at startup. On conflict between the two, prefer `ARCHITECTURE.md` for detailed behavior and this file for the startup contract.
 
 ## Core model
 
@@ -73,7 +73,7 @@ npm run typecheck:tsgo
 ## Scratch workspace
 
 - Available when GitHub auth isn't needed: sandbox-only, no repo GitHub tools.
-- Use for quick experiments or starting without repo auth.
+- Use for quick experiments or when starting without repo auth.
 
 ## New feature checklist
 
