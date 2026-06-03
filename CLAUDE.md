@@ -63,13 +63,7 @@ Biome formats the entire monorepo from the root config (`biome.json`); the linte
 
 ### Runtime roles and display vocabulary
 
-| Role | Responsibility |
-|---|---|
-| **Orchestrator** | Conversational lead, interprets intent, delegates |
-| **Explorer** | Read-only investigation, code tracing, evidence gathering |
-| **Coder** | Autonomous implementation in the sandbox |
-| **Reviewer** | On-demand advisory diff review (branch diff / last commit / working tree) |
-| **Auditor** | Pre-commit SAFE/UNSAFE gate; defaults to UNSAFE on error |
+The five internal roles — **Orchestrator**, **Explorer**, **Coder**, **Reviewer**, **Auditor** — and their responsibilities live once in [`ARCHITECTURE.md`](ARCHITECTURE.md#agent-roles-and-display-vocabulary) (the canonical source per this file's own deference to it). Don't restate the responsibility table here — the hand-copied duplicate had already drifted from ARCHITECTURE.md before this pointer replaced it.
 
 Roles are locked internally and models are replaceable. Presentation is phase-first: Explorer/Coder normally render as "Exploring" / "Editing", Orchestrator source attribution renders as "Assistant", and Reviewer/Auditor keep names where independent attribution is useful. Do not hand-spell user-facing role labels; use `lib/role-display.ts`.
 
