@@ -436,8 +436,8 @@ export function RepoChatDrawer({
                     className={`inline-flex h-9 items-center gap-1.5 px-3 text-xs font-medium text-push-fg-secondary ${DRAWER_CONTROL_SURFACE_CLASS} ${DRAWER_CONTROL_INTERACTIVE_CLASS}`}
                   >
                     <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
-                    <Plus className="relative z-10 h-3.5 w-3.5" />
-                    <span className="relative z-10">New chat</span>
+                    <Plus className="h-3.5 w-3.5" />
+                    <span>New chat</span>
                   </button>
                 </div>
                 <div className="relative mt-2">
@@ -498,7 +498,7 @@ export function RepoChatDrawer({
                             aria-label={`Customize ${repo.name}`}
                             title="Customize repo"
                           >
-                            <Palette className="relative z-10 h-3.5 w-3.5" />
+                            <Palette className="h-3.5 w-3.5" />
                           </button>
                         </div>
 

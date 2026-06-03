@@ -126,14 +126,14 @@ export function ChatScreen({
         style={{ transform: chatShellTransform }}
       >
         <ChatBackgroundGlow active={resolvedAppearance.glowEnabled} color={glowColor} />
-        <header className="relative z-10 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 pt-3 pb-2">
+        <header className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 pt-3 pb-2">
           <div className="relative z-20 flex min-w-0 items-center gap-2">
             <div className="flex h-[34px] min-w-0 items-center gap-1 pl-0.5 pr-1">
               <RepoChatDrawer {...drawerProps} />
               {activeRepoAppearance && (
                 <RepoAppearanceBadge
                   appearance={activeRepoAppearance}
-                  className="relative z-10 -ml-1.5 h-[18px] w-[18px] shrink-0 rounded-md"
+                  className="-ml-1.5 h-[18px] w-[18px] shrink-0 rounded-md"
                   iconClassName="h-[11px] w-[11px]"
                 />
               )}
@@ -242,8 +242,8 @@ export function ChatScreen({
                 aria-label="Open launcher"
                 title="Launcher"
               >
-                <LauncherGridIcon className="relative z-10 h-3.5 w-3.5 text-push-fg-secondary transition-colors group-hover:text-push-fg" />
-                <span className="relative z-10 max-w-[92px] truncate text-xs font-medium text-push-fg-secondary transition-colors group-hover:text-push-fg sm:max-w-[128px]">
+                <LauncherGridIcon className="h-3.5 w-3.5 text-push-fg-secondary transition-colors group-hover:text-push-fg" />
+                <span className="max-w-[92px] truncate text-xs font-medium text-push-fg-secondary transition-colors group-hover:text-push-fg sm:max-w-[128px]">
                   {launcherLabel}
                 </span>
               </button>
@@ -264,7 +264,7 @@ export function ChatScreen({
                     aria-label={`Approval mode: ${cfg.label}. Click to cycle.`}
                     title={`${cfg.label} mode — click to switch`}
                   >
-                    <Icon className="relative z-10 h-3.5 w-3.5" />
+                    <Icon className="h-3.5 w-3.5" />
                   </button>
                 );
               })()}
@@ -275,7 +275,7 @@ export function ChatScreen({
                 aria-label="Open workspace hub"
                 title="Workspace"
               >
-                <WorkspaceDockIcon className="relative z-10 h-3.5 w-3.5" />
+                <WorkspaceDockIcon className="h-3.5 w-3.5" />
                 {hasWorkspaceActivityIndicator && (
                   <span
                     className={`absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-push-sky ${
@@ -318,7 +318,7 @@ export function ChatScreen({
                     }
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-emerald-300`}
                   >
-                    <span className="relative z-10">
+                    <span>
                       {instructions.creatingAgentsMdWithAI ? 'Drafting...' : 'Create with AI'}
                     </span>
                   </button>
@@ -327,9 +327,7 @@ export function ChatScreen({
                     disabled={instructions.creatingAgentsMd || instructions.creatingAgentsMdWithAI}
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-push-link`}
                   >
-                    <span className="relative z-10">
-                      {instructions.creatingAgentsMd ? 'Creating...' : 'Create Template'}
-                    </span>
+                    <span>{instructions.creatingAgentsMd ? 'Creating...' : 'Create Template'}</span>
                   </button>
                 </div>
               </div>

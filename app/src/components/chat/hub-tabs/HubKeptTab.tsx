@@ -124,13 +124,13 @@ function KeptCard({
           >
             {expanded ? (
               <>
-                <ChevronUp className="relative z-10 h-3 w-3" />
-                <span className="relative z-10">Less</span>
+                <ChevronUp className="h-3 w-3" />
+                <span>Less</span>
               </>
             ) : (
               <>
-                <ChevronDown className="relative z-10 h-3 w-3" />
-                <span className="relative z-10">More</span>
+                <ChevronDown className="h-3 w-3" />
+                <span>More</span>
               </>
             )}
           </button>
@@ -143,9 +143,9 @@ function KeptCard({
           title={copied ? 'Copied!' : 'Copy content'}
         >
           {copied ? (
-            <Check className="relative z-10 h-3.5 w-3.5 text-push-status-success" />
+            <Check className="h-3.5 w-3.5 text-push-status-success" />
           ) : (
-            <Copy className="relative z-10 h-3.5 w-3.5" />
+            <Copy className="h-3.5 w-3.5" />
           )}
         </button>
         <button
@@ -154,7 +154,7 @@ function KeptCard({
           aria-label="Remove pin"
           title="Remove pin"
         >
-          <Trash2 className="relative z-10 h-3.5 w-3.5" />
+          <Trash2 className="h-3.5 w-3.5" />
         </button>
       </div>
     </div>

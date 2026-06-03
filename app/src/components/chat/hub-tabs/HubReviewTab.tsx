@@ -1030,11 +1030,11 @@ export function HubReviewTab({
                 className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-push-fg-secondary`}
               >
                 {running ? (
-                  <Loader2 className="relative z-10 h-3 w-3 animate-spin" />
+                  <Loader2 className="h-3 w-3 animate-spin" />
                 ) : (
-                  <RefreshCw className="relative z-10 h-3 w-3" />
+                  <RefreshCw className="h-3 w-3" />
                 )}
-                <span className="relative z-10">
+                <span>
                   {running
                     ? activeReviewDepth === 'deep'
                       ? 'Investigating…'
@@ -1050,8 +1050,8 @@ export function HubReviewTab({
                   className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5 text-push-fg-dim`}
                   title="Cancel deep review"
                 >
-                  <X className="relative z-10 h-3 w-3" />
-                  <span className="relative z-10">Cancel</span>
+                  <X className="h-3 w-3" />
+                  <span>Cancel</span>
                 </button>
               )}
             </div>
@@ -1099,13 +1099,13 @@ export function HubReviewTab({
                     onClick={handleLoadSavedReview}
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
                   >
-                    <span className="relative z-10">Load saved</span>
+                    <span>Load saved</span>
                   </button>
                   <button
                     onClick={handleClearSavedReview}
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
                   >
-                    <span className="relative z-10">Clear</span>
+                    <span>Clear</span>
                   </button>
                 </div>
               </div>
@@ -1160,7 +1160,7 @@ export function HubReviewTab({
                   onClick={handleSaveReview}
                   className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
                 >
-                  <span className="relative z-10">
+                  <span>
                     {isCurrentReviewSaved
                       ? 'Saved locally'
                       : savedReview
@@ -1173,7 +1173,7 @@ export function HubReviewTab({
                     onClick={handleLoadSavedReview}
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
                   >
-                    <span className="relative z-10">Load saved</span>
+                    <span>Load saved</span>
                   </button>
                 )}
                 {savedReview && (
@@ -1181,7 +1181,7 @@ export function HubReviewTab({
                     onClick={handleClearSavedReview}
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
                   >
-                    <span className="relative z-10">Clear saved</span>
+                    <span>Clear saved</span>
                   </button>
                 )}
                 {savedReview && (
@@ -1229,13 +1229,13 @@ export function HubReviewTab({
                 >
                   {postState === 'posting' ? (
                     <>
-                      <Loader2 className="relative z-10 h-3 w-3 animate-spin" />
-                      <span className="relative z-10">Posting…</span>
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      <span>Posting…</span>
                     </>
                   ) : (
                     <>
-                      <SendLiftIcon className="relative z-10 h-3 w-3" />
-                      <span className="relative z-10">Post to PR</span>
+                      <SendLiftIcon className="h-3 w-3" />
+                      <span>Post to PR</span>
                     </>
                   )}
                 </button>
@@ -1363,8 +1363,8 @@ export function HubReviewTab({
                                 className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} mt-0.5 h-7 gap-1 px-2.5 text-push-2xs`}
                                 title={`Open ${c.file}${typeof c.line === 'number' ? ` line ${c.line}` : ''} in Diff`}
                               >
-                                <DiffSeamIcon className="relative z-10 h-3 w-3" />
-                                <span className="relative z-10">Diff</span>
+                                <DiffSeamIcon className="h-3 w-3" />
+                                <span>Diff</span>
                               </button>
                               {onFixFinding && (
                                 <button
@@ -1381,8 +1381,8 @@ export function HubReviewTab({
                                   className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} mt-0.5 h-7 gap-1 px-2.5 text-push-2xs text-push-fg-secondary`}
                                   title={`Send ${c.file}${typeof c.line === 'number' ? ` line ${c.line}` : ''} to chat as a fix request`}
                                 >
-                                  <Sparkles className="relative z-10 h-3 w-3" />
-                                  <span className="relative z-10">Fix</span>
+                                  <Sparkles className="h-3 w-3" />
+                                  <span>Fix</span>
                                 </button>
                               )}
                             </div>

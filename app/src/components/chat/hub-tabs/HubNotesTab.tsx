@@ -104,8 +104,8 @@ export function HubNotesTab({
                   className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
                   title="Save current notes as a memory"
                 >
-                  <Check className="relative z-10 h-3.5 w-3.5" />
-                  <span className="relative z-10">Save note</span>
+                  <Check className="h-3.5 w-3.5" />
+                  <span>Save note</span>
                 </button>
                 <button
                   type="button"
@@ -115,7 +115,7 @@ export function HubNotesTab({
                   aria-label="Clear notes"
                   title="Clear notes"
                 >
-                  <Trash2 className="relative z-10 h-3.5 w-3.5" />
+                  <Trash2 className="h-3.5 w-3.5" />
                 </button>
                 {onExportToRepo ? (
                   <button
@@ -125,8 +125,8 @@ export function HubNotesTab({
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
                     aria-label="Save notes to repo"
                   >
-                    <Download className="relative z-10 h-3.5 w-3.5" />
-                    <span className="relative z-10">Save to repo</span>
+                    <Download className="h-3.5 w-3.5" />
+                    <span>Save to repo</span>
                   </button>
                 ) : null}
               </div>
@@ -152,7 +152,7 @@ export function HubNotesTab({
                     aria-label="Delete selected memory"
                     title="Delete selected memory"
                   >
-                    <Trash2 className="relative z-10 h-3.5 w-3.5" />
+                    <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 )}
               </div>
@@ -236,7 +236,7 @@ function HubTodoSection({ todos, onClear }: { todos: readonly TodoItem[]; onClea
             aria-label="Clear plan"
             title="Clear plan"
           >
-            <Trash2 className="relative z-10 h-3.5 w-3.5" />
+            <Trash2 className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>

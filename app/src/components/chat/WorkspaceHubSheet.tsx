@@ -271,7 +271,6 @@ const PHASE_LABELS: Record<CommitPhase, string> = {
 
 const COMMIT_MESSAGE_SUGGEST_TIMEOUT_MS = 30_000;
 const BRANCH_NAME_SUGGEST_TIMEOUT_MS = 30_000;
-const HUB_CONTROL_TEXT_CLASS = 'relative z-10';
 
 const COMMIT_MESSAGE_SUGGEST_SYSTEM_PROMPT = `You generate git commit messages.
 
@@ -1159,7 +1158,7 @@ export function WorkspaceHubSheet({
             className="pointer-events-none absolute inset-x-0 -top-20 z-0 h-48 bg-[radial-gradient(58%_100%_at_50%_0%,rgb(var(--push-accent-rgb)_/_0.17),transparent_72%)] blur-2xl"
           />
           {/* ---- Header ---- */}
-          <header className="relative z-10 border-b border-push-edge px-3 py-3">
+          <header className="border-b border-push-edge px-3 py-3">
             <div className="flex items-center justify-between gap-2">
               {/* Repo + Branch dropdown */}
               <div className="min-w-0 space-y-1">
@@ -1182,12 +1181,10 @@ export function WorkspaceHubSheet({
                         }}
                         className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-7 gap-1 px-2.5 text-push-2xs`}
                       >
-                        <BranchWaveIcon className={`${HUB_CONTROL_TEXT_CLASS} h-3 w-3`} />
-                        <span className={`${HUB_CONTROL_TEXT_CLASS} max-w-[92px] truncate`}>
-                          {branchProps.currentBranch}
-                        </span>
+                        <BranchWaveIcon className="h-3 w-3" />
+                        <span className="max-w-[92px] truncate">{branchProps.currentBranch}</span>
                         <ChevronDown
-                          className={`${HUB_CONTROL_TEXT_CLASS} h-3 w-3 transition-transform ${branchDropdownOpen ? 'rotate-180' : ''}`}
+                          className={`h-3 w-3 transition-transform ${branchDropdownOpen ? 'rotate-180' : ''}`}
                         />
                       </button>
 
@@ -1387,8 +1384,8 @@ export function WorkspaceHubSheet({
                       className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-7 gap-1 px-2.5 text-push-fg-dim`}
                       title="Drop the saved snapshot so the next start is a clean clone"
                     >
-                      <Trash2 className={`${HUB_CONTROL_TEXT_CLASS} h-3 w-3`} />
-                      <span className={HUB_CONTROL_TEXT_CLASS}>Forget</span>
+                      <Trash2 className="h-3 w-3" />
+                      <span>Forget</span>
                     </button>
                   )}
                   {sandboxStatus === 'error' && sandboxId && (
@@ -1396,8 +1393,8 @@ export function WorkspaceHubSheet({
                       onClick={onRetrySandbox}
                       className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-7 gap-1 px-2.5 text-amber-300`}
                     >
-                      <RefreshCw className={`${HUB_CONTROL_TEXT_CLASS} h-3 w-3`} />
-                      <span className={HUB_CONTROL_TEXT_CLASS}>Retry</span>
+                      <RefreshCw className="h-3 w-3" />
+                      <span>Retry</span>
                     </button>
                   )}
                   <button
@@ -1406,13 +1403,11 @@ export function WorkspaceHubSheet({
                   >
                     {sandboxStatus === 'error' ? (
                       <>
-                        <Plus className={`${HUB_CONTROL_TEXT_CLASS} h-3 w-3`} />
-                        <span className={HUB_CONTROL_TEXT_CLASS}>New</span>
+                        <Plus className="h-3 w-3" />
+                        <span>New</span>
                       </>
                     ) : (
-                      <span className={HUB_CONTROL_TEXT_CLASS}>
-                        {snapshotInfo ? 'Restore' : 'Start'}
-                      </span>
+                      <span>{snapshotInfo ? 'Restore' : 'Start'}</span>
                     )}
                   </button>
                 </div>
@@ -1437,13 +1432,11 @@ export function WorkspaceHubSheet({
                   title="Snapshot the workspace and terminate the container"
                 >
                   {hibernating ? (
-                    <Loader2 className={`${HUB_CONTROL_TEXT_CLASS} h-3 w-3 animate-spin`} />
+                    <Loader2 className="h-3 w-3 animate-spin" />
                   ) : (
-                    <Save className={`${HUB_CONTROL_TEXT_CLASS} h-3 w-3`} />
+                    <Save className="h-3 w-3" />
                   )}
-                  <span className={HUB_CONTROL_TEXT_CLASS}>
-                    {hibernating ? 'Hibernating…' : 'Hibernate'}
-                  </span>
+                  <span>{hibernating ? 'Hibernating…' : 'Hibernate'}</span>
                 </button>
               </div>
             </div>
@@ -1462,13 +1455,13 @@ export function WorkspaceHubSheet({
                     onClick={confirmBranchSwitch}
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
                   >
-                    <span className={HUB_CONTROL_TEXT_CLASS}>Switch</span>
+                    <span>Switch</span>
                   </button>
                   <button
                     onClick={() => setSwitchConfirmBranch(null)}
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
                   >
-                    <span className={HUB_CONTROL_TEXT_CLASS}>Cancel</span>
+                    <span>Cancel</span>
                   </button>
                 </div>
               </div>
@@ -1493,8 +1486,8 @@ export function WorkspaceHubSheet({
                         : 'border border-transparent text-push-fg-dim hover:border-push-edge/70 hover:bg-white/[0.03] hover:text-push-fg-secondary'
                     }`}
                   >
-                    <Icon className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5`} />
-                    <span className={HUB_CONTROL_TEXT_CLASS}>{tab.label}</span>
+                    <Icon className="h-3.5 w-3.5" />
+                    <span>{tab.label}</span>
                   </button>
                 );
               })}
@@ -1527,11 +1520,11 @@ export function WorkspaceHubSheet({
                   className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
                 >
                   {suggestingCommitMessage ? (
-                    <Loader2 className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5 animate-spin`} />
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : (
-                    <Sparkles className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5`} />
+                    <Sparkles className="h-3.5 w-3.5" />
                   )}
-                  <span className={HUB_CONTROL_TEXT_CLASS}>AI</span>
+                  <span>AI</span>
                 </button>
                 <button
                   onClick={() => {
@@ -1559,13 +1552,13 @@ export function WorkspaceHubSheet({
                   {commitPhase !== 'idle' &&
                   commitPhase !== 'success' &&
                   commitPhase !== 'error' ? (
-                    <Loader2 className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5 animate-spin`} />
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : commitPhase === 'success' ? (
-                    <Check className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5`} />
+                    <Check className="h-3.5 w-3.5" />
                   ) : (
-                    <CommitPulseIcon className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5`} />
+                    <CommitPulseIcon className="h-3.5 w-3.5" />
                   )}
-                  <span className={HUB_CONTROL_TEXT_CLASS}>
+                  <span>
                     {commitPhase === 'idle'
                       ? 'Commit & Push…'
                       : commitPhase === 'success' || commitPhase === 'error'
@@ -1607,11 +1600,11 @@ export function WorkspaceHubSheet({
                     title="Save sandbox snapshot"
                   >
                     {scratchActions.snapshotSaving ? (
-                      <Loader2 className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5 animate-spin`} />
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     ) : (
-                      <Save className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5`} />
+                      <Save className="h-3.5 w-3.5" />
                     )}
-                    <span className={HUB_CONTROL_TEXT_CLASS}>Save</span>
+                    <span>Save</span>
                   </button>
                   <button
                     onClick={scratchActions.onRestoreSnapshot}
@@ -1620,11 +1613,11 @@ export function WorkspaceHubSheet({
                     title="Restore latest sandbox snapshot"
                   >
                     {scratchActions.snapshotRestoring ? (
-                      <Loader2 className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5 animate-spin`} />
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     ) : (
-                      <RotateCcw className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5`} />
+                      <RotateCcw className="h-3.5 w-3.5" />
                     )}
-                    <span className={HUB_CONTROL_TEXT_CLASS}>Restore</span>
+                    <span>Restore</span>
                   </button>
                   <button
                     onClick={scratchActions.onDownloadWorkspace}
@@ -1633,11 +1626,11 @@ export function WorkspaceHubSheet({
                     title="Download sandbox workspace"
                   >
                     {scratchActions.downloadingWorkspace ? (
-                      <Loader2 className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5 animate-spin`} />
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     ) : (
-                      <Download className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5`} />
+                      <Download className="h-3.5 w-3.5" />
                     )}
-                    <span className={HUB_CONTROL_TEXT_CLASS}>Download</span>
+                    <span>Download</span>
                   </button>
                   {onPublishToGitHub && (
                     <button
@@ -1645,10 +1638,8 @@ export function WorkspaceHubSheet({
                       className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5 text-push-fg-secondary`}
                       title="Create a GitHub repository from this workspace"
                     >
-                      <PushOrbitIcon
-                        className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5 text-push-fg-dim`}
-                      />
-                      <span className={HUB_CONTROL_TEXT_CLASS}>Publish</span>
+                      <PushOrbitIcon className="h-3.5 w-3.5 text-push-fg-dim" />
+                      <span>Publish</span>
                     </button>
                   )}
                 </div>
@@ -1892,11 +1883,11 @@ export function WorkspaceHubSheet({
                       className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-10 px-3`}
                     >
                       {suggestingBranchName ? (
-                        <Loader2 className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5 animate-spin`} />
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : (
-                        <Sparkles className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5`} />
+                        <Sparkles className="h-3.5 w-3.5" />
                       )}
-                      <span className={HUB_CONTROL_TEXT_CLASS}>AI</span>
+                      <span>AI</span>
                     </button>
                   </div>
 
@@ -1930,13 +1921,13 @@ export function WorkspaceHubSheet({
                     disabled={suggestingBranchName}
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-10 flex-1 justify-center px-4 text-sm text-push-fg-secondary`}
                   >
-                    <span className={HUB_CONTROL_TEXT_CLASS}>Commit &amp; Push</span>
+                    <span>Commit &amp; Push</span>
                   </button>
                   <button
                     onClick={() => setCommitTargetSheetOpen(false)}
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-10 px-4 text-sm`}
                   >
-                    <span className={HUB_CONTROL_TEXT_CLASS}>Cancel</span>
+                    <span>Cancel</span>
                   </button>
                 </div>
               </div>

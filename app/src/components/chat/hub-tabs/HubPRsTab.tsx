@@ -272,11 +272,11 @@ export function HubPRsTab({
             className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
           >
             {listLoading ? (
-              <Loader2 className="relative z-10 h-3.5 w-3.5 animate-spin" />
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
-              <RefreshCw className="relative z-10 h-3.5 w-3.5" />
+              <RefreshCw className="h-3.5 w-3.5" />
             )}
-            <span className="relative z-10">Refresh</span>
+            <span>Refresh</span>
           </button>
         </div>
 
@@ -379,8 +379,8 @@ export function HubPRsTab({
           }}
           className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
         >
-          <ArrowLeft className="relative z-10 h-3.5 w-3.5" />
-          <span className="relative z-10">All PRs</span>
+          <ArrowLeft className="h-3.5 w-3.5" />
+          <span>All PRs</span>
         </button>
 
         <div className="flex items-center gap-1.5">
@@ -394,9 +394,9 @@ export function HubPRsTab({
             aria-label="Refresh pull requests"
           >
             {listLoading || detailLoading ? (
-              <Loader2 className="relative z-10 h-3.5 w-3.5 animate-spin" />
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
-              <RefreshCw className="relative z-10 h-3.5 w-3.5" />
+              <RefreshCw className="h-3.5 w-3.5" />
             )}
           </button>
           {detail?.url && (
@@ -407,7 +407,7 @@ export function HubPRsTab({
               className={HUB_MATERIAL_ROUND_BUTTON_CLASS}
               aria-label="Open pull request on GitHub"
             >
-              <ExternalLink className="relative z-10 h-3.5 w-3.5" />
+              <ExternalLink className="h-3.5 w-3.5" />
             </a>
           )}
         </div>
@@ -535,16 +535,16 @@ export function HubPRsTab({
                 disabled={!detail.diff}
                 className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-push-fg-secondary`}
               >
-                <DiffSeamIcon className="relative z-10 h-3.5 w-3.5" />
-                <span className="relative z-10">Open in Diff</span>
+                <DiffSeamIcon className="h-3.5 w-3.5" />
+                <span>Open in Diff</span>
               </button>
               {canUseReviewTab && (
                 <button
                   onClick={onOpenReviewTab}
                   className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-push-fg-secondary`}
                 >
-                  <PRThreadIcon className="relative z-10 h-3.5 w-3.5" />
-                  <span className="relative z-10">Review in Push</span>
+                  <PRThreadIcon className="h-3.5 w-3.5" />
+                  <span>Review in Push</span>
                 </button>
               )}
             </div>

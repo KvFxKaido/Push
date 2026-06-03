@@ -51,7 +51,7 @@ export function SandboxStatusBanner({
           onClick={onStart}
           className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} flex-shrink-0 px-3 text-push-link`}
         >
-          <span className="relative z-10">Start</span>
+          <span>Start</span>
         </button>
       </div>
     );
@@ -84,16 +84,16 @@ export function SandboxStatusBanner({
               onClick={onRetry}
               className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} gap-1 px-2.5 text-amber-300`}
             >
-              <RefreshCw className="relative z-10 h-3 w-3" />
-              <span className="relative z-10">Retry</span>
+              <RefreshCw className="h-3 w-3" />
+              <span>Retry</span>
             </button>
           )}
           <button
             onClick={onNewSandbox}
             className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} gap-1 px-2.5 text-red-300`}
           >
-            <Plus className="relative z-10 h-3 w-3" />
-            <span className="relative z-10">Restart runtime</span>
+            <Plus className="h-3 w-3" />
+            <span>Restart runtime</span>
           </button>
           {isInScratchWorkspace && onExitWorkspace && (
             <button

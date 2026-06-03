@@ -104,8 +104,8 @@ export function RepoAppearanceSheet({
                         : undefined
                     }
                   >
-                    <RepoAppearanceGlyph icon={option.id} className="relative z-10 h-5 w-5" />
-                    <span className="relative z-10 text-push-2xs">{option.label}</span>
+                    <RepoAppearanceGlyph icon={option.id} className="h-5 w-5" />
+                    <span className="text-push-2xs">{option.label}</span>
                   </button>
                 );
               })}
@@ -140,14 +140,14 @@ export function RepoAppearanceSheet({
                     }
                   >
                     <span
-                      className="relative z-10 h-3 w-3 rounded-full border"
+                      className="h-3 w-3 rounded-full border"
                       style={{
                         backgroundColor: option.hex,
                         borderColor: hexToRgba(option.hex, 0.45),
                         boxShadow: `0 0 0 4px ${hexToRgba(option.hex, 0.12)}`,
                       }}
                     />
-                    <span className="relative z-10 text-push-2xs">{option.label}</span>
+                    <span className="text-push-2xs">{option.label}</span>
                   </button>
                 );
               })}
@@ -186,7 +186,7 @@ export function RepoAppearanceSheet({
                         : undefined
                     }
                   >
-                    <span className="relative z-10 text-push-2xs">{option.label}</span>
+                    <span className="text-push-2xs">{option.label}</span>
                   </button>
                 );
               })}
@@ -203,8 +203,8 @@ export function RepoAppearanceSheet({
               }}
               className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-10 flex-1 gap-2 px-3 text-push-fg-secondary`}
             >
-              <RotateCcw className="relative z-10 h-4 w-4" />
-              <span className="relative z-10 text-sm">Reset</span>
+              <RotateCcw className="h-4 w-4" />
+              <span className="text-sm">Reset</span>
             </button>
             <button
               type="button"
@@ -220,10 +220,10 @@ export function RepoAppearanceSheet({
             >
               <RepoAppearanceBadge
                 appearance={draft}
-                className="relative z-10 h-5 w-5 rounded-md"
+                className="h-5 w-5 rounded-md"
                 iconClassName="h-3 w-3"
               />
-              <span className="relative z-10 text-sm">Save appearance</span>
+              <span className="text-sm">Save appearance</span>
             </button>
           </div>
         </div>

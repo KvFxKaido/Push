@@ -250,11 +250,11 @@ function BranchCreateSheet({
             >
               {creating ? (
                 <>
-                  <Loader2 className="relative z-10 h-4 w-4 animate-spin" />
-                  <span className="relative z-10">Creating...</span>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Creating...</span>
                 </>
               ) : (
-                <span className="relative z-10">Create</span>
+                <span>Create</span>
               )}
             </Button>
             <Button
@@ -263,7 +263,7 @@ function BranchCreateSheet({
               variant="outline"
               className={BRANCH_ACTION_BUTTON_CLASS}
             >
-              <span className="relative z-10">Cancel</span>
+              <span>Cancel</span>
             </Button>
           </div>
         </div>

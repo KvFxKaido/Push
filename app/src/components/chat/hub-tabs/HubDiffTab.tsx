@@ -225,9 +225,9 @@ export function HubDiffTab({
           className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-9 px-3 text-push-fg-secondary`}
         >
           {(startingSandbox || sandboxStatus === 'creating') && (
-            <Loader2 className="relative z-10 h-3.5 w-3.5 animate-spin" />
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
           )}
-          <span className="relative z-10">
+          <span>
             {startingSandbox || sandboxStatus === 'creating'
               ? 'Starting sandbox...'
               : 'Start sandbox'}
@@ -252,8 +252,8 @@ export function HubDiffTab({
             disabled={!onClearReviewDiff}
             className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
           >
-            <CornerDownRight className="relative z-10 h-3.5 w-3.5" />
-            <span className="relative z-10">Live diff</span>
+            <CornerDownRight className="h-3.5 w-3.5" />
+            <span>Live diff</span>
           </button>
         ) : (
           <button
@@ -262,11 +262,11 @@ export function HubDiffTab({
             className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
           >
             {diffLoading ? (
-              <Loader2 className="relative z-10 h-3.5 w-3.5 animate-spin" />
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
-              <RefreshCw className="relative z-10 h-3.5 w-3.5" />
+              <RefreshCw className="h-3.5 w-3.5" />
             )}
-            <span className="relative z-10">Refresh</span>
+            <span>Refresh</span>
           </button>
         )}
       </div>

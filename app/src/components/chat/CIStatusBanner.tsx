@@ -55,8 +55,8 @@ export function CIStatusBanner({ status, onDiagnose }: CIStatusBannerProps) {
           onClick={onDiagnose}
           className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} gap-1.5 px-3 text-red-100`}
         >
-          <Wrench className="relative z-10 h-3 w-3" />
-          <span className="relative z-10">Diagnose & Fix</span>
+          <Wrench className="h-3 w-3" />
+          <span>Diagnose & Fix</span>
         </button>
       )}
     </div>

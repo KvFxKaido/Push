@@ -54,8 +54,8 @@ export function HubScratchpadTab({
           disabled={!scratchpadContent.trim() || !memoryName.trim()}
           className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
         >
-          <Check className="relative z-10 h-3.5 w-3.5" />
-          <span className="relative z-10">Save</span>
+          <Check className="h-3.5 w-3.5" />
+          <span>Save</span>
         </button>
         <button
           onClick={onClear}
@@ -63,7 +63,7 @@ export function HubScratchpadTab({
           className={HUB_MATERIAL_ROUND_BUTTON_CLASS}
           aria-label="Clear scratchpad"
         >
-          <Trash2 className="relative z-10 h-3.5 w-3.5" />
+          <Trash2 className="h-3.5 w-3.5" />
         </button>
         <button
           onClick={onExportToRepo}
@@ -71,8 +71,8 @@ export function HubScratchpadTab({
           className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
           aria-label="Save scratchpad to repo"
         >
-          <Download className="relative z-10 h-3.5 w-3.5" />
-          <span className="relative z-10">Save to repo</span>
+          <Download className="h-3.5 w-3.5" />
+          <span>Save to repo</span>
         </button>
       </div>
 
@@ -95,7 +95,7 @@ export function HubScratchpadTab({
             className={HUB_MATERIAL_ROUND_BUTTON_CLASS}
             aria-label="Delete selected memory"
           >
-            <Trash2 className="relative z-10 h-3.5 w-3.5" />
+            <Trash2 className="h-3.5 w-3.5" />
           </button>
         )}
       </div>

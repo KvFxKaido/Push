@@ -118,7 +118,7 @@ export function LauncherHomeContent({
                     referrerPolicy="no-referrer"
                   />
                 ) : (
-                  <UserRound className="relative z-10 h-4 w-4" />
+                  <UserRound className="h-4 w-4" />
                 )}
                 <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-push-surface-inset bg-emerald-500" />
               </button>

@@ -171,11 +171,11 @@ function BranchForkSheet({ open, onOpenChange, fromBranch, forkBranch }: BranchF
             >
               {creating ? (
                 <>
-                  <Loader2 className="relative z-10 h-4 w-4 animate-spin" />
-                  <span className="relative z-10">Creating...</span>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Creating...</span>
                 </>
               ) : (
-                <span className="relative z-10">Create Branch</span>
+                <span>Create Branch</span>
               )}
             </Button>
             <Button
@@ -184,7 +184,7 @@ function BranchForkSheet({ open, onOpenChange, fromBranch, forkBranch }: BranchF
               variant="outline"
               className={BRANCH_ACTION_BUTTON_CLASS}
             >
-              <span className="relative z-10">Cancel</span>
+              <span>Cancel</span>
             </Button>
           </div>
         </div>

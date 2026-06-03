@@ -35,25 +35,27 @@ export function timeAgoCompact(timestamp: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Card shell — shared class string for all inline cards
+// Card shell — shared class string for all inline cards.
+// Flat chrome (matches the HUB_* material): solid surface steps + 1px borders,
+// no backdrop-blur / drop shadows / translucent gradients.
 // ---------------------------------------------------------------------------
 
 export const CARD_SHELL_CLASS =
-  'my-2.5 max-w-full overflow-hidden rounded-[20px] border border-push-edge/80 bg-[linear-gradient(180deg,rgba(11,15,22,0.96)_0%,rgba(6,9,14,0.98)_100%)] shadow-[0_16px_36px_rgba(0,0,0,0.4),0_3px_10px_rgba(0,0,0,0.2)] backdrop-blur-xl';
+  'my-2.5 max-w-full overflow-hidden rounded-[20px] border border-push-edge bg-push-surface-raised';
 
 export const CARD_PANEL_CLASS =
-  'rounded-[18px] border border-push-edge/70 bg-[linear-gradient(180deg,rgba(9,13,19,0.88)_0%,rgba(5,8,13,0.94)_100%)] shadow-[0_12px_26px_rgba(0,0,0,0.26),0_2px_8px_rgba(0,0,0,0.14)]';
+  'rounded-[18px] border border-push-edge-subtle bg-push-surface-inset';
 
-export const CARD_PANEL_SUBTLE_CLASS = 'rounded-[16px] border border-push-edge/70 bg-black/10';
+export const CARD_PANEL_SUBTLE_CLASS = 'rounded-[16px] border border-push-edge-subtle bg-black/10';
 
 export const CARD_BUTTON_CLASS =
-  'inline-flex items-center justify-center gap-1.5 rounded-full border border-push-edge-subtle bg-push-grad-input px-3 text-push-sm font-medium text-push-fg-secondary shadow-[0_10px_24px_rgba(0,0,0,0.26),0_2px_8px_rgba(0,0,0,0.14)] backdrop-blur-xl transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50';
+  'inline-flex items-center justify-center gap-1.5 rounded-full border border-push-edge bg-push-surface-raised px-3 text-push-sm font-medium text-push-fg-secondary transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50';
 
 export const CARD_ICON_BUTTON_CLASS =
-  'inline-flex items-center justify-center rounded-full border border-push-edge-subtle bg-push-grad-input text-push-fg-dim shadow-[0_10px_24px_rgba(0,0,0,0.24),0_2px_8px_rgba(0,0,0,0.12)] backdrop-blur-xl transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50';
+  'inline-flex items-center justify-center rounded-full border border-push-edge bg-push-surface-raised text-push-fg-dim transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50';
 
 export const CARD_INPUT_CLASS =
-  'w-full rounded-[18px] border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-push-base text-push-fg font-mono placeholder:text-push-fg-dim shadow-[0_10px_24px_rgba(0,0,0,0.22)] outline-none transition-all focus:border-push-sky/50';
+  'w-full rounded-[18px] border border-push-edge-subtle bg-push-surface-inset px-3 py-2 text-push-base text-push-fg font-mono placeholder:text-push-fg-dim outline-none transition-all focus:border-push-sky/50';
 
 // ---------------------------------------------------------------------------
 // Card status palette — shared across card components

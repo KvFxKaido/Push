@@ -238,7 +238,7 @@ export function PublishToGitHubSheet({ open, onOpenChange, onSubmit }: PublishTo
               disabled={submitting}
               className={`${ACTION_BUTTON_CLASS} text-push-fg-secondary`}
             >
-              <span className="relative z-10">Cancel</span>
+              <span>Cancel</span>
             </button>
             <button
               type="button"
@@ -249,11 +249,11 @@ export function PublishToGitHubSheet({ open, onOpenChange, onSubmit }: PublishTo
               className={`${ACTION_BUTTON_CLASS} text-push-fg`}
             >
               {submitting ? (
-                <Loader2 className="relative z-10 h-4 w-4 animate-spin" />
+                <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <Rocket className="relative z-10 h-4 w-4" />
+                <Rocket className="h-4 w-4" />
               )}
-              <span className="relative z-10">Create repository</span>
+              <span>Create repository</span>
             </button>
           </div>
         </div>
