@@ -1,6 +1,7 @@
 import { promises as fs, type Dirent } from 'node:fs';
 import path from 'node:path';
 import { GitInfo, MANIFEST_PARSERS } from '../lib/repo-awareness.js';
+import { resolveProjectInstructions } from '../lib/project-instructions-source.js';
 import { createLocalGitBackend } from './git-backend.js';
 
 const IGNORED_ENTRIES = new Set([
@@ -15,7 +16,6 @@ const IGNORED_ENTRIES = new Set([
 ]);
 
 const MAX_TREE_ENTRIES = 40;
-const MAX_INSTRUCTIONS_CHARS = 8000;
 const MAX_MEMORY_CHARS = 4000;
 const MEMORY_PATH = '.push/memory.md';
 const STRUCTURED_MEMORY_PATH = '.push/memory.json';
@@ -190,24 +190,22 @@ export async function loadMemory(cwd: string): Promise<string | null> {
 
 // ─── loadProjectInstructions ──────────────────────────────
 
-// PUSH.md is the Push-specific override that wins over the standard
-// AGENTS.md → CLAUDE.md → GEMINI.md chain. Matches the web loader in
-// `app/src/lib/github-tools.ts`. Tracked at repo root (unlike the prior
-// gitignored `.push/instructions.md` override, which was silent).
-const INSTRUCTION_FILES: readonly string[] = ['PUSH.md', 'AGENTS.md', 'CLAUDE.md', 'GEMINI.md'];
-
+// Candidate order and precedence live in the shared resolver
+// (`lib/project-instructions-source.ts`) so the CLI can't drift from the two
+// web acquisition paths. Returns raw content — the injection site
+// (`enrichCliBuilder` → `formatProjectInstructionsBlock`) is the single place
+// that caps and escapes, so there's no per-surface pre-slice here.
 export async function loadProjectInstructions(cwd: string): Promise<ProjectInstructions | null> {
-  for (const relPath of INSTRUCTION_FILES) {
-    try {
-      const fullPath: string = path.join(cwd, relPath);
-      let content: string = await fs.readFile(fullPath, 'utf8');
-      if (content.length > MAX_INSTRUCTIONS_CHARS) {
-        content = content.slice(0, MAX_INSTRUCTIONS_CHARS);
-      }
-      return { file: relPath, content };
-    } catch {
-      continue;
-    }
-  }
-  return null;
+  const raw = await resolveProjectInstructions((filename) =>
+    fs.readFile(path.join(cwd, filename), 'utf8').catch((err: unknown) => {
+      // Absent file → fall through to the next candidate. A real IO/permission
+      // failure (EACCES, EIO, …) — or any unexpected non-Errno rejection —
+      // must surface per the reader contract, not be swallowed into a silent
+      // "no instructions". Optional-chain the discriminant so a rejection
+      // without a `.code` can't throw a TypeError that replaces the real cause.
+      if ((err as NodeJS.ErrnoException | null)?.code === 'ENOENT') return null;
+      throw err;
+    }),
+  );
+  return raw ? { file: raw.filename, content: raw.content } : null;
 }

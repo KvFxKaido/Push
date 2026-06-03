@@ -8,6 +8,7 @@ import {
   loadProjectInstructions,
   loadMemory,
 } from '../workspace-context.ts';
+import { formatProjectInstructionsBlock } from '../../lib/project-instructions.ts';
 import { executeToolCall as _rawExecuteToolCall } from '../tools.ts';
 
 // Default `role: 'coder'` so the kernel role check admits these
@@ -202,15 +203,22 @@ describe('loadProjectInstructions', () => {
     }
   });
 
-  it('caps content at 8000 characters', async () => {
+  it('returns raw content; the size cap lives at the injection chokepoint', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-ws-test-'));
     try {
       const longContent = 'x'.repeat(10000);
       await fs.writeFile(path.join(tmpDir, 'CLAUDE.md'), longContent);
 
+      // Acquisition no longer pre-slices — it returns exactly what it read.
       const result = await loadProjectInstructions(tmpDir);
       assert.ok(result !== null);
-      assert.equal(result.content.length, 8000);
+      assert.equal(result.content.length, 10000);
+
+      // The cap is applied once, at the injection site (mirrors enrichCliBuilder):
+      // formatProjectInstructionsBlock truncates to the shared 8000 budget.
+      const block = formatProjectInstructionsBlock(result.content, { source: result.file });
+      assert.ok(block.includes('truncated'), 'injection block should be capped');
+      assert.ok(!block.includes('x'.repeat(8001)), 'capped below the raw length');
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }

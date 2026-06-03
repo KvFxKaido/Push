@@ -1,15 +1,14 @@
 import { readFromSandbox } from '@/lib/sandbox-client';
+import { PROJECT_INSTRUCTION_FILENAMES } from '@push/lib/project-instructions-source';
 
-// Phase B (sandbox re-read) order must match the Phase A (GitHub REST)
-// order in `github-tools.ts:fetchProjectInstructions`. If they diverge,
-// a repo carrying both PUSH.md and AGENTS.md would load PUSH.md initially
-// and then have it overwritten by AGENTS.md once the sandbox is ready.
-export const PROJECT_INSTRUCTION_PATHS = [
-  '/workspace/PUSH.md',
-  '/workspace/AGENTS.md',
-  '/workspace/CLAUDE.md',
-  '/workspace/GEMINI.md',
-] as const;
+// Phase B (sandbox re-read) resolves the same candidates as Phase A (GitHub
+// REST) and the CLI — derived from the one shared list rather than re-spelled,
+// so the orders can't diverge (a divergence would let a repo carrying both
+// PUSH.md and AGENTS.md load one initially and the other once the sandbox is
+// ready). Mapped onto the sandbox checkout's absolute paths.
+export const PROJECT_INSTRUCTION_PATHS = PROJECT_INSTRUCTION_FILENAMES.map(
+  (filename) => `/workspace/${filename}`,
+) as readonly string[];
 
 type SandboxInstructionReader = (
   sandboxId: string,
