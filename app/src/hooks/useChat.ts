@@ -594,13 +594,12 @@ export function useChat(
       const trimmedText = text.trim();
       const hasAttachments = Boolean(attachments && attachments.length > 0);
       if (!trimmedText && !hasAttachments) return;
-      // Coder Delegation Collapse step 1: route to the durable single-agent
-      // engine when `inline` delegation-mode or legacy background-mode is on.
+      // Coder Delegation Collapse step 1: route to the durable single-agent engine when `inline` delegation-mode or legacy background-mode is on.
       const engineTrigger = resolveTurnEngineTrigger({ hasAttachments });
-      const useBgMode = engineTrigger !== null;
+      const routeToEngine = engineTrigger !== null;
 
-      const bgChat = options?.chatId || activeChatIdRef.current;
-      if (bgChat && hasActiveBackgroundJob(conversationsRef.current[bgChat])) return;
+      const targetChat = options?.chatId || activeChatIdRef.current;
+      if (targetChat && hasActiveBackgroundJob(conversationsRef.current[targetChat])) return;
 
       const routed = routeActiveRunInput(
         { trimmedText, attachments, hasAttachments, options },
@@ -624,7 +623,7 @@ export function useChat(
 
       // --- Prepare context ---
       const prepared = await prepareSendContext(
-        { trimmedText, attachments, options, chatId, skipStreamingPlaceholder: useBgMode },
+        { trimmedText, attachments, options, chatId, skipStreamingPlaceholder: routeToEngine },
         {
           conversationsRef,
           dirtyConversationIdsRef,
@@ -640,7 +639,7 @@ export function useChat(
       const apiMessages = prepared.apiMessages;
       const toolCallRecoveryState = prepared.recoveryState;
 
-      if (useBgMode) {
+      if (routeToEngine) {
         // biome-ignore format: keep refs inline so this branch stays under the file line cap.
         const refs = { sandboxIdRef, repoRef, branchInfoRef, isMainProtectedRef, agentsMdRef, instructionFilenameRef };
         const r = await startBackgroundMainChatTurn({
@@ -651,6 +650,7 @@ export function useChat(
           refs,
           backgroundCoderJob,
           engineTrigger: engineTrigger ?? undefined,
+          ensureSandbox: () => ensureSandboxRef.current?.() ?? Promise.resolve(null),
         });
         if (!r.ok) updateAgentStatus({ active: false, phase: r.error }, { chatId, log: true });
         return;

@@ -72,13 +72,22 @@ export function setDelegationMode(mode: DelegationMode): void {
 }
 
 /**
+ * The two non-null ways a turn bypasses the Orchestrator and runs on the
+ * durable engine. Exported on its own so `chat-send-background.ts` types
+ * its forwarded `engineTrigger` from this single source rather than
+ * re-declaring the union (which would drift if a third trigger lands —
+ * Copilot review, PR #773).
+ */
+export type EngineTrigger = 'inline-delegation' | 'background-mode';
+
+/**
  * The named trigger that caused a turn to route to the durable engine,
  * or `null` when the turn stays on the foreground Orchestrator loop.
  * `inline-delegation` wins precedence over `background-mode` for the
  * measurement label when both are on — the collapse experiment is the
  * more specific intent.
  */
-export type TurnEngineTrigger = 'inline-delegation' | 'background-mode' | null;
+export type TurnEngineTrigger = EngineTrigger | null;
 
 /**
  * Single source of truth for "does this turn bypass the Orchestrator and
@@ -100,10 +109,10 @@ export function resolveTurnEngineTrigger(opts: { hasAttachments: boolean }): Tur
 
 /**
  * The two arcs are measured at their own seams rather than at a redundant
- * turn-level log: the inline single-agent arc emits
- * `delegation_inline_job_started` (with `trigger`) from
- * `chat-send-background.ts` and the CoderJob DO's own `coder_job_*` lines
- * carry its latency/quality; the delegated arc emits
+ * turn-level log: the engine arc emits `delegation_engine_job_started`
+ * (with `trigger`) from `chat-send-background.ts` and the CoderJob DO's
+ * own `coder_job_*` lines carry its latency/quality; the delegated arc
+ * emits
  * `coder_delegation_measured` from `coder-delegation-handler.ts`. Together
  * those give the step-1 A/B its latency + quality data.
  */

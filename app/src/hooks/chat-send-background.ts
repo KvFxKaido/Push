@@ -16,6 +16,7 @@
  */
 
 import type React from 'react';
+import type { EngineTrigger } from '@/lib/delegation-mode-settings';
 import type { AIProviderType, Conversation, DelegationEnvelope } from '@/types';
 import { getSandboxOwnerToken } from '@/lib/sandbox-client';
 import { getUserProfile } from '@/hooks/useUserProfile';
@@ -60,11 +61,21 @@ export interface StartBackgroundMainChatTurnInput {
   /**
    * The named trigger that routed this turn to the durable engine
    * (`inline-delegation` for the Coder Delegation Collapse experiment, or
-   * legacy `background-mode`). Forwarded only so the inline-arc
+   * legacy `background-mode`). Forwarded only so the engine-arc
    * measurement log can be tagged for the step-1 A/B — see
    * `docs/decisions/Coder Delegation Collapse — Component Audit.md`.
    */
-  engineTrigger?: 'inline-delegation' | 'background-mode';
+  engineTrigger?: EngineTrigger;
+  /**
+   * Lazily ensure a sandbox exists before routing the turn to the engine.
+   * The engine route requires a live sandbox up front — unlike the
+   * foreground loop, which can ensure one mid-run when a tool call needs
+   * it — so a cold inline/background first send would otherwise reject
+   * with "requires an active sandbox". Mirrors the prewarm in
+   * `prepareSendContext`. Best-effort: a null/throw falls through to the
+   * precondition error below. (Codex P2, PR #773.)
+   */
+  ensureSandbox?: () => Promise<string | null>;
 }
 
 export type StartBackgroundMainChatTurnResult =
@@ -76,6 +87,19 @@ export async function startBackgroundMainChatTurn(
 ): Promise<StartBackgroundMainChatTurnResult> {
   const { chatId, trimmedText, lockedProvider, resolvedModel, refs, backgroundCoderJob } = input;
   const trigger = input.engineTrigger ?? 'background-mode';
+
+  // The engine route needs a live sandbox up front (the foreground loop
+  // ensures one lazily mid-run; this path cannot). Ensure before the
+  // precondition check so a cold first send doesn't reject. Best-effort —
+  // a failure falls through to the precondition error below. (Codex P2.)
+  if (!refs.sandboxIdRef.current && input.ensureSandbox) {
+    try {
+      const ensured = await input.ensureSandbox();
+      if (ensured) refs.sandboxIdRef.current = ensured;
+    } catch {
+      /* fall through to the precondition error below */
+    }
+  }
 
   const sandboxId = refs.sandboxIdRef.current;
   const repoFullName = refs.repoRef.current;
@@ -126,23 +150,26 @@ export async function startBackgroundMainChatTurn(
     chatRef: { chatId, repoFullName, branch },
   });
 
-  // Inline-arc measurement for the Coder Delegation Collapse step-1 A/B.
-  // Symmetric — one paired event per outcome — so an inline single-agent
-  // turn is correlatable (chatId + jobId) with the CoderJob DO's own
-  // `coder_job_*` latency/quality logs. See the decision doc.
+  // Engine-arc measurement for the Coder Delegation Collapse step-1 A/B.
+  // Symmetric — one paired event per outcome — so an engine-routed turn is
+  // correlatable (chatId + jobId) with the CoderJob DO's own `coder_job_*`
+  // latency/quality logs. Event name is nomenclature-neutral: both engine
+  // triggers emit it, so the `trigger` field (not the name) is what tells
+  // the `inline-delegation` experiment apart from legacy `background-mode`
+  // (Kilo review, PR #773). See the decision doc.
   console.log(
     JSON.stringify(
       startResult.ok
         ? {
             level: 'info',
-            event: 'delegation_inline_job_started',
+            event: 'delegation_engine_job_started',
             chatId,
             jobId: startResult.jobId,
             trigger,
           }
         : {
             level: 'error',
-            event: 'delegation_inline_job_failed',
+            event: 'delegation_engine_job_failed',
             chatId,
             trigger,
             error: startResult.error,

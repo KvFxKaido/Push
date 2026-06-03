@@ -302,10 +302,16 @@ function getTaskStatusLabel(criteriaResults?: CriterionResult[]): string {
  * failed / tool-error), paired by the shared `event` name and
  * distinguished by `outcome`, so the delegated path's latency + a quality
  * signal (rounds, checkpoints, acceptance-criteria pass rate, whether the
- * Planner pre-pass ran) is comparable to the inline single-agent arc's
- * `coder_job_*` / `delegation_inline_job_started` logs. Kept as an
- * observability log, not a protocol event — no `subagent.*` shape changes,
- * so the category-3 drift pins are untouched.
+ * Planner pre-pass ran) is comparable to the engine arc's `coder_job_*` /
+ * `delegation_engine_job_started` logs. Kept as an observability log, not
+ * a protocol event — no `subagent.*` shape changes, so the category-3
+ * drift pins are untouched.
+ *
+ * `level` is `error` for both terminal-failure outcomes (`failed` and
+ * `tool-error` — missing sandbox / empty task list); `aborted` (a user
+ * cancel) and `ok` stay `info`. This keeps the delegated arc's
+ * error-level signal symmetric with the engine arc's launch-failure log
+ * (glm + Kilo review, PR #773).
  */
 function logDelegatedCoderMeasure(fields: {
   chatId: string;
@@ -322,7 +328,7 @@ function logDelegatedCoderMeasure(fields: {
     criteria.length > 0 ? criteria.filter((r) => r.passed).length / criteria.length : null;
   console.log(
     JSON.stringify({
-      level: fields.outcome === 'failed' ? 'error' : 'info',
+      level: fields.outcome === 'failed' || fields.outcome === 'tool-error' ? 'error' : 'info',
       event: 'coder_delegation_measured',
       mode: 'delegated',
       chatId: fields.chatId,
