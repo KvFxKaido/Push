@@ -19,14 +19,14 @@ module.exports = {
 
         // Surfaces (light → dark)
         'push-surface': '#070a10', // base background
-        'push-surface-raised': '#0c1018', // elevated surface
+        'push-surface-raised': '#14171f', // elevated surface
         'push-surface-hover': '#0d1119', // hover background
         'push-surface-active': '#111624', // pressed / badge background
         'push-surface-inset': '#05080e', // recessed (editor, inputs)
 
         // Borders (subtle → strong)
-        'push-edge-subtle': '#1b2230', // dividers, input borders
-        'push-edge': '#1f2531', // primary border
+        'push-edge-subtle': '#242c39', // dividers, input borders
+        'push-edge': '#2b3340', // primary border
         'push-edge-hover': '#2f3949', // hover border
         'push-edge-focus': '#3d5579', // focus / active input border
 

@@ -28,7 +28,7 @@ Tokens below are Tailwind theme extensions. Use them with the appropriate utilit
 | Token                 | Hex       | Use                          |
 | --------------------- | --------- | ---------------------------- |
 | `push-surface`        | `#070a10` | Base page background         |
-| `push-surface-raised` | `#0c1018` | Elevated panels, cards       |
+| `push-surface-raised` | `#14171f` | Elevated panels, cards       |
 | `push-surface-hover`  | `#0d1119` | Hover background             |
 | `push-surface-active` | `#111624` | Pressed state, badge fills   |
 | `push-surface-inset`  | `#05080e` | Recessed areas (editor, inputs) |
@@ -37,8 +37,8 @@ Tokens below are Tailwind theme extensions. Use them with the appropriate utilit
 
 | Token              | Hex       | Use                          |
 | ------------------ | --------- | ---------------------------- |
-| `push-edge-subtle` | `#1b2230` | Dividers, input borders      |
-| `push-edge`        | `#1f2531` | Primary border               |
+| `push-edge-subtle` | `#242c39` | Dividers, input borders      |
+| `push-edge`        | `#2b3340` | Primary border               |
 | `push-edge-hover`  | `#2f3949` | Hover border                 |
 | `push-edge-focus`  | `#3d5579` | Focus / active input border  |
 
@@ -68,7 +68,7 @@ The accent is **Sky**, two-tier. Light Sky (`#7dd3fc`) is the airy identity colo
 
 ### Gradients
 
-- **Card:** `linear-gradient(180deg, #090d14 0%, #06090f 100%)`
+- **Card:** `linear-gradient(180deg, #11151d 0%, #0b0f16 100%)`
 - **Panel:** `linear-gradient(180deg, #05070b 0%, #020306 100%)`
 - **Input:** `linear-gradient(180deg, #0a0d13 0%, #04060a 100%)`
 - **User bubble:** border `#313b49`, fill `linear-gradient(180deg, #1e2733 0%, #17202b 100%)`

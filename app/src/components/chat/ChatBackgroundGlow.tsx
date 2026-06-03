@@ -8,8 +8,8 @@ interface ChatBackgroundGlowProps {
 
 export function ChatBackgroundGlow({ active, color }: ChatBackgroundGlowProps) {
   const containerStyle = {
-    '--push-glow-strong': hexToRgba(color, 0.55),
-    '--push-glow-soft': hexToRgba(color, 0.28),
+    '--push-glow-strong': hexToRgba(color, 0.14),
+    '--push-glow-soft': hexToRgba(color, 0.06),
     opacity: active ? 1 : 0,
   } as CSSProperties;
 
