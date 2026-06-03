@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { GitHubTokenKind } from '@/lib/github-auth';
+import { USER_TOKEN_GATE_MESSAGE } from '@/lib/sandbox-auth-gate';
 
 const sandboxClient = vi.hoisted(() => ({
   createSandbox: vi.fn(),
@@ -33,7 +35,7 @@ const cacheLib = vi.hoisted(() => ({
   clearSandboxWorkspaceRevision: vi.fn(),
 }));
 const ghAuth = vi.hoisted(() => ({
-  getActiveGitHubTokenInfo: vi.fn<() => { token: string; kind: string }>(() => ({
+  getActiveGitHubTokenInfo: vi.fn<() => { token: string; kind: GitHubTokenKind }>(() => ({
     token: '',
     kind: 'none',
   })),
@@ -215,7 +217,7 @@ describe('useSandbox.start', () => {
     expect(id).toBeNull();
     expect(sandboxClient.createSandbox).not.toHaveBeenCalled();
     expect(reactState.cells[1].value).toBe('error');
-    expect(String(reactState.cells[2].value)).toContain('Acknowledge this in Settings');
+    expect(reactState.cells[2].value).toBe(USER_TOKEN_GATE_MESSAGE);
   });
 
   it('allows durable user-scoped repo tokens after acknowledgment', async () => {

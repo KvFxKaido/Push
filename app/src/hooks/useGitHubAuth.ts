@@ -83,10 +83,16 @@ export function useGitHubAuth(): UseGitHubAuth {
       if (user) {
         setValidatedUser(user);
       } else if (stored) {
-        // A stored OAuth/PAT token expired or was revoked — clear it so the
-        // UI and the sandbox gate both see "signed out".
+        // A stored OAuth/PAT token expired or was revoked — drop it, then
+        // re-derive state from scratch. Removing the stored key re-exposes the
+        // build-time env token (if one is configured) as the active credential
+        // via getActiveGitHubTokenInfo, which the sandbox gate reads. Collapsing
+        // straight to `none` here would desync the two again (Settings shows
+        // signed-out while the gate still enforces on the env token); deriving
+        // through initialTokenState lands on the env pair, or on `none` when no
+        // env token exists.
         safeStorageRemove(STORAGE_KEY);
-        clearToken();
+        setTokenState(initialTokenState());
         setValidatedUser(null);
       } else {
         // The candidate is the build-time ENV_TOKEN, which lives outside
@@ -99,7 +105,7 @@ export function useGitHubAuth(): UseGitHubAuth {
         setValidatedUser(null);
       }
     });
-  }, [clearToken]);
+  }, []);
 
   const setTokenManually = useCallback(
     async (pat: string): Promise<boolean> => {

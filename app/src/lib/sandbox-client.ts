@@ -1075,6 +1075,8 @@ export async function createSandbox(
       acknowledged: hasAcknowledgedUserTokenInjection(),
     });
     if (!gate.allow) {
+      // Structured console line keeps parity with the React hook's gate (repo
+      // convention: console.log(JSON.stringify({ level, event, ...ctx }))).
       console.log(
         JSON.stringify({
           level: 'warn',
@@ -1082,6 +1084,21 @@ export async function createSandbox(
           reason: gate.reason,
           tokenKind: kind,
         }),
+      );
+      // Also emit a span so this security-relevant block surfaces in backend
+      // observability (CF/prod), not just the browser console — a console-only
+      // record of a credential-injection block is easy to lose.
+      getPushTracer().startActiveSpan(
+        'sandbox.create.blocked_user_token',
+        { kind: SpanKind.CLIENT },
+        (span) => {
+          setSpanAttributes(span, {
+            'push.gate.reason': gate.reason,
+            'push.github.token_kind': kind,
+          });
+          span.addEvent('sandbox_client_blocked_user_token');
+          span.end();
+        },
       );
       return { sandboxId: '', status: 'error', error: USER_TOKEN_GATE_MESSAGE };
     }
