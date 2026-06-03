@@ -6,7 +6,6 @@ import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_MATERIAL_ROUND_BUTTON_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
-  HubControlGlow,
 } from '@/components/chat/hub-styles';
 
 interface HubScratchpadTabProps {
@@ -55,9 +54,8 @@ export function HubScratchpadTab({
           disabled={!scratchpadContent.trim() || !memoryName.trim()}
           className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
         >
-          <HubControlGlow />
-          <Check className="relative z-10 h-3.5 w-3.5" />
-          <span className="relative z-10">Save</span>
+          <Check className="h-3.5 w-3.5" />
+          <span>Save</span>
         </button>
         <button
           onClick={onClear}
@@ -65,8 +63,7 @@ export function HubScratchpadTab({
           className={HUB_MATERIAL_ROUND_BUTTON_CLASS}
           aria-label="Clear scratchpad"
         >
-          <HubControlGlow />
-          <Trash2 className="relative z-10 h-3.5 w-3.5" />
+          <Trash2 className="h-3.5 w-3.5" />
         </button>
         <button
           onClick={onExportToRepo}
@@ -74,9 +71,8 @@ export function HubScratchpadTab({
           className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
           aria-label="Save scratchpad to repo"
         >
-          <HubControlGlow />
-          <Download className="relative z-10 h-3.5 w-3.5" />
-          <span className="relative z-10">Save to repo</span>
+          <Download className="h-3.5 w-3.5" />
+          <span>Save to repo</span>
         </button>
       </div>
 
@@ -99,8 +95,7 @@ export function HubScratchpadTab({
             className={HUB_MATERIAL_ROUND_BUTTON_CLASS}
             aria-label="Delete selected memory"
           >
-            <HubControlGlow />
-            <Trash2 className="relative z-10 h-3.5 w-3.5" />
+            <Trash2 className="h-3.5 w-3.5" />
           </button>
         )}
       </div>

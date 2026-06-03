@@ -85,7 +85,7 @@ select:focus-visible {
 /* gradients used across the app. Change the hex values here    */
 /* and every card/panel/input follows.                          */
 .bg-push-grad-card {
-  background: linear-gradient(180deg, #090d14 0%, #06090f 100%);
+  background: linear-gradient(180deg, #11151d 0%, #0b0f16 100%);
 }
 .bg-push-grad-panel {
   background: linear-gradient(180deg, #05070b 0%, #020306 100%);
@@ -100,7 +100,7 @@ select:focus-visible {
   /* Page background gradient owned by <PageScaffold>. Previously hand-rolled */
   /* as `bg-[linear-gradient(180deg,rgba(4,6,10,1)_0%,rgba(2,4,8,1)_100%)]` */
   /* in HomeScreen, OnboardingScreen, LocalPcPairing, ComposerDraftScreen.   */
-  background: linear-gradient(180deg, #04060a 0%, #020408 100%);
+  background: linear-gradient(180deg, #070708 0%, #030304 100%);
 }
 
 .chat-user-bubble {

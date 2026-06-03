@@ -61,7 +61,7 @@
     /* amber-400 (#fbbf24) channels — the relay-mode replay-flash keyframe. */
     --push-warning-bright-rgb: 251 191 36;
 
-    --background: 240 6% 3.7%;
+    --background: 240 3% 4%;
     --foreground: 0 0% 98%;
     --card: 240 5% 7.1%;
     --card-foreground: 0 0% 98%;
@@ -84,7 +84,7 @@
     --input: 240 4% 11.4%;
     --ring: 199 95% 74%;
     --radius: 0.625rem;
-    --sidebar-background: 240 6% 3.7%;
+    --sidebar-background: 240 3% 4%;
     --sidebar-foreground: 240 5% 65%;
     --sidebar-primary: 200 98% 39%;
     --sidebar-primary-foreground: 0 0% 100%;
@@ -95,7 +95,7 @@
   }
 
   .dark {
-    --background: 240 6% 3.7%;
+    --background: 240 3% 4%;
     --foreground: 0 0% 98%;
     --card: 240 5% 7.1%;
     --card-foreground: 0 0% 98%;
@@ -114,7 +114,7 @@
     --border: 240 4% 11.4%;
     --input: 240 4% 11.4%;
     --ring: 199 95% 74%;
-    --sidebar-background: 240 6% 3.7%;
+    --sidebar-background: 240 3% 4%;
     --sidebar-foreground: 240 5% 65%;
     --sidebar-primary: 200 98% 39%;
     --sidebar-primary-foreground: 0 0% 100%;

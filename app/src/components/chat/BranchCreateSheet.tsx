@@ -19,7 +19,6 @@ import {
   HUB_MATERIAL_INPUT_CLASS,
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
-  HubControlGlow,
 } from '@/components/chat/hub-styles';
 import type { ActiveRepo } from '@/types';
 
@@ -249,14 +248,13 @@ function BranchCreateSheet({
               disabled={!isValid || creating}
               className={BRANCH_ACTION_BUTTON_CLASS}
             >
-              <HubControlGlow />
               {creating ? (
                 <>
-                  <Loader2 className="relative z-10 h-4 w-4 animate-spin" />
-                  <span className="relative z-10">Creating...</span>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Creating...</span>
                 </>
               ) : (
-                <span className="relative z-10">Create</span>
+                <span>Create</span>
               )}
             </Button>
             <Button
@@ -265,8 +263,7 @@ function BranchCreateSheet({
               variant="outline"
               className={BRANCH_ACTION_BUTTON_CLASS}
             >
-              <HubControlGlow />
-              <span className="relative z-10">Cancel</span>
+              <span>Cancel</span>
             </Button>
           </div>
         </div>

@@ -5,7 +5,6 @@ import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_MATERIAL_ROUND_BUTTON_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
-  HubControlGlow,
 } from '@/components/chat/hub-styles';
 
 interface HubKeptTabProps {
@@ -123,16 +122,15 @@ function KeptCard({
             onClick={() => setExpanded(!expanded)}
             className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} gap-1 px-2`}
           >
-            <HubControlGlow />
             {expanded ? (
               <>
-                <ChevronUp className="relative z-10 h-3 w-3" />
-                <span className="relative z-10">Less</span>
+                <ChevronUp className="h-3 w-3" />
+                <span>Less</span>
               </>
             ) : (
               <>
-                <ChevronDown className="relative z-10 h-3 w-3" />
-                <span className="relative z-10">More</span>
+                <ChevronDown className="h-3 w-3" />
+                <span>More</span>
               </>
             )}
           </button>
@@ -144,11 +142,10 @@ function KeptCard({
           aria-label={copied ? 'Copied!' : 'Copy content'}
           title={copied ? 'Copied!' : 'Copy content'}
         >
-          <HubControlGlow />
           {copied ? (
-            <Check className="relative z-10 h-3.5 w-3.5 text-push-status-success" />
+            <Check className="h-3.5 w-3.5 text-push-status-success" />
           ) : (
-            <Copy className="relative z-10 h-3.5 w-3.5" />
+            <Copy className="h-3.5 w-3.5" />
           )}
         </button>
         <button
@@ -157,8 +154,7 @@ function KeptCard({
           aria-label="Remove pin"
           title="Remove pin"
         >
-          <HubControlGlow />
-          <Trash2 className="relative z-10 h-3.5 w-3.5" />
+          <Trash2 className="h-3.5 w-3.5" />
         </button>
       </div>
     </div>

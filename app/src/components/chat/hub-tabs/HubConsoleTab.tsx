@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Copy, Download, Check } from 'lucide-react';
 import { detectAnyToolCall } from '@/lib/tool-dispatch';
-import { HUB_MATERIAL_PILL_BUTTON_CLASS, HubControlGlow } from '@/components/chat/hub-styles';
+import { HUB_MATERIAL_PILL_BUTTON_CLASS } from '@/components/chat/hub-styles';
 import { getRoleDisplay, getSourceLabel, getSubagentLabel } from '@push/lib/role-display';
 import type { AgentStatusEvent, AgentStatusSource, ChatMessage, RunEvent } from '@/types';
 
@@ -268,13 +268,8 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
             className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5 text-push-fg-secondary`}
             title="Copy all logs"
           >
-            <HubControlGlow />
-            {copied ? (
-              <Check className="relative z-10 h-3 w-3 text-green-500" />
-            ) : (
-              <Copy className="relative z-10 h-3 w-3" />
-            )}
-            <span className="relative z-10">Copy All</span>
+            {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
+            <span>Copy All</span>
           </button>
           <button
             onClick={handleDownloadLogs}
@@ -282,9 +277,8 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
             className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5 text-push-fg-secondary`}
             title="Download logs as .txt"
           >
-            <HubControlGlow />
-            <Download className="relative z-10 h-3 w-3" />
-            <span className="relative z-10">Download</span>
+            <Download className="h-3 w-3" />
+            <span>Download</span>
           </button>
         </div>
       </div>

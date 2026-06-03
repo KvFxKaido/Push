@@ -21,7 +21,6 @@ import { getRoleDisplay } from '@push/lib/role-display';
 import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_TOP_BANNER_STRIP_CLASS,
-  HubControlGlow,
 } from '@/components/chat/hub-styles';
 
 // --- Resume Banner (Resumable Sessions Phase 2) ---
@@ -88,9 +87,8 @@ function ResumeBanner({
           onClick={onResume}
           className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} gap-1.5 px-3 text-amber-200`}
         >
-          <HubControlGlow />
-          <RotateCcw className="relative z-10 h-3 w-3" />
-          <span className="relative z-10">Resume</span>
+          <RotateCcw className="h-3 w-3" />
+          <span>Resume</span>
         </button>
         <button
           onClick={onDismiss}
