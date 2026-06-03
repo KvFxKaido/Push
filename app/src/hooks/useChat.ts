@@ -29,6 +29,7 @@ import { useConversationPersistence } from './useConversationPersistence';
 import { useAgentDelegation } from './useAgentDelegation';
 import { useBackgroundCoderJob } from './useBackgroundCoderJob';
 import { isBackgroundModeEnabled } from '@/lib/background-mode-settings';
+import { resolveTurnEngineTrigger } from '@/lib/delegation-mode-settings';
 import { hasActiveBackgroundJob, startBackgroundMainChatTurn } from './chat-send-background';
 import { useCIPoller } from './useCIPoller';
 import { useChatCardActions } from './chat-card-actions';
@@ -593,8 +594,10 @@ export function useChat(
       const trimmedText = text.trim();
       const hasAttachments = Boolean(attachments && attachments.length > 0);
       if (!trimmedText && !hasAttachments) return;
-      // Attachments still fall through to foreground until PR 3+ envelopes them.
-      const useBgMode = isBackgroundModeEnabled() && !hasAttachments;
+      // Coder Delegation Collapse step 1: route to the durable single-agent
+      // engine when `inline` delegation-mode or legacy background-mode is on.
+      const engineTrigger = resolveTurnEngineTrigger({ hasAttachments });
+      const useBgMode = engineTrigger !== null;
 
       const bgChat = options?.chatId || activeChatIdRef.current;
       if (bgChat && hasActiveBackgroundJob(conversationsRef.current[bgChat])) return;
@@ -647,6 +650,7 @@ export function useChat(
           resolvedModel: resolvedModelForChat ?? undefined,
           refs,
           backgroundCoderJob,
+          engineTrigger: engineTrigger ?? undefined,
         });
         if (!r.ok) updateAgentStatus({ active: false, phase: r.error }, { chatId, log: true });
         return;

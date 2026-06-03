@@ -295,6 +295,49 @@ function getTaskStatusLabel(criteriaResults?: CriterionResult[]): string {
   return allPassed ? 'OK' : 'CHECKS_FAILED';
 }
 
+/**
+ * Emit the delegated-arc measurement for the Coder Delegation Collapse
+ * step-1 A/B (see `docs/decisions/Coder Delegation Collapse — Component
+ * Audit.md`). One structured line per terminal branch (ok / aborted /
+ * failed / tool-error), paired by the shared `event` name and
+ * distinguished by `outcome`, so the delegated path's latency + a quality
+ * signal (rounds, checkpoints, acceptance-criteria pass rate, whether the
+ * Planner pre-pass ran) is comparable to the inline single-agent arc's
+ * `coder_job_*` / `delegation_inline_job_started` logs. Kept as an
+ * observability log, not a protocol event — no `subagent.*` shape changes,
+ * so the category-3 drift pins are untouched.
+ */
+function logDelegatedCoderMeasure(fields: {
+  chatId: string;
+  executionId: string;
+  outcome: 'ok' | 'aborted' | 'failed' | 'tool-error';
+  elapsedMs: number;
+  plannerRan: boolean;
+  totalRounds?: number;
+  totalCheckpoints?: number;
+  criteriaResults?: CriterionResult[];
+}): void {
+  const criteria = fields.criteriaResults ?? [];
+  const criteriaPassRate =
+    criteria.length > 0 ? criteria.filter((r) => r.passed).length / criteria.length : null;
+  console.log(
+    JSON.stringify({
+      level: fields.outcome === 'failed' ? 'error' : 'info',
+      event: 'coder_delegation_measured',
+      mode: 'delegated',
+      chatId: fields.chatId,
+      executionId: fields.executionId,
+      outcome: fields.outcome,
+      elapsedMs: fields.elapsedMs,
+      plannerRan: fields.plannerRan,
+      totalRounds: fields.totalRounds ?? null,
+      totalCheckpoints: fields.totalCheckpoints ?? null,
+      criteriaCount: criteria.length,
+      criteriaPassRate,
+    }),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------------
@@ -315,6 +358,11 @@ export async function handleCoderDelegation(
 
   const executionId = createId();
   const coderStartMs = Date.now();
+  // Tracks whether the Planner pre-pass actually ran this arc — part of
+  // the delegated-arc measurement so the A/B can separate "Planner fired"
+  // (heavy/small-model profiles) from "Planner skipped" (frontier lead,
+  // plannerRequired=false) turns. See `logDelegatedCoderMeasure`.
+  let plannerRan = false;
   // Capture the foreground branch at dispatch. Bound to this delegation
   // for its lifetime — the result envelope carries it so the result
   // message stamps the launch branch, not whatever the foreground
@@ -340,6 +388,13 @@ export async function handleCoderDelegation(
 
   const currentSandboxId = ctx.sandboxIdRef.current;
   if (!currentSandboxId) {
+    logDelegatedCoderMeasure({
+      chatId,
+      executionId,
+      outcome: 'tool-error',
+      elapsedMs: Date.now() - coderStartMs,
+      plannerRan,
+    });
     return {
       status: 'tool-error',
       toolExecResult: {
@@ -394,6 +449,13 @@ export async function handleCoderDelegation(
     }
 
     if (taskList.length === 0) {
+      logDelegatedCoderMeasure({
+        chatId,
+        executionId,
+        outcome: 'tool-error',
+        elapsedMs: Date.now() - coderStartMs,
+        plannerRan,
+      });
       return {
         status: 'tool-error',
         toolExecResult: {
@@ -437,6 +499,7 @@ export async function handleCoderDelegation(
     // run the planner to decompose into a feature checklist.
     let plannerBrief: string | undefined;
     if (harnessSettings.plannerRequired && taskList.length === 1) {
+      plannerRan = true;
       const plannerExecutionId = createId();
       ctx.appendRunEvent(chatId, {
         type: 'subagent.started',
@@ -692,6 +755,16 @@ export async function handleCoderDelegation(
       allCards.push(...coderResult.cards);
     }
 
+    logDelegatedCoderMeasure({
+      chatId,
+      executionId,
+      outcome: 'ok',
+      elapsedMs: Date.now() - coderStartMs,
+      plannerRan,
+      totalRounds,
+      totalCheckpoints,
+      criteriaResults: allCriteriaResults,
+    });
     return {
       status: 'ok',
       executionId,
@@ -742,6 +815,13 @@ export async function handleCoderDelegation(
         delegationOutcome: abortOutcome,
         orchestratorBytes: utf8ByteLength(abortText),
       });
+      logDelegatedCoderMeasure({
+        chatId,
+        executionId,
+        outcome: 'aborted',
+        elapsedMs: Date.now() - coderStartMs,
+        plannerRan,
+      });
       return {
         status: 'aborted',
         executionId,
@@ -762,6 +842,13 @@ export async function handleCoderDelegation(
       executionId,
       agent: 'coder',
       error: summarizeToolResultPreview(msg),
+    });
+    logDelegatedCoderMeasure({
+      chatId,
+      executionId,
+      outcome: 'failed',
+      elapsedMs: Date.now() - coderStartMs,
+      plannerRan,
     });
     return {
       status: 'failed',

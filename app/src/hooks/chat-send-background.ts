@@ -57,6 +57,14 @@ export interface StartBackgroundMainChatTurnInput {
   resolvedModel: string | undefined;
   refs: BackgroundMainChatRefs;
   backgroundCoderJob: UseBackgroundCoderJobResult;
+  /**
+   * The named trigger that routed this turn to the durable engine
+   * (`inline-delegation` for the Coder Delegation Collapse experiment, or
+   * legacy `background-mode`). Forwarded only so the inline-arc
+   * measurement log can be tagged for the step-1 A/B — see
+   * `docs/decisions/Coder Delegation Collapse — Component Audit.md`.
+   */
+  engineTrigger?: 'inline-delegation' | 'background-mode';
 }
 
 export type StartBackgroundMainChatTurnResult =
@@ -67,6 +75,7 @@ export async function startBackgroundMainChatTurn(
   input: StartBackgroundMainChatTurnInput,
 ): Promise<StartBackgroundMainChatTurnResult> {
   const { chatId, trimmedText, lockedProvider, resolvedModel, refs, backgroundCoderJob } = input;
+  const trigger = input.engineTrigger ?? 'background-mode';
 
   const sandboxId = refs.sandboxIdRef.current;
   const repoFullName = refs.repoRef.current;
@@ -116,6 +125,30 @@ export async function startBackgroundMainChatTurn(
     taskPreview: trimmedText.slice(0, 140),
     chatRef: { chatId, repoFullName, branch },
   });
+
+  // Inline-arc measurement for the Coder Delegation Collapse step-1 A/B.
+  // Symmetric — one paired event per outcome — so an inline single-agent
+  // turn is correlatable (chatId + jobId) with the CoderJob DO's own
+  // `coder_job_*` latency/quality logs. See the decision doc.
+  console.log(
+    JSON.stringify(
+      startResult.ok
+        ? {
+            level: 'info',
+            event: 'delegation_inline_job_started',
+            chatId,
+            jobId: startResult.jobId,
+            trigger,
+          }
+        : {
+            level: 'error',
+            event: 'delegation_inline_job_failed',
+            chatId,
+            trigger,
+            error: startResult.error,
+          },
+    ),
+  );
 
   if (!startResult.ok) {
     return {
