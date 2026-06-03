@@ -126,7 +126,7 @@ export function ChatScreen({
         style={{ transform: chatShellTransform }}
       >
         <ChatBackgroundGlow active={resolvedAppearance.glowEnabled} color={glowColor} />
-        <header className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 pt-3 pb-2">
+        <header className="relative z-10 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 pt-3 pb-2">
           <div className="relative z-20 flex min-w-0 items-center gap-2">
             <div className="flex h-[34px] min-w-0 items-center gap-1 pl-0.5 pr-1">
               <RepoChatDrawer {...drawerProps} />

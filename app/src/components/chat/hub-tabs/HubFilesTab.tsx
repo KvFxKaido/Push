@@ -151,11 +151,8 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
   if (previewPath) {
     return (
       <div className="flex h-full min-h-0 flex-col p-3">
-        <div
-          className={`relative flex min-h-0 flex-1 flex-col overflow-hidden ${HUB_PANEL_SURFACE_CLASS}`}
-        >
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-white/[0.04] to-transparent" />
-          <div className="flex items-start gap-2 border-b border-push-edge/80 bg-[linear-gradient(180deg,rgba(10,13,20,0.78)_0%,rgba(6,9,14,0.88)_100%)] px-3 py-2.5 backdrop-blur-xl">
+        <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${HUB_PANEL_SURFACE_CLASS}`}>
+          <div className="flex items-start gap-2 border-b border-push-edge px-3 py-2.5">
             <button
               onClick={() => {
                 setPreviewPath(null);
