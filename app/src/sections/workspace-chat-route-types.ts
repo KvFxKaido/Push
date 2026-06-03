@@ -3,6 +3,7 @@ import type { ContextMode } from '@/lib/orchestrator';
 import type { PreferredProvider } from '@/lib/providers';
 import type { RepoAppearance } from '@/lib/repo-appearance';
 import type { SandboxStartMode } from '@/lib/sandbox-start-mode';
+import type { GitHubTokenKind } from '@/lib/github-auth';
 import type { BranchManager } from '@/hooks/useBranchManager';
 import type { ModelCatalog } from '@/hooks/useModelCatalog';
 import type { ProjectInstructionsManager } from '@/hooks/useProjectInstructions';
@@ -200,6 +201,7 @@ export interface ChatRouteWorkspaceDataProps {
 
 export interface ChatRouteAuthProps {
   token: string | null;
+  tokenKind: GitHubTokenKind;
   patToken: string | null;
   isAppAuth: boolean;
   installationId: string | null;

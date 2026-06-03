@@ -98,6 +98,7 @@ export function useDaemonSettingsBundles({
       isAppAuth: auth.isAppAuth,
       installationId: auth.installationId ?? '',
       token: auth.token ?? '',
+      tokenKind: auth.tokenKind,
       patToken: auth.patToken ?? '',
       validatedUser: auth.validatedUser,
       appLoading: auth.appLoading,

@@ -51,6 +51,7 @@ const mockState = vi.hoisted(() => {
   const defaultAuth = (): GitHubAuthSession => ({
     status: 'signed_out',
     token: null,
+    tokenKind: 'none',
     patToken: null,
     validatedUser: null,
     isAppAuth: false,
@@ -314,6 +315,7 @@ describe('App auth and shell integration', () => {
       ...mockState.defaultAuth(),
       status: 'pat',
       token: 'ghp_test',
+      tokenKind: 'pat',
       patToken: 'ghp_test',
       validatedUser: user,
     };
@@ -344,6 +346,7 @@ describe('App auth and shell integration', () => {
       ...mockState.defaultAuth(),
       status: 'app',
       token: 'ghu_app',
+      tokenKind: 'app',
       patToken: 'ghp_pat',
       validatedUser: { login: 'ishaw', avatar_url: '' },
       isAppAuth: true,
@@ -381,6 +384,7 @@ describe('App auth and shell integration', () => {
     expect(mockState.workspaceProps?.repoShell.repos).toEqual([repo]);
     expect(mockState.workspaceProps?.auth).toMatchObject({
       token: 'ghu_app',
+      tokenKind: 'app',
       patToken: 'ghp_pat',
       isAppAuth: true,
       installationId: '424242',
@@ -397,6 +401,7 @@ describe('App auth and shell integration', () => {
       ...mockState.defaultAuth(),
       status: 'pat',
       token: 'ghp_test',
+      tokenKind: 'pat',
       patToken: 'ghp_test',
       validatedUser: user,
     };

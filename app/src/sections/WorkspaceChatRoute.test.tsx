@@ -222,6 +222,7 @@ function baseProps(overrides: Partial<ChatRouteProps> = {}): ChatRouteProps {
       setRepoOverride: vi.fn(),
     },
     token: null,
+    tokenKind: 'none',
     patToken: null,
     isAppAuth: false,
     installationId: null,

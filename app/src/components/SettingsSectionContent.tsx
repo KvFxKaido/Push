@@ -28,6 +28,15 @@ import {
   type SettingsWorkspaceProps,
 } from '@/components/SettingsSheet';
 import { formatModelDisplayName, type PreferredProvider } from '@/lib/providers';
+import {
+  describeGitHubTokenKind,
+  getAppTokenExpiry,
+  isDurableUserToken,
+} from '@/lib/github-auth';
+import {
+  hasAcknowledgedUserTokenInjection,
+  setAcknowledgedUserTokenInjection,
+} from '@/lib/sandbox-auth-gate';
 import { useAuditorGate } from '@/hooks/useAuditorGate';
 import type { AIProviderType } from '@/types';
 import { getRoleLabel } from '@push/lib/role-display';
@@ -57,6 +66,75 @@ function PrivateConnectorsDisclosure({ children }: { children: React.ReactNode }
             setup so Gemini and Claude can share one provider entry.
           </p>
           {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Honest surface for the active GitHub credential: names the regime, its blast
+ * radius, and expiry instead of collapsing App / OAuth / PAT into one
+ * "connected" blob. For durable user-scoped tokens it surfaces the sandbox
+ * caution and the acknowledgment toggle the cloud-sandbox gate reads.
+ */
+function SandboxCredentialGrant({ auth }: { auth: SettingsAuthProps }) {
+  const kind = auth.tokenKind;
+  const desc = describeGitHubTokenKind(kind);
+  const durable = isDurableUserToken(kind);
+  const [ack, setAck] = useState(() => hasAcknowledgedUserTokenInjection());
+
+  let expiryLabel: string | null = null;
+  if (kind === 'app') {
+    const iso = getAppTokenExpiry();
+    const t = iso ? new Date(iso).getTime() : NaN;
+    expiryLabel = Number.isFinite(t)
+      ? `Expires ${new Date(t).toLocaleString()}`
+      : 'Refreshes automatically';
+  } else if (kind !== 'none') {
+    expiryLabel = 'Does not expire automatically';
+  }
+
+  const identity =
+    kind === 'app'
+      ? auth.installationId
+        ? `Installation ${auth.installationId}`
+        : null
+      : auth.validatedUser?.login
+        ? `@${auth.validatedUser.login}`
+        : null;
+
+  const labelTone =
+    kind === 'app' ? 'text-emerald-400' : durable ? 'text-amber-400' : 'text-push-fg-secondary';
+
+  return (
+    <div className="space-y-1.5 rounded-lg border border-push-edge-subtle bg-push-surface px-3 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className={`text-sm font-medium ${labelTone}`}>{desc.label}</span>
+        {identity && <span className="font-mono text-xs text-push-fg-muted">{identity}</span>}
+      </div>
+      <p className="text-xs text-push-fg-dim">{desc.authority}</p>
+      {expiryLabel && <p className="text-xs text-push-fg-muted">{expiryLabel}</p>}
+
+      {durable && (
+        <div className="mt-2 space-y-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-2.5 py-2">
+          <p className="text-xs text-amber-200/90">
+            This token is written into the cloud sandbox&rsquo;s git config and stays readable
+            inside the container for its whole lifetime. Connect the GitHub App for a scoped,
+            auto-expiring token instead.
+          </p>
+          <label className="flex items-start gap-2 text-xs text-push-fg-secondary">
+            <input
+              type="checkbox"
+              checked={ack}
+              onChange={(e) => {
+                setAck(e.target.checked);
+                setAcknowledgedUserTokenInjection(e.target.checked);
+              }}
+              className="mt-0.5"
+            />
+            <span>Allow this token in cloud sandboxes (required to start a sandbox with it)</span>
+          </label>
         </div>
       )}
     </div>
@@ -151,27 +229,7 @@ export function SettingsSectionContent({
             <div className="space-y-2">
               {auth.isConnected ? (
                 <>
-                  <div className="rounded-lg border border-push-edge-subtle bg-push-surface px-3 py-2">
-                    <p className="text-sm text-push-fg-secondary font-mono">
-                      {auth.isAppAuth ? (
-                        <span className="text-emerald-400">GitHub App</span>
-                      ) : auth.token.startsWith('ghp_') ? (
-                        'ghp_••••••••'
-                      ) : (
-                        'Token saved'
-                      )}
-                    </p>
-                    {auth.isAppAuth && (
-                      <p className="mt-1 text-xs text-push-fg-dim">
-                        Push keeps this token fresh for you
-                      </p>
-                    )}
-                    {auth.isAppAuth && auth.installationId && (
-                      <p className="mt-1 font-mono text-xs text-push-fg-muted">
-                        Installation ID: {auth.installationId}
-                      </p>
-                    )}
-                  </div>
+                  <SandboxCredentialGrant auth={auth} />
 
                   {!auth.isAppAuth && auth.patToken && (
                     <div className="space-y-2">

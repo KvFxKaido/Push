@@ -8,6 +8,7 @@ import type {
   SettingsWorkspaceProps,
 } from './SettingsSheet';
 import { ExperimentalProviderSection, ProviderKeySection, SettingsSheet } from './SettingsSheet';
+import { SettingsSectionContent } from './SettingsSectionContent';
 
 function emptyAuth(): SettingsAuthProps {
   return {
@@ -15,6 +16,7 @@ function emptyAuth(): SettingsAuthProps {
     isAppAuth: false,
     installationId: '',
     token: '',
+    tokenKind: 'none',
     patToken: '',
     validatedUser: null,
     appLoading: false,
@@ -133,6 +135,31 @@ describe('SettingsSheet', () => {
     // Radix renders a hidden title on close; the live dialog is portalled only
     // when open=true, so "Control center" is absent until opened.
     expect(html).not.toContain('Control center');
+  });
+});
+
+describe('SettingsSectionContent', () => {
+  it('renders env-backed GitHub credentials as build-time tokens', () => {
+    const html = renderToStaticMarkup(
+      <SettingsSectionContent
+        settingsTab="you"
+        auth={{
+          ...emptyAuth(),
+          isConnected: true,
+          token: 'ghp_env',
+          tokenKind: 'env',
+          patToken: 'ghp_env',
+          validatedUser: { login: 'ishaw' },
+        }}
+        profile={emptyProfile()}
+        ai={emptyAI()}
+        workspace={emptyWorkspace()}
+        data={emptyData()}
+      />,
+    );
+
+    expect(html).toContain('Build-time token');
+    expect(html).toContain('VITE_GITHUB_TOKEN');
   });
 });
 

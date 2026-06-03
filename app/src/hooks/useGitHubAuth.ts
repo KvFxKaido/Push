@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GitHubUser } from '../types';
+import { classifyTokenString, type GitHubTokenKind } from '@/lib/github-auth';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { isNetworkFetchError, validateGitHubToken as validateToken } from '@/lib/utils';
 
@@ -13,6 +14,7 @@ const ENV_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || '';
 
 type UseGitHubAuth = {
   token: string;
+  tokenKind: GitHubTokenKind;
   login: () => void;
   logout: () => void;
   loading: boolean;
@@ -22,6 +24,18 @@ type UseGitHubAuth = {
   setTokenManually: (token: string) => Promise<boolean>;
   validatedUser: GitHubUser | null;
 };
+
+function userFlowTokenKind(token: string): GitHubTokenKind {
+  const shape = classifyTokenString(token);
+  return shape === 'pat' ? 'pat' : 'oauth';
+}
+
+function initialTokenState(): { token: string; kind: GitHubTokenKind } {
+  const stored = safeStorageGet(STORAGE_KEY);
+  if (stored) return { token: stored, kind: userFlowTokenKind(stored) };
+  if (ENV_TOKEN) return { token: ENV_TOKEN, kind: 'env' };
+  return { token: '', kind: 'none' };
+}
 
 function getOAuthRedirectUri(): string {
   const configured = OAUTH_REDIRECT_URI.trim();
@@ -38,7 +52,7 @@ function getOAuthRedirectUri(): string {
 }
 
 export function useGitHubAuth(): UseGitHubAuth {
-  const [token, setToken] = useState(() => safeStorageGet(STORAGE_KEY) || ENV_TOKEN);
+  const [{ token, kind: tokenKind }, setTokenState] = useState(initialTokenState);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [validatedUser, setValidatedUser] = useState<GitHubUser | null>(null);
@@ -58,7 +72,7 @@ export function useGitHubAuth(): UseGitHubAuth {
       } else {
         // Token expired or revoked — clear it
         safeStorageRemove(STORAGE_KEY);
-        setToken('');
+        setTokenState({ token: '', kind: 'none' });
         setValidatedUser(null);
       }
     });
@@ -74,7 +88,7 @@ export function useGitHubAuth(): UseGitHubAuth {
     const user = await validateToken(trimmed);
     if (user) {
       safeStorageSet(STORAGE_KEY, trimmed);
-      setToken(trimmed);
+      setTokenState({ token: trimmed, kind: userFlowTokenKind(trimmed) });
       setValidatedUser(user);
       setLoading(false);
       return true;
@@ -107,7 +121,7 @@ export function useGitHubAuth(): UseGitHubAuth {
 
   const logout = useCallback(() => {
     safeStorageRemove(STORAGE_KEY);
-    setToken('');
+    setTokenState({ token: '', kind: 'none' });
     setValidatedUser(null);
   }, []);
 
@@ -158,7 +172,7 @@ export function useGitHubAuth(): UseGitHubAuth {
           throw new Error('No access token returned');
         }
         safeStorageSet(STORAGE_KEY, data.access_token);
-        setToken(data.access_token);
+        setTokenState({ token: data.access_token, kind: 'oauth' });
         window.history.replaceState({}, document.title, window.location.pathname);
 
         // Validate the OAuth token too
@@ -181,6 +195,7 @@ export function useGitHubAuth(): UseGitHubAuth {
 
   return {
     token,
+    tokenKind,
     login,
     logout,
     loading,

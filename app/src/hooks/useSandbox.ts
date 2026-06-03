@@ -37,7 +37,12 @@ import {
   clearFileVersionCache,
   clearSandboxWorkspaceRevision,
 } from '@/lib/sandbox-file-version-cache';
-import { getActiveGitHubToken, APP_TOKEN_STORAGE_KEY } from '@/lib/github-auth';
+import { getActiveGitHubTokenInfo, APP_TOKEN_STORAGE_KEY } from '@/lib/github-auth';
+import {
+  evaluateSandboxAuthGate,
+  hasAcknowledgedUserTokenInjection,
+  USER_TOKEN_GATE_MESSAGE,
+} from '@/lib/sandbox-auth-gate';
 import {
   buildSandboxSessionStorageKey,
   clearSandboxSessionByStorageKey,
@@ -61,10 +66,6 @@ const IDLE_HIBERNATE_MS = 8 * 60 * 1000; // 8 min idle before snapshot
 // (otherwise the restore failure is silent and looks like a normal cold start).
 const RESTORE_FAILED_MESSAGE = 'Could not restore your saved workspace — starting a fresh sandbox.';
 const IDLE_CHECK_INTERVAL_MS = 60 * 1000; // check every minute
-
-function getGitHubToken(): string {
-  return getActiveGitHubToken();
-}
 
 function getGitHubAppCommitIdentity(): GitCommitIdentity | undefined {
   const appToken = safeStorageGet(APP_TOKEN_STORAGE_KEY);
@@ -323,7 +324,33 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
 
       try {
         // Empty repo = sandbox mode (ephemeral workspace, no clone, no token needed)
-        const token = repo ? getGitHubToken() : '';
+        const { token, kind: tokenKind } = repo
+          ? getActiveGitHubTokenInfo()
+          : { token: '', kind: 'none' as const };
+
+        // Gate: a durable user-scoped token (OAuth/PAT) would be baked into the
+        // sandbox's git config and readable for its lifetime. Require an explicit
+        // acknowledgment before injecting one; App installation tokens (scoped +
+        // auto-expiring) and the no-clone ephemeral mode pass through.
+        const gate = evaluateSandboxAuthGate({
+          kind: tokenKind,
+          hasRepo: Boolean(repo),
+          acknowledged: hasAcknowledgedUserTokenInjection(),
+        });
+        if (!gate.allow) {
+          console.log(
+            JSON.stringify({
+              level: 'warn',
+              event: 'sandbox_create_blocked_user_token',
+              reason: gate.reason,
+              tokenKind,
+            }),
+          );
+          setStatus('error');
+          setError(USER_TOKEN_GATE_MESSAGE);
+          return null;
+        }
+
         const session = await createSandbox(repo, branch, token, getGitHubAppCommitIdentity());
 
         if (session.status === 'error') {

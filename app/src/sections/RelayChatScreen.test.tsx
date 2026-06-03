@@ -90,6 +90,7 @@ const binding: RelayBinding = {
 // need to satisfy the type, not exercise the Settings UI.
 const auth: WorkspaceScreenAuthProps = {
   token: null,
+  tokenKind: 'none',
   patToken: null,
   validatedUser: null,
   isAppAuth: false,

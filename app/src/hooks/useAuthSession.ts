@@ -2,9 +2,11 @@ import { useCallback, useMemo } from 'react';
 import { useGitHubAppAuth } from '@/hooks/useGitHubAppAuth';
 import { useGitHubAuth } from '@/hooks/useGitHubAuth';
 import type { GitHubAuthSession, GitHubUser } from '@/types';
+import type { GitHubTokenKind } from '@/lib/github-auth';
 
 type PatAuthState = {
   token: string;
+  tokenKind: GitHubTokenKind;
   logout: () => void;
   loading: boolean;
   error: string | null;
@@ -36,10 +38,16 @@ export function buildAuthSession(
 ): GitHubAuthSession {
   const patToken = toNullableString(patAuth.token);
   const token = toNullableString(appAuth.token) ?? patToken;
+  const tokenKind: GitHubTokenKind = appAuth.isAppAuth
+    ? 'app'
+    : patToken
+      ? patAuth.tokenKind
+      : 'none';
 
   return {
     status: appAuth.isAppAuth ? 'app' : patToken ? 'pat' : 'signed_out',
     token,
+    tokenKind,
     patToken,
     validatedUser: appAuth.validatedUser ?? patAuth.validatedUser,
     isAppAuth: appAuth.isAppAuth,

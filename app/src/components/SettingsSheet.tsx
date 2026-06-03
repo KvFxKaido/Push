@@ -6,6 +6,7 @@ import { ModelPicker } from '@/components/ui/model-picker';
 import { SettingsSectionContent } from '@/components/SettingsSectionContent';
 import type { AIProviderType, SandboxStateCardData } from '@/types';
 import type { PreferredProvider } from '@/lib/providers';
+import type { GitHubTokenKind } from '@/lib/github-auth';
 import type { ContextMode } from '@/lib/orchestrator';
 import type { SandboxStartMode } from '@/lib/sandbox-start-mode';
 import type { ApprovalMode } from '@/lib/approval-mode';
@@ -55,6 +56,7 @@ export interface SettingsAuthProps {
   isAppAuth: boolean;
   installationId: string;
   token: string;
+  tokenKind: GitHubTokenKind;
   patToken: string;
   validatedUser: { login: string } | null;
   appLoading: boolean;
