@@ -8,6 +8,7 @@ Related: `app/src/hooks/useWorkspaceSandboxController.ts` (branch→sandbox tear
 `app/src/worker/snapshot-index.ts`, `app/src/worker/worker-cf-sandbox.ts` (per-branch snapshot index + reclaim),
 `app/src/lib/sandbox-tools.ts` (`create_branch` / `switch_branch` typed tools),
 `docs/decisions/Modal Sandbox Snapshots Design.md`, `docs/decisions/Cloudflare Native Backup Migration.md` (the snapshot impl this leans on),
+`docs/decisions/Repo Mirror Design.md` (the phone-side `MirrorTarget` storage layer the phone-local variant builds on),
 `CLAUDE.md` (repo/session/branch model)
 
 ## TL;DR
@@ -134,6 +135,65 @@ deferring the commit safe.
    it as *the* obvious motion at "this is worth a PR," and folding the commit into
    the same gesture.
 
+## Durable home for the scratchpad: remote snapshot vs phone-local vs hybrid
+
+"Snapshot durability is the foundation" (above) assumes the durable copy of the
+`main` delta lives **remotely** (R2/Modal). That is one bet, not the only one.
+The alternative: store the `main` scratchpad **on the phone** — the one genuinely
+durable, user-owned thing in the system. Containers get reclaimed on idle; the
+phone does not.
+
+This reframes the whole architecture into a trichotomy where each store finally
+holds what it is *supposed* to:
+
+| Store | Holds | Property |
+|---|---|---|
+| **GitHub** | named, shared work (branches/PRs) | durable, collaborative |
+| **Phone** | the personal, unnamed `main` scratchpad (the uncommitted delta) | durable, private, owner-held |
+| **Container** | nothing | **stateless** — disposable compute, hydrated from GitHub + phone per session |
+
+The prize is the last row: the container becomes pure compute. No snapshot index,
+no TTL, no reclaim, and the `:main` collision (below) simply *cannot occur* —
+there is no shared remote scratchpad slot to contend for; each device holds its
+own delta.
+
+**What's actually stored** is the *delta*, not the tree: working-tree patch +
+untracked blobs + index state against branch HEAD. Small, and it composes onto a
+fresh `git clone` at session start.
+
+**Substrate already half-exists, but this extends it.** `Repo Mirror Design.md`
+supplies the storage half — the `MirrorTarget` abstraction (SAF on the Android
+APK, OPFS/IndexedDB on PWA) and a reserved "sandbox-as-export-proxy" transport
+(sandbox tars the tree, streams to client) that is exactly the pipe this needs.
+**But** that doc explicitly scopes out the two things this requires —
+*bidirectional sync* and *working-tree sync* are stated non-goals there
+(`Repo Mirror Design.md` is `read + share` only). So phone-local `main` is
+net-new scope built *on* the mirror's storage layer, not a free rider on it.
+
+**Three caveats this bet must stare at:**
+
+1. **Single-device continuity.** A remote snapshot is device-agnostic — reattach
+   from any device on the same repo+branch. Phone-local means `main` lives on
+   *that phone*; switch to laptop / lose the phone and the scratchpad isn't there.
+   Fine for a phone-first single-user posture; a real narrowing otherwise.
+2. **The phone becomes the loss surface.** If it is the *only* durable copy of
+   uncommitted work, a wiped phone = lost work — worse than a server snapshot with
+   backups. This pairs with **cheap + frequent graduation** (above): graduate
+   often and the phone only ever holds a sprint's worth, bounding the blast radius
+   by design. The two ideas reinforce each other.
+3. **APK-strong, PWA-weak.** SAF on the Android shell is real durable filesystem;
+   a mobile browser is on evictable OPFS/IndexedDB. So this is fundamentally an
+   *APK-shell* feature — and that shell is still experimental/debug-only. The
+   foundation is more reliable than R2 *only* on the surface that is least mature.
+
+**Recommended bet: phone-primary, remote-snapshot-as-backup** (belt and
+suspenders), frequent graduation keeping the unbacked window tiny — falling back
+to remote-snapshot-primary on PWA where local storage is evictable. This buys the
+stateless container and owner-held durability without making a lost phone
+catastrophic. It is a genuinely different architectural bet than "remote snapshot
+is the foundation," so it is captured here as a fork in the road, not silently
+swapped in — picking between them is a graduation-time decision.
+
 ## Explicitly out of scope / rejected
 
 - **Per-chat sandbox isolation** — would break the cross-chat continuity that is
@@ -159,11 +219,17 @@ making `:main` hold N streams.
 2. **Does graduation auto-commit, or stage-and-confirm?** The commit goes through
    the **Auditor** SAFE/UNSAFE gate per repo delivery rules — how does that fold
    into "one motion" without becoming ceremony again?
-3. **Snapshot reliability target.** What failure rate / restore-success SLO makes
-   deferring the commit *feel* safe enough to live on the scratchpad? Needs the
-   instrumentation from the CF/Modal snapshot work to answer with numbers.
-4. **Abandon path.** Discarding a scratchpad exploration without graduating —
-   explicit "forget", or just snapshot TTL expiry? What's the UX?
+3. **Where does the durable scratchpad live — remote snapshot, phone-local, or
+   hybrid?** (See the trichotomy section.) The recommended phone-primary /
+   snapshot-backup bet depends on the Android APK shell + a working-tree extension
+   to `Repo Mirror Design.md`'s storage layer; picking it is a graduation-time
+   decision, not assumed here.
+4. **Snapshot / mirror reliability target.** What restore-success SLO makes
+   deferring the commit *feel* safe enough to live on the scratchpad? Needs
+   instrumentation from the CF/Modal snapshot work (and, for the phone variant,
+   the mirror) to answer with numbers.
+5. **Abandon path.** Discarding a scratchpad exploration without graduating —
+   explicit "forget", or just snapshot/mirror TTL expiry? What's the UX?
 
 ## Next step
 
