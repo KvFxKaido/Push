@@ -130,8 +130,10 @@ happened to name `main`."
 
 ### "Yes" = the durable path
 - Carries the work onto a named branch (mechanics in `create_branch`), becomes
-  the commit, opens the PR on-ramp. The commit goes through the **Auditor**
-  SAFE/UNSAFE gate per delivery rules (see open question on folding that in).
+  the commit, opens the PR on-ramp. A **pre-push safety check** runs here — but
+  *which* check is open: the current Auditor SAFE/UNSAFE gate likely unbundles
+  into a deterministic secret-scan + the existing PR reviewers rather than a
+  per-commit model-judge (see open question #2).
 
 ### "No" = an explicit, best-effort checkpoint on `main`
 - The commit stays on the sandbox's local `main`. We *try* to keep it via the
@@ -191,9 +193,31 @@ way it's a real concurrency question, not just a graduation nudge.
 1. **Graduation prompt surface + silence policy.** Where does the commit-time
    "branch this?" live in the chat UI, and what's the *don't-nag* rule (once per
    session / stretch / until intent changes)? The silence is half the design.
-2. **Does "Yes" auto-commit, or stage-and-confirm?** The commit goes through the
-   Auditor SAFE/UNSAFE gate — how does that fold into "one motion" without
-   becoming the ceremony we just removed? (What happens on UNSAFE mid-graduation?)
+2. **Does "Yes" auto-commit, or stage-and-confirm — and does the Auditor survive
+   this model at all?** Leaning toward **unbundle and mostly retire the
+   model-Auditor.** It was the v1 answer when commit-to-`main` was the primary
+   path and a model-judge was the only available gate; the branch-at-commit shift
+   plus the tooling that now exists relocates each of its three jobs to a
+   better-fitted home:
+   - *Secrets / footguns (mechanical, a recall problem)* → a **deterministic
+     pre-push scan** (gitleaks/trufflehog-style; seed already in
+     `app/src/lib/sensitive-data-guard.ts`'s token regex). Models are the wrong
+     tool for recall — they miss and hallucinate.
+   - *"Is this change dangerous" (semantic judgment)* → the **PR reviewers we
+     already have** (Copilot trusted-gate, Kilo, the glm-5.1 autonomous
+     reviewer) — independent model judgment *with full diff context*, which a
+     commit-time gate lacks.
+   - *"Don't land unreviewed on the live branch"* → already `Protect Main`.
+
+   Independent cost argument for getting it off the per-commit path regardless:
+   the Auditor **defaults to UNSAFE on error**, so a flaky audit backend *blocks
+   your commit* — a latency/reliability liability on the hot path. The only
+   territory a slimmed model-judge-at-graduation would own is "semantically
+   dangerous AND must-be-caught **pre-push**, beyond secrets" — a band that looks
+   empty (the deterministic scan covers catastrophic-once-pushed; the PR catches
+   the rest pre-*merge*). Keep a model-Auditor at graduation **only if that band
+   turns out non-empty.** Open: confirm the band is empty; pick the deterministic
+   scanner; decide whether "Yes" auto-commits behind the scan or stage-and-confirms.
 3. **`:main` multi-surface contention.** Per-device slot, last-writer-wins-loud,
    or other? (See sharp edge above.)
 4. **Snapshot best-effort target.** Not an SLO, but a *felt* reliability bar —
