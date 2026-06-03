@@ -3,10 +3,15 @@ import type { GitHubUser } from '../types';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { isNetworkFetchError, validateGitHubToken as validateToken } from '@/lib/utils';
 import { resolveApiUrl } from '@/lib/api-url';
+import { APP_TOKEN_EXPIRY_KEY, APP_TOKEN_STORAGE_KEY } from '@/lib/github-auth';
 
 const INSTALLATION_ID_KEY = 'github_app_installation_id';
-const TOKEN_KEY = 'github_app_token';
-const TOKEN_EXPIRY_KEY = 'github_app_token_expiry';
+// Reuse the canonical storage-key constants from the central token-authority
+// module so the writers here can't drift from the reader (getAppTokenExpiry /
+// getActiveGitHubTokenInfo). A divergent literal would silently break the
+// settings expiry hint and the active-token resolution.
+const TOKEN_KEY = APP_TOKEN_STORAGE_KEY;
+const TOKEN_EXPIRY_KEY = APP_TOKEN_EXPIRY_KEY;
 const USER_KEY = 'github_app_user';
 const COMMIT_IDENTITY_KEY = 'github_app_commit_identity';
 

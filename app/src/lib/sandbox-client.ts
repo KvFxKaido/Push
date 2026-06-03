@@ -23,6 +23,12 @@ import {
   SpanStatusCode,
 } from './tracing';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storage';
+import { classifyTokenString } from './github-auth';
+import {
+  USER_TOKEN_GATE_MESSAGE,
+  evaluateSandboxAuthGate,
+  hasAcknowledgedUserTokenInjection,
+} from './sandbox-auth-gate';
 
 // --- Types ---
 
@@ -1054,6 +1060,33 @@ export async function createSandbox(
   githubToken?: string,
   githubIdentity?: GitCommitIdentity,
 ): Promise<SandboxSession> {
+  // Defense in depth: the React `useSandbox.start` path gates durable
+  // user-scoped tokens before it ever reaches here, but `createSandbox` is also
+  // the chokepoint for non-hook callers (e.g. the Modal provider) and is
+  // reachable directly. Re-evaluate the gate at the point the token is actually
+  // baked into the clone URL so no caller can bypass it. Origin context is gone
+  // by this layer, so we classify by token shape — which fails safe (an
+  // unrecognized shape reads as durable and requires acknowledgment).
+  if (repo && githubToken) {
+    const kind = classifyTokenString(githubToken);
+    const gate = evaluateSandboxAuthGate({
+      kind,
+      hasRepo: true,
+      acknowledged: hasAcknowledgedUserTokenInjection(),
+    });
+    if (!gate.allow) {
+      console.log(
+        JSON.stringify({
+          level: 'warn',
+          event: 'sandbox_client_blocked_user_token',
+          reason: gate.reason,
+          tokenKind: kind,
+        }),
+      );
+      return { sandboxId: '', status: 'error', error: USER_TOKEN_GATE_MESSAGE };
+    }
+  }
+
   const data = await sandboxFetch<{
     sandbox_id: string | null;
     owner_token?: string;

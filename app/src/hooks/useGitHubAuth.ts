@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GitHubUser } from '../types';
 import { classifyTokenString, type GitHubTokenKind } from '@/lib/github-auth';
+import { setAcknowledgedUserTokenInjection } from '@/lib/sandbox-auth-gate';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { isNetworkFetchError, validateGitHubToken as validateToken } from '@/lib/utils';
 
@@ -58,46 +59,71 @@ export function useGitHubAuth(): UseGitHubAuth {
   const [validatedUser, setValidatedUser] = useState<GitHubUser | null>(null);
   const mountValidated = useRef(false);
 
+  // Single source of truth for the token/kind pair so the two can never
+  // desync: every "we have a user-flow token" site derives the kind from the
+  // token shape, and every "we have nothing" site collapses to the same
+  // `none` pair. Updating one without the other is no longer expressible.
+  const applyUserToken = useCallback((nextToken: string) => {
+    setTokenState({ token: nextToken, kind: userFlowTokenKind(nextToken) });
+  }, []);
+  const clearToken = useCallback(() => {
+    setTokenState({ token: '', kind: 'none' });
+  }, []);
+
   // On mount: silently re-validate stored token
   useEffect(() => {
     if (mountValidated.current) return;
     mountValidated.current = true;
 
-    const stored = safeStorageGet(STORAGE_KEY) || ENV_TOKEN;
-    if (!stored) return;
+    const stored = safeStorageGet(STORAGE_KEY);
+    const candidate = stored || ENV_TOKEN;
+    if (!candidate) return;
 
-    validateToken(stored).then((user) => {
+    validateToken(candidate).then((user) => {
       if (user) {
         setValidatedUser(user);
-      } else {
-        // Token expired or revoked — clear it
+      } else if (stored) {
+        // A stored OAuth/PAT token expired or was revoked — clear it so the
+        // UI and the sandbox gate both see "signed out".
         safeStorageRemove(STORAGE_KEY);
-        setTokenState({ token: '', kind: 'none' });
+        clearToken();
+        setValidatedUser(null);
+      } else {
+        // The candidate is the build-time ENV_TOKEN, which lives outside
+        // storage and outside this hook's state — `getActiveGitHubTokenInfo()`
+        // (the source the sandbox gate reads) will keep resolving it
+        // regardless. Collapsing our state to `none` here would desync the two
+        // (Settings shows signed-out, but the gate still blocks on an env
+        // token with no way to acknowledge it). Leave the env pair in place;
+        // a genuinely invalid env token surfaces as an honest API failure.
         setValidatedUser(null);
       }
     });
-  }, []);
+  }, [clearToken]);
 
-  const setTokenManually = useCallback(async (pat: string): Promise<boolean> => {
-    const trimmed = pat.trim();
-    if (!trimmed) return false;
+  const setTokenManually = useCallback(
+    async (pat: string): Promise<boolean> => {
+      const trimmed = pat.trim();
+      if (!trimmed) return false;
 
-    setLoading(true);
-    setError(null);
+      setLoading(true);
+      setError(null);
 
-    const user = await validateToken(trimmed);
-    if (user) {
-      safeStorageSet(STORAGE_KEY, trimmed);
-      setTokenState({ token: trimmed, kind: userFlowTokenKind(trimmed) });
-      setValidatedUser(user);
-      setLoading(false);
-      return true;
-    } else {
-      setError('Invalid token — could not authenticate with GitHub.');
-      setLoading(false);
-      return false;
-    }
-  }, []);
+      const user = await validateToken(trimmed);
+      if (user) {
+        safeStorageSet(STORAGE_KEY, trimmed);
+        applyUserToken(trimmed);
+        setValidatedUser(user);
+        setLoading(false);
+        return true;
+      } else {
+        setError('Invalid token — could not authenticate with GitHub.');
+        setLoading(false);
+        return false;
+      }
+    },
+    [applyUserToken],
+  );
 
   const login = useCallback(() => {
     if (!CLIENT_ID) {
@@ -121,9 +147,13 @@ export function useGitHubAuth(): UseGitHubAuth {
 
   const logout = useCallback(() => {
     safeStorageRemove(STORAGE_KEY);
-    setTokenState({ token: '', kind: 'none' });
+    clearToken();
     setValidatedUser(null);
-  }, []);
+    // Consent to inject a durable user-scoped token into a cloud sandbox is
+    // tied to the credential — drop it when the credential is removed so a
+    // later (possibly different) token can't ride a stale acknowledgment.
+    setAcknowledgedUserTokenInjection(false);
+  }, [clearToken]);
 
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -172,7 +202,7 @@ export function useGitHubAuth(): UseGitHubAuth {
           throw new Error('No access token returned');
         }
         safeStorageSet(STORAGE_KEY, data.access_token);
-        setTokenState({ token: data.access_token, kind: 'oauth' });
+        applyUserToken(data.access_token);
         window.history.replaceState({}, document.title, window.location.pathname);
 
         // Validate the OAuth token too
@@ -191,7 +221,7 @@ export function useGitHubAuth(): UseGitHubAuth {
       .finally(() => {
         setLoading(false);
       });
-  }, []);
+  }, [applyUserToken]);
 
   return {
     token,

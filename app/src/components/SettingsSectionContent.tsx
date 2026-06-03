@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChevronDown, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 import { BranchWaveIcon } from '@/components/icons/push-custom-icons';
 import { getMalformedToolCallMetrics } from '@/lib/tool-call-metrics';
@@ -30,6 +30,7 @@ import {
 import { formatModelDisplayName, type PreferredProvider } from '@/lib/providers';
 import { describeGitHubTokenKind, getAppTokenExpiry, isDurableUserToken } from '@/lib/github-auth';
 import {
+  SANDBOX_USER_TOKEN_ACK_KEY,
   hasAcknowledgedUserTokenInjection,
   setAcknowledgedUserTokenInjection,
 } from '@/lib/sandbox-auth-gate';
@@ -79,6 +80,21 @@ function SandboxCredentialGrant({ auth }: { auth: SettingsAuthProps }) {
   const desc = describeGitHubTokenKind(kind);
   const durable = isDurableUserToken(kind);
   const [ack, setAck] = useState(() => hasAcknowledgedUserTokenInjection());
+
+  // The initializer only runs on mount, so the checkbox can drift if the ack is
+  // mutated elsewhere — most notably logout (which clears it) or a second tab.
+  // Re-sync from storage on cross-document `storage` events so the toggle
+  // reflects reality without remounting Settings. (The gate itself always
+  // re-reads live, so this is cosmetic, but a stale "allowed" checkbox is
+  // exactly the kind of thing that erodes trust in a security control.)
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== null && e.key !== SANDBOX_USER_TOKEN_ACK_KEY) return;
+      setAck(hasAcknowledgedUserTokenInjection());
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   let expiryLabel: string | null = null;
   if (kind === 'app') {

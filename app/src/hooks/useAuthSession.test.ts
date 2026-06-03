@@ -113,6 +113,26 @@ describe('buildAuthSession', () => {
     expect(session.connectPat).toBe(setTokenManually);
   });
 
+  it('classifies the resolved fallback token when an app token is missing', () => {
+    // Installation id is stored (isAppAuth true) but the app token failed to
+    // refresh, so `token` falls back to the PAT. tokenKind must follow the
+    // token that actually won (durable 'pat'), not the auth mode — otherwise
+    // Settings hides the sandbox acknowledgment while useSandbox blocks on the
+    // same durable token, leaving the user stuck.
+    const patUser: GitHubUser = { login: 'pat-user', avatar_url: '' };
+    const patAuth = createPatAuth({
+      token: 'ghp_pat',
+      tokenKind: 'pat',
+      validatedUser: patUser,
+    });
+    const appAuth = createAppAuth({ token: '', isAppAuth: true });
+
+    const session = buildAuthSession(patAuth, appAuth, vi.fn());
+
+    expect(session.token).toBe('ghp_pat');
+    expect(session.tokenKind).toBe('pat');
+  });
+
   it('returns a signed-out session when neither auth path is active', () => {
     const session = buildAuthSession(createPatAuth(), createAppAuth(), vi.fn());
 
