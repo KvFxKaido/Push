@@ -15,6 +15,9 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/**'
+      # Injected orientation file — guarded by lib/agents-budget.test.ts, which
+      # only runs (via the app test job) when a changed path triggers this workflow.
+      - 'AGENTS.md'
   pull_request:
     branches: [main]
     paths:
@@ -29,6 +32,7 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/**'
+      - 'AGENTS.md'
   workflow_dispatch:
 
 concurrency:

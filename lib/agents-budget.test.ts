@@ -10,8 +10,9 @@ describe('AGENTS.md injection budget', () => {
   // AGENTS.md is the orientation file the instruction loaders actually inject:
   // first-found-wins resolves it ahead of CLAUDE.md / GEMINI.md, and there is
   // no PUSH.md. At the orchestrator injection site it's capped at
-  // SIZE_BUDGETS.projectInstructionsDefault, and anything past the budget is
-  // silently truncated off the tail (which once clipped the ARCHITECTURE.md
+  // SIZE_BUDGETS.projectInstructionsDefault. Overflow isn't fully silent — the
+  // sanitizer leaves a "[Project instructions truncated …]" marker — but the
+  // tail content past the cap is gone (which once dropped the ARCHITECTURE.md
   // precedence note). This pins the fix so the file can't quietly creep back
   // over budget.
   //
