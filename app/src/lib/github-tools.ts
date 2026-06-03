@@ -14,7 +14,10 @@ import type {
   ReviewResult,
   ToolExecutionResult,
 } from '@/types';
-import { resolveProjectInstructions } from '@push/lib/project-instructions-source';
+import {
+  resolveProjectInstructions,
+  type RawProjectInstructions,
+} from '@push/lib/project-instructions-source';
 import { parseDiffIntoFiles } from './diff-utils';
 import {
   getGitHubAuthHeaders as getGitHubHeaders,
@@ -1021,7 +1024,7 @@ function collectAnchorableLines(diff: string): Map<string, Set<number>> {
 export async function fetchProjectInstructions(
   repo: string,
   branch?: string,
-): Promise<{ content: string; filename: string } | null> {
+): Promise<RawProjectInstructions | null> {
   const headers = getGitHubHeaders();
   // Candidate order lives in the shared resolver so this (Phase A) can't drift
   // from the sandbox re-read (Phase B) or the CLI. Returns raw content — the

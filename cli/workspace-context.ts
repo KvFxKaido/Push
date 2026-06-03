@@ -197,7 +197,13 @@ export async function loadMemory(cwd: string): Promise<string | null> {
 // that caps and escapes, so there's no per-surface pre-slice here.
 export async function loadProjectInstructions(cwd: string): Promise<ProjectInstructions | null> {
   const raw = await resolveProjectInstructions((filename) =>
-    fs.readFile(path.join(cwd, filename), 'utf8').catch(() => null),
+    fs.readFile(path.join(cwd, filename), 'utf8').catch((err: NodeJS.ErrnoException) => {
+      // Absent file → fall through to the next candidate. A real IO/permission
+      // failure (EACCES, EIO, …) must surface per the reader contract, not be
+      // swallowed into a silent "no instructions".
+      if (err.code === 'ENOENT') return null;
+      throw err;
+    }),
   );
   return raw ? { file: raw.filename, content: raw.content } : null;
 }
