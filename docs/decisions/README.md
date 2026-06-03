@@ -1,6 +1,6 @@
 # Decisions Folder
 
-Status reviewed: 2026-06-01 (added Role Display De-emphasis entry after PR #758; prior CLI/TUI/daemon sweep after PRs #662–#673 refreshed Remote Sessions Phase 2.j, added Subprocess Env Scrubbing entry, and closed parser convergence via #677/#679/#680/#681/#683/#684)
+Status reviewed: 2026-06-03 (promoted Single-Agent Loop + Branch-at-Commit to ROADMAP first priority; indexed the Coder Delegation Collapse doc; prior 2026-06-01 sweep added the Role Display De-emphasis entry after PR #758)
 
 This folder contains architecture decisions, research, analysis, and shipped design references.
 
