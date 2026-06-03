@@ -2,7 +2,7 @@
 
 This is the **required entry doc** for Push. Repo instruction loaders read `PUSH.md` first (Push-specific override) and fall back to `AGENTS.md` → `CLAUDE.md` → `GEMINI.md`, so this file must remain self-sufficient when no `PUSH.md` is present.
 
-[`ARCHITECTURE.md`](ARCHITECTURE.md) is the deeper canonical reference for architecture and implementation details, but this file carries the minimum contract Push agents need at startup.
+[`ARCHITECTURE.md`](ARCHITECTURE.md) is the deeper canonical reference for architecture and implementation details; this file carries the minimum contract Push agents need at startup. On conflict between the two, prefer `ARCHITECTURE.md` for detailed behavior and this file for the startup contract.
 
 ## Core model
 
@@ -53,7 +53,7 @@ Prompts and docs describe behavior; they do not create it.
 
 ## Decision-doc discipline
 
-When you ship something specified in a `docs/decisions/` doc, flip that doc's `Status:` field in the same PR. Spec docs that drift from reality become silently misleading: `phase-5-tool-runtime-brief.md` sat at "Draft — pending review" for three weeks while the implementation (`lib/tool-execution-runtime.ts`) had landed in commit `6fecefcc` within hours of the brief itself being written. The status flip is part of the ship checklist, not a follow-up. See `docs/decisions/README.md` for the available status labels (Current / Historical / Draft / Reference / Superseded by `<doc>` / Merged into `<doc>`).
+When you ship something specified in a `docs/decisions/` doc, flip that doc's `Status:` field in the same PR — part of the ship checklist, not a follow-up. Spec docs that drift become silently misleading (e.g. `phase-5-tool-runtime-brief.md` sat at "Draft — pending review" for three weeks after `lib/tool-execution-runtime.ts` had landed). See `docs/decisions/README.md` for the status labels (Current / Historical / Draft / Reference / Superseded by `<doc>` / Merged into `<doc>`).
 
 ## Validation commands
 
@@ -72,9 +72,8 @@ npm run typecheck:tsgo
 
 ## Scratch workspace
 
-- Scratch workspaces are available when GitHub auth is not needed.
-- They are sandbox-only and do not use repo GitHub tools.
-- Use them for quick experiments or when starting without repo auth.
+- Available when GitHub auth isn't needed: sandbox-only, no repo GitHub tools.
+- Use for quick experiments or when starting without repo auth.
 
 ## New feature checklist
 
@@ -83,11 +82,3 @@ Three guardrails surfaced during the 2026-04 Big Four extraction and CLI parity 
 - **Storage: scope keys CLI-first.** Durable identifiers (e.g. `repoFullName + branch`) beat per-session ones. Web chatId is durable; CLI sessionId is per-run, so a chatId-shaped key breaks cross-run retrieval on CLI (see the PR #333 typed-memory retraction). If both surfaces touch the store, put the scope resolver in `lib/` from day one — follow the shared-module pattern of `lib/role-memory-budgets.ts`, not a per-surface helper like today's `cli/workspace-identity.ts` (which should be promoted to `lib/` the next time web needs it).
 - **Background tasks: name the coordinator's home first.** State + callback clusters need an owning module before the first line of code. If the owner isn't obvious in one sentence, the coordinator lands in `useChat.ts` by default (this is how it regrew 125% between 2026-03-25 and 2026-04-19). New feature hooks ship as sibling modules under `app/src/hooks/` or `app/src/lib/`; the `max-lines` ESLint guard on `useChat.ts` enforces this at CI.
 - **Web/CLI communication: one source of truth per vocabulary.** Any new tool, event, or envelope type needs a single canonical definition and a drift-detector test in the same PR. Gap 2 (2026-04-18) surfaced three parallel layers (dispatcher allowlist, prompt protocol, capability table) diverging silently. Pick the precedent that matches the vocabulary: tool-protocol drift uses `cli/tests/daemon-integration.test.mjs` (prompt-vs-capability sync); event/envelope drift uses `cli/tests/protocol-drift.test.mjs` (strict-mode schema pins). Extend `lib/capabilities.ts` for shared capability tables and `lib/protocol-schema.ts` strict mode for protocol envelopes.
-
-If a fourth guardrail emerges, promote this section to its own doc under `docs/decisions/` rather than appending.
-
-## Pointer
-
-For full architecture, tool protocol, and implementation detail, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
-For quick start and entry points, see [`CLAUDE.md`](CLAUDE.md).
-If this file conflicts with `ARCHITECTURE.md`, prefer `ARCHITECTURE.md` for detailed behavior and this file for startup contract.
