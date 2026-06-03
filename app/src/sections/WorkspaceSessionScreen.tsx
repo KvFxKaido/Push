@@ -51,6 +51,7 @@ export function WorkspaceSessionScreen({
   } = repoShell;
   const {
     token,
+    tokenKind,
     patToken,
     validatedUser,
     isAppAuth,
@@ -610,6 +611,7 @@ export function WorkspaceSessionScreen({
 
   const authDomain = {
     token,
+    tokenKind,
     patToken,
     isAppAuth,
     installationId,

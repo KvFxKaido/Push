@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { GitHubUser } from '@/types';
+import type { GitHubTokenKind } from '@/lib/github-auth';
 import { buildAuthSession } from './useAuthSession';
 
 function createPatAuth(
   overrides: Partial<{
     token: string;
+    tokenKind: GitHubTokenKind;
     logout: () => void;
     loading: boolean;
     error: string | null;
@@ -14,6 +16,7 @@ function createPatAuth(
 ) {
   return {
     token: '',
+    tokenKind: 'none' as GitHubTokenKind,
     logout: vi.fn(),
     loading: false,
     error: null,
@@ -71,6 +74,7 @@ describe('buildAuthSession', () => {
 
     expect(session.status).toBe('app');
     expect(session.token).toBe('ghu_app');
+    expect(session.tokenKind).toBe('app');
     expect(session.patToken).toBe('ghp_pat');
     expect(session.validatedUser).toEqual(appUser);
     expect(session.isAppAuth).toBe(true);
@@ -88,6 +92,7 @@ describe('buildAuthSession', () => {
     const setTokenManually = vi.fn(async () => true);
     const patAuth = createPatAuth({
       token: 'ghp_pat',
+      tokenKind: 'pat',
       validatedUser: patUser,
       setTokenManually,
     });
@@ -99,6 +104,7 @@ describe('buildAuthSession', () => {
 
     expect(session.status).toBe('pat');
     expect(session.token).toBe('ghp_pat');
+    expect(session.tokenKind).toBe('pat');
     expect(session.patToken).toBe('ghp_pat');
     expect(session.validatedUser).toEqual(patUser);
     expect(session.isAppAuth).toBe(false);
@@ -107,11 +113,32 @@ describe('buildAuthSession', () => {
     expect(session.connectPat).toBe(setTokenManually);
   });
 
+  it('classifies the resolved fallback token when an app token is missing', () => {
+    // Installation id is stored (isAppAuth true) but the app token failed to
+    // refresh, so `token` falls back to the PAT. tokenKind must follow the
+    // token that actually won (durable 'pat'), not the auth mode — otherwise
+    // Settings hides the sandbox acknowledgment while useSandbox blocks on the
+    // same durable token, leaving the user stuck.
+    const patUser: GitHubUser = { login: 'pat-user', avatar_url: '' };
+    const patAuth = createPatAuth({
+      token: 'ghp_pat',
+      tokenKind: 'pat',
+      validatedUser: patUser,
+    });
+    const appAuth = createAppAuth({ token: '', isAppAuth: true });
+
+    const session = buildAuthSession(patAuth, appAuth, vi.fn());
+
+    expect(session.token).toBe('ghp_pat');
+    expect(session.tokenKind).toBe('pat');
+  });
+
   it('returns a signed-out session when neither auth path is active', () => {
     const session = buildAuthSession(createPatAuth(), createAppAuth(), vi.fn());
 
     expect(session.status).toBe('signed_out');
     expect(session.token).toBeNull();
+    expect(session.tokenKind).toBe('none');
     expect(session.patToken).toBeNull();
     expect(session.installationId).toBeNull();
     expect(session.validatedUser).toBeNull();

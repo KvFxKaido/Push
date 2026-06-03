@@ -10,6 +10,10 @@ const {
   APP_TOKEN_STORAGE_KEY,
   OAUTH_STORAGE_KEY,
   getActiveGitHubToken,
+  getActiveGitHubTokenInfo,
+  classifyTokenString,
+  isDurableUserToken,
+  isInstallationToken,
   getGitHubAuthHeaders,
   getGitHubAuthHeadersForToken,
 } = await import('./github-auth');
@@ -77,6 +81,81 @@ describe('getActiveGitHubToken', () => {
     vi.unstubAllGlobals();
     vi.stubGlobal('window', undefined);
     expect(getActiveGitHubToken()).toBe('');
+  });
+});
+
+describe('classifyTokenString', () => {
+  it('maps GitHub token prefixes to authority kinds', () => {
+    expect(classifyTokenString('ghs_abc')).toBe('app');
+    expect(classifyTokenString('gho_abc')).toBe('oauth');
+    expect(classifyTokenString('ghu_abc')).toBe('oauth');
+    expect(classifyTokenString('ghp_abc')).toBe('pat');
+    expect(classifyTokenString('github_pat_abc')).toBe('pat');
+  });
+
+  it('returns none for empty and unknown for unrecognized shapes', () => {
+    expect(classifyTokenString('')).toBe('none');
+    expect(classifyTokenString('legacy-opaque-token')).toBe('unknown');
+  });
+});
+
+describe('isInstallationToken / isDurableUserToken', () => {
+  it('treats only app as the scoped+expiring regime', () => {
+    expect(isInstallationToken('app')).toBe(true);
+    expect(isInstallationToken('oauth')).toBe(false);
+    expect(isInstallationToken('none')).toBe(false);
+  });
+
+  it('flags user-scoped and unknown as durable, but not app or none', () => {
+    expect(isDurableUserToken('oauth')).toBe(true);
+    expect(isDurableUserToken('pat')).toBe(true);
+    expect(isDurableUserToken('env')).toBe(true);
+    expect(isDurableUserToken('unknown')).toBe(true); // fail safe
+    expect(isDurableUserToken('app')).toBe(false);
+    expect(isDurableUserToken('none')).toBe(false);
+  });
+});
+
+describe('getActiveGitHubTokenInfo', () => {
+  let localStorage: ReturnType<typeof createStorageMock>;
+
+  beforeEach(() => {
+    localStorage = createStorageMock();
+    stubWindowWithStorage(localStorage);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('returns none when nothing is stored', () => {
+    expect(getActiveGitHubTokenInfo()).toEqual({ token: '', kind: 'none' });
+  });
+
+  it('classifies the app-token key as app regardless of prefix', () => {
+    localStorage.store.set(APP_TOKEN_STORAGE_KEY, 'opaque-installation-token');
+    expect(getActiveGitHubTokenInfo()).toEqual({ token: 'opaque-installation-token', kind: 'app' });
+  });
+
+  it('classifies a pasted PAT in the OAuth key as pat', () => {
+    localStorage.store.set(OAUTH_STORAGE_KEY, 'ghp_pasted');
+    expect(getActiveGitHubTokenInfo()).toEqual({ token: 'ghp_pasted', kind: 'pat' });
+  });
+
+  it('classifies a real OAuth token in the OAuth key as oauth', () => {
+    localStorage.store.set(OAUTH_STORAGE_KEY, 'gho_oauth');
+    expect(getActiveGitHubTokenInfo()).toEqual({ token: 'gho_oauth', kind: 'oauth' });
+  });
+
+  it('treats an unrecognized OAuth-key token as oauth (origin wins over shape)', () => {
+    localStorage.store.set(OAUTH_STORAGE_KEY, 'legacy-opaque');
+    expect(getActiveGitHubTokenInfo().kind).toBe('oauth');
+  });
+
+  it('prefers the app token over an OAuth-key PAT', () => {
+    localStorage.store.set(APP_TOKEN_STORAGE_KEY, 'ghs_app');
+    localStorage.store.set(OAUTH_STORAGE_KEY, 'ghp_user');
+    expect(getActiveGitHubTokenInfo()).toEqual({ token: 'ghs_app', kind: 'app' });
   });
 });
 

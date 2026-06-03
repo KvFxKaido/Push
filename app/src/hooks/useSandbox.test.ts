@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { GitHubTokenKind } from '@/lib/github-auth';
+import { USER_TOKEN_GATE_MESSAGE } from '@/lib/sandbox-auth-gate';
 
 const sandboxClient = vi.hoisted(() => ({
   createSandbox: vi.fn(),
@@ -33,7 +35,13 @@ const cacheLib = vi.hoisted(() => ({
   clearSandboxWorkspaceRevision: vi.fn(),
 }));
 const ghAuth = vi.hoisted(() => ({
-  getActiveGitHubToken: vi.fn<() => string>(() => ''),
+  getActiveGitHubTokenInfo: vi.fn<() => { token: string; kind: GitHubTokenKind }>(() => ({
+    token: '',
+    kind: 'none',
+  })),
+  isDurableUserToken: vi.fn(
+    (kind: string) => kind === 'oauth' || kind === 'pat' || kind === 'env' || kind === 'unknown',
+  ),
   APP_TOKEN_STORAGE_KEY: 'github_app_token',
 }));
 const sandboxSession = vi.hoisted(() => ({
@@ -120,7 +128,8 @@ beforeEach(() => {
   symbolLedger.clearRepo.mockResolvedValue(undefined);
   cacheLib.clearFileVersionCache.mockReset();
   cacheLib.clearSandboxWorkspaceRevision.mockReset();
-  ghAuth.getActiveGitHubToken.mockReset().mockReturnValue('');
+  ghAuth.getActiveGitHubTokenInfo.mockReset().mockReturnValue({ token: '', kind: 'none' });
+  ghAuth.isDurableUserToken.mockClear();
   Object.values(sandboxSession).forEach((m) => m.mockReset());
   sandboxSession.buildSandboxSessionStorageKey.mockImplementation(
     (repo, branch) => `sbx:${repo}:${branch}`,
@@ -173,7 +182,7 @@ describe('useSandbox.start', () => {
       sandboxId: 'sb-new',
       ownerToken: 'owner-tok',
     });
-    ghAuth.getActiveGitHubToken.mockReturnValue('gh-token');
+    ghAuth.getActiveGitHubTokenInfo.mockReturnValue({ token: 'gh-token', kind: 'app' });
     const hook = render();
     const id = await hook.start('owner/repo', 'feature');
     expect(id).toBe('sb-new');
@@ -195,10 +204,41 @@ describe('useSandbox.start', () => {
       sandboxId: 'sb-scratch',
       ownerToken: 'owner',
     });
-    ghAuth.getActiveGitHubToken.mockReturnValue('gh-token');
+    ghAuth.getActiveGitHubTokenInfo.mockReturnValue({ token: 'gh-token', kind: 'app' });
     const hook = render();
     await hook.start('', undefined);
     expect(sandboxClient.createSandbox).toHaveBeenCalledWith('', undefined, '', undefined);
+  });
+
+  it('blocks durable user-scoped repo tokens until the sandbox acknowledgment is set', async () => {
+    ghAuth.getActiveGitHubTokenInfo.mockReturnValue({ token: 'ghp-user', kind: 'pat' });
+    const hook = render();
+    const id = await hook.start('owner/repo', 'main');
+    expect(id).toBeNull();
+    expect(sandboxClient.createSandbox).not.toHaveBeenCalled();
+    expect(reactState.cells[1].value).toBe('error');
+    expect(reactState.cells[2].value).toBe(USER_TOKEN_GATE_MESSAGE);
+  });
+
+  it('allows durable user-scoped repo tokens after acknowledgment', async () => {
+    sandboxClient.createSandbox.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-ack',
+      ownerToken: 'owner-tok',
+    });
+    ghAuth.getActiveGitHubTokenInfo.mockReturnValue({ token: 'ghp-user', kind: 'pat' });
+    safeStorage.get.mockImplementation((key: string) =>
+      key === 'github_sandbox_user_token_ack' ? '1' : null,
+    );
+    const hook = render();
+    const id = await hook.start('owner/repo', 'main');
+    expect(id).toBe('sb-ack');
+    expect(sandboxClient.createSandbox).toHaveBeenCalledWith(
+      'owner/repo',
+      'main',
+      'ghp-user',
+      undefined,
+    );
   });
 
   it('transitions to error when the sandbox reports creation failure', async () => {

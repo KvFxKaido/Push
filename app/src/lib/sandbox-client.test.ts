@@ -31,6 +31,7 @@ import {
   SANDBOX_TS_ARROW_FUNCTION_REGEX,
   setSandboxOwnerToken,
 } from './sandbox-client';
+import { SANDBOX_USER_TOKEN_ACK_KEY, USER_TOKEN_GATE_MESSAGE } from './sandbox-auth-gate';
 
 function createStorageMock() {
   const data = new Map<string, string>();
@@ -854,6 +855,71 @@ describe('sandbox lifecycle events', () => {
       { timestamp: 1234, message: 'Workspace created' },
       { timestamp: 2345, message: 'Workspace state restored from snapshot' },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createSandbox — durable user-token gate (defense in depth)
+// ---------------------------------------------------------------------------
+//
+// useSandbox.start gates durable user-scoped tokens before calling createSandbox,
+// but createSandbox is also the chokepoint for non-hook callers (e.g. the Modal
+// provider) and is reachable directly. These pin the in-client backstop.
+
+describe('createSandbox — durable user-token gate', () => {
+  function setAck(value: boolean) {
+    const storage = createStorageMock();
+    if (value) storage.setItem(SANDBOX_USER_TOKEN_ACK_KEY, '1');
+    vi.stubGlobal('window', { localStorage: storage, sessionStorage: createStorageMock() });
+  }
+
+  it('blocks a repo clone with a durable user token when not acknowledged', async () => {
+    setAck(false);
+
+    const session = await createSandbox('owner/repo', 'main', 'ghp_durableUserToken');
+
+    expect(session.status).toBe('error');
+    expect(session.error).toBe(USER_TOKEN_GATE_MESSAGE);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('allows a durable user token once acknowledged', async () => {
+    setAck(true);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ sandbox_id: 'sb-ack', owner_token: 'owner-token' }),
+    });
+
+    const session = await createSandbox('owner/repo', 'main', 'ghp_durableUserToken');
+
+    expect(session.status).toBe('ready');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows a scoped App installation token without acknowledgment', async () => {
+    setAck(false);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ sandbox_id: 'sb-app', owner_token: 'owner-token' }),
+    });
+
+    const session = await createSandbox('owner/repo', 'main', 'ghs_installationToken');
+
+    expect(session.status).toBe('ready');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not gate the ephemeral (no-clone) sandbox path', async () => {
+    setAck(false);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ sandbox_id: 'sb-ephemeral', owner_token: 'owner-token' }),
+    });
+
+    const session = await createSandbox('', undefined, '');
+
+    expect(session.status).toBe('ready');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });
 

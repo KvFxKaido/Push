@@ -28,6 +28,7 @@ export function buildSettingsAuth(
     isAppAuth: props.isAppAuth,
     installationId: props.installationId ?? '',
     token: props.token ?? '',
+    tokenKind: props.tokenKind,
     patToken: props.patToken ?? '',
     validatedUser: props.validatedUser,
     appLoading: props.appLoading,

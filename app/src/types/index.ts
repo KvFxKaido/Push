@@ -1,5 +1,6 @@
 import type { RepoAppearance } from '@/lib/repo-appearance';
 import type { VerificationPolicy } from '@/lib/verification-policy';
+import type { GitHubTokenKind } from '@/lib/github-auth';
 import type { ArtifactRecord } from '@push/lib/artifacts/types';
 import type {
   AcceptanceCriterion,
@@ -1529,6 +1530,7 @@ export type ConversationIndex = Record<string, ConversationMeta>;
 export interface GitHubAuthSession {
   status: 'signed_out' | 'pat' | 'app';
   token: string | null;
+  tokenKind: GitHubTokenKind;
   patToken: string | null;
   validatedUser: GitHubUser | null;
   isAppAuth: boolean;
@@ -1563,6 +1565,7 @@ export interface WorkspaceScreenRepoShellProps {
 export type WorkspaceScreenAuthProps = Pick<
   GitHubAuthSession,
   | 'token'
+  | 'tokenKind'
   | 'patToken'
   | 'validatedUser'
   | 'isAppAuth'

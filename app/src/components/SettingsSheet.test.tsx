@@ -3,11 +3,17 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type {
   SettingsAIProps,
   SettingsAuthProps,
+  SettingsBuiltInProvider,
   SettingsDataProps,
   SettingsProfileProps,
   SettingsWorkspaceProps,
 } from './SettingsSheet';
 import { ExperimentalProviderSection, ProviderKeySection, SettingsSheet } from './SettingsSheet';
+import { SettingsSectionContent } from './SettingsSectionContent';
+import {
+  BUILT_IN_SETTINGS_PROVIDER_ORDER,
+  type BuiltInSettingsProviderId,
+} from './settings-shared';
 
 function emptyAuth(): SettingsAuthProps {
   return {
@@ -15,6 +21,7 @@ function emptyAuth(): SettingsAuthProps {
     isAppAuth: false,
     installationId: '',
     token: '',
+    tokenKind: 'none',
     patToken: '',
     validatedUser: null,
     appLoading: false,
@@ -60,7 +67,26 @@ function emptyAI(): SettingsAIProps {
     availableProviders: [],
     setPreferredProvider: vi.fn(),
     clearPreferredProvider: vi.fn(),
-    builtInProviders: {} as never,
+    builtInProviders: Object.fromEntries(
+      BUILT_IN_SETTINGS_PROVIDER_ORDER.map((providerId) => [
+        providerId,
+        {
+          hasKey: false,
+          model: '',
+          setModel: vi.fn(),
+          modelOptions: [],
+          modelsLoading: false,
+          modelsError: null,
+          modelsUpdatedAt: null,
+          isModelLocked: false,
+          refreshModels: vi.fn(),
+          keyInput: '',
+          setKeyInput: vi.fn(),
+          setKey: vi.fn(),
+          clearKey: vi.fn(),
+        } satisfies SettingsBuiltInProvider,
+      ]),
+    ) as unknown as Record<BuiltInSettingsProviderId, SettingsBuiltInProvider>,
     cloudflareProvider: {
       configured: false,
       statusLoading: false,
@@ -133,6 +159,32 @@ describe('SettingsSheet', () => {
     // Radix renders a hidden title on close; the live dialog is portalled only
     // when open=true, so "Control center" is absent until opened.
     expect(html).not.toContain('Control center');
+  });
+});
+
+describe('SettingsSectionContent', () => {
+  it('renders env-backed GitHub credentials as build-time tokens', () => {
+    const html = renderToStaticMarkup(
+      <SettingsSectionContent
+        settingsTab="you"
+        auth={{
+          ...emptyAuth(),
+          isConnected: true,
+          token: 'ghp_env',
+          tokenKind: 'env',
+          patToken: 'ghp_env',
+          validatedUser: { login: 'ishaw' },
+        }}
+        profile={emptyProfile()}
+        ai={emptyAI()}
+        workspace={emptyWorkspace()}
+        data={emptyData()}
+        onDismiss={() => {}}
+      />,
+    );
+
+    expect(html).toContain('Build-time token');
+    expect(html).toContain('VITE_GITHUB_TOKEN');
   });
 });
 

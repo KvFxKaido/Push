@@ -252,6 +252,7 @@ function App() {
   const auth = useAuthSession();
   const {
     token: authToken,
+    tokenKind,
     validatedUser,
     isAppAuth,
     loading: authLoading,
@@ -816,6 +817,7 @@ function App() {
         }}
         auth={{
           token: authToken,
+          tokenKind,
           patToken,
           validatedUser,
           isAppAuth,
