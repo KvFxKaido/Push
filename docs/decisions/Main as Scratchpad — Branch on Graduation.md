@@ -1,240 +1,217 @@
 # Main as Scratchpad — Branch on Graduation
 
-Date: 2026-06-03
+Date: 2026-06-03 (refocused 2026-06-03)
 Status: **Draft** — design-in-motion; needs a `ROADMAP.md` entry to graduate to an implementation commitment
 Owner: Push
 Related: `app/src/hooks/useWorkspaceSandboxController.ts` (branch→sandbox teardown gate),
-`app/src/hooks/useSandbox.ts` + `app/src/lib/sandbox-session.ts` (sandbox keyed by `repo:branch`),
+`app/src/hooks/useSandbox.ts` + `app/src/lib/sandbox-session.ts` (sandbox keyed by `repo:branch`; `RESTORE_FAILED_MESSAGE`),
 `app/src/worker/snapshot-index.ts`, `app/src/worker/worker-cf-sandbox.ts` (per-branch snapshot index + reclaim),
 `app/src/lib/sandbox-tools.ts` (`create_branch` / `switch_branch` typed tools),
 `docs/decisions/Modal Sandbox Snapshots Design.md`, `docs/decisions/Cloudflare Native Backup Migration.md` (the snapshot impl this leans on),
-`docs/decisions/Repo Mirror Design.md` (the phone-side `MirrorTarget` storage layer the phone-local variant builds on),
+`docs/decisions/Scratchpad Durable Storage — Remote vs Phone-Local.md` (the parked where-does-the-delta-live fork, split out of this doc),
 `CLAUDE.md` (repo/session/branch model)
 
 ## TL;DR
 
 Push's differentiator over every other mobile coding agent is that it lets you
-**start talking on `main` without branching first** — the main guard is optional
-and routinely off. Every other agent (Claude Code on web included) forces a
-branch before you can speak, because they conflate two separable things:
+**start talking on `main` without branching first**. This doc pins the model
+that keeps that differentiator coherent under load, in one line:
 
-- **the persistence boundary** — where diffs durably live, and
-- **the workflow ceremony** — naming a stream before you can work.
+> **We take the mandatory branch every cloud agent forces, and move it from the
+> front of the interaction to the point of intent.** You talk on `main`
+> immediately. When you *commit* — the moment you've decided some work is worth
+> keeping — Push asks once: *branch this?* "Yes" makes it durable, named, and
+> PR-bound. "No" keeps it as a best-effort checkpoint on `main`, with the
+> tradeoff stated plainly. You never branch to *start*; you branch to *persist*.
 
-This doc records the model we want Push to commit to, which keeps the
-differentiator and makes it *coherent* under load:
+The only things this asks us to engineer are small: a **commit-time branch
+prompt** (and the discipline to keep it quiet after the first ask), and an
+honest contract for the snapshot — **best-effort warm-reattach, not a
+durability guarantee**. The branch-carry plumbing and the honest-failure
+surface already exist.
 
-> **`main` is a short-lived, snapshot-backed scratchpad. Chats and models are
-> interchangeable lenses on one shared workspace. Branching is a deliberate
-> *graduation* — the single cheap motion that carries your accumulated diffs
-> onto a named branch, where they become a commit and a PR. You never branch to
-> start; you branch to diverge.**
+## The counterexample that anchors this
 
-The only thing this model asks us to *engineer* is the pair that makes it
-trustworthy: **snapshot durability** (so the scratchpad survives stalls) and
-**cheap graduation** (so the scratchpad's job stays short). It explicitly asks
-us to *remove* a tempting mechanism — under-the-hood-branch-routed-to-`main` —
-rather than add one.
+The realization that drove this doc: in another agent's cloud environment, a
+Claude Code instance hit a **stop-hook because it had uncommitted changes** —
+and that env had already **created a branch before responding to the first
+prompt**. Those two behaviors aren't UX quirks; they're forced by an
+architecture, and naming the architecture is what makes Push's choice legible.
 
-## What anchors this
+That agent's cloud persistence layer **is git, full stop.** There is no
+scratchpad underneath it. So:
 
-Two facts about how the owner actually uses Push pin the design:
+- **Branch-before-first-response** is mandatory because a branch is the *only*
+  durable home for work — nothing can be held until one exists.
+- **Stop-hook-on-uncommitted** treats uncommitted work as *unsafe to leave*,
+  because in a git-only model uncommitted = not persisted = gone on the next
+  sandbox reclaim. The hook is the system honestly admitting "I can't hold this
+  for you."
+
+They conflate the **persistence boundary** (where diffs durably live) with the
+**workflow ceremony** (naming a stream before you can work) — not out of
+carelessness, but because git is the only floor they have, so the two collapse
+into one act that has to happen up front.
+
+**Push's inversion:** the snapshot is a durability floor *below* git. Because
+work survives without a commit, the branch stops being the only way to persist —
+so it stops being mandatory up front. The branch decision is freed to move to
+where it's actually meaningful: the moment you commit. Same git-centric
+durability instinct as the stop-hook, but the branch is *pulled from the front
+to the point of intent*, and the floor underneath makes "talk on `main` first"
+a consequence of the architecture rather than a hack we're rationalizing.
+
+## What anchors this (how the owner actually uses Push)
 
 1. **Continuity is the headline feature, and the workspace is its unit.**
-   Switching chats/models to "pick up where I left off" after a stall or hiccup
-   means chats are *lenses on one body of work*, not isolated streams. The
-   shared `main` container is therefore **correct**, not a footgun — it is the
+   Switching chats/models to "pick up where I left off" after a stall means
+   chats are *lenses on one body of work*, not isolated streams. The shared
+   `main` container is therefore **correct**, not a footgun — it is the
    mechanism that makes reattachment possible.
 2. **"Work from `main`" was never anti-branch on principle.** It started as a
    workaround for PRs-feel-like-ceremony before the setup made them useful. With
-   PRs now wanted, `main`-first becomes *pro-low-friction-start*, and it
-   survives contact with branches instead of fighting them.
+   PRs now wanted, `main`-first becomes *pro-low-friction-start* and survives
+   contact with branches instead of fighting them.
+3. **Cloud is the default, and stays the default.** It's the most durable way to
+   code on every platform *today*. The daemon/remote-session path (drive a local
+   pushd from mobile) would put durability on a substrate we own — but
+   cross-network reachability is an unsolved, industry-wide problem, so making it
+   the durable home is premature. Cloud-default routes around that.
 
-## Current state (what the code does today)
-
-These are the load-bearing facts the design rests on, with refs:
+## Current state (load-bearing facts, with refs)
 
 - **Sandbox is keyed by `(repoFullName, branch)` only — no `chatId`.**
   `buildSandboxSessionStorageKey` (`app/src/lib/sandbox-session.ts:59-66`) and
   the `useSandbox` memo (`app/src/hooks/useSandbox.ts:105-108`) derive identity
-  from repo + branch. Switching chats only sets `activeChatId`
-  (`app/src/hooks/chat-management.ts:139`) — it never touches the sandbox.
-  **Consequence:** two chats on the same branch *share one container's
-  `/workspace` and all uncommitted diffs.* This is the continuity feature, by
-  construction.
-- **The working tree persists via a per-branch snapshot.** On idle-hibernate the
-  `/workspace` is archived to R2/Modal and restored on reconnect. The snapshot
-  index is keyed `snapshot:<repoFullName>:<branch>` —
-  *one snapshot per branch* — and each new hibernate reclaims the prior one
-  (`app/src/worker/worker-cf-sandbox.ts:1361-1367`, `app/src/worker/snapshot-index.ts`),
-  TTL ~7 days.
-- **Typed branch tools already preserve the workspace on fork.**
-  `create_branch` (forked) returns `branchSwitch: { kind: 'forked' }`
+  from repo + branch; switching chats only sets `activeChatId`
+  (`app/src/hooks/chat-management.ts:139`), never the sandbox. **Consequence:**
+  same-branch chats *share one container's `/workspace` and all uncommitted
+  diffs.* That's the continuity feature, by construction.
+- **The working tree persists via a per-branch snapshot** (R2/Modal on
+  idle-hibernate, restored on reconnect). The index is keyed
+  `snapshot:<repo>:<branch>` — one slot per branch, each hibernate reclaims the
+  prior (`app/src/worker/worker-cf-sandbox.ts:1361-1367`,
+  `app/src/worker/snapshot-index.ts`), TTL ~7 days.
+- **Restore failure is already surfaced, not silent.** `RESTORE_FAILED_MESSAGE`
+  in `useSandbox` ("Could not restore your saved workspace — starting a fresh
+  sandbox") exists specifically so a lost snapshot doesn't masquerade as a
+  normal cold start. The honest-failure half of this design is already shipped.
+- **Typed branch tools already carry the working tree on fork.** `create_branch`
+  (forked) returns `branchSwitch: { kind: 'forked' }`
   (`app/src/lib/sandbox-tools.ts:859`) and the controller suppresses teardown via
-  `skipBranchTeardownRef` (`app/src/hooks/useWorkspaceSandboxController.ts`), so a
-  fork carries the dirty working tree onto the new branch. **The graduation
-  motion's mechanics already exist** — the gap is ergonomics and intent, not
-  plumbing.
+  `skipBranchTeardownRef` (`useWorkspaceSandboxController.ts`). **The graduation
+  motion's mechanics already exist** — the gap is the commit-time prompt and
+  intent, not plumbing.
 
-So Push *already is* a branch-as-container system under the hood — it has simply
-assumed one stream of work per branch. "Work from `main`" today means "one active
-workspace that you happened to name `main`."
+So Push *already is* a branch-as-container system that has simply assumed one
+stream per branch. "Work from `main`" today means "one active workspace that you
+happened to name `main`."
 
 ## The model we're committing to
 
-### `main` = ephemeral, snapshot-backed scratchpad
-- You talk immediately; the guard stays optional. (Differentiator preserved.)
+### `main` = a scratchpad you start on (cloud-default)
+- You talk immediately; the main guard stays optional. (Differentiator.)
 - Continuity across chats/models lives here, on the shared workspace. (Anchor #1.)
-- **You do not commit to `main`, route to `main`, or try to make `main`
-  durable.** Work accumulates as *uncommitted diffs* held by the snapshot.
+- You do not route to `main` or try to make `main` *guaranteed*-durable. Work
+  accumulates as uncommitted diffs and best-effort checkpoints.
 
-### Chats / models = lenses
-- A stalled chat, a model swap, a hiccup → reattach to the same diffs from a new
-  lens. No per-chat isolation, because isolation would *break* reattachment.
+### Commit on `main` → "branch this?" (the graduation prompt)
+- The branch decision fires at **commit time** — the moment you've signaled this
+  work is worth keeping. This is the mandatory-branch-moved-to-intent.
+- **Intercept-before, not graduate-after.** The prompt fires at the commit
+  gesture; "Yes" branches *then* commits there, so `main` never carries the
+  commit and there's no reset-`main` cleanup. (Keeps `main` pristine, matches
+  "`main` is where you start, not where commits land.")
+- **Design the silence as deliberately as the prompt.** Firing on *every*
+  main-commit re-creates branch-first by a thousand cuts. The value is the
+  *first* graduation moment — after that, a "not now / stop asking this stretch"
+  affordance, or quiet until intent changes. Get this wrong and the prompt
+  becomes the new ceremony.
 
-### Branch = the deliberate commit-and-diverge moment
-- Graduation is **one cheap motion** that: (a) carries the working tree onto a
-  named branch (mechanics already in `create_branch`), (b) becomes the commit,
-  (c) opens the PR on-ramp. (Anchor #2.)
-- This is the *only* place "durable" and "named" enter — and they enter
-  **together**, which is the whole point (next section).
+### "Yes" = the durable path
+- Carries the work onto a named branch (mechanics in `create_branch`), becomes
+  the commit, opens the PR on-ramp. The commit goes through the **Auditor**
+  SAFE/UNSAFE gate per delivery rules (see open question on folding that in).
 
-## Why this dissolves the durability problem (instead of solving it)
+### "No" = an explicit, best-effort checkpoint on `main`
+- The commit stays on the sandbox's local `main`. We *try* to keep it via the
+  snapshot, but it is **not guaranteed** — and the prompt says so. Declining is a
+  visible, informed choice to treat the work as ephemeral, not a silent default.
+- Copy should call it a **checkpoint**, not a "save," so the word "commit"
+  doesn't quietly over-promise: *"committed as a checkpoint on `main`
+  (best-effort — branch to make it durable)."*
 
-The instinct to give `main` real git-commit durability leads straight to
-"branch under the hood but route pushes to `main`" — which is the *worst* of
-both worlds: you pay the branch ceremony **and** the routing complexity to end
-up pretending it's `main`. Two pairs of shoes for more traction. **Rejected.**
+## The snapshot's contract: best-effort warm-reattach (not a guarantee)
 
-It's unnecessary because the moment you'd actually *want* committed durability
-for some work is the exact moment that work is worth **naming** — i.e. the
-moment you'd graduate it anyway. **The durability need and the naming moment
-coincide.** There is no real window where you need "permanent committed
-durability on still-anonymous `main`." That window is imaginary, which is why
-solving for it feels like extra shoes.
+This is the key reframe versus the original draft. Treating the snapshot as a
+*durability guarantee* forces a hard SLO — never drop work, hold the line at
+every stall — which is the "marathon" that made this design feel expensive.
 
-So we don't make `main` durable. We **stop asking it to be.** In this model the
-uncommitted work sitting on `main` at any instant is small and short-lived — just
-the current in-flight exploration. The snapshot isn't running a marathon
-(hold months, never fail); it's holding a **sprint** — from now until the next
-graduation or abandon. That's a reliability bar, not an architecture.
+The owner's stance ("I'd like it there when I get back, but I won't expect it")
+demotes the snapshot to **best-effort warm-reattach**: usually your declined-but-
+committed `main` work is still there; sometimes it isn't; either way the system
+*tells you which*. No SLO to defend, no marathon — because we stopped promising
+something we couldn't guarantee.
 
-## What this asks us to engineer
-
-Only the pair that makes the sprint trustworthy. They reinforce each other:
-cheap graduation keeps the snapshot's job short; a reliable snapshot makes
-deferring the commit safe.
-
-1. **Snapshot durability is first-class, because it is load-bearing for "work
-   from `main`."** Stalls / reloads / container reclaims are *precisely* when the
-   snapshot is tested. A flaky snapshot makes the differentiator a lie. (This is
-   why `Cloudflare Native Backup Migration.md` and the Modal snapshot work matter
-   here — they're the foundation, not a side quest.)
-2. **Graduation is one frictionless tap that brings your work with it.** The
-   `create_branch` working-tree-carry already exists; what's missing is surfacing
-   it as *the* obvious motion at "this is worth a PR," and folding the commit into
-   the same gesture.
-
-## Durable home for the scratchpad: remote snapshot vs phone-local vs hybrid
-
-"Snapshot durability is the foundation" (above) assumes the durable copy of the
-`main` delta lives **remotely** (R2/Modal). That is one bet, not the only one.
-The alternative: store the `main` scratchpad **on the phone** — the one genuinely
-durable, user-owned thing in the system. Containers get reclaimed on idle; the
-phone does not.
-
-This reframes the whole architecture into a trichotomy where each store finally
-holds what it is *supposed* to:
-
-| Store | Holds | Property |
-|---|---|---|
-| **GitHub** | named, shared work (branches/PRs) | durable, collaborative |
-| **Phone** | the personal, unnamed `main` scratchpad (the uncommitted delta) | durable, private, owner-held |
-| **Container** | nothing | **stateless** — disposable compute, hydrated from GitHub + phone per session |
-
-The prize is the last row: the container becomes pure compute. No snapshot index,
-no TTL, no reclaim, and the `:main` collision (below) simply *cannot occur* —
-there is no shared remote scratchpad slot to contend for; each device holds its
-own delta.
-
-**What's actually stored** is the *delta*, not the tree: working-tree patch +
-untracked blobs + index state against branch HEAD. Small, and it composes onto a
-fresh `git clone` at session start.
-
-**Substrate already half-exists, but this extends it.** `Repo Mirror Design.md`
-supplies the storage half — the `MirrorTarget` abstraction (SAF on the Android
-APK, OPFS/IndexedDB on PWA) and a reserved "sandbox-as-export-proxy" transport
-(sandbox tars the tree, streams to client) that is exactly the pipe this needs.
-**But** that doc explicitly scopes out the two things this requires —
-*bidirectional sync* and *working-tree sync* are stated non-goals there
-(`Repo Mirror Design.md` is `read + share` only). So phone-local `main` is
-net-new scope built *on* the mirror's storage layer, not a free rider on it.
-
-**Three caveats this bet must stare at:**
-
-1. **Single-device continuity.** A remote snapshot is device-agnostic — reattach
-   from any device on the same repo+branch. Phone-local means `main` lives on
-   *that phone*; switch to laptop / lose the phone and the scratchpad isn't there.
-   Fine for a phone-first single-user posture; a real narrowing otherwise.
-2. **The phone becomes the loss surface.** If it is the *only* durable copy of
-   uncommitted work, a wiped phone = lost work — worse than a server snapshot with
-   backups. This pairs with **cheap + frequent graduation** (above): graduate
-   often and the phone only ever holds a sprint's worth, bounding the blast radius
-   by design. The two ideas reinforce each other.
-3. **APK-strong, PWA-weak.** SAF on the Android shell is real durable filesystem;
-   a mobile browser is on evictable OPFS/IndexedDB. So this is fundamentally an
-   *APK-shell* feature — and that shell is still experimental/debug-only. The
-   foundation is more reliable than R2 *only* on the surface that is least mature.
-
-**Recommended bet: phone-primary, remote-snapshot-as-backup** (belt and
-suspenders), frequent graduation keeping the unbacked window tiny — falling back
-to remote-snapshot-primary on PWA where local storage is evictable. This buys the
-stateless container and owner-held durability without making a lost phone
-catastrophic. It is a genuinely different architectural bet than "remote snapshot
-is the foundation," so it is captured here as a fork in the road, not silently
-swapped in — picking between them is a graduation-time decision.
+"Best-effort + honest" is **not** "permission to be flaky." The bar just moves
+from *never lose work* to **fail loudly, never silently** — good enough that
+"No" usually works, and clear at reconnect when it didn't (the
+`RESTORE_FAILED_MESSAGE` surface already does this). The tradeoff-statement at
+the prompt and the honest-failure at reconnect are two halves of one honesty,
+and one half already ships.
 
 ## Explicitly out of scope / rejected
 
 - **Per-chat sandbox isolation** — would break the cross-chat continuity that is
   Anchor #1. Same-branch chats *should* share a workspace.
-- **Under-the-hood branch routed to `main`** — the two-pairs-of-shoes pattern.
-- **Committing WIP to `main`** — clutters history, needs the guard off, and is
-  redundant once graduation is cheap.
+- **Under-the-hood branch routed to `main`** — pays the branch ceremony *and*
+  the routing complexity to end up pretending it's `main`. Two pairs of shoes.
+- **Committing WIP durably to `main`** — clutters history, needs the guard off,
+  and is redundant once the branch prompt is cheap.
+- **Daemon/remote-session as the *durable* home (for now)** — the right someday,
+  but cross-network reachability is unsolved; cloud-default sidesteps it. (Anchor #3.)
+- **Making the snapshot a durability guarantee** — replaced by the best-effort
+  contract above.
 
 ## Known sharp edge this reframes (not yet fixed)
 
 The per-branch snapshot key (`snapshot:<repo>:<branch>`, one slot, prior
-reclaimed) means *if* two genuinely parallel workspaces ever root at `main`, they
-contend for the single `:main` slot. In this model that's not a bug to patch on
-`main` — it's the signal that the second stream **wanted a name all along**, i.e.
-should have graduated to a branch. The fix is making graduation obvious, not
-making `:main` hold N streams.
+reclaimed) means two genuinely parallel workspaces rooted at `main` contend for
+the single `:main` slot. **This is live for this owner** — work moves on `main`
+across an Android surface *and* a local WSL surface, which is exactly two streams
+at `:main`. The original draft called this "a signal the stream wanted a name";
+that's too neat when the owner's real workflow provokes it routinely. Candidate
+fixes to weigh (deferred): a **per-device** scratchpad slot on the remote rather
+than per-branch, so two surfaces don't stomp each other; or accept last-writer-
+wins with a loud "a newer checkpoint from another device replaced this." Either
+way it's a real concurrency question, not just a graduation nudge.
 
 ## Open questions before this graduates
 
-1. **What's the graduation trigger surface?** Model-proposed (a tool suggestion
-   when work looks PR-shaped), user-tap, or both? Where does it live in the chat
-   UI?
-2. **Does graduation auto-commit, or stage-and-confirm?** The commit goes through
-   the **Auditor** SAFE/UNSAFE gate per repo delivery rules — how does that fold
-   into "one motion" without becoming ceremony again?
-3. **Where does the durable scratchpad live — remote snapshot, phone-local, or
-   hybrid?** (See the trichotomy section.) The recommended phone-primary /
-   snapshot-backup bet depends on the Android APK shell + a working-tree extension
-   to `Repo Mirror Design.md`'s storage layer; picking it is a graduation-time
-   decision, not assumed here.
-4. **Snapshot / mirror reliability target.** What restore-success SLO makes
-   deferring the commit *feel* safe enough to live on the scratchpad? Needs
-   instrumentation from the CF/Modal snapshot work (and, for the phone variant,
-   the mirror) to answer with numbers.
-5. **Abandon path.** Discarding a scratchpad exploration without graduating —
-   explicit "forget", or just snapshot/mirror TTL expiry? What's the UX?
+1. **Graduation prompt surface + silence policy.** Where does the commit-time
+   "branch this?" live in the chat UI, and what's the *don't-nag* rule (once per
+   session / stretch / until intent changes)? The silence is half the design.
+2. **Does "Yes" auto-commit, or stage-and-confirm?** The commit goes through the
+   Auditor SAFE/UNSAFE gate — how does that fold into "one motion" without
+   becoming the ceremony we just removed? (What happens on UNSAFE mid-graduation?)
+3. **`:main` multi-surface contention.** Per-device slot, last-writer-wins-loud,
+   or other? (See sharp edge above.)
+4. **Snapshot best-effort target.** Not an SLO, but a *felt* reliability bar —
+   how often must "No" survive for the checkpoint to feel trustworthy? Needs
+   instrumentation from the CF/Modal snapshot work to answer with numbers.
+5. **Abandon path.** Discarding a `main` exploration without graduating — explicit
+   "forget," or just snapshot TTL expiry? What's the UX?
+6. **Where the durable delta physically lives** — remote snapshot vs phone-local
+   vs hybrid — is split into
+   `docs/decisions/Scratchpad Durable Storage — Remote vs Phone-Local.md` and
+   **parked**; the best-effort contract here makes that question less urgent.
 
 ## Next step
 
 Needs a `ROADMAP.md` entry to become work. The cheapest first slice that proves
-the model is **(2) graduation ergonomics** — the plumbing already exists in
-`create_branch`; surfacing it as the one obvious motion is mostly UX + the commit
-fold. Snapshot durability (1) is already in motion via the CF/Modal snapshot
-docs and can harden in parallel.
+the model is the **commit-time branch prompt + its silence logic** — the
+branch-carry plumbing (`create_branch`) and the honest-failure surface
+(`RESTORE_FAILED_MESSAGE`) already exist, so the net-new is the prompt, the
+intercept-before wiring, and the don't-nag rule. Snapshot best-effort hardening
+proceeds in parallel via the CF/Modal snapshot docs — but as warm-reattach
+quality, no longer as a durability guarantee.
