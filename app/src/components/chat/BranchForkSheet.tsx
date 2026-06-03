@@ -16,7 +16,6 @@ import { CARD_HEADER_BG_ERROR } from '@/lib/utils';
 import {
   HUB_MATERIAL_INPUT_CLASS,
   HUB_MATERIAL_PILL_BUTTON_CLASS,
-  HubControlGlow,
 } from '@/components/chat/hub-styles';
 import type { ForkBranchInWorkspaceResult } from '@/lib/fork-branch-in-workspace';
 
@@ -170,7 +169,6 @@ function BranchForkSheet({ open, onOpenChange, fromBranch, forkBranch }: BranchF
               disabled={!isValid || creating}
               className={BRANCH_ACTION_BUTTON_CLASS}
             >
-              <HubControlGlow />
               {creating ? (
                 <>
                   <Loader2 className="relative z-10 h-4 w-4 animate-spin" />
@@ -186,7 +184,6 @@ function BranchForkSheet({ open, onOpenChange, fromBranch, forkBranch }: BranchF
               variant="outline"
               className={BRANCH_ACTION_BUTTON_CLASS}
             >
-              <HubControlGlow />
               <span className="relative z-10">Cancel</span>
             </Button>
           </div>

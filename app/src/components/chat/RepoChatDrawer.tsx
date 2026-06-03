@@ -34,7 +34,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { HUB_MATERIAL_PILL_BUTTON_CLASS, HubControlGlow } from '@/components/chat/hub-styles';
+import { HUB_MATERIAL_PILL_BUTTON_CLASS } from '@/components/chat/hub-styles';
 import { CliSessionRow } from '@/components/chat/drawer-cli-row';
 import type { RepoAppearance } from '@/lib/repo-appearance';
 import type { ActiveRepo, Conversation, DaemonCliSession, RepoWithActivity } from '@/types';
@@ -498,7 +498,6 @@ export function RepoChatDrawer({
                             aria-label={`Customize ${repo.name}`}
                             title="Customize repo"
                           >
-                            <HubControlGlow />
                             <Palette className="relative z-10 h-3.5 w-3.5" />
                           </button>
                         </div>

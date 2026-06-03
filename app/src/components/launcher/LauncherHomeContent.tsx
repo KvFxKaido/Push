@@ -22,7 +22,6 @@ import {
   HUB_MATERIAL_BUTTON_CLASS,
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_PANEL_SURFACE_CLASS,
-  HubControlGlow,
 } from '@/components/chat/hub-styles';
 import { PushMarkIcon } from '@/components/icons/push-custom-icons';
 import { RepoLauncherPanel, type LauncherSandboxSession } from './RepoLauncherPanel';
@@ -111,7 +110,6 @@ export function LauncherHomeContent({
                 className={`${HUB_MATERIAL_BUTTON_CLASS} relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-push-fg-secondary`}
                 aria-label="Open account menu"
               >
-                <HubControlGlow />
                 {user?.avatar_url ? (
                   <img
                     src={user.avatar_url}

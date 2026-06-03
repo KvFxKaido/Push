@@ -3,7 +3,6 @@ import type { CIStatus } from '@/types';
 import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_TOP_BANNER_STRIP_CLASS,
-  HubControlGlow,
 } from '@/components/chat/hub-styles';
 
 interface CIStatusBannerProps {
@@ -56,7 +55,6 @@ export function CIStatusBanner({ status, onDiagnose }: CIStatusBannerProps) {
           onClick={onDiagnose}
           className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} gap-1.5 px-3 text-red-100`}
         >
-          <HubControlGlow />
           <Wrench className="relative z-10 h-3 w-3" />
           <span className="relative z-10">Diagnose & Fix</span>
         </button>

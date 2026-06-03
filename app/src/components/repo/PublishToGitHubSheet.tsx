@@ -16,7 +16,6 @@ import {
   HUB_MATERIAL_INPUT_CLASS,
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
-  HubControlGlow,
 } from '@/components/chat/hub-styles';
 
 interface PublishToGitHubSheetProps {
@@ -239,7 +238,6 @@ export function PublishToGitHubSheet({ open, onOpenChange, onSubmit }: PublishTo
               disabled={submitting}
               className={`${ACTION_BUTTON_CLASS} text-push-fg-secondary`}
             >
-              <HubControlGlow />
               <span className="relative z-10">Cancel</span>
             </button>
             <button
@@ -250,7 +248,6 @@ export function PublishToGitHubSheet({ open, onOpenChange, onSubmit }: PublishTo
               disabled={!isValid || submitting}
               className={`${ACTION_BUTTON_CLASS} text-push-fg`}
             >
-              <HubControlGlow />
               {submitting ? (
                 <Loader2 className="relative z-10 h-4 w-4 animate-spin" />
               ) : (

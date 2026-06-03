@@ -47,7 +47,6 @@ import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
   HUB_TAG_CLASS,
-  HubControlGlow,
 } from '@/components/chat/hub-styles';
 import type { DiffPreviewCardData, ReviewResult, ReviewComment, ReviewDepth } from '@/types';
 import { DiffSeamIcon, SendLiftIcon } from '@/components/icons/push-custom-icons';
@@ -1030,7 +1029,6 @@ export function HubReviewTab({
                 disabled={!canRunReview}
                 className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-push-fg-secondary`}
               >
-                <HubControlGlow />
                 {running ? (
                   <Loader2 className="relative z-10 h-3 w-3 animate-spin" />
                 ) : (
@@ -1052,7 +1050,6 @@ export function HubReviewTab({
                   className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5 text-push-fg-dim`}
                   title="Cancel deep review"
                 >
-                  <HubControlGlow />
                   <X className="relative z-10 h-3 w-3" />
                   <span className="relative z-10">Cancel</span>
                 </button>
@@ -1102,14 +1099,12 @@ export function HubReviewTab({
                     onClick={handleLoadSavedReview}
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
                   >
-                    <HubControlGlow />
                     <span className="relative z-10">Load saved</span>
                   </button>
                   <button
                     onClick={handleClearSavedReview}
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
                   >
-                    <HubControlGlow />
                     <span className="relative z-10">Clear</span>
                   </button>
                 </div>
@@ -1165,7 +1160,6 @@ export function HubReviewTab({
                   onClick={handleSaveReview}
                   className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
                 >
-                  <HubControlGlow />
                   <span className="relative z-10">
                     {isCurrentReviewSaved
                       ? 'Saved locally'
@@ -1179,7 +1173,6 @@ export function HubReviewTab({
                     onClick={handleLoadSavedReview}
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
                   >
-                    <HubControlGlow />
                     <span className="relative z-10">Load saved</span>
                   </button>
                 )}
@@ -1188,7 +1181,6 @@ export function HubReviewTab({
                     onClick={handleClearSavedReview}
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
                   >
-                    <HubControlGlow />
                     <span className="relative z-10">Clear saved</span>
                   </button>
                 )}
@@ -1235,7 +1227,6 @@ export function HubReviewTab({
                   disabled={postState === 'posting'}
                   className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-push-fg-secondary`}
                 >
-                  <HubControlGlow />
                   {postState === 'posting' ? (
                     <>
                       <Loader2 className="relative z-10 h-3 w-3 animate-spin" />
@@ -1372,7 +1363,6 @@ export function HubReviewTab({
                                 className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} mt-0.5 h-7 gap-1 px-2.5 text-push-2xs`}
                                 title={`Open ${c.file}${typeof c.line === 'number' ? ` line ${c.line}` : ''} in Diff`}
                               >
-                                <HubControlGlow />
                                 <DiffSeamIcon className="relative z-10 h-3 w-3" />
                                 <span className="relative z-10">Diff</span>
                               </button>
@@ -1391,7 +1381,6 @@ export function HubReviewTab({
                                   className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} mt-0.5 h-7 gap-1 px-2.5 text-push-2xs text-push-fg-secondary`}
                                   title={`Send ${c.file}${typeof c.line === 'number' ? ` line ${c.line}` : ''} to chat as a fix request`}
                                 >
-                                  <HubControlGlow />
                                   <Sparkles className="relative z-10 h-3 w-3" />
                                   <span className="relative z-10">Fix</span>
                                 </button>

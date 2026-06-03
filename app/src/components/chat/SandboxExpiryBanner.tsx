@@ -4,7 +4,6 @@ import { downloadFromSandbox } from '@/lib/sandbox-client';
 import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_TOP_BANNER_STRIP_CLASS,
-  HubControlGlow,
 } from '@/components/chat/hub-styles';
 
 const SANDBOX_LIFETIME_MS = 30 * 60 * 1000; // 30 min (Modal container policy)
@@ -111,7 +110,6 @@ export function SandboxExpiryBanner({
           onClick={onRestart}
           className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} flex-shrink-0 gap-1.5 px-3 text-red-300`}
         >
-          <HubControlGlow />
           <RefreshCw className="relative z-10 h-3 w-3" />
           <span className="relative z-10">Restart runtime</span>
         </button>
@@ -141,7 +139,6 @@ export function SandboxExpiryBanner({
           disabled={downloading}
           className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} flex-shrink-0 gap-1.5 px-3 text-emerald-400`}
         >
-          <HubControlGlow />
           <Download className="relative z-10 h-3 w-3" />
           <span className="relative z-10">{downloading ? 'Downloading...' : 'Download'}</span>
         </button>

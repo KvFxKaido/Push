@@ -5,7 +5,6 @@ import { SandboxCubeIcon } from '@/components/icons/push-custom-icons';
 import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_TOP_BANNER_STRIP_CLASS,
-  HubControlGlow,
 } from '@/components/chat/hub-styles';
 
 interface SandboxStatusBannerProps {
@@ -52,7 +51,6 @@ export function SandboxStatusBanner({
           onClick={onStart}
           className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} flex-shrink-0 px-3 text-push-link`}
         >
-          <HubControlGlow />
           <span className="relative z-10">Start</span>
         </button>
       </div>
@@ -86,7 +84,6 @@ export function SandboxStatusBanner({
               onClick={onRetry}
               className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} gap-1 px-2.5 text-amber-300`}
             >
-              <HubControlGlow />
               <RefreshCw className="relative z-10 h-3 w-3" />
               <span className="relative z-10">Retry</span>
             </button>
@@ -95,7 +92,6 @@ export function SandboxStatusBanner({
             onClick={onNewSandbox}
             className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} gap-1 px-2.5 text-red-300`}
           >
-            <HubControlGlow />
             <Plus className="relative z-10 h-3 w-3" />
             <span className="relative z-10">Restart runtime</span>
           </button>

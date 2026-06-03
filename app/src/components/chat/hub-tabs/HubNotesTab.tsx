@@ -9,7 +9,6 @@ import {
   HUB_MATERIAL_ROUND_BUTTON_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
   HUB_TAG_CLASS,
-  HubControlGlow,
 } from '@/components/chat/hub-styles';
 import { KeptCacheIcon, NotebookPadIcon } from '@/components/icons/push-custom-icons';
 import { HubKeptTab } from './HubKeptTab';
@@ -105,7 +104,6 @@ export function HubNotesTab({
                   className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
                   title="Save current notes as a memory"
                 >
-                  <HubControlGlow />
                   <Check className="relative z-10 h-3.5 w-3.5" />
                   <span className="relative z-10">Save note</span>
                 </button>
@@ -117,7 +115,6 @@ export function HubNotesTab({
                   aria-label="Clear notes"
                   title="Clear notes"
                 >
-                  <HubControlGlow />
                   <Trash2 className="relative z-10 h-3.5 w-3.5" />
                 </button>
                 {onExportToRepo ? (
@@ -128,7 +125,6 @@ export function HubNotesTab({
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
                     aria-label="Save notes to repo"
                   >
-                    <HubControlGlow />
                     <Download className="relative z-10 h-3.5 w-3.5" />
                     <span className="relative z-10">Save to repo</span>
                   </button>
@@ -156,7 +152,6 @@ export function HubNotesTab({
                     aria-label="Delete selected memory"
                     title="Delete selected memory"
                   >
-                    <HubControlGlow />
                     <Trash2 className="relative z-10 h-3.5 w-3.5" />
                   </button>
                 )}
@@ -241,7 +236,6 @@ function HubTodoSection({ todos, onClear }: { todos: readonly TodoItem[]; onClea
             aria-label="Clear plan"
             title="Clear plan"
           >
-            <HubControlGlow />
             <Trash2 className="relative z-10 h-3.5 w-3.5" />
           </button>
         </div>

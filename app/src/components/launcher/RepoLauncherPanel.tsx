@@ -25,7 +25,6 @@ import {
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
   HUB_PANEL_SURFACE_CLASS,
   HUB_TAG_CLASS,
-  HubControlGlow,
 } from '@/components/chat/hub-styles';
 import { fetchRepoBranches } from '@/lib/github-tools';
 import { BranchCreateSheet } from '@/components/chat/BranchCreateSheet';
@@ -388,7 +387,6 @@ export function RepoLauncherPanel({
               aria-label={`Customize ${repo.name}`}
               title="Customize repo"
             >
-              <HubControlGlow />
               <Palette className="relative z-10 h-3.5 w-3.5" />
             </button>
           </div>
@@ -398,7 +396,6 @@ export function RepoLauncherPanel({
               onClick={() => setBranchCreateRepo(repo)}
               className={LAUNCHER_ACTION_BUTTON_CLASS}
             >
-              <HubControlGlow />
               <BranchWaveIcon className="relative z-10 h-3.5 w-3.5 text-push-fg-dim" />
               <span className="relative z-10">Create branch</span>
             </button>
@@ -416,7 +413,6 @@ export function RepoLauncherPanel({
                 <button
                   className={`${LAUNCHER_ACTION_BUTTON_CLASS} justify-between text-push-fg-secondary`}
                 >
-                  <HubControlGlow />
                   <span className="relative z-10 inline-flex min-w-0 items-center gap-1">
                     <BranchWaveIcon className="h-3 w-3 text-push-fg-dim" />
                     <span className="truncate">Open on branch</span>
@@ -617,7 +613,6 @@ export function RepoLauncherPanel({
               onClick={onStartChat}
               className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 gap-2 px-3 text-sm font-medium text-push-violet`}
             >
-              <HubControlGlow />
               <MessageSquare className="relative z-10 h-4 w-4" />
               <span className="relative z-10">Chat</span>
             </button>
@@ -627,7 +622,6 @@ export function RepoLauncherPanel({
               onClick={onStartWorkspace}
               className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 gap-2 px-3 text-sm font-medium text-emerald-300`}
             >
-              <HubControlGlow />
               <WorkspaceSparkIcon className="relative z-10 h-4 w-4" />
               <span className="relative z-10">Workspace</span>
             </button>
@@ -636,7 +630,6 @@ export function RepoLauncherPanel({
             onClick={() => setShowAllRepos((value) => !value)}
             className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 gap-2 px-3 text-sm font-medium text-push-fg-secondary`}
           >
-            <HubControlGlow />
             <Search className="relative z-10 h-4 w-4" />
             <span className="relative z-10">{showAllRepos ? 'Hide' : 'Repos'}</span>
           </button>
@@ -648,7 +641,6 @@ export function RepoLauncherPanel({
             onClick={onStartLocalPc}
             className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 w-full justify-center gap-2 px-3 text-sm font-medium text-amber-200`}
           >
-            <HubControlGlow />
             <Monitor className="relative z-10 h-4 w-4" />
             <span className="relative z-10">Local PC</span>
             <span className="relative z-10 text-[10px] uppercase tracking-wide text-amber-200/60">
@@ -663,7 +655,6 @@ export function RepoLauncherPanel({
             onClick={onStartRelay}
             className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 w-full justify-center gap-2 px-3 text-sm font-medium text-sky-200`}
           >
-            <HubControlGlow />
             <Globe className="relative z-10 h-4 w-4" />
             <span className="relative z-10">Remote</span>
             <span className="relative z-10 text-[10px] uppercase tracking-wide text-sky-200/60">
@@ -692,7 +683,6 @@ export function RepoLauncherPanel({
                   onClick={() => setPublishSheetOpen(true)}
                   className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} mx-auto h-9 gap-2 px-3 text-sm font-medium text-push-fg-secondary`}
                 >
-                  <HubControlGlow />
                   <Plus className="relative z-10 h-4 w-4" />
                   <span className="relative z-10">Create repository</span>
                 </button>

@@ -6,7 +6,6 @@ import {
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
   HUB_PANEL_SURFACE_CLASS,
   HUB_TAG_CLASS,
-  HubControlGlow,
 } from '@/components/chat/hub-styles';
 import { PageScaffold } from '@/components/layout';
 import { ChatBackgroundGlow } from '@/components/chat/ChatBackgroundGlow';
@@ -137,7 +136,6 @@ export function OnboardingScreen({
                   disabled={!pat.trim() || loading}
                   className={onboardingButtonClass}
                 >
-                  <HubControlGlow />
                   {loading ? (
                     <>
                       <Loader2 className="relative z-10 h-4 w-4 animate-spin" />
@@ -183,7 +181,6 @@ export function OnboardingScreen({
                   disabled={!installationId.replace(/\D/g, '') || loading}
                   className={onboardingButtonClass}
                 >
-                  <HubControlGlow />
                   {loading ? (
                     <>
                       <Loader2 className="relative z-10 h-4 w-4 animate-spin" />
@@ -226,7 +223,6 @@ export function OnboardingScreen({
                   disabled={loading}
                   className={onboardingButtonClass}
                 >
-                  <HubControlGlow />
                   {loading ? (
                     <>
                       <Loader2 className="relative z-10 h-4 w-4 animate-spin" />
@@ -253,14 +249,12 @@ export function OnboardingScreen({
 
                 {/* Install GitHub App (secondary — for first-time users) */}
                 <button onClick={onInstallApp} disabled={loading} className={onboardingButtonClass}>
-                  <HubControlGlow />
                   <Github className="relative z-10 h-4 w-4" />
                   <span className="relative z-10">Install GitHub App</span>
                 </button>
 
                 {/* PAT fallback */}
                 <button onClick={() => setShowPatInput(true)} className={onboardingButtonClass}>
-                  <HubControlGlow />
                   <Key className="relative z-10 h-4 w-4" />
                   <span className="relative z-10">Use Personal Access Token</span>
                 </button>
@@ -285,7 +279,6 @@ export function OnboardingScreen({
 
             <div className="grid grid-cols-2 gap-2">
               <button onClick={onStartChat} className={`${onboardingButtonClass} text-push-violet`}>
-                <HubControlGlow />
                 <MessageSquare className="relative z-10 h-4 w-4" />
                 <span className="relative z-10">Chat</span>
               </button>
@@ -293,7 +286,6 @@ export function OnboardingScreen({
                 onClick={onStartWorkspace}
                 className={`${onboardingButtonClass} text-emerald-300`}
               >
-                <HubControlGlow />
                 <span className="relative z-10">Workspace</span>
               </button>
             </div>
@@ -303,7 +295,6 @@ export function OnboardingScreen({
                 onClick={onStartLocalPc}
                 className={`${onboardingButtonClass} mt-2 text-amber-200`}
               >
-                <HubControlGlow />
                 <Monitor className="relative z-10 h-4 w-4" />
                 <span className="relative z-10">Local PC</span>
                 <span className="relative z-10 text-[10px] uppercase tracking-wide text-amber-200/60">
@@ -317,7 +308,6 @@ export function OnboardingScreen({
                 onClick={onStartRelay}
                 className={`${onboardingButtonClass} mt-2 text-sky-200`}
               >
-                <HubControlGlow />
                 <Globe className="relative z-10 h-4 w-4" />
                 <span className="relative z-10">Remote</span>
                 <span className="relative z-10 text-[10px] uppercase tracking-wide text-sky-200/60">

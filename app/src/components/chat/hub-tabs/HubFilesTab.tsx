@@ -20,7 +20,6 @@ import {
   HUB_PANEL_SURFACE_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
   HUB_TAG_CLASS,
-  HubControlGlow,
 } from '@/components/chat/hub-styles';
 
 interface HubFilesTabProps {
@@ -136,7 +135,6 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
           disabled={startingSandbox || sandboxStatus === 'creating'}
           className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-9 px-3 text-push-fg-secondary`}
         >
-          <HubControlGlow />
           {(startingSandbox || sandboxStatus === 'creating') && (
             <Loader2 className="relative z-10 h-3.5 w-3.5 animate-spin" />
           )}
@@ -166,7 +164,6 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
               }}
               className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} shrink-0 px-2.5`}
             >
-              <HubControlGlow />
               <ChevronLeft className="relative z-10 h-3.5 w-3.5" />
               <span className="relative z-10">Back</span>
             </button>
@@ -183,7 +180,6 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
               aria-label="Download file"
               title="Download file"
             >
-              <HubControlGlow />
               {previewDownloading ? (
                 <Loader2 className="relative z-10 h-3.5 w-3.5 animate-spin" />
               ) : (
@@ -245,7 +241,6 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
           className={HUB_MATERIAL_ROUND_BUTTON_CLASS}
           aria-label="Refresh directory"
         >
-          <HubControlGlow />
           <RefreshCw
             className={`relative z-10 h-3.5 w-3.5 ${fileStatus === 'loading' ? 'animate-spin' : ''}`}
           />

@@ -4,11 +4,7 @@ import { toast } from 'sonner';
 import { DiffLine } from '@/components/cards/DiffPreviewCard';
 import { parseDiffStats, parseDiffIntoFiles, type FileDiff } from '@/lib/diff-utils';
 import { getSandboxDiff } from '@/lib/sandbox-client';
-import {
-  HUB_MATERIAL_PILL_BUTTON_CLASS,
-  HUB_TAG_CLASS,
-  HubControlGlow,
-} from '@/components/chat/hub-styles';
+import { HUB_MATERIAL_PILL_BUTTON_CLASS, HUB_TAG_CLASS } from '@/components/chat/hub-styles';
 import type { DiffPreviewCardData } from '@/types';
 
 interface DiffJumpTarget {
@@ -228,7 +224,6 @@ export function HubDiffTab({
           disabled={startingSandbox || sandboxStatus === 'creating'}
           className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-9 px-3 text-push-fg-secondary`}
         >
-          <HubControlGlow />
           {(startingSandbox || sandboxStatus === 'creating') && (
             <Loader2 className="relative z-10 h-3.5 w-3.5 animate-spin" />
           )}
@@ -257,7 +252,6 @@ export function HubDiffTab({
             disabled={!onClearReviewDiff}
             className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
           >
-            <HubControlGlow />
             <CornerDownRight className="relative z-10 h-3.5 w-3.5" />
             <span className="relative z-10">Live diff</span>
           </button>
@@ -267,7 +261,6 @@ export function HubDiffTab({
             disabled={diffLoading}
             className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
           >
-            <HubControlGlow />
             {diffLoading ? (
               <Loader2 className="relative z-10 h-3.5 w-3.5 animate-spin" />
             ) : (

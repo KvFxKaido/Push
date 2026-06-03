@@ -26,7 +26,6 @@ import {
   HUB_MATERIAL_INPUT_CLASS,
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
-  HubControlGlow,
 } from '@/components/chat/hub-styles';
 import {
   executeFindExistingPR,
@@ -741,7 +740,6 @@ function MergeFlowSheet({
               </p>
             </div>
             <Button onClick={close} variant="outline" className={`${MERGE_BUTTON_CLASS} w-full`}>
-              <HubControlGlow />
               <span className="relative z-10">Close</span>
             </Button>
           </div>
@@ -777,7 +775,6 @@ function MergeFlowSheet({
                     </div>
                     <div className="flex gap-3">
                       <Button onClick={close} className={`${MERGE_BUTTON_CLASS} flex-1`}>
-                        <HubControlGlow />
                         <span className="relative z-10">Commit & push first</span>
                       </Button>
                       <Button
@@ -785,7 +782,6 @@ function MergeFlowSheet({
                         variant="outline"
                         className={`${MERGE_BUTTON_CLASS} flex-1`}
                       >
-                        <HubControlGlow />
                         <span className="relative z-10">Cancel</span>
                       </Button>
                     </div>
@@ -840,7 +836,6 @@ function MergeFlowSheet({
                         onClick={handleProceedWithExisting}
                         className={`${MERGE_BUTTON_CLASS} flex-1`}
                       >
-                        <HubControlGlow />
                         <ArrowRight className="relative z-10 h-4 w-4" />
                         <span className="relative z-10">Continue with this PR</span>
                       </Button>
@@ -849,7 +844,6 @@ function MergeFlowSheet({
                         variant="outline"
                         className={`${MERGE_BUTTON_CLASS} flex-1`}
                       >
-                        <HubControlGlow />
                         <span className="relative z-10">Cancel</span>
                       </Button>
                     </div>
@@ -901,7 +895,6 @@ function MergeFlowSheet({
                         disabled={!prTitle.trim() || loading}
                         className={`${MERGE_BUTTON_CLASS} flex-1`}
                       >
-                        <HubControlGlow />
                         {loading ? (
                           <>
                             <Loader2 className="relative z-10 h-4 w-4 animate-spin" />
@@ -917,7 +910,6 @@ function MergeFlowSheet({
                         variant="outline"
                         className={`${MERGE_BUTTON_CLASS} flex-1`}
                       >
-                        <HubControlGlow />
                         <span className="relative z-10">Cancel</span>
                       </Button>
                     </div>
@@ -982,7 +974,6 @@ function MergeFlowSheet({
                     </div>
                     <div className="flex gap-3">
                       <Button onClick={handleRetryAudit} className={`${MERGE_BUTTON_CLASS} flex-1`}>
-                        <HubControlGlow />
                         <span className="relative z-10">Fix and retry</span>
                       </Button>
                       <Button
@@ -990,7 +981,6 @@ function MergeFlowSheet({
                         variant="outline"
                         className={`${MERGE_BUTTON_CLASS} flex-1`}
                       >
-                        <HubControlGlow />
                         <span className="relative z-10">Cancel</span>
                       </Button>
                     </div>
@@ -1066,7 +1056,6 @@ function MergeFlowSheet({
                             disabled={loading}
                             className={`${MERGE_BUTTON_CLASS} flex-1 text-emerald-300`}
                           >
-                            <HubControlGlow />
                             {loading ? (
                               <>
                                 <Loader2 className="relative z-10 h-4 w-4 animate-spin" />
@@ -1085,7 +1074,6 @@ function MergeFlowSheet({
                             variant="outline"
                             className={`${MERGE_BUTTON_CLASS} flex-1`}
                           >
-                            <HubControlGlow />
                             <span className="relative z-10">Cancel</span>
                           </Button>
                         </div>
@@ -1115,7 +1103,6 @@ function MergeFlowSheet({
                             className="flex-1"
                           >
                             <Button className={`${MERGE_BUTTON_CLASS} w-full`}>
-                              <HubControlGlow />
                               <ExternalLink className="relative z-10 h-4 w-4" />
                               <span className="relative z-10">Resolve on GitHub</span>
                             </Button>
@@ -1125,7 +1112,6 @@ function MergeFlowSheet({
                             variant="outline"
                             className={`${MERGE_BUTTON_CLASS} flex-1`}
                           >
-                            <HubControlGlow />
                             <span className="relative z-10">Cancel</span>
                           </Button>
                         </div>
@@ -1151,7 +1137,6 @@ function MergeFlowSheet({
                             onClick={handleRecheck}
                             className={`${MERGE_BUTTON_CLASS} flex-1`}
                           >
-                            <HubControlGlow />
                             <span className="relative z-10">Check again</span>
                           </Button>
                           <Button
@@ -1159,7 +1144,6 @@ function MergeFlowSheet({
                             variant="outline"
                             className={`${MERGE_BUTTON_CLASS} flex-1`}
                           >
-                            <HubControlGlow />
                             <span className="relative z-10">Cancel</span>
                           </Button>
                         </div>
@@ -1188,7 +1172,6 @@ function MergeFlowSheet({
                             onClick={handleRecheck}
                             className={`${MERGE_BUTTON_CLASS} flex-1`}
                           >
-                            <HubControlGlow />
                             <span className="relative z-10">Check again</span>
                           </Button>
                           <Button
@@ -1196,7 +1179,6 @@ function MergeFlowSheet({
                             variant="outline"
                             className={`${MERGE_BUTTON_CLASS} flex-1`}
                           >
-                            <HubControlGlow />
                             <span className="relative z-10">Cancel</span>
                           </Button>
                         </div>
@@ -1226,7 +1208,6 @@ function MergeFlowSheet({
 
                 <div className="flex flex-col gap-2.5">
                   <Button onClick={handleSwitchToMain} className={`${MERGE_BUTTON_CLASS} w-full`}>
-                    <HubControlGlow />
                     <span className="relative z-10">Switch to {defaultBranch}</span>
                   </Button>
                   <Button
@@ -1235,7 +1216,6 @@ function MergeFlowSheet({
                     variant="outline"
                     className={`${MERGE_BUTTON_CLASS} w-full`}
                   >
-                    <HubControlGlow />
                     {deletingBranch ? (
                       <>
                         <Loader2 className="relative z-10 h-4 w-4 animate-spin" />
@@ -1278,11 +1258,9 @@ function ErrorDisplay({
       </div>
       <div className="flex gap-3">
         <Button onClick={onRetry} className={`${MERGE_BUTTON_CLASS} flex-1`}>
-          <HubControlGlow />
           <span className="relative z-10">Retry</span>
         </Button>
         <Button onClick={onCancel} variant="outline" className={`${MERGE_BUTTON_CLASS} flex-1`}>
-          <HubControlGlow />
           <span className="relative z-10">Cancel</span>
         </Button>
       </div>

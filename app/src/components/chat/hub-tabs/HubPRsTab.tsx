@@ -33,7 +33,6 @@ import {
   HUB_MATERIAL_ROUND_BUTTON_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
   HUB_TAG_CLASS,
-  HubControlGlow,
 } from '@/components/chat/hub-styles';
 import type { DiffPreviewCardData } from '@/types';
 
@@ -272,7 +271,6 @@ export function HubPRsTab({
             disabled={listLoading}
             className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
           >
-            <HubControlGlow />
             {listLoading ? (
               <Loader2 className="relative z-10 h-3.5 w-3.5 animate-spin" />
             ) : (
@@ -381,7 +379,6 @@ export function HubPRsTab({
           }}
           className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
         >
-          <HubControlGlow />
           <ArrowLeft className="relative z-10 h-3.5 w-3.5" />
           <span className="relative z-10">All PRs</span>
         </button>
@@ -396,7 +393,6 @@ export function HubPRsTab({
             className={HUB_MATERIAL_ROUND_BUTTON_CLASS}
             aria-label="Refresh pull requests"
           >
-            <HubControlGlow />
             {listLoading || detailLoading ? (
               <Loader2 className="relative z-10 h-3.5 w-3.5 animate-spin" />
             ) : (
@@ -411,7 +407,6 @@ export function HubPRsTab({
               className={HUB_MATERIAL_ROUND_BUTTON_CLASS}
               aria-label="Open pull request on GitHub"
             >
-              <HubControlGlow />
               <ExternalLink className="relative z-10 h-3.5 w-3.5" />
             </a>
           )}
@@ -540,7 +535,6 @@ export function HubPRsTab({
                 disabled={!detail.diff}
                 className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-push-fg-secondary`}
               >
-                <HubControlGlow />
                 <DiffSeamIcon className="relative z-10 h-3.5 w-3.5" />
                 <span className="relative z-10">Open in Diff</span>
               </button>
@@ -549,7 +543,6 @@ export function HubPRsTab({
                   onClick={onOpenReviewTab}
                   className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-push-fg-secondary`}
                 >
-                  <HubControlGlow />
                   <PRThreadIcon className="relative z-10 h-3.5 w-3.5" />
                   <span className="relative z-10">Review in Push</span>
                 </button>

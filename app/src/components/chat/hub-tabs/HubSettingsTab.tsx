@@ -12,7 +12,6 @@ import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
   HUB_PANEL_SURFACE_CLASS,
-  HubControlGlow,
 } from '@/components/chat/hub-styles';
 import {
   type SettingsAIProps,
@@ -84,7 +83,6 @@ function DetailShell({ description, icon: Icon, title, onBack, children }: Detai
           onClick={onBack}
           className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} mb-3 px-3`}
         >
-          <HubControlGlow />
           <ArrowLeft className="relative z-10 h-3.5 w-3.5" />
           <span className="relative z-10">Back</span>
         </button>

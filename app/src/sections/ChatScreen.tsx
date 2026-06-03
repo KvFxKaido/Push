@@ -16,7 +16,6 @@ import {
   HEADER_ROUND_BUTTON_CLASS,
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_TOP_BANNER_STRIP_CLASS,
-  HubControlGlow,
 } from '@/components/chat/hub-styles';
 import type { ProjectInstructionsManager } from '@/hooks/useProjectInstructions';
 import { snapshotStagePercent, type SnapshotManager } from '@/hooks/useSnapshotManager';
@@ -319,7 +318,6 @@ export function ChatScreen({
                     }
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-emerald-300`}
                   >
-                    <HubControlGlow />
                     <span className="relative z-10">
                       {instructions.creatingAgentsMdWithAI ? 'Drafting...' : 'Create with AI'}
                     </span>
@@ -329,7 +327,6 @@ export function ChatScreen({
                     disabled={instructions.creatingAgentsMd || instructions.creatingAgentsMdWithAI}
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-push-link`}
                   >
-                    <HubControlGlow />
                     <span className="relative z-10">
                       {instructions.creatingAgentsMd ? 'Creating...' : 'Create Template'}
                     </span>
