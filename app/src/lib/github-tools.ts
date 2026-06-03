@@ -14,6 +14,7 @@ import type {
   ReviewResult,
   ToolExecutionResult,
 } from '@/types';
+import { resolveProjectInstructions } from '@push/lib/project-instructions-source';
 import { parseDiffIntoFiles } from './diff-utils';
 import {
   getGitHubAuthHeaders as getGitHubHeaders,
@@ -1021,27 +1022,26 @@ export async function fetchProjectInstructions(
   repo: string,
   branch?: string,
 ): Promise<{ content: string; filename: string } | null> {
-  const FILES_TO_TRY = ['PUSH.md', 'AGENTS.md', 'CLAUDE.md', 'GEMINI.md'];
   const headers = getGitHubHeaders();
-
-  for (const filename of FILES_TO_TRY) {
+  // Candidate order lives in the shared resolver so this (Phase A) can't drift
+  // from the sandbox re-read (Phase B) or the CLI. Returns raw content — the
+  // injection site (`formatProjectInstructionsBlock` in useProjectInstructions)
+  // caps and escapes, so the old bespoke `.slice(0, 5_000)` (a tighter,
+  // un-escaped pre-cut that disagreed with Phase B's 8K injection budget) is
+  // gone. GitHub only inlines `content` for files under ~1 MB, so an oversized
+  // file resolves to `null` here rather than streaming a huge blob.
+  return resolveProjectInstructions(async (filename) => {
     const ref = branch ? `?ref=${encodeURIComponent(branch)}` : '';
     const res = await githubFetch(
       `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(filename)}${ref}`,
       { headers },
     );
-    if (res.status === 404) continue;
+    if (res.status === 404) return null;
     if (!res.ok) throw new Error(`GitHub API error ${res.status} fetching ${filename}`);
     const data = await res.json();
-    if (data.type !== 'file' || !data.content) continue;
-
-    let content = decodeGitHubBase64Utf8(data.content);
-    if (content.length > 5_000) {
-      content = content.slice(0, 5_000) + '\n\n[...truncated at 5K chars]';
-    }
-    return { content, filename };
-  }
-  return null;
+    if (data.type !== 'file' || !data.content) return null;
+    return decodeGitHubBase64Utf8(data.content);
+  });
 }
 
 /**
