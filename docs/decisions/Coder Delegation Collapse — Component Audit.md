@@ -1,7 +1,7 @@
 # Coder Delegation Collapse — Component Audit
 
 Date: 2026-06-02 (cross-linked 2026-06-03)
-Status: **ROADMAP-tracked (first priority, promoted 2026-06-03); implementation pending.** Sequenced *first* in the combined "Single-Agent Loop + Branch-at-Commit Persistence" item — category-2 cut goes behind a flag and is measured against the delegated path before any deletion. Flip to `Current` when the lead-drives-the-engine-inline path is the default.
+Status: **ROADMAP-tracked (first priority, promoted 2026-06-03); step 1 landed behind a flag (2026-06-03), still default-off and unmeasured.** Sequenced *first* in the combined "Single-Agent Loop + Branch-at-Commit Persistence" item — category-2 cut goes behind a flag and is measured against the delegated path before any deletion. **Step 1 shipped:** a `delegation-mode` preference (`delegated` default | `inline`) routes interactive turns to the durable single-agent engine (`startMainChatJob`) when `inline`, reusing — and deliberately decoupled-in-framing from — the existing background-mode engine route; both arcs now emit comparable measurement (`coder_delegation_measured` on the delegated arc, `delegation_engine_job_started` + the CoderJob DO's `coder_job_*` logs on the inline arc). The Planner/brief are NOT deleted. Flip to `Current` when the lead-drives-the-engine-inline path is the *default* (after the A/B gate clears).
 Owner: Push
 Related: [`Main as Scratchpad — Branch on Graduation.md`](Main%20as%20Scratchpad%20—%20Branch%20on%20Graduation.md) — **pairs with this track.** Same move (frontier-lead expired a scaffolding layer → cut the wrapper, keep the engine), same two durable floors (job engine + snapshot). Its `auto-branch-on-commit` is the durability story for the collapsed single-agent loop, and a *headless detached engine run* (more central after this collapse) can't answer a prompt — which is independent evidence auto-branch beats a prompt. **Note the Auditor reconciliation in Category 4 below.**
 
@@ -61,7 +61,15 @@ directly, not an Orchestrator briefing a separate Coder role.
 1. **Cut category 2 first** behind a flag: stop forcing `delegate_coder` → brief →
    Planner for interactive edits; let the lead edit inline, and keep the
    background-main-chat entry for detached runs. Measure quality/latency vs. the
-   delegated path before deleting code.
+   delegated path before deleting code. **(LANDED 2026-06-03, default-off):** the
+   `delegation-mode=inline` preference (`app/src/lib/delegation-mode-settings.ts`)
+   routes the turn through `startBackgroundMainChatTurn` → `startMainChatJob` — the
+   raw user turn on the durable engine, no Orchestrator/Planner/brief — selected at
+   the single `resolveTurnEngineTrigger` seam in `useChat.sendMessage`. The delegated
+   arc is untouched and still default. Both arcs emit measurement for the A/B gate.
+   The chosen seam is the durable DO engine (not a foreground in-browser inline lane),
+   so an inline turn currently inherits the detached/JobCard UX — same mechanism as
+   background-mode, reframed as the collapse experiment.
 2. Once interactive-inline is the default, **delete the Planner and brief
    ceremony** (category 2 proper).
 3. Re-evaluate task-graph parallelism on its own merits — its *events* are

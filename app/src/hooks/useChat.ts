@@ -29,6 +29,7 @@ import { useConversationPersistence } from './useConversationPersistence';
 import { useAgentDelegation } from './useAgentDelegation';
 import { useBackgroundCoderJob } from './useBackgroundCoderJob';
 import { isBackgroundModeEnabled } from '@/lib/background-mode-settings';
+import { resolveTurnEngineTrigger } from '@/lib/delegation-mode-settings';
 import { hasActiveBackgroundJob, startBackgroundMainChatTurn } from './chat-send-background';
 import { useCIPoller } from './useCIPoller';
 import { useChatCardActions } from './chat-card-actions';
@@ -593,11 +594,12 @@ export function useChat(
       const trimmedText = text.trim();
       const hasAttachments = Boolean(attachments && attachments.length > 0);
       if (!trimmedText && !hasAttachments) return;
-      // Attachments still fall through to foreground until PR 3+ envelopes them.
-      const useBgMode = isBackgroundModeEnabled() && !hasAttachments;
+      // Coder Delegation Collapse step 1: route to the durable single-agent engine when `inline` delegation-mode or legacy background-mode is on.
+      const engineTrigger = resolveTurnEngineTrigger({ hasAttachments });
+      const routeToEngine = engineTrigger !== null;
 
-      const bgChat = options?.chatId || activeChatIdRef.current;
-      if (bgChat && hasActiveBackgroundJob(conversationsRef.current[bgChat])) return;
+      const targetChat = options?.chatId || activeChatIdRef.current;
+      if (targetChat && hasActiveBackgroundJob(conversationsRef.current[targetChat])) return;
 
       const routed = routeActiveRunInput(
         { trimmedText, attachments, hasAttachments, options },
@@ -621,7 +623,7 @@ export function useChat(
 
       // --- Prepare context ---
       const prepared = await prepareSendContext(
-        { trimmedText, attachments, options, chatId, skipStreamingPlaceholder: useBgMode },
+        { trimmedText, attachments, options, chatId, skipStreamingPlaceholder: routeToEngine },
         {
           conversationsRef,
           dirtyConversationIdsRef,
@@ -637,7 +639,7 @@ export function useChat(
       const apiMessages = prepared.apiMessages;
       const toolCallRecoveryState = prepared.recoveryState;
 
-      if (useBgMode) {
+      if (routeToEngine) {
         // biome-ignore format: keep refs inline so this branch stays under the file line cap.
         const refs = { sandboxIdRef, repoRef, branchInfoRef, isMainProtectedRef, agentsMdRef, instructionFilenameRef };
         const r = await startBackgroundMainChatTurn({
@@ -647,6 +649,8 @@ export function useChat(
           resolvedModel: resolvedModelForChat ?? undefined,
           refs,
           backgroundCoderJob,
+          engineTrigger: engineTrigger ?? undefined,
+          ensureSandbox: () => ensureSandboxRef.current?.() ?? Promise.resolve(null),
         });
         if (!r.ok) updateAgentStatus({ active: false, phase: r.error }, { chatId, log: true });
         return;
