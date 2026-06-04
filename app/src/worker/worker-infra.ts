@@ -954,7 +954,7 @@ export async function handleRepoCoverage(request: Request, env: Env): Promise<Re
     return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
   }
 
-  let payload: { repo?: string };
+  let payload: { repo?: string; installation_id?: string };
   try {
     payload = JSON.parse(bodyResult.text);
   } catch {
@@ -969,6 +969,15 @@ export async function handleRepoCoverage(request: Request, env: Env): Promise<Re
   }
   const [owner, name] = repo.split('/');
   const encodedRepo = `${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
+
+  // Optional: the caller's active installation id. When present, coverage is
+  // confirmed against THIS installation (the one whose token will be injected),
+  // not merely against any installation of the App that covers the repo.
+  const activeInstallationId =
+    typeof payload.installation_id === 'string' ? payload.installation_id.trim() : '';
+  if (activeInstallationId && !/^\d{1,20}$/.test(activeInstallationId)) {
+    return Response.json({ error: 'Invalid installation_id' }, { status: 400 });
+  }
 
   try {
     const jwt = await generateGitHubAppJWT(env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY);
@@ -1000,15 +1009,35 @@ export async function handleRepoCoverage(request: Request, env: Env): Promise<Re
     }
 
     const data = (await response.json()) as { id?: number };
-    const installationId = typeof data.id === 'number' ? String(data.id) : null;
+    // A 200 without a numeric id is an upstream anomaly — `covered: true` must
+    // imply a real installation id (we compare + allowlist on it), so fail it.
+    if (typeof data.id !== 'number' || !Number.isFinite(data.id)) {
+      wlog('error', 'repo_coverage_error', { requestId, repo, reason: 'missing_installation_id' });
+      return Response.json({ error: 'GitHub returned no installation id' }, { status: 502 });
+    }
+    const installationId = String(data.id);
+
+    // The repo is covered by a different installation than the caller's active
+    // one — its injected token wouldn't be able to clone this repo.
+    if (activeInstallationId && activeInstallationId !== installationId) {
+      wlog('info', 'repo_coverage', {
+        requestId,
+        repo,
+        covered: false,
+        reason: 'installation_mismatch',
+      });
+      return Response.json({
+        covered: false,
+        reason: 'installation_mismatch',
+        install_url: installUrl,
+      });
+    }
+
     const allowedInstallationIds = (env.GITHUB_ALLOWED_INSTALLATION_IDS || '')
       .split(',')
       .map((id) => id.trim())
       .filter(Boolean);
-    if (
-      allowedInstallationIds.length > 0 &&
-      (!installationId || !allowedInstallationIds.includes(installationId))
-    ) {
+    if (allowedInstallationIds.length > 0 && !allowedInstallationIds.includes(installationId)) {
       wlog('info', 'repo_coverage', {
         requestId,
         repo,
@@ -1028,7 +1057,11 @@ export async function handleRepoCoverage(request: Request, env: Env): Promise<Re
       covered: true,
       installation_id: installationId,
     });
-    return Response.json({ covered: true, installation_id: installationId });
+    return Response.json({
+      covered: true,
+      installation_id: installationId,
+      install_url: installUrl,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     wlog('error', 'repo_coverage_error', { requestId, repo, message });

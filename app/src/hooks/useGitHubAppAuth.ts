@@ -3,10 +3,14 @@ import type { GitHubUser } from '../types';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { isNetworkFetchError, validateGitHubToken as validateToken } from '@/lib/utils';
 import { resolveApiUrl } from '@/lib/api-url';
-import { APP_TOKEN_EXPIRY_KEY, APP_TOKEN_STORAGE_KEY } from '@/lib/github-auth';
+import {
+  APP_TOKEN_EXPIRY_KEY,
+  APP_TOKEN_STORAGE_KEY,
+  INSTALLATION_ID_STORAGE_KEY,
+} from '@/lib/github-auth';
 import { clearSessionToken, setSessionToken } from '@/lib/session-auth';
 
-const INSTALLATION_ID_KEY = 'github_app_installation_id';
+const INSTALLATION_ID_KEY = INSTALLATION_ID_STORAGE_KEY;
 // Reuse the canonical storage-key constants from the central token-authority
 // module so the writers here can't drift from the reader (getAppTokenExpiry /
 // getActiveGitHubTokenInfo). A divergent literal would silently break the
