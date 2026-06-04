@@ -64,10 +64,10 @@ export const HUB_GLASS_PANEL_CLASS =
 // and supplies the resting outline color folded into GLASS_SURFACE below.
 export const HUB_GLASS_HAIRLINE = 'border-white/[0.06]';
 
-// Resting tinted tile — the lift that turns repo groups, the tab tray, and tab
-// cells into soft glass surfaces instead of flat slabs. Pair with the hover
-// variant for interactive tiles; an accent-active state may override it (set
-// border + bg in one place each so they never collide on CSS order).
+// Resting tinted tile — the lift that turns the drawer's repo / section groups
+// into soft glass surfaces instead of flat slabs. Pair with the hover variant
+// for interactive tiles; an accent-active state may override it (set border + bg
+// in one place each so they never collide on CSS order).
 export const GLASS_SURFACE = 'border-white/[0.06] bg-white/[0.02]';
 export const GLASS_SURFACE_HOVER = 'hover:border-white/[0.09] hover:bg-white/[0.05]';
 
@@ -80,8 +80,15 @@ export const GLASS_SURFACE_HOVER = 'hover:border-white/[0.09] hover:bg-white/[0.
 export const GLASS_ACTIVE_CLASS =
   'border-push-accent/30 bg-push-accent/[0.08] shadow-[0_0_0_1px_rgb(var(--push-accent-rgb)_/_0.06),0_10px_26px_-15px_rgb(var(--push-accent-rgb)_/_0.5)]';
 
-// Standalone faint fill (no border) — the footer / one-off lifts.
+// Borderless fill family — translucent white lifts with no edge, for surfaces
+// that build hierarchy from fill alone (the drawer footer, the workspace tool
+// tabs, the Review segmented pills). Both alphas are the documented fill steps
+// (0.02 faint, 0.05 soft); each comes in a resting and a `hover:` form so call
+// sites compose the scale instead of hand-rolling a fresh `white/[x]`.
 export const GLASS_FILL_FAINT = 'bg-white/[0.02]';
+export const GLASS_FILL_SOFT = 'bg-white/[0.05]';
+export const GLASS_FILL_HOVER_FAINT = 'hover:bg-white/[0.02]';
+export const GLASS_FILL_HOVER_SOFT = 'hover:bg-white/[0.05]';
 
 // Status / lifecycle strip: a bottom hairline seam plus the faint lift, so the
 // sandbox bars separate from the tab content without a hard rule.

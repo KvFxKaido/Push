@@ -54,6 +54,7 @@ import { iteratePushStreamText } from '@push/lib/stream-utils';
 import {
   GLASS_ACTIVE_CLASS,
   GLASS_FILL_FAINT,
+  GLASS_FILL_HOVER_SOFT,
   HUB_GLASS_HAIRLINE,
   HUB_GLASS_PANEL_CLASS,
   HUB_GLASS_STRIP_CLASS,
@@ -1495,7 +1496,7 @@ export function WorkspaceHubSheet({
                     className={`relative flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl border px-1.5 text-push-xs transition-all ${
                       active
                         ? `${GLASS_ACTIVE_CLASS} text-push-fg`
-                        : `border-transparent ${GLASS_FILL_FAINT} text-push-fg-dim hover:bg-white/[0.05] hover:text-push-fg-secondary`
+                        : `border-transparent ${GLASS_FILL_FAINT} text-push-fg-dim ${GLASS_FILL_HOVER_SOFT} hover:text-push-fg-secondary`
                     }`}
                   >
                     <Icon className={`h-3.5 w-3.5 ${active ? 'text-push-accent' : ''}`} />

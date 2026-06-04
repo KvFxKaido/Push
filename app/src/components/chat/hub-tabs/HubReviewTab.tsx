@@ -44,6 +44,8 @@ import {
 import { ModelPicker } from '@/components/ui/model-picker';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import {
+  GLASS_FILL_HOVER_FAINT,
+  GLASS_FILL_SOFT,
   HUB_GLASS_HAIRLINE,
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
@@ -114,13 +116,14 @@ type SavedReviewPayload = {
 // Segmented toggle pills (review source / depth / provider). These are
 // secondary controls, so they read as borderless fills rather than another ring
 // of bordered chips competing with the active tool tab and the Run button — the
-// selected one lifts on fill, the rest are quiet ghost text. Tap target is held
-// by the px/py padding, not a border.
+// selected one lifts on the soft fill, the rest are quiet ghost text with a
+// faint hover. Tints compose the named glass fill scale (no fresh `white/[x]`),
+// and the tap target is held by the px/py padding, not a border.
 const reviewSegmentPillClass = (active: boolean): string =>
   `rounded-full px-2.5 py-1 text-push-xs font-medium transition-colors ${
     active
-      ? 'bg-white/[0.07] text-push-fg'
-      : 'text-push-fg-dim hover:bg-white/[0.04] hover:text-push-fg-secondary'
+      ? `${GLASS_FILL_SOFT} text-push-fg`
+      : `text-push-fg-dim ${GLASS_FILL_HOVER_FAINT} hover:text-push-fg-secondary`
   }`;
 
 const REVIEW_PROVIDER_KEY = 'push:review:selected-provider';
