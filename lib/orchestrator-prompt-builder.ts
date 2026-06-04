@@ -96,9 +96,11 @@ export function buildOrchestratorToolInstructions(opts: OrchestratorPromptOption
 - Prefer ${getToolPublicName('sandbox_read_file')} over ${getToolPublicName('read_file')} when the sandbox is active — it reflects uncommitted changes.`;
 
   // The lead can emit sandbox_exec (both modes), so the git-guard row is always
-  // live: a git command inside sandbox_exec is blocked, routing commit/push
-  // through the typed flow.
-  const gitGuardLine = `\n- GIT_GUARD_BLOCKED → Direct git commit/push/merge/rebase in ${getToolPublicName('sandbox_exec')} is blocked. Use ${getToolPublicName('sandbox_prepare_commit')} + ${getToolPublicName('sandbox_push')}. If the standard flow fails, use ${getToolPublicName('ask_user')} to explain and request permission. Only with explicit user approval, retry with "allowDirectGit": true.`;
+  // live: a git command inside sandbox_exec is blocked, routing commit (and push,
+  // cloud only — local-daemon has no remote) through the typed flow.
+  const gitGuardLine = isLocalDaemon
+    ? `\n- GIT_GUARD_BLOCKED → Direct git commit/merge/rebase in ${getToolPublicName('sandbox_exec')} is blocked. Use ${getToolPublicName('sandbox_prepare_commit')} for commits. If the standard flow fails, use ${getToolPublicName('ask_user')} to explain and request permission. Only with explicit user approval, retry with "allowDirectGit": true.`
+    : `\n- GIT_GUARD_BLOCKED → Direct git commit/push/merge/rebase in ${getToolPublicName('sandbox_exec')} is blocked. Use ${getToolPublicName('sandbox_prepare_commit')} + ${getToolPublicName('sandbox_push')}. If the standard flow fails, use ${getToolPublicName('ask_user')} to explain and request permission. Only with explicit user approval, retry with "allowDirectGit": true.`;
 
   return `## Tool Execution Model
 
@@ -166,27 +168,26 @@ A single turn may emit:
 
 Order matters: put reads first, then writes/edits, then the single side-effect last. If you need to write files and then run tests, emit the writes and the \`${getToolPublicName('sandbox_exec')}\` in one turn.`;
 
-  return `## Efficient Delegation and Handoffs
+  return `## Efficient Delegation Briefs
 
-When delegating coding or exploration tasks via ${getToolPublicName('delegate_coder')} or ${getToolPublicName('delegate_explorer')}, significantly improve efficiency by passing the right brief, not just a bare task:
+You do coding yourself (see "Do the Work Yourself" below). Delegation is for read-only investigation (${getToolPublicName('delegate_explorer')}) and for genuinely parallel, multi-step work (${getToolPublicName('plan_tasks')} task graphs). When you do delegate, pass a precise brief, not a bare task:
 
 1. Scan conversation history for your previous tool calls (${getToolPublicName('read_file')}, ${getToolPublicName('grep_file')}, ${getToolPublicName('search_files')}, ${getToolPublicName('list_directory')}).
 2. Identify file paths from arguments and include them in "files".
 3. Add "knownContext" with short validated facts you already learned.
 4. Add "deliverable" when the expected output or end state is specific.
-5. Add "acceptanceCriteria" for ${getToolPublicName('delegate_coder')} when success can be checked by commands.
 
 Example:
 If you read "src/auth.ts", use:
-{"tool": "${getToolPublicName('delegate_coder')}", "args": { "task": "...", "files": ["src/auth.ts"], "knownContext": ["Session refresh already appears to be triggered from src/auth.ts"], "deliverable": "Ship the fix with passing auth tests" }}
+{"tool": "${getToolPublicName('delegate_explorer')}", "args": { "task": "...", "files": ["src/auth.ts"], "knownContext": ["Session refresh already appears to be triggered from src/auth.ts"], "deliverable": "Report where the refresh is triggered, with evidence" }}
 
 Rules:
 - Only include files actually read in this conversation.
 - Only include "knownContext" items you have actually validated.
 - Don't guess. If unsure, omit the field.
 - Prioritize correctness over optimization.
-- Coder and Explorer inherit the current chat-locked provider/model by default. Delegation does not grant capabilities the current model lacks.
-- After Explorer returns, either answer directly or hand off to Coder with the distilled findings in "knownContext" instead of sending the Coder back through the same discovery loop.
+- Explorer inherits the current chat-locked provider/model by default. Delegation does not grant capabilities the current model lacks.
+- After Explorer returns, do the coding yourself using the distilled findings — don't send a sub-agent back through the same discovery loop.
 
 ## Explorer Task Template
 
@@ -199,17 +200,6 @@ Report: [explicit output requirements like file paths and line numbers]
 
 Example:
 {"tool": "${getToolPublicName('delegate_explorer')}", "args": { "task": "Objective: Trace the auth flow and summarize where session refresh happens\\nLook at: src/auth.ts, src/middleware.ts\\nSearch for: 'refresh_token', 'session_expires'\\nReport: File paths, line numbers, and the exact conditions triggering the refresh.", "files": ["src/auth.ts"], "deliverable": "Return the trigger path with evidence and the next recommended actor" }}
-
-## Multi-Task Delegation
-
-For multiple independent coding tasks in a single request, use the "tasks" array instead of "task":
-{"tool": "${getToolPublicName('delegate_coder')}", "args": { "tasks": ["add dark mode toggle to SettingsPage", "refactor logger utility to support log levels"], "files": ["src/settings.tsx", "src/lib/logger.ts"], "deliverable": "Complete both changes with verification notes", "knownContext": ["The settings page and logger are independent areas"] }}
-
-Rules for multi-task delegation:
-- Each task must be independently completable — no task should depend on another task's output. If tasks have dependencies, use separate sequential ${getToolPublicName('delegate_coder')} calls instead.
-- All multiple tasks execute sequentially in the main sandbox, sharing the same active file state.
-- Acceptance criteria (if provided) run against every task independently.
-- All tasks share the same "files", "intent", and "constraints" context.
 
 ## Task Graph Orchestration
 
@@ -232,7 +222,7 @@ Rules for task graphs:
 - Coder tasks run one at a time (sequential) to avoid sandbox conflicts.
 - Results from completed dependencies are automatically injected as knownContext.
 - If a task fails, all tasks that depend on it (transitively) are cancelled.
-- Use task graphs when the goal requires 3+ steps with dependencies. For simpler goals, use direct ${getToolPublicName('delegate_coder')} or ${getToolPublicName('delegate_explorer')}.
+- Use task graphs when the goal genuinely needs 3+ steps with dependencies and parallelism. For ordinary work — even multi-file changes — do it yourself; reach for ${getToolPublicName('delegate_explorer')} only when read-only investigation is worth isolating.
 
 ## Do the Work Yourself
 

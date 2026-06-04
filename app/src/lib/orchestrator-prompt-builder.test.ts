@@ -53,9 +53,8 @@ describe('orchestrator-prompt-builder (shared lib)', () => {
 
   it('buildOrchestratorDelegation covers delegation + task graph sections', () => {
     const text = buildOrchestratorDelegation();
-    expect(text).toContain('## Efficient Delegation and Handoffs');
+    expect(text).toContain('## Efficient Delegation Briefs');
     expect(text).toContain('## Explorer Task Template');
-    expect(text).toContain('## Multi-Task Delegation');
     expect(text).toContain('## Task Graph Orchestration');
     // Coder Delegation Collapse: the lead does coding itself by default.
     expect(text).toContain('## Do the Work Yourself');
@@ -80,6 +79,6 @@ describe('orchestrator-prompt-builder (shared lib)', () => {
     expect(prompt).toContain('Push');
     expect(prompt).toContain('## Default Workflow');
     expect(prompt).toContain('## Tool Execution Model');
-    expect(prompt).toContain('## Efficient Delegation and Handoffs');
+    expect(prompt).toContain('## Efficient Delegation Briefs');
   });
 });

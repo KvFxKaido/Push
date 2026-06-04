@@ -94,7 +94,17 @@ describe('Role capability grants', () => {
     expect(roleHasCapability('orchestrator', 'git:push')).toBe(true);
     expect(roleHasCapability('orchestrator', 'sandbox:exec')).toBe(true);
     expect(roleHasCapability('orchestrator', 'sandbox:test')).toBe(true);
-    expect(roleHasCapability('orchestrator', 'sandbox:download')).toBe(true);
+    // NOT sandbox:download in the base grant — it also authorizes
+    // promote_to_github (create-repo + push), which stays a gated, daemon-only op.
+    expect(roleHasCapability('orchestrator', 'sandbox:download')).toBe(false);
+  });
+
+  it('cloud lead cannot promote_to_github (download grant stays daemon-only)', () => {
+    // Codex/cubic P1 on the collapse: sandbox:download also authorizes
+    // promote_to_github (create-repo + push). Keeping download out of the cloud
+    // base grant keeps promote unavailable to the cloud lead.
+    expect(roleCanUseTool('orchestrator', 'promote_to_github', 'cloud')).toBe(false);
+    expect(roleCanUseTool('orchestrator', 'sandbox_download', 'cloud')).toBe(false);
   });
 
   it('Orchestrator (cloud) can drive PRs and workflow dispatch when the user asks', () => {
@@ -413,20 +423,17 @@ describe('ExecutionMode — orchestrator capability widening for local-daemon', 
       expect(effective).toEqual(ROLE_CAPABILITIES.orchestrator);
     });
 
-    it('local-daemon orchestrator adds the local-branch extra and removes remote-only caps', () => {
+    it('local-daemon orchestrator adds branch + download extras and removes remote-only caps', () => {
       const cloudCaps = getEffectiveCapabilities('orchestrator', 'cloud');
       const daemonCaps = getEffectiveCapabilities('orchestrator', 'local-daemon');
-      // git:branch is the only daemon-only extra now (the lead has sandbox
-      // exec/test/download in BOTH modes after the Coder Delegation Collapse).
-      expect(daemonCaps.has('git:branch')).toBe(true);
-      expect(cloudCaps.has('git:branch')).toBe(false);
-      // Sandbox exec/test/download are now shared (base grant).
-      for (const cap of [
-        'sandbox:exec',
-        'sandbox:test',
-        'sandbox:download',
-        'repo:write',
-      ] as const) {
+      // Daemon-only: git:branch (local working tree) + sandbox:download (which
+      // also authorizes promote_to_github, kept out of the cloud lead grant).
+      for (const cap of ['git:branch', 'sandbox:download'] as const) {
+        expect(daemonCaps.has(cap)).toBe(true);
+        expect(cloudCaps.has(cap)).toBe(false);
+      }
+      // sandbox:exec/test are now shared (base grant) after the collapse.
+      for (const cap of ['sandbox:exec', 'sandbox:test', 'repo:write'] as const) {
         expect(cloudCaps.has(cap)).toBe(true);
         expect(daemonCaps.has(cap)).toBe(true);
       }
@@ -441,16 +448,16 @@ describe('ExecutionMode — orchestrator capability widening for local-daemon', 
       }
     });
 
-    it('local-daemon orchestrator extra is exactly git:branch', () => {
+    it('local-daemon orchestrator extras are exactly git:branch + sandbox:download', () => {
       const cloudCaps = getEffectiveCapabilities('orchestrator', 'cloud');
       const daemonCaps = getEffectiveCapabilities('orchestrator', 'local-daemon');
       const extras = new Set<Capability>();
       for (const cap of daemonCaps) {
         if (!cloudCaps.has(cap)) extras.add(cap);
       }
-      // sandbox exec/test/download moved to the base grant (Coder Delegation
-      // Collapse); git:branch is the only daemon-only local op left (PR #700).
-      expect(extras).toEqual(new Set<Capability>(['git:branch']));
+      // sandbox:exec/test moved to the base grant (collapse); git:branch and
+      // sandbox:download stay daemon-only (download gates promote_to_github).
+      expect(extras).toEqual(new Set<Capability>(['git:branch', 'sandbox:download']));
     });
 
     it('cloud-only orchestrator caps are the remote-bound PR/workflow + git:push', () => {

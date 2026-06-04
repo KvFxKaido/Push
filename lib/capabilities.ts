@@ -327,14 +327,20 @@ export function workspaceModeToExecutionMode(mode: string | null | undefined): E
  *     `git_create_branch` / `git_switch_branch` that `TOOL_PROTOCOL` advertises
  *     (Codex P2 on PR #700). `git:commit` stays in the base grant for the same
  *     reason — only the genuinely remote-bound `git:push` is stripped below.
+ *   - `sandbox:download` — kept daemon-only. It also authorizes
+ *     `promote_to_github` (create-repo + push), so it stays OUT of the cloud lead
+ *     grant where it would skip the approval prompt; the daemon path retains its
+ *     pre-existing behavior.
  *
- * Note: `sandbox:exec`/`test`/`download` used to live here too, but the Coder
- * Delegation Collapse (2026-06-04) moved them into the base orchestrator grant
- * (the lead runs commands directly in cloud now), so they're no longer
+ * Note: `sandbox:exec`/`test` used to live here too, but the Coder Delegation
+ * Collapse (2026-06-04) moved them into the base orchestrator grant (the lead
+ * runs commands directly in cloud now), so they're no longer daemon-only.
+ * `git:branch` and `sandbox:download` are NOT redundant — they remain
  * daemon-only.
  */
 const LOCAL_DAEMON_ORCHESTRATOR_EXTRA: ReadonlySet<Capability> = new Set<Capability>([
   'git:branch',
+  'sandbox:download',
 ]);
 
 /**
@@ -384,18 +390,18 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
     'repo:read',
     // The orchestrator is the single capable lead (Coder Delegation Collapse,
     // 2026-06-04): it edits, runs commands/tests, and ships directly instead of
-    // hopping to a separate Coder. The `sandbox:exec`/`test`/`download` grant
-    // that used to be the Coder-only boundary is now the lead's, so cloud no
-    // longer has to delegate to run anything. `delegate:coder` is RETAINED — the
-    // CLI/daemon task-graph + headless paths still use it, and it stays as an
-    // explicit detached-work escape hatch — but the collapsed lead's prompt no
-    // longer routes through it. In local-daemon mode `git:push` is stripped (no
-    // remote) and the daemon-orchestrator extras apply harmlessly (now redundant
-    // for exec/branch). See `getEffectiveCapabilities`.
+    // hopping to a separate Coder. `sandbox:exec`/`test` (the exec boundary that
+    // used to force delegation) are now the lead's. NOT `sandbox:download` — that
+    // capability also authorizes `promote_to_github` (create-repo + push), which
+    // must stay an explicit, gated action, so it's left to the local-daemon extra
+    // where it pre-existed. `delegate:coder` is RETAINED — the CLI/daemon
+    // task-graph + headless paths still use it, and it stays as an explicit
+    // detached-work escape hatch — but the collapsed lead's prompt no longer
+    // routes through it. In local-daemon mode `git:push` is stripped (no remote).
+    // See `getEffectiveCapabilities`.
     'repo:write',
     'sandbox:exec',
     'sandbox:test',
-    'sandbox:download',
     'git:commit',
     'git:push',
     'pr:read',
