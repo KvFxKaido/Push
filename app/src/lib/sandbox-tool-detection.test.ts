@@ -394,6 +394,20 @@ describe('LOCAL_PC_TOOL_PROTOCOL', () => {
     expect(LOCAL_PC_TOOL_PROTOCOL).toContain('```json');
   });
 
+  it('states the single-trailing-side-effect cap (MULTI_MUTATION_NOT_ALLOWED)', async () => {
+    const { LOCAL_PC_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
+    // The web dispatch enforces the per-turn budget even when the sandbox is a
+    // paired pushd — a second side-effect in one turn returns
+    // MULTI_MUTATION_NOT_ALLOWED. The protocol previously only said "place
+    // mutations LAST", which doesn't convey the *single* side-effect cap; state
+    // it explicitly so the local-pc model doesn't emit two execs and stall.
+    expect(LOCAL_PC_TOOL_PROTOCOL).toContain('MULTI_MUTATION_NOT_ALLOWED');
+    expect(LOCAL_PC_TOOL_PROTOCOL).toMatch(/at most one|single/i);
+    // The cap must stay local-pc-accurate: no commit/PR/delegation tools in the
+    // side-effect framing (those are forbidden by NO REMOTE / NO DELEGATION).
+    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/sandbox_prepare_commit|create_pr|delegate_/);
+  });
+
   it('lists the core sandbox_* tool public names that the daemon services', async () => {
     const { LOCAL_PC_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
     // Public tool names per the registry: exec / read / write / ls /
