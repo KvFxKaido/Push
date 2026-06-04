@@ -760,7 +760,7 @@ describe('handleGitHubAppToken happy path', () => {
         () =>
           jsonResponse({
             app_slug: 'push-auth',
-            account: { login: 'myorg', avatar_url: 'https://avatar/myorg' },
+            account: { login: 'myorg', avatar_url: 'https://avatar/myorg', id: 5555, type: 'User' },
           }),
         () =>
           jsonResponse({
@@ -779,6 +779,7 @@ describe('handleGitHubAppToken happy path', () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.token).toBe('inst_token');
+    // account id / type stay server-internal — user shape is { login, avatar_url }.
     expect(body.user).toEqual({ login: 'myorg', avatar_url: 'https://avatar/myorg' });
     expect(body.commit_identity).toEqual({
       name: 'push-auth[bot]',
@@ -786,6 +787,76 @@ describe('handleGitHubAppToken happy path', () => {
       login: 'push-auth[bot]',
       avatar_url: 'https://avatar/bot',
     });
+    // No secret configured → no session minted.
+    expect(body.session).toBeUndefined();
+  });
+
+  // A vouched User installation (secret + allowlisted installation id + User
+  // account) is the only combination that mints on this path.
+  const mintEnv: Partial<Env> = {
+    ...appEnv,
+    PUSH_SESSION_SECRET: 'unit-test-secret',
+    GITHUB_ALLOWED_INSTALLATION_IDS: '42',
+  };
+  function stubAppTokenFetch(account: Record<string, unknown>): void {
+    vi.stubGlobal(
+      'fetch',
+      sequentialFetch([
+        () => jsonResponse({ token: 'inst_token', expires_at: '2030-01-01T00:00:00Z' }),
+        () => jsonResponse({ app_slug: 'push-auth', account }),
+        () => jsonResponse({ id: 4242, login: 'push-auth[bot]', avatar_url: '' }),
+      ]),
+    );
+  }
+
+  it('mints a session keyed on the account id for a vouched User installation', async () => {
+    stubAppTokenFetch({ login: 'myuser', avatar_url: '', id: 107059169, type: 'User' });
+    const response = await handleGitHubAppToken(
+      makeRequest('https://push.example.test/api/auth/github-app/token', {
+        body: JSON.stringify({ installation_id: '42' }),
+      }),
+      makeEnv(mintEnv),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(typeof body.session).toBe('string');
+    expect(response.headers.get('Set-Cookie')).toContain('push_session=');
+
+    const verified = await verifySessionToken('unit-test-secret', body.session);
+    expect(verified.ok).toBe(true);
+    if (verified.ok) {
+      // sub = installation account id (same id space as the GitHub user id).
+      expect(verified.claims.sub).toBe('107059169');
+      expect(verified.claims.installation_id).toBe('42');
+    }
+  });
+
+  it('does NOT mint for an Organization installation (org id is not a user identity)', async () => {
+    stubAppTokenFetch({ login: 'myorg', avatar_url: '', id: 999, type: 'Organization' });
+    const response = await handleGitHubAppToken(
+      makeRequest('https://push.example.test/api/auth/github-app/token', {
+        body: JSON.stringify({ installation_id: '42' }),
+      }),
+      makeEnv(mintEnv),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.session).toBeUndefined();
+    expect(response.headers.get('Set-Cookie')).toBeNull();
+  });
+
+  it('does NOT mint when the installation is not operator-vouched (allowlist unset)', async () => {
+    stubAppTokenFetch({ login: 'myuser', avatar_url: '', id: 107059169, type: 'User' });
+    const response = await handleGitHubAppToken(
+      makeRequest('https://push.example.test/api/auth/github-app/token', {
+        body: JSON.stringify({ installation_id: '42' }),
+      }),
+      // secret set, but GITHUB_ALLOWED_INSTALLATION_IDS omitted → not vouched.
+      makeEnv({ ...appEnv, PUSH_SESSION_SECRET: 'unit-test-secret' }),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.session).toBeUndefined();
   });
 });
 

@@ -827,11 +827,74 @@ export async function handleGitHubAppToken(request: Request, env: Env): Promise<
     const tokenData = await exchangeForInstallationToken(jwt, installationId);
     const installationMeta = await fetchInstallationMetadata(jwt, installationId);
     const botCommitIdentity = await fetchGitHubAppBotCommitIdentity(installationMeta.app_slug);
-    return Response.json({
-      ...tokenData,
-      user: installationMeta.account,
-      commit_identity: botCommitIdentity,
-    });
+
+    // Mint a Push session on this path too — it's the working auth flow when the
+    // App is already installed (manual installation-id entry + install callback
+    // both land here, and the OAuth redirect is a no-op once installed). But this
+    // path's identity proof is weaker than OAuth (it proves knowledge of an
+    // installation id, not that the caller is a specific human), so we mint only
+    // when BOTH hold:
+    //   1. account.type === 'User' — so `sub` is a real user id (same id space as
+    //      GET /user), never an Organization id that could never match
+    //      GITHUB_ALLOWED_USER_IDS (and would otherwise let an hourly refresh
+    //      overwrite a valid OAuth user session with an org-id one).
+    //   2. the installation is operator-vouched — GITHUB_ALLOWED_INSTALLATION_IDS
+    //      is configured (and, via the 403 gate above, includes this one), so a
+    //      session keyed on an allowlisted identity can't be issued from a merely
+    //      guessable installation id once the deployment token retires.
+    const sessionSecret = env.PUSH_SESSION_SECRET?.trim();
+    const account = installationMeta.account;
+    const installationVouched = allowedInstallationIds.length > 0;
+    const responseHeaders: Record<string, string> = {};
+    let sessionToken: string | undefined;
+    let sessionExpiresAt: string | undefined;
+    if (!sessionSecret) {
+      wlog('warn', 'session_mint_skipped', {
+        requestId,
+        reason: 'no_secret',
+        via: 'app-token',
+        installation_id: installationId,
+      });
+    } else if (account?.type === 'User' && account.id !== null && installationVouched) {
+      const minted = await mintSessionToken(sessionSecret, {
+        sub: String(account.id),
+        login: account.login,
+        installationId,
+      });
+      sessionToken = minted.token;
+      sessionExpiresAt = minted.expiresAt;
+      responseHeaders['Set-Cookie'] = buildSessionSetCookie(minted.token);
+      wlog('info', 'session_minted', {
+        requestId,
+        sub: String(account.id),
+        login: account.login,
+        installation_id: installationId,
+        via: 'app-token',
+      });
+    } else {
+      wlog('warn', 'session_mint_skipped', {
+        requestId,
+        reason: !installationVouched
+          ? 'installation_not_scoped'
+          : account?.type !== 'User'
+            ? 'non_user_account'
+            : 'no_account_id',
+        via: 'app-token',
+        installation_id: installationId,
+      });
+    }
+
+    return Response.json(
+      {
+        ...tokenData,
+        // Keep account.id / account.type server-internal — the client user shape
+        // stays { login, avatar_url }.
+        user: account ? { login: account.login, avatar_url: account.avatar_url } : null,
+        commit_identity: botCommitIdentity,
+        ...(sessionToken ? { session: sessionToken, session_expires_at: sessionExpiresAt } : {}),
+      },
+      { headers: responseHeaders },
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     const stack = err instanceof Error ? err.stack : undefined;
@@ -1111,7 +1174,10 @@ export async function resolveRepoInstallationId(jwt: string, repo: string): Prom
 export async function fetchInstallationMetadata(
   jwt: string,
   installationId: string,
-): Promise<{ account: { login: string; avatar_url: string } | null; app_slug: string | null }> {
+): Promise<{
+  account: { login: string; avatar_url: string; id: number | null; type: string | null } | null;
+  app_slug: string | null;
+}> {
   const response = await fetch(
     `https://api.github.com/app/installations/${encodeURIComponent(installationId)}`,
     {
@@ -1129,13 +1195,23 @@ export async function fetchInstallationMetadata(
 
   const data = (await response.json()) as {
     app_slug?: unknown;
-    account?: { login?: unknown; avatar_url?: unknown };
+    account?: { login?: unknown; avatar_url?: unknown; id?: unknown; type?: unknown };
   };
   const account =
-    data.account && typeof data.account.login === 'string'
+    data.account && typeof data.account.login === 'string' && data.account.login.trim()
       ? {
           login: data.account.login,
           avatar_url: typeof data.account.avatar_url === 'string' ? data.account.avatar_url : '',
+          // The installation account's numeric id is in the same id space as the
+          // GitHub user id (`GET /user`) — but only when the account is a User.
+          // For an Organization install this is the org id, which is not a human
+          // identity and must not be minted as a session `sub` (the `type`
+          // discriminator gates that in handleGitHubAppToken).
+          id:
+            typeof data.account.id === 'number' && Number.isFinite(data.account.id)
+              ? data.account.id
+              : null,
+          type: typeof data.account.type === 'string' ? data.account.type : null,
         }
       : null;
   const appSlug = typeof data.app_slug === 'string' && data.app_slug.trim() ? data.app_slug : null;
