@@ -1,7 +1,7 @@
 # Auth Rework — GitHub as the Single Identity Anchor
 
 Date: 2026-06-04
-Status: **Draft** (design-in-motion; an implementation commitment needs a `ROADMAP.md` entry). Flip to `Current` when the allowlist gate is live and the deployment token is retired.
+Status: **Draft** (step 1 committed + implemented behind observe mode — see `ROADMAP.md` → *Auth Rework*). Flip to `Current` when the allowlist gate is enforcing and the deployment token is retired (migration step 3). Step-1 landing: `app/src/worker/worker-session.ts` (session primitive), session mint in `handleGitHubAppOAuth` (`worker-infra.ts`), `requireSessionForGatedApi` gate (`worker-middleware.ts` + `worker.ts`), client send-path (`app/src/lib/session-auth.ts` + `deployment-auth.ts` fetch chokepoint).
 Owner: Push
 Related:
 `app/src/lib/deployment-auth.ts` + `app/src/worker/worker-middleware.ts` (today's `X-Push-Deployment-Token` edge gate; also enforced in `github-webhook.ts`, `relay-routes.ts`),
@@ -164,9 +164,18 @@ touching the other two.
 
 ## Open questions
 
-1. **Session shape.** GitHub OAuth gives an identity at login — what carries it
-   per-request (a signed session cookie/JWT the Worker verifies, vs re-checking a
-   stored GitHub token)? Pick one verifiable per-request primitive.
+1. ~~**Session shape.**~~ **DECIDED (2026-06-04): Worker-minted signed session.**
+   GitHub verifies a human identity exactly once, at the App-OAuth moment
+   (`GET /user` → stable numeric id, now load-bearing); the Worker then mints a
+   short-lived HMAC `push_session` JWT (`PUSH_SESSION_SECRET`, ~24h, claims
+   `sub`/`login`/`installation_id`/`iat`/`exp`/`iss`/`aud`) and verifies *its own
+   signature* per request — no per-request GitHub dependency. Carried by a
+   `HttpOnly; Secure; SameSite=None` cookie (primary; `None` because the APK runs
+   on `https://localhost` and calls the Worker cross-origin) plus an
+   `X-Push-Session` header fallback. Rejected re-checking a stored GitHub token
+   per request: it either keeps a durable user token alive or turns every gated
+   call into a GitHub dependency, and the normal repo-auth path is moving to
+   installation tokens (repo authorization, *not* a durable human identity).
 2. **Allowlist storage.** Env/secret list vs a tiny KV entry. Single entry today,
    but decide the shape so widening it later is not a redeploy.
 3. **PAT escape-hatch UX.** With installation tokens as default, when is the PAT

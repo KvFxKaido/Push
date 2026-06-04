@@ -11,7 +11,11 @@
 
 /** base64url encoding of a UTF-8 string. */
 export function base64UrlEncodeString(value: string): string {
-  return btoa(value).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  // Encode to UTF-8 bytes first rather than `btoa(value)` directly — `btoa`
+  // is Latin1-only and throws on any code point > 0xFF, and the decode side
+  // (`base64UrlDecodeToString`) is UTF-8, so going through bytes keeps the
+  // encode/decode pair symmetric for non-ASCII input.
+  return base64UrlEncodeBytes(new TextEncoder().encode(value).buffer);
 }
 
 /** base64url encoding of a raw byte buffer. */
@@ -22,4 +26,31 @@ export function base64UrlEncodeBytes(bytes: ArrayBuffer): string {
     binary += String.fromCharCode(view[i]);
   }
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+/**
+ * Restore standard base64 (alphabet + padding) from a base64url string so the
+ * platform `atob` can decode it. Padding was stripped on encode; recompute it
+ * from the length. Throws (via `atob`) on malformed input — callers that treat
+ * decode failure as "invalid token" should wrap in try/catch.
+ */
+function base64UrlToBase64(value: string): string {
+  const restored = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padLength = (4 - (restored.length % 4)) % 4;
+  return restored + '='.repeat(padLength);
+}
+
+/** base64url decoding to raw bytes. Inverse of {@link base64UrlEncodeBytes}. */
+export function base64UrlDecodeToBytes(value: string): Uint8Array<ArrayBuffer> {
+  const binary = atob(base64UrlToBase64(value));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+/** base64url decoding to a UTF-8 string. Inverse of {@link base64UrlEncodeString}. */
+export function base64UrlDecodeToString(value: string): string {
+  return new TextDecoder().decode(base64UrlDecodeToBytes(value));
 }

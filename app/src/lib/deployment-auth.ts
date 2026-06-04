@@ -1,5 +1,6 @@
 import { resolveApiUrl } from './api-url';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storage';
+import { SESSION_HEADER, getSessionToken } from './session-auth';
 
 export const DEPLOYMENT_TOKEN_HEADER = 'X-Push-Deployment-Token';
 export const DEPLOYMENT_TOKEN_STORAGE_KEY = 'push_deployment_token';
@@ -43,7 +44,7 @@ function getApiOrigins(): Set<string> {
   return origins;
 }
 
-function shouldAttachDeploymentToken(input: RequestInfo | URL): boolean {
+function isFirstPartyApiRequest(input: RequestInfo | URL): boolean {
   if (typeof window === 'undefined') return false;
 
   const rawUrl =
@@ -57,21 +58,33 @@ function shouldAttachDeploymentToken(input: RequestInfo | URL): boolean {
   }
 }
 
-function withDeploymentToken(
+/**
+ * Decorate a first-party `/api/*` request with the auth that the Worker expects:
+ * the deployment token + the Push session header (each only when present), and
+ * `credentials: 'include'` so the `SameSite=None` session cookie rides — even
+ * cross-origin from the Capacitor APK (origin `https://localhost`) to the
+ * deployed Worker. Applied to every first-party API request regardless of token
+ * presence, because the cookie is the primary session carrier on web.
+ */
+function decorateApiRequest(
   input: RequestInfo | URL,
   init: RequestInit | undefined,
-  token: string,
 ): [RequestInfo | URL, RequestInit | undefined] {
   const headers = new Headers(
     init?.headers ?? (input instanceof Request ? input.headers : undefined),
   );
-  headers.set(DEPLOYMENT_TOKEN_HEADER, token);
+
+  const deploymentToken = getDeploymentToken();
+  if (deploymentToken) headers.set(DEPLOYMENT_TOKEN_HEADER, deploymentToken);
+
+  const sessionToken = getSessionToken();
+  if (sessionToken) headers.set(SESSION_HEADER, sessionToken);
 
   if (input instanceof Request && !init) {
-    return [new Request(input, { headers }), undefined];
+    return [new Request(input, { headers, credentials: 'include' }), undefined];
   }
 
-  return [input, { ...init, headers }];
+  return [input, { ...init, headers, credentials: 'include' }];
 }
 
 export function getDeploymentToken(): string {
@@ -116,7 +129,7 @@ async function inspectDeploymentAuthResponse(
   res: Response,
   input: RequestInfo | URL,
 ): Promise<void> {
-  if (res.status !== 401 || !shouldAttachDeploymentToken(input)) return;
+  if (res.status !== 401 || !isFirstPartyApiRequest(input)) return;
   try {
     const body = (await res.clone().json()) as { code?: unknown };
     if (body?.code === DEPLOYMENT_AUTH_REQUIRED_CODE) {
@@ -170,11 +183,9 @@ export function installDeploymentAuthFetch(): void {
   captureDeploymentTokenFromHash();
   const baseFetch = window.fetch.bind(window);
   window.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const token = getDeploymentToken();
-    const [nextInput, nextInit] =
-      token && shouldAttachDeploymentToken(input)
-        ? withDeploymentToken(input, init, token)
-        : ([input, init] as [RequestInfo | URL, RequestInit | undefined]);
+    const [nextInput, nextInit] = isFirstPartyApiRequest(input)
+      ? decorateApiRequest(input, init)
+      : ([input, init] as [RequestInfo | URL, RequestInit | undefined]);
     const res = await baseFetch(nextInput, nextInit);
     void inspectDeploymentAuthResponse(res, input);
     return res;
