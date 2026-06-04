@@ -76,44 +76,31 @@ export interface OrchestratorPromptOptions {
 export function buildOrchestratorToolInstructions(opts: OrchestratorPromptOptions = {}): string {
   const { isLocalDaemon = false } = opts;
 
-  // Mutation surface differs by mode. Cloud orchestrator has a direct-edit
-  // lane (repo:write + git:commit/push) but NO sandbox:exec, so it can edit
-  // + commit + push directly yet must delegate anything that needs running
-  // commands. Local-daemon additionally has sandbox:exec, so it can run
-  // commands directly too. Both place mutating calls last (after reads).
-  const mutatingShapesLine = isLocalDaemon
-    ? '- If you include a mutating call (edit, write, exec, commit, push, coder, explorer, ask, etc.), place it LAST — it runs after all reads complete.'
-    : '- If you include a mutating call (edit, write, commit, push, coder, explorer, ask, etc.), place it LAST — it runs after all reads complete.';
+  // The orchestrator is the single capable lead (Coder Delegation Collapse): it
+  // has sandbox:exec in BOTH modes now, so it edits AND runs commands directly.
+  // `isLocalDaemon` no longer governs exec — only remote git: cloud has
+  // git:push (the prepare_commit → push shipping flow), local-daemon does not.
+  const mutatingShapesLine =
+    '- If you include a mutating call (edit, write, exec, commit, push, explorer, ask, etc.), place it LAST — it runs after all reads complete.';
 
-  // Tool routing. Cloud orchestrator can edit + commit + push directly
-  // (repo:write + git:commit/push) but has no sandbox:exec, so it must route
-  // anything that runs commands through the Coder — that missing exec grant
-  // is the boundary on its direct-edit lane. Local-daemon adds sandbox:exec,
-  // so the daemon-as-user's-machine drives all sandbox tools directly.
-  const toolRoutingBlock = isLocalDaemon
-    ? `## Tool Routing
+  // Tool routing — the lead drives all sandbox tools directly (edit, run, test,
+  // diff). The push/ship lines are cloud-only (local-daemon has no remote).
+  const shipLines = isLocalDaemon
+    ? ''
+    : `\n- To ship a change: write/edit the files, then ${getToolPublicName('sandbox_prepare_commit')} as that turn's single trailing side-effect — it runs the Auditor gate and returns a review card for the user to approve (it does not commit on its own). After approval, publish with ${getToolPublicName('sandbox_push')} in a later turn (one side-effect per turn — never emit commit and push together).`;
+  const toolRoutingBlock = `## Tool Routing
 
-- Use **sandbox tools** for local operations: reading/editing code, running commands, tests, type checks, diffs, commits.
-- Use **GitHub tools** for remote repo metadata: PRs, branches, CI checks, cross-repo search, workflow dispatch.
-- Prefer ${getToolPublicName('sandbox_search')} over ${getToolPublicName('search_files')} for code in the active repo — it's faster and reflects local edits.
-- Prefer ${getToolPublicName('sandbox_read_file')} over ${getToolPublicName('read_file')} when the sandbox is active — it reflects uncommitted changes.`
-    : `## Tool Routing
-
-- Use **sandbox tools** for local read operations: reading code, searching, listing directories, diffs, symbol lookups.
-- For small, localized changes that need no verification (docs, config, a focused edit), act directly: write the files (${getToolPublicName('sandbox_write_file')} / ${getToolPublicName('sandbox_edit_file')} / ${getToolPublicName('sandbox_apply_patchset')}), then propose the commit with ${getToolPublicName('sandbox_prepare_commit')} as that turn's single trailing side-effect — it runs the Auditor gate and returns a review card for the user to approve (it does not commit on its own). Only after approval, publish with ${getToolPublicName('sandbox_push')} in a later turn (one side-effect per turn — never emit commit and push together).
-- For running commands, tests, type checks, builds, or installs — and for any change you'd want to verify by running something — emit ${getToolPublicName('delegate_coder')}. Exec belongs to the Coder's grant, not yours; the runtime denies direct ${getToolPublicName('sandbox_exec')} with ROLE_CAPABILITY_DENIED.
+- Use **sandbox tools** for local operations: reading/editing code, running commands (${getToolPublicName('sandbox_exec')}), tests, type checks, diffs, and commits (via ${getToolPublicName('sandbox_prepare_commit')}, which runs the Auditor gate — not a raw git commit). Do the work yourself — edit, then verify by running.${shipLines}
 - Use **GitHub tools** for remote repo metadata: PRs, branches, CI checks, cross-repo search, workflow dispatch.
 - Prefer ${getToolPublicName('sandbox_search')} over ${getToolPublicName('search_files')} for code in the active repo — it's faster and reflects local edits.
 - Prefer ${getToolPublicName('sandbox_read_file')} over ${getToolPublicName('read_file')} when the sandbox is active — it reflects uncommitted changes.`;
 
-  // GIT_GUARD_BLOCKED only surfaces when something emitted sandbox_exec
-  // with a git command. In cloud mode the orchestrator never reaches
-  // that error directly (it'd be denied earlier), so the row is dead
-  // instruction — drop it. In local-daemon mode the orchestrator can
-  // emit sandbox_exec, so keep the row.
+  // The lead can emit sandbox_exec (both modes), so the git-guard row is always
+  // live: a git command inside sandbox_exec is blocked, routing commit (and push,
+  // cloud only — local-daemon has no remote) through the typed flow.
   const gitGuardLine = isLocalDaemon
-    ? `\n- GIT_GUARD_BLOCKED → Direct git commit/push/merge/rebase in ${getToolPublicName('sandbox_exec')} is blocked. Use ${getToolPublicName('sandbox_prepare_commit')} + ${getToolPublicName('sandbox_push')}. If the standard flow fails, use ${getToolPublicName('ask_user')} to explain and request permission. Only with explicit user approval, retry with "allowDirectGit": true.`
-    : '';
+    ? `\n- GIT_GUARD_BLOCKED → Direct git commit/merge/rebase in ${getToolPublicName('sandbox_exec')} is blocked. Use ${getToolPublicName('sandbox_prepare_commit')} for commits. If the standard flow fails, use ${getToolPublicName('ask_user')} to explain and request permission. Only with explicit user approval, retry with "allowDirectGit": true.`
+    : `\n- GIT_GUARD_BLOCKED → Direct git commit/push/merge/rebase in ${getToolPublicName('sandbox_exec')} is blocked. Use ${getToolPublicName('sandbox_prepare_commit')} + ${getToolPublicName('sandbox_push')}. If the standard flow fails, use ${getToolPublicName('ask_user')} to explain and request permission. Only with explicit user approval, retry with "allowDirectGit": true.`;
 
   return `## Tool Execution Model
 
@@ -163,51 +150,48 @@ export function buildOrchestratorDelegation(opts: OrchestratorPromptOptions = {}
   // single turn with file writes/apply_patchset. Commit/push shipping is
   // cloud-only and lives in the Tool Routing section, so it's left out here
   // to stay accurate for local-daemon (no remote).
-  const handleDirectlyDirectWritesBullet = `\n- The task is a small, localized change you can complete in a single turn using a handful of file writes/edits or \`${getToolPublicName('sandbox_apply_patchset')}\` — nothing that needs running commands.`;
+  const handleDirectlyDirectWritesBullet = `\n- The task is a localized change you can complete yourself — edit the files (or \`${getToolPublicName('sandbox_apply_patchset')}\`), run \`${getToolPublicName('sandbox_exec')}\` to verify, and ship it.`;
 
-  // Per-turn tool budget. Cloud orchestrator can emit a file-mutation batch
-  // plus a single trailing side-effect (commit/push/delegate/GitHub) — but
-  // no `sandbox_exec`. Local-daemon adds exec to that trailing slot. Both
-  // shapes follow the same reads → mutations → one-side-effect ordering.
-  const perTurnBudget = isLocalDaemon
-    ? `## Per-turn tool budget
-
-A single turn may emit:
-- Any number of read-only calls (they run in parallel).
-- Any number of pure file mutations (\`${getToolPublicName('sandbox_write_file')}\`, \`${getToolPublicName('sandbox_edit_file')}\`, \`${getToolPublicName('sandbox_edit_range')}\`, \`${getToolPublicName('sandbox_search_replace')}\`, \`${getToolPublicName('sandbox_apply_patchset')}\`) — the runtime executes them sequentially as one mutation batch.
-- At most one trailing side-effecting call (\`${getToolPublicName('sandbox_exec')}\`, \`${getToolPublicName('sandbox_prepare_commit')}\`, \`${getToolPublicName('sandbox_push')}\`, \`${getToolPublicName('delegate_coder')}\`, workflow dispatch, etc.). Any second side-effect is rejected with \`MULTI_MUTATION_NOT_ALLOWED\`.
-
-Order matters: put reads first, then writes/edits, then the single side-effect last. If you need to write files and then run tests, emit the writes and the \`${getToolPublicName('sandbox_exec')}\` in one turn; if you need to write files and then delegate to the Coder, do both in one turn.`
-    : `## Per-turn tool budget
+  // Per-turn tool budget. The lead has sandbox:exec in both modes, so exec is a
+  // valid trailing side-effect everywhere. Only the trailing-call MENU differs:
+  // cloud carries the remote git/PR ops (push/create_pr/merge_pr/delete_branch).
+  // This builder branches solely on `isLocalDaemon`, so the local-daemon menu
+  // omits those — a known, PRE-EXISTING prompt-vs-capability gap for the
+  // remote-enabled (`remoteGitHubAvailable`) daemon config, where the effective
+  // grant keeps pr:write/git:push but the prompt doesn't surface them. Threading
+  // `remoteGitHubAvailable` into the prompt is a separate follow-up.
+  const trailingSideEffectMenu = isLocalDaemon
+    ? `\`${getToolPublicName('sandbox_exec')}\`, \`${getToolPublicName('sandbox_prepare_commit')}\`, \`${getToolPublicName('delegate_explorer')}\`, \`${getToolPublicName('plan_tasks')}\`, \`${getToolPublicName('ask_user')}\`, workflow dispatch, etc.`
+    : `\`${getToolPublicName('sandbox_exec')}\`, \`${getToolPublicName('sandbox_prepare_commit')}\`, \`${getToolPublicName('sandbox_push')}\`, \`${getToolPublicName('delegate_explorer')}\`, \`${getToolPublicName('plan_tasks')}\`, \`${getToolPublicName('ask_user')}\`, \`${getToolPublicName('create_pr')}\`, \`${getToolPublicName('merge_pr')}\`, \`${getToolPublicName('delete_branch')}\`, \`${getToolPublicName('trigger_workflow')}\``;
+  const perTurnBudget = `## Per-turn tool budget
 
 A single turn may emit:
 - Any number of read-only calls (they run in parallel, cap 6).
 - Any number of pure file mutations (\`${getToolPublicName('sandbox_write_file')}\`, \`${getToolPublicName('sandbox_edit_file')}\`, \`${getToolPublicName('sandbox_edit_range')}\`, \`${getToolPublicName('sandbox_search_replace')}\`, \`${getToolPublicName('sandbox_apply_patchset')}\`) — the runtime executes them sequentially as one mutation batch.
-- At most one trailing side-effecting call: \`${getToolPublicName('sandbox_prepare_commit')}\`, \`${getToolPublicName('sandbox_push')}\`, \`${getToolPublicName('delegate_coder')}\`, \`${getToolPublicName('delegate_explorer')}\`, \`${getToolPublicName('plan_tasks')}\`, \`${getToolPublicName('ask_user')}\`, \`${getToolPublicName('create_pr')}\`, \`${getToolPublicName('merge_pr')}\`, \`${getToolPublicName('delete_branch')}\`, \`${getToolPublicName('trigger_workflow')}\`. Any second side-effect is rejected with \`MULTI_MUTATION_NOT_ALLOWED\`.
+- At most one trailing side-effecting call: ${trailingSideEffectMenu}. Any second side-effect is rejected with \`MULTI_MUTATION_NOT_ALLOWED\`.
 
-Order matters: put reads first, then writes/edits, then the single side-effect last. You have no \`${getToolPublicName('sandbox_exec')}\` — for a small, localized change you can verify by inspection (docs, config, a focused edit), write the files and emit \`${getToolPublicName('sandbox_prepare_commit')}\` in one turn. For anything that needs running commands (tests, builds, installs) or an iterative edit→verify loop, emit a single \`${getToolPublicName('delegate_coder')}\` (or \`${getToolPublicName('plan_tasks')}\`) instead.`;
+Order matters: put reads first, then writes/edits, then the single side-effect last. If you need to write files and then run tests, emit the writes and the \`${getToolPublicName('sandbox_exec')}\` in one turn.`;
 
-  return `## Efficient Delegation and Handoffs
+  return `## Efficient Delegation Briefs
 
-When delegating coding or exploration tasks via ${getToolPublicName('delegate_coder')} or ${getToolPublicName('delegate_explorer')}, significantly improve efficiency by passing the right brief, not just a bare task:
+You do coding yourself (see "Do the Work Yourself" below). Delegation is for read-only investigation (${getToolPublicName('delegate_explorer')}) and for genuinely parallel, multi-step work (${getToolPublicName('plan_tasks')} task graphs). When you do delegate, pass a precise brief, not a bare task:
 
 1. Scan conversation history for your previous tool calls (${getToolPublicName('read_file')}, ${getToolPublicName('grep_file')}, ${getToolPublicName('search_files')}, ${getToolPublicName('list_directory')}).
 2. Identify file paths from arguments and include them in "files".
 3. Add "knownContext" with short validated facts you already learned.
 4. Add "deliverable" when the expected output or end state is specific.
-5. Add "acceptanceCriteria" for ${getToolPublicName('delegate_coder')} when success can be checked by commands.
 
 Example:
 If you read "src/auth.ts", use:
-{"tool": "${getToolPublicName('delegate_coder')}", "args": { "task": "...", "files": ["src/auth.ts"], "knownContext": ["Session refresh already appears to be triggered from src/auth.ts"], "deliverable": "Ship the fix with passing auth tests" }}
+{"tool": "${getToolPublicName('delegate_explorer')}", "args": { "task": "...", "files": ["src/auth.ts"], "knownContext": ["Session refresh already appears to be triggered from src/auth.ts"], "deliverable": "Report where the refresh is triggered, with evidence" }}
 
 Rules:
 - Only include files actually read in this conversation.
 - Only include "knownContext" items you have actually validated.
 - Don't guess. If unsure, omit the field.
 - Prioritize correctness over optimization.
-- Coder and Explorer inherit the current chat-locked provider/model by default. Delegation does not grant capabilities the current model lacks.
-- After Explorer returns, either answer directly or hand off to Coder with the distilled findings in "knownContext" instead of sending the Coder back through the same discovery loop.
+- Explorer inherits the current chat-locked provider/model by default. Delegation does not grant capabilities the current model lacks.
+- After Explorer returns, do the coding yourself using the distilled findings — don't send a sub-agent back through the same discovery loop.
 
 ## Explorer Task Template
 
@@ -220,17 +204,6 @@ Report: [explicit output requirements like file paths and line numbers]
 
 Example:
 {"tool": "${getToolPublicName('delegate_explorer')}", "args": { "task": "Objective: Trace the auth flow and summarize where session refresh happens\\nLook at: src/auth.ts, src/middleware.ts\\nSearch for: 'refresh_token', 'session_expires'\\nReport: File paths, line numbers, and the exact conditions triggering the refresh.", "files": ["src/auth.ts"], "deliverable": "Return the trigger path with evidence and the next recommended actor" }}
-
-## Multi-Task Delegation
-
-For multiple independent coding tasks in a single request, use the "tasks" array instead of "task":
-{"tool": "${getToolPublicName('delegate_coder')}", "args": { "tasks": ["add dark mode toggle to SettingsPage", "refactor logger utility to support log levels"], "files": ["src/settings.tsx", "src/lib/logger.ts"], "deliverable": "Complete both changes with verification notes", "knownContext": ["The settings page and logger are independent areas"] }}
-
-Rules for multi-task delegation:
-- Each task must be independently completable — no task should depend on another task's output. If tasks have dependencies, use separate sequential ${getToolPublicName('delegate_coder')} calls instead.
-- All multiple tasks execute sequentially in the main sandbox, sharing the same active file state.
-- Acceptance criteria (if provided) run against every task independently.
-- All tasks share the same "files", "intent", and "constraints" context.
 
 ## Task Graph Orchestration
 
@@ -253,27 +226,21 @@ Rules for task graphs:
 - Coder tasks run one at a time (sequential) to avoid sandbox conflicts.
 - Results from completed dependencies are automatically injected as knownContext.
 - If a task fails, all tasks that depend on it (transitively) are cancelled.
-- Use task graphs when the goal requires 3+ steps with dependencies. For simpler goals, use direct ${getToolPublicName('delegate_coder')} or ${getToolPublicName('delegate_explorer')}.
+- Use task graphs when the goal genuinely needs 3+ steps with dependencies and parallelism. For ordinary work — even multi-file changes — do it yourself; reach for ${getToolPublicName('delegate_explorer')} only when read-only investigation is worth isolating.
 
-## When to Delegate vs Handle Directly
+## Do the Work Yourself
 
-Delegate to the Coder when the task requires:
-- Multiple files are involved
-- New abstractions are introduced or structural refactors (e.g., extracting functions, modifying interfaces) are required
-- Running commands — tests, type checks, builds, installs
-- An iterative read → edit → verify loop
-- Exploratory changes where the full scope is unclear upfront
+You are the single capable lead: you read, edit, run commands and tests, and ship — all directly, in your own turn. **Do the coding yourself by default.** There is no Coder to hand off to for ordinary work; reaching for a sub-agent on a normal edit just adds latency and loses intent.
 
-Delegate to the Explorer when the task requires:
-- Tracing a flow across multiple files
-- Understanding architecture before implementation
-- Finding where behavior lives, what depends on a symbol, or what changed recently
-- Repo investigation that should stay strictly read-only
+Handle directly (the default for essentially all coding):
+- Read-only requests: explaining code, reviewing a PR diff, answering structure questions.
+- Any change you can make and verify — localized or spanning several files — by editing the files and running \`${getToolPublicName('sandbox_exec')}\` to check.${handleDirectlyDirectWritesBullet}
+- An iterative read → edit → run → fix loop. That's your loop now; run it inline.
 
-Handle directly (no delegation) when:
-- The request is read-only: explaining code, reviewing a PR diff, or answering structure questions.
-- The change is straightforward (e.g., adding to a list, updating config, localized refactor) even if it spans 2-3 files, provided you have the context and don't need to run complex commands.${handleDirectlyDirectWritesBullet}
-- You only need one or two tool calls and have the relevant content in context. Avoid delegating simple "add X to Y" tasks to the Coder; handle them yourself to keep the conversation fast.
+Delegate to the **Explorer** (read-only) when investigation is worth isolating:
+- Tracing a flow across many files, understanding architecture before a change, finding where behavior lives or what depends on a symbol — repo investigation that should stay strictly read-only.
+
+Use \`${getToolPublicName('plan_tasks')}\` / multi-task only for genuinely **parallel, independent** batches of work that benefit from concurrency — not as a default wrapper around a single change you could just make.
 
 ${perTurnBudget}`;
 }

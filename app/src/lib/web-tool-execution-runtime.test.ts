@@ -375,15 +375,11 @@ describe('WebToolExecutionRuntime — runtime-level role capability invariant', 
     });
   });
 
-  describe('role=orchestrator capability widens when binding is a local daemon', () => {
-    // Mode-aware capability grant: cloud orchestrator does NOT have
-    // sandbox:exec or repo:write — the runtime denies direct calls.
-    // Local-daemon sessions widen the grant so the orchestrator can
-    // drive sandbox tools directly, matching the local-pc tool
-    // protocol's "no delegation" rule. The named mode is derived from
-    // `context.localDaemonBinding` at the runtime edge via
-    // `getExecutionMode` — binding-presence is a transport detail, the
-    // policy input is the named mode.
+  describe('role=orchestrator drives sandbox tools directly in every mode', () => {
+    // Coder Delegation Collapse (2026-06-04): the orchestrator is the single
+    // capable lead — it holds sandbox:exec + repo:write in cloud AND
+    // local-daemon, so the runtime no longer denies its direct sandbox calls.
+    // (local-daemon still differs only on remote git: no push.)
 
     function execCall(): AnyToolCall {
       return {
@@ -392,25 +388,21 @@ describe('WebToolExecutionRuntime — runtime-level role capability invariant', 
       };
     }
 
-    it('cloud orchestrator: sandbox_exec is denied (no binding present)', async () => {
-      // Reproduces the screenshot bug for cloud sandbox sessions:
-      // orchestrator tries sandbox_exec, gets ROLE_CAPABILITY_DENIED
-      // because the cloud grant doesn't include sandbox:exec.
+    it('cloud orchestrator: sandbox_exec passes the role gate', async () => {
+      // The lead now has sandbox:exec in cloud — the capability gate no longer
+      // blocks it. Any error here comes from the mock sandbox, not the role check.
       const result = await runtime.execute(execCall(), {
         allowedRepo: 'owner/repo',
         sandboxId: 'sb-1',
         isMainProtected: false,
         role: 'orchestrator',
       });
-      expect(result.structuredError?.type).toBe('ROLE_CAPABILITY_DENIED');
-      expect(result.text).toContain('sandbox_exec');
+      expect(result.structuredError?.type).not.toBe('ROLE_CAPABILITY_DENIED');
     });
 
     it('cloud orchestrator: sandbox_write_file passes the gate (direct-edit lane)', async () => {
-      // The cloud direct-edit lane grants repo:write, so the capability
-      // gate no longer blocks writes — only sandbox_exec stays denied
-      // (covered above). Any error here comes from the mock sandbox, not
-      // the role check.
+      // The lead's full grant covers writes too; any error here comes from the
+      // mock sandbox, not the role check.
       const result = await runtime.execute(mutationCall(), {
         allowedRepo: 'owner/repo',
         sandboxId: 'sb-1',

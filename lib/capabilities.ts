@@ -320,8 +320,6 @@ export function workspaceModeToExecutionMode(mode: string | null | undefined): E
  * (the cloud direct-edit lane), so it isn't repeated here.
  *
  * Daemon-only additions:
- *   - `sandbox:exec` / `sandbox:test` / `sandbox:download` — the orchestrator
- *     wields sandbox tools directly on the paired pushd path (no Coder hop).
  *   - `git:branch` — the CLI/daemon operates on the user's REAL local working
  *     tree (not an ephemeral sandbox), so creating/switching branches locally
  *     is a no-remote operation the orchestrator can do directly. This is what
@@ -329,12 +327,21 @@ export function workspaceModeToExecutionMode(mode: string | null | undefined): E
  *     `git_create_branch` / `git_switch_branch` that `TOOL_PROTOCOL` advertises
  *     (Codex P2 on PR #700). `git:commit` stays in the base grant for the same
  *     reason — only the genuinely remote-bound `git:push` is stripped below.
+ *   - `sandbox:download` — kept daemon-only. It also authorizes
+ *     `promote_to_github` (create-repo + push), so it stays OUT of the cloud lead
+ *     grant where it would skip the approval prompt; the daemon path retains its
+ *     pre-existing behavior.
+ *
+ * Note: `sandbox:exec`/`test` used to live here too, but the Coder Delegation
+ * Collapse (2026-06-04) moved them into the base `ROLE_CAPABILITIES.orchestrator`
+ * grant below (the lead runs commands directly in cloud now), so they're no
+ * longer daemon-only. `git:branch` and `sandbox:download` are NOT redundant —
+ * they remain daemon-only (see the orchestrator grant comment for the
+ * download/promote_to_github rationale).
  */
 const LOCAL_DAEMON_ORCHESTRATOR_EXTRA: ReadonlySet<Capability> = new Set<Capability>([
-  'sandbox:exec',
-  'sandbox:test',
-  'sandbox:download',
   'git:branch',
+  'sandbox:download',
 ]);
 
 /**
@@ -382,15 +389,20 @@ const LOCAL_DAEMON_REMOTE_ONLY_CAPS: ReadonlySet<Capability> = new Set<Capabilit
 export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capability>>> = {
   orchestrator: new Set<Capability>([
     'repo:read',
-    // Cloud direct-edit lane: the orchestrator can make small, localized
-    // edits (docs, config, a focused change) and ship them itself instead
-    // of always hopping to the Coder. Deliberately NO `sandbox:exec` — the
-    // missing exec grant is the code-enforced boundary: anything needing
-    // tests/build/install can't be verified directly and must delegate.
-    // In local-daemon mode only `git:push` is stripped (no remote); `git:commit`
-    // is kept (local working tree) and `git:branch` is added back via the
-    // daemon-orchestrator extras. See `getEffectiveCapabilities`.
+    // The orchestrator is the single capable lead (Coder Delegation Collapse,
+    // 2026-06-04): it edits, runs commands/tests, and ships directly instead of
+    // hopping to a separate Coder. `sandbox:exec`/`test` (the exec boundary that
+    // used to force delegation) are now the lead's. NOT `sandbox:download` — that
+    // capability also authorizes `promote_to_github` (create-repo + push), which
+    // must stay an explicit, gated action, so it's left to the local-daemon extra
+    // where it pre-existed. `delegate:coder` is RETAINED — the CLI/daemon
+    // task-graph + headless paths still use it, and it stays as an explicit
+    // detached-work escape hatch — but the collapsed lead's prompt no longer
+    // routes through it. In local-daemon mode `git:push` is stripped (no remote).
+    // See `getEffectiveCapabilities`.
     'repo:write',
+    'sandbox:exec',
+    'sandbox:test',
     'git:commit',
     'git:push',
     'pr:read',
