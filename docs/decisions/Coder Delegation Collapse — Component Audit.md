@@ -85,3 +85,70 @@ directly, not an Orchestrator briefing a separate Coder role.
 - Does the CLI/daemon emit `subagent.*` for delegated coder runs that a remote
   attach client renders? If so, the collapse must keep emitting a compatible
   event shape (category 3) even when the lead runs inline.
+
+## Step 2 cut plan (recon, 2026-06-03 — NOT YET CUT; gated on the step-1 A/B)
+
+A trace of the actual blast radius shows the audit's one-line "delete the Planner
+and brief ceremony" is really **three separately-gated cuts**, and a naive
+"delete `planner-agent.ts` + `delegation-brief.ts`" would break two protected
+surfaces (the inline path we just shipped, and a category-3 protocol enum). The
+cuts, smallest-first:
+
+### Cut 2a — the web foreground Planner pre-pass (the actual step-2 target)
+
+- **Delete:** the Planner pre-pass block in `app/src/lib/coder-delegation-handler.ts`
+  (the `if (harnessSettings.plannerRequired && taskList.length === 1)` arm — the
+  `runPlanner` call, the `plannerBrief` thread into `runCoderAgent`, the
+  `subagent.started/completed {agent:'planner'}` emission **on this path only**);
+  `app/src/lib/planner-agent.ts` (web wrapper around `runPlannerCore`) once
+  orphaned — confirm its only consumer is the handler before deleting (it
+  re-exports `formatPlannerBrief` + planner types; re-point any stray importer at
+  `lib/planner-core.ts`).
+- **`plannerRequired`** (`app/src/types/index.ts:249`, `model-capabilities.ts`
+  standard=false/heavy=true, the `harness-profiles.ts:165` malformed-call
+  adaptation that escalates it) becomes dead for web once 2a lands — the
+  adaptation branch and likely the field go too. CLI never reads it
+  (`cli/harness-adaptation.ts:19`), so this is a web-only removal.
+- **Tests touched (update/remove):** `planner-agent.test.ts`, the Planner sub-seam
+  cases in `useAgentDelegation.test.ts`, `harness-profiles.test.ts` (the
+  plannerRequired adaptation), `model-capabilities-resolve.test.ts`. Also drop the
+  `plannerRan` field from `coder_delegation_measured` once the pre-pass is gone (it
+  becomes constant-false).
+
+### Cut 2b — the orchestrator-synthesized brief params (gated on retiring the foreground delegated path, NOT on 2a)
+
+- The "brief ceremony" the model performs is synthesizing
+  `intent/deliverable/knownContext/constraints/acceptanceCriteria` into the
+  `delegate_coder` args (`lib/tool-registry.ts:218` schema + the
+  `lib/orchestrator-prompt-builder.ts:196-210` guidance). Removing those params
+  from the tool schema + prompt is only safe **once the foreground delegated path
+  is fully retired** (i.e. inline is default *and* the Orchestrator→`delegate_coder`
+  arc is removed) — until then the orchestrator still legitimately uses them.
+- **DO NOT touch `buildCoderDelegationBrief`** (`lib/delegation-brief.ts` via
+  `role-context.ts`). It is the kernel envelope→preamble expansion and is called by
+  **both** `coder-agent.ts:326` (foreground) **and `coder-job-do.ts:663` — the
+  inline engine path we just shipped.** It is not ceremony; it is how the
+  single-agent loop frames its raw task. This corrects the audit's category-2 line
+  that listed `delegation-brief.ts` for removal: the *shared expansion stays*; only
+  the *orchestrator-side synthesis + the params that invite it* are ceremony.
+
+### Cut 2c — the CLI Planner + `planner-core.ts` + task-graph wiring (this is STEP 3, not step 2)
+
+- `cli/delegation-entry.ts` wires the Planner into the CLI's **task-graph**
+  pipeline (`runPlannerCore`, `planToTaskGraph`, `runDelegatedHeadless`), and
+  `lib/planner-core.ts` is its shared kernel. Per sequencing item 3, task-graph
+  parallelism is re-evaluated on its own merits — so the CLI Planner and
+  `planner-core.ts` are **out of scope for step 2** and stay until step 3.
+
+### Protected — do not touch in any step-2 cut
+
+- **`'planner'` is a category-3 protocol agent type** (`lib/protocol-schema.ts:325`,
+  `lib/runtime-contract.ts:187,268`, pinned by `cli/tests/daemon-integration.test.mjs`).
+  Step 2 **stops emitting** planner events but **keeps the enum value** — removing it
+  is a versioned protocol change with the drift tests updated in lockstep, never a
+  side effect of 2a.
+
+**Net:** step 2 (when the A/B clears) = cut 2a only — a contained web-side removal.
+2b waits on retiring the foreground delegated path; 2c is step 3. The "before
+deleting" gate from sequencing item 1 still governs even 2a: no data yet (inline is
+default-off as of the step-1 merge), so this plan is staged, not executed.
