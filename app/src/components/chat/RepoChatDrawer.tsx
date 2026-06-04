@@ -34,7 +34,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { HUB_MATERIAL_PILL_BUTTON_CLASS } from '@/components/chat/hub-styles';
+import {
+  GLASS_ACTIVE_CLASS,
+  GLASS_FILL_FAINT,
+  GLASS_GHOST_BUTTON_CLASS,
+  GLASS_SURFACE,
+  GLASS_SURFACE_HOVER,
+  HUB_GLASS_HAIRLINE,
+  HUB_GLASS_PANEL_CLASS,
+} from '@/components/chat/hub-styles';
 import { CliSessionRow } from '@/components/chat/drawer-cli-row';
 import type { RepoAppearance } from '@/lib/repo-appearance';
 import type { ActiveRepo, Conversation, DaemonCliSession, RepoWithActivity } from '@/types';
@@ -86,11 +94,18 @@ const EMPTY_CLI_SESSIONS: DaemonCliSession[] = [];
 
 import { timeAgoCompact } from '@/lib/utils';
 
-const DRAWER_CONTROL_SURFACE_CLASS =
-  'relative overflow-hidden rounded-full border border-push-edge-subtle bg-push-grad-input shadow-[0_12px_34px_rgba(0,0,0,0.5),0_3px_10px_rgba(0,0,0,0.28)] backdrop-blur-xl';
-const DRAWER_CONTROL_INTERACTIVE_CLASS =
-  'transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110';
-const DRAWER_SECTION_SURFACE_CLASS = 'border-b border-push-edge/70 pb-2 last:border-b-0';
+const DRAWER_CONTROL_SURFACE_CLASS = `relative overflow-hidden rounded-full border ${GLASS_SURFACE} shadow-[0_8px_24px_rgba(0,0,0,0.35)] backdrop-blur-xl`;
+const DRAWER_CONTROL_INTERACTIVE_CLASS = `transition-all duration-200 ${GLASS_SURFACE_HOVER} hover:text-push-fg`;
+// Repo groups read as soft glass cards floating on the panel rather than slabs
+// split by hard rules — this kills the "large empty slab" feeling and lets the
+// active repo glow stand out from its quiet neighbors. The base carries layout
+// + the border *width* only; the resting (GLASS_SURFACE) and active
+// (GLASS_ACTIVE_CLASS) states each own their border + bg so the two never
+// collide on CSS order. The active tint is the shared accent token, so it can't
+// drift from the active tab cell in the Workspace hub.
+const DRAWER_SECTION_SURFACE_CLASS =
+  'rounded-2xl border px-1.5 py-1 transition-colors duration-200';
+const DRAWER_SECTION_RESTING_CLASS = `${GLASS_SURFACE} ${GLASS_SURFACE_HOVER}`;
 
 export function RepoChatDrawer({
   open,
@@ -408,7 +423,7 @@ export function RepoChatDrawer({
         <SheetContent
           side="left"
           overlayClassName="bg-transparent"
-          className="w-[86vw] rounded-r-2xl border-push-edge-subtle bg-push-grad-panel p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.3)] sm:max-w-sm [&>[data-slot=sheet-close]]:text-push-fg-secondary [&>[data-slot=sheet-close]]:hover:text-push-fg"
+          className={`w-[86vw] rounded-r-2xl border-r ${HUB_GLASS_PANEL_CLASS} p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.5),0_4px_16px_rgba(0,0,0,0.28)] sm:max-w-sm [&>[data-slot=sheet-close]]:text-push-fg-secondary [&>[data-slot=sheet-close]]:hover:text-push-fg`}
         >
           {/* Subtle top highlight */}
           <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-16 rounded-tr-2xl bg-gradient-to-b from-white/[0.03] to-transparent" />
@@ -421,7 +436,7 @@ export function RepoChatDrawer({
               className="pointer-events-none absolute inset-x-0 -top-20 z-0 h-48 bg-[radial-gradient(58%_100%_at_50%_0%,rgb(var(--push-accent-rgb)_/_0.17),transparent_72%)] blur-2xl"
             />
             <div className="absolute inset-0 flex flex-col">
-              <SheetHeader className="border-b border-push-edge pb-3">
+              <SheetHeader className={`border-b ${HUB_GLASS_HAIRLINE} pb-3`}>
                 <SheetTitle className="flex items-center gap-2 text-push-lg font-display font-semibold text-push-fg">
                   <HistoryStackIcon className="h-4 w-4 text-push-fg-dim" />
                   <span>Chats</span>
@@ -452,22 +467,23 @@ export function RepoChatDrawer({
               </SheetHeader>
 
               <div className="flex-1 overflow-y-auto p-3">
-                <div className="space-y-3 stagger-in">
+                <div className="space-y-2 stagger-in">
                   {filteredRepoRows.map(({ repo, chats }) => {
                     const isExpanded =
                       isSearching ||
                       (expandedRepos[repo.full_name] ?? activeRepo?.full_name === repo.full_name);
                     const isActiveRepo = activeRepo?.id === repo.id;
                     return (
-                      <div key={repo.id} className={DRAWER_SECTION_SURFACE_CLASS}>
+                      <div
+                        key={repo.id}
+                        className={`${DRAWER_SECTION_SURFACE_CLASS} ${
+                          isActiveRepo ? GLASS_ACTIVE_CLASS : DRAWER_SECTION_RESTING_CLASS
+                        }`}
+                      >
                         <div className="relative">
                           <button
                             onClick={() => toggleRepo(repo.full_name, isExpanded)}
-                            className={`flex w-full items-center gap-2 rounded-xl px-1 py-2.5 pr-10 text-left transition-colors ${
-                              isActiveRepo
-                                ? 'bg-push-surface-raised/55'
-                                : 'hover:bg-push-surface-hover/40'
-                            }`}
+                            className="flex w-full items-center gap-2 rounded-xl px-1 py-2.5 pr-10 text-left transition-colors"
                           >
                             <ChevronRight
                               className={`h-3.5 w-3.5 shrink-0 text-push-fg-muted transition-transform ${isExpanded ? 'rotate-90' : ''}`}
@@ -494,7 +510,7 @@ export function RepoChatDrawer({
                           <button
                             type="button"
                             onClick={() => setAppearanceRepoState(repo)}
-                            className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} absolute right-0 top-1/2 h-8 w-8 -translate-y-1/2 justify-center px-0 text-push-fg-secondary`}
+                            className={`${GLASS_GHOST_BUTTON_CLASS} absolute right-0.5 top-1/2 h-8 w-8 -translate-y-1/2`}
                             aria-label={`Customize ${repo.name}`}
                             title="Customize repo"
                           >
@@ -741,7 +757,7 @@ export function RepoChatDrawer({
                   })}
 
                   {filteredChatModeChats.length > 0 && (
-                    <div className={DRAWER_SECTION_SURFACE_CLASS}>
+                    <div className={`${DRAWER_SECTION_SURFACE_CLASS} ${GLASS_SURFACE}`}>
                       <div className="px-1 py-2.5 text-push-xs font-medium uppercase tracking-wide text-push-violet">
                         Chats
                       </div>
@@ -751,7 +767,7 @@ export function RepoChatDrawer({
                     </div>
                   )}
                   {(filteredLocalPcChats.length > 0 || localPcCliSessions.length > 0) && (
-                    <div className={DRAWER_SECTION_SURFACE_CLASS}>
+                    <div className={`${DRAWER_SECTION_SURFACE_CLASS} ${GLASS_SURFACE}`}>
                       <div className="px-1 py-2.5 text-push-xs font-medium uppercase tracking-wide text-push-link">
                         Local PC
                       </div>
@@ -764,7 +780,7 @@ export function RepoChatDrawer({
                     </div>
                   )}
                   {(filteredRelayChats.length > 0 || relayCliSessions.length > 0) && (
-                    <div className={DRAWER_SECTION_SURFACE_CLASS}>
+                    <div className={`${DRAWER_SECTION_SURFACE_CLASS} ${GLASS_SURFACE}`}>
                       <div className="px-1 py-2.5 text-push-xs font-medium uppercase tracking-wide text-push-link">
                         Remote
                       </div>
@@ -777,7 +793,7 @@ export function RepoChatDrawer({
                     </div>
                   )}
                   {filteredUnscopedChats.length > 0 && (
-                    <div className={DRAWER_SECTION_SURFACE_CLASS}>
+                    <div className={`${DRAWER_SECTION_SURFACE_CLASS} ${GLASS_SURFACE}`}>
                       <div className="px-1 py-2.5 text-push-xs font-medium uppercase tracking-wide text-push-fg-muted">
                         Unscoped
                       </div>
@@ -800,7 +816,9 @@ export function RepoChatDrawer({
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 border-t border-push-edge bg-[linear-gradient(180deg,rgba(7,10,15,0.92)_0%,rgba(3,5,9,0.98)_100%)] px-3 py-3">
+              <div
+                className={`flex items-center gap-2 border-t ${HUB_GLASS_HAIRLINE} ${GLASS_FILL_FAINT} px-3 py-3`}
+              >
                 <PushMarkIcon className="h-[13px] w-[13px] shrink-0 text-push-accent" />
                 <div className="min-w-0">
                   <p className="text-push-xs font-medium text-push-fg-secondary">Push</p>
