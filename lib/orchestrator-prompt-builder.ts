@@ -90,7 +90,7 @@ export function buildOrchestratorToolInstructions(opts: OrchestratorPromptOption
     : `\n- To ship a change: write/edit the files, then ${getToolPublicName('sandbox_prepare_commit')} as that turn's single trailing side-effect — it runs the Auditor gate and returns a review card for the user to approve (it does not commit on its own). After approval, publish with ${getToolPublicName('sandbox_push')} in a later turn (one side-effect per turn — never emit commit and push together).`;
   const toolRoutingBlock = `## Tool Routing
 
-- Use **sandbox tools** for local operations: reading/editing code, running commands (${getToolPublicName('sandbox_exec')}), tests, type checks, diffs, commits. Do the work yourself — edit, then verify by running.${shipLines}
+- Use **sandbox tools** for local operations: reading/editing code, running commands (${getToolPublicName('sandbox_exec')}), tests, type checks, diffs, and commits (via ${getToolPublicName('sandbox_prepare_commit')}, which runs the Auditor gate — not a raw git commit). Do the work yourself — edit, then verify by running.${shipLines}
 - Use **GitHub tools** for remote repo metadata: PRs, branches, CI checks, cross-repo search, workflow dispatch.
 - Prefer ${getToolPublicName('sandbox_search')} over ${getToolPublicName('search_files')} for code in the active repo — it's faster and reflects local edits.
 - Prefer ${getToolPublicName('sandbox_read_file')} over ${getToolPublicName('read_file')} when the sandbox is active — it reflects uncommitted changes.`;
@@ -154,8 +154,12 @@ export function buildOrchestratorDelegation(opts: OrchestratorPromptOptions = {}
 
   // Per-turn tool budget. The lead has sandbox:exec in both modes, so exec is a
   // valid trailing side-effect everywhere. Only the trailing-call MENU differs:
-  // cloud carries the remote git/PR ops (push/create_pr/merge_pr/delete_branch),
-  // local-daemon does not.
+  // cloud carries the remote git/PR ops (push/create_pr/merge_pr/delete_branch).
+  // This builder branches solely on `isLocalDaemon`, so the local-daemon menu
+  // omits those — a known, PRE-EXISTING prompt-vs-capability gap for the
+  // remote-enabled (`remoteGitHubAvailable`) daemon config, where the effective
+  // grant keeps pr:write/git:push but the prompt doesn't surface them. Threading
+  // `remoteGitHubAvailable` into the prompt is a separate follow-up.
   const trailingSideEffectMenu = isLocalDaemon
     ? `\`${getToolPublicName('sandbox_exec')}\`, \`${getToolPublicName('sandbox_prepare_commit')}\`, \`${getToolPublicName('delegate_explorer')}\`, \`${getToolPublicName('plan_tasks')}\`, \`${getToolPublicName('ask_user')}\`, workflow dispatch, etc.`
     : `\`${getToolPublicName('sandbox_exec')}\`, \`${getToolPublicName('sandbox_prepare_commit')}\`, \`${getToolPublicName('sandbox_push')}\`, \`${getToolPublicName('delegate_explorer')}\`, \`${getToolPublicName('plan_tasks')}\`, \`${getToolPublicName('ask_user')}\`, \`${getToolPublicName('create_pr')}\`, \`${getToolPublicName('merge_pr')}\`, \`${getToolPublicName('delete_branch')}\`, \`${getToolPublicName('trigger_workflow')}\``;

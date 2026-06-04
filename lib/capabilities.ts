@@ -333,10 +333,11 @@ export function workspaceModeToExecutionMode(mode: string | null | undefined): E
  *     pre-existing behavior.
  *
  * Note: `sandbox:exec`/`test` used to live here too, but the Coder Delegation
- * Collapse (2026-06-04) moved them into the base orchestrator grant (the lead
- * runs commands directly in cloud now), so they're no longer daemon-only.
- * `git:branch` and `sandbox:download` are NOT redundant — they remain
- * daemon-only.
+ * Collapse (2026-06-04) moved them into the base `ROLE_CAPABILITIES.orchestrator`
+ * grant below (the lead runs commands directly in cloud now), so they're no
+ * longer daemon-only. `git:branch` and `sandbox:download` are NOT redundant —
+ * they remain daemon-only (see the orchestrator grant comment for the
+ * download/promote_to_github rationale).
  */
 const LOCAL_DAEMON_ORCHESTRATOR_EXTRA: ReadonlySet<Capability> = new Set<Capability>([
   'git:branch',
