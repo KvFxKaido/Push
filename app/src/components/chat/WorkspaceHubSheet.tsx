@@ -52,6 +52,8 @@ import { getActiveProvider, getProviderPushStream } from '@/lib/orchestrator';
 import { getModelForRole, type PreferredProvider } from '@/lib/providers';
 import { iteratePushStreamText } from '@push/lib/stream-utils';
 import {
+  HUB_GLASS_HAIRLINE,
+  HUB_GLASS_PANEL_CLASS,
   HUB_MATERIAL_BUTTON_CLASS,
   HUB_MATERIAL_INPUT_CLASS,
   HUB_MATERIAL_PILL_BUTTON_CLASS,
@@ -1130,7 +1132,7 @@ export function WorkspaceHubSheet({
       <SheetContent
         side="right"
         overlayClassName="bg-transparent"
-        className="w-[94vw] rounded-l-2xl border-l border-push-edge-subtle bg-push-grad-panel p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.3)] sm:max-w-none [&>[data-slot=sheet-close]]:hidden"
+        className={`w-[94vw] rounded-l-2xl border-l border-white/[0.07] ${HUB_GLASS_PANEL_CLASS} p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.5),0_4px_16px_rgba(0,0,0,0.28)] sm:max-w-none [&>[data-slot=sheet-close]]:hidden`}
       >
         <SheetHeader className="sr-only">
           <SheetTitle>
@@ -1158,7 +1160,7 @@ export function WorkspaceHubSheet({
             className="pointer-events-none absolute inset-x-0 -top-20 z-0 h-48 bg-[radial-gradient(58%_100%_at_50%_0%,rgb(var(--push-accent-rgb)_/_0.17),transparent_72%)] blur-2xl"
           />
           {/* ---- Header ---- */}
-          <header className="border-b border-push-edge px-3 py-3">
+          <header className={`border-b ${HUB_GLASS_HAIRLINE} px-3 py-3`}>
             <div className="flex items-center justify-between gap-2">
               {/* Repo + Branch dropdown */}
               <div className="min-w-0 space-y-1">
@@ -1346,7 +1348,9 @@ export function WorkspaceHubSheet({
 
           {/* Sandbox status strip */}
           {sandboxStatus !== 'ready' && (
-            <div className="flex items-center justify-between gap-2 border-b border-push-edge px-3 py-2">
+            <div
+              className={`flex items-center justify-between gap-2 border-b ${HUB_GLASS_HAIRLINE} bg-white/[0.015] px-3 py-2`}
+            >
               <div className="min-w-0 flex items-center gap-2">
                 {sandboxStatus === 'creating' || sandboxStatus === 'reconnecting' ? (
                   <Loader2 className="h-3 w-3 flex-shrink-0 animate-spin text-push-fg-dim" />
@@ -1417,7 +1421,9 @@ export function WorkspaceHubSheet({
 
           {/* Sandbox lifecycle strip (ready) — hibernate to preserve working tree. */}
           {sandboxStatus === 'ready' && sandboxId && onHibernateSandbox && (
-            <div className="flex items-center justify-between gap-2 border-b border-push-edge px-3 py-2">
+            <div
+              className={`flex items-center justify-between gap-2 border-b ${HUB_GLASS_HAIRLINE} bg-white/[0.015] px-3 py-2`}
+            >
               <div className="min-w-0 flex items-center gap-2">
                 <SandboxCubeIcon className="h-3 w-3 flex-shrink-0 text-push-fg-dim" />
                 <span className="min-w-0 truncate text-push-xs text-push-fg-dim">
@@ -1444,7 +1450,7 @@ export function WorkspaceHubSheet({
 
           {/* Branch switch confirmation overlay */}
           {switchConfirmBranch && (
-            <div className="border-b border-push-edge px-3 py-2.5">
+            <div className={`border-b ${HUB_GLASS_HAIRLINE} px-3 py-2.5`}>
               <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3 py-3`}>
                 <p className="text-xs text-push-fg-secondary">
                   Switch to <span className="font-medium text-push-fg">{switchConfirmBranch}</span>?
@@ -1468,10 +1474,11 @@ export function WorkspaceHubSheet({
             </div>
           )}
 
-          {/* Tab bar */}
-          <div className="border-b border-push-edge px-2 py-2">
+          {/* Tab bar — one grouped command grid rather than loose chips on black,
+              so the workspace surfaces read as a single control cluster. */}
+          <div className={`border-b ${HUB_GLASS_HAIRLINE} px-2 py-2`}>
             <div
-              className={`grid gap-1 ${tabs.length >= 7 || tabs.length === 4 ? 'grid-cols-4' : 'grid-cols-3'}`}
+              className={`grid gap-1 rounded-2xl border border-white/[0.05] bg-white/[0.02] p-1 ${tabs.length >= 7 || tabs.length === 4 ? 'grid-cols-4' : 'grid-cols-3'}`}
             >
               {tabs.map((tab) => {
                 const Icon = tab.icon;
@@ -1480,13 +1487,13 @@ export function WorkspaceHubSheet({
                   <button
                     key={tab.key}
                     onClick={() => setActiveTab(tab.key)}
-                    className={`relative flex min-h-[42px] items-center justify-center gap-1 rounded-[18px] px-1.5 text-push-xs transition-all ${
+                    className={`relative flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl px-1.5 text-push-xs transition-all ${
                       active
-                        ? `${HUB_MATERIAL_BUTTON_CLASS} text-push-fg`
-                        : 'border border-transparent text-push-fg-dim hover:border-push-edge/70 hover:bg-white/[0.03] hover:text-push-fg-secondary'
+                        ? 'border border-push-accent/30 bg-push-accent/[0.1] text-push-fg shadow-[0_0_0_1px_rgb(var(--push-accent-rgb)_/_0.06),0_8px_22px_-14px_rgb(var(--push-accent-rgb)_/_0.55)]'
+                        : 'border border-white/[0.04] bg-white/[0.015] text-push-fg-dim hover:border-white/[0.09] hover:bg-white/[0.05] hover:text-push-fg-secondary'
                     }`}
                   >
-                    <Icon className="h-3.5 w-3.5" />
+                    <Icon className={`h-3.5 w-3.5 ${active ? 'text-push-accent' : ''}`} />
                     <span>{tab.label}</span>
                   </button>
                 );
@@ -1496,7 +1503,7 @@ export function WorkspaceHubSheet({
 
           {/* Repo commit bar (shown on Files/Diff tabs when commit/push is meaningful) */}
           {showCommitBar && (
-            <div className="border-b border-push-edge px-3 py-2">
+            <div className={`border-b ${HUB_GLASS_HAIRLINE} px-3 py-2`}>
               <div className="flex items-center gap-1.5">
                 <input
                   value={commitMessage}
@@ -1580,7 +1587,7 @@ export function WorkspaceHubSheet({
 
           {/* Sandbox actions replace the repo commit bar in sandbox (no-repo) mode. */}
           {showScratchActionBar && scratchActions && (
-            <div className="border-b border-push-edge px-3 py-2">
+            <div className={`border-b ${HUB_GLASS_HAIRLINE} px-3 py-2`}>
               <div className="space-y-2">
                 <div className="min-w-0">
                   <p className="text-[10px] uppercase tracking-[0.18em] text-push-fg-dim">
@@ -1781,9 +1788,9 @@ export function WorkspaceHubSheet({
           >
             <SheetContent
               side="bottom"
-              className="border-t border-push-edge-subtle bg-push-grad-panel px-0 pb-6 pt-0 text-push-fg"
+              className={`border-t border-white/[0.07] ${HUB_GLASS_PANEL_CLASS} px-0 pb-6 pt-0 text-push-fg`}
             >
-              <SheetHeader className="border-b border-push-edge px-4 py-4">
+              <SheetHeader className={`border-b ${HUB_GLASS_HAIRLINE} px-4 py-4`}>
                 <SheetTitle className="text-push-lg font-display font-semibold text-push-fg">
                   Push target
                 </SheetTitle>

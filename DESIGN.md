@@ -245,6 +245,10 @@ Flat chrome: pill buttons, solid panels, 1px borders. These are the visual ident
 | `HUB_TAG_CLASS`                    | Rounded-full, uppercase mono, `tracking-[0.16em]`     | Inline metadata tag (`RECOMMENDED`, `EXPERIMENTAL`)       |
 | `HEADER_ROUND_BUTTON_CLASS`        | `h-9 w-9` plain interactive (no surface)              | Chat app-bar icon buttons (palette, dock, web search)     |
 | `HEADER_PILL_BUTTON_CLASS`         | `h-9 px-1.5` plain interactive with gap-2             | Chat app-bar pill (launcher button in the center cell)    |
+| `HUB_GLASS_PANEL_CLASS`            | Translucent gradient + `backdrop-blur-2xl` (no border) | **Menu shell only** — the `<SheetContent>` of the Chats drawer / Workspace hub |
+| `HUB_GLASS_HAIRLINE`              | `border-white/[0.06]`                                 | Soft dividers *inside* a glass menu (header / strip / tab-bar seams)            |
+
+The two `HUB_GLASS_*` classes are the **one** sanctioned exception to flat chrome: a top-level sliding menu is the seam where the panel meets the live app it slid over, so it stays true glass (translucent + blur) and the chat surface's Sky ambient frosts through its edges instead of reading as a separate black slab. The exception is the panel *shell* and its hairline dividers only — chips, pills, and inner panels within the menu still use the flat `HUB_MATERIAL_*` / `HUB_PANEL_*` surfaces above.
 
 Hub button height is `h-8`, not `h-9` — pill rhythm differs from the shadcn `h-9` baseline by design. The `HEADER_*` chat app-bar buttons are `h-9` because they sit on the page surface (`bg-push-surface-inset`), not on a raised hub panel; they're plain interactive — no border, no surface — and only color-shift on hover. For full-width form CTAs that need more presence, use `${HUB_MATERIAL_BUTTON_CLASS} h-9 px-4 rounded-md` (the surface treatment composes onto the standard button shape).
 

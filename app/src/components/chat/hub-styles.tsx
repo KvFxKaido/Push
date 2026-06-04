@@ -36,6 +36,21 @@ export const HUB_PANEL_SUBTLE_SURFACE_CLASS =
 
 export const HUB_TOP_BANNER_STRIP_CLASS = 'animate-fade-in border-b bg-transparent';
 
+// ── Menu glass ─────────────────────────────────────────────
+// The top-level sliding menus (Chats drawer, Workspace hub) are the one place
+// Push keeps a true glass material: a translucent gradient + backdrop blur so
+// the live chat surface and its Sky ambient frost *through* the panel instead
+// of reading as a separate black overlay. Inner chrome stays flat (see
+// DESIGN.md → Hub utility classes) — this is the panel shell only, the seam
+// where a menu meets the app it slid over.
+export const HUB_GLASS_PANEL_CLASS =
+  'bg-[linear-gradient(180deg,rgba(12,16,24,0.82)_0%,rgba(6,9,14,0.93)_100%)] backdrop-blur-2xl';
+
+// Soft hairline used for dividers *inside* the glass menus. Replaces the hard
+// `border-push-edge` slabs so stacked sections read as one continuous panel
+// rather than a stack of opaque cards.
+export const HUB_GLASS_HAIRLINE = 'border-white/[0.06]';
+
 export const HUB_TAG_CLASS =
   'inline-flex items-center rounded-full border border-push-edge-subtle bg-black/15 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-push-fg-dim';
 
