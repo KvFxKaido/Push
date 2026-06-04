@@ -16,6 +16,7 @@ import {
   applySecurityHeaders,
   corsHeadersFor,
   requireDeploymentTokenForApi,
+  requireSessionForGatedApi,
 } from './src/worker/worker-middleware';
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from './src/lib/request-id';
 
@@ -137,6 +138,14 @@ export default {
       const deploymentAuthResponse = requireDeploymentTokenForApi(requestWithId, env, url);
       if (deploymentAuthResponse) {
         return withRequestIdOnResponse(deploymentAuthResponse, requestId, requestWithId, env);
+      }
+
+      // GitHub-identity session gate (auth rework, migration step 1). Runs
+      // alongside the deployment token; in observe mode it only logs, so this
+      // returns a Response only once PUSH_SESSION_GATE_ENFORCE is set.
+      const sessionAuthResponse = await requireSessionForGatedApi(requestWithId, env, url);
+      if (sessionAuthResponse) {
+        return withRequestIdOnResponse(sessionAuthResponse, requestId, requestWithId, env);
       }
 
       const exactRoute = matchExactApiRoute(url.pathname, request.method);

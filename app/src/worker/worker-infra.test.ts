@@ -9,6 +9,7 @@ import {
   handleSandbox,
 } from './worker-infra';
 import type { Env } from './worker-middleware';
+import { verifySessionToken } from './worker-session';
 import { getSnapshot } from './snapshot-index';
 import type { ExecutionContext, KVNamespace } from '@cloudflare/workers-types';
 
@@ -424,7 +425,7 @@ describe('handleGitHubAppOAuth error paths', () => {
       'fetch',
       sequentialFetch([
         () => jsonResponse({ access_token: 'user_token' }),
-        () => jsonResponse({ login: 'user', avatar_url: '' }),
+        () => jsonResponse({ id: 555, login: 'user', avatar_url: '' }),
         () => jsonResponse({ total_count: 0, installations: [] }),
       ]),
     );
@@ -444,7 +445,7 @@ describe('handleGitHubAppOAuth error paths', () => {
       'fetch',
       sequentialFetch([
         () => jsonResponse({ access_token: 'user_token' }),
-        () => jsonResponse({ login: 'user', avatar_url: '' }),
+        () => jsonResponse({ id: 555, login: 'user', avatar_url: '' }),
         () =>
           jsonResponse({
             total_count: 1,
@@ -466,7 +467,7 @@ describe('handleGitHubAppOAuth error paths', () => {
       'fetch',
       sequentialFetch([
         () => jsonResponse({ access_token: 'user_token' }),
-        () => jsonResponse({ login: 'user', avatar_url: '' }),
+        () => jsonResponse({ id: 555, login: 'user', avatar_url: '' }),
         () => new Response('boom', { status: 500 }),
       ]),
     );
@@ -508,7 +509,7 @@ describe('handleGitHubAppOAuth happy path', () => {
       },
       (input, init) => {
         record(input, init);
-        return jsonResponse({ login: 'alice', avatar_url: 'https://avatar/alice' });
+        return jsonResponse({ id: 777, login: 'alice', avatar_url: 'https://avatar/alice' });
       },
       (input, init) => {
         record(input, init);
@@ -573,6 +574,66 @@ describe('handleGitHubAppOAuth happy path', () => {
     });
     expect(calls[4].url).toBe('https://api.github.com/users/push-auth%5Bbot%5D');
     expect(calls[4].method).toBe('GET');
+  });
+
+  it('mints a verifiable push_session keyed on the GitHub user id when the secret is set', async () => {
+    vi.stubGlobal(
+      'fetch',
+      sequentialFetch([
+        () => jsonResponse({ access_token: 'user_token' }),
+        () => jsonResponse({ id: 777, login: 'alice', avatar_url: '' }),
+        () =>
+          jsonResponse({
+            total_count: 1,
+            installations: [{ id: 123, app_id: 42, app_slug: 'push-auth' }],
+          }),
+        () => jsonResponse({ token: 'inst_token', expires_at: '2030-01-01T00:00:00Z' }),
+        () => jsonResponse({ id: 4242, login: 'push-auth[bot]', avatar_url: '' }),
+      ]),
+    );
+
+    const response = await handleGitHubAppOAuth(
+      makeRequest('https://push.example.test/api/auth/github-app/oauth', {
+        body: JSON.stringify({ code: 'valid' }),
+      }),
+      makeEnv({ ...appEnv, PUSH_SESSION_SECRET: 'unit-test-secret' }),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+
+    // Token returned in the body (APK header fallback) and as a Set-Cookie.
+    expect(typeof body.session).toBe('string');
+    expect(typeof body.session_expires_at).toBe('string');
+    expect(response.headers.get('Set-Cookie')).toContain('push_session=');
+    expect(response.headers.get('Set-Cookie')).toContain('SameSite=None');
+
+    // The minted token verifies under the same secret and carries the numeric id.
+    const verified = await verifySessionToken('unit-test-secret', body.session);
+    expect(verified.ok).toBe(true);
+    if (verified.ok) {
+      expect(verified.claims.sub).toBe('777');
+      expect(verified.claims.login).toBe('alice');
+      expect(verified.claims.installation_id).toBe('123');
+    }
+  });
+
+  it('returns 502 when GET /user resolves no numeric id (identity is load-bearing)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      sequentialFetch([
+        () => jsonResponse({ access_token: 'user_token' }),
+        // login present but no `id` — an identity we cannot anchor on.
+        () => jsonResponse({ login: 'alice', avatar_url: '' }),
+      ]),
+    );
+
+    const response = await handleGitHubAppOAuth(
+      makeRequest('https://push.example.test/api/auth/github-app/oauth', {
+        body: JSON.stringify({ code: 'valid' }),
+      }),
+      makeEnv(appEnv),
+    );
+    expect(response.status).toBe(502);
   });
 });
 

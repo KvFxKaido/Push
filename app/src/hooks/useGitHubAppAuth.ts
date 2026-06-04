@@ -4,6 +4,7 @@ import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-st
 import { isNetworkFetchError, validateGitHubToken as validateToken } from '@/lib/utils';
 import { resolveApiUrl } from '@/lib/api-url';
 import { APP_TOKEN_EXPIRY_KEY, APP_TOKEN_STORAGE_KEY } from '@/lib/github-auth';
+import { clearSessionToken, setSessionToken } from '@/lib/session-auth';
 
 const INSTALLATION_ID_KEY = 'github_app_installation_id';
 // Reuse the canonical storage-key constants from the central token-authority
@@ -32,6 +33,11 @@ type TokenResponse = {
   repository_selection: string;
   user?: GitHubUser | null;
   commit_identity?: GitHubAppCommitIdentity | null;
+  // Push identity session minted by the App-OAuth handler (auth rework). Only
+  // the OAuth path returns these — the installation-token refresh path has no
+  // verified user identity to anchor a session on.
+  session?: string;
+  session_expires_at?: string;
 };
 
 type GitHubAppCommitIdentity = {
@@ -315,6 +321,13 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
       try {
         const data = await fetchAppOAuth(code);
 
+        // Persist the Push identity session minted by the OAuth handler. The
+        // SameSite=None cookie is the primary carrier; this header copy is the
+        // APK fallback (see lib/session-auth.ts).
+        if (data.session) {
+          setSessionToken(data.session, data.session_expires_at);
+        }
+
         safeStorageSet(INSTALLATION_ID_KEY, data.installation_id);
         safeStorageSet(TOKEN_KEY, data.token);
         safeStorageSet(TOKEN_EXPIRY_KEY, data.expires_at);
@@ -472,6 +485,7 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
     safeStorageRemove(TOKEN_EXPIRY_KEY);
     safeStorageRemove(USER_KEY);
     safeStorageRemove(COMMIT_IDENTITY_KEY);
+    clearSessionToken();
     setInstallationId('');
     setToken('');
     setTokenExpiry('');

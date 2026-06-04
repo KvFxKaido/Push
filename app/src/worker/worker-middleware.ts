@@ -27,6 +27,7 @@ import {
   type WorkerSpanContext,
 } from './worker-tracing';
 import { base64UrlEncodeBytes, base64UrlEncodeString } from './worker-base64url';
+import { extractSessionToken, parseAllowedUserIds, verifySessionToken } from './worker-session';
 
 // ---------------------------------------------------------------------------
 // Env interface
@@ -183,6 +184,24 @@ export interface Env {
   // intentionally separate from Authorization because provider calls use that
   // header for BYOK model keys.
   PUSH_DEPLOYMENT_TOKEN?: string;
+  // --- Auth rework: GitHub-identity session gate ---
+  // (docs/decisions/Auth Rework — GitHub as the Single Identity Anchor.md)
+  //
+  // HMAC secret for the Push identity session JWT minted at App-OAuth time and
+  // verified per request on the metered surface. Independent of the GitHub,
+  // client, and deployment secrets. Unset → the session gate is a no-op (same
+  // fail-open shape as PUSH_DEPLOYMENT_TOKEN).
+  PUSH_SESSION_SECRET?: string;
+  // Comma/space-separated GitHub numeric user ids allowed past the session
+  // gate. One entry for the single-user deployment; widening needs no code
+  // change. Unset/empty → gate is a no-op.
+  GITHUB_ALLOWED_USER_IDS?: string;
+  // Step-1 migration switch. Unset → the gate runs in OBSERVE mode: it resolves
+  // identity and emits symmetric allow/deny logs but never blocks, so it can
+  // carry real traffic before becoming load-bearing. Truthy → ENFORCE (401 on
+  // deny). The deployment token stays the live gate until this is proven and
+  // retired (migration step 3).
+  PUSH_SESSION_GATE_ENFORCE?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -409,6 +428,11 @@ export function corsHeadersFor(request: Request, env: Env): Record<string, strin
     'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': requestedHeaders ?? 'Content-Type, X-Push-Request-Id',
+    // Allow the cross-site session cookie to ride from the Capacitor APK
+    // (origin https://localhost) to the deployed Worker. Safe alongside a
+    // specific echoed origin (never '*'), which is required when credentials
+    // are allowed.
+    'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin',
   };
@@ -521,6 +545,99 @@ export function requireDeploymentTokenForApi(
     },
     { status: 401 },
   );
+}
+
+// ---------------------------------------------------------------------------
+// GitHub-identity session gate (auth rework, migration step 1)
+// ---------------------------------------------------------------------------
+//
+// Runs *alongside* the deployment token, not instead of it: this gate proves
+// itself on real traffic in OBSERVE mode (logs allow/deny, never blocks) before
+// PUSH_SESSION_GATE_ENFORCE flips it to load-bearing and the deployment token
+// retires (docs/decisions/Auth Rework …, Migration sequencing).
+
+export const SESSION_GATE_REQUIRED_CODE = 'SESSION_AUTH_REQUIRED';
+
+/**
+ * The metered / cost-bearing surface the allowlist must hold without exception:
+ * AI chat + search, sandbox lifecycle/ops, background coder jobs, and the
+ * billable installation-token refresh. Read-only metadata (model lists),
+ * artifact/library KV, the user's-own-token GitHub proxy, and the OAuth
+ * callback itself stay ungated in step 1 — gating the expensive surface, not
+ * everything equally.
+ */
+export function isSessionGatedPath(pathname: string): boolean {
+  if (!pathname.startsWith('/api/')) return false;
+  if (pathname.endsWith('/chat')) return true;
+  if (pathname.endsWith('/search') || pathname.startsWith('/api/search')) return true;
+  if (pathname.startsWith('/api/sandbox/') || pathname.startsWith('/api/sandbox-cf/')) return true;
+  if (pathname === '/api/jobs' || pathname.startsWith('/api/jobs/')) return true;
+  if (pathname === '/api/github/app-token') return true;
+  return false;
+}
+
+function sessionDeniedResponse(reason: string): Response {
+  return Response.json(
+    {
+      error: 'GitHub identity required',
+      code: SESSION_GATE_REQUIRED_CODE,
+      reason,
+      details:
+        'This Push deployment gates metered endpoints behind an authorized GitHub identity. Sign in with the GitHub App to obtain a session.',
+    },
+    { status: 401 },
+  );
+}
+
+/**
+ * Verify the Push identity session and check the GitHub user id against the
+ * allowlist on gated endpoints. Returns a 401 `Response` only when ENFORCE is
+ * on and the check fails; otherwise (and always in observe mode) returns null
+ * so the request proceeds. Every branch emits a symmetric structured log.
+ */
+export async function requireSessionForGatedApi(
+  request: Request,
+  env: Env,
+  requestUrl = new URL(request.url),
+): Promise<Response | null> {
+  if (request.method === 'OPTIONS') return null;
+  if (!isSessionGatedPath(requestUrl.pathname)) return null;
+
+  const secret = trimSecret(env.PUSH_SESSION_SECRET);
+  const allowed = parseAllowedUserIds(env.GITHUB_ALLOWED_USER_IDS);
+  // Unconfigured → no-op, mirroring the deployment gate: no session
+  // infrastructure means nothing to enforce, and the app must still boot.
+  if (!secret || allowed.size === 0) return null;
+
+  const enforce = trimSecret(env.PUSH_SESSION_GATE_ENFORCE).length > 0;
+  const path = requestUrl.pathname;
+  const deny = (reason: string, extra?: Record<string, unknown>): Response | null => {
+    wlog(enforce ? 'warn' : 'info', enforce ? 'session_gate_deny' : 'session_gate_observe_deny', {
+      path,
+      reason,
+      enforce,
+      ...extra,
+    });
+    return enforce ? sessionDeniedResponse(reason) : null;
+  };
+
+  const token = extractSessionToken(request);
+  if (!token) return deny('no_session');
+
+  const result = await verifySessionToken(secret, token);
+  if (!result.ok) return deny(result.reason);
+
+  if (!allowed.has(result.claims.sub)) {
+    return deny('not_allowlisted', { sub: result.claims.sub, login: result.claims.login });
+  }
+
+  wlog('info', enforce ? 'session_gate_allow' : 'session_gate_observe_allow', {
+    path,
+    sub: result.claims.sub,
+    login: result.claims.login,
+    enforce,
+  });
+  return null;
 }
 
 // ---------------------------------------------------------------------------
