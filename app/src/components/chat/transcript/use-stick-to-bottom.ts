@@ -44,12 +44,21 @@ export function useStickToBottom(
   const { alignOnMount = false } = options;
   const elRef = useRef<HTMLElement | null>(null);
   const lastMessageIdRef = useRef<string | null>(null);
+  // Mirror of `isAtBottom` readable from callbacks without re-creating them.
+  // Defaults true so a fresh mount aligns; thereafter it remembers the user's
+  // follow intent across a scroller swap.
+  const atBottomRef = useRef(true);
   const [isAtBottom, setIsAtBottom] = useState(true);
+
+  const setAtBottom = useCallback((value: boolean) => {
+    atBottomRef.current = value;
+    setIsAtBottom(value);
+  }, []);
 
   const syncBottomState = useCallback(() => {
     const el = elRef.current;
-    if (el) setIsAtBottom(distanceFromBottom(el) <= AT_BOTTOM_THRESHOLD_PX);
-  }, []);
+    if (el) setAtBottom(distanceFromBottom(el) <= AT_BOTTOM_THRESHOLD_PX);
+  }, [setAtBottom]);
 
   // Raw scroll with no state write — safe to call from the effect. The
   // programmatic scroll fires `scroll` events that feed `syncBottomState`, so
@@ -64,9 +73,9 @@ export function useStickToBottom(
   const scrollToBottom = useCallback(
     (behavior: ScrollBehavior = 'smooth') => {
       scrollElementToBottom(behavior);
-      setIsAtBottom(true);
+      setAtBottom(true);
     },
-    [scrollElementToBottom],
+    [scrollElementToBottom, setAtBottom],
   );
 
   const registerScroller = useCallback(
@@ -81,11 +90,12 @@ export function useStickToBottom(
       elRef.current = node;
       if (!node) return;
       node.addEventListener('scroll', syncBottomState, { passive: true });
-      // Bottom-align on attach (virtualized threshold crossover). React only
-      // invokes this callback on a genuine attach/detach, so aligning on every
-      // attach is "once per node" — and a replacement scroller still lands at
-      // the bottom rather than its natural top.
-      if (alignOnMount) {
+      // Bottom-align on attach (virtualized threshold crossover), but only while
+      // the user is following. On first mount `atBottomRef` defaults true so we
+      // align; if Virtuoso ever swaps its scroller element mid-life we re-align a
+      // following user but leave a scrolled-away user where they were, rather
+      // than yanking them to the bottom.
+      if (alignOnMount && atBottomRef.current) {
         node.scrollTo({ top: node.scrollHeight });
       }
       syncBottomState();
