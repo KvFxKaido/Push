@@ -576,10 +576,13 @@ export const SESSION_GATE_REQUIRED_CODE = 'SESSION_AUTH_REQUIRED';
  *    Bearer`); browser WS can't attach the session header anyway.
  *  - `/api/_stats`, `/api/admin/*`       — their own admin-token guards, and may
  *    be hit by ops tooling without a browser session.
+ *  - `/api/auth-probe`                   — still used by the legacy
+ *    DeploymentTokenGate as the deployment-token probe during the 3a dual-gate
+ *    window (runs before a session exists); 3b repurposes it as the session
+ *    probe once the deployment token retires.
  *
- * Everything else — including `/api/auth-probe` (the client's session probe),
- * artifacts/library KV, model lists, search, sandbox, jobs, `github/tools`,
- * `repo-coverage`, and `pr-reviews` — requires a session.
+ * Everything else — artifacts/library KV, model lists, search, sandbox, jobs,
+ * `github/tools`, `repo-coverage`, and `pr-reviews` — requires a session.
  */
 const SESSION_EXEMPT_EXACT: ReadonlySet<string> = new Set([
   '/api/health',
@@ -588,12 +591,26 @@ const SESSION_EXEMPT_EXACT: ReadonlySet<string> = new Set([
   '/api/github/app-token',
   '/api/github/app-logout',
   '/api/_stats',
+  // `/api/auth-probe` stays exempt for now: during the 3a dual-gate window the
+  // legacy DeploymentTokenGate still uses it as the *deployment*-token liveness
+  // probe (before any GitHub session exists), and that client only handles a
+  // DEPLOYMENT_AUTH_REQUIRED 401 — a SESSION_AUTH_REQUIRED 401 here would break
+  // manual token entry. Step 3b repurposes it as the session probe when the
+  // deployment token + that gate are removed.
+  '/api/auth-probe',
 ]);
 
 function isSessionExemptPath(pathname: string): boolean {
-  if (SESSION_EXEMPT_EXACT.has(pathname)) return true;
-  if (pathname.startsWith('/api/admin/')) return true;
-  if (pathname.startsWith('/api/relay/')) return true;
+  // Normalize a single trailing slash so `/api/health/` matches `/api/health`
+  // — a stray trailing slash on a bootstrap path must not flip it to gated and
+  // break login under enforce.
+  const normalized =
+    pathname.length > 5 && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
+  if (SESSION_EXEMPT_EXACT.has(normalized)) return true;
+  if (normalized.startsWith('/api/admin/')) return true;
+  // Scope to the current relay protocol version; a future `/api/relay/v2/*`
+  // must opt into exemption explicitly rather than inherit it.
+  if (normalized === '/api/relay/v1' || normalized.startsWith('/api/relay/v1/')) return true;
   return false;
 }
 
@@ -609,7 +626,7 @@ function sessionDeniedResponse(reason: string): Response {
       code: SESSION_GATE_REQUIRED_CODE,
       reason,
       details:
-        'This Push deployment gates metered endpoints behind an authorized GitHub identity. Sign in with the GitHub App to obtain a session.',
+        'This Push deployment requires an authorized GitHub identity. Sign in with the GitHub App to obtain a session.',
     },
     { status: 401 },
   );
