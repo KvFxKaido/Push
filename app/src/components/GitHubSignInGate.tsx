@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { useGitHubAppAuth } from '@/hooks/useGitHubAppAuth';
-import { getSessionToken, probeSession } from '@/lib/session-auth';
+import { probeSession } from '@/lib/session-auth';
+import { subscribeSessionInvalid } from '@/lib/api-auth-fetch';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -11,12 +12,17 @@ import { Label } from '@/components/ui/label';
  * can't do anything useful — block it behind a single "Connect GitHub" call to
  * action instead of letting every feature 401 piecemeal.
  *
- * Renders the app when there's a session OR while a GitHub OAuth callback is
- * being processed (that's *how* you get a session). It reuses `useGitHubAppAuth`
- * for the full connect surface (OAuth auto-connect, first-time install, and the
- * manual installation-id path) and only renders children once authenticated, so
- * the OAuth `?code=` is consumed exactly once (here) and App's own
- * `useGitHubAppAuth` never sees it again.
+ * Authoritative signal is the session *probe* (`/api/auth-probe`), never the
+ * GitHub App installation token alone: `handleGitHubAppToken` can return a token
+ * without minting a session (missing secret, unvouched installation, org
+ * account), and revealing the app then would 401 every gated call. So we
+ * re-probe whenever auth completes and gate strictly on the probe result. A
+ * mid-session 401 (session expiry) flips us back to the connect screen via
+ * `subscribeSessionInvalid`.
+ *
+ * The OAuth `?code=` callback is consumed exactly once here (this gate owns
+ * `useGitHubAppAuth` while the app is hidden), so App's own hook never re-runs
+ * the exchange.
  */
 
 function hasOAuthCallbackParams(): boolean {
@@ -33,11 +39,10 @@ export function GitHubSignInGate({ children }: { children: ReactNode }) {
   const isCallback = useMemo(() => hasOAuthCallbackParams(), []);
   const [probe, setProbe] = useState<ProbeState>('pending');
   const [instId, setInstId] = useState('');
-  const [busy, setBusy] = useState(false);
 
+  // Initial probe — skipped during an OAuth/install callback, where the hook is
+  // busy minting the session; the auth.token effect below re-probes once it's done.
   useEffect(() => {
-    // During an OAuth/install callback, let `useGitHubAppAuth` consume the code
-    // and mint the session; we flip to authed off `auth.token` below.
     if (isCallback) return;
     let cancelled = false;
     probeSession().then((ok) => {
@@ -48,25 +53,37 @@ export function GitHubSignInGate({ children }: { children: ReactNode }) {
     };
   }, [isCallback]);
 
-  // A session obtained mid-gate (OAuth callback, or manual installation-id entry)
-  // sets the app token — treat that as authenticated and reveal the app.
-  const authed = probe === 'authed' || Boolean(auth.token);
+  // Re-probe authoritatively after the hook obtains an installation token (OAuth
+  // callback or manual installation-id entry). A token does NOT imply a session,
+  // so only the probe decides whether to reveal the app.
+  useEffect(() => {
+    if (!auth.token) return;
+    let cancelled = false;
+    probeSession().then((ok) => {
+      if (!cancelled) setProbe(ok ? 'authed' : 'no-session');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.token]);
 
-  if (authed) return <>{children}</>;
+  // A mid-session 401 (session expired) returns us to the connect screen.
+  useEffect(() => subscribeSessionInvalid(() => setProbe('no-session')), []);
 
-  // Probe in flight: render optimistically only if a session token copy already
-  // exists (avoids a flash of the connect screen for an already-signed-in user);
-  // otherwise show nothing until the probe lands.
-  if (probe === 'pending') {
-    if (isCallback) return <SignInSplash label="Connecting GitHub…" />;
-    return getSessionToken() ? <>{children}</> : <SignInSplash label="Checking session…" />;
-  }
+  if (probe === 'authed') return <>{children}</>;
 
-  const onSubmitInstallationId = async (e: FormEvent) => {
+  // Actively resolving: the hook is processing a connect/callback, or a probe is
+  // in flight after a callback minted a token. Anything that leaves the hook
+  // idle with `auth.error` (e.g. an expired OAuth code) falls through to the
+  // connect screen below, which surfaces the error — never a perpetual splash.
+  const resolving =
+    auth.loading || (probe === 'pending' && isCallback && Boolean(auth.token) && !auth.error);
+  if (resolving) return <SignInSplash label="Connecting GitHub…" />;
+  if (probe === 'pending' && !isCallback) return <SignInSplash label="Checking session…" />;
+
+  const onSubmitInstallationId = (e: FormEvent) => {
     e.preventDefault();
-    setBusy(true);
-    await auth.setInstallationIdManually(instId.trim());
-    setBusy(false);
+    void auth.setInstallationIdManually(instId.trim());
   };
 
   return (
@@ -103,8 +120,8 @@ export function GitHubSignInGate({ children }: { children: ReactNode }) {
               placeholder="12345678"
               className="font-mono"
             />
-            <Button type="submit" variant="secondary" disabled={busy || !instId.trim()}>
-              {busy ? '…' : 'Use'}
+            <Button type="submit" variant="secondary" disabled={auth.loading || !instId.trim()}>
+              Use
             </Button>
           </div>
         </form>

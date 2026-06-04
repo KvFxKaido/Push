@@ -22,6 +22,36 @@ declare global {
   }
 }
 
+// Structured-error code the session gate returns on a 401 (must match
+// SESSION_GATE_REQUIRED_CODE in worker-middleware.ts).
+const SESSION_AUTH_REQUIRED_CODE = 'SESSION_AUTH_REQUIRED';
+
+type SessionInvalidListener = () => void;
+const sessionInvalidListeners = new Set<SessionInvalidListener>();
+
+/**
+ * Subscribe to "the session is no longer valid" — fired when a first-party
+ * `/api/*` response comes back 401 with `SESSION_AUTH_REQUIRED`. Lets the
+ * sign-in gate flip back to the connect screen the moment a session expires
+ * mid-use, instead of letting features 401 piecemeal. Returns an unsubscribe.
+ */
+export function subscribeSessionInvalid(listener: SessionInvalidListener): () => void {
+  sessionInvalidListeners.add(listener);
+  return () => sessionInvalidListeners.delete(listener);
+}
+
+async function inspectForSessionInvalid(res: Response, input: RequestInfo | URL): Promise<void> {
+  if (res.status !== 401 || !isFirstPartyApiRequest(input)) return;
+  try {
+    const body = (await res.clone().json()) as { code?: unknown };
+    if (body?.code === SESSION_AUTH_REQUIRED_CODE) {
+      for (const listener of sessionInvalidListeners) listener();
+    }
+  } catch {
+    // Body wasn't JSON or was already consumed — leave listeners untouched.
+  }
+}
+
 function getApiOrigins(): Set<string> {
   const origins = new Set<string>();
   if (typeof window === 'undefined') return origins;
@@ -86,7 +116,9 @@ export function installApiAuthFetch(): void {
     const [nextInput, nextInit] = isFirstPartyApiRequest(input)
       ? decorateApiRequest(input, init)
       : ([input, init] as [RequestInfo | URL, RequestInit | undefined]);
-    return baseFetch(nextInput, nextInit);
+    const res = await baseFetch(nextInput, nextInit);
+    void inspectForSessionInvalid(res, input);
+    return res;
   }) as typeof window.fetch;
 
   window.__pushApiAuthFetchInstalled = true;

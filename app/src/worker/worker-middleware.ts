@@ -480,13 +480,14 @@ export function timingSafeEqual(a: string, b: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// GitHub-identity session gate (auth rework, migration step 1)
+// GitHub-identity session gate (auth rework) — the universal /api/* gate
 // ---------------------------------------------------------------------------
 //
-// Runs *alongside* the deployment token, not instead of it: this gate proves
-// itself on real traffic in OBSERVE mode (logs allow/deny, never blocks) before
-// PUSH_SESSION_GATE_ENFORCE flips it to load-bearing and the deployment token
-// retires (docs/decisions/Auth Rework …, Migration sequencing).
+// This is the sole API auth (the X-Push-Deployment-Token it replaced retired in
+// step 3). When PUSH_SESSION_SECRET + GITHUB_ALLOWED_USER_IDS are set it
+// resolves identity and logs allow/deny; PUSH_SESSION_GATE_ENFORCE flips it from
+// OBSERVE (log-only) to load-bearing (401 on deny). See
+// docs/decisions/Auth Rework — GitHub as the Single Identity Anchor.md.
 
 export const SESSION_GATE_REQUIRED_CODE = 'SESSION_AUTH_REQUIRED';
 

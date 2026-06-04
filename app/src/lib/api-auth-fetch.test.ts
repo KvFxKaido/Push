@@ -7,7 +7,7 @@ vi.mock('./session-auth', () => ({
 
 let mockToken = '';
 
-import { installApiAuthFetch } from './api-auth-fetch';
+import { installApiAuthFetch, subscribeSessionInvalid } from './api-auth-fetch';
 
 // The lib tests run in the `node` environment (no DOM), so we install a minimal
 // fake `window`. Manage it explicitly and DELETE it on teardown — leaving a
@@ -76,5 +76,33 @@ describe('installApiAuthFetch', () => {
     const wrapped = g.window!.fetch;
     installApiAuthFetch();
     expect(g.window!.fetch).toBe(wrapped);
+  });
+
+  it('notifies session-invalid subscribers on a first-party 401 SESSION_AUTH_REQUIRED', async () => {
+    baseFetch.mockResolvedValue(
+      new Response(JSON.stringify({ code: 'SESSION_AUTH_REQUIRED' }), { status: 401 }),
+    );
+    installApiAuthFetch();
+    const fired = new Promise<void>((res) => {
+      const unsub = subscribeSessionInvalid(() => {
+        unsub();
+        res();
+      });
+    });
+    await g.window!.fetch('/api/zen/chat', { method: 'POST' });
+    await expect(fired).resolves.toBeUndefined();
+  });
+
+  it('does not notify on a 401 without the session code', async () => {
+    baseFetch.mockResolvedValue(
+      new Response(JSON.stringify({ code: 'SOMETHING_ELSE' }), { status: 401 }),
+    );
+    installApiAuthFetch();
+    const cb = vi.fn();
+    const unsub = subscribeSessionInvalid(cb);
+    await g.window!.fetch('/api/zen/chat');
+    await new Promise((r) => setTimeout(r, 0));
+    unsub();
+    expect(cb).not.toHaveBeenCalled();
   });
 });
