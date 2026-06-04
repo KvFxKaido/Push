@@ -25,9 +25,12 @@ import {
   base64UrlEncodeBytes,
   base64UrlEncodeString,
 } from './worker-base64url';
+import { SESSION_HEADER } from '../lib/session-constants';
 
 export const SESSION_COOKIE_NAME = 'push_session';
-export const SESSION_HEADER = 'X-Push-Session';
+// Re-exported from the shared wire-vocabulary module so worker-side consumers
+// (and the tests) keep a single import surface while the literal lives once.
+export { SESSION_HEADER };
 export const SESSION_ISS = 'push';
 export const SESSION_AUD = 'push-session';
 

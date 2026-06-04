@@ -29,8 +29,11 @@ const GITHUB_APP_REDIRECT_URI = import.meta.env.VITE_GITHUB_APP_REDIRECT_URI || 
 type TokenResponse = {
   token: string;
   expires_at: string;
-  permissions: Record<string, string>;
-  repository_selection: string;
+  // Present on the installation-token-exchange path (fetchAppToken); the
+  // hand-authored OAuth response (fetchAppOAuth) omits them. Optional so the
+  // shared type stays accurate for both producers.
+  permissions?: Record<string, string>;
+  repository_selection?: string;
   user?: GitHubUser | null;
   commit_identity?: GitHubAppCommitIdentity | null;
   // Push identity session minted by the App-OAuth handler (auth rework). Only
@@ -327,7 +330,7 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
         // cookie in extractSessionToken, so a stale header must not survive a
         // re-auth. The SameSite=None cookie is the primary carrier; this is the
         // APK fallback (see lib/session-auth.ts).
-        setSessionToken(data.session ?? null, data.session_expires_at);
+        setSessionToken(data.session ?? null);
 
         safeStorageSet(INSTALLATION_ID_KEY, data.installation_id);
         safeStorageSet(TOKEN_KEY, data.token);

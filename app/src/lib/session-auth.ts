@@ -13,24 +13,21 @@
  */
 
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storage';
+import { SESSION_HEADER } from './session-constants';
 
 export const SESSION_TOKEN_STORAGE_KEY = 'push_session_token';
-export const SESSION_EXPIRY_STORAGE_KEY = 'push_session_expiry';
-// Must match SESSION_HEADER in app/src/worker/worker-session.ts.
-export const SESSION_HEADER = 'X-Push-Session';
+export { SESSION_HEADER };
 
 export function getSessionToken(): string {
   return safeStorageGet(SESSION_TOKEN_STORAGE_KEY)?.trim() ?? '';
 }
 
-export function setSessionToken(token: string | null | undefined, expiresAt?: string): void {
+export function setSessionToken(token: string | null | undefined): void {
   const trimmed = (token ?? '').trim();
   if (trimmed) {
     safeStorageSet(SESSION_TOKEN_STORAGE_KEY, trimmed);
-    if (expiresAt) safeStorageSet(SESSION_EXPIRY_STORAGE_KEY, expiresAt);
   } else {
     safeStorageRemove(SESSION_TOKEN_STORAGE_KEY);
-    safeStorageRemove(SESSION_EXPIRY_STORAGE_KEY);
   }
 }
 
