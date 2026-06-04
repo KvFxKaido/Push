@@ -191,8 +191,9 @@ describe('worker-session: transport + allowlist', () => {
 });
 
 describe('worker-session: gated-path predicate', () => {
-  it('gates the metered surface', () => {
+  it('gates the whole /api surface (universal gate), including formerly-open routes', () => {
     for (const p of [
+      // metered
       '/api/zen/chat',
       '/api/anthropic/chat',
       '/api/google/search',
@@ -202,25 +203,34 @@ describe('worker-session: gated-path predicate', () => {
       '/api/sandbox-cf/exec',
       '/api/jobs/start',
       '/api/jobs/abc/events',
-    ]) {
-      expect(isSessionGatedPath(p)).toBe(true);
-    }
-  });
-
-  it('leaves cheap/metadata + auth-bootstrap paths ungated', () => {
-    for (const p of [
+      // previously token-only (would have been public on token removal)
       '/api/zen/models',
       '/api/anthropic/models',
       '/api/artifacts/create',
       '/api/library/items/create',
       '/api/github/tools',
-      '/api/github/app-oauth',
-      // app-token is part of the auth bootstrap (install callback / manual
-      // installation-id paths hit it before a session exists) — must stay
-      // ungated so enforce mode can't lock new users out.
-      '/api/github/app-token',
+      '/api/github/repo-coverage',
+      '/api/pr-reviews/run',
+      // a future relay protocol version must opt into exemption explicitly, not
+      // inherit /api/relay/v1's bypass.
+      '/api/relay/v2/session',
+    ]) {
+      expect(isSessionGatedPath(p)).toBe(true);
+    }
+  });
+
+  it('exempts only bootstrap + self-authenticating + non-/api paths', () => {
+    for (const p of [
       '/api/health',
-      '/api/auth-probe',
+      '/api/health/', // trailing slash normalizes to the exempt entry
+      '/api/github/webhook', // HMAC
+      '/api/github/app-oauth', // mints the session
+      '/api/github/app-token', // auth bootstrap
+      '/api/github/app-logout',
+      '/api/auth-probe', // legacy deployment-token probe (exempt until 3b)
+      '/api/_stats', // admin token
+      '/api/admin/snapshots', // admin token
+      '/api/relay/v1/session', // device bearer
       '/not-api/chat',
     ]) {
       expect(isSessionGatedPath(p)).toBe(false);
@@ -240,9 +250,9 @@ describe('requireSessionForGatedApi', () => {
     });
   }
 
-  it('no-ops on ungated paths regardless of config', async () => {
+  it('no-ops on exempt paths regardless of config', async () => {
     const env = makeEnv({ PUSH_SESSION_SECRET: SECRET, GITHUB_ALLOWED_USER_IDS: '1' });
-    const req = new Request('https://push.example/api/zen/models');
+    const req = new Request('https://push.example/api/github/app-oauth', { method: 'POST' });
     expect(await requireSessionForGatedApi(req, env)).toBeNull();
   });
 
