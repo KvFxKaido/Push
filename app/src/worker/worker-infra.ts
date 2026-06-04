@@ -1198,7 +1198,7 @@ export async function fetchInstallationMetadata(
     account?: { login?: unknown; avatar_url?: unknown; id?: unknown; type?: unknown };
   };
   const account =
-    data.account && typeof data.account.login === 'string'
+    data.account && typeof data.account.login === 'string' && data.account.login.trim()
       ? {
           login: data.account.login,
           avatar_url: typeof data.account.avatar_url === 'string' ? data.account.avatar_url : '',
