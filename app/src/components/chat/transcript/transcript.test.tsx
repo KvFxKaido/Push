@@ -36,6 +36,12 @@ describe('segmentKey', () => {
     expect(segmentKey(segment, 3)).toBe('abc-3');
   });
 
+  it('throws on an unknown segment variant (exhaustiveness guard)', () => {
+    // Compile-time exhaustiveness is the real guard; this confirms the runtime
+    // fallback isn't a silent no-op if an unhandled variant ever reaches it.
+    expect(() => segmentKey({ type: 'mystery' } as never, 0)).toThrow();
+  });
+
   it('keys tool groups by index', () => {
     const segments = groupChatMessages([
       {
