@@ -158,8 +158,10 @@ export function buildOrchestratorDelegation(opts: OrchestratorPromptOptions = {}
   // This builder branches solely on `isLocalDaemon`, so the local-daemon menu
   // omits those — a known, PRE-EXISTING prompt-vs-capability gap for the
   // remote-enabled (`remoteGitHubAvailable`) daemon config, where the effective
-  // grant keeps pr:write/git:push but the prompt doesn't surface them. Threading
-  // `remoteGitHubAvailable` into the prompt is a separate follow-up.
+  // grant conditionally retains pr:write/workflow:trigger (git:push is
+  // unconditionally stripped for the local-daemon orchestrator) but the prompt
+  // doesn't surface them. Threading `remoteGitHubAvailable` into the prompt is a
+  // separate follow-up.
   const trailingSideEffectMenu = isLocalDaemon
     ? `\`${getToolPublicName('sandbox_exec')}\`, \`${getToolPublicName('sandbox_prepare_commit')}\`, \`${getToolPublicName('delegate_explorer')}\`, \`${getToolPublicName('plan_tasks')}\`, \`${getToolPublicName('ask_user')}\`, workflow dispatch, etc.`
     : `\`${getToolPublicName('sandbox_exec')}\`, \`${getToolPublicName('sandbox_prepare_commit')}\`, \`${getToolPublicName('sandbox_push')}\`, \`${getToolPublicName('delegate_explorer')}\`, \`${getToolPublicName('plan_tasks')}\`, \`${getToolPublicName('ask_user')}\`, \`${getToolPublicName('create_pr')}\`, \`${getToolPublicName('merge_pr')}\`, \`${getToolPublicName('delete_branch')}\`, \`${getToolPublicName('trigger_workflow')}\``;
