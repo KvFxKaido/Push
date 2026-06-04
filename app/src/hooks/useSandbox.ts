@@ -37,12 +37,19 @@ import {
   clearFileVersionCache,
   clearSandboxWorkspaceRevision,
 } from '@/lib/sandbox-file-version-cache';
-import { getActiveGitHubTokenInfo, APP_TOKEN_STORAGE_KEY } from '@/lib/github-auth';
 import {
-  evaluateSandboxAuthGate,
+  getActiveGitHubTokenInfo,
+  isInstallationToken,
+  APP_TOKEN_STORAGE_KEY,
+} from '@/lib/github-auth';
+import {
+  evaluateRepoAuth,
+  formatRepoNotCoveredMessage,
   hasAcknowledgedUserTokenInjection,
   USER_TOKEN_GATE_MESSAGE,
+  type RepoCoverage,
 } from '@/lib/sandbox-auth-gate';
+import { checkRepoCoverage } from '@/lib/github-repo-coverage';
 import {
   buildSandboxSessionStorageKey,
   clearSandboxSessionByStorageKey,
@@ -328,26 +335,41 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
           ? getActiveGitHubTokenInfo()
           : { token: '', kind: 'none' as const };
 
-        // Gate: a durable user-scoped token (OAuth/PAT) would be baked into the
-        // sandbox's git config and readable for its lifetime. Require an explicit
-        // acknowledgment before injecting one; App installation tokens (scoped +
-        // auto-expiring) and the no-clone ephemeral mode pass through.
-        const gate = evaluateSandboxAuthGate({
+        // Repo-auth gate (auth rework step 2). For the App-installation path
+        // (the default), confirm the installation actually covers this repo
+        // before we spin up a sandbox — so a not-covered repo gets an actionable
+        // install/update prompt instead of a cryptic clone failure. Coverage is
+        // only probed for the installation-token path; a durable legacy token
+        // still rides the one-time acknowledgment. Fail-open on a flaky probe.
+        let coverage: RepoCoverage = 'unknown';
+        let coverageInstallUrl: string | undefined;
+        if (repo && isInstallationToken(tokenKind)) {
+          const probe = await checkRepoCoverage(repo);
+          coverage = probe.coverage;
+          coverageInstallUrl = probe.installUrl;
+        }
+
+        const gate = evaluateRepoAuth({
           kind: tokenKind,
           hasRepo: Boolean(repo),
+          coverage,
           acknowledged: hasAcknowledgedUserTokenInjection(),
         });
         if (!gate.allow) {
           console.log(
             JSON.stringify({
               level: 'warn',
-              event: 'sandbox_create_blocked_user_token',
+              event: 'sandbox_create_blocked',
               reason: gate.reason,
               tokenKind,
             }),
           );
           setStatus('error');
-          setError(USER_TOKEN_GATE_MESSAGE);
+          setError(
+            gate.reason === 'app_repo_not_covered'
+              ? formatRepoNotCoveredMessage(repo, coverageInstallUrl)
+              : USER_TOKEN_GATE_MESSAGE,
+          );
           return null;
         }
 

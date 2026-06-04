@@ -62,6 +62,7 @@ import {
   handleHealthCheck,
   handleGitHubAppOAuth,
   handleGitHubAppToken,
+  handleRepoCoverage,
   handleGitHubAppLogout,
 } from './src/worker/worker-infra';
 import { handleCloudflareSandbox } from './src/worker/worker-cf-sandbox';
@@ -427,6 +428,7 @@ const EXACT_API_ROUTES: ExactApiRoute[] = [
       Promise.resolve(Response.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } })),
   },
   { path: '/api/github/app-token', method: 'POST', handler: handleGitHubAppToken },
+  { path: '/api/github/repo-coverage', method: 'POST', handler: handleRepoCoverage },
   { path: '/api/github/app-oauth', method: 'POST', handler: handleGitHubAppOAuth },
   { path: '/api/github/app-logout', method: 'POST', handler: handleGitHubAppLogout },
   { path: '/api/github/tools', method: 'POST', handler: handleGitHubTools },

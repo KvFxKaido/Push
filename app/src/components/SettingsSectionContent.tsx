@@ -131,9 +131,10 @@ function SandboxCredentialGrant({ auth }: { auth: SettingsAuthProps }) {
       {durable && (
         <div className="mt-2 space-y-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-2.5 py-2">
           <p className="text-xs text-amber-200/90">
-            This token is written into the cloud sandbox&rsquo;s git config and stays readable
-            inside the container for its whole lifetime. Connect the GitHub App for a scoped,
-            auto-expiring token instead.
+            This is a legacy full-account token (OAuth or PAT). It&rsquo;s written into the cloud
+            sandbox&rsquo;s git config and stays readable inside the container for its whole
+            lifetime. Connect the GitHub App for scoped, auto-expiring access instead &mdash;
+            recommended.
           </p>
           <label className="flex items-start gap-2 text-xs text-push-fg-secondary">
             <input

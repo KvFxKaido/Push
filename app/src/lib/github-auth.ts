@@ -10,6 +10,12 @@ import { safeStorageGet } from './safe-storage';
 export const OAUTH_STORAGE_KEY = 'github_access_token';
 export const APP_TOKEN_STORAGE_KEY = 'github_app_token';
 export const APP_TOKEN_EXPIRY_KEY = 'github_app_token_expiry';
+export const INSTALLATION_ID_STORAGE_KEY = 'github_app_installation_id';
+
+/** The active GitHub App installation id (the one the stored app token belongs to). */
+export function getActiveInstallationId(): string {
+  return safeStorageGet(INSTALLATION_ID_STORAGE_KEY)?.trim() ?? '';
+}
 
 /**
  * Read `VITE_GITHUB_TOKEN` lazily.
