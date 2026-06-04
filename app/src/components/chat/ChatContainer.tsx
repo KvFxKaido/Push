@@ -1,5 +1,5 @@
-import { useRef, useEffect, useMemo, useState, useCallback, memo } from 'react';
-import { ArrowDown, RotateCcw, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { RotateCcw, X } from 'lucide-react';
 import type {
   ChatMessage,
   AgentStatus,
@@ -10,11 +10,10 @@ import type {
   CIStatus,
   QuickPrompt,
 } from '@/types';
-import { MessageBubble } from './MessageBubble';
-import { ToolCallSummary } from './ToolCallSummary';
 import { groupChatMessages } from './tool-call-utils';
-import { AgentStatusBar } from './AgentStatusBar';
 import { CIStatusBanner } from './CIStatusBanner';
+import { TranscriptList } from './transcript/TranscriptList';
+import type { TranscriptHandlers } from './transcript/segment-model';
 import { getEmptyStateQuickPrompts } from '@/lib/quick-prompts';
 import { PushMarkIcon } from '@/components/icons/push-custom-icons';
 import { getRoleDisplay } from '@push/lib/role-display';
@@ -120,81 +119,6 @@ interface ChatContainerProps {
   onRegenerateLastResponse?: () => void;
 }
 
-/**
- * Memoized list of "settled" messages (all messages except the last one when
- * it is actively streaming). This avoids re-running the map/callback
- * computation for every streaming chunk when only the final message changes.
- */
-const GroupedMessageList = memo(
-  function GroupedMessageList({
-    messages,
-    onCardAction,
-    onPin,
-    onEditUserMessage,
-    regeneratableAssistantMessageId,
-    onRegenerateLastResponse,
-  }: {
-    messages: ChatMessage[];
-    onCardAction?: (action: CardAction) => void;
-    onPin?: (content: string, messageId: string) => void;
-    onEditUserMessage?: (messageId: string) => void;
-    regeneratableAssistantMessageId: string | null;
-    onRegenerateLastResponse?: () => void;
-  }) {
-    return (
-      <>
-        {groupChatMessages(messages).map((segment, idx) =>
-          segment.type === 'text' ? (
-            <MessageBubble
-              key={segment.message.id + '-' + idx}
-              message={segment.message}
-              onCardAction={onCardAction}
-              onPin={onPin}
-              onEdit={
-                segment.message.role === 'user' && !segment.message.isToolResult
-                  ? onEditUserMessage
-                  : undefined
-              }
-              canRegenerate={segment.message.id === regeneratableAssistantMessageId}
-              onRegenerate={
-                segment.message.id === regeneratableAssistantMessageId
-                  ? onRegenerateLastResponse
-                  : undefined
-              }
-            />
-          ) : (
-            <ToolCallSummary
-              key={'tool-group-' + idx}
-              items={segment.items}
-              onCardAction={onCardAction}
-            />
-          ),
-        )}
-      </>
-    );
-  },
-  (prevProps, nextProps) => {
-    if (prevProps.messages.length !== nextProps.messages.length) return false;
-    if (prevProps.onCardAction !== nextProps.onCardAction) return false;
-    if (prevProps.onPin !== nextProps.onPin) return false;
-    if (prevProps.onEditUserMessage !== nextProps.onEditUserMessage) return false;
-    if (prevProps.regeneratableAssistantMessageId !== nextProps.regeneratableAssistantMessageId)
-      return false;
-    if (prevProps.onRegenerateLastResponse !== nextProps.onRegenerateLastResponse) return false;
-
-    for (let index = 0; index < prevProps.messages.length; index++) {
-      if (prevProps.messages[index] !== nextProps.messages[index]) {
-        return false;
-      }
-    }
-
-    return true;
-  },
-);
-
-const AUTO_SCROLL_THRESHOLD_PX = 150;
-const AT_BOTTOM_THRESHOLD_PX = 48;
-
 function EmptyState({
   activeRepo,
   hasSandbox,
@@ -291,84 +215,23 @@ export function ChatContainer({
   onEditUserMessage,
   onRegenerateLastResponse,
 }: ChatContainerProps) {
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [isAtBottom, setIsAtBottom] = useState(true);
-  const lastMessageRef = useRef<ChatMessage | null>(null);
-  const lastMessageContent = messages.length > 0 ? messages[messages.length - 1]?.content : '';
-
-  const updateBottomState = useCallback((container: HTMLDivElement) => {
-    const distanceFromBottom =
-      container.scrollHeight - container.scrollTop - container.clientHeight;
-    setIsAtBottom(distanceFromBottom <= AT_BOTTOM_THRESHOLD_PX);
-  }, []);
-
-  // Track scroll position and show/hide scroll button
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    updateBottomState(container);
-
-    const handleScroll = () => {
-      updateBottomState(container);
-    };
-
-    container.addEventListener('scroll', handleScroll, { passive: true });
-
-    return () => {
-      container.removeEventListener('scroll', handleScroll);
-    };
-  }, [updateBottomState]);
-
-  // Auto-scroll to bottom when new messages arrive or content streams in.
-  // State (isAtBottom) is managed by the scroll event handler above —
-  // scrollIntoView triggers scroll events that feed into updateBottomState.
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
-    const previousLastMessage = lastMessageRef.current;
-
-    // Check if this is a new message (not just content update)
-    const isNewMessage =
-      lastMessage && (!previousLastMessage || lastMessage.id !== previousLastMessage.id);
-
-    // Always scroll to bottom when user sends a new message
-    if (isNewMessage && lastMessage.role === 'user') {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-    } else {
-      // For assistant messages (streaming), only scroll if user is near bottom
-      const distanceFromBottom =
-        container.scrollHeight - container.scrollTop - container.clientHeight;
-      if (distanceFromBottom < AUTO_SCROLL_THRESHOLD_PX) {
-        bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }
-    }
-
-    // Update ref to track the last message
-    lastMessageRef.current = lastMessage;
-  }, [messages, lastMessageContent]);
-
-  const scrollToBottom = () => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-    setIsAtBottom(true);
-  };
-
   // Split messages into settled (all but the active streaming tail) and active.
-  // SettledMessageList is memoized with a custom comparator, so streaming chunks
-  // can create a fresh settled array without forcing re-renders when the
-  // underlying settled message objects are unchanged.
-  const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
-  const isLastStreaming = lastMsg?.status === 'streaming';
+  // The settled set is grouped once and memoized so streaming chunks — which
+  // only mutate the tail — don't re-group or re-render the settled segments.
+  const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+  const isLastStreaming = lastMessage?.status === 'streaming';
   const settledMessages = useMemo(
     () => (isLastStreaming ? messages.slice(0, -1) : messages),
     [isLastStreaming, messages],
   );
-  const activeMessage = isLastStreaming ? lastMsg : null;
+  const activeMessage = isLastStreaming ? lastMessage : null;
+  // The streaming loop clones `messages` every token, so this regroups
+  // mid-stream — but grouping is a cheap O(n) pass. The expensive part (settled
+  // MessageBubble re-renders: markdown, syntax highlighting, mermaid) is
+  // prevented by SegmentView's content-based memo, which compares the underlying
+  // message refs that stay stable while only the tail changes.
+  const segments = useMemo(() => groupChatMessages(settledMessages), [settledMessages]);
 
-  const showScrollButton = !isAtBottom;
   const regeneratableAssistantMessageId = useMemo(() => {
     for (let index = messages.length - 1; index >= 0; index--) {
       const message = messages[index];
@@ -379,6 +242,25 @@ export function ChatContainer({
     }
     return null;
   }, [messages]);
+
+  // One memoized handler bundle for both transcript paths — its stable identity
+  // is what lets settled segments skip re-rendering while the tail streams.
+  const handlers = useMemo<TranscriptHandlers>(
+    () => ({
+      onCardAction,
+      onPin,
+      onEditUserMessage,
+      regeneratableAssistantMessageId,
+      onRegenerateLastResponse,
+    }),
+    [
+      onCardAction,
+      onPin,
+      onEditUserMessage,
+      regeneratableAssistantMessageId,
+      onRegenerateLastResponse,
+    ],
+  );
 
   if (messages.length === 0) {
     return (
@@ -403,7 +285,7 @@ export function ChatContainer({
   }
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden relative">
+    <div className="flex flex-1 flex-col overflow-hidden">
       {interruptedCheckpoint && onResumeRun && onDismissResume && (
         <ResumeBanner
           checkpoint={interruptedCheckpoint}
@@ -413,65 +295,13 @@ export function ChatContainer({
       )}
       {ciStatus && onDiagnoseCI && <CIStatusBanner status={ciStatus} onDiagnose={onDiagnoseCI} />}
 
-      <div ref={containerRef} className="flex-1 overflow-y-auto overscroll-contain">
-        <div className="flex-1" />
-        <div className="py-4 space-y-1.5">
-          {settledMessages.length > 0 && (
-            <GroupedMessageList
-              messages={settledMessages}
-              onCardAction={onCardAction}
-              onPin={onPin}
-              onEditUserMessage={onEditUserMessage}
-              regeneratableAssistantMessageId={regeneratableAssistantMessageId}
-              onRegenerateLastResponse={onRegenerateLastResponse}
-            />
-          )}
-          {activeMessage && (
-            <MessageBubble
-              key={activeMessage.id}
-              message={activeMessage}
-              onCardAction={onCardAction}
-              onPin={onPin}
-              onEdit={
-                activeMessage.role === 'user' && !activeMessage.isToolResult
-                  ? onEditUserMessage
-                  : undefined
-              }
-              canRegenerate={activeMessage.id === regeneratableAssistantMessageId}
-              onRegenerate={
-                activeMessage.id === regeneratableAssistantMessageId
-                  ? onRegenerateLastResponse
-                  : undefined
-              }
-            />
-          )}
-          <AgentStatusBar status={agentStatus} />
-        </div>
-        <div ref={bottomRef} />
-      </div>
-
-      {/* Scroll to bottom button */}
-      <button
-        onClick={scrollToBottom}
-        className={`
-          absolute left-1/2 -translate-x-1/2 bottom-8
-          flex items-center justify-center
-          w-10 h-10
-          rounded-full
-          z-20
-          border border-push-edge
-          bg-push-grad-card
-          text-push-fg-secondary
-          shadow-push-lg backdrop-blur-sm
-          transition-all duration-300 ease-out
-          hover:border-push-edge-hover hover:text-push-fg hover:shadow-push-xl
-          spring-press
-          ${showScrollButton ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-3 pointer-events-none'}
-        `}
-        aria-label="Scroll to bottom"
-      >
-        <ArrowDown size={18} />
-      </button>
+      <TranscriptList
+        segments={segments}
+        activeMessage={activeMessage}
+        agentStatus={agentStatus}
+        handlers={handlers}
+        lastMessage={lastMessage}
+      />
     </div>
   );
 }
