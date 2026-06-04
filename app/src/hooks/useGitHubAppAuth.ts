@@ -246,6 +246,9 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
           const data = await fetchAppToken(instId);
           safeStorageSet(TOKEN_KEY, data.token);
           safeStorageSet(TOKEN_EXPIRY_KEY, data.expires_at);
+          // Refresh the Push session alongside the installation token (~hourly),
+          // so an active installation-id session never lapses its 24h TTL.
+          setSessionToken(data.session ?? null);
           setToken(data.token);
           setTokenExpiry(data.expires_at);
           const commitIdentity = coerceCommitIdentity(data.commit_identity);
@@ -281,6 +284,10 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
 
         safeStorageSet(TOKEN_KEY, data.token);
         safeStorageSet(TOKEN_EXPIRY_KEY, data.expires_at);
+
+        // Installation-id / install-callback flow mints a session too (see
+        // handleGitHubAppToken). Mirror it into storage, clearing any stale copy.
+        setSessionToken(data.session ?? null);
 
         setToken(data.token);
         setTokenExpiry(data.expires_at);

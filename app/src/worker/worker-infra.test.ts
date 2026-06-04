@@ -760,7 +760,7 @@ describe('handleGitHubAppToken happy path', () => {
         () =>
           jsonResponse({
             app_slug: 'push-auth',
-            account: { login: 'myorg', avatar_url: 'https://avatar/myorg' },
+            account: { login: 'myorg', avatar_url: 'https://avatar/myorg', id: 5555 },
           }),
         () =>
           jsonResponse({
@@ -779,13 +779,48 @@ describe('handleGitHubAppToken happy path', () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.token).toBe('inst_token');
-    expect(body.user).toEqual({ login: 'myorg', avatar_url: 'https://avatar/myorg' });
+    expect(body.user).toEqual({ login: 'myorg', avatar_url: 'https://avatar/myorg', id: 5555 });
     expect(body.commit_identity).toEqual({
       name: 'push-auth[bot]',
       email: '4242+push-auth[bot]@users.noreply.github.com',
       login: 'push-auth[bot]',
       avatar_url: 'https://avatar/bot',
     });
+    // No secret configured → no session minted.
+    expect(body.session).toBeUndefined();
+  });
+
+  it('mints a session keyed on the installation account id when the secret is set', async () => {
+    vi.stubGlobal(
+      'fetch',
+      sequentialFetch([
+        () => jsonResponse({ token: 'inst_token', expires_at: '2030-01-01T00:00:00Z' }),
+        () =>
+          jsonResponse({
+            app_slug: 'push-auth',
+            account: { login: 'myuser', avatar_url: '', id: 107059169 },
+          }),
+        () => jsonResponse({ id: 4242, login: 'push-auth[bot]', avatar_url: '' }),
+      ]),
+    );
+    const response = await handleGitHubAppToken(
+      makeRequest('https://push.example.test/api/auth/github-app/token', {
+        body: JSON.stringify({ installation_id: '42' }),
+      }),
+      makeEnv({ ...appEnv, PUSH_SESSION_SECRET: 'unit-test-secret' }),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(typeof body.session).toBe('string');
+    expect(response.headers.get('Set-Cookie')).toContain('push_session=');
+
+    const verified = await verifySessionToken('unit-test-secret', body.session);
+    expect(verified.ok).toBe(true);
+    if (verified.ok) {
+      // sub = installation account id (same id space as the GitHub user id).
+      expect(verified.claims.sub).toBe('107059169');
+      expect(verified.claims.installation_id).toBe('42');
+    }
   });
 });
 

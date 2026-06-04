@@ -827,11 +827,50 @@ export async function handleGitHubAppToken(request: Request, env: Env): Promise<
     const tokenData = await exchangeForInstallationToken(jwt, installationId);
     const installationMeta = await fetchInstallationMetadata(jwt, installationId);
     const botCommitIdentity = await fetchGitHubAppBotCommitIdentity(installationMeta.app_slug);
-    return Response.json({
-      ...tokenData,
-      user: installationMeta.account,
-      commit_identity: botCommitIdentity,
-    });
+
+    // Mint a Push session on this path too — it's the working auth flow when the
+    // App is already installed (the manual installation-id entry + the install
+    // callback both land here, and the OAuth redirect is a no-op once installed).
+    // Keyed on the installation account's numeric id (resolved server-side from
+    // GitHub, not client-asserted) = the same `sub` the OAuth path produces.
+    const sessionSecret = env.PUSH_SESSION_SECRET?.trim();
+    const accountId = installationMeta.account?.id ?? null;
+    const responseHeaders: Record<string, string> = {};
+    let sessionToken: string | undefined;
+    let sessionExpiresAt: string | undefined;
+    if (sessionSecret && accountId !== null) {
+      const minted = await mintSessionToken(sessionSecret, {
+        sub: String(accountId),
+        login: installationMeta.account?.login,
+        installationId,
+      });
+      sessionToken = minted.token;
+      sessionExpiresAt = minted.expiresAt;
+      responseHeaders['Set-Cookie'] = buildSessionSetCookie(minted.token);
+      wlog('info', 'session_minted', {
+        requestId,
+        sub: String(accountId),
+        login: installationMeta.account?.login,
+        installation_id: installationId,
+        via: 'app-token',
+      });
+    } else if (sessionSecret) {
+      wlog('warn', 'session_mint_skipped', {
+        requestId,
+        reason: 'no_account_id',
+        installation_id: installationId,
+      });
+    }
+
+    return Response.json(
+      {
+        ...tokenData,
+        user: installationMeta.account,
+        commit_identity: botCommitIdentity,
+        ...(sessionToken ? { session: sessionToken, session_expires_at: sessionExpiresAt } : {}),
+      },
+      { headers: responseHeaders },
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     const stack = err instanceof Error ? err.stack : undefined;
@@ -1111,7 +1150,10 @@ export async function resolveRepoInstallationId(jwt: string, repo: string): Prom
 export async function fetchInstallationMetadata(
   jwt: string,
   installationId: string,
-): Promise<{ account: { login: string; avatar_url: string } | null; app_slug: string | null }> {
+): Promise<{
+  account: { login: string; avatar_url: string; id: number | null } | null;
+  app_slug: string | null;
+}> {
   const response = await fetch(
     `https://api.github.com/app/installations/${encodeURIComponent(installationId)}`,
     {
@@ -1129,13 +1171,21 @@ export async function fetchInstallationMetadata(
 
   const data = (await response.json()) as {
     app_slug?: unknown;
-    account?: { login?: unknown; avatar_url?: unknown };
+    account?: { login?: unknown; avatar_url?: unknown; id?: unknown };
   };
   const account =
     data.account && typeof data.account.login === 'string'
       ? {
           login: data.account.login,
           avatar_url: typeof data.account.avatar_url === 'string' ? data.account.avatar_url : '',
+          // The installation account's numeric id is the same id space as the
+          // GitHub user id (`GET /user`), so a session minted here is keyed on
+          // the same `sub` the OAuth path would produce — and matches the same
+          // GITHUB_ALLOWED_USER_IDS allowlist entry.
+          id:
+            typeof data.account.id === 'number' && Number.isFinite(data.account.id)
+              ? data.account.id
+              : null,
         }
       : null;
   const appSlug = typeof data.app_slug === 'string' && data.app_slug.trim() ? data.app_slug : null;
