@@ -559,25 +559,47 @@ export function requireDeploymentTokenForApi(
 export const SESSION_GATE_REQUIRED_CODE = 'SESSION_AUTH_REQUIRED';
 
 /**
- * The metered / cost-bearing surface the allowlist must hold without exception:
- * AI chat + search, sandbox lifecycle/ops, and background coder jobs. Read-only
- * metadata (model lists), artifact/library KV, the user's-own-token GitHub
- * proxy, and the GitHub-App auth endpoints stay ungated in step 1 — gating the
- * expensive surface, not everything equally.
+ * The session is the **universal** `/api/*` gate (auth rework step 3a): every
+ * `/api/*` route requires a valid allowlisted session EXCEPT a small exempt set
+ * that is either bootstrap (you call it *before* you have a session) or carries
+ * its own independent auth. This widens the original metered-only gate so the
+ * deployment token can retire (step 3b) without leaving artifact/library KV,
+ * model lists, or the GitHub proxy publicly reachable.
  *
- * `/api/github/app-token` is deliberately NOT gated: it's part of the auth
- * bootstrap (the install-callback and manual-installation-id paths exchange a
- * token here *before* any App-OAuth session exists), so gating it would 401 new
- * users out of ever obtaining a session under enforce. It carries its own
- * `GITHUB_ALLOWED_INSTALLATION_IDS` allowlist instead.
+ * Exempt, and why:
+ *  - `/api/health`                       — public liveness probe.
+ *  - `/api/github/webhook`               — authenticated by HMAC signature.
+ *  - `/api/github/app-oauth|app-token|app-logout` — auth bootstrap: these mint /
+ *    revoke the very session/token, so they run before one exists; each carries
+ *    its own OAuth-code / installation-allowlist guard.
+ *  - `/api/relay/v1/*`                   — device bearer (`Universal Session
+ *    Bearer`); browser WS can't attach the session header anyway.
+ *  - `/api/_stats`, `/api/admin/*`       — their own admin-token guards, and may
+ *    be hit by ops tooling without a browser session.
+ *
+ * Everything else — including `/api/auth-probe` (the client's session probe),
+ * artifacts/library KV, model lists, search, sandbox, jobs, `github/tools`,
+ * `repo-coverage`, and `pr-reviews` — requires a session.
  */
+const SESSION_EXEMPT_EXACT: ReadonlySet<string> = new Set([
+  '/api/health',
+  '/api/github/webhook',
+  '/api/github/app-oauth',
+  '/api/github/app-token',
+  '/api/github/app-logout',
+  '/api/_stats',
+]);
+
+function isSessionExemptPath(pathname: string): boolean {
+  if (SESSION_EXEMPT_EXACT.has(pathname)) return true;
+  if (pathname.startsWith('/api/admin/')) return true;
+  if (pathname.startsWith('/api/relay/')) return true;
+  return false;
+}
+
 export function isSessionGatedPath(pathname: string): boolean {
   if (!pathname.startsWith('/api/')) return false;
-  if (pathname.endsWith('/chat')) return true;
-  if (pathname.endsWith('/search') || pathname.startsWith('/api/search')) return true;
-  if (pathname.startsWith('/api/sandbox/') || pathname.startsWith('/api/sandbox-cf/')) return true;
-  if (pathname === '/api/jobs' || pathname.startsWith('/api/jobs/')) return true;
-  return false;
+  return !isSessionExemptPath(pathname);
 }
 
 function sessionDeniedResponse(reason: string): Response {
