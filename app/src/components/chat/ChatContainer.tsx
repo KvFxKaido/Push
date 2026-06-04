@@ -225,6 +225,11 @@ export function ChatContainer({
     [isLastStreaming, messages],
   );
   const activeMessage = isLastStreaming ? lastMessage : null;
+  // The streaming loop clones `messages` every token, so this regroups
+  // mid-stream — but grouping is a cheap O(n) pass. The expensive part (settled
+  // MessageBubble re-renders: markdown, syntax highlighting, mermaid) is
+  // prevented by SegmentView's content-based memo, which compares the underlying
+  // message refs that stay stable while only the tail changes.
   const segments = useMemo(() => groupChatMessages(settledMessages), [settledMessages]);
 
   const regeneratableAssistantMessageId = useMemo(() => {

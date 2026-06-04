@@ -1,15 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Virtuoso } from 'react-virtuoso';
 import type { ChatMessage, AgentStatus } from '@/types';
 import { SegmentView, TranscriptTail } from './segment-view';
 import { segmentKey, type TranscriptSegment, type TranscriptHandlers } from './segment-model';
 import { ScrollToBottomButton } from './ScrollToBottomButton';
-import { AT_BOTTOM_THRESHOLD_PX } from './constants';
+import { AUTO_SCROLL_THRESHOLD_PX, AT_BOTTOM_THRESHOLD_PX } from './constants';
 
 /**
  * Context handed to Virtuoso's item renderer and footer. Carrying the streaming
  * tail through `context` (rather than closing over it) keeps the footer mounted
- * and lets `followOutput` track its growth without virtualizing it.
+ * so the actively-streaming message isn't virtualized.
  */
 interface VirtuosoContext {
   activeMessage: ChatMessage | null;
@@ -21,11 +21,12 @@ interface VirtuosoContext {
 const Header = () => <div className="h-4" />;
 
 // The streaming tail + status bar live in the footer so they stay mounted and
-// `followOutput` keeps them pinned while the user is at the bottom.
+// non-virtualized. `space-y-1.5` matches the plain path, where the tail's
+// children share the transcript's `space-y-1.5` rhythm.
 const Footer = ({ context }: { context?: VirtuosoContext }) => {
   if (!context) return null;
   return (
-    <div className="pb-4">
+    <div className="pb-4 space-y-1.5">
       <TranscriptTail
         activeMessage={context.activeMessage}
         agentStatus={context.agentStatus}
@@ -45,13 +46,19 @@ interface VirtualizedTranscriptProps {
 
 /**
  * Virtuoso-backed transcript path for long chats. Virtuoso owns the scroll
- * container and provides the primitives that replace the plain path's
- * hand-tuned scroll logic:
- *  - `followOutput`: at/near bottom → follow streaming output; scrolled up → don't yank.
- *  - `atBottomStateChange`: drives the scroll-to-bottom button visibility.
- *  - dynamic item measurement: variable-height markdown/code/tool summaries.
- * New-user-message "jump to bottom" is handled explicitly below, matching the
- * plain path's behavior even when the user had scrolled away.
+ * container and provides dynamic item measurement; the stick-to-bottom behavior
+ * is driven manually against the scroll element so it matches the plain path
+ * exactly.
+ *
+ * Why not `followOutput`? Virtuoso's `followOutput` only reacts to changes in
+ * the item *count*. The streaming assistant tail grows inside the footer
+ * (`context`) without changing the settled-segment count, so `followOutput`
+ * would stop following a streaming response, and its only knobs key off
+ * `atBottomThreshold` (48px) rather than the plain path's 150px grace distance.
+ * Driving the scroll manually against `scrollerRef` lets us (a) follow the
+ * footer's growth, (b) reach the footer's bottom (not just the last data item),
+ * and (c) reuse `AUTO_SCROLL_THRESHOLD_PX`/`AT_BOTTOM_THRESHOLD_PX` so the two
+ * paths behave identically.
  */
 export function VirtualizedTranscript({
   segments,
@@ -60,24 +67,55 @@ export function VirtualizedTranscript({
   handlers,
   lastMessage,
 }: VirtualizedTranscriptProps) {
-  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const scrollerRef = useRef<HTMLElement | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const lastMessageIdRef = useRef<string | null>(null);
 
-  const scrollToBottom = useCallback(() => {
-    virtuosoRef.current?.scrollToIndex({ index: 'LAST', align: 'end', behavior: 'smooth' });
+  // Scroll to the very bottom of the scroll element — past the footer, so the
+  // streaming tail and status bar are reached (not just the last data item).
+  const scrollToBottom = useCallback((behavior: ScrollBehavior) => {
+    const el = scrollerRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior });
   }, []);
 
-  // Always jump to the bottom when the user sends a new message — even if they
-  // had scrolled up (followOutput alone won't fire when not already at bottom).
+  // Bottom-align on mount. This is the threshold-crossover case: when a chat
+  // grows past the segment threshold the virtualized container mounts fresh, and
+  // without this it would render with the last item aligned to the *top* of the
+  // viewport. Runs before paint so there's no visible jump.
+  useLayoutEffect(() => {
+    scrollToBottom('auto');
+    // Mount only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Stick-to-bottom mirroring the plain path: jump to bottom on a new user
+  // message even when scrolled away, otherwise follow streaming output only
+  // while within the 150px grace distance. Keyed on the streaming content so it
+  // re-evaluates on every chunk (the part `followOutput` can't see).
+  const streamingContent = activeMessage?.content ?? '';
   useEffect(() => {
     const previousId = lastMessageIdRef.current;
     const isNewMessage = lastMessage && lastMessage.id !== previousId;
-    if (isNewMessage && lastMessage.role === 'user') {
-      virtuosoRef.current?.scrollToIndex({ index: 'LAST', align: 'end', behavior: 'smooth' });
-    }
     lastMessageIdRef.current = lastMessage?.id ?? null;
-  }, [lastMessage]);
+
+    const el = scrollerRef.current;
+    if (!el) return;
+
+    if (isNewMessage && lastMessage.role === 'user') {
+      scrollToBottom('smooth');
+      return;
+    }
+
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceFromBottom < AUTO_SCROLL_THRESHOLD_PX) {
+      scrollToBottom('smooth');
+    }
+  }, [lastMessage, streamingContent, agentStatus, segments, scrollToBottom]);
+
+  const handleScrollToBottomClick = useCallback(() => {
+    scrollToBottom('smooth');
+    setIsAtBottom(true);
+  }, [scrollToBottom]);
 
   const context = useMemo<VirtuosoContext>(
     () => ({ activeMessage, agentStatus, handlers }),
@@ -87,7 +125,9 @@ export function VirtualizedTranscript({
   return (
     <>
       <Virtuoso<TranscriptSegment, VirtuosoContext>
-        ref={virtuosoRef}
+        scrollerRef={(ref) => {
+          scrollerRef.current = ref as HTMLElement | null;
+        }}
         className="flex-1 overscroll-contain"
         data={segments}
         context={context}
@@ -98,14 +138,13 @@ export function VirtualizedTranscript({
             <SegmentView segment={segment} handlers={ctx.handlers} />
           </div>
         )}
-        followOutput={(atBottom) => (atBottom ? 'smooth' : false)}
         atBottomThreshold={AT_BOTTOM_THRESHOLD_PX}
         atBottomStateChange={setIsAtBottom}
         initialTopMostItemIndex={Math.max(0, segments.length - 1)}
         increaseViewportBy={{ top: 600, bottom: 600 }}
       />
 
-      <ScrollToBottomButton visible={!isAtBottom} onClick={scrollToBottom} />
+      <ScrollToBottomButton visible={!isAtBottom} onClick={handleScrollToBottomClick} />
     </>
   );
 }

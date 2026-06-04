@@ -3,44 +3,53 @@ import type { ChatMessage, AgentStatus } from '@/types';
 import { MessageBubble } from '../MessageBubble';
 import { ToolCallSummary } from '../ToolCallSummary';
 import { AgentStatusBar } from '../AgentStatusBar';
+import { sameSegmentContent } from './segment-model';
 import type { TranscriptSegment, TranscriptHandlers } from './segment-model';
 
 /**
- * Renders one grouped segment. Memoized so that — because the grouped segment
- * array is itself memoized upstream — settled segments don't re-render on every
- * streaming chunk.
+ * Renders one grouped segment. Memoized with a content-based comparator
+ * (`sameSegmentContent`) rather than wrapper identity: the streaming loop clones
+ * the messages array every token and `groupChatMessages` re-allocates wrappers,
+ * so only comparing the underlying message refs keeps settled segments from
+ * re-rendering mid-stream.
  */
-export const SegmentView = memo(function SegmentView({
-  segment,
-  handlers,
-}: {
-  segment: TranscriptSegment;
-  handlers: TranscriptHandlers;
-}) {
-  if (segment.type === 'text') {
-    const { message } = segment;
-    const canRegenerate = message.id === handlers.regeneratableAssistantMessageId;
-    return (
-      <MessageBubble
-        message={message}
-        onCardAction={handlers.onCardAction}
-        onPin={handlers.onPin}
-        onEdit={
-          message.role === 'user' && !message.isToolResult ? handlers.onEditUserMessage : undefined
-        }
-        canRegenerate={canRegenerate}
-        onRegenerate={canRegenerate ? handlers.onRegenerateLastResponse : undefined}
-      />
-    );
-  }
-  return <ToolCallSummary items={segment.items} onCardAction={handlers.onCardAction} />;
-});
+export const SegmentView = memo(
+  function SegmentView({
+    segment,
+    handlers,
+  }: {
+    segment: TranscriptSegment;
+    handlers: TranscriptHandlers;
+  }) {
+    if (segment.type === 'text') {
+      const { message } = segment;
+      const canRegenerate = message.id === handlers.regeneratableAssistantMessageId;
+      return (
+        <MessageBubble
+          message={message}
+          onCardAction={handlers.onCardAction}
+          onPin={handlers.onPin}
+          onEdit={
+            message.role === 'user' && !message.isToolResult
+              ? handlers.onEditUserMessage
+              : undefined
+          }
+          canRegenerate={canRegenerate}
+          onRegenerate={canRegenerate ? handlers.onRegenerateLastResponse : undefined}
+        />
+      );
+    }
+    return <ToolCallSummary items={segment.items} onCardAction={handlers.onCardAction} />;
+  },
+  (prev, next) => prev.handlers === next.handlers && sameSegmentContent(prev.segment, next.segment),
+);
 
 /**
  * The streaming tail: the actively-streaming assistant message (if any) plus
  * the agent status bar. Kept mounted and non-virtualized in both paths — in the
- * virtualized path it lives in Virtuoso's `Footer` so `followOutput` tracks its
- * growth without virtualizing the part that changes most often.
+ * virtualized path it lives in Virtuoso's `Footer`, and the manual stick-to-
+ * bottom logic follows its growth without virtualizing the part that changes
+ * most often.
  */
 export function TranscriptTail({
   activeMessage,
