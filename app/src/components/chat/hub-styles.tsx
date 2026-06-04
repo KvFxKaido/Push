@@ -61,15 +61,29 @@ export const HUB_GLASS_PANEL_CLASS =
 
 // Soft hairline for dividers *inside* the glass menus. Replaces the hard
 // `border-push-edge` slabs so stacked sections read as one continuous panel,
-// and supplies the resting outline color folded into GLASS_SURFACE below.
+// and supplies the resting outline color the tiles below compose.
 export const HUB_GLASS_HAIRLINE = 'border-white/[0.06]';
+
+// Borderless fill family — translucent white lifts with no edge. The two
+// documented fill steps (0.02 faint, 0.05 soft), each in a resting and a
+// `hover:` form. These are the *atoms* of the glass scale: every tinted glass
+// surface below composes from them (and the hairline above), so the alphas are
+// declared exactly once and call sites never hand-roll a fresh `white/[x]`.
+// (The `hover:` forms are separate literals because the Tailwind JIT only emits
+// classes that appear as unbroken strings — a `hover:` prefix can't be glued on
+// at runtime.)
+export const GLASS_FILL_FAINT = 'bg-white/[0.02]';
+export const GLASS_FILL_SOFT = 'bg-white/[0.05]';
+export const GLASS_FILL_HOVER_FAINT = 'hover:bg-white/[0.02]';
+export const GLASS_FILL_HOVER_SOFT = 'hover:bg-white/[0.05]';
 
 // Resting tinted tile — the lift that turns the drawer's repo / section groups
 // into soft glass surfaces instead of flat slabs. Pair with the hover variant
 // for interactive tiles; an accent-active state may override it (set border + bg
-// in one place each so they never collide on CSS order).
-export const GLASS_SURFACE = 'border-white/[0.06] bg-white/[0.02]';
-export const GLASS_SURFACE_HOVER = 'hover:border-white/[0.09] hover:bg-white/[0.05]';
+// in one place each so they never collide on CSS order). `0.09` is the one
+// hover-edge step and lives only here.
+export const GLASS_SURFACE = `${HUB_GLASS_HAIRLINE} ${GLASS_FILL_FAINT}`;
+export const GLASS_SURFACE_HOVER = `hover:border-white/[0.09] ${GLASS_FILL_HOVER_SOFT}`;
 
 // Active (selected) glass tile — the accent counterpart to GLASS_SURFACE. The
 // Sky tint + ring + soft drop-glow that marks the live repo card and the live
@@ -80,24 +94,13 @@ export const GLASS_SURFACE_HOVER = 'hover:border-white/[0.09] hover:bg-white/[0.
 export const GLASS_ACTIVE_CLASS =
   'border-push-accent/30 bg-push-accent/[0.08] shadow-[0_0_0_1px_rgb(var(--push-accent-rgb)_/_0.06),0_10px_26px_-15px_rgb(var(--push-accent-rgb)_/_0.5)]';
 
-// Borderless fill family — translucent white lifts with no edge, for surfaces
-// that build hierarchy from fill alone (the drawer footer, the workspace tool
-// tabs, the Review segmented pills). Both alphas are the documented fill steps
-// (0.02 faint, 0.05 soft); each comes in a resting and a `hover:` form so call
-// sites compose the scale instead of hand-rolling a fresh `white/[x]`.
-export const GLASS_FILL_FAINT = 'bg-white/[0.02]';
-export const GLASS_FILL_SOFT = 'bg-white/[0.05]';
-export const GLASS_FILL_HOVER_FAINT = 'hover:bg-white/[0.02]';
-export const GLASS_FILL_HOVER_SOFT = 'hover:bg-white/[0.05]';
-
 // Status / lifecycle strip: a bottom hairline seam plus the faint lift, so the
 // sandbox bars separate from the tab content without a hard rule.
-export const HUB_GLASS_STRIP_CLASS = 'border-b border-white/[0.06] bg-white/[0.02]';
+export const HUB_GLASS_STRIP_CLASS = `border-b ${HUB_GLASS_HAIRLINE} ${GLASS_FILL_FAINT}`;
 
 // Quiet ghost icon action inside the glass (e.g. the per-repo customize button)
 // — no chrome surface, just a hover wash. Caller supplies size + position.
-export const GLASS_GHOST_BUTTON_CLASS =
-  'flex items-center justify-center rounded-full text-push-fg-dim transition-colors hover:bg-white/[0.05] hover:text-push-fg-secondary';
+export const GLASS_GHOST_BUTTON_CLASS = `flex items-center justify-center rounded-full text-push-fg-dim transition-colors ${GLASS_FILL_HOVER_SOFT} hover:text-push-fg-secondary`;
 
 export const HUB_TAG_CLASS =
   'inline-flex items-center rounded-full border border-push-edge-subtle bg-black/15 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-push-fg-dim';

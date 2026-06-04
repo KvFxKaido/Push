@@ -113,14 +113,16 @@ type SavedReviewPayload = {
   diffStorageTruncated: boolean;
 };
 
-// Segmented toggle pills (review source / depth / provider). These are
-// secondary controls, so they read as borderless fills rather than another ring
-// of bordered chips competing with the active tool tab and the Run button — the
-// selected one lifts on the soft fill, the rest are quiet ghost text with a
-// faint hover. Tints compose the named glass fill scale (no fresh `white/[x]`),
-// and the tap target is held by the px/py padding, not a border.
-const reviewSegmentPillClass = (active: boolean): string =>
-  `rounded-full px-2.5 py-1 text-push-xs font-medium transition-colors ${
+// Segmented toggle pills (review source / depth / provider) — secondary
+// controls that read as borderless fills instead of another ring of bordered
+// chips competing with the active tool tab and the Run button. Selected lifts on
+// the soft fill; the rest are quiet ghost text with a faint hover; disabled
+// (e.g. while a review is running) dims. Composes the named glass fill scale, so
+// the tints can't drift onto an undocumented opacity. Kept local to its sole
+// consumer — hub-styles.tsx can't export a function (react-refresh rule), and
+// per repo convention a helper is promoted only once a second surface needs it.
+const glassSegmentPillClass = (active: boolean): string =>
+  `rounded-full px-2.5 py-1 text-push-xs font-medium transition-colors disabled:opacity-50 ${
     active
       ? `${GLASS_FILL_SOFT} text-push-fg`
       : `text-push-fg-dim ${GLASS_FILL_HOVER_FAINT} hover:text-push-fg-secondary`
@@ -932,7 +934,7 @@ export function HubReviewTab({
                   {hasGitHubSource && (
                     <button
                       onClick={() => handleSourceChange('github')}
-                      className={reviewSegmentPillClass(reviewSource === 'github')}
+                      className={glassSegmentPillClass(reviewSource === 'github')}
                     >
                       Branch diff
                     </button>
@@ -940,14 +942,14 @@ export function HubReviewTab({
                   {hasCommitSource && (
                     <button
                       onClick={() => handleSourceChange('commit')}
-                      className={reviewSegmentPillClass(reviewSource === 'commit')}
+                      className={glassSegmentPillClass(reviewSource === 'commit')}
                     >
                       Last commit
                     </button>
                   )}
                   <button
                     onClick={() => handleSourceChange('sandbox')}
-                    className={reviewSegmentPillClass(reviewSource === 'sandbox')}
+                    className={glassSegmentPillClass(reviewSource === 'sandbox')}
                   >
                     Working tree
                   </button>
@@ -967,14 +969,14 @@ export function HubReviewTab({
               <button
                 onClick={() => setReviewDepth('quick')}
                 disabled={running}
-                className={reviewSegmentPillClass(reviewDepth === 'quick')}
+                className={glassSegmentPillClass(reviewDepth === 'quick')}
               >
                 Quick
               </button>
               <button
                 onClick={() => setReviewDepth('deep')}
                 disabled={running}
-                className={reviewSegmentPillClass(reviewDepth === 'deep')}
+                className={glassSegmentPillClass(reviewDepth === 'deep')}
               >
                 Deep
               </button>
@@ -991,7 +993,7 @@ export function HubReviewTab({
                 <button
                   key={type}
                   onClick={() => handleProviderChange(type)}
-                  className={reviewSegmentPillClass(selectedProvider === type)}
+                  className={glassSegmentPillClass(selectedProvider === type)}
                 >
                   {label}
                 </button>
