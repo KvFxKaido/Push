@@ -52,6 +52,7 @@ import { getActiveProvider, getProviderPushStream } from '@/lib/orchestrator';
 import { getModelForRole, type PreferredProvider } from '@/lib/providers';
 import { iteratePushStreamText } from '@push/lib/stream-utils';
 import {
+  GLASS_ACTIVE_CLASS,
   GLASS_SURFACE,
   GLASS_SURFACE_HOVER,
   HUB_GLASS_HAIRLINE,
@@ -1492,7 +1493,7 @@ export function WorkspaceHubSheet({
                     onClick={() => setActiveTab(tab.key)}
                     className={`relative flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl px-1.5 text-push-xs transition-all ${
                       active
-                        ? 'border border-push-accent/30 bg-push-accent/[0.1] text-push-fg shadow-[0_0_0_1px_rgb(var(--push-accent-rgb)_/_0.06),0_8px_22px_-14px_rgb(var(--push-accent-rgb)_/_0.55)]'
+                        ? `border ${GLASS_ACTIVE_CLASS} text-push-fg`
                         : `border ${GLASS_SURFACE} text-push-fg-dim ${GLASS_SURFACE_HOVER} hover:text-push-fg-secondary`
                     }`}
                   >

@@ -71,6 +71,15 @@ export const HUB_GLASS_HAIRLINE = 'border-white/[0.06]';
 export const GLASS_SURFACE = 'border-white/[0.06] bg-white/[0.02]';
 export const GLASS_SURFACE_HOVER = 'hover:border-white/[0.09] hover:bg-white/[0.05]';
 
+// Active (selected) glass tile — the accent counterpart to GLASS_SURFACE. The
+// Sky tint + ring + soft drop-glow that marks the live repo card and the live
+// tab cell, derived from `--push-accent-rgb` so it follows repo theming. Sets
+// border + bg in one place each (drop it onto a tile whose base owns only the
+// border *width*); callers add their own text color. Single source so the two
+// active surfaces can't drift apart on alpha/shadow.
+export const GLASS_ACTIVE_CLASS =
+  'border-push-accent/30 bg-push-accent/[0.08] shadow-[0_0_0_1px_rgb(var(--push-accent-rgb)_/_0.06),0_10px_26px_-15px_rgb(var(--push-accent-rgb)_/_0.5)]';
+
 // Standalone faint fill (no border) — the footer / one-off lifts.
 export const GLASS_FILL_FAINT = 'bg-white/[0.02]';
 

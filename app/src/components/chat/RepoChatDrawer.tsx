@@ -35,6 +35,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
+  GLASS_ACTIVE_CLASS,
   GLASS_FILL_FAINT,
   GLASS_GHOST_BUTTON_CLASS,
   GLASS_SURFACE,
@@ -98,13 +99,13 @@ const DRAWER_CONTROL_INTERACTIVE_CLASS = `transition-all duration-200 ${GLASS_SU
 // Repo groups read as soft glass cards floating on the panel rather than slabs
 // split by hard rules — this kills the "large empty slab" feeling and lets the
 // active repo glow stand out from its quiet neighbors. The base carries layout
-// + the border *width* only; the resting (GLASS_SURFACE) and active (accent)
-// states each own their border + bg so the two never collide on CSS order.
+// + the border *width* only; the resting (GLASS_SURFACE) and active
+// (GLASS_ACTIVE_CLASS) states each own their border + bg so the two never
+// collide on CSS order. The active tint is the shared accent token, so it can't
+// drift from the active tab cell in the Workspace hub.
 const DRAWER_SECTION_SURFACE_CLASS =
   'rounded-2xl border px-1.5 py-1 transition-colors duration-200';
 const DRAWER_SECTION_RESTING_CLASS = `${GLASS_SURFACE} ${GLASS_SURFACE_HOVER}`;
-const DRAWER_SECTION_ACTIVE_CLASS =
-  'border-push-accent/25 bg-push-accent/[0.055] shadow-[0_0_0_1px_rgb(var(--push-accent-rgb)_/_0.05),0_10px_30px_-16px_rgb(var(--push-accent-rgb)_/_0.4)]';
 
 export function RepoChatDrawer({
   open,
@@ -476,7 +477,7 @@ export function RepoChatDrawer({
                       <div
                         key={repo.id}
                         className={`${DRAWER_SECTION_SURFACE_CLASS} ${
-                          isActiveRepo ? DRAWER_SECTION_ACTIVE_CLASS : DRAWER_SECTION_RESTING_CLASS
+                          isActiveRepo ? GLASS_ACTIVE_CLASS : DRAWER_SECTION_RESTING_CLASS
                         }`}
                       >
                         <div className="relative">
@@ -756,7 +757,7 @@ export function RepoChatDrawer({
                   })}
 
                   {filteredChatModeChats.length > 0 && (
-                    <div className={DRAWER_SECTION_SURFACE_CLASS}>
+                    <div className={`${DRAWER_SECTION_SURFACE_CLASS} ${GLASS_SURFACE}`}>
                       <div className="px-1 py-2.5 text-push-xs font-medium uppercase tracking-wide text-push-violet">
                         Chats
                       </div>
@@ -766,7 +767,7 @@ export function RepoChatDrawer({
                     </div>
                   )}
                   {(filteredLocalPcChats.length > 0 || localPcCliSessions.length > 0) && (
-                    <div className={DRAWER_SECTION_SURFACE_CLASS}>
+                    <div className={`${DRAWER_SECTION_SURFACE_CLASS} ${GLASS_SURFACE}`}>
                       <div className="px-1 py-2.5 text-push-xs font-medium uppercase tracking-wide text-push-link">
                         Local PC
                       </div>
@@ -779,7 +780,7 @@ export function RepoChatDrawer({
                     </div>
                   )}
                   {(filteredRelayChats.length > 0 || relayCliSessions.length > 0) && (
-                    <div className={DRAWER_SECTION_SURFACE_CLASS}>
+                    <div className={`${DRAWER_SECTION_SURFACE_CLASS} ${GLASS_SURFACE}`}>
                       <div className="px-1 py-2.5 text-push-xs font-medium uppercase tracking-wide text-push-link">
                         Remote
                       </div>
@@ -792,7 +793,7 @@ export function RepoChatDrawer({
                     </div>
                   )}
                   {filteredUnscopedChats.length > 0 && (
-                    <div className={DRAWER_SECTION_SURFACE_CLASS}>
+                    <div className={`${DRAWER_SECTION_SURFACE_CLASS} ${GLASS_SURFACE}`}>
                       <div className="px-1 py-2.5 text-push-xs font-medium uppercase tracking-wide text-push-fg-muted">
                         Unscoped
                       </div>
