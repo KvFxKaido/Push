@@ -178,9 +178,18 @@ touching the other two.
    installation tokens (repo authorization, *not* a durable human identity).
 2. **Allowlist storage.** Env/secret list vs a tiny KV entry. Single entry today,
    but decide the shape so widening it later is not a redeploy.
-3. **PAT escape-hatch UX.** With installation tokens as default, when is the PAT
-   path even surfaced — power users with repos the App is not installed on?
-   Confirm the `needs_ack` copy points at *that* case specifically.
+3. ~~**PAT escape-hatch UX.**~~ **REFRAMED (2026-06-04): repo-auth clarity, not a
+   PAT hatch.** The codebase was already App-default *by absence* (installation
+   tokens preferred, no PAT-paste UI, the OAuth/PAT flow dormant), so step 2 does
+   NOT add a PAT escape hatch. Instead it hardens the App path around the *active
+   repo*: a server `POST /api/github/repo-coverage` probe (App JWT →
+   `GET /repos/{repo}/installation`) tells the client whether the installation
+   covers the repo *before* the sandbox clone, so a not-covered repo gets an
+   actionable "install/update the App here" prompt instead of a cryptic git
+   failure. `needs_ack` is reframed as a legacy-token-only path (normal App users
+   never see it); legacy durable tokens are still honored, no new PAT UI. The
+   gate became coverage-aware (`evaluateRepoAuth`). PAT-as-explicit-hatch is
+   deferred (multi-user concern).
 4. **Scratch/no-account mode.** Today "without an account" reaches Chat/Workspace
    (scratch). Does scratch survive the gate (no GitHub identity → no metered repo
    work, but does it still touch the AI binding)? Decide whether scratch is gated,

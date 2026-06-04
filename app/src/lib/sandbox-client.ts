@@ -26,7 +26,7 @@ import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storag
 import { classifyTokenString } from './github-auth';
 import {
   USER_TOKEN_GATE_MESSAGE,
-  evaluateSandboxAuthGate,
+  evaluateRepoAuth,
   hasAcknowledgedUserTokenInjection,
 } from './sandbox-auth-gate';
 
@@ -1069,9 +1069,14 @@ export async function createSandbox(
   // unrecognized shape reads as durable and requires acknowledgment).
   if (repo && githubToken) {
     const kind = classifyTokenString(githubToken);
-    const gate = evaluateSandboxAuthGate({
+    // Defense-in-depth re-check: durable-token bypass prevention only. Repo
+    // coverage for the installation-token path is enforced upstream in
+    // useSandbox (which has the repo + can probe), so pass coverage 'unknown'
+    // here — installation tokens fail open, durable tokens still need the ack.
+    const gate = evaluateRepoAuth({
       kind,
       hasRepo: true,
+      coverage: 'unknown',
       acknowledged: hasAcknowledgedUserTokenInjection(),
     });
     if (!gate.allow) {

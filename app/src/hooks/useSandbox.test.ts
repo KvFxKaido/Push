@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GitHubTokenKind } from '@/lib/github-auth';
-import { USER_TOKEN_GATE_MESSAGE } from '@/lib/sandbox-auth-gate';
+import { USER_TOKEN_GATE_MESSAGE, formatRepoNotCoveredMessage } from '@/lib/sandbox-auth-gate';
 
 const sandboxClient = vi.hoisted(() => ({
   createSandbox: vi.fn(),
@@ -42,7 +42,16 @@ const ghAuth = vi.hoisted(() => ({
   isDurableUserToken: vi.fn(
     (kind: string) => kind === 'oauth' || kind === 'pat' || kind === 'env' || kind === 'unknown',
   ),
+  isInstallationToken: vi.fn((kind: string) => kind === 'app'),
   APP_TOKEN_STORAGE_KEY: 'github_app_token',
+}));
+const repoCoverage = vi.hoisted(() => ({
+  checkRepoCoverage: vi.fn<
+    (repo: string) => Promise<{
+      coverage: 'covered' | 'not_covered' | 'unknown';
+      installUrl?: string;
+    }>
+  >(async () => ({ coverage: 'covered', installUrl: undefined })),
 }));
 const sandboxSession = vi.hoisted(() => ({
   buildSandboxSessionStorageKey: vi.fn<(repo?: string | null, branch?: string | null) => string>(
@@ -63,6 +72,7 @@ vi.mock('@/lib/file-awareness-ledger', () => ({ fileLedger }));
 vi.mock('@/lib/symbol-persistence-ledger', () => ({ symbolLedger }));
 vi.mock('@/lib/sandbox-file-version-cache', () => cacheLib);
 vi.mock('@/lib/github-auth', () => ghAuth);
+vi.mock('@/lib/github-repo-coverage', () => repoCoverage);
 vi.mock('@/lib/sandbox-session', () => sandboxSession);
 
 type Cell = { value: unknown };
@@ -130,6 +140,10 @@ beforeEach(() => {
   cacheLib.clearSandboxWorkspaceRevision.mockReset();
   ghAuth.getActiveGitHubTokenInfo.mockReset().mockReturnValue({ token: '', kind: 'none' });
   ghAuth.isDurableUserToken.mockClear();
+  ghAuth.isInstallationToken.mockClear();
+  repoCoverage.checkRepoCoverage
+    .mockReset()
+    .mockResolvedValue({ coverage: 'covered', installUrl: undefined });
   Object.values(sandboxSession).forEach((m) => m.mockReset());
   sandboxSession.buildSandboxSessionStorageKey.mockImplementation(
     (repo, branch) => `sbx:${repo}:${branch}`,
@@ -239,6 +253,42 @@ describe('useSandbox.start', () => {
       'ghp-user',
       undefined,
     );
+  });
+
+  it('blocks an App installation when it does not cover the repo, with an actionable message', async () => {
+    ghAuth.getActiveGitHubTokenInfo.mockReturnValue({ token: 'ghs-inst', kind: 'app' });
+    repoCoverage.checkRepoCoverage.mockResolvedValue({
+      coverage: 'not_covered',
+      installUrl: 'https://github.com/apps/push-agent/installations/new',
+    });
+    const hook = render();
+    const id = await hook.start('owner/repo', 'main');
+    expect(id).toBeNull();
+    expect(sandboxClient.createSandbox).not.toHaveBeenCalled();
+    expect(reactState.cells[1].value).toBe('error');
+    expect(reactState.cells[2].value).toBe(
+      formatRepoNotCoveredMessage(
+        'owner/repo',
+        'https://github.com/apps/push-agent/installations/new',
+      ),
+    );
+  });
+
+  it('proceeds when the App covers the repo (installation token, normal path)', async () => {
+    sandboxClient.createSandbox.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-cov',
+      ownerToken: 'owner-tok',
+    });
+    ghAuth.getActiveGitHubTokenInfo.mockReturnValue({ token: 'ghs-inst', kind: 'app' });
+    repoCoverage.checkRepoCoverage.mockResolvedValue({
+      coverage: 'covered',
+      installUrl: undefined,
+    });
+    const hook = render();
+    const id = await hook.start('owner/repo', 'main');
+    expect(id).toBe('sb-cov');
+    expect(repoCoverage.checkRepoCoverage).toHaveBeenCalledWith('owner/repo');
   });
 
   it('transitions to error when the sandbox reports creation failure', async () => {

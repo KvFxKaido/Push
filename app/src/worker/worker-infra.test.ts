@@ -6,6 +6,7 @@ import {
   handleGitHubAppOAuth,
   handleGitHubAppToken,
   handleHealthCheck,
+  handleRepoCoverage,
   handleSandbox,
 } from './worker-infra';
 import type { Env } from './worker-middleware';
@@ -857,6 +858,62 @@ describe('handleGitHubAppToken happy path', () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.session).toBeUndefined();
+  });
+});
+
+// ===========================================================================
+// handleRepoCoverage
+// ===========================================================================
+
+describe('handleRepoCoverage', () => {
+  const appEnv: Partial<Env> = {
+    GITHUB_APP_ID: '42',
+    GITHUB_APP_PRIVATE_KEY: RSA_PRIVATE_KEY_PEM,
+  };
+
+  function coverageRequest(repo: unknown) {
+    return makeRequest('https://push.example.test/api/github/repo-coverage', {
+      body: JSON.stringify({ repo }),
+    });
+  }
+
+  it('reports covered when the App installation resolves for the repo', async () => {
+    vi.stubGlobal('fetch', sequentialFetch([() => jsonResponse({ id: 555 })]));
+    const response = await handleRepoCoverage(coverageRequest('owner/repo'), makeEnv(appEnv));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.covered).toBe(true);
+    expect(body.installation_id).toBe('555');
+  });
+
+  it('reports not_covered (with install_url) on a 404 from GitHub', async () => {
+    vi.stubGlobal('fetch', sequentialFetch([() => new Response('{}', { status: 404 })]));
+    const response = await handleRepoCoverage(coverageRequest('owner/repo'), makeEnv(appEnv));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.covered).toBe(false);
+    expect(body.reason).toBe('not_covered');
+    expect(body.install_url).toContain('/apps/push-agent/installations/new');
+  });
+
+  it('reports not_covered when the resolved installation is not allowlisted', async () => {
+    vi.stubGlobal('fetch', sequentialFetch([() => jsonResponse({ id: 999 })]));
+    const response = await handleRepoCoverage(
+      coverageRequest('owner/repo'),
+      makeEnv({ ...appEnv, GITHUB_ALLOWED_INSTALLATION_IDS: '42, 555' }),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.covered).toBe(false);
+    expect(body.reason).toBe('installation_not_allowed');
+  });
+
+  it('rejects a malformed repo with 400 (no GitHub call)', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const response = await handleRepoCoverage(coverageRequest('not-a-repo'), makeEnv(appEnv));
+    expect(response.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 

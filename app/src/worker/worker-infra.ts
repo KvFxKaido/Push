@@ -907,6 +907,135 @@ export async function handleGitHubAppToken(request: Request, env: Env): Promise<
   }
 }
 
+// --- GitHub App repo-coverage probe ---
+
+/**
+ * Answer "does the Push GitHub App installation cover this repo?" so the client
+ * can confirm repo-auth BEFORE spinning up a sandbox and attempting a clone —
+ * turning a cryptic deep-in-the-sandbox git failure into an actionable
+ * install/update prompt (auth rework step 2).
+ *
+ * Uses the App JWT to call `GET /repos/{owner}/{repo}/installation`:
+ *   - 200 → installed + covers the repo (`covered: true`), unless the resolved
+ *     installation isn't on GITHUB_ALLOWED_INSTALLATION_IDS (then not covered).
+ *   - 404 → the App doesn't cover the repo (not installed, or repo not in the
+ *     installation's selected set — GitHub returns 404 for both).
+ *
+ * `install_url` is always returned so the client has a single CTA target that
+ * GitHub routes to either first-install or configure-repos as appropriate.
+ */
+export async function handleRepoCoverage(request: Request, env: Env): Promise<Response> {
+  const requestUrl = new URL(request.url);
+  const originCheck = validateOrigin(request, requestUrl, env);
+  if (!originCheck.ok) {
+    return Response.json({ error: originCheck.error }, { status: 403 });
+  }
+
+  const requestId = getOrCreateRequestId(request.headers.get(REQUEST_ID_HEADER), 'worker');
+  const clientIp = getClientIp(request);
+
+  const { success: rateLimitOk } = await env.RATE_LIMITER.limit({ key: clientIp });
+  if (!rateLimitOk) {
+    wlog('warn', 'rate_limited', { requestId, ip: clientIp, path: requestUrl.pathname });
+    return Response.json(
+      { error: 'Rate limit exceeded. Try again later.' },
+      { status: 429, headers: { 'Retry-After': '60' } },
+    );
+  }
+
+  const installUrl = `https://github.com/apps/${GITHUB_APP_SLUG}/installations/new`;
+
+  if (!env.GITHUB_APP_ID || !env.GITHUB_APP_PRIVATE_KEY) {
+    return Response.json({ error: 'GitHub App not configured' }, { status: 500 });
+  }
+
+  const bodyResult = await readBodyText(request, 4096);
+  if ('error' in bodyResult) {
+    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
+  }
+
+  let payload: { repo?: string };
+  try {
+    payload = JSON.parse(bodyResult.text);
+  } catch {
+    return Response.json({ error: 'Invalid JSON' }, { status: 400 });
+  }
+
+  const repo = typeof payload.repo === 'string' ? payload.repo.trim() : '';
+  // owner/name, each a conservative GitHub-name charset. Rejects path tricks
+  // (extra slashes, `?`/`#`) before the value reaches the GitHub URL.
+  if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repo)) {
+    return Response.json({ error: 'Invalid repo (expected owner/name)' }, { status: 400 });
+  }
+  const [owner, name] = repo.split('/');
+  const encodedRepo = `${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
+
+  try {
+    const jwt = await generateGitHubAppJWT(env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY);
+    const response = await fetch(`https://api.github.com/repos/${encodedRepo}/installation`, {
+      headers: {
+        Authorization: `Bearer ${jwt}`,
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'Push-App/1.0.0',
+      },
+    });
+
+    if (response.status === 404) {
+      wlog('info', 'repo_coverage', { requestId, repo, covered: false, reason: 'not_covered' });
+      return Response.json({ covered: false, reason: 'not_covered', install_url: installUrl });
+    }
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => '');
+      wlog('error', 'repo_coverage_error', {
+        requestId,
+        repo,
+        status: response.status,
+        body: errBody.slice(0, 200),
+      });
+      return Response.json(
+        { error: `Failed to resolve repo installation (${response.status})` },
+        { status: 502 },
+      );
+    }
+
+    const data = (await response.json()) as { id?: number };
+    const installationId = typeof data.id === 'number' ? String(data.id) : null;
+    const allowedInstallationIds = (env.GITHUB_ALLOWED_INSTALLATION_IDS || '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+    if (
+      allowedInstallationIds.length > 0 &&
+      (!installationId || !allowedInstallationIds.includes(installationId))
+    ) {
+      wlog('info', 'repo_coverage', {
+        requestId,
+        repo,
+        covered: false,
+        reason: 'installation_not_allowed',
+      });
+      return Response.json({
+        covered: false,
+        reason: 'installation_not_allowed',
+        install_url: installUrl,
+      });
+    }
+
+    wlog('info', 'repo_coverage', {
+      requestId,
+      repo,
+      covered: true,
+      installation_id: installationId,
+    });
+    return Response.json({ covered: true, installation_id: installationId });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    wlog('error', 'repo_coverage_error', { requestId, repo, message });
+    return Response.json({ error: 'Repo coverage check failed' }, { status: 500 });
+  }
+}
+
 // --- GitHub App logout ---
 
 /**
