@@ -4,8 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CAPACITOR_ANDROID_ORIGIN,
   CONTENT_SECURITY_POLICY,
-  DEPLOYMENT_AUTH_REQUIRED_CODE,
-  DEPLOYMENT_TOKEN_HEADER,
   MAX_BODY_SIZE_BYTES,
   SECURITY_HEADERS,
   applySecurityHeaders,
@@ -20,8 +18,6 @@ import {
   normalizeOrigin,
   passthroughAuth,
   readBodyText,
-  isDeploymentTokenConfigured,
-  requireDeploymentTokenForApi,
   runPreamble,
   standardAuth,
   validateOrigin,
@@ -261,140 +257,6 @@ describe('validateOrigin', () => {
       ok: false,
       error: 'Missing or invalid Origin/Referer',
     });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Private deployment gate
-// ---------------------------------------------------------------------------
-
-describe('requireDeploymentTokenForApi', () => {
-  it('does nothing when no deployment token is configured', () => {
-    const request = makeRequest('https://push.example.test/api/sandbox/create', {
-      method: 'POST',
-    });
-    expect(isDeploymentTokenConfigured(makeEnv())).toBe(false);
-    expect(requireDeploymentTokenForApi(request, makeEnv())).toBeNull();
-  });
-
-  it('allows /api/health without a token so clients can bootstrap diagnostics', () => {
-    const request = makeRequest('https://push.example.test/api/health', { method: 'GET' });
-    expect(
-      requireDeploymentTokenForApi(request, makeEnv({ PUSH_DEPLOYMENT_TOKEN: 'secret' })),
-    ).toBe(null);
-  });
-
-  it('allows a protected API request with the matching deployment token', () => {
-    const request = makeRequest('https://push.example.test/api/sandbox/create', {
-      method: 'POST',
-      headers: { [DEPLOYMENT_TOKEN_HEADER]: 'secret' },
-    });
-    expect(
-      requireDeploymentTokenForApi(request, makeEnv({ PUSH_DEPLOYMENT_TOKEN: 'secret' })),
-    ).toBe(null);
-  });
-
-  it('allows relay WebSocket upgrades through to relay auth without a deployment-token header', () => {
-    const request = makeRequest('https://push.example.test/api/relay/v1/session/s1/connect', {
-      method: 'GET',
-      headers: {
-        Upgrade: 'websocket',
-        Connection: 'Upgrade',
-        'Sec-WebSocket-Protocol': 'push.relay.v1, bearer.pushd_da_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-      },
-    });
-    expect(
-      requireDeploymentTokenForApi(request, makeEnv({ PUSH_DEPLOYMENT_TOKEN: 'secret' })),
-    ).toBe(null);
-  });
-
-  it('accepts a comma-separated Connection token list (e.g. "keep-alive, Upgrade")', () => {
-    const request = makeRequest('https://push.example.test/api/relay/v1/session/s1/connect', {
-      method: 'GET',
-      headers: {
-        Upgrade: 'websocket',
-        Connection: 'keep-alive, Upgrade',
-        'Sec-WebSocket-Protocol': 'push.relay.v1',
-      },
-    });
-    expect(
-      requireDeploymentTokenForApi(request, makeEnv({ PUSH_DEPLOYMENT_TOKEN: 'secret' })),
-    ).toBe(null);
-  });
-
-  it('keeps non-WebSocket relay requests behind the deployment-token gate', async () => {
-    const request = makeRequest('https://push.example.test/api/relay/v1/session/s1/connect', {
-      method: 'GET',
-      headers: { 'Sec-WebSocket-Protocol': 'push.relay.v1' },
-    });
-    const response = requireDeploymentTokenForApi(
-      request,
-      makeEnv({ PUSH_DEPLOYMENT_TOKEN: 'secret' }),
-    );
-    expect(response?.status).toBe(401);
-    const body = (await response!.json()) as { code?: string };
-    expect(body.code).toBe(DEPLOYMENT_AUTH_REQUIRED_CODE);
-  });
-
-  it('keeps WebSocket upgrades without the relay protocol behind the deployment-token gate', async () => {
-    const request = makeRequest('https://push.example.test/api/relay/v1/session/s1/connect', {
-      method: 'GET',
-      headers: {
-        Upgrade: 'websocket',
-        Connection: 'Upgrade',
-        'Sec-WebSocket-Protocol': 'bearer.pushd_da_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-      },
-    });
-    const response = requireDeploymentTokenForApi(
-      request,
-      makeEnv({ PUSH_DEPLOYMENT_TOKEN: 'secret' }),
-    );
-    expect(response?.status).toBe(401);
-    const body = (await response!.json()) as { code?: string };
-    expect(body.code).toBe(DEPLOYMENT_AUTH_REQUIRED_CODE);
-  });
-
-  it('keeps Upgrade+subprotocol requests without `Connection: Upgrade` behind the gate', async () => {
-    // RFC 6455 requires both. A shaped-but-bogus request that copies
-    // the Upgrade and subprotocol headers but omits `Connection:
-    // Upgrade` must NOT bypass the deployment gate.
-    const request = makeRequest('https://push.example.test/api/relay/v1/session/s1/connect', {
-      method: 'GET',
-      headers: {
-        Upgrade: 'websocket',
-        'Sec-WebSocket-Protocol': 'push.relay.v1',
-      },
-    });
-    const response = requireDeploymentTokenForApi(
-      request,
-      makeEnv({ PUSH_DEPLOYMENT_TOKEN: 'secret' }),
-    );
-    expect(response?.status).toBe(401);
-    const body = (await response!.json()) as { code?: string };
-    expect(body.code).toBe(DEPLOYMENT_AUTH_REQUIRED_CODE);
-  });
-
-  it('rejects a protected API request with a missing or wrong deployment token', async () => {
-    const request = makeRequest('https://push.example.test/api/sandbox/create', {
-      method: 'POST',
-      headers: { [DEPLOYMENT_TOKEN_HEADER]: 'wrong' },
-    });
-    const response = requireDeploymentTokenForApi(
-      request,
-      makeEnv({ PUSH_DEPLOYMENT_TOKEN: 'secret' }),
-    );
-    expect(response?.status).toBe(401);
-    const body = (await response!.json()) as { code?: string };
-    expect(body.code).toBe(DEPLOYMENT_AUTH_REQUIRED_CODE);
-  });
-
-  it('skips OPTIONS preflight so CORS can negotiate custom headers', () => {
-    const request = makeRequest('https://push.example.test/api/sandbox/create', {
-      method: 'OPTIONS',
-    });
-    expect(
-      requireDeploymentTokenForApi(request, makeEnv({ PUSH_DEPLOYMENT_TOKEN: 'secret' })),
-    ).toBe(null);
   });
 });
 

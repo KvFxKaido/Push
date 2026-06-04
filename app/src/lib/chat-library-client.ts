@@ -1,7 +1,7 @@
 /**
- * Client wrapper for `/api/library/*` (v2a). Plain `fetch` — the
- * global `installDeploymentAuthFetch` shim attaches the deployment
- * token header to /api/* requests automatically.
+ * Client wrapper for `/api/library/*` (v2a). Plain `fetch` — the global
+ * `installApiAuthFetch` chokepoint attaches the session header +
+ * `credentials:'include'` to first-party /api/* requests automatically.
  */
 
 import type { AttachmentData } from '@/types';

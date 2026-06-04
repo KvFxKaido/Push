@@ -56,10 +56,12 @@ const cfg = {
   // Fail the run (exit 1) on a red restore grade. Off by default: a slow
   // restore is a perf signal, not a correctness failure.
   strictLatency: process.env.PUSH_SMOKE_STRICT_LATENCY === '1',
-  // Private-deployment gate: when PUSH_DEPLOYMENT_TOKEN is set on the Worker,
-  // every /api/* route (except /api/health) requires this token in the
-  // X-Push-Deployment-Token header. Leave empty for an open deployment.
-  deploymentToken: process.env.PUSH_SMOKE_DEPLOYMENT_TOKEN ?? '',
+  // GitHub-identity session gate: the universal /api/* gate (auth rework). When
+  // PUSH_SESSION_GATE_ENFORCE is set on the Worker, every gated route requires a
+  // valid session in the X-Push-Session header. Generate one signed with
+  // PUSH_SESSION_SECRET for an allowlisted GITHUB_ALLOWED_USER_IDS. Leave empty
+  // for a non-enforcing deployment.
+  sessionToken: process.env.PUSH_SMOKE_SESSION_TOKEN ?? '',
   // Stress mode: seed N MB of INCOMPRESSIBLE data (/dev/urandom) instead of the
   // compressible file tree. This is what actually probes the 32 MB *compressed*
   // snapshot ceiling (MAX_SNAPSHOT_BYTES) — the file-count mode never does,
@@ -86,7 +88,7 @@ let failures = 0;
 /** POST a JSON body to /api/sandbox-cf/<route>; return { status, json }. */
 async function call(route, body) {
   const headers = { 'content-type': 'application/json', origin: cfg.origin };
-  if (cfg.deploymentToken) headers['X-Push-Deployment-Token'] = cfg.deploymentToken;
+  if (cfg.sessionToken) headers['X-Push-Session'] = cfg.sessionToken;
   const res = await fetch(`${cfg.baseUrl}/api/sandbox-cf/${route}`, {
     method: 'POST',
     headers,
@@ -101,9 +103,9 @@ async function call(route, body) {
   if (res.status === 429) {
     throw new Error('rate limited (429) — wait 60s and retry, or use a fresh IP');
   }
-  if (res.status === 401 && json?.code === 'DEPLOYMENT_AUTH_REQUIRED') {
+  if (res.status === 401 && json?.code === 'SESSION_AUTH_REQUIRED') {
     throw new Error(
-      'private deployment — set PUSH_SMOKE_DEPLOYMENT_TOKEN to the Worker PUSH_DEPLOYMENT_TOKEN secret',
+      'session gate — set PUSH_SMOKE_SESSION_TOKEN to a valid X-Push-Session JWT (signed with PUSH_SESSION_SECRET for an allowlisted user id)',
     );
   }
   return { status: res.status, json };

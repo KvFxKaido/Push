@@ -42,7 +42,7 @@
 //
 // Run:
 //   PUSH_SMOKE_BASE_URL=https://push.<sub>.workers.dev \
-//   PUSH_SMOKE_DEPLOYMENT_TOKEN=$(grep ^PUSH_DEPLOYMENT_TOKEN= .dev.vars | cut -d= -f2- | tr -d '"\r') \
+//   PUSH_SMOKE_SESSION_TOKEN=<X-Push-Session JWT> \
 //   node scripts/snapshot-smoke/coder-resume-cap-smoke.mjs
 //
 // Prereq: `wrangler kv key get` must work against the SANDBOX_TOKENS
@@ -59,7 +59,7 @@ const cfg = {
   origin: process.env.PUSH_SMOKE_ORIGIN ?? '',
   repo: process.env.PUSH_SMOKE_REPO ?? 'push-smoke/resume-cap',
   branch: process.env.PUSH_SMOKE_BRANCH ?? `resume-cap-${Date.now()}`,
-  deploymentToken: process.env.PUSH_SMOKE_DEPLOYMENT_TOKEN ?? '',
+  sessionToken: process.env.PUSH_SMOKE_SESSION_TOKEN ?? '',
   provider: process.env.PUSH_SMOKE_PROVIDER ?? 'cloudflare',
   model: process.env.PUSH_SMOKE_MODEL ?? '@cf/moonshotai/kimi-k2.6',
   // Delay between the FIRST prompt_snapshot and kill 1. Has to be past the
@@ -109,7 +109,7 @@ let failures = 0;
 
 function authHeaders() {
   const headers = { 'content-type': 'application/json', origin: cfg.origin };
-  if (cfg.deploymentToken) headers['X-Push-Deployment-Token'] = cfg.deploymentToken;
+  if (cfg.sessionToken) headers['X-Push-Session'] = cfg.sessionToken;
   return headers;
 }
 

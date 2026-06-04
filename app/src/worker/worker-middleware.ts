@@ -179,18 +179,14 @@ export interface Env {
   STATS_ADMIN_TOKEN?: string;
   // Cloudflare API token with Analytics Engine: Read permission (distinct from CF_AI_GATEWAY_TOKEN which is gateway-scoped)
   CF_ANALYTICS_TOKEN?: string;
-  // Optional private-deployment gate. When set, every /api/* route except
-  // /api/health requires X-Push-Deployment-Token to match this secret. This is
-  // intentionally separate from Authorization because provider calls use that
-  // header for BYOK model keys.
-  PUSH_DEPLOYMENT_TOKEN?: string;
   // --- Auth rework: GitHub-identity session gate ---
   // (docs/decisions/Auth Rework — GitHub as the Single Identity Anchor.md)
   //
-  // HMAC secret for the Push identity session JWT minted at App-OAuth time and
-  // verified per request on the metered surface. Independent of the GitHub,
-  // client, and deployment secrets. Unset → the session gate is a no-op (same
-  // fail-open shape as PUSH_DEPLOYMENT_TOKEN).
+  // The GitHub-identity session is the universal /api/* gate (step 3); it
+  // replaced the retired X-Push-Deployment-Token. HMAC secret for the Push
+  // session JWT minted at App-OAuth / installation-id time and verified per
+  // request. Independent of the GitHub and client secrets. Unset → the session
+  // gate is a no-op (fail-open shape).
   PUSH_SESSION_SECRET?: string;
   // Comma/space-separated GitHub numeric user ids allowed past the session
   // gate. One entry for the single-user deployment; widening needs no code
@@ -461,16 +457,17 @@ export function validateOrigin(
 }
 
 // ---------------------------------------------------------------------------
-// Private deployment gate
+// Shared secret helpers
 // ---------------------------------------------------------------------------
-
-export const DEPLOYMENT_TOKEN_HEADER = 'X-Push-Deployment-Token';
-export const DEPLOYMENT_AUTH_REQUIRED_CODE = 'DEPLOYMENT_AUTH_REQUIRED';
 
 function trimSecret(value: string | undefined): string {
   return value?.trim() ?? '';
 }
 
+// Constant-time string compare — shared by the GitHub webhook HMAC check, the
+// relay bearer check, and the sandbox owner-token check. (The deployment-token
+// gate that originally introduced this retired in auth rework step 3; the helper
+// stays because those callers still need it.)
 export function timingSafeEqual(a: string, b: string): boolean {
   const aBytes = new TextEncoder().encode(a);
   const bBytes = new TextEncoder().encode(b);
@@ -480,71 +477,6 @@ export function timingSafeEqual(a: string, b: string): boolean {
     diff |= (aBytes[i] ?? 0) ^ (bBytes[i] ?? 0);
   }
   return diff === 0;
-}
-
-export function isDeploymentTokenConfigured(env: Env): boolean {
-  return trimSecret(env.PUSH_DEPLOYMENT_TOKEN).length > 0;
-}
-
-export function isDeploymentTokenExemptPath(pathname: string): boolean {
-  // `/api/github/webhook` is exempt because GitHub can't attach the deployment
-  // token; the webhook authenticates with its own HMAC signature instead.
-  return pathname === '/api/health' || pathname === '/api/github/webhook';
-}
-
-function isRelayWebSocketUpgrade(request: Request, requestUrl: URL): boolean {
-  if (!requestUrl.pathname.startsWith('/api/relay/v1/')) return false;
-  if (request.method !== 'GET') return false;
-  if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return false;
-  // RFC 6455 requires `Connection: Upgrade` alongside `Upgrade:
-  // websocket` for a real handshake. The header is comma-separated and
-  // each token is case-insensitive — match on the `upgrade` token so a
-  // shaped-but-bogus request (Upgrade header + subprotocol but no
-  // Connection upgrade) doesn't slip past the deployment gate.
-  const connectionTokens = request.headers
-    .get('Connection')
-    ?.toLowerCase()
-    .split(',')
-    .map((entry) => entry.trim());
-  if (!connectionTokens?.includes('upgrade')) return false;
-
-  const protocols = request.headers
-    .get('Sec-WebSocket-Protocol')
-    ?.split(',')
-    .map((entry) => entry.trim());
-  return protocols?.includes('push.relay.v1') ?? false;
-}
-
-export function requireDeploymentTokenForApi(
-  request: Request,
-  env: Env,
-  requestUrl = new URL(request.url),
-): Response | null {
-  if (request.method === 'OPTIONS') return null;
-  if (!requestUrl.pathname.startsWith('/api/')) return null;
-  if (isDeploymentTokenExemptPath(requestUrl.pathname)) return null;
-  // Browser WebSockets cannot attach X-Push-Deployment-Token. Let
-  // relay upgrades reach relay-routes.ts, where pushd_relay_ /
-  // pushd_da_ bearers, origin checks, and the DO allowlist enforce
-  // the remote-session boundary. Non-WS relay requests remain covered
-  // by the private deployment gate.
-  if (isRelayWebSocketUpgrade(request, requestUrl)) return null;
-
-  const expected = trimSecret(env.PUSH_DEPLOYMENT_TOKEN);
-  if (!expected) return null;
-
-  const provided = trimSecret(request.headers.get(DEPLOYMENT_TOKEN_HEADER) ?? undefined);
-  if (provided && timingSafeEqual(provided, expected)) return null;
-
-  return Response.json(
-    {
-      error: 'Deployment token required',
-      code: DEPLOYMENT_AUTH_REQUIRED_CODE,
-      details:
-        'This Push deployment is private. Open the app once with #push_token=<token>, or send X-Push-Deployment-Token on API requests.',
-    },
-    { status: 401 },
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -576,13 +508,11 @@ export const SESSION_GATE_REQUIRED_CODE = 'SESSION_AUTH_REQUIRED';
  *    Bearer`); browser WS can't attach the session header anyway.
  *  - `/api/_stats`, `/api/admin/*`       — their own admin-token guards, and may
  *    be hit by ops tooling without a browser session.
- *  - `/api/auth-probe`                   — still used by the legacy
- *    DeploymentTokenGate as the deployment-token probe during the 3a dual-gate
- *    window (runs before a session exists); 3b repurposes it as the session
- *    probe once the deployment token retires.
  *
- * Everything else — artifacts/library KV, model lists, search, sandbox, jobs,
- * `github/tools`, `repo-coverage`, and `pr-reviews` — requires a session.
+ * Everything else — including `/api/auth-probe` (the client's session probe:
+ * 200 = valid session, 401 = none, which the GitHub sign-in gate keys on),
+ * artifacts/library KV, model lists, search, sandbox, jobs, `github/tools`,
+ * `repo-coverage`, and `pr-reviews` — requires a session.
  */
 const SESSION_EXEMPT_EXACT: ReadonlySet<string> = new Set([
   '/api/health',
@@ -591,13 +521,6 @@ const SESSION_EXEMPT_EXACT: ReadonlySet<string> = new Set([
   '/api/github/app-token',
   '/api/github/app-logout',
   '/api/_stats',
-  // `/api/auth-probe` stays exempt for now: during the 3a dual-gate window the
-  // legacy DeploymentTokenGate still uses it as the *deployment*-token liveness
-  // probe (before any GitHub session exists), and that client only handles a
-  // DEPLOYMENT_AUTH_REQUIRED 401 — a SESSION_AUTH_REQUIRED 401 here would break
-  // manual token entry. Step 3b repurposes it as the session probe when the
-  // deployment token + that gate are removed.
-  '/api/auth-probe',
 ]);
 
 function isSessionExemptPath(pathname: string): boolean {

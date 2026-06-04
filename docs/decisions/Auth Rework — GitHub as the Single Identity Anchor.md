@@ -1,7 +1,7 @@
 # Auth Rework — GitHub as the Single Identity Anchor
 
 Date: 2026-06-04
-Status: **Draft** (step 1 committed + implemented behind observe mode — see `ROADMAP.md` → *Auth Rework*). Flip to `Current` when the allowlist gate is enforcing and the deployment token is retired (migration step 3). Step-1 landing: `app/src/worker/worker-session.ts` (session primitive), session mint in `handleGitHubAppOAuth` (`worker-infra.ts`), `requireSessionForGatedApi` gate (`worker-middleware.ts` + `worker.ts`), client send-path (`app/src/lib/session-auth.ts` + `deployment-auth.ts` fetch chokepoint).
+Status: **Current** (all three migration steps shipped 2026-06-04). The GitHub-identity session is the enforcing, universal `/api/*` gate (`PUSH_SESSION_GATE_ENFORCE=1` in prod) and the `X-Push-Deployment-Token` is retired. Landing: `app/src/worker/worker-session.ts` (session primitive) + mint in `handleGitHubAppOAuth`/`handleGitHubAppToken` (`worker-infra.ts`); `requireSessionForGatedApi` universal gate (`worker-middleware.ts` denylist + `worker.ts`); per-repo coverage (`/api/github/repo-coverage` + `evaluateRepoAuth`); client transport `app/src/lib/api-auth-fetch.ts` + storage `session-auth.ts`; `GitHubSignInGate` replaces `DeploymentTokenGate`. The device/relay bearer (`Universal Session Bearer.md`) remains the one legitimately-custom layer, out of scope here.
 Owner: Push
 Related:
 `app/src/lib/deployment-auth.ts` + `app/src/worker/worker-middleware.ts` (today's `X-Push-Deployment-Token` edge gate; also enforced in `github-webhook.ts`, `relay-routes.ts`),
@@ -136,16 +136,20 @@ So commit to GitHub identity + installation-token repo-auth now; treat the
 allowlist as the single-user expression of the gate, swappable later without
 touching the other two.
 
-## Migration sequencing (rough; not a commitment until a ROADMAP entry exists)
+## Migration sequencing — SHIPPED 2026-06-04
 
-1. **Add the identity gate in parallel.** Resolve GitHub identity + allowlist check
-   on the expensive endpoints, running *alongside* the deployment token
-   (dual-gate) so nothing breaks mid-cutover. Emit symmetric structured logs on
-   allow/deny (per `CLAUDE.md`).
-2. **Make installation tokens the default repo-auth.** Demote PAT to an explicit
-   escape hatch; the `needs_ack` ack narrows to the PAT path only.
-3. **Retire the deployment token** (`deployment-auth.ts` + the middleware check +
-   the `#push_token` hash entry point) once the allowlist gate is proven.
+1. ✅ **Identity gate in parallel** (#776/#777). GitHub-identity session minted at
+   App-OAuth + installation-id time, verified per request, allowlist on
+   `GITHUB_ALLOWED_USER_IDS`. Ran observe → enforce; symmetric allow/deny logs.
+2. ✅ **Repo-auth clarity** (#778) — *reframed* (see Open Q#3): installation tokens
+   were already the default by absence, so instead of a PAT escape hatch this
+   added per-repo App-coverage detection (`/api/github/repo-coverage`) with an
+   actionable install/update prompt; `needs_ack` reframed legacy-only. No PAT UI.
+3. ✅ **Retire the deployment token** (#780 widened the session gate to universal;
+   this PR removed `deployment-auth.ts` + the `worker-middleware` check + the
+   `#push_token` entry point, replaced `DeploymentTokenGate` with
+   `GitHubSignInGate`, and made `/api/auth-probe` the session probe). Operator
+   deletes the `PUSH_DEPLOYMENT_TOKEN` secret post-deploy.
 
 ## Rejected / considered
 
