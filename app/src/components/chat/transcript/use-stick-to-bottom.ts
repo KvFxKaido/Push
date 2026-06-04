@@ -44,21 +44,18 @@ export function useStickToBottom(
   const { alignOnMount = false } = options;
   const elRef = useRef<HTMLElement | null>(null);
   const lastMessageIdRef = useRef<string | null>(null);
-  // Mirror of `isAtBottom` readable from callbacks without re-creating them.
-  // Defaults true so a fresh mount aligns; thereafter it remembers the user's
-  // follow intent across a scroller swap.
-  const atBottomRef = useRef(true);
+  // Whether the user was following (within the 150px grace band) when a scroller
+  // element was last detached. Defaults true so a fresh mount aligns; carries
+  // that intent across a scroller swap so we re-align a follower without yanking
+  // someone who had scrolled away. Uses the follow band, not the 48px at-bottom
+  // band, to match what the streaming effect treats as "following".
+  const followingRef = useRef(true);
   const [isAtBottom, setIsAtBottom] = useState(true);
-
-  const setAtBottom = useCallback((value: boolean) => {
-    atBottomRef.current = value;
-    setIsAtBottom(value);
-  }, []);
 
   const syncBottomState = useCallback(() => {
     const el = elRef.current;
-    if (el) setAtBottom(distanceFromBottom(el) <= AT_BOTTOM_THRESHOLD_PX);
-  }, [setAtBottom]);
+    if (el) setIsAtBottom(distanceFromBottom(el) <= AT_BOTTOM_THRESHOLD_PX);
+  }, []);
 
   // Raw scroll with no state write — safe to call from the effect. The
   // programmatic scroll fires `scroll` events that feed `syncBottomState`, so
@@ -73,9 +70,9 @@ export function useStickToBottom(
   const scrollToBottom = useCallback(
     (behavior: ScrollBehavior = 'smooth') => {
       scrollElementToBottom(behavior);
-      setAtBottom(true);
+      setIsAtBottom(true);
     },
-    [scrollElementToBottom, setAtBottom],
+    [scrollElementToBottom],
   );
 
   const registerScroller = useCallback(
@@ -86,16 +83,20 @@ export function useStickToBottom(
       // falls back to null rather than tracking the wrong target.
       const node = typeof HTMLElement !== 'undefined' && el instanceof HTMLElement ? el : null;
       const previous = elRef.current;
-      if (previous) previous.removeEventListener('scroll', syncBottomState);
+      if (previous) {
+        // Capture follow intent against the 150px grace band (the band the
+        // streaming effect follows within) before detaching the old element.
+        followingRef.current = distanceFromBottom(previous) < AUTO_SCROLL_THRESHOLD_PX;
+        previous.removeEventListener('scroll', syncBottomState);
+      }
       elRef.current = node;
       if (!node) return;
       node.addEventListener('scroll', syncBottomState, { passive: true });
       // Bottom-align on attach (virtualized threshold crossover), but only while
-      // the user is following. On first mount `atBottomRef` defaults true so we
+      // the user is following. On first mount `followingRef` defaults true so we
       // align; if Virtuoso ever swaps its scroller element mid-life we re-align a
-      // following user but leave a scrolled-away user where they were, rather
-      // than yanking them to the bottom.
-      if (alignOnMount && atBottomRef.current) {
+      // following user but leave a scrolled-away user where they were.
+      if (alignOnMount && followingRef.current) {
         node.scrollTo({ top: node.scrollHeight });
       }
       syncBottomState();
