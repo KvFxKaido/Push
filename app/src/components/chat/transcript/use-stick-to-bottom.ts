@@ -9,9 +9,11 @@ function distanceFromBottom(el: HTMLElement): number {
 export interface StickToBottomController {
   /**
    * Attach to the scroll element. Works as a plain DOM ref
-   * (`<div ref={registerScroller}>`) and as Virtuoso's `scrollerRef` (which may
-   * hand back a `Window`); the hook wires up the scroll listener and tears it
-   * down when the element detaches.
+   * (`<div ref={registerScroller}>`) and as Virtuoso's `scrollerRef`. The union
+   * includes `Window` only to stay assignable to Virtuoso's ref signature — we
+   * don't use window scrolling, so a `Window` (or any non-element) is ignored
+   * and leaves tracking disabled by design. For element scrollers the hook
+   * wires up the scroll listener and tears it down when the element detaches.
    */
   registerScroller: (el: HTMLElement | Window | null) => void;
   /** True while within `AT_BOTTOM_THRESHOLD_PX` of the bottom — drives the button. */
@@ -42,7 +44,6 @@ export function useStickToBottom(
   const { alignOnMount = false } = options;
   const elRef = useRef<HTMLElement | null>(null);
   const lastMessageIdRef = useRef<string | null>(null);
-  const alignedRef = useRef(false);
   const [isAtBottom, setIsAtBottom] = useState(true);
 
   const syncBottomState = useCallback(() => {
@@ -80,9 +81,11 @@ export function useStickToBottom(
       elRef.current = node;
       if (!node) return;
       node.addEventListener('scroll', syncBottomState, { passive: true });
-      // Bottom-align once on first attach (virtualized threshold crossover).
-      if (alignOnMount && !alignedRef.current) {
-        alignedRef.current = true;
+      // Bottom-align on attach (virtualized threshold crossover). React only
+      // invokes this callback on a genuine attach/detach, so aligning on every
+      // attach is "once per node" — and a replacement scroller still lands at
+      // the bottom rather than its natural top.
+      if (alignOnMount) {
         node.scrollTo({ top: node.scrollHeight });
       }
       syncBottomState();
