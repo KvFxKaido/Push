@@ -3,13 +3,12 @@
  *
  * Design: docs/decisions/Webhook-Triggered PR Review.md
  *
- * GitHub can't attach the private-deployment token (`X-Push-Deployment-Token`),
- * so `/api/github/webhook` is exempt from that gate (see
- * `isDeploymentTokenExemptPath`). The webhook's own auth is the HMAC signature
- * verified here against `GITHUB_WEBHOOK_SECRET` — the receiver fails closed when
- * that secret is unset. Each gate emits a paired structured log so a dropped
- * delivery is visible to ops rather than silent (CLAUDE.md "Symmetric structured
- * logs").
+ * GitHub can't attach a Push session, so `/api/github/webhook` is exempt from the
+ * session gate (the exempt set in `worker-middleware.ts`). The webhook's own auth
+ * is the HMAC signature verified here against `GITHUB_WEBHOOK_SECRET` — the
+ * receiver fails closed when that secret is unset. Each gate emits a paired
+ * structured log so a dropped delivery is visible to ops rather than silent
+ * (CLAUDE.md "Symmetric structured logs").
  *
  * The receiver does cheap, synchronous gating only and hands the actual review
  * to the `PrReviewJob` Durable Object, returning 202 well inside GitHub's ~10s

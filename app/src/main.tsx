@@ -3,14 +3,14 @@ import { createRoot } from 'react-dom/client';
 import './index.css';
 import App from './App.tsx';
 import { RootErrorBoundary } from './components/RootErrorBoundary.tsx';
-import { DeploymentTokenGate } from './components/DeploymentTokenGate.tsx';
+import { GitHubSignInGate } from './components/GitHubSignInGate.tsx';
 import { initPushTracing } from './lib/tracing.ts';
 import { installGlobalErrorHandlers, primeErrorReporting } from './lib/error-reporting.ts';
 import { perfMark } from './lib/perf-marks.ts';
-import { installDeploymentAuthFetch } from './lib/deployment-auth.ts';
+import { installApiAuthFetch } from './lib/api-auth-fetch.ts';
 
 perfMark('app:boot');
-installDeploymentAuthFetch();
+installApiAuthFetch();
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -37,9 +37,9 @@ if (tracingConfig.enabled && (tracingConfig.endpoint || tracingConfig.consoleExp
 createRoot(rootElement).render(
   <StrictMode>
     <RootErrorBoundary>
-      <DeploymentTokenGate>
+      <GitHubSignInGate>
         <App />
-      </DeploymentTokenGate>
+      </GitHubSignInGate>
     </RootErrorBoundary>
   </StrictMode>,
 );

@@ -202,9 +202,9 @@ function authenticateBearer(request: Request, env: Env): AuthResult | AuthError 
   if (bearer.startsWith(PUSHD_BEARER_PREFIX)) {
     // Trim trailing whitespace/newlines — `echo ... | wrangler secret
     // put PUSH_RELAY_TOKEN` is a common operator pattern and leaves
-    // a trailing `\n` that would otherwise cause silent
-    // BEARER_REJECTED (matches PUSH_DEPLOYMENT_TOKEN's trimSecret
-    // path in worker-middleware.ts).
+    // a trailing `\n` that would otherwise cause silent BEARER_REJECTED
+    // (same trim-on-read discipline as the session secrets in
+    // worker-middleware.ts).
     const expected = (env.PUSH_RELAY_TOKEN ?? '').trim();
     if (expected.length === 0) {
       return {

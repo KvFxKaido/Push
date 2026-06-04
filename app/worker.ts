@@ -15,7 +15,6 @@ import type { Env } from './src/worker/worker-middleware';
 import {
   applySecurityHeaders,
   corsHeadersFor,
-  requireDeploymentTokenForApi,
   requireSessionForGatedApi,
 } from './src/worker/worker-middleware';
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from './src/lib/request-id';
@@ -136,14 +135,10 @@ export default {
         );
       }
 
-      const deploymentAuthResponse = requireDeploymentTokenForApi(requestWithId, env, url);
-      if (deploymentAuthResponse) {
-        return withRequestIdOnResponse(deploymentAuthResponse, requestId, requestWithId, env);
-      }
-
-      // GitHub-identity session gate (auth rework, migration step 1). Runs
-      // alongside the deployment token; in observe mode it only logs, so this
-      // returns a Response only once PUSH_SESSION_GATE_ENFORCE is set.
+      // GitHub-identity session gate — the universal /api/* auth (auth rework
+      // step 3; the X-Push-Deployment-Token gate it replaced is retired). Returns
+      // a 401 Response when ENFORCE is on and the request lacks a valid
+      // allowlisted session on a gated path; null otherwise.
       const sessionAuthResponse = await requireSessionForGatedApi(requestWithId, env, url);
       if (sessionAuthResponse) {
         return withRequestIdOnResponse(sessionAuthResponse, requestId, requestWithId, env);

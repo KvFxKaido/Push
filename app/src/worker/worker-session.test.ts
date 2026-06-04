@@ -211,6 +211,8 @@ describe('worker-session: gated-path predicate', () => {
       '/api/github/tools',
       '/api/github/repo-coverage',
       '/api/pr-reviews/run',
+      // the client's session probe (sign-in gate keys on its 200/401)
+      '/api/auth-probe',
       // a future relay protocol version must opt into exemption explicitly, not
       // inherit /api/relay/v1's bypass.
       '/api/relay/v2/session',
@@ -227,7 +229,6 @@ describe('worker-session: gated-path predicate', () => {
       '/api/github/app-oauth', // mints the session
       '/api/github/app-token', // auth bootstrap
       '/api/github/app-logout',
-      '/api/auth-probe', // legacy deployment-token probe (exempt until 3b)
       '/api/_stats', // admin token
       '/api/admin/snapshots', // admin token
       '/api/relay/v1/session', // device bearer

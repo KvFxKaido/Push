@@ -55,7 +55,7 @@
 //
 // Run:
 //   PUSH_SMOKE_BASE_URL=https://push.<sub>.workers.dev \
-//   PUSH_SMOKE_DEPLOYMENT_TOKEN=$(grep ^PUSH_DEPLOYMENT_TOKEN= .dev.vars | cut -d= -f2- | tr -d '"\r') \
+//   PUSH_SMOKE_SESSION_TOKEN=<X-Push-Session JWT> \
 //   node scripts/snapshot-smoke/coder-resume-smoke.mjs
 // ---------------------------------------------------------------------------
 
@@ -66,7 +66,7 @@ const cfg = {
   origin: process.env.PUSH_SMOKE_ORIGIN ?? '',
   repo: process.env.PUSH_SMOKE_REPO ?? 'push-smoke/resume',
   branch: process.env.PUSH_SMOKE_BRANCH ?? `resume-smoke-${Date.now()}`,
-  deploymentToken: process.env.PUSH_SMOKE_DEPLOYMENT_TOKEN ?? '',
+  sessionToken: process.env.PUSH_SMOKE_SESSION_TOKEN ?? '',
   // The cloudflare provider is the only one configured on prod /api/health.
   // kimi-k2.6 is the strongest Workers AI model that reliably chains tool
   // calls on a multi-step Coder loop.
@@ -114,7 +114,7 @@ let failures = 0;
 
 function authHeaders() {
   const headers = { 'content-type': 'application/json', origin: cfg.origin };
-  if (cfg.deploymentToken) headers['X-Push-Deployment-Token'] = cfg.deploymentToken;
+  if (cfg.sessionToken) headers['X-Push-Session'] = cfg.sessionToken;
   return headers;
 }
 

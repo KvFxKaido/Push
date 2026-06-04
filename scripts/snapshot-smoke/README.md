@@ -59,10 +59,11 @@ Node 18+ (uses global `fetch`). Zero dependencies — nothing to install.
 | `PUSH_SMOKE_GREEN_MS` / `PUSH_SMOKE_YELLOW_MS` | `5000` / `15000` | restore-latency grading bars (from the spike) |
 | `PUSH_SMOKE_KEEP` | unset | `1` keeps the snapshot in R2 (skips `delete-snapshot`) |
 | `PUSH_SMOKE_STRICT_LATENCY` | unset | `1` makes a red restore grade fail the run |
-| `PUSH_SMOKE_DEPLOYMENT_TOKEN` | unset | Sent as `X-Push-Deployment-Token`. **Required for a private deployment** (Worker has `PUSH_DEPLOYMENT_TOKEN` set) — otherwise every route 401s with `DEPLOYMENT_AUTH_REQUIRED`. |
+| `PUSH_SMOKE_SESSION_TOKEN` | unset | Sent as `X-Push-Session`. **Required when the Worker enforces the session gate** (`PUSH_SESSION_GATE_ENFORCE=1`) — otherwise gated routes 401 with `SESSION_AUTH_REQUIRED`. Must be a session JWT signed with the Worker's `PUSH_SESSION_SECRET` for a `GITHUB_ALLOWED_USER_IDS` user. |
 
-> **Private deployment:** if the Worker sets `PUSH_DEPLOYMENT_TOKEN`, source it without
-> echoing the value, e.g. `export PUSH_SMOKE_DEPLOYMENT_TOKEN="$(grep '^PUSH_DEPLOYMENT_TOKEN=' .dev.vars | cut -d= -f2- | tr -d '"\r')"`.
+> **Enforcing deployment:** mint an `X-Push-Session` JWT (HS256, `sub` = an
+> allowlisted GitHub user id, signed with `PUSH_SESSION_SECRET`) and pass it as
+> `PUSH_SMOKE_SESSION_TOKEN`.
 
 ## Output
 
@@ -108,7 +109,7 @@ plus:
 
 ```bash
 PUSH_SMOKE_BASE_URL=https://push.<sub>.workers.dev \
-PUSH_SMOKE_DEPLOYMENT_TOKEN="$(grep ^PUSH_DEPLOYMENT_TOKEN= .dev.vars | cut -d= -f2- | tr -d '"\r')" \
+PUSH_SMOKE_SESSION_TOKEN="<X-Push-Session JWT>" \
 node scripts/snapshot-smoke/coder-resume-smoke.mjs
 ```
 

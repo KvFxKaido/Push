@@ -6,45 +6,34 @@ This runbook is for the "I test the production web app from my phone, but I do n
 
 Use Cloudflare Access / Zero Trust in front of the whole production hostname. That protects the static app and every Worker route before requests reach Push.
 
-Keep the repo-side deployment token below as a second layer or a fallback when Access setup is not available yet.
+The repo-side API gate is the **GitHub-identity session gate** below — Access is an optional additional outer edge layer.
 
-## Repo-Side API Gate
+> The legacy `X-Push-Deployment-Token` / `#push_token` gate was retired in the auth rework (see `docs/decisions/Auth Rework — GitHub as the Single Identity Anchor.md`). The GitHub-identity session is now the universal `/api/*` gate.
 
-Push supports an optional Worker secret:
+## GitHub-Identity Session Gate (repo-side API gate)
 
-```bash
-TOKEN=$(openssl rand -hex 32)
-printf '%s\n' "$TOKEN"
-printf '%s' "$TOKEN" | npx wrangler secret put PUSH_DEPLOYMENT_TOKEN
-```
-
-When `PUSH_DEPLOYMENT_TOKEN` is set:
-
-- every `/api/*` route except `/api/health` requires `X-Push-Deployment-Token`
-- static assets still load, so you get a visible app instead of a blank page
-- the browser can store the token by opening the app once with a URL fragment:
-
-```text
-https://your-push-host.example/#push_token=<token>
-```
-
-The fragment is not sent to the server. The app stores it in `localStorage` as `push_deployment_token`, strips it from the URL with `history.replaceState`, and automatically adds `X-Push-Deployment-Token` to same-origin `/api/*` requests. For the Capacitor shell, the same helper also works with `VITE_API_BASE_URL`.
-
-To rotate the token:
+The session is the universal `/api/*` gate: a request needs a valid session minted for an **allowlisted GitHub user id**. Configure three Worker secrets:
 
 ```bash
-TOKEN=$(openssl rand -hex 32)
-printf '%s\n' "$TOKEN"
-printf '%s' "$TOKEN" | npx wrangler secret put PUSH_DEPLOYMENT_TOKEN
+# 1) HMAC signing secret for the session JWT (independent of all other secrets)
+printf '%s' "$(openssl rand -hex 32)" | npx wrangler secret put PUSH_SESSION_SECRET
+
+# 2) Allowed GitHub numeric user id(s), comma/space separated (find yours at
+#    https://api.github.com/users/<login> → .id)
+printf '%s' "107059169" | npx wrangler secret put GITHUB_ALLOWED_USER_IDS
+
+# 3) Flip from observe (log-only) to enforcing, once you've watched the logs
+printf '%s' "1" | npx wrangler secret put PUSH_SESSION_GATE_ENFORCE
 ```
 
-Then open the app once with the new `#push_token=<token>` URL on each browser/device.
+When enforcing:
 
-To clear the browser token:
+- every gated `/api/*` route requires a valid session (the exempt set is health, the GitHub-App auth-bootstrap endpoints, the webhook (HMAC), relay (device bearer), and the admin-token routes)
+- static assets still load; a request with no session is met by the in-app **"Connect GitHub to continue"** screen (`GitHubSignInGate`)
+- the session is minted when you connect via the GitHub App (OAuth or installation-id) and travels as a `SameSite=None` cookie plus an `X-Push-Session` header fallback for the Capacitor shell
+- the repo must be covered by your GitHub App installation (`GITHUB_ALLOWED_INSTALLATION_IDS`); a non-covered repo gets an actionable install/update prompt before the sandbox clone
 
-```js
-localStorage.removeItem('push_deployment_token')
-```
+Roll out observe-first: leave `PUSH_SESSION_GATE_ENFORCE` unset, sign in on every surface you use, watch `wrangler tail` for `session_gate_observe_allow` with your `sub`, then set the flag to enforce. To deauthorize, remove your id from `GITHUB_ALLOWED_USER_IDS` (or disconnect, which expires the cookie).
 
 ## Cloudflare Access Setup Notes
 
@@ -66,6 +55,6 @@ After enabling Access, test from your phone:
 
 ## What This Does Not Solve
 
-The deployment token is a personal-deployment guard, not multi-user auth. It does not add per-user quota, billing isolation, or audit identity. If Push becomes a public hosted service, add real auth, per-user limits, and separate billing controls before opening sandbox creation or background jobs.
+The session gate's allowlist is a single-user / small-allowlist guard, not multi-user auth. It anchors identity on GitHub and gates the metered surface, but does not add per-user quota, billing isolation, or audit identity beyond the structured `session_gate_*` logs. If Push becomes a public hosted service, widen the allowlist into a real accounts/session system with per-user limits and separate billing before opening sandbox creation or background jobs.
 
 Also keep self-hosting config hygiene separate: public examples should use placeholder KV namespace IDs and explain how operators create their own Cloudflare resources.
