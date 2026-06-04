@@ -78,10 +78,14 @@ export function VirtualizedTranscript({
     if (el) el.scrollTo({ top: el.scrollHeight, behavior });
   }, []);
 
-  // Bottom-align on mount. This is the threshold-crossover case: when a chat
-  // grows past the segment threshold the virtualized container mounts fresh, and
-  // without this it would render with the last item aligned to the *top* of the
-  // viewport. Runs before paint so there's no visible jump.
+  // Bottom-align on mount — the threshold-crossover case, where the virtualized
+  // container mounts fresh and would otherwise render with the last item aligned
+  // to the *top*. The race-free baseline is Virtuoso's own
+  // `initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}` (below), which
+  // bottom-aligns natively even before our scroller ref is populated. This layout
+  // effect is a guarded refinement that pulls past the footer (streaming tail)
+  // when the ref is available; if it no-ops the native alignment still holds, so
+  // there's no top-aligned flash.
   useLayoutEffect(() => {
     scrollToBottom('auto');
     // Mount only.
@@ -110,7 +114,11 @@ export function VirtualizedTranscript({
     if (distanceFromBottom < AUTO_SCROLL_THRESHOLD_PX) {
       scrollToBottom('smooth');
     }
-  }, [lastMessage, streamingContent, agentStatus, segments, scrollToBottom]);
+    // Deps mirror the plain path's [lastMessage, lastMessageContent]:
+    // `streamingContent` triggers on every chunk, `lastMessage` on new messages.
+    // agentStatus/segments are deliberately excluded — they'd re-run the effect
+    // on phase changes and settled-array churn without affecting bottom-growth.
+  }, [lastMessage, streamingContent, scrollToBottom]);
 
   const handleScrollToBottomClick = useCallback(() => {
     scrollToBottom('smooth');
@@ -122,6 +130,23 @@ export function VirtualizedTranscript({
     [activeMessage, agentStatus, handlers],
   );
 
+  // Stable renderers/props so Virtuoso isn't handed fresh references each render.
+  // They close over nothing reactive — segment/context arrive as arguments,
+  // Header/Footer are module-level, segmentKey/SegmentView are imports.
+  const components = useMemo(() => ({ Header, Footer }), []);
+  const computeItemKey = useCallback(
+    (index: number, segment: TranscriptSegment) => segmentKey(segment, index),
+    [],
+  );
+  const itemContent = useCallback(
+    (_index: number, segment: TranscriptSegment, ctx: VirtuosoContext) => (
+      <div className="pb-1.5">
+        <SegmentView segment={segment} handlers={ctx.handlers} />
+      </div>
+    ),
+    [],
+  );
+
   return (
     <>
       <Virtuoso<TranscriptSegment, VirtuosoContext>
@@ -131,16 +156,12 @@ export function VirtualizedTranscript({
         className="flex-1 overscroll-contain"
         data={segments}
         context={context}
-        components={{ Header, Footer }}
-        computeItemKey={(index, segment) => segmentKey(segment, index)}
-        itemContent={(_index, segment, ctx) => (
-          <div className="pb-1.5">
-            <SegmentView segment={segment} handlers={ctx.handlers} />
-          </div>
-        )}
+        components={components}
+        computeItemKey={computeItemKey}
+        itemContent={itemContent}
         atBottomThreshold={AT_BOTTOM_THRESHOLD_PX}
         atBottomStateChange={setIsAtBottom}
-        initialTopMostItemIndex={Math.max(0, segments.length - 1)}
+        initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
         increaseViewportBy={{ top: 600, bottom: 600 }}
       />
 

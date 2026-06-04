@@ -31,10 +31,13 @@ export function TranscriptList({
   const virtualized = isVirtualizedTranscript(segments.length);
   const path = virtualized ? 'virtualized' : 'plain';
 
-  // Symmetric structured log: both branches emit on transition, so ops can
-  // confirm which container is active (and at what size) from logs alone —
-  // pairs with the dev-only badge below for visual confirmation in screenshots.
+  // Dev-only structured log on path transition. Uses the repo's canonical
+  // `JSON.stringify({ level, event, ...ctx })` shape, but gated to DEV (like the
+  // badge below) since this is a browser surface — prod infra wouldn't capture
+  // client console output, and the log exists for screenshot/testing
+  // verification rather than server-side ops.
   useEffect(() => {
+    if (!import.meta.env.DEV) return;
     console.log(
       JSON.stringify({
         level: 'debug',
