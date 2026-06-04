@@ -57,7 +57,8 @@ describe('orchestrator-prompt-builder (shared lib)', () => {
     expect(text).toContain('## Explorer Task Template');
     expect(text).toContain('## Multi-Task Delegation');
     expect(text).toContain('## Task Graph Orchestration');
-    expect(text).toContain('## When to Delegate vs Handle Directly');
+    // Coder Delegation Collapse: the lead does coding itself by default.
+    expect(text).toContain('## Do the Work Yourself');
   });
 
   it('buildOrchestratorBaseBuilder wires the base sections', () => {

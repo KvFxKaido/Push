@@ -490,17 +490,12 @@ describe('chat-send', () => {
     expect(lastMsg?.content).toContain('npx tsc --noEmit');
   });
 
-  it('refuses sandbox_exec from the orchestrator chat path at the role-capability kernel gate', async () => {
-    // Orchestrator's grant in `lib/capabilities.ts:ROLE_CAPABILITIES`
-    // intentionally omits `sandbox:exec` — destructive shell commands
-    // belong in a Coder delegation. Before the kernel role check was
-    // promoted into `WebToolExecutionRuntime.execute`, the chat path
-    // forgot to pass `role`, the check silently no-op'd, and the call
-    // landed on the approval gate. With kernel enforcement on, the call
-    // is denied with `ROLE_CAPABILITY_DENIED` *before* the approval
-    // gate runs — the architectural invariant ("orchestrator delegates
-    // mutation") is now load-bearing rather than convention. Closes
-    // audit item #3 from the OpenCode silent-failure inventory.
+  it('allows sandbox_exec from the orchestrator chat path (Coder Delegation Collapse)', async () => {
+    // The orchestrator is the single capable lead now (lib/capabilities.ts):
+    // sandbox:exec is in its grant, so the role-capability kernel gate no longer
+    // blocks the call. It proceeds past the role check (to the approval/exec
+    // path) instead of returning ROLE_CAPABILITY_DENIED — the lead runs commands
+    // itself rather than delegating.
     const conversationsRef = {
       current: makeConversation([makeMessage({ content: 'streaming...' })]),
     };
@@ -511,14 +506,14 @@ describe('chat-send', () => {
 
     const result = await processAssistantTurn(
       0,
-      '```json\n{"tool":"sandbox_exec","args":{"command":"rm -rf /workspace/tmp-cache"}}\n```',
+      '```json\n{"tool":"sandbox_exec","args":{"command":"npm test"}}\n```',
       '',
       [],
       [
         makeMessage({
           id: 'user-1',
           role: 'user',
-          content: 'Clean up the workspace',
+          content: 'Run the tests',
           status: 'done',
         }),
       ],
@@ -526,13 +521,12 @@ describe('chat-send', () => {
       { diagnosisRetries: 0, recoveryAttempted: false },
     );
 
-    expect(result.loopAction).toBe('continue');
-    expect(result.loopCompletedNormally).toBe(false);
+    // No role-capability denial: the lead is allowed to exec.
     const lastApiMsg = result.nextApiMessages.at(-1)?.content ?? '';
-    expect(lastApiMsg).toContain('Tool Blocked');
-    expect(lastApiMsg).toContain('sandbox_exec');
-    expect(lastApiMsg).toContain('orchestrator');
-    expect(conversationsRef.current['chat-1'].messages.at(-1)?.content).toContain('Tool Blocked');
+    expect(lastApiMsg).not.toContain('ROLE_CAPABILITY_DENIED');
+    expect(conversationsRef.current['chat-1'].messages.at(-1)?.content ?? '').not.toContain(
+      'ROLE_CAPABILITY_DENIED',
+    );
   });
 
   it('appends post-tool inject messages to the conversation and next round context', async () => {

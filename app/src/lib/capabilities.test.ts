@@ -83,14 +83,18 @@ describe('Role capability grants', () => {
     expect(roleHasCapability('coder', 'git:push')).toBe(true);
   });
 
-  it('Orchestrator can delegate and make direct edits, but cannot run commands', () => {
+  it('Orchestrator is the single capable lead: edits, runs commands, and ships directly', () => {
+    // Coder Delegation Collapse (2026-06-04): the lead has the full sandbox +
+    // git grant and runs the work itself. delegate:coder is retained (CLI/daemon
+    // task-graph + headless), but the lead no longer routes ordinary work to it.
     expect(roleHasCapability('orchestrator', 'delegate:coder')).toBe(true);
     expect(roleHasCapability('orchestrator', 'delegate:explorer')).toBe(true);
-    // Cloud direct-edit lane: write + commit + push, but no exec.
     expect(roleHasCapability('orchestrator', 'repo:write')).toBe(true);
     expect(roleHasCapability('orchestrator', 'git:commit')).toBe(true);
     expect(roleHasCapability('orchestrator', 'git:push')).toBe(true);
-    expect(roleHasCapability('orchestrator', 'sandbox:exec')).toBe(false);
+    expect(roleHasCapability('orchestrator', 'sandbox:exec')).toBe(true);
+    expect(roleHasCapability('orchestrator', 'sandbox:test')).toBe(true);
+    expect(roleHasCapability('orchestrator', 'sandbox:download')).toBe(true);
   });
 
   it('Orchestrator (cloud) can drive PRs and workflow dispatch when the user asks', () => {
@@ -277,9 +281,9 @@ describe('ExecutionMode — orchestrator capability widening for local-daemon', 
   // `localDaemonBinding` via `getExecutionMode`; the capability layer
   // never sees the binding directly.
 
-  describe('cloud mode (default) gives orchestrator a direct-edit lane (no exec)', () => {
-    it('orchestrator can write/edit/patch and commit/push, but cannot exec in cloud mode', () => {
-      // Direct-edit lane: file mutations + commit/push are in the grant.
+  describe('cloud mode (default) gives orchestrator the full edit + exec lane', () => {
+    it('orchestrator can write/edit/patch, commit/push, AND exec in cloud mode', () => {
+      // Coder Delegation Collapse: the lead does the work itself.
       expect(roleCanUseTool('orchestrator', 'sandbox_write_file', 'cloud')).toBe(true);
       expect(roleCanUseTool('orchestrator', 'sandbox_edit_file', 'cloud')).toBe(true);
       expect(roleCanUseTool('orchestrator', 'sandbox_edit_range', 'cloud')).toBe(true);
@@ -287,15 +291,15 @@ describe('ExecutionMode — orchestrator capability widening for local-daemon', 
       expect(roleCanUseTool('orchestrator', 'sandbox_apply_patchset', 'cloud')).toBe(true);
       expect(roleCanUseTool('orchestrator', 'sandbox_prepare_commit', 'cloud')).toBe(true);
       expect(roleCanUseTool('orchestrator', 'sandbox_push', 'cloud')).toBe(true);
-      // No exec lane — the boundary that keeps verify-needed work with the Coder.
-      expect(roleCanUseTool('orchestrator', 'sandbox_exec', 'cloud')).toBe(false);
-      expect(roleCanUseTool('orchestrator', 'sandbox_run_tests', 'cloud')).toBe(false);
+      // Exec lane is now the lead's — no more delegation just to run something.
+      expect(roleCanUseTool('orchestrator', 'sandbox_exec', 'cloud')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'sandbox_run_tests', 'cloud')).toBe(true);
     });
 
     it('omitting the mode argument behaves like cloud (back-compat)', () => {
-      expect(roleCanUseTool('orchestrator', 'sandbox_exec')).toBe(false);
+      expect(roleCanUseTool('orchestrator', 'sandbox_exec')).toBe(true);
       expect(roleCanUseTool('orchestrator', 'sandbox_write_file')).toBe(true);
-      expect(roleHasCapability('orchestrator', 'sandbox:exec')).toBe(false);
+      expect(roleHasCapability('orchestrator', 'sandbox:exec')).toBe(true);
       expect(roleHasCapability('orchestrator', 'repo:write')).toBe(true);
     });
 
@@ -409,22 +413,23 @@ describe('ExecutionMode — orchestrator capability widening for local-daemon', 
       expect(effective).toEqual(ROLE_CAPABILITIES.orchestrator);
     });
 
-    it('local-daemon orchestrator adds sandbox + local-branch extras and removes remote-only caps', () => {
+    it('local-daemon orchestrator adds the local-branch extra and removes remote-only caps', () => {
       const cloudCaps = getEffectiveCapabilities('orchestrator', 'cloud');
       const daemonCaps = getEffectiveCapabilities('orchestrator', 'local-daemon');
-      // Sandbox extras + local git:branch present only in daemon mode
-      // (repo:write is shared — cloud has it too via the direct-edit lane).
+      // git:branch is the only daemon-only extra now (the lead has sandbox
+      // exec/test/download in BOTH modes after the Coder Delegation Collapse).
+      expect(daemonCaps.has('git:branch')).toBe(true);
+      expect(cloudCaps.has('git:branch')).toBe(false);
+      // Sandbox exec/test/download are now shared (base grant).
       for (const cap of [
         'sandbox:exec',
         'sandbox:test',
         'sandbox:download',
-        'git:branch',
+        'repo:write',
       ] as const) {
+        expect(cloudCaps.has(cap)).toBe(true);
         expect(daemonCaps.has(cap)).toBe(true);
-        expect(cloudCaps.has(cap)).toBe(false);
       }
-      expect(cloudCaps.has('repo:write')).toBe(true);
-      expect(daemonCaps.has('repo:write')).toBe(true);
       // git:commit is a LOCAL op — kept in daemon mode (and cloud).
       expect(cloudCaps.has('git:commit')).toBe(true);
       expect(daemonCaps.has('git:commit')).toBe(true);
@@ -436,18 +441,16 @@ describe('ExecutionMode — orchestrator capability widening for local-daemon', 
       }
     });
 
-    it('local-daemon orchestrator extras are exactly exec/test/download/branch', () => {
+    it('local-daemon orchestrator extra is exactly git:branch', () => {
       const cloudCaps = getEffectiveCapabilities('orchestrator', 'cloud');
       const daemonCaps = getEffectiveCapabilities('orchestrator', 'local-daemon');
       const extras = new Set<Capability>();
       for (const cap of daemonCaps) {
         if (!cloudCaps.has(cap)) extras.add(cap);
       }
-      // repo:write is shared (not daemon-only); git:branch is a daemon-only
-      // local op the orchestrator picks up (PR #700).
-      expect(extras).toEqual(
-        new Set<Capability>(['sandbox:exec', 'sandbox:test', 'sandbox:download', 'git:branch']),
-      );
+      // sandbox exec/test/download moved to the base grant (Coder Delegation
+      // Collapse); git:branch is the only daemon-only local op left (PR #700).
+      expect(extras).toEqual(new Set<Capability>(['git:branch']));
     });
 
     it('cloud-only orchestrator caps are the remote-bound PR/workflow + git:push', () => {
@@ -464,12 +467,9 @@ describe('ExecutionMode — orchestrator capability widening for local-daemon', 
   });
 
   describe('enforceRoleCapability honors mode', () => {
-    it('cloud orchestrator hitting sandbox_exec gets ROLE_CAPABILITY_DENIED', () => {
+    it('cloud orchestrator can exec — the collapse moved exec into the base grant', () => {
       const check = enforceRoleCapability('orchestrator', 'sandbox_exec', 'cloud');
-      expect(check.ok).toBe(false);
-      if (check.ok) return;
-      expect(check.type).toBe('ROLE_CAPABILITY_DENIED');
-      expect(check.detail).toContain('Mode: cloud');
+      expect(check.ok).toBe(true);
     });
 
     it('local-daemon orchestrator can exec — same call passes the gate', () => {
