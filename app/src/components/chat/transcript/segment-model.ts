@@ -22,12 +22,28 @@ export interface TranscriptHandlers {
 }
 
 /**
+ * Compile-time exhaustiveness guard. If `groupChatMessages` grows a new segment
+ * variant, every `switch` below that doesn't handle it stops type-checking here
+ * — turning silent drift into a build error.
+ */
+function assertNeverSegment(segment: never): never {
+  throw new Error(`Unhandled transcript segment: ${JSON.stringify(segment)}`);
+}
+
+/**
  * Stable key for a segment. The index suffix matches the original
  * (non-virtualized) keying so React reconciliation behaves identically across
  * both paths and Virtuoso's `computeItemKey`.
  */
 export function segmentKey(segment: TranscriptSegment, index: number): string {
-  return segment.type === 'text' ? `${segment.message.id}-${index}` : `tool-group-${index}`;
+  switch (segment.type) {
+    case 'text':
+      return `${segment.message.id}-${index}`;
+    case 'toolGroup':
+      return `tool-group-${index}`;
+    default:
+      return assertNeverSegment(segment);
+  }
 }
 
 /**
@@ -41,14 +57,19 @@ export function segmentKey(segment: TranscriptSegment, index: number): string {
  */
 export function sameSegmentContent(a: TranscriptSegment, b: TranscriptSegment): boolean {
   if (a.type !== b.type) return false;
-  if (a.type === 'text' && b.type === 'text') return a.message === b.message;
-  if (a.type === 'toolGroup' && b.type === 'toolGroup') {
-    if (a.items.length !== b.items.length) return false;
-    for (let index = 0; index < a.items.length; index++) {
-      if (a.items[index].callMsg !== b.items[index].callMsg) return false;
-      if (a.items[index].resultMsg !== b.items[index].resultMsg) return false;
+  switch (a.type) {
+    case 'text':
+      return b.type === 'text' && a.message === b.message;
+    case 'toolGroup': {
+      if (b.type !== 'toolGroup') return false;
+      if (a.items.length !== b.items.length) return false;
+      for (let index = 0; index < a.items.length; index++) {
+        if (a.items[index].callMsg !== b.items[index].callMsg) return false;
+        if (a.items[index].resultMsg !== b.items[index].resultMsg) return false;
+      }
+      return true;
     }
-    return true;
+    default:
+      return assertNeverSegment(a);
   }
-  return false;
 }
