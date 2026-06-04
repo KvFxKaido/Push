@@ -53,8 +53,7 @@ import { getModelForRole, type PreferredProvider } from '@/lib/providers';
 import { iteratePushStreamText } from '@push/lib/stream-utils';
 import {
   GLASS_ACTIVE_CLASS,
-  GLASS_SURFACE,
-  GLASS_SURFACE_HOVER,
+  GLASS_FILL_FAINT,
   HUB_GLASS_HAIRLINE,
   HUB_GLASS_PANEL_CLASS,
   HUB_GLASS_STRIP_CLASS,
@@ -1478,11 +1477,13 @@ export function WorkspaceHubSheet({
             </div>
           )}
 
-          {/* Tab bar — one grouped command grid rather than loose chips on black,
-              so the workspace surfaces read as a single control cluster. */}
+          {/* Tab bar — a quiet tool grid. The tabs carry their own (faint) fill
+              instead of sitting in a bordered tray, so the only outline in the
+              cluster is the active tab's accent ring. Inactive tabs keep a
+              transparent border purely to hold their size when one goes active. */}
           <div className={`border-b ${HUB_GLASS_HAIRLINE} px-2 py-2`}>
             <div
-              className={`grid gap-1 rounded-2xl border ${GLASS_SURFACE} p-1 ${tabs.length >= 7 || tabs.length === 4 ? 'grid-cols-4' : 'grid-cols-3'}`}
+              className={`grid gap-1 ${tabs.length >= 7 || tabs.length === 4 ? 'grid-cols-4' : 'grid-cols-3'}`}
             >
               {tabs.map((tab) => {
                 const Icon = tab.icon;
@@ -1491,10 +1492,10 @@ export function WorkspaceHubSheet({
                   <button
                     key={tab.key}
                     onClick={() => setActiveTab(tab.key)}
-                    className={`relative flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl px-1.5 text-push-xs transition-all ${
+                    className={`relative flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl border px-1.5 text-push-xs transition-all ${
                       active
-                        ? `border ${GLASS_ACTIVE_CLASS} text-push-fg`
-                        : `border ${GLASS_SURFACE} text-push-fg-dim ${GLASS_SURFACE_HOVER} hover:text-push-fg-secondary`
+                        ? `${GLASS_ACTIVE_CLASS} text-push-fg`
+                        : `border-transparent ${GLASS_FILL_FAINT} text-push-fg-dim hover:bg-white/[0.05] hover:text-push-fg-secondary`
                     }`}
                   >
                     <Icon className={`h-3.5 w-3.5 ${active ? 'text-push-accent' : ''}`} />

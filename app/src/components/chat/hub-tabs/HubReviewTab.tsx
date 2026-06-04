@@ -44,6 +44,7 @@ import {
 import { ModelPicker } from '@/components/ui/model-picker';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import {
+  HUB_GLASS_HAIRLINE,
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
   HUB_TAG_CLASS,
@@ -109,6 +110,18 @@ type SavedReviewPayload = {
   reviewDiffData: DiffPreviewCardData | null;
   diffStorageTruncated: boolean;
 };
+
+// Segmented toggle pills (review source / depth / provider). These are
+// secondary controls, so they read as borderless fills rather than another ring
+// of bordered chips competing with the active tool tab and the Run button — the
+// selected one lifts on fill, the rest are quiet ghost text. Tap target is held
+// by the px/py padding, not a border.
+const reviewSegmentPillClass = (active: boolean): string =>
+  `rounded-full px-2.5 py-1 text-push-xs font-medium transition-colors ${
+    active
+      ? 'bg-white/[0.07] text-push-fg'
+      : 'text-push-fg-dim hover:bg-white/[0.04] hover:text-push-fg-secondary'
+  }`;
 
 const REVIEW_PROVIDER_KEY = 'push:review:selected-provider';
 const SAVED_REVIEW_STORAGE_PREFIX = 'push:review:saved:';
@@ -903,7 +916,7 @@ export function HubReviewTab({
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Controls */}
-      <div className="flex-shrink-0 border-b border-push-edge px-3 py-3 space-y-2.5">
+      <div className={`flex-shrink-0 border-b ${HUB_GLASS_HAIRLINE} px-3 py-3 space-y-2.5`}>
         {providerOptions.length === 0 ? (
           <p className="text-push-xs text-push-fg-dim">
             No AI provider configured. Add an API key in Settings to use the Reviewer.
@@ -916,11 +929,7 @@ export function HubReviewTab({
                   {hasGitHubSource && (
                     <button
                       onClick={() => handleSourceChange('github')}
-                      className={`rounded-full border px-2.5 py-1 text-push-xs font-medium transition-colors ${
-                        reviewSource === 'github'
-                          ? 'border-push-edge-hover bg-white/[0.05] text-push-fg'
-                          : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
-                      }`}
+                      className={reviewSegmentPillClass(reviewSource === 'github')}
                     >
                       Branch diff
                     </button>
@@ -928,22 +937,14 @@ export function HubReviewTab({
                   {hasCommitSource && (
                     <button
                       onClick={() => handleSourceChange('commit')}
-                      className={`rounded-full border px-2.5 py-1 text-push-xs font-medium transition-colors ${
-                        reviewSource === 'commit'
-                          ? 'border-push-edge-hover bg-white/[0.05] text-push-fg'
-                          : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
-                      }`}
+                      className={reviewSegmentPillClass(reviewSource === 'commit')}
                     >
                       Last commit
                     </button>
                   )}
                   <button
                     onClick={() => handleSourceChange('sandbox')}
-                    className={`rounded-full border px-2.5 py-1 text-push-xs font-medium transition-colors ${
-                      reviewSource === 'sandbox'
-                        ? 'border-push-edge-hover bg-white/[0.05] text-push-fg'
-                        : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
-                    }`}
+                    className={reviewSegmentPillClass(reviewSource === 'sandbox')}
                   >
                     Working tree
                   </button>
@@ -963,22 +964,14 @@ export function HubReviewTab({
               <button
                 onClick={() => setReviewDepth('quick')}
                 disabled={running}
-                className={`rounded-full border px-2.5 py-1 text-push-xs font-medium transition-colors ${
-                  reviewDepth === 'quick'
-                    ? 'border-push-edge-hover bg-white/[0.05] text-push-fg'
-                    : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
-                }`}
+                className={reviewSegmentPillClass(reviewDepth === 'quick')}
               >
                 Quick
               </button>
               <button
                 onClick={() => setReviewDepth('deep')}
                 disabled={running}
-                className={`rounded-full border px-2.5 py-1 text-push-xs font-medium transition-colors ${
-                  reviewDepth === 'deep'
-                    ? 'border-push-edge-hover bg-white/[0.05] text-push-fg'
-                    : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
-                }`}
+                className={reviewSegmentPillClass(reviewDepth === 'deep')}
               >
                 Deep
               </button>
@@ -995,11 +988,7 @@ export function HubReviewTab({
                 <button
                   key={type}
                   onClick={() => handleProviderChange(type)}
-                  className={`rounded-full border px-2.5 py-1 text-push-xs font-medium transition-colors ${
-                    selectedProvider === type
-                      ? 'border-push-edge-hover bg-white/[0.05] text-push-fg'
-                      : 'border-push-edge text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary'
-                  }`}
+                  className={reviewSegmentPillClass(selectedProvider === type)}
                 >
                   {label}
                 </button>
