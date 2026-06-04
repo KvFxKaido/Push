@@ -70,7 +70,11 @@ export function useStickToBottom(
 
   const registerScroller = useCallback(
     (el: HTMLElement | Window | null) => {
-      const node = el instanceof Window ? null : el;
+      // Only element scrollers are supported (Virtuoso's default). Narrow
+      // positively to HTMLElement, guarding the global so a non-browser runtime
+      // can't throw on `instanceof`; Window (useWindowScroll) or anything else
+      // falls back to null rather than tracking the wrong target.
+      const node = typeof HTMLElement !== 'undefined' && el instanceof HTMLElement ? el : null;
       const previous = elRef.current;
       if (previous) previous.removeEventListener('scroll', syncBottomState);
       elRef.current = node;
