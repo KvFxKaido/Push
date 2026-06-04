@@ -125,8 +125,11 @@ function parseClaims(payloadSegment: string): PushSessionClaims | null {
     ) as Partial<PushSessionClaims>;
     if (
       typeof parsed.sub !== 'string' ||
-      typeof parsed.iat !== 'number' ||
-      typeof parsed.exp !== 'number' ||
+      // Require finite integer timestamps: a non-finite exp (NaN/Infinity)
+      // would slip past the `exp <= now` expiry check (NaN comparisons are
+      // always false) and read as a never-expiring token.
+      !Number.isInteger(parsed.iat) ||
+      !Number.isInteger(parsed.exp) ||
       typeof parsed.iss !== 'string' ||
       typeof parsed.aud !== 'string'
     ) {

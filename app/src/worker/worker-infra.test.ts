@@ -901,6 +901,10 @@ describe('handleGitHubAppLogout', () => {
     expect(calls[0].url).toBe('https://api.github.com/installation/token');
     expect(calls[0].method).toBe('DELETE');
     expect(calls[0].auth).toBe('Bearer ghs_secret');
+    // Logout expires the HttpOnly session cookie server-side.
+    const setCookie = response.headers.get('Set-Cookie') ?? '';
+    expect(setCookie).toContain('push_session=');
+    expect(setCookie).toContain('Max-Age=0');
   });
 
   it('returns 204 (idempotent) when GitHub reports the token already invalid', async () => {

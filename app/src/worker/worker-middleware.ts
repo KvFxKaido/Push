@@ -560,11 +560,16 @@ export const SESSION_GATE_REQUIRED_CODE = 'SESSION_AUTH_REQUIRED';
 
 /**
  * The metered / cost-bearing surface the allowlist must hold without exception:
- * AI chat + search, sandbox lifecycle/ops, background coder jobs, and the
- * billable installation-token refresh. Read-only metadata (model lists),
- * artifact/library KV, the user's-own-token GitHub proxy, and the OAuth
- * callback itself stay ungated in step 1 — gating the expensive surface, not
- * everything equally.
+ * AI chat + search, sandbox lifecycle/ops, and background coder jobs. Read-only
+ * metadata (model lists), artifact/library KV, the user's-own-token GitHub
+ * proxy, and the GitHub-App auth endpoints stay ungated in step 1 — gating the
+ * expensive surface, not everything equally.
+ *
+ * `/api/github/app-token` is deliberately NOT gated: it's part of the auth
+ * bootstrap (the install-callback and manual-installation-id paths exchange a
+ * token here *before* any App-OAuth session exists), so gating it would 401 new
+ * users out of ever obtaining a session under enforce. It carries its own
+ * `GITHUB_ALLOWED_INSTALLATION_IDS` allowlist instead.
  */
 export function isSessionGatedPath(pathname: string): boolean {
   if (!pathname.startsWith('/api/')) return false;
@@ -572,7 +577,6 @@ export function isSessionGatedPath(pathname: string): boolean {
   if (pathname.endsWith('/search') || pathname.startsWith('/api/search')) return true;
   if (pathname.startsWith('/api/sandbox/') || pathname.startsWith('/api/sandbox-cf/')) return true;
   if (pathname === '/api/jobs' || pathname.startsWith('/api/jobs/')) return true;
-  if (pathname === '/api/github/app-token') return true;
   return false;
 }
 

@@ -11,7 +11,11 @@
 
 /** base64url encoding of a UTF-8 string. */
 export function base64UrlEncodeString(value: string): string {
-  return btoa(value).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  // Encode to UTF-8 bytes first rather than `btoa(value)` directly — `btoa`
+  // is Latin1-only and throws on any code point > 0xFF, and the decode side
+  // (`base64UrlDecodeToString`) is UTF-8, so going through bytes keeps the
+  // encode/decode pair symmetric for non-ASCII input.
+  return base64UrlEncodeBytes(new TextEncoder().encode(value).buffer);
 }
 
 /** base64url encoding of a raw byte buffer. */

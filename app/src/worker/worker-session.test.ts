@@ -105,6 +105,22 @@ describe('worker-session: mint + verify', () => {
     });
   });
 
+  it('rejects non-integer timestamps (no NaN/float expiry bypass)', async () => {
+    // A validly-signed token whose exp is a non-integer must not be treated as
+    // valid — guards the `exp <= now` check from float/NaN-style payloads.
+    const fractionalExp = await forgeToken(SECRET, {
+      sub: '1',
+      iat: 0,
+      exp: 1.5,
+      iss: SESSION_ISS,
+      aud: SESSION_AUD,
+    });
+    expect(await verifySessionToken(SECRET, fractionalExp, 0)).toEqual({
+      ok: false,
+      reason: 'malformed',
+    });
+  });
+
   it('rejects structurally malformed tokens', async () => {
     expect(await verifySessionToken(SECRET, 'only.two')).toEqual({
       ok: false,
@@ -186,7 +202,6 @@ describe('worker-session: gated-path predicate', () => {
       '/api/sandbox-cf/exec',
       '/api/jobs/start',
       '/api/jobs/abc/events',
-      '/api/github/app-token',
     ]) {
       expect(isSessionGatedPath(p)).toBe(true);
     }
@@ -200,6 +215,10 @@ describe('worker-session: gated-path predicate', () => {
       '/api/library/items/create',
       '/api/github/tools',
       '/api/github/app-oauth',
+      // app-token is part of the auth bootstrap (install callback / manual
+      // installation-id paths hit it before a session exists) — must stay
+      // ungated so enforce mode can't lock new users out.
+      '/api/github/app-token',
       '/api/health',
       '/api/auth-probe',
       '/not-api/chat',

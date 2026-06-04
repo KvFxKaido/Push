@@ -11,7 +11,7 @@ import {
 import { SANDBOX_ROUTES, resolveModalSandboxBase } from '../lib/sandbox-routes';
 import { recordSnapshotEvent } from './snapshot-index';
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from '../lib/request-id';
-import { buildSessionSetCookie, mintSessionToken } from './worker-session';
+import { buildSessionClearCookie, buildSessionSetCookie, mintSessionToken } from './worker-session';
 import {
   createSpanContext,
   buildTraceparent,
@@ -565,14 +565,28 @@ export async function handleGitHubAppOAuth(request: Request, env: Env): Promise<
     // numeric user id (docs/decisions/Auth Rework …). Without a verified id
     // there is nothing to anchor the allowlist on, so a failure here is fatal.
     let oauthUser: { login: string; avatar_url: string } | null = null;
-    const userRes = await fetch('https://api.github.com/user', {
-      headers: {
-        Authorization: `Bearer ${userToken}`,
-        Accept: 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-        'User-Agent': 'Push-App/1.0.0',
-      },
-    });
+    // Network and JSON-parse failures map to 502 (not the outer catch's 500):
+    // this is an upstream-GitHub failure on a now-mandatory step, so it gets
+    // the same gateway-error classification as a non-2xx /user response.
+    let userRes: Response;
+    try {
+      userRes = await fetch('https://api.github.com/user', {
+        headers: {
+          Authorization: `Bearer ${userToken}`,
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'Push-App/1.0.0',
+        },
+      });
+    } catch (err) {
+      wlog('error', 'github_oauth_error', {
+        requestId,
+        step: 'user_identity',
+        reason: 'fetch_failed',
+        message: err instanceof Error ? err.message : String(err),
+      });
+      return Response.json({ error: 'Failed to resolve GitHub identity' }, { status: 502 });
+    }
     if (!userRes.ok) {
       const errBody = await userRes.text().catch(() => '');
       wlog('error', 'github_oauth_error', {
@@ -586,11 +600,17 @@ export async function handleGitHubAppOAuth(request: Request, env: Env): Promise<
         { status: 502 },
       );
     }
-    const userData = (await userRes.json()) as {
-      id?: unknown;
-      login?: unknown;
-      avatar_url?: unknown;
-    };
+    let userData: { id?: unknown; login?: unknown; avatar_url?: unknown };
+    try {
+      userData = (await userRes.json()) as { id?: unknown; login?: unknown; avatar_url?: unknown };
+    } catch {
+      wlog('error', 'github_oauth_error', {
+        requestId,
+        step: 'user_identity',
+        reason: 'parse_failed',
+      });
+      return Response.json({ error: 'Failed to parse GitHub identity' }, { status: 502 });
+    }
     if (typeof userData.id !== 'number' || !Number.isFinite(userData.id)) {
       wlog('error', 'github_oauth_error', {
         requestId,
@@ -904,7 +924,14 @@ export async function handleGitHubAppLogout(request: Request, env: Env): Promise
     });
 
     if (ghRes.ok || ghRes.status === 401 || ghRes.status === 404) {
-      return new Response(null, { status: 204 });
+      // Expire the HttpOnly push_session cookie server-side — the client can't
+      // clear it from JS, and the fetch wrapper now sends it with every
+      // first-party /api request, so without this the session would keep
+      // authorizing the gated surface until its Max-Age elapsed (Codex P1).
+      return new Response(null, {
+        status: 204,
+        headers: { 'Set-Cookie': buildSessionClearCookie() },
+      });
     }
 
     const errBody = await ghRes.text().catch(() => '');
