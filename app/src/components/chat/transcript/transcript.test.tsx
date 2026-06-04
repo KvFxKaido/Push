@@ -2,10 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatMessage } from '@/types';
 import { groupChatMessages } from '../tool-call-utils';
-import {
-  VIRTUALIZED_TRANSCRIPT_MIN_SEGMENTS,
-  isVirtualizedTranscript,
-} from './constants';
+import { VIRTUALIZED_TRANSCRIPT_MIN_SEGMENTS, isVirtualizedTranscript } from './constants';
 import { segmentKey } from './segment-model';
 import { TranscriptList } from './TranscriptList';
 
@@ -41,7 +38,14 @@ describe('segmentKey', () => {
 
   it('keys tool groups by index', () => {
     const segments = groupChatMessages([
-      { id: 'call', role: 'assistant', content: '', timestamp: 1, status: 'done', isToolCall: true },
+      {
+        id: 'call',
+        role: 'assistant',
+        content: '',
+        timestamp: 1,
+        status: 'done',
+        isToolCall: true,
+      },
       {
         id: 'result',
         role: 'user',
