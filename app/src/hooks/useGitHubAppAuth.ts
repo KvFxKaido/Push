@@ -321,12 +321,13 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
       try {
         const data = await fetchAppOAuth(code);
 
-        // Persist the Push identity session minted by the OAuth handler. The
-        // SameSite=None cookie is the primary carrier; this header copy is the
+        // Mirror the OAuth response's session exactly: store the freshly minted
+        // token, or clear any stale copy when the response carries none (e.g.
+        // server-side secret unset). The header copy takes precedence over the
+        // cookie in extractSessionToken, so a stale header must not survive a
+        // re-auth. The SameSite=None cookie is the primary carrier; this is the
         // APK fallback (see lib/session-auth.ts).
-        if (data.session) {
-          setSessionToken(data.session, data.session_expires_at);
-        }
+        setSessionToken(data.session ?? null, data.session_expires_at);
 
         safeStorageSet(INSTALLATION_ID_KEY, data.installation_id);
         safeStorageSet(TOKEN_KEY, data.token);
