@@ -52,8 +52,11 @@ import { getActiveProvider, getProviderPushStream } from '@/lib/orchestrator';
 import { getModelForRole, type PreferredProvider } from '@/lib/providers';
 import { iteratePushStreamText } from '@push/lib/stream-utils';
 import {
+  GLASS_SURFACE,
+  GLASS_SURFACE_HOVER,
   HUB_GLASS_HAIRLINE,
   HUB_GLASS_PANEL_CLASS,
+  HUB_GLASS_STRIP_CLASS,
   HUB_MATERIAL_BUTTON_CLASS,
   HUB_MATERIAL_INPUT_CLASS,
   HUB_MATERIAL_PILL_BUTTON_CLASS,
@@ -1132,7 +1135,7 @@ export function WorkspaceHubSheet({
       <SheetContent
         side="right"
         overlayClassName="bg-transparent"
-        className={`w-[94vw] rounded-l-2xl border-l border-white/[0.07] ${HUB_GLASS_PANEL_CLASS} p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.5),0_4px_16px_rgba(0,0,0,0.28)] sm:max-w-none [&>[data-slot=sheet-close]]:hidden`}
+        className={`w-[94vw] rounded-l-2xl border-l ${HUB_GLASS_PANEL_CLASS} p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.5),0_4px_16px_rgba(0,0,0,0.28)] sm:max-w-none [&>[data-slot=sheet-close]]:hidden`}
       >
         <SheetHeader className="sr-only">
           <SheetTitle>
@@ -1349,7 +1352,7 @@ export function WorkspaceHubSheet({
           {/* Sandbox status strip */}
           {sandboxStatus !== 'ready' && (
             <div
-              className={`flex items-center justify-between gap-2 border-b ${HUB_GLASS_HAIRLINE} bg-white/[0.015] px-3 py-2`}
+              className={`flex items-center justify-between gap-2 ${HUB_GLASS_STRIP_CLASS} px-3 py-2`}
             >
               <div className="min-w-0 flex items-center gap-2">
                 {sandboxStatus === 'creating' || sandboxStatus === 'reconnecting' ? (
@@ -1422,7 +1425,7 @@ export function WorkspaceHubSheet({
           {/* Sandbox lifecycle strip (ready) — hibernate to preserve working tree. */}
           {sandboxStatus === 'ready' && sandboxId && onHibernateSandbox && (
             <div
-              className={`flex items-center justify-between gap-2 border-b ${HUB_GLASS_HAIRLINE} bg-white/[0.015] px-3 py-2`}
+              className={`flex items-center justify-between gap-2 ${HUB_GLASS_STRIP_CLASS} px-3 py-2`}
             >
               <div className="min-w-0 flex items-center gap-2">
                 <SandboxCubeIcon className="h-3 w-3 flex-shrink-0 text-push-fg-dim" />
@@ -1478,7 +1481,7 @@ export function WorkspaceHubSheet({
               so the workspace surfaces read as a single control cluster. */}
           <div className={`border-b ${HUB_GLASS_HAIRLINE} px-2 py-2`}>
             <div
-              className={`grid gap-1 rounded-2xl border border-white/[0.05] bg-white/[0.02] p-1 ${tabs.length >= 7 || tabs.length === 4 ? 'grid-cols-4' : 'grid-cols-3'}`}
+              className={`grid gap-1 rounded-2xl border ${GLASS_SURFACE} p-1 ${tabs.length >= 7 || tabs.length === 4 ? 'grid-cols-4' : 'grid-cols-3'}`}
             >
               {tabs.map((tab) => {
                 const Icon = tab.icon;
@@ -1490,7 +1493,7 @@ export function WorkspaceHubSheet({
                     className={`relative flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl px-1.5 text-push-xs transition-all ${
                       active
                         ? 'border border-push-accent/30 bg-push-accent/[0.1] text-push-fg shadow-[0_0_0_1px_rgb(var(--push-accent-rgb)_/_0.06),0_8px_22px_-14px_rgb(var(--push-accent-rgb)_/_0.55)]'
-                        : 'border border-white/[0.04] bg-white/[0.015] text-push-fg-dim hover:border-white/[0.09] hover:bg-white/[0.05] hover:text-push-fg-secondary'
+                        : `border ${GLASS_SURFACE} text-push-fg-dim ${GLASS_SURFACE_HOVER} hover:text-push-fg-secondary`
                     }`}
                   >
                     <Icon className={`h-3.5 w-3.5 ${active ? 'text-push-accent' : ''}`} />
@@ -1788,7 +1791,7 @@ export function WorkspaceHubSheet({
           >
             <SheetContent
               side="bottom"
-              className={`border-t border-white/[0.07] ${HUB_GLASS_PANEL_CLASS} px-0 pb-6 pt-0 text-push-fg`}
+              className={`border-t ${HUB_GLASS_PANEL_CLASS} px-0 pb-6 pt-0 text-push-fg`}
             >
               <SheetHeader className={`border-b ${HUB_GLASS_HAIRLINE} px-4 py-4`}>
                 <SheetTitle className="text-push-lg font-display font-semibold text-push-fg">

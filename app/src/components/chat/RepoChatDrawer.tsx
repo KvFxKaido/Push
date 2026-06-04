@@ -34,7 +34,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { HUB_GLASS_HAIRLINE, HUB_GLASS_PANEL_CLASS } from '@/components/chat/hub-styles';
+import {
+  GLASS_FILL_FAINT,
+  GLASS_GHOST_BUTTON_CLASS,
+  GLASS_SURFACE,
+  GLASS_SURFACE_HOVER,
+  HUB_GLASS_HAIRLINE,
+  HUB_GLASS_PANEL_CLASS,
+} from '@/components/chat/hub-styles';
 import { CliSessionRow } from '@/components/chat/drawer-cli-row';
 import type { RepoAppearance } from '@/lib/repo-appearance';
 import type { ActiveRepo, Conversation, DaemonCliSession, RepoWithActivity } from '@/types';
@@ -86,15 +93,16 @@ const EMPTY_CLI_SESSIONS: DaemonCliSession[] = [];
 
 import { timeAgoCompact } from '@/lib/utils';
 
-const DRAWER_CONTROL_SURFACE_CLASS =
-  'relative overflow-hidden rounded-full border border-white/[0.08] bg-white/[0.03] shadow-[0_8px_24px_rgba(0,0,0,0.35)] backdrop-blur-xl';
-const DRAWER_CONTROL_INTERACTIVE_CLASS =
-  'transition-all duration-200 hover:border-white/[0.14] hover:bg-white/[0.05] hover:text-push-fg';
-// Repo groups read as soft glass cards floating on the panel rather than
-// slabs split by hard rules — this is what kills the "large empty slab"
-// feeling and lets the active repo glow stand out from its quiet neighbors.
+const DRAWER_CONTROL_SURFACE_CLASS = `relative overflow-hidden rounded-full border ${GLASS_SURFACE} shadow-[0_8px_24px_rgba(0,0,0,0.35)] backdrop-blur-xl`;
+const DRAWER_CONTROL_INTERACTIVE_CLASS = `transition-all duration-200 ${GLASS_SURFACE_HOVER} hover:text-push-fg`;
+// Repo groups read as soft glass cards floating on the panel rather than slabs
+// split by hard rules — this kills the "large empty slab" feeling and lets the
+// active repo glow stand out from its quiet neighbors. The base carries layout
+// + the border *width* only; the resting (GLASS_SURFACE) and active (accent)
+// states each own their border + bg so the two never collide on CSS order.
 const DRAWER_SECTION_SURFACE_CLASS =
-  'rounded-2xl border border-white/[0.05] bg-white/[0.018] px-1.5 py-1 transition-colors duration-200';
+  'rounded-2xl border px-1.5 py-1 transition-colors duration-200';
+const DRAWER_SECTION_RESTING_CLASS = `${GLASS_SURFACE} ${GLASS_SURFACE_HOVER}`;
 const DRAWER_SECTION_ACTIVE_CLASS =
   'border-push-accent/25 bg-push-accent/[0.055] shadow-[0_0_0_1px_rgb(var(--push-accent-rgb)_/_0.05),0_10px_30px_-16px_rgb(var(--push-accent-rgb)_/_0.4)]';
 
@@ -414,7 +422,7 @@ export function RepoChatDrawer({
         <SheetContent
           side="left"
           overlayClassName="bg-transparent"
-          className={`w-[86vw] rounded-r-2xl border-r border-white/[0.07] ${HUB_GLASS_PANEL_CLASS} p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.5),0_4px_16px_rgba(0,0,0,0.28)] sm:max-w-sm [&>[data-slot=sheet-close]]:text-push-fg-secondary [&>[data-slot=sheet-close]]:hover:text-push-fg`}
+          className={`w-[86vw] rounded-r-2xl border-r ${HUB_GLASS_PANEL_CLASS} p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.5),0_4px_16px_rgba(0,0,0,0.28)] sm:max-w-sm [&>[data-slot=sheet-close]]:text-push-fg-secondary [&>[data-slot=sheet-close]]:hover:text-push-fg`}
         >
           {/* Subtle top highlight */}
           <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-16 rounded-tr-2xl bg-gradient-to-b from-white/[0.03] to-transparent" />
@@ -468,9 +476,7 @@ export function RepoChatDrawer({
                       <div
                         key={repo.id}
                         className={`${DRAWER_SECTION_SURFACE_CLASS} ${
-                          isActiveRepo
-                            ? DRAWER_SECTION_ACTIVE_CLASS
-                            : 'hover:border-white/[0.09] hover:bg-white/[0.03]'
+                          isActiveRepo ? DRAWER_SECTION_ACTIVE_CLASS : DRAWER_SECTION_RESTING_CLASS
                         }`}
                       >
                         <div className="relative">
@@ -503,7 +509,7 @@ export function RepoChatDrawer({
                           <button
                             type="button"
                             onClick={() => setAppearanceRepoState(repo)}
-                            className="absolute right-0.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-push-fg-dim transition-colors hover:bg-white/[0.06] hover:text-push-fg-secondary"
+                            className={`${GLASS_GHOST_BUTTON_CLASS} absolute right-0.5 top-1/2 h-8 w-8 -translate-y-1/2`}
                             aria-label={`Customize ${repo.name}`}
                             title="Customize repo"
                           >
@@ -810,7 +816,7 @@ export function RepoChatDrawer({
               </div>
 
               <div
-                className={`flex items-center gap-2 border-t ${HUB_GLASS_HAIRLINE} bg-white/[0.02] px-3 py-3`}
+                className={`flex items-center gap-2 border-t ${HUB_GLASS_HAIRLINE} ${GLASS_FILL_FAINT} px-3 py-3`}
               >
                 <PushMarkIcon className="h-[13px] w-[13px] shrink-0 text-push-accent" />
                 <div className="min-w-0">

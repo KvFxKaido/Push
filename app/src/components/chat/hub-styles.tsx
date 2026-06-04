@@ -40,16 +40,48 @@ export const HUB_TOP_BANNER_STRIP_CLASS = 'animate-fade-in border-b bg-transpare
 // The top-level sliding menus (Chats drawer, Workspace hub) are the one place
 // Push keeps a true glass material: a translucent gradient + backdrop blur so
 // the live chat surface and its Sky ambient frost *through* the panel instead
-// of reading as a separate black overlay. Inner chrome stays flat (see
-// DESIGN.md → Hub utility classes) — this is the panel shell only, the seam
-// where a menu meets the app it slid over.
-export const HUB_GLASS_PANEL_CLASS =
-  'bg-[linear-gradient(180deg,rgba(12,16,24,0.82)_0%,rgba(6,9,14,0.93)_100%)] backdrop-blur-2xl';
+// of reading as a separate black overlay. The glass identity extends from the
+// shell down to a small set of tinted surfaces built on it (strips, repo cards,
+// the tab tray + cells) — flat `HUB_MATERIAL_*` / `HUB_PANEL_*` is reserved for
+// the *dense content* inside a menu (settings forms, inputs, data/diff cards),
+// where a solid raised step out-reads a translucent tint. See DESIGN.md → Hub
+// utility classes for the full contract.
+//
+// Everything below is the single source of truth for that scale: a complete
+// utility class per token (the Tailwind JIT only emits classes that appear as
+// unbroken strings, so compose with a space — never interpolate the opacity).
+// The scale is intentionally tight — five alpha steps total: 0.02 fill,
+// 0.05 hover fill, 0.06 hairline, 0.07 shell frame, 0.09 hover edge.
 
-// Soft hairline used for dividers *inside* the glass menus. Replaces the hard
-// `border-push-edge` slabs so stacked sections read as one continuous panel
-// rather than a stack of opaque cards.
+// Panel shell: the frosted surface *and* its outer frame weight. Callers add
+// only the side (`border-l` / `border-r` / `border-t`) so the frame lives here,
+// one step stronger than the inner hairline by design (a defined outer edge).
+export const HUB_GLASS_PANEL_CLASS =
+  'border-white/[0.07] bg-[linear-gradient(180deg,rgba(12,16,24,0.82)_0%,rgba(6,9,14,0.93)_100%)] backdrop-blur-2xl';
+
+// Soft hairline for dividers *inside* the glass menus. Replaces the hard
+// `border-push-edge` slabs so stacked sections read as one continuous panel,
+// and supplies the resting outline color folded into GLASS_SURFACE below.
 export const HUB_GLASS_HAIRLINE = 'border-white/[0.06]';
+
+// Resting tinted tile — the lift that turns repo groups, the tab tray, and tab
+// cells into soft glass surfaces instead of flat slabs. Pair with the hover
+// variant for interactive tiles; an accent-active state may override it (set
+// border + bg in one place each so they never collide on CSS order).
+export const GLASS_SURFACE = 'border-white/[0.06] bg-white/[0.02]';
+export const GLASS_SURFACE_HOVER = 'hover:border-white/[0.09] hover:bg-white/[0.05]';
+
+// Standalone faint fill (no border) — the footer / one-off lifts.
+export const GLASS_FILL_FAINT = 'bg-white/[0.02]';
+
+// Status / lifecycle strip: a bottom hairline seam plus the faint lift, so the
+// sandbox bars separate from the tab content without a hard rule.
+export const HUB_GLASS_STRIP_CLASS = 'border-b border-white/[0.06] bg-white/[0.02]';
+
+// Quiet ghost icon action inside the glass (e.g. the per-repo customize button)
+// — no chrome surface, just a hover wash. Caller supplies size + position.
+export const GLASS_GHOST_BUTTON_CLASS =
+  'flex items-center justify-center rounded-full text-push-fg-dim transition-colors hover:bg-white/[0.05] hover:text-push-fg-secondary';
 
 export const HUB_TAG_CLASS =
   'inline-flex items-center rounded-full border border-push-edge-subtle bg-black/15 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-push-fg-dim';
