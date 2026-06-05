@@ -26,8 +26,9 @@ const codePlugin = createCodePlugin({ themes: ['github-dark-default', 'github-da
  *  - **No Streamdown animation.** `animated={false}` so its staggered reveal
  *    never runs alongside Push's own cadence (`useSmoothStreamedText`) or the
  *    per-word shimmer. The reveal is driven entirely by the growing `text`.
- *  - **No control chrome.** `controls={false}` removes copy/download/fullscreen
- *    buttons; Push has its own copy affordance on the bubble.
+ *  - **Granular block controls.** `controls={true}` adds per-block copy and
+ *    download buttons. While MessageBubble has a master copy button, these
+ *    provide better UX for messages containing multiple code blocks.
  *  - **Sanitation stays upstream.** Tool-call JSON stripping and malformed /
  *    tool-call message hiding happen in MessageBubble's `displayContentText`
  *    before any text reaches this component, so the adapter is pure rendering.
@@ -182,7 +183,7 @@ export function PushMarkdownRenderer({
       // to its own line the way a sibling element would. MessageBubble omits its
       // own caret on this path to avoid two carets.
       caret={isStreaming ? 'block' : undefined}
-      controls={false}
+      controls={true}
       lineNumbers={false}
       disallowedElements={['img']}
       components={enableCodeHighlight ? BASE_COMPONENTS : COMPONENTS_PLAIN}
