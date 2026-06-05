@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { revealStep } from './useSmoothStreamedText';
+import { revealStep, sliceToSafeBoundary } from './useSmoothStreamedText';
 
 const FRAME_MS = 16; // ~60fps
 
@@ -51,5 +51,37 @@ describe('revealStep', () => {
       current = revealStep(current, target, FRAME_MS);
     }
     expect(current).toBe(target);
+  });
+});
+
+describe('sliceToSafeBoundary', () => {
+  it('passes through plain ASCII at any boundary', () => {
+    expect(sliceToSafeBoundary('hello world', 5)).toBe('hello');
+    expect(sliceToSafeBoundary('hello', 0)).toBe('');
+    expect(sliceToSafeBoundary('hello', 5)).toBe('hello');
+  });
+
+  it('never splits a surrogate pair (astral emoji)', () => {
+    const text = 'hi 🎉 there'; // 🎉 is a surrogate pair at indices 3-4
+    // Boundary landing on the low surrogate backs off to exclude the half-char.
+    const sliced = sliceToSafeBoundary(text, 4);
+    expect(sliced).toBe('hi ');
+    // Boundary past the full pair keeps the whole emoji.
+    expect(sliceToSafeBoundary(text, 5)).toBe('hi 🎉');
+  });
+
+  it('does not end on a dangling zero-width joiner', () => {
+    // Family emoji: woman + ZWJ + boy = [D83D DC69][200D][D83D DC66]
+    const family = '👩‍👦';
+    // A boundary just after the ZWJ must not leave a trailing joiner; it backs
+    // off to the completed leading cluster.
+    expect(sliceToSafeBoundary(family, 3)).toBe('👩');
+    // Mid second surrogate pair also backs off to the complete first emoji.
+    expect(sliceToSafeBoundary(family, 4)).toBe('👩');
+  });
+
+  it('returns the full string when end is at or past length', () => {
+    expect(sliceToSafeBoundary('abc', 3)).toBe('abc');
+    expect(sliceToSafeBoundary('abc', 99)).toBe('abc');
   });
 });

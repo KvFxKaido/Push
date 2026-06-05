@@ -159,8 +159,10 @@
 
 /* Streaming caret — a soft, rounded, glowing cursor that trails revealed text.
    Pulses on a smooth ease (alternating fade) instead of a hard on/off blink,
-   pairing with the smooth character reveal. Background color is supplied by a
-   utility class (`bg-push-accent`); this rule owns shape, glow, and motion. */
+   pairing with the smooth character reveal. The bar color comes from a utility
+   class (`bg-push-accent`), which the repo-theme overrides retint; the glow
+   uses the matching `--repo-theme-accent-glow` token so it follows the active
+   repo accent instead of drifting to a hardcoded sky blue. */
 @keyframes stream-caret-pulse {
   from {
     opacity: 1;
@@ -177,8 +179,17 @@
   margin-left: 2px;
   vertical-align: text-bottom;
   border-radius: 9999px;
-  box-shadow: 0 0 6px rgba(125, 211, 252, 0.45);
+  box-shadow: 0 0 6px var(--repo-theme-accent-glow);
   animation: stream-caret-pulse 0.72s var(--ease-default) infinite alternate;
+}
+
+/* The global reduced-motion block below neutralizes animations, but make the
+   caret's resting state explicit: a static, full-opacity cursor rather than one
+   frozen mid-fade. Matches the hook's flush-to-full behavior for these users. */
+@media (prefers-reduced-motion: reduce) {
+  .stream-caret {
+    animation: none;
+  }
 }
 
 /* ── Motion utilities ────────────────────────────── */

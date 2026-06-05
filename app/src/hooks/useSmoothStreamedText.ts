@@ -55,9 +55,32 @@ function prefersReducedMotion(): boolean {
   );
 }
 
+/**
+ * Trim a code-unit slice index back so it never lands inside a surrogate pair
+ * or right after a zero-width joiner — either would momentarily render a broken
+ * glyph (tofu / a dangling joiner) mid-reveal. The reveal accounting stays in
+ * UTF-16 code units (revealStep's internal contract); we only snap the
+ * displayed boundary. Full grapheme segmentation (Intl.Segmenter) is avoided on
+ * purpose: it would re-segment the whole growing string every frame (O(n^2)
+ * over a long message) for this marginal, self-healing case.
+ */
+export function sliceToSafeBoundary(text: string, end: number): string {
+  let n = end;
+  if (n > 0 && n < text.length) {
+    // Don't split a surrogate pair: back off a leading low surrogate.
+    const code = text.charCodeAt(n);
+    if (code >= 0xdc00 && code <= 0xdfff) n -= 1;
+    // Don't end on a dangling ZWJ: drop a trailing joiner so we never show a
+    // base glyph + joiner without its continuation.
+    while (n > 0 && text.charCodeAt(n - 1) === 0x200d) n -= 1;
+  }
+  return text.slice(0, n);
+}
+
 export function useSmoothStreamedText(fullText: string, animate: boolean): string {
   const [revealedLength, setRevealedLength] = useState(fullText.length);
   const [reduceMotion, setReduceMotion] = useState(prefersReducedMotion);
+  const [prevText, setPrevText] = useState(fullText);
 
   // Refs hold the live values the rAF loop reads, so the loop callback stays
   // stable (no per-token re-subscription) while always seeing the latest target.
@@ -65,6 +88,21 @@ export function useSmoothStreamedText(fullText: string, animate: boolean): strin
   const targetRef = useRef(fullText);
   const rafRef = useRef<number | null>(null);
   const lastFrameRef = useRef(0);
+
+  // Reset the reveal synchronously *during render* when the content shrinks —
+  // a regenerated or replaced message restarts streaming from a shorter string.
+  // Collapsing the displayed length here (React's endorsed "adjust state during
+  // render" pattern) avoids a one-frame flash of the full new text: without it,
+  // the clamp in the return value would briefly paint the entire new message
+  // before the loop reset on its next frame. The matching `lengthRef` reset
+  // (which the rAF loop reads) happens in the effect below, where ref writes are
+  // allowed; the tick also defensively treats an over-target length as 0.
+  if (fullText !== prevText) {
+    setPrevText(fullText);
+    if (fullText.length < prevText.length) {
+      setRevealedLength(0);
+    }
+  }
 
   // Track reduced-motion changes live so toggling the OS setting mid-stream
   // takes effect without a remount.
@@ -113,14 +151,16 @@ export function useSmoothStreamedText(fullText: string, animate: boolean): strin
 
     // Flush-to-full: settled message, reduced motion, or no rAF (SSR / node).
     // The displayed value (below) already resolves to the full text in these
-    // cases, so we only need to halt any in-flight loop.
+    // cases, so we only need to halt any in-flight loop. Returning `stop` keeps
+    // this effect the single owner of frame cleanup, including on unmount.
     if (!animate || reduceMotion || typeof requestAnimationFrame !== 'function') {
       stop();
-      return;
+      return stop;
     }
 
-    // Reset the cursor if the content shrank (new / regenerated message) so we
-    // don't briefly paint stale characters before the loop catches up.
+    // Content shrank (new / regenerated message): reset the loop cursor so it
+    // re-reveals from the start. Pairs with the render-time `revealedLength`
+    // reset above — this is the ref half, which the rAF loop reads.
     if (lengthRef.current > fullText.length) {
       lengthRef.current = 0;
     }
@@ -133,16 +173,13 @@ export function useSmoothStreamedText(fullText: string, animate: boolean): strin
     return stop;
   }, [fullText, animate, reduceMotion]);
 
-  // Cancel any pending frame on unmount.
-  useEffect(
-    () => () => {
-      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
-    },
-    [],
-  );
-
   return useMemo(() => {
-    if (!animate || reduceMotion) return fullText;
-    return fullText.slice(0, Math.min(revealedLength, fullText.length));
+    // Mirror the effect's flush conditions so the render path never shows a
+    // partial slice when smoothing is inactive (settled, reduced motion, or no
+    // rAF to ever advance the reveal).
+    if (!animate || reduceMotion || typeof requestAnimationFrame !== 'function') {
+      return fullText;
+    }
+    return sliceToSafeBoundary(fullText, Math.min(revealedLength, fullText.length));
   }, [animate, reduceMotion, fullText, revealedLength]);
 }

@@ -124,5 +124,29 @@ export function useStickToBottom(
     }
   }, [lastMessage, streamingContent, scrollElementToBottom]);
 
+  // Follow the *animated* growth of a streaming message. The smooth-stream
+  // reveal grows the DOM height across animation frames without changing
+  // `lastMessage.content`, so the content-keyed effect above never re-fires for
+  // those frames — left to it alone, the view would scroll once on each token
+  // and then fall behind the reveal, potentially drifting outside the follow
+  // band before the final flush. While the tail is streaming and the user is
+  // within the band, pin the bottom every frame (instant, so it tracks the
+  // height growth rather than compounding smooth scrolls). The band check leaves
+  // a user who has scrolled up alone, and resumes following if they return.
+  const isStreamingTail = lastMessage?.status === 'streaming';
+  useEffect(() => {
+    if (!isStreamingTail || typeof requestAnimationFrame !== 'function') return;
+    let raf = 0;
+    const follow = () => {
+      const el = elRef.current;
+      if (el && distanceFromBottom(el) < AUTO_SCROLL_THRESHOLD_PX) {
+        el.scrollTop = el.scrollHeight;
+      }
+      raf = requestAnimationFrame(follow);
+    };
+    raf = requestAnimationFrame(follow);
+    return () => cancelAnimationFrame(raf);
+  }, [isStreamingTail]);
+
   return { registerScroller, isAtBottom, scrollToBottom };
 }
