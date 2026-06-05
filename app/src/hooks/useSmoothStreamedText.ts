@@ -105,14 +105,22 @@ export function useSmoothStreamedText(fullText: string, animate: boolean): strin
   }
 
   // Track reduced-motion changes live so toggling the OS setting mid-stream
-  // takes effect without a remount.
+  // takes effect without a remount. Gated on `animate`: only the active
+  // streaming bubble can animate, so settled/user bubbles never register a
+  // listener — otherwise a long transcript would accumulate a media-query
+  // subscription per message, all firing on an OS-setting change. The initial
+  // `useState(prefersReducedMotion)` already seeds the value at mount, and the
+  // streaming bubble has `animate` true for its whole life, so no resync is
+  // needed when subscribing.
   useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    if (!animate || typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return;
+    }
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
     const onChange = () => setReduceMotion(mq.matches);
     mq.addEventListener?.('change', onChange);
     return () => mq.removeEventListener?.('change', onChange);
-  }, []);
+  }, [animate]);
 
   // The animation loop, held in a ref so it can schedule itself without a
   // forward reference. Its body closes over only stable values (refs + the
