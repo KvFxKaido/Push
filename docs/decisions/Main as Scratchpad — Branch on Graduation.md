@@ -1,6 +1,6 @@
 # Main as Scratchpad — Branch on Graduation
 
-Date: 2026-06-03 (refocused 2026-06-03)
+Date: 2026-06-03 (refocused 2026-06-03; amended 2026-06-05 — model-named, deterministically-gated refinement, see below)
 Status: **ROADMAP-tracked (first priority, promoted 2026-06-03); implementation pending.** Design is committed; sequenced *after* the [Coder Delegation Collapse](Coder%20Delegation%20Collapse%20—%20Component%20Audit.md) track (step 2 of the combined roadmap item). Flip to `Current` when `auto-branch-on-commit` ships.
 Owner: Push
 Related: `app/src/hooks/useWorkspaceSandboxController.ts` (branch→sandbox teardown gate),
@@ -170,6 +170,79 @@ it too, but keeps the start-on-`main` differentiator the upfront version throws 
 
 **Pairs with the [Coder Delegation Collapse](Coder%20Delegation%20Collapse%20—%20Component%20Audit.md) track:** that collapse makes *headless detached engine runs* (lead drives the durable job DO directly, no Orchestrator handoff) more central — and a headless run literally *cannot* answer a "branch this?" prompt. So the delegation collapse is independent evidence that auto-branch, not a prompt, is the right call; and auto-branch supplies the durability story for that collapsed single-agent loop. Pair the visions, but sequence the rollout (collapse delegation first — it has a test suite and a clean cut — then layer auto-branch, whose "who commits" answer is cleanest once the single-agent loop exists).
 
+## Refinement (2026-06-05): model-named, deterministically-gated
+
+The mechanism above implies the *runtime* both decides to branch and names it.
+This refinement splits those: keep the **guarantee** in code, hand the
+**judgment** to the model. It is strictly better — it gets good branch names for
+free — and it resolves open-Q #1 while leaving open-Q #2's scan placement intact.
+
+The motivating instinct: rather than runtime-intercept the commit verb, let a
+hook simply *tell the model to branch first, then keep working*. That instinct is
+right about the **trigger** and about **who names the branch**, and wrong only if
+the hook *asks* without being able to *enforce* — at which point it is just the
+rejected "branch this?" prompt pointed at the model instead of the user. The fix
+is to decompose "branch" into three parts and put each where it belongs:
+
+- **Gate (deterministic, in code) — the guarantee.** A boundary check that
+  *cannot pass while unpersisted work sits on `main`*: HEAD-is-`main` with a dirty
+  tree, or a commit-to-`main` attempt, is a hard stop. Unbreakable, and it lives
+  at the git-policy enforcement seam (`lib/git/policy.ts`-adjacent), not in a
+  prompt. This is the part a non-cooperating model cannot route around.
+- **Name (the model's judgment) — the one sub-task that genuinely wants a model.**
+  On a gate trip the runtime *nudges*: "branch before you persist — name it for
+  the work." The model supplies a real topic name (`fix/streamdown-purge`, not
+  `wip-2026-06-05-1432`) via the `create_branch` tool it already has. This is the
+  answer to **open-Q #1** — *both* model-proposed and deterministic, layered:
+  model-proposed is the happy path because the model knows what the work *is*;
+  naming is intent, not mechanics, so it is the right thing to delegate.
+- **Fallback (deterministic slug) — the non-cooperating / headless case.** If the
+  model doesn't branch within N attempts, `create_branch` errors, or the run is
+  headless with no model turn to nudge, the runtime auto-branches with the
+  timestamp slug and proceeds. This is what keeps the refinement honest against
+  `CLAUDE.md`'s *behavior-lives-in-code* test: the gate never opens and the
+  fallback eventually fires, so a confused or hostile model still cannot strand
+  work on `main`.
+
+**Why this isn't the rejected prompt.** "Branch this?" asked a human *whether* to
+branch — a breakable decision with a "No" path. This nudges the model about *what
+to name* a branch the system is creating **either way**. The decision ("you will
+branch") is the gate's; only the label is the model's.
+
+**The trigger is a hook — the [anchoring counterexample](#the-counterexample-that-anchors-this),
+inverted.** That env's stop-hook fired on uncommitted changes as a *confession*
+("I can't hold this — commit or lose it"). Push's reads as the opposite posture —
+a graduation gate ("persist this properly before you go") — and it lands as
+housekeeping rather than panic *only because the snapshot floor already held the
+work during the run*. Same hook point, opposite meaning, earned by the floor
+underneath. Trigger placement is a durability-granularity knob, not a naming
+question:
+
+- **Stop-gate** (won't let a run finish with unpersisted `main` work): simplest —
+  no commit-verb interception, a pure run-end post-check — but batches the branch
+  to run-end, widening the window where committed-but-unpushed work leans on the
+  snapshot (open-Q #4's reliability bar).
+- **Commit-attempt gate**: keeps per-commit durability, at the cost of the
+  interception the hook framing was trying to avoid.
+
+Either works with the gate/name/fallback split; pick by how much mid-run loss the
+snapshot floor can absorb.
+
+**Consistency with the Auditor unbundle (open-Q #2).** The unbundle's logic is
+"mechanical jobs (secret recall) belong in deterministic code, not a model." This
+refinement honors it exactly: the *mechanical* parts of branching — the guarantee
+a branch exists, the push, the secret scan, the slug fallback — are all
+deterministic; the model is used *only* for naming. The earlier worry that
+"telling the model to branch" re-mechanizes a model dissolves once "branch" is
+decomposed into deterministic-guarantee + model-named-label. We are not handing
+the model a mechanical job; we are handing it the one judgment call in the flow.
+
+**Net change to the build list.** The gate seam + fallback are net-new
+deterministic code; the nudge is a hook message; `create_branch` is reused.
+**Open-Q #1 (auto-naming) is resolved** — model-proposed, deterministic-slug
+fallback. Open-Q #2's scan stays at auto-push. What's genuinely new to decide is
+only the stop-gate-vs-commit-attempt trigger (the durability knob above).
+
 ## The decomposition: flag the *storage substrate*, not the commit-flow
 
 The one thing the platform flag governs is **where durable state lives** — because
@@ -254,9 +327,11 @@ remote collision entirely but at the cost of cross-surface visibility.
 
 ## Open questions before this graduates
 
-1. **Branch auto-naming + auto-push policy.** `auto-branch-on-commit` needs a
-   name with no human in the loop — model-proposed topic name, deterministic
-   fallback (timestamp/slug), or both? And does the first commit *always*
+1. **Branch auto-naming + auto-push policy.** *Naming half **resolved** by the
+   [2026-06-05 refinement](#refinement-2026-06-05-model-named-deterministically-gated):
+   model-proposed name on the happy path, deterministic timestamp/slug as the
+   non-cooperating/headless fallback — both, layered.* Still open is the auto-push
+   policy: does the first commit *always*
    auto-push to origin, or is there a "stay local until I say" case (which would
    re-introduce snapshot-dependence for that branch)? Note the scope: auto-branch
    fires on the *first* commit while on `main`; once you're on the named branch,
