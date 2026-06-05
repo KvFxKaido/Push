@@ -372,6 +372,13 @@ export async function streamCompletion(
             // callback API. The text-based dispatcher picks the assembled
             // call up later as a fenced JSON `text_delta`.
             break;
+          case 'citations':
+            // Native web-search sources (OpenRouter `openrouter:web_search`).
+            // The grounded answer already streamed as `text_delta`; the web
+            // app renders these as a "Sources" footer. A terminal affordance
+            // for the TUI is a deliberate follow-up — dropping the structured
+            // list here loses no answer text, only the clickable source links.
+            break;
           case 'done':
             // Loop exits naturally when the iterator returns after `done`.
             break;

@@ -14,7 +14,12 @@
  * filter for native tool calls) flows in via injected config.
  */
 
-import type { PushStreamEvent, ReasoningBlock, StreamUsage } from './provider-contract.js';
+import type {
+  PushStreamEvent,
+  ReasoningBlock,
+  StreamUsage,
+  UrlCitation,
+} from './provider-contract.js';
 
 // ---------------------------------------------------------------------------
 // Helpers — duplicated across openrouter/zen/kilocode adapters before #392
@@ -73,6 +78,35 @@ function parseReasoningBlock(value: unknown): ReasoningBlock | undefined {
     return { type: 'redacted_thinking', data: rec.data };
   }
   return undefined;
+}
+
+/**
+ * Normalize an OpenAI-compatible `delta.annotations` array into `UrlCitation`s.
+ * Keeps only well-formed `url_citation` entries (a string `url` is the minimum
+ * bar); everything else is dropped silently — a malformed citation is metadata
+ * loss, never a reason to disturb the text stream. Returns `[]` when the input
+ * isn't an array or holds no usable citations.
+ */
+function parseUrlCitations(value: unknown): UrlCitation[] {
+  if (!Array.isArray(value)) return [];
+  const out: UrlCitation[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') continue;
+    const rec = entry as Record<string, unknown>;
+    if (rec.type !== 'url_citation') continue;
+    const uc = rec.url_citation;
+    if (!uc || typeof uc !== 'object') continue;
+    const c = uc as Record<string, unknown>;
+    if (typeof c.url !== 'string' || !c.url) continue;
+    out.push({
+      url: c.url,
+      title: typeof c.title === 'string' ? c.title : '',
+      content: typeof c.content === 'string' ? c.content : '',
+      startIndex: typeof c.start_index === 'number' ? c.start_index : 0,
+      endIndex: typeof c.end_index === 'number' ? c.end_index : 0,
+    });
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +231,9 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
            *  adapter can replay them in a continuation request. */
           assistant_content_blocks?: unknown;
           tool_calls?: unknown;
+          /** OpenAI-compatible web-search citations. OpenRouter sets this
+           *  for its `openrouter:web_search` server tool. */
+          annotations?: unknown;
         };
         finish_reason?: unknown;
       }>;
@@ -238,6 +275,15 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
     const reasoningBlock = parseReasoningBlock(delta?.reasoning_block);
     if (reasoningBlock) {
       yield { type: 'reasoning_block', block: reasoningBlock };
+    }
+
+    // Web-search citations (OpenRouter `openrouter:web_search`). Additive to
+    // the text channel; emitted whenever a frame carries url_citation
+    // annotations. Consumers dedupe by url since some engines resend the
+    // cumulative list on each frame.
+    const citations = parseUrlCitations(delta?.annotations);
+    if (citations.length > 0) {
+      yield { type: 'citations', citations };
     }
 
     if (typeof delta?.content === 'string' && delta.content) {
