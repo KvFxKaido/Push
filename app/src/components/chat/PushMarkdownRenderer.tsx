@@ -1,5 +1,14 @@
 import { cloneElement, isValidElement, type ReactElement } from 'react';
 import { Streamdown, type Components } from 'streamdown';
+import { createCodePlugin } from '@streamdown/code';
+
+// Shiki code-highlighting plugin (the supported Streamdown integration — base
+// Streamdown does NOT highlight on its own; it needs this plugin passed via
+// `plugins.code`). Push is dark-only, so both slots of Shiki's [light, dark]
+// tuple use the same dark theme. The plugin (and Shiki) load lazily as part of
+// the already-lazy adapter chunk; highlighting resolves asynchronously, so the
+// first paint shows the code text immediately and colors fill in when ready.
+const codePlugin = createCodePlugin({ themes: ['github-dark-default', 'github-dark-default'] });
 
 /**
  * Push's markdown renderer, adapting Vercel's Streamdown to Push's chat styling
@@ -7,14 +16,13 @@ import { Streamdown, type Components } from 'streamdown';
  * `formatContent`/`formatInline` parser in MessageBubble.
  *
  * Design decisions (see PR notes):
- *  - **Push-styled elements; plain code (no syntax highlighting yet).** Prose
- *    elements are overridden with Push-styled components, including fenced code
- *    blocks, which render as plain Push-styled monospace. Syntax highlighting is
- *    intentionally NOT wired: Streamdown's Shiki path needs the `shiki` package
- *    (not a Streamdown dependency) and its lazy highlight chunk never loaded in
- *    a live render, so code came out uncolored. Highlighting is deferred to a
- *    follow-up that adds the `shiki` dep and verifies a real colored render.
- *    Mermaid and math (KaTeX) likewise never render, so their chunks never load.
+ *  - **Push-styled elements; Shiki code highlighting on by default.** Prose
+ *    elements are overridden with Push-styled components. Fenced code blocks use
+ *    Streamdown's CodeBlock with the `@streamdown/code` (Shiki) plugin, themed
+ *    through Push's existing shadcn tokens. Highlighting can be turned off per
+ *    call (`enableCodeHighlight={false}`) to render plain Push monospace with no
+ *    Shiki cost. Mermaid and math (KaTeX) plugins are NOT wired, so those
+ *    components never render and their chunks never load.
  *  - **No Streamdown animation.** `animated={false}` so its staggered reveal
  *    never runs alongside Push's own cadence (`useSmoothStreamedText`) or the
  *    per-word shimmer. The reveal is driven entirely by the growing `text`.
@@ -37,9 +45,9 @@ const linkClass =
 // that would trip a React warning, and forwarding `className` would let
 // Streamdown's defaults override Push's styling.
 //
-// `code`/`pre` are not in this base map; the plain Push-styled overrides below
-// (PLAIN_CODE_COMPONENTS) are merged in. Streamdown's own Shiki CodeBlock is
-// intentionally unused — see the header note on deferred highlighting.
+// `code`/`pre` are intentionally NOT in this base map. With highlighting on we
+// let Streamdown's own CodeBlock (driven by the Shiki plugin) render them; with
+// highlighting off, the plain Push overrides below are merged in.
 const BASE_COMPONENTS: Components = {
   // Paragraphs — modest separation; the bubble container owns size/leading.
   p: ({ children }) => <p className="break-words [&:not(:last-child)]:mb-2">{children}</p>,
@@ -116,7 +124,7 @@ const BASE_COMPONENTS: Components = {
   td: ({ children }) => <td className="px-2.5 py-1.5 align-top text-push-fg-soft">{children}</td>,
 };
 
-// Plain, un-highlighted code rendering — the only code path the adapter uses.
+// Plain, un-highlighted code rendering (used when `enableCodeHighlight` is off).
 // Streamdown's default `pre` tags the block child with `data-block`; we replicate
 // that so a single `code` override can distinguish inline from block without
 // pulling in Shiki.
@@ -144,16 +152,26 @@ const PLAIN_CODE_COMPONENTS: Components = {
   ),
 };
 
-const COMPONENTS: Components = { ...BASE_COMPONENTS, ...PLAIN_CODE_COMPONENTS };
+const COMPONENTS_PLAIN: Components = { ...BASE_COMPONENTS, ...PLAIN_CODE_COMPONENTS };
 
 export interface PushMarkdownRendererProps {
   /** The (already-sanitized, possibly partially-revealed) markdown text. */
   text: string;
   /** When streaming, parse incomplete markdown so half-open tokens render cleanly. */
   isStreaming: boolean;
+  /**
+   * Syntax-highlight fenced code blocks via Streamdown's `@streamdown/code`
+   * (Shiki) plugin. On by default. When false, code blocks render as plain
+   * Push-styled monospace with no Shiki cost.
+   */
+  enableCodeHighlight?: boolean;
 }
 
-export function PushMarkdownRenderer({ text, isStreaming }: PushMarkdownRendererProps) {
+export function PushMarkdownRenderer({
+  text,
+  isStreaming,
+  enableCodeHighlight = true,
+}: PushMarkdownRendererProps) {
   return (
     <Streamdown
       mode={isStreaming ? 'streaming' : 'static'}
@@ -167,7 +185,8 @@ export function PushMarkdownRenderer({ text, isStreaming }: PushMarkdownRenderer
       controls={false}
       lineNumbers={false}
       disallowedElements={['img']}
-      components={COMPONENTS}
+      components={enableCodeHighlight ? BASE_COMPONENTS : COMPONENTS_PLAIN}
+      plugins={enableCodeHighlight ? { code: codePlugin } : undefined}
       className="push-markdown"
     >
       {text}

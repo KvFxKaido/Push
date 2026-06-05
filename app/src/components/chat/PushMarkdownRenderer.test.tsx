@@ -69,39 +69,57 @@ describe('PushMarkdownRenderer (Streamdown adapter)', () => {
     expect(html).not.toContain('tracker.png');
   });
 
-  // 5 + 8. Code renders as plain Push-styled monospace — no Shiki highlighting.
-  // Syntax highlighting is deferred (Shiki isn't a Streamdown dep and its lazy
-  // chunk never loaded in a live render); see PushMarkdownRenderer's header note.
-  describe('code rendering (plain Push-styled, no Shiki)', () => {
-    it('renders inline code as a Push-styled chip, not a block', () => {
+  // 5 + 8. Code rendering. Highlighting is on by default via the @streamdown/code
+  // (Shiki) plugin — these SSR fixtures assert the code-block STRUCTURE and that
+  // the code text is present; the actual resolved colors are verified separately
+  // in code-highlight.test.ts (the plugin highlights asynchronously, so colors
+  // don't resolve during synchronous SSR).
+  describe('with code highlighting (default)', () => {
+    it('renders inline code as a chip, not a block', () => {
       const html = render('Run `npm test` now.');
-      expect(html).toContain('<code');
+      expect(html).toContain('data-streamdown="inline-code"');
       expect(html).toContain('npm test');
-      expect(html).toContain('bg-push-surface');
-      expect(html).not.toContain('<pre');
-      // Streamdown's own Shiki code-block chrome must not appear.
       expect(html).not.toContain('data-streamdown="code-block"');
-      expect(html).not.toContain('--sdm');
     });
 
-    it('renders a typed fence as plain code, not highlighted', () => {
+    it('renders a fenced code block through the Streamdown CodeBlock', () => {
       const html = render('```ts\nconst x = 1;\n```');
-      expect(html).toContain('<pre');
+      expect(html).toContain('data-streamdown="code-block"');
       expect(html).toContain('const x = 1;');
-      // No Shiki token structure / CSS-variable styling.
-      expect(html).not.toContain('data-streamdown="code-block"');
-      expect(html).not.toContain('--sdm');
     });
 
     it('keeps long code lines scrollable rather than wrapping', () => {
       const longLine = 'const x = ' + "'a'.repeat().".repeat(20) + 'end;';
       const html = render('```\n' + longLine + '\n```');
+      expect(html).toContain('data-streamdown="code-block"');
+      expect(html).toContain('overflow-x-auto');
+      expect(html).toContain('end;');
+    });
+  });
+
+  describe('with code highlighting disabled', () => {
+    function renderPlain(text: string): string {
+      return renderToStaticMarkup(
+        <PushMarkdownRenderer text={text} isStreaming={false} enableCodeHighlight={false} />,
+      );
+    }
+
+    it('renders inline code as a Push-styled chip', () => {
+      const html = renderPlain('Run `npm test` now.');
+      expect(html).toContain('<code');
+      expect(html).toContain('npm test');
+      expect(html).toContain('bg-push-surface');
+      expect(html).not.toContain('<pre');
+    });
+
+    it('renders fenced blocks as plain scrollable Push code', () => {
+      const longLine = 'const x = ' + "'a'.repeat().".repeat(20) + 'end;';
+      const html = renderPlain('```\n' + longLine + '\n```');
       expect(html).toContain('<pre');
       expect(html).toContain('overflow-x-auto');
       expect(html).toContain('whitespace-pre');
       expect(html).toContain('end;');
       expect(html).not.toContain('data-streamdown="code-block"');
-      expect(html).not.toContain('--sdm');
     });
   });
 });
