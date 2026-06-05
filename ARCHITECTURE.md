@@ -25,13 +25,15 @@ Push is built around execution-first reliability. We favor explicit state and hu
 
 Role-based runtime system. Models are replaceable. Internal roles are locked. Backend/model routing is hybrid: Settings stores defaults and the active backend preference, chat/review selection happens separately, and the role split stays fixed underneath.
 
+Since the **Coder Delegation Collapse** (PR #783), the Orchestrator is the **single capable lead**: it reads, edits, runs commands/tests, and ships directly in one loop rather than handing ordinary coding to a separate Coder. The Coder role still exists and is granted (`delegate:coder` is retained), but it is now the **detached path** — CLI/daemon task graphs and background jobs — not the default foreground flow. Explorer remains read-only investigation, pulled in only when isolating it adds leverage.
+
 The runtime role contract is not the user-facing vocabulary. Human-readable labels flow through `lib/role-display.ts`: Explorer/Coder read as workflow phases ("Exploring", "Editing"), Orchestrator source attribution reads as "Assistant", and Reviewer/Auditor keep names where independent attribution improves trust. Raw role strings still belong in capability checks, event payloads, logs, persisted data, and role-kernel module names.
 
 | Role | Responsibility |
 |---|---|
-| **Orchestrator** | Conversational lead, interprets intent, delegates to Explorer or Coder |
+| **Orchestrator** | Single capable lead — interprets intent and does the work directly (read → edit → run → ship); delegates read-only investigation to Explorer, and code work to the Coder only on the detached/CLI task-graph path |
 | **Explorer** | Autonomous read-only investigation — code tracing, architecture discovery, evidence gathering |
-| **Coder** | Autonomous code implementation and execution in the sandbox |
+| **Coder** | Autonomous code implementation and execution in the sandbox — the detached path (CLI/daemon task graphs, background jobs), no longer the default foreground flow |
 | **Reviewer** | On-demand advisory diff review in the Workspace Hub |
 | **Auditor** | Pre-commit safety gate with a binary SAFE/UNSAFE verdict |
 

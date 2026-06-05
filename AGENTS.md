@@ -35,8 +35,9 @@ This is the **required entry doc** for Push. Repo instruction loaders read `PUSH
 
 ## Workflow rules
 
+- The Orchestrator is the single capable lead — it implements directly (read → edit → run → ship) rather than handing ordinary coding off. Do the work in-loop.
 - Use the Explorer runtime for read-only investigation and architecture tracing.
-- Use the Coder runtime for implementation in the sandbox.
+- The Coder runtime is the detached path (CLI/daemon task graphs, background jobs), not the default — reach for `delegate:coder` only for genuinely detached work, not ordinary edits.
 - Use Reviewer for advisory diffs on branch diff, last commit, or working tree.
 - Use Auditor for the pre-commit SAFE/UNSAFE gate on standard commits.
 - Standard merges go through **GitHub PR flow** only.

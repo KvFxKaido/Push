@@ -16,7 +16,7 @@ It gives you a chat-first workflow anchored to a real repo, real branch state, r
 ## What makes it different
 
 - **Chat-first, repo-locked workflow** — context stays anchored to one repo and one active branch
-- **Role-based agents** — Orchestrator, Explorer, Coder, Reviewer, Auditor
+- **One capable agent, not a relay** — a single lead reads, edits, runs, and ships in one loop; pulls in read-only investigation or independent review only when it earns its keep
 - **Self-hosted and provider-flexible** — use your own model stack instead of buying into one AI platform
 - **Scratch workspaces** — prototype in an ephemeral sandbox without GitHub auth, export anytime
 - **GitHub-native flow** — branch-aware chats, PR reviews, commit/push, and merge flow
