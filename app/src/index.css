@@ -192,6 +192,39 @@
   }
 }
 
+/* Per-word shimmer reveal — each newly-revealed word blooms in: a soft blur +
+   accent glow that sharpens and settles to plain text. Driven entirely by mount
+   (one iteration, `backwards` so the hidden start state applies pre-paint), with
+   stable keys upstream guaranteeing each word animates exactly once. The glow
+   uses the themeable accent token so it tracks the active repo. Applied to
+   inline spans (no transform/inline-block) to leave text wrapping untouched. */
+@keyframes stream-word-in {
+  0% {
+    opacity: 0;
+    filter: blur(4px);
+    text-shadow: 0 0 10px var(--repo-theme-accent-glow);
+  }
+  60% {
+    opacity: 1;
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    filter: blur(0);
+    text-shadow: 0 0 0 transparent;
+  }
+}
+
+.stream-word {
+  animation: stream-word-in 0.5s var(--ease-default) backwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stream-word {
+    animation: none;
+  }
+}
+
 /* ── Motion utilities ────────────────────────────── */
 
 /* Spring easing for interactive elements */
