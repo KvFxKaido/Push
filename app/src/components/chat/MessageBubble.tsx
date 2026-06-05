@@ -8,8 +8,9 @@ import {
   Pin,
   Pencil,
   RefreshCw,
+  ExternalLink,
 } from 'lucide-react';
-import type { ChatMessage, CardAction, AttachmentData } from '@/types';
+import type { ChatMessage, CardAction, AttachmentData, UrlCitation } from '@/types';
 import { CardRenderer } from '@/components/cards/CardRenderer';
 import { BranchWaveIcon, PushMarkIcon } from '@/components/icons/push-custom-icons';
 import { useSmoothStreamedText } from '@/hooks/useSmoothStreamedText';
@@ -352,6 +353,81 @@ function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreamin
   );
 }
 
+/** Parse a citation URL, returning null for anything that isn't a plain
+ *  http(s) link. Citation URLs come from upstream web-search results, so a
+ *  hostile or malformed entry could carry a `javascript:`/`data:` scheme —
+ *  those must never reach an `href`. */
+function safeHttpUrl(url: string): URL | null {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function hostnameOf(parsed: URL): string {
+  return parsed.hostname.replace(/^www\./, '');
+}
+
+/** Web-search sources surfaced by a provider's native search (OpenRouter).
+ *  Collapsed by default to one line; expands to the full numbered list. */
+function SourcesFooter({ citations }: { citations: UrlCitation[] }) {
+  const [expanded, setExpanded] = useState(false);
+  // Drop citations whose URL isn't a safe http(s) link — they can't be
+  // rendered as a trustworthy source and must not become a clickable href.
+  const safe = useMemo(
+    () =>
+      citations
+        .map((c) => ({ c, parsed: safeHttpUrl(c.url) }))
+        .filter((x): x is { c: UrlCitation; parsed: URL } => x.parsed !== null),
+    [citations],
+  );
+  if (safe.length === 0) return null;
+
+  return (
+    <div className="mt-2">
+      <button
+        onClick={() => setExpanded((e) => !e)}
+        className="flex items-center gap-1 text-push-xs text-push-fg-dim hover:text-push-fg-muted transition-colors duration-150"
+      >
+        <ChevronRight
+          className={`h-3 w-3 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
+        />
+        <span className="font-medium">
+          {safe.length} {safe.length === 1 ? 'source' : 'sources'}
+        </span>
+      </button>
+
+      {expanded && (
+        <ol className="mt-1.5 ml-4 space-y-1 list-none">
+          {safe.map(({ c, parsed }, i) => {
+            const host = hostnameOf(parsed);
+            return (
+              <li key={`${c.url}-${i}`} className="flex items-baseline gap-1.5 text-push-sm">
+                <span className="text-push-fg-dimmest tabular-nums shrink-0">{i + 1}.</span>
+                <a
+                  href={parsed.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={c.content || c.url}
+                  className="group/src inline-flex items-baseline gap-1 min-w-0 text-push-accent hover:text-push-accent-strong transition-colors"
+                >
+                  <span className="truncate underline decoration-push-accent/30 group-hover/src:decoration-push-accent underline-offset-2">
+                    {c.title || host}
+                  </span>
+                  <span className="text-push-fg-dimmest shrink-0">{host}</span>
+                  <ExternalLink className="h-3 w-3 shrink-0 self-center opacity-60" />
+                </a>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 function AttachmentBadge({ attachment }: { attachment: AttachmentData }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -609,6 +685,9 @@ export const MessageBubble = memo(function MessageBubble({
             {content}
             {isStreaming && <span className="stream-caret bg-push-accent" aria-hidden="true" />}
           </div>
+        )}
+        {message.citations && message.citations.length > 0 && (
+          <SourcesFooter citations={message.citations} />
         )}
         {hasContent && !isStreaming && (
           <div className="opacity-0 group-hover/assistant:opacity-100 transition-opacity duration-200 mt-1.5 flex items-center gap-0.5">

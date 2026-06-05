@@ -41,6 +41,7 @@ import type {
   PushStream,
   ReasoningBlock,
   StreamUsage,
+  UrlCitation,
 } from '@push/lib/provider-contract';
 import {
   recordSpanError,
@@ -106,6 +107,11 @@ export interface IterateChatStreamCallbacks {
    *  turn's request body must echo back. Consumers persist these on the
    *  assistant message so chained turns survive. */
   onReasoningBlock?: (block: ReasoningBlock) => void;
+  /** Fired when a provider's native web search returns `url_citation`
+   *  annotations (OpenRouter). Additive to `onToken`: the grounded answer
+   *  still streams as text; this carries the sources for a "Sources" UI
+   *  affordance. May fire more than once — consumers dedupe by url. */
+  onCitations?: (citations: UrlCitation[]) => void;
 }
 
 export interface IterateChatStreamOptions {
@@ -146,7 +152,7 @@ export async function iterateChatStream<M extends LlmMessage>(
   callbacks: IterateChatStreamCallbacks,
   options?: IterateChatStreamOptions,
 ): Promise<void> {
-  const { onToken, onDone, onError, onThinkingToken, onReasoningBlock } = callbacks;
+  const { onToken, onDone, onError, onThinkingToken, onReasoningBlock, onCitations } = callbacks;
   const externalSignal = request.signal;
 
   if (externalSignal?.aborted) {
@@ -276,6 +282,12 @@ export async function iterateChatStream<M extends LlmMessage>(
             // Doesn't surface to the legacy callbacks — assembly stays
             // inside the stream.
             resetContentTimer();
+            break;
+          case 'citations':
+            // Native web-search sources. Additive metadata; doesn't reset
+            // the content timer (it isn't streamed text), and `done`
+            // typically follows immediately.
+            onCitations?.(event.citations);
             break;
           case 'done':
             clearAllTimers();

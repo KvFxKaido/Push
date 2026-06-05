@@ -100,6 +100,26 @@ export type ReasoningBlock =
   | { type: 'thinking'; text: string; signature: string }
   | { type: 'redacted_thinking'; data: string };
 
+/**
+ * A single web-search citation surfaced by a provider's native search tool.
+ * Normalized (flat, camelCase) from the OpenAI-compatible wire shape
+ * (`delta.annotations[].url_citation`, which OpenRouter emits for its
+ * `openrouter:web_search` server tool). Display-only — citations are never
+ * sent back to the model, so they don't need wire-fidelity round-tripping
+ * the way `ReasoningBlock` does.
+ */
+export interface UrlCitation {
+  url: string;
+  title: string;
+  /** Excerpt the search engine pulled from the page. May be '' when the
+   *  engine omits per-result content. */
+  content: string;
+  /** Character span in the assistant message this citation supports. Both
+   *  default to 0 when the engine doesn't provide offsets. */
+  startIndex: number;
+  endIndex: number;
+}
+
 // ---------------------------------------------------------------------------
 // Gateway Abstraction (New Wire Model)
 // ---------------------------------------------------------------------------
@@ -116,6 +136,16 @@ export type PushStreamEvent =
    * replacement.
    */
   | { type: 'reasoning_block'; block: ReasoningBlock }
+  /**
+   * Emitted when a provider's native web search returns `url_citation`
+   * annotations (OpenRouter's `openrouter:web_search` server tool). Additive
+   * to the `text_delta` channel — the grounded answer still streams as text;
+   * this carries the structured sources for a "Sources" UI affordance.
+   * Adapters without native search never emit it. May arrive more than once
+   * (some engines send the cumulative list per frame), so consumers should
+   * dedupe by `url`.
+   */
+  | { type: 'citations'; citations: UrlCitation[] }
   // Native `delta.tool_calls` fragment from an OpenAI-shaped provider.
   // Streams emit one per fragment so the adapter's content timer can see
   // progress while a model is mid-way through a long tool-arg payload.

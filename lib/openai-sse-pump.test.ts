@@ -984,4 +984,100 @@ describe('openAISSEPump', () => {
     expect(out.some((e) => e.type === 'text_delta' && e.text === 'still works')).toBe(true);
     expect(out.some((e) => e.type === 'done')).toBe(true);
   });
+
+  it('normalizes delta.annotations url_citations into a citations event', async () => {
+    // OpenRouter's `openrouter:web_search` returns web sources as
+    // `delta.annotations[].url_citation`. The pump must flatten the wire
+    // shape (snake_case offsets, nested object) into the normalized
+    // `UrlCitation` shape on a `citations` event, additive to text.
+    const s = makeStream();
+    const events = collect(openAISSEPump({ body: s.body }));
+    s.push(
+      JSON.stringify({
+        choices: [
+          {
+            delta: {
+              annotations: [
+                {
+                  type: 'url_citation',
+                  url_citation: {
+                    url: 'https://example.com/a',
+                    title: 'Example A',
+                    content: 'excerpt A',
+                    start_index: 5,
+                    end_index: 12,
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    s.push(contentFrame('grounded answer'));
+    s.finish();
+
+    const out = await events;
+    const citationEvents = out.filter(
+      (e): e is { type: 'citations'; citations: import('./provider-contract.js').UrlCitation[] } =>
+        e.type === 'citations',
+    );
+    expect(citationEvents).toHaveLength(1);
+    expect(citationEvents[0].citations).toEqual([
+      {
+        url: 'https://example.com/a',
+        title: 'Example A',
+        content: 'excerpt A',
+        startIndex: 5,
+        endIndex: 12,
+      },
+    ]);
+    // Answer text still streams independently of the citations event.
+    expect(out.some((e) => e.type === 'text_delta' && e.text === 'grounded answer')).toBe(true);
+  });
+
+  it('zero-fills missing offsets and drops non-url_citation / urlless entries', async () => {
+    const s = makeStream();
+    const events = collect(openAISSEPump({ body: s.body }));
+    s.push(
+      JSON.stringify({
+        choices: [
+          {
+            delta: {
+              annotations: [
+                // Kept — offsets/title/content default cleanly.
+                { type: 'url_citation', url_citation: { url: 'https://ok.test' } },
+                // Dropped — not a url_citation.
+                { type: 'file_citation', file_citation: { file_id: 'x' } },
+                // Dropped — no url.
+                { type: 'url_citation', url_citation: { title: 'no url' } },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    s.finish();
+
+    const out = await events;
+    const citationEvents = out.filter(
+      (e): e is { type: 'citations'; citations: import('./provider-contract.js').UrlCitation[] } =>
+        e.type === 'citations',
+    );
+    expect(citationEvents).toHaveLength(1);
+    expect(citationEvents[0].citations).toEqual([
+      { url: 'https://ok.test', title: '', content: '', startIndex: 0, endIndex: 0 },
+    ]);
+  });
+
+  it('emits no citations event when annotations is empty or absent', async () => {
+    const s = makeStream();
+    const events = collect(openAISSEPump({ body: s.body }));
+    s.push(JSON.stringify({ choices: [{ delta: { annotations: [] } }] }));
+    s.push(contentFrame('hi'));
+    s.finish();
+
+    const out = await events;
+    expect(out.some((e) => e.type === 'citations')).toBe(false);
+  });
 });

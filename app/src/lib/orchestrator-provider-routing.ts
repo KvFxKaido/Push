@@ -4,6 +4,7 @@ import type {
   PushStream,
   PushStreamEvent,
   ReasoningBlock,
+  UrlCitation,
 } from '@push/lib/provider-contract';
 import { normalizeReasoning } from '@push/lib/reasoning-tokens';
 import { ollamaStream } from './ollama-stream';
@@ -442,6 +443,7 @@ export async function streamChat(
   onReasoningBlock?: (block: ReasoningBlock) => void,
   sessionDigest?: SessionDigestPlumbing,
   linkedLibraryContent?: string,
+  onCitations?: (citations: UrlCitation[]) => void,
 ): Promise<void> {
   const provider = providerOverride || getActiveProvider();
 
@@ -513,6 +515,7 @@ export async function streamChat(
       onError: wrappedOnError,
       onThinkingToken,
       onReasoningBlock,
+      onCitations,
     },
     {
       timeouts: buildChatTimeouts(provider),

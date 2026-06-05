@@ -40,8 +40,8 @@ export type {
   TaskGraphProgressEvent,
   TaskGraphResult,
 } from '@push/lib/runtime-contract';
-import type { AIProviderType, ReasoningBlock } from '@push/lib/provider-contract';
-export type { ReasoningBlock } from '@push/lib/provider-contract';
+import type { AIProviderType, ReasoningBlock, UrlCitation } from '@push/lib/provider-contract';
+export type { ReasoningBlock, UrlCitation } from '@push/lib/provider-contract';
 export type {
   AIProviderType,
   PreCompactEvent,
@@ -342,6 +342,11 @@ export interface ChatMessage {
    *  (`thinking` text) is independent and may be present without these
    *  blocks for providers that emit reasoning as plain text. */
   reasoningBlocks?: ReasoningBlock[];
+  /** Web-search sources surfaced by a provider's native search (OpenRouter's
+   *  `openrouter:web_search`). Display-only — never sent back to the model;
+   *  rendered as a "Sources" footer beneath the assistant's answer. Deduped
+   *  by url at accumulation time. */
+  citations?: UrlCitation[];
   cards?: ChatCard[];
   attachments?: AttachmentData[]; // User-attached files
   isToolCall?: boolean; // Assistant message that requested a tool

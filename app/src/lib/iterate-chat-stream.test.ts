@@ -81,6 +81,50 @@ describe('iterateChatStream — basic event dispatch', () => {
     expect(cbs.onToken).toHaveBeenCalledWith('answer');
   });
 
+  it('forwards citations events to onCitations alongside the text channel', async () => {
+    const cbs = callbacks();
+    const onCitations = vi.fn<(c: import('@push/lib/provider-contract').UrlCitation[]) => void>();
+    const citations = [
+      { url: 'https://a.test', title: 'A', content: '', startIndex: 0, endIndex: 0 },
+    ];
+    await iterateChatStream(
+      makeStream([
+        { type: 'text_delta', text: 'grounded' },
+        { type: 'citations', citations },
+        { type: 'done', finishReason: 'stop' },
+      ]),
+      baseRequest,
+      { ...cbs, onCitations },
+      { telemetry: 'disabled' },
+    );
+
+    expect(onCitations).toHaveBeenCalledTimes(1);
+    expect(onCitations).toHaveBeenCalledWith(citations);
+    expect(cbs.onToken).toHaveBeenCalledWith('grounded');
+    expect(cbs.onDone).toHaveBeenCalled();
+  });
+
+  it('ignores citations events when no onCitations callback is supplied', async () => {
+    const cbs = callbacks();
+    await iterateChatStream(
+      makeStream([
+        {
+          type: 'citations',
+          citations: [
+            { url: 'https://a.test', title: 'A', content: '', startIndex: 0, endIndex: 0 },
+          ],
+        },
+        { type: 'done', finishReason: 'stop' },
+      ]),
+      baseRequest,
+      cbs,
+      { telemetry: 'disabled' },
+    );
+
+    expect(cbs.onError).not.toHaveBeenCalled();
+    expect(cbs.onDone).toHaveBeenCalled();
+  });
+
   it('passes the request envelope into the stream factory', async () => {
     let captured: unknown = null;
     const stream: PushStream = (req) => {

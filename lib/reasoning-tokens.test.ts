@@ -355,4 +355,54 @@ describe('normalizeReasoning', () => {
       { kind: 'done', finishReason: 'stop', usage: undefined },
     ]);
   });
+
+  // Regression: a side-channel event (citations / reasoning_block) must pass
+  // through WITHOUT terminating the stream. The transducer used to treat any
+  // non-text/reasoning/tool_call_delta event as terminal `done`, which
+  // truncated the answer text after an OpenRouter web-search citation frame.
+  it('passes a citations event through and keeps streaming the text after it', async () => {
+    const citations = [
+      { url: 'https://a.test', title: 'A', content: '', startIndex: 0, endIndex: 0 },
+    ];
+    const out: PushStreamEvent[] = [];
+    for await (const event of normalizeReasoning(
+      streamOf([
+        { type: 'text_delta', text: 'before ' },
+        { type: 'citations', citations },
+        { type: 'text_delta', text: 'after' },
+        { type: 'done', finishReason: 'stop' },
+      ]),
+    )) {
+      out.push(event);
+    }
+
+    // The citations event is forwarded verbatim, untouched by reasoning logic.
+    expect(out).toContainEqual({ type: 'citations', citations });
+    // Text on BOTH sides of the citation survives (no truncation).
+    const text = out
+      .filter((e): e is { type: 'text_delta'; text: string } => e.type === 'text_delta')
+      .map((e) => e.text)
+      .join('');
+    expect(text).toBe('before after');
+    // The real terminal `done` is still forwarded (not swallowed by the citation).
+    expect(out.filter((e) => e.type === 'done')).toHaveLength(1);
+  });
+
+  it('passes a reasoning_block event through without terminating the stream', async () => {
+    const block = { type: 'thinking', text: 't', signature: 'sig' } as const;
+    const out: PushStreamEvent[] = [];
+    for await (const event of normalizeReasoning(
+      streamOf([
+        { type: 'reasoning_block', block },
+        { type: 'text_delta', text: 'answer' },
+        { type: 'done', finishReason: 'stop' },
+      ]),
+    )) {
+      out.push(event);
+    }
+
+    expect(out).toContainEqual({ type: 'reasoning_block', block });
+    expect(out.some((e) => e.type === 'text_delta' && e.text === 'answer')).toBe(true);
+    expect(out.filter((e) => e.type === 'done')).toHaveLength(1);
+  });
 });

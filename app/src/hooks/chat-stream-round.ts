@@ -31,7 +31,7 @@ import { type SessionDigest, SESSION_DIGEST_HEADER } from '@push/lib/session-dig
  *  but high enough to skip the cost on warm-up turns. The actual
  *  compaction decision still happens in `manageContext`. */
 const MIN_MESSAGES_BEFORE_PREFETCH = 20;
-import type { ChatMessage, ReasoningBlock } from '@/types';
+import type { ChatMessage, ReasoningBlock, UrlCitation } from '@/types';
 import type { SendLoopContext, StreamRoundResult } from './chat-send-types';
 
 /**
@@ -88,6 +88,10 @@ export async function streamAssistantRound(
   let accumulated = '';
   let thinkingAccumulated = '';
   const reasoningBlocks: ReasoningBlock[] = [];
+  // Web-search citations, deduped by url. Some engines resend the cumulative
+  // list on every frame, so a Map keyed by url collapses repeats while
+  // preserving first-seen order for the "Sources" footer.
+  const citationsByUrl = new Map<string, UrlCitation>();
   // Sandbox tools are advertised in the prompt when ANY sandbox-shaped
   // transport is available: a cloud sandbox id (`sandboxIdRef`) or a
   // paired local-PC daemon binding (`localDaemonBindingRef`). Without
@@ -281,6 +285,32 @@ export async function streamAssistantRound(
         },
       },
       linkedLibraryContent,
+      (citations) => {
+        if (abortRef.current) return;
+        let added = false;
+        for (const c of citations) {
+          if (!citationsByUrl.has(c.url)) {
+            citationsByUrl.set(c.url, c);
+            added = true;
+          }
+        }
+        if (!added) return;
+        // Stamp the in-flight assistant message. Like the reasoningBlocks
+        // stamp above, later setConversations updates spread `...msgs[lastIdx]`,
+        // so this survives the post-stream status flips and persists for render.
+        const next = [...citationsByUrl.values()];
+        setConversations((prev) => {
+          const conv = prev[chatId];
+          if (!conv) return prev;
+          const lastIdx = conv.messages.length - 1;
+          // Bail before cloning when there's no assistant message to stamp —
+          // avoids a no-op state update + re-render.
+          if (conv.messages[lastIdx]?.role !== 'assistant') return prev;
+          const msgs = [...conv.messages];
+          msgs[lastIdx] = { ...msgs[lastIdx], citations: next };
+          return { ...prev, [chatId]: { ...conv, messages: msgs } };
+        });
+      },
     );
   });
 
