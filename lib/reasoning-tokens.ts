@@ -322,11 +322,20 @@ export async function* normalizeReasoning(
         yield event;
         continue;
       }
-      // done — drain buffer, close any open reasoning block, then forward.
-      yield* flushRemaining();
-      yield* closeReasoningIfOpen();
+      if (event.type === 'done') {
+        // Terminal — drain buffer, close any open reasoning block, forward.
+        yield* flushRemaining();
+        yield* closeReasoningIfOpen();
+        yield event;
+        return;
+      }
+      // Any other event (citations, reasoning_block, future additive types):
+      // pass through untouched and KEEP GOING. These carry side-channel data
+      // that doesn't interact with the `<think>` buffer and must never be
+      // treated as terminal — gating termination on `done` instead of an
+      // implicit else is what stops a citations/reasoning_block frame from
+      // truncating the answer text that follows it.
       yield event;
-      return;
     }
     // Stream ended without a `done` event. Still drain cleanly.
     yield* flushRemaining();

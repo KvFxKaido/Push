@@ -302,11 +302,12 @@ export async function streamAssistantRound(
         setConversations((prev) => {
           const conv = prev[chatId];
           if (!conv) return prev;
+          const lastIdx = conv.messages.length - 1;
+          // Bail before cloning when there's no assistant message to stamp —
+          // avoids a no-op state update + re-render.
+          if (conv.messages[lastIdx]?.role !== 'assistant') return prev;
           const msgs = [...conv.messages];
-          const lastIdx = msgs.length - 1;
-          if (msgs[lastIdx]?.role === 'assistant') {
-            msgs[lastIdx] = { ...msgs[lastIdx], citations: next };
-          }
+          msgs[lastIdx] = { ...msgs[lastIdx], citations: next };
           return { ...prev, [chatId]: { ...conv, messages: msgs } };
         });
       },

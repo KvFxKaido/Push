@@ -378,7 +378,9 @@ function SourcesFooter({ citations }: { citations: UrlCitation[] }) {
   // rendered as a trustworthy source and must not become a clickable href.
   const safe = useMemo(
     () =>
-      citations.map((c) => ({ c, parsed: safeHttpUrl(c.url) })).filter((x) => x.parsed !== null),
+      citations
+        .map((c) => ({ c, parsed: safeHttpUrl(c.url) }))
+        .filter((x): x is { c: UrlCitation; parsed: URL } => x.parsed !== null),
     [citations],
   );
   if (safe.length === 0) return null;
@@ -400,12 +402,12 @@ function SourcesFooter({ citations }: { citations: UrlCitation[] }) {
       {expanded && (
         <ol className="mt-1.5 ml-4 space-y-1 list-none">
           {safe.map(({ c, parsed }, i) => {
-            const host = hostnameOf(parsed!);
+            const host = hostnameOf(parsed);
             return (
               <li key={`${c.url}-${i}`} className="flex items-baseline gap-1.5 text-push-sm">
                 <span className="text-push-fg-dimmest tabular-nums shrink-0">{i + 1}.</span>
                 <a
-                  href={parsed!.href}
+                  href={parsed.href}
                   target="_blank"
                   rel="noopener noreferrer"
                   title={c.content || c.url}
