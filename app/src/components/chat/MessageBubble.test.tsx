@@ -43,4 +43,34 @@ describe('MessageBubble', () => {
     expect(html).not.toContain('npm audit fix');
     expect(html).toContain('[browser-screenshot]');
   });
+
+  it('wraps streaming assistant words in shimmer spans', () => {
+    const message = assistantMessage({ content: 'hello world', status: 'streaming' });
+    const html = renderToStaticMarkup(<MessageBubble message={message} />);
+    expect(html).toContain('class="stream-word"');
+    // Each visible word becomes its own span; whitespace stays unwrapped.
+    expect(html.match(/class="stream-word"/g)?.length).toBe(2);
+    expect(html).toContain('hello');
+    expect(html).toContain('world');
+  });
+
+  it('does not wrap words once the message has settled', () => {
+    const message = assistantMessage({ content: 'hello world', status: 'done' });
+    const html = renderToStaticMarkup(<MessageBubble message={message} />);
+    expect(html).not.toContain('stream-word');
+    expect(html).toContain('hello world');
+  });
+
+  it('leaves code blocks unshimmered while streaming', () => {
+    const message = assistantMessage({
+      content: 'run this:\n```\nnpm install\n```',
+      status: 'streaming',
+    });
+    const html = renderToStaticMarkup(<MessageBubble message={message} />);
+    // Prose outside the fence still shimmers...
+    expect(html).toContain('class="stream-word"');
+    // ...but the code text is not split into word spans.
+    expect(html).toContain('npm install');
+    expect(html).not.toMatch(/stream-word"[^>]*>npm</);
+  });
 });

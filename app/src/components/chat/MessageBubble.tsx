@@ -1,4 +1,4 @@
-import { memo, useMemo, useState, useCallback } from 'react';
+import { memo, useMemo, useState, useCallback, cloneElement, isValidElement } from 'react';
 import {
   ChevronRight,
   FileCode,
@@ -252,6 +252,60 @@ function formatInline(text: string): React.ReactNode[] {
   return result;
 }
 
+// --- Per-word shimmer reveal (streaming only) ---------------------------------
+// Post-process the formatted node tree, splitting plain-text runs into
+// individually-keyed word spans so each newly-revealed word can bloom in once
+// (CSS `.stream-word`). Keys are assigned in document order from a shared
+// counter, so a word keeps its key as the text grows by appending — meaning it
+// mounts (and animates) exactly once and stays inert afterward. Code/`pre` are
+// skipped: per-word motion inside code reads as noise. Above the char cap we
+// bail to the plain tree so a very long answer never pays the per-word cost.
+const STREAM_WORD_SKIP_TYPES = new Set(['code', 'pre']);
+const MAX_SHIMMER_CHARS = 4000;
+
+function splitTextToWords(text: string, counter: { i: number }): React.ReactNode[] {
+  // Keep whitespace runs as bare strings so spacing/wrapping is untouched; wrap
+  // only the visible word tokens.
+  const out: React.ReactNode[] = [];
+  for (const token of text.split(/(\s+)/)) {
+    if (token === '') continue;
+    if (/^\s+$/.test(token)) {
+      out.push(token);
+    } else {
+      out.push(
+        <span key={`sw-${counter.i++}`} className="stream-word">
+          {token}
+        </span>,
+      );
+    }
+  }
+  return out;
+}
+
+function wrapStreamWordsNode(node: React.ReactNode, counter: { i: number }): React.ReactNode {
+  if (typeof node === 'string') {
+    return splitTextToWords(node, counter);
+  }
+  if (Array.isArray(node)) {
+    return node.map((child) => wrapStreamWordsNode(child, counter));
+  }
+  if (isValidElement(node)) {
+    if (typeof node.type === 'string' && STREAM_WORD_SKIP_TYPES.has(node.type)) {
+      return node;
+    }
+    const { children } = node.props as { children?: React.ReactNode };
+    if (children == null) return node;
+    return cloneElement(node, undefined, wrapStreamWordsNode(children, counter));
+  }
+  return node;
+}
+
+function wrapStreamWords(nodes: React.ReactNode[], textLength: number): React.ReactNode[] {
+  if (textLength > MAX_SHIMMER_CHARS) return nodes;
+  const counter = { i: 0 };
+  return nodes.map((node) => wrapStreamWordsNode(node, counter));
+}
+
 function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreaming: boolean }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -439,7 +493,12 @@ export const MessageBubble = memo(function MessageBubble({
     [message.cards],
   );
 
-  const content = useMemo(() => formatContent(revealedContentText), [revealedContentText]);
+  const content = useMemo(() => {
+    const nodes = formatContent(revealedContentText);
+    // While streaming, animate each newly-revealed word in; settled messages
+    // render plain markdown so the spans (and their cost) exist only in-flight.
+    return isStreaming ? wrapStreamWords(nodes, revealedContentText.length) : nodes;
+  }, [revealedContentText, isStreaming]);
 
   // Hide tool call / malformed messages only when they have no cards.
   // If the model included user-facing text before the JSON call, keep it visible.
