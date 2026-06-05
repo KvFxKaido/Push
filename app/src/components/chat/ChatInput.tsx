@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { ChevronsUpDown, Loader2, Lock, RefreshCw, Square } from 'lucide-react';
+import { toast } from 'sonner';
 import { AttachmentPreview } from './AttachmentPreview';
 import { ContextMeter } from './ContextMeter';
 import { LibraryPanel } from './LibraryPanel';
@@ -284,7 +285,24 @@ export function ChatInput({
       }
     };
     recognition.onend = () => setIsListening(false);
-    recognition.onerror = () => setIsListening(false);
+    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+      setIsListening(false);
+      // 'aborted' = user stopped; 'no-speech' = benign silence timeout. Both are
+      // expected and shouldn't nag. Everything else is a real failure the user
+      // can't otherwise see, so name it instead of swallowing it.
+      const code = event.error;
+      console.warn(JSON.stringify({ level: 'warn', event: 'speech_recognition_error', code }));
+      if (code === 'aborted' || code === 'no-speech') return;
+      const message =
+        code === 'not-allowed' || code === 'service-not-allowed'
+          ? 'Microphone access is blocked. Enable it for this site in your browser settings.'
+          : code === 'audio-capture'
+            ? 'No microphone was found.'
+            : code === 'network'
+              ? 'Voice input needs a network connection.'
+              : 'Voice input failed. Please try again.';
+      toast.error(message);
+    };
     recognitionRef.current = recognition;
     recognition.start();
     setIsListening(true);

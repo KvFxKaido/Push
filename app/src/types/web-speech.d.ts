@@ -3,13 +3,18 @@ interface SpeechRecognitionEvent extends Event {
   readonly results: SpeechRecognitionResultList;
 }
 
+interface SpeechRecognitionErrorEvent extends Event {
+  readonly error: string;
+  readonly message: string;
+}
+
 interface SpeechRecognition extends EventTarget {
   continuous: boolean;
   interimResults: boolean;
   lang: string;
   onresult: ((this: SpeechRecognition, event: SpeechRecognitionEvent) => void) | null;
   onend: ((this: SpeechRecognition, event: Event) => void) | null;
-  onerror: ((this: SpeechRecognition, event: Event) => void) | null;
+  onerror: ((this: SpeechRecognition, event: SpeechRecognitionErrorEvent) => void) | null;
   start(): void;
   stop(): void;
 }
