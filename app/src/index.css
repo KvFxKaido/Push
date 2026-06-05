@@ -246,7 +246,10 @@
   @apply text-push-fg-muted;
 }
 .push-markdown [data-streamdown='inline-code'] {
-  @apply border border-push-edge bg-push-surface text-push-fg-soft;
+  /* text-push-base (13px) matches body prose; Streamdown's default chip is
+     text-sm (14px), which reads slightly large inline. Rounding/padding/font-mono
+     carry over from Streamdown's own utility class. */
+  @apply border border-push-edge bg-push-surface text-push-base text-push-fg-soft;
 }
 
 /* ── Motion utilities ────────────────────────────── */
