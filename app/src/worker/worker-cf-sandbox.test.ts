@@ -26,6 +26,10 @@ interface FakeSandbox {
   deleteFile: ReturnType<typeof vi.fn>;
   gitCheckout: ReturnType<typeof vi.fn>;
   destroy: ReturnType<typeof vi.fn>;
+  startProcess: ReturnType<typeof vi.fn>;
+  getProcess: ReturnType<typeof vi.fn>;
+  getProcessLogs: ReturnType<typeof vi.fn>;
+  killProcess: ReturnType<typeof vi.fn>;
 }
 
 type ExecResult = { stdout?: string; stderr?: string; exitCode?: number };
@@ -80,6 +84,23 @@ function createFakeSandbox(): FakeSandbox {
     deleteFile: vi.fn(async () => ({ success: true })),
     gitCheckout: vi.fn(async () => ({ success: true })),
     destroy: vi.fn(async () => ({ success: true })),
+    startProcess: vi.fn(async (command: string) => ({
+      id: 'proc_test_1',
+      command,
+      status: 'running',
+      startTime: new Date('2026-06-04T00:00:00.000Z'),
+    })),
+    getProcess: vi.fn(async (id: string) => ({
+      id,
+      status: 'running',
+      startTime: new Date('2026-06-04T00:00:00.000Z'),
+    })),
+    getProcessLogs: vi.fn(async (id: string) => ({
+      stdout: '',
+      stderr: '',
+      processId: id,
+    })),
+    killProcess: vi.fn(async () => undefined),
   };
 }
 
@@ -1592,5 +1613,126 @@ describe('handleCloudflareSandbox snapshots (R2)', () => {
     );
     expect(response.status).toBe(403);
     expect(r2.head).not.toHaveBeenCalled();
+  });
+});
+
+describe('background execution routes', () => {
+  it('exec-start detaches the process with autoCleanup disabled', async () => {
+    const sandbox = mockSandbox();
+    sandbox.startProcess.mockResolvedValue({
+      id: 'proc_42',
+      command: 'sleep 5',
+      status: 'running',
+      startTime: new Date('2026-06-04T01:02:03.000Z'),
+    });
+
+    const response = await callRoute('exec-start', {
+      sandbox_id: 'sb1',
+      command: 'sleep 5',
+      workdir: '/workspace/app',
+      timeout_ms: 30_000,
+    });
+
+    expect(response.status).toBe(200);
+    expect(await jsonBody(response)).toEqual({
+      process_id: 'proc_42',
+      status: 'running',
+      running: true,
+      started_at: '2026-06-04T01:02:03.000Z',
+    });
+    // autoCleanup:false is load-bearing — without it the record (and final
+    // status/logs) is purged on exit, breaking reconnect-after-completion.
+    expect(sandbox.startProcess).toHaveBeenCalledWith(
+      'sleep 5',
+      expect.objectContaining({ cwd: '/workspace/app', timeout: 30_000, autoCleanup: false }),
+    );
+  });
+
+  it('exec-status maps a finished process and reports not-running', async () => {
+    const sandbox = mockSandbox();
+    sandbox.getProcess.mockResolvedValue({
+      id: 'proc_42',
+      status: 'completed',
+      exitCode: 0,
+      startTime: new Date('2026-06-04T01:00:00.000Z'),
+      endTime: new Date('2026-06-04T01:00:09.000Z'),
+    });
+
+    const response = await callRoute('exec-status', { sandbox_id: 'sb1', process_id: 'proc_42' });
+
+    expect(response.status).toBe(200);
+    expect(await jsonBody(response)).toEqual({
+      process_id: 'proc_42',
+      status: 'completed',
+      running: false,
+      exit_code: 0,
+      started_at: '2026-06-04T01:00:00.000Z',
+      ended_at: '2026-06-04T01:00:09.000Z',
+    });
+  });
+
+  it('exec-status returns terminal NOT_FOUND when the process is gone', async () => {
+    const sandbox = mockSandbox();
+    sandbox.getProcess.mockResolvedValue(null);
+
+    const response = await callRoute('exec-status', { sandbox_id: 'sb1', process_id: 'ghost' });
+
+    expect(response.status).toBe(404);
+    expect((await jsonBody(response)).code).toBe('NOT_FOUND');
+  });
+
+  it('exec-logs returns only the slice after the cursor and advances it', async () => {
+    const sandbox = mockSandbox();
+    const full = 'line 1\nline 2\nline 3\nline 4\n'; // length 28
+    sandbox.getProcessLogs.mockResolvedValue({ stdout: full, stderr: '', processId: 'proc_42' });
+
+    // Cursor past the first two lines (14 bytes) — expect only lines 3-4.
+    const response = await callRoute('exec-logs', {
+      sandbox_id: 'sb1',
+      process_id: 'proc_42',
+      cursor_stdout: 14,
+    });
+
+    expect(response.status).toBe(200);
+    const body = await jsonBody(response);
+    expect(body.stdout).toBe('line 3\nline 4\n');
+    expect(body.next_cursor_stdout).toBe(full.length);
+    expect(body.truncated).toBe(false);
+  });
+
+  it('exec-logs clamps a cursor past the buffer instead of throwing', async () => {
+    const sandbox = mockSandbox();
+    sandbox.getProcessLogs.mockResolvedValue({ stdout: 'abc', stderr: '', processId: 'proc_42' });
+
+    const response = await callRoute('exec-logs', {
+      sandbox_id: 'sb1',
+      process_id: 'proc_42',
+      cursor_stdout: 999,
+    });
+
+    expect(response.status).toBe(200);
+    const body = await jsonBody(response);
+    expect(body.stdout).toBe('');
+    expect(body.next_cursor_stdout).toBe(3);
+  });
+
+  it('exec-logs maps an unknown process to NOT_FOUND', async () => {
+    const sandbox = mockSandbox();
+    sandbox.getProcessLogs.mockRejectedValue(new Error('no such process'));
+
+    const response = await callRoute('exec-logs', { sandbox_id: 'sb1', process_id: 'ghost' });
+
+    expect(response.status).toBe(404);
+    expect((await jsonBody(response)).code).toBe('NOT_FOUND');
+  });
+
+  it('exec-kill is idempotent when the process is already gone', async () => {
+    const sandbox = mockSandbox();
+    sandbox.killProcess.mockRejectedValue(new Error('no such process'));
+
+    const response = await callRoute('exec-kill', { sandbox_id: 'sb1', process_id: 'ghost' });
+
+    expect(response.status).toBe(200);
+    expect(await jsonBody(response)).toEqual({ ok: true });
   });
 });

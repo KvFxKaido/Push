@@ -12,6 +12,10 @@ import {
   setWorkspaceRevisionByKey,
   setSandboxWorkspaceRevision,
 } from './sandbox-file-version-cache';
+import {
+  runDetachedToCompletion,
+  type DetachedExecPrimitives,
+} from '@push/lib/detached-exec-runner';
 import { resolveApiUrl } from './api-url';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import {
@@ -859,7 +863,13 @@ function sleep(ms: number): Promise<void> {
  * (read/write/list/diff) are cheap and idempotent, so we keep retrying them.
  */
 function isRetryableError(err: unknown, statusCode?: number, endpoint?: string): boolean {
-  const isExec = endpoint === 'exec';
+  // `exec` and `exec-start` LAUNCH a command, so they share the wedged-container
+  // hazard: replaying a timed-out launch against a stuck container just hides
+  // the failure for ~12 minutes (and a duplicate launch is wasteful). Opt them
+  // out of timeout/504 retries. The other background routes (exec-status/-logs/
+  // -kill) are cheap idempotent reads/controls like read/list, so they keep the
+  // normal retry policy — a transient blip on a status poll should recover.
+  const isExec = endpoint === 'exec' || endpoint === 'exec-start';
 
   // Timeout errors (original AbortError). Not retryable for exec — see above.
   if (err instanceof DOMException && err.name === 'AbortError') {
@@ -1190,6 +1200,143 @@ export async function execInSandbox(
     error: raw.error,
     workspaceRevision: raw.workspace_revision,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Background execution (detached process + resumable cursor logs)
+//
+// Thin fetch wrappers over the CF-only /api/sandbox-cf/exec-* routes, plus
+// `execLongRunningInSandbox` which drives the shared `runDetachedToCompletion`
+// kernel and falls back to buffered `execInSandbox` when the active backend
+// lacks the routes (Modal — its handler 404s the unknown route). Used for
+// commands that can outrun the buffered per-exec deadline, e.g. a cold
+// `npm install`.
+// ---------------------------------------------------------------------------
+
+async function execStartInSandbox(
+  sandboxId: string,
+  command: string,
+  opts?: { workdir?: string; timeoutMs?: number },
+): Promise<{ processId: string }> {
+  const raw = await sandboxFetch<{ process_id: string }>(
+    'exec-start',
+    withOwnerToken(
+      {
+        sandbox_id: sandboxId,
+        command,
+        workdir: opts?.workdir,
+        timeout_ms: opts?.timeoutMs,
+      },
+      sandboxId,
+    ),
+  );
+  return { processId: raw.process_id };
+}
+
+async function execStatusInSandbox(
+  sandboxId: string,
+  processId: string,
+): Promise<{ running: boolean; exitCode: number | null }> {
+  const raw = await sandboxFetch<{ running: boolean; exit_code: number | null }>(
+    'exec-status',
+    withOwnerToken({ sandbox_id: sandboxId, process_id: processId }, sandboxId),
+  );
+  return { running: raw.running, exitCode: raw.exit_code };
+}
+
+async function execLogsInSandbox(
+  sandboxId: string,
+  processId: string,
+  cursors: { cursorStdout: number; cursorStderr: number },
+): Promise<{
+  stdout: string;
+  stderr: string;
+  nextCursorStdout: number;
+  nextCursorStderr: number;
+}> {
+  const raw = await sandboxFetch<{
+    stdout: string;
+    stderr: string;
+    next_cursor_stdout: number;
+    next_cursor_stderr: number;
+  }>(
+    'exec-logs',
+    withOwnerToken(
+      {
+        sandbox_id: sandboxId,
+        process_id: processId,
+        cursor_stdout: cursors.cursorStdout,
+        cursor_stderr: cursors.cursorStderr,
+      },
+      sandboxId,
+    ),
+  );
+  return {
+    stdout: raw.stdout,
+    stderr: raw.stderr,
+    nextCursorStdout: raw.next_cursor_stdout,
+    nextCursorStderr: raw.next_cursor_stderr,
+  };
+}
+
+async function execInterruptInSandbox(sandboxId: string, processId: string): Promise<void> {
+  await sandboxFetch<{ ok: boolean }>(
+    'exec-kill',
+    withOwnerToken({ sandbox_id: sandboxId, process_id: processId }, sandboxId),
+  );
+}
+
+/**
+ * Run a long command detached, blocking until it finishes — returns the same
+ * `ExecResult` shape as `execInSandbox`. Removes the buffered per-exec deadline
+ * for genuinely long commands. Falls back to buffered `execInSandbox` when the
+ * active backend has no background routes (the start call 404s).
+ */
+export async function execLongRunningInSandbox(
+  sandboxId: string,
+  command: string,
+  opts?: {
+    workdir?: string;
+    markWorkspaceMutated?: boolean;
+    overallTimeoutMs?: number;
+    onProgress?: (chunk: { stdout: string; stderr: string }) => void;
+  },
+): Promise<ExecResult> {
+  const primitives: DetachedExecPrimitives = {
+    start: (cmd, o) => execStartInSandbox(sandboxId, cmd, { workdir: o.workdir }),
+    status: (processId) => execStatusInSandbox(sandboxId, processId),
+    logs: (processId, cursors) => execLogsInSandbox(sandboxId, processId, cursors),
+    interrupt: (processId) => execInterruptInSandbox(sandboxId, processId),
+  };
+  try {
+    return await runDetachedToCompletion(primitives, command, {
+      workdir: opts?.workdir,
+      overallTimeoutMs: opts?.overallTimeoutMs,
+      onProgress: opts?.onProgress,
+    });
+  } catch (err) {
+    // runDetachedToCompletion throws ONLY when the command never started — a
+    // backend without background routes (404, e.g. Modal), or a launch that
+    // failed/timed out. Buffered exec is the always-safe pre-feature path, so
+    // fall back to it regardless of the specific start error. Log the downgrade
+    // (symmetric-structured-logs): a silent fallback would hide both a
+    // misconfigured CF backend that never uses the detached path AND the loss
+    // of live progress for the caller's onProgress.
+    const statusCode = (err as { statusCode?: number }).statusCode;
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        event: 'background_exec_fallback',
+        sandboxId,
+        statusCode: statusCode ?? null,
+        hadProgressListener: Boolean(opts?.onProgress),
+        message: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    return await execInSandbox(sandboxId, command, opts?.workdir, {
+      markWorkspaceMutated: opts?.markWorkspaceMutated,
+    });
+  }
 }
 
 export async function readSymbolsFromSandbox(

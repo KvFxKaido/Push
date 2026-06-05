@@ -34,6 +34,11 @@ import type {
   SandboxErrorCode,
   ExecResult,
   ExecOptions,
+  ExecHandle,
+  ExecBackgroundOptions,
+  ExecBackgroundStatus,
+  ExecLogsResult,
+  ExecLogsOptions,
   FileReadResult,
   ReadFileOptions,
   WriteResult,
@@ -120,6 +125,7 @@ export class CloudflareSandboxProvider implements SandboxProvider {
 
   readonly capabilities: SandboxProviderCapabilities = {
     snapshots: true,
+    backgroundExec: true,
     portForwarding: false,
     externalStorage: false,
     staticPolicyEnforcement: false,
@@ -234,6 +240,7 @@ export class CloudflareSandboxProvider implements SandboxProvider {
       owner_token: this.tokenFor(sandboxId),
       command,
       workdir: options?.workdir,
+      timeout_ms: options?.timeoutMs,
     });
     return {
       stdout: res.stdout,
@@ -243,6 +250,94 @@ export class CloudflareSandboxProvider implements SandboxProvider {
       error: res.error,
       workspaceRevision: res.workspace_revision,
     };
+  }
+
+  // -- Background execution -------------------------------------------------
+
+  async execBackground(
+    sandboxId: string,
+    command: string,
+    options?: ExecBackgroundOptions,
+  ): Promise<ExecHandle> {
+    const res = await call<{
+      process_id: string;
+      status: string;
+      running: boolean;
+      started_at?: string | null;
+    }>('exec-start', {
+      sandbox_id: sandboxId,
+      owner_token: this.tokenFor(sandboxId),
+      command,
+      workdir: options?.workdir,
+      timeout_ms: options?.timeoutMs,
+    });
+    return {
+      processId: res.process_id,
+      status: res.status,
+      running: res.running,
+      startedAt: res.started_at ?? null,
+    };
+  }
+
+  async execStatus(sandboxId: string, processId: string): Promise<ExecBackgroundStatus> {
+    const res = await call<{
+      process_id: string;
+      status: string;
+      running: boolean;
+      exit_code: number | null;
+      started_at?: string | null;
+      ended_at?: string | null;
+    }>('exec-status', {
+      sandbox_id: sandboxId,
+      owner_token: this.tokenFor(sandboxId),
+      process_id: processId,
+    });
+    return {
+      processId: res.process_id,
+      status: res.status,
+      running: res.running,
+      exitCode: res.exit_code,
+      startedAt: res.started_at ?? null,
+      endedAt: res.ended_at ?? null,
+    };
+  }
+
+  async execLogs(
+    sandboxId: string,
+    processId: string,
+    options?: ExecLogsOptions,
+  ): Promise<ExecLogsResult> {
+    const res = await call<{
+      process_id: string;
+      stdout: string;
+      stderr: string;
+      next_cursor_stdout: number;
+      next_cursor_stderr: number;
+      truncated: boolean;
+    }>('exec-logs', {
+      sandbox_id: sandboxId,
+      owner_token: this.tokenFor(sandboxId),
+      process_id: processId,
+      cursor_stdout: options?.cursorStdout,
+      cursor_stderr: options?.cursorStderr,
+    });
+    return {
+      processId: res.process_id,
+      stdout: res.stdout,
+      stderr: res.stderr,
+      nextCursorStdout: res.next_cursor_stdout,
+      nextCursorStderr: res.next_cursor_stderr,
+      truncated: res.truncated,
+    };
+  }
+
+  async execInterrupt(sandboxId: string, processId: string, signal?: string): Promise<void> {
+    await call<{ ok: boolean }>('exec-kill', {
+      sandbox_id: sandboxId,
+      owner_token: this.tokenFor(sandboxId),
+      process_id: processId,
+      signal,
+    });
   }
 
   // -- File operations ------------------------------------------------------

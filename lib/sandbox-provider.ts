@@ -122,6 +122,50 @@ export interface ExecResult {
   workspaceRevision?: number;
 }
 
+// -- Background execution -----------------------------------------------------
+// Detached counterpart to `exec()`. Where `exec()` buffers and returns once the
+// command finishes, `execBackground()` returns a handle immediately and the
+// command keeps running independent of the request that started it. Output is
+// fetched incrementally by cursor (`execLogs`) so a client that disconnects
+// mid-run can reconnect and resume from its last offset rather than losing the
+// stream — the property cursor polling has that SSE does not. Providers that
+// support this set `capabilities.backgroundExec = true` and implement all four
+// methods; others omit them.
+
+/** Handle returned by `execBackground` — identifies a detached process. */
+export interface ExecHandle {
+  processId: string;
+  /** Provider-native status string at start (e.g. "starting" | "running"). */
+  status: string;
+  running: boolean;
+  startedAt?: string | null;
+}
+
+/** Point-in-time status of a detached process. */
+export interface ExecBackgroundStatus {
+  processId: string;
+  status: string;
+  running: boolean;
+  /** Exit code once finished; null while still running. */
+  exitCode: number | null;
+  startedAt?: string | null;
+  endedAt?: string | null;
+}
+
+/**
+ * Incremental log slice for a detached process. `nextCursor*` advance only by
+ * what was actually returned, so a truncated read stays resumable: pass them
+ * back on the next call to continue exactly where this slice was cut.
+ */
+export interface ExecLogsResult {
+  processId: string;
+  stdout: string;
+  stderr: string;
+  nextCursorStdout: number;
+  nextCursorStderr: number;
+  truncated: boolean;
+}
+
 export interface FileReadResult {
   content: string;
   truncated: boolean;
@@ -195,6 +239,29 @@ export interface ArchiveResult {
 export interface ExecOptions {
   workdir?: string;
   markWorkspaceMutated?: boolean;
+  /**
+   * Caller-supplied per-command deadline in milliseconds. Providers enforce it
+   * as a hard bound that can only tighten the provider's own ceiling, never
+   * extend past it. Omit to use the provider default.
+   */
+  timeoutMs?: number;
+}
+
+export interface ExecBackgroundOptions {
+  workdir?: string;
+  /** Optional deadline for the detached command; omit for unbounded. */
+  timeoutMs?: number;
+}
+
+export interface ExecLogsOptions {
+  /**
+   * Character offset (UTF-16 code unit, not byte) into accumulated stdout;
+   * omit for a full read from 0. Treat as an opaque resume token — pass back
+   * the `nextCursorStdout` from the previous read.
+   */
+  cursorStdout?: number;
+  /** Character offset (UTF-16 code unit, not byte) into accumulated stderr. */
+  cursorStderr?: number;
 }
 
 export interface ReadFileOptions {
@@ -228,6 +295,12 @@ export interface DeleteFileOptions {
 export interface SandboxProviderCapabilities {
   /** Provider supports filesystem snapshots and restore. */
   snapshots: boolean;
+  /**
+   * Provider supports detached background execution with resumable cursor
+   * logs. When `true`, `execBackground`/`execStatus`/`execLogs`/`execInterrupt`
+   * must all be implemented; when `false`, they must be omitted.
+   */
+  backgroundExec: boolean;
   /** Provider supports exposing sandbox ports to the user. */
   portForwarding: boolean;
   /** Provider supports mounting external storage (S3, GCS, R2). */
@@ -311,6 +384,30 @@ export interface SandboxProvider {
 
   /** Run a shell command inside the sandbox. */
   exec(sandboxId: string, command: string, options?: ExecOptions): Promise<ExecResult>;
+
+  // -- Background execution (optional) ---------------------------------------
+  // Providers with capabilities.backgroundExec = true must implement all four;
+  // others must omit them.
+
+  /** Start a detached command. Returns a handle immediately. */
+  execBackground?(
+    sandboxId: string,
+    command: string,
+    options?: ExecBackgroundOptions,
+  ): Promise<ExecHandle>;
+
+  /** Poll a detached process's status. Rejects NOT_FOUND once reclaimed. */
+  execStatus?(sandboxId: string, processId: string): Promise<ExecBackgroundStatus>;
+
+  /** Fetch a resumable log slice from the given cursors. */
+  execLogs?(
+    sandboxId: string,
+    processId: string,
+    options?: ExecLogsOptions,
+  ): Promise<ExecLogsResult>;
+
+  /** Interrupt a detached process. Idempotent — does not throw if already gone. */
+  execInterrupt?(sandboxId: string, processId: string, signal?: string): Promise<void>;
 
   // -- File operations ------------------------------------------------------
 
