@@ -6,12 +6,6 @@ function render(text: string, isStreaming = false): string {
   return renderToStaticMarkup(<PushMarkdownRenderer text={text} isStreaming={isStreaming} />);
 }
 
-function renderPlain(text: string, isStreaming = false): string {
-  return renderToStaticMarkup(
-    <PushMarkdownRenderer text={text} isStreaming={isStreaming} enableCodeHighlight={false} />,
-  );
-}
-
 describe('PushMarkdownRenderer (Streamdown adapter)', () => {
   // 1. Plain paragraphs
   it('renders plain paragraphs', () => {
@@ -75,53 +69,37 @@ describe('PushMarkdownRenderer (Streamdown adapter)', () => {
     expect(html).not.toContain('tracker.png');
   });
 
-  describe('with code highlighting (default)', () => {
-    // 5. Inline code — Streamdown's themed chip (Push shadcn `bg-muted`)
-    it('renders inline code as a chip, not a block', () => {
+  // 5 + 8. Code renders as plain Push-styled monospace — no Shiki highlighting.
+  // Syntax highlighting is deferred (Shiki isn't a Streamdown dep and its lazy
+  // chunk never loaded in a live render); see PushMarkdownRenderer's header note.
+  describe('code rendering (plain Push-styled, no Shiki)', () => {
+    it('renders inline code as a Push-styled chip, not a block', () => {
       const html = render('Run `npm test` now.');
-      expect(html).toContain('data-streamdown="inline-code"');
-      expect(html).toContain('npm test');
-      expect(html).not.toContain('data-streamdown="code-block"');
-    });
-
-    // Fenced blocks render through Streamdown's Shiki CodeBlock
-    it('renders a fenced code block with the highlighter structure', () => {
-      const html = render('```ts\nconst x = 1;\n```');
-      expect(html).toContain('data-streamdown="code-block"');
-      // Shiki token spans, with the code text intact.
-      expect(html).toContain('const x = 1;');
-      expect(html).toContain('--sdm'); // Shiki CSS-variable token styling
-    });
-
-    // 8. Long code lines on mobile — body is a horizontal scroller
-    it('keeps long code lines scrollable rather than wrapping', () => {
-      const longLine = 'const x = ' + "'a'.repeat().".repeat(20) + 'end;';
-      const html = render('```\n' + longLine + '\n```');
-      expect(html).toContain('data-streamdown="code-block"');
-      expect(html).toContain('overflow-x-auto');
-      expect(html).toContain('end;');
-    });
-  });
-
-  describe('with code highlighting disabled', () => {
-    // 5. Inline code — Push chip
-    it('renders inline code as a Push-styled chip', () => {
-      const html = renderPlain('Run `npm test` now.');
       expect(html).toContain('<code');
       expect(html).toContain('npm test');
       expect(html).toContain('bg-push-surface');
       expect(html).not.toContain('<pre');
+      // Streamdown's own Shiki code-block chrome must not appear.
+      expect(html).not.toContain('data-streamdown="code-block"');
+      expect(html).not.toContain('--sdm');
     });
 
-    // 8. Long code lines — plain Push pre with horizontal scroll, no Shiki
-    it('renders fenced blocks as plain scrollable Push code', () => {
+    it('renders a typed fence as plain code, not highlighted', () => {
+      const html = render('```ts\nconst x = 1;\n```');
+      expect(html).toContain('<pre');
+      expect(html).toContain('const x = 1;');
+      // No Shiki token structure / CSS-variable styling.
+      expect(html).not.toContain('data-streamdown="code-block"');
+      expect(html).not.toContain('--sdm');
+    });
+
+    it('keeps long code lines scrollable rather than wrapping', () => {
       const longLine = 'const x = ' + "'a'.repeat().".repeat(20) + 'end;';
-      const html = renderPlain('```\n' + longLine + '\n```');
+      const html = render('```\n' + longLine + '\n```');
       expect(html).toContain('<pre');
       expect(html).toContain('overflow-x-auto');
       expect(html).toContain('whitespace-pre');
       expect(html).toContain('end;');
-      // No Shiki / Streamdown code-block chrome.
       expect(html).not.toContain('data-streamdown="code-block"');
       expect(html).not.toContain('--sdm');
     });
