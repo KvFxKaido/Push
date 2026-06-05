@@ -3170,6 +3170,18 @@ export async function runTUI(options = {}) {
         scheduler.schedule();
         break;
 
+      case 'assistant_citations': {
+        // Native web-search sources. Dispatched after `assistant_done`, so the
+        // assistant entry is already committed and this renders directly below
+        // it as a `sources` transcript entry (see sourcesFramer).
+        const citations = event.payload?.citations ?? [];
+        if (Array.isArray(citations) && citations.length > 0) {
+          pushTranscriptEntry(tuiState, { role: 'sources', citations, timestamp: Date.now() });
+        }
+        scheduler.schedule();
+        break;
+      }
+
       case 'tool_call':
       case 'tool.execution_start': {
         const argsQueue = pendingToolArgs.get(event.payload.toolName) || [];

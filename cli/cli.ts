@@ -10,6 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.js';
 import { matchingRiskPatternIndex, suggestApprovalPrefix } from './tools.js';
 import { getCuratedModels, DEFAULT_MODELS } from './model-catalog.js';
+import { safeCitations, citationHost, sanitizeCitationText } from './citation-format.js';
+import type { UrlCitation } from '../lib/provider-contract.ts';
 import {
   createSessionState,
   saveSessionState,
@@ -396,6 +398,17 @@ export function makeCLIEventHandler() {
           isAssistantStreaming = false;
         }
         break;
+      case 'assistant_citations': {
+        flushInlineStreams();
+        const safe = safeCitations((event.payload.citations ?? []) as UrlCitation[]);
+        if (safe.length === 0) break;
+        process.stdout.write(`\n${fmt.dim('sources>')}\n`);
+        safe.forEach(({ citation, url }, i) => {
+          const title = sanitizeCitationText(citation.title) || citationHost(url);
+          process.stdout.write(`  ${fmt.dim(`${i + 1}.`)} ${title} ${fmt.dim(url.href)}\n`);
+        });
+        break;
+      }
       case 'warning':
         spinner.stop();
         process.stdout.write(
