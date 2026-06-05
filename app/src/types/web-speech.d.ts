@@ -3,8 +3,18 @@ interface SpeechRecognitionEvent extends Event {
   readonly results: SpeechRecognitionResultList;
 }
 
+type SpeechRecognitionErrorCode =
+  | 'no-speech'
+  | 'aborted'
+  | 'audio-capture'
+  | 'network'
+  | 'not-allowed'
+  | 'service-not-allowed'
+  | 'bad-grammar'
+  | 'language-not-supported';
+
 interface SpeechRecognitionErrorEvent extends Event {
-  readonly error: string;
+  readonly error: SpeechRecognitionErrorCode;
   readonly message: string;
 }
 

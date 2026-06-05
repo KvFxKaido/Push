@@ -290,8 +290,16 @@ export function ChatInput({
       // 'aborted' = user stopped; 'no-speech' = benign silence timeout. Both are
       // expected and shouldn't nag. Everything else is a real failure the user
       // can't otherwise see, so name it instead of swallowing it.
-      const code = event.error;
-      console.warn(JSON.stringify({ level: 'warn', event: 'speech_recognition_error', code }));
+      // Non-standard browsers may dispatch a generic Event lacking `error`.
+      const code = event?.error;
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          event: 'speech_recognition_error',
+          code,
+          message: event?.message,
+        }),
+      );
       if (code === 'aborted' || code === 'no-speech') return;
       const message =
         code === 'not-allowed' || code === 'service-not-allowed'
