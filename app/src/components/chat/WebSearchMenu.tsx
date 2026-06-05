@@ -4,6 +4,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import {
   WEB_SEARCH_MODES,
   WEB_SEARCH_MODE_LABELS,
+  getAutoNativeSearchLabel,
   getWebSearchMode,
   getWebSearchModeUnavailableReason,
   setWebSearchMode,
@@ -17,10 +18,18 @@ import { getActiveProvider } from '@/lib/orchestrator-provider-routing';
 interface WebSearchMenuProps {
   /** Shared header round-button class so the trigger matches sibling icons. */
   triggerClassName: string;
+  /** Provider the current chat is locked to (after first send). The menu's
+   *  provider-dependent UI — the Auto native-search hint and the
+   *  grounding/ollama availability gates — must reflect the provider the
+   *  NEXT turn actually streams with, which is the lock when present, not the
+   *  global default. Falls back to `getActiveProvider()` for a fresh chat. */
+  lockedProvider?: string | null;
 }
 
-export function WebSearchMenu({ triggerClassName }: WebSearchMenuProps) {
-  const activeProvider = getActiveProvider();
+export function WebSearchMenu({ triggerClassName, lockedProvider }: WebSearchMenuProps) {
+  // The locked provider wins so the menu describes what the next turn will do;
+  // a not-yet-locked chat falls back to the global active provider.
+  const activeProvider = lockedProvider ?? getActiveProvider();
   const [mode, setMode] = useState<WebSearchMode>(() => getWebSearchMode());
   const [open, setOpen] = useState(false);
 
@@ -40,6 +49,12 @@ export function WebSearchMenu({ triggerClassName }: WebSearchMenuProps) {
   };
 
   const indicator = mode === 'off' ? null : mode === 'auto' ? 'auto' : 'on';
+
+  // What "Auto" resolves to for the current chat: the active provider's
+  // native web search (OpenRouter / Anthropic / Gemini), or null when the
+  // provider has no native tool. Shown on the Auto row so the menu reflects
+  // live state instead of hiding which native search is in play.
+  const autoNativeLabel = getAutoNativeSearchLabel(activeProvider);
 
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
@@ -97,9 +112,13 @@ export function WebSearchMenu({ triggerClassName }: WebSearchMenuProps) {
                   aria-pressed={selected}
                 >
                   <span>{WEB_SEARCH_MODE_LABELS[option]}</span>
-                  {disabled && reason && (
+                  {disabled && reason ? (
                     <span className="ml-2 truncate text-push-2xs text-push-fg-dim">{reason}</span>
-                  )}
+                  ) : option === 'auto' && autoNativeLabel ? (
+                    <span className="ml-2 shrink-0 text-push-2xs text-push-fg-dim">
+                      {autoNativeLabel}
+                    </span>
+                  ) : null}
                 </button>
               </li>
             );

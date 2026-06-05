@@ -115,6 +115,30 @@ export function isNativeWebSearchEnabled(
 }
 
 /**
+ * Friendly name of the provider-native web search that `'auto'` turns on
+ * for `provider`, or `null` when the provider has no native tool (Auto then
+ * falls back to the prompt-engineered `web_search`). The Web Search menu
+ * shows this next to "Auto" so the row reflects what Auto resolves to for
+ * the current chat — e.g. "OpenRouter" when the chat is on OpenRouter. Keyed
+ * off `isNativeWebSearchEnabled(..., 'auto')` so the two can't drift.
+ */
+export function getAutoNativeSearchLabel(provider: string): string | null {
+  if (!isNativeWebSearchEnabled(provider, undefined, 'auto')) return null;
+  switch (provider) {
+    case 'openrouter':
+      return 'OpenRouter';
+    case 'anthropic':
+      return 'Anthropic';
+    case 'google':
+      return 'Google';
+    case 'vertex':
+      return 'Vertex';
+    default:
+      return null;
+  }
+}
+
+/**
  * Availability gate for the WebSearchMenu UI. `off` and `auto` are
  * always available; explicit-backend modes require the matching key
  * (and, for grounding/ollama, that the active provider is compatible).
