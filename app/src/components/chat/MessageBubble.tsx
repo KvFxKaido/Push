@@ -712,7 +712,10 @@ export const MessageBubble = memo(function MessageBubble({
             ) : (
               content
             )}
-            {isStreaming && <span className="stream-caret bg-push-accent" aria-hidden="true" />}
+            {/* Streamdown renders its own inline caret; only the legacy path needs this one. */}
+            {isStreaming && !useStreamdown && (
+              <span className="stream-caret bg-push-accent" aria-hidden="true" />
+            )}
           </div>
         )}
         {message.citations && message.citations.length > 0 && (

@@ -176,6 +176,11 @@ export function PushMarkdownRenderer({
       mode={isStreaming ? 'streaming' : 'static'}
       parseIncompleteMarkdown={isStreaming}
       animated={false}
+      // Streamdown renders the streaming caret as an inline `::after` on the
+      // last block (gated internally to `mode="streaming"`), so it never wraps
+      // to its own line the way a sibling element would. MessageBubble omits its
+      // own caret on this path to avoid two carets.
+      caret={isStreaming ? 'block' : undefined}
       controls={false}
       lineNumbers={false}
       disallowedElements={['img']}
