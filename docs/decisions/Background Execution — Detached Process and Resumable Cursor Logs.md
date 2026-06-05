@@ -135,14 +135,25 @@ mid-run drain, `exitCode ?? 0` masking abnormal exit, `exec-*` missing the retry
 deadline not re-checking status, byte-vs-UTF-16 cursor misnomer + surrogate-split guard).
 These remain open:
 
-- **The two-client split (#6/#7/#10).** The live path is `sandbox-client.ts`'s fetch
-  wrappers; `CloudflareSandboxProvider`'s four `exec*` methods + `capabilities.backgroundExec`
-  are a parallel, currently-unconsumed copy of the same wire contract. Consequences: the
-  fallback sniffs HTTP 404 instead of reading the capability (a genuine 404 from a
-  CF-supporting backend silently downgrades to buffered exec, reintroducing the ~140s
-  deadline, with no log distinguishing why), and `onProgress` is dropped on the fallback
-  without a structured log. **Decision owed:** route the live path through the provider +
-  capability flag, or delete the dead provider methods and add a structured fallback log.
+- **#6/#10 — silent/fragile fallback. FIXED.** The runner's contract is now crisp: it
+  throws **only** if the command never started; every post-start outcome (clean/abnormal
+  exit, lost contact, deadline) resolves to an `ExecResult`. So `execLongRunningInSandbox`'s
+  fallback is unambiguous — it fires only on a genuine start failure (route absent OR a
+  failed/timed-out launch, all safely handled by buffered exec), and **emits a
+  `background_exec_fallback` structured log** so the downgrade (and any lost `onProgress`)
+  is observable instead of silent. A mid-run status error no longer propagates (which would
+  have re-run an already-running command); it resolves to a `-1` failure the caller surfaces.
+  The `exec` retry opt-out was also narrowed to the command-launchers (`exec`/`exec-start`)
+  so cheap status/log polls still recover from transient blips.
+- **#7 — the unconsumed provider copy. Reframed, deliberately kept.** This is **not** a
+  background-exec-specific dead-code issue: `createSandboxProvider` has zero callers, so the
+  *entire* `SandboxProvider` class (`exec`/`readFile`/`snapshot` included) is unconsumed by
+  design — the web tool path runs on `sandbox-client.ts`. The background-exec methods mirror
+  that existing pattern rather than adding new asymmetry, so cherry-pick-deleting only them
+  would be inconsistent. The real item is the larger **"adopt `SandboxProvider` in the web
+  tool path"** initiative (which would also let the fallback key off
+  `capabilities.backgroundExec` instead of catching a start error) — tracked separately, out
+  of scope here.
 - **#8 — O(n²) log transfer.** `exec-logs` re-fetches the full accumulated buffer every
   poll (the SDK has no cursored read) and slices worker-side. Fine at install/test-run
   sizes; swap for a tail-only fetch if a chatty long-running consumer is added. Status +

@@ -863,11 +863,13 @@ function sleep(ms: number): Promise<void> {
  * (read/write/list/diff) are cheap and idempotent, so we keep retrying them.
  */
 function isRetryableError(err: unknown, statusCode?: number, endpoint?: string): boolean {
-  // The detached background routes (exec-start/-status/-logs/-kill) share the
-  // buffered `exec` route's wedged-container hazard: replaying a timed-out call
-  // against a stuck container just hides the failure for ~12 minutes. Treat the
-  // whole `exec` family the same way (opt out of timeout/504 retries).
-  const isExec = endpoint === 'exec' || endpoint?.startsWith('exec-') === true;
+  // `exec` and `exec-start` LAUNCH a command, so they share the wedged-container
+  // hazard: replaying a timed-out launch against a stuck container just hides
+  // the failure for ~12 minutes (and a duplicate launch is wasteful). Opt them
+  // out of timeout/504 retries. The other background routes (exec-status/-logs/
+  // -kill) are cheap idempotent reads/controls like read/list, so they keep the
+  // normal retry policy — a transient blip on a status poll should recover.
+  const isExec = endpoint === 'exec' || endpoint === 'exec-start';
 
   // Timeout errors (original AbortError). Not retryable for exec — see above.
   if (err instanceof DOMException && err.name === 'AbortError') {
@@ -1313,15 +1315,27 @@ export async function execLongRunningInSandbox(
       onProgress: opts?.onProgress,
     });
   } catch (err) {
-    // A 404 from the start call means the active backend doesn't expose the
-    // background routes (e.g. Modal). Fall back to a buffered exec so behavior
-    // is identical, just without the detached-execution benefit.
-    if ((err as { statusCode?: number }).statusCode === 404) {
-      return await execInSandbox(sandboxId, command, opts?.workdir, {
-        markWorkspaceMutated: opts?.markWorkspaceMutated,
-      });
-    }
-    throw err;
+    // runDetachedToCompletion throws ONLY when the command never started — a
+    // backend without background routes (404, e.g. Modal), or a launch that
+    // failed/timed out. Buffered exec is the always-safe pre-feature path, so
+    // fall back to it regardless of the specific start error. Log the downgrade
+    // (symmetric-structured-logs): a silent fallback would hide both a
+    // misconfigured CF backend that never uses the detached path AND the loss
+    // of live progress for the caller's onProgress.
+    const statusCode = (err as { statusCode?: number }).statusCode;
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        event: 'background_exec_fallback',
+        sandboxId,
+        statusCode: statusCode ?? null,
+        hadProgressListener: Boolean(opts?.onProgress),
+        message: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    return await execInSandbox(sandboxId, command, opts?.workdir, {
+      markWorkspaceMutated: opts?.markWorkspaceMutated,
+    });
   }
 }
 

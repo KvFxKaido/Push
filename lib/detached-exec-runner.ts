@@ -91,8 +91,11 @@ export async function runDetachedToCompletion(
   const sleep = options.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const now = options.now ?? (() => Date.now());
 
-  // `start` failures propagate — the caller distinguishes "backend has no
-  // background routes" (fall back) from other errors.
+  // Contract: this function throws ONLY if the command never started. Every
+  // post-start outcome (clean exit, abnormal exit, lost contact, deadline)
+  // resolves to an ExecResult. That lets the caller treat a throw
+  // unambiguously as "start failed → fall back to buffered exec" without risk
+  // of re-running a command that is already executing detached.
   const { processId } = await primitives.start(command, { workdir: options.workdir });
 
   const deadline = now() + overallTimeoutMs;
@@ -136,20 +139,23 @@ export async function runDetachedToCompletion(
     try {
       st = await primitives.status(processId);
     } catch (err) {
-      if (isNotFound(err)) {
-        // The process record vanished mid-run (reclaimed/evicted). Drain
-        // whatever logs remain reachable, then report it as a failure the
-        // caller can distinguish from a clean exit.
-        await drain().catch(() => {});
-        return {
-          stdout,
-          stderr,
-          exitCode: -1,
-          truncated: false,
-          error: 'background process record disappeared before completion',
-        };
-      }
-      throw err;
+      // Any status failure mid-run resolves to a failure result rather than
+      // throwing — the command already started, so re-running it via the
+      // caller's start-failure fallback would duplicate work and orphan the
+      // detached process. A NOT_FOUND means the record was reclaimed; any
+      // other persistent error (retries already exhausted in the transport)
+      // means we've lost contact and can't determine the outcome. Both are
+      // failures the caller surfaces, not restarts.
+      await drain().catch(() => {});
+      return {
+        stdout,
+        stderr,
+        exitCode: -1,
+        truncated: false,
+        error: isNotFound(err)
+          ? 'background process record disappeared before completion'
+          : `lost contact with background process: ${err instanceof Error ? err.message : String(err)}`,
+      };
     }
 
     // A log-fetch failure must NOT escape the loop: `status` above is the

@@ -128,6 +128,30 @@ describe('runDetachedToCompletion', () => {
     expect(result.error).toMatch(/disappeared/);
   });
 
+  it('resolves to a failure (never throws) on a non-404 status error mid-run', async () => {
+    // The command already started, so a lost-contact status error must NOT
+    // propagate — propagating would trip the caller's start-failure fallback
+    // and re-run an already-running command.
+    const primitives: DetachedExecPrimitives = {
+      start: async () => ({ processId: 'p' }),
+      status: async () => {
+        const err = new Error('upstream 504') as Error & { statusCode?: number };
+        err.statusCode = 504;
+        throw err;
+      },
+      logs: async () => ({ stdout: '', stderr: '', nextCursorStdout: 0, nextCursorStderr: 0 }),
+      interrupt: async () => {},
+    };
+
+    const result = await runDetachedToCompletion(primitives, 'cmd', {
+      sleep: async () => {},
+      now: () => 0,
+    });
+
+    expect(result.exitCode).toBe(-1);
+    expect(result.error).toMatch(/lost contact/);
+  });
+
   it('survives a mid-run log-fetch error instead of escaping the loop', async () => {
     // A transient failure on `logs` (404/504/network) must not reject the run
     // nor surface as a start-failure to the caller's fallback — `status` is the
