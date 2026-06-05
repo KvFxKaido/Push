@@ -78,6 +78,7 @@ describe('protocol drift characterization — schema surface', () => {
       'approval_received',
       'approval_required',
       'assistant.prompt_snapshot',
+      'assistant_citations',
       'assistant_thinking_token',
       'assistant_token',
       'context.compaction',
@@ -327,6 +328,36 @@ describe('protocol drift characterization — assistant streaming', () => {
 
   it('accepts assistant_thinking_token symmetrically', () => {
     assertStrictBroadcastPass(makeEnvelope('assistant_thinking_token', { text: 'thinking…' }));
+  });
+
+  it('accepts a well-formed assistant_citations envelope', () => {
+    assertStrictBroadcastPass(
+      makeEnvelope('assistant_citations', {
+        citations: [
+          { url: 'https://a.test', title: 'A', content: 'excerpt', startIndex: 0, endIndex: 5 },
+        ],
+      }),
+    );
+  });
+
+  it('rejects assistant_citations whose citations is not an array', () => {
+    assertStrictBroadcastFail(makeEnvelope('assistant_citations', { citations: 'nope' }));
+  });
+
+  it('rejects an assistant_citations entry missing a url', () => {
+    assertStrictBroadcastFail(
+      makeEnvelope('assistant_citations', {
+        citations: [{ title: 'no url', content: '', startIndex: 0, endIndex: 0 }],
+      }),
+    );
+  });
+
+  it('rejects an assistant_citations entry with a non-string title', () => {
+    assertStrictBroadcastFail(
+      makeEnvelope('assistant_citations', {
+        citations: [{ url: 'https://a.test', title: 42, content: '', startIndex: 0, endIndex: 0 }],
+      }),
+    );
   });
 });
 

@@ -17,6 +17,7 @@ import type {
   PushStream,
   PushStreamEvent,
   ReasoningBlock,
+  UrlCitation,
 } from '../lib/provider-contract.ts';
 import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
 import { CliProviderError, createCliProviderStream } from './openai-stream.ts';
@@ -81,6 +82,12 @@ export interface StreamCompletionOptions {
    *  with `invalid_request_error`. Adapters that don't surface signed
    *  reasoning (every OpenAI-compat path today) never call this. */
   onReasoningBlock?: ((block: ReasoningBlock) => void) | null;
+  /** Fires when a provider's native web search returns `url_citation`
+   *  annotations (OpenRouter's `openrouter:web_search`). Display-only —
+   *  callers accumulate these (deduped by url) and render a "Sources"
+   *  footer; they're never sent back to the model. May fire more than once
+   *  per turn. */
+  onCitations?: ((citations: UrlCitation[]) => void) | null;
   /** OpenRouter session_id for grouping related requests. */
   sessionId?: string;
   /**
@@ -282,6 +289,7 @@ export async function streamCompletion(
 ): Promise<string> {
   const onThinkingToken = options?.onThinkingToken ?? null;
   const onReasoningBlock = options?.onReasoningBlock ?? null;
+  const onCitations = options?.onCitations ?? null;
   let lastError: Error | undefined;
 
   for (let attempt: number = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -374,10 +382,9 @@ export async function streamCompletion(
             break;
           case 'citations':
             // Native web-search sources (OpenRouter `openrouter:web_search`).
-            // The grounded answer already streamed as `text_delta`; the web
-            // app renders these as a "Sources" footer. A terminal affordance
-            // for the TUI is a deliberate follow-up — dropping the structured
-            // list here loses no answer text, only the clickable source links.
+            // Hand off to the caller, which dedupes + renders a "Sources"
+            // footer. The grounded answer already streamed as `text_delta`.
+            onCitations?.(event.citations);
             break;
           case 'done':
             // Loop exits naturally when the iterator returns after `done`.

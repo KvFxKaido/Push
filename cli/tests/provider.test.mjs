@@ -1502,4 +1502,67 @@ describe('streamCompletion reasoning-block forwarding (direct Anthropic)', () =>
 
     assert.equal(capturedBlocks.length, 0);
   });
+
+  it('forwards openrouter url_citation annotations to onCitations (normalized)', async () => {
+    const orConfig = {
+      id: 'openrouter',
+      url: 'http://test.invalid/v1/chat/completions',
+      defaultModel: 'test-model',
+      apiKeyEnv: ['TEST_STREAM_KEY'],
+      requiresKey: false,
+    };
+
+    const annFrame = JSON.stringify({
+      choices: [
+        {
+          delta: {
+            annotations: [
+              {
+                type: 'url_citation',
+                url_citation: {
+                  url: 'https://a.test',
+                  title: 'A',
+                  content: 'excerpt',
+                  start_index: 1,
+                  end_index: 2,
+                },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const textFrame = JSON.stringify({ choices: [{ delta: { content: 'answer' } }] });
+
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      body: stringToStream(`data: ${annFrame}\n\ndata: ${textFrame}\n\ndata: [DONE]\n\n`),
+      headers: new Headers({ 'content-type': 'text/event-stream' }),
+      text: async () => '',
+    });
+
+    const captured = [];
+    const text = await streamCompletion(
+      orConfig,
+      'sk',
+      'model',
+      [{ role: 'user', content: 'hi' }],
+      null,
+      undefined,
+      null,
+      { onCitations: (c) => captured.push(...c) },
+    );
+
+    // Citations pass through normalizeReasoning without truncating the answer.
+    assert.equal(text, 'answer');
+    assert.equal(captured.length, 1);
+    assert.deepEqual(captured[0], {
+      url: 'https://a.test',
+      title: 'A',
+      content: 'excerpt',
+      startIndex: 1,
+      endIndex: 2,
+    });
+  });
 });

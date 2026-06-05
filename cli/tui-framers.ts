@@ -19,6 +19,8 @@
 import type { Theme, TokenName } from './tui-theme.js';
 import { truncate, visibleWidth, wordWrap } from './tui-renderer.js';
 import { highlightCode } from './tui-highlight.js';
+import { safeCitations, citationHost, sanitizeCitationText } from './citation-format.js';
+import type { UrlCitation } from '../lib/provider-contract.ts';
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -329,6 +331,7 @@ export type Role =
   | 'error'
   | 'warning'
   | 'reasoning'
+  | 'sources'
   | 'verdict'
   | 'divider';
 
@@ -482,6 +485,23 @@ const reasoningFramer: EntryFramer = {
   },
 };
 
+const sourcesFramer: EntryFramer = {
+  render(out, entry, width, theme) {
+    const safe = safeCitations((entry.citations as UrlCitation[] | undefined) ?? []);
+    if (safe.length === 0) return;
+    out.push(`${theme.style('fg.dim', '*')} ${theme.style('fg.muted', 'sources')}`);
+    safe.forEach(({ citation, url }, i) => {
+      const host = citationHost(url);
+      const title = sanitizeCitationText(citation.title) || host;
+      const num = theme.style('fg.dim', `${i + 1}.`);
+      // Title line (truncated to width), then the dimmed URL beneath it.
+      const titleLine = truncate(title, Math.max(1, width - 6));
+      out.push(`  ${num} ${theme.style('fg.muted', titleLine)}`);
+      out.push(`     ${theme.style('fg.dim', truncate(url.href, Math.max(1, width - 6)))}`);
+    });
+  },
+};
+
 const verdictFramer: EntryFramer = {
   render(out, entry, width, theme) {
     const { glyphs } = theme;
@@ -511,6 +531,7 @@ export const framers: Record<Role, EntryFramer> = {
   error: errorFramer,
   warning: warningFramer,
   reasoning: reasoningFramer,
+  sources: sourcesFramer,
   verdict: verdictFramer,
   divider: dividerFramer,
 };

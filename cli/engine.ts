@@ -19,7 +19,7 @@ import {
   makeRunId,
 } from './session-store.js';
 import { streamCompletion, type StreamCompletionOptions } from './provider.js';
-import type { ReasoningBlock } from '../lib/provider-contract.ts';
+import type { ReasoningBlock, UrlCitation } from '../lib/provider-contract.ts';
 import {
   createFileLedger,
   getLedgerSummary,
@@ -149,6 +149,32 @@ export interface RunResult {
   finalAssistantText: string;
   rounds: number;
   runId: string;
+}
+
+/**
+ * Per-turn accumulator for native web-search citations. Dedupes by url
+ * (some engines resend the cumulative list on each frame) while preserving
+ * first-seen order. Mirrors the `turnReasoningBlocks` pattern — the `onCitations`
+ * sink feeds `StreamCompletionOptions`, and the collected list is stamped onto
+ * the assistant `Message` + dispatched as `assistant_citations` for rendering.
+ */
+function createCitationSink(): {
+  citations: UrlCitation[];
+  onCitations: (incoming: UrlCitation[]) => void;
+} {
+  const citations: UrlCitation[] = [];
+  const seen = new Set<string>();
+  return {
+    citations,
+    onCitations: (incoming: UrlCitation[]): void => {
+      for (const c of incoming) {
+        if (!seen.has(c.url)) {
+          seen.add(c.url);
+          citations.push(c);
+        }
+      }
+    },
+  };
 }
 
 interface ToolCall {
@@ -1444,6 +1470,7 @@ async function runAssistantLoopImpl(
     // thinking + tool use are combined and the signed prefix is
     // missing. Non-Anthropic providers never call this callback.
     const turnReasoningBlocks: ReasoningBlock[] = [];
+    const turnCitations = createCitationSink();
 
     const streamOptions: StreamCompletionOptions = {
       onThinkingToken: emit
@@ -1458,6 +1485,7 @@ async function runAssistantLoopImpl(
       onReasoningBlock: (block: ReasoningBlock): void => {
         turnReasoningBlocks.push(block);
       },
+      onCitations: turnCitations.onCitations,
       sessionId: state.sessionId,
       cacheBreakpointIndices: transformed.cacheBreakpointIndices,
     };
@@ -1528,6 +1556,9 @@ async function runAssistantLoopImpl(
     if (turnReasoningBlocks.length > 0) {
       assistantMessage.reasoningBlocks = turnReasoningBlocks;
     }
+    if (turnCitations.citations.length > 0) {
+      assistantMessage.citations = turnCitations.citations;
+    }
     (state.messages as Message[]).push(assistantMessage);
     state.rounds += 1;
     turnCtx.round = round;
@@ -1572,6 +1603,11 @@ async function runAssistantLoopImpl(
       runId,
     );
     dispatchEvent('assistant_done', { messageId });
+    // Sources footer — dispatched after assistant_done so it renders below
+    // the answer in both the TUI and the transcript REPL.
+    if (turnCitations.citations.length > 0) {
+      dispatchEvent('assistant_citations', { citations: turnCitations.citations });
+    }
 
     const detected: DetectedToolCalls = detectAllToolCalls(assistantText);
 
@@ -1764,6 +1800,7 @@ async function runAssistantLoopImpl(
             },
           });
           const finalTurnReasoningBlocks: ReasoningBlock[] = [];
+          const finalTurnCitations = createCitationSink();
           const finalStreamOptions: StreamCompletionOptions = {
             onThinkingToken: emit
               ? (token: string | null): void => {
@@ -1777,6 +1814,7 @@ async function runAssistantLoopImpl(
             onReasoningBlock: (block: ReasoningBlock): void => {
               finalTurnReasoningBlocks.push(block);
             },
+            onCitations: finalTurnCitations.onCitations,
             sessionId: state.sessionId,
             cacheBreakpointIndices: finalTransformed.cacheBreakpointIndices,
           };
@@ -1802,6 +1840,9 @@ async function runAssistantLoopImpl(
             if (finalTurnReasoningBlocks.length > 0) {
               finalizationMessage.reasoningBlocks = finalTurnReasoningBlocks;
             }
+            if (finalTurnCitations.citations.length > 0) {
+              finalizationMessage.citations = finalTurnCitations.citations;
+            }
             (state.messages as Message[]).push(finalizationMessage);
             assistantPushed = true;
             const finalizationMessageId: string = `asst_${Date.now().toString(36)}`;
@@ -1812,6 +1853,9 @@ async function runAssistantLoopImpl(
               runId,
             );
             dispatchEvent('assistant_done', { messageId: finalizationMessageId });
+            if (finalTurnCitations.citations.length > 0) {
+              dispatchEvent('assistant_citations', { citations: finalTurnCitations.citations });
+            }
           }
         } catch (err: unknown) {
           // Abort propagates; other failures (provider error, timeout)
@@ -2339,6 +2383,7 @@ async function runAssistantLoopImpl(
       });
     }
     const maxRoundsReasoningBlocks: ReasoningBlock[] = [];
+    const maxRoundsCitations = createCitationSink();
     const finalStreamOptions: StreamCompletionOptions = {
       onThinkingToken: emit
         ? (token: string | null): void => {
@@ -2352,6 +2397,7 @@ async function runAssistantLoopImpl(
       onReasoningBlock: (block: ReasoningBlock): void => {
         maxRoundsReasoningBlocks.push(block);
       },
+      onCitations: maxRoundsCitations.onCitations,
       sessionId: state.sessionId,
       cacheBreakpointIndices: finalTransformed.cacheBreakpointIndices,
     };
@@ -2372,10 +2418,16 @@ async function runAssistantLoopImpl(
     if (maxRoundsReasoningBlocks.length > 0) {
       summaryMessage.reasoningBlocks = maxRoundsReasoningBlocks;
     }
+    if (maxRoundsCitations.citations.length > 0) {
+      summaryMessage.citations = maxRoundsCitations.citations;
+    }
     (state.messages as Message[]).push(summaryMessage);
     const messageId: string = `asst_${Date.now().toString(36)}`;
     await appendSessionEvent(state, 'assistant_done', { messageId }, runId);
     dispatchEvent('assistant_done', { messageId });
+    if (maxRoundsCitations.citations.length > 0) {
+      dispatchEvent('assistant_citations', { citations: maxRoundsCitations.citations });
+    }
   } catch (err: unknown) {
     const isAbort: boolean =
       (err instanceof Error && err.name === 'AbortError') || (signal?.aborted ?? false);

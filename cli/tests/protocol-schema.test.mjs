@@ -578,6 +578,7 @@ describe('validateRunEventPayload — task_graph events', () => {
       // to a runtime UI bug.
       'approval_received',
       'approval_required',
+      'assistant_citations',
       'assistant_thinking_token',
       'assistant_token',
       'error',

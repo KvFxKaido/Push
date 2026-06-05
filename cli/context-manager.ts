@@ -23,7 +23,7 @@ import {
   estimateTokens,
   getContextBudget,
 } from '../lib/context-budget.ts';
-import type { ReasoningBlock } from '../lib/provider-contract.ts';
+import type { ReasoningBlock, UrlCitation } from '../lib/provider-contract.ts';
 import type { DistillResult } from '../lib/context-transformer.ts';
 
 export interface Message {
@@ -38,6 +38,10 @@ export interface Message {
    *  upgrades don't drop data the moment a provider starts surfacing it.
    *  See `ReasoningBlock` in `lib/provider-contract.ts`. */
   reasoningBlocks?: ReasoningBlock[];
+  /** Web-search sources surfaced by a provider's native search (OpenRouter's
+   *  `openrouter:web_search`). Display-only — rendered as a "Sources" footer
+   *  in the terminal, never sent back to the model. Deduped by url. */
+  citations?: UrlCitation[];
 }
 
 export interface TrimResult {

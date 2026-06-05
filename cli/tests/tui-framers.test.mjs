@@ -149,6 +149,55 @@ describe('renderEntryLines: verdict / divider', () => {
   });
 });
 
+describe('renderEntryLines: sources', () => {
+  it('renders a header plus numbered title/URL pairs', () => {
+    assert.deepEqual(
+      render({
+        role: 'sources',
+        citations: [
+          { url: 'https://a.test', title: 'A', content: '', startIndex: 0, endIndex: 0 },
+          { url: 'https://b.test/x', title: 'B', content: '', startIndex: 0, endIndex: 0 },
+        ],
+      }),
+      ['* sources', '  1. A', '     https://a.test/', '  2. B', '     https://b.test/x'],
+    );
+  });
+
+  it('falls back to the hostname when a citation has no title', () => {
+    assert.deepEqual(
+      render({
+        role: 'sources',
+        citations: [
+          {
+            url: 'https://www.example.com/page',
+            title: '',
+            content: '',
+            startIndex: 0,
+            endIndex: 0,
+          },
+        ],
+      }),
+      ['* sources', '  1. example.com', '     https://www.example.com/page'],
+    );
+  });
+
+  it('drops citations whose URL is not http(s) and renders nothing when all are unsafe', () => {
+    assert.deepEqual(
+      render({
+        role: 'sources',
+        citations: [
+          { url: 'javascript:alert(1)', title: 'evil', content: '', startIndex: 0, endIndex: 0 },
+        ],
+      }),
+      [],
+    );
+  });
+
+  it('produces no output for an empty citations list', () => {
+    assert.deepEqual(render({ role: 'sources', citations: [] }), []);
+  });
+});
+
 describe('renderEntryLines: unknown role', () => {
   it('produces no output for an unrecognized role', () => {
     assert.deepEqual(render({ role: 'mystery', text: 'x' }), []);
