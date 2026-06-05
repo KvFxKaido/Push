@@ -115,6 +115,9 @@ export class ModalSandboxProvider implements SandboxProvider {
 
   readonly capabilities: SandboxProviderCapabilities = {
     snapshots: true,
+    // Modal's HTTP shim is buffered-exec only; detached background execution
+    // with resumable cursor logs is a CF-backend-only capability for now.
+    backgroundExec: false,
     portForwarding: false,
     externalStorage: false,
     staticPolicyEnforcement: false,

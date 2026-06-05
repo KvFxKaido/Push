@@ -50,6 +50,10 @@ const ROUTES = new Set([
   'connect',
   'cleanup',
   'exec',
+  'exec-start',
+  'exec-status',
+  'exec-logs',
+  'exec-kill',
   'read',
   'write',
   'batch-write',
@@ -272,6 +276,14 @@ export async function handleCloudflareSandbox(
         return await routeCleanup(env, body);
       case 'exec':
         return await routeExec(env, body);
+      case 'exec-start':
+        return await routeExecStart(env, body);
+      case 'exec-status':
+        return await routeExecStatus(env, body);
+      case 'exec-logs':
+        return await routeExecLogs(env, body);
+      case 'exec-kill':
+        return await routeExecKill(env, body);
       case 'read':
         return await routeRead(env, body);
       case 'write':
@@ -565,6 +577,17 @@ async function routeExec(env: Env, body: Json): Promise<Response> {
   const sandboxId = requireStr(body, 'sandbox_id');
   const command = requireStr(body, 'command');
   const workdir = str(body.workdir);
+  // Optional caller-supplied deadline. Without it the only bound is the fixed
+  // container wrapper (CONTAINER_EXEC_TIMEOUT_SECONDS) + the SDK-level race —
+  // neither of which a caller can shorten for a command it knows is quick.
+  // Clamped to the container ceiling so it can only ever tighten, never extend
+  // past the safety net. Passing it to the SDK `timeout` makes the bound a
+  // contract guarantee rather than a host-side best effort.
+  const timeoutMs = num(body.timeout_ms);
+  const clampedTimeoutMs =
+    timeoutMs !== undefined
+      ? Math.min(timeoutMs, CONTAINER_EXEC_TIMEOUT_SECONDS * 1000)
+      : undefined;
 
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
   // Wrap the user command in `timeout -k <grace> <seconds> bash -c '<cmd>'`
@@ -582,8 +605,18 @@ async function routeExec(env: Env, body: Json): Promise<Response> {
     `timeout -k ${CONTAINER_EXEC_KILL_GRACE_SECONDS} ` +
     `${CONTAINER_EXEC_TIMEOUT_SECONDS} ` +
     `bash -c ${shellSingleQuote(command)}`;
+  const execOptions =
+    workdir || clampedTimeoutMs !== undefined
+      ? {
+          ...(workdir ? { cwd: workdir } : {}),
+          ...(clampedTimeoutMs !== undefined ? { timeout: clampedTimeoutMs } : {}),
+        }
+      : undefined;
   const result = await withExecDeadline(
-    sandbox.exec(wrappedCommand, workdir ? { cwd: workdir } : undefined),
+    sandbox.exec(wrappedCommand, execOptions),
+    // When the caller asked for a shorter deadline, fire the worker-side race at
+    // that bound too so a wedged gRPC connection can't outlast the request.
+    clampedTimeoutMs !== undefined ? clampedTimeoutMs + 2_000 : undefined,
   );
 
   const stdout = (result as { stdout?: string }).stdout ?? '';
@@ -597,6 +630,169 @@ async function routeExec(env: Env, body: Json): Promise<Response> {
     truncated: stdout.length > 500_000 || stderr.length > 100_000,
     workspace_revision: 0,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Background execution (detached process + resumable cursor logs)
+//
+// Unlike `routeExec` (single buffered call, output returned at completion),
+// this family detaches the command via the SDK's process API so a long-running
+// command (npm install, test suite, dev server) survives the HTTP request that
+// started it. Output is fetched incrementally by cursor so a client that drops
+// mid-run — the mobile-disconnect case — can reconnect and resume reading from
+// where it left off instead of losing the stream (and the process) the way SSE
+// would. The contract mirrors OpenSandbox's execd /command{background:true} +
+// /command/{id}/logs?cursor pattern, rebuilt on @cloudflare/sandbox primitives.
+//
+// `autoCleanup: false` is load-bearing: the SDK defaults to purging the process
+// record on exit, which would drop final status + logs the instant a command
+// finishes. Keeping the record means a post-completion reconnect can still read
+// the exit code and tail. `routeExecKill` (or container teardown) is the
+// reclaim path.
+// ---------------------------------------------------------------------------
+
+interface ProcessLike {
+  readonly id: string;
+  readonly status: string;
+  readonly exitCode?: number;
+  readonly startTime?: Date;
+  readonly endTime?: Date;
+}
+
+function isRunningStatus(status: string): boolean {
+  return status === 'starting' || status === 'running';
+}
+
+async function routeExecStart(env: Env, body: Json): Promise<Response> {
+  const sandboxId = requireStr(body, 'sandbox_id');
+  const command = requireStr(body, 'command');
+  const workdir = str(body.workdir);
+  const timeoutMs = num(body.timeout_ms);
+
+  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  // The start call itself should return a handle promptly; guard it with the
+  // SDK-level deadline so a wedged container surfaces TIMEOUT instead of
+  // hanging the route. The process's own runtime is NOT bounded here — that's
+  // the point of detaching — except by the optional caller-supplied timeout.
+  const proc = (await withExecDeadline(
+    sandbox.startProcess(command, {
+      ...(workdir ? { cwd: workdir } : {}),
+      ...(timeoutMs !== undefined ? { timeout: timeoutMs } : {}),
+      autoCleanup: false,
+    }),
+  )) as ProcessLike;
+
+  return Response.json({
+    process_id: proc.id,
+    status: proc.status,
+    running: isRunningStatus(proc.status),
+    started_at: proc.startTime ? proc.startTime.toISOString() : null,
+  });
+}
+
+async function routeExecStatus(env: Env, body: Json): Promise<Response> {
+  const sandboxId = requireStr(body, 'sandbox_id');
+  const processId = requireStr(body, 'process_id');
+
+  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  const proc = (await withExecDeadline(sandbox.getProcess(processId))) as ProcessLike | null;
+
+  if (!proc) {
+    // Distinguish "process never existed / was reclaimed" from "still running":
+    // a null here is terminal for this id, so callers must stop polling.
+    wlog('warn', 'cf_exec_status_not_found', { sandboxId, processId });
+    return Response.json({ error: 'Process not found', code: 'NOT_FOUND' }, { status: 404 });
+  }
+
+  return Response.json({
+    process_id: proc.id,
+    status: proc.status,
+    running: isRunningStatus(proc.status),
+    exit_code: proc.exitCode ?? null,
+    started_at: proc.startTime ? proc.startTime.toISOString() : null,
+    ended_at: proc.endTime ? proc.endTime.toISOString() : null,
+  });
+}
+
+async function routeExecLogs(env: Env, body: Json): Promise<Response> {
+  const sandboxId = requireStr(body, 'sandbox_id');
+  const processId = requireStr(body, 'process_id');
+  // Character offsets (UTF-16 code units, NOT bytes) into the accumulated
+  // stdout/stderr. Omit for a full read. The SDK only exposes whole-log reads,
+  // so the cursor is layered here: we fetch the full buffer and slice from the
+  // caller's offset, returning the new length as the next cursor. Cheap for
+  // npm-install/test-run-sized logs; if buffers grow huge this is the seam to
+  // swap for a tail-only fetch.
+  const cursorStdout = Math.max(0, num(body.cursor_stdout) ?? 0);
+  const cursorStderr = Math.max(0, num(body.cursor_stderr) ?? 0);
+
+  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  let logs: { stdout?: string; stderr?: string };
+  try {
+    logs = (await withExecDeadline(sandbox.getProcessLogs(processId))) as {
+      stdout?: string;
+      stderr?: string;
+    };
+  } catch (err) {
+    // getProcessLogs throws for an unknown id; map to the same terminal
+    // NOT_FOUND the status route returns so callers have one stop signal.
+    wlog('warn', 'cf_exec_logs_not_found', {
+      sandboxId,
+      processId,
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return Response.json({ error: 'Process not found', code: 'NOT_FOUND' }, { status: 404 });
+  }
+
+  const fullStdout = logs.stdout ?? '';
+  const fullStderr = logs.stderr ?? '';
+  // Guard against a cursor past the buffer (e.g. process record reset): clamp
+  // so we return an empty slice + a corrected cursor rather than throwing.
+  const fromStdout = Math.min(cursorStdout, fullStdout.length);
+  const fromStderr = Math.min(cursorStderr, fullStderr.length);
+  const stdoutChunk = fullStdout.slice(fromStdout);
+  const stderrChunk = fullStderr.slice(fromStderr);
+
+  const STDOUT_CAP = 500_000;
+  const STDERR_CAP = 100_000;
+  // Emit at most CAP code units, but never cut mid-surrogate-pair — a lone
+  // surrogate would corrupt the resumed stream and break JSON rendering. The
+  // cursor advances by exactly what we emit, so a capped read stays resumable.
+  const stdoutEmit = safeCutLength(stdoutChunk, STDOUT_CAP);
+  const stderrEmit = safeCutLength(stderrChunk, STDERR_CAP);
+  const stdoutTruncated = stdoutEmit < stdoutChunk.length;
+  const stderrTruncated = stderrEmit < stderrChunk.length;
+
+  return Response.json({
+    process_id: processId,
+    stdout: stdoutTruncated ? `${stdoutChunk.slice(0, stdoutEmit)}\n…[truncated]` : stdoutChunk,
+    stderr: stderrTruncated ? `${stderrChunk.slice(0, stderrEmit)}\n…[truncated]` : stderrChunk,
+    // Advance only by what we actually returned so a truncated read is
+    // resumable: the next poll picks up exactly where this chunk was cut.
+    next_cursor_stdout: fromStdout + stdoutEmit,
+    next_cursor_stderr: fromStderr + stderrEmit,
+    truncated: stdoutTruncated || stderrTruncated,
+  });
+}
+
+async function routeExecKill(env: Env, body: Json): Promise<Response> {
+  const sandboxId = requireStr(body, 'sandbox_id');
+  const processId = requireStr(body, 'process_id');
+  const signal = str(body.signal);
+
+  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  try {
+    await withExecDeadline(sandbox.killProcess(processId, signal));
+  } catch (err) {
+    // Idempotent: killing an already-gone process is success from the
+    // caller's perspective. Log so a genuinely failing kill is still visible.
+    wlog('warn', 'cf_exec_kill_noop', {
+      sandboxId,
+      processId,
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+  return Response.json({ ok: true });
 }
 
 async function routeRead(env: Env, body: Json): Promise<Response> {
@@ -1694,6 +1890,16 @@ async function hashSha256(content: string): Promise<string> {
 
 function truncate(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max)}\n…[truncated]` : s;
+}
+
+// Largest cut length ≤ cap that does not split a UTF-16 surrogate pair. Cutting
+// between a high and low surrogate emits a lone surrogate, which corrupts the
+// resumed cursor stream and can break JSON rendering. Cursors are character
+// (UTF-16 code unit) offsets, so backing off by one keeps them consistent.
+function safeCutLength(s: string, cap: number): number {
+  if (s.length <= cap) return s.length;
+  const c = s.charCodeAt(cap - 1);
+  return c >= 0xd800 && c <= 0xdbff ? cap - 1 : cap;
 }
 
 async function verifySandboxOwnerToken(

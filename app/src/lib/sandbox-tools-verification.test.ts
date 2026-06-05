@@ -21,6 +21,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mock sandbox-client so no real HTTP calls are made.
 vi.mock('./sandbox-client', () => ({
   execInSandbox: vi.fn(),
+  execLongRunningInSandbox: vi.fn(),
   findReferencesInSandbox: vi.fn(),
   getSandboxEnvironment: vi.fn(),
   readFromSandbox: vi.fn(),
@@ -100,6 +101,7 @@ const fail = (stdout = '', stderr = '', exitCode = 1): ExecResult => ({
 
 function resetMocks() {
   vi.mocked(sandboxClient.execInSandbox).mockReset();
+  vi.mocked(sandboxClient.execLongRunningInSandbox).mockReset();
   vi.mocked(clearFileVersionCache).mockReset();
   vi.mocked(clearPrefetchedEditFileCache).mockReset();
 }
@@ -353,25 +355,26 @@ describe('executeSandboxToolCall -- sandbox_check_types', () => {
       .mockResolvedValueOnce(ok('tsconfig.json\n'))
       // node_modules probe — missing
       .mockResolvedValueOnce(fail('', 'No such file', 1))
-      // npm install succeeds
-      .mockResolvedValueOnce(ok('added 123 packages\n'))
       // tsc version check
       .mockResolvedValueOnce(ok('Version 5.4.0\n'))
       // actual type check
       .mockResolvedValueOnce(ok('', ''));
+    // npm install now runs through the detached long-running path.
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(
+      ok('added 123 packages\n'),
+    );
 
     const result = await executeSandboxToolCall(
       { tool: 'sandbox_check_types', args: {} },
       'sb-install',
     );
 
-    // npm install runs with mutation flag set
-    expect(sandboxClient.execInSandbox).toHaveBeenNthCalledWith(
-      3,
+    // npm install runs detached, with the mutation flag set. The context
+    // adapter calls the export with an opts bag (workdir + mutation flag).
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith(
       'sb-install',
       'cd /workspace && npm install',
-      undefined,
-      { markWorkspaceMutated: true },
+      { workdir: undefined, markWorkspaceMutated: true },
     );
     // Caches cleared twice: once after the npm install, and once after
     // the final typecheck exec (which also marks the workspace mutated).
@@ -386,8 +389,11 @@ describe('executeSandboxToolCall -- sandbox_check_types', () => {
   it('short-circuits with an install-failure message when npm install fails', async () => {
     vi.mocked(sandboxClient.execInSandbox)
       .mockResolvedValueOnce(ok('tsconfig.json\n'))
-      .mockResolvedValueOnce(fail('', '', 1))
-      .mockResolvedValueOnce(fail('', 'ENOENT: missing lockfile', 1));
+      .mockResolvedValueOnce(fail('', '', 1));
+    // The detached install fails.
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(
+      fail('', 'ENOENT: missing lockfile', 1),
+    );
 
     const result = await executeSandboxToolCall(
       { tool: 'sandbox_check_types', args: {} },

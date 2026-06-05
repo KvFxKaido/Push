@@ -11,6 +11,7 @@
 import type { ToolExecutionResult, StructuredToolError, SandboxCardData } from '@/types';
 import {
   execInSandbox,
+  execLongRunningInSandbox,
   findReferencesInSandbox,
   getSandboxEnvironment,
   readFromSandbox,
@@ -139,6 +140,14 @@ function buildVerificationContext(sandboxId: string): VerificationHandlerContext
   return {
     sandboxId,
     execInSandbox,
+    // Adapt the (sandboxId, command, workdir?, options?) handler signature onto
+    // execLongRunningInSandbox's opts-bag shape. Detached on CF; transparently
+    // falls back to buffered exec on backends without background routes.
+    execLongRunning: (id, command, workdir, options) =>
+      execLongRunningInSandbox(id, command, {
+        workdir,
+        markWorkspaceMutated: options?.markWorkspaceMutated,
+      }),
     getSandboxEnvironment,
     clearFileVersionCache,
     clearPrefetchedEditFileCache,

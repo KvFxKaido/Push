@@ -12,6 +12,10 @@ import {
   setWorkspaceRevisionByKey,
   setSandboxWorkspaceRevision,
 } from './sandbox-file-version-cache';
+import {
+  runDetachedToCompletion,
+  type DetachedExecPrimitives,
+} from '@push/lib/detached-exec-runner';
 import { resolveApiUrl } from './api-url';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import {
@@ -859,7 +863,11 @@ function sleep(ms: number): Promise<void> {
  * (read/write/list/diff) are cheap and idempotent, so we keep retrying them.
  */
 function isRetryableError(err: unknown, statusCode?: number, endpoint?: string): boolean {
-  const isExec = endpoint === 'exec';
+  // The detached background routes (exec-start/-status/-logs/-kill) share the
+  // buffered `exec` route's wedged-container hazard: replaying a timed-out call
+  // against a stuck container just hides the failure for ~12 minutes. Treat the
+  // whole `exec` family the same way (opt out of timeout/504 retries).
+  const isExec = endpoint === 'exec' || endpoint?.startsWith('exec-') === true;
 
   // Timeout errors (original AbortError). Not retryable for exec — see above.
   if (err instanceof DOMException && err.name === 'AbortError') {
@@ -1190,6 +1198,131 @@ export async function execInSandbox(
     error: raw.error,
     workspaceRevision: raw.workspace_revision,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Background execution (detached process + resumable cursor logs)
+//
+// Thin fetch wrappers over the CF-only /api/sandbox-cf/exec-* routes, plus
+// `execLongRunningInSandbox` which drives the shared `runDetachedToCompletion`
+// kernel and falls back to buffered `execInSandbox` when the active backend
+// lacks the routes (Modal — its handler 404s the unknown route). Used for
+// commands that can outrun the buffered per-exec deadline, e.g. a cold
+// `npm install`.
+// ---------------------------------------------------------------------------
+
+async function execStartInSandbox(
+  sandboxId: string,
+  command: string,
+  opts?: { workdir?: string; timeoutMs?: number },
+): Promise<{ processId: string }> {
+  const raw = await sandboxFetch<{ process_id: string }>(
+    'exec-start',
+    withOwnerToken(
+      {
+        sandbox_id: sandboxId,
+        command,
+        workdir: opts?.workdir,
+        timeout_ms: opts?.timeoutMs,
+      },
+      sandboxId,
+    ),
+  );
+  return { processId: raw.process_id };
+}
+
+async function execStatusInSandbox(
+  sandboxId: string,
+  processId: string,
+): Promise<{ running: boolean; exitCode: number | null }> {
+  const raw = await sandboxFetch<{ running: boolean; exit_code: number | null }>(
+    'exec-status',
+    withOwnerToken({ sandbox_id: sandboxId, process_id: processId }, sandboxId),
+  );
+  return { running: raw.running, exitCode: raw.exit_code };
+}
+
+async function execLogsInSandbox(
+  sandboxId: string,
+  processId: string,
+  cursors: { cursorStdout: number; cursorStderr: number },
+): Promise<{
+  stdout: string;
+  stderr: string;
+  nextCursorStdout: number;
+  nextCursorStderr: number;
+}> {
+  const raw = await sandboxFetch<{
+    stdout: string;
+    stderr: string;
+    next_cursor_stdout: number;
+    next_cursor_stderr: number;
+  }>(
+    'exec-logs',
+    withOwnerToken(
+      {
+        sandbox_id: sandboxId,
+        process_id: processId,
+        cursor_stdout: cursors.cursorStdout,
+        cursor_stderr: cursors.cursorStderr,
+      },
+      sandboxId,
+    ),
+  );
+  return {
+    stdout: raw.stdout,
+    stderr: raw.stderr,
+    nextCursorStdout: raw.next_cursor_stdout,
+    nextCursorStderr: raw.next_cursor_stderr,
+  };
+}
+
+async function execInterruptInSandbox(sandboxId: string, processId: string): Promise<void> {
+  await sandboxFetch<{ ok: boolean }>(
+    'exec-kill',
+    withOwnerToken({ sandbox_id: sandboxId, process_id: processId }, sandboxId),
+  );
+}
+
+/**
+ * Run a long command detached, blocking until it finishes — returns the same
+ * `ExecResult` shape as `execInSandbox`. Removes the buffered per-exec deadline
+ * for genuinely long commands. Falls back to buffered `execInSandbox` when the
+ * active backend has no background routes (the start call 404s).
+ */
+export async function execLongRunningInSandbox(
+  sandboxId: string,
+  command: string,
+  opts?: {
+    workdir?: string;
+    markWorkspaceMutated?: boolean;
+    overallTimeoutMs?: number;
+    onProgress?: (chunk: { stdout: string; stderr: string }) => void;
+  },
+): Promise<ExecResult> {
+  const primitives: DetachedExecPrimitives = {
+    start: (cmd, o) => execStartInSandbox(sandboxId, cmd, { workdir: o.workdir }),
+    status: (processId) => execStatusInSandbox(sandboxId, processId),
+    logs: (processId, cursors) => execLogsInSandbox(sandboxId, processId, cursors),
+    interrupt: (processId) => execInterruptInSandbox(sandboxId, processId),
+  };
+  try {
+    return await runDetachedToCompletion(primitives, command, {
+      workdir: opts?.workdir,
+      overallTimeoutMs: opts?.overallTimeoutMs,
+      onProgress: opts?.onProgress,
+    });
+  } catch (err) {
+    // A 404 from the start call means the active backend doesn't expose the
+    // background routes (e.g. Modal). Fall back to a buffered exec so behavior
+    // is identical, just without the detached-execution benefit.
+    if ((err as { statusCode?: number }).statusCode === 404) {
+      return await execInSandbox(sandboxId, command, opts?.workdir, {
+        markWorkspaceMutated: opts?.markWorkspaceMutated,
+      });
+    }
+    throw err;
+  }
 }
 
 export async function readSymbolsFromSandbox(

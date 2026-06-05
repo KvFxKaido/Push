@@ -66,6 +66,12 @@ export interface VerificationHandlerContext {
   sandboxId: string;
   /** Execute a shell command in the sandbox. */
   execInSandbox: VerificationExecInSandbox;
+  /**
+   * Execute a long-running command (e.g. a cold `npm install`) detached, so it
+   * isn't bound by the buffered per-exec deadline. Optional: when absent,
+   * handlers fall back to `execInSandbox`. Same `ExecResult` shape.
+   */
+  execLongRunning?: VerificationExecInSandbox;
   /** Read the sandbox's environment readiness data (for verify_workspace). */
   getSandboxEnvironment: (sandboxId?: string) => SandboxEnvironment | null;
   /** Clear the file-version cache for a sandbox after a workspace mutation. */
@@ -337,12 +343,13 @@ export async function handleCheckTypes(
       'cd /workspace && ls -d node_modules 2>/dev/null',
     );
     if (nodeModulesCheck.exitCode !== 0) {
-      const installResult = await execInSandbox(
-        sandboxId,
-        'cd /workspace && npm install',
-        undefined,
-        { markWorkspaceMutated: true },
-      );
+      // Cold install on a cache miss can outrun the buffered per-exec deadline,
+      // so prefer the detached path when the context provides it; fall back to
+      // a buffered exec otherwise (and on backends without background routes).
+      const runInstall = ctx.execLongRunning ?? execInSandbox;
+      const installResult = await runInstall(sandboxId, 'cd /workspace && npm install', undefined, {
+        markWorkspaceMutated: true,
+      });
       if (installResult.exitCode !== 0) {
         return {
           text: `[Tool Result — sandbox_check_types]\nFailed to install dependencies:\n${installResult.stderr}`,
