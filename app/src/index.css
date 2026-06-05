@@ -245,6 +245,11 @@
 .push-markdown [data-streamdown='code-block-header'] {
   @apply text-push-fg-muted;
 }
+
+.push-markdown [data-streamdown='code-block-controls'] button {
+  @apply text-push-fg-dim hover:text-push-fg-soft hover:bg-push-surface-raised rounded p-1 transition-colors;
+}
+
 .push-markdown [data-streamdown='inline-code'] {
   /* text-push-base (13px) matches body prose; Streamdown's default chip is
      text-sm (14px), which reads slightly large inline. Rounding/padding/font-mono

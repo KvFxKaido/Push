@@ -182,7 +182,7 @@ export function PushMarkdownRenderer({
       // to its own line the way a sibling element would. MessageBubble omits its
       // own caret on this path to avoid two carets.
       caret={isStreaming ? 'block' : undefined}
-      controls={false}
+      controls={true}
       lineNumbers={false}
       disallowedElements={['img']}
       components={enableCodeHighlight ? BASE_COMPONENTS : COMPONENTS_PLAIN}
