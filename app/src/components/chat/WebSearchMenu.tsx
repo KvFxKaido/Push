@@ -18,10 +18,18 @@ import { getActiveProvider } from '@/lib/orchestrator-provider-routing';
 interface WebSearchMenuProps {
   /** Shared header round-button class so the trigger matches sibling icons. */
   triggerClassName: string;
+  /** Provider the current chat is locked to (after first send). The menu's
+   *  provider-dependent UI — the Auto native-search hint and the
+   *  grounding/ollama availability gates — must reflect the provider the
+   *  NEXT turn actually streams with, which is the lock when present, not the
+   *  global default. Falls back to `getActiveProvider()` for a fresh chat. */
+  lockedProvider?: string | null;
 }
 
-export function WebSearchMenu({ triggerClassName }: WebSearchMenuProps) {
-  const activeProvider = getActiveProvider();
+export function WebSearchMenu({ triggerClassName, lockedProvider }: WebSearchMenuProps) {
+  // The locked provider wins so the menu describes what the next turn will do;
+  // a not-yet-locked chat falls back to the global active provider.
+  const activeProvider = lockedProvider ?? getActiveProvider();
   const [mode, setMode] = useState<WebSearchMode>(() => getWebSearchMode());
   const [open, setOpen] = useState(false);
 

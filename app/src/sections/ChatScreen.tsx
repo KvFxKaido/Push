@@ -58,6 +58,10 @@ interface ChatScreenShellProps {
 interface ChatScreenChatProps {
   containerProps: ChatContainerProps;
   inputProps: ChatInputProps;
+  /** Provider the current chat is locked to (after first send), or null for a
+   *  fresh chat. Forwarded to the Web Search menu so its Auto hint + gates
+   *  reflect the provider the next turn actually uses. */
+  lockedProvider?: string | null;
 }
 
 interface ChatScreenBannerProps {
@@ -251,7 +255,10 @@ export function ChatScreen({
           )}
 
           <div className="relative z-20 flex min-w-0 items-center justify-end gap-2">
-            <WebSearchMenu triggerClassName={HEADER_ROUND_BUTTON_CLASS} />
+            <WebSearchMenu
+              triggerClassName={HEADER_ROUND_BUTTON_CLASS}
+              lockedProvider={chat.lockedProvider}
+            />
             {approvalMode &&
               onCycleApprovalMode &&
               (() => {

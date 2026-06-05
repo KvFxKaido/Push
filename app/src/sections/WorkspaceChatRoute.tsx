@@ -544,6 +544,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     drawerProps,
   };
   const chatScreenChat = {
+    lockedProvider,
     containerProps: {
       messages,
       agentStatus,
