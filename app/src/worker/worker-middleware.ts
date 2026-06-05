@@ -258,7 +258,10 @@ export const SECURITY_HEADERS: Readonly<Record<string, string>> = Object.freeze(
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
   'Referrer-Policy': 'strict-origin-when-cross-origin',
-  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+  // microphone=(self) is required for the Web Speech API voice input in the chat
+  // composer; an empty allowlist denies first-party use too. Third-party frames
+  // stay blocked. Keep in sync with app/public/_headers.
+  'Permissions-Policy': 'camera=(), microphone=(self), geolocation=(), payment=(), usb=()',
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Resource-Policy': 'same-origin',
 });
