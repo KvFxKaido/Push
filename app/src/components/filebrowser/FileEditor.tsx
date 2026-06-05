@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import { getFileEditability, isBinaryContent, formatFileSize } from '@/lib/file-utils';
 import { readFromSandbox, type WriteResult } from '@/lib/sandbox-client';
 import type { FileEntry } from '@/types';
+import { useCodeMirror } from '@/hooks/useCodeMirror';
 
 interface FileEditorProps {
   file: FileEntry;
@@ -339,35 +340,19 @@ interface CodeEditorProps {
   disabled?: boolean;
 }
 
-function CodeEditor({ content, onChange, disabled }: CodeEditorProps) {
-  const lines = content.split('\n');
-
+function CodeEditor({ content, onChange, language, disabled }: CodeEditorProps) {
+  const { containerRef } = useCodeMirror({
+    doc: content,
+    language,
+    readOnly: disabled,
+    lineWrapping: true,
+    onDocChange: onChange,
+  });
   return (
-    <div className="flex h-full">
-      {/* Line numbers */}
-      <div className="flex-shrink-0 w-12 bg-push-surface border-r border-push-edge-subtle py-2 overflow-hidden select-none">
-        {lines.map((_, i) => (
-          <div
-            key={i}
-            className="min-h-[1.5em] px-2 text-right text-push-2xs text-push-fg-dimmest leading-[1.5em] font-mono"
-          >
-            {i + 1}
-          </div>
-        ))}
-      </div>
-
-      {/* Textarea */}
-      <textarea
-        value={content}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={disabled}
-        spellCheck={false}
-        autoCapitalize="off"
-        autoCorrect="off"
-        className="flex-1 h-full bg-push-surface-inset text-push-fg p-2 text-xs font-mono leading-[1.5em] resize-none border-none outline-none focus:outline-none disabled:opacity-50"
-        style={{ tabSize: 2 }}
-      />
-    </div>
+    <div
+      ref={containerRef}
+      className={`h-full [&_.cm-editor]:h-full ${disabled ? 'opacity-50' : ''}`}
+    />
   );
 }
 
