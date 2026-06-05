@@ -12,6 +12,7 @@ import {
 import type { ChatMessage, CardAction, AttachmentData } from '@/types';
 import { CardRenderer } from '@/components/cards/CardRenderer';
 import { BranchWaveIcon, PushMarkIcon } from '@/components/icons/push-custom-icons';
+import { useSmoothStreamedText } from '@/hooks/useSmoothStreamedText';
 import {
   looksLikeToolCall,
   ONLY_BRACKETS_RE,
@@ -427,12 +428,18 @@ export const MessageBubble = memo(function MessageBubble({
   }, [isUser, message.content, message.displayContent, message.isToolCall, message.isMalformed]);
   const hasContent = Boolean(displayContentText.trim());
 
+  // Smooth-stream the assistant's visible text so bursty token arrivals reveal
+  // at a steady cadence instead of spilling in jumps. Copy/pin still use the
+  // full `displayContentText`; only the rendered body animates. Disabled for
+  // user bubbles and once the message has settled (flushes to full instantly).
+  const revealedContentText = useSmoothStreamedText(displayContentText, isStreaming && !isUser);
+
   const visibleCards = useMemo(
     () => (message.cards || []).filter((card) => card.type !== 'sandbox-state'),
     [message.cards],
   );
 
-  const content = useMemo(() => formatContent(displayContentText), [displayContentText]);
+  const content = useMemo(() => formatContent(revealedContentText), [revealedContentText]);
 
   // Hide tool call / malformed messages only when they have no cards.
   // If the model included user-facing text before the JSON call, keep it visible.
@@ -541,9 +548,7 @@ export const MessageBubble = memo(function MessageBubble({
             }`}
           >
             {content}
-            {isStreaming && (
-              <span className="inline-block w-[6px] h-[16px] bg-push-accent ml-0.5 align-text-bottom animate-blink" />
-            )}
+            {isStreaming && <span className="stream-caret bg-push-accent" aria-hidden="true" />}
           </div>
         )}
         {hasContent && !isStreaming && (
