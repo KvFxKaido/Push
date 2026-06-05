@@ -1,7 +1,19 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   darkMode: ['class'],
-  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  content: [
+    './index.html',
+    './src/**/*.{js,ts,jsx,tsx}',
+    // Streamdown ships its CodeBlock/prose styling as Tailwind utility classes
+    // in its dist bundle. Tailwind v3 purges any class it can't find in a
+    // scanned file, so without this path the Streamdown-rendered code block
+    // chrome (padding/background/border/overflow) is stripped in production
+    // builds and highlighted blocks render unstyled. Required by Streamdown's
+    // Tailwind v3 setup. Adapter: src/components/chat/PushMarkdownRenderer.tsx.
+    './node_modules/streamdown/dist/*.js',
+    // Same for the @streamdown/code (Shiki) plugin's own classes.
+    './node_modules/@streamdown/code/dist/*.js',
+  ],
   theme: {
     extend: {
       colors: {

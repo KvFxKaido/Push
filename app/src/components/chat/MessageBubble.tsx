@@ -1,4 +1,12 @@
-import { memo, useMemo, useState, useCallback, cloneElement, isValidElement } from 'react';
+import {
+  memo,
+  useMemo,
+  useState,
+  useCallback,
+  cloneElement,
+  isValidElement,
+  Suspense,
+} from 'react';
 import {
   ChevronRight,
   FileCode,
@@ -14,12 +22,18 @@ import type { ChatMessage, CardAction, AttachmentData, UrlCitation } from '@/typ
 import { CardRenderer } from '@/components/cards/CardRenderer';
 import { BranchWaveIcon, PushMarkIcon } from '@/components/icons/push-custom-icons';
 import { useSmoothStreamedText } from '@/hooks/useSmoothStreamedText';
+import { isStreamdownEnabled } from '@/lib/feature-flags';
+import { lazyWithRecovery } from '@/lib/lazy-import';
 import {
   looksLikeToolCall,
   ONLY_BRACKETS_RE,
   stripToolCallPayload,
   stripToolResultEnvelopes,
 } from './message-content';
+
+// Streamdown adapter is loaded only when the flag is on, so the markdown
+// library (and its lazy Shiki/Mermaid chunks) never enters the default bundle.
+const LazyPushMarkdownRenderer = lazyWithRecovery(() => import('./PushMarkdownRenderer'));
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -569,12 +583,17 @@ export const MessageBubble = memo(function MessageBubble({
     [message.cards],
   );
 
+  // Renderer selection. When the Streamdown flag is on we skip the legacy
+  // parser entirely (and its per-word shimmer) so the two reveal animations
+  // never run together — cadence still comes from `revealedContentText`.
+  const useStreamdown = isStreamdownEnabled();
   const content = useMemo(() => {
+    if (useStreamdown) return null;
     const nodes = formatContent(revealedContentText);
     // While streaming, animate each newly-revealed word in; settled messages
     // render plain markdown so the spans (and their cost) exist only in-flight.
     return isStreaming ? wrapStreamWords(nodes, revealedContentText.length) : nodes;
-  }, [revealedContentText, isStreaming]);
+  }, [revealedContentText, isStreaming, useStreamdown]);
 
   // Hide tool call / malformed messages only when they have no cards.
   // If the model included user-facing text before the JSON call, keep it visible.
@@ -682,8 +701,21 @@ export const MessageBubble = memo(function MessageBubble({
               isError ? 'text-red-400' : 'text-push-fg-soft'
             }`}
           >
-            {content}
-            {isStreaming && <span className="stream-caret bg-push-accent" aria-hidden="true" />}
+            {useStreamdown ? (
+              <Suspense
+                fallback={
+                  <span className="whitespace-pre-wrap break-words">{revealedContentText}</span>
+                }
+              >
+                <LazyPushMarkdownRenderer text={revealedContentText} isStreaming={isStreaming} />
+              </Suspense>
+            ) : (
+              content
+            )}
+            {/* Streamdown renders its own inline caret; only the legacy path needs this one. */}
+            {isStreaming && !useStreamdown && (
+              <span className="stream-caret bg-push-accent" aria-hidden="true" />
+            )}
           </div>
         )}
         {message.citations && message.citations.length > 0 && (

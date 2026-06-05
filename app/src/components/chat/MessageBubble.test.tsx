@@ -61,6 +61,19 @@ describe('MessageBubble', () => {
     expect(html).toContain('hello world');
   });
 
+  it('hides malformed tool JSON before any renderer (sanitation is upstream)', () => {
+    // Fixture case 7: malformed tool JSON. Hiding happens in displayContentText /
+    // hasContent, ahead of the markdown renderer, so it is renderer-agnostic —
+    // the Streamdown adapter never receives this text.
+    const message = assistantMessage({
+      content: '{"tool": "repo_read", "args": {"path": "READ',
+      isMalformed: true,
+    });
+    const html = renderToStaticMarkup(<MessageBubble message={message} />);
+    expect(html).toBe('');
+    expect(html).not.toContain('repo_read');
+  });
+
   it('leaves code blocks unshimmered while streaming', () => {
     const message = assistantMessage({
       content: 'run this:\n```\nnpm install\n```',
