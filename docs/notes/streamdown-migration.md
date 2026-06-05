@@ -67,9 +67,16 @@ the next render without a reload.
 Measured with `npm run build` (Vite 7 / Rollup), gzip sizes.
 
 ### Default (flag off)
-- **Zero added download.** The adapter is `lazyWithRecovery(() => import('./PushMarkdownRenderer'))`,
+- **Zero added JS.** The adapter is `lazyWithRecovery(() => import('./PushMarkdownRenderer'))`,
   and with the flag off the dynamic import never fires. Streamdown is **not** in
   the eager entry chunk (verified: entry has no `data-streamdown`).
+- **Small always-on CSS bump.** Streamdown's Tailwind v3 setup requires
+  `./node_modules/streamdown/dist/*.js` in `tailwind.config.js` `content` (else
+  its code-block classes are purged and highlighted blocks render unstyled when
+  the flag is on). Tailwind content scanning is build-time and unconditional, so
+  Streamdown's utility classes land in the CSS bundle **regardless of flag
+  state** — a few KB of extra CSS even with the flag off. The lazy JS chunk
+  stays flag-gated; only the CSS is unconditional.
 
 ### Flag on (per session, after first paint)
 - **Base markdown chunk: ~458 KB raw / ~140 KB gzip**, loaded once when the
