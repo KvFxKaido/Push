@@ -14,6 +14,7 @@ vi.mock('./safe-storage', () => ({
 import {
   getWebSearchMode,
   getWebSearchModeUnavailableReason,
+  isNativeWebSearchEnabled,
   setWebSearchMode,
 } from './web-search-mode';
 
@@ -85,5 +86,31 @@ describe('getWebSearchModeUnavailableReason', () => {
         activeProvider: 'ollama',
       }),
     ).toBeNull();
+  });
+});
+
+describe('isNativeWebSearchEnabled', () => {
+  it('enables native search on "auto" for providers that have a native tool', () => {
+    for (const provider of ['google', 'anthropic', 'vertex', 'openrouter']) {
+      expect(isNativeWebSearchEnabled(provider, undefined, 'auto')).toBe(true);
+    }
+  });
+
+  it('leaves native-less providers on the prompt-engineered path under "auto"', () => {
+    for (const provider of ['openai', 'ollama', 'zen']) {
+      expect(isNativeWebSearchEnabled(provider, undefined, 'auto')).toBe(false);
+    }
+  });
+
+  it('suppresses native search for every provider when mode is "off"', () => {
+    for (const provider of ['google', 'anthropic', 'vertex', 'openrouter']) {
+      expect(isNativeWebSearchEnabled(provider, undefined, 'off')).toBe(false);
+    }
+  });
+
+  it('does not enable OpenRouter native search under explicit non-native backends', () => {
+    for (const mode of ['tavily', 'duckduckgo', 'ollama'] as const) {
+      expect(isNativeWebSearchEnabled('openrouter', undefined, mode)).toBe(false);
+    }
   });
 });

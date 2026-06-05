@@ -339,6 +339,50 @@ describe('openrouterStream', () => {
     expect(body.top_p).toBe(0.9);
   });
 
+  it('injects the openrouter:web_search server tool by default (auto mode)', async () => {
+    installStreamFetch(fetchMock);
+    const { openrouterStream } = await import('./openrouter-stream');
+    const iter = openrouterStream(baseRequest);
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(fetchMock).toHaveBeenCalled();
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.tools).toEqual([{ type: 'openrouter:web_search' }]);
+  });
+
+  it('omits the web_search tool when openrouterWebSearch=false', async () => {
+    installStreamFetch(fetchMock);
+    const { openrouterStream } = await import('./openrouter-stream');
+    const iter = openrouterStream({ ...baseRequest, openrouterWebSearch: false });
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(fetchMock).toHaveBeenCalled();
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.tools).toBeUndefined();
+  });
+
+  it('injects the web_search tool when openrouterWebSearch=true overrides off-by-storage', async () => {
+    installStreamFetch(fetchMock);
+    const { openrouterStream } = await import('./openrouter-stream');
+    const iter = openrouterStream({ ...baseRequest, openrouterWebSearch: true });
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.tools).toEqual([{ type: 'openrouter:web_search' }]);
+  });
+
   it('closes cleanly when the stream ends without a [DONE] or finish_reason', async () => {
     const { push, close } = installStreamFetch(fetchMock);
     const { openrouterStream } = await import('./openrouter-stream');

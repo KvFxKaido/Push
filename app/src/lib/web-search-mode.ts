@@ -66,9 +66,10 @@ export function setWebSearchMode(mode: WebSearchMode): void {
  * Provider-native web-search enablement rule.
  *
  * `'auto'` (the default) opts each provider into its own native search
- * tool — that's how Gemini gets `googleSearch` grounding and Anthropic
- * gets `web_search_20250305` without the user having to know either tool
- * exists. Explicit non-native backends (`'tavily'`, `'duckduckgo'`,
+ * tool — that's how Gemini gets `googleSearch` grounding, Anthropic gets
+ * `web_search_20250305`, and OpenRouter gets its `openrouter:web_search`
+ * server tool without the user having to know any of them exist. Explicit
+ * non-native backends (`'tavily'`, `'duckduckgo'`,
  * `'ollama'`) suppress native — the user has chosen a specific
  * client-side backend and we don't want the provider running a parallel
  * server-side search behind their back. `'google-grounding'` is the
@@ -98,7 +99,12 @@ export function isNativeWebSearchEnabled(
     case 'off':
       return false;
     case 'auto':
-      return provider === 'google' || provider === 'anthropic' || provider === 'vertex';
+      return (
+        provider === 'google' ||
+        provider === 'anthropic' ||
+        provider === 'vertex' ||
+        provider === 'openrouter'
+      );
     case 'google-grounding':
       return provider === 'google';
     case 'tavily':

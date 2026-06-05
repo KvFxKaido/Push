@@ -47,6 +47,18 @@ export interface CliProviderStreamOptions {
   sessionId?: string;
 }
 
+/** Per-request flag wins; otherwise OpenRouter's native `openrouter:web_search`
+ *  server tool defaults ON so CLI chats search the web without an opt-in step
+ *  (parity with the web app's `'auto'` web-search mode). Set
+ *  `PUSH_OPENROUTER_WEB_SEARCH=0` (or `false`/`no`/`off`) to disable.
+ *  https://openrouter.ai/docs/guides/features/server-tools/web-search */
+function resolveOpenRouterWebSearch(req: PushStreamRequest<LlmMessage>): boolean {
+  if (typeof req.openrouterWebSearch === 'boolean') return req.openrouterWebSearch;
+  const env = process.env.PUSH_OPENROUTER_WEB_SEARCH?.trim().toLowerCase();
+  if (!env) return true;
+  return !(env === '0' || env === 'false' || env === 'no' || env === 'off');
+}
+
 /**
  * Build a PushStream for a CLI provider. The returned function is a
  * `PushStream<LlmMessage>` — invoking it returns an async iterable that
@@ -187,6 +199,12 @@ async function* cliProviderStream(
           ...baseBody,
           ...(options.sessionId
             ? { session_id: options.sessionId.slice(0, OPENROUTER_MAX_SESSION_ID_LENGTH) }
+            : {}),
+          // OpenRouter executes `openrouter:web_search` server-side (engine
+          // `auto`) and feeds grounded, cited results back to the model.
+          // The text-based dispatcher never sees it as a client tool call.
+          ...(resolveOpenRouterWebSearch(req)
+            ? { tools: [{ type: 'openrouter:web_search' }] }
             : {}),
           // See: https://openrouter.ai/docs/guides/features/broadcast/overview
           trace: { generation_name: 'push-cli-chat', trace_name: 'push-cli' },
