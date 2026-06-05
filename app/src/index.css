@@ -225,6 +225,33 @@
   }
 }
 
+/* ── Streamdown code chrome → Push palette ─────────────
+   The Streamdown adapter mounts under `.push-markdown` and leaves code/pre to
+   Streamdown's own CodeBlock so the @streamdown/code Shiki plugin can color
+   tokens. That chrome themes through shadcn tokens (--sidebar / --background /
+   --border / --muted-foreground), which read as a generic github-dark block.
+   These rules repaint only the frame, code well, language bar, and inline chips
+   onto Push's explicit palette — a raised frame around a darker inset code well,
+   plus the bordered Push chip for inline code. Shiki token colors are inline
+   styles on inner spans and are deliberately left untouched. Selectors are
+   class + attribute (specificity 0,2,0), so they beat Streamdown's single-class
+   utilities without `!important`. */
+.push-markdown [data-streamdown='code-block'] {
+  @apply bg-push-surface-raised border-push-edge;
+}
+.push-markdown [data-streamdown='code-block-body'] {
+  @apply bg-push-surface border-push-edge-subtle;
+}
+.push-markdown [data-streamdown='code-block-header'] {
+  @apply text-push-fg-muted;
+}
+.push-markdown [data-streamdown='inline-code'] {
+  /* text-push-base (13px) matches body prose; Streamdown's default chip is
+     text-sm (14px), which reads slightly large inline. Rounding/padding/font-mono
+     carry over from Streamdown's own utility class. */
+  @apply border border-push-edge bg-push-surface text-push-base text-push-fg-soft;
+}
+
 /* ── Motion utilities ────────────────────────────── */
 
 /* Spring easing for interactive elements */
