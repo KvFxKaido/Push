@@ -4,6 +4,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import {
   WEB_SEARCH_MODES,
   WEB_SEARCH_MODE_LABELS,
+  getAutoNativeSearchLabel,
   getWebSearchMode,
   getWebSearchModeUnavailableReason,
   setWebSearchMode,
@@ -40,6 +41,12 @@ export function WebSearchMenu({ triggerClassName }: WebSearchMenuProps) {
   };
 
   const indicator = mode === 'off' ? null : mode === 'auto' ? 'auto' : 'on';
+
+  // What "Auto" resolves to for the current chat: the active provider's
+  // native web search (OpenRouter / Anthropic / Gemini), or null when the
+  // provider has no native tool. Shown on the Auto row so the menu reflects
+  // live state instead of hiding which native search is in play.
+  const autoNativeLabel = getAutoNativeSearchLabel(activeProvider);
 
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
@@ -97,9 +104,13 @@ export function WebSearchMenu({ triggerClassName }: WebSearchMenuProps) {
                   aria-pressed={selected}
                 >
                   <span>{WEB_SEARCH_MODE_LABELS[option]}</span>
-                  {disabled && reason && (
+                  {disabled && reason ? (
                     <span className="ml-2 truncate text-push-2xs text-push-fg-dim">{reason}</span>
-                  )}
+                  ) : option === 'auto' && autoNativeLabel ? (
+                    <span className="ml-2 shrink-0 text-push-2xs text-push-fg-dim">
+                      {autoNativeLabel}
+                    </span>
+                  ) : null}
                 </button>
               </li>
             );
