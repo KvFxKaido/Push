@@ -212,6 +212,11 @@ export interface PushStreamRequest<M extends LlmMessage = LlmMessage> {
   googleSearchGrounding?: boolean;
   /** Anthropic-specific flag to enable native `web_search_20250305` tool */
   anthropicWebSearch?: boolean;
+  /** OpenRouter-specific flag to enable the native `openrouter:web_search`
+   *  server tool. OpenRouter executes the search server-side (engine `auto`:
+   *  native provider search when available, else Exa) and feeds grounded,
+   *  cited results back to the model. */
+  openrouterWebSearch?: boolean;
 }
 
 export type PushStream<M extends LlmMessage = LlmMessage> = (

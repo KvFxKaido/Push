@@ -22,6 +22,20 @@ import { PROVIDER_URLS } from './providers';
 import type { WorkspaceContext } from '@/types';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
+import { isNativeWebSearchEnabled } from './web-search-mode';
+
+/**
+ * OpenRouter's native server-side web search, expressed as a server tool.
+ * OpenRouter runs the search upstream (engine `auto` → native provider
+ * search when the routed model supports it, else Exa) and feeds grounded,
+ * `url_citation`-annotated results back to the model — Push's own
+ * prompt-engineered `web_search` is suppressed for OpenRouter when this is
+ * active (see `nativeWebSearchActive` in `orchestrator.ts`), so the two
+ * never collide. The `openrouter:web_search` tool is the current shape;
+ * the older `:online` suffix / `plugins: [{ id: 'web' }]` form is
+ * deprecated. https://openrouter.ai/docs/guides/features/server-tools/web-search
+ */
+const OPENROUTER_WEB_SEARCH_TOOL = { type: 'openrouter:web_search' } as const;
 
 export async function* openrouterStream(
   req: PushStreamRequest<ChatMessage>,
@@ -57,6 +71,13 @@ export async function* openrouterStream(
   const sessionId = getOpenRouterSessionId();
   const trace = buildOpenRouterTrace();
 
+  // Per-request flag wins; otherwise the Web Search menu's mode decides.
+  // `'auto'` (the default) enables OpenRouter's `openrouter:web_search`
+  // server tool so chats search the web without the user opting in;
+  // explicit non-native backends suppress it. Mirrors the Anthropic /
+  // Gemini native-search adapters.
+  const webSearch = req.openrouterWebSearch ?? isNativeWebSearchEnabled('openrouter', req.model);
+
   const body: Record<string, unknown> = {
     model: req.model,
     messages: llmMessages,
@@ -66,6 +87,7 @@ export async function* openrouterStream(
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
     ...(useReasoning ? { reasoning: { effort } } : {}),
     ...(sessionId ? { session_id: sessionId } : {}),
+    ...(webSearch ? { tools: [OPENROUTER_WEB_SEARCH_TOOL] } : {}),
     trace,
   };
 

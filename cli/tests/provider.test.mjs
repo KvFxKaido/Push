@@ -733,6 +733,77 @@ describe('streamCompletion', () => {
       assert.equal(capturedHeaders['X-Title'], 'Push CLI');
     });
 
+    it('injects the openrouter:web_search server tool by default', async () => {
+      const prev = process.env.PUSH_OPENROUTER_WEB_SEARCH;
+      delete process.env.PUSH_OPENROUTER_WEB_SEARCH;
+      let capturedBody;
+      globalThis.fetch = async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildSSE(['ok'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      try {
+        await streamCompletion(orConfig, 'key', 'model', testMessages, null);
+      } finally {
+        if (prev === undefined) delete process.env.PUSH_OPENROUTER_WEB_SEARCH;
+        else process.env.PUSH_OPENROUTER_WEB_SEARCH = prev;
+      }
+
+      assert.deepEqual(capturedBody.tools, [{ type: 'openrouter:web_search' }]);
+    });
+
+    it('omits the web_search tool when PUSH_OPENROUTER_WEB_SEARCH=0', async () => {
+      const prev = process.env.PUSH_OPENROUTER_WEB_SEARCH;
+      process.env.PUSH_OPENROUTER_WEB_SEARCH = '0';
+      let capturedBody;
+      globalThis.fetch = async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildSSE(['ok'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      try {
+        await streamCompletion(orConfig, 'key', 'model', testMessages, null);
+      } finally {
+        if (prev === undefined) delete process.env.PUSH_OPENROUTER_WEB_SEARCH;
+        else process.env.PUSH_OPENROUTER_WEB_SEARCH = prev;
+      }
+
+      assert.equal(capturedBody.tools, undefined);
+    });
+
+    it('does NOT inject the web_search tool for non-openrouter providers', async () => {
+      let capturedBody;
+      globalThis.fetch = async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildSSE(['ok'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      await streamCompletion(testConfig, 'key', 'model', testMessages, null);
+
+      assert.equal(capturedBody.tools, undefined);
+    });
+
     it('includes session_id in request body when provided', async () => {
       let capturedBody;
       globalThis.fetch = async (_url, opts) => {
