@@ -583,9 +583,12 @@ async function routeExec(env: Env, body: Json): Promise<Response> {
   // Clamped to the container ceiling so it can only ever tighten, never extend
   // past the safety net. Passing it to the SDK `timeout` makes the bound a
   // contract guarantee rather than a host-side best effort.
+  // Guard `> 0`: a zero/negative timeout (payload manipulation, bad client
+  // config) would otherwise pass a non-positive deadline to the SDK and fire an
+  // immediate timeout. Treat non-positive as "unset" and fall back to defaults.
   const timeoutMs = num(body.timeout_ms);
   const clampedTimeoutMs =
-    timeoutMs !== undefined
+    timeoutMs !== undefined && timeoutMs > 0
       ? Math.min(timeoutMs, CONTAINER_EXEC_TIMEOUT_SECONDS * 1000)
       : undefined;
 
@@ -667,6 +670,8 @@ async function routeExecStart(env: Env, body: Json): Promise<Response> {
   const sandboxId = requireStr(body, 'sandbox_id');
   const command = requireStr(body, 'command');
   const workdir = str(body.workdir);
+  // Only apply a strictly-positive timeout; a zero/negative value would fire an
+  // immediate timeout in the SDK, so treat non-positive as "unbounded".
   const timeoutMs = num(body.timeout_ms);
 
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
@@ -677,7 +682,7 @@ async function routeExecStart(env: Env, body: Json): Promise<Response> {
   const proc = (await withExecDeadline(
     sandbox.startProcess(command, {
       ...(workdir ? { cwd: workdir } : {}),
-      ...(timeoutMs !== undefined ? { timeout: timeoutMs } : {}),
+      ...(timeoutMs !== undefined && timeoutMs > 0 ? { timeout: timeoutMs } : {}),
       autoCleanup: false,
     }),
   )) as ProcessLike;
@@ -765,8 +770,12 @@ async function routeExecLogs(env: Env, body: Json): Promise<Response> {
 
   return Response.json({
     process_id: processId,
-    stdout: stdoutTruncated ? `${stdoutChunk.slice(0, stdoutEmit)}\n…[truncated]` : stdoutChunk,
-    stderr: stderrTruncated ? `${stderrChunk.slice(0, stderrEmit)}\n…[truncated]` : stderrChunk,
+    // Return the raw slice with NO inline "[truncated]" marker: the cursor
+    // advances by exactly what we emit, so the next poll fetches the rest — a
+    // marker would be persisted mid-stream in the caller's concatenated output.
+    // The `truncated` boolean already signals a capped slice for any UI use.
+    stdout: stdoutChunk.slice(0, stdoutEmit),
+    stderr: stderrChunk.slice(0, stderrEmit),
     // Advance only by what we actually returned so a truncated read is
     // resumable: the next poll picks up exactly where this chunk was cut.
     next_cursor_stdout: fromStdout + stdoutEmit,

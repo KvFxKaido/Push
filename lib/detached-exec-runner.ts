@@ -118,6 +118,26 @@ export async function runDetachedToCompletion(
     cursorStderr = slice.nextCursorStderr;
   };
 
+  // Drain repeatedly until no new bytes arrive. Each `logs` read is capped
+  // (the worker returns at most one cap-sized slice per call), so a single
+  // `drain()` can leave a large final burst unread. Safe to loop ONLY once the
+  // process has stopped — the buffer is then finite and every iteration must
+  // advance a cursor or terminate, so it can't spin forever. Used on the
+  // terminal paths; the per-poll mid-run drain stays single-shot to keep the
+  // loop responsive.
+  const drainToEnd = async (): Promise<void> => {
+    for (;;) {
+      const beforeStdout = cursorStdout;
+      const beforeStderr = cursorStderr;
+      try {
+        await drain();
+      } catch {
+        return; // lost contact draining the tail — keep what we have
+      }
+      if (cursorStdout === beforeStdout && cursorStderr === beforeStderr) return;
+    }
+  };
+
   // Build the terminal result for a process that is no longer running. A
   // finished process with no exit code terminated abnormally (killed/errored
   // before the runtime recorded a code) — surface that as a failure rather
@@ -146,7 +166,7 @@ export async function runDetachedToCompletion(
       // other persistent error (retries already exhausted in the transport)
       // means we've lost contact and can't determine the outcome. Both are
       // failures the caller surfaces, not restarts.
-      await drain().catch(() => {});
+      await drainToEnd();
       return {
         stdout,
         stderr,
@@ -158,29 +178,31 @@ export async function runDetachedToCompletion(
       };
     }
 
-    // A log-fetch failure must NOT escape the loop: `status` above is the
-    // authoritative terminal signal, so swallow drain errors (losing at most a
-    // partial slice — the next poll re-reads from the same cursor) and let the
-    // loop continue. Otherwise a transient 404/504 on getProcessLogs would
-    // either reject the whole run or be misread by the caller's start-failure
-    // fallback as "backend lacks background routes" and re-run the command.
-    await drain().catch(() => {});
-
     if (!st.running) {
+      // Process stopped — fully catch up on any final burst before returning.
+      await drainToEnd();
       return finishedResult(st);
     }
+
+    // Mid-run: one bounded slice per poll keeps the loop responsive. A log-fetch
+    // failure must NOT escape the loop — `status` is the authoritative terminal
+    // signal, so swallow drain errors (losing at most a partial slice; the next
+    // poll re-reads from the same cursor) and continue. Otherwise a transient
+    // 404/504 on getProcessLogs would reject the whole run or be misread by the
+    // caller's start-failure fallback as "backend lacks routes" and re-run it.
+    await drain().catch(() => {});
 
     if (now() >= deadline) {
       // The process may have finished in the window between the status read
       // above and now. Re-check before declaring a timeout so a command that
       // completed right at the boundary isn't mislabeled exit 124.
       const finalStatus = await primitives.status(processId).catch(() => null);
-      await drain().catch(() => {});
       if (finalStatus && !finalStatus.running) {
+        await drainToEnd();
         return finishedResult(finalStatus);
       }
       await primitives.interrupt(processId).catch(() => {});
-      await drain().catch(() => {});
+      await drainToEnd();
       return {
         stdout,
         stderr,

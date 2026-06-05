@@ -79,6 +79,36 @@ describe('runDetachedToCompletion', () => {
     expect(result.error).toBeUndefined();
   });
 
+  it('fully drains a final burst larger than one capped slice on exit', async () => {
+    // The worker caps each logs slice; a single drain on exit would drop the
+    // tail beyond the cap. The runner must keep draining a stopped process
+    // until the buffer is exhausted. Here `logs` serves at most 3 chars/call.
+    const full = 'abcdefgh';
+    const primitives: DetachedExecPrimitives = {
+      start: async () => ({ processId: 'p' }),
+      status: async () => ({ running: false, exitCode: 0 }), // already finished
+      logs: async (_id, cursors) => {
+        const from = cursors.cursorStdout;
+        const next = Math.min(from + 3, full.length); // 3-char cap per call
+        return {
+          stdout: full.slice(from, next),
+          stderr: '',
+          nextCursorStdout: next,
+          nextCursorStderr: 0,
+        };
+      },
+      interrupt: async () => {},
+    };
+
+    const result = await runDetachedToCompletion(primitives, 'cmd', {
+      sleep: async () => {},
+      now: () => 0,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe(full); // not just the first 3 chars
+  });
+
   it('does not re-emit already-cursored output across polls', async () => {
     const chunks: string[] = [];
     const p = makePrimitives({
