@@ -56,6 +56,17 @@ describe('sanitizeCitationText', () => {
     assert.equal(cleaned, 'a b c');
   });
 
+  it('strips zero-width and Bidi-override characters (visual spoofing)', () => {
+    const ZWSP = '​'; // zero-width space
+    const RLO = '‮'; // right-to-left override
+    const BOM = '﻿'; // zero-width no-break space / BOM
+    const cleaned = sanitizeCitationText(`a${ZWSP}b${RLO}c${BOM}`);
+    for (const ch of [ZWSP, RLO, BOM]) {
+      assert.equal(cleaned.includes(ch), false);
+    }
+    assert.equal(cleaned, 'a b c');
+  });
+
   it('leaves plain text untouched (modulo trim)', () => {
     assert.equal(sanitizeCitationText('  Hello World  '), 'Hello World');
   });

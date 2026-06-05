@@ -702,6 +702,51 @@ function validateAssistantTextChunk(payload: unknown, basePath: string): Validat
   return issues;
 }
 
+/** Web-search sources (OpenRouter `openrouter:web_search`). The TUI and web
+ * both render `payload.citations[]`, so pin the array shape plus the
+ * per-citation fields a consumer reads — `url` (required, non-empty),
+ * `title` / `content` (strings, may be empty), and the `startIndex` /
+ * `endIndex` offsets. Permissive about extras, matching the module. */
+function validateAssistantCitations(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  if (!Array.isArray(payload.citations)) {
+    issues.push({
+      path: `${basePath}.citations`,
+      message: `expected array, got ${JSON.stringify(payload.citations)}`,
+    });
+    return issues;
+  }
+  payload.citations.forEach((c, i) => {
+    const p = `${basePath}.citations[${i}]`;
+    if (!isPlainObject(c)) {
+      issues.push({ path: p, message: `expected plain object, got ${typeof c}` });
+      return;
+    }
+    const u = expectNonEmptyString(c, 'url', p);
+    if (u) issues.push(u);
+    if (typeof c.title !== 'string') {
+      issues.push({
+        path: `${p}.title`,
+        message: `expected string, got ${JSON.stringify(c.title)}`,
+      });
+    }
+    if (typeof c.content !== 'string') {
+      issues.push({
+        path: `${p}.content`,
+        message: `expected string, got ${JSON.stringify(c.content)}`,
+      });
+    }
+    const si = expectOptionalNonNegativeInteger(c, 'startIndex', p);
+    if (si) issues.push(si);
+    const ei = expectOptionalNonNegativeInteger(c, 'endIndex', p);
+    if (ei) issues.push(ei);
+  });
+  return issues;
+}
+
 /** Tool call announcement. Both `tool_call` and `tool.execution_start`
  * land here because the TUI reads the same fields out of both. */
 function validateToolCall(payload: unknown, basePath: string): ValidationIssue[] {
@@ -1032,6 +1077,7 @@ const PAYLOAD_VALIDATORS: Record<string, PayloadValidator> = {
   // section comment above the validators for the rationale.
   assistant_token: validateAssistantTextChunk,
   assistant_thinking_token: validateAssistantTextChunk,
+  assistant_citations: validateAssistantCitations,
   tool_call: validateToolCall,
   'tool.execution_start': validateToolCall,
   tool_result: validateToolResult,

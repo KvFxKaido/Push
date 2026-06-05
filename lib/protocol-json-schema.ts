@@ -193,6 +193,22 @@ const PAYLOAD_DEFS: Record<string, JsonSchemaNode> = {
     text: str(),
   }),
 
+  // `assistant_citations` — web-search sources (OpenRouter). Each entry's
+  // `url` is required non-empty; `title`/`content` are required strings (may
+  // be empty); the `startIndex`/`endIndex` offsets are optional.
+  AssistantCitations: objectNode(['citations'], {
+    citations: {
+      type: 'array',
+      items: objectNode(['url', 'title', 'content'], {
+        url: nestr(),
+        title: str(),
+        content: str(),
+        startIndex: uint(),
+        endIndex: uint(),
+      }),
+    },
+  }),
+
   // `tool_call` + `tool.execution_start`. `args` is any JSON object;
   // per-tool arg schemas live in lib/tool-registry.ts, not here.
   ToolCall: objectNode(['toolName', 'args'], {
@@ -297,6 +313,7 @@ export const TYPE_TO_DEF: Record<string, string> = {
   'task_graph.graph_completed': 'TaskGraphGraphCompleted',
   assistant_token: 'AssistantTextChunk',
   assistant_thinking_token: 'AssistantTextChunk',
+  assistant_citations: 'AssistantCitations',
   tool_call: 'ToolCall',
   'tool.execution_start': 'ToolCall',
   tool_result: 'ToolResult',

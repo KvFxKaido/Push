@@ -29,10 +29,20 @@ export function citationHost(parsed: URL): string {
   return parsed.hostname.replace(/^www\./, '');
 }
 
-// C0 (0x00–0x1F) + DEL (0x7F) + C1 (0x80–0x9F) control chars, incl. the ANSI
-// escape `ESC` (0x1B). Built from a string so no literal control bytes live in
-// source (and to sidestep the control-char regex-literal lint).
-const CONTROL_CHARS = new RegExp('[\\u0000-\\u001f\\u007f-\\u009f]', 'g');
+// Characters that must never reach the terminal verbatim from an upstream
+// page title:
+//   - C0 (0x00–0x1F) + DEL (0x7F) + C1 (0x80–0x9F) controls, incl. ANSI ESC.
+//   - soft hyphen (00AD), zero-width + directional marks (200B–200F),
+//     line/paragraph separators (2028–2029), Bidi overrides (202A–202E,
+//     2066–2069), and the BOM/ZWNBSP (FEFF).
+// Bidi/zero-width chars enable visual spoofing (reordering or hiding text)
+// even though they aren't "control codes" in the C0/C1 sense. Built from a
+// string so no literal control bytes live in source (and to sidestep the
+// control-char regex-literal lint).
+const CONTROL_CHARS = new RegExp(
+  '[\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u200b-\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069\\ufeff]',
+  'g',
+);
 
 /**
  * Strip terminal control characters from upstream text before echoing it to
