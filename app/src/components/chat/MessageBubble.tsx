@@ -246,18 +246,26 @@ function formatInline(text: string): React.ReactNode[] {
         </code>,
       );
     } else if (match[8]) {
-      // Link [text](url)
-      result.push(
-        <a
-          key={key++}
-          href={match[9]}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-push-accent hover:text-push-link underline underline-offset-2 decoration-push-accent/30 hover:decoration-push-link/50 transition-colors"
-        >
-          {match[8]}
-        </a>,
-      );
+      // Link [text](url) — only render as a real anchor when the URL is a plain
+      // http(s) link. A hostile/malformed assistant message could carry a
+      // `javascript:`/`data:` scheme that must never reach an `href` (same guard
+      // SourcesFooter applies to citation URLs via `safeHttpUrl`). On rejection
+      // we keep the link *text* as plain, non-clickable content.
+      if (safeHttpUrl(match[9])) {
+        result.push(
+          <a
+            key={key++}
+            href={match[9]}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-push-accent hover:text-push-link underline underline-offset-2 decoration-push-accent/30 hover:decoration-push-link/50 transition-colors"
+          >
+            {match[8]}
+          </a>,
+        );
+      } else {
+        result.push(<span key={key++}>{match[8]}</span>);
+      }
     } else if (match[10]) {
       // Plain text
       result.push(<span key={key++}>{match[10]}</span>);

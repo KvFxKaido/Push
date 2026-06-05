@@ -74,6 +74,22 @@ describe('MessageBubble', () => {
     expect(html).not.toContain('repo_read');
   });
 
+  it('strips non-http(s) markdown link schemes, keeping the link text as plain', () => {
+    const message = assistantMessage({
+      content: '[js](javascript:alert(1)) [data](data:text/html,<b>x</b>) [safe](https://ok.com)',
+      status: 'done',
+    });
+    const html = renderToStaticMarkup(<MessageBubble message={message} />);
+    // Dangerous schemes never reach an href...
+    expect(html).not.toContain('javascript:');
+    expect(html).not.toContain('data:text/html');
+    // ...but their visible text is preserved as plain, non-clickable content.
+    expect(html).toContain('js');
+    expect(html).toContain('data');
+    // A plain http(s) link still renders as a real anchor.
+    expect(html).toContain('href="https://ok.com"');
+  });
+
   it('leaves code blocks unshimmered while streaming', () => {
     const message = assistantMessage({
       content: 'run this:\n```\nnpm install\n```',
