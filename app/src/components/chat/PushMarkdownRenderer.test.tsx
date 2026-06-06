@@ -52,6 +52,14 @@ describe('PushMarkdownRenderer (Streamdown adapter)', () => {
     expect(html).not.toContain('```');
   });
 
+  // Streaming block-reveal hook: the container gets `push-markdown-streaming`
+  // only while streaming, so the index.css `.push-markdown-streaming > *` block
+  // fade runs in-flight and settled / history renders stay static.
+  it('marks the container for the streaming block fade only while streaming', () => {
+    expect(render('Streaming text.', true)).toContain('push-markdown-streaming');
+    expect(render('Settled text.', false)).not.toContain('push-markdown-streaming');
+  });
+
   // 6. Links
   it('renders links with new-tab + hardened rel', () => {
     const html = render('See [Push](https://example.com/docs).');

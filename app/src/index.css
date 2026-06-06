@@ -225,6 +225,36 @@
   }
 }
 
+/* Streamdown block reveal — the Streamdown path drives its reveal cadence from
+   Push's `useSmoothStreamedText` (so Streamdown's own `animated` stays off),
+   which left freshly-revealed blocks popping in with no entrance. This fades
+   each block in once on mount: completed blocks keep stable identity and the
+   in-progress last block keeps its element identity as text appends, so each
+   animates exactly once rather than re-firing per token. Scoped to the streaming
+   container class so settled / history renders stay static. Block-level (not
+   per-word) keeps it cheap — no span explosion or char cap like the legacy
+   `.stream-word` path — and pairs with Streamdown's own inline caret. */
+@keyframes stream-block-in {
+  from {
+    opacity: 0;
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+.push-markdown-streaming > * {
+  animation: stream-block-in 140ms var(--ease-default) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .push-markdown-streaming > * {
+    animation: none;
+  }
+}
+
 /* ── Streamdown code chrome → Push palette ─────────────
    The Streamdown adapter mounts under `.push-markdown` and leaves code/pre to
    Streamdown's own CodeBlock so the @streamdown/code Shiki plugin can color

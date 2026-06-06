@@ -23,9 +23,13 @@ const codePlugin = createCodePlugin({ themes: ['github-dark-default', 'github-da
  *    call (`enableCodeHighlight={false}`) to render plain Push monospace with no
  *    Shiki cost. Mermaid and math (KaTeX) plugins are NOT wired, so those
  *    components never render and their chunks never load.
- *  - **No Streamdown animation.** `animated={false}` so its staggered reveal
- *    never runs alongside Push's own cadence (`useSmoothStreamedText`) or the
- *    per-word shimmer. The reveal is driven entirely by the growing `text`.
+ *  - **No Streamdown built-in animation.** `animated={false}` so its staggered
+ *    token reveal never runs alongside Push's own cadence (`useSmoothStreamedText`)
+ *    or the legacy per-word shimmer. The reveal is driven entirely by the growing
+ *    `text`. A lightweight, Push-owned block-level fade is layered on for the
+ *    streaming path only via the `push-markdown-streaming` container class
+ *    (`.push-markdown-streaming > *` in index.css) — reduced-motion-gated and
+ *    distinct from Streamdown's own token animation.
  *  - **Granular block controls.** `controls={true}` adds per-block copy and
  *    download buttons. While MessageBubble has a master copy button, these
  *    provide better UX for messages containing multiple code blocks.
@@ -188,7 +192,7 @@ export function PushMarkdownRenderer({
       disallowedElements={['img']}
       components={enableCodeHighlight ? BASE_COMPONENTS : COMPONENTS_PLAIN}
       plugins={enableCodeHighlight ? { code: codePlugin } : undefined}
-      className="push-markdown"
+      className={isStreaming ? 'push-markdown push-markdown-streaming' : 'push-markdown'}
     >
       {text}
     </Streamdown>
