@@ -68,7 +68,6 @@ jobs:
     permissions:
       contents: 'read'
       pull-requests: 'write'
-      issues: 'write'
     steps:
       - name: 'Checkout repository'
         # Full head checkout (not just the diff) so Codex can read source files
