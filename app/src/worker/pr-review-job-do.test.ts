@@ -175,9 +175,21 @@ function createMockCtx() {
       setStatus(p[1] as string, { check_run_id: p[0] as number });
       return [];
     }
+    // Orphan sweep: non-terminal rows.
+    if (/^SELECT \* FROM review WHERE status IN \('queued','running'\)/i.test(sql)) {
+      return [...reviews.values()]
+        .filter((r) => r.status === 'queued' || r.status === 'running')
+        .map((r) => ({ ...r }));
+    }
+    if (/^SELECT delivery_id FROM review WHERE status IN \('queued','running'\)/i.test(sql)) {
+      return [...reviews.values()]
+        .filter((r) => r.status === 'queued' || r.status === 'running')
+        .map((r) => ({ delivery_id: r.delivery_id }));
+    }
     throw new Error(`unhandled sql: ${sql}`);
   }
 
+  const alarms: number[] = [];
   const ctx = {
     storage: {
       sql: {
@@ -186,12 +198,17 @@ function createMockCtx() {
           return { toArray: () => rows, [Symbol.iterator]: () => rows[Symbol.iterator]() };
         },
       },
+      setAlarm: async (ts: number) => {
+        alarms.push(ts);
+      },
+      getAlarm: async () => alarms[alarms.length - 1] ?? null,
+      deleteAlarm: async () => {},
     },
     waitUntil: (p: Promise<unknown>) => {
       pending.push(p);
     },
   };
-  return { ctx, reviews, events, pending };
+  return { ctx, reviews, events, pending, alarms };
 }
 
 const RESULT: ReviewResult = {
@@ -480,5 +497,72 @@ describe('PrReviewJob check-run status surface', () => {
       .mocked(createReviewCheckRun)
       .mock.calls.some((c) => c[2] === 'neutral');
     expect(neutralPatched || neutralCreated).toBe(true);
+  });
+});
+
+describe('PrReviewJob orphan sweep', () => {
+  function seedRow(overrides: Partial<ReviewRow> & { delivery_id: string }): ReviewRow {
+    return {
+      repo: 'octo/repo',
+      pr_number: 7,
+      head_sha: 'shaX',
+      base_ref: 'main',
+      head_ref: 'feature/x',
+      installation_id: '42',
+      is_cross_fork: 0,
+      status: 'running',
+      comments_posted: null,
+      posted: null,
+      result_json: null,
+      error_text: null,
+      created_at: Date.now(),
+      started_at: Date.now(),
+      finished_at: null,
+      check_run_id: null,
+      ...overrides,
+    };
+  }
+
+  it('fails a stale running review with no live execution; leaves fresh rows alone', async () => {
+    const mock = createMockCtx();
+    // Orphan: running, 30m old, no live controller (fresh DO instance).
+    mock.reviews.set(
+      'orphan',
+      seedRow({
+        delivery_id: 'orphan',
+        status: 'running',
+        created_at: Date.now() - 30 * 60_000,
+        started_at: Date.now() - 30 * 60_000,
+        check_run_id: 99,
+      }),
+    );
+    // Fresh queued row within the grace window — must NOT be swept (could be a
+    // delivery whose runReview hasn't registered its controller yet).
+    mock.reviews.set(
+      'fresh',
+      seedRow({ delivery_id: 'fresh', status: 'queued', created_at: Date.now(), started_at: null }),
+    );
+
+    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
+    await do_.fetch(new Request('https://do/list')); // any fetch kicks the first-fetch sweep
+    await Promise.allSettled(mock.pending);
+
+    expect(mock.reviews.get('orphan')!.status).toBe('failed');
+    expect(mock.reviews.get('fresh')!.status).toBe('queued');
+    const ev = mock.events.find((e) => e.delivery_id === 'orphan' && e.type === 'review.failed');
+    expect(JSON.parse(ev!.payload_json).errorType).toBe('orphaned');
+  });
+
+  it('arms the orphan alarm when a review starts', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
+    __setPrReviewExecutorOverride('d1', async () => ({
+      result: RESULT,
+      commentsPosted: 1,
+      posted: true,
+    }));
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd1' })));
+    await Promise.allSettled(mock.pending);
+    expect(mock.alarms.length).toBeGreaterThan(0);
   });
 });
