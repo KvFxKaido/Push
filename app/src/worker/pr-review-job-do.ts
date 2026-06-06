@@ -66,8 +66,13 @@ const DEFAULT_MODEL = DEFAULT_PR_REVIEW_MODEL;
 // whose runReview hasn't registered its abort controller yet; ALARM is the
 // persistent backstop that fires even with no further traffic (it survives the
 // eviction), set comfortably past the deep reviewer's wall-clock budget (~14m).
+// REVIEW_TIMEOUT_MS is the max wall-clock budget for a single live review before
+// it is force-failed. ORPHAN_ALARM_MS is the sweep cadence / initial alarm arm.
+// Both are 15 min today but are intentionally separate: the orphan cadence is a
+// detection heuristic while the review budget is a hard max-runtime policy.
 const ORPHAN_GRACE_MS = 2 * 60_000;
 const ORPHAN_ALARM_MS = 15 * 60_000;
+const REVIEW_TIMEOUT_MS = 15 * 60_000;
 
 /** Start payload the webhook receiver POSTs to the DO. */
 export interface PrReviewStartInput extends ReviewablePullRequest {
@@ -274,7 +279,7 @@ export class PrReviewJob {
     for (const row of pending) {
       if (row.status !== 'running' || row.started_at == null) continue;
       if (!this.abortControllers.has(row.delivery_id)) continue;
-      const deadline = row.started_at + ORPHAN_ALARM_MS;
+      const deadline = row.started_at + REVIEW_TIMEOUT_MS;
       nextAlarm = nextAlarm == null ? deadline : Math.min(nextAlarm, deadline);
     }
     if (nextAlarm != null) {
@@ -284,34 +289,36 @@ export class PrReviewJob {
 
   /** Force-fail live reviews that exceeded the wall-clock budget. */
   private async failTimedOutReviews(now: number): Promise<void> {
-    try {
-      const rows = this.ctx.storage.sql
-        .exec("SELECT * FROM review WHERE status IN ('queued','running')")
-        .toArray() as unknown as ReviewRow[];
-      for (const row of rows) {
-        if (row.status !== 'running' || row.started_at == null) continue;
-        const controller = this.abortControllers.get(row.delivery_id);
-        if (!controller) continue;
-        if (now - row.started_at < ORPHAN_ALARM_MS) continue;
+    const rows = this.ctx.storage.sql
+      .exec("SELECT * FROM review WHERE status IN ('queued','running')")
+      .toArray() as unknown as ReviewRow[];
+    for (const row of rows) {
+      if (row.status !== 'running' || row.started_at == null) continue;
+      const controller = this.abortControllers.get(row.delivery_id);
+      if (!controller) continue;
+      if (now - row.started_at < REVIEW_TIMEOUT_MS) continue;
 
-        if (!controller.signal.aborted) controller.abort();
-        this.abortControllers.delete(row.delivery_id);
+      if (!controller.signal.aborted) controller.abort();
+      this.abortControllers.delete(row.delivery_id);
 
-        const message =
-          'Review exceeded its wall-clock budget; the provider stream appears stalled and was forcibly terminated.';
-        this.ctx.storage.sql.exec(
-          "UPDATE review SET status = 'failed', error_text = ?, finished_at = ? WHERE delivery_id = ?",
-          message,
-          now,
-          row.delivery_id,
-        );
-        this.emit(row.delivery_id, 'review.failed', { errorType: 'timeout', message });
-        log('warn', 'pr_review_timeout_swept', {
-          deliveryId: row.delivery_id,
-          repo: row.repo,
-          pr: row.pr_number,
-        });
+      const message =
+        'Review exceeded its wall-clock budget; the provider stream appears stalled and was forcibly terminated.';
+      this.ctx.storage.sql.exec(
+        "UPDATE review SET status = 'failed', error_text = ?, finished_at = ? WHERE delivery_id = ?",
+        message,
+        now,
+        row.delivery_id,
+      );
+      this.emit(row.delivery_id, 'review.failed', { errorType: 'timeout', message });
+      log('warn', 'pr_review_timeout_swept', {
+        deliveryId: row.delivery_id,
+        repo: row.repo,
+        pr: row.pr_number,
+      });
 
+      // Best-effort check-run finalization per row: a single network hiccup
+      // must not skip abort+DB-update for other timed-out rows.
+      try {
         const token = await this.mintInstallationToken(row.installation_id);
         if (token) {
           await this.finalizeCheckRun(
@@ -327,11 +334,12 @@ export class PrReviewJob {
             },
           );
         }
+      } catch (err) {
+        log('warn', 'pr_review_timeout_check_close_failed', {
+          deliveryId: row.delivery_id,
+          message: err instanceof Error ? err.message : String(err),
+        });
       }
-    } catch (err) {
-      log('error', 'pr_review_timeout_sweep_failed', {
-        message: err instanceof Error ? err.message : String(err),
-      });
     }
   }
 
