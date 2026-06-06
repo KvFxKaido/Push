@@ -1072,8 +1072,9 @@ export function HubReviewTab({
 
       {/* Results */}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {/* Autonomous (webhook-triggered) PR reviews for this PR. Self-hides
-            when there's no open PR or no reviews yet. */}
+        {/* Autonomous (webhook-triggered) PR reviews: the global on/off toggle
+            plus this PR's review history. Renders whenever a repo is connected
+            (empty state when there's no PR/reviews); hidden only with no repo. */}
         <div className="px-3 pt-3 empty:hidden">
           <PrReviewHistorySection repoFullName={repoFullName} activeBranch={activeBranch} />
         </div>

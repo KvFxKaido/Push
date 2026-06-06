@@ -11,8 +11,10 @@ import {
 import type { ReviewComment } from '@/types';
 import { findOpenPRForBranch } from '@/lib/github-tools';
 import { triggerPrReview, usePrReviewHistory } from '@/hooks/usePrReviewHistory';
+import { usePrReviewConfig } from '@/hooks/usePrReviewConfig';
 import type { PrReviewListItem } from '@/worker/pr-review-job-do';
 import { HUB_PANEL_SUBTLE_SURFACE_CLASS } from '@/components/chat/hub-styles';
+import { Switch } from '@/components/ui/switch';
 
 interface PrReviewHistorySectionProps {
   repoFullName: string | null | undefined;
@@ -210,6 +212,7 @@ export function PrReviewHistorySection({
   }, [repoFullName, activeBranch]);
 
   const { reviews, refresh } = usePrReviewHistory(repoFullName ?? null, prNumber);
+  const { enabled, saving, setEnabled, error: configError } = usePrReviewConfig();
   const [rerunning, setRerunning] = useState(false);
   const [rerunError, setRerunError] = useState<string | null>(null);
 
@@ -227,31 +230,65 @@ export function PrReviewHistorySection({
     }
   };
 
-  if (!prNumber || reviews.length === 0) return null;
+  // Render whenever there's a repo — the global on/off toggle plus the per-PR
+  // history. (Previously returned null with no open PR or no reviews, so the
+  // surface vanished after merge — the visibility gap this fixes; now it shows
+  // an explanatory empty state instead.)
+  if (!repoFullName) return null;
 
   return (
     <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3.5 py-3`}>
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="flex items-center gap-2">
           <span className="text-xs font-medium text-push-fg">Automated PR reviews</span>
-          <span className="text-push-2xs text-push-fg-dim">#{prNumber}</span>
+          {prNumber != null && <span className="text-push-2xs text-push-fg-dim">#{prNumber}</span>}
         </span>
-        <button
-          type="button"
-          onClick={handleRerun}
-          disabled={rerunning}
-          className="inline-flex items-center gap-1 text-push-2xs text-push-fg-dim hover:text-push-fg disabled:opacity-50"
-        >
-          <RefreshCw className={`h-3 w-3 ${rerunning ? 'animate-spin' : ''}`} />
-          {rerunning ? 'Starting…' : 'Re-run'}
-        </button>
+        <span className="flex items-center gap-2.5">
+          {prNumber != null && (
+            <button
+              type="button"
+              onClick={handleRerun}
+              disabled={rerunning || enabled === false}
+              title={enabled === false ? 'Reviewer is off' : 'Re-run review'}
+              className="inline-flex items-center gap-1 text-push-2xs text-push-fg-dim hover:text-push-fg disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3 w-3 ${rerunning ? 'animate-spin' : ''}`} />
+              {rerunning ? 'Starting…' : 'Re-run'}
+            </button>
+          )}
+          {/* Global reviewer kill-switch — off means no webhook or manual run
+              spends provider quota. */}
+          <Switch
+            checked={enabled ?? true}
+            disabled={enabled === null || saving}
+            onCheckedChange={(next) => void setEnabled(next)}
+            aria-label="Automated PR reviews enabled"
+          />
+        </span>
       </div>
-      {rerunError && <p className="mb-1.5 text-push-2xs text-red-400">{rerunError}</p>}
-      <div className="space-y-2">
-        {reviews.map((review) => (
-          <ReviewRow key={review.deliveryId} review={review} />
-        ))}
-      </div>
+      {(rerunError || configError) && (
+        <p className="mb-1.5 text-push-2xs text-red-400">
+          {[rerunError, configError].filter(Boolean).join(' · ')}
+        </p>
+      )}
+      {enabled === false && (
+        <p className="mb-1.5 text-push-2xs text-push-fg-dim">
+          Reviewer is off — no automated reviews will run (saves provider quota).
+        </p>
+      )}
+      {reviews.length > 0 ? (
+        <div className="space-y-2">
+          {reviews.map((review) => (
+            <ReviewRow key={review.deliveryId} review={review} />
+          ))}
+        </div>
+      ) : (
+        <p className="text-push-2xs text-push-fg-dim">
+          {prNumber != null
+            ? 'No reviews yet for this PR.'
+            : 'Reviews run automatically when you open a pull request.'}
+        </p>
+      )}
     </div>
   );
 }
