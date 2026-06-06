@@ -43,30 +43,33 @@ export function usePrReviewConfig(): PrReviewConfigState {
     };
   }, []);
 
-  const setEnabled = useCallback(
-    async (next: boolean) => {
-      setSaving(true);
-      setError(null);
-      const prev = enabled;
-      setEnabledState(next); // optimistic
-      try {
-        const res = await fetch(resolveApiUrl('/api/pr-reviews/config'), {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ enabled: next }),
-        });
-        if (!res.ok) throw new Error(`config ${res.status}`);
-        const data = (await res.json()) as { enabled?: boolean };
-        setEnabledState(typeof data.enabled === 'boolean' ? data.enabled : next);
-      } catch (err) {
-        setEnabledState(prev); // revert on failure
-        setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        setSaving(false);
-      }
-    },
-    [enabled],
-  );
+  const setEnabled = useCallback(async (next: boolean) => {
+    setSaving(true);
+    setError(null);
+    // Capture the true current value via a functional update (not the
+    // closed-over `enabled`, which would be stale on rapid successive toggles)
+    // so a failed POST reverts to the right prior state.
+    let prev: boolean | null = null;
+    setEnabledState((curr) => {
+      prev = curr;
+      return next; // optimistic
+    });
+    try {
+      const res = await fetch(resolveApiUrl('/api/pr-reviews/config'), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: next }),
+      });
+      if (!res.ok) throw new Error(`config ${res.status}`);
+      const data = (await res.json()) as { enabled?: boolean };
+      setEnabledState(typeof data.enabled === 'boolean' ? data.enabled : next);
+    } catch (err) {
+      setEnabledState(prev); // revert on failure
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }, []);
 
   return { enabled, saving, error, setEnabled };
 }

@@ -267,7 +267,9 @@ export function PrReviewHistorySection({
         </span>
       </div>
       {(rerunError || configError) && (
-        <p className="mb-1.5 text-push-2xs text-red-400">{rerunError ?? configError}</p>
+        <p className="mb-1.5 text-push-2xs text-red-400">
+          {[rerunError, configError].filter(Boolean).join(' · ')}
+        </p>
       )}
       {enabled === false && (
         <p className="mb-1.5 text-push-2xs text-push-fg-dim">
