@@ -12,13 +12,7 @@
  * implementations (role-memory-context + sandbox-client).
  */
 
-import type {
-  AIProviderType,
-  LlmMessage,
-  PushStream,
-  ReviewComment,
-  ReviewResult,
-} from './provider-contract.js';
+import type { AIProviderType, LlmMessage, PushStream, ReviewResult } from './provider-contract.js';
 import type { RunEventInput } from './runtime-contract.js';
 import type { ReviewerPromptContext } from './role-context.js';
 import { SystemPromptBuilder } from './system-prompt-builder.js';
@@ -30,48 +24,8 @@ import {
   classifyFilePath,
 } from './diff-utils.js';
 import { SIZE_BUDGETS } from './size-budgets.js';
-import { z } from 'zod';
 import { parseStructured } from './structured-output.js';
-
-// ---------------------------------------------------------------------------
-// Response schema — single source of truth for the JSON the Reviewer prompt
-// asks the model to emit. Per-field `.catch` defaults reproduce the inline
-// coercion the parse site used to do; the array transform drops comments with
-// an empty body, matching the old `.filter((c) => c.comment.length > 0)`.
-// ---------------------------------------------------------------------------
-
-/** One review finding. Mirrors `ReviewComment` from provider-contract. */
-const ReviewCommentSchema = z
-  .object({
-    file: z.string().catch('unknown'),
-    severity: z.enum(['critical', 'warning', 'suggestion', 'note']).catch('note'),
-    comment: z.string().catch(''),
-    // Keep a line number only when it's a positive integer; otherwise omit
-    // the field entirely (the old code spread `...(line !== undefined ...)`).
-    line: z.number().int().positive().optional().catch(undefined),
-  })
-  .catch({ file: 'unknown', severity: 'note', comment: '', line: undefined })
-  .transform(
-    (c): ReviewComment => ({
-      file: c.file,
-      severity: c.severity,
-      comment: c.comment,
-      ...(c.line !== undefined ? { line: c.line } : {}),
-    }),
-  );
-
-const ReviewerResponseSchema = z
-  .object({
-    summary: z.string().catch('No summary provided.'),
-    comments: z
-      .array(ReviewCommentSchema)
-      .catch([])
-      .transform((cs) => cs.filter((c) => c.comment.length > 0)),
-  })
-  // Valid JSON that isn't an object (a bare primitive) used to coerce to an
-  // empty review rather than throw — the top-level catch preserves that, so
-  // only genuinely unparseable JSON reaches the throw path below.
-  .catch({ summary: 'No summary provided.', comments: [] });
+import { ReviewerResponseSchema } from './review-schema.js';
 
 const REVIEWER_TIMEOUT_MS = 90_000; // 90s — reviews can be thorough
 const REVIEWER_FILE_STRUCTURE_LIMIT = 2_000;
