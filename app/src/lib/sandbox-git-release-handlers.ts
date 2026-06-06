@@ -560,8 +560,14 @@ export async function handleSaveDraft(
     };
   }
 
-  // Step 2: Get current branch (null → '' when detached / not a repo)
-  const pushGit = createSandboxPushGit(ctx.sandboxId, { execFn: ctx.execInSandbox });
+  // Step 2: Get current branch (null → '' when detached / not a repo).
+  // `secretScan` matters most here: save_draft is the one release path that
+  // skips the Auditor, so the deterministic pre-push scan is the only gate
+  // standing between a draft credential and origin.
+  const pushGit = createSandboxPushGit(ctx.sandboxId, {
+    execFn: ctx.execInSandbox,
+    secretScan: true,
+  });
   const currentBranch = (await pushGit.currentBranch()) ?? '';
 
   // Step 3: Determine draft branch name — must be a valid ref and start with
@@ -628,7 +634,9 @@ export async function handleSaveDraft(
     `${draftStats.filesChanged} file${draftStats.filesChanged !== 1 ? 's' : ''} changed, +${draftStats.additions} -${draftStats.deletions}`,
     pushOk
       ? 'Pushed to remote.'
-      : `Push failed: ${pushResult.stderr}. Use sandbox_push() to retry.`,
+      : pushResult.blocked
+        ? `Push blocked: ${pushResult.stderr} The draft is committed locally; remove the secret, then use sandbox_push() to retry.`
+        : `Push failed: ${pushResult.stderr}. Use sandbox_push() to retry.`,
   ];
 
   const draftCardData: DiffPreviewCardData = {

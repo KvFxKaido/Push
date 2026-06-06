@@ -97,15 +97,16 @@ function makeContext(opts: MakeContextOpts = {}): MockedContext {
     diffCalls,
     readCalls,
     execInSandbox: vi.fn(async (...args: ExecArgs) => {
-      execCalls.push(args);
-      // Absorb the pre-push secret scan's `computePushedDiff` reads without
-      // consuming the positional execResults queue. Resolving the base on the
+      // Absorb the pre-push secret scan's `computePushedDiff` reads — transparent
+      // to both the positional execResults queue AND `execCalls`, so handlers'
+      // command sequences and counts are unaffected. Resolving the base on the
       // first read (`@{upstream}`) means the scan only ever issues these two
       // distinctive commands; everything else (incl. the real `git 'push'`)
-      // still draws from the queue.
+      // is recorded and draws from the queue.
       const cmd = String(args[1]);
       if (cmd.includes('@{upstream}')) return ok('origin/main'); // base resolves
       if (/ 'diff' '--no-color'/.test(cmd)) return ok(opts.pushedDiff ?? '');
+      execCalls.push(args);
       return execQueue.shift() ?? ok();
     }),
     getSandboxDiff: vi.fn(async (...args: DiffArgs) => {
@@ -607,8 +608,9 @@ describe('handleSaveDraft', () => {
     const result = await handleSaveDraft(ctx, {});
     expect(result.text).toContain('Draft saved to branch: draft/existing');
     expect(result.branchSwitch).toBeUndefined();
-    // 5 execs: branch-detect, stage, commit, rev-parse (sha), push (no checkout).
-    expect(ctx.execInSandbox).toHaveBeenCalledTimes(5);
+    // 5 handler execs: branch-detect, stage, commit, rev-parse (sha), push
+    // (no checkout). execCalls excludes the transparent pre-push scan reads.
+    expect(ctx.execCalls).toHaveLength(5);
   });
 
   it('checks out a different draft branch when an explicit branch_name is requested while already on a draft branch', async () => {
@@ -634,7 +636,8 @@ describe('handleSaveDraft', () => {
       kind: 'switched',
       source: 'release_draft',
     });
-    expect(ctx.execInSandbox).toHaveBeenCalledTimes(6);
+    // 6 handler execs (execCalls excludes the transparent pre-push scan reads).
+    expect(ctx.execCalls).toHaveLength(6);
     // Second exec is the checkout — confirm it targets the requested branch.
     expect(ctx.execCalls[1][1]).toContain("git 'checkout' '-b' 'draft/requested'");
   });

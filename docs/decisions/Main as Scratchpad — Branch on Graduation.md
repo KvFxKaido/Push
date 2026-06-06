@@ -367,8 +367,9 @@ remote collision entirely but at the cost of cross-surface visibility.
      skipping. **Wired into every push path** via
      `createSandboxPushGit(..., { secretScan: true })`: the web commit/push flow
      (`useCommitPush`), the model-invokable `push` tool (`handleSandboxPush`),
-     `promote_to_github`, and the chat-card commit/push action — closing the
-     surface asymmetry (PR #803). Opt-out: `PUSH_SECRET_SCAN=0` (Node) /
+     `promote_to_github`, the chat-card commit/push action, and `sandbox_save_draft`
+     (the one release path that skips the Auditor, so the deterministic scan is
+     its only gate) — closing the surface asymmetry (PR #803). Opt-out: `PUSH_SECRET_SCAN=0` (Node) /
      `VITE_PUSH_SECRET_SCAN=0` (web client), `resolveSecretScanEnabled` (mirrors
      `resolveAuditorGateEnabled`). **Remaining:** confirm
      the "semantically-dangerous AND must-be-caught-pre-push, beyond secrets"
