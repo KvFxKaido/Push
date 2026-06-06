@@ -346,7 +346,32 @@ remote collision entirely but at the cost of cross-surface visibility.
    - *Secrets / footguns (mechanical, a recall problem)* → a **deterministic
      pre-push scan** (gitleaks/trufflehog-style; seed already in
      `app/src/lib/sensitive-data-guard.ts`'s token regex). Models are the wrong
-     tool for recall — they miss and hallucinate.
+     tool for recall — they miss and hallucinate. **Shipped (2026-06-06):** the
+     scanner kernel is `lib/secret-scan.ts` (high-precision rules:
+     private-key/GitHub/OpenAI/Google/AWS-id/AWS-secret/Slack/Stripe-live/GCP-SA;
+     precision-over-recall since there's no human at auto-push, so broad shapes
+     like a bare `Bearer` are redacted-for-display but not blocked). The
+     deterministic match **fails closed** (blocks) while infra trouble (no diff
+     resolvable / read error) **fails open** with a loud structured log
+     (`secret_scan_clean`↔`blocked`↔`skipped`↔`no_diff`↔`error`) — deliberately
+     *not* the model-Auditor's "flaky backend blocks the op" liability. It runs
+     through a new **`PrePushGate` seam** on `PushGit.push()`
+     (`lib/git/push-git.ts`), built by `lib/git/secret-scan-gate.ts` over a
+     caller-supplied diff source. It scans the **uncapped about-to-be-pushed
+     commits** — `lib/git/pushed-diff.ts`'s `computePushedDiff` resolves
+     `base..HEAD` (upstream → `origin/<branch>` → merge-base with `origin/HEAD`)
+     — *not* a working-tree preview, so a truncated diff or a secret already
+     sitting in an unpushed commit can't slip past (PR #802 review). Wired into
+     the web commit/push flow via `createSandboxPushGit(..., { secretScan: true })`.
+     Opt-out: `PUSH_SECRET_SCAN=0` (Node) / `VITE_PUSH_SECRET_SCAN=0` (web client),
+     `resolveSecretScanEnabled` (mirrors `resolveAuditorGateEnabled`).
+     **Remaining:** (i) route the model-invokable `push` tool (`handleSandboxPush`),
+     `promote_to_github`, and the card-action push through the same
+     `secretScan` option (the factory + `computePushedDiff` now make this a
+     one-line change each) — folded into the auto-push slice; until then the
+     model's *commit* path stays Auditor-gated. (ii) confirm
+     the "semantically-dangerous AND must-be-caught-pre-push, beyond secrets"
+     band is empty before retiring the model-Auditor.
    - *"Is this change dangerous" (semantic judgment)* → the **PR reviewers we
      already have** (Copilot trusted-gate, Kilo, the glm-5.1 autonomous
      reviewer) — independent model judgment *with full diff context*, which a

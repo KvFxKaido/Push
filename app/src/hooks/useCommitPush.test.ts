@@ -54,6 +54,35 @@ function render(
   return useCommitPush(sandboxId, providerOverride, modelOverride, onSandboxExpired);
 }
 
+type GitExecResult = { exitCode: number; stdout?: string; stderr?: string; error?: string };
+
+/**
+ * Dispatch `execInSandbox` by command so the pre-push secret scan's
+ * `computePushedDiff` reads (rev-parse/branch/merge-base/diff) don't depend on
+ * call order. `pushedDiff` is what the scan sees; `push` is the push result;
+ * `override(id, cmd)` wins first (used to fail a specific sandbox/command).
+ */
+function dispatchGit(
+  opts: {
+    pushedDiff?: string;
+    push?: GitExecResult;
+    override?: (id: string, cmd: string) => GitExecResult | undefined;
+  } = {},
+) {
+  sandboxClient.execInSandbox.mockImplementation(async (id: string, cmd: string) => {
+    const ov = opts.override?.(id, cmd);
+    if (ov) return { stdout: '', stderr: '', ...ov };
+    if (cmd.includes('@{upstream}')) return { exitCode: 0, stdout: 'origin/main', stderr: '' };
+    if (cmd.includes("'diff'")) return { exitCode: 0, stdout: opts.pushedDiff ?? '', stderr: '' };
+    if (cmd.includes("'push'"))
+      return { stdout: '', stderr: '', ...(opts.push ?? { exitCode: 0 }) };
+    return { exitCode: 0, stdout: '', stderr: '' }; // add, commit, apply, etc.
+  });
+}
+
+const calledWith = (substr: string): boolean =>
+  sandboxClient.execInSandbox.mock.calls.some((c: unknown[]) => String(c[1]).includes(substr));
+
 beforeEach(() => {
   Object.values(sandboxClient).forEach((m) => m.mockReset());
   sandboxClient.writeToSandbox.mockResolvedValue({ ok: true });
@@ -204,19 +233,39 @@ describe('useCommitPush.commitAndPush (audit → commit → push)', () => {
       verdict: 'safe',
       card: { summary: 'looks good' },
     });
-    sandboxClient.execInSandbox
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }) // git add -A
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }) // git commit
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }); // git push
+    dispatchGit({ pushedDiff: '+const x = 1;' }); // clean diff → scan passes
 
     const hook = render();
     await hook.commitAndPush();
 
-    // The backend stages then commits, so [add, commit, push].
-    const [, commitCall, pushCall] = sandboxClient.execInSandbox.mock.calls;
-    expect(commitCall[1]).toContain("git 'commit' '-m' 'fix thing'");
-    expect(pushCall[1]).toContain("git 'push' 'origin' 'HEAD'");
+    expect(calledWith("git 'commit' '-m' 'fix thing'")).toBe(true);
+    expect(calledWith("git 'push' 'origin' 'HEAD'")).toBe(true);
     expect((reactState.cells[0].value as { phase: string }).phase).toBe('success');
+  });
+
+  it('blocks the push (after commit) when the about-to-be-pushed diff carries a secret', async () => {
+    seedReviewingState();
+    diffUtils.parseDiffStats.mockReturnValue({ fileNames: [] });
+    auditor.runAuditor.mockResolvedValue({ verdict: 'safe', card: { summary: 'looks good' } });
+    // The secret lives in the *pushed* commits (what computePushedDiff returns),
+    // not the in-hand preview — proving the gate scans the real push payload.
+    const secretDiff = [
+      '+++ b/config.ts',
+      '@@ -0,0 +1 @@',
+      '+const k = "AKIAIOSFODNN7EXAMPLE";',
+    ].join('\n');
+    dispatchGit({ pushedDiff: secretDiff });
+
+    const hook = render();
+    await hook.commitAndPush();
+
+    const state = reactState.cells[0].value as { phase: string; error: string };
+    expect(state.phase).toBe('error');
+    expect(state.error).toContain('AWS access key ID');
+    expect(state.error).not.toContain('AKIAIOSFODNN7EXAMPLE');
+    // The commit ran, but the push is never attempted.
+    expect(calledWith("git 'commit'")).toBe(true);
+    expect(calledWith("git 'push'")).toBe(false);
   });
 
   it('reports commit failures with stderr/stdout detail', async () => {
@@ -246,14 +295,7 @@ describe('useCommitPush.commitAndPush (audit → commit → push)', () => {
       verdict: 'safe',
       card: { summary: '' },
     });
-    sandboxClient.execInSandbox
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }) // git add -A
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }) // git commit
-      .mockResolvedValueOnce({
-        exitCode: 1,
-        stdout: '',
-        stderr: 'rejected (non-fast-forward)',
-      }); // git push
+    dispatchGit({ push: { exitCode: 1, stderr: 'rejected (non-fast-forward)' } });
     const hook = render();
     await hook.commitAndPush();
     expect((reactState.cells[0].value as { phase: string; error: string }).phase).toBe('error');
@@ -270,10 +312,7 @@ describe('useCommitPush.commitAndPush (audit → commit → push)', () => {
       verdict: 'safe',
       card: { summary: '' },
     });
-    sandboxClient.execInSandbox
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }) // git add -A
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }) // git commit
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }); // git push
+    dispatchGit();
     const hook = render();
     await hook.commitAndPush();
     // runAuditor receives an empty file-context array rather than crashing.
@@ -314,14 +353,11 @@ describe('useCommitPush.commitAndPush (audit → commit → push)', () => {
       verdict: 'safe',
       card: { summary: '' },
     });
-    sandboxClient.execInSandbox
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }) // git add -A
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }) // git commit
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }); // git push
+    dispatchGit();
     const hook = render();
     await hook.commitAndPush();
-    // The backend shell-escapes the message identically; commit is the 2nd exec.
-    expect(sandboxClient.execInSandbox.mock.calls[1][1]).toContain(`'it'"'"'s fine'`);
+    // The backend shell-escapes the message identically when committing.
+    expect(calledWith(`'it'"'"'s fine'`)).toBe(true);
   });
 });
 
@@ -346,22 +382,12 @@ describe('useCommitPush.commitAndPush — sandbox-expiry recovery', () => {
       card: { summary: 'looks good' },
     });
 
-    sandboxClient.execInSandbox
-      // 1: git add -A on dead sandbox → expired signal
-      .mockResolvedValueOnce({
-        exitCode: -1,
-        stdout: '',
-        stderr: '',
-        error: 'Sandbox not found or expired',
-      })
-      // 2: git apply in new sandbox
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
-      // 3: git add -A in new sandbox
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
-      // 4: git commit in new sandbox
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
-      // 5: git push in new sandbox
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' });
+    // The original sandbox is dead: its first git call (add) reports expired.
+    // The recovered sandbox (sbx-2) succeeds for everything, incl. the scan.
+    dispatchGit({
+      override: (id) =>
+        id === 'sbx-1' ? { exitCode: -1, error: 'Sandbox not found or expired' } : undefined,
+    });
 
     const onSandboxExpired = vi.fn().mockResolvedValue('sbx-2');
     const hook = render('sbx-1', 'openrouter', undefined, onSandboxExpired);
@@ -374,11 +400,11 @@ describe('useCommitPush.commitAndPush — sandbox-expiry recovery', () => {
       'diff --git a/x b/x',
     );
     const calls = sandboxClient.execInSandbox.mock.calls;
-    expect(calls[1][0]).toBe('sbx-2');
-    expect(calls[1][1]).toContain('git apply');
-    // Recovery commit/push go through the backend (escaped argv): [add, commit, push].
-    expect(calls[3][1]).toContain("git 'commit' '-m' 'fix thing'");
-    expect(calls[4][1]).toContain("git 'push' 'origin' 'HEAD'");
+    const onSbx2 = (substr: string) =>
+      calls.some((c: unknown[]) => c[0] === 'sbx-2' && String(c[1]).includes(substr));
+    expect(onSbx2('git apply')).toBe(true);
+    expect(onSbx2("git 'commit' '-m' 'fix thing'")).toBe(true);
+    expect(onSbx2("git 'push' 'origin' 'HEAD'")).toBe(true);
     expect((reactState.cells[0].value as { phase: string }).phase).toBe('success');
   });
 
@@ -387,25 +413,14 @@ describe('useCommitPush.commitAndPush — sandbox-expiry recovery', () => {
     diffUtils.parseDiffStats.mockReturnValue({ fileNames: [] });
     auditor.runAuditor.mockResolvedValue({ verdict: 'safe', card: { summary: '' } });
 
-    sandboxClient.execInSandbox
-      // 1: git add -A on the original sandbox
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
-      // 2: git commit succeeds on the original sandbox
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
-      // 3: git push fails because the sandbox is gone
-      .mockResolvedValueOnce({
-        exitCode: -1,
-        stdout: '',
-        stderr: 'Sandbox has been terminated',
-      })
-      // 4: git apply in new sandbox
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
-      // 5: git add -A in new sandbox (the prior commit is gone with the dead container)
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
-      // 6: git commit in new sandbox
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
-      // 7: git push in new sandbox
-      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' });
+    // Original sandbox commits fine but its push reports the container is gone;
+    // the recovered sandbox (sbx-2) succeeds end-to-end (incl. the pre-push scan).
+    dispatchGit({
+      override: (id, cmd) =>
+        id === 'sbx-1' && cmd.includes("'push'")
+          ? { exitCode: -1, stderr: 'Sandbox has been terminated' }
+          : undefined,
+    });
 
     const onSandboxExpired = vi.fn().mockResolvedValue('sbx-2');
     const hook = render('sbx-1', 'openrouter', undefined, onSandboxExpired);

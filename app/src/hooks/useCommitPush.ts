@@ -271,7 +271,14 @@ export function useCommitPush(
         }
 
         setState((s) => ({ ...s, phase: 'committing' }));
-        const pushGit = createSandboxPushGit(targetSandbox);
+        // Deterministic pre-push secret scan: the gate runs inside
+        // `pushGit.push()` over the *uncapped* about-to-be-pushed commits
+        // (`computePushedDiff`, base..HEAD), not the capped working-tree
+        // preview — so it can't be bypassed by a truncated diff or a secret
+        // already sitting in an unpushed commit. The commit is doctrinally
+        // fine (local, not exposure); the *push* is the boundary it defends.
+        // Same gate `auto-branch-on-commit` will run on its auto-push.
+        const pushGit = createSandboxPushGit(targetSandbox, { secretScan: true });
         const commit = await pushGit.commit({ message });
         if (!commit.ok) {
           const r = commit.result;
@@ -283,6 +290,11 @@ export function useCommitPush(
         setState((s) => ({ ...s, phase: 'pushing' }));
         const pushResult = await pushGit.push();
         if (!pushResult.ok) {
+          // A secret-scan block is a policy refusal, not a git/transport
+          // failure: surface the reason verbatim and never trigger recovery.
+          if (pushResult.blocked) {
+            return { status: 'failed', error: pushResult.stderr || 'Push blocked.' };
+          }
           if (isExecResultGone(pushResult)) return { status: 'expired' };
           const detail =
             pushResult.stderr || pushResult.stdout || pushResult.error || 'Unknown error';

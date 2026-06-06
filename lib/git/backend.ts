@@ -56,6 +56,12 @@ export type GitExec = (args: string[], opts?: GitExecOptions) => Promise<GitExec
 /** Result of a sanctioned write — the raw exec result plus an `ok` flag. */
 export interface GitWriteResult extends GitExecResult {
   ok: boolean;
+  /**
+   * True when a `PushGit` gate (e.g. the pre-push secret scan) denied the write
+   * before it reached git. Lets callers distinguish a policy block from a real
+   * git/transport failure (and not, e.g., trigger sandbox-recovery on a block).
+   */
+  blocked?: boolean;
 }
 
 export interface GitBackend {
