@@ -49,9 +49,13 @@
  *     still evolving and codifying them now risks friction. A follow-up
  *     PR can promote the stable ones into schemas as they settle.
  *
- *   - External schema libraries (zod, ajv, typebox). cli/ is
- *     zero-external-deps by convention. Hand-rolled validators keep
- *     that property and are simple enough for the scope here.
+ *   - External schema libraries for *wire-envelope* validation. The
+ *     hand-rolled validators here stay dependency-free and are simple
+ *     enough for the envelope scope. (Note: `lib/structured-output.ts`
+ *     does adopt `zod` for validating *model JSON output* — the auditor
+ *     and reviewer payloads — where hand-rolled coercion had drifted
+ *     across sites. That carve-out is deliberate and scoped to model
+ *     output; envelope validation deliberately stays hand-rolled.)
  *
  * The validators are intentionally permissive about *extra* fields on
  * both the envelope and the payload — adding a new optional field
