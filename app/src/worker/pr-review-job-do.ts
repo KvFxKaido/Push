@@ -32,12 +32,14 @@ import { resolveReviewGuidance } from '@push/lib/review-guidance';
 import { buildReviewerContextBlock } from '@push/lib/role-context';
 import { runDeepReviewer } from '@push/lib/deep-reviewer-agent';
 import {
+  createInProgressReviewCheckRun,
   createReviewCheckRun,
   executePostPRReview,
   executeReadOnlyGitHubToolWithToken,
   fetchPullRequestDiff,
   fetchPullRequestHeadSha,
   fetchReviewGuidance,
+  finalizeReviewCheckRun,
   type ReviewCheckConclusion,
 } from '@/lib/github-tools';
 import type { Env } from './worker-middleware';
@@ -158,7 +160,8 @@ CREATE TABLE IF NOT EXISTS review (
   error_text TEXT,
   created_at INTEGER NOT NULL,
   started_at INTEGER,
-  finished_at INTEGER
+  finished_at INTEGER,
+  check_run_id INTEGER
 );
 CREATE INDEX IF NOT EXISTS review_status_idx ON review (status);
 
@@ -188,6 +191,7 @@ interface ReviewRow {
   created_at: number;
   started_at: number | null;
   finished_at: number | null;
+  check_run_id: number | null;
 }
 
 export class PrReviewJob {
@@ -218,6 +222,9 @@ export class PrReviewJob {
     }
     if (!have.has('posted')) {
       this.ctx.storage.sql.exec('ALTER TABLE review ADD COLUMN posted INTEGER');
+    }
+    if (!have.has('check_run_id')) {
+      this.ctx.storage.sql.exec('ALTER TABLE review ADD COLUMN check_run_id INTEGER');
     }
   }
 
@@ -287,6 +294,9 @@ export class PrReviewJob {
         byDeliveryId: input.deliveryId,
         pr: input.prNumber,
       });
+      // Close the superseded delivery's check-run so it doesn't hang
+      // "Reviewing…" — its own runReview returns early on abort without doing so.
+      this.ctx.waitUntil(this.finalizeSupersededCheck(row.delivery_id, input.installationId));
     }
 
     this.ctx.storage.sql.exec(
@@ -318,6 +328,10 @@ export class PrReviewJob {
       input.deliveryId,
     );
     this.emit(input.deliveryId, 'review.started', {});
+
+    // Open the visible "Reviewing…" check-run (best-effort; null without creds).
+    const checkToken = await this.mintInstallationToken(input.installationId);
+    const checkRunId = checkToken ? await this.startCheckRun(input, checkToken) : null;
 
     const executor = EXECUTOR_OVERRIDES.get(input.deliveryId) ?? defaultPrReviewExecutor;
     try {
@@ -356,6 +370,42 @@ export class PrReviewJob {
         // keeps the field present (and greppable) when it didn't.
         totalTokens: outcome.result.usage?.totalTokens ?? null,
       });
+      if (checkToken) {
+        const findings = outcome.result.comments.length;
+        // !posted = head advanced before posting (skipped). gated = blocking
+        // finding on a gating repo → failure. Otherwise success, with the
+        // finding count in the title so it's legible without opening the PR.
+        const status = !outcome.posted
+          ? {
+              conclusion: 'neutral' as ReviewCheckConclusion,
+              title: 'Skipped — newer commit',
+              summary: 'A newer commit arrived before this review could post.',
+            }
+          : outcome.gated
+            ? {
+                conclusion: 'failure' as ReviewCheckConclusion,
+                title: 'Critical findings',
+                summary: outcome.result.summary || 'Critical issues found.',
+              }
+            : {
+                conclusion: 'success' as ReviewCheckConclusion,
+                title:
+                  findings === 0
+                    ? 'No blocking findings'
+                    : `${findings} finding${findings === 1 ? '' : 's'}`,
+                summary:
+                  outcome.result.summary ||
+                  (findings === 0 ? 'No blocking issues.' : `${findings} finding(s) posted.`),
+              };
+        await this.finalizeCheckRun(
+          input.repoFullName,
+          input.headSha,
+          checkToken,
+          checkRunId,
+          status.conclusion,
+          { title: status.title, summary: status.summary },
+        );
+      }
     } catch (err) {
       if (controller.signal.aborted) {
         log('info', 'pr_review_aborted', { deliveryId: input.deliveryId });
@@ -376,6 +426,21 @@ export class PrReviewJob {
         errorType: classifyError(message),
         message,
       });
+      if (checkToken) {
+        // Neutral, not failure: a reviewer hiccup shouldn't red-X the PR's
+        // checks — but it must be visible rather than vanish.
+        await this.finalizeCheckRun(
+          input.repoFullName,
+          input.headSha,
+          checkToken,
+          checkRunId,
+          'neutral',
+          {
+            title: 'Review failed',
+            summary: `Push could not complete the review: ${message.slice(0, 300)}`,
+          },
+        );
+      }
     } finally {
       this.abortControllers.delete(input.deliveryId);
     }
@@ -413,6 +478,108 @@ export class PrReviewJob {
       Date.now(),
       type,
       JSON.stringify(payload),
+    );
+  }
+
+  // ── Check-run status surface ──────────────────────────────────────────────
+  // Every delivery gets a single "Push review" check-run that progresses
+  // in-place: in_progress on start → terminal at every outcome (posted /
+  // skipped / superseded / failed). This is the visibility surface — it lives
+  // on the PR, survives merge in the checks list, and turns the formerly-silent
+  // superseded/failed/head-advanced paths into something you can see. All ops
+  // are best-effort and token-gated: with no GitHub App creds they no-op, so a
+  // check-run hiccup never affects the review (or the credential-free tests).
+
+  private async mintInstallationToken(installationId: string): Promise<string | null> {
+    if (!this.env.GITHUB_APP_ID || !this.env.GITHUB_APP_PRIVATE_KEY) return null;
+    try {
+      const jwt = await generateGitHubAppJWT(
+        this.env.GITHUB_APP_ID,
+        this.env.GITHUB_APP_PRIVATE_KEY,
+      );
+      const { token } = await exchangeForInstallationToken(jwt, installationId);
+      return token;
+    } catch (err) {
+      log('warn', 'pr_review_check_token_failed', {
+        installationId,
+        message: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
+  }
+
+  /** Best-effort: open the in-progress check-run and persist its id. */
+  private async startCheckRun(input: PrReviewStartInput, token: string): Promise<number | null> {
+    try {
+      const id = await createInProgressReviewCheckRun(
+        input.repoFullName,
+        input.headSha,
+        { title: 'Reviewing…', summary: 'Push is reviewing this pull request.' },
+        { token },
+      );
+      this.ctx.storage.sql.exec(
+        'UPDATE review SET check_run_id = ? WHERE delivery_id = ?',
+        id,
+        input.deliveryId,
+      );
+      return id;
+    } catch (err) {
+      log('warn', 'pr_review_check_create_failed', {
+        deliveryId: input.deliveryId,
+        message: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Best-effort terminal update of a delivery's check-run. Patches the existing
+   * in-progress run if we have its id; otherwise posts a fresh completed run
+   * (covers a delivery superseded before its in-progress run was created).
+   */
+  private async finalizeCheckRun(
+    repo: string,
+    headSha: string,
+    token: string,
+    checkRunId: number | null,
+    conclusion: ReviewCheckConclusion,
+    output: { title: string; summary: string },
+  ): Promise<void> {
+    try {
+      if (checkRunId != null) {
+        await finalizeReviewCheckRun(repo, checkRunId, conclusion, output, { token });
+      } else {
+        await createReviewCheckRun(repo, headSha, conclusion, output, { token });
+      }
+    } catch (err) {
+      log('warn', 'pr_review_check_finalize_failed', {
+        repo,
+        conclusion,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * A newer push coalesced this delivery; close its check-run so it doesn't hang
+   * "Reviewing…" forever. Runs in `waitUntil` from handleStart (the aborted
+   * review's own runReview returns early without touching the check-run).
+   */
+  private async finalizeSupersededCheck(deliveryId: string, installationId: string): Promise<void> {
+    const token = await this.mintInstallationToken(installationId);
+    if (!token) return;
+    const row = this.reviewRow(deliveryId);
+    if (!row) return;
+    await this.finalizeCheckRun(
+      row.repo,
+      row.head_sha,
+      token,
+      row.check_run_id ?? null,
+      'neutral',
+      {
+        title: 'Superseded',
+        summary: 'A newer commit arrived; this review was superseded.',
+      },
     );
   }
 }
@@ -546,42 +713,14 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
     diff,
   );
 
-  // Opt-in gating: post a Checks API run reflecting the verdict (critical →
-  // failure, else success) on the reviewed commit, alongside the advisory
-  // comment. A check-run failure (e.g. missing `checks: write`) is logged but
-  // never aborts the already-posted review.
-  let gated = false;
-  if (repoGatingEnabled(input.repoFullName, env.PR_REVIEW_GATING_REPOS)) {
-    const hasCritical = result.comments.some((c) => c.severity === 'critical');
-    const conclusion: ReviewCheckConclusion = hasCritical ? 'failure' : 'success';
-    try {
-      await createReviewCheckRun(
-        input.repoFullName,
-        input.headSha,
-        conclusion,
-        {
-          title: hasCritical ? 'Critical findings' : 'No blocking findings',
-          summary:
-            result.summary || (hasCritical ? 'Critical issues found.' : 'No blocking issues.'),
-        },
-        auth,
-      );
-      // Only true once a failing check actually posted — so the recorded
-      // outcome matches reality if the POST throws (e.g. missing checks:write).
-      gated = hasCritical;
-      log('info', 'pr_review_check_run_posted', {
-        deliveryId: input.deliveryId,
-        repo: input.repoFullName,
-        conclusion,
-      });
-    } catch (err) {
-      log('warn', 'pr_review_check_run_failed', {
-        deliveryId: input.deliveryId,
-        repo: input.repoFullName,
-        message: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
+  // Opt-in gating verdict: a blocking (critical) finding on a gating repo. The
+  // single "Push review" check-run is now created and finalized by the DO
+  // lifecycle (which turns this into a `failure` conclusion); the executor only
+  // reports whether the verdict gates, so the recorded outcome + event reflect
+  // it. No separate check-run POST here — that produced a duplicate check.
+  const gated =
+    repoGatingEnabled(input.repoFullName, env.PR_REVIEW_GATING_REPOS) &&
+    result.comments.some((c) => c.severity === 'critical');
 
   return { result, commentsPosted, posted: true, gated };
 };
