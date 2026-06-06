@@ -147,7 +147,7 @@ Three guardrails from the 2026-04 Big Four extraction; apply before adding cross
 
 ### PR self-review pass
 
-Before opening a PR (or pushing a review-response commit), walk the diff through these checks. Each one corresponds to a class of bug bot reviewers (Copilot, Codex, Kilo) have caught more than once on this repo, so shifting them left saves a ~30-min review cycle.
+Before opening a PR (or pushing a review-response commit), walk the diff through these checks. Each one corresponds to a class of bug bot reviewers (Copilot, Codex, Kilo) have caught more than once on this repo, so shifting them left saves a ~30-min review cycle. These same classes are mirrored (reviewer-framed) in `REVIEW.md`'s "Recurring defect classes" — which the in-app and autonomous reviewers load at runtime — so **edits here should be reflected there, and vice versa.**
 
 - **HTTP status classification.** Every `if (status >= 400)` arm should enumerate the cases (auth, rate-limit, not-found, validation) and assign each a sensible `structuredError.type` / surface code. Default fallbacks to "everything is sandbox loss" or "everything is unknown" are bugs (see PR #656's rate-limit misclassification).
 - **`await` in a loop.** Every `await` inside a `for`/`while` should prove it can exit on terminal conditions (deadlines, abort signals, event-completion races) — not just on the happy path. A naked `await promiseThatOnlyResolvesOnSuccess` is a hang waiting to happen (see PR #657's `prompt_snapshot` race fix).
