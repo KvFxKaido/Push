@@ -133,7 +133,11 @@ describe('handlePrReviewRoute — config (reviewer on/off)', () => {
       'config-get',
     );
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ enabled: true });
+    expect(await res.json()).toEqual({
+      enabled: true,
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+    });
   });
 
   it('POST persists the flag and a subsequent GET reflects it', async () => {
@@ -144,9 +148,31 @@ describe('handlePrReviewRoute — config (reviewer on/off)', () => {
       'config-set',
     );
     expect(set.status).toBe(200);
-    expect(await set.json()).toEqual({ enabled: false });
+    expect(await set.json()).toEqual({
+      enabled: false,
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+    });
     const get = await handlePrReviewRoute(makeRequest('/api/pr-reviews/config'), env, 'config-get');
-    expect(await get.json()).toEqual({ enabled: false });
+    expect(await get.json()).toEqual({
+      enabled: false,
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+    });
+  });
+
+  it('POST persists provider/model and a subsequent GET reflects it', async () => {
+    const env = kvEnv();
+    const set = await handlePrReviewRoute(
+      makePost('/api/pr-reviews/config', { provider: 'openai', model: 'gpt-5.4' }),
+      env,
+      'config-set',
+    );
+    expect(set.status).toBe(200);
+    expect(await set.json()).toEqual({ enabled: true, provider: 'openai', model: 'gpt-5.4' });
+
+    const get = await handlePrReviewRoute(makeRequest('/api/pr-reviews/config'), env, 'config-get');
+    expect(await get.json()).toEqual({ enabled: true, provider: 'openai', model: 'gpt-5.4' });
   });
 
   it('POST rejects a non-boolean enabled (400)', async () => {

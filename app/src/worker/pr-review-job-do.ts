@@ -43,13 +43,21 @@ import {
   type ReviewCheckConclusion,
 } from '@/lib/github-tools';
 import type { Env } from './worker-middleware';
+import {
+  DEFAULT_PR_REVIEW_MODEL,
+  DEFAULT_PR_REVIEW_PROVIDER,
+  getDefaultPrReviewModel,
+  getPrReviewRuntimeConfig,
+  isKnownPrReviewProvider,
+  isValidPrReviewRuntimeConfig,
+} from './pr-review-config';
 import { exchangeForInstallationToken, generateGitHubAppJWT } from './worker-infra';
 import { createWebStreamAdapter } from './coder-job-stream-adapter';
 import { createWebDetectorAdapter, type AnyToolCall } from './coder-job-detector-adapter';
 import type { ReviewablePullRequest } from './github-webhook';
 
-const DEFAULT_PROVIDER: AIProviderType = 'anthropic';
-const DEFAULT_MODEL = 'claude-sonnet-4-6';
+const DEFAULT_PROVIDER: AIProviderType = DEFAULT_PR_REVIEW_PROVIDER;
+const DEFAULT_MODEL = DEFAULT_PR_REVIEW_MODEL;
 
 // Orphan-sweep tuning. A review whose DO is evicted mid-run leaves its row
 // `running` and its check-run hanging "Reviewing…" forever (the in-process
@@ -739,8 +747,18 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
         : fetchReviewGuidance(input.repoFullName, input.baseRef, auth),
   });
 
-  const provider = (env.PR_REVIEW_PROVIDER as AIProviderType | undefined) ?? DEFAULT_PROVIDER;
-  const modelId = env.PR_REVIEW_MODEL ?? DEFAULT_MODEL;
+  const runtimeConfig = await getPrReviewRuntimeConfig(env);
+  const provider = runtimeConfig.provider ?? DEFAULT_PROVIDER;
+  const modelId = runtimeConfig.model ?? getDefaultPrReviewModel(provider) ?? DEFAULT_MODEL;
+
+  // Hard-fail policy: no fallback when the configured model is invalid/unavailable.
+  if (!isKnownPrReviewProvider(provider)) {
+    throw new Error(`Configured review provider is unavailable: ${provider}`);
+  }
+  if (!isValidPrReviewRuntimeConfig(provider, modelId)) {
+    throw new Error(`Configured review model is unavailable for ${provider}: ${modelId}`);
+  }
+
   const zenGo =
     provider === 'zen' && ['1', 'true', 'yes'].includes((env.PR_REVIEW_ZEN_GO ?? '').toLowerCase());
   const stream = createWebStreamAdapter({

@@ -16,6 +16,7 @@
  * the webhook receiver enforces.
  */
 
+import type { AIProviderType } from '@push/lib/provider-contract';
 import { getClientIp, validateOrigin, type Env } from './worker-middleware';
 import {
   exchangeForInstallationToken,
@@ -28,7 +29,13 @@ import {
   prReviewJobName,
 } from './github-webhook';
 import { fetchPullRequestRefs } from '@/lib/github-tools';
-import { isPrReviewEnabled, setPrReviewEnabled } from './pr-review-config';
+import {
+  getPrReviewEffectiveConfig,
+  isPrReviewEnabled,
+  isValidPrReviewRuntimeConfig,
+  setPrReviewEnabled,
+  setPrReviewRuntimeConfig,
+} from './pr-review-config';
 
 const LIST_PATH = '/api/pr-reviews';
 const RUN_PATH = '/api/pr-reviews/run';
@@ -95,7 +102,7 @@ export async function handlePrReviewRoute(
 }
 
 async function handleConfigGet(env: Env): Promise<Response> {
-  return json({ enabled: await isPrReviewEnabled(env) });
+  return json(await getPrReviewEffectiveConfig(env));
 }
 
 async function handleConfigSet(request: Request, env: Env): Promise<Response> {
@@ -105,19 +112,64 @@ async function handleConfigSet(request: Request, env: Env): Promise<Response> {
   } catch {
     return json({ error: 'INVALID_BODY', message: 'POST body must be JSON.' }, 400);
   }
-  const enabled = (body as { enabled?: unknown })?.enabled;
-  if (typeof enabled !== 'boolean') {
-    return json({ error: 'INVALID_REQUEST', message: 'enabled (boolean) is required.' }, 400);
+
+  if (!body || typeof body !== 'object') {
+    return json({ error: 'INVALID_REQUEST', message: 'POST body must be an object.' }, 400);
   }
-  const persisted = await setPrReviewEnabled(env, enabled);
-  if (!persisted) {
+
+  const payload = body as { enabled?: unknown; provider?: unknown; model?: unknown };
+  const hasEnabled = Object.prototype.hasOwnProperty.call(payload, 'enabled');
+  const hasModelConfig =
+    Object.prototype.hasOwnProperty.call(payload, 'provider') ||
+    Object.prototype.hasOwnProperty.call(payload, 'model');
+
+  if (!hasEnabled && !hasModelConfig) {
+    return json(
+      { error: 'INVALID_REQUEST', message: 'enabled or provider/model is required.' },
+      400,
+    );
+  }
+
+  if (hasEnabled && typeof payload.enabled !== 'boolean') {
+    return json({ error: 'INVALID_REQUEST', message: 'enabled must be a boolean.' }, 400);
+  }
+
+  if (hasModelConfig) {
+    if (typeof payload.provider !== 'string' || typeof payload.model !== 'string') {
+      return json(
+        { error: 'INVALID_REQUEST', message: 'provider and model must both be strings.' },
+        400,
+      );
+    }
+    if (!isValidPrReviewRuntimeConfig(payload.provider, payload.model)) {
+      return json(
+        { error: 'INVALID_REQUEST', message: 'provider/model is not available for automated reviews.' },
+        400,
+      );
+    }
+  }
+
+  const persistedEnabled = hasEnabled
+    ? await setPrReviewEnabled(env, payload.enabled as boolean)
+    : true;
+  const persistedModel = hasModelConfig
+    ? await setPrReviewRuntimeConfig(env, payload.provider as AIProviderType, payload.model as string)
+    : true;
+
+  if (!persistedEnabled || !persistedModel) {
     return json(
       { error: 'NOT_CONFIGURED', message: 'Config store (SNAPSHOT_INDEX KV) is not bound.' },
       503,
     );
   }
-  log('info', 'pr_review_config_set', { enabled });
-  return json({ enabled });
+
+  const next = await getPrReviewEffectiveConfig(env);
+  log('info', 'pr_review_config_set', {
+    enabled: next.enabled,
+    provider: next.provider,
+    model: next.model,
+  });
+  return json(next);
 }
 
 /** Validate an owner/name + positive-integer PR, returning them or null. */
