@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   CheckCircle,
   ChevronDown,
@@ -8,6 +8,8 @@ import {
   RefreshCw,
   XCircle,
 } from 'lucide-react';
+import { CLOUDFLARE_MODELS, SHARED_PROVIDER_MODEL_CATALOG } from '@push/lib/provider-models';
+import { PROVIDERS, type PreferredProvider } from '@/lib/providers';
 import type { ReviewComment } from '@/types';
 import { findOpenPRForBranch } from '@/lib/github-tools';
 import { triggerPrReview, usePrReviewHistory } from '@/hooks/usePrReviewHistory';
@@ -15,6 +17,19 @@ import { usePrReviewConfig } from '@/hooks/usePrReviewConfig';
 import type { PrReviewListItem } from '@/worker/pr-review-job-do';
 import { HUB_PANEL_SUBTLE_SURFACE_CLASS } from '@/components/chat/hub-styles';
 import { Switch } from '@/components/ui/switch';
+
+const AUTOMATED_REVIEW_MODEL_OPTIONS: Partial<Record<PreferredProvider, readonly string[]>> = {
+  ...SHARED_PROVIDER_MODEL_CATALOG,
+  cloudflare: CLOUDFLARE_MODELS,
+};
+
+const AUTOMATED_REVIEW_PROVIDERS = PROVIDERS.filter(
+  (provider) => AUTOMATED_REVIEW_MODEL_OPTIONS[provider.type as PreferredProvider]?.length,
+);
+
+function getAutomatedReviewModels(provider: string | null | undefined): readonly string[] {
+  return provider ? (AUTOMATED_REVIEW_MODEL_OPTIONS[provider as PreferredProvider] ?? []) : [];
+}
 
 interface PrReviewHistorySectionProps {
   repoFullName: string | null | undefined;
@@ -212,7 +227,23 @@ export function PrReviewHistorySection({
   }, [repoFullName, activeBranch]);
 
   const { reviews, refresh } = usePrReviewHistory(repoFullName ?? null, prNumber);
-  const { enabled, saving, setEnabled, error: configError } = usePrReviewConfig();
+  const {
+    enabled,
+    provider,
+    model,
+    saving,
+    setEnabled,
+    setModelConfig,
+    error: configError,
+  } = usePrReviewConfig();
+
+  const providerOptions = AUTOMATED_REVIEW_PROVIDERS;
+  const selectedProvider = useMemo(
+    () => providerOptions.find((p) => p.type === provider) ?? null,
+    [providerOptions, provider],
+  );
+  const selectedModels = useMemo(() => getAutomatedReviewModels(provider), [provider]);
+  const selectedModel = model && selectedModels.includes(model) ? model : null;
   const [rerunning, setRerunning] = useState(false);
   const [rerunError, setRerunError] = useState<string | null>(null);
 
@@ -256,6 +287,49 @@ export function PrReviewHistorySection({
               {rerunning ? 'Starting…' : 'Re-run'}
             </button>
           )}
+          <div className="flex items-center gap-1.5">
+            <label className="text-push-2xs text-push-fg-dim" htmlFor="pr-review-provider">
+              Model
+            </label>
+            <select
+              id="pr-review-provider"
+              className="h-6 rounded border border-push-border/50 bg-push-bg text-push-2xs text-push-fg"
+              value={provider ?? ''}
+              disabled={saving || provider == null}
+              onChange={(e) => {
+                const nextProvider = e.target.value as PreferredProvider;
+                const nextModel = getAutomatedReviewModels(nextProvider)[0];
+                if (!nextModel) return;
+                void setModelConfig(nextProvider, nextModel);
+              }}
+            >
+              {provider && !selectedProvider && (
+                <option value={provider}>Unavailable ({provider})</option>
+              )}
+              {providerOptions.map((p) => (
+                <option key={p.type} value={p.type}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <select
+              id="pr-review-model"
+              className="h-6 max-w-[12rem] rounded border border-push-border/50 bg-push-bg text-push-2xs text-push-fg"
+              value={model ?? ''}
+              disabled={saving || !selectedProvider}
+              onChange={(e) => {
+                if (!selectedProvider) return;
+                void setModelConfig(selectedProvider.type, e.target.value);
+              }}
+            >
+              {model && !selectedModel && <option value={model}>{model} (Unavailable)</option>}
+              {selectedModels.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </div>
           {/* Global reviewer kill-switch — off means no webhook or manual run
               spends provider quota. */}
           <Switch
@@ -269,6 +343,11 @@ export function PrReviewHistorySection({
       {(rerunError || configError) && (
         <p className="mb-1.5 text-push-2xs text-red-400">
           {[rerunError, configError].filter(Boolean).join(' · ')}
+        </p>
+      )}
+      {provider && model && !selectedModel && (
+        <p className="mb-1.5 text-push-2xs text-amber-400">
+          Configured model is not currently available and upcoming review runs will fail.
         </p>
       )}
       {enabled === false && (
