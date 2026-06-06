@@ -219,6 +219,34 @@ describe('useCommitPush.commitAndPush (audit → commit → push)', () => {
     expect((reactState.cells[0].value as { phase: string }).phase).toBe('success');
   });
 
+  it('blocks the push (after commit) when the diff carries a secret', async () => {
+    // A unified diff whose added line contains a synthetic AWS key id.
+    const secretDiff = [
+      '+++ b/config.ts',
+      '@@ -0,0 +1 @@',
+      '+const k = "AKIAIOSFODNN7EXAMPLE";',
+    ].join('\n');
+    seedReviewingState(secretDiff);
+    diffUtils.parseDiffStats.mockReturnValue({ fileNames: [] });
+    auditor.runAuditor.mockResolvedValue({ verdict: 'safe', card: { summary: 'looks good' } });
+    sandboxClient.execInSandbox
+      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }) // git add -A
+      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' }); // git commit
+
+    const hook = render();
+    await hook.commitAndPush();
+
+    const state = reactState.cells[0].value as { phase: string; error: string };
+    expect(state.phase).toBe('error');
+    expect(state.error).toContain('AWS access key ID');
+    expect(state.error).not.toContain('AKIAIOSFODNN7EXAMPLE');
+    // The push is never attempted — only [add, commit] ran, no push.
+    expect(sandboxClient.execInSandbox).toHaveBeenCalledTimes(2);
+    expect(
+      sandboxClient.execInSandbox.mock.calls.some((c) => String(c[1]).includes("git 'push'")),
+    ).toBe(false);
+  });
+
   it('reports commit failures with stderr/stdout detail', async () => {
     seedReviewingState();
     diffUtils.parseDiffStats.mockReturnValue({ fileNames: [] });

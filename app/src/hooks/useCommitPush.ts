@@ -23,6 +23,8 @@ import {
 import { runAuditor } from '@/lib/auditor-agent';
 import { getIsAuditorGateEnabled } from '@/hooks/useAuditorGate';
 import { createSandboxPushGit } from '@/lib/git-backend';
+import { makeSecretScanPrePushGate } from '@push/lib/git/secret-scan-gate';
+import { resolveSecretScanEnabled } from '@push/lib/secret-scan';
 import { fetchAuditorFileContexts, type AuditorFileContext } from '@/lib/auditor-file-context';
 import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
 import { parseDiffStats } from '@/lib/diff-utils';
@@ -271,7 +273,16 @@ export function useCommitPush(
         }
 
         setState((s) => ({ ...s, phase: 'committing' }));
-        const pushGit = createSandboxPushGit(targetSandbox);
+        // Deterministic pre-push secret scan over the diff already in hand —
+        // the gate runs inside `pushGit.push()` (no extra git calls). The
+        // commit is doctrinally fine (local, not exposure); the *push* is the
+        // boundary the scan defends. This is the same gate `auto-branch-on-commit`
+        // will run on its auto-push.
+        const prePush = makeSecretScanPrePushGate({
+          getDiff: () => diffText,
+          enabled: resolveSecretScanEnabled(),
+        });
+        const pushGit = createSandboxPushGit(targetSandbox, { prePush });
         const commit = await pushGit.commit({ message });
         if (!commit.ok) {
           const r = commit.result;
@@ -283,6 +294,11 @@ export function useCommitPush(
         setState((s) => ({ ...s, phase: 'pushing' }));
         const pushResult = await pushGit.push();
         if (!pushResult.ok) {
+          // A secret-scan block is a policy refusal, not a git/transport
+          // failure: surface the reason verbatim and never trigger recovery.
+          if (pushResult.blocked) {
+            return { status: 'failed', error: pushResult.stderr || 'Push blocked.' };
+          }
           if (isExecResultGone(pushResult)) return { status: 'expired' };
           const detail =
             pushResult.stderr || pushResult.stdout || pushResult.error || 'Unknown error';

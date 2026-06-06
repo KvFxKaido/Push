@@ -3,9 +3,11 @@
  *
  * The single composition point the branch + commit/push tool handlers use for
  * git writes. It wraps a `GitBackend` (typed reads + sanctioned writes) and
- * adds the **PreCommitGate seam**: a commit may be gated by an injected
- * closure (the handler builds it over the Auditor), so `lib/git/` never
- * imports `auditor-agent`.
+ * adds two gate seams: the **PreCommitGate** (a commit may be gated by an
+ * injected closure the handler builds over the Auditor) and the
+ * **PrePushGate** (a push may be gated by an injected closure the factory
+ * builds over the deterministic secret scan). Both gates are injected, so
+ * `lib/git/` never imports `auditor-agent` or `secret-scan`.
  *
  * Orchestration is deliberately NOT owned here — the `branchSwitch` / `meta`
  * routing, chat re-scoping, the Auditor delegation itself (provider lock,
@@ -28,9 +30,19 @@ export interface PreCommitVerdict {
 /** Gate run before a commit; the handler builds it over the Auditor. */
 export type PreCommitGate = () => Promise<PreCommitVerdict>;
 
+export interface PrePushVerdict {
+  ok: boolean;
+  /** Surfaced to the caller when blocked (e.g. the secret scan's findings). */
+  reason?: string;
+}
+
+/** Gate run before a push; the factory builds it over the deterministic secret scan. */
+export type PrePushGate = () => Promise<PrePushVerdict>;
+
 export interface PushGitDeps {
   backend: GitBackend;
   preCommit?: PreCommitGate;
+  prePush?: PrePushGate;
 }
 
 export interface ActiveBranchValidation {
@@ -55,10 +67,12 @@ export interface PushGitCommitResult {
 export class PushGit {
   private readonly backend: GitBackend;
   private readonly preCommit?: PreCommitGate;
+  private readonly prePush?: PrePushGate;
 
   constructor(deps: PushGitDeps) {
     this.backend = deps.backend;
     this.preCommit = deps.preCommit;
+    this.prePush = deps.prePush;
   }
 
   // --- Reads (delegated) ---
@@ -93,7 +107,32 @@ export class PushGit {
   switchBranch(branch: string): Promise<GitWriteResult> {
     return this.backend.switchBranch(branch);
   }
-  push(opts?: { setUpstream?: boolean; remote?: string; ref?: string }): Promise<GitWriteResult> {
+  /**
+   * Run the PrePushGate (if injected) then push. When the gate denies — or
+   * throws — the push is not attempted and a blocked `GitWriteResult`
+   * (`ok: false, blocked: true`) carries the reason in `stderr`. A throw
+   * fail-safe-blocks, mirroring `commit`; the secret-scan gate itself fails
+   * *open* on its own infra errors (it can't read the diff), so this catch only
+   * trips on an unexpected gate bug.
+   */
+  async push(opts?: {
+    setUpstream?: boolean;
+    remote?: string;
+    ref?: string;
+  }): Promise<GitWriteResult> {
+    if (this.prePush) {
+      let verdict: PrePushVerdict;
+      try {
+        verdict = await this.prePush();
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : 'pre-push gate failed';
+        return { ok: false, blocked: true, exitCode: 1, stdout: '', stderr: reason };
+      }
+      if (!verdict.ok) {
+        const reason = verdict.reason ?? 'push blocked by pre-push gate';
+        return { ok: false, blocked: true, exitCode: 1, stdout: '', stderr: reason };
+      }
+    }
     return this.backend.push(opts);
   }
 

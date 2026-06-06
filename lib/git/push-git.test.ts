@@ -130,3 +130,47 @@ describe('PushGit write delegation', () => {
     expect(push).toHaveBeenCalledWith({ setUpstream: true, ref: 'feat/x' });
   });
 });
+
+describe('PushGit.push gate', () => {
+  it('pushes directly when no gate is injected', async () => {
+    const push = vi.fn(async () => writeOk());
+    const pg = new PushGit({ backend: fakeBackend({ push }) });
+    const res = await pg.push();
+    expect(res.ok).toBe(true);
+    expect(push).toHaveBeenCalledOnce();
+  });
+
+  it('runs the gate then pushes when it passes', async () => {
+    const prePush = vi.fn(async () => ({ ok: true }));
+    const push = vi.fn(async () => writeOk());
+    const pg = new PushGit({ backend: fakeBackend({ push }), prePush });
+    const res = await pg.push({ setUpstream: true, ref: 'feat/x' });
+    expect(prePush).toHaveBeenCalledOnce();
+    expect(push).toHaveBeenCalledWith({ setUpstream: true, ref: 'feat/x' });
+    expect(res.ok).toBe(true);
+  });
+
+  it('blocks without pushing when the gate denies', async () => {
+    const prePush = vi.fn(async () => ({ ok: false, reason: 'secret found' }));
+    const push = vi.fn(async () => writeOk());
+    const pg = new PushGit({ backend: fakeBackend({ push }), prePush });
+    const res = await pg.push();
+    expect(res.ok).toBe(false);
+    expect(res.blocked).toBe(true);
+    expect(res.stderr).toBe('secret found');
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('fail-safe blocks (no push) when the gate throws', async () => {
+    const prePush = vi.fn(async () => {
+      throw new Error('gate crashed');
+    });
+    const push = vi.fn(async () => writeOk());
+    const pg = new PushGit({ backend: fakeBackend({ push }), prePush });
+    const res = await pg.push();
+    expect(res.ok).toBe(false);
+    expect(res.blocked).toBe(true);
+    expect(res.stderr).toContain('gate crashed');
+    expect(push).not.toHaveBeenCalled();
+  });
+});

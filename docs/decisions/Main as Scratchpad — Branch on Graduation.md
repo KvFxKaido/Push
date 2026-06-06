@@ -346,7 +346,27 @@ remote collision entirely but at the cost of cross-surface visibility.
    - *Secrets / footguns (mechanical, a recall problem)* → a **deterministic
      pre-push scan** (gitleaks/trufflehog-style; seed already in
      `app/src/lib/sensitive-data-guard.ts`'s token regex). Models are the wrong
-     tool for recall — they miss and hallucinate.
+     tool for recall — they miss and hallucinate. **Shipped (2026-06-06):** the
+     scanner kernel is `lib/secret-scan.ts` (high-precision rules:
+     private-key/GitHub/OpenAI/Google/AWS-id/AWS-secret/Slack/Stripe-live/GCP-SA;
+     precision-over-recall since there's no human at auto-push, so broad shapes
+     like a bare `Bearer` are redacted-for-display but not blocked). The
+     deterministic match **fails closed** (blocks) while infra trouble (no diff
+     resolvable / read error) **fails open** with a loud structured log
+     (`secret_scan_clean`↔`blocked`↔`skipped`↔`no_diff`↔`error`) — deliberately
+     *not* the model-Auditor's "flaky backend blocks the op" liability. It runs
+     through a new **`PrePushGate` seam** on `PushGit.push()`
+     (`lib/git/push-git.ts`), built by `lib/git/secret-scan-gate.ts` over a
+     caller-supplied diff source, and is wired into the web commit/push flow
+     (`useCommitPush.ts`) over the in-hand diff. Opt-out: `PUSH_SECRET_SCAN=0`
+     (`resolveSecretScanEnabled`, mirrors `resolveAuditorGateEnabled`).
+     **Remaining:** (i) route the model-invokable `push` tool (`handleSandboxPush`),
+     `promote_to_github`, and the card-action push through the same gate — they
+     need an about-to-be-pushed diff computed from git (a `computePushedDiff`
+     helper) rather than an in-hand one, so they're deferred to the auto-push
+     slice; until then the model's *commit* path stays Auditor-gated. (ii) confirm
+     the "semantically-dangerous AND must-be-caught-pre-push, beyond secrets"
+     band is empty before retiring the model-Auditor.
    - *"Is this change dangerous" (semantic judgment)* → the **PR reviewers we
      already have** (Copilot trusted-gate, Kilo, the glm-5.1 autonomous
      reviewer) — independent model judgment *with full diff context*, which a

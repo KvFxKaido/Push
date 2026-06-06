@@ -12,7 +12,7 @@
  */
 
 import { SandboxPlumbingBackend, type GitBackend, type GitExec } from '@push/lib/git/backend';
-import { PushGit, type PreCommitGate } from '@push/lib/git/push-git';
+import { PushGit, type PreCommitGate, type PrePushGate } from '@push/lib/git/push-git';
 import { execInSandbox, type ExecResult } from './sandbox-client';
 import { shellEscape } from './sandbox-tool-utils';
 
@@ -59,15 +59,17 @@ export function createSandboxGitBackend(
 
 /**
  * Build a PushGit facade bound to a sandbox. Pass `preCommit` (a closure the
- * handler builds over the Auditor) to gate commits; pass `execFn` to reuse a
- * call-site's injected executor.
+ * handler builds over the Auditor) to gate commits; pass `prePush` (built over
+ * the deterministic secret scan, see `makeSecretScanPrePushGate`) to gate
+ * pushes; pass `execFn` to reuse a call-site's injected executor.
  */
 export function createSandboxPushGit(
   sandboxId: string,
-  opts?: { execFn?: SandboxExecFn; preCommit?: PreCommitGate },
+  opts?: { execFn?: SandboxExecFn; preCommit?: PreCommitGate; prePush?: PrePushGate },
 ): PushGit {
   return new PushGit({
     backend: createSandboxGitBackend(sandboxId, opts?.execFn),
     preCommit: opts?.preCommit,
+    prePush: opts?.prePush,
   });
 }

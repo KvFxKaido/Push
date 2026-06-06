@@ -11,7 +11,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { SandboxPlumbingBackend, type GitBackend, type GitExec } from '../lib/git/backend.js';
-import { PushGit, type PreCommitGate } from '../lib/git/push-git.js';
+import { PushGit, type PreCommitGate, type PrePushGate } from '../lib/git/push-git.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -48,14 +48,17 @@ export function createLocalGitBackend(cwd: string, opts?: { timeoutMs?: number }
  * Build a PushGit facade over the local working tree at `cwd`. An optional
  * `preCommit` gate is run by `PushGit.commit` before the commit lands — the
  * CLI uses this to wire the Auditor commit gate (see `makeAuditorPreCommitGate`
- * in `cli/tools.ts`).
+ * in `cli/tools.ts`). An optional `prePush` gate (the deterministic secret
+ * scan) is run by `PushGit.push`; the seam is wired here for parity even though
+ * the CLI does not push today.
  */
 export function createLocalPushGit(
   cwd: string,
-  opts?: { timeoutMs?: number; preCommit?: PreCommitGate },
+  opts?: { timeoutMs?: number; preCommit?: PreCommitGate; prePush?: PrePushGate },
 ): PushGit {
   return new PushGit({
     backend: createLocalGitBackend(cwd, { timeoutMs: opts?.timeoutMs }),
     preCommit: opts?.preCommit,
+    prePush: opts?.prePush,
   });
 }
