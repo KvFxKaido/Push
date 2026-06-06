@@ -895,3 +895,107 @@ describe('validateRunEventPayload — recovery/interruption events', () => {
     assert.ok(issues.some((i) => i.path === 'payload.subagents[0]'));
   });
 });
+
+describe('validateRunEventPayload — RunEventInput passthrough events', () => {
+  it('accepts assistant.turn_start', () => {
+    assert.deepEqual(validateRunEventPayload('assistant.turn_start', { round: 0 }), []);
+  });
+
+  it('rejects assistant.turn_start with a non-integer round', () => {
+    const issues = validateRunEventPayload('assistant.turn_start', { round: 1.5 });
+    assert.ok(issues.some((i) => i.path === 'payload.round'));
+  });
+
+  it('accepts assistant.turn_end with a valid outcome', () => {
+    const issues = validateRunEventPayload('assistant.turn_end', {
+      round: 3,
+      outcome: 'completed',
+    });
+    assert.deepEqual(issues, []);
+  });
+
+  it('rejects assistant.turn_end with an unknown outcome', () => {
+    const issues = validateRunEventPayload('assistant.turn_end', { round: 3, outcome: 'finished' });
+    assert.ok(issues.some((i) => i.path === 'payload.outcome'));
+  });
+
+  it('accepts job.started (detail optional)', () => {
+    assert.deepEqual(
+      validateRunEventPayload('job.started', { executionId: 'job_1', role: 'coder' }),
+      [],
+    );
+  });
+
+  it('rejects job.started with an unknown role', () => {
+    const issues = validateRunEventPayload('job.started', {
+      executionId: 'job_1',
+      role: 'planner',
+    });
+    assert.ok(issues.some((i) => i.path === 'payload.role'));
+  });
+
+  it('accepts job.completed and rejects a missing summary', () => {
+    assert.deepEqual(
+      validateRunEventPayload('job.completed', {
+        executionId: 'job_1',
+        role: 'explorer',
+        summary: 'done',
+      }),
+      [],
+    );
+    const issues = validateRunEventPayload('job.completed', {
+      executionId: 'job_1',
+      role: 'explorer',
+    });
+    assert.ok(issues.some((i) => i.path === 'payload.summary'));
+  });
+
+  it('accepts job.failed and rejects a missing error', () => {
+    assert.deepEqual(
+      validateRunEventPayload('job.failed', {
+        executionId: 'job_1',
+        role: 'coder',
+        error: 'boom',
+      }),
+      [],
+    );
+    const issues = validateRunEventPayload('job.failed', { executionId: 'job_1', role: 'coder' });
+    assert.ok(issues.some((i) => i.path === 'payload.error'));
+  });
+
+  it('accepts user.follow_up_queued', () => {
+    const issues = validateRunEventPayload('user.follow_up_queued', {
+      round: 2,
+      position: 1,
+      preview: 'fix the bug',
+    });
+    assert.deepEqual(issues, []);
+  });
+
+  it('rejects user.follow_up_queued with a non-integer position', () => {
+    const issues = validateRunEventPayload('user.follow_up_queued', {
+      round: 2,
+      position: -1,
+      preview: 'x',
+    });
+    assert.ok(issues.some((i) => i.path === 'payload.position'));
+  });
+
+  it('accepts user.follow_up_steered', () => {
+    const issues = validateRunEventPayload('user.follow_up_steered', {
+      round: 2,
+      preview: 'actually do this instead',
+      replacedPending: true,
+    });
+    assert.deepEqual(issues, []);
+  });
+
+  it('rejects user.follow_up_steered with a non-boolean replacedPending', () => {
+    const issues = validateRunEventPayload('user.follow_up_steered', {
+      round: 2,
+      preview: 'x',
+      replacedPending: 'yes',
+    });
+    assert.ok(issues.some((i) => i.path === 'payload.replacedPending'));
+  });
+});

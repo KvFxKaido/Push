@@ -912,6 +912,167 @@
           }
         }
       }
+    },
+    "AssistantTurnStart": {
+      "type": "object",
+      "required": [
+        "round"
+      ],
+      "properties": {
+        "round": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "AssistantTurnEnd": {
+      "type": "object",
+      "required": [
+        "round",
+        "outcome"
+      ],
+      "properties": {
+        "round": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "completed",
+            "continued",
+            "error",
+            "aborted",
+            "steered"
+          ]
+        }
+      }
+    },
+    "JobStarted": {
+      "type": "object",
+      "required": [
+        "executionId",
+        "role"
+      ],
+      "properties": {
+        "executionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "orchestrator",
+            "explorer",
+            "coder",
+            "reviewer",
+            "auditor"
+          ]
+        },
+        "detail": {
+          "type": "string"
+        }
+      }
+    },
+    "JobCompleted": {
+      "type": "object",
+      "required": [
+        "executionId",
+        "role",
+        "summary"
+      ],
+      "properties": {
+        "executionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "orchestrator",
+            "explorer",
+            "coder",
+            "reviewer",
+            "auditor"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "delegationOutcome": {
+          "type": "object"
+        }
+      }
+    },
+    "JobFailed": {
+      "type": "object",
+      "required": [
+        "executionId",
+        "role",
+        "error"
+      ],
+      "properties": {
+        "executionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "orchestrator",
+            "explorer",
+            "coder",
+            "reviewer",
+            "auditor"
+          ]
+        },
+        "error": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "UserFollowUpQueued": {
+      "type": "object",
+      "required": [
+        "round",
+        "position",
+        "preview"
+      ],
+      "properties": {
+        "round": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "preview": {
+          "type": "string"
+        }
+      }
+    },
+    "UserFollowUpSteered": {
+      "type": "object",
+      "required": [
+        "round",
+        "preview",
+        "replacedPending"
+      ],
+      "properties": {
+        "round": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "preview": {
+          "type": "string"
+        },
+        "replacedPending": {
+          "type": "boolean"
+        }
+      }
     }
   },
   "allOf": [
@@ -1557,6 +1718,139 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/DelegationInterrupted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "assistant.turn_start"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/AssistantTurnStart"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "assistant.turn_end"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/AssistantTurnEnd"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "job.started"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/JobStarted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "job.completed"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/JobCompleted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "job.failed"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/JobFailed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "user.follow_up_queued"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/UserFollowUpQueued"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "user.follow_up_steered"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/UserFollowUpSteered"
           }
         }
       }
