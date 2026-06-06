@@ -66,8 +66,13 @@ const DEFAULT_MODEL = DEFAULT_PR_REVIEW_MODEL;
 // whose runReview hasn't registered its abort controller yet; ALARM is the
 // persistent backstop that fires even with no further traffic (it survives the
 // eviction), set comfortably past the deep reviewer's wall-clock budget (~14m).
+// REVIEW_TIMEOUT_MS is the max wall-clock budget for a single live review before
+// it is force-failed. ORPHAN_ALARM_MS is the sweep cadence / initial alarm arm.
+// Both are 15 min today but are intentionally separate: the orphan cadence is a
+// detection heuristic while the review budget is a hard max-runtime policy.
 const ORPHAN_GRACE_MS = 2 * 60_000;
 const ORPHAN_ALARM_MS = 15 * 60_000;
+const REVIEW_TIMEOUT_MS = 15 * 60_000;
 
 /** Start payload the webhook receiver POSTs to the DO. */
 export interface PrReviewStartInput extends ReviewablePullRequest {
@@ -252,17 +257,89 @@ export class PrReviewJob {
 
   /**
    * Alarm backstop: fires (even after an eviction — the alarm is persistent) at
-   * a review's deadline and finalizes anything left orphaned. Re-arms while a
-   * live review is still running so a long review is rechecked rather than
-   * force-failed.
+   * a review's deadline and finalizes anything left orphaned or live-but-stuck.
+   * A live AbortController means the current isolate still owns the review; it
+   * does not prove the provider/model stream is making progress. Once the wall
+   * clock budget expires, abort and fail it so the UI/check-run cannot hang
+   * forever.
+   *
+   * Merges the grace-recheck alarm from sweepOrphans with live-review deadlines
+   * so the earliest alarm always wins — preventing the grace alarm from being
+   * silently overwritten (Durable Objects support only a single alarm).
    */
   async alarm(): Promise<void> {
-    await this.sweepOrphans();
+    const now = Date.now();
+    await this.failTimedOutReviews(now);
+    const graceAlarm = await this.sweepOrphans(false);
+
     const pending = this.ctx.storage.sql
-      .exec("SELECT delivery_id FROM review WHERE status IN ('queued','running')")
-      .toArray() as Array<{ delivery_id: string }>;
-    if (pending.some((r) => this.abortControllers.has(r.delivery_id))) {
-      await this.ctx.storage.setAlarm(Date.now() + ORPHAN_ALARM_MS);
+      .exec("SELECT * FROM review WHERE status IN ('queued','running')")
+      .toArray() as unknown as ReviewRow[];
+    let nextAlarm = graceAlarm;
+    for (const row of pending) {
+      if (row.status !== 'running' || row.started_at == null) continue;
+      if (!this.abortControllers.has(row.delivery_id)) continue;
+      const deadline = row.started_at + REVIEW_TIMEOUT_MS;
+      nextAlarm = nextAlarm == null ? deadline : Math.min(nextAlarm, deadline);
+    }
+    if (nextAlarm != null) {
+      await this.ctx.storage.setAlarm(Math.max(Date.now() + 1_000, nextAlarm));
+    }
+  }
+
+  /** Force-fail live reviews that exceeded the wall-clock budget. */
+  private async failTimedOutReviews(now: number): Promise<void> {
+    const rows = this.ctx.storage.sql
+      .exec("SELECT * FROM review WHERE status IN ('queued','running')")
+      .toArray() as unknown as ReviewRow[];
+    for (const row of rows) {
+      if (row.status !== 'running' || row.started_at == null) continue;
+      const controller = this.abortControllers.get(row.delivery_id);
+      if (!controller) continue;
+      if (now - row.started_at < REVIEW_TIMEOUT_MS) continue;
+
+      if (!controller.signal.aborted) controller.abort();
+      this.abortControllers.delete(row.delivery_id);
+
+      const message =
+        'Review exceeded its wall-clock budget; the provider stream appears stalled and was forcibly terminated.';
+      this.ctx.storage.sql.exec(
+        "UPDATE review SET status = 'failed', error_text = ?, finished_at = ? WHERE delivery_id = ?",
+        message,
+        now,
+        row.delivery_id,
+      );
+      this.emit(row.delivery_id, 'review.failed', { errorType: 'timeout', message });
+      log('warn', 'pr_review_timeout_swept', {
+        deliveryId: row.delivery_id,
+        repo: row.repo,
+        pr: row.pr_number,
+      });
+
+      // Best-effort check-run finalization per row: a single network hiccup
+      // must not skip abort+DB-update for other timed-out rows.
+      try {
+        const token = await this.mintInstallationToken(row.installation_id);
+        if (token) {
+          await this.finalizeCheckRun(
+            row.repo,
+            row.head_sha,
+            token,
+            row.check_run_id ?? null,
+            'neutral',
+            {
+              title: 'Review timed out',
+              summary:
+                'The review exceeded its wall-clock budget. Push a new commit or re-run to retry.',
+            },
+          );
+        }
+      } catch (err) {
+        log('warn', 'pr_review_timeout_check_close_failed', {
+          deliveryId: row.delivery_id,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
   }
 
@@ -387,11 +464,16 @@ export class PrReviewJob {
     const executor = EXECUTOR_OVERRIDES.get(input.deliveryId) ?? defaultPrReviewExecutor;
     try {
       const outcome = await executor(input, this.env, controller.signal);
-      // A late supersede may have flipped status while we ran; don't clobber it.
+      // A late alarm/supersede may have flipped status while we ran; don't clobber it.
       const current = this.reviewRow(input.deliveryId);
-      if (current?.status === 'superseded') {
-        log('info', 'pr_review_completed_after_supersede', { deliveryId: input.deliveryId });
-        if (checkToken) await this.closeCheckSuperseded(input, checkToken, checkRunId);
+      if (current?.status !== 'running') {
+        log('info', 'pr_review_completed_after_terminal', {
+          deliveryId: input.deliveryId,
+          status: current?.status ?? null,
+        });
+        if (current?.status === 'superseded' && checkToken) {
+          await this.closeCheckSuperseded(input, checkToken, checkRunId);
+        }
         return;
       }
       this.ctx.storage.sql.exec(
@@ -460,6 +542,14 @@ export class PrReviewJob {
       }
     } catch (err) {
       if (controller.signal.aborted) {
+        const current = this.reviewRow(input.deliveryId);
+        if (current?.status === 'failed') {
+          log('info', 'pr_review_aborted_after_terminal', {
+            deliveryId: input.deliveryId,
+            status: current.status,
+          });
+          return;
+        }
         log('info', 'pr_review_aborted', { deliveryId: input.deliveryId });
         // We own this check-run (created at start, id held locally); close it so
         // a superseded delivery doesn't leave it hanging "Reviewing…". By now
@@ -648,7 +738,8 @@ export class PrReviewJob {
    * not have registered its controller yet, avoiding a race that would fail a
    * live review. Best-effort throughout — never throws into the caller.
    */
-  private async sweepOrphans(): Promise<void> {
+  private async sweepOrphans(armGrace = true): Promise<number | null> {
+    let graceAlarm: number | null = null;
     try {
       const cutoff = Date.now() - ORPHAN_GRACE_MS;
       const rows = this.ctx.storage.sql
@@ -697,7 +788,10 @@ export class PrReviewJob {
       // would hang forever once the grace window passes and the once-per-instance
       // first-fetch sweep is spent. Ensure a recheck just past the grace window.
       // (A row that turned out live re-arms the long alarm in alarm() instead.)
-      if (graceSkipped) await this.ctx.storage.setAlarm(Date.now() + ORPHAN_GRACE_MS + 1_000);
+      if (graceSkipped) {
+        graceAlarm = Date.now() + ORPHAN_GRACE_MS + 1_000;
+        if (armGrace) await this.ctx.storage.setAlarm(graceAlarm);
+      }
     } catch (err) {
       // Best-effort: a storage hiccup mid-sweep must not throw into the alarm
       // handler (which the runtime would retry) or a waitUntil. The first-fetch
@@ -706,6 +800,7 @@ export class PrReviewJob {
         message: err instanceof Error ? err.message : String(err),
       });
     }
+    return graceAlarm;
   }
 }
 
