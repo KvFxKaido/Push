@@ -6496,7 +6496,12 @@ describe('broadcastEvent strict-mode schema enforcement', () => {
     const drift = broadcastAndCaptureDrift({ strict: undefined, observe: undefined });
     assert.ok(drift, 'expected a protocol_drift_detected log line');
     assert.equal(drift.type, 'subagent.started');
-    assert.ok(Array.isArray(drift.issues) && drift.issues.length > 0);
+    // Only sanitized dotted paths are logged — never raw field values (P2).
+    assert.ok(Array.isArray(drift.issuePaths) && drift.issuePaths.length > 0);
+    assert.ok(
+      drift.issuePaths.every((p) => typeof p === 'string' && !p.includes(': ')),
+      'issuePaths must be bare paths, not "path: message" strings',
+    );
   });
 
   it('is a true silent no-op when both strict and observe are disabled', () => {

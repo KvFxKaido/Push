@@ -1109,7 +1109,12 @@ function checkOutboundEvent(event) {
       sessionId: event?.sessionId,
       type: event?.type,
       seq: event?.seq,
-      issues: issues.map((i) => `${i.path || '(root)'}: ${i.message}`),
+      // Log only the dotted paths, never `i.message` — validator messages embed
+      // JSON.stringify(value) of the offending field, and a drifted tool-call /
+      // approval / stream payload can carry user prompts, tool args, or command
+      // output. Path + type + seq is enough drift signal; reproduce with
+      // PUSH_PROTOCOL_STRICT=1 locally to see the full values.
+      issuePaths: issues.map((i) => i.path || '(root)'),
     }),
   );
 }
