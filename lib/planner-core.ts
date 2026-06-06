@@ -228,8 +228,10 @@ export function parsePlannerResponse(raw: string): PlannerFeatureList | null {
   if (!parseResult.ok) {
     // Fail-open: callers proceed without a plan. Log the branch so a
     // persistent planner-format regression is visible to ops rather than
-    // silently degrading to the Coder's internal planning.
-    console.log(
+    // silently degrading to the Coder's internal planning. stderr (console.warn)
+    // because the CLI's headless `--json` mode reserves stdout for the single
+    // machine-readable result.
+    console.warn(
       JSON.stringify({ level: 'warn', event: 'planner_parse_failed', reason: parseResult.reason }),
     );
     return null;
@@ -239,7 +241,7 @@ export function parsePlannerResponse(raw: string): PlannerFeatureList | null {
   if (plan.features.length === 0) {
     // Parsed cleanly but produced no usable features — a distinct, formerly
     // silent fail-open path that callers can't tell from a parse error.
-    console.log(JSON.stringify({ level: 'warn', event: 'planner_no_features' }));
+    console.warn(JSON.stringify({ level: 'warn', event: 'planner_no_features' }));
     return null;
   }
 

@@ -190,6 +190,12 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
       '@push/lib': path.resolve(__dirname, '../lib'),
     },
+    // Shared lib/ lives at the repo root, so a bare `zod` import from a
+    // lib/ module would otherwise resolve up to the (uninstalled) root
+    // node_modules during the app build. dedupe forces it to the app's
+    // own copy of zod, which the bundle already vendors (manualChunks →
+    // vendor-forms).
+    dedupe: ['zod'],
   },
   server: {
     fs: {

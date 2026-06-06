@@ -367,7 +367,7 @@ function parseReviewResult(
   // callers wrap this in try/catch and fall back to a neutral review.
   const parseResult = parseStructured(jsonStr, ReviewerResponseSchema);
   if (!parseResult.ok) {
-    console.log(
+    console.warn(
       JSON.stringify({
         level: 'warn',
         event: 'deep_reviewer_parse_failed',

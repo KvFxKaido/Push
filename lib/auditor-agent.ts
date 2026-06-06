@@ -445,7 +445,7 @@ async function runAuditorCore(
   if (!parseResult.ok) {
     // Close the formerly-silent catch{} path with a structured log, then
     // fail-safe to UNSAFE.
-    console.log(
+    console.warn(
       JSON.stringify({
         level: 'warn',
         event: 'auditor_verdict_parse_failed',
@@ -658,7 +658,7 @@ export async function runAuditorEvaluation(
   const parseResult = parseStructured(accumulated, AuditorEvaluationSchema);
 
   if (!parseResult.ok) {
-    console.log(
+    console.warn(
       JSON.stringify({
         level: 'warn',
         event: 'auditor_evaluation_parse_failed',

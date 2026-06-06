@@ -443,7 +443,7 @@ async function runReviewerCore(
   const parseResult = parseStructured(accumulated, ReviewerResponseSchema);
 
   if (!parseResult.ok) {
-    console.log(
+    console.warn(
       JSON.stringify({
         level: 'warn',
         event: 'reviewer_parse_failed',
