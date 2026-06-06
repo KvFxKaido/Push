@@ -8,10 +8,7 @@ import {
   RefreshCw,
   XCircle,
 } from 'lucide-react';
-import {
-  CLOUDFLARE_MODELS,
-  SHARED_PROVIDER_MODEL_CATALOG,
-} from '@push/lib/provider-models';
+import { CLOUDFLARE_MODELS, SHARED_PROVIDER_MODEL_CATALOG } from '@push/lib/provider-models';
 import { PROVIDERS, type PreferredProvider } from '@/lib/providers';
 import type { ReviewComment } from '@/types';
 import { findOpenPRForBranch } from '@/lib/github-tools';
@@ -230,8 +227,15 @@ export function PrReviewHistorySection({
   }, [repoFullName, activeBranch]);
 
   const { reviews, refresh } = usePrReviewHistory(repoFullName ?? null, prNumber);
-  const { enabled, provider, model, saving, setEnabled, setModelConfig, error: configError } =
-    usePrReviewConfig();
+  const {
+    enabled,
+    provider,
+    model,
+    saving,
+    setEnabled,
+    setModelConfig,
+    error: configError,
+  } = usePrReviewConfig();
 
   const providerOptions = useMemo(() => AUTOMATED_REVIEW_PROVIDERS, []);
   const selectedProvider = useMemo(

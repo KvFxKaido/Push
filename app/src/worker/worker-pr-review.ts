@@ -143,7 +143,10 @@ async function handleConfigSet(request: Request, env: Env): Promise<Response> {
     }
     if (!isValidPrReviewRuntimeConfig(payload.provider, payload.model)) {
       return json(
-        { error: 'INVALID_REQUEST', message: 'provider/model is not available for automated reviews.' },
+        {
+          error: 'INVALID_REQUEST',
+          message: 'provider/model is not available for automated reviews.',
+        },
         400,
       );
     }
@@ -153,7 +156,11 @@ async function handleConfigSet(request: Request, env: Env): Promise<Response> {
     ? await setPrReviewEnabled(env, payload.enabled as boolean)
     : true;
   const persistedModel = hasModelConfig
-    ? await setPrReviewRuntimeConfig(env, payload.provider as AIProviderType, payload.model as string)
+    ? await setPrReviewRuntimeConfig(
+        env,
+        payload.provider as AIProviderType,
+        payload.model as string,
+      )
     : true;
 
   if (!persistedEnabled || !persistedModel) {

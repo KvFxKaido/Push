@@ -107,7 +107,10 @@ export async function getPrReviewRuntimeConfig(env: Env): Promise<PrReviewRuntim
 }
 
 export async function getPrReviewEffectiveConfig(env: Env): Promise<PrReviewEffectiveConfig> {
-  const [enabled, runtime] = await Promise.all([isPrReviewEnabled(env), getPrReviewRuntimeConfig(env)]);
+  const [enabled, runtime] = await Promise.all([
+    isPrReviewEnabled(env),
+    getPrReviewRuntimeConfig(env),
+  ]);
   const provider = runtime.provider ?? DEFAULT_PR_REVIEW_PROVIDER;
   const model = runtime.model ?? getDefaultPrReviewModel(provider) ?? DEFAULT_PR_REVIEW_MODEL;
   return { enabled, provider, model };

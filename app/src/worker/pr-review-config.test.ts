@@ -9,7 +9,10 @@ import {
 } from './pr-review-config';
 import type { Env } from './worker-middleware';
 
-function kvEnv(initial?: Record<string, string> | string): { env: Env; store: Map<string, string> } {
+function kvEnv(initial?: Record<string, string> | string): {
+  env: Env;
+  store: Map<string, string>;
+} {
   const store = new Map<string, string>();
   if (typeof initial === 'string') store.set('config:pr-review-enabled', initial);
   else if (initial) {
