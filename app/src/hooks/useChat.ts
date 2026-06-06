@@ -33,6 +33,7 @@ import { resolveTurnEngineTrigger } from '@/lib/delegation-mode-settings';
 import { hasActiveBackgroundJob, startBackgroundMainChatTurn } from './chat-send-background';
 import { useCIPoller } from './useCIPoller';
 import { useChatCardActions } from './chat-card-actions';
+import { useFullAutoCommitApproval } from './chat-full-auto-approvals';
 import { useChatManagement } from './chat-management';
 import { useChatReplay } from './chat-replay';
 import { useChatCheckpoint } from './useChatCheckpoint';
@@ -817,6 +818,9 @@ export function useChat(
     messages,
   });
 
+  // Full Auto: auto-approve the Auditor's SAFE commit-review card (sibling hook).
+  useFullAutoCommitApproval({ conversations, activeChatId, handleCardAction });
+
   // ---------------------------------------------------------------------------
   // UI-initiated branch fork (slice 2.1)
   // ---------------------------------------------------------------------------
@@ -917,16 +921,12 @@ export function useChat(
     setWorkspaceSessionId,
     setEnsureSandbox,
     setLocalDaemonBinding,
-
-    // Protect Main
     setIsMainProtected,
 
     // AGENTS.md
     setAgentsMd,
     setInstructionFilename,
     injectAssistantCardMessage,
-
-    // Card actions
     handleCardAction,
 
     // Context usage (for meter UI)

@@ -1,4 +1,4 @@
-import type { ChatMessage } from '@/types';
+import type { ChatCard, ChatMessage } from '@/types';
 import { Terminal, FileText, Search, Globe, Hammer, Wrench } from 'lucide-react';
 
 /* ------------------------------------------------------------------ */
@@ -8,6 +8,56 @@ import { Terminal, FileText, Search, Globe, Hammer, Wrench } from 'lucide-react'
 export interface ToolCallPair {
   callMsg: ChatMessage;
   resultMsg: ChatMessage;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Pending-action cards (must stay visible, never collapsed)          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A card that's awaiting a user decision and would be lost if it stayed
+ * folded inside a collapsed `ToolCallSummary`. These get hoisted out of
+ * the group and rendered prominently regardless of the group's collapsed
+ * state. Once resolved (answer recorded / commit landed) the card folds
+ * back into the group like any other tool output.
+ */
+export function isPendingActionCard(card: ChatCard): boolean {
+  if (card.type === 'ask-user') {
+    return !card.data.responseText || card.data.responseText.trim().length === 0;
+  }
+  if (card.type === 'commit-review') {
+    // Visible through the whole commit lifecycle (pending → error → in-flight)
+    // until it reaches a terminal state the user no longer needs to act on.
+    return card.data.status !== 'committed' && card.data.status !== 'rejected';
+  }
+  return false;
+}
+
+export interface HoistedActionCard {
+  card: ChatCard;
+  messageId: string;
+  /** Original index into `callMsg.cards` — required so card actions
+   * (`ask-user-submit`, `commit-approve`) target the right card. */
+  cardIndex: number;
+}
+
+/**
+ * Pull every unresolved action card out of a tool group so the caller can
+ * render it above/below the collapsed summary. Indices are the card's
+ * position in its message's `cards` array, not a filtered position.
+ */
+export function collectPendingActionCards(items: ToolCallPair[]): HoistedActionCard[] {
+  const hoisted: HoistedActionCard[] = [];
+  for (const item of items) {
+    const cards = item.callMsg.cards;
+    if (!cards) continue;
+    cards.forEach((card, cardIndex) => {
+      if (isPendingActionCard(card)) {
+        hoisted.push({ card, messageId: item.callMsg.id, cardIndex });
+      }
+    });
+  }
+  return hoisted;
 }
 
 /* ------------------------------------------------------------------ */
