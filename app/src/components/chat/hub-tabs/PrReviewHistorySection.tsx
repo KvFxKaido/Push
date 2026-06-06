@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Ban,
   CheckCircle,
   ChevronDown,
   ChevronRight,
@@ -12,7 +13,7 @@ import { CLOUDFLARE_MODELS, SHARED_PROVIDER_MODEL_CATALOG } from '@push/lib/prov
 import { PROVIDERS, type PreferredProvider } from '@/lib/providers';
 import type { ReviewComment } from '@/types';
 import { findOpenPRForBranch } from '@/lib/github-tools';
-import { triggerPrReview, usePrReviewHistory } from '@/hooks/usePrReviewHistory';
+import { cancelPrReview, triggerPrReview, usePrReviewHistory } from '@/hooks/usePrReviewHistory';
 import { usePrReviewConfig } from '@/hooks/usePrReviewConfig';
 import type { PrReviewListItem } from '@/worker/pr-review-job-do';
 import { HUB_PANEL_SUBTLE_SURFACE_CLASS } from '@/components/chat/hub-styles';
@@ -91,6 +92,12 @@ function StatusBadge({ status }: { status: PrReviewListItem['status'] }) {
           <XCircle className="h-3 w-3" /> Failed
         </span>
       );
+    case 'cancelled':
+      return (
+        <span className="inline-flex items-center gap-1 text-push-2xs text-push-fg-dim">
+          <Ban className="h-3 w-3" /> Cancelled
+        </span>
+      );
     default:
       // superseded / duplicate — terminal but uninteresting.
       return <span className="text-push-2xs text-push-fg-dim capitalize">{status}</span>;
@@ -149,33 +156,76 @@ function ReviewFindings({ review }: { review: PrReviewListItem }) {
   );
 }
 
-function ReviewRow({ review }: { review: PrReviewListItem }) {
+function ReviewRow({
+  review,
+  onCancel,
+}: {
+  review: PrReviewListItem;
+  /** Cancel this review by deliveryId; resolves after the refresh is kicked. */
+  onCancel?: (deliveryId: string) => Promise<void>;
+}) {
   const [open, setOpen] = useState(review.status === 'running' || review.status === 'completed');
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
   const outcomeNote = review.status === 'completed' ? ` · ${completedOutcome(review)}` : '';
   const usage = review.result?.usage;
+  // Only queued/running reviews can be cancelled; everything else is terminal.
+  const inFlight = review.status === 'queued' || review.status === 'running';
+
+  const handleCancel = async () => {
+    if (!onCancel || cancelling) return;
+    setCancelling(true);
+    setCancelError(null);
+    try {
+      await onCancel(review.deliveryId);
+    } catch (err) {
+      // A 409 here means the review reached a terminal state first (stale-tab
+      // race) — the refresh the caller kicks will reconcile the badge, so this
+      // message is only meaningful for a genuine network/server failure.
+      setCancelError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   return (
     <div className="border-t border-push-border/40 pt-2 first:border-t-0 first:pt-0">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-2 text-left"
-      >
-        <span className="flex items-center gap-2">
-          {open ? (
-            <ChevronDown className="h-3 w-3 text-push-fg-dim" />
-          ) : (
-            <ChevronRight className="h-3 w-3 text-push-fg-dim" />
-          )}
-          <StatusBadge status={review.status} />
-          <span className="font-mono text-push-2xs text-push-fg-dim">
-            {review.headSha.slice(0, 7)}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
+        >
+          <span className="flex items-center gap-2">
+            {open ? (
+              <ChevronDown className="h-3 w-3 text-push-fg-dim" />
+            ) : (
+              <ChevronRight className="h-3 w-3 text-push-fg-dim" />
+            )}
+            <StatusBadge status={review.status} />
+            <span className="font-mono text-push-2xs text-push-fg-dim">
+              {review.headSha.slice(0, 7)}
+            </span>
           </span>
-        </span>
-        <span className="text-push-2xs text-push-fg-dim">
-          {relativeTime(review.finishedAt ?? review.startedAt ?? review.createdAt)}
-          {outcomeNote}
-        </span>
-      </button>
+          <span className="text-push-2xs text-push-fg-dim">
+            {relativeTime(review.finishedAt ?? review.startedAt ?? review.createdAt)}
+            {outcomeNote}
+          </span>
+        </button>
+        {inFlight && onCancel && (
+          <button
+            type="button"
+            onClick={handleCancel}
+            disabled={cancelling}
+            title="Cancel this review"
+            className="inline-flex shrink-0 items-center gap-1 text-push-2xs text-push-fg-dim hover:text-red-400 disabled:opacity-50"
+          >
+            <Ban className="h-3 w-3" />
+            {cancelling ? 'Cancelling…' : 'Cancel'}
+          </button>
+        )}
+      </div>
+      {cancelError && <p className="mt-1 text-push-2xs text-red-400">{cancelError}</p>}
       {open && (
         <>
           <ReviewFindings review={review} />
@@ -260,6 +310,20 @@ export function PrReviewHistorySection({
       setRerunning(false);
     }
   };
+
+  // Cancel an in-flight review, then refresh so the row flips to "Cancelled"
+  // without waiting for the next poll. Errors surface inline on the row itself.
+  const handleCancel = useCallback(
+    async (deliveryId: string) => {
+      if (!repoFullName || !prNumber) return;
+      try {
+        await cancelPrReview(repoFullName, prNumber, deliveryId);
+      } finally {
+        refresh();
+      }
+    },
+    [repoFullName, prNumber, refresh],
+  );
 
   // Render whenever there's a repo — the global on/off toggle plus the per-PR
   // history. (Previously returned null with no open PR or no reviews, so the
@@ -358,7 +422,7 @@ export function PrReviewHistorySection({
       {reviews.length > 0 ? (
         <div className="space-y-2">
           {reviews.map((review) => (
-            <ReviewRow key={review.deliveryId} review={review} />
+            <ReviewRow key={review.deliveryId} review={review} onCancel={handleCancel} />
           ))}
         </div>
       ) : (
