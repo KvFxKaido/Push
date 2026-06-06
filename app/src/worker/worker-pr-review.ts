@@ -39,6 +39,7 @@ import {
 
 const LIST_PATH = '/api/pr-reviews';
 const RUN_PATH = '/api/pr-reviews/run';
+const CANCEL_PATH = '/api/pr-reviews/cancel';
 const CONFIG_PATH = '/api/pr-reviews/config';
 
 /**
@@ -56,11 +57,12 @@ function log(
   console.log(JSON.stringify({ level, event, ...ctx }));
 }
 
-export type PrReviewRouteAction = 'list' | 'run' | 'config-get' | 'config-set';
+export type PrReviewRouteAction = 'list' | 'run' | 'cancel' | 'config-get' | 'config-set';
 
 export function matchPrReviewRoute(pathname: string, method: string): PrReviewRouteAction | null {
   if (pathname === LIST_PATH && method === 'GET') return 'list';
   if (pathname === RUN_PATH && method === 'POST') return 'run';
+  if (pathname === CANCEL_PATH && method === 'POST') return 'cancel';
   if (pathname === CONFIG_PATH && method === 'GET') return 'config-get';
   if (pathname === CONFIG_PATH && method === 'POST') return 'config-set';
   return null;
@@ -98,7 +100,9 @@ export async function handlePrReviewRoute(
     );
   }
 
-  return action === 'run' ? handleRun(request, env, requestUrl) : handleList(env, requestUrl);
+  if (action === 'run') return handleRun(request, env, requestUrl);
+  if (action === 'cancel') return handleCancel(request, env);
+  return handleList(env, requestUrl);
 }
 
 async function handleConfigGet(env: Env): Promise<Response> {
@@ -347,6 +351,80 @@ async function handleRun(request: Request, env: Env, requestUrl: URL): Promise<R
     status: outcome.status ?? 'queued',
   });
   return json({ ok: true, status: outcome.status ?? 'queued' }, 202);
+}
+
+/**
+ * deliveryId charset guard. The DO binds it as a SQL parameter (so it's
+ * injection-safe regardless), but constraining it at the edge rejects obviously
+ * malformed input with a clear 400 and bounds the value that rides into the DO
+ * name-scoped lookup. Covers GitHub delivery UUIDs and our `manual-<uuid>` ids.
+ */
+const DELIVERY_ID_RE = /^[A-Za-z0-9._-]{1,200}$/;
+
+/**
+ * Cancel an in-flight review. Addressed by repo#pr (to reach the DO) plus the
+ * review's `deliveryId` (to identify which review within it). Deliberately not
+ * gated on the reviewer kill-switch or App creds: cancelling a running review
+ * must work even after the reviewer was turned off, and the DO's check-run close
+ * is best-effort/token-gated. Origin + rate-limit gating already ran in the
+ * caller, same as every other action.
+ */
+async function handleCancel(request: Request, env: Env): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    log('warn', 'pr_review_cancel_invalid_body', {});
+    return json({ error: 'INVALID_BODY', message: 'POST body must be JSON.' }, 400);
+  }
+  const {
+    repo: rawRepo,
+    pr,
+    deliveryId: rawDeliveryId,
+  } = (body ?? {}) as { repo?: unknown; pr?: unknown; deliveryId?: unknown };
+  const parsed = parseRepoPr(typeof rawRepo === 'string' ? rawRepo : '', String(pr ?? ''));
+  const deliveryId = typeof rawDeliveryId === 'string' ? rawDeliveryId : '';
+  if (!parsed || !DELIVERY_ID_RE.test(deliveryId)) {
+    log('warn', 'pr_review_cancel_invalid_request', {
+      repo: String(rawRepo ?? ''),
+      pr: String(pr ?? ''),
+    });
+    return json(
+      {
+        error: 'INVALID_REQUEST',
+        message: 'repo (owner/name), pr (positive integer), and deliveryId are required.',
+      },
+      400,
+    );
+  }
+
+  const doResponse = await forwardToDo(
+    env,
+    parsed.repo,
+    parsed.prNumber,
+    new Request('https://do/cancel', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deliveryId }),
+    }),
+  );
+  // Pass the DO's status through (200 cancelled / 404 not-found / 409 terminal)
+  // so the client can distinguish a successful cancel from a stale-tab race.
+  // The original response body is never read again, so no clone is needed.
+  const outcome = (await doResponse.json().catch(() => ({}))) as {
+    status?: string;
+    error?: string;
+  };
+  log(doResponse.ok ? 'info' : 'warn', 'pr_review_cancel_forwarded', {
+    repo: parsed.repo,
+    pr: parsed.prNumber,
+    doStatus: doResponse.status,
+    status: outcome.status ?? outcome.error ?? null,
+  });
+  return json(
+    doResponse.ok ? { ok: true, status: outcome.status ?? 'cancelled' } : outcome,
+    doResponse.status,
+  );
 }
 
 async function forwardToDo(

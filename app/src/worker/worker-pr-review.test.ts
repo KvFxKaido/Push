@@ -97,11 +97,13 @@ function runEnv(overrides: Partial<Env> = {}): Env {
 }
 
 describe('matchPrReviewRoute', () => {
-  it('maps the list (GET) and run (POST) routes, rejects others', () => {
+  it('maps the list (GET), run (POST), and cancel (POST) routes, rejects others', () => {
     expect(matchPrReviewRoute('/api/pr-reviews', 'GET')).toBe('list');
     expect(matchPrReviewRoute('/api/pr-reviews/run', 'POST')).toBe('run');
+    expect(matchPrReviewRoute('/api/pr-reviews/cancel', 'POST')).toBe('cancel');
     expect(matchPrReviewRoute('/api/pr-reviews', 'POST')).toBeNull();
     expect(matchPrReviewRoute('/api/pr-reviews/run', 'GET')).toBeNull();
+    expect(matchPrReviewRoute('/api/pr-reviews/cancel', 'GET')).toBeNull();
     expect(matchPrReviewRoute('/api/pr-reviews/extra', 'GET')).toBeNull();
   });
 
@@ -357,5 +359,101 @@ describe('handlePrReviewRoute — run', () => {
       'run',
     );
     expect(res.status).toBe(400);
+  });
+});
+
+describe('handlePrReviewRoute — cancel', () => {
+  it('forwards a cancel to the DO by repo#prNumber with the deliveryId', async () => {
+    const stub = makeFakeStub(
+      new Response(JSON.stringify({ status: 'cancelled' }), { status: 200 }),
+    );
+    const namespace = makePrReviewNamespace(stub);
+    const res = await handlePrReviewRoute(
+      makePost('/api/pr-reviews/cancel', { repo: 'octo/repo', pr: 7, deliveryId: 'manual-abc' }),
+      makeEnv({ PrReviewJob: namespace }),
+      'cancel',
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, status: 'cancelled' });
+    expect(namespace.idFromName as ReturnType<typeof vi.fn>).toHaveBeenCalledWith('octo/repo#7');
+    const forwarded = stub.fetch.mock.calls[0]![0] as Request;
+    expect(new URL(forwarded.url).pathname).toBe('/cancel');
+    expect(JSON.parse(await forwarded.text())).toEqual({ deliveryId: 'manual-abc' });
+  });
+
+  it('passes the DO status through on a terminal-race (409)', async () => {
+    const stub = makeFakeStub(
+      new Response(JSON.stringify({ error: 'NOT_CANCELLABLE' }), { status: 409 }),
+    );
+    const res = await handlePrReviewRoute(
+      makePost('/api/pr-reviews/cancel', { repo: 'octo/repo', pr: 7, deliveryId: 'manual-abc' }),
+      makeEnv({ PrReviewJob: makePrReviewNamespace(stub) }),
+      'cancel',
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: 'NOT_CANCELLABLE' });
+  });
+
+  it('works even when the reviewer is turned off (no kill-switch gate)', async () => {
+    const stub = makeFakeStub(
+      new Response(JSON.stringify({ status: 'cancelled' }), { status: 200 }),
+    );
+    const res = await handlePrReviewRoute(
+      makePost('/api/pr-reviews/cancel', { repo: 'octo/repo', pr: 7, deliveryId: 'manual-abc' }),
+      makeEnv({
+        PrReviewJob: makePrReviewNamespace(stub),
+        // Reviewer kill-switch off — cancel must still reach the DO.
+        SNAPSHOT_INDEX: {
+          get: async () => '0',
+          put: async () => {},
+        } as unknown as Env['SNAPSHOT_INDEX'],
+      }),
+      'cancel',
+    );
+    expect(res.status).toBe(200);
+    expect(stub.fetch).toHaveBeenCalledOnce();
+  });
+
+  it('rejects a missing/invalid deliveryId (400) without forwarding', async () => {
+    const stub = makeFakeStub();
+    const env = makeEnv({ PrReviewJob: makePrReviewNamespace(stub) });
+    for (const body of [
+      { repo: 'octo/repo', pr: 7 }, // no deliveryId
+      { repo: 'octo/repo', pr: 7, deliveryId: 'has spaces' },
+      { repo: 'octo/repo', pr: 7, deliveryId: '' },
+      { repo: 'octo', pr: 7, deliveryId: 'manual-abc' }, // bad repo
+    ]) {
+      const res = await handlePrReviewRoute(
+        makePost('/api/pr-reviews/cancel', body),
+        env,
+        'cancel',
+      );
+      expect(res.status).toBe(400);
+    }
+    expect(stub.fetch).not.toHaveBeenCalled();
+  });
+
+  it('fails closed with 503 when the DO binding is absent', async () => {
+    const res = await handlePrReviewRoute(
+      makePost('/api/pr-reviews/cancel', { repo: 'octo/repo', pr: 7, deliveryId: 'manual-abc' }),
+      makeEnv(),
+      'cancel',
+    );
+    expect(res.status).toBe(503);
+  });
+
+  it('rejects a disallowed origin (403) before forwarding', async () => {
+    const stub = makeFakeStub();
+    const res = await handlePrReviewRoute(
+      makePost(
+        '/api/pr-reviews/cancel',
+        { repo: 'octo/repo', pr: 7, deliveryId: 'manual-abc' },
+        { Origin: 'https://evil.test' },
+      ),
+      makeEnv({ PrReviewJob: makePrReviewNamespace(stub) }),
+      'cancel',
+    );
+    expect(res.status).toBe(403);
+    expect(stub.fetch).not.toHaveBeenCalled();
   });
 });

@@ -1,7 +1,7 @@
 # Webhook-Triggered PR Review
 
 Date: 2026-05-28
-Status: **Current** — ROADMAP-tracked (`Autonomous Webhook PR Review`). Shipped: receiver + DO + REVIEW.md base-ref binding (#690), shared token-injectable client (#691), PWA read-only review-history surface (#692), web-tool suppression (#694), deep + cancellable reviews (#693), manual re-run from the PWA (#695), and opt-in Checks-API gating (`PR_REVIEW_GATING_REPOS`, critical-only). Feature-complete for v1. Not live in prod until the `v4` DO migration is applied via a one-time non-versioned `wrangler deploy`; gating additionally needs the App's `checks: write` permission. Open: PWA gating-status surfacing and the multi-tenant read-authz caveat (both documented).
+Status: **Current** — ROADMAP-tracked (`Autonomous Webhook PR Review`). Shipped: receiver + DO + REVIEW.md base-ref binding (#690), shared token-injectable client (#691), PWA read-only review-history surface (#692), web-tool suppression (#694), deep + cancellable reviews (#693), manual re-run from the PWA (#695), opt-in Checks-API gating (`PR_REVIEW_GATING_REPOS`, critical-only), and manual cancellation of an in-flight review from the PWA. Feature-complete for v1. Not live in prod until the `v4` DO migration is applied via a one-time non-versioned `wrangler deploy`; gating additionally needs the App's `checks: write` permission. Open: PWA gating-status surfacing and the multi-tenant read-authz caveat (both documented).
 Owner: Push
 Related: `app/src/worker/github-webhook.ts` (the receiver — signature, allowlist, event-select, enqueue),
 `app/src/worker/pr-review-job-do.ts` (`PrReviewJob` DO — dedupe, coalesce, advisory post, `list` history),
@@ -280,6 +280,20 @@ Per the new-feature checklist ("one source of truth per vocabulary"):
   forwards to it; `usePrReviewHistory` polls (fast while in-flight, slow idle)
   and `PrReviewHistorySection` renders per-PR review status + findings in the
   review tab, self-hiding when there's no open PR or no reviews.
+- **Manual cancellation**: a `cancel` DO action drives a `queued`/`running`
+  review to a terminal `cancelled` status, aborts the live `AbortController`
+  (the deep reviewer composes the signal, so the in-flight model/tool round stops
+  rather than running to its budget), and closes the check-run as neutral
+  ("Review cancelled"). The cancel path is the single owner of that terminal
+  transition + check-run close — `runReview`'s abort catch early-returns on
+  `cancelled` exactly as it does for the timeout sweep's `failed`, so the close
+  isn't double-driven. `POST /api/pr-reviews/cancel { repo, pr, deliveryId }`
+  forwards to it (origin- + rate-limit-gated like the other actions, but
+  deliberately **not** gated on the reviewer kill-switch or App creds — cancelling
+  a running review must work after the reviewer is turned off, and the check-run
+  close is best-effort/token-gated). Already-terminal reviews return 409 so a
+  stale tab gets a clear signal. A per-row "Cancel" control in
+  `PrReviewHistorySection` (shown only for in-flight rows) calls it and refreshes.
 
 **Remaining:** `runDeepReviewer` upgrade (needs DO-side GitHub tool exec; the
 shared client unblocks it), re-run-from-PWA (a manual trigger route), and

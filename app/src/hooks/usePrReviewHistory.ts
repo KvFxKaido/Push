@@ -8,7 +8,7 @@ import type { PrReviewListItem } from '@/worker/pr-review-job-do';
 const ACTIVE_POLL_MS = 4_000;
 const IDLE_POLL_MS = 30_000;
 
-const TERMINAL_STATUSES = new Set(['completed', 'failed', 'superseded', 'duplicate']);
+const TERMINAL_STATUSES = new Set(['completed', 'failed', 'superseded', 'duplicate', 'cancelled']);
 
 /**
  * Trigger a fresh review for a PR now (manual re-run). The worker resolves the
@@ -24,6 +24,28 @@ export async function triggerPrReview(repoFullName: string, prNumber: number): P
   });
   if (!res.ok) {
     throw new Error(`pr-review run failed (${res.status})`);
+  }
+}
+
+/**
+ * Cancel an in-flight (queued/running) review for a PR. Addresses the review by
+ * `deliveryId` within the PR's DO. Throws on a non-2xx so callers can surface the
+ * failure — notably a 409 when the review reached a terminal state first (a
+ * stale-tab race), which the caller can treat as "already done" and just refresh.
+ * The deployment-token header is attached by the global fetch wrapper.
+ */
+export async function cancelPrReview(
+  repoFullName: string,
+  prNumber: number,
+  deliveryId: string,
+): Promise<void> {
+  const res = await fetch(resolveApiUrl('/api/pr-reviews/cancel'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ repo: repoFullName, pr: prNumber, deliveryId }),
+  });
+  if (!res.ok) {
+    throw new Error(`pr-review cancel failed (${res.status})`);
   }
 }
 

@@ -86,7 +86,7 @@ export interface PrReviewStatusSnapshot {
   repo: string;
   prNumber: number;
   headSha: string;
-  status: 'queued' | 'running' | 'completed' | 'failed' | 'superseded' | 'duplicate';
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'superseded' | 'duplicate' | 'cancelled';
   createdAt: number;
   startedAt: number | null;
   finishedAt: number | null;
@@ -361,6 +361,8 @@ export class PrReviewJob {
           return this.handleStatus(url.searchParams.get('deliveryId') ?? '');
         case 'list':
           return this.handleList();
+        case 'cancel':
+          return this.handleCancel((await request.json()) as { deliveryId?: string });
         default:
           return json({ error: 'UNKNOWN_ACTION', action }, 404);
       }
@@ -471,8 +473,12 @@ export class PrReviewJob {
           deliveryId: input.deliveryId,
           status: current?.status ?? null,
         });
-        if (current?.status === 'superseded' && checkToken) {
-          await this.closeCheckSuperseded(input, checkToken, checkRunId);
+        if (checkToken) {
+          if (current?.status === 'superseded') {
+            await this.closeCheckSuperseded(input, checkToken, checkRunId);
+          } else if (current?.status === 'cancelled') {
+            await this.closeCheckCancelled(input, checkToken, checkRunId);
+          }
         }
         return;
       }
@@ -543,6 +549,8 @@ export class PrReviewJob {
     } catch (err) {
       if (controller.signal.aborted) {
         const current = this.reviewRow(input.deliveryId);
+        // The timeout sweep (failTimedOutReviews) already closed the check-run
+        // when it drove the row to `failed`; re-closing would race its finalize.
         if (current?.status === 'failed') {
           log('info', 'pr_review_aborted_after_terminal', {
             deliveryId: input.deliveryId,
@@ -550,12 +558,24 @@ export class PrReviewJob {
           });
           return;
         }
-        log('info', 'pr_review_aborted', { deliveryId: input.deliveryId });
-        // We own this check-run (created at start, id held locally); close it so
-        // a superseded delivery doesn't leave it hanging "Reviewing…". By now
-        // startCheckRun has resolved, so checkRunId is set even if the abort
-        // landed mid-create.
-        if (checkToken) await this.closeCheckSuperseded(input, checkToken, checkRunId);
+        log('info', 'pr_review_aborted', {
+          deliveryId: input.deliveryId,
+          status: current?.status ?? null,
+        });
+        // We own this check-run (created at start, id held locally), and by now
+        // startCheckRun has resolved — so `checkRunId` is the real in-progress id
+        // even when the abort landed mid-create. Close it here so it can't hang
+        // "Reviewing…", for both a user cancel and a supersede. handleCancel
+        // deliberately does NOT close when a controller is live (this path); it
+        // only closes orphaned rows, so closing the *late-created* run with the
+        // real id is owned here rather than racing a stale (null-id) close.
+        if (checkToken) {
+          if (current?.status === 'cancelled') {
+            await this.closeCheckCancelled(input, checkToken, checkRunId);
+          } else {
+            await this.closeCheckSuperseded(input, checkToken, checkRunId);
+          }
+        }
         return;
       }
       const message = err instanceof Error ? err.message : String(err);
@@ -609,6 +629,66 @@ export class PrReviewJob {
       .exec('SELECT * FROM review ORDER BY created_at DESC')
       .toArray() as unknown as ReviewRow[];
     return json({ reviews: rows.map(rowToListItem) }, 200);
+  }
+
+  /**
+   * User-initiated cancel of an in-flight (`queued`/`running`) review. Drives the
+   * row to `cancelled`, aborts the live executor if this instance owns one, and
+   * closes the check-run — mirroring the timeout sweep's ownership model: the
+   * cancel path is the single owner of the terminal transition + check-run close,
+   * so runReview's abort catch early-returns on `cancelled` (see runReview).
+   *
+   * Already-terminal reviews return 409 (NOT_CANCELLABLE) so a stale tab racing a
+   * just-completed/superseded review gets a clear signal instead of a silent
+   * no-op. The check-run close runs via waitUntil so the client isn't blocked on
+   * GitHub; it's token-gated (no-op without App creds) and covers the orphaned
+   * case too (a `running` row whose DO died has no controller to abort, but the
+   * check-run still needs closing — nothing else will).
+   */
+  private handleCancel(input: { deliveryId?: string }): Response {
+    const deliveryId = typeof input.deliveryId === 'string' ? input.deliveryId : '';
+    if (!deliveryId) return json({ error: 'MISSING_FIELDS', fields: ['deliveryId'] }, 400);
+    const row = this.reviewRow(deliveryId);
+    if (!row) return json({ error: 'NOT_FOUND', deliveryId }, 404);
+    if (row.status !== 'queued' && row.status !== 'running') {
+      return json(
+        {
+          error: 'NOT_CANCELLABLE',
+          status: row.status,
+          message: 'Review is already in a terminal state.',
+        },
+        409,
+      );
+    }
+
+    this.ctx.storage.sql.exec(
+      "UPDATE review SET status = 'cancelled', finished_at = ? WHERE delivery_id = ?",
+      Date.now(),
+      deliveryId,
+    );
+    const controller = this.abortControllers.get(deliveryId);
+    if (controller && !controller.signal.aborted) controller.abort();
+    this.abortControllers.delete(deliveryId);
+    this.emit(deliveryId, 'review.cancelled', {});
+    log('info', 'pr_review_cancelled', {
+      deliveryId,
+      repo: row.repo,
+      pr: row.pr_number,
+      priorStatus: row.status,
+      hadController: controller != null,
+    });
+
+    // Check-run close ownership: when a live controller exists, the aborted
+    // runReview closes the in-progress run with the *real* check-run id — which
+    // covers the race where this cancel landed while startCheckRun was still
+    // creating it (the row's check_run_id is still null here, so closing from it
+    // would orphan the real run and post a duplicate). Only close from the row
+    // for a true orphan (no controller: the running row's instance died), since
+    // nothing else will. Best-effort/token-gated; waitUntil keeps the DO alive.
+    if (!controller) {
+      this.ctx.waitUntil(this.closeCheckCancelledFromRow(row));
+    }
+    return json({ status: 'cancelled' }, 200);
   }
 
   private reviewRow(deliveryId: string): ReviewRow | null {
@@ -727,6 +807,46 @@ export class PrReviewJob {
       title: 'Superseded',
       summary: 'A newer commit arrived; this review was superseded.',
     });
+  }
+
+  /**
+   * Close a cancelled review's check-run as neutral, using the in-scope real
+   * check-run id from runReview (mirrors closeCheckSuperseded). Called from
+   * runReview's abort / after-terminal exits — the path that owns the close
+   * whenever a live controller existed, so the late-created in-progress run is
+   * patched with its real id rather than left hanging "Reviewing…".
+   */
+  private async closeCheckCancelled(
+    input: PrReviewStartInput,
+    token: string,
+    checkRunId: number | null,
+  ): Promise<void> {
+    await this.finalizeCheckRun(input.repoFullName, input.headSha, token, checkRunId, 'neutral', {
+      title: 'Review cancelled',
+      summary: 'This review was cancelled.',
+    });
+  }
+
+  /**
+   * Close a cancelled *orphan's* check-run from its persisted row — used only
+   * when the cancel found no live controller (the running row's instance had
+   * died), so runReview won't run to close it. Mints its own token; token-gated
+   * and best-effort throughout.
+   */
+  private async closeCheckCancelledFromRow(row: ReviewRow): Promise<void> {
+    const token = await this.mintInstallationToken(row.installation_id);
+    if (!token) return;
+    await this.finalizeCheckRun(
+      row.repo,
+      row.head_sha,
+      token,
+      row.check_run_id ?? null,
+      'neutral',
+      {
+        title: 'Review cancelled',
+        summary: 'This review was cancelled.',
+      },
+    );
   }
 
   /**
