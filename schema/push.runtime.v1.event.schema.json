@@ -720,6 +720,175 @@
           "type": "string"
         }
       }
+    },
+    "ContextCompacted": {
+      "type": "object",
+      "required": [
+        "preserveTurns",
+        "totalTurns",
+        "compactedMessages",
+        "removedCount",
+        "beforeTokens",
+        "afterTokens"
+      ],
+      "properties": {
+        "preserveTurns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "totalTurns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "compactedMessages": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "removedCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "beforeTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "afterTokens": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "SessionReverted": {
+      "type": "object",
+      "required": [
+        "turns",
+        "removedCount",
+        "totalTurns",
+        "remainingTurns",
+        "remainingMessages"
+      ],
+      "properties": {
+        "turns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "removedCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "totalTurns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "remainingTurns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "remainingMessages": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "SessionUnreverted": {
+      "type": "object",
+      "required": [
+        "restoredCount",
+        "totalMessages"
+      ],
+      "properties": {
+        "restoredCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "totalMessages": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "RunRecovered": {
+      "type": "object",
+      "required": [
+        "originalRunId",
+        "recoveryRunId",
+        "policy",
+        "markerAge"
+      ],
+      "properties": {
+        "originalRunId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recoveryRunId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "policy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "markerAge": {
+          "type": "number"
+        }
+      }
+    },
+    "RecoverySkipped": {
+      "type": "object",
+      "required": [
+        "originalRunId",
+        "reason",
+        "policy",
+        "markerAge"
+      ],
+      "properties": {
+        "originalRunId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "policy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "markerAge": {
+          "type": "number"
+        }
+      }
+    },
+    "DelegationInterrupted": {
+      "type": "object",
+      "required": [
+        "originalRunId",
+        "recoveryRunId",
+        "subagents",
+        "graphs"
+      ],
+      "properties": {
+        "originalRunId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recoveryRunId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "subagents": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "graphs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
     }
   },
   "allOf": [
@@ -1251,6 +1420,120 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/UserMessage"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "context_compacted"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/ContextCompacted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "session_reverted"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/SessionReverted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "session_unreverted"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/SessionUnreverted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "run_recovered"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/RunRecovered"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "recovery_skipped"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/RecoverySkipped"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "delegation_interrupted"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/DelegationInterrupted"
           }
         }
       }

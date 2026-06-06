@@ -42,12 +42,19 @@
  *     and restructuring them into a schema-driven pipeline is a
  *     larger refactor.
  *
- *   - Payload validation for daemon-specific events (`session_started`,
- *     `approval_required`, `error`, `run_complete`, `run_recovered`,
- *     `recovery_skipped`, `delegation_interrupted`, etc.). Those shapes
- *     live in `cli/pushd.ts` and are not shared with web — they're
- *     still evolving and codifying them now risks friction. A follow-up
- *     PR can promote the stable ones into schemas as they settle.
+ *   - Payload validation for the `RunEventInput` passthrough events the
+ *     run loop forwards through the daemon (`assistant.turn_start` /
+ *     `turn_end`, `job.started` / `completed` / `failed`,
+ *     `user.follow_up_queued` / `follow_up_steered`). Their shapes are
+ *     owned by `lib/run-events.ts` / `lib/runtime-contract.ts`, not the
+ *     daemon, and are validated at the envelope layer only for now —
+ *     promote them into per-type schemas as they settle.
+ *
+ *     (The daemon-owned lifecycle, session-mutation, and recovery events
+ *     — `session_started`, `approval_required`, `error`, `run_complete`,
+ *     `context_compacted`, `session_reverted`, `session_unreverted`,
+ *     `run_recovered`, `recovery_skipped`, `delegation_interrupted`, etc.
+ *     — DO have per-type schemas now; see `PAYLOAD_VALIDATORS`.)
  *
  *   - External schema libraries for *wire-envelope* validation. The
  *     hand-rolled validators here stay dependency-free and are simple
@@ -328,6 +335,54 @@ function expectOptionalNonNegativeInteger(
         message: `expected non-negative integer or omitted, got ${JSON.stringify(value)}`,
       };
     }
+  }
+  return null;
+}
+
+function expectNonNegativeInteger(
+  obj: Record<string, unknown>,
+  field: string,
+  basePath: string,
+): ValidationIssue | null {
+  if (!isFiniteNonNegativeInt(obj[field])) {
+    return {
+      path: `${basePath}.${field}`,
+      message: `expected non-negative integer, got ${JSON.stringify(obj[field])}`,
+    };
+  }
+  return null;
+}
+
+// Required finite number, but NOT constrained to non-negative — duration-style
+// fields (e.g. `markerAge = Date.now() - startedAt`) can legitimately go
+// negative under clock skew, and rejecting that would be a false-positive in
+// observe mode.
+function expectFiniteNumber(
+  obj: Record<string, unknown>,
+  field: string,
+  basePath: string,
+): ValidationIssue | null {
+  const value = obj[field];
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return {
+      path: `${basePath}.${field}`,
+      message: `expected finite number, got ${JSON.stringify(value)}`,
+    };
+  }
+  return null;
+}
+
+function expectStringArray(
+  obj: Record<string, unknown>,
+  field: string,
+  basePath: string,
+): ValidationIssue | null {
+  const value = obj[field];
+  if (!Array.isArray(value) || !value.every((s) => typeof s === 'string')) {
+    return {
+      path: `${basePath}.${field}`,
+      message: `expected array of strings, got ${JSON.stringify(value)}`,
+    };
   }
   return null;
 }
@@ -1092,6 +1147,102 @@ function validateUserMessage(payload: unknown, basePath: string): ValidationIssu
   return issues;
 }
 
+// ---------------------------------------------------------------------------
+// Session-mutation broadcasts + recovery/interruption events
+//
+// Shapes derived from the single emission site for each type in
+// `cli/pushd.ts`. The compaction/revert trio is live-broadcast; the recovery
+// trio is appended via `appendSessionEvent` (not live-broadcast) but reaches
+// clients on reconnect through the replay path, which runs the same validated
+// `emitEventWithDowngrade` fan-out — so a payload validator catches drift on
+// either path. All fields are required at their (single) emission site.
+// ---------------------------------------------------------------------------
+
+function validateAllNonNegativeIntegers(
+  payload: unknown,
+  basePath: string,
+  fields: readonly string[],
+): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  for (const field of fields) {
+    const issue = expectNonNegativeInteger(payload, field, basePath);
+    if (issue) issues.push(issue);
+  }
+  return issues;
+}
+
+function validateContextCompacted(payload: unknown, basePath: string): ValidationIssue[] {
+  return validateAllNonNegativeIntegers(payload, basePath, [
+    'preserveTurns',
+    'totalTurns',
+    'compactedMessages',
+    'removedCount',
+    'beforeTokens',
+    'afterTokens',
+  ]);
+}
+
+function validateSessionReverted(payload: unknown, basePath: string): ValidationIssue[] {
+  return validateAllNonNegativeIntegers(payload, basePath, [
+    'turns',
+    'removedCount',
+    'totalTurns',
+    'remainingTurns',
+    'remainingMessages',
+  ]);
+}
+
+function validateSessionUnreverted(payload: unknown, basePath: string): ValidationIssue[] {
+  return validateAllNonNegativeIntegers(payload, basePath, ['restoredCount', 'totalMessages']);
+}
+
+function validateRunRecovered(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  for (const field of ['originalRunId', 'recoveryRunId', 'policy']) {
+    const issue = expectNonEmptyString(payload, field, basePath);
+    if (issue) issues.push(issue);
+  }
+  const age = expectFiniteNumber(payload, 'markerAge', basePath);
+  if (age) issues.push(age);
+  return issues;
+}
+
+function validateRecoverySkipped(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  for (const field of ['originalRunId', 'reason', 'policy']) {
+    const issue = expectNonEmptyString(payload, field, basePath);
+    if (issue) issues.push(issue);
+  }
+  const age = expectFiniteNumber(payload, 'markerAge', basePath);
+  if (age) issues.push(age);
+  return issues;
+}
+
+function validateDelegationInterrupted(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  for (const field of ['originalRunId', 'recoveryRunId']) {
+    const issue = expectNonEmptyString(payload, field, basePath);
+    if (issue) issues.push(issue);
+  }
+  for (const field of ['subagents', 'graphs']) {
+    const issue = expectStringArray(payload, field, basePath);
+    if (issue) issues.push(issue);
+  }
+  return issues;
+}
+
 const PAYLOAD_VALIDATORS: Record<string, PayloadValidator> = {
   // Existing delegation + dev observability + state events.
   'assistant.prompt_snapshot': validateAssistantPromptSnapshot,
@@ -1125,6 +1276,16 @@ const PAYLOAD_VALIDATORS: Record<string, PayloadValidator> = {
   run_complete: validateRunComplete,
   session_started: validateSessionStarted,
   user_message: validateUserMessage,
+
+  // Session-mutation broadcasts + recovery/interruption events. The recovery
+  // trio is persisted-only but replayed through the validated fan-out on
+  // reconnect. Promotes these off this module's former non-goals list.
+  context_compacted: validateContextCompacted,
+  session_reverted: validateSessionReverted,
+  session_unreverted: validateSessionUnreverted,
+  run_recovered: validateRunRecovered,
+  recovery_skipped: validateRecoverySkipped,
+  delegation_interrupted: validateDelegationInterrupted,
 };
 
 /** The set of event types that have a per-payload schema in this module. */
@@ -1133,9 +1294,9 @@ export const SCHEMA_VALIDATED_EVENT_TYPES = new Set(Object.keys(PAYLOAD_VALIDATO
 /**
  * Validate a payload against the per-type schema. Returns issues if
  * the schema exists and the payload doesn't match. Returns an empty
- * array for event types we don't have schemas for (including
- * daemon-only events like `session_started` or `approval_required`) —
- * those are handled by envelope validation only.
+ * array for event types we don't have schemas for (the `RunEventInput`
+ * passthrough events — `job.*`, `user.follow_up_*`, `assistant.turn_*`)
+ * — those are handled by envelope validation only.
  */
 export function validateRunEventPayload(type: string, payload: unknown): ValidationIssue[] {
   const validator = PAYLOAD_VALIDATORS[type];
