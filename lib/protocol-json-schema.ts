@@ -289,6 +289,74 @@ const PAYLOAD_DEFS: Record<string, JsonSchemaNode> = {
     chars: uint(),
     preview: str(),
   }),
+
+  // Session-mutation broadcasts + recovery/interruption events (daemon-owned;
+  // see protocol-schema.ts). All fields required at their single emission site.
+  ContextCompacted: objectNode(
+    [
+      'preserveTurns',
+      'totalTurns',
+      'compactedMessages',
+      'removedCount',
+      'beforeTokens',
+      'afterTokens',
+    ],
+    {
+      preserveTurns: uint(),
+      totalTurns: uint(),
+      compactedMessages: uint(),
+      removedCount: uint(),
+      beforeTokens: uint(),
+      afterTokens: uint(),
+    },
+  ),
+
+  SessionReverted: objectNode(
+    ['turns', 'removedCount', 'totalTurns', 'remainingTurns', 'remainingMessages'],
+    {
+      turns: uint(),
+      removedCount: uint(),
+      totalTurns: uint(),
+      remainingTurns: uint(),
+      remainingMessages: uint(),
+    },
+  ),
+
+  SessionUnreverted: objectNode(['restoredCount', 'totalMessages'], {
+    restoredCount: uint(),
+    totalMessages: uint(),
+  }),
+
+  // `markerAge` is a duration (Date.now() - startedAt) — finite number, NOT
+  // constrained non-negative, since clock skew can make it go negative.
+  RunRecovered: objectNode(['originalRunId', 'recoveryRunId', 'policy', 'markerAge'], {
+    originalRunId: nestr(),
+    recoveryRunId: nestr(),
+    policy: nestr(),
+    markerAge: num(),
+  }),
+
+  RecoverySkipped: objectNode(['originalRunId', 'reason', 'policy', 'markerAge'], {
+    originalRunId: nestr(),
+    reason: nestr(),
+    policy: nestr(),
+    markerAge: num(),
+  }),
+
+  // subagents/graphs are arrays of objects (from collectOrphanedDelegations in
+  // cli/pushd.ts), NOT strings: { subagentId, agent } and { executionId }.
+  DelegationInterrupted: objectNode(['originalRunId', 'recoveryRunId', 'subagents', 'graphs'], {
+    originalRunId: nestr(),
+    recoveryRunId: nestr(),
+    subagents: {
+      type: 'array',
+      items: objectNode(['subagentId', 'agent'], { subagentId: nestr(), agent: nestr() }),
+    },
+    graphs: {
+      type: 'array',
+      items: objectNode(['executionId'], { executionId: nestr() }),
+    },
+  }),
 };
 
 /**
@@ -327,6 +395,12 @@ export const TYPE_TO_DEF: Record<string, string> = {
   run_complete: 'RunComplete',
   session_started: 'SessionStarted',
   user_message: 'UserMessage',
+  context_compacted: 'ContextCompacted',
+  session_reverted: 'SessionReverted',
+  session_unreverted: 'SessionUnreverted',
+  run_recovered: 'RunRecovered',
+  recovery_skipped: 'RecoverySkipped',
+  delegation_interrupted: 'DelegationInterrupted',
 };
 
 // ---------------------------------------------------------------------------

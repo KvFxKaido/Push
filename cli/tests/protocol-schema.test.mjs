@@ -592,6 +592,16 @@ describe('validateRunEventPayload — task_graph events', () => {
       'tool_result',
       'user_message',
       'warning',
+      // Session-mutation broadcasts + recovery/interruption events emitted
+      // by `cli/pushd.ts` (the latter persisted via `appendSessionEvent` and
+      // replayed through the validated fan-out on reconnect). Daemon-owned,
+      // so deliberately absent from `RunEventInput`.
+      'context_compacted',
+      'session_reverted',
+      'session_unreverted',
+      'run_recovered',
+      'recovery_skipped',
+      'delegation_interrupted',
     ]);
     const orphanValidators = [...SCHEMA_VALIDATED_EVENT_TYPES]
       .filter((t) => !allTypes.has(t) && !DAEMON_ONLY_VALIDATED_TYPES.has(t))
@@ -735,5 +745,153 @@ describe('assertValidEvent', () => {
       assert.match(err.message, /Full envelope:/);
       assert.match(err.message, /"seq":-5/);
     }
+  });
+});
+
+describe('validateRunEventPayload — session-mutation broadcasts', () => {
+  it('accepts a valid context_compacted payload', () => {
+    const issues = validateRunEventPayload('context_compacted', {
+      preserveTurns: 4,
+      totalTurns: 20,
+      compactedMessages: 12,
+      removedCount: 8,
+      beforeTokens: 50_000,
+      afterTokens: 12_000,
+    });
+    assert.deepEqual(issues, []);
+  });
+
+  it('rejects context_compacted with a non-integer count', () => {
+    const issues = validateRunEventPayload('context_compacted', {
+      preserveTurns: 4,
+      totalTurns: 20,
+      compactedMessages: 12,
+      removedCount: 8,
+      beforeTokens: 50_000,
+      afterTokens: 'lots',
+    });
+    assert.ok(issues.some((i) => i.path === 'payload.afterTokens'));
+  });
+
+  it('accepts a valid session_reverted payload', () => {
+    const issues = validateRunEventPayload('session_reverted', {
+      turns: 2,
+      removedCount: 6,
+      totalTurns: 10,
+      remainingTurns: 8,
+      remainingMessages: 24,
+    });
+    assert.deepEqual(issues, []);
+  });
+
+  it('rejects session_reverted missing remainingMessages', () => {
+    const issues = validateRunEventPayload('session_reverted', {
+      turns: 2,
+      removedCount: 6,
+      totalTurns: 10,
+      remainingTurns: 8,
+    });
+    assert.ok(issues.some((i) => i.path === 'payload.remainingMessages'));
+  });
+
+  it('accepts a valid session_unreverted payload', () => {
+    const issues = validateRunEventPayload('session_unreverted', {
+      restoredCount: 6,
+      totalMessages: 30,
+    });
+    assert.deepEqual(issues, []);
+  });
+});
+
+describe('validateRunEventPayload — recovery/interruption events', () => {
+  it('accepts a valid run_recovered payload', () => {
+    const issues = validateRunEventPayload('run_recovered', {
+      originalRunId: 'run_a',
+      recoveryRunId: 'run_b',
+      policy: 'on-failure',
+      markerAge: 42_000,
+    });
+    assert.deepEqual(issues, []);
+  });
+
+  it('accepts run_recovered with a negative markerAge (clock skew)', () => {
+    const issues = validateRunEventPayload('run_recovered', {
+      originalRunId: 'run_a',
+      recoveryRunId: 'run_b',
+      policy: 'always',
+      markerAge: -5,
+    });
+    assert.deepEqual(issues, []);
+  });
+
+  it('rejects run_recovered missing recoveryRunId', () => {
+    const issues = validateRunEventPayload('run_recovered', {
+      originalRunId: 'run_a',
+      policy: 'always',
+      markerAge: 0,
+    });
+    assert.ok(issues.some((i) => i.path === 'payload.recoveryRunId'));
+  });
+
+  it('accepts a valid recovery_skipped payload', () => {
+    const issues = validateRunEventPayload('recovery_skipped', {
+      originalRunId: 'run_a',
+      reason: 'policy=never',
+      policy: 'never',
+      markerAge: 1_000,
+    });
+    assert.deepEqual(issues, []);
+  });
+
+  it('rejects recovery_skipped with a non-string reason', () => {
+    const issues = validateRunEventPayload('recovery_skipped', {
+      originalRunId: 'run_a',
+      reason: 42,
+      policy: 'never',
+      markerAge: 1_000,
+    });
+    assert.ok(issues.some((i) => i.path === 'payload.reason'));
+  });
+
+  it('accepts delegation_interrupted with empty arrays', () => {
+    const issues = validateRunEventPayload('delegation_interrupted', {
+      originalRunId: 'run_a',
+      recoveryRunId: 'run_b',
+      subagents: [],
+      graphs: [],
+    });
+    assert.deepEqual(issues, []);
+  });
+
+  it('accepts delegation_interrupted with populated object arrays', () => {
+    // collectOrphanedDelegations yields { subagentId, agent } and
+    // { executionId } objects — NOT strings.
+    const issues = validateRunEventPayload('delegation_interrupted', {
+      originalRunId: 'run_a',
+      recoveryRunId: 'run_b',
+      subagents: [{ subagentId: 'sub_1', agent: 'coder' }],
+      graphs: [{ executionId: 'graph_1' }],
+    });
+    assert.deepEqual(issues, []);
+  });
+
+  it('rejects delegation_interrupted with a subagents element missing agent', () => {
+    const issues = validateRunEventPayload('delegation_interrupted', {
+      originalRunId: 'run_a',
+      recoveryRunId: 'run_b',
+      subagents: [{ subagentId: 'sub_1' }],
+      graphs: [],
+    });
+    assert.ok(issues.some((i) => i.path === 'payload.subagents[0].agent'));
+  });
+
+  it('rejects delegation_interrupted when subagents holds a non-object (old string shape)', () => {
+    const issues = validateRunEventPayload('delegation_interrupted', {
+      originalRunId: 'run_a',
+      recoveryRunId: 'run_b',
+      subagents: ['sub_1'],
+      graphs: [],
+    });
+    assert.ok(issues.some((i) => i.path === 'payload.subagents[0]'));
   });
 });
