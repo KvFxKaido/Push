@@ -565,4 +565,37 @@ describe('PrReviewJob orphan sweep', () => {
     await Promise.allSettled(mock.pending);
     expect(mock.alarms.length).toBeGreaterThan(0);
   });
+
+  it('alarm force-fails a live review that exceeds the wall-clock budget', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
+    let aborted = false;
+
+    __setPrReviewExecutorOverride(
+      'stuck',
+      (_input, _env, signal) =>
+        new Promise((_, reject) => {
+          signal.addEventListener('abort', () => {
+            aborted = true;
+            reject(new Error('aborted'));
+          });
+        }),
+    );
+
+    await do_.fetch(startRequest(startInput({ deliveryId: 'stuck' })));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const row = mock.reviews.get('stuck')!;
+    row.started_at = Date.now() - 16 * 60_000;
+
+    await do_.alarm();
+    await Promise.allSettled(mock.pending);
+
+    expect(aborted).toBe(true);
+    expect(mock.reviews.get('stuck')!.status).toBe('failed');
+    expect(mock.reviews.get('stuck')!.error_text).toContain('wall-clock budget');
+    const ev = mock.events.find((e) => e.delivery_id === 'stuck' && e.type === 'review.failed');
+    expect(JSON.parse(ev!.payload_json).errorType).toBe('timeout');
+  });
 });
