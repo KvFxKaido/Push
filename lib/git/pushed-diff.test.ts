@@ -56,12 +56,17 @@ describe('computePushedDiff', () => {
     expect(await computePushedDiff(exec)).toBe('D3');
   });
 
-  it('returns null when no base can be resolved (gate then fails open)', async () => {
+  it('falls back to the empty tree when the remote has no baseline (promote)', async () => {
     const exec = execFrom((args) => {
       if (args[0] === 'branch') return okRes('lonely');
-      return failRes(); // no upstream, no origin/branch, no origin/HEAD
+      if (args[0] === 'diff') {
+        // Scans the full tree against git's canonical empty-tree object.
+        expect(args[2]).toBe('4b825dc642cb6eb9a060e54bf8d69288fbee4904..HEAD');
+        return okRes('FULL TREE DIFF');
+      }
+      return failRes(); // no upstream, no origin/<branch>, no origin/HEAD
     });
-    expect(await computePushedDiff(exec)).toBeNull();
+    expect(await computePushedDiff(exec)).toBe('FULL TREE DIFF');
   });
 
   it('returns null when the diff command itself fails', async () => {

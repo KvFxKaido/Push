@@ -350,7 +350,7 @@ export function useChatCardActions({
             // already ran at the prepare step, so this approved commit needs no
             // gate; the backend shell-escapes the message and marks the
             // workspace mutated.
-            const pushGit = createSandboxPushGit(sandboxId);
+            const pushGit = createSandboxPushGit(sandboxId, { secretScan: true });
             // Non-blocking desync check: warn (don't block) if the sandbox HEAD
             // drifted from the branch Push tracks as active. PushGit only
             // verifies the invariant; any future enforcement is the caller's.
@@ -396,7 +396,12 @@ export function useChatCardActions({
             const pushResult = await pushGit.push();
 
             if (!pushResult.ok) {
+              // A secret-scan block reads cleanly on its own; a real push
+              // failure keeps the "Push failed:" prefix.
               const pushErrorDetail = pushResult.stderr || pushResult.stdout || 'Unknown error';
+              const errorText = pushResult.blocked
+                ? pushErrorDetail
+                : `Push failed: ${pushErrorDetail}`;
               updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
                 if (card.type !== 'commit-review') return card;
                 return {
@@ -404,7 +409,7 @@ export function useChatCardActions({
                   data: {
                     ...card.data,
                     status: 'error',
-                    error: `Push failed: ${pushErrorDetail}`,
+                    error: errorText,
                   } as CommitReviewCardData,
                 };
               });

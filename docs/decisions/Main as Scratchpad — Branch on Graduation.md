@@ -361,15 +361,17 @@ remote collision entirely but at the cost of cross-surface visibility.
      commits** — `lib/git/pushed-diff.ts`'s `computePushedDiff` resolves
      `base..HEAD` (upstream → `origin/<branch>` → merge-base with `origin/HEAD`)
      — *not* a working-tree preview, so a truncated diff or a secret already
-     sitting in an unpushed commit can't slip past (PR #802 review). Wired into
-     the web commit/push flow via `createSandboxPushGit(..., { secretScan: true })`.
-     Opt-out: `PUSH_SECRET_SCAN=0` (Node) / `VITE_PUSH_SECRET_SCAN=0` (web client),
-     `resolveSecretScanEnabled` (mirrors `resolveAuditorGateEnabled`).
-     **Remaining:** (i) route the model-invokable `push` tool (`handleSandboxPush`),
-     `promote_to_github`, and the card-action push through the same
-     `secretScan` option (the factory + `computePushedDiff` now make this a
-     one-line change each) — folded into the auto-push slice; until then the
-     model's *commit* path stays Auditor-gated. (ii) confirm
+     sitting in an unpushed commit can't slip past (PR #802 review). `computePushedDiff`
+     also falls back to the **empty tree** when the remote has no baseline (a
+     fresh/empty repo), so a first publish scans its whole tree rather than
+     skipping. **Wired into every push path** via
+     `createSandboxPushGit(..., { secretScan: true })`: the web commit/push flow
+     (`useCommitPush`), the model-invokable `push` tool (`handleSandboxPush`),
+     `promote_to_github`, the chat-card commit/push action, and `sandbox_save_draft`
+     (the one release path that skips the Auditor, so the deterministic scan is
+     its only gate) — closing the surface asymmetry (PR #803). Opt-out: `PUSH_SECRET_SCAN=0` (Node) /
+     `VITE_PUSH_SECRET_SCAN=0` (web client), `resolveSecretScanEnabled` (mirrors
+     `resolveAuditorGateEnabled`). **Remaining:** confirm
      the "semantically-dangerous AND must-be-caught-pre-push, beyond secrets"
      band is empty before retiring the model-Auditor.
    - *"Is this change dangerous" (semantic judgment)* → the **PR reviewers we

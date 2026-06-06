@@ -1286,6 +1286,35 @@ describe('executeSandboxToolCall -- sandbox_prepare_commit characterization', ()
   });
 });
 
+// The pre-push secret scan (`computePushedDiff`) issues two distinctive reads
+// (`@{upstream}` and `git 'diff' '--no-color'`) inside `PushGit.push()`. These
+// helpers let the push/promote/save_draft tests stay focused on the handlers'
+// own git commands: `mockExecScan` absorbs the scan reads (base resolves, clean
+// diff) while serving the handlers' results positionally, and `handlerExecCalls`
+// filters the scan reads out of call-count assertions.
+type DispatcherExecResult = { stdout?: string; stderr?: string; exitCode: number };
+function mockExecScan(handlerResults: DispatcherExecResult[]) {
+  const queue = handlerResults.map((r) => ({
+    stdout: '',
+    stderr: '',
+    truncated: false,
+    ...r,
+  }));
+  vi.mocked(sandboxClient.execInSandbox).mockImplementation(async (_id, cmd) => {
+    const c = String(cmd);
+    if (c.includes('@{upstream}'))
+      return { stdout: 'origin/main', stderr: '', exitCode: 0, truncated: false };
+    if (/ 'diff' '--no-color'/.test(c))
+      return { stdout: '', stderr: '', exitCode: 0, truncated: false };
+    return queue.shift() ?? { stdout: '', stderr: '', exitCode: 0, truncated: false };
+  });
+}
+const handlerExecCalls = () =>
+  vi.mocked(sandboxClient.execInSandbox).mock.calls.filter((c) => {
+    const cmd = String(c[1]);
+    return !cmd.includes('@{upstream}') && !/ 'diff' '--no-color'/.test(cmd);
+  });
+
 describe('executeSandboxToolCall -- sandbox_push', () => {
   beforeEach(() => {
     vi.mocked(sandboxClient.execInSandbox).mockReset();
@@ -1301,13 +1330,14 @@ describe('executeSandboxToolCall -- sandbox_push', () => {
 
     const result = await executeSandboxToolCall({ tool: 'sandbox_push', args: {} }, 'sb-1');
 
-    expect(sandboxClient.execInSandbox).toHaveBeenCalledTimes(1);
-    expect(sandboxClient.execInSandbox).toHaveBeenCalledWith(
+    // The real push is the last exec (the pre-push scan's reads precede it).
+    expect(sandboxClient.execInSandbox).toHaveBeenLastCalledWith(
       'sb-1',
       "git 'push' 'origin' 'HEAD'",
       undefined,
       { markWorkspaceMutated: true },
     );
+    expect(handlerExecCalls()).toHaveLength(1);
     expect(result.text).toBe('[Tool Result — sandbox_push]\nPushed successfully.');
     expect(result.card).toBeUndefined();
   });
@@ -1424,25 +1454,11 @@ describe('executeSandboxToolCall -- promote_to_github', () => {
   it('reports a push failure (non "no commits yet") with sanitized stderr and leaves pushed false', async () => {
     vi.mocked(createGitHubRepo).mockResolvedValue(makeCreatedRepo());
     vi.mocked(getActiveGitHubToken).mockReturnValue('gho_secret');
-    vi.mocked(sandboxClient.execInSandbox)
-      .mockResolvedValueOnce({
-        stdout: 'main',
-        stderr: '',
-        exitCode: 0,
-        truncated: false,
-      })
-      .mockResolvedValueOnce({
-        stdout: '',
-        stderr: '',
-        exitCode: 0,
-        truncated: false,
-      })
-      .mockResolvedValueOnce({
-        stdout: '',
-        stderr: 'fatal: unable to access token gho_secret (403)',
-        exitCode: 128,
-        truncated: false,
-      });
+    mockExecScan([
+      { stdout: 'main', exitCode: 0 }, // branch-detect
+      { exitCode: 0 }, // remote-config
+      { stderr: 'fatal: unable to access token gho_secret (403)', exitCode: 128 }, // push
+    ]);
 
     const result = await executeSandboxToolCall(
       { tool: 'promote_to_github', args: { repo_name: 'my-repo' } },
@@ -1458,25 +1474,11 @@ describe('executeSandboxToolCall -- promote_to_github', () => {
   it('reports a warning and returns pushed=false when the push fails due to no local commits yet', async () => {
     vi.mocked(createGitHubRepo).mockResolvedValue(makeCreatedRepo());
     vi.mocked(getActiveGitHubToken).mockReturnValue('gho_token');
-    vi.mocked(sandboxClient.execInSandbox)
-      .mockResolvedValueOnce({
-        stdout: 'main',
-        stderr: '',
-        exitCode: 0,
-        truncated: false,
-      })
-      .mockResolvedValueOnce({
-        stdout: '',
-        stderr: '',
-        exitCode: 0,
-        truncated: false,
-      })
-      .mockResolvedValueOnce({
-        stdout: '',
-        stderr: 'error: src refspec main does not match any',
-        exitCode: 1,
-        truncated: false,
-      });
+    mockExecScan([
+      { stdout: 'main', exitCode: 0 }, // branch-detect
+      { exitCode: 0 }, // remote-config
+      { stderr: 'error: src refspec main does not match any', exitCode: 1 }, // push
+    ]);
 
     const result = await executeSandboxToolCall(
       { tool: 'promote_to_github', args: { repo_name: 'my-repo' } },
@@ -1602,24 +1604,14 @@ describe('executeSandboxToolCall -- sandbox_save_draft', () => {
   it('runs checkout/stage/commit/push and returns branchSwitch on the auto-generated-branch path', async () => {
     const diff = 'diff --git a/x.ts b/x.ts\n+a\n';
     vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({ diff, truncated: false });
-    vi.mocked(sandboxClient.execInSandbox)
-      // git branch --show-current
-      .mockResolvedValueOnce({ stdout: 'main', stderr: '', exitCode: 0, truncated: false })
-      // git checkout -b draft/...
-      .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0, truncated: false })
-      // git add -A
-      .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0, truncated: false })
-      // git commit -m
-      .mockResolvedValueOnce({
-        stdout: '[draft/main-x abc1234] WIP: draft save',
-        stderr: '',
-        exitCode: 0,
-        truncated: false,
-      })
-      // git rev-parse --short HEAD (commit sha via plumbing)
-      .mockResolvedValueOnce({ stdout: 'abc1234', stderr: '', exitCode: 0, truncated: false })
-      // git push -u origin draft/...
-      .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+    mockExecScan([
+      { stdout: 'main', exitCode: 0 }, // git branch --show-current
+      { exitCode: 0 }, // git checkout -b draft/...
+      { exitCode: 0 }, // git add -A
+      { stdout: '[draft/main-x abc1234] WIP: draft save', exitCode: 0 }, // git commit -m
+      { stdout: 'abc1234', exitCode: 0 }, // git rev-parse --short HEAD
+      { exitCode: 0 }, // git push -u origin draft/...
+    ]);
 
     const result = await executeSandboxToolCall({ tool: 'sandbox_save_draft', args: {} }, 'sb-1');
 
@@ -1647,30 +1639,21 @@ describe('executeSandboxToolCall -- sandbox_save_draft', () => {
       diff: 'diff --git a/x.ts b/x.ts\n+a\n',
       truncated: false,
     });
-    vi.mocked(sandboxClient.execInSandbox)
-      .mockResolvedValueOnce({
-        stdout: 'draft/existing',
-        stderr: '',
-        exitCode: 0,
-        truncated: false,
-      })
-      .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0, truncated: false })
-      .mockResolvedValueOnce({
-        stdout: '[draft/existing def5678] WIP: draft save',
-        stderr: '',
-        exitCode: 0,
-        truncated: false,
-      })
-      // git rev-parse --short HEAD (commit sha via plumbing)
-      .mockResolvedValueOnce({ stdout: 'def5678', stderr: '', exitCode: 0, truncated: false })
-      .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+    mockExecScan([
+      { stdout: 'draft/existing', exitCode: 0 }, // branch --show-current
+      { exitCode: 0 }, // git add -A
+      { stdout: '[draft/existing def5678] WIP: draft save', exitCode: 0 }, // git commit
+      { stdout: 'def5678', exitCode: 0 }, // git rev-parse --short HEAD
+      { exitCode: 0 }, // git push
+    ]);
 
     const result = await executeSandboxToolCall({ tool: 'sandbox_save_draft', args: {} }, 'sb-1');
 
     expect(result.text).toContain('Draft saved to branch: draft/existing');
     expect(result.branchSwitch).toBeUndefined();
-    // 5 execs (no checkout): branch-detect, stage, commit, rev-parse (sha), push
-    expect(sandboxClient.execInSandbox).toHaveBeenCalledTimes(5);
+    // 5 handler execs (no checkout): branch-detect, stage, commit, rev-parse
+    // (sha), push — excluding the transparent pre-push scan reads.
+    expect(handlerExecCalls()).toHaveLength(5);
   });
 });
 

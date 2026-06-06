@@ -67,6 +67,7 @@ import {
   sanitizeGitOutput,
   shellEscape,
 } from './sandbox-tool-utils';
+import type { StructuredToolError } from '@/types';
 
 // ---------------------------------------------------------------------------
 // Handler context
@@ -387,10 +388,24 @@ export async function handleSandboxPush(
 ): Promise<ToolExecutionResult> {
   const pushResult = await createSandboxPushGit(ctx.sandboxId, {
     execFn: ctx.execInSandbox,
+    secretScan: true,
   }).push();
 
   if (!pushResult.ok) {
     const reason = pushResult.error || pushResult.stderr || pushResult.stdout || 'push failed';
+    // A deterministic secret-scan block (not a git/transport failure): tell the
+    // model why and that retrying as-is won't help — it must remove the secret.
+    if (pushResult.blocked) {
+      const err: StructuredToolError = {
+        type: 'GIT_GUARD_BLOCKED',
+        retryable: false,
+        message: pushResult.stderr || 'push blocked',
+      };
+      return {
+        text: formatStructuredError(err, `[Tool Error — sandbox_push]\n${pushResult.stderr}`),
+        structuredError: err,
+      };
+    }
     // exitCode -1, or a transport/gone error the adapter caught, means the
     // container is unreachable. Surface a structured error so the chat runtime
     // can trigger sandbox recovery — the pre-refactor path threw here and the
@@ -464,7 +479,20 @@ export async function handlePromoteToGithub(
 
   const pushResult = await createSandboxPushGit(ctx.sandboxId, {
     execFn: ctx.execInSandbox,
+    secretScan: true,
   }).push({ setUpstream: true, ref: branchName });
+
+  // A secret-scan block on the first publish: the repo exists but nothing was
+  // pushed. Surface it explicitly (sanitized) so the model removes the secret
+  // rather than retrying into the same wall.
+  if (pushResult.blocked) {
+    return {
+      text: `[Tool Error] Repo ${createdRepo.full_name} was created, but the push was blocked: ${sanitizeGitOutput(
+        pushResult.stderr || 'secret detected',
+        authToken,
+      )} Remove the credential(s) from the commit history, then retry.`,
+    };
+  }
 
   const rawPushError = `${pushResult.stderr}\n${pushResult.stdout}`.toLowerCase();
   const noCommitsYet =
@@ -532,8 +560,14 @@ export async function handleSaveDraft(
     };
   }
 
-  // Step 2: Get current branch (null → '' when detached / not a repo)
-  const pushGit = createSandboxPushGit(ctx.sandboxId, { execFn: ctx.execInSandbox });
+  // Step 2: Get current branch (null → '' when detached / not a repo).
+  // `secretScan` matters most here: save_draft is the one release path that
+  // skips the Auditor, so the deterministic pre-push scan is the only gate
+  // standing between a draft credential and origin.
+  const pushGit = createSandboxPushGit(ctx.sandboxId, {
+    execFn: ctx.execInSandbox,
+    secretScan: true,
+  });
   const currentBranch = (await pushGit.currentBranch()) ?? '';
 
   // Step 3: Determine draft branch name — must be a valid ref and start with
@@ -600,7 +634,9 @@ export async function handleSaveDraft(
     `${draftStats.filesChanged} file${draftStats.filesChanged !== 1 ? 's' : ''} changed, +${draftStats.additions} -${draftStats.deletions}`,
     pushOk
       ? 'Pushed to remote.'
-      : `Push failed: ${pushResult.stderr}. Use sandbox_push() to retry.`,
+      : pushResult.blocked
+        ? `Push blocked: ${pushResult.stderr} The draft is committed locally; remove the secret, then use sandbox_push() to retry.`
+        : `Push failed: ${pushResult.stderr}. Use sandbox_push() to retry.`,
   ];
 
   const draftCardData: DiffPreviewCardData = {
