@@ -294,9 +294,11 @@ export class PrReviewJob {
         byDeliveryId: input.deliveryId,
         pr: input.prNumber,
       });
-      // Close the superseded delivery's check-run so it doesn't hang
-      // "Reviewing…" — its own runReview returns early on abort without doing so.
-      this.ctx.waitUntil(this.finalizeSupersededCheck(row.delivery_id, input.installationId));
+      // The superseded delivery's own runReview closes its check-run on its
+      // abort/superseded exit (it always registered the controller and holds
+      // the check-run id by then) — so we deliberately do NOT touch the
+      // check-run here. Doing so raced startCheckRun and could both
+      // double-post and leave the late in-progress run hanging "Reviewing…".
     }
 
     this.ctx.storage.sql.exec(
@@ -340,6 +342,7 @@ export class PrReviewJob {
       const current = this.reviewRow(input.deliveryId);
       if (current?.status === 'superseded') {
         log('info', 'pr_review_completed_after_supersede', { deliveryId: input.deliveryId });
+        if (checkToken) await this.closeCheckSuperseded(input, checkToken, checkRunId);
         return;
       }
       this.ctx.storage.sql.exec(
@@ -409,6 +412,11 @@ export class PrReviewJob {
     } catch (err) {
       if (controller.signal.aborted) {
         log('info', 'pr_review_aborted', { deliveryId: input.deliveryId });
+        // We own this check-run (created at start, id held locally); close it so
+        // a superseded delivery doesn't leave it hanging "Reviewing…". By now
+        // startCheckRun has resolved, so checkRunId is set even if the abort
+        // landed mid-create.
+        if (checkToken) await this.closeCheckSuperseded(input, checkToken, checkRunId);
         return;
       }
       const message = err instanceof Error ? err.message : String(err);
@@ -508,7 +516,12 @@ export class PrReviewJob {
     }
   }
 
-  /** Best-effort: open the in-progress check-run and persist its id. */
+  /**
+   * Best-effort: open the in-progress check-run and return its id. The id is
+   * also persisted on the review row as a correlation handle (DO record ↔ the
+   * GitHub check-run) for debugging/observability; finalization itself uses the
+   * in-scope id returned here, not a DB read-back.
+   */
   private async startCheckRun(input: PrReviewStartInput, token: string): Promise<number | null> {
     try {
       const id = await createInProgressReviewCheckRun(
@@ -561,26 +574,20 @@ export class PrReviewJob {
   }
 
   /**
-   * A newer push coalesced this delivery; close its check-run so it doesn't hang
-   * "Reviewing…" forever. Runs in `waitUntil` from handleStart (the aborted
-   * review's own runReview returns early without touching the check-run).
+   * Close this delivery's own check-run as superseded. Called from runReview's
+   * abort/superseded exits (not from handleStart) so the run that opened the
+   * check is the one that closes it — avoiding the race where a not-yet-
+   * persisted id from an in-flight startCheckRun leaves a hanging "Reviewing…".
    */
-  private async finalizeSupersededCheck(deliveryId: string, installationId: string): Promise<void> {
-    const token = await this.mintInstallationToken(installationId);
-    if (!token) return;
-    const row = this.reviewRow(deliveryId);
-    if (!row) return;
-    await this.finalizeCheckRun(
-      row.repo,
-      row.head_sha,
-      token,
-      row.check_run_id ?? null,
-      'neutral',
-      {
-        title: 'Superseded',
-        summary: 'A newer commit arrived; this review was superseded.',
-      },
-    );
+  private async closeCheckSuperseded(
+    input: PrReviewStartInput,
+    token: string,
+    checkRunId: number | null,
+  ): Promise<void> {
+    await this.finalizeCheckRun(input.repoFullName, input.headSha, token, checkRunId, 'neutral', {
+      title: 'Superseded',
+      summary: 'A newer commit arrived; this review was superseded.',
+    });
   }
 }
 
