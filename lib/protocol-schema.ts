@@ -111,6 +111,36 @@ export function isStrictModeEnabled(): boolean {
   return raw === '1' || raw === 'true';
 }
 
+/**
+ * True unless `PUSH_PROTOCOL_OBSERVE=0` (or `false`) is set — i.e. ON by
+ * default in any Node context. Observe mode is the production counterpart to
+ * strict mode: the daemon's broadcast path validates every outbound envelope
+ * and emits a structured `protocol_drift_detected` log on failure, but does
+ * NOT throw — so a drifted envelope is surfaced to ops instead of being
+ * dropped for every attached client (fail-open, matching the secret-scan's
+ * "infra trouble fails open with structured logs" posture).
+ *
+ * Strict mode takes precedence: when `PUSH_PROTOCOL_STRICT` is on, the
+ * broadcast path throws and observe never runs, so CI still fails loud while
+ * prod stays fail-open. The envelope checks are ~8 comparisons plus a dict
+ * miss for non-delegation types, negligible against the per-event JSON
+ * serialize + WS send, so validating on the hot path costs effectively
+ * nothing — but `PUSH_PROTOCOL_OBSERVE=0` is the escape hatch if profiling
+ * ever says otherwise.
+ *
+ * Returns false where there is no `process` (browser): only the daemon
+ * broadcast path consults this, so it stays inert on the web surface. Reads
+ * `process.env` at call time via `globalThis` for the same browser-compat
+ * reason as {@link isStrictModeEnabled}.
+ */
+export function isProtocolObserveEnabled(): boolean {
+  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process
+    ?.env;
+  if (!env) return false;
+  const raw = env.PUSH_PROTOCOL_OBSERVE;
+  return raw !== '0' && raw !== 'false';
+}
+
 // ---------------------------------------------------------------------------
 // Envelope validation
 // ---------------------------------------------------------------------------
