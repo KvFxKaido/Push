@@ -56,6 +56,40 @@ Mandatory mappings:
 
 These encode the rules that a generic reviewer would miss. Weight them heavily.
 
+### Recurring defect classes
+
+Specific bug shapes that have slipped past review on this repo more than once —
+higher-yield than generic lint, and easy to miss without looking for them by
+name. (Mirrored from CLAUDE.md's "PR self-review pass"; keep the two in sync.)
+Kept first so it survives the reviewer-context size cap.
+
+- **HTTP status classification.** Every `if (status >= 400)` arm should enumerate
+  the cases (auth, rate-limit, not-found, validation) and map each to a sensible
+  `structuredError.type` / surface code. A catch-all that collapses everything to
+  "sandbox loss" or "unknown" is a bug.
+- **`await` in a loop.** Every `await` inside a `for`/`while` must prove it can
+  exit on terminal conditions (deadlines, abort signals, event-completion races),
+  not just the happy path. A naked `await promiseThatOnlyResolvesOnSuccess` is a
+  hang waiting to happen.
+- **Fire-and-forget promises.** `(async () => { … })()` and `fn().catch(() => {})`
+  swallow errors silently. The returned promise must be awaited somewhere, or the
+  failure surfaced via `warn()` / a structured log — not dropped.
+- **Silent return paths.** Any `return null` / `return` / `return false` a caller
+  can't distinguish from "still in progress" needs a structured log line in the
+  same change — one per branch, with paired event names (success ↔ failure ↔
+  cap-hit).
+- **Config-file secrets.** Scan new diffs in `wrangler.jsonc`, `*.yml`, `.env*`,
+  and `secrets/` for account IDs, slugs, tokens, or hardcoded URLs that belong in
+  the secret store / dashboard vars / `.dev.vars` — the public repo has leaked
+  these before.
+- **Error-formatting passthrough.** Upstream content (HTTP bodies, stderr, exec
+  output) must be wrapped/escaped, never rendered to a surface verbatim — past
+  regressions leaked raw upstream JSON/HTML into the UI.
+- **Auth / allowlist asymmetry.** When a change gates a security-sensitive
+  resource on one path, grep every other path that touches the same resource and
+  confirm the gate is symmetric. Trace at least one denied and one allowed path
+  end-to-end.
+
 ### Consult the canonical docs
 
 Push keeps two canonical references the diff should stay consistent with. Pull
@@ -148,39 +182,6 @@ their spec at "Draft". See `docs/decisions/README.md` for the label vocabulary.
    PR — tool-protocol drift via `cli/tests/daemon-integration.test.mjs`,
    event/envelope drift via `cli/tests/protocol-drift.test.mjs`. Extend
    `lib/capabilities.ts` for shared capability tables.
-
-### Recurring defect classes
-
-Specific bug shapes that have slipped past review on this repo more than once —
-higher-yield than generic lint, and easy to miss without looking for them by
-name. (Mirrored from CLAUDE.md's "PR self-review pass"; keep the two in sync.)
-
-- **HTTP status classification.** Every `if (status >= 400)` arm should enumerate
-  the cases (auth, rate-limit, not-found, validation) and map each to a sensible
-  `structuredError.type` / surface code. A catch-all that collapses everything to
-  "sandbox loss" or "unknown" is a bug.
-- **`await` in a loop.** Every `await` inside a `for`/`while` must prove it can
-  exit on terminal conditions (deadlines, abort signals, event-completion races),
-  not just the happy path. A naked `await promiseThatOnlyResolvesOnSuccess` is a
-  hang waiting to happen.
-- **Fire-and-forget promises.** `(async () => { … })()` and `fn().catch(() => {})`
-  swallow errors silently. The returned promise must be awaited somewhere, or the
-  failure surfaced via `warn()` / a structured log — not dropped.
-- **Silent return paths.** Any `return null` / `return` / `return false` a caller
-  can't distinguish from "still in progress" needs a structured log line in the
-  same change — one per branch, with paired event names (success ↔ failure ↔
-  cap-hit).
-- **Config-file secrets.** Scan new diffs in `wrangler.jsonc`, `*.yml`, `.env*`,
-  and `secrets/` for account IDs, slugs, tokens, or hardcoded URLs that belong in
-  the secret store / dashboard vars / `.dev.vars` — the public repo has leaked
-  these before.
-- **Error-formatting passthrough.** Upstream content (HTTP bodies, stderr, exec
-  output) must be wrapped/escaped, never rendered to a surface verbatim — past
-  regressions leaked raw upstream JSON/HTML into the UI.
-- **Auth / allowlist asymmetry.** When a change gates a security-sensitive
-  resource on one path, grep every other path that touches the same resource and
-  confirm the gate is symmetric. Trace at least one denied and one allowed path
-  end-to-end.
 
 ## Validation expectations
 
