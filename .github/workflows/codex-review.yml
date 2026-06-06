@@ -72,8 +72,13 @@ jobs:
     steps:
       - name: 'Checkout repository'
         # Full head checkout (not just the diff) so Codex can read source files
-        # and trace definitions — the whole point of using Codex here.
+        # and trace definitions — the whole point of using Codex here. Pin the
+        # PR head ref explicitly: on workflow_dispatch there is no PR context, so
+        # the default checkout would land on the default branch and Codex would
+        # trace the WRONG source.
         uses: 'actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8' # ratchet:actions/checkout@v6
+        with:
+          ref: 'refs/pull/${{ github.event.pull_request.number || github.event.inputs.pr_number }}/head'
 
       - name: 'Set up Node'
         uses: 'actions/setup-node@v4'
@@ -94,11 +99,20 @@ jobs:
           GH_ERROR_FILE=.codex/work/gh-error.txt
           if ! gh pr view "$PULL_REQUEST_NUMBER" \
               --repo "$REPOSITORY" \
-              --json title,body,headRefName,baseRefName,changedFiles,additions,deletions,author \
+              --json title,body,headRefName,baseRefName,changedFiles,additions,deletions,author,isCrossRepository \
               > .codex/work/pr-meta.json 2> "$GH_ERROR_FILE"; then
             echo "::error::Failed to load PR metadata for #$PULL_REQUEST_NUMBER"
             cat "$GH_ERROR_FILE"
             exit 1
+          fi
+          # Fork gate for the workflow_dispatch path: the job-level `if` only
+          # blocks forks on `pull_request` events, so a manual dispatch with a
+          # fork PR number would otherwise reach the credentialed, sandbox-
+          # bypassed Codex step. Refuse it here, before any secret is in scope.
+          if [ "$(jq -r '.isCrossRepository' .codex/work/pr-meta.json)" = "true" ]; then
+            echo "::warning::PR #$PULL_REQUEST_NUMBER is from a fork — refusing the credentialed Codex review."
+            echo "is_fork=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           gh pr diff "$PULL_REQUEST_NUMBER" \
             --repo "$REPOSITORY" \
@@ -184,7 +198,7 @@ jobs:
       - name: 'Run Codex analysis'
         id: 'codex'
         if: |-
-          steps.gather.outcome == 'success'
+          steps.gather.outcome == 'success' && steps.gather.outputs.is_fork != 'true'
         env:
           OPENAI_API_KEY: '${{ secrets.OPENAI_API_KEY }}'
           CODEX_AUTH_JSON: '${{ secrets.CODEX_AUTH_JSON }}'
@@ -227,13 +241,21 @@ jobs:
             --dangerously-bypass-approvals-and-sandbox \
             --output-last-message .codex/work/out.json \
             < .codex/work/prompt.md \
-            > .codex/work/codex-stdout.log 2>&1 || {
-              echo "::warning::codex exec exited non-zero; tail of log:"
-              tail -40 .codex/work/codex-stdout.log
-            }
+            > .codex/work/codex-stdout.log 2>&1
+          status=$?
+          # On any codex failure or empty output, skip gracefully — do NOT post
+          # the raw stdout log as a review (it would leak internal CI/error
+          # detail and read as garbage). A failed review just doesn't post.
+          if [ "$status" -ne 0 ]; then
+            echo "::warning::codex exec exited $status; skipping review (not posting logs). Tail:"
+            tail -40 .codex/work/codex-stdout.log
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ ! -s .codex/work/out.json ]; then
-            echo "::warning::Codex produced no final message; using stdout log as raw output"
-            cp .codex/work/codex-stdout.log .codex/work/out.json
+            echo "::warning::Codex produced no final message; skipping review."
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           # Strip a stray ```json fence if Codex wrapped the object despite the
           # strict instruction, so the JSON transform below has a clean shot.
@@ -242,7 +264,7 @@ jobs:
 
       - name: 'Post review to GitHub'
         if: |-
-          steps.gather.outcome == 'success' && steps.codex.outputs.skipped != 'true'
+          steps.gather.outcome == 'success' && steps.gather.outputs.is_fork != 'true' && steps.codex.outputs.skipped != 'true'
         # Parse Codex's JSON, build the GitHub Pull Request Review payload, POST.
         # Identical fallback logic to gemini-review.yml: non-JSON, schema
         # violation, or API rejection all fall back to a single raw comment, and
