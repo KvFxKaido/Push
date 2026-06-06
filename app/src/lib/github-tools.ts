@@ -1159,11 +1159,75 @@ export async function fetchPullRequestRefs(
 export type ReviewCheckConclusion = 'success' | 'failure' | 'neutral';
 
 /**
+ * The single check-run name the reviewer creates and updates in place. Shared
+ * across create/patch so a delivery's `in_progress` run becomes its terminal
+ * status rather than spawning a second check.
+ */
+export const REVIEW_CHECK_NAME = 'Push review';
+
+/**
+ * Start an `in_progress` "Push review" check-run on the head commit and return
+ * its id, so a later {@link finalizeReviewCheckRun} can update the same run in
+ * place. Gives every reviewed PR a visible "Reviewing…" status while the model
+ * runs, instead of silence until (or unless) a review posts.
+ */
+export async function createInProgressReviewCheckRun(
+  repo: string,
+  headSha: string,
+  output: { title: string; summary: string },
+  auth?: GitHubAuth,
+): Promise<number> {
+  const res = await githubFetch(
+    `https://api.github.com/repos/${repo}/check-runs`,
+    {
+      method: 'POST',
+      headers: { ...resolveHeaders(auth), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: REVIEW_CHECK_NAME,
+        head_sha: headSha,
+        status: 'in_progress',
+        output: { title: output.title, summary: output.summary },
+      }),
+    },
+    { retry: false },
+  );
+  if (!res.ok)
+    throw new Error(formatGitHubError(res.status, `start check run on ${repo}@${headSha}`));
+  const data = (await res.json()) as { id: number };
+  return data.id;
+}
+
+/** Patch an existing check-run to a terminal `completed` state in place. */
+export async function finalizeReviewCheckRun(
+  repo: string,
+  checkRunId: number,
+  conclusion: ReviewCheckConclusion,
+  output: { title: string; summary: string },
+  auth?: GitHubAuth,
+): Promise<void> {
+  const res = await githubFetch(
+    `https://api.github.com/repos/${repo}/check-runs/${checkRunId}`,
+    {
+      method: 'PATCH',
+      headers: { ...resolveHeaders(auth), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        status: 'completed',
+        conclusion,
+        output: { title: output.title, summary: output.summary },
+      }),
+    },
+    { retry: false },
+  );
+  if (!res.ok)
+    throw new Error(formatGitHubError(res.status, `patch check run ${checkRunId} on ${repo}`));
+}
+
+/**
  * Create a GitHub Checks API run reflecting an automated review's verdict, on the
- * reviewed commit. Used by the gating opt-in: `failure` when the review found a
- * blocking finding, else `success`. Requires the `checks: write` permission on
- * the installation token. Non-idempotent POST (not retried). Throws on failure
- * so the caller can log without aborting the already-posted advisory review.
+ * reviewed commit. Used for the terminal-direct path (no prior in-progress run to
+ * patch): `failure` when the review found a blocking finding, else `success`.
+ * Requires the `checks: write` permission. Non-idempotent POST (not retried).
+ * Throws on failure so the caller can log without aborting the posted review.
  */
 export async function createReviewCheckRun(
   repo: string,
@@ -1178,7 +1242,7 @@ export async function createReviewCheckRun(
       method: 'POST',
       headers: { ...resolveHeaders(auth), 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        name: 'Push review',
+        name: REVIEW_CHECK_NAME,
         head_sha: headSha,
         status: 'completed',
         conclusion,

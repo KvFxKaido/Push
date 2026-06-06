@@ -5,7 +5,7 @@
  * prove dedupe, coalescing, status, and the event log — not the network path.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReviewResult } from '@push/lib/provider-contract';
 import {
   PrReviewJob,
@@ -14,6 +14,35 @@ import {
   type PrReviewStartInput,
 } from './pr-review-job-do';
 import type { Env } from './worker-middleware';
+import {
+  createInProgressReviewCheckRun,
+  createReviewCheckRun,
+  finalizeReviewCheckRun,
+} from '@/lib/github-tools';
+
+// Hand back a fake installation token so the DO's check-run path activates;
+// without App creds in env it no-ops (which is what every other test relies on).
+vi.mock('./worker-infra', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>('./worker-infra');
+  return {
+    ...actual,
+    generateGitHubAppJWT: vi.fn(async () => 'jwt'),
+    exchangeForInstallationToken: vi.fn(async () => ({ token: 'tok' })),
+  };
+});
+
+// Spy the check-run GitHub calls (keep the rest of github-tools real). A
+// monotonic id lets the superseded vs completed checks be told apart.
+const { checkRunIdRef } = vi.hoisted(() => ({ checkRunIdRef: { current: 1 } }));
+vi.mock('@/lib/github-tools', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>('@/lib/github-tools');
+  return {
+    ...actual,
+    createInProgressReviewCheckRun: vi.fn(async () => checkRunIdRef.current++),
+    finalizeReviewCheckRun: vi.fn(async () => {}),
+    createReviewCheckRun: vi.fn(async () => {}),
+  };
+});
 
 interface ReviewRow {
   delivery_id: string;
@@ -32,6 +61,7 @@ interface ReviewRow {
   created_at: number;
   started_at: number | null;
   finished_at: number | null;
+  check_run_id: number | null;
 }
 
 function createMockCtx() {
@@ -98,6 +128,7 @@ function createMockCtx() {
         created_at,
         started_at: null,
         finished_at: null,
+        check_run_id: null,
       });
       return [];
     }
@@ -138,6 +169,10 @@ function createMockCtx() {
         error_text: p[0] as string,
         finished_at: p[1] as number,
       });
+      return [];
+    }
+    if (/^UPDATE review SET check_run_id = /i.test(sql)) {
+      setStatus(p[1] as string, { check_run_id: p[0] as number });
       return [];
     }
     throw new Error(`unhandled sql: ${sql}`);
@@ -362,5 +397,88 @@ describe('PrReviewJob', () => {
       startRequest(startInput({ repoFullName: '' as unknown as string })),
     );
     expect(res.status).toBe(400);
+  });
+});
+
+describe('PrReviewJob check-run status surface', () => {
+  // App creds present → the check-run lifecycle activates (token is mocked).
+  const APP_ENV = { GITHUB_APP_ID: 'app', GITHUB_APP_PRIVATE_KEY: 'key' } as unknown as Env;
+
+  beforeEach(() => {
+    checkRunIdRef.current = 1;
+    vi.mocked(createInProgressReviewCheckRun).mockClear();
+    vi.mocked(finalizeReviewCheckRun).mockClear();
+    vi.mocked(createReviewCheckRun).mockClear();
+  });
+
+  it('opens an in-progress check-run then finalizes it as success on a posted review', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
+    __setPrReviewExecutorOverride('d1', async () => ({
+      result: RESULT,
+      commentsPosted: 1,
+      posted: true,
+    }));
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd1' })));
+    await Promise.allSettled(mock.pending);
+
+    expect(createInProgressReviewCheckRun).toHaveBeenCalledTimes(1);
+    expect(createInProgressReviewCheckRun).toHaveBeenCalledWith(
+      'octo/repo',
+      'shaA',
+      expect.anything(),
+      expect.anything(),
+    );
+    // Same run patched in place to a terminal success conclusion.
+    const lastFinalize = vi.mocked(finalizeReviewCheckRun).mock.calls.at(-1);
+    expect(lastFinalize?.[1]).toBe(1); // the check-run id from the in-progress create
+    expect(lastFinalize?.[2]).toBe('success');
+  });
+
+  it('finalizes a head-advanced (posted:false) review as a neutral "skipped" check', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
+    __setPrReviewExecutorOverride('d1', async () => ({
+      result: RESULT,
+      commentsPosted: 0,
+      posted: false,
+    }));
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd1' })));
+    await Promise.allSettled(mock.pending);
+
+    const lastFinalize = vi.mocked(finalizeReviewCheckRun).mock.calls.at(-1);
+    expect(lastFinalize?.[2]).toBe('neutral');
+    expect(lastFinalize?.[3].title).toMatch(/skipped/i);
+  });
+
+  it('closes a superseded delivery’s check-run as neutral instead of leaving it hanging', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
+    // d1 blocks until aborted; d2 (newer head) supersedes it.
+    __setPrReviewExecutorOverride(
+      'd1',
+      (_input, _env, signal) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('aborted')));
+        }),
+    );
+    __setPrReviewExecutorOverride('d2', async () => ({
+      result: RESULT,
+      commentsPosted: 0,
+      posted: true,
+    }));
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd1', headSha: 'shaA' })));
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd2', headSha: 'shaB' })));
+    await Promise.allSettled(mock.pending);
+
+    // The superseded delivery's check is closed neutral — via patch if its
+    // in-progress run already existed, else a fresh terminal create (race-safe).
+    const neutralPatched = vi
+      .mocked(finalizeReviewCheckRun)
+      .mock.calls.some((c) => c[2] === 'neutral');
+    const neutralCreated = vi
+      .mocked(createReviewCheckRun)
+      .mock.calls.some((c) => c[2] === 'neutral');
+    expect(neutralPatched || neutralCreated).toBe(true);
   });
 });
