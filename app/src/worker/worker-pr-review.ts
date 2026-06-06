@@ -28,9 +28,11 @@ import {
   prReviewJobName,
 } from './github-webhook';
 import { fetchPullRequestRefs } from '@/lib/github-tools';
+import { isPrReviewEnabled, setPrReviewEnabled } from './pr-review-config';
 
 const LIST_PATH = '/api/pr-reviews';
 const RUN_PATH = '/api/pr-reviews/run';
+const CONFIG_PATH = '/api/pr-reviews/config';
 
 /**
  * owner/name with GitHub-valid characters only (alphanumeric, `.`, `_`, `-`).
@@ -47,11 +49,13 @@ function log(
   console.log(JSON.stringify({ level, event, ...ctx }));
 }
 
-export type PrReviewRouteAction = 'list' | 'run';
+export type PrReviewRouteAction = 'list' | 'run' | 'config-get' | 'config-set';
 
 export function matchPrReviewRoute(pathname: string, method: string): PrReviewRouteAction | null {
   if (pathname === LIST_PATH && method === 'GET') return 'list';
   if (pathname === RUN_PATH && method === 'POST') return 'run';
+  if (pathname === CONFIG_PATH && method === 'GET') return 'config-get';
+  if (pathname === CONFIG_PATH && method === 'POST') return 'config-set';
   return null;
 }
 
@@ -60,13 +64,6 @@ export async function handlePrReviewRoute(
   env: Env,
   action: PrReviewRouteAction,
 ): Promise<Response> {
-  if (!env.PrReviewJob) {
-    return json(
-      { error: 'NOT_CONFIGURED', message: 'PrReviewJob DO binding is not present.' },
-      503,
-    );
-  }
-
   const requestUrl = new URL(request.url);
   const originCheck = validateOrigin(request, requestUrl, env);
   if (!originCheck.ok) {
@@ -81,7 +78,46 @@ export async function handlePrReviewRoute(
     });
   }
 
+  // The reviewer on/off flag lives in KV, independent of the DO — handle it
+  // before the PrReviewJob binding check so the toggle works even if the DO
+  // weren't bound.
+  if (action === 'config-get') return handleConfigGet(env);
+  if (action === 'config-set') return handleConfigSet(request, env);
+
+  if (!env.PrReviewJob) {
+    return json(
+      { error: 'NOT_CONFIGURED', message: 'PrReviewJob DO binding is not present.' },
+      503,
+    );
+  }
+
   return action === 'run' ? handleRun(request, env, requestUrl) : handleList(env, requestUrl);
+}
+
+async function handleConfigGet(env: Env): Promise<Response> {
+  return json({ enabled: await isPrReviewEnabled(env) });
+}
+
+async function handleConfigSet(request: Request, env: Env): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'INVALID_BODY', message: 'POST body must be JSON.' }, 400);
+  }
+  const enabled = (body as { enabled?: unknown })?.enabled;
+  if (typeof enabled !== 'boolean') {
+    return json({ error: 'INVALID_REQUEST', message: 'enabled (boolean) is required.' }, 400);
+  }
+  const persisted = await setPrReviewEnabled(env, enabled);
+  if (!persisted) {
+    return json(
+      { error: 'NOT_CONFIGURED', message: 'Config store (SNAPSHOT_INDEX KV) is not bound.' },
+      503,
+    );
+  }
+  log('info', 'pr_review_config_set', { enabled });
+  return json({ enabled });
 }
 
 /** Validate an owner/name + positive-integer PR, returning them or null. */
