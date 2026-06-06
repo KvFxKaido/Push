@@ -12,17 +12,11 @@
  * implementations (role-memory-context + sandbox-client).
  */
 
-import type {
-  AIProviderType,
-  LlmMessage,
-  PushStream,
-  ReviewComment,
-  ReviewResult,
-} from './provider-contract.js';
+import type { AIProviderType, LlmMessage, PushStream, ReviewResult } from './provider-contract.js';
 import type { RunEventInput } from './runtime-contract.js';
 import type { ReviewerPromptContext } from './role-context.js';
 import { SystemPromptBuilder } from './system-prompt-builder.js';
-import { asRecord, iteratePushStreamText } from './stream-utils.js';
+import { iteratePushStreamText } from './stream-utils.js';
 import {
   parseDiffStats,
   parseDiffIntoFiles,
@@ -30,6 +24,8 @@ import {
   classifyFilePath,
 } from './diff-utils.js';
 import { SIZE_BUDGETS } from './size-budgets.js';
+import { parseStructured } from './structured-output.js';
+import { ReviewerResponseSchema } from './review-schema.js';
 
 const REVIEWER_TIMEOUT_MS = 90_000; // 90s — reviews can be thorough
 const REVIEWER_FILE_STRUCTURE_LIMIT = 2_000;
@@ -439,37 +435,27 @@ async function runReviewerCore(
     throw new Error(streamError.message);
   }
 
-  // Strip markdown fences if present
-  let jsonStr = accumulated.trim();
-  const fenceMatch = jsonStr.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
-  if (fenceMatch) jsonStr = fenceMatch[1].trim();
+  // Parse + validate the review JSON. parseStructured strips a fence, repairs
+  // common LLM garbling, and validates against the schema (whose defaults
+  // reproduce the inline coercion this site used to do). The reviewer is a
+  // hard parse: genuinely unparseable JSON throws, matching the prior naked
+  // `JSON.parse` behaviour, rather than silently returning an empty review.
+  const parseResult = parseStructured(accumulated, ReviewerResponseSchema);
 
-  const parsed = asRecord(JSON.parse(jsonStr));
+  if (!parseResult.ok) {
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        event: 'reviewer_parse_failed',
+        reason: parseResult.reason,
+        provider,
+        model: modelId || provider,
+      }),
+    );
+    throw new Error(`Reviewer returned an unparseable response (${parseResult.reason}).`);
+  }
 
-  const summary = typeof parsed?.summary === 'string' ? parsed.summary : 'No summary provided.';
-  const rawComments = Array.isArray(parsed?.comments) ? parsed.comments : [];
-
-  const comments: ReviewComment[] = rawComments
-    .map((c) => {
-      const rc = asRecord(c);
-      const sev = rc?.severity;
-      const severity: ReviewComment['severity'] =
-        sev === 'critical' || sev === 'warning' || sev === 'suggestion' || sev === 'note'
-          ? sev
-          : 'note';
-      const rawLine = rc?.line;
-      const line =
-        typeof rawLine === 'number' && Number.isInteger(rawLine) && rawLine > 0
-          ? rawLine
-          : undefined;
-      return {
-        file: typeof rc?.file === 'string' ? rc.file : 'unknown',
-        severity,
-        comment: typeof rc?.comment === 'string' ? rc.comment : '',
-        ...(line !== undefined && { line }),
-      };
-    })
-    .filter((c) => c.comment.length > 0);
+  const { summary, comments } = parseResult.data;
 
   return {
     summary,

@@ -21,14 +21,55 @@ import type { MemoryScope, RunEventInput } from './runtime-contract.js';
 import type { AuditorPromptContext } from './role-context.js';
 import { formatCoderState, type CoderWorkingMemory } from './working-memory.js';
 import { SIZE_BUDGETS } from './size-budgets.js';
-import { asRecord, iteratePushStreamText } from './stream-utils.js';
+import { iteratePushStreamText } from './stream-utils.js';
 import { parseDiffStats, chunkDiffByFile, classifyFilePath } from './diff-utils.js';
 import { detectAiCommentPatterns, formatCommentCheckBlock } from './comment-check.js';
 import type { AuditorFileContext } from './auditor-file-context.js';
 import { SystemPromptBuilder } from './system-prompt-builder.js';
 import { formatVerificationPolicyBlock, type VerificationPolicy } from './verification-policy.js';
+import { z } from 'zod';
+import { parseStructured } from './structured-output.js';
 
 const AUDITOR_TIMEOUT_MS = 90_000; // 90s — allows for richer file-context processing
+
+// ---------------------------------------------------------------------------
+// Response schemas — the single source of truth for the JSON shapes the
+// Auditor prompts ask the model to emit. Per-field `.catch` defaults encode
+// the same fallbacks the parse sites used to apply with inline `typeof`
+// guards, so validation is behaviour-preserving: a malformed-but-parseable
+// field falls back to its default rather than failing the whole parse.
+// ---------------------------------------------------------------------------
+
+/** One entry of the Auditor verdict's `risks` array. */
+const AuditRiskSchema = z
+  .object({
+    level: z.enum(['low', 'medium', 'high']).catch('medium'),
+    description: z.string().catch('Unknown risk'),
+  })
+  // A non-object element (the prompt occasionally yields a bare string)
+  // collapses to a generic medium risk, matching the old `asRecord(risk)`
+  // null-coalescing behaviour.
+  .catch({ level: 'medium', description: 'Unknown risk' });
+
+/** Commit-mode SAFE/UNSAFE verdict payload. */
+const AuditorVerdictSchema = z.object({
+  verdict: z.enum(['safe', 'unsafe']).catch('unsafe'),
+  summary: z.string().catch('No summary provided'),
+  risks: z.array(AuditRiskSchema).catch([]),
+});
+
+/** Evaluation-mode COMPLETE/INCOMPLETE completeness payload. */
+const AuditorEvaluationSchema = z.object({
+  verdict: z.enum(['complete', 'incomplete']).catch('incomplete'),
+  summary: z.string().catch('No summary provided'),
+  // Drop any non-string gaps rather than failing — mirrors the old
+  // `Array.isArray(...) ? filter(string) : []` coercion.
+  gaps: z.preprocess(
+    (v) => (Array.isArray(v) ? v.filter((g) => typeof g === 'string') : []),
+    z.array(z.string()),
+  ),
+  confidence: z.enum(['high', 'medium', 'low']).catch('low'),
+});
 
 export interface HookResult {
   exitCode: number;
@@ -395,50 +436,24 @@ async function runAuditorCore(
     };
   }
 
-  // Parse JSON from response
-  try {
-    // The response might have markdown code fences around it
-    let jsonStr = accumulated.trim();
-    const fenceMatch = jsonStr.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
-    if (fenceMatch) {
-      jsonStr = fenceMatch[1].trim();
-    }
+  // Parse + validate the verdict JSON. parseStructured strips a markdown
+  // fence, repairs common LLM garbling, and validates against the schema;
+  // the schema's per-field `.catch` defaults reproduce the inline coercion
+  // this site used to do by hand.
+  const parseResult = parseStructured(accumulated, AuditorVerdictSchema);
 
-    const parsed = asRecord(JSON.parse(jsonStr));
-    const parsedVerdict = parsed?.verdict;
-    const parsedSummary = parsed?.summary;
-    const parsedRisks = parsed?.risks;
-
-    const modelVerdict: 'safe' | 'unsafe' = parsedVerdict === 'safe' ? 'safe' : 'unsafe';
-    const summary = typeof parsedSummary === 'string' ? parsedSummary : 'No summary provided';
-    const risks = Array.isArray(parsedRisks)
-      ? parsedRisks.map((risk) => {
-          const r = asRecord(risk);
-          const level = r?.level;
-          const description = r?.description;
-          const riskLevel: 'low' | 'medium' | 'high' =
-            level === 'low' || level === 'medium' || level === 'high' ? level : 'medium';
-          return {
-            level: riskLevel,
-            description: typeof description === 'string' ? description : 'Unknown risk',
-          };
-        })
-      : [];
-
-    // Runtime-enforced gate: a non-zero pre-commit hook exit code forces
-    // UNSAFE regardless of the model's verdict (hookFailed/hookRisk computed
-    // above). The prompt instructs the model to do this, but enforcement must
-    // live in code — a non-cooperating model could otherwise return SAFE past
-    // a failing hook.
-    const verdict: 'safe' | 'unsafe' = hookFailed ? 'unsafe' : modelVerdict;
-    const cardRisks = [...hookRisk, ...risks];
-
-    return {
-      verdict,
-      card: { verdict, summary, risks: cardRisks, filesReviewed },
-    };
-  } catch {
-    // Invalid JSON → fail-safe to unsafe
+  if (!parseResult.ok) {
+    // Close the formerly-silent catch{} path with a structured log, then
+    // fail-safe to UNSAFE.
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        event: 'auditor_verdict_parse_failed',
+        reason: parseResult.reason,
+        provider: options.provider,
+        model: modelId,
+      }),
+    );
     return {
       verdict: 'unsafe',
       card: {
@@ -452,6 +467,21 @@ async function runAuditorCore(
       },
     };
   }
+
+  const { verdict: modelVerdict, summary, risks } = parseResult.data;
+
+  // Runtime-enforced gate: a non-zero pre-commit hook exit code forces
+  // UNSAFE regardless of the model's verdict (hookFailed/hookRisk computed
+  // above). The prompt instructs the model to do this, but enforcement must
+  // live in code — a non-cooperating model could otherwise return SAFE past
+  // a failing hook.
+  const verdict: 'safe' | 'unsafe' = hookFailed ? 'unsafe' : modelVerdict;
+  const cardRisks = [...hookRisk, ...risks];
+
+  return {
+    verdict,
+    card: { verdict, summary, risks: cardRisks, filesReviewed },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -623,33 +653,25 @@ export async function runAuditorEvaluation(
     return { ...INCOMPLETE_DEFAULT, summary: `Evaluation error: ${streamError.message}` };
   }
 
-  // Parse JSON response
-  try {
-    let jsonStr = accumulated.trim();
-    const fenceMatch = jsonStr.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
-    if (fenceMatch) {
-      jsonStr = fenceMatch[1].trim();
-    }
+  // Parse + validate the evaluation JSON (schema `.catch` defaults mirror the
+  // inline coercion this site used to do).
+  const parseResult = parseStructured(accumulated, AuditorEvaluationSchema);
 
-    const parsed = asRecord(JSON.parse(jsonStr));
-    const verdict: 'complete' | 'incomplete' =
-      parsed?.verdict === 'complete' ? 'complete' : 'incomplete';
-    const summary = typeof parsed?.summary === 'string' ? parsed.summary : 'No summary provided';
-    const gaps = Array.isArray(parsed?.gaps)
-      ? (parsed.gaps as unknown[]).filter((g): g is string => typeof g === 'string')
-      : [];
-    const confidence: 'high' | 'medium' | 'low' =
-      parsed?.confidence === 'high' ||
-      parsed?.confidence === 'medium' ||
-      parsed?.confidence === 'low'
-        ? parsed.confidence
-        : 'low';
-
-    return { verdict, summary, gaps, confidence };
-  } catch {
+  if (!parseResult.ok) {
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        event: 'auditor_evaluation_parse_failed',
+        reason: parseResult.reason,
+        provider: options.provider,
+        model: modelId,
+      }),
+    );
     return {
       ...INCOMPLETE_DEFAULT,
       summary: 'Evaluator returned invalid response. Defaulting to incomplete.',
     };
   }
+
+  return parseResult.data;
 }

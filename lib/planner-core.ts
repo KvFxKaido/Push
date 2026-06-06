@@ -8,8 +8,10 @@
  */
 
 import type { AIProviderType, LlmMessage, PushStream } from './provider-contract.js';
-import { asRecord, iteratePushStreamText } from './stream-utils.js';
+import { iteratePushStreamText } from './stream-utils.js';
 import { formatUserGoalBlock, type UserGoalAnchor } from './user-goal-anchor.ts';
+import { z } from 'zod';
+import { parseStructured } from './structured-output.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -169,56 +171,81 @@ export async function runPlannerCore(
 // Parsing
 // ---------------------------------------------------------------------------
 
-export function parsePlannerResponse(raw: string): PlannerFeatureList | null {
-  try {
-    let jsonStr = raw.trim();
-    const fenceMatch = jsonStr.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
-    if (fenceMatch) {
-      jsonStr = fenceMatch[1].trim();
+// ---------------------------------------------------------------------------
+// Response schema — single source of truth for the JSON the Planner prompt
+// asks the model to emit. The per-feature object requires `id` + `description`
+// (a feature missing either is dropped, not fatal); the optional fields are
+// shaped in a transform that omits absent keys and filters non-string array
+// members, exactly as the old hand-rolled mapping did.
+// ---------------------------------------------------------------------------
+
+const PlannerFeatureSchema = z
+  .object({
+    id: z.string(),
+    description: z.string(),
+    // Typed as optional unknown so an absent or malformed optional field never
+    // fails the feature; the transform below applies the same coercion the old
+    // hand-rolled mapping did.
+    files: z.unknown().optional(),
+    verifyCommand: z.unknown().optional(),
+    dependsOn: z.unknown().optional(),
+    addresses: z.unknown().optional(),
+  })
+  .transform((f): PlannerFeature => {
+    const feature: PlannerFeature = { id: f.id, description: f.description };
+    if (Array.isArray(f.files)) {
+      feature.files = f.files.filter((v): v is string => typeof v === 'string');
     }
+    if (typeof f.verifyCommand === 'string') {
+      feature.verifyCommand = f.verifyCommand;
+    }
+    if (Array.isArray(f.dependsOn)) {
+      feature.dependsOn = f.dependsOn.filter((v): v is string => typeof v === 'string');
+    }
+    if (typeof f.addresses === 'string' && f.addresses.trim()) {
+      feature.addresses = f.addresses.trim();
+    }
+    return feature;
+  });
 
-    const parsed = asRecord(JSON.parse(jsonStr));
-    if (!parsed) return null;
+const PlannerFeatureListSchema = z.object({
+  approach: z.string().catch(''),
+  // Drop any element that isn't a valid feature (missing id/description),
+  // mirroring the old `.map(...).filter(f => f !== null)`.
+  features: z
+    .array(z.unknown())
+    .catch([])
+    .transform((arr) =>
+      arr.flatMap((f) => {
+        const r = PlannerFeatureSchema.safeParse(f);
+        return r.success ? [r.data] : [];
+      }),
+    ),
+});
 
-    const approach = typeof parsed.approach === 'string' ? parsed.approach : '';
-    const rawFeatures = Array.isArray(parsed.features) ? parsed.features : [];
-
-    const features: PlannerFeature[] = rawFeatures
-      .map((f) => {
-        const feat = asRecord(f);
-        if (!feat || typeof feat.id !== 'string' || typeof feat.description !== 'string')
-          return null;
-        const feature: PlannerFeature = {
-          id: feat.id,
-          description: feat.description,
-        };
-        if (Array.isArray(feat.files)) {
-          feature.files = (feat.files as unknown[]).filter(
-            (v): v is string => typeof v === 'string',
-          );
-        }
-        if (typeof feat.verifyCommand === 'string') {
-          feature.verifyCommand = feat.verifyCommand;
-        }
-        if (Array.isArray(feat.dependsOn)) {
-          feature.dependsOn = (feat.dependsOn as unknown[]).filter(
-            (v): v is string => typeof v === 'string',
-          );
-        }
-        if (typeof feat.addresses === 'string' && feat.addresses.trim()) {
-          feature.addresses = feat.addresses.trim();
-        }
-        return feature;
-      })
-      .filter((f): f is PlannerFeature => f !== null);
-
-    if (features.length === 0) return null;
-
-    return { approach, features };
-  } catch {
-    console.warn('[Planner] Failed to parse response');
+export function parsePlannerResponse(raw: string): PlannerFeatureList | null {
+  const parseResult = parseStructured(raw, PlannerFeatureListSchema);
+  if (!parseResult.ok) {
+    // Fail-open: callers proceed without a plan. Log the branch so a
+    // persistent planner-format regression is visible to ops rather than
+    // silently degrading to the Coder's internal planning. stderr (console.warn)
+    // because the CLI's headless `--json` mode reserves stdout for the single
+    // machine-readable result.
+    console.warn(
+      JSON.stringify({ level: 'warn', event: 'planner_parse_failed', reason: parseResult.reason }),
+    );
     return null;
   }
+
+  const plan = parseResult.data;
+  if (plan.features.length === 0) {
+    // Parsed cleanly but produced no usable features — a distinct, formerly
+    // silent fail-open path that callers can't tell from a parse error.
+    console.warn(JSON.stringify({ level: 'warn', event: 'planner_no_features' }));
+    return null;
+  }
+
+  return plan;
 }
 
 // ---------------------------------------------------------------------------

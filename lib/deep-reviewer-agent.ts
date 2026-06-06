@@ -22,7 +22,6 @@ import type {
   AIProviderType,
   LlmMessage,
   PushStream,
-  ReviewComment,
   ReviewResult,
   StreamUsage,
 } from './provider-contract.js';
@@ -30,7 +29,9 @@ import type { ReviewerOptions } from './reviewer-agent.js';
 import { annotateDiffWithLineNumbers, REVIEWER_CRITERIA_BLOCK } from './reviewer-agent.js';
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
 import { parseDiffStats, chunkDiffByFile, classifyFilePath } from './diff-utils.js';
-import { asRecord, iteratePushStreamText } from './stream-utils.js';
+import { iteratePushStreamText } from './stream-utils.js';
+import { parseStructured } from './structured-output.js';
+import { ReviewerResponseSchema } from './review-schema.js';
 import { getToolPublicName, getToolPublicNames } from './tool-registry.js';
 import { detectUnimplementedToolCall, diagnoseToolCallFailure } from './tool-call-diagnosis.js';
 import {
@@ -360,32 +361,25 @@ function parseReviewResult(
   coverage: Pick<ReviewResult, 'filesReviewed' | 'totalFiles' | 'truncated'>,
   usage?: StreamUsage,
 ): ReviewResult {
-  const parsed = asRecord(JSON.parse(jsonStr));
+  // Shares the canonical ReviewerResponseSchema with runReviewer (one source
+  // of truth for the review payload shape). Kept as a hard parse: an
+  // unparseable response throws, matching the prior naked `JSON.parse` — the
+  // callers wrap this in try/catch and fall back to a neutral review.
+  const parseResult = parseStructured(jsonStr, ReviewerResponseSchema);
+  if (!parseResult.ok) {
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        event: 'deep_reviewer_parse_failed',
+        reason: parseResult.reason,
+        provider,
+        model: modelId || provider,
+      }),
+    );
+    throw new Error(`Deep reviewer returned an unparseable response (${parseResult.reason}).`);
+  }
 
-  const summary = typeof parsed?.summary === 'string' ? parsed.summary : 'No summary provided.';
-  const rawComments = Array.isArray(parsed?.comments) ? parsed.comments : [];
-
-  const comments: ReviewComment[] = rawComments
-    .map((c) => {
-      const rc = asRecord(c);
-      const sev = rc?.severity;
-      const severity: ReviewComment['severity'] =
-        sev === 'critical' || sev === 'warning' || sev === 'suggestion' || sev === 'note'
-          ? sev
-          : 'note';
-      const rawLine = rc?.line;
-      const line =
-        typeof rawLine === 'number' && Number.isInteger(rawLine) && rawLine > 0
-          ? rawLine
-          : undefined;
-      return {
-        file: typeof rc?.file === 'string' ? rc.file : 'unknown',
-        severity,
-        comment: typeof rc?.comment === 'string' ? rc.comment : '',
-        ...(line !== undefined && { line }),
-      };
-    })
-    .filter((c) => c.comment.length > 0);
+  const { summary, comments } = parseResult.data;
 
   return {
     summary,

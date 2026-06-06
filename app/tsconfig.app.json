@@ -10,7 +10,11 @@
 
     "paths": {
       "@/*": ["./src/*"],
-      "@push/lib/*": ["../lib/*"]
+      "@push/lib/*": ["../lib/*"],
+      // Shared lib/ modules import `zod` as a bare specifier; without this
+      // they resolve up to the root node_modules (not installed for the app
+      // build). Pin it to the app's own copy.
+      "zod": ["./node_modules/zod"]
     },
     /* Bundler mode */
     "moduleResolution": "bundler",
