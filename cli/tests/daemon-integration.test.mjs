@@ -20,6 +20,7 @@ import {
   collectOrphanedDelegations,
   formatDelegationInterruptedNote,
   broadcastEvent,
+  emitEventWithDowngrade,
   wrapCliDetectAllToolCalls,
   makeDaemonCoderToolExec,
   makeDaemonExplorerToolExec,
@@ -6507,6 +6508,57 @@ describe('broadcastEvent strict-mode schema enforcement', () => {
   it('is a true silent no-op when both strict and observe are disabled', () => {
     const drift = broadcastAndCaptureDrift({ strict: undefined, observe: '0' });
     assert.equal(drift, undefined, 'expected no drift log when observe is disabled');
+  });
+
+  it('validates the original event on the replay path (emitEventWithDowngrade)', () => {
+    // Persisted-but-not-live-broadcast events (the recovery trio) reach a
+    // reconnecting client only through emitEventWithDowngrade. Its direct-emit
+    // branch must still validate — and stay fail-open (emit anyway).
+    const prevStrict = process.env.PUSH_PROTOCOL_STRICT;
+    const prevObserve = process.env.PUSH_PROTOCOL_OBSERVE;
+    delete process.env.PUSH_PROTOCOL_STRICT;
+    delete process.env.PUSH_PROTOCOL_OBSERVE;
+    const logged = [];
+    const origLog = console.log;
+    console.log = (line) => logged.push(line);
+    let emitted = 0;
+    try {
+      assert.doesNotThrow(() =>
+        emitEventWithDowngrade(
+          {
+            v: PROTOCOL_VERSION,
+            kind: 'event',
+            sessionId: SESSION_ID,
+            seq: 3,
+            ts: Date.now(),
+            type: 'run_recovered',
+            payload: { originalRunId: 'run_a' }, // missing recoveryRunId/policy/markerAge
+          },
+          () => {
+            emitted += 1;
+          },
+          new Set(),
+        ),
+      );
+    } finally {
+      console.log = origLog;
+      if (prevStrict === undefined) delete process.env.PUSH_PROTOCOL_STRICT;
+      else process.env.PUSH_PROTOCOL_STRICT = prevStrict;
+      if (prevObserve === undefined) delete process.env.PUSH_PROTOCOL_OBSERVE;
+      else process.env.PUSH_PROTOCOL_OBSERVE = prevObserve;
+    }
+    const drift = logged
+      .map((l) => {
+        try {
+          return JSON.parse(l);
+        } catch {
+          return null;
+        }
+      })
+      .find((o) => o && o.event === 'protocol_drift_detected');
+    assert.ok(drift, 'expected replay-path validation to log drift');
+    assert.equal(drift.type, 'run_recovered');
+    assert.equal(emitted, 1, 'event should still be emitted (fail-open)');
   });
 
   it('lets a valid event through when strict mode is on (no listeners)', () => {

@@ -863,23 +863,35 @@ describe('validateRunEventPayload — recovery/interruption events', () => {
     assert.deepEqual(issues, []);
   });
 
-  it('accepts delegation_interrupted with populated string arrays', () => {
+  it('accepts delegation_interrupted with populated object arrays', () => {
+    // collectOrphanedDelegations yields { subagentId, agent } and
+    // { executionId } objects — NOT strings.
     const issues = validateRunEventPayload('delegation_interrupted', {
       originalRunId: 'run_a',
       recoveryRunId: 'run_b',
-      subagents: ['sub_1', 'sub_2'],
-      graphs: ['graph_1'],
+      subagents: [{ subagentId: 'sub_1', agent: 'coder' }],
+      graphs: [{ executionId: 'graph_1' }],
     });
     assert.deepEqual(issues, []);
   });
 
-  it('rejects delegation_interrupted with a non-string array element', () => {
+  it('rejects delegation_interrupted with a subagents element missing agent', () => {
     const issues = validateRunEventPayload('delegation_interrupted', {
       originalRunId: 'run_a',
       recoveryRunId: 'run_b',
-      subagents: ['sub_1', 99],
+      subagents: [{ subagentId: 'sub_1' }],
       graphs: [],
     });
-    assert.ok(issues.some((i) => i.path === 'payload.subagents'));
+    assert.ok(issues.some((i) => i.path === 'payload.subagents[0].agent'));
+  });
+
+  it('rejects delegation_interrupted when subagents holds a non-object (old string shape)', () => {
+    const issues = validateRunEventPayload('delegation_interrupted', {
+      originalRunId: 'run_a',
+      recoveryRunId: 'run_b',
+      subagents: ['sub_1'],
+      graphs: [],
+    });
+    assert.ok(issues.some((i) => i.path === 'payload.subagents[0]'));
   });
 });

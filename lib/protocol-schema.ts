@@ -372,19 +372,34 @@ function expectFiniteNumber(
   return null;
 }
 
-function expectStringArray(
+// Validate that `obj[field]` is an array of plain objects, each carrying the
+// given required non-empty-string keys. Element index is included in the path
+// so a drift log points at the exact bad entry.
+function expectObjectArray(
   obj: Record<string, unknown>,
   field: string,
   basePath: string,
-): ValidationIssue | null {
+  requiredStringKeys: readonly string[],
+): ValidationIssue[] {
   const value = obj[field];
-  if (!Array.isArray(value) || !value.every((s) => typeof s === 'string')) {
-    return {
-      path: `${basePath}.${field}`,
-      message: `expected array of strings, got ${JSON.stringify(value)}`,
-    };
+  if (!Array.isArray(value)) {
+    return [
+      { path: `${basePath}.${field}`, message: `expected array, got ${JSON.stringify(value)}` },
+    ];
   }
-  return null;
+  const issues: ValidationIssue[] = [];
+  value.forEach((element, index) => {
+    const elementPath = `${basePath}.${field}[${index}]`;
+    if (!isPlainObject(element)) {
+      issues.push({ path: elementPath, message: `expected plain object, got ${typeof element}` });
+      return;
+    }
+    for (const key of requiredStringKeys) {
+      const issue = expectNonEmptyString(element, key, elementPath);
+      if (issue) issues.push(issue);
+    }
+  });
+  return issues;
 }
 
 function expectAgentValue(
@@ -1236,10 +1251,10 @@ function validateDelegationInterrupted(payload: unknown, basePath: string): Vali
     const issue = expectNonEmptyString(payload, field, basePath);
     if (issue) issues.push(issue);
   }
-  for (const field of ['subagents', 'graphs']) {
-    const issue = expectStringArray(payload, field, basePath);
-    if (issue) issues.push(issue);
-  }
+  // collectOrphanedDelegations (cli/pushd.ts) returns objects, not strings:
+  // subagents: Array<{ subagentId, agent }>, graphs: Array<{ executionId }>.
+  issues.push(...expectObjectArray(payload, 'subagents', basePath, ['subagentId', 'agent']));
+  issues.push(...expectObjectArray(payload, 'graphs', basePath, ['executionId']));
   return issues;
 }
 

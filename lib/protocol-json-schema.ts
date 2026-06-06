@@ -343,11 +343,19 @@ const PAYLOAD_DEFS: Record<string, JsonSchemaNode> = {
     markerAge: num(),
   }),
 
+  // subagents/graphs are arrays of objects (from collectOrphanedDelegations in
+  // cli/pushd.ts), NOT strings: { subagentId, agent } and { executionId }.
   DelegationInterrupted: objectNode(['originalRunId', 'recoveryRunId', 'subagents', 'graphs'], {
     originalRunId: nestr(),
     recoveryRunId: nestr(),
-    subagents: { type: 'array', items: str() },
-    graphs: { type: 'array', items: str() },
+    subagents: {
+      type: 'array',
+      items: objectNode(['subagentId', 'agent'], { subagentId: nestr(), agent: nestr() }),
+    },
+    graphs: {
+      type: 'array',
+      items: objectNode(['executionId'], { executionId: nestr() }),
+    },
   }),
 };
 

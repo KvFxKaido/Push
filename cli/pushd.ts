@@ -1197,7 +1197,13 @@ export function broadcastEvent(sessionId, event) {
  * `sessionClients`. Callers that track capabilities as arrays should
  * wrap in `new Set(arr)` before calling.
  */
-function emitEventWithDowngrade(event, emitFn, capabilities) {
+export function emitEventWithDowngrade(event, emitFn, capabilities) {
+  // Validate the original envelope on the replay path too — this is the only
+  // path a reconnecting client sees persisted-but-not-live-broadcast events
+  // (the recovery trio), and the direct-emit branch below would otherwise skip
+  // it. Mirrors broadcastEvent's top-of-function check. The synth branch
+  // additionally validates each downgraded shadow.
+  checkOutboundEvent(event);
   const isDelegation = isV2DelegationEvent(event.type);
   if (!isDelegation || capabilities.has(EVENT_V2)) {
     try {

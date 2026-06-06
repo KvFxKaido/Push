@@ -879,13 +879,36 @@
         "subagents": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "object",
+            "required": [
+              "subagentId",
+              "agent"
+            ],
+            "properties": {
+              "subagentId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "agent": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
           }
         },
         "graphs": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "object",
+            "required": [
+              "executionId"
+            ],
+            "properties": {
+              "executionId": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
           }
         }
       }
