@@ -17,6 +17,13 @@
  * Auditor SAFE gate is a real safety check that always produces the card,
  * even in Full Auto.
  *
+ * Auto-approval is deliberately scoped to the active chat: `handleCardAction`
+ * itself resolves `chatId` from the focused conversation, so dispatching for a
+ * background chat would commit against the wrong context. It also only ever
+ * approves a commit that became pending *after* Full Auto was already active
+ * (see `planAutoApprovals`), so toggling modes can't retroactively push a
+ * commit the user left unapproved under Supervised/Autonomous.
+ *
  * This is the owning coordinator for the behavior — kept out of
  * `useChat.ts` (which is `max-lines`-guarded) per the "name the
  * coordinator's home first" rule.
@@ -60,28 +67,77 @@ interface FullAutoCommitApprovalArgs {
   handleCardAction: (action: CardAction) => void | Promise<void>;
 }
 
+export interface AutoApprovalPlan {
+  /** Cards to auto-approve now (dispatch `commit-approve`). */
+  approve: PendingCommitApproval[];
+  /** Cards to record as seen without approving (so a later mode switch can't
+   * retroactively push them). Always a superset of `approve`. */
+  handled: PendingCommitApproval[];
+}
+
+/**
+ * Decide what to do with the pending commit-review cards visible this tick.
+ *
+ * A card is auto-approvable only when it became pending *after* Full Auto was
+ * already active for a chat we were already watching. On the first sight of a
+ * chat — mount, chat switch, or reload — and under any stricter mode, every
+ * pending card is treated as pre-existing: marked handled so flipping into
+ * Full Auto later can't retroactively approve it, but never approved itself.
+ * This closes the "switch to Full Auto and an old unapproved commit gets
+ * pushed" hole (Codex P1 on PR #801).
+ */
+export function planAutoApprovals(
+  pending: PendingCommitApproval[],
+  opts: {
+    isFullAuto: boolean;
+    firstSightOfChat: boolean;
+    isAlreadyHandled: (card: PendingCommitApproval) => boolean;
+  },
+): AutoApprovalPlan {
+  const approve: PendingCommitApproval[] = [];
+  const handled: PendingCommitApproval[] = [];
+  const autoApprovable = opts.isFullAuto && !opts.firstSightOfChat;
+  for (const card of pending) {
+    if (opts.isAlreadyHandled(card)) continue;
+    handled.push(card);
+    if (autoApprovable) approve.push(card);
+  }
+  return { approve, handled };
+}
+
 export function useFullAutoCommitApproval({
   conversations,
   activeChatId,
   handleCardAction,
 }: FullAutoCommitApprovalArgs): void {
-  // Cards we've already auto-approved, keyed `chatId:messageId:cardIndex`.
-  // Guards against re-firing on the card's own pending → approved → committed
-  // transitions and on unrelated re-renders. We add the key *before*
-  // dispatching, so a synchronous state update can never double-commit.
-  const approvedRef = useRef<Set<string>>(new Set());
+  // Cards we've already acted on (approved OR marked pre-existing), keyed
+  // `chatId:messageId:cardIndex`. We add keys *before* dispatching, so a
+  // synchronous state update can never double-commit.
+  const handledRef = useRef<Set<string>>(new Set());
+  // Chats we've observed at least once. The first observation of a chat seeds
+  // its already-pending cards as pre-existing rather than approving them.
+  const seenChatsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    if (getApprovalMode() !== 'full-auto') return;
     if (!activeChatId) return;
     const conv = conversations[activeChatId];
     if (!conv) return;
 
-    for (const { messageId, cardIndex, commitMessage } of selectPendingCommitApprovals(conv)) {
-      const key = `${activeChatId}:${messageId}:${cardIndex}`;
-      if (approvedRef.current.has(key)) continue;
-      approvedRef.current.add(key);
+    const keyOf = (card: PendingCommitApproval) =>
+      `${activeChatId}:${card.messageId}:${card.cardIndex}`;
+    const firstSightOfChat = !seenChatsRef.current.has(activeChatId);
+    seenChatsRef.current.add(activeChatId);
 
+    const { approve, handled } = planAutoApprovals(selectPendingCommitApprovals(conv), {
+      isFullAuto: getApprovalMode() === 'full-auto',
+      firstSightOfChat,
+      isAlreadyHandled: (card) => handledRef.current.has(keyOf(card)),
+    });
+
+    // Record everything we're acting on before any dispatch.
+    for (const card of handled) handledRef.current.add(keyOf(card));
+
+    for (const { messageId, cardIndex, commitMessage } of approve) {
       console.log(
         JSON.stringify({
           level: 'info',
@@ -91,7 +147,6 @@ export function useFullAutoCommitApproval({
           cardIndex,
         }),
       );
-
       void handleCardAction({ type: 'commit-approve', messageId, cardIndex, commitMessage });
     }
   }, [conversations, activeChatId, handleCardAction]);

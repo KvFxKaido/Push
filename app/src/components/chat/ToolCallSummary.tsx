@@ -72,7 +72,9 @@ export const ToolCallSummary = memo(function ToolCallSummary({
 
                 {/* Cards — sandbox-state is internal; pending action cards are
                     hoisted out of the collapsed group and rendered prominently. */}
-                {cards.length > 0 && (
+                {cards.some(
+                  ({ card }) => card.type !== 'sandbox-state' && !isPendingActionCard(card),
+                ) && (
                   <div className="space-y-1">
                     {cards.map(({ card, originalIndex }) =>
                       card.type === 'sandbox-state' || isPendingActionCard(card) ? null : (
