@@ -222,6 +222,31 @@ describe('handleGitHubWebhook', () => {
     });
   });
 
+  it('skips enqueue and acks 202 "disabled" when the reviewer is toggled off', async () => {
+    const body = JSON.stringify(prPayload());
+    const stub = vi.fn<(r: Request) => Promise<Response>>(
+      async () => new Response(JSON.stringify({ status: 'queued' }), { status: 202 }),
+    );
+    const env = {
+      ...fakeDoEnv(stub),
+      SNAPSHOT_INDEX: {
+        get: async (k: string) => (k === 'config:pr-review-enabled' ? '0' : null),
+      } as unknown as Env['SNAPSHOT_INDEX'],
+    } as Env;
+    const res = await handleGitHubWebhook(
+      makeRequest(body, {
+        'X-GitHub-Event': 'pull_request',
+        'X-GitHub-Delivery': 'delivery-off',
+        'X-Hub-Signature-256': await sign(body, SECRET),
+      }),
+      env,
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ status: 'disabled' });
+    // The point of the toggle: no DO spun up, so no provider tokens spent.
+    expect(stub).not.toHaveBeenCalled();
+  });
+
   it('returns 502 (not 202) when the DO rejects the start', async () => {
     const body = JSON.stringify(prPayload());
     const stub = vi.fn<(r: Request) => Promise<Response>>(

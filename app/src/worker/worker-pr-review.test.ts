@@ -104,6 +104,86 @@ describe('matchPrReviewRoute', () => {
     expect(matchPrReviewRoute('/api/pr-reviews/run', 'GET')).toBeNull();
     expect(matchPrReviewRoute('/api/pr-reviews/extra', 'GET')).toBeNull();
   });
+
+  it('maps the config GET/POST routes', () => {
+    expect(matchPrReviewRoute('/api/pr-reviews/config', 'GET')).toBe('config-get');
+    expect(matchPrReviewRoute('/api/pr-reviews/config', 'POST')).toBe('config-set');
+    expect(matchPrReviewRoute('/api/pr-reviews/config', 'DELETE')).toBeNull();
+  });
+});
+
+describe('handlePrReviewRoute — config (reviewer on/off)', () => {
+  function kvEnv(initial?: string): Env {
+    const store = new Map<string, string>();
+    if (initial !== undefined) store.set('config:pr-review-enabled', initial);
+    return makeEnv({
+      SNAPSHOT_INDEX: {
+        get: async (k: string) => store.get(k) ?? null,
+        put: async (k: string, v: string) => {
+          store.set(k, v);
+        },
+      } as unknown as Env['SNAPSHOT_INDEX'],
+    });
+  }
+
+  it('GET returns enabled (default true) — and works without a PrReviewJob DO binding', async () => {
+    const res = await handlePrReviewRoute(
+      makeRequest('/api/pr-reviews/config'),
+      kvEnv(),
+      'config-get',
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ enabled: true });
+  });
+
+  it('POST persists the flag and a subsequent GET reflects it', async () => {
+    const env = kvEnv();
+    const set = await handlePrReviewRoute(
+      makePost('/api/pr-reviews/config', { enabled: false }),
+      env,
+      'config-set',
+    );
+    expect(set.status).toBe(200);
+    expect(await set.json()).toEqual({ enabled: false });
+    const get = await handlePrReviewRoute(makeRequest('/api/pr-reviews/config'), env, 'config-get');
+    expect(await get.json()).toEqual({ enabled: false });
+  });
+
+  it('POST rejects a non-boolean enabled (400)', async () => {
+    const res = await handlePrReviewRoute(
+      makePost('/api/pr-reviews/config', { enabled: 'nope' }),
+      kvEnv(),
+      'config-set',
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a disallowed origin (403) before touching the flag', async () => {
+    const res = await handlePrReviewRoute(
+      makePost('/api/pr-reviews/config', { enabled: false }, { Origin: 'https://evil.test' }),
+      kvEnv(),
+      'config-set',
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('blocks a manual run (409) and does not enqueue when the reviewer is off', async () => {
+    const stub = makeFakeStub(new Response(JSON.stringify({ status: 'queued' }), { status: 202 }));
+    const env = runEnv({
+      PrReviewJob: makePrReviewNamespace(stub),
+      SNAPSHOT_INDEX: {
+        get: async () => '0',
+        put: async () => {},
+      } as unknown as Env['SNAPSHOT_INDEX'],
+    });
+    const res = await handlePrReviewRoute(
+      makePost('/api/pr-reviews/run', { repo: 'octo/repo', pr: 7 }),
+      env,
+      'run',
+    );
+    expect(res.status).toBe(409);
+    expect(stub.fetch).not.toHaveBeenCalled();
+  });
 });
 
 describe('handlePrReviewRoute — list', () => {

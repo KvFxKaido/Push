@@ -17,6 +17,7 @@
  */
 
 import { timingSafeEqual, type Env } from './worker-middleware';
+import { isPrReviewEnabled } from './pr-review-config';
 
 /** Actions on a `pull_request` event that warrant a fresh review. */
 const REVIEWABLE_ACTIONS = new Set(['opened', 'synchronize', 'reopened', 'ready_for_review']);
@@ -205,6 +206,18 @@ export async function handleGitHubWebhook(request: Request, env: Env): Promise<R
       repo: pr.repoFullName,
     });
     return json({ error: 'INSTALLATION_NOT_ALLOWED' }, 403);
+  }
+
+  // Reviewer kill-switch (in-app toggle). Checked before any DO work so a
+  // disabled reviewer spins up nothing and spends no provider tokens. Ack 202
+  // (not a retry-worthy error — the skip is intentional).
+  if (!(await isPrReviewEnabled(env))) {
+    log('info', 'webhook_skipped_disabled', {
+      deliveryId,
+      repo: pr.repoFullName,
+      pr: pr.prNumber,
+    });
+    return json({ ok: true, status: 'disabled' }, 202);
   }
 
   if (!env.PrReviewJob) {
