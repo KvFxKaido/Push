@@ -34,6 +34,7 @@ import { executeArtifactToolCall } from './artifact-tools';
 import { runMemoryGrep, runMemoryExpand } from '@push/lib/memory-tool-exec';
 import { getDefaultMemoryStore } from '@push/lib/context-memory-store';
 import { getActiveProvider, type ActiveProvider } from './orchestrator';
+import { getApprovalMode } from './approval-mode';
 import { type AnyToolCall } from './tool-dispatch';
 import { execInSandbox } from './sandbox-client';
 import type { ArtifactAuthor, ArtifactScope } from '@push/lib/artifacts/types';
@@ -398,12 +399,41 @@ export class WebToolExecutionRuntime
           break;
         }
 
-        case 'ask-user':
+        case 'ask-user': {
+          // Full Auto has no human at the keyboard, so a question card would
+          // sit unanswered — and, worse, hidden inside a collapsed tool group —
+          // while the model either stalls or silently answers for itself. The
+          // FULL_AUTO_BLOCK prompt already says "never use ask_user," but a
+          // prompt can't enforce it; honor the contract in the runtime so the
+          // loop keeps moving. Paired with the card-emitting branch below so
+          // ops can tell the two outcomes apart.
+          if (getApprovalMode() === 'full-auto') {
+            console.log(
+              JSON.stringify({
+                level: 'info',
+                event: 'ask_user_auto_resolved',
+                mode: 'full-auto',
+                question: toolCall.call.args.question.slice(0, 160),
+              }),
+            );
+            result = {
+              text: '[Tool Result — ask_user] Full Auto mode: no user is available to answer. Choose the most reasonable option yourself and continue without asking.',
+            };
+            break;
+          }
+          console.log(
+            JSON.stringify({
+              level: 'info',
+              event: 'ask_user_card_emitted',
+              mode: getApprovalMode(),
+            }),
+          );
           result = {
             text: '[Tool Result] Question sent to user. The system will wait for their response.',
             card: { type: 'ask-user', data: toolCall.call.args },
           };
           break;
+        }
 
         case 'artifacts': {
           if (!context.allowedRepo) {

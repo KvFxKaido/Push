@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import type { ChatMessage } from '@/types';
-import { groupChatMessages, buildSummaryLine, type ToolCallPair } from './tool-call-utils';
+import type { ChatCard, ChatMessage } from '@/types';
+import {
+  groupChatMessages,
+  buildSummaryLine,
+  isPendingActionCard,
+  collectPendingActionCards,
+  type ToolCallPair,
+} from './tool-call-utils';
 
 function textMsg(id: string, content: string): ChatMessage {
   return {
@@ -135,5 +141,75 @@ describe('buildSummaryLine', () => {
     expect(line).toContain('Ran 1 command');
     expect(line).toContain('Read 2 files');
     expect(line).toContain(',');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/*  Pending-action cards (hoisted out of collapsed groups)             */
+/* ------------------------------------------------------------------ */
+
+const askCard = (responseText?: string): ChatCard =>
+  ({
+    type: 'ask-user',
+    data: { question: 'Pick one', options: [{ id: 'a', label: 'A' }], responseText },
+  }) as ChatCard;
+
+const commitCard = (status: string): ChatCard =>
+  ({
+    type: 'commit-review',
+    data: {
+      diff: { diff: '', filesChanged: 0, additions: 0, deletions: 0, truncated: false },
+      auditVerdict: { verdict: 'safe', summary: '', risks: [], filesReviewed: 0 },
+      commitMessage: 'feat: thing',
+      status,
+    },
+  }) as ChatCard;
+
+describe('isPendingActionCard', () => {
+  it('treats an unanswered ask-user card as pending', () => {
+    expect(isPendingActionCard(askCard())).toBe(true);
+    expect(isPendingActionCard(askCard('   '))).toBe(true);
+  });
+
+  it('treats an answered ask-user card as resolved', () => {
+    expect(isPendingActionCard(askCard('Option A'))).toBe(false);
+  });
+
+  it('treats commit-review as pending until it reaches a terminal state', () => {
+    for (const status of ['pending', 'refreshing', 'approved', 'pushing', 'error']) {
+      expect(isPendingActionCard(commitCard(status))).toBe(true);
+    }
+    expect(isPendingActionCard(commitCard('committed'))).toBe(false);
+    expect(isPendingActionCard(commitCard('rejected'))).toBe(false);
+  });
+
+  it('ignores non-action cards', () => {
+    expect(isPendingActionCard({ type: 'file', data: {} } as ChatCard)).toBe(false);
+  });
+});
+
+describe('collectPendingActionCards', () => {
+  it('hoists pending cards with their original message id + card index', () => {
+    const callMsg: ChatMessage = {
+      ...toolCallMsg('tc1'),
+      // [resolved ask, pending commit] — index 1 must survive the filter.
+      cards: [askCard('done'), commitCard('pending')],
+    };
+    const items: ToolCallPair[] = [{ callMsg, resultMsg: toolResultMsg('tr1') }];
+
+    const hoisted = collectPendingActionCards(items);
+    expect(hoisted).toHaveLength(1);
+    expect(hoisted[0]).toMatchObject({ messageId: 'tc1', cardIndex: 1 });
+    expect(hoisted[0].card.type).toBe('commit-review');
+  });
+
+  it('returns nothing when every card is resolved', () => {
+    const callMsg: ChatMessage = {
+      ...toolCallMsg('tc1'),
+      cards: [askCard('answered'), commitCard('committed')],
+    };
+    expect(collectPendingActionCards([{ callMsg, resultMsg: toolResultMsg('tr1') }])).toHaveLength(
+      0,
+    );
   });
 });

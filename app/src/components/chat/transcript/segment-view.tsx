@@ -3,8 +3,45 @@ import type { ChatMessage, AgentStatus } from '@/types';
 import { MessageBubble } from '../MessageBubble';
 import { ToolCallSummary } from '../ToolCallSummary';
 import { AgentStatusBar } from '../AgentStatusBar';
+import { CardRenderer } from '@/components/cards/CardRenderer';
+import { collectPendingActionCards, type ToolCallPair } from '../tool-call-utils';
 import { sameSegmentContent } from './segment-model';
 import type { TranscriptSegment, TranscriptHandlers } from './segment-model';
+
+/**
+ * A tool group plus any pending approval/input cards hoisted out of the
+ * collapsed summary. A buried "Input needed" / commit-review card is
+ * invisible until the user manually expands the group — so anything still
+ * awaiting a decision renders prominently below the summary line and stays
+ * there until resolved.
+ */
+function ToolGroupSegment({
+  items,
+  handlers,
+}: {
+  items: ToolCallPair[];
+  handlers: TranscriptHandlers;
+}) {
+  const pendingCards = collectPendingActionCards(items);
+  return (
+    <>
+      <ToolCallSummary items={items} onCardAction={handlers.onCardAction} />
+      {pendingCards.length > 0 && (
+        <div className="px-4 my-1 space-y-2">
+          {pendingCards.map(({ card, messageId, cardIndex }) => (
+            <CardRenderer
+              key={`${messageId}:${cardIndex}`}
+              card={card}
+              messageId={messageId}
+              cardIndex={cardIndex}
+              onAction={handlers.onCardAction}
+            />
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
 
 /**
  * Renders one grouped segment. Memoized with a content-based comparator
@@ -39,7 +76,7 @@ export const SegmentView = memo(
         />
       );
     }
-    return <ToolCallSummary items={segment.items} onCardAction={handlers.onCardAction} />;
+    return <ToolGroupSegment items={segment.items} handlers={handlers} />;
   },
   (prev, next) => prev.handlers === next.handlers && sameSegmentContent(prev.segment, next.segment),
 );

@@ -2,7 +2,12 @@ import { memo, useState } from 'react';
 import { ChevronRight, AlertCircle } from 'lucide-react';
 import type { CardAction } from '@/types';
 import { CardRenderer } from '@/components/cards/CardRenderer';
-import { type ToolCallPair, getLabel, buildSummaryLine } from './tool-call-utils';
+import {
+  type ToolCallPair,
+  getLabel,
+  buildSummaryLine,
+  isPendingActionCard,
+} from './tool-call-utils';
 
 interface ToolCallSummaryProps {
   items: ToolCallPair[];
@@ -40,7 +45,13 @@ export const ToolCallSummary = memo(function ToolCallSummary({
             const { icon: Icon } = getLabel(toolName);
             const duration = item.resultMsg.toolMeta?.durationMs;
             const isError = item.resultMsg.toolMeta?.isError;
-            const cards = item.callMsg.cards?.filter((c) => c.type !== 'sandbox-state') ?? [];
+            // Keep original indices: card actions index into `callMsg.cards`.
+            // Pending action cards are hoisted out of the collapsed group by
+            // the segment renderer, so skip them here to avoid double-render.
+            const cards = (item.callMsg.cards ?? []).map((card, originalIndex) => ({
+              card,
+              originalIndex,
+            }));
 
             return (
               <div key={i} className="space-y-1.5">
@@ -59,18 +70,21 @@ export const ToolCallSummary = memo(function ToolCallSummary({
                   {isError && <AlertCircle className="h-3 w-3 text-red-400" />}
                 </div>
 
-                {/* Cards */}
+                {/* Cards — sandbox-state is internal; pending action cards are
+                    hoisted out of the collapsed group and rendered prominently. */}
                 {cards.length > 0 && (
                   <div className="space-y-1">
-                    {cards.map((card, ci) => (
-                      <CardRenderer
-                        key={ci}
-                        card={card}
-                        messageId={item.callMsg.id}
-                        cardIndex={ci}
-                        onAction={onCardAction}
-                      />
-                    ))}
+                    {cards.map(({ card, originalIndex }) =>
+                      card.type === 'sandbox-state' || isPendingActionCard(card) ? null : (
+                        <CardRenderer
+                          key={originalIndex}
+                          card={card}
+                          messageId={item.callMsg.id}
+                          cardIndex={originalIndex}
+                          onAction={onCardAction}
+                        />
+                      ),
+                    )}
                   </div>
                 )}
               </div>
