@@ -374,11 +374,14 @@ const PAYLOAD_DEFS: Record<string, JsonSchemaNode> = {
     detail: str(),
   }),
 
+  // delegationOutcome is optional and its shape is owned elsewhere — omitted
+  // here so the schema stays as permissive as the validator (which leaves it
+  // unchecked), matching the SubagentCompleted twin. Constraining it would let
+  // the published schema reject a payload the runtime accepts.
   JobCompleted: objectNode(['executionId', 'role', 'summary'], {
     executionId: nestr(),
     role: enumOf(PROMPT_SNAPSHOT_ROLES),
     summary: nestr(),
-    delegationOutcome: { type: 'object' },
   }),
 
   JobFailed: objectNode(['executionId', 'role', 'error'], {

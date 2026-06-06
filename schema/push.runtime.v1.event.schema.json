@@ -999,9 +999,6 @@
         "summary": {
           "type": "string",
           "minLength": 1
-        },
-        "delegationOutcome": {
-          "type": "object"
         }
       }
     },
