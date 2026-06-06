@@ -682,6 +682,8 @@ import { validateTaskGraph, executeTaskGraph, formatTaskGraphResult } from '../l
 import {
   assertValidEvent,
   isStrictModeEnabled,
+  isProtocolObserveEnabled,
+  validateEvent,
   RELAY_SENDER_FIELD,
 } from '../lib/protocol-schema.js';
 import { DAEMON_CAPABILITIES, EVENT_V2 } from '../lib/daemon-capabilities.js';
@@ -1077,16 +1079,43 @@ function removeSessionClient(sessionId, emitFn) {
   }
 }
 
-export function broadcastEvent(sessionId, event) {
-  // Strict-mode schema check. Opt-in via `PUSH_PROTOCOL_STRICT=1` — the
-  // daemon-integration test harness flips this on at module load so any
-  // drift between the wire-format contract (`cli/protocol-schema.ts`)
-  // and what a handler actually produces lands as a test failure
-  // instead of silent consumer-side breakage. Production leaves this
-  // off to avoid any per-event overhead.
+/**
+ * Validate an outbound envelope before fan-out.
+ *
+ * Strict mode (`PUSH_PROTOCOL_STRICT=1`, set by the daemon-integration test
+ * harness at module load) throws, so envelope drift lands as a CI failure
+ * instead of silent consumer-side breakage.
+ *
+ * Otherwise observe mode (ON by default in the daemon, opt out via
+ * `PUSH_PROTOCOL_OBSERVE=0`) validates and emits a structured
+ * `protocol_drift_detected` log, but still lets the event through —
+ * fail-open, so a drifted envelope is surfaced to ops rather than dropped
+ * for every attached client. The log goes to stdout via `console.log` like
+ * the daemon's other structured logs; the NDJSON wire is the per-client WS
+ * (`emitFn`), never stdout, so it can't corrupt a client stream.
+ */
+function checkOutboundEvent(event) {
   if (isStrictModeEnabled()) {
     assertValidEvent(event);
+    return;
   }
+  if (!isProtocolObserveEnabled()) return;
+  const issues = validateEvent(event);
+  if (issues.length === 0) return;
+  console.log(
+    JSON.stringify({
+      level: 'warn',
+      event: 'protocol_drift_detected',
+      sessionId: event?.sessionId,
+      type: event?.type,
+      seq: event?.seq,
+      issues: issues.map((i) => `${i.path || '(root)'}: ${i.message}`),
+    }),
+  );
+}
+
+export function broadcastEvent(sessionId, event) {
+  checkOutboundEvent(event);
   const clients = sessionClients.get(sessionId);
   if (!clients) return;
 
@@ -1134,9 +1163,7 @@ export function broadcastEvent(sessionId, event) {
     // with only v2 clients pay nothing.
     if (synthesized === null) {
       synthesized = synthesizeV1DelegationEvent(event);
-      if (isStrictModeEnabled()) {
-        for (const synth of synthesized) assertValidEvent(synth);
-      }
+      for (const synth of synthesized) checkOutboundEvent(synth);
     }
     for (const synth of synthesized) {
       try {
@@ -1177,9 +1204,7 @@ function emitEventWithDowngrade(event, emitFn, capabilities) {
   }
   // v1 client + delegation event — synthesize the downgrade shadow(s).
   const synthesized = synthesizeV1DelegationEvent(event);
-  if (isStrictModeEnabled()) {
-    for (const synth of synthesized) assertValidEvent(synth);
-  }
+  for (const synth of synthesized) checkOutboundEvent(synth);
   for (const synth of synthesized) {
     try {
       emitFn(synth);

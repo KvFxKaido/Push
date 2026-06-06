@@ -6445,28 +6445,63 @@ describe('broadcastEvent strict-mode schema enforcement', () => {
     );
   });
 
-  it('is a no-op when strict mode is disabled', () => {
-    // Temporarily unset the env var to prove strict mode is gated on it.
-    // No listeners are attached, so broadcastEvent should return silently
-    // even for an obviously bad event.
-    const prev = process.env.PUSH_PROTOCOL_STRICT;
-    delete process.env.PUSH_PROTOCOL_STRICT;
+  const BOGUS_EVENT = {
+    v: PROTOCOL_VERSION,
+    kind: 'event',
+    sessionId: SESSION_ID,
+    runId: null,
+    seq: -1,
+    ts: Date.now(),
+    type: 'subagent.started',
+    payload: {},
+  };
+
+  // Capture console.log (the daemon's structured-log channel) while
+  // broadcasting `BOGUS_EVENT` with the given env overrides, then return any
+  // parsed `protocol_drift_detected` line. No listeners are attached, so the
+  // only observable effect is the validation branch.
+  function broadcastAndCaptureDrift({ strict, observe }) {
+    const prevStrict = process.env.PUSH_PROTOCOL_STRICT;
+    const prevObserve = process.env.PUSH_PROTOCOL_OBSERVE;
+    if (strict === undefined) delete process.env.PUSH_PROTOCOL_STRICT;
+    else process.env.PUSH_PROTOCOL_STRICT = strict;
+    if (observe === undefined) delete process.env.PUSH_PROTOCOL_OBSERVE;
+    else process.env.PUSH_PROTOCOL_OBSERVE = observe;
+    const logged = [];
+    const origLog = console.log;
+    console.log = (line) => logged.push(line);
     try {
-      assert.doesNotThrow(() =>
-        broadcastEvent(SESSION_ID, {
-          v: PROTOCOL_VERSION,
-          kind: 'event',
-          sessionId: SESSION_ID,
-          runId: null,
-          seq: -1,
-          ts: Date.now(),
-          type: 'subagent.started',
-          payload: {},
-        }),
-      );
+      assert.doesNotThrow(() => broadcastEvent(SESSION_ID, BOGUS_EVENT));
     } finally {
-      if (prev !== undefined) process.env.PUSH_PROTOCOL_STRICT = prev;
+      console.log = origLog;
+      if (prevStrict === undefined) delete process.env.PUSH_PROTOCOL_STRICT;
+      else process.env.PUSH_PROTOCOL_STRICT = prevStrict;
+      if (prevObserve === undefined) delete process.env.PUSH_PROTOCOL_OBSERVE;
+      else process.env.PUSH_PROTOCOL_OBSERVE = prevObserve;
     }
+    return logged
+      .map((l) => {
+        try {
+          return JSON.parse(l);
+        } catch {
+          return null;
+        }
+      })
+      .find((o) => o && o.event === 'protocol_drift_detected');
+  }
+
+  it('observe mode (strict off, default on) logs drift but does not throw', () => {
+    // Fail-open: a malformed event must NOT throw (that would drop it for
+    // every attached client) but SHOULD surface a structured drift line.
+    const drift = broadcastAndCaptureDrift({ strict: undefined, observe: undefined });
+    assert.ok(drift, 'expected a protocol_drift_detected log line');
+    assert.equal(drift.type, 'subagent.started');
+    assert.ok(Array.isArray(drift.issues) && drift.issues.length > 0);
+  });
+
+  it('is a true silent no-op when both strict and observe are disabled', () => {
+    const drift = broadcastAndCaptureDrift({ strict: undefined, observe: '0' });
+    assert.equal(drift, undefined, 'expected no drift log when observe is disabled');
   });
 
   it('lets a valid event through when strict mode is on (no listeners)', () => {
