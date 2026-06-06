@@ -157,6 +157,16 @@ async function handleList(env: Env, requestUrl: URL): Promise<Response> {
 }
 
 async function handleRun(request: Request, env: Env, requestUrl: URL): Promise<Response> {
+  // Honor the reviewer kill-switch on the manual path too — "off" means no
+  // reviews spend quota, whether webhook- or user-triggered. The PWA disables
+  // the re-run control when off; this is the server-side backstop.
+  if (!(await isPrReviewEnabled(env))) {
+    log('info', 'pr_review_run_disabled', {});
+    return json(
+      { error: 'REVIEWER_DISABLED', message: 'The automated reviewer is turned off.' },
+      409,
+    );
+  }
   if (!env.GITHUB_APP_ID || !env.GITHUB_APP_PRIVATE_KEY) {
     log('error', 'pr_review_run_not_configured', {});
     return json({ error: 'NOT_CONFIGURED', message: 'GitHub App is not configured.' }, 503);

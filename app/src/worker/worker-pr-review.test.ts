@@ -166,6 +166,24 @@ describe('handlePrReviewRoute — config (reviewer on/off)', () => {
     );
     expect(res.status).toBe(403);
   });
+
+  it('blocks a manual run (409) and does not enqueue when the reviewer is off', async () => {
+    const stub = makeFakeStub(new Response(JSON.stringify({ status: 'queued' }), { status: 202 }));
+    const env = runEnv({
+      PrReviewJob: makePrReviewNamespace(stub),
+      SNAPSHOT_INDEX: {
+        get: async () => '0',
+        put: async () => {},
+      } as unknown as Env['SNAPSHOT_INDEX'],
+    });
+    const res = await handlePrReviewRoute(
+      makePost('/api/pr-reviews/run', { repo: 'octo/repo', pr: 7 }),
+      env,
+      'run',
+    );
+    expect(res.status).toBe(409);
+    expect(stub.fetch).not.toHaveBeenCalled();
+  });
 });
 
 describe('handlePrReviewRoute — list', () => {
