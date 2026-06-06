@@ -68,6 +68,8 @@ interface MakeContextOpts {
   auditorVerdict?: RunAuditorReturn;
   authToken?: string;
   createdRepo?: CreatedRepoResponse;
+  /** The diff the pre-push secret scan (`computePushedDiff`) sees, if any. */
+  pushedDiff?: string;
 }
 
 const makeCreatedRepo = (overrides: Partial<CreatedRepoResponse> = {}): CreatedRepoResponse => ({
@@ -96,6 +98,14 @@ function makeContext(opts: MakeContextOpts = {}): MockedContext {
     readCalls,
     execInSandbox: vi.fn(async (...args: ExecArgs) => {
       execCalls.push(args);
+      // Absorb the pre-push secret scan's `computePushedDiff` reads without
+      // consuming the positional execResults queue. Resolving the base on the
+      // first read (`@{upstream}`) means the scan only ever issues these two
+      // distinctive commands; everything else (incl. the real `git 'push'`)
+      // still draws from the queue.
+      const cmd = String(args[1]);
+      if (cmd.includes('@{upstream}')) return ok('origin/main'); // base resolves
+      if (/ 'diff' '--no-color'/.test(cmd)) return ok(opts.pushedDiff ?? '');
       return execQueue.shift() ?? ok();
     }),
     getSandboxDiff: vi.fn(async (...args: DiffArgs) => {
@@ -347,11 +357,11 @@ describe('handlePrepareCommit', () => {
 // ---------------------------------------------------------------------------
 
 describe('handleSandboxPush', () => {
-  it('reports success and threads markWorkspaceMutated on the exec call', async () => {
+  it('reports success and threads markWorkspaceMutated on the push exec', async () => {
     const ctx = makeContext({ execResults: [ok('Everything up-to-date')] });
     const result = await handleSandboxPush(ctx);
-    expect(ctx.execInSandbox).toHaveBeenCalledTimes(1);
-    expect(ctx.execCalls[0]).toEqual([
+    // The real push is the last exec (the secret scan's reads precede it).
+    expect(ctx.execCalls.at(-1)).toEqual([
       'sb-1',
       "git 'push' 'origin' 'HEAD'",
       undefined,
@@ -359,6 +369,19 @@ describe('handleSandboxPush', () => {
     ]);
     expect(result.text).toBe('[Tool Result — sandbox_push]\nPushed successfully.');
     expect(result.card).toBeUndefined();
+  });
+
+  it('blocks the push when the secret scan finds a credential in the pushed commits', async () => {
+    const secretDiff = ['+++ b/c.ts', '@@ -0,0 +1 @@', '+const k = "AKIAIOSFODNN7EXAMPLE";'].join(
+      '\n',
+    );
+    const ctx = makeContext({ pushedDiff: secretDiff });
+    const result = await handleSandboxPush(ctx);
+    expect(result.structuredError?.type).toBe('GIT_GUARD_BLOCKED');
+    expect(result.text).toContain('AWS access key ID');
+    expect(result.text).not.toContain('AKIAIOSFODNN7EXAMPLE');
+    // The actual git push was never issued.
+    expect(ctx.execCalls.some((c) => String(c[1]).includes("git 'push'"))).toBe(false);
   });
 
   it('reports failure with stderr when the push exec fails', async () => {
@@ -473,6 +496,22 @@ describe('handlePromoteToGithub', () => {
       warning: undefined,
       htmlUrl: 'https://github.com/myuser/my-repo',
     });
+  });
+
+  it('blocks the first publish when the scan finds a secret, without leaking it', async () => {
+    const secretDiff = ['+++ b/.env', '@@ -0,0 +1 @@', '+AWS=AKIAIOSFODNN7EXAMPLE'].join('\n');
+    const ctx = makeContext({
+      authToken: 'gho_secret',
+      pushedDiff: secretDiff,
+      execResults: [ok('main'), ok()], // branch-detect, remote-config; push never issued
+    });
+    const result = await handlePromoteToGithub(ctx, { repo_name: 'my-repo' });
+    expect(result.text).toContain('was created, but the push was blocked');
+    expect(result.text).toContain('AWS access key ID');
+    expect(result.text).not.toContain('AKIAIOSFODNN7EXAMPLE');
+    expect(result.text).not.toContain('gho_secret');
+    expect(result.promotion).toBeUndefined();
+    expect(ctx.execCalls.some((c) => String(c[1]).includes("git 'push'"))).toBe(false);
   });
 });
 

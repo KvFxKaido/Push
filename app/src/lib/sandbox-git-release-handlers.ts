@@ -67,6 +67,7 @@ import {
   sanitizeGitOutput,
   shellEscape,
 } from './sandbox-tool-utils';
+import type { StructuredToolError } from '@/types';
 
 // ---------------------------------------------------------------------------
 // Handler context
@@ -387,10 +388,24 @@ export async function handleSandboxPush(
 ): Promise<ToolExecutionResult> {
   const pushResult = await createSandboxPushGit(ctx.sandboxId, {
     execFn: ctx.execInSandbox,
+    secretScan: true,
   }).push();
 
   if (!pushResult.ok) {
     const reason = pushResult.error || pushResult.stderr || pushResult.stdout || 'push failed';
+    // A deterministic secret-scan block (not a git/transport failure): tell the
+    // model why and that retrying as-is won't help — it must remove the secret.
+    if (pushResult.blocked) {
+      const err: StructuredToolError = {
+        type: 'GIT_GUARD_BLOCKED',
+        retryable: false,
+        message: pushResult.stderr || 'push blocked',
+      };
+      return {
+        text: formatStructuredError(err, `[Tool Error — sandbox_push]\n${pushResult.stderr}`),
+        structuredError: err,
+      };
+    }
     // exitCode -1, or a transport/gone error the adapter caught, means the
     // container is unreachable. Surface a structured error so the chat runtime
     // can trigger sandbox recovery — the pre-refactor path threw here and the
@@ -464,7 +479,20 @@ export async function handlePromoteToGithub(
 
   const pushResult = await createSandboxPushGit(ctx.sandboxId, {
     execFn: ctx.execInSandbox,
+    secretScan: true,
   }).push({ setUpstream: true, ref: branchName });
+
+  // A secret-scan block on the first publish: the repo exists but nothing was
+  // pushed. Surface it explicitly (sanitized) so the model removes the secret
+  // rather than retrying into the same wall.
+  if (pushResult.blocked) {
+    return {
+      text: `[Tool Error] Repo ${createdRepo.full_name} was created, but the push was blocked: ${sanitizeGitOutput(
+        pushResult.stderr || 'secret detected',
+        authToken,
+      )} Remove the credential(s) from the commit history, then retry.`,
+    };
+  }
 
   const rawPushError = `${pushResult.stderr}\n${pushResult.stdout}`.toLowerCase();
   const noCommitsYet =

@@ -13,14 +13,22 @@
  *   2. `origin/<branch>` — an existing remote branch with no local upstream set;
  *   3. the merge-base with `origin/HEAD` — a brand-new branch (the
  *      auto-branch-on-commit case): everything since it forked from the default.
+ *   4. the empty tree — a remote with no baseline at all (a fresh/empty repo,
+ *      e.g. `promote_to_github`'s first push): every commit on HEAD is new, so
+ *      scan the whole tree rather than skip. This makes "no baseline" fail
+ *      *safe* (scan everything) instead of fail-open.
  *
- * Returns `null` when no base can be resolved or the diff read fails — the
- * caller (the gate) then fails *open* with a structured log, because an inability
- * to scope the diff is infra trouble, not a detected secret, and must not brick
- * every push.
+ * Returns `null` only when the diff read itself fails (e.g. no commits / invalid
+ * ref) — the caller (the gate) then fails *open* with a structured log, because
+ * that's infra trouble, not a detected secret, and must not brick every push.
  */
 
 import type { GitExec } from './backend.js';
+
+// Git's canonical empty-tree object (stable for SHA-1 repos). `git diff
+// <empty-tree>..HEAD` yields the full tree as additions — used when the remote
+// has no baseline to diff against.
+const EMPTY_TREE_SHA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
 async function ok(exec: GitExec, args: string[]): Promise<string | null> {
   const res = await exec(args);
@@ -59,7 +67,8 @@ export async function computePushedDiff(
     }
   }
 
-  if (!base) return null;
+  // 4. no remote baseline at all → diff the full tree against the empty tree.
+  if (!base) base = EMPTY_TREE_SHA;
 
   const res = await exec(['diff', '--no-color', `${base}..${ref}`]);
   if (res.exitCode !== 0) return null;
