@@ -237,7 +237,7 @@ export function PrReviewHistorySection({
     error: configError,
   } = usePrReviewConfig();
 
-  const providerOptions = useMemo(() => AUTOMATED_REVIEW_PROVIDERS, []);
+  const providerOptions = AUTOMATED_REVIEW_PROVIDERS;
   const selectedProvider = useMemo(
     () => providerOptions.find((p) => p.type === provider) ?? null,
     [providerOptions, provider],
@@ -303,7 +303,9 @@ export function PrReviewHistorySection({
                 void setModelConfig(nextProvider, nextModel);
               }}
             >
-              {provider && !selectedProvider && <option value={provider}>Unavailable</option>}
+              {provider && !selectedProvider && (
+                <option value={provider}>Unavailable ({provider})</option>
+              )}
               {providerOptions.map((p) => (
                 <option key={p.type} value={p.type}>
                   {p.name}
@@ -320,7 +322,7 @@ export function PrReviewHistorySection({
                 void setModelConfig(selectedProvider.type, e.target.value);
               }}
             >
-              {model && !selectedModel && <option value={model}>{model}</option>}
+              {model && !selectedModel && <option value={model}>{model} (Unavailable)</option>}
               {selectedModels.map((m) => (
                 <option key={m} value={m}>
                   {m}

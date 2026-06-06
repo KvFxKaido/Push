@@ -93,8 +93,12 @@ export async function getPrReviewRuntimeConfig(env: Env): Promise<PrReviewRuntim
   const kv = env.SNAPSHOT_INDEX;
   if (kv) {
     try {
-      provider = clean(await kv.get(PROVIDER_CONFIG_KEY)) ?? provider;
-      model = clean(await kv.get(MODEL_CONFIG_KEY)) ?? model;
+      const [storedProvider, storedModel] = await Promise.all([
+        kv.get(PROVIDER_CONFIG_KEY),
+        kv.get(MODEL_CONFIG_KEY),
+      ]);
+      provider = clean(storedProvider) ?? provider;
+      model = clean(storedModel) ?? model;
     } catch {
       // Keep env/default fallback on transient KV failures.
     }
@@ -135,6 +139,10 @@ export async function setPrReviewRuntimeConfig(
 ): Promise<boolean> {
   const kv = env.SNAPSHOT_INDEX;
   if (!kv) return false;
-  await Promise.all([kv.put(PROVIDER_CONFIG_KEY, provider), kv.put(MODEL_CONFIG_KEY, model)]);
-  return true;
+  try {
+    await Promise.all([kv.put(PROVIDER_CONFIG_KEY, provider), kv.put(MODEL_CONFIG_KEY, model)]);
+    return true;
+  } catch {
+    return false;
+  }
 }
