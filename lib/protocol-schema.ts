@@ -42,19 +42,14 @@
  *     and restructuring them into a schema-driven pipeline is a
  *     larger refactor.
  *
- *   - Payload validation for the `RunEventInput` passthrough events the
- *     run loop forwards through the daemon (`assistant.turn_start` /
- *     `turn_end`, `job.started` / `completed` / `failed`,
- *     `user.follow_up_queued` / `follow_up_steered`). Their shapes are
- *     owned by `lib/run-events.ts` / `lib/runtime-contract.ts`, not the
- *     daemon, and are validated at the envelope layer only for now —
- *     promote them into per-type schemas as they settle.
- *
- *     (The daemon-owned lifecycle, session-mutation, and recovery events
- *     — `session_started`, `approval_required`, `error`, `run_complete`,
- *     `context_compacted`, `session_reverted`, `session_unreverted`,
- *     `run_recovered`, `recovery_skipped`, `delegation_interrupted`, etc.
- *     — DO have per-type schemas now; see `PAYLOAD_VALIDATORS`.)
+ *   - Payload validation for events that carry no required payload the
+ *     surfaces read — e.g. `assistant_done` / `assistant_thinking_done`.
+ *     These stay envelope-only on purpose; there is nothing to schema-
+ *     validate beyond the envelope. Everything with a meaningful payload
+ *     contract — daemon-owned lifecycle / session-mutation / recovery
+ *     events AND the `RunEventInput` passthrough the run loop forwards
+ *     (`assistant.turn_*`, `job.*`, `user.follow_up_*`) — now has a
+ *     per-type schema; see `PAYLOAD_VALIDATORS`.
  *
  *   - External schema libraries for *wire-envelope* validation. The
  *     hand-rolled validators here stay dependency-free and are simple
@@ -1258,6 +1253,124 @@ function validateDelegationInterrupted(payload: unknown, basePath: string): Vali
   return issues;
 }
 
+// ---------------------------------------------------------------------------
+// RunEventInput passthrough events
+//
+// These are forwarded by the run loop through the daemon's broadcast path
+// (not daemon-originated). Shapes are the canonical RunEventInput union
+// members in lib/runtime-contract.ts, minus the discriminant `type` (which
+// lives on the envelope) — the payload is the member's remaining fields, the
+// same mapping the existing prompt_snapshot / tool.* / subagent.* validators
+// already assume. `role` is `AgentRole`, whose value set is exactly
+// PROMPT_SNAPSHOT_ROLES (reused here rather than duplicated).
+// ---------------------------------------------------------------------------
+
+export const TURN_END_OUTCOMES = ['completed', 'continued', 'error', 'aborted', 'steered'] as const;
+
+function validateAssistantTurnStart(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issue = expectNonNegativeInteger(payload, 'round', basePath);
+  return issue ? [issue] : [];
+}
+
+function validateAssistantTurnEnd(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const round = expectNonNegativeInteger(payload, 'round', basePath);
+  if (round) issues.push(round);
+  const outcome = expectAgentValue(payload, 'outcome', basePath, TURN_END_OUTCOMES);
+  if (outcome) issues.push(outcome);
+  return issues;
+}
+
+function validateJobStarted(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const exec = expectNonEmptyString(payload, 'executionId', basePath);
+  if (exec) issues.push(exec);
+  const role = expectAgentValue(payload, 'role', basePath, PROMPT_SNAPSHOT_ROLES);
+  if (role) issues.push(role);
+  const detail = expectOptionalString(payload, 'detail', basePath);
+  if (detail) issues.push(detail);
+  return issues;
+}
+
+function validateJobCompleted(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const exec = expectNonEmptyString(payload, 'executionId', basePath);
+  if (exec) issues.push(exec);
+  const role = expectAgentValue(payload, 'role', basePath, PROMPT_SNAPSHOT_ROLES);
+  if (role) issues.push(role);
+  const summary = expectNonEmptyString(payload, 'summary', basePath);
+  if (summary) issues.push(summary);
+  // delegationOutcome is optional and its shape is owned elsewhere — left
+  // unchecked beyond the envelope's "permissive about extra fields" rule.
+  return issues;
+}
+
+function validateJobFailed(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const exec = expectNonEmptyString(payload, 'executionId', basePath);
+  if (exec) issues.push(exec);
+  const role = expectAgentValue(payload, 'role', basePath, PROMPT_SNAPSHOT_ROLES);
+  if (role) issues.push(role);
+  const error = expectNonEmptyString(payload, 'error', basePath);
+  if (error) issues.push(error);
+  return issues;
+}
+
+function validateUserFollowUpQueued(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const round = expectNonNegativeInteger(payload, 'round', basePath);
+  if (round) issues.push(round);
+  const position = expectNonNegativeInteger(payload, 'position', basePath);
+  if (position) issues.push(position);
+  if (typeof payload.preview !== 'string') {
+    issues.push({
+      path: `${basePath}.preview`,
+      message: `expected string, got ${JSON.stringify(payload.preview)}`,
+    });
+  }
+  return issues;
+}
+
+function validateUserFollowUpSteered(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const round = expectNonNegativeInteger(payload, 'round', basePath);
+  if (round) issues.push(round);
+  if (typeof payload.preview !== 'string') {
+    issues.push({
+      path: `${basePath}.preview`,
+      message: `expected string, got ${JSON.stringify(payload.preview)}`,
+    });
+  }
+  if (typeof payload.replacedPending !== 'boolean') {
+    issues.push({
+      path: `${basePath}.replacedPending`,
+      message: `expected boolean, got ${JSON.stringify(payload.replacedPending)}`,
+    });
+  }
+  return issues;
+}
+
 const PAYLOAD_VALIDATORS: Record<string, PayloadValidator> = {
   // Existing delegation + dev observability + state events.
   'assistant.prompt_snapshot': validateAssistantPromptSnapshot,
@@ -1301,6 +1414,16 @@ const PAYLOAD_VALIDATORS: Record<string, PayloadValidator> = {
   run_recovered: validateRunRecovered,
   recovery_skipped: validateRecoverySkipped,
   delegation_interrupted: validateDelegationInterrupted,
+
+  // RunEventInput passthrough events (forwarded by the run loop). Shapes are
+  // the canonical union members in lib/runtime-contract.ts.
+  'assistant.turn_start': validateAssistantTurnStart,
+  'assistant.turn_end': validateAssistantTurnEnd,
+  'job.started': validateJobStarted,
+  'job.completed': validateJobCompleted,
+  'job.failed': validateJobFailed,
+  'user.follow_up_queued': validateUserFollowUpQueued,
+  'user.follow_up_steered': validateUserFollowUpSteered,
 };
 
 /** The set of event types that have a per-payload schema in this module. */
@@ -1309,9 +1432,9 @@ export const SCHEMA_VALIDATED_EVENT_TYPES = new Set(Object.keys(PAYLOAD_VALIDATO
 /**
  * Validate a payload against the per-type schema. Returns issues if
  * the schema exists and the payload doesn't match. Returns an empty
- * array for event types we don't have schemas for (the `RunEventInput`
- * passthrough events — `job.*`, `user.follow_up_*`, `assistant.turn_*`)
- * — those are handled by envelope validation only.
+ * array for event types with no registered schema (e.g. `assistant_done`,
+ * which is intentionally envelope-only — it carries no required payload) —
+ * those are handled by envelope validation only.
  */
 export function validateRunEventPayload(type: string, payload: unknown): ValidationIssue[] {
   const validator = PAYLOAD_VALIDATORS[type];

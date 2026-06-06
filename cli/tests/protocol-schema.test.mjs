@@ -477,24 +477,23 @@ describe('validateRunEventPayload — task_graph events', () => {
     assert.deepEqual(issues, []);
   });
 
-  it('covers every delegation variant declared in RunEventInput', async () => {
+  it('covers every variant declared in RunEventInput', async () => {
     // This is the real drift guard: parse `lib/runtime-contract.ts` to
     // find the `RunEventInput` discriminated union, extract every
     // `type: '...'` literal inside its body, and assert two
     // invariants:
     //
-    //   1. Every delegation variant (`subagent.*` / `task_graph.*`)
-    //      has a registered payload validator in
-    //      `SCHEMA_VALIDATED_EVENT_TYPES`. Otherwise a new variant
-    //      slips through strict-mode validation silently.
+    //   1. EVERY RunEventInput variant has a registered payload
+    //      validator in `SCHEMA_VALIDATED_EVENT_TYPES`. The contract is
+    //      intended to be complete — every typed run event is
+    //      schema-validated — so a new variant without a validator
+    //      slips through strict/observe validation silently. (Events
+    //      with no required payload, e.g. `assistant_done`, live OUTSIDE
+    //      RunEventInput and are envelope-only by design.)
     //   2. Every type in `SCHEMA_VALIDATED_EVENT_TYPES` corresponds
-    //      to a real RunEventInput variant. Otherwise an orphan
-    //      validator is registered for a removed/renamed event type.
-    //
-    // The set of types we choose to schema-validate is broader than
-    // delegation today — `assistant.prompt_snapshot` is also pinned
-    // (added by the OpenCode silent-failure audit) — so the
-    // assertion is a pair of subset checks, not a single equality.
+    //      to a real RunEventInput variant, OR is on the daemon-only
+    //      allowlist below. Otherwise an orphan validator is registered
+    //      for a removed/renamed event type.
     //
     // Reading source text is brittler than importing a runtime const,
     // but the RunEvent union is TypeScript-only (erased at runtime) and
@@ -537,19 +536,19 @@ describe('validateRunEventPayload — task_graph events', () => {
       `expected RunEventInput to declare at least one type literal, got ${JSON.stringify([...allTypes])}`,
     );
 
-    // Invariant 1: every delegation variant has a validator.
-    const delegationTypes = [...allTypes]
-      .filter((t) => t.startsWith('subagent.') || t.startsWith('task_graph.'))
-      .sort();
+    // Invariant 1: every RunEventInput variant has a validator.
+    const runEventTypes = [...allTypes].sort();
     const validatedSet = new Set(SCHEMA_VALIDATED_EVENT_TYPES);
-    const missingValidators = delegationTypes.filter((t) => !validatedSet.has(t));
+    const missingValidators = runEventTypes.filter((t) => !validatedSet.has(t));
     assert.deepEqual(
       missingValidators,
       [],
-      `Delegation variants in RunEventInput without a payload validator.\n` +
-        `If you just added a new \`subagent.*\` or \`task_graph.*\` variant to ` +
-        `lib/runtime-contract.ts, you also need to register a payload validator ` +
-        `in lib/protocol-schema.ts (see the PAYLOAD_VALIDATORS map).`,
+      `RunEventInput variants without a payload validator.\n` +
+        `Every variant in the RunEventInput union (lib/runtime-contract.ts) must ` +
+        `have a payload validator registered in lib/protocol-schema.ts (the ` +
+        `PAYLOAD_VALIDATORS map). If you added a new variant, register one. If it ` +
+        `is genuinely envelope-only (no required payload), it should not live in ` +
+        `RunEventInput — emit it as a daemon-only event instead (see assistant_done).`,
     );
 
     // Invariant 2: no orphan validators — every validated type must
@@ -893,5 +892,109 @@ describe('validateRunEventPayload — recovery/interruption events', () => {
       graphs: [],
     });
     assert.ok(issues.some((i) => i.path === 'payload.subagents[0]'));
+  });
+});
+
+describe('validateRunEventPayload — RunEventInput passthrough events', () => {
+  it('accepts assistant.turn_start', () => {
+    assert.deepEqual(validateRunEventPayload('assistant.turn_start', { round: 0 }), []);
+  });
+
+  it('rejects assistant.turn_start with a non-integer round', () => {
+    const issues = validateRunEventPayload('assistant.turn_start', { round: 1.5 });
+    assert.ok(issues.some((i) => i.path === 'payload.round'));
+  });
+
+  it('accepts assistant.turn_end with a valid outcome', () => {
+    const issues = validateRunEventPayload('assistant.turn_end', {
+      round: 3,
+      outcome: 'completed',
+    });
+    assert.deepEqual(issues, []);
+  });
+
+  it('rejects assistant.turn_end with an unknown outcome', () => {
+    const issues = validateRunEventPayload('assistant.turn_end', { round: 3, outcome: 'finished' });
+    assert.ok(issues.some((i) => i.path === 'payload.outcome'));
+  });
+
+  it('accepts job.started (detail optional)', () => {
+    assert.deepEqual(
+      validateRunEventPayload('job.started', { executionId: 'job_1', role: 'coder' }),
+      [],
+    );
+  });
+
+  it('rejects job.started with an unknown role', () => {
+    const issues = validateRunEventPayload('job.started', {
+      executionId: 'job_1',
+      role: 'planner',
+    });
+    assert.ok(issues.some((i) => i.path === 'payload.role'));
+  });
+
+  it('accepts job.completed and rejects a missing summary', () => {
+    assert.deepEqual(
+      validateRunEventPayload('job.completed', {
+        executionId: 'job_1',
+        role: 'explorer',
+        summary: 'done',
+      }),
+      [],
+    );
+    const issues = validateRunEventPayload('job.completed', {
+      executionId: 'job_1',
+      role: 'explorer',
+    });
+    assert.ok(issues.some((i) => i.path === 'payload.summary'));
+  });
+
+  it('accepts job.failed and rejects a missing error', () => {
+    assert.deepEqual(
+      validateRunEventPayload('job.failed', {
+        executionId: 'job_1',
+        role: 'coder',
+        error: 'boom',
+      }),
+      [],
+    );
+    const issues = validateRunEventPayload('job.failed', { executionId: 'job_1', role: 'coder' });
+    assert.ok(issues.some((i) => i.path === 'payload.error'));
+  });
+
+  it('accepts user.follow_up_queued', () => {
+    const issues = validateRunEventPayload('user.follow_up_queued', {
+      round: 2,
+      position: 1,
+      preview: 'fix the bug',
+    });
+    assert.deepEqual(issues, []);
+  });
+
+  it('rejects user.follow_up_queued with a non-integer position', () => {
+    const issues = validateRunEventPayload('user.follow_up_queued', {
+      round: 2,
+      position: -1,
+      preview: 'x',
+    });
+    assert.ok(issues.some((i) => i.path === 'payload.position'));
+  });
+
+  it('accepts user.follow_up_steered', () => {
+    const issues = validateRunEventPayload('user.follow_up_steered', {
+      round: 2,
+      preview: 'actually do this instead',
+      replacedPending: true,
+    });
+    assert.deepEqual(issues, []);
+  });
+
+  it('rejects user.follow_up_steered with a non-boolean replacedPending', () => {
+    const issues = validateRunEventPayload('user.follow_up_steered', {
+      round: 2,
+      preview: 'x',
+      replacedPending: 'yes',
+    });
+    assert.ok(issues.some((i) => i.path === 'payload.replacedPending'));
   });
 });

@@ -44,6 +44,7 @@ import {
   RUN_COMPLETE_OUTCOMES,
   SUBAGENT_AGENTS,
   TASK_GRAPH_AGENTS,
+  TURN_END_OUTCOMES,
 } from './protocol-schema.ts';
 
 /** A JSON Schema node. Loose by design — this is data, not a place to
@@ -357,6 +358,49 @@ const PAYLOAD_DEFS: Record<string, JsonSchemaNode> = {
       items: objectNode(['executionId'], { executionId: nestr() }),
     },
   }),
+
+  // RunEventInput passthrough events (shapes from lib/runtime-contract.ts,
+  // minus the discriminant `type`). `role` is AgentRole == PROMPT_SNAPSHOT_ROLES.
+  AssistantTurnStart: objectNode(['round'], { round: uint() }),
+
+  AssistantTurnEnd: objectNode(['round', 'outcome'], {
+    round: uint(),
+    outcome: enumOf(TURN_END_OUTCOMES),
+  }),
+
+  JobStarted: objectNode(['executionId', 'role'], {
+    executionId: nestr(),
+    role: enumOf(PROMPT_SNAPSHOT_ROLES),
+    detail: str(),
+  }),
+
+  // delegationOutcome is optional and its shape is owned elsewhere — omitted
+  // here so the schema stays as permissive as the validator (which leaves it
+  // unchecked), matching the SubagentCompleted twin. Constraining it would let
+  // the published schema reject a payload the runtime accepts.
+  JobCompleted: objectNode(['executionId', 'role', 'summary'], {
+    executionId: nestr(),
+    role: enumOf(PROMPT_SNAPSHOT_ROLES),
+    summary: nestr(),
+  }),
+
+  JobFailed: objectNode(['executionId', 'role', 'error'], {
+    executionId: nestr(),
+    role: enumOf(PROMPT_SNAPSHOT_ROLES),
+    error: nestr(),
+  }),
+
+  UserFollowUpQueued: objectNode(['round', 'position', 'preview'], {
+    round: uint(),
+    position: uint(),
+    preview: str(),
+  }),
+
+  UserFollowUpSteered: objectNode(['round', 'preview', 'replacedPending'], {
+    round: uint(),
+    preview: str(),
+    replacedPending: bool(),
+  }),
 };
 
 /**
@@ -401,6 +445,13 @@ export const TYPE_TO_DEF: Record<string, string> = {
   run_recovered: 'RunRecovered',
   recovery_skipped: 'RecoverySkipped',
   delegation_interrupted: 'DelegationInterrupted',
+  'assistant.turn_start': 'AssistantTurnStart',
+  'assistant.turn_end': 'AssistantTurnEnd',
+  'job.started': 'JobStarted',
+  'job.completed': 'JobCompleted',
+  'job.failed': 'JobFailed',
+  'user.follow_up_queued': 'UserFollowUpQueued',
+  'user.follow_up_steered': 'UserFollowUpSteered',
 };
 
 // ---------------------------------------------------------------------------
