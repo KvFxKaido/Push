@@ -605,13 +605,16 @@ describe('PrReviewJob orphan sweep', () => {
 
     // Plant an orphan row within the grace window (no abort controller).
     // Use a distinct PR number so handleStart's coalescing doesn't supersede it.
-    mock.reviews.set('orphan', seedRow({
-      delivery_id: 'orphan',
-      pr_number: 99,
-      status: 'running',
-      created_at: Date.now() - 90_000,
-      started_at: Date.now() - 30_000,
-    }));
+    mock.reviews.set(
+      'orphan',
+      seedRow({
+        delivery_id: 'orphan',
+        pr_number: 99,
+        status: 'running',
+        created_at: Date.now() - 90_000,
+        started_at: Date.now() - 30_000,
+      }),
+    );
 
     // A stuck live review with a 15-minute deadline.
     __setPrReviewExecutorOverride(
