@@ -641,43 +641,62 @@ export class PrReviewJob {
    * live review. Best-effort throughout — never throws into the caller.
    */
   private async sweepOrphans(): Promise<void> {
-    const cutoff = Date.now() - ORPHAN_GRACE_MS;
-    const rows = this.ctx.storage.sql
-      .exec("SELECT * FROM review WHERE status IN ('queued','running')")
-      .toArray() as unknown as ReviewRow[];
-    for (const row of rows) {
-      if (this.abortControllers.has(row.delivery_id)) continue; // live in this instance
-      if ((row.started_at ?? row.created_at) > cutoff) continue; // too fresh — avoid the race
-      const message =
-        'Review did not finish (the worker restarted or it exceeded its time budget).';
-      this.ctx.storage.sql.exec(
-        "UPDATE review SET status = 'failed', error_text = ?, finished_at = ? WHERE delivery_id = ?",
-        message,
-        Date.now(),
-        row.delivery_id,
-      );
-      this.emit(row.delivery_id, 'review.failed', { errorType: 'orphaned', message });
-      log('warn', 'pr_review_orphan_swept', {
-        deliveryId: row.delivery_id,
-        repo: row.repo,
-        pr: row.pr_number,
-        priorStatus: row.status,
-      });
-      const token = await this.mintInstallationToken(row.installation_id);
-      if (token) {
-        await this.finalizeCheckRun(
-          row.repo,
-          row.head_sha,
-          token,
-          row.check_run_id ?? null,
-          'neutral',
-          {
-            title: 'Review incomplete',
-            summary:
-              'The review did not finish (the worker restarted or it exceeded its time budget). Push a new commit or re-run to retry.',
-          },
+    try {
+      const cutoff = Date.now() - ORPHAN_GRACE_MS;
+      const rows = this.ctx.storage.sql
+        .exec("SELECT * FROM review WHERE status IN ('queued','running')")
+        .toArray() as unknown as ReviewRow[];
+      let graceSkipped = false;
+      for (const row of rows) {
+        if (this.abortControllers.has(row.delivery_id)) continue; // live in this instance
+        if ((row.started_at ?? row.created_at) > cutoff) {
+          graceSkipped = true; // too fresh — recheck after the grace window
+          continue;
+        }
+        const message =
+          'Review did not finish (the worker restarted or it exceeded its time budget).';
+        this.ctx.storage.sql.exec(
+          "UPDATE review SET status = 'failed', error_text = ?, finished_at = ? WHERE delivery_id = ?",
+          message,
+          Date.now(),
+          row.delivery_id,
         );
+        this.emit(row.delivery_id, 'review.failed', { errorType: 'orphaned', message });
+        log('warn', 'pr_review_orphan_swept', {
+          deliveryId: row.delivery_id,
+          repo: row.repo,
+          pr: row.pr_number,
+          priorStatus: row.status,
+        });
+        const token = await this.mintInstallationToken(row.installation_id);
+        if (token) {
+          await this.finalizeCheckRun(
+            row.repo,
+            row.head_sha,
+            token,
+            row.check_run_id ?? null,
+            'neutral',
+            {
+              title: 'Review incomplete',
+              summary:
+                'The review did not finish (the worker restarted or it exceeded its time budget). Push a new commit or re-run to retry.',
+            },
+          );
+        }
       }
+      // A grace-skipped row may be a genuine orphan whose start-time alarm never
+      // armed (DO died in the window before setAlarm) — without a recheck it
+      // would hang forever once the grace window passes and the once-per-instance
+      // first-fetch sweep is spent. Ensure a recheck just past the grace window.
+      // (A row that turned out live re-arms the long alarm in alarm() instead.)
+      if (graceSkipped) await this.ctx.storage.setAlarm(Date.now() + ORPHAN_GRACE_MS + 1_000);
+    } catch (err) {
+      // Best-effort: a storage hiccup mid-sweep must not throw into the alarm
+      // handler (which the runtime would retry) or a waitUntil. The first-fetch
+      // sweep / alarm will retry on the next wake.
+      log('error', 'pr_review_orphan_sweep_failed', {
+        message: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 }
