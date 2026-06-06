@@ -12,16 +12,18 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { SandboxPlumbingBackend, type GitBackend, type GitExec } from '../lib/git/backend.js';
 import { PushGit, type PreCommitGate, type PrePushGate } from '../lib/git/push-git.js';
+import { computePushedDiff } from '../lib/git/pushed-diff.js';
+import { makeSecretScanPrePushGate } from '../lib/git/secret-scan-gate.js';
+import { resolveSecretScanEnabled } from '../lib/secret-scan.js';
 
 const execFileAsync = promisify(execFile);
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
-export function createLocalGitBackend(cwd: string, opts?: { timeoutMs?: number }): GitBackend {
-  const timeout = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+function makeLocalGitExec(cwd: string, timeout: number): GitExec {
   // The `mutates` hint is sandbox-only (workspace-revision bump); the local
   // working tree needs no equivalent, so it is ignored here.
-  const exec: GitExec = async (args, _opts) => {
+  return async (args, _opts) => {
     try {
       const { stdout, stderr } = await execFileAsync('git', args, { cwd, timeout });
       return { stdout, stderr, exitCode: 0 };
@@ -41,24 +43,42 @@ export function createLocalGitBackend(cwd: string, opts?: { timeoutMs?: number }
       };
     }
   };
-  return new SandboxPlumbingBackend(exec);
+}
+
+export function createLocalGitBackend(cwd: string, opts?: { timeoutMs?: number }): GitBackend {
+  return new SandboxPlumbingBackend(makeLocalGitExec(cwd, opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS));
 }
 
 /**
  * Build a PushGit facade over the local working tree at `cwd`. An optional
  * `preCommit` gate is run by `PushGit.commit` before the commit lands — the
  * CLI uses this to wire the Auditor commit gate (see `makeAuditorPreCommitGate`
- * in `cli/tools.ts`). An optional `prePush` gate (the deterministic secret
- * scan) is run by `PushGit.push`; the seam is wired here for parity even though
- * the CLI does not push today.
+ * in `cli/tools.ts`). Pass `secretScan: true` to gate pushes behind the
+ * deterministic secret scan over the *uncapped* about-to-be-pushed diff; pass
+ * `prePush` to inject a custom gate. Wired for parity even though the CLI does
+ * not push today; `PUSH_SECRET_SCAN=0` opts out.
  */
 export function createLocalPushGit(
   cwd: string,
-  opts?: { timeoutMs?: number; preCommit?: PreCommitGate; prePush?: PrePushGate },
+  opts?: {
+    timeoutMs?: number;
+    preCommit?: PreCommitGate;
+    prePush?: PrePushGate;
+    secretScan?: boolean;
+  },
 ): PushGit {
+  const exec = makeLocalGitExec(cwd, opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const prePush =
+    opts?.prePush ??
+    (opts?.secretScan
+      ? makeSecretScanPrePushGate({
+          getDiff: () => computePushedDiff(exec),
+          enabled: resolveSecretScanEnabled({ env: process.env.PUSH_SECRET_SCAN }),
+        })
+      : undefined);
   return new PushGit({
-    backend: createLocalGitBackend(cwd, { timeoutMs: opts?.timeoutMs }),
+    backend: new SandboxPlumbingBackend(exec),
     preCommit: opts?.preCommit,
-    prePush: opts?.prePush,
+    prePush,
   });
 }

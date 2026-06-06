@@ -13,6 +13,9 @@
 
 import { SandboxPlumbingBackend, type GitBackend, type GitExec } from '@push/lib/git/backend';
 import { PushGit, type PreCommitGate, type PrePushGate } from '@push/lib/git/push-git';
+import { computePushedDiff } from '@push/lib/git/pushed-diff';
+import { makeSecretScanPrePushGate } from '@push/lib/git/secret-scan-gate';
+import { resolveSecretScanEnabled } from '@push/lib/secret-scan';
 import { execInSandbox, type ExecResult } from './sandbox-client';
 import { shellEscape } from './sandbox-tool-utils';
 
@@ -24,17 +27,11 @@ type SandboxExecFn = (
 ) => Promise<ExecResult>;
 
 /**
- * Build a GitBackend bound to a sandbox. Defaults to the module-level
- * `execInSandbox`; pass a custom executor (e.g. a tool-handler's injected
- * `ctx.execInSandbox`) when the call-site already has one. Commands run in
- * the sandbox's default workdir (`/workspace`); write calls forward the
- * `mutates` hint as `markWorkspaceMutated`.
+ * Build the argv-based `GitExec` port over a sandbox executor. Shared by the
+ * backend and the secret-scan diff source so both run git the same way.
  */
-export function createSandboxGitBackend(
-  sandboxId: string,
-  execFn: SandboxExecFn = execInSandbox,
-): GitBackend {
-  const exec: GitExec = async (args, opts) => {
+function makeSandboxGitExec(sandboxId: string, execFn: SandboxExecFn): GitExec {
+  return async (args, opts) => {
     const command = `git ${args.map(shellEscape).join(' ')}`;
     try {
       const res = await execFn(
@@ -54,22 +51,61 @@ export function createSandboxGitBackend(
       return { stdout: '', stderr: message, exitCode: 1, error: message };
     }
   };
-  return new SandboxPlumbingBackend(exec);
+}
+
+/**
+ * Resolve the web secret-scan opt-out. Vite exposes build-time vars on
+ * `import.meta.env`; `VITE_PUSH_SECRET_SCAN=0` disables the gate on the client
+ * (process env isn't readable in the browser). Guarded so it's safe under any
+ * bundler/test runner.
+ */
+function resolveWebSecretScanEnabled(): boolean {
+  const env = (import.meta as { env?: Record<string, unknown> }).env?.VITE_PUSH_SECRET_SCAN;
+  return resolveSecretScanEnabled({ env });
+}
+
+/**
+ * Build a GitBackend bound to a sandbox. Defaults to the module-level
+ * `execInSandbox`; pass a custom executor (e.g. a tool-handler's injected
+ * `ctx.execInSandbox`) when the call-site already has one. Commands run in
+ * the sandbox's default workdir (`/workspace`); write calls forward the
+ * `mutates` hint as `markWorkspaceMutated`.
+ */
+export function createSandboxGitBackend(
+  sandboxId: string,
+  execFn: SandboxExecFn = execInSandbox,
+): GitBackend {
+  return new SandboxPlumbingBackend(makeSandboxGitExec(sandboxId, execFn));
 }
 
 /**
  * Build a PushGit facade bound to a sandbox. Pass `preCommit` (a closure the
- * handler builds over the Auditor) to gate commits; pass `prePush` (built over
- * the deterministic secret scan, see `makeSecretScanPrePushGate`) to gate
- * pushes; pass `execFn` to reuse a call-site's injected executor.
+ * handler builds over the Auditor) to gate commits; pass `secretScan: true` to
+ * gate pushes behind the deterministic secret scan over the *uncapped*
+ * about-to-be-pushed diff (`computePushedDiff`); pass `prePush` to inject a
+ * custom push gate; pass `execFn` to reuse a call-site's injected executor.
  */
 export function createSandboxPushGit(
   sandboxId: string,
-  opts?: { execFn?: SandboxExecFn; preCommit?: PreCommitGate; prePush?: PrePushGate },
+  opts?: {
+    execFn?: SandboxExecFn;
+    preCommit?: PreCommitGate;
+    prePush?: PrePushGate;
+    secretScan?: boolean;
+  },
 ): PushGit {
+  const exec = makeSandboxGitExec(sandboxId, opts?.execFn ?? execInSandbox);
+  const prePush =
+    opts?.prePush ??
+    (opts?.secretScan
+      ? makeSecretScanPrePushGate({
+          getDiff: () => computePushedDiff(exec),
+          enabled: resolveWebSecretScanEnabled(),
+        })
+      : undefined);
   return new PushGit({
-    backend: createSandboxGitBackend(sandboxId, opts?.execFn),
+    backend: new SandboxPlumbingBackend(exec),
     preCommit: opts?.preCommit,
-    prePush: opts?.prePush,
+    prePush,
   });
 }

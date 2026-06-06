@@ -94,6 +94,20 @@ describe('scanDiffForSecrets', () => {
     const diff = ['+++ b/x.ts', '@@ -0,0 +1 @@', '+const x = 1;'].join('\n');
     expect(scanDiffForSecrets(diff)).toEqual([]);
   });
+
+  it('does not let a "\\ No newline at end of file" marker shift line numbers', () => {
+    const diff = [
+      '+++ b/keys.ts',
+      '@@ -1,2 +1,3 @@',
+      ' const a = 1;', // context → new line 1, advance to 2
+      '-const old = 2;', // removed → no advance
+      '\\ No newline at end of file', // metadata → must NOT advance
+      `+const k = "${SAMPLES['aws-access-key-id']}";`, // added → new line 2
+    ].join('\n');
+    const findings = scanDiffForSecrets(diff);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].line).toBe(2);
+  });
 });
 
 describe('formatSecretFindings', () => {
@@ -105,7 +119,7 @@ describe('formatSecretFindings', () => {
     expect(reason).toContain('AWS access key ID');
     expect(reason).toContain('a.ts:1');
     expect(reason).not.toContain(SAMPLES['aws-access-key-id']);
-    expect(reason).toContain('PUSH_SECRET_SCAN=0');
+    expect(reason.toLowerCase()).toContain('remove');
   });
 });
 

@@ -23,8 +23,6 @@ import {
 import { runAuditor } from '@/lib/auditor-agent';
 import { getIsAuditorGateEnabled } from '@/hooks/useAuditorGate';
 import { createSandboxPushGit } from '@/lib/git-backend';
-import { makeSecretScanPrePushGate } from '@push/lib/git/secret-scan-gate';
-import { resolveSecretScanEnabled } from '@push/lib/secret-scan';
 import { fetchAuditorFileContexts, type AuditorFileContext } from '@/lib/auditor-file-context';
 import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
 import { parseDiffStats } from '@/lib/diff-utils';
@@ -273,16 +271,14 @@ export function useCommitPush(
         }
 
         setState((s) => ({ ...s, phase: 'committing' }));
-        // Deterministic pre-push secret scan over the diff already in hand —
-        // the gate runs inside `pushGit.push()` (no extra git calls). The
-        // commit is doctrinally fine (local, not exposure); the *push* is the
-        // boundary the scan defends. This is the same gate `auto-branch-on-commit`
-        // will run on its auto-push.
-        const prePush = makeSecretScanPrePushGate({
-          getDiff: () => diffText,
-          enabled: resolveSecretScanEnabled(),
-        });
-        const pushGit = createSandboxPushGit(targetSandbox, { prePush });
+        // Deterministic pre-push secret scan: the gate runs inside
+        // `pushGit.push()` over the *uncapped* about-to-be-pushed commits
+        // (`computePushedDiff`, base..HEAD), not the capped working-tree
+        // preview — so it can't be bypassed by a truncated diff or a secret
+        // already sitting in an unpushed commit. The commit is doctrinally
+        // fine (local, not exposure); the *push* is the boundary it defends.
+        // Same gate `auto-branch-on-commit` will run on its auto-push.
+        const pushGit = createSandboxPushGit(targetSandbox, { secretScan: true });
         const commit = await pushGit.commit({ message });
         if (!commit.ok) {
           const r = commit.result;

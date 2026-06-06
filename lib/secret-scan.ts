@@ -185,8 +185,10 @@ export function scanDiffForSecrets(diff: string): SecretFinding[] {
       newLineNo += 1;
     } else if (rawLine.startsWith('-')) {
       // Removed line — present in the old file only, does not advance new count.
-    } else {
+    } else if (rawLine.startsWith(' ') || rawLine === '') {
       // Context line (leading space) or a blank line — advances the new count.
+      // Other metadata (e.g. `\ No newline at end of file`) is neither added
+      // nor a real new-file line, so it must NOT advance the counter.
       newLineNo += 1;
     }
   }
@@ -195,7 +197,9 @@ export function scanDiffForSecrets(diff: string): SecretFinding[] {
 
 /**
  * A user-facing block reason. Names the distinct rule labels and a few
- * file:line locations; never includes the raw secret.
+ * file:line locations; never includes the raw secret. The message is
+ * surface-neutral (the opt-out env var differs per surface and isn't readable
+ * on the web client, so it's documented in code, not advertised here).
  */
 export function formatSecretFindings(findings: SecretFinding[]): string {
   const labels = [...new Set(findings.map((f) => f.label))];
@@ -207,8 +211,8 @@ export function formatSecretFindings(findings: SecretFinding[]): string {
   const noun = count === 1 ? 'potential secret' : 'potential secrets';
   const where = locations.length ? ` (${locations.join(', ')})` : '';
   return (
-    `Blocked: ${count} ${noun} detected in the push diff — ${labels.join(', ')}${where}. ` +
-    `Remove the credential(s) or move them to a secret store, then push again. ` +
-    `Set ${SECRET_SCAN_ENV_VAR}=0 to disable this scan.`
+    `Blocked: ${count} ${noun} detected in the commits being pushed — ` +
+    `${labels.join(', ')}${where}. Remove the credential(s) from the commit ` +
+    `history (or move them to a secret store), then push again.`
   );
 }
