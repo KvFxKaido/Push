@@ -529,12 +529,64 @@ describe('PrReviewJob cancel', () => {
     await do_.fetch(cancelRequest('d1'));
     await Promise.allSettled(mock.pending);
 
-    // The in-progress run is patched to a neutral "Review cancelled" terminal —
-    // closed once by the cancel path, not re-closed by runReview's abort catch.
+    // The in-progress run is *patched* to a neutral "Review cancelled" terminal,
+    // exactly once, using the real check-run id from the in-progress create (1).
+    // runReview's abort catch owns this when a controller is live — handleCancel
+    // does NOT post a separate fresh run from the (null-id) pre-update row, so no
+    // duplicate "Review cancelled" check is created and the in-progress run never
+    // hangs "Reviewing…".
     const cancelledCalls = vi
       .mocked(finalizeReviewCheckRun)
       .mock.calls.filter((c) => c[2] === 'neutral' && /cancel/i.test(c[3].title));
     expect(cancelledCalls).toHaveLength(1);
+    expect(cancelledCalls[0]![1]).toBe(1);
+    expect(createReviewCheckRun).not.toHaveBeenCalled();
+  });
+
+  it('closes the check-run of a cancelled orphan (no live controller) from its row', async () => {
+    checkRunIdRef.current = 1;
+    vi.mocked(createInProgressReviewCheckRun).mockClear();
+    vi.mocked(finalizeReviewCheckRun).mockClear();
+    vi.mocked(createReviewCheckRun).mockClear();
+    const APP_ENV = { GITHUB_APP_ID: 'app', GITHUB_APP_PRIVATE_KEY: 'key' } as unknown as Env;
+
+    const mock = createMockCtx();
+    // A `running` row with no entry in abortControllers (its instance died), so
+    // the cancel can't abort anything and must close the check-run itself. Kept
+    // fresh (within the orphan grace window) so the first-fetch orphan sweep
+    // skips it rather than failing it before the cancel lands.
+    mock.reviews.set('orphan', {
+      delivery_id: 'orphan',
+      repo: 'octo/repo',
+      pr_number: 7,
+      head_sha: 'shaA',
+      base_ref: 'main',
+      head_ref: 'feature/x',
+      installation_id: '42',
+      is_cross_fork: 0,
+      status: 'running',
+      comments_posted: null,
+      posted: null,
+      result_json: null,
+      error_text: null,
+      created_at: Date.now(),
+      started_at: Date.now(),
+      finished_at: null,
+      check_run_id: 77,
+    });
+    const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
+
+    const res = await do_.fetch(cancelRequest('orphan'));
+    expect(res.status).toBe(200);
+    await Promise.allSettled(mock.pending);
+
+    expect(mock.reviews.get('orphan')?.status).toBe('cancelled');
+    // Patched its persisted in-progress run (id 77) to neutral "Review cancelled".
+    const cancelledCalls = vi
+      .mocked(finalizeReviewCheckRun)
+      .mock.calls.filter((c) => c[2] === 'neutral' && /cancel/i.test(c[3].title));
+    expect(cancelledCalls).toHaveLength(1);
+    expect(cancelledCalls[0]![1]).toBe(77);
   });
 });
 

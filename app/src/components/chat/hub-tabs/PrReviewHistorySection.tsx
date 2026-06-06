@@ -225,7 +225,7 @@ function ReviewRow({
           </button>
         )}
       </div>
-      {cancelError && <p className="mt-1 text-push-2xs text-red-400">{cancelError}</p>}
+      {inFlight && cancelError && <p className="mt-1 text-push-2xs text-red-400">{cancelError}</p>}
       {open && (
         <>
           <ReviewFindings review={review} />

@@ -410,10 +410,11 @@ async function handleCancel(request: Request, env: Env): Promise<Response> {
   );
   // Pass the DO's status through (200 cancelled / 404 not-found / 409 terminal)
   // so the client can distinguish a successful cancel from a stale-tab race.
-  const outcome = (await doResponse
-    .clone()
-    .json()
-    .catch(() => ({}))) as { status?: string; error?: string };
+  // The original response body is never read again, so no clone is needed.
+  const outcome = (await doResponse.json().catch(() => ({}))) as {
+    status?: string;
+    error?: string;
+  };
   log(doResponse.ok ? 'info' : 'warn', 'pr_review_cancel_forwarded', {
     repo: parsed.repo,
     pr: parsed.prNumber,
