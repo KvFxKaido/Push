@@ -598,4 +598,43 @@ describe('PrReviewJob orphan sweep', () => {
     const ev = mock.events.find((e) => e.delivery_id === 'stuck' && e.type === 'review.failed');
     expect(JSON.parse(ev!.payload_json).errorType).toBe('timeout');
   });
+
+  it('alarm merges grace recheck with live-review deadline, picking the earliest', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
+
+    // Plant an orphan row within the grace window (no abort controller).
+    // Use a distinct PR number so handleStart's coalescing doesn't supersede it.
+    mock.reviews.set('orphan', seedRow({
+      delivery_id: 'orphan',
+      pr_number: 99,
+      status: 'running',
+      created_at: Date.now() - 90_000,
+      started_at: Date.now() - 30_000,
+    }));
+
+    // A stuck live review with a 15-minute deadline.
+    __setPrReviewExecutorOverride(
+      'live',
+      (_input, _env, signal) =>
+        new Promise(() => {
+          signal.addEventListener('abort', () => {});
+        }),
+    );
+    await do_.fetch(startRequest(startInput({ deliveryId: 'live' })));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const alarmsBefore = mock.alarms.length;
+    await do_.alarm();
+
+    // alarm() should have set exactly one new alarm.
+    expect(mock.alarms.length).toBe(alarmsBefore + 1);
+    const lastAlarm = mock.alarms[mock.alarms.length - 1];
+    // Grace alarm (~2 min) is earlier than live deadline (~15 min) and in the future.
+    expect(lastAlarm).toBeGreaterThan(Date.now());
+    expect(lastAlarm).toBeLessThan(Date.now() + 3 * 60_000);
+    // The orphan is within the grace window so it must not be swept.
+    expect(mock.reviews.get('orphan')!.status).toBe('running');
+  });
 });

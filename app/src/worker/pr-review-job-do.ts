@@ -257,16 +257,20 @@ export class PrReviewJob {
    * does not prove the provider/model stream is making progress. Once the wall
    * clock budget expires, abort and fail it so the UI/check-run cannot hang
    * forever.
+   *
+   * Merges the grace-recheck alarm from sweepOrphans with live-review deadlines
+   * so the earliest alarm always wins — preventing the grace alarm from being
+   * silently overwritten (Durable Objects support only a single alarm).
    */
   async alarm(): Promise<void> {
     const now = Date.now();
     await this.failTimedOutReviews(now);
-    await this.sweepOrphans();
+    const graceAlarm = await this.sweepOrphans(false);
 
     const pending = this.ctx.storage.sql
       .exec("SELECT * FROM review WHERE status IN ('queued','running')")
       .toArray() as unknown as ReviewRow[];
-    let nextAlarm: number | null = null;
+    let nextAlarm = graceAlarm;
     for (const row of pending) {
       if (row.status !== 'running' || row.started_at == null) continue;
       if (!this.abortControllers.has(row.delivery_id)) continue;
@@ -726,7 +730,8 @@ export class PrReviewJob {
    * not have registered its controller yet, avoiding a race that would fail a
    * live review. Best-effort throughout — never throws into the caller.
    */
-  private async sweepOrphans(): Promise<void> {
+  private async sweepOrphans(armGrace = true): Promise<number | null> {
+    let graceAlarm: number | null = null;
     try {
       const cutoff = Date.now() - ORPHAN_GRACE_MS;
       const rows = this.ctx.storage.sql
@@ -775,7 +780,10 @@ export class PrReviewJob {
       // would hang forever once the grace window passes and the once-per-instance
       // first-fetch sweep is spent. Ensure a recheck just past the grace window.
       // (A row that turned out live re-arms the long alarm in alarm() instead.)
-      if (graceSkipped) await this.ctx.storage.setAlarm(Date.now() + ORPHAN_GRACE_MS + 1_000);
+      if (graceSkipped) {
+        graceAlarm = Date.now() + ORPHAN_GRACE_MS + 1_000;
+        if (armGrace) await this.ctx.storage.setAlarm(graceAlarm);
+      }
     } catch (err) {
       // Best-effort: a storage hiccup mid-sweep must not throw into the alarm
       // handler (which the runtime would retry) or a waitUntil. The first-fetch
@@ -784,6 +792,7 @@ export class PrReviewJob {
         message: err instanceof Error ? err.message : String(err),
       });
     }
+    return graceAlarm;
   }
 }
 
