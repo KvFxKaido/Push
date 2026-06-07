@@ -19,6 +19,7 @@
 import type { Theme, TokenName } from './tui-theme.js';
 import { truncate, visibleWidth, wordWrap } from './tui-renderer.js';
 import { highlightCode } from './tui-highlight.js';
+import { renderInline } from './tui-inline.js';
 import { safeCitations, citationHost, sanitizeCitationText } from './citation-format.js';
 import type { UrlCitation } from '../lib/provider-contract.ts';
 
@@ -201,6 +202,19 @@ export function renderAssistantEntryLines(
     pushAssistant(summary, (s) => theme.style('accent.secondary', s));
   };
 
+  // Render inline markdown (bold / code / links) for a prose-like line: the
+  // result is pre-styled per-word ANSI, so push with an identity styleFn exactly
+  // like the code-fence path. `linePrefix` carries any already-styled leading
+  // text (e.g. a list marker) that should sit on the same line. Per-line link
+  // footnotes are pushed beneath, indented two spaces under the line.
+  const pushInline = (lineText: string, baseToken: TokenName, linePrefix = ''): void => {
+    const inlined = renderInline(theme, lineText, baseToken);
+    pushAssistant(linePrefix + inlined.text, (s) => s);
+    for (const footnote of inlined.footnotes) {
+      pushAssistant(`  ${footnote}`, (s) => s);
+    }
+  };
+
   // Syntax-highlight a code fence and push it line by line. Lines come back
   // pre-styled into balanced per-word ANSI, so we push with an identity
   // styleFn — wrapping a styled run is safe because no colour is ever left
@@ -318,16 +332,18 @@ export function renderAssistantEntryLines(
     const bullet = line.match(/^(\s*)([-*]|\d+\.)\s+(.*)$/);
     if (bullet) {
       const indent = ' '.repeat(Math.min(4, bullet[1].length));
-      pushAssistant(`${indent}${bullet[2]} ${bullet[3]}`, (s) => theme.style('fg.primary', s));
+      // Keep the list marker in the base colour; inline-render only the text.
+      const marker = `${indent}${theme.style('fg.primary', bullet[2])} `;
+      pushInline(bullet[3], 'fg.primary', marker);
       continue;
     }
 
     if (/^\s*>\s+/.test(line)) {
-      pushAssistant(line.replace(/^\s*>\s+/, ''), (s) => theme.style('fg.secondary', s));
+      pushInline(line.replace(/^\s*>\s+/, ''), 'fg.secondary');
       continue;
     }
 
-    pushAssistant(line, (s) => theme.style('fg.primary', s));
+    pushInline(line, 'fg.primary');
   }
 
   if (fenceLang != null) flushFence();
