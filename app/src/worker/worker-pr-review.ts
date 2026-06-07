@@ -36,11 +36,17 @@ import {
   setPrReviewEnabled,
   setPrReviewRuntimeConfig,
 } from './pr-review-config';
+import { evictInflightReview, listInflightReviews } from './pr-review-inflight-index';
+import type { PrReviewListItem } from './pr-review-job-do';
 
 const LIST_PATH = '/api/pr-reviews';
 const RUN_PATH = '/api/pr-reviews/run';
 const CANCEL_PATH = '/api/pr-reviews/cancel';
+const INFLIGHT_PATH = '/api/pr-reviews/inflight';
 const CONFIG_PATH = '/api/pr-reviews/config';
+
+/** Statuses a review can still be cancelled from; everything else is terminal. */
+const NON_TERMINAL_STATUSES = new Set(['queued', 'running']);
 
 /**
  * owner/name with GitHub-valid characters only (alphanumeric, `.`, `_`, `-`).
@@ -57,9 +63,16 @@ function log(
   console.log(JSON.stringify({ level, event, ...ctx }));
 }
 
-export type PrReviewRouteAction = 'list' | 'run' | 'cancel' | 'config-get' | 'config-set';
+export type PrReviewRouteAction =
+  | 'list'
+  | 'inflight'
+  | 'run'
+  | 'cancel'
+  | 'config-get'
+  | 'config-set';
 
 export function matchPrReviewRoute(pathname: string, method: string): PrReviewRouteAction | null {
+  if (pathname === INFLIGHT_PATH && method === 'GET') return 'inflight';
   if (pathname === LIST_PATH && method === 'GET') return 'list';
   if (pathname === RUN_PATH && method === 'POST') return 'run';
   if (pathname === CANCEL_PATH && method === 'POST') return 'cancel';
@@ -102,6 +115,7 @@ export async function handlePrReviewRoute(
 
   if (action === 'run') return handleRun(request, env, requestUrl);
   if (action === 'cancel') return handleCancel(request, env);
+  if (action === 'inflight') return handleInflight(env, requestUrl);
   return handleList(env, requestUrl);
 }
 
@@ -217,6 +231,62 @@ async function handleList(env: Env, requestUrl: URL): Promise<Response> {
     parsed.prNumber,
     new Request('https://do/list', { method: 'GET' }),
   );
+}
+
+/**
+ * Cross-PR in-flight view: list every `queued`/`running` review for a repo,
+ * regardless of which branch's PR it belongs to — the surface that makes Cancel
+ * reachable for a review on a PR other than the one the active branch resolves
+ * to. The KV discovery index (written at enqueue) supplies the candidate set;
+ * each candidate's owning DO is then asked for authoritative status so the list
+ * never shows a stale "running" for a review that already finished. Candidates
+ * whose DO reports terminal / not-found are lazily evicted from the index here,
+ * so it self-heals without the DO having to delete on every terminal path.
+ */
+async function handleInflight(env: Env, requestUrl: URL): Promise<Response> {
+  const repo = requestUrl.searchParams.get('repo') ?? '';
+  if (!REPO_RE.test(repo)) {
+    return json({ error: 'INVALID_REQUEST', message: 'repo (owner/name) required.' }, 400);
+  }
+
+  const candidates = await listInflightReviews(env, repo);
+  const resolved = await Promise.all(
+    candidates.map(async (entry) => {
+      try {
+        const doResponse = await forwardToDo(
+          env,
+          entry.repo,
+          entry.prNumber,
+          new Request(`https://do/status?deliveryId=${encodeURIComponent(entry.deliveryId)}`, {
+            method: 'GET',
+          }),
+        );
+        if (doResponse.status === 404) {
+          // The DO has no such row (evicted before the index entry expired).
+          await evictInflightReview(env, entry.repo, entry.prNumber, entry.deliveryId);
+          return null;
+        }
+        if (!doResponse.ok) return null; // transient — keep the index entry, retry next poll
+        const item = (await doResponse.json()) as PrReviewListItem;
+        if (NON_TERMINAL_STATUSES.has(item.status)) return item;
+        // Terminal: drop it from the index so the next poll skips the round-trip.
+        await evictInflightReview(env, entry.repo, entry.prNumber, entry.deliveryId);
+        return null;
+      } catch {
+        return null; // transient DO/network failure — leave the index entry alone
+      }
+    }),
+  );
+
+  const reviews = resolved
+    .filter((r): r is PrReviewListItem => r !== null)
+    .sort((a, b) => (b.startedAt ?? b.createdAt) - (a.startedAt ?? a.createdAt));
+  log('info', 'pr_review_inflight_listed', {
+    repo,
+    candidates: candidates.length,
+    inflight: reviews.length,
+  });
+  return json({ reviews }, 200);
 }
 
 async function handleRun(request: Request, env: Env, requestUrl: URL): Promise<Response> {

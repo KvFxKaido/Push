@@ -97,13 +97,15 @@ function runEnv(overrides: Partial<Env> = {}): Env {
 }
 
 describe('matchPrReviewRoute', () => {
-  it('maps the list (GET), run (POST), and cancel (POST) routes, rejects others', () => {
+  it('maps the list (GET), run (POST), cancel (POST), inflight (GET) routes, rejects others', () => {
     expect(matchPrReviewRoute('/api/pr-reviews', 'GET')).toBe('list');
     expect(matchPrReviewRoute('/api/pr-reviews/run', 'POST')).toBe('run');
     expect(matchPrReviewRoute('/api/pr-reviews/cancel', 'POST')).toBe('cancel');
+    expect(matchPrReviewRoute('/api/pr-reviews/inflight', 'GET')).toBe('inflight');
     expect(matchPrReviewRoute('/api/pr-reviews', 'POST')).toBeNull();
     expect(matchPrReviewRoute('/api/pr-reviews/run', 'GET')).toBeNull();
     expect(matchPrReviewRoute('/api/pr-reviews/cancel', 'GET')).toBeNull();
+    expect(matchPrReviewRoute('/api/pr-reviews/inflight', 'POST')).toBeNull();
     expect(matchPrReviewRoute('/api/pr-reviews/extra', 'GET')).toBeNull();
   });
 
@@ -454,6 +456,119 @@ describe('handlePrReviewRoute — cancel', () => {
       'cancel',
     );
     expect(res.status).toBe(403);
+    expect(stub.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('handlePrReviewRoute — inflight (cross-PR active reviews)', () => {
+  // KV mock with the list/get/delete surface the index reader uses.
+  function makeKv(entries: Record<string, unknown>) {
+    const store = new Map<string, string>(
+      Object.entries(entries).map(([k, v]) => [k, JSON.stringify(v)]),
+    );
+    return {
+      kv: {
+        list: async ({ prefix }: { prefix: string }) => ({
+          keys: [...store.keys()].filter((k) => k.startsWith(prefix)).map((name) => ({ name })),
+        }),
+        get: async (k: string) => store.get(k) ?? null,
+        delete: async (k: string) => {
+          store.delete(k);
+        },
+        put: async (k: string, v: string) => {
+          store.set(k, v);
+        },
+      } as unknown as Env['SNAPSHOT_INDEX'],
+      store,
+    };
+  }
+
+  // DO stub that answers /status?deliveryId=<id> from a per-delivery status map.
+  // A missing entry returns 404 (NOT_FOUND), mirroring the real DO.
+  function makeStatusStub(statuses: Record<string, string>): FakeStub {
+    return {
+      fetch: vi.fn(async (req: Request) => {
+        const id = new URL(req.url).searchParams.get('deliveryId') ?? '';
+        const status = statuses[id];
+        if (!status) return new Response(JSON.stringify({ error: 'NOT_FOUND' }), { status: 404 });
+        return new Response(
+          JSON.stringify({ deliveryId: id, prNumber: 7, status, startedAt: 1, createdAt: 1 }),
+          { status: 200 },
+        );
+      }),
+    };
+  }
+
+  const KEY = (pr: number, id: string) => `inflight:pr-review:octo/repo#${pr}#${id}`;
+
+  it('returns only queued/running reviews and lazily evicts terminal/not-found entries', async () => {
+    const { kv, store } = makeKv({
+      [KEY(7, 'd-run')]: {
+        repo: 'octo/repo',
+        prNumber: 7,
+        deliveryId: 'd-run',
+        headSha: 'a',
+        createdAt: 3,
+      },
+      [KEY(8, 'd-done')]: {
+        repo: 'octo/repo',
+        prNumber: 8,
+        deliveryId: 'd-done',
+        headSha: 'b',
+        createdAt: 2,
+      },
+      [KEY(9, 'd-gone')]: {
+        repo: 'octo/repo',
+        prNumber: 9,
+        deliveryId: 'd-gone',
+        headSha: 'c',
+        createdAt: 1,
+      },
+    });
+    const stub = makeStatusStub({ 'd-run': 'running', 'd-done': 'completed' }); // d-gone → 404
+    const res = await handlePrReviewRoute(
+      makeRequest('/api/pr-reviews/inflight?repo=octo/repo'),
+      makeEnv({ PrReviewJob: makePrReviewNamespace(stub), SNAPSHOT_INDEX: kv }),
+      'inflight',
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { reviews: Array<{ deliveryId: string }> };
+    expect(body.reviews.map((r) => r.deliveryId)).toEqual(['d-run']);
+    // Terminal + not-found entries are evicted; the live one stays.
+    expect(store.has(KEY(7, 'd-run'))).toBe(true);
+    expect(store.has(KEY(8, 'd-done'))).toBe(false);
+    expect(store.has(KEY(9, 'd-gone'))).toBe(false);
+  });
+
+  it('rejects a malformed repo (400) without touching the DO', async () => {
+    const stub = makeFakeStub();
+    const res = await handlePrReviewRoute(
+      makeRequest('/api/pr-reviews/inflight?repo=not-a-repo'),
+      makeEnv({ PrReviewJob: makePrReviewNamespace(stub), SNAPSHOT_INDEX: makeKv({}).kv }),
+      'inflight',
+    );
+    expect(res.status).toBe(400);
+    expect(stub.fetch).not.toHaveBeenCalled();
+  });
+
+  it('returns 503 when the PrReviewJob DO binding is absent', async () => {
+    const res = await handlePrReviewRoute(
+      makeRequest('/api/pr-reviews/inflight?repo=octo/repo'),
+      makeEnv(),
+      'inflight',
+    );
+    expect(res.status).toBe(503);
+  });
+
+  it('returns an empty list (200) when nothing is indexed', async () => {
+    const stub = makeFakeStub();
+    const res = await handlePrReviewRoute(
+      makeRequest('/api/pr-reviews/inflight?repo=octo/repo'),
+      makeEnv({ PrReviewJob: makePrReviewNamespace(stub), SNAPSHOT_INDEX: makeKv({}).kv }),
+      'inflight',
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ reviews: [] });
     expect(stub.fetch).not.toHaveBeenCalled();
   });
 });

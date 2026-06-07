@@ -14,6 +14,7 @@ import { PROVIDERS, type PreferredProvider } from '@/lib/providers';
 import type { ReviewComment } from '@/types';
 import { findOpenPRForBranch } from '@/lib/github-tools';
 import { cancelPrReview, triggerPrReview, usePrReviewHistory } from '@/hooks/usePrReviewHistory';
+import { usePrReviewInflight } from '@/hooks/usePrReviewInflight';
 import { usePrReviewConfig } from '@/hooks/usePrReviewConfig';
 import type { PrReviewListItem } from '@/worker/pr-review-job-do';
 import { HUB_PANEL_SUBTLE_SURFACE_CLASS } from '@/components/chat/hub-styles';
@@ -159,10 +160,13 @@ function ReviewFindings({ review }: { review: PrReviewListItem }) {
 function ReviewRow({
   review,
   onCancel,
+  showPrNumber = false,
 }: {
   review: PrReviewListItem;
   /** Cancel this review by deliveryId; resolves after the refresh is kicked. */
   onCancel?: (deliveryId: string) => Promise<void>;
+  /** Show the PR number in the row header — used by the cross-PR active list. */
+  showPrNumber?: boolean;
 }) {
   const [open, setOpen] = useState(review.status === 'running' || review.status === 'completed');
   const [cancelling, setCancelling] = useState(false);
@@ -203,6 +207,9 @@ function ReviewRow({
               <ChevronRight className="h-3 w-3 text-push-fg-dim" />
             )}
             <StatusBadge status={review.status} />
+            {showPrNumber && (
+              <span className="text-push-2xs text-push-fg-dim">#{review.prNumber}</span>
+            )}
             <span className="font-mono text-push-2xs text-push-fg-dim">
               {review.headSha.slice(0, 7)}
             </span>
@@ -277,6 +284,7 @@ export function PrReviewHistorySection({
   }, [repoFullName, activeBranch]);
 
   const { reviews, refresh } = usePrReviewHistory(repoFullName ?? null, prNumber);
+  const { reviews: inflight, refresh: refreshInflight } = usePrReviewInflight(repoFullName ?? null);
   const {
     enabled,
     provider,
@@ -320,9 +328,27 @@ export function PrReviewHistorySection({
         await cancelPrReview(repoFullName, prNumber, deliveryId);
       } finally {
         refresh();
+        refreshInflight();
       }
     },
-    [repoFullName, prNumber, refresh],
+    [repoFullName, prNumber, refresh, refreshInflight],
+  );
+
+  // Cancel a review from the cross-PR active list, which carries its own PR
+  // number (it may belong to a PR other than the active branch's). Refresh both
+  // surfaces so the row clears from the active list and, if it's also the
+  // current PR, flips to "Cancelled" in the history below.
+  const handleCancelInflight = useCallback(
+    async (cancelPr: number, deliveryId: string) => {
+      if (!repoFullName) return;
+      try {
+        await cancelPrReview(repoFullName, cancelPr, deliveryId);
+      } finally {
+        refreshInflight();
+        refresh();
+      }
+    },
+    [repoFullName, refresh, refreshInflight],
   );
 
   // Render whenever there's a repo — the global on/off toggle plus the per-PR
@@ -418,6 +444,28 @@ export function PrReviewHistorySection({
         <p className="mb-1.5 text-push-2xs text-push-fg-dim">
           Reviewer is off — no automated reviews will run (saves provider quota).
         </p>
+      )}
+      {/* Cross-PR active reviews: every queued/running review for this repo,
+          including ones on PRs other than the active branch's — so a runaway
+          review is reachable to cancel without branch-hopping. Only shown when
+          something is actually in flight. */}
+      {inflight.length > 0 && (
+        <div className="mb-2 rounded border border-sky-400/30 bg-sky-400/5 px-2.5 py-2">
+          <p className="mb-1.5 flex items-center gap-1.5 text-push-2xs font-medium text-sky-400">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Active reviews ({inflight.length})
+          </p>
+          <div className="space-y-2">
+            {inflight.map((review) => (
+              <ReviewRow
+                key={`${review.prNumber}:${review.deliveryId}`}
+                review={review}
+                showPrNumber
+                onCancel={(deliveryId) => handleCancelInflight(review.prNumber, deliveryId)}
+              />
+            ))}
+          </div>
+        </div>
       )}
       {reviews.length > 0 ? (
         <div className="space-y-2">
