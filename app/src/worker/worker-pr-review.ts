@@ -16,6 +16,7 @@
  * the webhook receiver enforces.
  */
 
+import type { ExecutionContext } from '@cloudflare/workers-types';
 import type { AIProviderType } from '@push/lib/provider-contract';
 import { getClientIp, validateOrigin, type Env } from './worker-middleware';
 import {
@@ -85,6 +86,7 @@ export async function handlePrReviewRoute(
   request: Request,
   env: Env,
   action: PrReviewRouteAction,
+  ctx?: ExecutionContext,
 ): Promise<Response> {
   const requestUrl = new URL(request.url);
   const originCheck = validateOrigin(request, requestUrl, env);
@@ -115,7 +117,7 @@ export async function handlePrReviewRoute(
 
   if (action === 'run') return handleRun(request, env, requestUrl);
   if (action === 'cancel') return handleCancel(request, env);
-  if (action === 'inflight') return handleInflight(env, requestUrl);
+  if (action === 'inflight') return handleInflight(env, requestUrl, ctx);
   return handleList(env, requestUrl);
 }
 
@@ -243,13 +245,21 @@ async function handleList(env: Env, requestUrl: URL): Promise<Response> {
  * whose DO reports terminal / not-found are lazily evicted from the index here,
  * so it self-heals without the DO having to delete on every terminal path.
  */
-async function handleInflight(env: Env, requestUrl: URL): Promise<Response> {
+async function handleInflight(
+  env: Env,
+  requestUrl: URL,
+  ctx?: ExecutionContext,
+): Promise<Response> {
   const repo = requestUrl.searchParams.get('repo') ?? '';
   if (!REPO_RE.test(repo)) {
     return json({ error: 'INVALID_REQUEST', message: 'repo (owner/name) required.' }, 400);
   }
 
   const candidates = await listInflightReviews(env, repo);
+  // Eviction of terminal/not-found entries is best-effort cleanup, not part of
+  // the answer — collect the targets and reap them off the response path so a
+  // burst of just-finished reviews doesn't add KV-delete latency to the poll.
+  const toEvict: Array<{ prNumber: number; deliveryId: string }> = [];
   const resolved = await Promise.all(
     candidates.map(async (entry) => {
       try {
@@ -263,14 +273,14 @@ async function handleInflight(env: Env, requestUrl: URL): Promise<Response> {
         );
         if (doResponse.status === 404) {
           // The DO has no such row (evicted before the index entry expired).
-          await evictInflightReview(env, entry.repo, entry.prNumber, entry.deliveryId);
+          toEvict.push({ prNumber: entry.prNumber, deliveryId: entry.deliveryId });
           return null;
         }
         if (!doResponse.ok) return null; // transient — keep the index entry, retry next poll
         const item = (await doResponse.json()) as PrReviewListItem;
         if (NON_TERMINAL_STATUSES.has(item.status)) return item;
         // Terminal: drop it from the index so the next poll skips the round-trip.
-        await evictInflightReview(env, entry.repo, entry.prNumber, entry.deliveryId);
+        toEvict.push({ prNumber: entry.prNumber, deliveryId: entry.deliveryId });
         return null;
       } catch {
         return null; // transient DO/network failure — leave the index entry alone
@@ -278,9 +288,19 @@ async function handleInflight(env: Env, requestUrl: URL): Promise<Response> {
     }),
   );
 
+  if (toEvict.length > 0) {
+    const evictAll = Promise.all(
+      toEvict.map((e) => evictInflightReview(env, repo, e.prNumber, e.deliveryId)),
+    );
+    // waitUntil keeps the cleanup alive past the response; fall back to awaiting
+    // when no ExecutionContext is threaded (e.g. unit tests) so it still runs.
+    if (ctx) ctx.waitUntil(evictAll);
+    else await evictAll;
+  }
+
   const reviews = resolved
     .filter((r): r is PrReviewListItem => r !== null)
-    .sort((a, b) => (b.startedAt ?? b.createdAt) - (a.startedAt ?? a.createdAt));
+    .sort((a, b) => b.createdAt - a.createdAt);
   log('info', 'pr_review_inflight_listed', {
     repo,
     candidates: candidates.length,

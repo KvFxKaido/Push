@@ -31,12 +31,23 @@ export function usePrReviewInflight(repoFullName: string | null): PrReviewInflig
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Reset the cached list the instant the repo changes — React's blessed
+  // "adjust state during render" pattern, NOT an in-effect setState. Without
+  // this, repo A's rows survive into repo B until B's first poll resolves (and
+  // indefinitely if that poll fails), and because the cancel handler binds the
+  // *current* repoFullName to a stale row's deliveryId, a cancel could hit the
+  // wrong repo's DO. Resetting here scopes the list to repoFullName at all times
+  // while still preserving same-repo rows across transient poll failures.
+  const [trackedRepo, setTrackedRepo] = useState(repoFullName);
+  if (repoFullName !== trackedRepo) {
+    setTrackedRepo(repoFullName);
+    setReviews([]);
+    setError(null);
+  }
+
   useEffect(() => {
-    // No repo → nothing to poll. The consuming section is hidden when there's
-    // no repo, so any stale list is never rendered; we deliberately don't reset
-    // state synchronously here (it would make this a "you might not need an
-    // effect" reset). A repo switch re-runs the effect and the first poll
-    // replaces the list.
+    // No repo → nothing to poll (the cross-repo reset above already cleared the
+    // list). A repo switch re-runs the effect and the first poll repopulates.
     if (!repoFullName) return;
 
     let cancelled = false;

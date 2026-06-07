@@ -36,6 +36,7 @@ vi.mock('@/lib/github-tools', () => ({
   fetchPullRequestRefs: (...args: unknown[]) => fetchRefsMock(...args),
 }));
 
+import type { ExecutionContext } from '@cloudflare/workers-types';
 import { handlePrReviewRoute, matchPrReviewRoute } from './worker-pr-review';
 import type { Env } from './worker-middleware';
 
@@ -534,10 +535,40 @@ describe('handlePrReviewRoute — inflight (cross-PR active reviews)', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { reviews: Array<{ deliveryId: string }> };
     expect(body.reviews.map((r) => r.deliveryId)).toEqual(['d-run']);
-    // Terminal + not-found entries are evicted; the live one stays.
+    // Terminal + not-found entries are evicted (await-fallback when no ctx); the
+    // live one stays.
     expect(store.has(KEY(7, 'd-run'))).toBe(true);
     expect(store.has(KEY(8, 'd-done'))).toBe(false);
     expect(store.has(KEY(9, 'd-gone'))).toBe(false);
+  });
+
+  it('defers eviction to ctx.waitUntil (off the response path) when a context is threaded', async () => {
+    const { kv, store } = makeKv({
+      [KEY(8, 'd-done')]: {
+        repo: 'octo/repo',
+        prNumber: 8,
+        deliveryId: 'd-done',
+        headSha: 'b',
+        createdAt: 2,
+      },
+    });
+    const stub = makeStatusStub({ 'd-done': 'completed' });
+    const deferred: Promise<unknown>[] = [];
+    const ctx = {
+      waitUntil: (p: Promise<unknown>) => deferred.push(p),
+    } as unknown as ExecutionContext;
+    const res = await handlePrReviewRoute(
+      makeRequest('/api/pr-reviews/inflight?repo=octo/repo'),
+      makeEnv({ PrReviewJob: makePrReviewNamespace(stub), SNAPSHOT_INDEX: kv }),
+      'inflight',
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    // Eviction is parked in waitUntil (off the response path) rather than awaited
+    // inline — proven by it landing in the ctx's deferred queue.
+    expect(deferred.length).toBe(1);
+    await Promise.all(deferred);
+    expect(store.has(KEY(8, 'd-done'))).toBe(false);
   });
 
   it('rejects a malformed repo (400) without touching the DO', async () => {

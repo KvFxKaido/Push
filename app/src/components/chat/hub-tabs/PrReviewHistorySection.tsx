@@ -285,6 +285,13 @@ export function PrReviewHistorySection({
 
   const { reviews, refresh } = usePrReviewHistory(repoFullName ?? null, prNumber);
   const { reviews: inflight, refresh: refreshInflight } = usePrReviewInflight(repoFullName ?? null);
+  // "Active reviews" is purely a cross-PR monitor: the current PR's in-flight
+  // review already appears (cancellable) in the per-PR history below, so exclude
+  // it here to avoid rendering two identical rows for the same run.
+  const otherPrInflight = useMemo(
+    () => inflight.filter((r) => r.prNumber !== prNumber),
+    [inflight, prNumber],
+  );
   const {
     enabled,
     provider,
@@ -449,14 +456,14 @@ export function PrReviewHistorySection({
           including ones on PRs other than the active branch's — so a runaway
           review is reachable to cancel without branch-hopping. Only shown when
           something is actually in flight. */}
-      {inflight.length > 0 && (
+      {otherPrInflight.length > 0 && (
         <div className="mb-2 rounded border border-sky-400/30 bg-sky-400/5 px-2.5 py-2">
           <p className="mb-1.5 flex items-center gap-1.5 text-push-2xs font-medium text-sky-400">
             <Loader2 className="h-3 w-3 animate-spin" />
-            Active reviews ({inflight.length})
+            Active reviews ({otherPrInflight.length})
           </p>
           <div className="space-y-2">
-            {inflight.map((review) => (
+            {otherPrInflight.map((review) => (
               <ReviewRow
                 key={`${review.prNumber}:${review.deliveryId}`}
                 review={review}
