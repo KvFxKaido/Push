@@ -149,6 +149,13 @@ export interface AssistantRenderOptions {
   expandToolJsonPayloads?: boolean;
   entryKey?: string | null;
   payloadUI?: PayloadUI | null;
+  /**
+   * When true, the leading bullet glyph is suppressed and the first line uses
+   * the continuation prefix instead. Used by the streaming settle-and-freeze
+   * path (tui-stream-frame.ts) when framing a chunk that is *not* the start of
+   * the message — the bullet was already emitted by an earlier settled chunk.
+   */
+  firstPrefixConsumed?: boolean;
 }
 
 export function renderAssistantEntryLines(
@@ -158,7 +165,12 @@ export function renderAssistantEntryLines(
   theme: Theme,
   opts: AssistantRenderOptions = {},
 ): void {
-  const { expandToolJsonPayloads = false, entryKey = null, payloadUI = null } = opts;
+  const {
+    expandToolJsonPayloads = false,
+    entryKey = null,
+    payloadUI = null,
+    firstPrefixConsumed = false,
+  } = opts;
 
   // Single bullet prefix — same shape `assistantFramer` and the
   // streaming render path use. Earlier versions accepted a
@@ -170,7 +182,7 @@ export function renderAssistantEntryLines(
   const bullet = bulletGlyph(theme);
   const firstPrefix = `${theme.style('fg.muted', bullet)} `;
   const nextPrefix = '  ';
-  let canUseFirstPrefix = true;
+  let canUseFirstPrefix = !firstPrefixConsumed;
   let jsonFenceOrdinal = 0;
 
   const pushAssistant = (

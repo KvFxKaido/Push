@@ -145,6 +145,7 @@ import {
 } from './tui-transcript-window.js';
 import { shouldFullRedraw } from './tui-render-frame.js';
 import { reconcileEntryBlocks } from './tui-transcript-cache.js';
+import { reconcileStreamFrame } from './tui-stream-frame.js';
 
 // ── TUI state ───────────────────────────────────────────────────────
 
@@ -288,6 +289,9 @@ function createTUIState() {
     entryRenderCache: new WeakMap(),
     // Streaming token accumulator (for in-progress assistant response)
     streamBuf: '',
+    // Settle-and-freeze cache for the streaming tail (tui-stream-frame.ts):
+    // frames the settled prefix once, reframes only the volatile tail per token.
+    streamFrameState: null,
     // Tool feed: array of { type: 'call'|'result', name, args?, duration?, error?, preview?, timestamp }
     toolFeed: [],
     // Approval prompt (when awaiting_approval)
@@ -465,16 +469,34 @@ function renderTranscript(buf, layout, theme, tuiState) {
     },
   });
 
-  const streamingLines = [];
+  let streamingLines = [];
 
-  // Add streaming buffer if assistant is currently streaming. Same
-  // bullet prefix the assistant framer uses; renderAssistantEntryLines
-  // applies it internally now that the badge-led layout is gone.
+  // Add streaming buffer if assistant is currently streaming. The settled
+  // prefix (complete lines + closed fences) is framed once and cached; only the
+  // volatile tail reframes per token (see tui-stream-frame.ts). Same bullet
+  // prefix the assistant framer uses — emitted once via firstPrefixConsumed.
   if (tuiState.streamBuf) {
-    renderAssistantEntryLines(streamingLines, tuiState.streamBuf, width, theme, {
-      expandToolJsonPayloads: tuiState.toolJsonPayloadsExpanded,
-      payloadUI: null,
+    const streamSig = `${width}::${theme.name}::${tuiState.toolJsonPayloadsExpanded ? 1 : 0}`;
+    const { lines: framed, state } = reconcileStreamFrame({
+      text: tuiState.streamBuf,
+      sig: streamSig,
+      prev: tuiState.streamFrameState,
+      frameChunk: (src, firstPrefixConsumed) => {
+        const chunkLines = [];
+        renderAssistantEntryLines(chunkLines, src, width, theme, {
+          expandToolJsonPayloads: tuiState.toolJsonPayloadsExpanded,
+          payloadUI: null,
+          firstPrefixConsumed,
+        });
+        return chunkLines;
+      },
     });
+    tuiState.streamFrameState = state;
+    streamingLines = framed;
+  } else if (tuiState.streamFrameState) {
+    // Stream ended (buffer committed/cleared) — drop the cache so the next
+    // stream starts clean rather than reusing a stale settled prefix.
+    tuiState.streamFrameState = null;
   }
 
   // Take the last `height` lines (scroll to bottom), adjusted by scrollOffset.
@@ -4079,6 +4101,7 @@ export async function runTUI(options = {}) {
     tuiState.reasoningStreaming = false;
     tuiState.transcript = [];
     tuiState.entryRenderCache = new WeakMap();
+    tuiState.streamFrameState = null;
     tuiState.toolFeed = [];
     tuiState.scrollOffset = 0;
     tuiState.fileAwareness = null;
