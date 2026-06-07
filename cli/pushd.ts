@@ -695,6 +695,7 @@ import {
   ROLE_CAPABILITIES,
 } from '../lib/capabilities.ts';
 import { setDefaultMemoryStore } from '../lib/context-memory-store.ts';
+import { installCliEmbeddingProvider } from './embedding-provider-cli.ts';
 import { createFileMemoryStore, getMemoryStoreBaseDir } from './context-memory-file-store.ts';
 import { resolveWorkspaceIdentity } from '../lib/workspace-identity.js';
 import { buildTypedMemoryBlockForNode, writeTaskGraphResultMemory } from './task-graph-memory.ts';
@@ -7602,6 +7603,7 @@ export async function main() {
   // typed memory. See Gap 3 Step 3 in the Architecture Remediation
   // Plan for context.
   setDefaultMemoryStore(createFileMemoryStore({ baseDir: getMemoryStoreBaseDir() }));
+  installCliEmbeddingProvider();
 
   const server = net.createServer(handleConnection);
 

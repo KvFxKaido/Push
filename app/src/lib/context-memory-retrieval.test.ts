@@ -13,6 +13,8 @@ function makeRecord(
     summary?: string;
     relatedFiles?: string[];
     relatedSymbols?: string[];
+    embedding?: number[];
+    embeddingModel?: string;
   } = {},
 ): MemoryRecord {
   return {
@@ -34,6 +36,8 @@ function makeRecord(
     freshness: overrides.freshness ?? 'fresh',
     relatedFiles: overrides.relatedFiles,
     relatedSymbols: overrides.relatedSymbols,
+    embedding: overrides.embedding,
+    embeddingModel: overrides.embeddingModel,
   };
 }
 
@@ -304,5 +308,84 @@ describe('retrieveRecords', () => {
     const result = await retrieveRecords(store, makeQuery({ fileHints: ['app/src/auth.ts'] }), now);
     // gamma is newest, then alpha/beta tied on score+age → id order
     expect(result.records.map((r) => r.record.id)).toEqual(['gamma', 'alpha', 'beta']);
+  });
+});
+
+describe('scoreRecord — semantic similarity', () => {
+  const MODEL = '@cf/baai/bge-base-en-v1.5';
+
+  it('surfaces a record with no lexical overlap when the query embedding is similar', () => {
+    // Summary shares no tokens with the query, no file/symbol/lineage match —
+    // lexically this is a miss and would be dropped by the specific-match gate.
+    const record = makeRecord('sem', {
+      summary: 'session bearer enforcement on every relay verb',
+      embedding: [1, 0, 0],
+      embeddingModel: MODEL,
+    });
+    const baseQuery = makeQuery({ taskText: 'how does authorization gating work', fileHints: [] });
+
+    // Without a query embedding: pure lexical, no shared tokens → null.
+    expect(scoreRecord(record, baseQuery)).toBeNull();
+
+    // With a similar query embedding: semantic clears the floor and the record
+    // is retrieved on meaning alone.
+    const scored = scoreRecord(record, {
+      ...baseQuery,
+      queryEmbedding: [1, 0, 0],
+      queryEmbeddingModel: MODEL,
+    });
+    expect(scored).not.toBeNull();
+    expect(scored!.breakdown.semantic).toBeGreaterThan(0);
+  });
+
+  it('contributes nothing below the similarity floor', () => {
+    const record = makeRecord('sem', {
+      summary: 'totally unrelated subject matter',
+      embedding: [0, 1, 0], // orthogonal to query → cosine 0, under floor
+      embeddingModel: MODEL,
+    });
+    const scored = scoreRecord(record, {
+      ...makeQuery({ taskText: 'no shared words here', fileHints: [] }),
+      queryEmbedding: [1, 0, 0],
+      queryEmbeddingModel: MODEL,
+    });
+    // No lexical match + sub-floor semantic → dropped entirely.
+    expect(scored).toBeNull();
+  });
+
+  it('ignores the semantic signal when embedding models differ', () => {
+    const record = makeRecord('sem', {
+      summary: 'alpha beta gamma',
+      embedding: [1, 0, 0],
+      embeddingModel: 'some-other-model',
+    });
+    const scored = scoreRecord(record, {
+      ...makeQuery({ taskText: 'delta epsilon zeta', fileHints: [] }),
+      queryEmbedding: [1, 0, 0],
+      queryEmbeddingModel: MODEL,
+    });
+    // Identical vectors but mismatched models → cosine not trusted → null.
+    expect(scored).toBeNull();
+  });
+
+  it('blends semantic into the total alongside lexical signals', () => {
+    const record = makeRecord('sem', {
+      summary: 'implement auth flow',
+      relatedFiles: ['app/src/auth.ts'],
+      embedding: [1, 0, 0],
+      embeddingModel: MODEL,
+    });
+    const query = makeQuery({
+      taskText: 'implement auth',
+      fileHints: ['app/src/auth.ts'],
+      queryEmbedding: [1, 0, 0],
+      queryEmbeddingModel: MODEL,
+    });
+    const withSem = scoreRecord(record, query)!;
+    const withoutSem = scoreRecord(record, { ...query, queryEmbedding: undefined })!;
+    expect(withSem.breakdown.semantic).toBeGreaterThan(0);
+    expect(withSem.breakdown.total).toBeCloseTo(
+      withoutSem.breakdown.total + withSem.breakdown.semantic,
+    );
   });
 });

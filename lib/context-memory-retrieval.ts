@@ -10,6 +10,7 @@ import type {
   ScoredMemoryRecord,
 } from './runtime-contract.js';
 import type { ContextMemoryStore } from './context-memory-store.js';
+import { cosineSimilarity } from './embedding-provider.js';
 
 const W_BRANCH = 3;
 const W_TASK_GRAPH = 3;
@@ -23,6 +24,19 @@ const W_SYMBOL_OVERLAP_CAP = 4;
 const W_ROLE_FAMILY = 1;
 const W_RECENCY_MAX = 2;
 const STALE_PENALTY = -5;
+
+// Semantic similarity contribution. Capped at parity with the strongest
+// lexical signals (taskText/fileOverlap caps are 6) so a strong meaning-match
+// can carry a record on its own — that's the whole point of adding it — without
+// drowning the structured signals (branch/lineage/recency) that encode
+// provenance the embedding can't see.
+const W_SEMANTIC_CAP = 6;
+// BGE-base cosine runs high even for loosely-related English text (~0.4–0.5 for
+// unrelated, ~0.65+ for related). Floor below which we treat similarity as
+// noise and contribute nothing; scores above scale linearly across the
+// remaining range. Without the floor, every record would earn a little
+// semantic credit and the `hasSpecificMatch` gate would stop filtering.
+const SEMANTIC_FLOOR = 0.55;
 
 const RECENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -113,6 +127,27 @@ function countTaskTokenOverlap(record: MemoryRecord, query: MemoryQuery): number
   return hits;
 }
 
+/**
+ * Thresholded, scaled cosine between the query and record embeddings. Returns 0
+ * unless both vectors exist, were produced by the same model, and clear
+ * `SEMANTIC_FLOOR`. Same-model gating prevents comparing vectors across an
+ * embedding-model change (the cosine would be meaningless).
+ */
+function scoreSemantic(record: MemoryRecord, query: MemoryQuery): number {
+  if (!query.queryEmbedding || !record.embedding) return 0;
+  if (
+    query.queryEmbeddingModel &&
+    record.embeddingModel &&
+    query.queryEmbeddingModel !== record.embeddingModel
+  ) {
+    return 0;
+  }
+  const cosine = cosineSimilarity(query.queryEmbedding, record.embedding);
+  if (cosine <= SEMANTIC_FLOOR) return 0;
+  const scaled = ((cosine - SEMANTIC_FLOOR) / (1 - SEMANTIC_FLOOR)) * W_SEMANTIC_CAP;
+  return Math.min(scaled, W_SEMANTIC_CAP);
+}
+
 export function scoreRecord(
   record: MemoryRecord,
   query: MemoryQuery,
@@ -135,6 +170,7 @@ export function scoreRecord(
     roleFamily: 0,
     recency: 0,
     freshness: 0,
+    semantic: 0,
     total: 0,
   };
 
@@ -157,6 +193,8 @@ export function scoreRecord(
   const symbolHits = countOverlap(record.relatedSymbols, query.symbolHints);
   breakdown.symbolOverlap = Math.min(symbolHits * W_SYMBOL_OVERLAP_PER_HIT, W_SYMBOL_OVERLAP_CAP);
 
+  breakdown.semantic = scoreSemantic(record, query);
+
   if (record.scope.role && ROLE_FAMILIES[query.role].has(record.scope.role)) {
     breakdown.roleFamily = W_ROLE_FAMILY;
   }
@@ -178,13 +216,18 @@ export function scoreRecord(
     breakdown.symbolOverlap +
     breakdown.roleFamily +
     breakdown.recency +
-    breakdown.freshness;
+    breakdown.freshness +
+    breakdown.semantic;
 
+  // A semantic hit counts as a specific match: this is what lets retrieval
+  // surface a record that's about the same thing in different words, which the
+  // lexical signals (taskText/file/symbol overlap) structurally cannot.
   const hasSpecificMatch =
     breakdown.taskLineage > 0 ||
     breakdown.taskText > 0 ||
     breakdown.fileOverlap > 0 ||
-    breakdown.symbolOverlap > 0;
+    breakdown.symbolOverlap > 0 ||
+    breakdown.semantic > 0;
   if (!hasSpecificMatch) return null;
 
   return { score: breakdown.total, breakdown };

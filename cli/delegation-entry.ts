@@ -55,6 +55,7 @@ import { isToolResultMessage, isParseErrorMessage } from './context-manager.js';
 import type { LlmMessage, PushStream } from '../lib/provider-contract.js';
 import { normalizeReasoning } from '../lib/reasoning-tokens.js';
 import { setDefaultMemoryStore } from '../lib/context-memory-store.js';
+import { installCliEmbeddingProvider } from './embedding-provider-cli.js';
 import { createCliProviderStream } from './openai-stream.js';
 import { type ProviderConfig } from './provider.js';
 import { buildSystemPromptBase, runAssistantLoop } from './engine.js';
@@ -383,6 +384,7 @@ export async function runDelegatedHeadless(
     // override PUSH_MEMORY_DIR lets tests and measurement scripts
     // isolate per-run stores.
     setDefaultMemoryStore(createFileMemoryStore({ baseDir: getMemoryStoreBaseDir() }));
+    installCliEmbeddingProvider();
 
     // Resolve workspace identity once per graph for memory scoping.
     // resolveWorkspaceIdentity is non-throwing by contract (errors
@@ -867,6 +869,7 @@ export async function runUserTurnWithDelegation(
   // typed-memory writes from this graph persist and are retrievable by later
   // runs on the same repo/branch.
   setDefaultMemoryStore(createFileMemoryStore({ baseDir: getMemoryStoreBaseDir() }));
+  installCliEmbeddingProvider();
   const workspaceIdentity = await resolveWorkspaceIdentity(state.cwd);
   const graphMemoryScope = {
     repoFullName: workspaceIdentity.repoFullName,

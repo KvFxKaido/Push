@@ -210,6 +210,19 @@ export interface MemoryRecord {
   derivedFrom?: string[];
   invalidatedAt?: number;
   invalidationReason?: string;
+  /**
+   * Dense semantic embedding of the record's searchable text, computed
+   * best-effort at write time when an EmbeddingProvider is configured (see
+   * `lib/embedding-provider.ts`). Absent when no provider is available — the
+   * scorer falls back to pure lexical overlap, so this is purely additive.
+   */
+  embedding?: number[];
+  /**
+   * Identifier of the model that produced `embedding`. Cosine similarity is
+   * only meaningful between vectors from the same model, so retrieval skips
+   * the semantic signal when this does not match the query embedding's model.
+   */
+  embeddingModel?: string;
 }
 
 export interface MemoryQuery {
@@ -224,6 +237,15 @@ export interface MemoryQuery {
   taskId?: string;
   maxRecords: number;
   includeStale?: boolean;
+  /**
+   * Dense embedding of `taskText`, computed once before retrieval when an
+   * EmbeddingProvider is configured. When present, the scorer blends cosine
+   * similarity against each record's `embedding` into the score. Absent ⇒
+   * retrieval is pure lexical (the prior behavior).
+   */
+  queryEmbedding?: number[];
+  /** Model that produced `queryEmbedding`; gates same-model cosine. */
+  queryEmbeddingModel?: string;
 }
 
 export interface MemoryScoreBreakdown {
@@ -235,6 +257,13 @@ export interface MemoryScoreBreakdown {
   roleFamily: number;
   recency: number;
   freshness: number;
+  /**
+   * Semantic similarity contribution (cosine between the query embedding and
+   * the record embedding, thresholded and scaled). Zero when either vector is
+   * missing or the models differ, which makes retrieval degrade cleanly to the
+   * lexical signals above.
+   */
+  semantic: number;
   total: number;
 }
 

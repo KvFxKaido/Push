@@ -20,8 +20,28 @@ import {
   type MemoryPackResult,
 } from './context-memory-packing.js';
 import { supersedeVerificationMemory } from './context-memory-invalidation.js';
+import {
+  embedOne,
+  getDefaultEmbeddingProvider,
+  memoryRecordEmbeddingText,
+  type EmbeddingProvider,
+} from './embedding-provider.js';
 
 const MAX_SUMMARY_CHARS = 400;
+
+// Diagnostics for the embed paths go to stderr, not stdout: this module runs in
+// the browser, the Worker, AND the CLI, and on the CLI stdout is the user-output
+// / `--json` channel that must not be polluted. `console.error` is captured by
+// Worker observability all the same. Chatty success/skip lines are gated behind
+// PUSH_DEBUG; failures always log so a silently vector-less store is visible.
+const MEMORY_EMBED_DEBUG =
+  typeof process !== 'undefined' &&
+  (process.env?.PUSH_DEBUG === '1' || process.env?.PUSH_DEBUG === 'true');
+
+function logEmbedEvent(level: 'debug' | 'warn', event: string, ctx: Record<string, unknown>): void {
+  if (level === 'debug' && !MEMORY_EMBED_DEBUG) return;
+  console.error(JSON.stringify({ level, event, ...ctx }));
+}
 const MAX_DETAIL_CHARS = 2000;
 
 function truncate(text: string | undefined, cap: number): string | undefined {
@@ -77,6 +97,71 @@ export function createMemoryRecord(input: CreateMemoryRecordInput): MemoryRecord
   };
 }
 
+/**
+ * Best-effort: compute embeddings for freshly-written records and patch them
+ * back onto the store. Batches all texts into one provider call. Never throws —
+ * a failed/absent embedder simply leaves the records vector-less, and retrieval
+ * falls back to lexical scoring for them. Awaited by the write helpers so the
+ * vector is in place before the next retrieval, but a no-op (single `return`)
+ * when no provider is configured, which is the common CLI case.
+ *
+ * Emits one structured log per terminal branch so an operator can tell
+ * "embedding skipped (no provider)" from "embedding ran" from "embedding
+ * failed" — otherwise a silently vector-less store is indistinguishable from a
+ * working one until recall quality quietly degrades.
+ */
+async function enrichEmbeddings(
+  records: MemoryRecord[],
+  store: ContextMemoryStore,
+  provider: EmbeddingProvider | null = getDefaultEmbeddingProvider(),
+): Promise<void> {
+  if (!provider || records.length === 0) {
+    if (records.length > 0) {
+      logEmbedEvent('debug', 'memory_embed_skipped', { count: records.length });
+    }
+    return;
+  }
+  try {
+    const texts = records.map(memoryRecordEmbeddingText);
+    const results = await provider.embed(texts);
+    let enriched = 0;
+    await Promise.all(
+      records.map(async (record, i) => {
+        const vector = results[i]?.vector;
+        if (!vector) return;
+        const embeddingModel = results[i]?.model ?? provider.model;
+        await store.update(record.id, { embedding: vector, embeddingModel });
+        // Also mutate the in-memory record: write helpers return these
+        // instances to callers, and the store's update() persists a *copy* —
+        // so without this the returned object would lack the embedding it was
+        // just given.
+        record.embedding = vector;
+        record.embeddingModel = embeddingModel;
+        enriched++;
+      }),
+    );
+    logEmbedEvent('debug', 'memory_embed_enriched', { count: records.length, enriched });
+  } catch (error) {
+    logEmbedEvent('warn', 'memory_embed_failed', {
+      count: records.length,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
+ * Return a copy of `query` with `queryEmbedding`/`queryEmbeddingModel`
+ * populated from `query.taskText`, or the query unchanged when no provider is
+ * configured or embedding fails. Idempotent: leaves an already-embedded query
+ * alone so callers that pre-embed don't pay twice.
+ */
+async function withQueryEmbedding(query: MemoryQuery): Promise<MemoryQuery> {
+  if (query.queryEmbedding) return query;
+  const result = await embedOne(query.taskText);
+  if (!result || !result.vector) return query;
+  return { ...query, queryEmbedding: result.vector, queryEmbeddingModel: result.model };
+}
+
 export interface WriteDecisionMemoryInput {
   scope: MemoryScope;
   question: string;
@@ -97,6 +182,7 @@ export async function writeDecisionMemory(input: WriteDecisionMemoryInput): Prom
     },
   });
   await store.write(record);
+  await enrichEmbeddings([record], store);
   return record;
 }
 
@@ -126,6 +212,7 @@ export async function writeExplorerMemory(
     relatedSymbols: input.relatedSymbols,
   });
   await store.write(record);
+  await enrichEmbeddings([record], store);
   return record;
 }
 
@@ -204,6 +291,7 @@ export async function writeCoderMemory(input: WriteCoderMemoryInput): Promise<Me
     written.push(verification);
   }
 
+  await enrichEmbeddings(written, store);
   return written;
 }
 
@@ -244,6 +332,7 @@ export async function writeTaskGraphNodeMemory(
     tags: evidenceLabels,
   });
   await store.write(record);
+  await enrichEmbeddings([record], store);
   return record;
 }
 
@@ -256,7 +345,8 @@ export async function retrieveMemoryForDelegation(
   input: RetrieveMemoryForDelegationInput,
 ): Promise<MemoryRetrievalResult> {
   const store = input.store ?? getDefaultMemoryStore();
-  return retrieveRecords(store, input.query);
+  const query = await withQueryEmbedding(input.query);
+  return retrieveRecords(store, query);
 }
 
 export async function buildRetrievedMemoryKnownContext(

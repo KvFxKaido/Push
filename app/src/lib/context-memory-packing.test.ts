@@ -43,6 +43,7 @@ function makeScored(
       roleFamily: 0,
       recency: 0,
       freshness: 0,
+      semantic: 0,
       total: 1,
     },
   };

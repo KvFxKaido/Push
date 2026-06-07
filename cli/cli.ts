@@ -57,6 +57,7 @@ import { runCommandInResolvedShell } from './shell.js';
 import { scrubEnv } from './env-scrub.js';
 import { ensureRepoCommandsSeeded } from './repo-commands.js';
 import { setDefaultMemoryStore } from '../lib/context-memory-store.js';
+import { installCliEmbeddingProvider } from './embedding-provider-cli.js';
 import { createFileMemoryStore, getMemoryStoreBaseDir } from './context-memory-file-store.js';
 import {
   readClientAttachState,
@@ -3132,6 +3133,7 @@ export async function main() {
   // (cli/engine.ts) and the memory_grep/memory_expand tools. Idempotent — the
   // daemon/headless paths re-set the same store.
   setDefaultMemoryStore(createFileMemoryStore({ baseDir: getMemoryStoreBaseDir() }));
+  installCliEmbeddingProvider();
 
   if (values.help) {
     printHelp();
