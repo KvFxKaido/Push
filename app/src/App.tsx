@@ -32,8 +32,13 @@ import {
   getDefaultMemoryStore,
 } from '@/lib/context-memory-store';
 import { createPolicyEnforcedStore } from '@push/lib/context-memory-policy-store';
+import { setDefaultEmbeddingProvider } from '@push/lib/embedding-provider';
+import { createWebEmbeddingProvider } from '@/lib/embedding-provider-web';
 
 setDefaultMemoryStore(createPolicyEnforcedStore(createIndexedDbStore()));
+// Semantic memory retrieval — records embed via /api/memory/embed and the
+// scorer blends cosine similarity. Falls back to lexical if the endpoint errors.
+setDefaultEmbeddingProvider(createWebEmbeddingProvider());
 
 const WORKSPACE_SESSION_STORAGE_KEY = 'workspace_session';
 

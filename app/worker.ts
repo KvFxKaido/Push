@@ -81,6 +81,7 @@ import {
   handleArtifactsGet,
   handleArtifactsList,
 } from './src/worker/worker-artifacts';
+import { handleMemoryEmbed } from './src/worker/worker-memory-embed';
 import {
   handleCollectionsCreate,
   handleCollectionsDelete,
@@ -437,6 +438,9 @@ const EXACT_API_ROUTES: ExactApiRoute[] = [
   { path: '/api/artifacts/list', method: 'POST', handler: handleArtifactsList },
   { path: '/api/artifacts/get', method: 'POST', handler: handleArtifactsGet },
   { path: '/api/artifacts/delete', method: 'POST', handler: handleArtifactsDelete },
+  // Semantic memory embeddings — turns text into BGE vectors via env.AI for
+  // context-memory retrieval. See app/src/worker/worker-memory-embed.ts.
+  { path: '/api/memory/embed', method: 'POST', handler: handleMemoryEmbed },
   // Chat library — user-managed bundles (v2a). Collections + items live
   // under separate route tiers; see worker-chat-library.ts.
   { path: '/api/library/collections/create', method: 'POST', handler: handleCollectionsCreate },
