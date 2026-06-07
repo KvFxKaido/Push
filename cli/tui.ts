@@ -144,6 +144,7 @@ import {
   findFirstIntersectingBlock,
 } from './tui-transcript-window.js';
 import { shouldFullRedraw } from './tui-render-frame.js';
+import { reconcileEntryBlocks } from './tui-transcript-cache.js';
 
 // ── TUI state ───────────────────────────────────────────────────────
 
@@ -277,10 +278,14 @@ function createTUIState() {
     // (thinking / replying / <tool verb>). Null when idle. Updated from
     // engine events; resolved via tui-spinner.verbForActivity.
     activity: null,
-    // Transcript: array of { role, text, timestamp }
+    // Transcript: array of { role, text, timestamp, seq }
     transcript: [],
-    transcriptVersion: 0,
-    transcriptRenderCache: null, // { key, lines, payloadBlocks }
+    // Monotonic id stamped on each entry at push time — stable across
+    // MAX_TRANSCRIPT front-eviction, so cached payload ids don't drift.
+    transcriptSeq: 0,
+    // Per-entry framed-line cache keyed by entry identity (see
+    // tui-transcript-cache.ts). Appending an entry only frames that entry.
+    entryRenderCache: new WeakMap(),
     // Streaming token accumulator (for in-progress assistant response)
     streamBuf: '',
     // Tool feed: array of { type: 'call'|'result', name, args?, duration?, error?, preview?, timestamp }
@@ -339,17 +344,17 @@ function createTUIState() {
 
 const DEFAULT_COMPACT_TURNS = 6;
 
-function invalidateTranscriptRenderCache(tuiState) {
-  tuiState.transcriptVersion = (tuiState.transcriptVersion || 0) + 1;
-  tuiState.transcriptRenderCache = null;
-}
-
 function pushTranscriptEntry(tuiState, entry, { autoScroll = true } = {}) {
+  // Stamp a stable id before push so the per-entry render cache (keyed by entry
+  // identity) and the payload ids derived from it survive front-eviction.
+  entry.seq = tuiState.transcriptSeq = (tuiState.transcriptSeq || 0) + 1;
   tuiState.transcript.push(entry);
   if (tuiState.transcript.length > MAX_TRANSCRIPT) {
     tuiState.transcript.splice(0, tuiState.transcript.length - MAX_TRANSCRIPT);
   }
-  invalidateTranscriptRenderCache(tuiState);
+  // No cache invalidation needed: the new entry is a natural cache miss while
+  // every prior entry keeps its framed lines (identity-keyed). Width / theme /
+  // payload-flag changes invalidate via the global `sig` in renderTranscript.
   if (autoScroll) tuiState.scrollOffset = 0;
   tuiState.dirty.add('transcript');
 }
@@ -425,54 +430,40 @@ function renderTranscript(buf, layout, theme, tuiState) {
   const expandedPayloadIdsKey = tuiState.toolJsonPayloadsExpanded
     ? 'all'
     : Array.from(tuiState.expandedToolJsonPayloadIds).sort().join('|');
-  const transcriptCacheKey = [
+  // Global frame signature: when any of these change, every entry must reflow
+  // (width re-wraps, theme re-styles, payload-expansion changes line counts), so
+  // the signature mismatch forces a full reframe. Entry *identity* handles the
+  // common case — appending an entry frames only that entry; all prior entries
+  // reuse their cached lines.
+  const sig = [
     width,
-    tuiState.transcriptVersion,
+    theme.name,
     tuiState.toolJsonPayloadsExpanded ? 1 : 0,
     tuiState.payloadInspectorOpen ? 1 : 0,
     tuiState.payloadCursorId || '',
     expandedPayloadIdsKey,
   ].join('::');
 
-  let cached = tuiState.transcriptRenderCache;
-  if (!cached || cached.key !== transcriptCacheKey) {
-    // Build per-entry rendered blocks and cache them. This lets us only
-    // assemble the visible window on each frame.
-    const entryBlocks = [];
-    let totalLines = 0;
-
-    for (let entryIndex = 0; entryIndex < tuiState.transcript.length; entryIndex++) {
-      const entry = tuiState.transcript[entryIndex];
-      const entryLines = [];
-      const localPayloadBlocks = [];
-      const payloadUI = {
-        blocks: localPayloadBlocks,
-        cursorId: tuiState.payloadCursorId,
-        expandedIds: tuiState.expandedToolJsonPayloadIds,
-        inspectorOpen: tuiState.payloadInspectorOpen,
-      };
-
-      renderEntryLines(entryLines, entry, width, theme, {
+  const { entryBlocks, totalLines } = reconcileEntryBlocks({
+    entries: tuiState.transcript,
+    sig,
+    cache: tuiState.entryRenderCache,
+    frameEntry: (entry, entryIndex) => {
+      const lines = [];
+      const payloadBlocks = [];
+      renderEntryLines(lines, entry, width, theme, {
         expandToolJsonPayloads: tuiState.toolJsonPayloadsExpanded,
-        entryKey: `${entry.timestamp ?? 0}:${entryIndex}`,
-        payloadUI,
+        entryKey: `${entry.timestamp ?? 0}:${entry.seq ?? entryIndex}`,
+        payloadUI: {
+          blocks: payloadBlocks,
+          cursorId: tuiState.payloadCursorId,
+          expandedIds: tuiState.expandedToolJsonPayloadIds,
+          inspectorOpen: tuiState.payloadInspectorOpen,
+        },
       });
-
-      const blockStartLine = totalLines;
-      const block = {
-        lineCount: entryLines.length,
-        startLine: blockStartLine,
-        endLine: blockStartLine + entryLines.length,
-        lines: entryLines,
-        payloadBlocks: localPayloadBlocks,
-      };
-      entryBlocks.push(block);
-      totalLines = block.endLine;
-    }
-
-    cached = { key: transcriptCacheKey, entryBlocks, totalLines };
-    tuiState.transcriptRenderCache = cached;
-  }
+      return { lines, payloadBlocks };
+    },
+  });
 
   const streamingLines = [];
 
@@ -488,14 +479,13 @@ function renderTranscript(buf, layout, theme, tuiState) {
 
   // Take the last `height` lines (scroll to bottom), adjusted by scrollOffset.
   const { effectiveOffset, startIdx, endIdxExclusive } = computeTranscriptViewport({
-    totalLineCount: (cached.totalLines || 0) + streamingLines.length,
+    totalLineCount: (totalLines || 0) + streamingLines.length,
     viewportHeight: height,
     scrollOffset: tuiState.scrollOffset,
   });
 
   const slice = [];
   const payloadBlocks = [];
-  const entryBlocks = cached.entryBlocks || [];
   const startBlockIdx = findFirstIntersectingTranscriptBlock(entryBlocks, startIdx);
   const endBlockIdxExclusive = findFirstTranscriptBlockStartingAtOrAfter(
     entryBlocks,
@@ -528,7 +518,7 @@ function renderTranscript(buf, layout, theme, tuiState) {
     }
   }
 
-  const streamingStart = cached.totalLines || 0;
+  const streamingStart = totalLines || 0;
   const streamingEnd = streamingStart + streamingLines.length;
   if (streamingEnd > startIdx && streamingStart < endIdxExclusive) {
     const localStart = Math.max(0, startIdx - streamingStart);
@@ -3226,19 +3216,21 @@ export async function runTUI(options = {}) {
         // Update the last tool_call transcript entry with result info and preview
         let updatedTranscriptToolCall = false;
         for (let i = tuiState.transcript.length - 1; i >= 0; i--) {
-          if (
-            tuiState.transcript[i].role === 'tool_call' &&
-            tuiState.transcript[i].text === event.payload.toolName
-          ) {
-            tuiState.transcript[i].error = isError;
-            tuiState.transcript[i].duration = event.payload.durationMs;
-            tuiState.transcript[i].resultPreview = text.slice(0, 200);
+          const candidate = tuiState.transcript[i];
+          if (candidate.role === 'tool_call' && candidate.text === event.payload.toolName) {
+            candidate.error = isError;
+            candidate.duration = event.payload.durationMs;
+            candidate.resultPreview = text.slice(0, 200);
+            // This entry was framed before its result landed; drop its cached
+            // frame so the reconciler reframes it (the identity-keyed cache
+            // can't observe an in-place edit). This is the one sanctioned
+            // mutation of a committed entry — see tui-transcript-cache.ts.
+            tuiState.entryRenderCache.delete(candidate);
             updatedTranscriptToolCall = true;
             break;
           }
         }
         if (updatedTranscriptToolCall) {
-          invalidateTranscriptRenderCache(tuiState);
           tuiState.dirty.add('transcript');
         }
         // Tool finished — model resumes reasoning. The next assistant_*
@@ -4086,8 +4078,7 @@ export async function runTUI(options = {}) {
     tuiState.lastReasoning = '';
     tuiState.reasoningStreaming = false;
     tuiState.transcript = [];
-    tuiState.transcriptVersion = 0;
-    tuiState.transcriptRenderCache = null;
+    tuiState.entryRenderCache = new WeakMap();
     tuiState.toolFeed = [];
     tuiState.scrollOffset = 0;
     tuiState.fileAwareness = null;
