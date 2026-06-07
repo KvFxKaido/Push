@@ -7,7 +7,7 @@ import { createTheme } from '../tui-theme.ts';
 
 describe('streamSettledEnd', () => {
   it('settles complete lines up to the last newline, leaving the partial tail', () => {
-    // "a\nb\nc" → "a\n" and "b\n" are settled (5 bytes), "c" is the partial tail.
+    // "a\nb\nc" → "a\n" and "b\n" are settled (4 bytes), "c" is the partial tail.
     assert.equal(streamSettledEnd('a\nb\nc'), 4);
   });
 
