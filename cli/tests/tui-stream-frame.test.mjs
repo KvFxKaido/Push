@@ -158,3 +158,50 @@ describe('reconcileStreamFrame — cache behaviour', () => {
     assert.deepEqual(calls, ['n']);
   });
 });
+
+// Inline emphasis (tui-inline) is active only at a colour tier. Re-run the
+// incremental==whole invariant there, with bold/code/link markers in the
+// content, to prove the settle-freeze stays byte-identical with inline styling
+// applied — i.e. inline emphasis didn't break the streaming cache.
+describe('reconcileStreamFrame — invariant holds at a colour tier with inline markers', () => {
+  const WIDTH = 64;
+  const theme = createTheme({ tier: '256', unicode: true, name: 'default' });
+  const sig = `${WIDTH}::default::0`;
+
+  const frameWhole = (text) => {
+    const out = [];
+    renderAssistantEntryLines(out, text, WIDTH, theme, { payloadUI: null });
+    return out;
+  };
+  const frameChunk = (src, firstPrefixConsumed) => {
+    const out = [];
+    renderAssistantEntryLines(out, src, WIDTH, theme, { payloadUI: null, firstPrefixConsumed });
+    return out;
+  };
+
+  const assertGrowsCorrectly = (final) => {
+    let state = null;
+    for (let i = 1; i <= final.length; i++) {
+      const text = final.slice(0, i);
+      const result = reconcileStreamFrame({ text, sig, prev: state, frameChunk });
+      state = result.state;
+      assert.deepEqual(
+        result.lines,
+        frameWhole(text),
+        `mismatch at prefix length ${i}: ${JSON.stringify(text)}`,
+      );
+    }
+  };
+
+  it('matches across bold / code / link prose as it streams', () => {
+    assertGrowsCorrectly(
+      'Use **bold** and `code`.\nSee the [docs](https://docs.example.com) for more.\nDone.',
+    );
+  });
+
+  it('matches when an inline span is still being typed (unbalanced on the tail)', () => {
+    // The partial "**bol" / "[doc" lives on the volatile tail and resolves when
+    // closed — the per-char replay asserts every intermediate state is correct.
+    assertGrowsCorrectly('alpha **bol\nbeta [doc');
+  });
+});
