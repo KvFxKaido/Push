@@ -6,10 +6,10 @@ Owner: Push
 Related:
 - `Harness Reliability Plan.md` — historical rollout of the first reliability wave
 - `Runtime Enforcement Follow-up Plan.md` — completed follow-on for the runtime enforcement layer
-- `docs/decisions/Harness Friction — Agent Self-Report.md`
-- `docs/decisions/AgentScope Architecture Review.md`
-- `docs/decisions/Copilot SDK Research.md`
-- `docs/decisions/Resumable Sessions Design.md`
+- `docs/archive/decisions/Harness Friction — Agent Self-Report.md`
+- `docs/archive/decisions/AgentScope Architecture Review.md`
+- `docs/archive/decisions/Copilot SDK Research.md`
+- `docs/archive/decisions/Resumable Sessions Design.md`
 
 ## Why this plan exists
 

@@ -46,14 +46,14 @@ plugins.
 
 Push already overlaps meaningfully. Before we start copying, the honest list:
 
-- **Role-based agents** with locked roles and replaceable models ([architecture: Agent Roles](../../ARCHITECTURE.md#agent-roles)).
-- **Delegation and orchestration** including dependency-aware task graphs via `plan_tasks` ([architecture: Key Systems](../../ARCHITECTURE.md#key-systems)).
-- **Adaptive hashline edits, patchset transactions, resumable sessions** already listed under harness reliability ([architecture: Key Systems](../../ARCHITECTURE.md#key-systems)). See also `docs/decisions/Hashline System Review.md`.
-- **Project-instruction loading** for `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, plus the CLI `.push/instructions.md` override ([architecture: Key Systems](../../ARCHITECTURE.md#key-systems)).
-- **Shared runtime contract** for task-graph, memory, delegation briefs, role-context, and run events in root `lib/` ([architecture: Shared Runtime Shape](../../ARCHITECTURE.md#shared-runtime-shape)).
+- **Role-based agents** with locked roles and replaceable models ([architecture: Agent Roles](../../../ARCHITECTURE.md#agent-roles)).
+- **Delegation and orchestration** including dependency-aware task graphs via `plan_tasks` ([architecture: Key Systems](../../../ARCHITECTURE.md#key-systems)).
+- **Adaptive hashline edits, patchset transactions, resumable sessions** already listed under harness reliability ([architecture: Key Systems](../../../ARCHITECTURE.md#key-systems)). See also `docs/archive/decisions/Hashline System Review.md`.
+- **Project-instruction loading** for `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, plus the CLI `.push/instructions.md` override ([architecture: Key Systems](../../../ARCHITECTURE.md#key-systems)).
+- **Shared runtime contract** for task-graph, memory, delegation briefs, role-context, and run events in root `lib/` ([architecture: Shared Runtime Shape](../../../ARCHITECTURE.md#shared-runtime-shape)).
 - **MCP integration** exists in `mcp/` but without a formal per-skill teardown story.
-- **Auditor** pre-commit gate with SAFE/UNSAFE verdict ([architecture: Agent Roles](../../ARCHITECTURE.md#agent-roles)).
-- **Reviewer** on-demand diff review ([architecture: Agent Roles](../../ARCHITECTURE.md#agent-roles)).
+- **Auditor** pre-commit gate with SAFE/UNSAFE verdict ([architecture: Agent Roles](../../../ARCHITECTURE.md#agent-roles)).
+- **Reviewer** on-demand diff review ([architecture: Agent Roles](../../../ARCHITECTURE.md#agent-roles)).
 
 So: persona naming, hashline, shared runtime, role separation, project
 instructions, and delegation graphs are covered. The genuine deltas are in
@@ -82,14 +82,14 @@ Ranked by effort vs payoff.
 3. **Published hashline metric.** Pick a fixture set, run edits with hashline
    on/off, record the success-rate delta. Validates (or disproves) a claim we
    already ship. Plan drafted in
-   [`../runbooks/Hashline Effectiveness Metric.md`](../runbooks/Hashline%20Effectiveness%20Metric.md).
+   [`../runbooks/Hashline Effectiveness Metric.md`](../../runbooks/Hashline%20Effectiveness%20Metric.md).
 
 ### Tier 2 — one session with a short design note
 
 4. **Task-category tags on delegation briefs.** Add
    `category: 'quick' | 'deep' | 'visual' | 'ultrabrain'` to the delegation
    brief. Settings maps category → model per backend. Chat-lock
-   ([architecture: Provider Routing](../../ARCHITECTURE.md#provider-routing)) remains the override. Touches provider
+   ([architecture: Provider Routing](../../../ARCHITECTURE.md#provider-routing)) remains the override. Touches provider
    routing but the diff is contained.
 
 5. **Todo Enforcer around `plan_tasks`.** After each task-graph step, check
@@ -131,9 +131,9 @@ are the three Tier-1 items above. They are being tackled on branch
       the shared planner and the filesystem adapter. Usage:
       `push init-deep [--dry-run] [--force]`.
 - [x] Hashline metric runbook — drafted as
-      [`../runbooks/Hashline Effectiveness Metric.md`](../runbooks/Hashline%20Effectiveness%20Metric.md).
+      [`../runbooks/Hashline Effectiveness Metric.md`](../../runbooks/Hashline%20Effectiveness%20Metric.md).
       Not yet executed; the plan is fixtures + control path + committed
       `results.json`, no runtime flag.
 
 Tier 2 items are not committed work — promote to a runbook or ROADMAP entry
-- [x] Hashline metric runbook — executed. Initial results (100% vs 66.7%) recorded in `docs/decisions/Hashline System Review.md`. Fixtures and harness live in `tests/hashline-effectiveness/`.
+- [x] Hashline metric runbook — executed. Initial results (100% vs 66.7%) recorded in `docs/archive/decisions/Hashline System Review.md`. Fixtures and harness live in `tests/hashline-effectiveness/`.

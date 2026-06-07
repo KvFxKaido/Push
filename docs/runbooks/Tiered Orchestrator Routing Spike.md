@@ -1,7 +1,7 @@
 # Tiered Orchestrator Routing Spike
 
 Status: Draft spike, added 2026-04-14
-Origin: [External Resource Review — Harness Engineering and Ralph Loop](../decisions/External%20Resource%20Review%20%E2%80%94%20Harness%20Engineering%20and%20Ralph%20Loop.md), r/ollama CPU SLM agent post (2026-04)
+Origin: [External Resource Review — Harness Engineering and Ralph Loop](../archive/decisions/External%20Resource%20Review%20%E2%80%94%20Harness%20Engineering%20and%20Ralph%20Loop.md), r/ollama CPU SLM agent post (2026-04)
 
 ## Why This Exists
 

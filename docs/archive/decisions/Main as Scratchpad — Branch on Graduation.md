@@ -7,8 +7,8 @@ Related: `app/src/hooks/useWorkspaceSandboxController.ts` (branch→sandbox tear
 `app/src/hooks/useSandbox.ts` + `app/src/lib/sandbox-session.ts` (sandbox keyed by `repo:branch`; `RESTORE_FAILED_MESSAGE`),
 `app/src/worker/snapshot-index.ts`, `app/src/worker/worker-cf-sandbox.ts` (per-branch snapshot index + reclaim),
 `app/src/lib/sandbox-tools.ts` (`create_branch` / `switch_branch` typed tools),
-`docs/decisions/Modal Sandbox Snapshots Design.md`, `docs/decisions/Cloudflare Native Backup Migration.md` (the snapshot impl this leans on),
-`docs/decisions/Scratchpad Durable Storage — Remote vs Phone-Local.md` (the where-does-the-delta-live fork, split out of this doc),
+`docs/archive/decisions/Modal Sandbox Snapshots Design.md`, `docs/archive/decisions/Cloudflare Native Backup Migration.md` (the snapshot impl this leans on),
+`docs/archive/decisions/Scratchpad Durable Storage — Remote vs Phone-Local.md` (the where-does-the-delta-live fork, split out of this doc),
 [`Coder Delegation Collapse — Component Audit.md`](Coder%20Delegation%20Collapse%20—%20Component%20Audit.md) (**pairs with this** — collapses the Orchestrator→Coder wrapper so the lead agent drives the engine directly; that single-agent loop is what *commits*, and auto-branch is its durability story),
 `CLAUDE.md` (repo/session/branch model)
 
@@ -403,7 +403,7 @@ remote collision entirely but at the cost of cross-surface visibility.
    cross-surface continuity** to "graduate-to-a-branch," and (b) the **identity**
    pick (scratchpad = APK power-user hook vs niche perk). Detail + the
    remote-vs-local bet live in
-   `docs/decisions/Scratchpad Durable Storage — Remote vs Phone-Local.md`.
+   `docs/archive/decisions/Scratchpad Durable Storage — Remote vs Phone-Local.md`.
 
 ## Next step
 

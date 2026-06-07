@@ -194,5 +194,5 @@ shape) — verified pre-existing on main throughout this arc. Independent.
 - PR #435 — chatRef context-loader for multi-turn continuity
 - `docs/archive/runbooks/Background Coder Tasks Phase 1.md` — original CoderJob DO
   scoping, predates this arc
-- `docs/decisions/Resumable Sessions Design.md` §"Relationship to Background
+- `docs/archive/decisions/Resumable Sessions Design.md` §"Relationship to Background
   Coder Tasks" — the design hook this arc fulfills

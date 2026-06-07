@@ -3,7 +3,7 @@
 Date: 2026-05-02
 Status: **Current** — deferred; defenses listed below are the operating posture
 Owner: Push
-Related: `docs/decisions/Cloudflare Sandbox Provider Design.md` (sibling owner-token model),
+Related: `docs/archive/decisions/Cloudflare Sandbox Provider Design.md` (sibling owner-token model),
 `app/src/hooks/useGitHubAppAuth.ts`, `app/src/hooks/useGitHubAuth.ts`,
 `app/src/worker/worker-infra.ts` (`handleGitHubAppOAuth`, `handleGitHubAppLogout`),
 `app/src/worker/sandbox-token-store.ts`,

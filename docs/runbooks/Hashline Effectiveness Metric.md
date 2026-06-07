@@ -8,7 +8,7 @@
 ## Why this exists
 
 Push ships hashline-anchored edits as part of its "harness reliability"
-story ([architecture: Key Systems](../../ARCHITECTURE.md#key-systems), `docs/decisions/Hashline System Review.md`).
+story ([architecture: Key Systems](../../ARCHITECTURE.md#key-systems), `docs/archive/decisions/Hashline System Review.md`).
 The external comparable, `oh-my-openagent`, publishes a concrete before/after
 edit-success delta for the same technique (claimed 6.7% → 68.3% on one
 benchmark). Push has the mechanism but no published number. That gap is
@@ -104,9 +104,9 @@ second sophisticated edit engine.
 ## Reporting
 
 - Append the headline number (exact-match rate hashline vs. control) to
-  `docs/decisions/Hashline System Review.md` under a new `## Measured
+  `docs/archive/decisions/Hashline System Review.md` under a new `## Measured
   Effectiveness` section, linked back to this runbook.
-- Reference the number in `docs/decisions/Oh My OpenAgent Review.md`
+- Reference the number in `docs/archive/decisions/Oh My OpenAgent Review.md`
   section 5 where the OMO claim appears.
 - If the delta is smaller than ~10 percentage points, open a follow-up
   ticket to audit the control fixtures — a small delta on synthetic edits

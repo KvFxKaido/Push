@@ -7,8 +7,10 @@ Owner: Push
 Operational steps to turn on the GitHub-webhook-driven PR reviewer in a Push
 deployment. The code is fully merged; nothing here is a code change — it's
 deploy + GitHub App configuration that only an operator with Cloudflare/GitHub
-access can do. Architecture and rationale live in
-[`../decisions/Webhook-Triggered PR Review.md`](../decisions/Webhook-Triggered%20PR%20Review.md).
+access can do. Architecture and rationale are summarized in
+[`../decisions/Platform, Sessions, and Sandbox Decisions.md`](<../decisions/Platform, Sessions, and Sandbox Decisions.md>);
+the original source note is archived in
+[`../archive/decisions/Webhook-Triggered PR Review.md`](../archive/decisions/Webhook-Triggered%20PR%20Review.md).
 
 ## What it does
 

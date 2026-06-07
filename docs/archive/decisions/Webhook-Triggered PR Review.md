@@ -13,7 +13,7 @@ Related: `app/src/worker/github-webhook.ts` (the receiver — signature, allowli
 `app/src/worker/worker-infra.ts` (`generateGitHubAppJWT` / `exchangeForInstallationToken` — token mint the DO reuses),
 `app/src/hooks/useGitHubAppAuth.ts` (the `push-agent` GitHub App this extends),
 `app/src/worker/coder-job-do.ts` (the DO-as-async-job pattern this mirrors),
-`docs/decisions/Diff and Annotation Envelope.md` (the serializable annotation taxonomy a richer round-trip needs)
+`docs/archive/decisions/Diff and Annotation Envelope.md` (the serializable annotation taxonomy a richer round-trip needs)
 
 ## TL;DR
 

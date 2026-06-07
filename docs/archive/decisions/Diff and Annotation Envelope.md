@@ -3,7 +3,7 @@
 Date: 2026-05-12
 Status: **Draft** — design-in-motion; implementation requires a `ROADMAP.md` entry before commitments
 Owner: Push
-Related: `docs/decisions/Remote Sessions via pushd Relay.md`, `docs/decisions/Web and CLI Runtime Contract.md`, `ARCHITECTURE.md`
+Related: `docs/archive/decisions/Remote Sessions via pushd Relay.md`, `docs/archive/decisions/Web and CLI Runtime Contract.md`, `ARCHITECTURE.md`
 
 ## Context
 

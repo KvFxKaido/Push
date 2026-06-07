@@ -132,7 +132,7 @@ Either way: **decide this first, before any code gets written.** Don't discover 
 ## First Reads for the Next Session
 
 1. **This handoff doc** — orients on current state + design question.
-2. `docs/decisions/useAgentDelegation Coupling Recon.md` §Phase 5 (lines ~491–515), §Coupling Hazards #3 (TG Auditor state coupling), §Open Questions #1 (the accumulation strategy).
+2. `docs/archive/decisions/useAgentDelegation Coupling Recon.md` §Phase 5 (lines ~491–515), §Coupling Hazards #3 (TG Auditor state coupling), §Open Questions #1 (the accumulation strategy).
 3. `app/src/hooks/useAgentDelegation.ts` — the TG branch, lines 437–1173.
 4. `app/src/lib/coder-delegation-handler.ts` + `auditor-delegation-handler.ts` — see the pattern Phase 5 will mirror or diverge from.
 5. `app/src/lib/task-graph.ts` — the role-kernel the TG Execute seam calls through. The handler must respect its contract; understand `executeTaskGraph`'s guarantees before wrapping.

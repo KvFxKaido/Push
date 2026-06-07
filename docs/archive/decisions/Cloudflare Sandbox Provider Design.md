@@ -3,8 +3,8 @@
 Date: 2026-04-20
 Status: **Shipped** — PRs #353, #354, #355, #356 merged
 Owner: Push
-Related: `docs/decisions/Modal Sandbox Snapshots Design.md` (sibling provider),
-`docs/decisions/AgentScope Architecture Review.md` (origin of the `SandboxProvider` interface),
+Related: `docs/archive/decisions/Modal Sandbox Snapshots Design.md` (sibling provider),
+`docs/archive/decisions/AgentScope Architecture Review.md` (origin of the `SandboxProvider` interface),
 `lib/sandbox-provider.ts`, `app/src/worker/worker-cf-sandbox.ts`,
 `app/src/lib/cloudflare-sandbox-provider.ts`, `app/src/worker/sandbox-token-store.ts`,
 `Dockerfile.sandbox`

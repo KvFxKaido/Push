@@ -31,7 +31,7 @@ Push uses **two** ephemeral breakpoints: system message and last user message.
 
 - `cli/openai-stream.ts:108-137` — gates on `config.id === 'openrouter'` (only known Anthropic route in CLI), wraps system (index 0) and `cacheBreakpointIndex` in content-array form with `cache_control: { type: 'ephemeral' }`. Inline comment: "Mirrors `app/src/lib/orchestrator.ts:285-298` and 367-387".
 - `lib/context-transformer.ts:260-272` — `cacheBreakpointIndex = findLastUserIndex(messages)` after compaction/distillation. The transformer enforces a documented invariant (lines 18–21): "If the transformed prefix changes between turns when only new messages were appended, the cache misses."
-- `docs/decisions/pi-mono Agent Loop Review.md` — already flagged mid-stream working-memory re-injection as a cache-hit-rate hazard; verdict was to consolidate compaction into one LLM-boundary transform.
+- `docs/archive/decisions/pi-mono Agent Loop Review.md` — already flagged mid-stream working-memory re-injection as a cache-hit-rate hazard; verdict was to consolidate compaction into one LLM-boundary transform.
 
 So Push has the invariant, has the gate, has one rolling breakpoint already (last user). The unused two slots are the cheap win.
 
@@ -60,7 +60,7 @@ The structured pieces exist — they're not assembled into a single session dige
 - `lib/context-memory.ts:54-78` — `MemoryRecord` already carries `kind` ('fact' | 'finding' | 'decision' | 'task_outcome' | …), `summary` (≤400 char), `detail` (≤2000 char), `scope`, `source`, `relatedFiles`, `relatedSymbols`, `tags`, `freshness`. This is the strongest piece of the puzzle.
 - `lib/context-summary.ts:30-55, 175-281` — `ContextSummaryMessage` + `extractSemanticSummaryLines()` pulls load-bearing lines (headers, bullets, "Status:"/"Files:" prefixes) and emits omission markers ("[N more X omitted from original Y-item list]") so the model knows it's reading a sampled tail.
 - `lib/compaction-tiers.ts` — three tiers (drop old tool outputs / semantic compact via `compactMessage()` / drop oldest pairs); preserves system + recent 4 by default (`preserveTail ?? 4`).
-- `docs/decisions/Context Memory and Retrieval Architecture.md` is the canonical design.
+- `docs/archive/decisions/Context Memory and Retrieval Architecture.md` is the canonical design.
 
 The gap: when compaction fires, there's no single "session summary" message produced with a fixed Hermes-shaped schema. Memory records and semantic line extraction are both there; nothing assembles them into one block addressed at the model's working context.
 

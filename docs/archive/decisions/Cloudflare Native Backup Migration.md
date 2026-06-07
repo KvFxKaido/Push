@@ -3,8 +3,8 @@
 Date: 2026-05-25
 Status: **Draft** — design-in-motion; needs a `ROADMAP.md` entry to graduate to an implementation commitment
 Owner: Push
-Related: `docs/decisions/Cloudflare Sandbox Provider Design.md` (the provider this swaps the snapshot impl inside),
-`docs/decisions/Modal Sandbox Snapshots Design.md` (the snapshot index / TTL model the routes mirror),
+Related: `docs/archive/decisions/Cloudflare Sandbox Provider Design.md` (the provider this swaps the snapshot impl inside),
+`docs/archive/decisions/Modal Sandbox Snapshots Design.md` (the snapshot index / TTL model the routes mirror),
 `app/src/worker/worker-cf-sandbox.ts` (`createWorkspaceSnapshot` / `restoreWorkspaceSnapshot` — the two functions this replaces),
 `app/src/worker/snapshot-index.ts`, `app/src/worker/coder-job-do.ts` (DO resume loop — unchanged),
 `scripts/snapshot-smoke/` (route-level regression harness for the swap)

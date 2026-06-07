@@ -55,7 +55,7 @@ Node 18+ (uses global `fetch`). Zero dependencies — nothing to install.
 | `PUSH_SMOKE_REPO` | `push-smoke/scratch` | `repo_full_name` for snapshot-index keying (does **not** clone — create runs scratch) |
 | `PUSH_SMOKE_BRANCH` | `snapshot-smoke-<ts>` | unique per run so it never collides with a real index entry |
 | `PUSH_SMOKE_FILES` | `256` | seed-file count (compressible content — does NOT stress the size ceiling) |
-| `PUSH_SMOKE_BLOB_MB` | `0` | Stress mode: seed N MB of **incompressible** data. The only mode that probes the ~24 MiB compressed RPC ceiling. `>~24` is expected to fail with a DO RPC 32 MiB error (see `docs/decisions/Cloudflare Native Backup Migration.md`). |
+| `PUSH_SMOKE_BLOB_MB` | `0` | Stress mode: seed N MB of **incompressible** data. The only mode that probes the ~24 MiB compressed RPC ceiling. `>~24` is expected to fail with a DO RPC 32 MiB error (see `docs/archive/decisions/Cloudflare Native Backup Migration.md`). |
 | `PUSH_SMOKE_GREEN_MS` / `PUSH_SMOKE_YELLOW_MS` | `5000` / `15000` | restore-latency grading bars (from the spike) |
 | `PUSH_SMOKE_KEEP` | unset | `1` keeps the snapshot in R2 (skips `delete-snapshot`) |
 | `PUSH_SMOKE_STRICT_LATENCY` | unset | `1` makes a red restore grade fail the run |

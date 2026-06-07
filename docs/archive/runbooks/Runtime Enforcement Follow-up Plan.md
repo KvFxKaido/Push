@@ -5,9 +5,9 @@ Status: **Complete**
 Owner: Push
 Related:
 - `Harness Runtime Evolution Plan.md` — completed foundation that made this follow-up possible
-- `docs/decisions/Architecture Rating Snapshot.md`
-- `docs/decisions/Harness Friction — Agent Self-Report.md`
-- `docs/decisions/Agent Tool Patterns — Claude Code Cross-Reference.md`
+- `docs/archive/decisions/Architecture Rating Snapshot.md`
+- `docs/archive/decisions/Harness Friction — Agent Self-Report.md`
+- `docs/archive/decisions/Agent Tool Patterns — Claude Code Cross-Reference.md`
 
 ## Why this plan exists
 

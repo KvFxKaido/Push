@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-02
 **Status:** Active — endpoint shipped 2026-04-29, this runbook covers operating it.
-**Decision:** [`docs/decisions/Provider Observability via Analytics Engine.md`](../decisions/Provider%20Observability%20via%20Analytics%20Engine.md)
+**Decision:** [`docs/decisions/Platform, Sessions, and Sandbox Decisions.md`](<../decisions/Platform, Sessions, and Sandbox Decisions.md>) (source note: [`Provider Observability via Analytics Engine`](<../archive/decisions/Provider Observability via Analytics Engine.md>))
 
 ## What this is
 

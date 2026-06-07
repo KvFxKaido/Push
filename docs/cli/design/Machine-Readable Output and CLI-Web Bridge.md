@@ -94,7 +94,7 @@ The shipped bridge did not use HTTP/SSE. It uses:
 - `cli/pushd-relay-client.ts`, `app/src/worker/relay-routes.ts`, and `app/src/worker/relay-do.ts` for the Worker/Durable Object relay path.
 - `app/src/lib/relay-daemon-binding.ts` for Remote clients.
 
-The exact remote topology and remaining packaging work live in `docs/decisions/Remote Sessions via pushd Relay.md`.
+The exact remote topology and remaining packaging work live in `docs/decisions/Platform, Sessions, and Sandbox Decisions.md`.
 
 ---
 

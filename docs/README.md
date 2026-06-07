@@ -1,6 +1,6 @@
 # Docs Index
 
-Status reviewed: 2026-06-01
+Status reviewed: 2026-06-07
 
 Use this file to navigate active design/planning docs versus historical references.
 The canonical architecture and design-system docs live at the repo root
@@ -11,7 +11,7 @@ The canonical architecture and design-system docs live at the repo root
 
 - [`../ARCHITECTURE.md`](../ARCHITECTURE.md) (repo root) — tech stack, runtime roles, display vocabulary, key systems, and repo map
 - [`../DESIGN.md`](../DESIGN.md) (repo root) — visual tokens, colors, typography, spacing, and component specs
-- `decisions/` — architecture decisions, research, analysis, and shipped design references
+- `decisions/` — small live architecture-decision surface
 - `runbooks/` — active, draft, or deferred product plans
 - `research/` — external research notes that inform upcoming design work
 - `security/` — security reviews, audits, and provider usage policies
@@ -19,6 +19,7 @@ The canonical architecture and design-system docs live at the repo root
 - `cli/runbooks/` — active or proposed CLI work
 - `cli/schemas/` — machine-readable runtime protocol artifacts
 - `archive/` — historical root docs plus archived completed history
+- `archive/decisions/` — archived per-topic decision notes and research/provenance
 - `archive/runbooks/` — shipped/completed product plans kept for reference
 - `archive/cli/runbooks/` — shipped/completed CLI plans kept for reference
 
@@ -31,13 +32,15 @@ The canonical architecture and design-system docs live at the repo root
 
 ## Decisions
 
-Detailed per-doc status lives in [`decisions/README.md`](decisions/README.md). Summary by status:
+Detailed status lives in [`decisions/README.md`](decisions/README.md).
+The live decision surface is intentionally small:
 
-- **Shipped design references** — `Agent Experience Wishlist.md`, `Resumable Sessions Design.md`, `Sectioned System Prompts.md`, `CLI Prompt Builder Convergence.md`, `Hashline System Review.md`, `Tool-Call Parser Convergence Gap.md`.
-- **Current working designs** — `AgentScope Architecture Review.md`, `Architecture Remediation Plan — Defusing the Big Four.md`, `Coder Bypass of WebToolExecutionRuntime.md`, `Context Memory and Retrieval Architecture.md`, `CorrelationContext Contract.md`, `Copilot SDK Research.md`, `Harness Friction — Agent Self-Report.md`, `Duplication and Structural Symmetry Analysis.md`, `Role Display De-emphasis.md`, `Sandbox Policy Seam.md`, `Vercel Open Agents Review.md`, `Web and CLI Runtime Contract.md`.
-- **Shipped / historical design references** — `Cloudflare AI Gateway Integration.md`, `Cloudflare Sandbox Provider Design.md`, `phase-5-tool-runtime-brief.md`, `PushStream Gateway Migration.md`, `Remote Sessions via pushd Relay.md`, `push-runtime-v2.md`.
-- **Draft / in-motion** — `Diff and Annotation Envelope.md`, `Modal Sandbox Snapshots Design.md`, `Rerank Before Prompt Packing.md`, `Streaming UI Deltas.md`.
-- **Reference / comparative** — `Agent Tool Patterns — Claude Code Cross-Reference.md`, `Architecture Rating Snapshot.md`, `External Resource Review — Harness Engineering and Ralph Loop.md`, `Multi-Agent Orchestration Research — open-multi-agent.md`, `Oh My OpenAgent Review.md`, `OpenAI Agents SDK Evolution Review.md`.
+- [`decisions/Agent Runtime Decisions.md`](<decisions/Agent Runtime Decisions.md>)
+  - Status: Current. Covers agent-loop shape, runtime protocol, role/display vocabulary, memory, prompt packing, task graph, tool dispatch, loop detection, and TUI decomposition.
+- [`decisions/Platform, Sessions, and Sandbox Decisions.md`](<decisions/Platform, Sessions, and Sandbox Decisions.md>)
+  - Status: Current. Covers auth, session/bearer model, remote relay, sandbox providers, background execution, provider observability, PR review automation, repo mirror, and git/RPC seams.
+- [`archive/decisions/README.md`](archive/decisions/README.md)
+  - Status: Archived source notes. Preserves the old per-topic decision docs, shipped chronicles, and comparative research.
 
 ## Runbooks
 
@@ -140,7 +143,7 @@ Detailed per-doc status lives in [`runbooks/README.md`](runbooks/README.md). Sum
 ## Filing Rules
 
 - Put new active, draft, or deferred product work in `runbooks/` and new CLI work in `cli/runbooks/`.
-- Keep durable specs and shipped design references in `decisions/` or `cli/design/`.
-- Keep research, comparisons, and post-hoc analysis in `decisions/` (or `research/` for raw external source writeups).
+- Keep durable, active decision summaries in `decisions/` or `cli/design/`.
+- Keep research, comparisons, shipped chronicles, and post-hoc analysis in `archive/decisions/` once their current takeaways are summarized in the live decision docs. Use `research/` for raw external source writeups.
 - When a plan is done but still worth keeping, move it into `archive/runbooks/` or `archive/cli/runbooks/`.
 - If a draft in `docs/` becomes an implementation commitment, promote a concise version into `../ROADMAP.md` first.

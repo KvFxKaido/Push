@@ -14,7 +14,7 @@ Core outcomes:
 
 - Last updated: 2026-03-11
 - State: **Sprint 2 complete** — all six items implemented, council-reviewed (Sprint 1), tests passing
-- Origin: Cross-agent self-report (`docs/decisions/Harness Friction — Agent Self-Report.md`). Gripes sourced from Claude Code (Opus 4.6), Gemini, and Codex (GPT-5.4) during real sessions.
+- Origin: Cross-agent self-report (`docs/archive/decisions/Harness Friction — Agent Self-Report.md`). Gripes sourced from Claude Code (Opus 4.6), Gemini, and Codex (GPT-5.4) during real sessions.
 
 ## Why
 

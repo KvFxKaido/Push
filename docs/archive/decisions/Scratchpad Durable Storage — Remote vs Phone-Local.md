@@ -3,9 +3,9 @@
 Date: 2026-06-03 (rescoped 2026-06-03)
 Status: **Draft — ROADMAP-tracked as step 4 (gated) of the "Single-Agent Loop + Branch-at-Commit Persistence" item; not yet decided.** Split out of `Main as Scratchpad — Branch on Graduation.md`. That doc's **decomposition decided** the *commit-flow* is `auto-branch-on-commit`, universal (no platform fork) — and that the **one thing the platform flag governs is the durable-storage substrate**, which is what THIS doc owns. So this is no longer just a parked fork: it's the open half of a settled split. Still open here: which substrate per platform, and the two conscious tradeoffs (continuity narrowing + identity) below.
 Owner: Push
-Related: `docs/decisions/Main as Scratchpad — Branch on Graduation.md` (parent — the persistence posture this serves),
-`docs/decisions/Repo Mirror Design.md` (the phone-side `MirrorTarget` storage layer a phone-local variant would build on),
-`docs/decisions/Cloudflare Native Backup Migration.md`, `docs/decisions/Modal Sandbox Snapshots Design.md` (the remote-snapshot impl)
+Related: `docs/archive/decisions/Main as Scratchpad — Branch on Graduation.md` (parent — the persistence posture this serves),
+`docs/archive/decisions/Repo Mirror Design.md` (the phone-side `MirrorTarget` storage layer a phone-local variant would build on),
+`docs/archive/decisions/Cloudflare Native Backup Migration.md`, `docs/archive/decisions/Modal Sandbox Snapshots Design.md` (the remote-snapshot impl)
 
 ## What this owns (post-decomposition)
 

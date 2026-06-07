@@ -8,7 +8,7 @@ Use Cloudflare Access / Zero Trust in front of the whole production hostname. Th
 
 The repo-side API gate is the **GitHub-identity session gate** below — Access is an optional additional outer edge layer.
 
-> The legacy `X-Push-Deployment-Token` / `#push_token` gate was retired in the auth rework (see `docs/decisions/Auth Rework — GitHub as the Single Identity Anchor.md`). The GitHub-identity session is now the universal `/api/*` gate.
+> The legacy `X-Push-Deployment-Token` / `#push_token` gate was retired in the auth rework (see `docs/decisions/Platform, Sessions, and Sandbox Decisions.md`). The GitHub-identity session is now the universal `/api/*` gate.
 
 ## GitHub-Identity Session Gate (repo-side API gate)
 

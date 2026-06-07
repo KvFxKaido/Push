@@ -6,7 +6,7 @@ Owner: Push
 Related:
 - `docs/archive/runbooks/Workspace Route Follow-up Plan.md` — route-boundary cleanup that made the current workspace/chat shell possible
 - `docs/archive/runbooks/UX Nice-to-Haves Plan.md` — longer-tail chat UX ideas and quality-of-life follow-ups
-- `docs/decisions/Architecture Rating Snapshot.md`
+- `docs/archive/decisions/Architecture Rating Snapshot.md`
 
 ## Why this plan exists
 

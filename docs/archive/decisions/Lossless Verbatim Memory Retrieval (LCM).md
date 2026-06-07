@@ -28,7 +28,7 @@ Claude Code on the OOLONG long-context eval from 32K→1M tokens). The core idea
    recall the exact text of an old decision on demand.
 
 The thesis — "stop letting the model manage its own memory" — aligns with Push's
-[behavior-lives-in-code](../../CLAUDE.md) principle, and points 1–2 substantially
+[behavior-lives-in-code](../../../CLAUDE.md) principle, and points 1–2 substantially
 overlap with what [`Context Memory and Retrieval Architecture.md`](Context%20Memory%20and%20Retrieval%20Architecture.md)
 already shipped (typed records, deterministic scoring, freshness invalidation).
 Point 3 is the gap.

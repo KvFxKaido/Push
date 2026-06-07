@@ -1,6 +1,6 @@
 # Remediation Observations
 
-Lightweight observation log per [Architecture Remediation Plan §Lightweight observation log](decisions/Architecture%20Remediation%20Plan%20%E2%80%94%20Defusing%20the%20Big%20Four.md). One line per real session. Three green entries on a given extraction discharges the evaluation step and unblocks the next one.
+Lightweight observation log per [Architecture Remediation Plan §Lightweight observation log](archive/decisions/Architecture%20Remediation%20Plan%20%E2%80%94%20Defusing%20the%20Big%20Four.md). One line per real session. Three green entries on a given extraction discharges the evaluation step and unblocks the next one.
 
 Format: `date, session purpose, "<tools> fine" or "hit X"`.
 
@@ -383,7 +383,7 @@ Per-node rounds stayed in the 2-3 range across all measurement states (cold and 
 
 **What this is and is not:**
 
-- **Is:** closure of the record-content-quality axis. Future debugging of "memory records contain garbage" symptoms can refer to this entry plus the failure-mode taxonomy in `docs/decisions/Tool-Call Parser Convergence Gap.md`'s 2026-04-18 update. Future operators inspecting `~/.push/memory/<repo>/<branch>.jsonl` will see real findings, which is a debugging affordance in its own right.
+- **Is:** closure of the record-content-quality axis. Future debugging of "memory records contain garbage" symptoms can refer to this entry plus the failure-mode taxonomy in `docs/archive/decisions/Tool-Call Parser Convergence Gap.md`'s 2026-04-18 update. Future operators inspecting `~/.push/memory/<repo>/<branch>.jsonl` will see real findings, which is a debugging affordance in its own right.
 - **Is not:** an answer to the value question PR #333's retraction left open. The "does typed memory measurably help small models" question remains research-shaped. Any future N=1 measurement on this surface should include a "did the retrieval block contain N records?" assertion at minimum and a content-quality sniff before believing rounds metrics.
 
 **Reference-pattern takeaways worth keeping:**

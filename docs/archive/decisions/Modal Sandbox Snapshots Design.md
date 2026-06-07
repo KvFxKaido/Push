@@ -3,7 +3,7 @@
 Date: 2026-04-14 (Phases 1–2 shipped 2026-04-16)
 Status: **Partially shipped** — Phases 0–2 complete; Phase 3 (UX polish) in progress; Phase 4 (eviction cron + KV index) open
 Owner: Push
-Related: `docs/decisions/Resumable Sessions Design.md` (client-side checkpoint companion), `docs/decisions/Vercel Open Agents Review.md` (origin of this work item), `sandbox/app.py`
+Related: `docs/archive/decisions/Resumable Sessions Design.md` (client-side checkpoint companion), `docs/archive/decisions/Vercel Open Agents Review.md` (origin of this work item), `sandbox/app.py`
 
 ## Shipping status
 
@@ -87,7 +87,7 @@ active ──idle timeout──▶ snapshotting ──▶ snapshotted ──resu
 | State | Meaning | Visible to the agent? |
 |---|---|---|
 | `active` | Container is running, accepting calls. | Yes (existing). |
-| `snapshotting` | A snapshot is being taken; container still serves reads but blocks mutations. | Yes — surfaced in the session capability block described in [architecture: Key Systems](../../ARCHITECTURE.md#key-systems) so the agent knows not to dispatch more tools. |
+| `snapshotting` | A snapshot is being taken; container still serves reads but blocks mutations. | Yes — surfaced in the session capability block described in [architecture: Key Systems](../../../ARCHITECTURE.md#key-systems) so the agent knows not to dispatch more tools. |
 | `snapshotted` | Container has been terminated; a snapshot exists for `(repo, branch)`. No live container. | No — the agent sees "no sandbox" until it's restored. |
 | `restoring` | A new container is being created from the snapshot. | Yes — surfaced as a capability-block phase, similar to today's "creating sandbox" state. |
 | `dead` | No container, no usable snapshot. Must clone fresh. | No. |
@@ -149,7 +149,7 @@ A daily Worker cron walks the snapshot index and evicts expired entries.
 
 ### 7. Capability block update
 
-Today the session capability block already exposes container lifetime, creation/download events, and recent workspace lifecycle state ([architecture: Key Systems](../../ARCHITECTURE.md#key-systems)). Add three things:
+Today the session capability block already exposes container lifetime, creation/download events, and recent workspace lifecycle state ([architecture: Key Systems](../../../ARCHITECTURE.md#key-systems)). Add three things:
 
 - `sandbox.phase` extended with `snapshotting | snapshotted | restoring`.
 - `sandbox.snapshotAge` (seconds since the snapshot was taken; null if active).

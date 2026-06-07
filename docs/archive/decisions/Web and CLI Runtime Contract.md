@@ -1,7 +1,7 @@
 # Web and CLI Runtime Contract
 
 Status: Current, refreshed 2026-04-05 after the first shared-runtime convergence tranche shipped
-Origin: [Web–CLI Parity Plan](../runbooks/Web-CLI%20Parity%20Plan.md), [Architecture](../../ARCHITECTURE.md), [Context Memory and Retrieval Architecture](Context%20Memory%20and%20Retrieval%20Architecture.md)
+Origin: [Web–CLI Parity Plan](../runbooks/Web-CLI%20Parity%20Plan.md), [Architecture](../../../ARCHITECTURE.md), [Context Memory and Retrieval Architecture](Context%20Memory%20and%20Retrieval%20Architecture.md)
 
 ## Why This Exists
 
@@ -210,7 +210,7 @@ For `coder-agent` this produces a two-headed shape:
 - `app/src/lib/coder-agent.ts` — the Web binding: wires `executeSandboxToolCall`, chat-message approval UI, Web-side memory adapters, and browser lifecycle into the kernel's `ToolExec` and approval contracts
 - `makeDaemonCoderToolExec` in `cli/pushd.ts` — the CLI binding: wires `cli/tools.ts` execution, socket-RPC approvals, and daemon session storage into the same kernel
 
-This is **not** a transition artifact. The Phase 7 "Web-as-daemon-client" flow in `docs/decisions/push-runtime-v2.md` is explicitly out of scope for v2.0, and would require substantial Web-side refactoring (`useChat.ts` → daemon RPC, approval → socket callback, working memory → shared daemon state) to land. Until that migration is committed, the dual-binding shape is the correct way to satisfy each shell's DI contract without pushing shell concerns down into `lib/`.
+This is **not** a transition artifact. The Phase 7 "Web-as-daemon-client" flow in `docs/archive/decisions/push-runtime-v2.md` is explicitly out of scope for v2.0, and would require substantial Web-side refactoring (`useChat.ts` → daemon RPC, approval → socket callback, working memory → shared daemon state) to land. Until that migration is committed, the dual-binding shape is the correct way to satisfy each shell's DI contract without pushing shell concerns down into `lib/`.
 
 The operating rule for this pattern:
 

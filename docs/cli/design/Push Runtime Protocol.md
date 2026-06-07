@@ -72,7 +72,7 @@ Primary (local):
 
 Secondary (remote app bridge):
 - WebSocket endpoint that forwards the same JSON envelopes unchanged
-- Remote cross-machine use should go through the Worker/Durable Object relay described in `docs/decisions/Remote Sessions via pushd Relay.md`; direct public WebSocket exposure from the user's computer is not the preferred topology.
+- Remote cross-machine use should go through the Worker/Durable Object relay described in `docs/decisions/Platform, Sessions, and Sandbox Decisions.md`; direct public WebSocket exposure from the user's computer is not the preferred topology.
 
 Message framing:
 - UTF-8 NDJSON (one JSON object per line)

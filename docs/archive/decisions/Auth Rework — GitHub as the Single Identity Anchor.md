@@ -8,7 +8,7 @@ Related:
 `app/src/worker/worker-infra.ts` (`generateGitHubAppJWT` / `exchangeForInstallationToken` / `resolveRepoInstallationId` — the App installation-token path, already used by `pr-review-job-do.ts` + `worker-pr-review.ts`),
 `app/src/lib/sandbox-auth-gate.ts` + `app/src/lib/github-auth.ts` (`GitHubTokenKind`, `isDurableUserToken`, the `needs_ack` user-token gate from PR #766) consumed at `app/src/hooks/useSandbox.ts:333`,
 [[push-prod-deployment-gate]], [[push-git-credential-proxy-deferred]], [[push-infra-direction]],
-`docs/decisions/Universal Session Bearer.md` (the device/relay bearer — the one legitimately-custom auth layer, out of scope here),
+`docs/archive/decisions/Universal Session Bearer.md` (the device/relay bearer — the one legitimately-custom auth layer, out of scope here),
 `CLAUDE.md` (delivery rules, Protect Main).
 
 ## TL;DR

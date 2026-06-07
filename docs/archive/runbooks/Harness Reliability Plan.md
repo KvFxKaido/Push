@@ -309,7 +309,7 @@ Key conclusion: **Push's prompt-engineered tool protocol is its biggest reliabil
 - Baseline: No structured errors, single-tool-per-turn, no meta context, no acceptance criteria, no working memory
 - Result: All 9 items shipped in 4 phases. Error taxonomy (`classifyError()`), structured malformed-call feedback (`[TOOL_CALL_PARSE_ERROR]`), edit result diffs, multi-tool dispatch (`detectAllToolCalls()`), universal meta envelope (`[meta]` line), machine-checkable acceptance criteria, Coder working memory (`CoderWorkingMemory`), `sandbox_read_symbols` (AST/regex symbol extraction), `sandbox_apply_patchset` (all-or-nothing validation, sequential writes). Post-sprint Codex review caught 5 issues (parallel criteria passthrough, patchset atomicity wording, duplicate-path bug, state-update swallowing checkpoint, unused imports) — all fixed.
 - Decision: `go` (shipped)
-- Notes: No backend (Python/Worker) changes needed. All client-side. See `docs/decisions/Agent Experience Wishlist.md` for the original spec.
+- Notes: No backend (Python/Worker) changes needed. All client-side. See `docs/archive/decisions/Agent Experience Wishlist.md` for the original spec.
 
 ## Immediate Next Action
 
