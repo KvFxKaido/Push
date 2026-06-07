@@ -186,7 +186,7 @@ export default {
       const prReviewAction = matchPrReviewRoute(url.pathname, request.method);
       if (prReviewAction) {
         return withRequestIdOnResponse(
-          await handlePrReviewRoute(requestWithId, env, prReviewAction),
+          await handlePrReviewRoute(requestWithId, env, prReviewAction, ctx),
           requestId,
           requestWithId,
           env,

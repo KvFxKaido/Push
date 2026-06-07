@@ -52,6 +52,7 @@ import {
   isValidPrReviewRuntimeConfig,
 } from './pr-review-config';
 import { exchangeForInstallationToken, generateGitHubAppJWT } from './worker-infra';
+import { recordInflightReview } from './pr-review-inflight-index';
 import { createWebStreamAdapter } from './coder-job-stream-adapter';
 import { createWebDetectorAdapter, type AnyToolCall } from './coder-job-detector-adapter';
 import type { ReviewablePullRequest } from './github-webhook';
@@ -439,6 +440,20 @@ export class PrReviewJob {
       Date.now(),
     );
     this.emit(input.deliveryId, 'review.queued', { headSha: input.headSha });
+
+    // Register in the cross-PR discovery index so this review is reachable from
+    // the global "active reviews" surface regardless of which branch the UI is
+    // on. Best-effort/waitUntil — the index is observability, not correctness,
+    // and must not block the 202 ack the webhook receiver needs within ~10s.
+    this.ctx.waitUntil(
+      recordInflightReview(this.env, {
+        repo: input.repoFullName,
+        prNumber: input.prNumber,
+        deliveryId: input.deliveryId,
+        headSha: input.headSha,
+        createdAt: Date.now(),
+      }),
+    );
 
     // Run in the background; keep the DO alive until it settles.
     this.ctx.waitUntil(this.runReview(input));

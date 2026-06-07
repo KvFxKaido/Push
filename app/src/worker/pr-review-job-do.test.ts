@@ -814,3 +814,56 @@ describe('PrReviewJob orphan sweep', () => {
     expect(mock.reviews.get('orphan')!.status).toBe('running');
   });
 });
+
+describe('PrReviewJob cross-PR in-flight index', () => {
+  it('records the review in the SNAPSHOT_INDEX index on start', async () => {
+    const mock = createMockCtx();
+    const store = new Map<string, string>();
+    const env = {
+      SNAPSHOT_INDEX: {
+        put: async (k: string, v: string) => {
+          store.set(k, v);
+        },
+        get: async (k: string) => store.get(k) ?? null,
+        delete: async (k: string) => {
+          store.delete(k);
+        },
+        list: async ({ prefix }: { prefix: string }) => ({
+          keys: [...store.keys()].filter((k) => k.startsWith(prefix)).map((name) => ({ name })),
+        }),
+      },
+    } as unknown as Env;
+    const do_ = new PrReviewJob(mock.ctx as never, env);
+    __setPrReviewExecutorOverride('d1', async () => ({
+      result: RESULT,
+      commentsPosted: 1,
+      posted: true,
+    }));
+
+    await do_.fetch(startRequest(startInput()));
+    await Promise.allSettled(mock.pending);
+
+    const key = 'inflight:pr-review:octo/repo#7#d1';
+    expect(store.has(key)).toBe(true);
+    expect(JSON.parse(store.get(key)!)).toMatchObject({
+      repo: 'octo/repo',
+      prNumber: 7,
+      deliveryId: 'd1',
+      headSha: 'shaA',
+    });
+  });
+
+  it('start succeeds (202) even when no KV binding is present', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
+    __setPrReviewExecutorOverride('d1', async () => ({
+      result: RESULT,
+      commentsPosted: 1,
+      posted: true,
+    }));
+
+    const res = await do_.fetch(startRequest(startInput()));
+    expect(res.status).toBe(202);
+    await Promise.allSettled(mock.pending);
+  });
+});
