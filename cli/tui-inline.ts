@@ -65,13 +65,19 @@ function styleSafe(theme: Theme, token: TokenName, text: string): string {
     .join(' ');
 }
 
-/** Bold `text` per-word (same space invariant as `styleSafe`). */
-function boldSafe(theme: Theme, text: string): string {
+/**
+ * Bold `text` per-word, keeping the line's base foreground. Bold (SGR 1m) alone
+ * drops to the terminal's default fg, which on a dark terminal can read dimmer
+ * than the surrounding `fg.primary`/`fg.secondary` prose — so wrap bold in the
+ * base colour (colour outer, bold inner → one trailing reset, still balanced).
+ */
+function boldSafe(theme: Theme, token: TokenName, text: string): string {
   if (text === '') return '';
-  if (text.indexOf(' ') === -1) return theme.bold(text);
+  const bold = (word: string) => theme.style(token, theme.bold(word));
+  if (text.indexOf(' ') === -1) return bold(text);
   return text
     .split(' ')
-    .map((part) => (part === '' ? '' : theme.bold(part)))
+    .map((part) => (part === '' ? '' : bold(part)))
     .join(' ');
 }
 
@@ -133,7 +139,7 @@ export function renderInline(
       const close = text.indexOf(marker, i + 2);
       if (close > i + 2) {
         flushPlain();
-        out += boldSafe(theme, text.slice(i + 2, close));
+        out += boldSafe(theme, baseToken, text.slice(i + 2, close));
         i = close + 2;
         continue;
       }

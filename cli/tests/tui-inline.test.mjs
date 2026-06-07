@@ -36,11 +36,14 @@ describe('renderInline — tier none is a no-op', () => {
 });
 
 describe('renderInline — bold', () => {
-  it('strips ** markers and bolds the interior', () => {
+  it('strips ** markers and bolds the interior, keeping the base foreground', () => {
     const r = renderInline(color, 'see **this** now');
     assert.ok(!r.text.includes('**'), 'markers stripped');
     assert.ok(r.text.includes('\x1b[1m'), 'bold opener present');
     assert.ok(r.text.includes('this'), 'text preserved');
+    // Bold must also carry the base fg colour (38;5;… at the 256 tier), not drop
+    // to the terminal default — otherwise bold reads dimmer than its prose.
+    assert.ok(/\x1b\[38;5;\d+m/.test(r.text), 'bold span carries the base foreground');
     assertNoColorAcrossSpace(r.text);
   });
 
