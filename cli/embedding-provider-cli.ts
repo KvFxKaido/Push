@@ -12,8 +12,9 @@
  * recall (small models on the CLI) gets it only with a Worker. A local
  * embedder (transformers.js BGE) is the follow-up that closes it offline.
  *
- * Auth: if `PUSH_EMBED_TOKEN` is set it rides as a Bearer header, for deploys
- * with the session gate enforced. In observe mode the token is unnecessary.
+ * Auth: if `PUSH_EMBED_TOKEN` is set it rides as the `X-Push-Session` header
+ * (what the gate reads), for deploys with the session gate enforced. In observe
+ * mode the token is unnecessary.
  */
 
 import {
@@ -42,7 +43,11 @@ function createCliEmbeddingProvider(
       try {
         const body: EmbedRequest = { texts };
         const headers: Record<string, string> = { 'content-type': 'application/json' };
-        if (token) headers.authorization = `Bearer ${token}`;
+        // The universal /api/* session gate reads the session token from the
+        // `X-Push-Session` header (or the push_session cookie), NOT Authorization
+        // — see SESSION_HEADER in app/src/lib/session-constants.ts. Sending it as
+        // a Bearer token would 401 against an enforced deployment.
+        if (token) headers['X-Push-Session'] = token;
         const res = await fetch(endpoint, {
           method: 'POST',
           headers,

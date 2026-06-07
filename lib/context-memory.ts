@@ -129,10 +129,14 @@ async function enrichEmbeddings(
       records.map(async (record, i) => {
         const vector = results[i]?.vector;
         if (!vector) return;
-        await store.update(record.id, {
-          embedding: vector,
-          embeddingModel: results[i]?.model ?? provider.model,
-        });
+        const embeddingModel = results[i]?.model ?? provider.model;
+        await store.update(record.id, { embedding: vector, embeddingModel });
+        // Also mutate the in-memory record: write helpers return these
+        // instances to callers, and the store's update() persists a *copy* —
+        // so without this the returned object would lack the embedding it was
+        // just given.
+        record.embedding = vector;
+        record.embeddingModel = embeddingModel;
         enriched++;
       }),
     );
