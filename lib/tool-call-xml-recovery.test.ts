@@ -319,6 +319,87 @@ describe('recoverXmlToolCalls — Shape C (Anthropic function_calls/invoke/param
 });
 
 // ---------------------------------------------------------------------------
+// Shape D — namespace-token-wrapped tags. DeepSeek-family finetunes emit
+// the Anthropic invoke/parameter shape with each tag wrapped in a
+// chat-template namespace token (`<|DSML|invoke …>` / `</|DSML|invoke>`),
+// using a `tool_calls` (plural) wrapper. Before this recovery the call
+// leaked into visible content verbatim and never executed — the exact
+// capture below is the mobile-app screenshot that motivated the fix.
+// ---------------------------------------------------------------------------
+describe('recoverXmlToolCalls — Shape D (namespace-token-wrapped invoke/parameter)', () => {
+  it('recovers the exact DeepSeek `<|DSML|…>` screenshot capture', () => {
+    const text =
+      '<|DSML|tool_calls><|DSML|invoke name="openrouter_web_search">' +
+      '<|DSML|parameter name="query" string="true">github.com/KvFxKaido/Push</|DSML|parameter>' +
+      '</|DSML|invoke></|DSML|tool_calls>';
+    expect(recoverXmlToolCalls(text)).toEqual([
+      expect.objectContaining({
+        tool: 'openrouter_web_search',
+        args: { query: 'github.com/KvFxKaido/Push' },
+      }),
+    ]);
+  });
+
+  it('tolerates the full-width pipe `｜` (U+FF5C) delimiter open-weight templates use', () => {
+    const text =
+      '<｜DSML｜tool_calls><｜DSML｜invoke name="read">' +
+      '<｜DSML｜parameter name="path">/workspace/README.md</｜DSML｜parameter>' +
+      '</｜DSML｜invoke></｜DSML｜tool_calls>';
+    const recovered = recoverXmlToolCalls(text);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]).toMatchObject({ tool: 'read', args: { path: '/workspace/README.md' } });
+  });
+
+  it('expands multiple namespaced invoke children of one tool_calls wrapper', () => {
+    const text =
+      '<|DSML|tool_calls>' +
+      '<|DSML|invoke name="read"><|DSML|parameter name="path">/a</|DSML|parameter></|DSML|invoke>' +
+      '<|DSML|invoke name="diff"></|DSML|invoke>' +
+      '</|DSML|tool_calls>';
+    const recovered = recoverXmlToolCalls(text);
+    expect(recovered.map((r) => r.tool)).toEqual(['read', 'diff']);
+    expect(recovered[0].args).toEqual({ path: '/a' });
+    expect(recovered[1].args).toEqual({});
+  });
+
+  it('ignores stray attributes on the namespaced parameter tag (e.g. `string="true"`)', () => {
+    const text =
+      '<|DSML|tool_calls><|DSML|invoke name="exec">' +
+      '<|DSML|parameter name="command" string="true">ls -la</|DSML|parameter>' +
+      '</|DSML|invoke></|DSML|tool_calls>';
+    expect(recoverXmlToolCalls(text)[0].args).toEqual({ command: 'ls -la' });
+  });
+
+  it('anchors offsets to the original text despite the namespace prefix', () => {
+    const text =
+      '<|DSML|tool_calls><|DSML|invoke name="read">' +
+      '<|DSML|parameter name="path">/a</|DSML|parameter>' +
+      '</|DSML|invoke></|DSML|tool_calls>';
+    const [r] = recoverXmlToolCalls(text);
+    // offset/endOffset bound the `<|DSML|invoke>` child, not the wrapper,
+    // and are positions in the *original* string — not a normalized copy.
+    expect(r.offset).toBe(text.indexOf('<|DSML|invoke'));
+    expect(r.endOffset).toBe(text.indexOf('</|DSML|invoke>') + '</|DSML|invoke>'.length);
+  });
+
+  it('rejects a namespaced block embedded in prose (eligibility gate still applies)', () => {
+    const text =
+      'Do not run <|DSML|tool_calls><|DSML|invoke name="exec">' +
+      '<|DSML|parameter name="command">rm -rf /</|DSML|parameter>' +
+      '</|DSML|invoke></|DSML|tool_calls> in production.';
+    expect(recoverXmlToolCalls(text)).toEqual([]);
+  });
+
+  it('still recovers a plain (non-namespaced) function_calls block — NS is optional', () => {
+    const text =
+      '<function_calls><invoke name="read"><parameter name="path">/a</parameter></invoke></function_calls>';
+    expect(recoverXmlToolCalls(text)).toEqual([
+      expect.objectContaining({ tool: 'read', args: { path: '/a' } }),
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Nested-wrapper regression — Codex P1 review on PR #600. A literal
 // `<function_calls>...</function_calls>` string embedded inside a
 // `<tool_call>` arg value (e.g. documentation snippets in an edit_file
