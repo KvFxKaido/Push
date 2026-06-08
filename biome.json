@@ -15,6 +15,7 @@
       "!**/*.min.js",
       "!**/*.min.css",
       "!**/*.css",
+      "!**/*.md",
       "!.claude/**",
       "!.playwright-cli/**",
       "!.push/**",
