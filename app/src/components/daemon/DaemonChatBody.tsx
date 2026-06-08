@@ -172,6 +172,12 @@ export interface DaemonChatBodyProps {
   reattachedRun?: ReattachedRun | null;
   /** Clear the reattached-run indicator (local takeover, Stop, or completion). */
   onClearReattachedRun?: () => void;
+  /**
+   * Live assistant message projected from a TUI-driven turn's broadcast tokens
+   * (see useRemoteTurnProjection). Appended to the transcript as a streaming
+   * tail so the user watches the remote turn stream. Null when no remote turn.
+   */
+  remoteTurnMessage?: ChatMessage | null;
 }
 
 const MODE_HEADER_LABEL: Record<DaemonChatBodyProps['mode'], string> = {
@@ -214,6 +220,7 @@ export function DaemonChatBody({
   hydratedMessages = null,
   reattachedRun = null,
   onClearReattachedRun,
+  remoteTurnMessage = null,
 }: DaemonChatBodyProps) {
   // Provider/model picker plumbing — identical between the two
   // screens. The catalog hook owns reactive `activeBackend` state;
@@ -406,17 +413,26 @@ export function DaemonChatBody({
   // carried over (the daemon's state.messages exposes role+content
   // only), and reasoning blocks are dropped. Both land in a follow-up
   // if the bare transcript proves insufficient.
+  // Transcript = hydrated history (prepended) + the web's own messages + a live
+  // remote-turn message (appended as a streaming tail) when the TUI is driving.
   const displayMessages = useMemo<ChatMessage[]>(() => {
-    if (!hydratedMessages || hydratedMessages.length === 0) return messages;
-    const prefix: ChatMessage[] = hydratedMessages.map((m, i) => ({
-      id: m.id,
-      role: m.role,
-      content: m.content,
-      timestamp: i,
-      status: 'done' as const,
-    }));
-    return [...prefix, ...messages];
-  }, [hydratedMessages, messages]);
+    const prefix: ChatMessage[] = hydratedMessages?.length
+      ? hydratedMessages.map((m, i) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          timestamp: i,
+          status: 'done' as const,
+        }))
+      : [];
+    // Hide the remote turn the moment the local user starts their own (their
+    // turn appends to `messages`, which must order after the remote one). The
+    // just-watched turn is in the daemon's history and returns via
+    // `hydratedMessages` on the next attach.
+    const tail: ChatMessage[] = remoteTurnMessage && !isStreaming ? [remoteTurnMessage] : [];
+    if (prefix.length === 0 && tail.length === 0) return messages;
+    return [...prefix, ...messages, ...tail];
+  }, [hydratedMessages, messages, remoteTurnMessage, isStreaming]);
 
   // Composer state — owns the per-chat provider/model drafts that
   // ChatInput's picker reads. `sendMessageWithChatDraft` wraps
@@ -862,7 +878,10 @@ export function DaemonChatBody({
             // status was off would silently drop the user's draft on
             // the click. The `disabled` prop blocks `canSend` entirely
             // so the draft survives until the daemon reconnects.
-            disabled={status.state !== 'open'}
+            // Also disabled while a TUI-driven turn is mid-run: the daemon
+            // rejects a concurrent run with RUN_IN_PROGRESS, so block the send
+            // (the "Running…" header explains why) and keep the draft.
+            disabled={status.state !== 'open' || showReattachedRun}
             queuedFollowUpCount={queuedFollowUpCount}
             pendingSteerCount={pendingSteerCount}
             placeholder={composePlaceholder}
