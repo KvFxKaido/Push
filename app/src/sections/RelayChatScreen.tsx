@@ -81,13 +81,26 @@ export function RelayChatScreen({
   // attached: an approval the session is blocked on, and a foreground run it's
   // mid-turn on. The approval enqueue dedupes by id; run-state hydration primes
   // the busy indicator + remote Stop until a run_complete (or local takeover).
-  const { hydrateSnapshotApproval } = approvals;
-  const { hydrateSnapshotRunState } = runState;
+  // When the snapshot goes null (target change / attach failure) the old
+  // session's state is no longer valid — clear both so a stale prompt or
+  // "Running…"/Stop can't act on a session this screen is no longer bound to.
+  const { hydrateSnapshotApproval, clear: clearApprovals } = approvals;
+  const { hydrateSnapshotRunState, clear: clearRunState } = runState;
   useEffect(() => {
-    if (!sessionSnapshot) return;
+    if (!sessionSnapshot) {
+      clearApprovals();
+      clearRunState();
+      return;
+    }
     hydrateSnapshotApproval(sessionSnapshot.pendingApproval, sessionSnapshot.session.sessionId);
     hydrateSnapshotRunState(sessionSnapshot);
-  }, [sessionSnapshot, hydrateSnapshotApproval, hydrateSnapshotRunState]);
+  }, [
+    sessionSnapshot,
+    hydrateSnapshotApproval,
+    hydrateSnapshotRunState,
+    clearApprovals,
+    clearRunState,
+  ]);
 
   const workspaceContext = useMemo(
     () => ({
