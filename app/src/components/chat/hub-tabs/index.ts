@@ -5,6 +5,6 @@ export { HubKeptTab } from './HubKeptTab';
 export { HubConsoleTab } from './HubConsoleTab';
 export { HubFilesTab } from './HubFilesTab';
 export { HubDiffTab } from './HubDiffTab';
-export { HubPRsTab } from './HubPRsTab';
+export { PrBrowser } from './PrBrowser';
 export { HubReviewTab } from './HubReviewTab';
 export { HubSettingsTab } from './HubSettingsTab';

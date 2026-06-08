@@ -73,7 +73,6 @@ import {
   FilesStackIcon,
   MergeShieldIcon,
   NotebookPadIcon,
-  PRThreadIcon,
   PushOrbitIcon,
   ReviewLensIcon,
   SandboxCubeIcon,
@@ -81,9 +80,6 @@ import {
 } from '@/components/icons/push-custom-icons';
 import { PublishToGitHubSheet } from '@/components/repo/PublishToGitHubSheet';
 import { HubNotesTab, HubConsoleTab, HubFilesTab, HubDiffTab } from './hub-tabs';
-const HubPRsTab = lazy(() =>
-  import('./hub-tabs/HubPRsTab').then((m) => ({ default: m.HubPRsTab })),
-);
 const HubReviewTab = lazy(() =>
   import('./hub-tabs/HubReviewTab').then((m) => ({ default: m.HubReviewTab })),
 );
@@ -116,7 +112,7 @@ import type {
 // Types
 // ---------------------------------------------------------------------------
 
-type HubTab = 'notes' | 'console' | 'files' | 'diff' | 'prs' | 'review' | 'settings';
+type HubTab = 'notes' | 'console' | 'files' | 'diff' | 'review' | 'settings';
 
 type CommitPhase =
   | 'idle'
@@ -251,7 +247,6 @@ const TABS_WITH_CONSOLE: Array<{
   { key: 'console', label: 'Console', icon: ConsoleTraceIcon },
   { key: 'files', label: 'Files', icon: FilesStackIcon },
   { key: 'diff', label: 'Diff', icon: DiffSeamIcon },
-  { key: 'prs', label: 'PRs', icon: PRThreadIcon },
   { key: 'review', label: 'Review', icon: ReviewLensIcon },
   { key: 'settings', label: 'Settings', icon: SettingsCellsIcon },
 ];
@@ -492,18 +487,8 @@ export function WorkspaceHubSheet({
       );
     }
     const baseTabs = showToolActivity ? TABS_WITH_CONSOLE : TABS_WITHOUT_CONSOLE;
-    return baseTabs.filter(
-      (tab) =>
-        (capabilities.canBrowsePullRequests || tab.key !== 'prs') &&
-        (tab.key !== 'settings' || hasSettingsBundles),
-    );
-  }, [
-    capabilities.canBrowsePullRequests,
-    hasSettingsBundles,
-    isDaemonMode,
-    showToolActivity,
-    workspaceMode,
-  ]);
+    return baseTabs.filter((tab) => tab.key !== 'settings' || hasSettingsBundles);
+  }, [hasSettingsBundles, isDaemonMode, showToolActivity, workspaceMode]);
   const fallbackTab = (
     workspaceMode === 'chat' || isDaemonMode
       ? (tabs.find((tab) => tab.key === 'notes')?.key ?? tabs[0]?.key ?? 'notes')
@@ -1719,19 +1704,6 @@ export function WorkspaceHubSheet({
               </div>
             )}
 
-            {activeTab === 'prs' && (
-              <div className="flex h-full min-h-0 flex-col">
-                <Suspense fallback={null}>
-                  <HubPRsTab
-                    repoFullName={repoFullName}
-                    activeBranch={branchProps.currentBranch}
-                    onOpenDiff={handleOpenReviewDiff}
-                    onOpenReviewTab={() => setActiveTab('review')}
-                  />
-                </Suspense>
-              </div>
-            )}
-
             {reviewTabMounted && (
               <div
                 className={
@@ -1753,6 +1725,7 @@ export function WorkspaceHubSheet({
                     defaultBranch={branchProps.defaultBranch}
                     projectInstructions={projectInstructions}
                     protectMain={protectMainEnabled}
+                    canBrowsePullRequests={capabilities.canBrowsePullRequests}
                     onOpenDiff={handleOpenReviewDiff}
                     onFixFinding={onFixReviewFinding}
                   />

@@ -15,6 +15,7 @@ import { getSandboxDiff } from '@/lib/sandbox-client';
 import { runReviewer } from '@/lib/reviewer-agent';
 import { runDeepReviewer } from '@/lib/deep-reviewer-agent';
 import { PrReviewHistorySection } from './PrReviewHistorySection';
+import { PrBrowser } from './PrBrowser';
 import {
   executePostPRReview,
   fetchGitHubReviewDiff,
@@ -72,11 +73,15 @@ interface HubReviewTabProps {
   projectInstructions?: string | null;
   /** Whether Protect Main is enabled for the current repo context */
   protectMain?: boolean;
+  /** Whether the signed-in identity may browse this repo's pull requests */
+  canBrowsePullRequests?: boolean;
   onOpenDiff: (payload: {
     diffData: DiffPreviewCardData;
     label: string;
     mode: 'review-github' | 'review-sandbox';
-    target: { path: string; line?: number };
+    // Optional: the PR browser opens a whole-PR diff with no line target, while
+    // a review finding jumps to a specific path/line.
+    target?: { path: string; line?: number };
   }) => void;
   onFixFinding?: (prompt: string) => void;
 }
@@ -404,6 +409,7 @@ export function HubReviewTab({
   defaultBranch,
   projectInstructions,
   protectMain,
+  canBrowsePullRequests,
   onOpenDiff,
   onFixFinding,
 }: HubReviewTabProps) {
@@ -424,6 +430,11 @@ export function HubReviewTab({
   const [reviewSource, setReviewSource] = useState<ReviewSourceMode>(
     hasGitHubSource ? 'github' : hasCommitSource ? 'commit' : 'sandbox',
   );
+  // Top-level Review-tab view: run the advisory review vs. browse this repo's
+  // pull requests (inspection only). Independent of the review source so PR
+  // browsing stays reachable on the default branch too (where there's no
+  // branch-diff source).
+  const [reviewView, setReviewView] = useState<'review' | 'pulls'>('review');
   const [selectedModels, setSelectedModels] =
     useState<Record<PreferredProvider, string>>(readReviewModels);
   const [status, setStatus] = useState<string | null>(null);
@@ -914,480 +925,527 @@ export function HubReviewTab({
         : sandboxReady || sandboxStatus === 'idle');
   const showSandboxPostingHint = reviewContext?.kind === 'sandbox' && hasGitHubSource;
 
+  // Browsing PRs is an inspection sub-view of the github source. Needs a repo and
+  // the GitHub-app capability; advisory review stays bound to the active branch.
+  const canBrowsePrs = Boolean(canBrowsePullRequests && repoFullName);
+  const showPullsView = reviewView === 'pulls' && canBrowsePrs;
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Controls */}
       <div className={`flex-shrink-0 border-b ${HUB_GLASS_HAIRLINE} px-3 py-3 space-y-2.5`}>
-        {providerOptions.length === 0 ? (
-          <p className="text-push-xs text-push-fg-dim">
-            No AI provider configured. Add an API key in Settings to use the Reviewer.
-          </p>
-        ) : (
-          <>
-            {(hasGitHubSource || hasCommitSource || reviewSource === 'sandbox') && (
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {hasGitHubSource && (
-                    <button
-                      onClick={() => handleSourceChange('github')}
-                      className={glassSegmentPillClass(reviewSource === 'github')}
-                    >
-                      Branch diff
-                    </button>
-                  )}
-                  {hasCommitSource && (
-                    <button
-                      onClick={() => handleSourceChange('commit')}
-                      className={glassSegmentPillClass(reviewSource === 'commit')}
-                    >
-                      Last commit
-                    </button>
-                  )}
-                  <button
-                    onClick={() => handleSourceChange('sandbox')}
-                    className={glassSegmentPillClass(reviewSource === 'sandbox')}
-                  >
-                    Working tree
-                  </button>
-                </div>
-                <p className="text-push-2xs text-push-fg-dim">
-                  {reviewSource === 'github'
-                    ? 'Reviews the pushed PR or branch diff against the default branch.'
-                    : reviewSource === 'commit'
-                      ? 'Reviews the diff of the most recent commit — no sandbox needed.'
-                      : 'Reviews uncommitted working tree edits in the current workspace.'}
-                </p>
-              </div>
-            )}
-
-            {/* Review depth — Quick vs Deep */}
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <button
-                onClick={() => setReviewDepth('quick')}
-                disabled={running}
-                className={glassSegmentPillClass(reviewDepth === 'quick')}
-              >
-                Quick
-              </button>
-              <button
-                onClick={() => setReviewDepth('deep')}
-                disabled={running}
-                className={glassSegmentPillClass(reviewDepth === 'deep')}
-              >
-                Deep
-              </button>
-              <span className="text-push-2xs text-push-fg-dim">
-                {reviewDepth === 'deep'
-                  ? 'Investigates the codebase before reviewing.'
-                  : 'Single-pass review of the diff.'}
-              </span>
-            </div>
-
-            {/* Provider pills — only configured providers */}
-            <div className="flex items-center gap-1.5 flex-wrap">
-              {providerOptions.map(({ type, label }) => (
-                <button
-                  key={type}
-                  onClick={() => handleProviderChange(type)}
-                  className={glassSegmentPillClass(selectedProvider === type)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            {/* Model selector */}
-            <div className="flex items-center gap-2">
-              <div className="min-w-0 flex-1">
-                <ModelPicker
-                  key={selectedProvider ?? 'none'}
-                  provider={selectedProvider ?? 'ollama'}
-                  value={selectedReviewModel}
-                  customInputValue={selectedReviewModelInput}
-                  options={modelOptionsForProvider}
-                  onChange={handleModelChange}
-                  disabled={running || !selectedProvider}
-                  allowCustom
-                  customPlaceholder={
-                    selectedDefaultModel ? `Default: ${selectedDefaultModel}` : 'Review model'
-                  }
-                  ariaLabel="Select review model"
-                />
-              </div>
-              <button
-                onClick={() => void handleRunReview()}
-                disabled={!canRunReview}
-                className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-push-fg-secondary`}
-              >
-                {running ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-3 w-3" />
-                )}
-                <span>
-                  {running
-                    ? activeReviewDepth === 'deep'
-                      ? 'Investigating…'
-                      : 'Reviewing…'
-                    : reviewDepth === 'deep'
-                      ? 'Run deep review'
-                      : 'Run review'}
-                </span>
-              </button>
-              {running && runningReviewDepth === 'deep' && (
-                <button
-                  onClick={handleCancelDeepReview}
-                  className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5 text-push-fg-dim`}
-                  title="Cancel deep review"
-                >
-                  <X className="h-3 w-3" />
-                  <span>Cancel</span>
-                </button>
-              )}
-            </div>
-          </>
-        )}
-
-        {/* Status line */}
-        {running && status && <p className="text-push-xs text-push-fg-dim">{status}</p>}
-        {error && <p className="text-push-xs text-red-400">{error}</p>}
-        {savedReviewNotice && (
-          <p
-            className={`text-push-xs ${
-              savedReviewNotice.tone === 'error'
-                ? 'text-red-400'
-                : savedReviewNotice.tone === 'success'
-                  ? 'text-emerald-400'
-                  : 'text-push-fg-dim'
-            }`}
-          >
-            {savedReviewNotice.text}
-          </p>
-        )}
-      </div>
-
-      {/* Results */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {/* Autonomous (webhook-triggered) PR reviews: the global on/off toggle
-            plus this PR's review history. Renders whenever a repo is connected
-            (empty state when there's no PR/reviews); hidden only with no repo. */}
-        <div className="px-3 pt-3 empty:hidden">
-          <PrReviewHistorySection repoFullName={repoFullName} activeBranch={activeBranch} />
-        </div>
-        {!result && !running && !error && savedReview && (
-          <div className="px-3 py-3">
-            <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3.5 py-3`}>
-              <div className="flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="text-xs font-medium text-push-fg">Saved review available</p>
-                  <p className="text-push-xs text-push-fg-dim">
-                    {savedReview.reviewContext?.label || 'Saved review'} ·{' '}
-                    {new Date(savedReview.savedAt).toLocaleString()}
-                  </p>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={handleLoadSavedReview}
-                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
-                  >
-                    <span>Load saved</span>
-                  </button>
-                  <button
-                    onClick={handleClearSavedReview}
-                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
-                  >
-                    <span>Clear</span>
-                  </button>
-                </div>
-              </div>
-            </div>
+        {/* Top-level view: run the advisory review vs. browse pull requests
+            (inspection). Reachable whenever PR browsing is allowed — independent
+            of the review source, so it works on the default branch too, and needs
+            no AI provider. */}
+        {canBrowsePrs && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              onClick={() => setReviewView('review')}
+              className={glassSegmentPillClass(reviewView === 'review')}
+            >
+              Review
+            </button>
+            <button
+              onClick={() => setReviewView('pulls')}
+              className={glassSegmentPillClass(reviewView === 'pulls')}
+            >
+              Pull requests
+            </button>
           </div>
         )}
 
-        {!result && !running && !error && !savedReview && (
-          <div className="flex h-full items-center justify-center">
-            <p className="text-xs text-push-fg-dim">
+        {/* Source selector — only in the review view (browsing needs no source) */}
+        {!showPullsView && (hasGitHubSource || hasCommitSource || reviewSource === 'sandbox') && (
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {hasGitHubSource && (
+                <button
+                  onClick={() => handleSourceChange('github')}
+                  className={glassSegmentPillClass(reviewSource === 'github')}
+                >
+                  Branch diff
+                </button>
+              )}
+              {hasCommitSource && (
+                <button
+                  onClick={() => handleSourceChange('commit')}
+                  className={glassSegmentPillClass(reviewSource === 'commit')}
+                >
+                  Last commit
+                </button>
+              )}
+              <button
+                onClick={() => handleSourceChange('sandbox')}
+                className={glassSegmentPillClass(reviewSource === 'sandbox')}
+              >
+                Working tree
+              </button>
+            </div>
+            <p className="text-push-2xs text-push-fg-dim">
               {reviewSource === 'github'
-                ? 'Run a review to inspect the active branch or open PR from GitHub.'
+                ? 'Reviews the pushed PR or branch diff against the default branch.'
                 : reviewSource === 'commit'
-                  ? 'Run a review to inspect the most recent commit on this branch.'
-                  : 'Run a review to see feedback on your current working tree changes.'}
+                  ? 'Reviews the diff of the most recent commit — no sandbox needed.'
+                  : 'Reviews uncommitted working tree edits in the current workspace.'}
             </p>
           </div>
         )}
 
-        {result && (
-          <div className="px-3 py-3 space-y-3">
-            {/* Summary */}
-            <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3.5 py-3`}>
-              <div className="flex items-center justify-between gap-2 mb-1.5">
-                <div className="flex items-center gap-2">
-                  <CheckCircle className="h-3.5 w-3.5 text-emerald-400" />
-                  <span className="text-xs font-medium text-push-fg">
-                    Review complete{reviewContext ? ` · ${reviewContext.label}` : ''}
-                  </span>
-                </div>
+        {!showPullsView &&
+          (providerOptions.length === 0 ? (
+            <p className="text-push-xs text-push-fg-dim">
+              No AI provider configured. Add an API key in Settings to use the Reviewer.
+            </p>
+          ) : (
+            <>
+              {/* Review depth — Quick vs Deep */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  onClick={() => setReviewDepth('quick')}
+                  disabled={running}
+                  className={glassSegmentPillClass(reviewDepth === 'quick')}
+                >
+                  Quick
+                </button>
+                <button
+                  onClick={() => setReviewDepth('deep')}
+                  disabled={running}
+                  className={glassSegmentPillClass(reviewDepth === 'deep')}
+                >
+                  Deep
+                </button>
                 <span className="text-push-2xs text-push-fg-dim">
-                  {result.truncated
-                    ? `${result.filesReviewed} of ${result.totalFiles} files`
-                    : `${result.filesReviewed} file${result.filesReviewed !== 1 ? 's' : ''}`}{' '}
-                  · {result.model}
+                  {reviewDepth === 'deep'
+                    ? 'Investigates the codebase before reviewing.'
+                    : 'Single-pass review of the diff.'}
                 </span>
               </div>
-              {result.truncated && (
-                <div className="flex items-center gap-1.5 mb-1.5 rounded-lg border border-amber-500/20 bg-amber-500/5 px-2.5 py-1.5">
-                  <AlertTriangle className="h-3 w-3 text-amber-400 flex-shrink-0" />
-                  <p className="text-push-2xs text-amber-400">
-                    Diff too large — review covers {result.filesReviewed} of {result.totalFiles}{' '}
-                    files. Later files were not seen.
-                  </p>
+
+              {/* Provider pills — only configured providers */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {providerOptions.map(({ type, label }) => (
+                  <button
+                    key={type}
+                    onClick={() => handleProviderChange(type)}
+                    className={glassSegmentPillClass(selectedProvider === type)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Model selector */}
+              <div className="flex items-center gap-2">
+                <div className="min-w-0 flex-1">
+                  <ModelPicker
+                    key={selectedProvider ?? 'none'}
+                    provider={selectedProvider ?? 'ollama'}
+                    value={selectedReviewModel}
+                    customInputValue={selectedReviewModelInput}
+                    options={modelOptionsForProvider}
+                    onChange={handleModelChange}
+                    disabled={running || !selectedProvider}
+                    allowCustom
+                    customPlaceholder={
+                      selectedDefaultModel ? `Default: ${selectedDefaultModel}` : 'Review model'
+                    }
+                    ariaLabel="Select review model"
+                  />
                 </div>
-              )}
-              <p className="text-push-xs leading-relaxed text-push-fg-secondary">
-                {result.summary}
-              </p>
-              <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 <button
-                  onClick={handleSaveReview}
-                  className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
+                  onClick={() => void handleRunReview()}
+                  disabled={!canRunReview}
+                  className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-push-fg-secondary`}
                 >
+                  {running ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-3 w-3" />
+                  )}
                   <span>
-                    {isCurrentReviewSaved
-                      ? 'Saved locally'
-                      : savedReview
-                        ? 'Replace saved review'
-                        : 'Save locally'}
+                    {running
+                      ? activeReviewDepth === 'deep'
+                        ? 'Investigating…'
+                        : 'Reviewing…'
+                      : reviewDepth === 'deep'
+                        ? 'Run deep review'
+                        : 'Run review'}
                   </span>
                 </button>
-                {savedReview && !isCurrentReviewSaved && (
+                {running && runningReviewDepth === 'deep' && (
                   <button
-                    onClick={handleLoadSavedReview}
-                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
+                    onClick={handleCancelDeepReview}
+                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5 text-push-fg-dim`}
+                    title="Cancel deep review"
                   >
-                    <span>Load saved</span>
+                    <X className="h-3 w-3" />
+                    <span>Cancel</span>
                   </button>
-                )}
-                {savedReview && (
-                  <button
-                    onClick={handleClearSavedReview}
-                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
-                  >
-                    <span>Clear saved</span>
-                  </button>
-                )}
-                {savedReview && (
-                  <span className="text-push-2xs text-push-fg-dim">
-                    Saved {new Date(savedReview.savedAt).toLocaleString()}
-                  </span>
                 )}
               </div>
-              {loadedSavedReviewMeta?.diffStorageTruncated && (
-                <div className={`mt-2 px-2.5 py-2 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
-                  <p className="text-push-2xs text-push-fg-dim">
-                    Loaded from local save. The stored diff snapshot was trimmed, so Diff jump
-                    targets may be incomplete.
-                  </p>
+            </>
+          ))}
+
+        {/* Status line — review-run specific; hidden while browsing PRs */}
+        {!showPullsView && (
+          <>
+            {running && status && <p className="text-push-xs text-push-fg-dim">{status}</p>}
+            {error && <p className="text-push-xs text-red-400">{error}</p>}
+            {savedReviewNotice && (
+              <p
+                className={`text-push-xs ${
+                  savedReviewNotice.tone === 'error'
+                    ? 'text-red-400'
+                    : savedReviewNotice.tone === 'success'
+                      ? 'text-emerald-400'
+                      : 'text-push-fg-dim'
+                }`}
+              >
+                {savedReviewNotice.text}
+              </p>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Body: browse pull requests (inspection) or the review results pane */}
+      {showPullsView ? (
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <PrBrowser
+            repoFullName={repoFullName}
+            activeBranch={activeBranch}
+            onOpenDiff={onOpenDiff}
+          />
+        </div>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {/* Autonomous (webhook-triggered) PR reviews: the global on/off toggle
+            plus this PR's review history. Renders whenever a repo is connected
+            (empty state when there's no PR/reviews); hidden only with no repo. */}
+          <div className="px-3 pt-3 empty:hidden">
+            <PrReviewHistorySection repoFullName={repoFullName} activeBranch={activeBranch} />
+          </div>
+          {!result && !running && !error && savedReview && (
+            <div className="px-3 py-3">
+              <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3.5 py-3`}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-push-fg">Saved review available</p>
+                    <p className="text-push-xs text-push-fg-dim">
+                      {savedReview.reviewContext?.label || 'Saved review'} ·{' '}
+                      {new Date(savedReview.savedAt).toLocaleString()}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={handleLoadSavedReview}
+                      className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
+                    >
+                      <span>Load saved</span>
+                    </button>
+                    <button
+                      onClick={handleClearSavedReview}
+                      className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
+                    >
+                      <span>Clear</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!result && !running && !error && !savedReview && (
+            <div className="flex h-full items-center justify-center">
+              <p className="text-xs text-push-fg-dim">
+                {reviewSource === 'github'
+                  ? 'Run a review to inspect the active branch or open PR from GitHub.'
+                  : reviewSource === 'commit'
+                    ? 'Run a review to inspect the most recent commit on this branch.'
+                    : 'Run a review to see feedback on your current working tree changes.'}
+              </p>
+            </div>
+          )}
+
+          {result && (
+            <div className="px-3 py-3 space-y-3">
+              {/* Summary */}
+              <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3.5 py-3`}>
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="h-3.5 w-3.5 text-emerald-400" />
+                    <span className="text-xs font-medium text-push-fg">
+                      Review complete{reviewContext ? ` · ${reviewContext.label}` : ''}
+                    </span>
+                  </div>
+                  <span className="text-push-2xs text-push-fg-dim">
+                    {result.truncated
+                      ? `${result.filesReviewed} of ${result.totalFiles} files`
+                      : `${result.filesReviewed} file${result.filesReviewed !== 1 ? 's' : ''}`}{' '}
+                    · {result.model}
+                  </span>
+                </div>
+                {result.truncated && (
+                  <div className="flex items-center gap-1.5 mb-1.5 rounded-lg border border-amber-500/20 bg-amber-500/5 px-2.5 py-1.5">
+                    <AlertTriangle className="h-3 w-3 text-amber-400 flex-shrink-0" />
+                    <p className="text-push-2xs text-amber-400">
+                      Diff too large — review covers {result.filesReviewed} of {result.totalFiles}{' '}
+                      files. Later files were not seen.
+                    </p>
+                  </div>
+                )}
+                <p className="text-push-xs leading-relaxed text-push-fg-secondary">
+                  {result.summary}
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <button
+                    onClick={handleSaveReview}
+                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
+                  >
+                    <span>
+                      {isCurrentReviewSaved
+                        ? 'Saved locally'
+                        : savedReview
+                          ? 'Replace saved review'
+                          : 'Save locally'}
+                    </span>
+                  </button>
+                  {savedReview && !isCurrentReviewSaved && (
+                    <button
+                      onClick={handleLoadSavedReview}
+                      className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
+                    >
+                      <span>Load saved</span>
+                    </button>
+                  )}
+                  {savedReview && (
+                    <button
+                      onClick={handleClearSavedReview}
+                      className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3`}
+                    >
+                      <span>Clear saved</span>
+                    </button>
+                  )}
+                  {savedReview && (
+                    <span className="text-push-2xs text-push-fg-dim">
+                      Saved {new Date(savedReview.savedAt).toLocaleString()}
+                    </span>
+                  )}
+                </div>
+                {loadedSavedReviewMeta?.diffStorageTruncated && (
+                  <div className={`mt-2 px-2.5 py-2 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
+                    <p className="text-push-2xs text-push-fg-dim">
+                      Loaded from local save. The stored diff snapshot was trimmed, so Diff jump
+                      targets may be incomplete.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Post to PR */}
+              {reviewContext?.kind === 'github-pr' && postState !== 'posted' && (
+                <div
+                  className={`flex items-center justify-between gap-2 px-3.5 py-2.5 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}
+                >
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="text-push-xs text-push-fg-secondary truncate">
+                      PR{' '}
+                      <a
+                        href={reviewContext.pr.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-push-accent hover:underline inline-flex items-center gap-0.5"
+                      >
+                        #{reviewContext.pr.number} <ExternalLink className="h-2.5 w-2.5" />
+                      </a>{' '}
+                      open
+                    </span>
+                    {postState === 'error' && postError && (
+                      <span className="text-push-2xs text-red-400 truncate">{postError}</span>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => void handlePostToPR()}
+                    disabled={postState === 'posting'}
+                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-push-fg-secondary`}
+                  >
+                    {postState === 'posting' ? (
+                      <>
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        <span>Posting…</span>
+                      </>
+                    ) : (
+                      <>
+                        <SendLiftIcon className="h-3 w-3" />
+                        <span>Post to PR</span>
+                      </>
+                    )}
+                  </button>
                 </div>
               )}
-            </div>
-
-            {/* Post to PR */}
-            {reviewContext?.kind === 'github-pr' && postState !== 'posted' && (
-              <div
-                className={`flex items-center justify-between gap-2 px-3.5 py-2.5 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}
-              >
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="text-push-xs text-push-fg-secondary truncate">
-                    PR{' '}
+              {postState === 'posted' && reviewContext?.kind === 'github-pr' && (
+                <div className="flex items-center gap-2 rounded-[18px] border border-emerald-500/20 bg-emerald-500/5 px-3.5 py-2.5">
+                  <CheckCircle className="h-3.5 w-3.5 text-emerald-400 flex-shrink-0" />
+                  <span className="text-push-xs text-emerald-400">
+                    Review posted to{' '}
                     <a
                       href={reviewContext.pr.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-push-accent hover:underline inline-flex items-center gap-0.5"
+                      className="underline inline-flex items-center gap-0.5"
                     >
-                      #{reviewContext.pr.number} <ExternalLink className="h-2.5 w-2.5" />
-                    </a>{' '}
-                    open
+                      PR #{reviewContext.pr.number} <ExternalLink className="h-2.5 w-2.5" />
+                    </a>
                   </span>
-                  {postState === 'error' && postError && (
-                    <span className="text-push-2xs text-red-400 truncate">{postError}</span>
-                  )}
                 </div>
-                <button
-                  onClick={() => void handlePostToPR()}
-                  disabled={postState === 'posting'}
-                  className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-push-fg-secondary`}
+              )}
+              {showSandboxPostingHint && (
+                <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3.5 py-2.5`}>
+                  <p className="text-push-xs text-push-fg-dim">
+                    Working tree reviews stay in Push. Switch to{' '}
+                    <span className="text-push-fg-secondary">GitHub diff</span> to review the pushed
+                    branch or post findings back to a PR.
+                  </p>
+                </div>
+              )}
+              {reviewContext?.kind === 'github-branch' && (
+                <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3.5 py-2.5`}>
+                  <p className="text-push-xs text-push-fg-dim">
+                    No open PR for this branch. This review covers the pushed branch diff against{' '}
+                    <span className="text-push-fg-secondary">{defaultBranch}</span>.
+                  </p>
+                </div>
+              )}
+              {reviewContext?.kind === 'github-commit' && (
+                <div
+                  className={`flex items-center gap-2 px-3.5 py-2.5 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}
                 >
-                  {postState === 'posting' ? (
-                    <>
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      <span>Posting…</span>
-                    </>
-                  ) : (
-                    <>
-                      <SendLiftIcon className="h-3 w-3" />
-                      <span>Post to PR</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            )}
-            {postState === 'posted' && reviewContext?.kind === 'github-pr' && (
-              <div className="flex items-center gap-2 rounded-[18px] border border-emerald-500/20 bg-emerald-500/5 px-3.5 py-2.5">
-                <CheckCircle className="h-3.5 w-3.5 text-emerald-400 flex-shrink-0" />
-                <span className="text-push-xs text-emerald-400">
-                  Review posted to{' '}
+                  <span className="text-push-xs text-push-fg-dim">Commit</span>
                   <a
-                    href={reviewContext.pr.url}
+                    href={reviewContext.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="underline inline-flex items-center gap-0.5"
+                    className="inline-flex items-center gap-0.5 font-mono text-push-xs text-push-accent hover:underline"
                   >
-                    PR #{reviewContext.pr.number} <ExternalLink className="h-2.5 w-2.5" />
+                    {reviewContext.shortSha} <ExternalLink className="h-2.5 w-2.5" />
                   </a>
-                </span>
-              </div>
-            )}
-            {showSandboxPostingHint && (
-              <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3.5 py-2.5`}>
-                <p className="text-push-xs text-push-fg-dim">
-                  Working tree reviews stay in Push. Switch to{' '}
-                  <span className="text-push-fg-secondary">GitHub diff</span> to review the pushed
-                  branch or post findings back to a PR.
+                </div>
+              )}
+
+              {/* No comments */}
+              {result.comments.length === 0 && (
+                <p className="text-center text-xs text-push-fg-dim py-4">
+                  No specific comments — looks clean.
                 </p>
-              </div>
-            )}
-            {reviewContext?.kind === 'github-branch' && (
-              <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3.5 py-2.5`}>
-                <p className="text-push-xs text-push-fg-dim">
-                  No open PR for this branch. This review covers the pushed branch diff against{' '}
-                  <span className="text-push-fg-secondary">{defaultBranch}</span>.
-                </p>
-              </div>
-            )}
-            {reviewContext?.kind === 'github-commit' && (
-              <div
-                className={`flex items-center gap-2 px-3.5 py-2.5 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}
-              >
-                <span className="text-push-xs text-push-fg-dim">Commit</span>
-                <a
-                  href={reviewContext.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-0.5 font-mono text-push-xs text-push-accent hover:underline"
-                >
-                  {reviewContext.shortSha} <ExternalLink className="h-2.5 w-2.5" />
-                </a>
-              </div>
-            )}
+              )}
 
-            {/* No comments */}
-            {result.comments.length === 0 && (
-              <p className="text-center text-xs text-push-fg-dim py-4">
-                No specific comments — looks clean.
-              </p>
-            )}
+              {/* Comments grouped by file */}
+              {result.comments.length > 0 && (
+                <div className="space-y-2">
+                  {Array.from(groupByFile(result.comments)).map(([file, comments]) => {
+                    const sorted = [...comments].sort(
+                      (a, b) => severityOrder(a.severity) - severityOrder(b.severity),
+                    );
+                    const expanded = expandedFiles.has(file);
+                    const hasCritical = comments.some((c) => c.severity === 'critical');
+                    const hasWarning = comments.some((c) => c.severity === 'warning');
+                    const headerColor = hasCritical
+                      ? 'text-red-300'
+                      : hasWarning
+                        ? 'text-amber-300'
+                        : 'text-push-fg-secondary';
 
-            {/* Comments grouped by file */}
-            {result.comments.length > 0 && (
-              <div className="space-y-2">
-                {Array.from(groupByFile(result.comments)).map(([file, comments]) => {
-                  const sorted = [...comments].sort(
-                    (a, b) => severityOrder(a.severity) - severityOrder(b.severity),
-                  );
-                  const expanded = expandedFiles.has(file);
-                  const hasCritical = comments.some((c) => c.severity === 'critical');
-                  const hasWarning = comments.some((c) => c.severity === 'warning');
-                  const headerColor = hasCritical
-                    ? 'text-red-300'
-                    : hasWarning
-                      ? 'text-amber-300'
-                      : 'text-push-fg-secondary';
-
-                  return (
-                    <div key={file} className={`overflow-hidden ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
-                      <button
-                        onClick={() => toggleFile(file)}
-                        className="flex w-full items-center justify-between gap-2 px-3.5 py-2.5 hover:bg-push-surface-hover transition-colors"
+                    return (
+                      <div
+                        key={file}
+                        className={`overflow-hidden ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}
                       >
-                        <span
-                          className={`min-w-0 flex-1 truncate text-left text-push-xs font-medium ${headerColor}`}
+                        <button
+                          onClick={() => toggleFile(file)}
+                          className="flex w-full items-center justify-between gap-2 px-3.5 py-2.5 hover:bg-push-surface-hover transition-colors"
                         >
-                          {file}
-                        </span>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="text-push-2xs text-push-fg-dim">{comments.length}</span>
-                          {expanded ? (
-                            <ChevronDown className="h-3 w-3 text-push-fg-dim" />
-                          ) : (
-                            <ChevronRight className="h-3 w-3 text-push-fg-dim" />
-                          )}
-                        </div>
-                      </button>
+                          <span
+                            className={`min-w-0 flex-1 truncate text-left text-push-xs font-medium ${headerColor}`}
+                          >
+                            {file}
+                          </span>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="text-push-2xs text-push-fg-dim">
+                              {comments.length}
+                            </span>
+                            {expanded ? (
+                              <ChevronDown className="h-3 w-3 text-push-fg-dim" />
+                            ) : (
+                              <ChevronRight className="h-3 w-3 text-push-fg-dim" />
+                            )}
+                          </div>
+                        </button>
 
-                      {expanded && (
-                        <div className="border-t border-push-edge divide-y divide-push-edge">
-                          {sorted.map((c, i) => (
-                            <div key={i} className="flex items-start gap-2.5 px-3.5 py-2.5">
-                              {severityIcon(c.severity)}
-                              <div className="min-w-0 flex-1">
-                                <div className="mb-0.5 flex items-center gap-2">
-                                  {severityLabel(c.severity)}
-                                  {typeof c.line === 'number' ? (
-                                    <button
-                                      onClick={() => handleOpenCommentInDiff(c.file, c.line)}
-                                      disabled={!reviewDiffData}
-                                      className={`${HUB_TAG_CLASS} border-push-edge-hover font-mono`}
-                                      title={`Open ${c.file} at line ${c.line} in Diff`}
-                                    >
-                                      L{c.line}
-                                    </button>
-                                  ) : null}
+                        {expanded && (
+                          <div className="border-t border-push-edge divide-y divide-push-edge">
+                            {sorted.map((c, i) => (
+                              <div key={i} className="flex items-start gap-2.5 px-3.5 py-2.5">
+                                {severityIcon(c.severity)}
+                                <div className="min-w-0 flex-1">
+                                  <div className="mb-0.5 flex items-center gap-2">
+                                    {severityLabel(c.severity)}
+                                    {typeof c.line === 'number' ? (
+                                      <button
+                                        onClick={() => handleOpenCommentInDiff(c.file, c.line)}
+                                        disabled={!reviewDiffData}
+                                        className={`${HUB_TAG_CLASS} border-push-edge-hover font-mono`}
+                                        title={`Open ${c.file} at line ${c.line} in Diff`}
+                                      >
+                                        L{c.line}
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                  <p className="text-push-xs leading-relaxed text-push-fg-secondary">
+                                    {c.comment}
+                                  </p>
                                 </div>
-                                <p className="text-push-xs leading-relaxed text-push-fg-secondary">
-                                  {c.comment}
-                                </p>
-                              </div>
-                              <button
-                                onClick={() => handleOpenCommentInDiff(c.file, c.line)}
-                                disabled={!reviewDiffData}
-                                className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} mt-0.5 h-7 gap-1 px-2.5 text-push-2xs`}
-                                title={`Open ${c.file}${typeof c.line === 'number' ? ` line ${c.line}` : ''} in Diff`}
-                              >
-                                <DiffSeamIcon className="h-3 w-3" />
-                                <span>Diff</span>
-                              </button>
-                              {onFixFinding && (
                                 <button
-                                  onClick={() =>
-                                    onFixFinding(
-                                      buildFixPrompt({
-                                        comment: c,
-                                        reviewContext,
-                                        activeBranch,
-                                        defaultBranch,
-                                      }),
-                                    )
-                                  }
-                                  className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} mt-0.5 h-7 gap-1 px-2.5 text-push-2xs text-push-fg-secondary`}
-                                  title={`Send ${c.file}${typeof c.line === 'number' ? ` line ${c.line}` : ''} to chat as a fix request`}
+                                  onClick={() => handleOpenCommentInDiff(c.file, c.line)}
+                                  disabled={!reviewDiffData}
+                                  className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} mt-0.5 h-7 gap-1 px-2.5 text-push-2xs`}
+                                  title={`Open ${c.file}${typeof c.line === 'number' ? ` line ${c.line}` : ''} in Diff`}
                                 >
-                                  <Sparkles className="h-3 w-3" />
-                                  <span>Fix</span>
+                                  <DiffSeamIcon className="h-3 w-3" />
+                                  <span>Diff</span>
                                 </button>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+                                {onFixFinding && (
+                                  <button
+                                    onClick={() =>
+                                      onFixFinding(
+                                        buildFixPrompt({
+                                          comment: c,
+                                          reviewContext,
+                                          activeBranch,
+                                          defaultBranch,
+                                        }),
+                                      )
+                                    }
+                                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} mt-0.5 h-7 gap-1 px-2.5 text-push-2xs text-push-fg-secondary`}
+                                    title={`Send ${c.file}${typeof c.line === 'number' ? ` line ${c.line}` : ''} to chat as a fix request`}
+                                  >
+                                    <Sparkles className="h-3 w-3" />
+                                    <span>Fix</span>
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
