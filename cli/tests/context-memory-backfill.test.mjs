@@ -94,6 +94,26 @@ describe('backfillEmbeddings', () => {
     assert.equal(result.failed, 1);
   });
 
+  it('keeps going when a batch throws — counts it failed, embeds the rest', async () => {
+    const store = createInMemoryStore();
+    for (const id of ['a', 'b', 'c', 'd']) store.write(record(id));
+    let call = 0;
+    const provider = {
+      model: 'fake-model',
+      warmup: async () => true,
+      embed: async (texts) => {
+        call++;
+        if (call === 1) throw new Error('rate limited'); // first batch throws
+        return texts.map(() => ({ model: 'fake-model', vector: [7, 7, 7] }));
+      },
+    };
+    const result = await backfillEmbeddings(store, provider, { batchSize: 2 });
+    // first batch (2) failed via throw, second batch (2) embedded — run did not abort
+    assert.equal(result.embedded, 2);
+    assert.equal(result.failed, 2);
+    assert.equal(result.needed, 4);
+  });
+
   it('reports an empty store cleanly without calling the provider', async () => {
     const store = createInMemoryStore();
     const provider = fakeProvider();

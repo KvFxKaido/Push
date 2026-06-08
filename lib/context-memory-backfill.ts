@@ -70,7 +70,17 @@ export async function backfillEmbeddings(
   let failed = 0;
   for (let i = 0; i < needing.length; i += batchSize) {
     const batch = needing.slice(i, i + batchSize);
-    const results = await provider.embed(batch.map(memoryRecordEmbeddingText));
+    let results: Awaited<ReturnType<EmbeddingProvider['embed']>>;
+    try {
+      results = await provider.embed(batch.map(memoryRecordEmbeddingText));
+    } catch {
+      // A throwing provider (rate-limit, network, API error) shouldn't abort the
+      // whole backfill — count this batch as failed and keep going so the rest
+      // of the store still gets embedded. The `failed` count surfaces it.
+      failed += batch.length;
+      options.onProgress?.(embedded, needed);
+      continue;
+    }
     await Promise.all(
       batch.map(async (record, j) => {
         const vector = results[j]?.vector;

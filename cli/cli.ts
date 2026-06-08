@@ -1748,7 +1748,7 @@ async function runThemeSubcommand(positionals) {
   return 0;
 }
 
-async function runMemorySubcommand(positionals: string[]): Promise<void> {
+async function runMemorySubcommand(positionals: string[]): Promise<number> {
   const sub = (positionals[1] || '').toLowerCase();
   if (sub !== 'backfill') {
     throw new Error(`Unknown memory subcommand: ${sub || '(missing)'}. Supported: backfill`);
@@ -1760,7 +1760,7 @@ async function runMemorySubcommand(positionals: string[]): Promise<void> {
       'No embedding provider configured — nothing to backfill. Enable local embeddings ' +
         '(PUSH_EMBED_LOCAL, the default) or set PUSH_EMBED_URL, then re-run.\n',
     );
-    return;
+    return 0;
   }
 
   const { backfillEmbeddings } = await import('../lib/context-memory-backfill.js');
@@ -1774,20 +1774,21 @@ async function runMemorySubcommand(positionals: string[]): Promise<void> {
 
   if (result.needed === 0) {
     process.stdout.write(`Up to date: ${result.scanned} record(s), none missing embeddings.\n`);
-    return;
+    return 0;
   }
   if (!result.providerReady) {
     process.stdout.write(
       `Embedding model unavailable (${provider.model}); left ${result.needed} record(s) lexical. ` +
         'Install @huggingface/transformers or check PUSH_EMBED_URL, then re-run.\n',
     );
-    return;
+    return 0;
   }
   process.stdout.write(
     `Done: ${result.scanned} scanned, ${result.embedded} embedded` +
       (result.failed ? `, ${result.failed} failed` : '') +
       `, ${result.scanned - result.needed} already current.\n`,
   );
+  return 0;
 }
 
 async function runSpinnerSubcommand(positionals) {
