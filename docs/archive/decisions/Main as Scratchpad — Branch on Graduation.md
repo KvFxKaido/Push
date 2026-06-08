@@ -338,11 +338,23 @@ remote collision entirely but at the cost of cross-surface visibility.
    subsequent commits are ordinary. *(This replaces the old "branch this?" prompt
    + silence-policy question — auto-branch dissolved it.)*
 2. **Does the commit auto-push behind a scan, and does the Auditor survive this
-   model at all?** Leaning toward **unbundle and mostly retire the
-   model-Auditor.** It was the v1 answer when commit-to-`main` was the primary
-   path and a model-judge was the only available gate; the branch-at-commit shift
-   plus the tooling that now exists relocates each of its three jobs to a
-   better-fitted home:
+   model at all?** ~~Leaning toward **unbundle and mostly retire the
+   model-Auditor.**~~ **Reframed (2026-06-08): unbundle the *secrets* job to a
+   deterministic scan, but KEEP the model-Auditor as the per-commit gate in every
+   mode.** The "retire it" lean below assumed the per-commit judge is ceremony a
+   headless run can't use — no human present to answer the SAFE/UNSAFE verdict.
+   That premise is wrong: the verdict's reader is the **agent loop, not a human**.
+   In Autonomous/Full-Auto an UNSAFE verdict feeds back to the Coder, which revises
+   and re-commits with no human in the path (observed 2026-06-08 — a markdown-renderer
+   change where the Auditor blocked three commits and the model shipped cleaner each
+   time, seamlessly). The judge is *more* affordable AFK, not less: a false positive
+   costs one silent revise round, not a human tap. (Mechanism confirmed in code: the
+   Auditor runs inside `sandbox_prepare_commit`; UNSAFE suppresses the commit-review
+   card entirely, so Full-Auto's auto-approver — which only fires on an *already-SAFE*
+   card — cannot route around the verdict.) It was the v1 answer when commit-to-`main`
+   was the primary path and a model-judge was the only available gate; the
+   branch-at-commit shift plus the tooling that now exists relocates **only the
+   mechanical jobs** to a better-fitted home, while the semantic per-commit gate stays:
    - *Secrets / footguns (mechanical, a recall problem)* → a **deterministic
      pre-push scan** (gitleaks/trufflehog-style; seed already in
      `app/src/lib/sensitive-data-guard.ts`'s token regex). Models are the wrong
@@ -371,23 +383,32 @@ remote collision entirely but at the cost of cross-surface visibility.
      (the one release path that skips the Auditor, so the deterministic scan is
      its only gate) — closing the surface asymmetry (PR #803). Opt-out: `PUSH_SECRET_SCAN=0` (Node) /
      `VITE_PUSH_SECRET_SCAN=0` (web client), `resolveSecretScanEnabled` (mirrors
-     `resolveAuditorGateEnabled`). **Remaining:** confirm
-     the "semantically-dangerous AND must-be-caught-pre-push, beyond secrets"
-     band is empty before retiring the model-Auditor.
+     `resolveAuditorGateEnabled`). **~~Remaining:~~ Resolved (2026-06-08): the
+     "semantically-dangerous AND must-be-caught-pre-push, beyond secrets" band is
+     NON-empty** — a per-commit Auditor caught an XSS-class issue in a markdown
+     renderer and forced a revise before any push (Autonomous mode). The scan stays
+     an *additive* backstop for the secrets class on the auto-push transport that
+     skips `prepare_commit`; it does **not** retire the model-Auditor.
    - *"Is this change dangerous" (semantic judgment)* → the **PR reviewers we
      already have** (Copilot trusted-gate, Kilo, the glm-5.1 autonomous
      reviewer) — independent model judgment *with full diff context*, which a
      commit-time gate lacks.
    - *"Don't land unreviewed on the live branch"* → already `Protect Main`.
 
-   Independent cost argument for getting it off the per-commit path regardless:
+   ~~Independent cost argument for getting it off the per-commit path regardless:
    the Auditor **defaults to UNSAFE on error**, so a flaky audit backend *blocks
-   your commit* — a latency/reliability liability on the hot path. The only
-   territory a slimmed model-judge-at-graduation would own is "semantically
-   dangerous AND must-be-caught **pre-push**, beyond secrets" — a band that looks
-   empty (the deterministic scan covers catastrophic-once-pushed; the PR catches
-   the rest pre-*merge*). Keep a model-Auditor here **only if that band turns out
-   non-empty.** Open: confirm the band is empty; pick the deterministic scanner;
+   your commit* — a latency/reliability liability on the hot path.~~ **Reframed
+   (2026-06-08):** fail-closed-on-error is the *correct* posture for a safety gate,
+   and in Autonomous/Full-Auto a block costs one silent revise round rather than a
+   stalled human — so "get it off the hot path" is a weaker argument than it reads
+   here. The only territory a slimmed model-judge-at-graduation would own is
+   "semantically dangerous AND must-be-caught **pre-push**, beyond secrets" — **a
+   band now confirmed non-empty** (an Auditor-blocked XSS-class markdown-renderer
+   change, 2026-06-08; the PR reviewers catch the rest only pre-*merge*, i.e. after
+   the bad commit has already auto-pushed to the branch). Keep the model-Auditor on
+   the per-commit path — the band is non-empty. The deterministic scan stays the
+   gate **only** on the auto-push transport that structurally skips `prepare_commit`.
+   Open: pick the deterministic scanner;
    decide whether the scan runs inline on auto-push and blocks on a hit (and how
    that failure surfaces, since there's no human in the loop at auto-push).
 3. **`:main` multi-surface contention.** Per-device slot, last-writer-wins-loud,
