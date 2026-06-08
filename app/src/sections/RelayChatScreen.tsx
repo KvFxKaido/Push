@@ -13,7 +13,7 @@
  * was a 95% clone of the local-PC version.
  */
 import { Globe } from 'lucide-react';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 
 import { RelayModeChip } from '@/components/RelayModeChip';
 import { DaemonChatBody } from '@/components/daemon/DaemonChatBody';
@@ -57,9 +57,20 @@ export function RelayChatScreen({
     attachStatus,
     attachError,
     hydratedMessages,
+    sessionSnapshot,
   } = useRelayDaemon(binding, {
     onEvent: approvals.handleDaemonEvent,
   });
+
+  // Hydrate an approval the session was already blocked on at attach time. The
+  // `approval_required` event fired before this client attached, so the live
+  // `handleDaemonEvent` path never saw it; the snapshot carries it. enqueue
+  // dedupes by id, so a racing live event won't double the prompt.
+  const { hydrateSnapshotApproval } = approvals;
+  useEffect(() => {
+    if (!sessionSnapshot) return;
+    hydrateSnapshotApproval(sessionSnapshot.pendingApproval, sessionSnapshot.session.sessionId);
+  }, [sessionSnapshot, hydrateSnapshotApproval]);
 
   const workspaceContext = useMemo(
     () => ({

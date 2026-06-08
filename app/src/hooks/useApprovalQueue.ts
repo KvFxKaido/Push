@@ -30,6 +30,7 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 
 import type { SessionEvent } from '@/lib/local-daemon-binding';
+import { snapshotApprovalToPending, type SnapshotPendingApproval } from '@/lib/daemon-snapshot';
 
 import type { PendingApproval } from '@/components/daemon/ApprovalPrompt';
 
@@ -82,9 +83,43 @@ export function classifyApprovalEvent(event: SessionEvent): ApprovalQueueAction 
   return { kind: 'noop' };
 }
 
+/**
+ * Reconcile the queue with a session's authoritative approval state from a
+ * `get_session_snapshot`. The snapshot is the source of truth for `sessionId` at
+ * attach time: keep other sessions' entries, ensure the snapshot's approval is
+ * present (if any), and drop a now-stale approval for this session — the case a
+ * reattaching client hits when it missed the `approval_received` while
+ * disconnected, where append-only hydration would leave a resolved prompt
+ * showing (or wedge a new approval behind it). Order-preserving and ref-stable
+ * when nothing changed (so it never forces a spurious render). Mirrors the TUI's
+ * snapshot path, which closes the pane when the snapshot has no approval.
+ */
+export function reconcileApprovalQueue(
+  prev: PendingApproval[],
+  desired: PendingApproval | null,
+  sessionId: string,
+): PendingApproval[] {
+  // Drop this session's stale approvals (anything not matching the snapshot);
+  // leave other sessions untouched.
+  const filtered = prev.filter(
+    (p) => p.sessionId !== sessionId || (desired !== null && p.approvalId === desired.approvalId),
+  );
+  const hasDesired = desired !== null && filtered.some((p) => p.approvalId === desired.approvalId);
+  const next = desired !== null && !hasDesired ? [...filtered, desired] : filtered;
+  if (next.length === prev.length && next.every((p, i) => p === prev[i])) return prev;
+  return next;
+}
+
 export interface ApprovalQueueHandle {
   /** Wire this into the daemon hook's `onEvent` callback. */
   handleDaemonEvent: (event: SessionEvent) => void;
+  /**
+   * Reconcile the queue with a `get_session_snapshot` for `sessionId`. Installs
+   * an approval the session was blocked on before this client attached (the
+   * `approval_required` event it missed), and drops a now-stale one the snapshot
+   * says is gone. No-op when nothing changed. See `reconcileApprovalQueue`.
+   */
+  hydrateSnapshotApproval: (approval: SnapshotPendingApproval | null, sessionId: string) => void;
   /** Head of the queue, null when empty. The ApprovalPrompt renders this. */
   head: PendingApproval | null;
   /** Count behind the head — surfaced as the "N more waiting" counter. */
@@ -137,8 +172,17 @@ export function useApprovalQueue(): ApprovalQueueHandle {
     [enqueue, drop],
   );
 
+  const hydrateSnapshotApproval = useCallback(
+    (approval: SnapshotPendingApproval | null, sessionId: string) => {
+      const desired = snapshotApprovalToPending(approval, sessionId);
+      setQueue((prev) => reconcileApprovalQueue(prev, desired, sessionId));
+    },
+    [],
+  );
+
   return {
     handleDaemonEvent,
+    hydrateSnapshotApproval,
     head: queue[0] ?? null,
     queuedBehind: Math.max(0, queue.length - 1),
     headRef,

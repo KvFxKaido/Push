@@ -35,6 +35,7 @@ import {
   type SessionResponse,
 } from '@/lib/local-daemon-binding';
 import { type AttachResult, createRelayDaemonBinding } from '@/lib/relay-daemon-binding';
+import { parseSessionSnapshot, type DaemonSessionSnapshot } from '@/lib/daemon-snapshot';
 import type { LiveDaemonBinding } from '@/lib/local-daemon-sandbox-client';
 import type { RelayBinding } from '@/types';
 import { isTranscriptMutationEvent } from '@push/lib/session-transcript-events';
@@ -108,6 +109,15 @@ export interface UseRelayDaemonResult {
    * the cause for ops triage.
    */
   hydratedMessages: DaemonHydratedMessage[] | null;
+  /**
+   * Live session state from the daemon's `get_session_snapshot`, fetched once on
+   * attach alongside the transcript. Carries what the event stream already
+   * passed before this client attached — most importantly a `pendingApproval`
+   * the session is blocked on. Null until hydration completes (or on failure —
+   * non-fatal, logged). `RelayChatScreen` installs the approval into the queue;
+   * `state`/`branch`/`model` are available for display. One-shot per target.
+   */
+  sessionSnapshot: DaemonSessionSnapshot | null;
 }
 
 /** Shape returned by the daemon's `get_session_messages` RPC. */
@@ -143,6 +153,7 @@ export function useRelayDaemon(
   >('idle');
   const [attachError, setAttachError] = useState<{ code: string; message: string } | null>(null);
   const [hydratedMessages, setHydratedMessages] = useState<DaemonHydratedMessage[] | null>(null);
+  const [sessionSnapshot, setSessionSnapshot] = useState<DaemonSessionSnapshot | null>(null);
 
   const reconnectReducer = useCallback(
     (prev: ReconnectInfo, action: ReconnectAction): ReconnectInfo => {
@@ -263,6 +274,7 @@ export function useRelayDaemon(
       // genuine target change that follows still triggers the clear.
       if (hydratedTargetRef.current !== targetSessionId) {
         setHydratedMessages(null);
+        setSessionSnapshot(null);
         hydratedTargetRef.current = targetSessionId;
       }
     });
@@ -313,6 +325,45 @@ export function useRelayDaemon(
         });
     };
 
+    // Fetch the daemon's live session state once on attach: run/idle, active run,
+    // and — the load-bearing bit — any approval the session is blocked on, which
+    // the `approval_required` event already emitted before this client attached.
+    // Non-fatal like transcript hydration: on failure the snapshot stays null and
+    // the chat works, but a reattach to an approval-blocked session won't surface
+    // the prompt until the next event. Reason-tagged for ops triage.
+    const hydrateSnapshot = (reason: 'attach') => {
+      const handle = bindingRef.current;
+      if (!handle || targetSessionId === null || targetAttachToken === null) return;
+      void handle
+        .request<unknown>({
+          type: 'get_session_snapshot',
+          sessionId: targetSessionId,
+          payload: {
+            sessionId: targetSessionId,
+            attachToken: targetAttachToken,
+            recentEventLimit: 1,
+          },
+          timeoutMs: 10_000,
+        })
+        .then((response) => {
+          if (cancelled) return;
+          if (!response.ok) return;
+          const parsed = parseSessionSnapshot(response.payload);
+          if (parsed) setSessionSnapshot(parsed);
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          console.warn(
+            JSON.stringify({
+              level: 'warn',
+              event: 'relay_snapshot_hydration_failed',
+              reason: err instanceof Error ? err.message : String(err),
+              attachReason: reason,
+            }),
+          );
+        });
+    };
+
     let handle: ReturnType<typeof createRelayDaemonBinding>;
     try {
       handle = createRelayDaemonBinding({
@@ -333,6 +384,9 @@ export function useRelayDaemon(
             // works, but the user starts from an empty transcript.
             // Logged via console.warn so ops can spot the regression.
             hydrateTranscript('attach');
+            // ...and the live session-state snapshot, so a reattach to a
+            // mid-run / approval-blocked session renders the right pane.
+            hydrateSnapshot('attach');
           } else {
             setAttachStatus('attach_failed');
             setAttachError({ code: result.error.code, message: result.error.message });
@@ -343,6 +397,7 @@ export function useRelayDaemon(
             // chat") isn't shown alongside a stale prepended TUI history.
             // Reset the ref too so a later successful reattach re-hydrates.
             setHydratedMessages(null);
+            setSessionSnapshot(null);
             hydratedTargetRef.current = undefined;
           }
         },
@@ -496,5 +551,6 @@ export function useRelayDaemon(
     attachStatus,
     attachError,
     hydratedMessages,
+    sessionSnapshot,
   };
 }
