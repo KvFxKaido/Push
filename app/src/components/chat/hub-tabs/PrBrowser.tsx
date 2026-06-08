@@ -34,6 +34,7 @@ import {
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
   HUB_TAG_CLASS,
 } from '@/components/chat/hub-styles';
+import { PushMarkdownRenderer } from '@/components/chat/PushMarkdownRenderer';
 import type { DiffPreviewCardData } from '@/types';
 
 interface PrBrowserProps {
@@ -587,9 +588,9 @@ export function PrBrowser({ repoFullName, activeBranch, onOpenDiff }: PrBrowserP
                     Description
                   </p>
                   {detail.body ? (
-                    <p className="whitespace-pre-wrap text-push-base leading-relaxed text-push-fg-secondary">
-                      {detail.body}
-                    </p>
+                    <div className="text-push-base leading-relaxed text-push-fg-secondary">
+                      <PushMarkdownRenderer text={detail.body} isStreaming={false} enableCodeHighlight={false} />
+                    </div>
                   ) : (
                     <p className="text-xs text-push-fg-dim">No description provided.</p>
                   )}
