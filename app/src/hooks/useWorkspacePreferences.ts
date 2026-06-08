@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useUserProfile } from '@/hooks/useUserProfile';
+import { useSetting } from '@/hooks/useSetting';
 import { getApprovalMode, setApprovalMode, type ApprovalMode } from '@/lib/approval-mode';
 import { getContextMode, setContextMode, type ContextMode } from '@/lib/orchestrator';
 import {
@@ -7,9 +8,21 @@ import {
   setSandboxStartMode,
   type SandboxStartMode,
 } from '@/lib/sandbox-start-mode';
+import { safeStorageGet } from '@/lib/safe-storage';
+import { SETTINGS_KEYS } from '@/lib/settings-store';
 
+// Pre-unification localStorage key, read once as a fallback.
 const TOOL_ACTIVITY_STORAGE_KEY = 'push:workspace:show-tool-activity';
 const ALLOWLIST_SECRET_COMMAND = 'npx wrangler secret put GITHUB_ALLOWED_INSTALLATION_IDS';
+
+const coerceToolActivity = (raw: unknown): boolean | undefined =>
+  typeof raw === 'boolean' ? raw : undefined;
+
+function legacyToolActivity(): boolean | undefined {
+  const raw = safeStorageGet(TOOL_ACTIVITY_STORAGE_KEY);
+  if (raw === null) return undefined;
+  return raw === '1';
+}
 
 export function useWorkspacePreferences(validatedGithubLogin: string | null | undefined) {
   const { profile, updateProfile, clearProfile } = useUserProfile();
@@ -18,10 +31,11 @@ export function useWorkspacePreferences(validatedGithubLogin: string | null | un
   const [chatInstructionsDraftState, setChatInstructionsDraftState] = useState<string | null>(null);
   const [installIdInput, setInstallIdInput] = useState('');
   const [showInstallIdInput, setShowInstallIdInput] = useState(false);
-  const [showToolActivity, setShowToolActivityState] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    return window.localStorage.getItem(TOOL_ACTIVITY_STORAGE_KEY) === '1';
-  });
+  const [showToolActivity, setShowToolActivityValue] = useSetting<boolean>(
+    SETTINGS_KEYS.showToolActivity,
+    false,
+    { coerce: coerceToolActivity, legacyFallback: legacyToolActivity },
+  );
   const [sandboxStartMode, setSandboxStartModeState] = useState<SandboxStartMode>(() =>
     getSandboxStartMode(),
   );
@@ -79,15 +93,12 @@ export function useWorkspacePreferences(validatedGithubLogin: string | null | un
     setSandboxStartModeState(mode);
   }, []);
 
-  const updateShowToolActivity = useCallback((value: boolean) => {
-    setShowToolActivityState(value);
-    if (typeof window === 'undefined') return;
-    if (value) {
-      window.localStorage.setItem(TOOL_ACTIVITY_STORAGE_KEY, '1');
-    } else {
-      window.localStorage.removeItem(TOOL_ACTIVITY_STORAGE_KEY);
-    }
-  }, []);
+  const updateShowToolActivity = useCallback(
+    (value: boolean) => {
+      setShowToolActivityValue(value);
+    },
+    [setShowToolActivityValue],
+  );
 
   const handleDisplayNameBlur = useCallback(() => {
     const nextDisplayName = displayNameDraft.trim();

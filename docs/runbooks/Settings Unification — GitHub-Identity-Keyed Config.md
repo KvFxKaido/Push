@@ -1,7 +1,10 @@
 # Settings Unification — GitHub-Identity-Keyed Config
 
 Date: 2026-06-07
-Status: **draft** (design-in-motion; not roadmap-promoted)
+Status: **MVP shipped** — the non-secret preferences tier (substrate + GET/PUT
+`/api/settings` + shared client store + autonomous-reviewer fold + non-secret
+hooks) has landed. Secrets tier and scratchpad/todo content are deferred (see
+phasing + open questions below).
 Owner: Push
 
 Make the web app's info/settings the same on every device by moving them from
@@ -100,28 +103,41 @@ user.
 
 ## MVP / phasing
 
-1. Generalize `pr-review-config` into `GET/PUT /api/settings` — one KV doc keyed
-   by GitHub user id, LWW with `updatedAt`. Fold the existing `config:pr-review-*`
-   into it (fixing the global-key → identity-key flaw).
-2. Migrate the non-secret tier: each `use*Config` / appearance hook swaps its
-   `safe-storage` backend for the settings doc (read-on-load, write-through,
-   local cache for first-paint/offline). Put the read/write/merge resolver in a
-   shared module so it isn't re-implemented per hook.
-3. Reviewer config now lives in the shared doc → controlling the reviewer from
-   any device is free, which unblocks the original reviewer-visibility goal.
-4. Secrets tier — only after `PUSH_SESSION_GATE_ENFORCE=1` (or decide to never
+1. ✅ Generalize `pr-review-config` into `GET/PUT /api/settings` — one KV doc
+   keyed by GitHub user id, LWW with `updatedAt`. Folded the existing
+   `config:pr-review-*` into `reviewer.autonomous.*` (fixing the global-key →
+   identity-key flaw); legacy flat keys are read as a fallback.
+2. ✅ Migrate the non-secret tier: appearance, protect-main, show-tool-activity,
+   last-used models, profile, and the in-app advisory reviewer picks now read
+   through the shared `settings-store` (sync first-paint cache, write-through,
+   boot reconcile) with a per-hook legacy-localStorage fallback. Scratchpad/todo
+   *content* deferred (open question #4).
+3. ✅ Reviewer config lives in the shared doc → controlling the reviewer from any
+   device is unblocked.
+4. ⏳ Secrets tier — only after `PUSH_SESSION_GATE_ENFORCE=1` (or decide to never
    sync secrets).
 
 ## Open questions
 
-1. **Do the two reviewer notions converge?** There's the autonomous PR reviewer
-   (server config) and the in-app advisory reviewer (localStorage model picks).
-   Unify into one reviewer-config block or keep distinct?
-2. **Secrets posture:** sync-after-enforce vs. never-sync-enter-per-device.
-3. **Per-device override layer:** schema shape for "global default + optional
-   device pin" (theme is the obvious case).
-4. **Conflict policy:** LWW is the proposed default; confirm it's acceptable for
-   the rare two-devices-at-once edit.
+_Resolved for the MVP (2026-06-07):_
+
+1. **Do the two reviewer notions converge?** **No — kept distinct, co-located.**
+   The autonomous PR reviewer and the in-app advisory reviewer live in the same
+   document as separate blocks (`reviewer.autonomous.*` vs `reviewer.advisory.*`);
+   the features are not merged.
+2. **Secrets posture:** **Deferred.** Non-secret tier shipped; provider keys stay
+   device-local until `PUSH_SESSION_GATE_ENFORCE` is flipped, then sync-vs-never
+   is decided. Not touched this pass.
+3. **Per-device override layer:** **Deferred.** Shipped global-only; the
+   "global default + device pin" layer (theme) is a follow-up. The doc is a flat
+   canonical-key→value bag, so a `*.deviceOverrides` block can be added additively.
+4. **Conflict policy:** **Last-write-wins, per key.** A `PUT` shallow-merges the
+   changed keys server-side under one monotonic `updatedAt` — strictly better than
+   whole-document LWW (no two-hooks-write clobber) without a CRDT. Accepted for
+   the rare two-devices-at-once edit at single-user scale. This is why
+   scratchpad/todo *content* is **not** in the MVP: LWW on actively-edited content
+   would silently lose a concurrent cross-device edit (decision #5's open
+   substrate question), so it waits for the per-device-slots decision.
 
 ## Dependencies
 

@@ -1,57 +1,70 @@
-import { useState, useCallback } from 'react';
+import { useCallback } from 'react';
 import type { UserProfile } from '../types';
 import { USER_PROFILE_DEFAULTS } from '../types';
-import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
+import { safeStorageGet } from '@/lib/safe-storage';
+import { getSetting, SETTINGS_KEYS, setSetting } from '@/lib/settings-store';
+import { useSetting } from './useSetting';
 
-const STORAGE_KEY = 'push_user_profile';
+const LEGACY_KEY = 'push_user_profile';
 const MAX_BIO_LENGTH = 300;
 const MAX_CHAT_INSTRUCTIONS_LENGTH = 4000;
 
+function coerce(raw: unknown): UserProfile | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  return { ...USER_PROFILE_DEFAULTS, ...(raw as Partial<UserProfile>) };
+}
+
+function legacyProfile(): UserProfile | undefined {
+  const stored = safeStorageGet(LEGACY_KEY);
+  if (!stored) return undefined;
+  try {
+    return coerce(JSON.parse(stored));
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * Standalone getter — callable from orchestrator.ts without React.
- * Returns full profile with defaults for any missing fields.
+ * Standalone getter — callable from orchestrator.ts without React. Reads the
+ * unified settings cache (hydrated synchronously from the localStorage mirror at
+ * import, reconciled with the server at boot), falling back to the pre-migration
+ * localStorage value, then defaults.
  */
 export function getUserProfile(): UserProfile {
-  try {
-    const stored = safeStorageGet(STORAGE_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      return { ...USER_PROFILE_DEFAULTS, ...parsed };
-    }
-  } catch {
-    // Corrupted data or restricted context — return defaults
+  const stored = getSetting<unknown>(SETTINGS_KEYS.userProfile);
+  return coerce(stored) ?? legacyProfile() ?? { ...USER_PROFILE_DEFAULTS };
+}
+
+function clampProfile(profile: UserProfile): UserProfile {
+  const merged = { ...profile };
+  if (merged.bio.length > MAX_BIO_LENGTH) {
+    merged.bio = merged.bio.slice(0, MAX_BIO_LENGTH);
   }
-  return { ...USER_PROFILE_DEFAULTS };
+  if (merged.chatInstructions && merged.chatInstructions.length > MAX_CHAT_INSTRUCTIONS_LENGTH) {
+    merged.chatInstructions = merged.chatInstructions.slice(0, MAX_CHAT_INSTRUCTIONS_LENGTH);
+  }
+  return merged;
 }
 
 /**
  * React hook for Settings UI — manage user profile (name, bio, GitHub login).
  */
 export function useUserProfile() {
-  const [profile, setProfileState] = useState<UserProfile>(() => getUserProfile());
+  const [profile, setProfileValue] = useSetting<UserProfile>(
+    SETTINGS_KEYS.userProfile,
+    { ...USER_PROFILE_DEFAULTS },
+    { coerce, legacyFallback: legacyProfile },
+  );
 
-  const updateProfile = useCallback((partial: Partial<UserProfile>) => {
-    setProfileState((prev) => {
-      const merged = { ...prev, ...partial };
-      // Cap bio length
-      if (merged.bio.length > MAX_BIO_LENGTH) {
-        merged.bio = merged.bio.slice(0, MAX_BIO_LENGTH);
-      }
-      // Cap chat instructions length
-      if (
-        merged.chatInstructions &&
-        merged.chatInstructions.length > MAX_CHAT_INSTRUCTIONS_LENGTH
-      ) {
-        merged.chatInstructions = merged.chatInstructions.slice(0, MAX_CHAT_INSTRUCTIONS_LENGTH);
-      }
-      safeStorageSet(STORAGE_KEY, JSON.stringify(merged));
-      return merged;
-    });
-  }, []);
+  const updateProfile = useCallback(
+    (partial: Partial<UserProfile>) => {
+      setProfileValue(clampProfile({ ...profile, ...partial }));
+    },
+    [profile, setProfileValue],
+  );
 
   const clearProfile = useCallback(() => {
-    safeStorageRemove(STORAGE_KEY);
-    setProfileState({ ...USER_PROFILE_DEFAULTS });
+    setSetting(SETTINGS_KEYS.userProfile, { ...USER_PROFILE_DEFAULTS });
   }, []);
 
   return { profile, updateProfile, clearProfile };

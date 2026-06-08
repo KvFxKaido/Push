@@ -11,6 +11,10 @@ import { installApiAuthFetch } from './lib/api-auth-fetch.ts';
 
 perfMark('app:boot');
 installApiAuthFetch();
+// The unified settings doc is reconciled with the server from the sign-in gate
+// once a session is established (GitHubSignInGate), not here — a boot-time call
+// would run before the session is minted, 401, and never retry. Hooks still
+// render from the synchronous localStorage-mirror cache for first paint.
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

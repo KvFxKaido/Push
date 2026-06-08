@@ -57,12 +57,32 @@ describe('pr-review-config', () => {
     expect(await isPrReviewEnabled(env)).toBe(true);
   });
 
-  it('persists and round-trips the flag', async () => {
+  it('persists and round-trips the flag through the settings doc', async () => {
     const { env, store } = kvEnv();
     expect(await setPrReviewEnabled(env, false)).toBe(true);
-    expect(store.get('config:pr-review-enabled')).toBe('0');
+    // Written into the owner's settings document, not the legacy flat key.
+    expect(store.has('config:pr-review-enabled')).toBe(false);
+    expect(JSON.parse(store.get('settings:anon')!).values['reviewer.autonomous.enabled']).toBe(
+      false,
+    );
     expect(await isPrReviewEnabled(env)).toBe(false);
     await setPrReviewEnabled(env, true);
+    expect(await isPrReviewEnabled(env)).toBe(true);
+  });
+
+  it('reads a disabled flag from the legacy flat key when the doc is unset', async () => {
+    const { env } = kvEnv({ 'config:pr-review-enabled': '0' });
+    expect(await isPrReviewEnabled(env)).toBe(false);
+  });
+
+  it('lets the settings doc override the legacy enabled flag', async () => {
+    const { env } = kvEnv({
+      'config:pr-review-enabled': '0',
+      'settings:anon': JSON.stringify({
+        updatedAt: 1,
+        values: { 'reviewer.autonomous.enabled': true },
+      }),
+    });
     expect(await isPrReviewEnabled(env)).toBe(true);
   });
 
@@ -96,12 +116,38 @@ describe('pr-review-config', () => {
     });
   });
 
-  it('persists provider/model config', async () => {
+  it('persists provider/model config to the settings doc', async () => {
     const { env, store } = kvEnv();
     expect(await setPrReviewRuntimeConfig(env, 'openai', 'gpt-5.4')).toBe(true);
-    expect(store.get('config:pr-review-provider')).toBe('openai');
-    expect(store.get('config:pr-review-model')).toBe('gpt-5.4');
+    const doc = JSON.parse(store.get('settings:anon')!);
+    expect(doc.values['reviewer.autonomous.provider']).toBe('openai');
+    expect(doc.values['reviewer.autonomous.model']).toBe('gpt-5.4');
     expect(await getPrReviewRuntimeConfig(env)).toEqual({ provider: 'openai', model: 'gpt-5.4' });
+  });
+
+  it('lets the settings doc override legacy provider/model', async () => {
+    const { env } = kvEnv({
+      'config:pr-review-provider': 'google',
+      'config:pr-review-model': 'gemini-3.5-flash',
+      'settings:anon': JSON.stringify({
+        updatedAt: 1,
+        values: {
+          'reviewer.autonomous.provider': 'openai',
+          'reviewer.autonomous.model': 'gpt-5.4',
+        },
+      }),
+    });
+    expect(await getPrReviewRuntimeConfig(env)).toEqual({ provider: 'openai', model: 'gpt-5.4' });
+  });
+
+  it('keys the reviewer config by the deployment owner when an allowlist is set', async () => {
+    const { env, store } = kvEnv();
+    env.GITHUB_ALLOWED_USER_IDS = '107059169';
+    await setPrReviewRuntimeConfig(env, 'openai', 'gpt-5.4');
+    expect(store.has('settings:anon')).toBe(false);
+    expect(
+      JSON.parse(store.get('settings:107059169')!).values['reviewer.autonomous.provider'],
+    ).toBe('openai');
   });
 
   it('returns false from setPrReviewRuntimeConfig when there is no KV binding', async () => {
