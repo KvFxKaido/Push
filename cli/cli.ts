@@ -56,7 +56,8 @@ import { createDelegationTranscriptRenderer, isDelegationEvent } from './tui-del
 import { runCommandInResolvedShell } from './shell.js';
 import { scrubEnv } from './env-scrub.js';
 import { ensureRepoCommandsSeeded } from './repo-commands.js';
-import { setDefaultMemoryStore } from '../lib/context-memory-store.js';
+import { getDefaultMemoryStore, setDefaultMemoryStore } from '../lib/context-memory-store.js';
+import { getDefaultEmbeddingProvider } from '../lib/embedding-provider.js';
 import { installCliEmbeddingProvider } from './embedding-provider-cli.js';
 import { createFileMemoryStore, getMemoryStoreBaseDir } from './context-memory-file-store.js';
 import {
@@ -131,6 +132,7 @@ const KNOWN_SUBCOMMANDS = new Set([
   'theme',
   'animate',
   'spinner',
+  'memory',
   'init-deep',
 ]);
 const SEARCH_BACKENDS = new Set(['auto', 'tavily', 'ollama', 'duckduckgo']);
@@ -231,6 +233,7 @@ Usage:
   push spinner list             List spinners (with frame previews)
   push spinner set <name>       Pin spinner (off|braille|orbit|breathe|pulse|helix)
   push spinner unpin            Unpin: revert to static status dot
+  push memory backfill          Embed stored memory records that lack an embedding (semantic recall)
 
 Options:
   --provider <name>             ollama | openrouter | zen | nvidia | kilocode | blackbox | openadapter | openai | anthropic | google (default: ollama)
@@ -1745,6 +1748,48 @@ async function runThemeSubcommand(positionals) {
   return 0;
 }
 
+async function runMemorySubcommand(positionals: string[]): Promise<void> {
+  const sub = (positionals[1] || '').toLowerCase();
+  if (sub !== 'backfill') {
+    throw new Error(`Unknown memory subcommand: ${sub || '(missing)'}. Supported: backfill`);
+  }
+
+  const provider = getDefaultEmbeddingProvider();
+  if (!provider) {
+    process.stdout.write(
+      'No embedding provider configured — nothing to backfill. Enable local embeddings ' +
+        '(PUSH_EMBED_LOCAL, the default) or set PUSH_EMBED_URL, then re-run.\n',
+    );
+    return;
+  }
+
+  const { backfillEmbeddings } = await import('../lib/context-memory-backfill.js');
+  const store = getDefaultMemoryStore();
+  process.stdout.write(`Backfilling embeddings in ${getMemoryStoreBaseDir()} …\n`);
+  const result = await backfillEmbeddings(store, provider, {
+    onProgress: (embedded, total) => {
+      process.stdout.write(`  ${embedded}/${total} embedded\n`);
+    },
+  });
+
+  if (result.needed === 0) {
+    process.stdout.write(`Up to date: ${result.scanned} record(s), none missing embeddings.\n`);
+    return;
+  }
+  if (!result.providerReady) {
+    process.stdout.write(
+      `Embedding model unavailable (${provider.model}); left ${result.needed} record(s) lexical. ` +
+        'Install @huggingface/transformers or check PUSH_EMBED_URL, then re-run.\n',
+    );
+    return;
+  }
+  process.stdout.write(
+    `Done: ${result.scanned} scanned, ${result.embedded} embedded` +
+      (result.failed ? `, ${result.failed} failed` : '') +
+      `, ${result.scanned - result.needed} already current.\n`,
+  );
+}
+
 async function runSpinnerSubcommand(positionals) {
   const { SPINNER_NAMES, SPINNERS, isSpinnerName, isReducedMotion } = await import(
     './tui-spinner.js'
@@ -3195,6 +3240,10 @@ export async function main() {
     return runSpinnerSubcommand(positionals);
   }
 
+  if (subcommand === 'memory') {
+    return runMemorySubcommand(positionals);
+  }
+
   if (subcommand === 'resume' || subcommand === 'sessions') {
     const sessionsCmd = positionals[1] || '';
     if (sessionsCmd === 'rename') {
@@ -3504,7 +3553,7 @@ export async function main() {
 
   if (!KNOWN_SUBCOMMANDS.has(subcommand)) {
     throw new Error(
-      `Unknown command: ${subcommand}. Known commands: run, config, sessions, skills, stats, daemon, attach, tui, theme, animate, spinner, init-deep. See: push --help`,
+      `Unknown command: ${subcommand}. Known commands: run, config, sessions, skills, stats, daemon, attach, tui, theme, animate, spinner, memory, init-deep. See: push --help`,
     );
   }
 

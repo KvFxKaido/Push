@@ -58,6 +58,14 @@ export interface EmbedResult {
 export interface EmbeddingProvider {
   readonly model: string;
   embed(texts: string[]): Promise<EmbedResult[]>;
+  /**
+   * Optional: block until the provider is ready to embed, returning whether it
+   * is. Providers whose `embed` is non-blocking-while-warming (e.g. the local
+   * on-device model) implement this so deliberate, user-initiated batch work
+   * like backfill can wait for the model rather than getting all-null. Always-
+   * ready providers (remote HTTP) omit it; callers treat that as ready.
+   */
+  warmup?(): Promise<boolean>;
 }
 
 let defaultProvider: EmbeddingProvider | null = null;
