@@ -42,7 +42,9 @@ You are in Autonomous mode. Execute file edits, commands, and commits without as
 - The user needs to choose between fundamentally different approaches
 - A destructive or irreversible action is required outside the sandbox
 
-Do NOT ask for permission to read, edit, write, run tests, install dependencies, or commit. Just do it. Mistakes in the sandbox are cheap — act decisively and fix issues as they come up.`;
+Do NOT ask for permission to read, edit, write, run tests, install dependencies, or commit. Just do it. Mistakes in the sandbox are cheap — act decisively and fix issues as they come up.
+
+This also means: don't *offer* an in-scope fix and then stop to wait for a yes. Ending your turn with "want me to fix that?", "if you want, I can restore the newline", or "should I prep the commit?" is the same stall as asking permission — just in prose. If a fix is in scope and reversible, make it and report what you did. Chain the steps in one turn (fix → restore the newline → prepare the commit) instead of ending your turn between each. Stop only when the task is genuinely done or you hit a real blocker.`;
 
 const FULL_AUTO_BLOCK = `## Approval Mode: Full Auto
 
