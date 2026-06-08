@@ -65,9 +65,18 @@ interface TransformersModule {
   env: { cacheDir?: string; allowRemoteModels?: boolean };
 }
 
+// Load state. We distinguish two failure modes (push-agent review on #824):
+//   - packageMissing: the optional dependency isn't installed. Permanent within
+//     a process — it never becomes available, so never retry.
+//   - a transient load failure (download/network/init while the dep IS present):
+//     recoverable. We record `lastFailedAt` and let the next embed() retry after
+//     a cooldown, so a blip during the cold download doesn't disable a
+//     long-lived daemon for its entire life.
 let extractor: Extractor | null = null;
-let disabled = false;
-let loadPromise: Promise<void> | null = null;
+let packageMissing = false;
+let loading = false;
+let lastFailedAt = 0;
+const RETRY_COOLDOWN_MS = 30_000;
 
 function modelsCacheDir(): string {
   return process.env.PUSH_MODELS_DIR || path.join(os.homedir(), '.push', 'models');
@@ -87,11 +96,25 @@ function isDownloadProgress(progress: unknown): boolean {
 }
 
 async function loadExtractor(): Promise<void> {
+  let mod: TransformersModule;
   try {
     // Computed specifier: TS skips module resolution, so this compiles without
-    // the optional dependency present. Absent at runtime → caught below.
+    // the optional dependency present. Absent at runtime → permanent fallback.
     const moduleName = '@huggingface/transformers';
-    const mod = (await import(moduleName)) as unknown as TransformersModule;
+    mod = (await import(moduleName)) as unknown as TransformersModule;
+  } catch (error) {
+    // Package not installed → permanent. Debug-level: an absent optional
+    // dependency is the expected, benign case (lexical fallback), not a failure
+    // to shout about on every run. PUSH_DEBUG surfaces it when diagnosing
+    // "why isn't semantic working".
+    packageMissing = true;
+    logLocal('debug', 'local_embed_unavailable', {
+      hint: 'install @huggingface/transformers to enable offline semantic memory',
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+  try {
     mod.env.cacheDir = modelsCacheDir();
     let announced = false;
     extractor = await mod.pipeline('feature-extraction', LOCAL_MODEL_REPO, {
@@ -106,23 +129,30 @@ async function loadExtractor(): Promise<void> {
         }
       },
     });
+    lastFailedAt = 0;
     logLocal('debug', 'local_embed_ready', { model: LOCAL_EMBEDDING_MODEL });
   } catch (error) {
-    disabled = true;
+    // Transient (download/network/init): the dep IS installed, so this is a real
+    // failure worth a warn — but recoverable. Record the time so a later embed()
+    // retries after the cooldown instead of disabling local embeddings forever.
     extractor = null;
-    // Debug-level, not warn: an absent optional dependency is the expected,
-    // benign case (lexical fallback) — not a failure to shout about on every
-    // run. PUSH_DEBUG surfaces it when diagnosing "why isn't semantic working".
-    logLocal('debug', 'local_embed_unavailable', {
-      hint: 'install @huggingface/transformers to enable offline semantic memory',
+    lastFailedAt = Date.now();
+    logLocal('warn', 'local_embed_load_failed', {
+      retryAfterMs: RETRY_COOLDOWN_MS,
       error: error instanceof Error ? error.message : String(error),
     });
   }
 }
 
 function ensureLoading(): void {
-  if (disabled || loadPromise) return;
-  loadPromise = loadExtractor();
+  if (packageMissing || extractor || loading) return;
+  // Back off after a transient failure so we don't hammer a failing download on
+  // every memory op; a later op past the cooldown retries.
+  if (lastFailedAt && Date.now() - lastFailedAt < RETRY_COOLDOWN_MS) return;
+  loading = true;
+  void loadExtractor().finally(() => {
+    loading = false;
+  });
 }
 
 export function createLocalEmbeddingProvider(): EmbeddingProvider {
@@ -133,7 +163,7 @@ export function createLocalEmbeddingProvider(): EmbeddingProvider {
         texts.map(() => ({ model: LOCAL_EMBEDDING_MODEL, vector: null }));
       // Short-circuit before any model load: nothing to embed, nothing to load.
       if (texts.length === 0) return [];
-      if (disabled) return allNull();
+      if (packageMissing) return allNull();
       if (!extractor) {
         // Kick the load in the background and return lexical-now. We do NOT await
         // it: this runs in the memory-write path on the critical path of a
@@ -141,6 +171,10 @@ export function createLocalEmbeddingProvider(): EmbeddingProvider {
         // out the daemon integration test). Records written before the model is
         // warm stay lexical-only until rewritten/backfilled.
         ensureLoading();
+        // Log the degradation: these records go out vector-less (lexical) because
+        // the model isn't warm yet. Debug-gated — fires per memory op during the
+        // warmup window, not once per run. (push-agent review on #824.)
+        logLocal('debug', 'local_embed_warming', { count: texts.length });
         return allNull();
       }
       try {
@@ -160,8 +194,9 @@ export function createLocalEmbeddingProvider(): EmbeddingProvider {
 /** Test seam: reset the lazily-loaded module state. */
 export function __resetLocalEmbedderForTests(): void {
   extractor = null;
-  disabled = false;
-  loadPromise = null;
+  packageMissing = false;
+  loading = false;
+  lastFailedAt = 0;
 }
 
 // Re-export so the install site can wire local without importing the engine.
