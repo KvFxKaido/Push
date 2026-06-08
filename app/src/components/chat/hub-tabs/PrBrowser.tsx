@@ -36,7 +36,7 @@ import {
 } from '@/components/chat/hub-styles';
 import type { DiffPreviewCardData } from '@/types';
 
-interface HubPRsTabProps {
+interface PrBrowserProps {
   repoFullName?: string;
   activeBranch?: string;
   onOpenDiff: (payload: {
@@ -45,7 +45,6 @@ interface HubPRsTabProps {
     mode: 'review-github';
     target?: { path: string; line?: number };
   }) => void;
-  onOpenReviewTab?: () => void;
 }
 
 type DetailSection = 'overview' | 'changes' | 'conversation';
@@ -129,12 +128,13 @@ function reviewStateBadge(state: RepoPullRequestDetail['reviews'][number]['state
   }
 }
 
-export function HubPRsTab({
-  repoFullName,
-  activeBranch,
-  onOpenDiff,
-  onOpenReviewTab,
-}: HubPRsTabProps) {
+/**
+ * Read-only browser for a repo's open pull requests — list + detail (overview /
+ * changes / conversation, checks/merge summary), with "Open in Diff". Rendered
+ * inside the Review tab's `github` source as an inspection sub-view; the advisory
+ * review itself stays bound to the active branch's PR (see HubReviewTab).
+ */
+export function PrBrowser({ repoFullName, activeBranch, onOpenDiff }: PrBrowserProps) {
   const [prs, setPrs] = useState<RepoPullRequestListItem[]>([]);
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
@@ -362,9 +362,6 @@ export function HubPRsTab({
 
   const currentDetail = detail ?? selectedListItem;
   const commentCount = currentDetail ? currentDetail.comments + currentDetail.reviewComments : 0;
-  const canUseReviewTab = Boolean(
-    detail && activeBranch && detail.headRef === activeBranch && onOpenReviewTab,
-  );
   const checksSummary = detail ? checksTone(detail.status.checksOverall) : null;
   const mergeSummary = detail ? mergeTone(detail) : null;
 
@@ -538,15 +535,6 @@ export function HubPRsTab({
                 <DiffSeamIcon className="h-3.5 w-3.5" />
                 <span>Open in Diff</span>
               </button>
-              {canUseReviewTab && (
-                <button
-                  onClick={onOpenReviewTab}
-                  className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-push-fg-secondary`}
-                >
-                  <PRThreadIcon className="h-3.5 w-3.5" />
-                  <span>Review in Push</span>
-                </button>
-              )}
             </div>
 
             {activeBranch && detail.headRef !== activeBranch && (
