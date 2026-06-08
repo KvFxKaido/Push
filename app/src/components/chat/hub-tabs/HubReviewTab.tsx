@@ -1196,10 +1196,11 @@ export function HubReviewTab({
                     </p>
                   </div>
                 )}
-                {/* Strip raw HTML tags as a defense-in-depth (Streamdown's rehype-harden also sanitizes upstream). */}
+                {/* Sanitized by Streamdown's rehype-harden (default in PushMarkdownRenderer.tsx:39);
+                    disallowedElements={['img']} (PushMarkdownRenderer.tsx:192) blocks remote content loading. */}
                 <div className="push-markdown text-push-xs leading-relaxed text-push-fg-secondary">
                   <PushMarkdownRenderer
-                    text={result.summary.replace(/<[^>]*>/g, '')}
+                    text={result.summary}
                     isStreaming={false}
                     enableCodeHighlight={false}
                   />
