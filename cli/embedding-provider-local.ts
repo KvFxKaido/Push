@@ -74,7 +74,7 @@ interface TransformersModule {
 //     long-lived daemon for its entire life.
 let extractor: Extractor | null = null;
 let packageMissing = false;
-let loading = false;
+let loadPromise: Promise<void> | null = null;
 let lastFailedAt = 0;
 const RETRY_COOLDOWN_MS = 30_000;
 
@@ -145,19 +145,37 @@ async function loadExtractor(): Promise<void> {
 }
 
 function ensureLoading(): void {
-  if (packageMissing || extractor || loading) return;
+  if (packageMissing || extractor || loadPromise) return;
   // Back off after a transient failure so we don't hammer a failing download on
   // every memory op; a later op past the cooldown retries.
   if (lastFailedAt && Date.now() - lastFailedAt < RETRY_COOLDOWN_MS) return;
-  loading = true;
-  void loadExtractor().finally(() => {
-    loading = false;
+  loadPromise = loadExtractor().finally(() => {
+    loadPromise = null;
   });
+}
+
+/**
+ * Block until the model is loaded, returning whether it's ready. For deliberate
+ * batch work (backfill) where blocking is correct — unlike the embed() hot path.
+ * Bypasses the transient-failure cooldown: an explicit, user-initiated request
+ * should force a fresh load attempt rather than honor a recent backoff.
+ */
+export async function warmupLocalEmbedder(): Promise<boolean> {
+  if (packageMissing) return false;
+  if (extractor) return true;
+  if (!loadPromise) {
+    loadPromise = loadExtractor().finally(() => {
+      loadPromise = null;
+    });
+  }
+  await loadPromise;
+  return Boolean(extractor);
 }
 
 export function createLocalEmbeddingProvider(): EmbeddingProvider {
   return {
     model: LOCAL_EMBEDDING_MODEL,
+    warmup: warmupLocalEmbedder,
     async embed(texts: string[]): Promise<EmbedResult[]> {
       const allNull = (): EmbedResult[] =>
         texts.map(() => ({ model: LOCAL_EMBEDDING_MODEL, vector: null }));
@@ -195,7 +213,7 @@ export function createLocalEmbeddingProvider(): EmbeddingProvider {
 export function __resetLocalEmbedderForTests(): void {
   extractor = null;
   packageMissing = false;
-  loading = false;
+  loadPromise = null;
   lastFailedAt = 0;
 }
 
