@@ -18,15 +18,21 @@
  * meaningless), even though both are 768-dim. Stores are per-surface, so within
  * one CLI store every vector is locally-produced and comparable.
  *
- * Lazy + blocking: the model loads on the first `embed()` call, not at install
- * — so commands that never touch memory (e.g. `push spinner show`) never pay
- * for it, and the common no-dependency case stays silent. `embed()` awaits the
- * load, so a record written before the model is ready still gets embedded
- * rather than being permanently vector-less; the cost is that the very first
- * cold run (a ~110MB one-time download) blocks the first embed until it
- * finishes. In a long-lived daemon the load happens once and stays warm.
- * Diagnostics go to stderr (never stdout — that's the CLI's user-output /
- * `--json` channel; see [[push-stdout-is-user-channel-on-cli]]).
+ * Lazy + non-blocking: the model loads on the first `embed()` call, in the
+ * background — `embed()` never awaits the load. While the model is loading
+ * (including a ~110MB cold-start download) `embed()` returns all-null so
+ * retrieval stays lexical and the caller never stalls. This matters because
+ * embedding runs inside the memory-write path, which is on the critical path of
+ * a delegation's output: a blocking load would delay the agent's actual
+ * envelopes (and did — it timed out a daemon integration test). Once the model
+ * is warm, subsequent calls embed normally; in a long-lived daemon that's after
+ * the first op or two. The cost of non-blocking is that records written during
+ * the warmup window are lexical-only until rewritten (the backfill follow-up).
+ *
+ * Commands that never touch memory (e.g. `push spinner show`) never trigger a
+ * load, and the common no-dependency case stays silent. Diagnostics go to
+ * stderr (never stdout — the CLI's user-output / `--json` channel; see
+ * [[push-stdout-is-user-channel-on-cli]]).
  */
 
 import os from 'node:os';
@@ -128,9 +134,15 @@ export function createLocalEmbeddingProvider(): EmbeddingProvider {
       // Short-circuit before any model load: nothing to embed, nothing to load.
       if (texts.length === 0) return [];
       if (disabled) return allNull();
-      ensureLoading();
-      await loadPromise;
-      if (!extractor) return allNull();
+      if (!extractor) {
+        // Kick the load in the background and return lexical-now. We do NOT await
+        // it: this runs in the memory-write path on the critical path of a
+        // delegation's output, so blocking here would stall the agent (and time
+        // out the daemon integration test). Records written before the model is
+        // warm stay lexical-only until rewritten/backfilled.
+        ensureLoading();
+        return allNull();
+      }
       try {
         const output = await extractor(texts, { pooling: 'mean', normalize: true });
         const vectors = output.tolist();
