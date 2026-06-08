@@ -10,8 +10,23 @@
 import { describe, expect, it } from 'vitest';
 
 import type { SessionEvent } from '@/lib/local-daemon-binding';
+import type { PendingApproval } from '@/components/daemon/ApprovalPrompt';
 
-import { classifyApprovalEvent } from './useApprovalQueue';
+import { classifyApprovalEvent, reconcileApprovalQueue } from './useApprovalQueue';
+
+function approval(
+  overrides: Partial<PendingApproval> & Pick<PendingApproval, 'approvalId'>,
+): PendingApproval {
+  return {
+    sessionId: 'sess_1',
+    kind: 'tool_execution',
+    title: 'Approval required',
+    summary: '',
+    options: ['approve', 'deny'],
+    receivedAt: 0,
+    ...overrides,
+  };
+}
 
 function makeEvent(overrides: Partial<SessionEvent> & Pick<SessionEvent, 'type'>): SessionEvent {
   return {
@@ -122,5 +137,49 @@ describe('classifyApprovalEvent', () => {
     expect(action.kind).toBe('enqueue');
     if (action.kind !== 'enqueue') throw new Error('unreachable');
     expect(action.approval.options).toEqual(['approve', 'deny']);
+  });
+});
+
+describe('reconcileApprovalQueue (snapshot hydration)', () => {
+  it('installs the snapshot approval into an empty queue', () => {
+    const desired = approval({ approvalId: 'a1' });
+    expect(reconcileApprovalQueue([], desired, 'sess_1')).toEqual([desired]);
+  });
+
+  it('is a no-op (ref-stable) when the queue already matches the snapshot', () => {
+    const a1 = approval({ approvalId: 'a1' });
+    const prev = [a1];
+    expect(reconcileApprovalQueue(prev, approval({ approvalId: 'a1' }), 'sess_1')).toBe(prev);
+  });
+
+  it('drops a now-stale approval when the snapshot reports none (resolved while away)', () => {
+    const prev = [approval({ approvalId: 'stale' })];
+    expect(reconcileApprovalQueue(prev, null, 'sess_1')).toEqual([]);
+  });
+
+  it('replaces a stale approval with the snapshot’s current one', () => {
+    const prev = [approval({ approvalId: 'old' })];
+    const desired = approval({ approvalId: 'new' });
+    expect(reconcileApprovalQueue(prev, desired, 'sess_1')).toEqual([desired]);
+  });
+
+  it('leaves other sessions’ approvals untouched', () => {
+    const other = approval({ approvalId: 'b1', sessionId: 'sess_2' });
+    const prev = [other, approval({ approvalId: 'stale', sessionId: 'sess_1' })];
+    // sess_1 resolved (snapshot null) → drop only its entry, keep sess_2's.
+    expect(reconcileApprovalQueue(prev, null, 'sess_1')).toEqual([other]);
+  });
+
+  it('keeps the already-queued copy (stable reference) when ids match', () => {
+    const a1 = approval({ approvalId: 'a1', receivedAt: 111 });
+    const prev = [a1];
+    const result = reconcileApprovalQueue(
+      prev,
+      approval({ approvalId: 'a1', receivedAt: 999 }),
+      'sess_1',
+    );
+    // Same id → existing entry preserved (its receivedAt/position), not replaced.
+    expect(result).toBe(prev);
+    expect(result[0].receivedAt).toBe(111);
   });
 });
