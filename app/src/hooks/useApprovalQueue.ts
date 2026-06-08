@@ -30,6 +30,7 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 
 import type { SessionEvent } from '@/lib/local-daemon-binding';
+import { snapshotApprovalToPending, type SnapshotPendingApproval } from '@/lib/daemon-snapshot';
 
 import type { PendingApproval } from '@/components/daemon/ApprovalPrompt';
 
@@ -85,6 +86,14 @@ export function classifyApprovalEvent(event: SessionEvent): ApprovalQueueAction 
 export interface ApprovalQueueHandle {
   /** Wire this into the daemon hook's `onEvent` callback. */
   handleDaemonEvent: (event: SessionEvent) => void;
+  /**
+   * Install an approval the session was already blocked on at attach time, from
+   * a `get_session_snapshot` packet (the `approval_required` event fired before
+   * this client attached). No-op when the snapshot has no pending approval.
+   * Dedupes by id like `handleDaemonEvent`, so a racing live event won't double
+   * it and a later `approval_received` drops it.
+   */
+  hydrateSnapshotApproval: (approval: SnapshotPendingApproval | null, sessionId: string) => void;
   /** Head of the queue, null when empty. The ApprovalPrompt renders this. */
   head: PendingApproval | null;
   /** Count behind the head — surfaced as the "N more waiting" counter. */
@@ -137,8 +146,17 @@ export function useApprovalQueue(): ApprovalQueueHandle {
     [enqueue, drop],
   );
 
+  const hydrateSnapshotApproval = useCallback(
+    (approval: SnapshotPendingApproval | null, sessionId: string) => {
+      const pending = snapshotApprovalToPending(approval, sessionId);
+      if (pending) enqueue(pending);
+    },
+    [enqueue],
+  );
+
   return {
     handleDaemonEvent,
+    hydrateSnapshotApproval,
     head: queue[0] ?? null,
     queuedBehind: Math.max(0, queue.length - 1),
     headRef,
