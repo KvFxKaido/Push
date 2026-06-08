@@ -1196,8 +1196,7 @@ export function HubReviewTab({
                     </p>
                   </div>
                 )}
-                {/* Sanitized by Streamdown's rehype-harden (default in PushMarkdownRenderer.tsx:39);
-                    disallowedElements={['img']} (PushMarkdownRenderer.tsx:192) blocks remote content loading. */}
+                {/* Rendering is sanitized in PushMarkdownRenderer; images are disallowed. */}
                 <div className="push-markdown text-push-xs leading-relaxed text-push-fg-secondary">
                   <PushMarkdownRenderer
                     text={result.summary}
