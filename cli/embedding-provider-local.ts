@@ -1,0 +1,156 @@
+/**
+ * Local CLI EmbeddingProvider — runs BGE entirely on-device via transformers.js
+ * (ONNX), so semantic memory retrieval works with no Worker round-trip.
+ *
+ * This closes the offline-CLI parity gap: the surface that most benefits from
+ * better recall for small models ([[push-cli-delegation-parity-decision]]) no
+ * longer needs `PUSH_EMBED_URL` pointing at a deployed Worker.
+ *
+ * Dependency posture: `@huggingface/transformers` is an *optional* dependency
+ * (it drags onnxruntime-node + sharp native binaries the web build/CI never
+ * need). It's loaded via a dynamic `import()` with a computed specifier so the
+ * CLI typechecks and runs even when the package isn't installed — in that case
+ * every embed call returns all-null and retrieval degrades to lexical.
+ *
+ * Model id is `local:bge-base-en-v1.5`, deliberately distinct from the Worker's
+ * `@cf/baai/bge-base-en-v1.5`. Same-model gating in the scorer means CF-embedded
+ * and locally-embedded records never cross-compare (the cosine would be
+ * meaningless), even though both are 768-dim. Stores are per-surface, so within
+ * one CLI store every vector is locally-produced and comparable.
+ *
+ * Lazy + blocking: the model loads on the first `embed()` call, not at install
+ * — so commands that never touch memory (e.g. `push spinner show`) never pay
+ * for it, and the common no-dependency case stays silent. `embed()` awaits the
+ * load, so a record written before the model is ready still gets embedded
+ * rather than being permanently vector-less; the cost is that the very first
+ * cold run (a ~110MB one-time download) blocks the first embed until it
+ * finishes. In a long-lived daemon the load happens once and stays warm.
+ * Diagnostics go to stderr (never stdout — that's the CLI's user-output /
+ * `--json` channel; see [[push-stdout-is-user-channel-on-cli]]).
+ */
+
+import os from 'node:os';
+import path from 'node:path';
+
+import {
+  type EmbeddingProvider,
+  type EmbedResult,
+  setDefaultEmbeddingProvider,
+} from '../lib/embedding-provider.js';
+
+const LOCAL_MODEL_REPO = 'Xenova/bge-base-en-v1.5';
+export const LOCAL_EMBEDDING_MODEL = 'local:bge-base-en-v1.5';
+
+const DEBUG = process.env.PUSH_DEBUG === '1' || process.env.PUSH_DEBUG === 'true';
+
+// Minimal structural types for the bits of transformers.js we touch. We can't
+// `import type` from an optional dep that may be absent, so we describe the
+// surface ourselves and cast the dynamic import.
+type Extractor = (
+  texts: string[],
+  opts: { pooling: 'mean'; normalize: boolean },
+) => Promise<{ tolist(): number[][] }>;
+interface TransformersModule {
+  pipeline(
+    task: 'feature-extraction',
+    model: string,
+    opts?: { progress_callback?: (progress: unknown) => void },
+  ): Promise<Extractor>;
+  env: { cacheDir?: string; allowRemoteModels?: boolean };
+}
+
+let extractor: Extractor | null = null;
+let disabled = false;
+let loadPromise: Promise<void> | null = null;
+
+function modelsCacheDir(): string {
+  return process.env.PUSH_MODELS_DIR || path.join(os.homedir(), '.push', 'models');
+}
+
+function logLocal(level: 'debug' | 'warn', event: string, ctx: Record<string, unknown> = {}): void {
+  if (level === 'debug' && !DEBUG) return;
+  console.error(JSON.stringify({ level, event, ...ctx }));
+}
+
+function isDownloadProgress(progress: unknown): boolean {
+  return (
+    typeof progress === 'object' &&
+    progress !== null &&
+    (progress as { status?: string }).status === 'download'
+  );
+}
+
+async function loadExtractor(): Promise<void> {
+  try {
+    // Computed specifier: TS skips module resolution, so this compiles without
+    // the optional dependency present. Absent at runtime → caught below.
+    const moduleName = '@huggingface/transformers';
+    const mod = (await import(moduleName)) as unknown as TransformersModule;
+    mod.env.cacheDir = modelsCacheDir();
+    let announced = false;
+    extractor = await mod.pipeline('feature-extraction', LOCAL_MODEL_REPO, {
+      progress_callback: (progress) => {
+        // One-time notice on a cold download so a multi-second first run isn't a
+        // silent hang. Subsequent runs load from disk and never hit this.
+        if (!announced && isDownloadProgress(progress)) {
+          announced = true;
+          process.stderr.write(
+            '[push] downloading local embedding model (bge-base, ~110MB, one-time)…\n',
+          );
+        }
+      },
+    });
+    logLocal('debug', 'local_embed_ready', { model: LOCAL_EMBEDDING_MODEL });
+  } catch (error) {
+    disabled = true;
+    extractor = null;
+    // Debug-level, not warn: an absent optional dependency is the expected,
+    // benign case (lexical fallback) — not a failure to shout about on every
+    // run. PUSH_DEBUG surfaces it when diagnosing "why isn't semantic working".
+    logLocal('debug', 'local_embed_unavailable', {
+      hint: 'install @huggingface/transformers to enable offline semantic memory',
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function ensureLoading(): void {
+  if (disabled || loadPromise) return;
+  loadPromise = loadExtractor();
+}
+
+export function createLocalEmbeddingProvider(): EmbeddingProvider {
+  return {
+    model: LOCAL_EMBEDDING_MODEL,
+    async embed(texts: string[]): Promise<EmbedResult[]> {
+      const allNull = (): EmbedResult[] =>
+        texts.map(() => ({ model: LOCAL_EMBEDDING_MODEL, vector: null }));
+      // Short-circuit before any model load: nothing to embed, nothing to load.
+      if (texts.length === 0) return [];
+      if (disabled) return allNull();
+      ensureLoading();
+      await loadPromise;
+      if (!extractor) return allNull();
+      try {
+        const output = await extractor(texts, { pooling: 'mean', normalize: true });
+        const vectors = output.tolist();
+        return texts.map((_, i) => ({ model: LOCAL_EMBEDDING_MODEL, vector: vectors[i] ?? null }));
+      } catch (error) {
+        logLocal('warn', 'local_embed_failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return allNull();
+      }
+    },
+  };
+}
+
+/** Test seam: reset the lazily-loaded module state. */
+export function __resetLocalEmbedderForTests(): void {
+  extractor = null;
+  disabled = false;
+  loadPromise = null;
+}
+
+// Re-export so the install site can wire local without importing the engine.
+export { setDefaultEmbeddingProvider };
