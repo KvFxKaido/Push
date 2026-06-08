@@ -133,6 +133,12 @@ export interface ApprovalQueueHandle {
    * running.
    */
   popMatching: (approvalId: string) => void;
+  /**
+   * Drop every queued approval. Used when the bound session is no longer valid
+   * (target change / attach failure) so a prompt from the old session can't
+   * linger — and be approved — on the new one. Idempotent / ref-stable.
+   */
+  clear: () => void;
 }
 
 export function useApprovalQueue(): ApprovalQueueHandle {
@@ -163,6 +169,10 @@ export function useApprovalQueue(): ApprovalQueueHandle {
     setQueue((prev) => (prev[0]?.approvalId === approvalId ? prev.slice(1) : prev));
   }, []);
 
+  const clear = useCallback(() => {
+    setQueue((prev) => (prev.length === 0 ? prev : []));
+  }, []);
+
   const handleDaemonEvent = useCallback(
     (event: SessionEvent) => {
       const action = classifyApprovalEvent(event);
@@ -187,5 +197,6 @@ export function useApprovalQueue(): ApprovalQueueHandle {
     queuedBehind: Math.max(0, queue.length - 1),
     headRef,
     popMatching,
+    clear,
   };
 }

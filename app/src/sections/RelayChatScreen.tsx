@@ -13,12 +13,14 @@
  * was a 95% clone of the local-PC version.
  */
 import { Globe } from 'lucide-react';
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 
 import { RelayModeChip } from '@/components/RelayModeChip';
 import { DaemonChatBody } from '@/components/daemon/DaemonChatBody';
 import { useApprovalQueue } from '@/hooks/useApprovalQueue';
+import { useDaemonRunState } from '@/hooks/useDaemonRunState';
 import { useRelayDaemon } from '@/hooks/useRelayDaemon';
+import type { SessionEvent } from '@/lib/local-daemon-binding';
 import { clearPairedRemote } from '@/lib/relay-storage';
 import { buildLocalPcWorkspaceContext } from '@/lib/workspace-context';
 import type { RelayBinding, WorkspaceScreenAuthProps } from '@/types';
@@ -47,6 +49,19 @@ export function RelayChatScreen({
   onDisconnect,
 }: RelayChatScreenProps) {
   const approvals = useApprovalQueue();
+  const runState = useDaemonRunState();
+  // Fan the live event stream to both consumers: approvals (drop on
+  // approval_received) and run-state (clear on run_complete). Destructure the
+  // (stable) handlers so the memo deps don't ride the per-render hook objects.
+  const handleApprovalEvent = approvals.handleDaemonEvent;
+  const handleRunStateEvent = runState.handleDaemonEvent;
+  const handleEvent = useCallback(
+    (event: SessionEvent) => {
+      handleApprovalEvent(event);
+      handleRunStateEvent(event);
+    },
+    [handleApprovalEvent, handleRunStateEvent],
+  );
   const {
     status,
     reconnect,
@@ -59,18 +74,33 @@ export function RelayChatScreen({
     hydratedMessages,
     sessionSnapshot,
   } = useRelayDaemon(binding, {
-    onEvent: approvals.handleDaemonEvent,
+    onEvent: handleEvent,
   });
 
-  // Hydrate an approval the session was already blocked on at attach time. The
-  // `approval_required` event fired before this client attached, so the live
-  // `handleDaemonEvent` path never saw it; the snapshot carries it. enqueue
-  // dedupes by id, so a racing live event won't double the prompt.
-  const { hydrateSnapshotApproval } = approvals;
+  // Hydrate the state the event stream already passed before this client
+  // attached: an approval the session is blocked on, and a foreground run it's
+  // mid-turn on. The approval enqueue dedupes by id; run-state hydration primes
+  // the busy indicator + remote Stop until a run_complete (or local takeover).
+  // When the snapshot goes null (target change / attach failure) the old
+  // session's state is no longer valid — clear both so a stale prompt or
+  // "Running…"/Stop can't act on a session this screen is no longer bound to.
+  const { hydrateSnapshotApproval, clear: clearApprovals } = approvals;
+  const { hydrateSnapshotRunState, clear: clearRunState } = runState;
   useEffect(() => {
-    if (!sessionSnapshot) return;
+    if (!sessionSnapshot) {
+      clearApprovals();
+      clearRunState();
+      return;
+    }
     hydrateSnapshotApproval(sessionSnapshot.pendingApproval, sessionSnapshot.session.sessionId);
-  }, [sessionSnapshot, hydrateSnapshotApproval]);
+    hydrateSnapshotRunState(sessionSnapshot);
+  }, [
+    sessionSnapshot,
+    hydrateSnapshotApproval,
+    hydrateSnapshotRunState,
+    clearApprovals,
+    clearRunState,
+  ]);
 
   const workspaceContext = useMemo(
     () => ({
@@ -114,6 +144,8 @@ export function RelayChatScreen({
       attachStatus={attachStatus}
       attachError={attachError}
       hydratedMessages={hydratedMessages}
+      reattachedRun={runState.reattachedRun}
+      onClearReattachedRun={runState.clear}
     />
   );
 }
