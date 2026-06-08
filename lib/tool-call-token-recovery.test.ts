@@ -72,9 +72,49 @@ describe('recoverTokenDelimitedToolCalls — Mistral [TOOL_CALLS]', () => {
     expect(recoverTokenDelimitedToolCalls(text)).toEqual([]);
   });
 
-  it('anchors the offset to the sentinel', () => {
-    const text = 'Sure.\n[TOOL_CALLS] [{"name": "read", "arguments": {"path": "a"}}]';
+  it('anchors the offset to the sentinel (leading whitespace is allowed context)', () => {
+    const text = '\n  [TOOL_CALLS] [{"name": "read", "arguments": {"path": "a"}}]';
     expect(recoverTokenDelimitedToolCalls(text)[0].offset).toBe(text.indexOf('[TOOL_CALLS]'));
+  });
+});
+
+describe('recoverTokenDelimitedToolCalls — prose eligibility gate', () => {
+  it('rejects a Mistral sample with trailing prose (pasted-transcript guard)', () => {
+    const text = '[TOOL_CALLS] [{"name": "exec", "arguments": {"cmd": "ls"}}] — what does this do?';
+    expect(recoverTokenDelimitedToolCalls(text)).toEqual([]);
+  });
+
+  it('rejects a Mistral sample with leading prose', () => {
+    const text =
+      'For example you could run [TOOL_CALLS] [{"name": "exec", "arguments": {"cmd": "ls"}}]';
+    expect(recoverTokenDelimitedToolCalls(text)).toEqual([]);
+  });
+
+  it('rejects a DeepSeek wrapper embedded in prose', () => {
+    const text = `Here is how it looks: ${ds.callsBegin}${dsCall('exec', '{"cmd": "ls"}')}${ds.callsEnd} — neat, right?`;
+    expect(recoverTokenDelimitedToolCalls(text)).toEqual([]);
+  });
+
+  it('still accepts a call wrapped only in whitespace / a stray language marker', () => {
+    const text = 'tool\n[TOOL_CALLS] [{"name": "read", "arguments": {"path": "a"}}]\n';
+    expect(recoverTokenDelimitedToolCalls(text)).toEqual([
+      expect.objectContaining({ tool: 'read', format: 'mistral' }),
+    ]);
+  });
+});
+
+describe('recoverTokenDelimitedToolCalls — DeepSeek multiple wrappers + truncation', () => {
+  it('recovers blocks across several separate tool_calls wrappers', () => {
+    const text =
+      `${ds.callsBegin}${dsCall('read', '{"path": "a"}')}${ds.callsEnd}\n` +
+      `${ds.callsBegin}${dsCall('write', '{"path": "b"}')}${ds.callsEnd}`;
+    const recovered = recoverTokenDelimitedToolCalls(text);
+    expect(recovered.map((r) => r.tool)).toEqual(['read', 'write']);
+  });
+
+  it('drops a block whose args object opens but never closes (no empty-arg exec)', () => {
+    const text = `${ds.callsBegin}${ds.callBegin}function${ds.sep}exec\n\`\`\`json\n{"cmd": "rm -rf /"${ds.callEnd}${ds.callsEnd}`;
+    expect(recoverTokenDelimitedToolCalls(text)).toEqual([]);
   });
 });
 

@@ -73,26 +73,92 @@ const DS_CALL_BLOCK =
   /<[|｜]tool[▁_ ]call[▁_ ]begin[|｜]>([\s\S]*?)<[|｜]tool[▁_ ]call[▁_ ]end[|｜]>/g;
 const DS_SEP = /<[|｜]tool[▁_ ]sep[|｜]>/;
 
+// Whole-message eligibility gate — mirrors `XML_GAP_REGEX` in the XML
+// recovery. Every region OUTSIDE a recovered call's covered span must be
+// whitespace plus an optional fence / language marker. A recovered call's
+// `[offset, endOffset)` span (inclusive of the `[TOOL_CALLS]` sentinel or
+// the whole DeepSeek wrapper) is exempt; everything else is checked.
+const TOKEN_GAP_REGEX =
+  /^\s*(?:`{3,}|~{3,})?\s*(?:json[c5]?|tool|xml|javascript)?\s*(?:`{3,}|~{3,})?\s*$/i;
+
+/** A half-open `[start, end)` span of `text` covered by a recovered call. */
+type Region = [number, number];
+
+interface FormatRecovery {
+  calls: RecoveredTokenCall[];
+  /** Spans the eligibility gate treats as "this is a tool call, not
+   *  prose" — the inverse regions are what must be whitespace/markers. */
+  regions: Region[];
+}
+
 /**
  * Scan `text` for Mistral `[TOOL_CALLS]` and DeepSeek-native tool-call
  * blocks. Order-preserving across both formats, no dedup — the
  * dispatcher dedupes across all phases by canonical key.
+ *
+ * Promotion is gated on a whole-message surrounding-context check (see
+ * `TOKEN_GAP_REGEX`): the regions outside the recovered calls must be
+ * whitespace + optional fence/language markers. Without it, a prose
+ * mention or a pasted transcript like `[TOOL_CALLS] [{"name":"exec",
+ * "arguments":{...}}]` would execute the example whenever no canonical
+ * wrappers are present. Codex P1 review on PR #830. The gate is
+ * all-or-nothing, matching the XML recovery: any prose-bearing gap
+ * rejects the whole batch. False-negative trade (a model that mixes a
+ * tool call with surrounding prose is skipped, resolving next turn) is
+ * preferable to a false-positive that runs a destructive command — the
+ * same trade the XML and namespaced recoveries make.
  */
 export function recoverTokenDelimitedToolCalls(text: string): RecoveredTokenCall[] {
-  const out: RecoveredTokenCall[] = [
-    ...recoverMistralToolCalls(text),
-    ...recoverDeepSeekToolCalls(text),
-  ];
-  out.sort((a, b) => a.offset - b.offset);
-  return out;
+  const mistral = recoverMistralToolCalls(text);
+  const deepseek = recoverDeepSeekToolCalls(text);
+  const calls = [...mistral.calls, ...deepseek.calls];
+  if (calls.length === 0) return [];
+
+  const regions = mergeRegions([...mistral.regions, ...deepseek.regions]);
+  if (!regionsAreContextEligible(text, regions)) return [];
+
+  calls.sort((a, b) => a.offset - b.offset);
+  return calls;
+}
+
+/** Merge overlapping/adjacent covered spans into a sorted, disjoint list. */
+function mergeRegions(regions: Region[]): Region[] {
+  if (regions.length === 0) return [];
+  const sorted = [...regions].sort((a, b) => a[0] - b[0]);
+  const merged: Region[] = [sorted[0]];
+  for (let i = 1; i < sorted.length; i++) {
+    const last = merged[merged.length - 1];
+    if (sorted[i][0] <= last[1]) {
+      last[1] = Math.max(last[1], sorted[i][1]);
+    } else {
+      merged.push(sorted[i]);
+    }
+  }
+  return merged;
+}
+
+/**
+ * True when every region of `text` outside the covered `regions` is
+ * whitespace + optional fence/language markers. Checks the prefix before
+ * the first region, each inter-region gap, and the suffix after the last.
+ */
+function regionsAreContextEligible(text: string, regions: Region[]): boolean {
+  if (regions.length === 0) return false;
+  const isAllowedGap = (slice: string): boolean => TOKEN_GAP_REGEX.test(slice);
+  if (!isAllowedGap(text.slice(0, regions[0][0]))) return false;
+  for (let i = 1; i < regions.length; i++) {
+    if (!isAllowedGap(text.slice(regions[i - 1][1], regions[i][0]))) return false;
+  }
+  return isAllowedGap(text.slice(regions[regions.length - 1][1]));
 }
 
 // ---------------------------------------------------------------------------
 // Mistral `[TOOL_CALLS]`
 // ---------------------------------------------------------------------------
 
-function recoverMistralToolCalls(text: string): RecoveredTokenCall[] {
-  const out: RecoveredTokenCall[] = [];
+function recoverMistralToolCalls(text: string): FormatRecovery {
+  const calls: RecoveredTokenCall[] = [];
+  const regions: Region[] = [];
   let searchFrom = 0;
   for (;;) {
     const sentinel = text.indexOf(MISTRAL_SENTINEL, searchFrom);
@@ -116,12 +182,15 @@ function recoverMistralToolCalls(text: string): RecoveredTokenCall[] {
         const call = shapeMistralElement(element);
         if (!call) continue;
         recoveredAny = true;
-        out.push({ ...call, offset: anchor, endOffset: arrayEnd + 1, format: 'mistral' });
+        calls.push({ ...call, offset: anchor, endOffset: arrayEnd + 1, format: 'mistral' });
       }
       // Only advance the scan past a payload we actually consumed; an
       // unrecognized array shape leaves `searchFrom` at the sentinel end
       // so a later genuine sentinel still gets a chance.
-      if (recoveredAny) searchFrom = arrayEnd + 1;
+      if (recoveredAny) {
+        regions.push([anchor, arrayEnd + 1]);
+        searchFrom = arrayEnd + 1;
+      }
       continue;
     }
 
@@ -136,10 +205,11 @@ function recoverMistralToolCalls(text: string): RecoveredTokenCall[] {
     if (objEnd === -1) continue;
     const args = parseArgsObject(text.slice(braceCursor, objEnd + 1));
     if (!args) continue;
-    out.push({ tool, args, offset: anchor, endOffset: objEnd + 1, format: 'mistral' });
+    calls.push({ tool, args, offset: anchor, endOffset: objEnd + 1, format: 'mistral' });
+    regions.push([anchor, objEnd + 1]);
     searchFrom = objEnd + 1;
   }
-  return out;
+  return { calls, regions };
 }
 
 function shapeMistralElement(
@@ -164,38 +234,48 @@ function shapeMistralElement(
 // DeepSeek V3 / R1 native
 // ---------------------------------------------------------------------------
 
-function recoverDeepSeekToolCalls(text: string): RecoveredTokenCall[] {
+function recoverDeepSeekToolCalls(text: string): FormatRecovery {
   // Require the `tool▁calls▁begin` wrapper — a strong sentinel that
-  // bounds the recovery region. Without it, a lone `tool▁call▁begin` in
+  // bounds each recovery region. Without it, a lone `tool▁call▁begin` in
   // prose (vanishingly unlikely, but cheap to exclude) won't promote.
+  // Iterate ALL wrappers, not just the first: concatenated multi-turn
+  // logs / transcript dumps can carry several `tool_calls` wrappers, and
+  // blocks in later wrappers were previously dropped. github-actions
+  // review on PR #830.
   const beginRegex = new RegExp(DS_CALLS_BEGIN.source, DS_CALLS_BEGIN.flags);
-  const firstBegin = beginRegex.exec(text);
-  if (!firstBegin) return [];
-
-  // Recovery region runs from the first wrapper open to its matching
-  // close (or end-of-text if the close leaked away / was truncated).
   const endRegex = new RegExp(DS_CALLS_END.source, DS_CALLS_END.flags);
-  endRegex.lastIndex = firstBegin.index + firstBegin[0].length;
-  const endMatch = endRegex.exec(text);
-  const regionEnd = endMatch ? endMatch.index + endMatch[0].length : text.length;
+  const calls: RecoveredTokenCall[] = [];
+  const regions: Region[] = [];
 
-  const out: RecoveredTokenCall[] = [];
-  const blockRegex = new RegExp(DS_CALL_BLOCK.source, DS_CALL_BLOCK.flags);
-  blockRegex.lastIndex = firstBegin.index;
-  let block: RegExpExecArray | null;
-  while ((block = blockRegex.exec(text)) !== null) {
-    if (block.index >= regionEnd) break;
-    const parsed = parseDeepSeekBlock(block[1]);
-    if (!parsed) continue;
-    out.push({
-      tool: parsed.tool,
-      args: parsed.args,
-      offset: block.index,
-      endOffset: block.index + block[0].length,
-      format: 'deepseek',
-    });
+  let begin: RegExpExecArray | null;
+  while ((begin = beginRegex.exec(text)) !== null) {
+    // Recovery region runs from this wrapper open to its matching close
+    // (or end-of-text if the close leaked away / was truncated).
+    endRegex.lastIndex = begin.index + begin[0].length;
+    const endMatch = endRegex.exec(text);
+    const regionEnd = endMatch ? endMatch.index + endMatch[0].length : text.length;
+
+    const blockRegex = new RegExp(DS_CALL_BLOCK.source, DS_CALL_BLOCK.flags);
+    blockRegex.lastIndex = begin.index;
+    let block: RegExpExecArray | null;
+    while ((block = blockRegex.exec(text)) !== null) {
+      if (block.index >= regionEnd) break;
+      const parsed = parseDeepSeekBlock(block[1]);
+      if (!parsed) continue;
+      calls.push({
+        tool: parsed.tool,
+        args: parsed.args,
+        offset: block.index,
+        endOffset: block.index + block[0].length,
+        format: 'deepseek',
+      });
+    }
+    regions.push([begin.index, regionEnd]);
+    // Resume scanning for the next wrapper past this region's close so a
+    // truncated wrapper (regionEnd === text.length) terminates the loop.
+    if (regionEnd > beginRegex.lastIndex) beginRegex.lastIndex = regionEnd;
   }
-  return out;
+  return { calls, regions };
 }
 
 function parseDeepSeekBlock(inner: string): { tool: string; args: Record<string, unknown> } | null {
@@ -210,11 +290,15 @@ function parseDeepSeekBlock(inner: string): { tool: string; args: Record<string,
 
   // Args are the first balanced `{...}` after the name (inside the
   // ```json fence when present; the fence markers are skipped over by
-  // the brace scan). A block with no object is a zero-arg call.
+  // the brace scan). A block with NO object at all is a legitimate
+  // zero-arg call (e.g. `git_status`). But an object that opens and
+  // never closes is truncated/malformed — drop the call rather than
+  // execute the tool with silently-empty args, which could run it
+  // without its intended arguments. github-actions review on PR #830.
   const braceIdx = afterSep.indexOf('{', nameMatch[0].length);
   if (braceIdx === -1) return { tool, args: {} };
   const objEnd = findBalancedEnd(afterSep, braceIdx, '}');
-  if (objEnd === -1) return { tool, args: {} };
+  if (objEnd === -1) return null;
   const args = parseArgsObject(afterSep.slice(braceIdx, objEnd + 1));
   if (!args) return null;
   return { tool, args };
