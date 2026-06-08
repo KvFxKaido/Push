@@ -6,6 +6,7 @@ import {
   getGitHubAuthHeaders,
   APP_TOKEN_STORAGE_KEY,
 } from '@/lib/github-auth';
+import { setRepoMetadata } from '@/lib/repo-metadata';
 
 const APP_INSTALLATION_ID_KEY = 'github_app_installation_id';
 const PUSHED_STORAGE_KEY = 'repo_last_pushed';
@@ -164,8 +165,21 @@ export function useRepos() {
         pushed_at: string;
         default_branch: string;
         language?: string | null;
+        topics?: string[] | null;
       };
-      const summaries: RepoSummary[] = (reposData as RepoApi[])
+      const apiRepos = reposData as RepoApi[];
+
+      // Cache language + topics by full_name so the thinking-phase vibe picker
+      // can read them synchronously (it can't make an async GitHub call in its
+      // hot path). Topics are the strongest *domain* signal we have.
+      for (const r of apiRepos) {
+        setRepoMetadata(r.full_name, {
+          topics: Array.isArray(r.topics) ? r.topics : [],
+          language: r.language ?? null,
+        });
+      }
+
+      const summaries: RepoSummary[] = apiRepos
         .map((r) => ({
           id: r.id,
           name: r.name,

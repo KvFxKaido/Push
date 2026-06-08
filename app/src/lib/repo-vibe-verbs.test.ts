@@ -9,6 +9,56 @@ import {
 } from './repo-vibe-verbs';
 
 describe('classifyRepoVibe', () => {
+  describe('domain themes come from GitHub topics (the strongest domain signal)', () => {
+    const cases: Array<[string[], RepoVibe]> = [
+      [['machine-learning'], 'ai'],
+      [['deep-learning', 'pytorch'], 'ai'],
+      [['llm'], 'ai'],
+      [['computer-vision'], 'ai'],
+      [['gamedev'], 'game'],
+      [['game-engine'], 'game'],
+      [['unity3d'], 'game'],
+      [['flutter'], 'mobile'],
+      [['jetpack-compose'], 'mobile'],
+      [['kubernetes', 'helm'], 'devops'],
+      [['terraform'], 'devops'],
+      [['gitops'], 'devops'],
+    ];
+
+    it.each(cases)('classifies topics %j as %s', (topics, vibe) => {
+      // Name is deliberately neutral so topics are what decide.
+      expect(classifyRepoVibe({ fullName: 'acme/platform', topics })).toBe(vibe);
+    });
+
+    it('outranks a conflicting name', () => {
+      // The name screams web (`vite`), the owner-curated topic says AI — trust
+      // the topic, which is the more deliberate signal.
+      expect(classifyRepoVibe({ fullName: 'acme/vite-app', topics: ['machine-learning'] })).toBe(
+        'ai',
+      );
+    });
+
+    it('outranks the implementation language', () => {
+      expect(
+        classifyRepoVibe({
+          fullName: 'acme/platform',
+          topics: ['game-engine'],
+          projectMarkers: ['package.json'],
+        }),
+      ).toBe('game');
+    });
+
+    it('falls through to language when topics are present but unrecognized', () => {
+      expect(
+        classifyRepoVibe({
+          fullName: 'acme/platform',
+          topics: ['hacktoberfest', 'awesome'],
+          projectMarkers: ['Cargo.toml'],
+        }),
+      ).toBe('rust');
+    });
+  });
+
   describe('domain themes come from the name (no filesystem footprint)', () => {
     const cases: Array<[string, RepoVibe]> = [
       ['huggingface/transformers', 'ai'],

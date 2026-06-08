@@ -29,6 +29,7 @@
 
 import type { MutableRefObject } from 'react';
 import { getVibeVerb } from '@/lib/repo-vibe-verbs';
+import { getRepoMetadata } from '@/lib/repo-metadata';
 import { getSandboxEnvironment } from '@/lib/sandbox-client';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 import { markJournalCheckpoint, type RunJournalEntry } from '@/lib/run-journal';
@@ -371,14 +372,18 @@ export async function runRoundLoop(
 
     let phase = 'Responding...';
     if (round === 0) {
-      // Drive the thinking verb off real repo signals: the sandbox's boot-time
-      // manifest probe tells us the language, the name hints at the domain. The
-      // probe read is a synchronous cache lookup (null while the sandbox boots,
-      // in which case the classifier falls back to the name alone).
+      // Drive the thinking verb off real repo signals: GitHub topics state the
+      // domain, the sandbox's boot-time manifest probe tells us the language,
+      // and the name is the fallback for both. Both reads are synchronous cache
+      // lookups (null when the repo list or sandbox hasn't populated yet, in
+      // which case the classifier degrades to the name alone).
       const sandboxEnv = getSandboxEnvironment(loopCtx.sandboxIdRef.current ?? undefined);
+      const repoMeta = getRepoMetadata(loopCtx.repoRef.current);
       phase = getVibeVerb({
         fullName: loopCtx.repoRef.current,
+        topics: repoMeta?.topics ?? null,
         projectMarkers: sandboxEnv?.project_markers ?? null,
+        language: repoMeta?.language ?? null,
       });
     }
 

@@ -91,10 +91,17 @@ export const VERB_POOLS: Record<RepoVibe, string[]> = {
  * Real runtime signals used to classify a repo's vibe, in descending order of
  * trust. The whole point of this module is that a repo's *language* should come
  * from what's actually in the tree — not from guessing at its name — while its
- * *domain* (AI, game, ...) has no filesystem footprint and can only be hinted
- * at by the name. `classifyRepoVibe` layers them accordingly.
+ * *domain* (AI, game, ...) has no filesystem footprint and is best read from
+ * owner-curated topics, falling back to a name hint. `classifyRepoVibe` layers
+ * them accordingly.
  */
 export interface RepoVibeSignals {
+  /**
+   * GitHub repository topics (lowercase-hyphenated, e.g. `['machine-learning']`).
+   * The strongest *domain* signal: curated by the repo owner, so it states the
+   * domain outright instead of leaving us to guess from the name.
+   */
+  topics?: string[] | null;
   /**
    * Manifest files detected in the sandbox at boot, e.g.
    * `['package.json', 'Cargo.toml']`. The strongest *language* signal because
@@ -126,7 +133,96 @@ function tokenize(value: string): Set<string> {
   );
 }
 
-// --- Layer 1: domain themes (name-only) ---
+// --- Layer 1: domain themes from GitHub topics (the strongest domain signal) ---
+// Topics are owner-curated and already normalized to lowercase-hyphenated
+// strings, so we match them as whole values (no tokenizing). Order mirrors the
+// name layer: `push` first, then ai / game / mobile / devops.
+const DOMAIN_TOPICS: Array<[RepoVibe, Set<string>]> = [
+  ['push', new Set(['push'])],
+  [
+    'ai',
+    new Set([
+      'ai',
+      'ml',
+      'llm',
+      'llms',
+      'gpt',
+      'nlp',
+      'machine-learning',
+      'deep-learning',
+      'artificial-intelligence',
+      'neural-network',
+      'neural-networks',
+      'computer-vision',
+      'generative-ai',
+      'transformers',
+      'diffusion',
+      'embeddings',
+    ]),
+  ],
+  [
+    'game',
+    new Set([
+      'game',
+      'gamedev',
+      'game-development',
+      'game-engine',
+      'gaming',
+      'unity',
+      'unity3d',
+      'godot',
+      'graphics',
+      'shaders',
+      'voxel',
+      'roguelike',
+    ]),
+  ],
+  [
+    'mobile',
+    new Set([
+      'android',
+      'ios',
+      'mobile',
+      'flutter',
+      'react-native',
+      'swift',
+      'swiftui',
+      'kotlin',
+      'jetpack-compose',
+      'capacitor',
+    ]),
+  ],
+  [
+    'devops',
+    new Set([
+      'devops',
+      'infrastructure',
+      'infra',
+      'terraform',
+      'kubernetes',
+      'k8s',
+      'helm',
+      'docker',
+      'ci-cd',
+      'cicd',
+      'gitops',
+      'ansible',
+      'pipeline',
+    ]),
+  ],
+];
+
+function domainVibeFromTopics(topics: string[]): RepoVibe | null {
+  const set = new Set(topics.map((t) => t.toLowerCase()));
+  for (const [vibe, matchers] of DOMAIN_TOPICS) {
+    for (const m of matchers) {
+      if (set.has(m)) return vibe;
+    }
+  }
+  return null;
+}
+
+// --- Layer 1b: domain themes from the repo name (fallback when topics are absent) ---
 // AI/game/devops are about *what a project does*, which leaves no trace in the
 // file tree, so the name is the only signal we have. Mobile appears here (for
 // `ios`/`android`-style names) and again in the language layer (swift/kotlin).
@@ -209,12 +305,21 @@ function languageVibeFromName(tokens: Set<string>): RepoVibe | null {
 }
 
 /**
- * Classify a repo's vibe from real signals, layered by trust: domain themes
- * (name-only) → language from the sandbox's manifest files → language from
- * GitHub's primary-language field → language guessed from the name → default.
+ * Classify a repo's vibe from real signals, layered by trust:
+ * 1. Domain from GitHub topics (owner-curated, the strongest domain signal).
+ * 2. Domain from the repo name (fallback when topics are absent).
+ * 3. Language from the sandbox's manifest files (the files actually exist).
+ * 4. Language from GitHub's primary-language field.
+ * 5. Language guessed from the name (sandbox-still-booting fallback).
+ * 6. Default.
  */
 export function classifyRepoVibe(signals: RepoVibeSignals): RepoVibe {
   const tokens = signals.fullName ? tokenize(signals.fullName) : new Set<string>();
+
+  if (signals.topics && signals.topics.length > 0) {
+    const topicDomain = domainVibeFromTopics(signals.topics);
+    if (topicDomain) return topicDomain;
+  }
 
   const domain = domainVibeFromName(tokens);
   if (domain) return domain;
