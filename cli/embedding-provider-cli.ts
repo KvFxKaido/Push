@@ -1,20 +1,18 @@
 /**
- * CLI EmbeddingProvider — opt-in semantic memory via a deployed Push Worker.
+ * CLI embedding-provider selection for semantic memory.
  *
- * Unlike the web app, the CLI has no inherent Worker URL — it talks straight to
- * LLM provider endpoints. Embeddings need `env.AI`, which only the Worker has,
- * so the CLI reaches semantic recall *only* when pointed at a Worker via
- * `PUSH_EMBED_URL` (the deploy's base URL, e.g. https://push.<acct>.workers.dev).
- * When unset, `installCliEmbeddingProvider()` is a no-op and retrieval stays
- * lexical — zero regression for fully-offline CLI runs.
+ * Precedence (in `installCliEmbeddingProvider`):
+ *   1. `PUSH_EMBED_URL` set  → remote provider, POSTs to a deployed Worker's
+ *      `/api/memory/embed` (the only place `env.AI` is reachable). Explicit
+ *      remote choice wins.
+ *   2. `PUSH_EMBED_LOCAL !== '0'` → local on-device provider (transformers.js
+ *      BGE), auto-on when the optional dependency is installed. Closes the
+ *      offline gap so the CLI no longer needs a Worker for semantic recall.
+ *   3. otherwise → no provider; retrieval stays lexical (zero regression).
  *
- * This is the known parity gap: the surface that most benefits from better
- * recall (small models on the CLI) gets it only with a Worker. A local
- * embedder (transformers.js BGE) is the follow-up that closes it offline.
- *
- * Auth: if `PUSH_EMBED_TOKEN` is set it rides as the `X-Push-Session` header
- * (what the gate reads), for deploys with the session gate enforced. In observe
- * mode the token is unnecessary.
+ * Auth (remote path): if `PUSH_EMBED_TOKEN` is set it rides as the
+ * `X-Push-Session` header (what the gate reads), for deploys with the session
+ * gate enforced. In observe mode the token is unnecessary.
  */
 
 import {
@@ -25,6 +23,7 @@ import {
   type EmbeddingProvider,
   type EmbedResult,
 } from '../lib/embedding-provider.js';
+import { createLocalEmbeddingProvider } from './embedding-provider-local.js';
 
 function resolveEmbedUrl(base: string): string {
   const trimmed = base.replace(/\/+$/, '');
@@ -67,8 +66,8 @@ function createCliEmbeddingProvider(
 const DEBUG = process.env.PUSH_DEBUG === '1' || process.env.PUSH_DEBUG === 'true';
 
 /**
- * Install the CLI embedding provider when `PUSH_EMBED_URL` is configured.
- * Idempotent and safe to call at each memory-store bootstrap site.
+ * Select and install the CLI embedding provider (see precedence in the module
+ * header). Idempotent and safe to call at each memory-store bootstrap site.
  *
  * Diagnostics go to stderr and only under PUSH_DEBUG: this runs on every CLI
  * command, and stdout is the user-output / `--json` channel — a stray log line
@@ -77,18 +76,27 @@ const DEBUG = process.env.PUSH_DEBUG === '1' || process.env.PUSH_DEBUG === 'true
  */
 export function installCliEmbeddingProvider(): void {
   const base = process.env.PUSH_EMBED_URL?.trim();
-  if (!base) {
+  if (base) {
+    const endpoint = resolveEmbedUrl(base);
+    setDefaultEmbeddingProvider(
+      createCliEmbeddingProvider(endpoint, process.env.PUSH_EMBED_TOKEN?.trim()),
+    );
+    if (DEBUG)
+      console.error(
+        JSON.stringify({ level: 'debug', event: 'cli_embed_provider_remote', endpoint }),
+      );
+    return;
+  }
+  if (process.env.PUSH_EMBED_LOCAL === '0') {
     setDefaultEmbeddingProvider(null);
     if (DEBUG)
       console.error(JSON.stringify({ level: 'debug', event: 'cli_embed_provider_lexical_only' }));
     return;
   }
-  const endpoint = resolveEmbedUrl(base);
-  setDefaultEmbeddingProvider(
-    createCliEmbeddingProvider(endpoint, process.env.PUSH_EMBED_TOKEN?.trim()),
-  );
-  if (DEBUG)
-    console.error(
-      JSON.stringify({ level: 'debug', event: 'cli_embed_provider_installed', endpoint }),
-    );
+  // Auto-on local embeddings. The model loads lazily on the first embed() call
+  // (not here — so memory-free commands don't pay for it). If the optional
+  // dependency isn't installed, the provider returns all-null and retrieval
+  // degrades to lexical — no error.
+  setDefaultEmbeddingProvider(createLocalEmbeddingProvider());
+  if (DEBUG) console.error(JSON.stringify({ level: 'debug', event: 'cli_embed_provider_local' }));
 }
