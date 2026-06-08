@@ -1,4 +1,4 @@
-const AI_ML_VERBS = [
+export const AI_ML_VERBS = [
   'Backpropagating...',
   'Training on your input...',
   'Inferring...',
@@ -6,7 +6,7 @@ const AI_ML_VERBS = [
   'Running inference...',
 ];
 
-const GAME_VERBS = [
+export const GAME_VERBS = [
   'Rendering ideas...',
   'Spawning thoughts...',
   'Loading assets...',
@@ -14,49 +14,49 @@ const GAME_VERBS = [
   'Rolling initiative...',
 ];
 
-const MOBILE_VERBS = [
+export const MOBILE_VERBS = [
   'Building for device...',
   'Packaging thoughts...',
   'Checking permissions...',
   'Compiling for arm64...',
 ];
 
-const RUST_VERBS = [
+export const RUST_VERBS = [
   'Fighting the borrow checker...',
   'Compiling...',
   'Satisfying the compiler...',
   'Checking lifetimes...',
 ];
 
-const PYTHON_VERBS = [
+export const PYTHON_VERBS = [
   'Pip installing wisdom...',
   'Indenting thoughts...',
   'Parsing the AST...',
   'Running in the REPL...',
 ];
 
-const WEB_JS_VERBS = [
+export const WEB_JS_VERBS = [
   'Bundling thoughts...',
   'Hydrating...',
   'Tree-shaking ideas...',
   'Hot reloading...',
 ];
 
-const PUSH_VERBS = [
+export const PUSH_VERBS = [
   'Orchestrating...',
   'Delegating to inner agent...',
   'Dispatching tool calls...',
   'Querying the sandbox...',
 ];
 
-const DEVOPS_VERBS = [
+export const DEVOPS_VERBS = [
   'Provisioning thoughts...',
   'Containerizing...',
   'Scaling to zero...',
   'Applying manifests...',
 ];
 
-const DEFAULT_VERBS = [
+export const DEFAULT_VERBS = [
   'Thinking...',
   'Reasoning...',
   'Processing...',
@@ -68,73 +68,57 @@ function pickRandom(pool: string[]): string {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
+// Split a repo identifier into lowercase alphanumeric tokens. We match on
+// exact tokens rather than raw substrings so that short keywords like `ai`,
+// `ml`, `ios`, and `ci` don't collide with longer words (`main`, `html`,
+// `studios`, `recipe`). `nextjs` stays one token; `react-native` splits into
+// `react` + `native`; the `owner/repo` slash is just another separator.
+function tokenize(value: string): Set<string> {
+  return new Set(
+    value
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean),
+  );
+}
+
 export function getVibeVerb(repoFullName: string | null): string {
   if (!repoFullName) return pickRandom(DEFAULT_VERBS);
 
-  const lower = repoFullName.toLowerCase();
+  const tokens = tokenize(repoFullName);
+  const has = (...keywords: string[]) => keywords.some((k) => tokens.has(k));
 
-  const aiKeywords = ['ai', 'ml', 'llm', 'gpt', 'neural', 'model', 'diffusion', 'embedding'];
-  if (aiKeywords.some((k) => lower.includes(k))) return pickRandom(AI_ML_VERBS);
+  if (
+    has('ai', 'ml', 'llm', 'gpt', 'neural', 'diffusion', 'embedding', 'embeddings', 'transformer')
+  )
+    return pickRandom(AI_ML_VERBS);
 
-  const gameKeywords = ['game', 'unity', 'godot', 'engine', 'render', 'shader', 'voxel'];
-  if (gameKeywords.some((k) => lower.includes(k))) return pickRandom(GAME_VERBS);
+  if (has('game', 'unity', 'godot', 'engine', 'render', 'shader', 'voxel'))
+    return pickRandom(GAME_VERBS);
 
-  const mobileKeywords = [
-    'android',
-    'ios',
-    'mobile',
-    'flutter',
-    'react-native',
-    'capacitor',
-    'swift',
-    'kotlin',
-  ];
-  if (mobileKeywords.some((k) => lower.includes(k))) return pickRandom(MOBILE_VERBS);
+  // `react-native` only counts as mobile when both tokens are present, so a
+  // plain `react` repo falls through to the web/JS pool below.
+  if (
+    has('android', 'ios', 'mobile', 'flutter', 'capacitor', 'swift', 'kotlin') ||
+    (tokens.has('react') && tokens.has('native'))
+  )
+    return pickRandom(MOBILE_VERBS);
 
-  const rustKeywords = ['rust', '-rs', '_rs'];
-  if (rustKeywords.some((k) => lower.includes(k))) return pickRandom(RUST_VERBS);
+  // `-rs` / `_rs` suffixes tokenize to a bare `rs`; same for `-py` / `_py`.
+  if (has('rust', 'rs')) return pickRandom(RUST_VERBS);
 
-  const pythonKeywords = [
-    'python',
-    '-py',
-    '_py',
-    'django',
-    'flask',
-    'fastapi',
-    'jupyter',
-    'notebook',
-  ];
-  if (pythonKeywords.some((k) => lower.includes(k))) return pickRandom(PYTHON_VERBS);
+  if (has('python', 'py', 'django', 'flask', 'fastapi', 'jupyter', 'notebook'))
+    return pickRandom(PYTHON_VERBS);
 
-  const webJsKeywords = [
-    'web',
-    'nextjs',
-    'next-js',
-    'vite',
-    'webpack',
-    'nuxt',
-    'svelte',
-    'angular',
-    'vue',
-    'react',
-  ];
-  if (webJsKeywords.some((k) => lower.includes(k))) return pickRandom(WEB_JS_VERBS);
+  if (has('web', 'nextjs', 'next', 'vite', 'webpack', 'nuxt', 'svelte', 'angular', 'vue', 'react'))
+    return pickRandom(WEB_JS_VERBS);
 
-  const [owner, repo] = lower.split('/');
-  if (owner === 'push' || (repo && repo.includes('push'))) return pickRandom(PUSH_VERBS);
+  // `push` is matched as a token from anywhere in the identifier (owner or
+  // repo), so it works whether or not the input contains a slash.
+  if (tokens.has('push')) return pickRandom(PUSH_VERBS);
 
-  const devopsKeywords = [
-    'infra',
-    'terraform',
-    'k8s',
-    'kubernetes',
-    'docker',
-    'deploy',
-    'ci',
-    'pipeline',
-    'helm',
-  ];
-  if (devopsKeywords.some((k) => lower.includes(k))) return pickRandom(DEVOPS_VERBS);
+  if (has('infra', 'terraform', 'k8s', 'kubernetes', 'docker', 'deploy', 'ci', 'pipeline', 'helm'))
+    return pickRandom(DEVOPS_VERBS);
 
   return pickRandom(DEFAULT_VERBS);
 }
