@@ -134,11 +134,34 @@ Source notes:
 [`PushGit Broker`](<../archive/decisions/PushGit Broker — Cross-Language RPC Seam.md>),
 [`Repo Mirror Design`](<../archive/decisions/Repo Mirror Design.md>).
 
+### 11. Settings unify behind GitHub identity
+
+Web info/settings move from per-browser `localStorage` into a
+server-authoritative document keyed by the GitHub identity — one KV doc behind
+the `/api/*` session gate, last-write-wins, generalizing the existing
+`pr-review-config` round-trip (which today uses a *global* key; the general doc
+keys by GitHub user id). The APK inherits this for free (it loads the prod origin
+via `server.url`, see #1). CLI is deferred, but the doc is identity-keyed from
+day one so it joins additively rather than via migration.
+
+Tiered: non-secret prefs/content migrate first; provider secrets wait on the
+auth enforce-flip (#1); auth tokens, model caches, and composer drafts stay
+device-local; session state and context-memory are separate concerns. The
+motivating payoff is reviewer visibility/control from any device, which falls out
+once reviewer config lives in the shared doc.
+
+Status:
+- Draft — design-in-motion, not roadmap-promoted.
+
+Design note:
+[`Settings Unification`](<../runbooks/Settings Unification — GitHub-Identity-Keyed Config.md>).
+
 ## Active Platform Work
 
 1. Apply/verify webhook PR-review production migration and permissions.
 2. Hydrate clients from `get_session_snapshot` where it replaces replay glue.
-3. Decide scratchpad storage substrate for PWA/APK/local surfaces.
+3. Decide scratchpad storage substrate for PWA/APK/local surfaces — folded into
+   the settings-unification draft (#11).
 4. Promote Cloudflare native backup migration when the current snapshot ceiling
    becomes painful or adjacent CF work makes it cheap.
 5. Finish provider support for detached background execution where it improves
