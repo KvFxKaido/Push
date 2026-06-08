@@ -3,6 +3,7 @@ import {
   __resetSettingsStoreForTests,
   getSetting,
   loadSettingsFromServer,
+  resetSettingsCache,
   setSetting,
   subscribeSetting,
 } from './settings-store';
@@ -75,6 +76,52 @@ describe('settings-store: write-through', () => {
     expect(url).toBe('/api/settings');
     expect(init.method).toBe('PUT');
     expect(JSON.parse(init.body as string)).toEqual({ values: { a: 1, b: 2 } });
+  });
+});
+
+describe('settings-store: write-during-flush race', () => {
+  it('does not drop an edit that lands while a flush is in flight', async () => {
+    vi.useFakeTimers();
+    let resolveFirst: (value: { ok: boolean; json: () => Promise<unknown> }) => void = () => {};
+    const okResponse = { ok: true, json: async () => ({ updatedAt: 1, values: {} }) };
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ ok: boolean; json: () => Promise<unknown> }>((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockResolvedValue(okResponse);
+    vi.stubGlobal('fetch', fetchMock);
+
+    setSetting('k', 1);
+    await vi.advanceTimersByTimeAsync(500); // flush #1 fires, PUT(k=1) hangs
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    setSetting('k', 2); // edit lands while flush #1 is pending
+    resolveFirst(okResponse); // flush #1 succeeds (it sent the stale k=1)
+    await vi.advanceTimersByTimeAsync(500); // microtasks + flush #2 fires
+
+    // k=2 must have been flushed, not orphaned by flush #1's success handler.
+    const lastBody = JSON.parse(
+      (fetchMock.mock.calls.at(-1) as [string, RequestInit])[1].body as string,
+    );
+    expect(lastBody).toEqual({ values: { k: 2 } });
+    expect(getSetting('k')).toBe(2);
+  });
+});
+
+describe('settings-store: resetSettingsCache', () => {
+  it('clears the cache and notifies subscribers (sign-out)', () => {
+    const cb = vi.fn();
+    subscribeSetting('k', cb);
+    setSetting('k', 'v');
+    expect(getSetting('k')).toBe('v');
+
+    resetSettingsCache();
+    expect(getSetting('k')).toBeUndefined();
+    expect(cb).toHaveBeenCalled();
   });
 });
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 're
 import { useGitHubAppAuth } from '@/hooks/useGitHubAppAuth';
 import { probeSession } from '@/lib/session-auth';
 import { subscribeSessionInvalid } from '@/lib/api-auth-fetch';
+import { loadSettingsFromServer, resetSettingsCache } from '@/lib/settings-store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -69,6 +70,15 @@ export function GitHubSignInGate({ children }: { children: ReactNode }) {
 
   // A mid-session 401 (session expired) returns us to the connect screen.
   useEffect(() => subscribeSessionInvalid(() => setProbe('no-session')), []);
+
+  // Drive the unified settings reconcile at the auth boundary: load the
+  // identity's document once a session is established, and drop the cache (incl.
+  // the localStorage mirror) when the session ends, so the next identity on this
+  // browser isn't hydrated from the previous user's settings.
+  useEffect(() => {
+    if (probe === 'authed') void loadSettingsFromServer();
+    else if (probe === 'no-session') resetSettingsCache();
+  }, [probe]);
 
   if (probe === 'authed') return <>{children}</>;
 

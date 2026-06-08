@@ -24,7 +24,7 @@
  */
 
 import { resolveApiUrl } from './api-url';
-import { safeStorageGet, safeStorageSet } from './safe-storage';
+import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storage';
 
 /** Canonical settings keys. One source of truth for the names hooks read. */
 export const SETTINGS_KEYS = {
@@ -85,7 +85,10 @@ let cache: SettingsDoc = hydrateFromMirror();
 const dirty = new Set<string>();
 const subscribers = new Map<string, Set<() => void>>();
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
-let loadStarted = false;
+// Coalesces concurrent loads but, unlike a one-shot flag, lets the load run
+// again after it settles — so a post-sign-in reconcile re-fetches the now-authed
+// document instead of being permanently skipped by the pre-auth boot attempt.
+let loadInFlight: Promise<void> | null = null;
 
 function log(level: 'info' | 'warn', event: string, ctx: Record<string, unknown> = {}): void {
   // Mirrors the worker's structured-log shape; cheap and only on notable paths.
@@ -140,6 +143,10 @@ function scheduleFlush(): void {
 async function flushDirty(): Promise<void> {
   if (typeof window === 'undefined' || dirty.size === 0) return;
   const sent = [...dirty];
+  // Clear the dirty keys *before* the await: if a write lands mid-flight,
+  // setSetting re-adds the key (with its newer value), so this flush's success
+  // path can't wipe an edit it never sent. On failure we re-add what we tried.
+  for (const key of sent) dirty.delete(key);
   const values: Record<string, unknown> = {};
   for (const key of sent) values[key] = cache.values[key];
   try {
@@ -150,14 +157,14 @@ async function flushDirty(): Promise<void> {
     });
     if (!res.ok) {
       log('warn', 'settings_flush_failed', { status: res.status, keys: sent.length });
-      return;
+      for (const key of sent) dirty.add(key);
     }
-    for (const key of sent) dirty.delete(key);
   } catch (err) {
     log('warn', 'settings_flush_error', {
       message: err instanceof Error ? err.message : String(err),
       keys: sent.length,
     });
+    for (const key of sent) dirty.add(key);
   }
 }
 
@@ -167,9 +174,16 @@ async function flushDirty(): Promise<void> {
  * the authoritative document — preserving any key still dirty after the flush
  * (e.g. offline) so it isn't clobbered.
  */
-export async function loadSettingsFromServer(): Promise<void> {
-  if (typeof window === 'undefined' || loadStarted) return;
-  loadStarted = true;
+export function loadSettingsFromServer(): Promise<void> {
+  if (typeof window === 'undefined') return Promise.resolve();
+  if (loadInFlight) return loadInFlight;
+  loadInFlight = doLoadSettings().finally(() => {
+    loadInFlight = null;
+  });
+  return loadInFlight;
+}
+
+async function doLoadSettings(): Promise<void> {
   await flushDirty();
   try {
     const res = await fetch(resolveApiUrl(SETTINGS_PATH), {
@@ -197,6 +211,22 @@ export async function loadSettingsFromServer(): Promise<void> {
   }
 }
 
+/**
+ * Drop all cached settings — the in-memory cache, the localStorage mirror, and
+ * any pending writes — and notify subscribers so hooks fall back to defaults.
+ * Called on sign-out / session invalidation so a different GitHub identity on the
+ * same browser is never hydrated from the previous user's mirror. The next
+ * `loadSettingsFromServer()` (driven on sign-in) repopulates from the server.
+ */
+export function resetSettingsCache(): void {
+  const affected = [...subscribers.keys(), ...Object.keys(cache.values)];
+  cache = emptyDoc();
+  dirty.clear();
+  loadInFlight = null;
+  safeStorageRemove(MIRROR_KEY);
+  notify(new Set(affected));
+}
+
 /** Subscribe to changes for a single key. Returns an unsubscribe function. */
 export function subscribeSetting(key: string, cb: () => void): () => void {
   let subs = subscribers.get(key);
@@ -218,5 +248,5 @@ export function __resetSettingsStoreForTests(): void {
   subscribers.clear();
   if (flushTimer) clearTimeout(flushTimer);
   flushTimer = null;
-  loadStarted = false;
+  loadInFlight = null;
 }

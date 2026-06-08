@@ -8,15 +8,13 @@ import { initPushTracing } from './lib/tracing.ts';
 import { installGlobalErrorHandlers, primeErrorReporting } from './lib/error-reporting.ts';
 import { perfMark } from './lib/perf-marks.ts';
 import { installApiAuthFetch } from './lib/api-auth-fetch.ts';
-import { loadSettingsFromServer } from './lib/settings-store.ts';
 
 perfMark('app:boot');
 installApiAuthFetch();
-// Reconcile the unified settings doc with the server once at boot. Fire-and-
-// forget: hooks already render from the synchronous localStorage-mirror cache,
-// and this swaps in the server-authoritative values when they arrive. Failures
-// are logged inside the store and leave the local cache in place.
-void loadSettingsFromServer();
+// The unified settings doc is reconciled with the server from the sign-in gate
+// once a session is established (GitHubSignInGate), not here — a boot-time call
+// would run before the session is minted, 401, and never retry. Hooks still
+// render from the synchronous localStorage-mirror cache for first paint.
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

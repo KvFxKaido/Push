@@ -173,6 +173,13 @@ export type SettingsWriteResult =
  * and persist. `updatedAt` advances monotonically so a clock that ticks slowly
  * (or two writes in the same millisecond) can't produce a non-increasing
  * timestamp.
+ *
+ * The read-modify-write is not atomic — KV has no transactions — so two
+ * overlapping writes can both read the same `existing` doc and the later put
+ * wins, dropping the earlier write's keys. This is the accepted LWW trade-off at
+ * single-user scale (decision §11 / runbook open question #4), heavily mitigated
+ * by the client's debounced single-flight flush. If concurrency ever matters,
+ * the fix is a DO-serialized writer, not a CRDT.
  */
 export async function writeSettingsMerge(
   env: Env,

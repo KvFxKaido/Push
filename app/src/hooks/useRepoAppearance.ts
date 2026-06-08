@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { safeStorageGet } from '@/lib/safe-storage';
 import { getSetting, SETTINGS_KEYS, setSetting, subscribeSetting } from '@/lib/settings-store';
 import {
@@ -38,16 +38,21 @@ function readMap(): RepoAppearanceMap {
 }
 
 export function useRepoAppearance() {
-  const [appearancesByRepo, setAppearancesByRepo] = useState<RepoAppearanceMap>(readMap);
-
-  // Re-derive when a server reconcile or another hook instance writes the map.
-  useEffect(
-    () => subscribeSetting(SETTINGS_KEYS.appearanceByRepo, () => setAppearancesByRepo(readMap())),
-    [],
+  // Subscribe to the raw map; derive the coerced map in a memo so the snapshot
+  // stays referentially stable (matches the unified pattern used by the other
+  // settings hooks; avoids tearing/extra renders).
+  const rawMap = useSyncExternalStore(
+    (cb) => subscribeSetting(SETTINGS_KEYS.appearanceByRepo, cb),
+    () => getSetting(SETTINGS_KEYS.appearanceByRepo),
+    () => undefined,
+  );
+  const appearancesByRepo = useMemo<RepoAppearanceMap>(
+    () => (rawMap !== undefined ? coerceMap(rawMap) : (legacyMap() ?? {})),
+    [rawMap],
   );
 
-  // Write-through. `setSetting` notifies synchronously, so the subscription above
-  // refreshes local state — no separate setState needed.
+  // Write-through. `setSetting` notifies synchronously, so useSyncExternalStore
+  // re-derives — no separate setState needed.
   const persist = useCallback((next: RepoAppearanceMap) => {
     setSetting(SETTINGS_KEYS.appearanceByRepo, next);
   }, []);
