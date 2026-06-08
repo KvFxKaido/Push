@@ -19,6 +19,7 @@ import { RelayModeChip } from '@/components/RelayModeChip';
 import { DaemonChatBody } from '@/components/daemon/DaemonChatBody';
 import { useApprovalQueue } from '@/hooks/useApprovalQueue';
 import { useDaemonRunState } from '@/hooks/useDaemonRunState';
+import { useRemoteTurnProjection } from '@/hooks/useRemoteTurnProjection';
 import { useRelayDaemon } from '@/hooks/useRelayDaemon';
 import type { SessionEvent } from '@/lib/local-daemon-binding';
 import { clearPairedRemote } from '@/lib/relay-storage';
@@ -50,17 +51,23 @@ export function RelayChatScreen({
 }: RelayChatScreenProps) {
   const approvals = useApprovalQueue();
   const runState = useDaemonRunState();
-  // Fan the live event stream to both consumers: approvals (drop on
-  // approval_received) and run-state (clear on run_complete). Destructure the
-  // (stable) handlers so the memo deps don't ride the per-render hook objects.
+  // Project the live content of a turn the TUI is driving (assistant tokens) so
+  // it streams into this client's transcript — see useRemoteTurnProjection.
+  const remoteTurn = useRemoteTurnProjection(runState.reattachedRun);
+  // Fan the live event stream to all consumers: approvals (drop on
+  // approval_received), run-state (clear on run_complete), and the remote-turn
+  // projection (accumulate assistant tokens). Destructure the (stable) handlers
+  // so the memo deps don't ride the per-render hook objects.
   const handleApprovalEvent = approvals.handleDaemonEvent;
   const handleRunStateEvent = runState.handleDaemonEvent;
+  const handleRemoteTurnEvent = remoteTurn.handleDaemonEvent;
   const handleEvent = useCallback(
     (event: SessionEvent) => {
       handleApprovalEvent(event);
       handleRunStateEvent(event);
+      handleRemoteTurnEvent(event);
     },
-    [handleApprovalEvent, handleRunStateEvent],
+    [handleApprovalEvent, handleRunStateEvent, handleRemoteTurnEvent],
   );
   const {
     status,
@@ -86,10 +93,12 @@ export function RelayChatScreen({
   // "Running…"/Stop can't act on a session this screen is no longer bound to.
   const { hydrateSnapshotApproval, clear: clearApprovals } = approvals;
   const { hydrateSnapshotRunState, clear: clearRunState } = runState;
+  const { reset: resetRemoteTurn } = remoteTurn;
   useEffect(() => {
     if (!sessionSnapshot) {
       clearApprovals();
       clearRunState();
+      resetRemoteTurn();
       return;
     }
     hydrateSnapshotApproval(sessionSnapshot.pendingApproval, sessionSnapshot.session.sessionId);
@@ -100,6 +109,7 @@ export function RelayChatScreen({
     hydrateSnapshotRunState,
     clearApprovals,
     clearRunState,
+    resetRemoteTurn,
   ]);
 
   const workspaceContext = useMemo(
@@ -146,6 +156,7 @@ export function RelayChatScreen({
       hydratedMessages={hydratedMessages}
       reattachedRun={runState.reattachedRun}
       onClearReattachedRun={runState.clear}
+      remoteTurnMessage={remoteTurn.remoteMessage}
     />
   );
 }
