@@ -128,6 +128,7 @@
     "ws": "^8.20.0"
   },
   "overrides": {
-    "typescript": "$typescript"
+    "typescript": "$typescript",
+    "sharp": "^0.33.5"
   }
 }
