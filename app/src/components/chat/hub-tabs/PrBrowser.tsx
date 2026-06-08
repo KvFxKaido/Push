@@ -589,7 +589,11 @@ export function PrBrowser({ repoFullName, activeBranch, onOpenDiff }: PrBrowserP
                   </p>
                   {detail.body ? (
                     <div className="text-push-base leading-relaxed text-push-fg-secondary">
-                      <PushMarkdownRenderer text={detail.body} isStreaming={false} enableCodeHighlight={false} />
+                      <PushMarkdownRenderer
+                        text={detail.body}
+                        isStreaming={false}
+                        enableCodeHighlight={false}
+                      />
                     </div>
                   ) : (
                     <p className="text-xs text-push-fg-dim">No description provided.</p>
