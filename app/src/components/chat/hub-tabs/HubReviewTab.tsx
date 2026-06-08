@@ -55,6 +55,7 @@ import {
 } from '@/components/chat/hub-styles';
 import type { DiffPreviewCardData, ReviewResult, ReviewComment, ReviewDepth } from '@/types';
 import { DiffSeamIcon, SendLiftIcon } from '@/components/icons/push-custom-icons';
+import { PushMarkdownRenderer } from '@/components/chat/PushMarkdownRenderer';
 
 interface HubReviewTabProps {
   sandboxId: string | null;
@@ -1195,9 +1196,14 @@ export function HubReviewTab({
                     </p>
                   </div>
                 )}
-                <p className="text-push-xs leading-relaxed text-push-fg-secondary">
-                  {result.summary}
-                </p>
+                {/* Rendering is sanitized in PushMarkdownRenderer; images are disallowed. */}
+                <div className="push-markdown text-push-xs leading-relaxed text-push-fg-secondary">
+                  <PushMarkdownRenderer
+                    text={result.summary}
+                    isStreaming={false}
+                    enableCodeHighlight={false}
+                  />
+                </div>
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   <button
                     onClick={handleSaveReview}
