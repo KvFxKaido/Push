@@ -430,9 +430,11 @@ export function HubReviewTab({
   const [reviewSource, setReviewSource] = useState<ReviewSourceMode>(
     hasGitHubSource ? 'github' : hasCommitSource ? 'commit' : 'sandbox',
   );
-  // Within the github source: run the advisory review (bound to the active
-  // branch's PR) vs. browse this repo's pull requests (inspection only).
-  const [githubView, setGithubView] = useState<'review' | 'pulls'>('review');
+  // Top-level Review-tab view: run the advisory review vs. browse this repo's
+  // pull requests (inspection only). Independent of the review source so PR
+  // browsing stays reachable on the default branch too (where there's no
+  // branch-diff source).
+  const [reviewView, setReviewView] = useState<'review' | 'pulls'>('review');
   const [selectedModels, setSelectedModels] =
     useState<Record<PreferredProvider, string>>(readReviewModels);
   const [status, setStatus] = useState<string | null>(null);
@@ -524,8 +526,6 @@ export function HubReviewTab({
 
   const handleSourceChange = useCallback((source: ReviewSourceMode) => {
     setReviewSource(source);
-    // Leaving github drops the browse sub-view back to the review pane.
-    if (source !== 'github') setGithubView('review');
     setResult(null);
     setReviewContext(null);
     setReviewDiffData(null);
@@ -928,14 +928,35 @@ export function HubReviewTab({
   // Browsing PRs is an inspection sub-view of the github source. Needs a repo and
   // the GitHub-app capability; advisory review stays bound to the active branch.
   const canBrowsePrs = Boolean(canBrowsePullRequests && repoFullName);
-  const showPullsView = reviewSource === 'github' && githubView === 'pulls' && canBrowsePrs;
+  const showPullsView = reviewView === 'pulls' && canBrowsePrs;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Controls */}
       <div className={`flex-shrink-0 border-b ${HUB_GLASS_HAIRLINE} px-3 py-3 space-y-2.5`}>
-        {/* Source selector — always available (PR browsing needs no provider) */}
-        {(hasGitHubSource || hasCommitSource || reviewSource === 'sandbox') && (
+        {/* Top-level view: run the advisory review vs. browse pull requests
+            (inspection). Reachable whenever PR browsing is allowed — independent
+            of the review source, so it works on the default branch too, and needs
+            no AI provider. */}
+        {canBrowsePrs && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              onClick={() => setReviewView('review')}
+              className={glassSegmentPillClass(reviewView === 'review')}
+            >
+              Review
+            </button>
+            <button
+              onClick={() => setReviewView('pulls')}
+              className={glassSegmentPillClass(reviewView === 'pulls')}
+            >
+              Pull requests
+            </button>
+          </div>
+        )}
+
+        {/* Source selector — only in the review view (browsing needs no source) */}
+        {!showPullsView && (hasGitHubSource || hasCommitSource || reviewSource === 'sandbox') && (
           <div className="space-y-1.5">
             <div className="flex items-center gap-1.5 flex-wrap">
               {hasGitHubSource && (
@@ -968,24 +989,6 @@ export function HubReviewTab({
                   ? 'Reviews the diff of the most recent commit — no sandbox needed.'
                   : 'Reviews uncommitted working tree edits in the current workspace.'}
             </p>
-          </div>
-        )}
-
-        {/* GitHub sub-view: run the advisory review vs. browse pull requests */}
-        {reviewSource === 'github' && canBrowsePrs && (
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <button
-              onClick={() => setGithubView('review')}
-              className={glassSegmentPillClass(githubView === 'review')}
-            >
-              Review
-            </button>
-            <button
-              onClick={() => setGithubView('pulls')}
-              className={glassSegmentPillClass(githubView === 'pulls')}
-            >
-              Pull requests
-            </button>
           </div>
         )}
 
