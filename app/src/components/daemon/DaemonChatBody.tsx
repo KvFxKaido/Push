@@ -47,6 +47,7 @@ import { cancelPendingApprovals } from '@/lib/daemon-cancel-pending-approvals';
 import { RepoAppearanceSheet } from '@/components/repo/RepoAppearanceSheet';
 import { useChat } from '@/hooks/useChat';
 import type { DaemonHydratedMessage } from '@/hooks/useRelayDaemon';
+import type { ReattachedRun } from '@/hooks/useDaemonRunState';
 import { useDaemonAppearance } from '@/hooks/useDaemonAppearance';
 import { useDaemonCliSessions } from '@/hooks/useDaemonCliSessions';
 import { useDaemonSettingsBundles } from '@/hooks/useDaemonSettingsBundles';
@@ -162,6 +163,15 @@ export interface DaemonChatBodyProps {
    * chat transcript so the phone sees the TUI session's history.
    */
   hydratedMessages?: DaemonHydratedMessage[] | null;
+  /**
+   * A foreground run this client reattached to but did not start (from
+   * `get_session_snapshot`, see `useDaemonRunState`). When set and the local
+   * user isn't streaming, the header shows a "Running…" indicator + a Stop that
+   * fires a session-scoped `cancel_run`. Null for local-PC mode / no live run.
+   */
+  reattachedRun?: ReattachedRun | null;
+  /** Clear the reattached-run indicator (local takeover, Stop, or completion). */
+  onClearReattachedRun?: () => void;
 }
 
 const MODE_HEADER_LABEL: Record<DaemonChatBodyProps['mode'], string> = {
@@ -202,6 +212,8 @@ export function DaemonChatBody({
   attachStatus = 'idle',
   attachError = null,
   hydratedMessages = null,
+  reattachedRun = null,
+  onClearReattachedRun,
 }: DaemonChatBodyProps) {
   // Provider/model picker plumbing — identical between the two
   // screens. The catalog hook owns reactive `activeBackend` state;
@@ -566,6 +578,37 @@ export function DaemonChatBody({
     abortStream();
   };
 
+  // The reattached run is the daemon's own — once the local user starts a turn
+  // (`isStreaming`), their Stop supersedes it, so drop the indicator.
+  useEffect(() => {
+    if (isStreaming) onClearReattachedRun?.();
+  }, [isStreaming, onClearReattachedRun]);
+
+  // Stop a run we reattached to but didn't start: there's no local stream to
+  // abort, so fire a session-scoped `cancel_run` directly (same shape as the
+  // pending-approval cancel). Clear optimistically; a `run_complete` would clear
+  // it anyway. Low-frequency click, so a per-render closure is fine.
+  const handleStopReattachedRun = () => {
+    if (!reattachedRun) return;
+    void request({
+      type: 'cancel_run',
+      sessionId: reattachedRun.sessionId,
+      payload: {
+        sessionId: reattachedRun.sessionId,
+        ...(typeof sessionAttachToken === 'string' && sessionAttachToken.length > 0
+          ? { attachToken: sessionAttachToken }
+          : {}),
+      },
+    }).catch(() => {
+      // Surfaces in the daemon audit log; the indicator is cleared regardless.
+    });
+    onClearReattachedRun?.();
+  };
+
+  // Show the busy indicator + remote Stop only when the daemon is mid-run and the
+  // local user hasn't taken over with their own turn.
+  const showReattachedRun = Boolean(reattachedRun) && !isStreaming;
+
   // Shell slide transform: drawer pushes the chat right, hub pulls it
   // left, matching ChatSurfaceScreen / WorkspaceChatRoute. Sized at the
   // same offsets so the visual rhythm is identical.
@@ -689,12 +732,21 @@ export function DaemonChatBody({
             </div>
 
             <div className="relative z-20 flex min-w-0 items-center justify-end gap-2">
-              {isStreaming && (
+              {showReattachedRun && (
+                <span
+                  className="inline-flex items-center gap-1.5 text-push-2xs text-push-fg-dim"
+                  title={`This session is mid-run on ${daemonLabel}`}
+                >
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
+                  Running…
+                </span>
+              )}
+              {(isStreaming || showReattachedRun) && (
                 <button
                   type="button"
-                  onClick={handleAbort}
+                  onClick={isStreaming ? handleAbort : handleStopReattachedRun}
                   aria-label="Stop"
-                  title="Stop the in-flight turn"
+                  title={isStreaming ? 'Stop the in-flight turn' : `Stop the run on ${daemonLabel}`}
                   className={`${HEADER_ROUND_BUTTON_CLASS} text-rose-300 hover:text-rose-200`}
                 >
                   <Square className="relative z-10 h-3.5 w-3.5" aria-hidden="true" />
