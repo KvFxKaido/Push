@@ -28,6 +28,7 @@
  */
 
 import type { MutableRefObject } from 'react';
+import { getVibeVerb } from '@/lib/repo-vibe-verbs';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 import { markJournalCheckpoint, type RunJournalEntry } from '@/lib/run-journal';
 import { summarizeQueuedInputPreview } from '@/lib/queued-follow-up-utils';
@@ -368,7 +369,7 @@ export async function runRoundLoop(
     if (round > 0) appendStreamingAssistantDraft(loopCtx);
 
     loopCtx.updateAgentStatus(
-      { active: true, phase: round === 0 ? 'Thinking...' : 'Responding...' },
+      { active: true, phase: round === 0 ? getVibeVerb(loopCtx.repoRef.current) : 'Responding...' },
       { chatId },
     );
 
