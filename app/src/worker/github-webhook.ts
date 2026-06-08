@@ -19,8 +19,16 @@
 import { timingSafeEqual, type Env } from './worker-middleware';
 import { isPrReviewEnabled } from './pr-review-config';
 
-/** Actions on a `pull_request` event that warrant a fresh review. */
-const REVIEWABLE_ACTIONS = new Set(['opened', 'synchronize', 'reopened', 'ready_for_review']);
+/**
+ * Actions on a `pull_request` event that warrant a fresh review.
+ *
+ * Deliberately excludes `synchronize` (a new commit pushed to the head branch):
+ * the reviewer fires on a PR's first open — and on reopen / draft-becomes-ready,
+ * which are the "first review" moment for those flows — but NOT on every
+ * subsequent commit. Re-reviewing each push is noisy and the follow-up bots
+ * (and the author) don't reliably re-read follow-up reviews anyway.
+ */
+const REVIEWABLE_ACTIONS = new Set(['opened', 'reopened', 'ready_for_review']);
 
 /** A pull_request event we've decided to review, with everything the DO needs. */
 export interface ReviewablePullRequest {

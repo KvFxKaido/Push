@@ -122,6 +122,14 @@ describe('selectReviewablePullRequest', () => {
       ok: false,
       reason: 'action:closed',
     });
+    // `synchronize` (a new commit pushed) is deliberately NOT reviewable — the
+    // reviewer only fires on a PR's first open, not on subsequent commits.
+    expect(
+      selectReviewablePullRequest('pull_request', prPayload({ action: 'synchronize' })),
+    ).toMatchObject({
+      ok: false,
+      reason: 'action:synchronize',
+    });
     expect(
       selectReviewablePullRequest(
         'pull_request',
