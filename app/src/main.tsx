@@ -8,9 +8,15 @@ import { initPushTracing } from './lib/tracing.ts';
 import { installGlobalErrorHandlers, primeErrorReporting } from './lib/error-reporting.ts';
 import { perfMark } from './lib/perf-marks.ts';
 import { installApiAuthFetch } from './lib/api-auth-fetch.ts';
+import { loadSettingsFromServer } from './lib/settings-store.ts';
 
 perfMark('app:boot');
 installApiAuthFetch();
+// Reconcile the unified settings doc with the server once at boot. Fire-and-
+// forget: hooks already render from the synchronous localStorage-mirror cache,
+// and this swaps in the server-authoritative values when they arrive. Failures
+// are logged inside the store and leave the local cache in place.
+void loadSettingsFromServer();
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

@@ -73,6 +73,7 @@ import { SNAPSHOT_KEY_PREFIX } from './src/worker/worker-cf-sandbox';
 import { handleAdminSnapshots } from './src/worker/admin-routes';
 import { handleJobsRoute, matchJobsRoute } from './src/worker/worker-coder-job';
 import { handlePrReviewRoute, matchPrReviewRoute } from './src/worker/worker-pr-review';
+import { handleSettingsRoute, matchSettingsRoute } from './src/worker/worker-settings';
 import { handleRelayRequest, matchRelayRoute } from './src/worker/relay-routes';
 import { handleStats } from './src/worker/worker-stats';
 import {
@@ -188,6 +189,18 @@ export default {
       if (prReviewAction) {
         return withRequestIdOnResponse(
           await handlePrReviewRoute(requestWithId, env, prReviewAction, ctx),
+          requestId,
+          requestWithId,
+          env,
+        );
+      }
+
+      // Unified web settings — one identity-keyed KV doc behind the session
+      // gate. See docs/decisions §11 (Settings unify behind GitHub identity).
+      const settingsAction = matchSettingsRoute(url.pathname, request.method);
+      if (settingsAction) {
+        return withRequestIdOnResponse(
+          await handleSettingsRoute(requestWithId, env, settingsAction),
           requestId,
           requestWithId,
           env,
