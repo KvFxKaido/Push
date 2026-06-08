@@ -144,9 +144,11 @@ keys by GitHub user id). The APK inherits this for free (it loads the prod origi
 via `server.url`, see #1). CLI is deferred, but the doc is identity-keyed from
 day one so it joins additively rather than via migration.
 
-Tiered: non-secret prefs/content migrate first; provider secrets wait on the
+Tiered: non-secret **preferences** migrate first; provider secrets wait on the
 auth enforce-flip (#1); auth tokens, model caches, and composer drafts stay
-device-local; session state and context-memory are separate concerns. The
+device-local; scratchpad/todo content, session state, and context-memory are
+separate concerns (scratchpad/todo reassigned to the session-continuity track —
+see Status). The
 motivating payoff is reviewer visibility/control from any device, which falls out
 once reviewer config lives in the shared doc.
 
@@ -158,11 +160,18 @@ Status:
   daemon), protect-main (global + per-repo), show-tool-activity, last-used
   models, user profile, and the in-app advisory reviewer picks
   (`reviewer.advisory.*`).
-- Deferred: the provider-secrets tier (waits on `PUSH_SESSION_GATE_ENFORCE`,
-  #1) and scratchpad/todo content — their substrate is the open question in #5
-  (remote-snapshot per-device slots vs. last-write-wins), and naive LWW on
-  actively-edited content would silently clobber a concurrent cross-device edit
-  against #5's "fail loudly, never silently" bar.
+- Deferred (still in scope): the provider-secrets tier — waits on
+  `PUSH_SESSION_GATE_ENFORCE` (#1).
+- Reassigned (out of settings scope): scratchpad/todo content. They were
+  mis-bucketed as "settings" — they are *content/context*, not preferences, and
+  pay off only next to the conversation that produced them. Two distinct things
+  hid under one name: (a) **UI scratchpad notes + todo** are repo-scoped working
+  artifacts that belong with chat/session continuity (the north-star track),
+  implemented there or not at all — syncing them alone is low ROI and incurs the
+  LWW data-loss risk on actively-edited content for little gain; (b) the
+  **"main as scratchpad" uncommitted code** is a git/sandbox substrate (#5 /
+  branch-on-commit), never a KV-doc concern. The settings doc stays
+  preferences-only.
 
 Design note:
 [`Settings Unification`](<../runbooks/Settings Unification — GitHub-Identity-Keyed Config.md>).
@@ -171,8 +180,10 @@ Design note:
 
 1. Apply/verify webhook PR-review production migration and permissions.
 2. Hydrate clients from `get_session_snapshot` where it replaces replay glue.
-3. Decide scratchpad storage substrate for PWA/APK/local surfaces — folded into
-   the settings-unification draft (#11).
+3. Decide scratchpad storage substrate for PWA/APK/local surfaces — the
+   uncommitted-code side rides #5 (main-as-scratchpad / branch-on-commit); the
+   UI scratchpad-notes + todo side rides chat/session continuity. Out of
+   settings-unification scope (#11).
 4. Promote Cloudflare native backup migration when the current snapshot ceiling
    becomes painful or adjacent CF work makes it cheap.
 5. Finish provider support for detached background execution where it improves

@@ -3,8 +3,9 @@
 Date: 2026-06-07
 Status: **MVP shipped** — the non-secret preferences tier (substrate + GET/PUT
 `/api/settings` + shared client store + autonomous-reviewer fold + non-secret
-hooks) has landed. Secrets tier and scratchpad/todo content are deferred (see
-phasing + open questions below).
+hooks) has landed. Secrets tier is deferred (waits on the auth enforce-flip);
+scratchpad/todo content is **reassigned out of scope** to chat/session
+continuity (see phasing + open questions below).
 Owner: Push
 
 Make the web app's info/settings the same on every device by moving them from
@@ -71,7 +72,12 @@ Recon of `app/src` persistence, 2026-06-07.
 | Toggles/prefs | `protect_main_default`, `push:workspace:show-tool-activity`, `push:chat:last-used-models` |
 | In-app advisory reviewer | `push:review:selected-provider`, `REVIEW_MODEL_KEYS.*` |
 | User info | `push_user_profile` |
-| Content | `push-scratchpad*`, `push-todo` |
+
+> **Reassigned, NOT migrated here:** `push-scratchpad*` and `push-todo` were
+> originally listed as "Content" in this table. They are **out of
+> settings-unification scope** — they're content/context, not preferences. See
+> the Open questions + decision §11: the UI scratchpad-notes + todo ride
+> chat/session continuity; the "main as scratchpad" uncommitted code rides #5.
 
 ### Migrate later — secrets tier (gated on the auth enforce-flip)
 
@@ -111,7 +117,7 @@ user.
    last-used models, profile, and the in-app advisory reviewer picks now read
    through the shared `settings-store` (sync first-paint cache, write-through,
    boot reconcile) with a per-hook legacy-localStorage fallback. Scratchpad/todo
-   *content* deferred (open question #4).
+   content is **out of scope** (reassigned to session continuity — open question #4).
 3. ✅ Reviewer config lives in the shared doc → controlling the reviewer from any
    device is unblocked.
 4. ⏳ Secrets tier — only after `PUSH_SESSION_GATE_ENFORCE=1` (or decide to never
@@ -134,19 +140,34 @@ _Resolved for the MVP (2026-06-07):_
 4. **Conflict policy:** **Last-write-wins, per key.** A `PUT` shallow-merges the
    changed keys server-side under one monotonic `updatedAt` — strictly better than
    whole-document LWW (no two-hooks-write clobber) without a CRDT. Accepted for
-   the rare two-devices-at-once edit at single-user scale. This is why
-   scratchpad/todo *content* is **not** in the MVP: LWW on actively-edited content
-   would silently lose a concurrent cross-device edit (decision #5's open
-   substrate question), so it waits for the per-device-slots decision.
+   the rare two-devices-at-once edit at single-user scale. LWW is fine for small,
+   rarely-co-edited *preferences*; it is the wrong fit for actively-edited content
+   (see #5 below).
+
+_Reassigned (2026-06-08):_
+
+5. **Scratchpad/todo — out of settings-unification scope.** Originally listed as
+   "Content" to migrate; reassigned after concluding they're content/context, not
+   preferences, and pay off only beside the conversation that produced them.
+   - **UI scratchpad-notes + todo** are repo-scoped working artifacts. Syncing
+     them on their own is low ROI (todo is regenerated per run; notes without the
+     chat are margin notes with no book) and would pay the LWW data-loss cost on
+     actively-edited content for little gain. They ride **chat/session
+     continuity** — implemented there, or not at all. No interim per-device-slots
+     scheme: that builds the hard part ahead of the thing that gives it meaning.
+   - **"Main as scratchpad" uncommitted code** is a git/sandbox substrate
+     (decision #5 / branch-on-commit), never a KV-doc concern.
+   The settings doc stays **preferences-only**.
 
 ## Dependencies
 
 - Secrets tier blocks on the auth enforce-flip (`PUSH_SESSION_GATE_ENFORCE`),
   see Platform decision #1.
-- Subsumes part of "Active Platform Work" item #3 (scratchpad storage substrate).
 
 ## Non-goals
 
 - CLI settings sync (deferred; additive later via an identity-keyed read).
 - Context-memory unification.
+- Scratchpad/todo content (reassigned to chat/session continuity — see Open
+  questions #5).
 - Multi-user / per-user partitioning beyond keying the doc by identity.
