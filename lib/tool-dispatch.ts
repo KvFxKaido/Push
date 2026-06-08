@@ -34,6 +34,7 @@ import {
   repairToolJson,
 } from './tool-call-parsing.js';
 import { recoverNamespacedToolCalls } from './tool-call-namespaced-recovery.js';
+import { recoverTokenDelimitedToolCalls } from './tool-call-token-recovery.js';
 import { recoverXmlToolCalls } from './tool-call-xml-recovery.js';
 
 /**
@@ -305,11 +306,13 @@ export function createToolDispatcher<TCall>(
       }
 
       // Phase 3: non-canonical recovery — namespaced `functions.<name>:<id>
-      // <args>` traces (Kimi/Blackbox) and XML-wrapped `<tool_call>…
-      // </tool_call>` blocks (Hermes/Qwen/Nous finetunes). Merged into
-      // one promotion path so a model that emits BOTH non-canonical
-      // shapes runs all of them rather than executing namespaced and
-      // dropping XML as malformed. Codex/Copilot review on PR #558.
+      // <args>` traces (Kimi/Blackbox), XML-wrapped `<tool_call>…
+      // </tool_call>` blocks (Hermes/Qwen/Nous finetunes), and
+      // token-delimited native formats (Mistral `[TOOL_CALLS]`, DeepSeek
+      // `<｜tool▁calls▁begin｜>`). Merged into one promotion path so a
+      // model that emits MULTIPLE non-canonical shapes runs all of them
+      // rather than executing one and dropping the rest as malformed.
+      // Codex/Copilot review on PR #558.
       // Two paths:
       //
       //   (a) Phases 1+2 produced zero candidates — promote ALL
@@ -336,6 +339,13 @@ export function createToolDispatcher<TCall>(
           args: r.args,
           offset: r.offset,
           sample: formatXmlRecoverySample(r.tool, r.args),
+        })),
+        ...recoverTokenDelimitedToolCalls(text).map((r) => ({
+          kind: 'token' as const,
+          tool: r.tool,
+          args: r.args,
+          offset: r.offset,
+          sample: formatTokenRecoverySample(r.format, r.tool, r.args),
         })),
       ].sort((a, b) => a.offset - b.offset);
 
@@ -414,7 +424,8 @@ export function createToolDispatcher<TCall>(
           candidate.kind === 'fenced' ||
           candidate.kind === 'bare' ||
           candidate.kind === 'namespaced' ||
-          candidate.kind === 'xml'
+          candidate.kind === 'xml' ||
+          candidate.kind === 'token'
         ) {
           malformed.push({
             reason: 'unknown_tool',
@@ -667,7 +678,7 @@ function isBareBlockEligible(
 }
 
 interface DetectedCandidate {
-  kind: 'fenced' | 'bare' | 'namespaced' | 'xml';
+  kind: 'fenced' | 'bare' | 'namespaced' | 'xml' | 'token';
   offset: number;
   parsed: ParsedToolObject;
   /** Truncatable sample for malformed reports. */
@@ -680,7 +691,7 @@ interface DetectedCandidate {
  * promotion/dedup loop instead of duplicating the logic per source.
  */
 interface RecoveredCandidate {
-  kind: 'namespaced' | 'xml';
+  kind: 'namespaced' | 'xml' | 'token';
   tool: string;
   args: Record<string, unknown>;
   offset: number;
@@ -696,6 +707,21 @@ interface RecoveredCandidate {
  */
 function formatXmlRecoverySample(tool: string, args: Record<string, unknown>): string {
   return `<tool_call> ${tool} ${JSON.stringify(args)}`;
+}
+
+/**
+ * Render a token-delimited recovery (Mistral `[TOOL_CALLS]` / DeepSeek
+ * native) as a short malformed-report sample. Labels the source format
+ * so the model sees a compact reminder of what it emitted without
+ * echoing the full original payload.
+ */
+function formatTokenRecoverySample(
+  format: 'mistral' | 'deepseek',
+  tool: string,
+  args: Record<string, unknown>,
+): string {
+  const label = format === 'mistral' ? '[TOOL_CALLS]' : '<｜tool▁call｜>';
+  return `${label} ${tool} ${JSON.stringify(args)}`;
 }
 
 type ParseOutcome =
