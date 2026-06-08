@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { ModelCatalog } from '@/hooks/useModelCatalog';
+import { useSetting } from '@/hooks/useSetting';
 import { normalizeKilocodeModelName, type PreferredProvider } from '@/lib/providers';
-import { safeStorageGet, safeStorageSet } from '@/lib/safe-storage';
+import { safeStorageGet } from '@/lib/safe-storage';
+import { getSetting, SETTINGS_KEYS } from '@/lib/settings-store';
 import type { AttachmentData, ChatSendOptions, Conversation } from '@/types';
 
-const CHAT_MODEL_MEMORY_STORAGE_KEY = 'push:chat:last-used-models';
+// Pre-unification localStorage key, read once as a fallback.
+const CHAT_MODEL_MEMORY_LEGACY_KEY = 'push:chat:last-used-models';
 
 const EMPTY_CHAT_MODEL_MEMORY: Record<PreferredProvider, string> = {
   ollama: '',
@@ -23,32 +26,44 @@ const EMPTY_CHAT_MODEL_MEMORY: Record<PreferredProvider, string> = {
   openadapter: '',
 };
 
-function readStoredChatModelMemory(): Record<PreferredProvider, string> {
-  const raw = safeStorageGet(CHAT_MODEL_MEMORY_STORAGE_KEY);
-  if (!raw) return { ...EMPTY_CHAT_MODEL_MEMORY };
+function coerceChatModelMemory(raw: unknown): Record<PreferredProvider, string> | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const parsed = raw as Partial<Record<PreferredProvider, unknown>>;
+  return {
+    ollama: typeof parsed.ollama === 'string' ? parsed.ollama.trim() : '',
+    openrouter: typeof parsed.openrouter === 'string' ? parsed.openrouter.trim() : '',
+    cloudflare: typeof parsed.cloudflare === 'string' ? parsed.cloudflare.trim() : '',
+    zen: typeof parsed.zen === 'string' ? parsed.zen.trim() : '',
+    nvidia: typeof parsed.nvidia === 'string' ? parsed.nvidia.trim() : '',
+    blackbox: typeof parsed.blackbox === 'string' ? parsed.blackbox.trim() : '',
+    azure: typeof parsed.azure === 'string' ? parsed.azure.trim() : '',
+    bedrock: typeof parsed.bedrock === 'string' ? parsed.bedrock.trim() : '',
+    vertex: typeof parsed.vertex === 'string' ? parsed.vertex.trim() : '',
+    anthropic: typeof parsed.anthropic === 'string' ? parsed.anthropic.trim() : '',
+    openai: typeof parsed.openai === 'string' ? parsed.openai.trim() : '',
+    google: typeof parsed.google === 'string' ? parsed.google.trim() : '',
+    kilocode:
+      typeof parsed.kilocode === 'string' ? normalizeKilocodeModelName(parsed.kilocode) : '',
+    openadapter: typeof parsed.openadapter === 'string' ? parsed.openadapter.trim() : '',
+  };
+}
 
+function legacyChatModelMemory(): Record<PreferredProvider, string> | undefined {
+  const raw = safeStorageGet(CHAT_MODEL_MEMORY_LEGACY_KEY);
+  if (!raw) return undefined;
   try {
-    const parsed = JSON.parse(raw) as Partial<Record<PreferredProvider, unknown>>;
-    return {
-      ollama: typeof parsed.ollama === 'string' ? parsed.ollama.trim() : '',
-      openrouter: typeof parsed.openrouter === 'string' ? parsed.openrouter.trim() : '',
-      cloudflare: typeof parsed.cloudflare === 'string' ? parsed.cloudflare.trim() : '',
-      zen: typeof parsed.zen === 'string' ? parsed.zen.trim() : '',
-      nvidia: typeof parsed.nvidia === 'string' ? parsed.nvidia.trim() : '',
-      blackbox: typeof parsed.blackbox === 'string' ? parsed.blackbox.trim() : '',
-      azure: typeof parsed.azure === 'string' ? parsed.azure.trim() : '',
-      bedrock: typeof parsed.bedrock === 'string' ? parsed.bedrock.trim() : '',
-      vertex: typeof parsed.vertex === 'string' ? parsed.vertex.trim() : '',
-      anthropic: typeof parsed.anthropic === 'string' ? parsed.anthropic.trim() : '',
-      openai: typeof parsed.openai === 'string' ? parsed.openai.trim() : '',
-      google: typeof parsed.google === 'string' ? parsed.google.trim() : '',
-      kilocode:
-        typeof parsed.kilocode === 'string' ? normalizeKilocodeModelName(parsed.kilocode) : '',
-      openadapter: typeof parsed.openadapter === 'string' ? parsed.openadapter.trim() : '',
-    };
+    return coerceChatModelMemory(JSON.parse(raw));
   } catch {
-    return { ...EMPTY_CHAT_MODEL_MEMORY };
+    return undefined;
   }
+}
+
+/** The current effective remembered-models record (store → legacy → empty). */
+function currentChatModelMemory(): Record<PreferredProvider, string> {
+  return (
+    coerceChatModelMemory(getSetting(SETTINGS_KEYS.lastUsedModels)) ??
+    legacyChatModelMemory() ?? { ...EMPTY_CHAT_MODEL_MEMORY }
+  );
 }
 
 type ChatComposerDraft = {
@@ -147,13 +162,12 @@ export function useWorkspaceComposerState({
     catalog.availableProviders,
   ]);
 
-  const [rememberedChatModels, setRememberedChatModels] = useState<
+  const [rememberedChatModels, setRememberedChatModels] = useSetting<
     Record<PreferredProvider, string>
-  >(() => readStoredChatModelMemory());
-
-  useEffect(() => {
-    safeStorageSet(CHAT_MODEL_MEMORY_STORAGE_KEY, JSON.stringify(rememberedChatModels));
-  }, [rememberedChatModels]);
+  >(SETTINGS_KEYS.lastUsedModels, EMPTY_CHAT_MODEL_MEMORY, {
+    coerce: coerceChatModelMemory,
+    legacyFallback: legacyChatModelMemory,
+  });
 
   const rememberChatModel = useCallback(
     (provider: PreferredProvider, model: string | null | undefined) => {
@@ -164,11 +178,12 @@ export function useWorkspaceComposerState({
             : model.trim()
           : '';
       if (!trimmed) return;
-      setRememberedChatModels((prev) =>
-        prev[provider] === trimmed ? prev : { ...prev, [provider]: trimmed },
-      );
+      // Read fresh from the store rather than a possibly-stale closure value.
+      const prev = currentChatModelMemory();
+      if (prev[provider] === trimmed) return;
+      setRememberedChatModels({ ...prev, [provider]: trimmed });
     },
-    [],
+    [setRememberedChatModels],
   );
 
   const normalizeChatDraft = useCallback(

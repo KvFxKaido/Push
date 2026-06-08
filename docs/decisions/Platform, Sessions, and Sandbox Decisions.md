@@ -151,7 +151,18 @@ motivating payoff is reviewer visibility/control from any device, which falls ou
 once reviewer config lives in the shared doc.
 
 Status:
-- Draft — design-in-motion, not roadmap-promoted.
+- Shipped (MVP): the identity-keyed settings document + `GET/PUT /api/settings`
+  behind the session gate, the shared client store (sync cache + write-through +
+  boot reconcile), the autonomous-reviewer config fold (`reviewer.autonomous.*`),
+  and the non-secret preference hooks — appearance (chat-mode / per-repo /
+  daemon), protect-main (global + per-repo), show-tool-activity, last-used
+  models, user profile, and the in-app advisory reviewer picks
+  (`reviewer.advisory.*`).
+- Deferred: the provider-secrets tier (waits on `PUSH_SESSION_GATE_ENFORCE`,
+  #1) and scratchpad/todo content — their substrate is the open question in #5
+  (remote-snapshot per-device slots vs. last-write-wins), and naive LWW on
+  actively-edited content would silently clobber a concurrent cross-device edit
+  against #5's "fail loudly, never silently" bar.
 
 Design note:
 [`Settings Unification`](<../runbooks/Settings Unification — GitHub-Identity-Keyed Config.md>).

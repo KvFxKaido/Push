@@ -1,62 +1,70 @@
-import { useCallback, useState } from 'react';
-import { safeStorageGet, safeStorageSet } from '@/lib/safe-storage';
+import { useCallback, useEffect, useState } from 'react';
+import { safeStorageGet } from '@/lib/safe-storage';
+import { getSetting, SETTINGS_KEYS, setSetting, subscribeSetting } from '@/lib/settings-store';
 import {
   coerceRepoAppearance,
   DEFAULT_REPO_APPEARANCE,
   type RepoAppearance,
 } from '@/lib/repo-appearance';
 
-const REPO_APPEARANCE_STORAGE_KEY = 'push:repo-appearance:v1';
+const LEGACY_KEY = 'push:repo-appearance:v1';
 
 type RepoAppearanceMap = Record<string, RepoAppearance>;
 
-function loadRepoAppearances(): RepoAppearanceMap {
-  const raw = safeStorageGet(REPO_APPEARANCE_STORAGE_KEY);
-  if (!raw) return {};
+function coerceMap(raw: unknown): RepoAppearanceMap {
+  if (!raw || typeof raw !== 'object') return {};
+  const next: RepoAppearanceMap = {};
+  for (const [repoFullName, value] of Object.entries(raw as Record<string, unknown>)) {
+    const appearance = coerceRepoAppearance(value);
+    if (appearance) next[repoFullName] = appearance;
+  }
+  return next;
+}
 
+function legacyMap(): RepoAppearanceMap | undefined {
+  const raw = safeStorageGet(LEGACY_KEY);
+  if (!raw) return undefined;
   try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const next: RepoAppearanceMap = {};
-    for (const [repoFullName, value] of Object.entries(parsed)) {
-      const appearance = coerceRepoAppearance(value);
-      if (appearance) {
-        next[repoFullName] = appearance;
-      }
-    }
-    return next;
+    return coerceMap(JSON.parse(raw));
   } catch {
-    return {};
+    return undefined;
   }
 }
 
-export function useRepoAppearance() {
-  const [appearancesByRepo, setAppearancesByRepo] =
-    useState<RepoAppearanceMap>(loadRepoAppearances);
+function readMap(): RepoAppearanceMap {
+  const stored = getSetting(SETTINGS_KEYS.appearanceByRepo);
+  if (stored !== undefined) return coerceMap(stored);
+  return legacyMap() ?? {};
+}
 
+export function useRepoAppearance() {
+  const [appearancesByRepo, setAppearancesByRepo] = useState<RepoAppearanceMap>(readMap);
+
+  // Re-derive when a server reconcile or another hook instance writes the map.
+  useEffect(
+    () => subscribeSetting(SETTINGS_KEYS.appearanceByRepo, () => setAppearancesByRepo(readMap())),
+    [],
+  );
+
+  // Write-through. `setSetting` notifies synchronously, so the subscription above
+  // refreshes local state — no separate setState needed.
   const persist = useCallback((next: RepoAppearanceMap) => {
-    safeStorageSet(REPO_APPEARANCE_STORAGE_KEY, JSON.stringify(next));
-    setAppearancesByRepo(next);
+    setSetting(SETTINGS_KEYS.appearanceByRepo, next);
   }, []);
 
   const setRepoAppearance = useCallback((repoFullName: string, appearance: RepoAppearance) => {
     if (!repoFullName) return;
     const normalized = coerceRepoAppearance(appearance) ?? DEFAULT_REPO_APPEARANCE;
-    setAppearancesByRepo((prev) => {
-      const next = { ...prev, [repoFullName]: normalized };
-      safeStorageSet(REPO_APPEARANCE_STORAGE_KEY, JSON.stringify(next));
-      return next;
-    });
+    setSetting(SETTINGS_KEYS.appearanceByRepo, { ...readMap(), [repoFullName]: normalized });
   }, []);
 
   const clearRepoAppearance = useCallback((repoFullName: string) => {
     if (!repoFullName) return;
-    setAppearancesByRepo((prev) => {
-      if (!prev[repoFullName]) return prev;
-      const next = { ...prev };
-      delete next[repoFullName];
-      safeStorageSet(REPO_APPEARANCE_STORAGE_KEY, JSON.stringify(next));
-      return next;
-    });
+    const current = readMap();
+    if (!current[repoFullName]) return;
+    const next = { ...current };
+    delete next[repoFullName];
+    setSetting(SETTINGS_KEYS.appearanceByRepo, next);
   }, []);
 
   const getRepoAppearance = useCallback(

@@ -1,8 +1,11 @@
 /**
  * useDaemonAppearance — per-mode appearance state for daemon-backed
- * workspaces. Mirrors `useChatModeAppearance` in shape: read from
- * localStorage at mount, re-read when `mode` changes, write through on
- * every change.
+ * workspaces. Mirrors `useChatModeAppearance` in shape: read at mount,
+ * re-read when `mode` changes, write through on every change.
+ *
+ * Storage moved from per-mode localStorage keys into the unified settings
+ * document (a `{ [mode]: RepoAppearance }` map under one canonical key), so the
+ * daemon palette follows the signed-in identity across devices.
  *
  * Why keyed by mode: local-pc and relay sessions render the same shell
  * but the user is likely to think of them as different "places" (one
@@ -10,8 +13,9 @@
  * appearance would force them to look identical; keying per mode lets
  * the user paint each lane distinctly without bleeding into the other.
  */
-import { useCallback, useEffect, useState } from 'react';
-import { safeStorageGet, safeStorageSet } from '@/lib/safe-storage';
+import { useCallback, useMemo, useSyncExternalStore } from 'react';
+import { safeStorageGet } from '@/lib/safe-storage';
+import { getSetting, SETTINGS_KEYS, setSetting, subscribeSetting } from '@/lib/settings-store';
 import {
   coerceRepoAppearance,
   DEFAULT_REPO_APPEARANCE,
@@ -20,6 +24,8 @@ import {
 import type { WorkspaceMode } from '@/types';
 
 type DaemonAppearanceMode = Extract<WorkspaceMode, 'local-pc' | 'relay'>;
+
+type DaemonAppearanceMap = Partial<Record<DaemonAppearanceMode, RepoAppearance>>;
 
 // Daemon sessions deliberately start with the glow off — the animated
 // blob layer is a wasted compositor cost when the user hasn't opted in
@@ -32,45 +38,53 @@ const DAEMON_DEFAULT_APPEARANCE: RepoAppearance = {
   glowEnabled: false,
 };
 
-function storageKey(mode: DaemonAppearanceMode): string {
+// Pre-unification per-mode localStorage key, read once as a fallback.
+function legacyKey(mode: DaemonAppearanceMode): string {
   return `push:daemon-appearance:${mode}:v1`;
 }
 
-function loadAppearance(mode: DaemonAppearanceMode): RepoAppearance {
-  const raw = safeStorageGet(storageKey(mode));
-  if (!raw) return DAEMON_DEFAULT_APPEARANCE;
+function legacyAppearance(mode: DaemonAppearanceMode): RepoAppearance | undefined {
+  const raw = safeStorageGet(legacyKey(mode));
+  if (!raw) return undefined;
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    return coerceRepoAppearance(parsed) ?? DAEMON_DEFAULT_APPEARANCE;
+    return coerceRepoAppearance(JSON.parse(raw)) ?? undefined;
   } catch {
-    return DAEMON_DEFAULT_APPEARANCE;
+    return undefined;
   }
 }
 
-export function useDaemonAppearance(mode: DaemonAppearanceMode) {
-  const [appearance, setAppearanceState] = useState<RepoAppearance>(() => loadAppearance(mode));
+function resolveMode(mode: DaemonAppearanceMode, rawMap: unknown): RepoAppearance {
+  const map = rawMap && typeof rawMap === 'object' ? (rawMap as DaemonAppearanceMap) : undefined;
+  const stored = map?.[mode];
+  const coerced = stored !== undefined ? coerceRepoAppearance(stored) : null;
+  return coerced ?? legacyAppearance(mode) ?? DAEMON_DEFAULT_APPEARANCE;
+}
 
-  // Re-read from storage when `mode` changes. The hook initializes
-  // once at mount, so without this a parent that swaps between modes
-  // on the same mounted DaemonChatBody (theoretical today, but cheap
-  // to guard) would keep showing the previous mode's palette until a
-  // manual update or unmount.
-  useEffect(() => {
-    setAppearanceState(loadAppearance(mode));
-  }, [mode]);
+function writeMode(mode: DaemonAppearanceMode, value: RepoAppearance): void {
+  const map = getSetting<DaemonAppearanceMap>(SETTINGS_KEYS.appearanceDaemon) ?? {};
+  setSetting(SETTINGS_KEYS.appearanceDaemon, { ...map, [mode]: value });
+}
+
+export function useDaemonAppearance(mode: DaemonAppearanceMode) {
+  // Subscribe to the raw daemon-appearance map; the per-mode value is derived in
+  // a memo so the snapshot stays referentially stable (the map ref only changes
+  // on a real write) and a `mode` change re-derives without a setState-in-effect.
+  const rawMap = useSyncExternalStore(
+    (cb) => subscribeSetting(SETTINGS_KEYS.appearanceDaemon, cb),
+    () => getSetting(SETTINGS_KEYS.appearanceDaemon),
+    () => undefined,
+  );
+  const appearance = useMemo(() => resolveMode(mode, rawMap), [mode, rawMap]);
 
   const setAppearance = useCallback(
     (next: RepoAppearance) => {
-      const normalized = coerceRepoAppearance(next) ?? DAEMON_DEFAULT_APPEARANCE;
-      safeStorageSet(storageKey(mode), JSON.stringify(normalized));
-      setAppearanceState(normalized);
+      writeMode(mode, coerceRepoAppearance(next) ?? DAEMON_DEFAULT_APPEARANCE);
     },
     [mode],
   );
 
   const resetAppearance = useCallback(() => {
-    safeStorageSet(storageKey(mode), JSON.stringify(DAEMON_DEFAULT_APPEARANCE));
-    setAppearanceState(DAEMON_DEFAULT_APPEARANCE);
+    writeMode(mode, DAEMON_DEFAULT_APPEARANCE);
   }, [mode]);
 
   return { appearance, setAppearance, resetAppearance };

@@ -12,31 +12,30 @@ vi.mock('@/lib/safe-storage', () => ({
   safeStorageRemove: (key: string) => storage.remove(key),
 }));
 
-const state = vi.hoisted(() => ({
-  globalDefault: false,
-  repoOverride: 'inherit' as 'inherit' | 'always' | 'never',
-  setGlobalDefaultCalls: [] as boolean[],
-  setRepoOverrideCalls: [] as ('inherit' | 'always' | 'never')[],
+// The settings store is the persistence backend. getSetting returns the cached
+// doc value (drives the read paths; falls back to legacy localStorage when
+// undefined); setSetting is the write spy the persistence assertions check.
+const settings = vi.hoisted(() => ({
+  get: vi.fn<(key: string) => unknown>(() => undefined),
+  set: vi.fn<(key: string, value: unknown) => void>(),
 }));
 
+vi.mock('@/lib/settings-store', () => ({
+  SETTINGS_KEYS: {
+    protectMainDefault: 'prefs.protectMain.default',
+    protectMainByRepo: 'prefs.protectMain.byRepo',
+  },
+  getSetting: (key: string) => settings.get(key),
+  setSetting: (key: string, value: unknown) => settings.set(key, value),
+  subscribeSetting: () => () => {},
+}));
+
+// Minimal React shims: useSyncExternalStore returns the live snapshot, useMemo
+// recomputes eagerly, useCallback is identity.
 vi.mock('react', () => ({
   useCallback: <T extends (...args: never[]) => unknown>(fn: T) => fn,
-  useEffect: () => {},
-  useState: <T>(initial: T | (() => T)) => {
-    const seed = typeof initial === 'function' ? (initial as () => T)() : initial;
-    // Route state to our controllable store for the two useState calls.
-    if (typeof seed === 'boolean') {
-      return [
-        state.globalDefault as T,
-        ((value: boolean) => state.setGlobalDefaultCalls.push(value)) as unknown,
-      ];
-    }
-    return [
-      state.repoOverride as T,
-      ((value: 'inherit' | 'always' | 'never') =>
-        state.setRepoOverrideCalls.push(value)) as unknown,
-    ];
-  },
+  useMemo: <T>(fn: () => T) => fn(),
+  useSyncExternalStore: <T>(_subscribe: unknown, getSnapshot: () => T) => getSnapshot(),
 }));
 
 const { useProtectMain, getIsMainProtected } = await import('./useProtectMain');
@@ -45,10 +44,8 @@ beforeEach(() => {
   storage.get.mockReset();
   storage.set.mockReset().mockReturnValue(true);
   storage.remove.mockReset();
-  state.globalDefault = false;
-  state.repoOverride = 'inherit';
-  state.setGlobalDefaultCalls = [];
-  state.setRepoOverrideCalls = [];
+  settings.get.mockReset().mockReturnValue(undefined);
+  settings.set.mockReset();
 });
 
 describe('getIsMainProtected', () => {
@@ -73,56 +70,71 @@ describe('getIsMainProtected', () => {
     storage.get.mockImplementation((key) => (key === 'protect_main_default' ? 'false' : null));
     expect(getIsMainProtected()).toBe(false);
   });
+
+  it('prefers the settings doc over the legacy localStorage value', () => {
+    settings.get.mockImplementation((key) =>
+      key === 'prefs.protectMain.byRepo' ? { 'owner/repo': 'never' } : undefined,
+    );
+    storage.get.mockImplementation((key) =>
+      key === 'protect_main_owner/repo' ? 'always' : 'true',
+    );
+    expect(getIsMainProtected('owner/repo')).toBe(false);
+  });
 });
 
 describe('useProtectMain', () => {
   it('returns isProtected=true when the repo override is always', () => {
-    state.repoOverride = 'always';
-    state.globalDefault = false;
+    settings.get.mockImplementation((key) =>
+      key === 'prefs.protectMain.byRepo' ? { 'owner/repo': 'always' } : undefined,
+    );
     const result = useProtectMain('owner/repo');
     expect(result.isProtected).toBe(true);
   });
 
   it('returns isProtected=false when the repo override is never, even with a true global default', () => {
-    state.repoOverride = 'never';
-    state.globalDefault = true;
+    settings.get.mockImplementation((key) => {
+      if (key === 'prefs.protectMain.byRepo') return { 'owner/repo': 'never' };
+      if (key === 'prefs.protectMain.default') return true;
+      return undefined;
+    });
     const result = useProtectMain('owner/repo');
     expect(result.isProtected).toBe(false);
   });
 
   it('falls back to the global default when the repo override is inherit', () => {
-    state.repoOverride = 'inherit';
-    state.globalDefault = true;
+    settings.get.mockImplementation((key) =>
+      key === 'prefs.protectMain.default' ? true : undefined,
+    );
     const result = useProtectMain('owner/repo');
     expect(result.isProtected).toBe(true);
   });
 
-  it('persists the global default when toggled', () => {
+  it('persists the global default to the settings doc when toggled', () => {
     const result = useProtectMain();
     result.setGlobalDefault(true);
-    expect(storage.set).toHaveBeenCalledWith('protect_main_default', 'true');
-    expect(state.setGlobalDefaultCalls).toEqual([true]);
+    expect(settings.set).toHaveBeenCalledWith('prefs.protectMain.default', true);
   });
 
-  it('clears the stored override when the value returns to inherit', () => {
+  it('drops the repo from the override map when the value returns to inherit', () => {
+    settings.get.mockImplementation((key) =>
+      key === 'prefs.protectMain.byRepo' ? { 'owner/repo': 'always' } : undefined,
+    );
     const result = useProtectMain('owner/repo');
     result.setRepoOverride('inherit');
-    expect(storage.remove).toHaveBeenCalledWith('protect_main_owner/repo');
-    expect(storage.set).not.toHaveBeenCalled();
-    expect(state.setRepoOverrideCalls).toEqual(['inherit']);
+    expect(settings.set).toHaveBeenCalledWith('prefs.protectMain.byRepo', {});
   });
 
-  it('writes the override key for always/never values', () => {
+  it('writes the override into the map for always/never values', () => {
     const result = useProtectMain('owner/repo');
     result.setRepoOverride('always');
-    expect(storage.set).toHaveBeenCalledWith('protect_main_owner/repo', 'always');
+    expect(settings.set).toHaveBeenCalledWith('prefs.protectMain.byRepo', {
+      'owner/repo': 'always',
+    });
   });
 
-  it('skips writing overrides when no repoFullName is active', () => {
+  it('is a no-op when no repoFullName is active', () => {
     const result = useProtectMain();
     result.setRepoOverride('always');
-    expect(storage.set).not.toHaveBeenCalled();
-    expect(storage.remove).not.toHaveBeenCalled();
-    expect(state.setRepoOverrideCalls).toEqual(['always']);
+    expect(settings.set).not.toHaveBeenCalled();
   });
 });

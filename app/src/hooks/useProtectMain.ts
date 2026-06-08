@@ -1,64 +1,88 @@
-import { useCallback, useEffect, useState } from 'react';
-import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
-
-const GLOBAL_DEFAULT_KEY = 'protect_main_default';
+import { useCallback, useMemo, useSyncExternalStore } from 'react';
+import { safeStorageGet } from '@/lib/safe-storage';
+import { getSetting, SETTINGS_KEYS, setSetting, subscribeSetting } from '@/lib/settings-store';
 
 export type RepoOverride = 'inherit' | 'always' | 'never';
 
-function repoKey(repoFullName: string): string {
+type RepoOverrideMap = Record<string, 'always' | 'never'>;
+
+// Pre-unification localStorage keys, read once as a fallback so existing
+// protection prefs survive the first load and migrate into the doc on write.
+const LEGACY_GLOBAL_KEY = 'protect_main_default';
+function legacyRepoKey(repoFullName: string): string {
   return `protect_main_${repoFullName}`;
 }
 
-function loadGlobalDefault(): boolean {
-  return safeStorageGet(GLOBAL_DEFAULT_KEY) === 'true';
+function resolveOverrideMap(raw: unknown): RepoOverrideMap {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: RepoOverrideMap = {};
+  for (const [repo, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (value === 'always' || value === 'never') out[repo] = value;
+  }
+  return out;
 }
 
-function loadRepoOverride(repoFullName?: string): RepoOverride {
+function resolveGlobalDefault(raw: unknown): boolean {
+  if (typeof raw === 'boolean') return raw;
+  return safeStorageGet(LEGACY_GLOBAL_KEY) === 'true';
+}
+
+function resolveRepoOverride(repoFullName: string | undefined, rawMap: unknown): RepoOverride {
   if (!repoFullName) return 'inherit';
-  const raw = safeStorageGet(repoKey(repoFullName));
-  if (raw === 'always' || raw === 'never') return raw;
+  const fromDoc = resolveOverrideMap(rawMap)[repoFullName];
+  if (fromDoc) return fromDoc;
+  const legacy = safeStorageGet(legacyRepoKey(repoFullName));
+  if (legacy === 'always' || legacy === 'never') return legacy;
   return 'inherit';
 }
 
 /**
  * Standalone (non-hook) getter for use in library code that can't call hooks.
- * Returns true if main branch protection is active for the given repo.
+ * Returns true if main branch protection is active for the given repo. Reads the
+ * unified settings cache, falling back to the pre-migration localStorage values.
  */
 export function getIsMainProtected(repoFullName?: string): boolean {
-  const override = loadRepoOverride(repoFullName);
+  const override = resolveRepoOverride(repoFullName, getSetting(SETTINGS_KEYS.protectMainByRepo));
   if (override === 'always') return true;
   if (override === 'never') return false;
-  return loadGlobalDefault();
+  return resolveGlobalDefault(getSetting(SETTINGS_KEYS.protectMainDefault));
 }
 
 export function useProtectMain(repoFullName?: string) {
-  const [globalDefault, setGlobalDefaultState] = useState(loadGlobalDefault);
-  const [repoOverride, setRepoOverrideState] = useState<RepoOverride>(() =>
-    loadRepoOverride(repoFullName),
+  // Subscribe to the raw doc values; derive booleans/overrides in memos so the
+  // external-store snapshots stay referentially stable and a `repoFullName`
+  // change re-derives without a setState-in-effect.
+  const rawGlobal = useSyncExternalStore(
+    (cb) => subscribeSetting(SETTINGS_KEYS.protectMainDefault, cb),
+    () => getSetting(SETTINGS_KEYS.protectMainDefault),
+    () => undefined,
+  );
+  const rawMap = useSyncExternalStore(
+    (cb) => subscribeSetting(SETTINGS_KEYS.protectMainByRepo, cb),
+    () => getSetting(SETTINGS_KEYS.protectMainByRepo),
+    () => undefined,
   );
 
-  // Reload repo override when repo changes
-  useEffect(() => {
-    setRepoOverrideState(loadRepoOverride(repoFullName));
-  }, [repoFullName]);
+  const globalDefault = useMemo(() => resolveGlobalDefault(rawGlobal), [rawGlobal]);
+  const repoOverride = useMemo(
+    () => resolveRepoOverride(repoFullName, rawMap),
+    [repoFullName, rawMap],
+  );
 
   const setGlobalDefault = useCallback((value: boolean) => {
-    safeStorageSet(GLOBAL_DEFAULT_KEY, String(value));
-    setGlobalDefaultState(value);
+    setSetting(SETTINGS_KEYS.protectMainDefault, value);
   }, []);
 
   const setRepoOverride = useCallback(
     (value: RepoOverride) => {
-      if (repoFullName) {
-        if (value === 'inherit') {
-          safeStorageRemove(repoKey(repoFullName));
-        } else {
-          safeStorageSet(repoKey(repoFullName), value);
-        }
-      }
-      setRepoOverrideState(value);
+      // No repo in context: an override has nothing to scope to, so it's a no-op.
+      if (!repoFullName) return;
+      const next = { ...resolveOverrideMap(rawMap) };
+      if (value === 'inherit') delete next[repoFullName];
+      else next[repoFullName] = value;
+      setSetting(SETTINGS_KEYS.protectMainByRepo, next);
     },
-    [repoFullName],
+    [repoFullName, rawMap],
   );
 
   const isProtected =

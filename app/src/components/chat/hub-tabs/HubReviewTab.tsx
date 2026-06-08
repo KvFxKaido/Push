@@ -43,6 +43,7 @@ import {
 } from '@/lib/providers';
 import { ModelPicker } from '@/components/ui/model-picker';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
+import { getSetting, SETTINGS_KEYS, setSetting } from '@/lib/settings-store';
 import {
   GLASS_FILL_HOVER_FAINT,
   GLASS_FILL_SOFT,
@@ -128,6 +129,11 @@ const glassSegmentPillClass = (active: boolean): string =>
       : `text-push-fg-dim ${GLASS_FILL_HOVER_FAINT} hover:text-push-fg-secondary`
   }`;
 
+// Pre-unification localStorage keys for the in-app advisory reviewer picks. Now
+// read-only fallbacks: the provider + per-provider model picks live in the
+// unified settings doc (reviewer.advisory.*). Saved-review payloads
+// (push:review:saved:*) stay device-local — they're cached review results, not
+// preferences.
 const REVIEW_PROVIDER_KEY = 'push:review:selected-provider';
 const SAVED_REVIEW_STORAGE_PREFIX = 'push:review:saved:';
 const MAX_SAVED_REVIEW_DIFF_CHARS = 120_000;
@@ -165,26 +171,12 @@ const REVIEW_DEFAULT_MODELS: Record<PreferredProvider, string> = {
   openadapter: OPENADAPTER_DEFAULT_MODEL,
 };
 
-function readStoredReviewProvider(): PreferredProvider | null {
-  const stored = safeStorageGet(REVIEW_PROVIDER_KEY);
-  if (
-    stored === 'ollama' ||
-    stored === 'openrouter' ||
-    stored === 'cloudflare' ||
-    stored === 'zen' ||
-    stored === 'nvidia' ||
-    stored === 'blackbox' ||
-    stored === 'azure' ||
-    stored === 'bedrock' ||
-    stored === 'vertex' ||
-    stored === 'anthropic' ||
-    stored === 'openai' ||
-    stored === 'google' ||
-    stored === 'kilocode' ||
-    stored === 'openadapter'
-  ) {
-    return stored;
-  }
+function readReviewProvider(): PreferredProvider | null {
+  const stored = getSetting<unknown>(SETTINGS_KEYS.reviewerAdvisoryProvider);
+  if (typeof stored === 'string' && isPreferredProvider(stored)) return stored;
+  // Legacy localStorage fallback.
+  const legacy = safeStorageGet(REVIEW_PROVIDER_KEY);
+  if (typeof legacy === 'string' && isPreferredProvider(legacy)) return legacy;
   return null;
 }
 
@@ -207,22 +199,33 @@ function isPreferredProvider(value: string): value is PreferredProvider {
   );
 }
 
-function readStoredReviewModels(): Record<PreferredProvider, string> {
+function readReviewModels(): Record<PreferredProvider, string> {
+  const stored = getSetting<unknown>(SETTINGS_KEYS.reviewerAdvisoryModelByProvider);
+  const map =
+    stored && typeof stored === 'object'
+      ? (stored as Partial<Record<PreferredProvider, unknown>>)
+      : undefined;
+  // Precedence per provider: settings doc → legacy localStorage key → default.
+  const pick = (provider: PreferredProvider): string => {
+    const fromDoc = map?.[provider];
+    if (typeof fromDoc === 'string' && fromDoc.trim()) return fromDoc;
+    return safeStorageGet(REVIEW_MODEL_KEYS[provider]) || REVIEW_DEFAULT_MODELS[provider];
+  };
   return {
-    ollama: safeStorageGet(REVIEW_MODEL_KEYS.ollama) || REVIEW_DEFAULT_MODELS.ollama,
-    openrouter: safeStorageGet(REVIEW_MODEL_KEYS.openrouter) || REVIEW_DEFAULT_MODELS.openrouter,
-    cloudflare: safeStorageGet(REVIEW_MODEL_KEYS.cloudflare) || REVIEW_DEFAULT_MODELS.cloudflare,
-    zen: safeStorageGet(REVIEW_MODEL_KEYS.zen) || REVIEW_DEFAULT_MODELS.zen,
-    nvidia: safeStorageGet(REVIEW_MODEL_KEYS.nvidia) || REVIEW_DEFAULT_MODELS.nvidia,
-    blackbox: safeStorageGet(REVIEW_MODEL_KEYS.blackbox) || REVIEW_DEFAULT_MODELS.blackbox,
-    kilocode: safeStorageGet(REVIEW_MODEL_KEYS.kilocode) || REVIEW_DEFAULT_MODELS.kilocode,
-    openadapter: safeStorageGet(REVIEW_MODEL_KEYS.openadapter) || REVIEW_DEFAULT_MODELS.openadapter,
-    azure: safeStorageGet(REVIEW_MODEL_KEYS.azure) || REVIEW_DEFAULT_MODELS.azure,
-    bedrock: safeStorageGet(REVIEW_MODEL_KEYS.bedrock) || REVIEW_DEFAULT_MODELS.bedrock,
-    vertex: safeStorageGet(REVIEW_MODEL_KEYS.vertex) || REVIEW_DEFAULT_MODELS.vertex,
-    anthropic: safeStorageGet(REVIEW_MODEL_KEYS.anthropic) || REVIEW_DEFAULT_MODELS.anthropic,
-    openai: safeStorageGet(REVIEW_MODEL_KEYS.openai) || REVIEW_DEFAULT_MODELS.openai,
-    google: safeStorageGet(REVIEW_MODEL_KEYS.google) || REVIEW_DEFAULT_MODELS.google,
+    ollama: pick('ollama'),
+    openrouter: pick('openrouter'),
+    cloudflare: pick('cloudflare'),
+    zen: pick('zen'),
+    nvidia: pick('nvidia'),
+    blackbox: pick('blackbox'),
+    kilocode: pick('kilocode'),
+    openadapter: pick('openadapter'),
+    azure: pick('azure'),
+    bedrock: pick('bedrock'),
+    vertex: pick('vertex'),
+    anthropic: pick('anthropic'),
+    openai: pick('openai'),
+    google: pick('google'),
   };
 }
 
@@ -416,13 +419,13 @@ export function HubReviewTab({
   );
   const hasCommitSource = Boolean(repoFullName && activeBranch);
   const [selectedProvider, setSelectedProvider] = useState<PreferredProvider | null>(() =>
-    readStoredReviewProvider(),
+    readReviewProvider(),
   );
   const [reviewSource, setReviewSource] = useState<ReviewSourceMode>(
     hasGitHubSource ? 'github' : hasCommitSource ? 'commit' : 'sandbox',
   );
   const [selectedModels, setSelectedModels] =
-    useState<Record<PreferredProvider, string>>(readStoredReviewModels);
+    useState<Record<PreferredProvider, string>>(readReviewModels);
   const [status, setStatus] = useState<string | null>(null);
   const [result, setResult] = useState<ReviewResult | null>(null);
   const [reviewContext, setReviewContext] = useState<ReviewContext | null>(null);
@@ -475,11 +478,7 @@ export function HubReviewTab({
   }, [reviewStorageKey]);
 
   useEffect(() => {
-    if (selectedProvider) {
-      safeStorageSet(REVIEW_PROVIDER_KEY, selectedProvider);
-    } else {
-      safeStorageRemove(REVIEW_PROVIDER_KEY);
-    }
+    setSetting(SETTINGS_KEYS.reviewerAdvisoryProvider, selectedProvider ?? null);
   }, [selectedProvider]);
 
   useEffect(() => {
@@ -506,15 +505,12 @@ export function HubReviewTab({
   const handleModelChange = useCallback(
     (nextModel: string) => {
       if (!selectedProvider) return;
-      setSelectedModels((prev) => ({ ...prev, [selectedProvider]: nextModel }));
-      const trimmed = nextModel.trim();
-      if (trimmed) {
-        safeStorageSet(REVIEW_MODEL_KEYS[selectedProvider], trimmed);
-      } else {
-        safeStorageRemove(REVIEW_MODEL_KEYS[selectedProvider]);
-      }
+      const value = nextModel.trim() || REVIEW_DEFAULT_MODELS[selectedProvider];
+      const next = { ...selectedModels, [selectedProvider]: value };
+      setSelectedModels(next);
+      setSetting(SETTINGS_KEYS.reviewerAdvisoryModelByProvider, next);
     },
-    [selectedProvider],
+    [selectedModels, selectedProvider],
   );
 
   const handleSourceChange = useCallback((source: ReviewSourceMode) => {

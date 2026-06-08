@@ -1,38 +1,47 @@
-import { useCallback, useState } from 'react';
-import { safeStorageGet, safeStorageSet } from '@/lib/safe-storage';
+import { useCallback } from 'react';
+import { safeStorageGet } from '@/lib/safe-storage';
+import { SETTINGS_KEYS } from '@/lib/settings-store';
 import {
   coerceRepoAppearance,
   DEFAULT_REPO_APPEARANCE,
   type RepoAppearance,
 } from '@/lib/repo-appearance';
+import { useSetting } from './useSetting';
 
-const CHAT_MODE_APPEARANCE_STORAGE_KEY = 'push:chat-mode-appearance:v1';
+// Pre-unification localStorage key, read once as a fallback so an existing
+// chat-mode palette survives the first load and migrates into the settings doc
+// on the next write.
+const LEGACY_KEY = 'push:chat-mode-appearance:v1';
 
-function loadChatModeAppearance(): RepoAppearance {
-  const raw = safeStorageGet(CHAT_MODE_APPEARANCE_STORAGE_KEY);
-  if (!raw) return DEFAULT_REPO_APPEARANCE;
+const coerce = (raw: unknown): RepoAppearance | undefined => coerceRepoAppearance(raw) ?? undefined;
 
+function legacyChatModeAppearance(): RepoAppearance | undefined {
+  const raw = safeStorageGet(LEGACY_KEY);
+  if (!raw) return undefined;
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    return coerceRepoAppearance(parsed) ?? DEFAULT_REPO_APPEARANCE;
+    return coerce(JSON.parse(raw));
   } catch {
-    return DEFAULT_REPO_APPEARANCE;
+    return undefined;
   }
 }
 
 export function useChatModeAppearance() {
-  const [appearance, setAppearanceState] = useState<RepoAppearance>(loadChatModeAppearance);
+  const [appearance, setAppearanceValue] = useSetting<RepoAppearance>(
+    SETTINGS_KEYS.appearanceChatMode,
+    DEFAULT_REPO_APPEARANCE,
+    { coerce, legacyFallback: legacyChatModeAppearance },
+  );
 
-  const setAppearance = useCallback((next: RepoAppearance) => {
-    const normalized = coerceRepoAppearance(next) ?? DEFAULT_REPO_APPEARANCE;
-    safeStorageSet(CHAT_MODE_APPEARANCE_STORAGE_KEY, JSON.stringify(normalized));
-    setAppearanceState(normalized);
-  }, []);
+  const setAppearance = useCallback(
+    (next: RepoAppearance) => {
+      setAppearanceValue(coerceRepoAppearance(next) ?? DEFAULT_REPO_APPEARANCE);
+    },
+    [setAppearanceValue],
+  );
 
   const resetAppearance = useCallback(() => {
-    safeStorageSet(CHAT_MODE_APPEARANCE_STORAGE_KEY, JSON.stringify(DEFAULT_REPO_APPEARANCE));
-    setAppearanceState(DEFAULT_REPO_APPEARANCE);
-  }, []);
+    setAppearanceValue(DEFAULT_REPO_APPEARANCE);
+  }, [setAppearanceValue]);
 
   return { appearance, setAppearance, resetAppearance };
 }
