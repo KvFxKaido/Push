@@ -5,6 +5,8 @@ import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
 import { getBlackboxKey } from '@/hooks/useBlackboxConfig';
 import { getKilocodeKey } from '@/hooks/useKilocodeConfig';
 import { getOpenAdapterKey } from '@/hooks/useOpenAdapterConfig';
+import { getGoogleKey } from '@/hooks/useGoogleConfig';
+import { getOpenAIKey } from '@/hooks/useOpenAIConfig';
 import { safeStorageGet, safeStorageSet } from './safe-storage';
 import {
   CLOUDFLARE_MODELS,
@@ -464,9 +466,13 @@ function extractAllModelsDevProviderMetadata(
 async function fetchModelsDevProviderMetadata(
   providerKey: string,
   cacheKey: string,
+  forceRefresh = false,
 ): Promise<Record<string, ModelsDevProviderMetadata>> {
   const cached = readCachedModelsDevMetadata<ModelsDevProviderMetadata>(cacheKey);
-  if (cached) return cached;
+  // Auto fetches reuse the 12h cache. A manual refresh forces a revalidation so
+  // newly-added upstream models — whose context/capability metadata the curated
+  // builders fail-close on when absent — can surface without waiting out the TTL.
+  if (cached && !forceRefresh) return cached;
 
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
@@ -475,7 +481,7 @@ async function fetchModelsDevProviderMetadata(
     const res = await fetch(MODELS_DEV_OPENROUTER_URL, {
       method: 'GET',
       signal: controller.signal,
-      cache: 'force-cache',
+      cache: forceRefresh ? 'reload' : 'force-cache',
     });
     if (!res.ok) throw new Error(`models.dev metadata failed (${res.status})`);
     const payload = (await res.json()) as unknown;
@@ -520,11 +526,11 @@ function extractModelsDevOpenRouterMetadata(
   return entries;
 }
 
-async function fetchModelsDevOpenRouterMetadata(): Promise<
-  Record<string, ModelsDevOpenRouterMetadata>
-> {
+async function fetchModelsDevOpenRouterMetadata(
+  forceRefresh = false,
+): Promise<Record<string, ModelsDevOpenRouterMetadata>> {
   const cached = readCachedModelsDevOpenRouterMetadata();
-  if (cached) return cached;
+  if (cached && !forceRefresh) return cached;
 
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
@@ -533,7 +539,7 @@ async function fetchModelsDevOpenRouterMetadata(): Promise<
     const res = await fetch(MODELS_DEV_OPENROUTER_URL, {
       method: 'GET',
       signal: controller.signal,
-      cache: 'force-cache',
+      cache: forceRefresh ? 'reload' : 'force-cache',
     });
     if (!res.ok) throw new Error(`models.dev metadata failed (${res.status})`);
     const payload = (await res.json()) as unknown;
@@ -549,27 +555,31 @@ async function fetchModelsDevOpenRouterMetadata(): Promise<
   }
 }
 
-async function fetchModelsDevNvidiaMetadata(): Promise<Record<string, ModelsDevProviderMetadata>> {
-  return fetchModelsDevProviderMetadata('nvidia', MODELS_DEV_NVIDIA_CACHE_KEY);
+async function fetchModelsDevNvidiaMetadata(
+  forceRefresh = false,
+): Promise<Record<string, ModelsDevProviderMetadata>> {
+  return fetchModelsDevProviderMetadata('nvidia', MODELS_DEV_NVIDIA_CACHE_KEY, forceRefresh);
 }
 
-async function fetchModelsDevOllamaMetadata(): Promise<Record<string, ModelsDevProviderMetadata>> {
-  return fetchModelsDevProviderMetadata('ollama-cloud', MODELS_DEV_OLLAMA_CACHE_KEY);
+async function fetchModelsDevOllamaMetadata(
+  forceRefresh = false,
+): Promise<Record<string, ModelsDevProviderMetadata>> {
+  return fetchModelsDevProviderMetadata('ollama-cloud', MODELS_DEV_OLLAMA_CACHE_KEY, forceRefresh);
 }
 
-async function fetchModelsDevOpencodeMetadata(): Promise<
-  Record<string, ModelsDevProviderMetadata>
-> {
-  return fetchModelsDevProviderMetadata('opencode', MODELS_DEV_OPENCODE_CACHE_KEY);
+async function fetchModelsDevOpencodeMetadata(
+  forceRefresh = false,
+): Promise<Record<string, ModelsDevProviderMetadata>> {
+  return fetchModelsDevProviderMetadata('opencode', MODELS_DEV_OPENCODE_CACHE_KEY, forceRefresh);
 }
 
-async function fetchModelsDevGlobalProviderMetadata(): Promise<
-  Record<string, ModelsDevProviderMetadata>
-> {
+async function fetchModelsDevGlobalProviderMetadata(
+  forceRefresh = false,
+): Promise<Record<string, ModelsDevProviderMetadata>> {
   const cached = readCachedModelsDevMetadata<ModelsDevProviderMetadata>(
     MODELS_DEV_GLOBAL_PROVIDER_CACHE_KEY,
   );
-  if (cached) return cached;
+  if (cached && !forceRefresh) return cached;
 
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
@@ -578,7 +588,7 @@ async function fetchModelsDevGlobalProviderMetadata(): Promise<
     const res = await fetch(MODELS_DEV_OPENROUTER_URL, {
       method: 'GET',
       signal: controller.signal,
-      cache: 'force-cache',
+      cache: forceRefresh ? 'reload' : 'force-cache',
     });
     if (!res.ok) throw new Error(`models.dev metadata failed (${res.status})`);
     const payload = (await res.json()) as unknown;
@@ -991,7 +1001,9 @@ function normalizeModelList(payload: unknown): string[] {
   return Array.from(ids).sort((a, b) => a.localeCompare(b));
 }
 
-export async function fetchOllamaModels(): Promise<string[]> {
+export async function fetchOllamaModels(
+  opts: { forceMetadataRefresh?: boolean } = {},
+): Promise<string[]> {
   const key = getOllamaKey();
   const headers: HeadersInit = {};
   if (key) headers.Authorization = `Bearer ${key}`;
@@ -1006,7 +1018,7 @@ export async function fetchOllamaModels(): Promise<string[]> {
         signal: controller.signal,
         cache: 'no-store',
       }),
-      fetchModelsDevOllamaMetadata(),
+      fetchModelsDevOllamaMetadata(opts.forceMetadataRefresh),
     ]);
 
     if (!catalogRes.ok) {
@@ -1032,7 +1044,9 @@ export async function fetchOllamaModels(): Promise<string[]> {
   }
 }
 
-export async function fetchOpenRouterModels(): Promise<string[]> {
+export async function fetchOpenRouterModels(
+  opts: { forceMetadataRefresh?: boolean } = {},
+): Promise<string[]> {
   const key = getOpenRouterKey();
   const headers: HeadersInit = {};
   if (key) headers.Authorization = `Bearer ${key}`;
@@ -1047,7 +1061,7 @@ export async function fetchOpenRouterModels(): Promise<string[]> {
         signal: controller.signal,
         cache: 'no-store',
       }),
-      fetchModelsDevOpenRouterMetadata(),
+      fetchModelsDevOpenRouterMetadata(opts.forceMetadataRefresh),
     ]);
 
     if (!catalogRes.ok) {
@@ -1119,7 +1133,9 @@ export async function fetchCloudflareModels(): Promise<string[]> {
   }
 }
 
-export async function fetchZenModels(): Promise<string[]> {
+export async function fetchZenModels(
+  opts: { forceMetadataRefresh?: boolean } = {},
+): Promise<string[]> {
   const key = getZenKey();
   const headers: HeadersInit = {};
   if (key) headers.Authorization = `Bearer ${key}`;
@@ -1134,7 +1150,7 @@ export async function fetchZenModels(): Promise<string[]> {
         signal: controller.signal,
         cache: 'no-store',
       }),
-      fetchModelsDevOpencodeMetadata(),
+      fetchModelsDevOpencodeMetadata(opts.forceMetadataRefresh),
     ]);
 
     if (!catalogRes.ok) {
@@ -1162,7 +1178,9 @@ export async function fetchZenModels(): Promise<string[]> {
   }
 }
 
-export async function fetchNvidiaModels(): Promise<string[]> {
+export async function fetchNvidiaModels(
+  opts: { forceMetadataRefresh?: boolean } = {},
+): Promise<string[]> {
   const key = getNvidiaKey();
   const headers: HeadersInit = {};
   if (key) headers.Authorization = `Bearer ${key}`;
@@ -1177,7 +1195,7 @@ export async function fetchNvidiaModels(): Promise<string[]> {
         signal: controller.signal,
         cache: 'no-store',
       }),
-      fetchModelsDevNvidiaMetadata(),
+      fetchModelsDevNvidiaMetadata(opts.forceMetadataRefresh),
     ]);
 
     if (!catalogRes.ok) {
@@ -1205,7 +1223,9 @@ export async function fetchNvidiaModels(): Promise<string[]> {
   }
 }
 
-export async function fetchBlackboxModels(): Promise<string[]> {
+export async function fetchBlackboxModels(
+  opts: { forceMetadataRefresh?: boolean } = {},
+): Promise<string[]> {
   const key = getBlackboxKey();
   const headers: HeadersInit = {};
   if (key) headers.Authorization = `Bearer ${key}`;
@@ -1220,7 +1240,7 @@ export async function fetchBlackboxModels(): Promise<string[]> {
         signal: controller.signal,
         cache: 'no-store',
       }),
-      fetchModelsDevGlobalProviderMetadata(),
+      fetchModelsDevGlobalProviderMetadata(opts.forceMetadataRefresh),
     ]);
 
     if (!catalogRes.ok) {
@@ -1312,6 +1332,84 @@ export async function fetchOpenAdapterModels(): Promise<string[]> {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(
         `OpenAdapter model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+      );
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+// OpenAI and Google live model lists are filtered Worker-side
+// (`handleOpenAIModels` / `handleGoogleModels` drop embeddings/audio/image-only
+// entries and fall back to the curated list on key-missing/upstream failure),
+// so the client just normalizes the OpenAI-shaped `{ data: [{ id }] }` payload.
+// No models.dev metadata pass is needed here — hence no forceMetadataRefresh
+// option — and the Worker's `cache: 'no-store'` keeps each refresh live.
+export async function fetchOpenAIModels(): Promise<string[]> {
+  const key = getOpenAIKey();
+  const headers: HeadersInit = {};
+  if (key) headers.Authorization = `Bearer ${key}`;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(PROVIDER_URLS.openai.models, {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw new Error(`OpenAI model list failed (${res.status}): ${detail.slice(0, 200)}`);
+    }
+
+    const payload = (await res.json()) as unknown;
+    return normalizeModelList(payload).sort((left, right) =>
+      compareProviderModelIds('openai', left, right),
+    );
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(
+        `OpenAI model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+      );
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+export async function fetchGoogleModels(): Promise<string[]> {
+  const key = getGoogleKey();
+  const headers: HeadersInit = {};
+  if (key) headers.Authorization = `Bearer ${key}`;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(PROVIDER_URLS.google.models, {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw new Error(`Google Gemini model list failed (${res.status}): ${detail.slice(0, 200)}`);
+    }
+
+    const payload = (await res.json()) as unknown;
+    return normalizeModelList(payload).sort((left, right) =>
+      compareProviderModelIds('google', left, right),
+    );
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(
+        `Google Gemini model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
       );
     }
     throw err;

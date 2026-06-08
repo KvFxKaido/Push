@@ -1247,6 +1247,15 @@ export function createJsonProxyHandler(
             ...gatewayHeaders,
           },
           signal: controller.signal,
+          // GET proxies are the provider model-list endpoints. Without an
+          // explicit bypass the Cloudflare edge caches the upstream GET per its
+          // Cache-Control headers and serves a frozen catalog — the "provider
+          // list never updates on refresh" bug (Blackbox serves cacheable
+          // headers, so its list stayed static no matter how often the client
+          // refreshed). Model lists are cold paths, so skipping the subrequest
+          // cache is cheap and keeps every refresh reflecting upstream. POST
+          // proxies are non-idempotent and not cached, so scope this to GET.
+          ...(method === 'GET' ? { cache: 'no-store' as RequestCache } : {}),
         };
         if (needsBody) fetchInit.body = bodyText;
         upstream = await fetch(upstreamUrl, fetchInit);

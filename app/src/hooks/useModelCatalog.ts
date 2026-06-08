@@ -30,6 +30,8 @@ import {
   fetchBlackboxModels,
   fetchKilocodeModels,
   fetchOpenAdapterModels,
+  fetchGoogleModels,
+  fetchOpenAIModels,
 } from '@/lib/model-catalog';
 import { useOllamaConfig } from '@/hooks/useOllamaConfig';
 import { useOpenRouterConfig } from '@/hooks/useOpenRouterConfig';
@@ -174,6 +176,8 @@ export interface ModelCatalog {
   blackboxModels: ProviderModelState;
   kilocodeModels: ProviderModelState;
   openAdapterModels: ProviderModelState;
+  googleModels: ProviderModelState;
+  openaiModels: ProviderModelState;
 
   // Model option lists (includes selected even if not in fetched list)
   ollamaModelOptions: string[];
@@ -201,6 +205,8 @@ export interface ModelCatalog {
   refreshBlackboxModels: () => Promise<void>;
   refreshKilocodeModels: () => Promise<void>;
   refreshOpenAdapterModels: () => Promise<void>;
+  refreshGoogleModels: () => Promise<void>;
+  refreshOpenAIModels: () => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -434,6 +440,9 @@ export function buildModelControl(
           lockedModel ?? catalog.openai.model,
         ),
         onChange: catalog.openai.setModel,
+        loading: catalog.openaiModels.loading,
+        error: catalog.openaiModels.error,
+        onRefresh: catalog.refreshOpenAIModels,
         allowCustom: true,
       };
     case 'google':
@@ -446,6 +455,9 @@ export function buildModelControl(
           lockedModel ?? catalog.google.model,
         ),
         onChange: catalog.google.setModel,
+        loading: catalog.googleModels.loading,
+        error: catalog.googleModels.error,
+        onRefresh: catalog.refreshGoogleModels,
         allowCustom: true,
       };
     default:
@@ -584,6 +596,8 @@ export function useModelCatalog(): ModelCatalog {
   const [blackboxModelList, setBlackboxModelList] = useState<string[]>([]);
   const [kilocodeModelList, setKilocodeModelList] = useState<string[]>([]);
   const [openAdapterModelList, setOpenAdapterModelList] = useState<string[]>([]);
+  const [googleModelList, setGoogleModelList] = useState<string[]>([]);
+  const [openaiModelList, setOpenaiModelList] = useState<string[]>([]);
 
   const [ollamaLoading, setOllamaLoading] = useState(false);
   const [openRouterLoading, setOpenRouterLoading] = useState(false);
@@ -593,6 +607,8 @@ export function useModelCatalog(): ModelCatalog {
   const [blackboxLoading, setBlackboxLoading] = useState(false);
   const [kilocodeLoading, setKilocodeLoading] = useState(false);
   const [openAdapterLoading, setOpenAdapterLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [openaiLoading, setOpenaiLoading] = useState(false);
 
   const [ollamaError, setOllamaError] = useState<string | null>(null);
   const [openRouterError, setOpenRouterError] = useState<string | null>(null);
@@ -602,6 +618,8 @@ export function useModelCatalog(): ModelCatalog {
   const [blackboxError, setBlackboxError] = useState<string | null>(null);
   const [kilocodeError, setKilocodeError] = useState<string | null>(null);
   const [openAdapterError, setOpenAdapterError] = useState<string | null>(null);
+  const [googleError, setGoogleError] = useState<string | null>(null);
+  const [openaiError, setOpenaiError] = useState<string | null>(null);
 
   const [ollamaUpdatedAt, setOllamaUpdatedAt] = useState<number | null>(null);
   const [openRouterUpdatedAt, setOpenRouterUpdatedAt] = useState<number | null>(null);
@@ -611,6 +629,8 @@ export function useModelCatalog(): ModelCatalog {
   const [blackboxUpdatedAt, setBlackboxUpdatedAt] = useState<number | null>(null);
   const [kilocodeUpdatedAt, setKilocodeUpdatedAt] = useState<number | null>(null);
   const [openAdapterUpdatedAt, setOpenAdapterUpdatedAt] = useState<number | null>(null);
+  const [googleUpdatedAt, setGoogleUpdatedAt] = useState<number | null>(null);
+  const [openaiUpdatedAt, setOpenaiUpdatedAt] = useState<number | null>(null);
 
   // Generic refresh helper
   const refreshModels = useCallback(
@@ -643,33 +663,43 @@ export function useModelCatalog(): ModelCatalog {
   );
 
   // Per-provider refresh callbacks
-  const refreshOllamaModels = useCallback(async () => {
-    await refreshModels({
-      hasKey: ollamaCfg.hasKey,
-      isLoading: ollamaLoading,
-      setLoading: setOllamaLoading,
-      setError: setOllamaError,
-      setModels: setOllamaModelList,
-      setUpdatedAt: setOllamaUpdatedAt,
-      fetchModels: fetchOllamaModels,
-      emptyMessage: 'No models returned by Ollama.',
-      failureMessage: 'Failed to load Ollama models.',
-    });
-  }, [ollamaCfg.hasKey, ollamaLoading, refreshModels]);
+  // Metadata-backed providers default `force` to true so the picker's manual
+  // refresh revalidates the models.dev cache (surfacing new upstream models the
+  // curated builders would otherwise fail-close on). The auto-fetch effects
+  // below pass `false` to keep first-load on the cached metadata.
+  const refreshOllamaModels = useCallback(
+    async (force = true) => {
+      await refreshModels({
+        hasKey: ollamaCfg.hasKey,
+        isLoading: ollamaLoading,
+        setLoading: setOllamaLoading,
+        setError: setOllamaError,
+        setModels: setOllamaModelList,
+        setUpdatedAt: setOllamaUpdatedAt,
+        fetchModels: () => fetchOllamaModels({ forceMetadataRefresh: force }),
+        emptyMessage: 'No models returned by Ollama.',
+        failureMessage: 'Failed to load Ollama models.',
+      });
+    },
+    [ollamaCfg.hasKey, ollamaLoading, refreshModels],
+  );
 
-  const refreshOpenRouterModels = useCallback(async () => {
-    await refreshModels({
-      hasKey: openRouterCfg.hasKey,
-      isLoading: openRouterLoading,
-      setLoading: setOpenRouterLoading,
-      setError: setOpenRouterError,
-      setModels: setOpenRouterModelList,
-      setUpdatedAt: setOpenRouterUpdatedAt,
-      fetchModels: fetchOpenRouterModels,
-      emptyMessage: 'No models returned by OpenRouter.',
-      failureMessage: 'Failed to load OpenRouter models.',
-    });
-  }, [openRouterCfg.hasKey, openRouterLoading, refreshModels]);
+  const refreshOpenRouterModels = useCallback(
+    async (force = true) => {
+      await refreshModels({
+        hasKey: openRouterCfg.hasKey,
+        isLoading: openRouterLoading,
+        setLoading: setOpenRouterLoading,
+        setError: setOpenRouterError,
+        setModels: setOpenRouterModelList,
+        setUpdatedAt: setOpenRouterUpdatedAt,
+        fetchModels: () => fetchOpenRouterModels({ forceMetadataRefresh: force }),
+        emptyMessage: 'No models returned by OpenRouter.',
+        failureMessage: 'Failed to load OpenRouter models.',
+      });
+    },
+    [openRouterCfg.hasKey, openRouterLoading, refreshModels],
+  );
 
   const refreshCloudflareModels = useCallback(async () => {
     if (cloudflareLoading) return;
@@ -702,55 +732,67 @@ export function useModelCatalog(): ModelCatalog {
     }
   }, [cloudflareLoading, setCloudflareConfiguredStateAndPersist]);
 
-  const refreshZenStandardModels = useCallback(async () => {
-    await refreshModels({
-      hasKey: zenCfg.hasKey,
-      isLoading: zenLoading,
-      setLoading: setZenLoading,
-      setError: setZenError,
-      setModels: setZenModelList,
-      setUpdatedAt: setZenUpdatedAt,
-      fetchModels: fetchZenModels,
-      emptyMessage: 'No models returned by OpenCode Zen.',
-      failureMessage: 'Failed to load OpenCode Zen models.',
-    });
-  }, [zenCfg.hasKey, zenLoading, refreshModels]);
+  const refreshZenStandardModels = useCallback(
+    async (force = true) => {
+      await refreshModels({
+        hasKey: zenCfg.hasKey,
+        isLoading: zenLoading,
+        setLoading: setZenLoading,
+        setError: setZenError,
+        setModels: setZenModelList,
+        setUpdatedAt: setZenUpdatedAt,
+        fetchModels: () => fetchZenModels({ forceMetadataRefresh: force }),
+        emptyMessage: 'No models returned by OpenCode Zen.',
+        failureMessage: 'Failed to load OpenCode Zen models.',
+      });
+    },
+    [zenCfg.hasKey, zenLoading, refreshModels],
+  );
 
-  const refreshZenModels = useCallback(async () => {
-    if (zenCfg.goMode) {
-      setZenError(null);
-      return;
-    }
-    await refreshZenStandardModels();
-  }, [refreshZenStandardModels, zenCfg.goMode]);
+  const refreshZenModels = useCallback(
+    async (force = true) => {
+      if (zenCfg.goMode) {
+        setZenError(null);
+        return;
+      }
+      await refreshZenStandardModels(force);
+    },
+    [refreshZenStandardModels, zenCfg.goMode],
+  );
 
-  const refreshNvidiaModels = useCallback(async () => {
-    await refreshModels({
-      hasKey: nvidiaCfg.hasKey,
-      isLoading: nvidiaLoading,
-      setLoading: setNvidiaLoading,
-      setError: setNvidiaError,
-      setModels: setNvidiaModelList,
-      setUpdatedAt: setNvidiaUpdatedAt,
-      fetchModels: fetchNvidiaModels,
-      emptyMessage: 'No models returned by Nvidia NIM.',
-      failureMessage: 'Failed to load Nvidia NIM models.',
-    });
-  }, [nvidiaCfg.hasKey, nvidiaLoading, refreshModels]);
+  const refreshNvidiaModels = useCallback(
+    async (force = true) => {
+      await refreshModels({
+        hasKey: nvidiaCfg.hasKey,
+        isLoading: nvidiaLoading,
+        setLoading: setNvidiaLoading,
+        setError: setNvidiaError,
+        setModels: setNvidiaModelList,
+        setUpdatedAt: setNvidiaUpdatedAt,
+        fetchModels: () => fetchNvidiaModels({ forceMetadataRefresh: force }),
+        emptyMessage: 'No models returned by Nvidia NIM.',
+        failureMessage: 'Failed to load Nvidia NIM models.',
+      });
+    },
+    [nvidiaCfg.hasKey, nvidiaLoading, refreshModels],
+  );
 
-  const refreshBlackboxModels = useCallback(async () => {
-    await refreshModels({
-      hasKey: blackboxCfg.hasKey,
-      isLoading: blackboxLoading,
-      setLoading: setBlackboxLoading,
-      setError: setBlackboxError,
-      setModels: setBlackboxModelList,
-      setUpdatedAt: setBlackboxUpdatedAt,
-      fetchModels: fetchBlackboxModels,
-      emptyMessage: 'No models returned by Blackbox AI.',
-      failureMessage: 'Failed to load Blackbox AI models.',
-    });
-  }, [blackboxCfg.hasKey, blackboxLoading, refreshModels]);
+  const refreshBlackboxModels = useCallback(
+    async (force = true) => {
+      await refreshModels({
+        hasKey: blackboxCfg.hasKey,
+        isLoading: blackboxLoading,
+        setLoading: setBlackboxLoading,
+        setError: setBlackboxError,
+        setModels: setBlackboxModelList,
+        setUpdatedAt: setBlackboxUpdatedAt,
+        fetchModels: () => fetchBlackboxModels({ forceMetadataRefresh: force }),
+        emptyMessage: 'No models returned by Blackbox AI.',
+        failureMessage: 'Failed to load Blackbox AI models.',
+      });
+    },
+    [blackboxCfg.hasKey, blackboxLoading, refreshModels],
+  );
 
   const refreshKilocodeModels = useCallback(async () => {
     await refreshModels({
@@ -780,6 +822,37 @@ export function useModelCatalog(): ModelCatalog {
     });
   }, [openAdapterCfg.hasKey, openAdapterLoading, refreshModels]);
 
+  // Google/OpenAI fetch live lists from the Worker proxies, which filter to
+  // chat-capable models and fall back to the curated list on key-missing or
+  // upstream failure. No models.dev metadata pass, so no force flag.
+  const refreshGoogleModels = useCallback(async () => {
+    await refreshModels({
+      hasKey: googleCfg.hasKey,
+      isLoading: googleLoading,
+      setLoading: setGoogleLoading,
+      setError: setGoogleError,
+      setModels: setGoogleModelList,
+      setUpdatedAt: setGoogleUpdatedAt,
+      fetchModels: fetchGoogleModels,
+      emptyMessage: 'No models returned by Google Gemini.',
+      failureMessage: 'Failed to load Google Gemini models.',
+    });
+  }, [googleCfg.hasKey, googleLoading, refreshModels]);
+
+  const refreshOpenAIModels = useCallback(async () => {
+    await refreshModels({
+      hasKey: openaiCfg.hasKey,
+      isLoading: openaiLoading,
+      setLoading: setOpenaiLoading,
+      setError: setOpenaiError,
+      setModels: setOpenaiModelList,
+      setUpdatedAt: setOpenaiUpdatedAt,
+      fetchModels: fetchOpenAIModels,
+      emptyMessage: 'No models returned by OpenAI.',
+      failureMessage: 'Failed to load OpenAI models.',
+    });
+  }, [openaiCfg.hasKey, openaiLoading, refreshModels]);
+
   // Auto-fetch models when key becomes available.
   // The active provider fetches immediately; all others are deferred via
   // requestIdleCallback (or a short setTimeout) so startup isn't blocked.
@@ -798,7 +871,7 @@ export function useModelCatalog(): ModelCatalog {
         }),
         activeProviderLabel === 'ollama',
         () => {
-          void refreshOllamaModels();
+          void refreshOllamaModels(false);
         },
       ),
     [
@@ -821,7 +894,7 @@ export function useModelCatalog(): ModelCatalog {
         }),
         activeProviderLabel === 'openrouter',
         () => {
-          void refreshOpenRouterModels();
+          void refreshOpenRouterModels(false);
         },
       ),
     [
@@ -868,7 +941,7 @@ export function useModelCatalog(): ModelCatalog {
           }),
         activeProviderLabel === 'zen',
         () => {
-          void refreshZenStandardModels();
+          void refreshZenStandardModels(false);
         },
       ),
     [
@@ -892,7 +965,7 @@ export function useModelCatalog(): ModelCatalog {
         }),
         activeProviderLabel === 'nvidia',
         () => {
-          void refreshNvidiaModels();
+          void refreshNvidiaModels(false);
         },
       ),
     [
@@ -915,7 +988,7 @@ export function useModelCatalog(): ModelCatalog {
         }),
         activeProviderLabel === 'blackbox',
         () => {
-          void refreshBlackboxModels();
+          void refreshBlackboxModels(false);
         },
       ),
     [
@@ -971,6 +1044,52 @@ export function useModelCatalog(): ModelCatalog {
       openAdapterLoading,
       openAdapterModelList.length,
       refreshOpenAdapterModels,
+    ],
+  );
+  useEffect(
+    () =>
+      scheduleAutoFetch(
+        shouldAutoFetchProviderModels({
+          hasKey: googleCfg.hasKey,
+          modelCount: googleModelList.length,
+          loading: googleLoading,
+          error: googleError,
+        }),
+        activeProviderLabel === 'google',
+        () => {
+          void refreshGoogleModels();
+        },
+      ),
+    [
+      activeProviderLabel,
+      googleCfg.hasKey,
+      googleError,
+      googleLoading,
+      googleModelList.length,
+      refreshGoogleModels,
+    ],
+  );
+  useEffect(
+    () =>
+      scheduleAutoFetch(
+        shouldAutoFetchProviderModels({
+          hasKey: openaiCfg.hasKey,
+          modelCount: openaiModelList.length,
+          loading: openaiLoading,
+          error: openaiError,
+        }),
+        activeProviderLabel === 'openai',
+        () => {
+          void refreshOpenAIModels();
+        },
+      ),
+    [
+      activeProviderLabel,
+      openaiCfg.hasKey,
+      openaiError,
+      openaiLoading,
+      openaiModelList.length,
+      refreshOpenAIModels,
     ],
   );
 
@@ -1033,6 +1152,20 @@ export function useModelCatalog(): ModelCatalog {
       setOpenAdapterUpdatedAt(null);
     }
   }, [openAdapterCfg.hasKey]);
+  useEffect(() => {
+    if (!googleCfg.hasKey) {
+      setGoogleModelList([]);
+      setGoogleError(null);
+      setGoogleUpdatedAt(null);
+    }
+  }, [googleCfg.hasKey]);
+  useEffect(() => {
+    if (!openaiCfg.hasKey) {
+      setOpenaiModelList([]);
+      setOpenaiError(null);
+      setOpenaiUpdatedAt(null);
+    }
+  }, [openaiCfg.hasKey]);
 
   const kilocodeSelectedModel = kilocodeCfg.model;
   const setKilocodeModel = kilocodeCfg.setModel;
@@ -1133,19 +1266,27 @@ export function useModelCatalog(): ModelCatalog {
     () => includeSelectedModel(ANTHROPIC_MODELS, anthropicCfg.model),
     [anthropicCfg.model],
   );
-  // OpenAI: curated list for now. A live /v1/models proxy could land later
-  // once we filter to chat-capable models (the upstream list contains
-  // embeddings/audio/etc. that aren't useful in the chat dropdown).
+  // OpenAI: live list via the Worker proxy (`handleOpenAIModels` filters out
+  // embeddings/audio/image/etc.); falls back to the curated list before the
+  // first fetch resolves or when the proxy returns the curated set.
   const openaiModelOptions = useMemo(
-    () => includeSelectedModel(OPENAI_MODELS, openaiCfg.model),
-    [openaiCfg.model],
+    () =>
+      includeSelectedModel(
+        openaiModelList.length > 0 ? openaiModelList : OPENAI_MODELS,
+        openaiCfg.model,
+      ),
+    [openaiModelList, openaiCfg.model],
   );
-  // Google: curated list for MVP. A live /v1beta/models proxy could land
-  // later — it ships chat-capable models alongside embedding/image-only
-  // entries, so the live path needs a filter before it's useful here.
+  // Google: live list via the Worker proxy (`handleGoogleModels` keeps only
+  // generateContent-capable models); curated fallback before the first fetch
+  // or when the proxy serves the curated set.
   const googleModelOptions = useMemo(
-    () => includeSelectedModel(GOOGLE_MODELS, googleCfg.model),
-    [googleCfg.model],
+    () =>
+      includeSelectedModel(
+        googleModelList.length > 0 ? googleModelList : GOOGLE_MODELS,
+        googleCfg.model,
+      ),
+    [googleModelList, googleCfg.model],
   );
   const vertexModelOptions = useMemo(
     () => includeSelectedModel(vertexCfg.modelOptions, vertexCfg.model),
@@ -1390,6 +1531,18 @@ export function useModelCatalog(): ModelCatalog {
       error: openAdapterError,
       updatedAt: openAdapterUpdatedAt,
     },
+    googleModels: {
+      models: googleModelList,
+      loading: googleLoading,
+      error: googleError,
+      updatedAt: googleUpdatedAt,
+    },
+    openaiModels: {
+      models: openaiModelList,
+      loading: openaiLoading,
+      error: openaiError,
+      updatedAt: openaiUpdatedAt,
+    },
 
     ollamaModelOptions,
     openRouterModelOptions,
@@ -1414,5 +1567,7 @@ export function useModelCatalog(): ModelCatalog {
     refreshBlackboxModels,
     refreshKilocodeModels,
     refreshOpenAdapterModels,
+    refreshGoogleModels,
+    refreshOpenAIModels,
   };
 }

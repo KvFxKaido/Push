@@ -1165,6 +1165,9 @@ export async function handleOpenAIModels(request: Request, env: Env): Promise<Re
           [REQUEST_ID_HEADER]: requestId,
         },
         signal: controller.signal,
+        // Skip the edge cache so each refresh reflects the live catalog (see
+        // the GET note in createJsonProxyHandler for the stale-list rationale).
+        cache: 'no-store',
       });
     } finally {
       clearTimeout(timeoutId);
@@ -1564,6 +1567,9 @@ export async function handleGoogleModels(request: Request, env: Env): Promise<Re
           [REQUEST_ID_HEADER]: requestId,
         },
         signal: controller.signal,
+        // Skip the edge cache so each refresh reflects the live catalog (see
+        // the GET note in createJsonProxyHandler for the stale-list rationale).
+        cache: 'no-store',
       });
     } finally {
       clearTimeout(timeoutId);
