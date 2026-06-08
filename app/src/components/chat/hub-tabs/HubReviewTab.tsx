@@ -1198,7 +1198,11 @@ export function HubReviewTab({
                 )}
                 {/* Strip raw HTML tags as a defense-in-depth (Streamdown's rehype-harden also sanitizes upstream). */}
                 <div className="push-markdown text-push-xs leading-relaxed text-push-fg-secondary">
-                  <PushMarkdownRenderer text={result.summary.replace(/<[^>]*>/g, '')} isStreaming={false} enableCodeHighlight={false} />
+                  <PushMarkdownRenderer
+                    text={result.summary.replace(/<[^>]*>/g, '')}
+                    isStreaming={false}
+                    enableCodeHighlight={false}
+                  />
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   <button
