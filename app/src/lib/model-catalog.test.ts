@@ -6,9 +6,11 @@ import {
   buildCuratedOpencodeModelList,
   buildCuratedOpenRouterModelList,
   fetchBlackboxModels,
+  fetchGoogleModels,
   fetchKilocodeModels,
   fetchNvidiaModels,
   fetchOllamaModels,
+  fetchOpenAIModels,
   fetchZenModels,
   filterModelByContext,
   MIN_CONTEXT_TOKENS,
@@ -920,6 +922,116 @@ describe('provider model fetchers', () => {
       String(input).includes('models.dev/api.json'),
     );
     expect(modelsDevCalls).toHaveLength(2);
+  });
+
+  it('re-fetches provider metadata on a forced refresh before the TTL expires', async () => {
+    stubWindow();
+
+    let contextLimit = 32_000;
+    const fetchSpy = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes('models.dev/api.json')) {
+        return jsonResponse({
+          nvidia: {
+            models: {
+              'fresh-context-model': {
+                id: 'fresh-context-model',
+                modalities: { input: ['text'], output: ['text'] },
+                limit: { context: contextLimit },
+              },
+            },
+          },
+        });
+      }
+      if (url.includes('/nvidia/') || url.includes('/api/nvidia/models')) {
+        return jsonResponse({ data: [{ id: 'fresh-context-model' }] });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.resetModules();
+    const { fetchNvidiaModels: fetchFreshNvidiaModels } = await import('./model-catalog');
+
+    // First (auto) fetch caches metadata; the model fails the context floor.
+    await expect(fetchFreshNvidiaModels()).resolves.toEqual([]);
+
+    // Upstream now reports a usable context, but a non-forced refresh keeps
+    // serving the cached (stale) metadata, so the model stays filtered out.
+    contextLimit = 200_000;
+    await expect(fetchFreshNvidiaModels()).resolves.toEqual([]);
+
+    // A forced refresh busts the metadata cache and re-fetches models.dev,
+    // surfacing the now-eligible model without waiting out the 12h TTL.
+    await expect(fetchFreshNvidiaModels({ forceMetadataRefresh: true })).resolves.toEqual([
+      'fresh-context-model',
+    ]);
+
+    const modelsDevCalls = fetchSpy.mock.calls.filter(([input]) =>
+      String(input).includes('models.dev/api.json'),
+    );
+    // 1 (first auto) + 0 (cached, non-forced) + 1 (forced) = 2.
+    expect(modelsDevCalls).toHaveLength(2);
+  });
+});
+
+describe('fetchGoogleModels', () => {
+  it('normalizes the Worker proxy model list payload', async () => {
+    stubWindow();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({
+          object: 'list',
+          data: [
+            { id: 'gemini-pro', name: 'gemini-pro' },
+            { id: 'gemini-flash', name: 'gemini-flash' },
+          ],
+        }),
+      ),
+    );
+
+    await expect(fetchGoogleModels()).resolves.toEqual(['gemini-flash', 'gemini-pro']);
+  });
+
+  it('throws on non-OK response', async () => {
+    stubWindow();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 500, text: async () => 'Server error' })),
+    );
+
+    await expect(fetchGoogleModels()).rejects.toThrow(/Google Gemini model list failed \(500\)/);
+  });
+});
+
+describe('fetchOpenAIModels', () => {
+  it('normalizes the Worker proxy model list payload', async () => {
+    stubWindow();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({
+          object: 'list',
+          data: [
+            { id: 'gpt-5.2', name: 'gpt-5.2' },
+            { id: 'gpt-5.1', name: 'gpt-5.1' },
+          ],
+        }),
+      ),
+    );
+
+    await expect(fetchOpenAIModels()).resolves.toEqual(['gpt-5.1', 'gpt-5.2']);
+  });
+
+  it('throws on non-OK response', async () => {
+    stubWindow();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 401, text: async () => 'Unauthorized' })),
+    );
+
+    await expect(fetchOpenAIModels()).rejects.toThrow(/OpenAI model list failed \(401\)/);
   });
 });
 

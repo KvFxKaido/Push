@@ -131,6 +131,8 @@ export function makeDaemonModelCatalogStub(opts: {
     blackboxModels: { loading: false, error: null, updatedAt: null },
     kilocodeModels: { loading: false, error: null, updatedAt: null },
     openAdapterModels: { loading: false, error: null, updatedAt: null },
+    googleModels: { loading: false, error: null, updatedAt: null },
+    openaiModels: { loading: false, error: null, updatedAt: null },
     refreshOllamaModels: vi.fn(),
     refreshOpenRouterModels: vi.fn(),
     refreshCloudflareModels: vi.fn(),
@@ -139,6 +141,8 @@ export function makeDaemonModelCatalogStub(opts: {
     refreshBlackboxModels: vi.fn(),
     refreshKilocodeModels: vi.fn(),
     refreshOpenAdapterModels: vi.fn(),
+    refreshGoogleModels: vi.fn(),
+    refreshOpenAIModels: vi.fn(),
     zenGoMode: false,
     setZenGoMode: vi.fn(),
   };

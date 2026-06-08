@@ -214,14 +214,13 @@ export function buildSettingsAI(props: ChatRouteProps): SettingsAIProps {
         model: catalog.openai.model,
         setModel: catalog.openai.setModel,
         modelOptions: catalog.openaiModelOptions,
-        // Curated-list-only — OpenAI's /v1/models includes a lot of
-        // non-chat endpoints (embeddings, audio, etc.) so a live proxy
-        // would need filtering; not worth it for MVP.
-        modelsLoading: false,
-        modelsError: null,
-        modelsUpdatedAt: null,
+        // Live list via the Worker proxy (`handleOpenAIModels` filters out the
+        // embeddings/audio/image endpoints); curated fallback until it resolves.
+        modelsLoading: catalog.openaiModels.loading,
+        modelsError: catalog.openaiModels.error,
+        modelsUpdatedAt: catalog.openaiModels.updatedAt,
         isModelLocked: isProviderLocked && lockedProvider === 'openai',
-        refreshModels: () => {},
+        refreshModels: catalog.refreshOpenAIModels,
         keyInput: catalog.openai.keyInput,
         setKeyInput: catalog.openai.setKeyInput,
         setKey: catalog.openai.setKey,
@@ -232,14 +231,13 @@ export function buildSettingsAI(props: ChatRouteProps): SettingsAIProps {
         model: catalog.google.model,
         setModel: catalog.google.setModel,
         modelOptions: catalog.googleModelOptions,
-        // Curated-list-only — Gemini's /v1beta/models mixes chat-capable
-        // models with embedding/image-only entries; a live proxy needs a
-        // filter before it's useful here.
-        modelsLoading: false,
-        modelsError: null,
-        modelsUpdatedAt: null,
+        // Live list via the Worker proxy (`handleGoogleModels` keeps only
+        // generateContent-capable models); curated fallback until it resolves.
+        modelsLoading: catalog.googleModels.loading,
+        modelsError: catalog.googleModels.error,
+        modelsUpdatedAt: catalog.googleModels.updatedAt,
         isModelLocked: isProviderLocked && lockedProvider === 'google',
-        refreshModels: () => {},
+        refreshModels: catalog.refreshGoogleModels,
         keyInput: catalog.google.keyInput,
         setKeyInput: catalog.google.setKeyInput,
         setKey: catalog.google.setKey,
