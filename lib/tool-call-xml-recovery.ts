@@ -52,11 +52,32 @@ export interface RecoveredXmlCall {
   endOffset: number;
 }
 
+// Shape D — namespace-token-wrapped tags. Some models (DeepSeek-family
+// finetunes in particular) emit the Anthropic invoke/parameter shape but
+// wrap each tag in a chat-template namespace token, so the call leaks
+// into the content stream as literal text like
+//   <｜DSML｜tool_calls><｜DSML｜invoke name="web_search">
+//     <｜DSML｜parameter name="query">…</｜DSML｜parameter>
+//   </｜DSML｜invoke></｜DSML｜tool_calls>
+// where the delimiter `｜` is either the ASCII pipe `|` (U+007C) or the
+// full-width pipe `｜` (U+FF5C) common in open-weight templates. The
+// prefix sits between `<` (or `</`) and the tag name. We tolerate it
+// *in place* — woven into each tag regex rather than stripped in a
+// pre-pass — so recovered offsets stay anchored to the original text
+// (the dispatcher merges these against bare-JSON candidates by offset).
+// `NS` is optional, so every plain-tag shape below keeps matching too.
+const NS = String.raw`(?:[|｜][\w.\-]+[|｜])?`;
+
 // Match a `<tool_call>` element. The `\b[^>]*` allows attributes the
 // model occasionally adds (e.g. `<tool_call id="0">`) — we ignore the
 // attribute list. Non-greedy so a sequence of calls in one message each
-// resolve to their own tag pair instead of one giant match.
-const TOOL_CALL_TAG_REGEX = /<tool_call\b[^>]*>([\s\S]*?)<\/tool_call\s*>/gi;
+// resolve to their own tag pair instead of one giant match. `tool_call\b`
+// won't match the plural `tool_calls` wrapper (no word boundary between
+// `l` and `s`), so the two shapes never collide.
+const TOOL_CALL_TAG_REGEX = new RegExp(
+  String.raw`<${NS}tool_call\b[^>]*>([\s\S]*?)<\/${NS}tool_call\s*>`,
+  'gi',
+);
 
 // Anthropic's documented tool-use wrapper. Models trained on the public
 // Claude API protocol (and copies of it) emit
@@ -65,20 +86,31 @@ const TOOL_CALL_TAG_REGEX = /<tool_call\b[^>]*>([\s\S]*?)<\/tool_call\s*>/gi;
 //       <parameter name="path">/foo</parameter>
 //     </invoke>
 //   </function_calls>
-// for each tool call. Distinct from `<tool_call>` (singular, used by
-// Hermes / Qwen / Nous finetunes) — captured separately so the per-shape
-// inner parser stays focused. A single `<function_calls>` can contain
-// multiple `<invoke>` children: each becomes its own recovered call.
-const FUNCTION_CALLS_TAG_REGEX = /<function_calls\b[^>]*>([\s\S]*?)<\/function_calls\s*>/gi;
+// for each tool call. `tool_calls` (plural) is accepted as an alias —
+// the namespace-wrapped Shape D variant uses it as its wrapper name —
+// since both carry `<invoke>` children with identical semantics.
+// Distinct from `<tool_call>` (singular, used by Hermes / Qwen / Nous
+// finetunes) — captured separately so the per-shape inner parser stays
+// focused. A single wrapper can contain multiple `<invoke>` children:
+// each becomes its own recovered call.
+const FUNCTION_CALLS_TAG_REGEX = new RegExp(
+  String.raw`<${NS}(?:function_calls|tool_calls)\b[^>]*>([\s\S]*?)<\/${NS}(?:function_calls|tool_calls)\s*>`,
+  'gi',
+);
 
 // Inner-block patterns for the Anthropic shape. `name` may use either
 // quote style or no quotes; everything inside the attribute set up to
 // the closing `>` is ignored so models that add stray attributes
-// (`<invoke name="x" id="0">`) still match.
-const INVOKE_TAG_REGEX =
-  /<invoke\b[^>]*?\bname\s*=\s*["']?([^"'\s>]+)["']?[^>]*>([\s\S]*?)<\/invoke\s*>/gi;
-const PARAMETER_TAG_REGEX =
-  /<parameter\b[^>]*?\bname\s*=\s*["']?([^"'\s>]+)["']?[^>]*>([\s\S]*?)<\/parameter\s*>/gi;
+// (`<invoke name="x" id="0">`, or Shape D's `<parameter name="q"
+// string="true">`) still match.
+const INVOKE_TAG_REGEX = new RegExp(
+  String.raw`<${NS}invoke\b[^>]*?\bname\s*=\s*["']?([^"'\s>]+)["']?[^>]*>([\s\S]*?)<\/${NS}invoke\s*>`,
+  'gi',
+);
+const PARAMETER_TAG_REGEX = new RegExp(
+  String.raw`<${NS}parameter\b[^>]*?\bname\s*=\s*["']?([^"'\s>]+)["']?[^>]*>([\s\S]*?)<\/${NS}parameter\s*>`,
+  'gi',
+);
 
 // `<arg_key>K</arg_key>` followed by `<arg_value>V</arg_value>`. Both
 // child tags are required and must appear in order — a stray key
@@ -91,8 +123,10 @@ const PARAMETER_TAG_REGEX =
 // swallowing the next valid pair into a "wider" malformed match.
 // Value body is `[\s\S]*?` so JSON-encoded values that happen to
 // contain `<` (e.g. `"a < b"`) survive intact.
-const ARG_PAIR_REGEX =
-  /<arg_key\b[^>]*>([^<]*?)<\/arg_key\s*>\s*<arg_value\b[^>]*>([\s\S]*?)<\/arg_value\s*>/gi;
+const ARG_PAIR_REGEX = new RegExp(
+  String.raw`<${NS}arg_key\b[^>]*>([^<]*?)<\/${NS}arg_key\s*>\s*<${NS}arg_value\b[^>]*>([\s\S]*?)<\/${NS}arg_value\s*>`,
+  'gi',
+);
 
 // Conservative identifier shape — matches `recoverNamespacedToolCalls`'
 // tool-name capture. Anything outside this is either prose noise or a
