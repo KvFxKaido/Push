@@ -1,16 +1,18 @@
 /**
  * Anthropic Claude direct PushStream implementation.
  *
- * Hits the Worker proxy at `/api/anthropic/chat`. The Worker (`handleAnthropicChat`
- * in `app/src/worker/worker-providers.ts`) translates the OpenAI-shaped body via
- * `buildAnthropicMessagesRequest`, POSTs to `api.anthropic.com/v1/messages` with
- * the `x-api-key` + `anthropic-version` headers, and returns the upstream stream
- * already translated back to OpenAI SSE shape via `createAnthropicTranslatedStream`.
+ * Hits the Worker proxy at `/api/anthropic/chat`. The client serializes the
+ * neutral `push.stream.v1` wire body (`toPushStreamWire`) — materialized
+ * messages plus neutral scalars, tagged with `contract: "push.stream.v1"`. The
+ * Worker (`handleAnthropicChat`) dual-accepts: a `contract` field routes to the
+ * neutral branch, which serializes to Anthropic via `toAnthropicMessages`, POSTs
+ * to `api.anthropic.com/v1/messages`, and returns the upstream stream translated
+ * back to OpenAI SSE shape via `createAnthropicTranslatedStream`.
  *
- * So from the client adapter's perspective this looks identical to any other
- * OpenAI-compatible provider: send OpenAI-shaped JSON, read OpenAI-shaped SSE.
- * The Anthropic-specific protocol details live on the Worker side, which keeps
- * the API key out of the browser.
+ * Prompt materialization (`toLLMMessages`) stays client-side, so the wire carries
+ * already-materialized `messages` and `systemPromptOverride` is baked in. The
+ * *response* axis is unchanged — the client still reads OpenAI-shaped SSE. The
+ * API key stays out of the browser (Worker-side injection).
  *
  * Runs client-side. Timer/abort safety comes from `createProviderStreamAdapter`
  * wrapping this stream — no timer machinery lives here.
@@ -19,6 +21,7 @@
 import type { ChatMessage, WorkspaceContext } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
+import { toPushStreamWire } from '@push/lib/provider-wire';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
 import { parseProviderError } from './orchestrator-streaming';
@@ -57,15 +60,19 @@ export async function* anthropicStream(
   const anthropicWebSearch =
     req.anthropicWebSearch ?? isNativeWebSearchEnabled('anthropic', req.model);
 
-  const body: Record<string, unknown> = {
+  // Neutral `push.stream.v1` wire body. Sampling scalars and the web-search flag
+  // ride as neutral fields; the Worker's dual-accept neutral branch serializes
+  // them to Anthropic. Prefix-cache breakpoints are intentionally NOT sent — the
+  // legacy OpenAI-shape body never carried them on this path, so enabling web
+  // prefix caching is a separate, deliberate change, not a flip side effect.
+  const baseBody = toPushStreamWire(llmMessages, {
+    provider: 'anthropic',
     model: req.model,
-    messages: llmMessages,
-    stream: true,
-    ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
-    ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
-    ...(req.topP !== undefined ? { top_p: req.topP } : {}),
-    ...(anthropicWebSearch ? { anthropic_web_search: true } : {}),
-  };
+    maxTokens: req.maxTokens,
+    temperature: req.temperature,
+    topP: req.topP,
+    ...(anthropicWebSearch ? { anthropicWebSearch: true } : {}),
+  });
 
   // The Worker prefers its own server-side ANTHROPIC_API_KEY when set and
   // ignores the client-side header. Sending the client key as a Bearer when
@@ -90,8 +97,14 @@ export async function* anthropicStream(
   // model is almost certainly stuck and the user would rather see what
   // we have than wait through more spins.
   const MAX_PAUSE_TURN_ITERATIONS = 3;
-  let currentBody = body;
+  // Paused assistant content[] arrays accumulate oldest-first across iterations.
+  // The Worker forwards them to `toAnthropicMessages`' `replayAssistantTurns`,
+  // which appends them as trailing assistant turns — the neutral-wire equivalent
+  // of the old loop appending `assistant_content_blocks` messages inline.
+  const replayAssistantTurns: Array<Array<Record<string, unknown>>> = [];
   for (let attempt = 0; attempt <= MAX_PAUSE_TURN_ITERATIONS; attempt += 1) {
+    const currentBody =
+      replayAssistantTurns.length > 0 ? { ...baseBody, replayAssistantTurns } : baseBody;
     const response = await fetch(PROVIDER_URLS.anthropic.chat, {
       method: 'POST',
       headers,
@@ -148,15 +161,10 @@ export async function* anthropicStream(
       yield { type: 'done', finishReason: 'stop' };
       return;
     }
-    // Append the paused assistant blocks as the next request's prior
-    // assistant turn. The Anthropic bridge picks up
-    // `assistant_content_blocks` and uses them verbatim as the upstream
-    // content[]. Cloning by spread keeps each iteration's body
-    // independent for telemetry / debugging.
-    const nextMessages = Array.isArray(currentBody.messages)
-      ? [...(currentBody.messages as unknown[])]
-      : [];
-    nextMessages.push({ role: 'assistant', assistant_content_blocks: paused });
-    currentBody = { ...currentBody, messages: nextMessages };
+    // Record the paused assistant blocks as the next request's replay turn.
+    // The Worker forwards `replayAssistantTurns` to `toAnthropicMessages`, which
+    // appends them as trailing assistant turns the upstream resumes from. The
+    // next iteration rebuilds `currentBody` from `baseBody` + this growing array.
+    replayAssistantTurns.push(paused);
   }
 }

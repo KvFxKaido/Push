@@ -209,7 +209,7 @@ describe('anthropicStream', () => {
     expect(caught!.message).toMatch(/invalid x-api-key/);
   });
 
-  it('forwards max_tokens / temperature / top_p into the request body', async () => {
+  it('sends the push.stream.v1 neutral wire body (contract + camelCase scalars)', async () => {
     installStreamFetch(fetchMock);
     const { anthropicStream } = await import('./anthropic-stream');
     const iter = anthropicStream({ ...baseRequest, maxTokens: 4096, temperature: 0.5, topP: 0.95 });
@@ -220,12 +220,21 @@ describe('anthropicStream', () => {
 
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     const body = JSON.parse(init.body as string);
-    expect(body.max_tokens).toBe(4096);
+    // Neutral wire: discriminator present, camelCase scalars, materialized
+    // messages, and no OpenAI-shape sidecars (max_tokens / top_p / stream).
+    expect(body.contract).toBe('push.stream.v1');
+    expect(body.provider).toBe('anthropic');
+    expect(body.model).toBe('claude-sonnet-4-6');
+    expect(body.maxTokens).toBe(4096);
     expect(body.temperature).toBe(0.5);
-    expect(body.top_p).toBe(0.95);
+    expect(body.topP).toBe(0.95);
+    expect(body.messages).toEqual([{ role: 'user', content: 'hi' }]);
+    expect(body).not.toHaveProperty('max_tokens');
+    expect(body).not.toHaveProperty('top_p');
+    expect(body).not.toHaveProperty('stream');
   });
 
-  it('defaults anthropic_web_search on in auto mode', async () => {
+  it('defaults anthropicWebSearch on in auto mode', async () => {
     installStreamFetch(fetchMock);
     const { anthropicStream } = await import('./anthropic-stream');
     const iter = anthropicStream(baseRequest);
@@ -236,10 +245,11 @@ describe('anthropicStream', () => {
 
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     const body = JSON.parse(init.body as string);
-    expect(body.anthropic_web_search).toBe(true);
+    expect(body.anthropicWebSearch).toBe(true);
+    expect(body).not.toHaveProperty('anthropic_web_search');
   });
 
-  it('omits anthropic_web_search when web search is off', async () => {
+  it('omits anthropicWebSearch when web search is off', async () => {
     installStreamFetch(fetchMock);
     webSearchMode = 'off';
     try {
@@ -252,7 +262,7 @@ describe('anthropicStream', () => {
 
       const init = fetchMock.mock.calls[0][1] as RequestInit;
       const body = JSON.parse(init.body as string);
-      expect(body.anthropic_web_search).toBeUndefined();
+      expect(body.anthropicWebSearch).toBeUndefined();
     } finally {
       webSearchMode = 'auto';
     }
@@ -317,15 +327,19 @@ describe('anthropicStream', () => {
     );
     expect(textDeltas.map((e) => e.text).join('')).toBe('Searching done.');
 
-    // The second request's body must carry the captured blocks as the
-    // prior assistant turn so Anthropic can resume the paused sampling.
+    // The second request carries the captured blocks via the neutral wire's
+    // `replayAssistantTurns` (the Worker forwards them to toAnthropicMessages,
+    // which appends them as a trailing assistant turn). The base `messages`
+    // array is unchanged — replay rides as a separate field, not inline.
     const secondInit = fetchMock.mock.calls[1][1] as RequestInit;
     const secondBody = JSON.parse(secondInit.body as string);
-    const trailingAssistant = secondBody.messages[secondBody.messages.length - 1];
-    expect(trailingAssistant.role).toBe('assistant');
-    expect(trailingAssistant.assistant_content_blocks).toEqual([
-      { type: 'text', text: 'Searching' },
-      { type: 'server_tool_use', id: 'su_01', name: 'web_search', input: {} },
+    expect(secondBody.contract).toBe('push.stream.v1');
+    expect(secondBody.messages).toEqual([{ role: 'user', content: 'hi' }]);
+    expect(secondBody.replayAssistantTurns).toEqual([
+      [
+        { type: 'text', text: 'Searching' },
+        { type: 'server_tool_use', id: 'su_01', name: 'web_search', input: {} },
+      ],
     ]);
   });
 
@@ -340,6 +354,6 @@ describe('anthropicStream', () => {
 
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     const body = JSON.parse(init.body as string);
-    expect(body.anthropic_web_search).toBeUndefined();
+    expect(body.anthropicWebSearch).toBeUndefined();
   });
 });
