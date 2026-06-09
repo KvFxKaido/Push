@@ -4,10 +4,11 @@
  * Calls `https://api.anthropic.com/v1/messages` directly with `x-api-key`,
  * builds the Messages-API body straight from the neutral `PushStreamRequest`
  * via `toAnthropicMessages` (no OpenAI Chat-Completions intermediate — see
- * `docs/runbooks/Provider Request Normalization.md`), then pumps the upstream
- * stream through `createAnthropicTranslatedStream` so the events leave this
- * adapter in OpenAI Chat-Completions shape — exactly what `openAISSEPump`
- * (and downstream consumers) already expect.
+ * `docs/runbooks/Provider Request Normalization.md`), then parses the upstream
+ * Anthropic SSE directly into neutral `PushStreamEvent`s via
+ * `anthropicEventStream` (Phase 3a — no OpenAI-SSE serialize/reparse round-trip;
+ * the web Worker still uses `createAnthropicTranslatedStream` for its response
+ * wire until the response-contract migration).
  *
  * Shape mirrors the Worker's `handleAnthropicChat`: build body, POST,
  * translate response, yield events. Difference vs the Worker version: the CLI
@@ -38,11 +39,7 @@ import type {
   PushStreamEvent,
   PushStreamRequest,
 } from '../lib/provider-contract.ts';
-import {
-  createAnthropicTranslatedStream,
-  toAnthropicMessages,
-} from '../lib/openai-anthropic-bridge.ts';
-import { openAISSEPump } from '../lib/openai-sse-pump.ts';
+import { anthropicEventStream, toAnthropicMessages } from '../lib/openai-anthropic-bridge.ts';
 import { CliProviderError } from './openai-stream.ts';
 import type { ProviderConfig } from './provider.ts';
 
@@ -123,9 +120,8 @@ async function* cliAnthropicStream(
       return;
     }
 
-    const translated = createAnthropicTranslatedStream(response, model);
     let paused: Array<Record<string, unknown>> | null = null;
-    for await (const event of openAISSEPump({ body: translated, signal: req.signal })) {
+    for await (const event of anthropicEventStream(response, req.signal)) {
       if (event.type === 'pause_turn') {
         paused = event.assistantBlocks;
         continue;
