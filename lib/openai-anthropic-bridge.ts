@@ -523,8 +523,16 @@ export function toAnthropicMessages(
       typeof req.maxTokens === 'number' ? req.maxTokens : (options?.maxTokensDefault ?? 8192),
     stream: options?.stream ?? true,
     samplingModel: model,
+    // Apply the default temperature only when the caller set neither sampling
+    // param. If they explicitly chose top_p, injecting a default temperature
+    // would (a) on Claude 4+ force the exclusivity guard to drop their explicit
+    // top_p, and (b) anywhere fabricate a sampling param they never asked for.
     temperature:
-      typeof req.temperature === 'number' ? req.temperature : options?.temperatureDefault,
+      typeof req.temperature === 'number'
+        ? req.temperature
+        : typeof req.topP === 'number'
+          ? undefined
+          : options?.temperatureDefault,
     topP: req.topP,
     enableWebSearch: options?.enableWebSearch ?? req.anthropicWebSearch === true,
     anthropicVersion: options?.anthropicVersion,

@@ -770,6 +770,32 @@ describe('toAnthropicMessages — drift vs legacy OpenAI-detour path', () => {
     expect(body.model).toBe('claude-sonnet-4-6');
   });
 
+  it('keeps an explicit top_p instead of injecting the default temperature', () => {
+    // The CLI passes temperatureDefault: 0.1. A request that explicitly sets
+    // only top_p must not get the default temperature filled in — on Claude 4+
+    // that would force the exclusivity guard to drop the user's explicit top_p.
+    const body = toAnthropicMessages(
+      {
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-6',
+        topP: 0.3,
+        messages: [llm('1', 'user', 'hi')],
+      },
+      { temperatureDefault: 0.1 },
+    );
+    expect(body).toMatchObject({ top_p: 0.3 });
+    expect(body).not.toHaveProperty('temperature');
+  });
+
+  it('still applies the default temperature when no sampling param is set', () => {
+    const body = toAnthropicMessages(
+      { provider: 'anthropic', model: 'claude-sonnet-4-6', messages: [llm('1', 'user', 'hi')] },
+      { temperatureDefault: 0.1 },
+    );
+    expect(body).toMatchObject({ temperature: 0.1 });
+    expect(body).not.toHaveProperty('top_p');
+  });
+
   it('appends pause-turn replay turns as verbatim trailing assistant messages', () => {
     const replayA = [{ type: 'text', text: 'paused-a' }];
     const replayB = [{ type: 'text', text: 'paused-b' }];
