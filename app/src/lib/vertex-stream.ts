@@ -184,11 +184,13 @@ export async function* vertexStream(
   const MAX_PAUSE_TURN_ITERATIONS = 3;
   const replayAssistantTurns: Array<Array<Record<string, unknown>>> = [];
   for (let attempt = 0; attempt <= MAX_PAUSE_TURN_ITERATIONS; attempt += 1) {
-    const currentBody = isNeutral
+    // Branch on the base objects directly (not `isNeutral`) so TS narrows away
+    // the nullable side — `neutralBase` is non-null exactly in native mode.
+    const currentBody = neutralBase
       ? replayAssistantTurns.length > 0
         ? { ...neutralBase, replayAssistantTurns }
         : neutralBase
-      : replayAssistantTurns.length > 0
+      : legacyBase && replayAssistantTurns.length > 0
         ? {
             ...legacyBase,
             messages: [
