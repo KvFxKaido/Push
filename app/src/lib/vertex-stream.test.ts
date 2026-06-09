@@ -276,19 +276,21 @@ describe('vertexStream', () => {
       .join('');
     expect(text).toBe('Searching done.');
 
-    // Continuation request body must carry the captured blocks as the
-    // prior assistant turn.
+    // Native mode is the neutral wire: the continuation carries the captured
+    // blocks via `replayAssistantTurns` (the Worker forwards them to
+    // toAnthropicMessages), not inline on `messages`.
     const secondInit = fetchMock.mock.calls[1][1] as RequestInit;
     const secondBody = JSON.parse(secondInit.body as string);
-    const trailingAssistant = secondBody.messages[secondBody.messages.length - 1];
-    expect(trailingAssistant.role).toBe('assistant');
-    expect(trailingAssistant.assistant_content_blocks).toEqual([
-      { type: 'text', text: 'Searching' },
-      { type: 'server_tool_use', id: 'su_01', name: 'web_search', input: {} },
+    expect(secondBody.contract).toBe('push.stream.v1');
+    expect(secondBody.replayAssistantTurns).toEqual([
+      [
+        { type: 'text', text: 'Searching' },
+        { type: 'server_tool_use', id: 'su_01', name: 'web_search', input: {} },
+      ],
     ]);
   });
 
-  it('sets anthropic_web_search on Claude (Anthropic-transport) models', async () => {
+  it('sets anthropicWebSearch on Claude (Anthropic-transport) models', async () => {
     installStreamFetch(fetchMock);
     const { vertexStream } = await import('./vertex-stream');
     const iter = vertexStream({ ...baseRequest, model: 'claude-opus-4-7@20251015' });
@@ -299,11 +301,11 @@ describe('vertexStream', () => {
 
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     const body = JSON.parse(init.body as string);
-    expect(body.anthropic_web_search).toBe(true);
-    expect(body.google_search_grounding).toBeUndefined();
+    expect(body.anthropicWebSearch).toBe(true);
+    expect(body.googleSearchGrounding).toBeUndefined();
   });
 
-  it('sets google_search_grounding on Gemini (OpenAI-compat-transport) models', async () => {
+  it('sets googleSearchGrounding on Gemini (OpenAI-compat-transport) models', async () => {
     installStreamFetch(fetchMock);
     const { vertexStream } = await import('./vertex-stream');
     const iter = vertexStream({ ...baseRequest, model: 'gemini-2.5-pro' });
@@ -314,13 +316,12 @@ describe('vertexStream', () => {
 
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     const body = JSON.parse(init.body as string);
-    expect(body.google_search_grounding).toBe(true);
-    // Must NOT leak the Anthropic flag onto a Gemini turn — strict
-    // OpenAI-compat proxies reject unknown root fields.
-    expect(body.anthropic_web_search).toBeUndefined();
+    expect(body.googleSearchGrounding).toBe(true);
+    // Must NOT leak the Anthropic flag onto a Gemini turn.
+    expect(body.anthropicWebSearch).toBeUndefined();
   });
 
-  it('forwards max_tokens / temperature / top_p into the request body', async () => {
+  it('sends the push.stream.v1 neutral wire body in native mode (camelCase scalars)', async () => {
     installStreamFetch(fetchMock);
     const { vertexStream } = await import('./vertex-stream');
     const iter = vertexStream({ ...baseRequest, maxTokens: 4096, temperature: 0.5, topP: 0.95 });
@@ -331,9 +332,14 @@ describe('vertexStream', () => {
 
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     const body = JSON.parse(init.body as string);
-    expect(body.max_tokens).toBe(4096);
+    expect(body.contract).toBe('push.stream.v1');
+    expect(body.provider).toBe('vertex');
+    expect(body.maxTokens).toBe(4096);
     expect(body.temperature).toBe(0.5);
-    expect(body.top_p).toBe(0.95);
+    expect(body.topP).toBe(0.95);
+    expect(body).not.toHaveProperty('max_tokens');
+    expect(body).not.toHaveProperty('top_p');
+    expect(body).not.toHaveProperty('stream');
   });
 
   it('maps finish_reason onto the done event', async () => {
@@ -400,6 +406,32 @@ describe('vertexStream', () => {
     );
     expect(headers['X-Push-Vertex-Service-Account']).toBeUndefined();
     expect(headers['X-Push-Vertex-Region']).toBeUndefined();
+  });
+
+  it('legacy mode keeps the OpenAI Chat Completions body shape (NOT neutral)', async () => {
+    // handleLegacyVertexChat does not dual-accept, so the legacy path must keep
+    // sending the OpenAI-shaped body — only native mode flips to the wire.
+    vi.doMock('@/hooks/useVertexConfig', () => ({
+      getVertexBaseUrl: () =>
+        'https://us-central1-aiplatform.googleapis.com/v1beta1/projects/test-project/locations/us-central1/endpoints/openapi',
+      getVertexKey: () => 'test-key',
+      getVertexMode: () => 'legacy' as const,
+      getVertexRegion: () => 'us-central1',
+    }));
+    installStreamFetch(fetchMock);
+    const { vertexStream } = await import('./vertex-stream');
+    const iter = vertexStream({ ...baseRequest, maxTokens: 4096, temperature: 0.5 });
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1]!.body as string);
+    expect(body.contract).toBeUndefined();
+    expect(body.stream).toBe(true);
+    expect(body.max_tokens).toBe(4096);
+    expect(body.temperature).toBe(0.5);
+    expect(body).not.toHaveProperty('maxTokens');
   });
 
   it('legacy mode omits Authorization when the client key is empty', async () => {

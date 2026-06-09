@@ -29,6 +29,7 @@
 import type { ChatMessage } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
+import { toPushStreamWire } from '@push/lib/provider-wire';
 import type { WorkspaceContext } from '@/types';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
@@ -70,26 +71,16 @@ export async function* vertexStream(
     linkedLibraryContent: req.linkedLibraryContent,
   });
 
-  // 2. Plain OpenAI-compatible request body. The Worker forwards verbatim
-  //    on the OpenAPI transport (Gemini) and rewrites via
-  //    `buildAnthropicMessagesRequest` on the Anthropic transport (Claude).
-  //
-  //    Vertex carries both Claude and Gemini under one provider. The model
-  //    id picks the transport: `claude-*` → Anthropic, anything else →
-  //    OpenAI-compat (Gemini). Native web search splits the same way:
-  //
-  //      - Anthropic transport reads `anthropic_web_search`; the bridge
-  //        emits the `web_search_20250305` tool on the upstream Anthropic
-  //        body. AND-ed with `isAnthropicTransport` so an explicit
-  //        `req.anthropicWebSearch=true` can't smuggle the field onto a
-  //        Gemini turn (some strict OpenAI-compat proxies reject unknown
-  //        root fields).
-  //      - Gemini transport reads `google_search_grounding`; the Worker's
-  //        `handleVertexChat` translates it into `tools: [{ googleSearch:
-  //        {} }]` on the upstream body. Vertex's OpenAI-compat layer
-  //        doesn't auto-translate the OpenAI `web_search` tool shape, so
-  //        the rewrite has to live somewhere — the Worker keeps the
-  //        Push-private flag out of the upstream request.
+  // 2. Native web search splits by transport. Vertex carries both Claude and
+  //    Gemini under one provider; the model id picks the transport server-side
+  //    (`claude-*` → Anthropic, anything else → OpenAI-compat/Gemini), and the
+  //    matching search flag rides along:
+  //      - Anthropic transport → `anthropicWebSearch`; the bridge emits the
+  //        `web_search_20250305` tool. AND-ed with `isAnthropicTransport` so an
+  //        explicit `req.anthropicWebSearch=true` can't smuggle the field onto a
+  //        Gemini turn.
+  //      - Gemini transport → `googleSearchGrounding`; the Worker translates it
+  //        into `tools: [{ googleSearch: {} }]`.
   const isAnthropicTransport =
     typeof req.model === 'string' && req.model.trim().toLowerCase().startsWith('claude-');
   const anthropicWebSearch =
@@ -99,18 +90,10 @@ export async function* vertexStream(
     !isAnthropicTransport &&
     (req.googleSearchGrounding ?? isNativeWebSearchEnabled('vertex', req.model));
 
-  const body: Record<string, unknown> = {
-    model: req.model,
-    messages: llmMessages,
-    stream: true,
-    ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
-    ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
-    ...(req.topP !== undefined ? { top_p: req.topP } : {}),
-    ...(anthropicWebSearch ? { anthropic_web_search: true } : {}),
-    ...(googleSearchGrounding ? { google_search_grounding: true } : {}),
-  };
-
-  // 3. Headers — branch on configured Vertex mode.
+  // 3. Headers — branch on configured Vertex mode. Native mode hits the
+  //    dual-accept `handleVertexChat`, so it sends the neutral push.stream.v1
+  //    wire; legacy mode falls through to `handleLegacyVertexChat`, which does
+  //    NOT dual-accept, so it keeps the OpenAI Chat Completions shape.
   const mode = getVertexMode();
   const requestId = createRequestId('chat');
   const headers: Record<string, string> = {
@@ -162,16 +145,61 @@ export async function* vertexStream(
   }
   injectTraceHeaders(headers);
 
-  // 4. POST + stream response. Anthropic-transport models (Claude on Vertex)
+  // 4. Request body. Native → neutral push.stream.v1 wire (toPushStreamWire);
+  //    legacy → the OpenAI Chat Completions shape `handleLegacyVertexChat` still
+  //    expects. Both carry the matching search flag (only one is ever set).
+  const isNeutral = mode === 'native';
+  const neutralBase = isNeutral
+    ? toPushStreamWire(llmMessages, {
+        provider: 'vertex',
+        model: req.model,
+        maxTokens: req.maxTokens,
+        temperature: req.temperature,
+        topP: req.topP,
+        ...(anthropicWebSearch ? { anthropicWebSearch: true } : {}),
+        ...(googleSearchGrounding ? { googleSearchGrounding: true } : {}),
+      })
+    : null;
+  const legacyBase: Record<string, unknown> | null = isNeutral
+    ? null
+    : {
+        model: req.model,
+        messages: llmMessages,
+        stream: true,
+        ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
+        ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
+        ...(req.topP !== undefined ? { top_p: req.topP } : {}),
+        ...(anthropicWebSearch ? { anthropic_web_search: true } : {}),
+        ...(googleSearchGrounding ? { google_search_grounding: true } : {}),
+      };
+
+  // 5. POST + stream response. Anthropic-transport models (Claude on Vertex)
   //    can return `stop_reason: pause_turn` mid-turn when the server-side
-  //    sampling loop hits its iteration cap — mirror the
-  //    `app/src/lib/anthropic-stream.ts` continuation loop here so Vertex
-  //    Claude doesn't truncate / leak the pause_turn event to consumers.
-  //    OpenAI-compat transport (Gemini) never emits pause_turn, so the
-  //    same loop is a no-op for those models.
+  //    sampling loop hits its iteration cap — replay the paused assistant
+  //    content so it resumes. Neutral carries the paused blocks via
+  //    `replayAssistantTurns` (the Worker forwards them to toAnthropicMessages);
+  //    legacy appends them inline as `assistant_content_blocks` messages.
+  //    OpenAI-compat transport (Gemini) never emits pause_turn, so the loop is
+  //    a no-op for those models.
   const MAX_PAUSE_TURN_ITERATIONS = 3;
-  let currentBody: Record<string, unknown> = body;
+  const replayAssistantTurns: Array<Array<Record<string, unknown>>> = [];
   for (let attempt = 0; attempt <= MAX_PAUSE_TURN_ITERATIONS; attempt += 1) {
+    const currentBody = isNeutral
+      ? replayAssistantTurns.length > 0
+        ? { ...neutralBase, replayAssistantTurns }
+        : neutralBase
+      : replayAssistantTurns.length > 0
+        ? {
+            ...legacyBase,
+            messages: [
+              ...llmMessages,
+              ...replayAssistantTurns.map((blocks) => ({
+                role: 'assistant',
+                assistant_content_blocks: blocks,
+              })),
+            ],
+          }
+        : legacyBase;
     const response = await fetch(PROVIDER_URLS.vertex.chat, {
       method: 'POST',
       headers,
@@ -215,10 +243,9 @@ export async function* vertexStream(
       yield { type: 'done', finishReason: 'stop' };
       return;
     }
-    const nextMessages = Array.isArray(currentBody.messages)
-      ? [...(currentBody.messages as unknown[])]
-      : [];
-    nextMessages.push({ role: 'assistant', assistant_content_blocks: paused });
-    currentBody = { ...currentBody, messages: nextMessages };
+    // Record the paused blocks; the next iteration rebuilds `currentBody` from
+    // the stable base + this growing array (neutral: replayAssistantTurns;
+    // legacy: appended assistant_content_blocks messages).
+    replayAssistantTurns.push(paused);
   }
 }
