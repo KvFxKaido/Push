@@ -116,12 +116,20 @@ drift-test corpus in `lib/openai-anthropic-bridge.test.ts`, and the CLI adapter'
 body-capture suite (`cli/tests/anthropic-stream.test.mjs`) is the independent
 oracle for the cache-tagging edges.
 
-**Phase 3 — native SSE → neutral events, then retire the OpenAI-canonical
-assumption.**
-Have `createAnthropicTranslatedStream` emit `PushStreamEvent` directly rather
-than rebuilding OpenAI SSE chunks. Repeat Phases 2–3 for Gemini. Once no
-provider depends on OpenAI-shape as an intermediate, delete the
-re-emit-to-OpenAI step and make `toOpenAIChat` an explicit peer serializer.
+**Phase 3 — two axes, then retire the OpenAI-canonical assumption.**
+- *Request contract (web).* Move the web client↔Worker request body off OpenAI
+  shape onto the neutral wire so the Worker serializes via `toAnthropicMessages`
+  (Phase 2) instead of `buildAnthropicMessagesRequest`. This is the risky part —
+  it's a network contract between a long-lived browser client and an
+  atomically-deployed Worker — so it has its own plan:
+  [`Anthropic Worker Contract Migration.md`](<Anthropic Worker Contract Migration.md>).
+- *Response contract (SSE).* Have `createAnthropicTranslatedStream` emit
+  `PushStreamEvent` directly rather than rebuilding OpenAI SSE chunks. Separate,
+  independently shippable axis.
+
+Repeat both for Gemini. Once no provider depends on OpenAI-shape as an
+intermediate, delete the re-emit-to-OpenAI step and make `toOpenAIChat` an
+explicit peer serializer.
 
 ## What NOT to change
 
