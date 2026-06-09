@@ -290,6 +290,130 @@ describe('handleZenGoChat', () => {
   });
 });
 
+describe('handleZenGoChat — neutral wire (dual-accept)', () => {
+  function makeNeutralRequest(payload: Record<string, unknown>): Request {
+    return new Request('https://push.example.test/api/zen/go/chat', {
+      method: 'POST',
+      headers: { Origin: 'https://push.example.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contract: 'push.stream.v1', ...payload }),
+    });
+  }
+
+  function captureUpstream() {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('', { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }),
+    );
+    return () => captured;
+  }
+
+  it('routes an Anthropic-transport model through toAnthropicMessages with NO body model', async () => {
+    const get = captureUpstream();
+    await handleZenGoChat(
+      makeNeutralRequest({
+        model: 'minimax-m3',
+        messages: [
+          { role: 'system', content: 'be terse' },
+          { role: 'user', content: 'hello' },
+        ],
+      }),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    const captured = get();
+    expect(captured?.url).toBe('https://opencode.ai/zen/go/v1/messages');
+    const body = JSON.parse(captured!.init.body as string);
+    // Zen-Go's /v1/messages carries the model out-of-band — emitModel:false.
+    expect(body).not.toHaveProperty('model');
+    expect(body.system).toBe('be terse');
+    expect(body.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'hello' }] }]);
+  });
+
+  it('routes an OpenAI-transport model through toOpenAIChat (model in body, /chat/completions)', async () => {
+    const get = captureUpstream();
+    await handleZenGoChat(
+      makeNeutralRequest({
+        model: 'glm-5.1',
+        messages: [{ role: 'user', content: 'hello' }],
+      }),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    const captured = get();
+    expect(captured?.url).toBe('https://opencode.ai/zen/go/v1/chat/completions');
+    const body = JSON.parse(captured!.init.body as string);
+    expect(body.model).toBe('glm-5.1');
+    expect(body.messages).toEqual([{ role: 'user', content: 'hello' }]);
+    expect(body.stream).toBe(true);
+  });
+
+  it('enables the native web_search tool from the neutral anthropicWebSearch flag', async () => {
+    const get = captureUpstream();
+    await handleZenGoChat(
+      makeNeutralRequest({
+        model: 'minimax-m3',
+        messages: [{ role: 'user', content: 'hi' }],
+        anthropicWebSearch: true,
+      }),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    expect(body.tools).toEqual([{ type: 'web_search_20250305', name: 'web_search' }]);
+  });
+
+  it('clamps neutral maxTokens to the route ceiling (12288)', async () => {
+    const get = captureUpstream();
+    await handleZenGoChat(
+      makeNeutralRequest({
+        model: 'minimax-m3',
+        messages: [{ role: 'user', content: 'hi' }],
+        maxTokens: 999_999,
+      }),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    expect(body.max_tokens).toBe(12_288);
+  });
+
+  it('returns 400 (not 502) when a neutral content part has an unrepresentable image URL', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const response = await handleZenGoChat(
+      makeNeutralRequest({
+        model: 'minimax-m3',
+        messages: [
+          {
+            role: 'user',
+            content: [{ type: 'image_url', image_url: { url: 'ftp://nope/x.png' } }],
+          },
+        ],
+      }),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    expect(response.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('400s an unknown contract value instead of silently downgrading to legacy', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const req = new Request('https://push.example.test/api/zen/go/chat', {
+      method: 'POST',
+      headers: { Origin: 'https://push.example.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contract: 'push.stream.v2',
+        model: 'glm-5.1',
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    });
+    const response = await handleZenGoChat(req, makeEnv({ ZEN_API_KEY: 'zen-key' }));
+    expect(response.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe('handleOpenRouterChat — Cloudflare AI Gateway', () => {
   // Asserts that the gateway is purely opt-in: when the env vars are unset,
   // every request flows direct to OpenRouter exactly as before. Account/slug

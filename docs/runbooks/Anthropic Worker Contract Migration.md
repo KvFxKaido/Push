@@ -182,14 +182,24 @@ ship before client changes**, never the reverse.
    `googleSearchGrounding` flag for native grounding). Both backward-compatible
    and dormant.
 
-   **Vertex / Zen-Go still pending — and not just "apply the recipe".** Their
-   *non-anthropic* transports are OpenAI-compat passthroughs (`bodyText` /
-   `translateVertexOpenApiBody`), not Gemini-native, so the neutral branch there
-   serializes via `toOpenAIChat(PushStreamRequest)` — **now shipped** (the
-   "explicit peer serializer", `lib/openai-chat-serializer.ts`). The one
-   remaining prerequisite: their *anthropic* transports omit `model` from the
-   body (model in URL / implied), so `toAnthropicMessages` needs an
-   `emitModel: false` option before the Vertex/Zen-Go dual-accept cut.
+   **`emitModel: false` shipped, `handleZenGoChat` now dual-accepts.** The
+   prerequisite — `toAnthropicMessages({ emitModel: false })`, which suppresses
+   the top-level `model` while keeping the sampling-capability gate on the
+   resolved model — landed, and Zen-Go was cut onto `parseDualAcceptRequest`
+   across **both** transports: the anthropic transport (`minimax-*`/`qwen3.*`)
+   serializes via `toAnthropicMessages({ emitModel: false })` to match its
+   model-omitting `/v1/messages` body, and the OpenAI-compat transport
+   (`glm-*`/`kimi-*`/etc.) serializes via `toOpenAIChat`. Legacy bodies still
+   forward verbatim (`buildAnthropicMessagesRequest` / raw `bodyText`).
+   Backward-compatible and dormant.
+
+   **Vertex still pending.** Same recipe (anthropic transport →
+   `toAnthropicMessages({ emitModel: false, anthropicVersion: 'vertex-2023-10-16' })`,
+   OpenAI-compat transport → `toOpenAIChat` + the `googleSearch` grounding
+   injection that `translateVertexOpenApiBody` does today). Held for its own PR
+   because the native path needs a service-account / `getGoogleAccessToken`
+   test harness that doesn't exist yet — building it under-tested would be worse
+   than a focused follow-up.
 
 3. **Flip the client adapter (ship after step 2 is live).**
    `app/src/lib/anthropic-stream.ts` **still runs `toLLMMessages` first** (see
@@ -241,8 +251,8 @@ Mapped to the recurring defect classes in `CLAUDE.md` → PR self-review:
 ## Scope boundaries
 
 - **Response/SSE (Phase 3a)** — separate axis; out of scope here.
-- **Vertex-Anthropic and Zen-Go-Anthropic** — same recipe, same dual-accept
-  pattern, but follow as separate cuts after the direct path proves the shape.
+- **Zen-Go** — ✅ cut (both transports). **Vertex** — same recipe, separate cut
+  pending its native-credentials test harness.
 - **Gemini / OpenAI** — get the same neutral wire once Anthropic lands; the
   provider-agnostic endpoint consolidation is the convergence point.
 
