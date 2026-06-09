@@ -83,6 +83,44 @@ describe('toOpenAIChat', () => {
     ]);
   });
 
+  it('strips per-part cache_control markers when tagCacheBreakpoints is off (default)', () => {
+    const body = toOpenAIChat(
+      reqWith([
+        llm('1', 'user', 'fallback', {
+          contentParts: [
+            { type: 'text', text: 'cached?', cache_control: { type: 'ephemeral' } },
+            {
+              type: 'image_url',
+              image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' },
+              cache_control: { type: 'ephemeral' },
+            },
+          ] as unknown as LlmMessage['contentParts'],
+        }),
+      ]),
+    );
+    // Push-private markers must not leak to a strict OpenAI-compat endpoint.
+    expect(body.messages?.[0].content).toEqual([
+      { type: 'text', text: 'cached?' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
+    ]);
+  });
+
+  it('preserves per-part cache_control markers when tagCacheBreakpoints is on', () => {
+    const body = toOpenAIChat(
+      reqWith([
+        llm('1', 'user', 'fallback', {
+          contentParts: [
+            { type: 'text', text: 'cached?', cache_control: { type: 'ephemeral' } },
+          ] as unknown as LlmMessage['contentParts'],
+        }),
+      ]),
+      { tagCacheBreakpoints: true },
+    );
+    expect(body.messages?.[0].content).toEqual([
+      { type: 'text', text: 'cached?', cache_control: { type: 'ephemeral' } },
+    ]);
+  });
+
   it('does NOT forward reasoning_blocks (OpenAI-compat endpoints reject the sidecar)', () => {
     const body = toOpenAIChat(
       reqWith([

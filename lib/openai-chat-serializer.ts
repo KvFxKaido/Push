@@ -34,8 +34,17 @@ import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
  * parts to OpenAI content parts and THROWS on an unsupported/malformed part,
  * rather than silently dropping it. (OpenAI accepts `image_url` with any URL, so
  * there's no per-URL loud-fail — only unknown part types throw.)
+ *
+ * `keepCacheControl` gates whether an incoming part's Push-private
+ * `cache_control` marker is preserved on the wire. When false (the default for
+ * strict OpenAI-compat routes), the marker is dropped — those endpoints can
+ * reject unknown content-part fields, and the message-level cache gate is off,
+ * so a per-part marker must not slip through it.
  */
-function llmContentPartsToOpenAI(parts: readonly LlmContentPart[]): OpenAIContentPart[] {
+function llmContentPartsToOpenAI(
+  parts: readonly LlmContentPart[],
+  keepCacheControl: boolean,
+): OpenAIContentPart[] {
   const out: OpenAIContentPart[] = [];
   for (const rawPart of parts) {
     const part = rawPart as {
@@ -48,7 +57,7 @@ function llmContentPartsToOpenAI(parts: readonly LlmContentPart[]): OpenAIConten
       out.push({
         type: 'text',
         text: part.text,
-        ...(part.cache_control
+        ...(keepCacheControl && part.cache_control
           ? { cache_control: part.cache_control as { type: 'ephemeral' } }
           : {}),
       });
@@ -63,7 +72,7 @@ function llmContentPartsToOpenAI(parts: readonly LlmContentPart[]): OpenAIConten
       out.push({
         type: 'image_url',
         image_url: { url: (part.image_url as { url: string }).url },
-        ...(part.cache_control
+        ...(keepCacheControl && part.cache_control
           ? { cache_control: part.cache_control as { type: 'ephemeral' } }
           : {}),
       });
@@ -127,6 +136,7 @@ export function toOpenAIChat(
   const reqMessages = Array.isArray(req.messages) ? req.messages : [];
   const hasOverride =
     typeof req.systemPromptOverride === 'string' && req.systemPromptOverride.length > 0;
+  const tagCache = options?.tagCacheBreakpoints === true;
 
   const messages: OpenAIMessage[] = [];
   if (hasOverride) {
@@ -137,13 +147,13 @@ export function toOpenAIChat(
       role: m.role,
       content:
         m.contentParts && m.contentParts.length > 0
-          ? llmContentPartsToOpenAI(m.contentParts)
+          ? llmContentPartsToOpenAI(m.contentParts, tagCache)
           : m.content,
     });
   }
 
   const rawBreakpoints = req.cacheBreakpointIndices;
-  if (options?.tagCacheBreakpoints && Array.isArray(rawBreakpoints) && rawBreakpoints.length > 0) {
+  if (tagCache && Array.isArray(rawBreakpoints) && rawBreakpoints.length > 0) {
     const offset = hasOverride ? 1 : 0;
     if (messages[0]?.role === 'system') {
       tagMessageCacheControl(messages[0]);
