@@ -56,5 +56,8 @@ export interface PushStreamRequestWire {
   temperature?: number;
   topP?: number;
   cacheBreakpointIndices?: number[];
+  /** Enable Anthropic's native `web_search_20250305` server tool. */
   anthropicWebSearch?: boolean;
+  /** Enable Gemini's native `googleSearch` grounding tool. */
+  googleSearchGrounding?: boolean;
 }

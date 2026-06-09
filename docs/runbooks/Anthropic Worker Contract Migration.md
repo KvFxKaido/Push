@@ -170,8 +170,26 @@ ship before client changes**, never the reverse.
    Verified by the handler suite in `worker-providers.test.ts` (neutral routing,
    multimodal, token clamp, loud-fail→400, and the unchanged legacy path); the
    live Worker/browser path is not exercisable from CI, but nothing reachable
-   changes until a client sends the discriminator. *(Vertex/Zen-Go siblings still
-   pending — they share the recipe but are separate cuts.)*
+   changes until a client sends the discriminator.
+
+   **Shared dispatch + Google.** The peek+validator-selection is now
+   `parseDualAcceptRequest` (in `chat-request-guardrails.ts`): it returns a
+   discriminated `{ contractKind: 'neutral', request } | { contractKind:
+   'legacy', parsed }`, and each handler does its own provider serialization off
+   it (model-in-body vs model-in-URL, transport, loud-fail→400). `handleAnthropicChat`
+   was re-pointed onto it (its tests prove no regression) and **`handleGoogleChat`
+   now dual-accepts** too (neutral → `toGeminiGenerateContent`; the wire gained a
+   `googleSearchGrounding` flag for native grounding). Both backward-compatible
+   and dormant.
+
+   **Vertex / Zen-Go still pending — and not just "apply the recipe".** Their
+   *non-anthropic* transports are OpenAI-compat passthroughs (`bodyText` /
+   `translateVertexOpenApiBody`), not Gemini-native, so the neutral branch there
+   needs a net-new `toOpenAIChat(PushStreamRequest)` serializer (the final-phase
+   "explicit peer serializer"). Their *anthropic* transports also omit `model`
+   from the body (model in URL / implied), so `toAnthropicMessages` needs an
+   `emitModel: false` option. Those two pieces are the prerequisite for the
+   Vertex/Zen-Go dual-accept cut.
 
 3. **Flip the client adapter (ship after step 2 is live).**
    `app/src/lib/anthropic-stream.ts` **still runs `toLLMMessages` first** (see

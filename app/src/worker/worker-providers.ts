@@ -15,8 +15,8 @@ import {
 } from './worker-middleware';
 import { REQUEST_ID_HEADER } from '../lib/request-id';
 import {
+  parseDualAcceptRequest,
   validateAndNormalizeChatRequest,
-  validateAndNormalizeWireRequest,
 } from '../lib/chat-request-guardrails';
 import {
   buildAnthropicMessagesRequest,
@@ -28,6 +28,7 @@ import { ANTHROPIC_MODELS, GOOGLE_MODELS, OPENAI_MODELS } from '@push/lib/provid
 import {
   buildGeminiGenerateContentRequest,
   createGeminiTranslatedStream,
+  toGeminiGenerateContent,
 } from '@push/lib/openai-gemini-bridge';
 import {
   buildVertexAnthropicEndpoint,
@@ -1287,26 +1288,22 @@ export async function handleAnthropicChat(request: Request, env: Env): Promise<R
 
   const policy = { routeLabel: 'Anthropic', maxOutputTokens: 12_288 } as const;
 
-  // Dual-accept: a body carrying `contract: "push.stream.v1"` is the neutral
-  // wire shape (serialized straight from PushStreamRequest); anything else is
-  // the legacy OpenAI Chat Completions shape. Deployed clients send no
+  // Dual-accept (push.stream.v1): a body carrying a `contract` field is the
+  // neutral wire shape, serialized straight from PushStreamRequest; anything
+  // else is the legacy OpenAI Chat Completions shape. Deployed clients send no
   // discriminator and hit the legacy branch verbatim, so this is backward-
-  // compatible. The neutral branch stays dormant until the client flip.
-  // See docs/runbooks/Anthropic Worker Contract Migration.md.
-  // Route on the PRESENCE of a `contract` field, not its exact value: a legacy
-  // OpenAI body never carries `contract`, so any request that includes one is
-  // declaring neutral intent. Routing a typo'd or future `contract` (e.g.
-  // `push.stream.v2`) to the neutral validator means it fails loudly with the
-  // "unrecognized contract" 400 instead of being silently downgraded to the
-  // legacy path (which would drop neutral-only fields like maxTokens/topP).
-  let contractKind: 'neutral' | 'legacy';
-  try {
-    const peeked = JSON.parse(bodyText) as { contract?: unknown } | null;
-    contractKind =
-      peeked && typeof peeked === 'object' && peeked.contract !== undefined ? 'neutral' : 'legacy';
-  } catch {
-    // Malformed JSON — let the legacy validator produce the canonical 400.
-    contractKind = 'legacy';
+  // compatible; the neutral branch stays dormant until the client flip. See
+  // docs/runbooks/Anthropic Worker Contract Migration.md.
+  const dual = parseDualAcceptRequest(bodyText, policy);
+  if (!dual.ok) {
+    return Response.json({ error: dual.error }, { status: dual.status });
+  }
+  if (dual.adjustments.length > 0) {
+    wlog('warn', 'chat_request_adjusted', {
+      requestId,
+      route: 'api/anthropic/chat',
+      adjustments: dual.adjustments,
+    });
   }
 
   // Both branches converge on `{ upstreamBody, model }`. The version stays a
@@ -1316,27 +1313,16 @@ export async function handleAnthropicChat(request: Request, env: Env): Promise<R
   let upstreamBody: string;
   let model: string;
 
-  if (contractKind === 'neutral') {
-    const wire = validateAndNormalizeWireRequest(bodyText, policy);
-    if (!wire.ok) {
-      return Response.json({ error: wire.error }, { status: wire.status });
-    }
-    if (wire.value.adjustments.length > 0) {
-      wlog('warn', 'chat_request_adjusted', {
-        requestId,
-        route: 'api/anthropic/chat',
-        adjustments: wire.value.adjustments,
-      });
-    }
-    model = wire.value.request.model;
+  if (dual.contractKind === 'neutral') {
+    model = dual.request.model;
     try {
       // `toAnthropicMessages` includes `model` and throws loudly on a content
       // part it can't represent (e.g. a non-data/non-http image URL). Map that
       // to a 400 rather than letting it fall through to the 502 upstream catch.
       upstreamBody = JSON.stringify(
-        toAnthropicMessages(wire.value.request, {
+        toAnthropicMessages(dual.request, {
           modelOverride: model,
-          enableWebSearch: wire.value.request.anthropicWebSearch === true,
+          enableWebSearch: dual.request.anthropicWebSearch === true,
         }),
       );
     } catch (err) {
@@ -1346,27 +1332,12 @@ export async function handleAnthropicChat(request: Request, env: Env): Promise<R
       );
     }
   } else {
-    const normalizedRequest = validateAndNormalizeChatRequest(bodyText, policy);
-    if (!normalizedRequest.ok) {
-      return Response.json(
-        { error: normalizedRequest.error },
-        { status: normalizedRequest.status },
-      );
-    }
-    if (normalizedRequest.value.adjustments.length > 0) {
-      wlog('warn', 'chat_request_adjusted', {
-        requestId,
-        route: 'api/anthropic/chat',
-        adjustments: normalizedRequest.value.adjustments,
-      });
-    }
-    const parsedRequest = normalizedRequest.value.parsed;
-    model = typeof parsedRequest.model === 'string' ? parsedRequest.model.trim() : '';
+    model = typeof dual.parsed.model === 'string' ? dual.parsed.model.trim() : '';
     if (!model) {
       return Response.json({ error: 'Anthropic request is missing a model id' }, { status: 400 });
     }
     upstreamBody = JSON.stringify({
-      ...buildAnthropicMessagesRequest(parsedRequest),
+      ...buildAnthropicMessagesRequest(dual.parsed),
       model,
     });
   }
@@ -1377,7 +1348,7 @@ export async function handleAnthropicChat(request: Request, env: Env): Promise<R
     requestId,
     route: 'api/anthropic/chat',
     model,
-    contract: contractKind,
+    contract: dual.contractKind,
   });
 
   try {
@@ -1499,40 +1470,64 @@ export async function handleGoogleChat(request: Request, env: Env): Promise<Resp
   if (preamble instanceof Response) return preamble;
   const { authHeader: apiKey, bodyText, requestId } = preamble;
 
-  const normalizedRequest = validateAndNormalizeChatRequest(bodyText, {
+  // Dual-accept (push.stream.v1): neutral wire serialized via
+  // `toGeminiGenerateContent`, else the legacy OpenAI→Gemini translation. The
+  // neutral branch is dormant until the client flip (deployed clients send no
+  // discriminator). See docs/runbooks/Anthropic Worker Contract Migration.md.
+  const dual = parseDualAcceptRequest(bodyText, {
     routeLabel: 'Google Gemini',
     maxOutputTokens: 12_288,
   });
-  if (!normalizedRequest.ok) {
-    return Response.json({ error: normalizedRequest.error }, { status: normalizedRequest.status });
+  if (!dual.ok) {
+    return Response.json({ error: dual.error }, { status: dual.status });
   }
-  if (normalizedRequest.value.adjustments.length > 0) {
+  if (dual.adjustments.length > 0) {
     wlog('warn', 'chat_request_adjusted', {
       requestId,
       route: 'api/google/chat',
-      adjustments: normalizedRequest.value.adjustments,
+      adjustments: dual.adjustments,
     });
   }
 
-  const parsedRequest = normalizedRequest.value.parsed;
-  const model = typeof parsedRequest.model === 'string' ? parsedRequest.model.trim() : '';
-  if (!model) {
-    return Response.json({ error: 'Google request is missing a model id' }, { status: 400 });
+  let model: string;
+  let upstreamBody: string;
+  if (dual.contractKind === 'neutral') {
+    model = dual.request.model;
+    try {
+      // `toGeminiGenerateContent` throws loudly on a content part it can't
+      // represent (Gemini inline images require a base64 data: URL) — a 400,
+      // not a 502 from the upstream catch.
+      upstreamBody = JSON.stringify(
+        toGeminiGenerateContent(dual.request, {
+          enableGoogleSearch: dual.request.googleSearchGrounding === true,
+        }),
+      );
+    } catch (err) {
+      return Response.json(
+        { error: `Google request: ${err instanceof Error ? err.message : String(err)}` },
+        { status: 400 },
+      );
+    }
+  } else {
+    model = typeof dual.parsed.model === 'string' ? dual.parsed.model.trim() : '';
+    if (!model) {
+      return Response.json({ error: 'Google request is missing a model id' }, { status: 400 });
+    }
+    upstreamBody = JSON.stringify(buildGeminiGenerateContentRequest(dual.parsed));
   }
 
   // Gemini puts the model in the URL path and selects SSE framing via
-  // `?alt=sse`. The body is the OpenAI→Gemini translation; auth is the API
-  // key in the `x-goog-api-key` header (preferred over the legacy `?key=`
-  // query-param so the secret stays out of access logs).
+  // `?alt=sse`. Auth is the API key in the `x-goog-api-key` header (preferred
+  // over the legacy `?key=` query-param so the secret stays out of access logs).
   const upstreamUrl = `${GOOGLE_API_BASE}/models/${encodeURIComponent(
     model,
   )}:streamGenerateContent?alt=sse`;
-  const upstreamBody = JSON.stringify(buildGeminiGenerateContentRequest(parsedRequest));
 
   wlog('info', 'request', {
     requestId,
     route: 'api/google/chat',
     model,
+    contract: dual.contractKind,
   });
 
   try {

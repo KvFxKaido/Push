@@ -1679,3 +1679,128 @@ describe('handleAnthropicChat — neutral wire (dual-accept)', () => {
     expect(body.error).toMatch(/unrecognized contract/);
   });
 });
+
+describe('handleGoogleChat — neutral wire (dual-accept)', () => {
+  function makeNeutralGoogleRequest(payload: Record<string, unknown>): Request {
+    return new Request('https://push.example.test/api/google/chat', {
+      method: 'POST',
+      headers: { Origin: 'https://push.example.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contract: 'push.stream.v1', ...payload }),
+    });
+  }
+
+  function captureUpstream() {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('', { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }),
+    );
+    return () => captured;
+  }
+
+  it('routes a push.stream.v1 body through toGeminiGenerateContent (model in URL, neutral body)', async () => {
+    const get = captureUpstream();
+    await handleGoogleChat(
+      // The neutral wire carries no systemPromptOverride (materialization is
+      // client-side); the system arrives as a materialized system-role message.
+      makeNeutralGoogleRequest({
+        model: 'gemini-3.5-flash',
+        messages: [
+          { role: 'system', content: 'Be concise.' },
+          { role: 'user', content: 'Hi' },
+          { role: 'assistant', content: 'Hello' },
+        ],
+      }),
+      makeEnv({ GOOGLE_API_KEY: 'AIza' }),
+    );
+    const captured = get();
+    expect(captured?.url).toContain('/models/gemini-3.5-flash:streamGenerateContent?alt=sse');
+    expect((captured?.init.headers as Record<string, string>)['x-goog-api-key']).toBe('AIza');
+    const body = JSON.parse(captured!.init.body as string);
+    // Gemini wire markers: system hoisted, user/model rename, no OpenAI leak.
+    expect(body.systemInstruction).toEqual({ parts: [{ text: 'Be concise.' }] });
+    expect(body.contents).toEqual([
+      { role: 'user', parts: [{ text: 'Hi' }] },
+      { role: 'model', parts: [{ text: 'Hello' }] },
+    ]);
+    expect('model' in body).toBe(false);
+    expect('messages' in body).toBe(false);
+  });
+
+  it('enables the googleSearch tool from the neutral googleSearchGrounding flag', async () => {
+    const get = captureUpstream();
+    await handleGoogleChat(
+      makeNeutralGoogleRequest({
+        model: 'gemini-3.5-flash',
+        messages: [{ role: 'user', content: 'hi' }],
+        googleSearchGrounding: true,
+      }),
+      makeEnv({ GOOGLE_API_KEY: 'AIza' }),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    expect(body.tools).toEqual([{ googleSearch: {} }]);
+  });
+
+  it('carries multimodal image content as inline_data and clamps maxTokens', async () => {
+    const get = captureUpstream();
+    await handleGoogleChat(
+      makeNeutralGoogleRequest({
+        model: 'gemini-3.5-flash',
+        maxTokens: 999_999,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'see' },
+              { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
+            ],
+          },
+        ],
+      }),
+      makeEnv({ GOOGLE_API_KEY: 'AIza' }),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    expect(body.contents[0].parts).toEqual([
+      { text: 'see' },
+      { inline_data: { mime_type: 'image/png', data: 'iVBORw0KGgo=' } },
+    ]);
+    expect(body.generationConfig.maxOutputTokens).toBe(12_288);
+  });
+
+  it('400s a neutral content part with a non-data image URL (loud failure)', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const response = await handleGoogleChat(
+      makeNeutralGoogleRequest({
+        model: 'gemini-3.5-flash',
+        messages: [
+          { role: 'user', content: [{ type: 'image_url', image_url: { url: 'https://x/c.png' } }] },
+        ],
+      }),
+      makeEnv({ GOOGLE_API_KEY: 'AIza' }),
+    );
+    expect(response.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect((await response.json()).error).toMatch(/cannot represent image/);
+  });
+
+  it('400s an unknown contract without calling upstream', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const req = new Request('https://push.example.test/api/google/chat', {
+      method: 'POST',
+      headers: { Origin: 'https://push.example.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contract: 'push.stream.v2',
+        model: 'gemini-3.5-flash',
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    });
+    const response = await handleGoogleChat(req, makeEnv({ GOOGLE_API_KEY: 'AIza' }));
+    expect(response.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});

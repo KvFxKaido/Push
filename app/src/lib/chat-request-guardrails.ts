@@ -560,10 +560,10 @@ export function validateAndNormalizeWireRequest(
     cacheBreakpointIndices = parsed.cacheBreakpointIndices as number[];
   }
 
-  if (parsed.anthropicWebSearch !== undefined && typeof parsed.anthropicWebSearch !== 'boolean') {
-    return validationError(
-      `${policy.routeLabel} request field "anthropicWebSearch" must be a boolean.`,
-    );
+  for (const flag of ['anthropicWebSearch', 'googleSearchGrounding'] as const) {
+    if (parsed[flag] !== undefined && typeof parsed[flag] !== 'boolean') {
+      return validationError(`${policy.routeLabel} request field "${flag}" must be a boolean.`);
+    }
   }
 
   const request: PushStreamRequest<LlmMessage> = {
@@ -577,7 +577,75 @@ export function validateAndNormalizeWireRequest(
     ...(typeof parsed.anthropicWebSearch === 'boolean'
       ? { anthropicWebSearch: parsed.anthropicWebSearch }
       : {}),
+    ...(typeof parsed.googleSearchGrounding === 'boolean'
+      ? { googleSearchGrounding: parsed.googleSearchGrounding }
+      : {}),
   };
 
   return { ok: true, value: { request, adjustments } };
+}
+
+// ---------------------------------------------------------------------------
+// Dual-accept dispatch
+//
+// Shared peek + validator selection for the `push.stream.v1` dual-accept used by
+// the provider chat handlers. Routes on the PRESENCE of a `contract` field (a
+// legacy OpenAI body never carries one, so any request that includes one is
+// declaring neutral intent and a wrong value fails loudly via the wire
+// validator). Each handler does its own provider serialization off the
+// discriminated result — model-in-body vs model-in-URL, transport selection, and
+// the loud-fail→400 are provider-specific. See
+// `docs/runbooks/Anthropic Worker Contract Migration.md`.
+// ---------------------------------------------------------------------------
+
+export type DualAcceptRequest =
+  | {
+      ok: true;
+      contractKind: 'neutral';
+      request: PushStreamRequest<LlmMessage>;
+      adjustments: string[];
+    }
+  | {
+      ok: true;
+      contractKind: 'legacy';
+      parsed: OpenAIChatRequest;
+      bodyText: string;
+      adjustments: string[];
+    }
+  | { ok: false; status: number; error: string };
+
+export function parseDualAcceptRequest(
+  bodyText: string,
+  policy: ChatRequestPolicy,
+): DualAcceptRequest {
+  let isNeutral = false;
+  try {
+    const peeked = JSON.parse(bodyText) as { contract?: unknown } | null;
+    isNeutral = Boolean(peeked) && typeof peeked === 'object' && peeked!.contract !== undefined;
+  } catch {
+    // Malformed JSON — fall through to the legacy validator for the canonical
+    // 400 (the wire validator would produce the same, but legacy is the
+    // historical owner of this error string).
+  }
+
+  if (isNeutral) {
+    const wire = validateAndNormalizeWireRequest(bodyText, policy);
+    if (!wire.ok) return wire;
+    return {
+      ok: true,
+      contractKind: 'neutral',
+      request: wire.value.request,
+      adjustments: wire.value.adjustments,
+    };
+  }
+
+  const legacy = validateAndNormalizeChatRequest(bodyText, policy);
+  if (!legacy.ok) return legacy;
+  return {
+    ok: true,
+    contractKind: 'legacy',
+    parsed: legacy.value.parsed,
+    bodyText: legacy.value.bodyText,
+    adjustments: legacy.value.adjustments,
+  };
 }
