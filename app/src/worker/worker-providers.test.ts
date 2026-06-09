@@ -300,6 +300,23 @@ describe('handleZenGoChat', () => {
     const body = await response.json();
     expect(body.code).toBeUndefined();
   });
+
+  it('re-attaches the model on the legacy Anthropic-transport body', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('', { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }),
+    );
+    await handleZenGoChat(makeZenGoRequest('minimax-m3'), makeEnv({ ZEN_API_KEY: 'zen-key' }));
+    expect(captured?.url).toBe('https://opencode.ai/zen/go/v1/messages');
+    // buildAnthropicMessagesRequest omits `model`; the handler must re-attach it
+    // so the shared /v1/messages URL can dispatch to the right model.
+    const body = JSON.parse(captured!.init.body as string);
+    expect(body.model).toBe('minimax-m3');
+  });
 });
 
 describe('handleZenGoChat — neutral wire (dual-accept)', () => {
@@ -323,7 +340,7 @@ describe('handleZenGoChat — neutral wire (dual-accept)', () => {
     return () => captured;
   }
 
-  it('routes an Anthropic-transport model through toAnthropicMessages with NO body model', async () => {
+  it('routes an Anthropic-transport model through toAnthropicMessages WITH the body model', async () => {
     const get = captureUpstream();
     await handleZenGoChat(
       makeNeutralRequest({
@@ -338,8 +355,10 @@ describe('handleZenGoChat — neutral wire (dual-accept)', () => {
     const captured = get();
     expect(captured?.url).toBe('https://opencode.ai/zen/go/v1/messages');
     const body = JSON.parse(captured!.init.body as string);
-    // Zen-Go's /v1/messages carries the model out-of-band — emitModel:false.
-    expect(body).not.toHaveProperty('model');
+    // Zen-Go's /v1/messages is a single fixed URL shared by every
+    // Anthropic-transport model, so the model id must ride in the body or
+    // upstream can't dispatch it (mirrors the native Anthropic handler).
+    expect(body.model).toBe('minimax-m3');
     expect(body.system).toBe('be terse');
     expect(body.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'hello' }] }]);
   });

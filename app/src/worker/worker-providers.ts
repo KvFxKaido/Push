@@ -617,12 +617,14 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
     });
   }
 
-  // Both contract kinds converge on `{ model, transport, upstreamBody }`. Zen-Go
-  // carries the model out-of-band — its `/v1/messages` endpoint omits the body
-  // `model`, matching `buildAnthropicMessagesRequest` — so the neutral Anthropic
-  // branch serializes with `emitModel: false`. The OpenAI-compat transport
-  // serializes the neutral request via `toOpenAIChat`; the legacy path forwards
-  // the validated raw body verbatim.
+  // Both contract kinds converge on `{ model, transport, upstreamBody }`. Zen-Go's
+  // `/v1/messages` is a single fixed URL shared by every Anthropic-transport
+  // model (the MiniMax + Qwen families), so — unlike Vertex, which carries the
+  // model in the URL path — it can only learn the model from the body. We
+  // therefore emit `model` in the body on both branches, mirroring the native
+  // Anthropic handler below. The OpenAI-compat transport serializes the neutral
+  // request via `toOpenAIChat`; the legacy path forwards the validated raw body
+  // verbatim (which already carries `model`).
   const model =
     dual.contractKind === 'neutral'
       ? dual.request.model.trim()
@@ -644,7 +646,6 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
         transport === 'anthropic'
           ? JSON.stringify(
               toAnthropicMessages(dual.request, {
-                emitModel: false,
                 enableWebSearch: dual.request.anthropicWebSearch === true,
               }),
             )
@@ -658,7 +659,7 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
   } else {
     upstreamBody =
       transport === 'anthropic'
-        ? JSON.stringify(buildAnthropicMessagesRequest(dual.parsed))
+        ? JSON.stringify({ ...buildAnthropicMessagesRequest(dual.parsed), model })
         : dual.bodyText;
   }
 

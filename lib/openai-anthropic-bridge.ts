@@ -480,12 +480,14 @@ export interface ToAnthropicMessagesOptions {
   stream?: boolean;
   /**
    * Whether to emit the top-level `model` field. Defaults to true — the direct
-   * Anthropic API requires `model` in the body. Set false for transports that
-   * carry the model out-of-band: Vertex puts it in the URL path, and Zen-Go's
-   * `/v1/messages` omits it. This mirrors `buildAnthropicMessagesRequest`, whose
-   * body never includes `model` (its callers re-attach it where the endpoint
-   * needs it). The sampling-capability gate still uses the resolved model
-   * regardless of this flag.
+   * Anthropic API requires `model` in the body. Set false ONLY for transports
+   * that genuinely carry the model out-of-band: Vertex puts it in the URL path
+   * (`/models/{model}:...`). Endpoints with a fixed shared URL (the direct
+   * Anthropic API, and Zen-Go's `/v1/messages`) must keep `model` in the body —
+   * leave this true for them. This mirrors `buildAnthropicMessagesRequest`,
+   * whose body never includes `model` (its callers re-attach it where the
+   * endpoint needs it). The sampling-capability gate still uses the resolved
+   * model regardless of this flag.
    */
   emitModel?: boolean;
   /**
