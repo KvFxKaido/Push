@@ -1,7 +1,9 @@
 # Anthropic Worker Contract Migration
 
 Date: 2026-06-09
-Status: **draft** (design-in-motion; needs roadmap promotion before implementation)
+Status: **in progress** — Step 0 (multimodal serializer) and Steps 1–2 (wire type,
+neutral validator, Worker dual-accept) shipped; Steps 3–5 (client flip, bake,
+drop legacy) pending.
 Owner: Push
 
 This is the Phase 3 "risky part" called out in
@@ -143,24 +145,33 @@ ship before client changes**, never the reverse.
    [`Provider Request Normalization.md`](<Provider Request Normalization.md>). Without
    this, Step 2's neutral branch would have dropped images on picture chats.
 
-1. **`PushStreamRequestWire` type + neutral validator (lib, no behavior change).**
-   Add the wire type and a `validateAndNormalizeWireRequest` beside the existing
-   `validateAndNormalizeChatRequest`, sharing the clamping/model/token policy so
-   the neutral path enforces the *same* `maxOutputTokens` ceiling and model
-   checks. The wire message carries `contentParts` for multimodal turns (now
-   supported by `toAnthropicMessages`, per Step 0). Unit-tested in isolation.
-   Ships dormant.
+1. **`PushStreamRequestWire` type + neutral validator (lib, no behavior change). ✅ Shipped.**
+   `lib/provider-wire.ts` holds the `push.stream.v1` discriminator constant + the
+   `PushStreamRequestWire` / `PushStreamWireMessage` types (neutral camelCase;
+   no `id`/`timestamp`/`systemPromptOverride`). `validateAndNormalizeWireRequest`
+   sits beside `validateAndNormalizeChatRequest` in
+   `app/src/lib/chat-request-guardrails.ts`, sharing its policy (the same
+   `maxOutputTokens` clamp, message/part caps) and helpers
+   (`normalizeReasoningBlocks`, `pickCacheControl`). It normalizes the wire body
+   into a `PushStreamRequest<LlmMessage>` — array `content` becomes
+   `contentParts` (multimodal, per Step 0). Unit-tested in
+   `chat-request-guardrails.test.ts`.
 
-2. **Worker dual-accept (ship FIRST).** In `handleAnthropicChat` (and the Vertex
-   / Zen-Go siblings), branch on a discriminator: a top-level
-   `"contract": "push.stream.v1"` field on the body. Present → parse with the
-   neutral validator and serialize via `toAnthropicMessages`. Absent → today's
-   `validateAndNormalizeChatRequest` → `buildAnthropicMessagesRequest`
-   (unchanged). Emit a structured log per request tagging which contract was
-   used (`worker_anthropic_contract: "legacy" | "neutral"`) so step 5 has data.
-   A body field (not a header) is the discriminator because the validator parses
-   the body anyway and intermediaries can strip headers. **Old clients are
-   unaffected** — they send no discriminator and hit the legacy branch verbatim.
+2. **Worker dual-accept. ✅ Shipped.** `handleAnthropicChat` peeks the body for
+   `contract: "push.stream.v1"`: present → `validateAndNormalizeWireRequest` →
+   `toAnthropicMessages` (a content part it can't represent maps to a **400**,
+   not a 502); absent → today's `validateAndNormalizeChatRequest` →
+   `buildAnthropicMessagesRequest`, unchanged. Both converge on
+   `{ upstreamBody, model }` and the existing fetch/translate code (response stays
+   OpenAI SSE — the response axis is unchanged here). A symmetric `request` log on
+   both branches carries `contract: "legacy" | "neutral"` for step-5 telemetry.
+   **Deployed clients are unaffected** — they send no discriminator and hit the
+   legacy branch verbatim, so the neutral branch is dormant until the client flip.
+   Verified by the handler suite in `worker-providers.test.ts` (neutral routing,
+   multimodal, token clamp, loud-fail→400, and the unchanged legacy path); the
+   live Worker/browser path is not exercisable from CI, but nothing reachable
+   changes until a client sends the discriminator. *(Vertex/Zen-Go siblings still
+   pending — they share the recipe but are separate cuts.)*
 
 3. **Flip the client adapter (ship after step 2 is live).**
    `app/src/lib/anthropic-stream.ts` **still runs `toLLMMessages` first** (see

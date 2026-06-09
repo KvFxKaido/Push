@@ -14,11 +14,16 @@ import {
   getGoogleAccessToken,
 } from './worker-middleware';
 import { REQUEST_ID_HEADER } from '../lib/request-id';
-import { validateAndNormalizeChatRequest } from '../lib/chat-request-guardrails';
+import {
+  validateAndNormalizeChatRequest,
+  validateAndNormalizeWireRequest,
+} from '../lib/chat-request-guardrails';
 import {
   buildAnthropicMessagesRequest,
   createAnthropicTranslatedStream,
+  toAnthropicMessages,
 } from '@push/lib/openai-anthropic-bridge';
+import { PUSH_STREAM_WIRE_CONTRACT } from '@push/lib/provider-wire';
 import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
 import { ANTHROPIC_MODELS, GOOGLE_MODELS, OPENAI_MODELS } from '@push/lib/provider-models';
 import {
@@ -1281,43 +1286,95 @@ export async function handleAnthropicChat(request: Request, env: Env): Promise<R
   if (preamble instanceof Response) return preamble;
   const { authHeader: apiKey, bodyText, requestId } = preamble;
 
-  const normalizedRequest = validateAndNormalizeChatRequest(bodyText, {
-    routeLabel: 'Anthropic',
-    maxOutputTokens: 12_288,
-  });
-  if (!normalizedRequest.ok) {
-    return Response.json({ error: normalizedRequest.error }, { status: normalizedRequest.status });
+  const policy = { routeLabel: 'Anthropic', maxOutputTokens: 12_288 } as const;
+
+  // Dual-accept: a body carrying `contract: "push.stream.v1"` is the neutral
+  // wire shape (serialized straight from PushStreamRequest); anything else is
+  // the legacy OpenAI Chat Completions shape. Deployed clients send no
+  // discriminator and hit the legacy branch verbatim, so this is backward-
+  // compatible. The neutral branch stays dormant until the client flip.
+  // See docs/runbooks/Anthropic Worker Contract Migration.md.
+  let contractKind: 'neutral' | 'legacy';
+  try {
+    const peeked = JSON.parse(bodyText) as { contract?: unknown } | null;
+    contractKind =
+      peeked && typeof peeked === 'object' && peeked.contract === PUSH_STREAM_WIRE_CONTRACT
+        ? 'neutral'
+        : 'legacy';
+  } catch {
+    // Malformed JSON — let the legacy validator produce the canonical 400.
+    contractKind = 'legacy';
   }
-  if (normalizedRequest.value.adjustments.length > 0) {
-    wlog('warn', 'chat_request_adjusted', {
-      requestId,
-      route: 'api/anthropic/chat',
-      adjustments: normalizedRequest.value.adjustments,
+
+  // Both branches converge on `{ upstreamBody, model }`. The version stays a
+  // header (the direct Anthropic API ignores any body `anthropic_version`),
+  // and `model` is re-attached into the body because the direct `/v1/messages`
+  // endpoint requires it there.
+  let upstreamBody: string;
+  let model: string;
+
+  if (contractKind === 'neutral') {
+    const wire = validateAndNormalizeWireRequest(bodyText, policy);
+    if (!wire.ok) {
+      return Response.json({ error: wire.error }, { status: wire.status });
+    }
+    if (wire.value.adjustments.length > 0) {
+      wlog('warn', 'chat_request_adjusted', {
+        requestId,
+        route: 'api/anthropic/chat',
+        adjustments: wire.value.adjustments,
+      });
+    }
+    model = wire.value.request.model;
+    try {
+      // `toAnthropicMessages` includes `model` and throws loudly on a content
+      // part it can't represent (e.g. a non-data/non-http image URL). Map that
+      // to a 400 rather than letting it fall through to the 502 upstream catch.
+      upstreamBody = JSON.stringify(
+        toAnthropicMessages(wire.value.request, {
+          modelOverride: model,
+          enableWebSearch: wire.value.request.anthropicWebSearch === true,
+        }),
+      );
+    } catch (err) {
+      return Response.json(
+        { error: `Anthropic request: ${err instanceof Error ? err.message : String(err)}` },
+        { status: 400 },
+      );
+    }
+  } else {
+    const normalizedRequest = validateAndNormalizeChatRequest(bodyText, policy);
+    if (!normalizedRequest.ok) {
+      return Response.json(
+        { error: normalizedRequest.error },
+        { status: normalizedRequest.status },
+      );
+    }
+    if (normalizedRequest.value.adjustments.length > 0) {
+      wlog('warn', 'chat_request_adjusted', {
+        requestId,
+        route: 'api/anthropic/chat',
+        adjustments: normalizedRequest.value.adjustments,
+      });
+    }
+    const parsedRequest = normalizedRequest.value.parsed;
+    model = typeof parsedRequest.model === 'string' ? parsedRequest.model.trim() : '';
+    if (!model) {
+      return Response.json({ error: 'Anthropic request is missing a model id' }, { status: 400 });
+    }
+    upstreamBody = JSON.stringify({
+      ...buildAnthropicMessagesRequest(parsedRequest),
+      model,
     });
   }
-  const parsedRequest = normalizedRequest.value.parsed;
-  const model = typeof parsedRequest.model === 'string' ? parsedRequest.model.trim() : '';
-  if (!model) {
-    return Response.json({ error: 'Anthropic request is missing a model id' }, { status: 400 });
-  }
 
-  // Anthropic API requires the version header. We deliberately do NOT pass
-  // `anthropicVersion` into the body — that field is for Vertex's
-  // `vertex-2023-10-16` shape; the direct Anthropic API ignores any
-  // `anthropic_version` field and reads it from the header instead.
-  //
-  // `buildAnthropicMessagesRequest` does not include `model` in the body
-  // because Vertex carries the model in the URL path. Direct `/v1/messages`
-  // requires `model` in the JSON, so re-attach it here.
-  const upstreamBody = JSON.stringify({
-    ...buildAnthropicMessagesRequest(parsedRequest),
-    model,
-  });
-
+  // Symmetric log on both branches — `contract` lets ops measure how much
+  // traffic still uses the legacy shape before the legacy branch is dropped.
   wlog('info', 'request', {
     requestId,
     route: 'api/anthropic/chat',
     model,
+    contract: contractKind,
   });
 
   try {

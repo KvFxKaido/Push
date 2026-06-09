@@ -1542,3 +1542,118 @@ describe('handleGoogleSearch', () => {
     expect(body.error).toMatch(/^Google 400/);
   });
 });
+
+describe('handleAnthropicChat — neutral wire (dual-accept)', () => {
+  function makeNeutralRequest(payload: Record<string, unknown>): Request {
+    return new Request('https://push.example.test/api/anthropic/chat', {
+      method: 'POST',
+      headers: { Origin: 'https://push.example.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contract: 'push.stream.v1', ...payload }),
+    });
+  }
+
+  function captureUpstream() {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('', { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }),
+    );
+    return () => captured;
+  }
+
+  it('routes a push.stream.v1 body through toAnthropicMessages (system hoist + block content)', async () => {
+    const get = captureUpstream();
+    await handleAnthropicChat(
+      makeNeutralRequest({
+        model: 'claude-sonnet-4-6',
+        messages: [
+          { role: 'system', content: 'be terse' },
+          { role: 'user', content: 'hello' },
+        ],
+      }),
+      makeEnv({ ANTHROPIC_API_KEY: 'sk-ant' }),
+    );
+    const captured = get();
+    expect(captured?.url).toBe('https://api.anthropic.com/v1/messages');
+    expect((captured?.init.headers as Record<string, string>)['x-api-key']).toBe('sk-ant');
+    const body = JSON.parse(captured!.init.body as string);
+    expect(body.model).toBe('claude-sonnet-4-6');
+    // Translation markers: system hoisted to a top-level field, string content
+    // wrapped into Anthropic `[{ type: 'text' }]` blocks.
+    expect(body.system).toBe('be terse');
+    expect(body.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'hello' }] }]);
+  });
+
+  it('carries multimodal image content on the neutral path', async () => {
+    const get = captureUpstream();
+    await handleAnthropicChat(
+      makeNeutralRequest({
+        model: 'claude-sonnet-4-6',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'see' },
+              { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
+            ],
+          },
+        ],
+      }),
+      makeEnv({ ANTHROPIC_API_KEY: 'sk-ant' }),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    expect(body.messages[0].content).toEqual([
+      { type: 'text', text: 'see' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' } },
+    ]);
+  });
+
+  it('clamps neutral maxTokens to the route ceiling (12288)', async () => {
+    const get = captureUpstream();
+    await handleAnthropicChat(
+      makeNeutralRequest({
+        model: 'claude-sonnet-4-6',
+        messages: [{ role: 'user', content: 'hi' }],
+        maxTokens: 999_999,
+      }),
+      makeEnv({ ANTHROPIC_API_KEY: 'sk-ant' }),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    expect(body.max_tokens).toBe(12_288);
+  });
+
+  it('returns 400 (not 502) when a neutral content part has an unrepresentable image URL', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const response = await handleAnthropicChat(
+      makeNeutralRequest({
+        model: 'claude-sonnet-4-6',
+        messages: [
+          {
+            role: 'user',
+            content: [{ type: 'image_url', image_url: { url: 'ftp://nope/x.png' } }],
+          },
+        ],
+      }),
+      makeEnv({ ANTHROPIC_API_KEY: 'sk-ant' }),
+    );
+    expect(response.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    const body = await response.json();
+    expect(body.error).toMatch(/cannot represent image/);
+  });
+
+  it('returns the validator 400 for a malformed neutral body without calling upstream', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const response = await handleAnthropicChat(
+      makeNeutralRequest({ model: '', messages: [{ role: 'user', content: 'hi' }] }),
+      makeEnv({ ANTHROPIC_API_KEY: 'sk-ant' }),
+    );
+    expect(response.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});

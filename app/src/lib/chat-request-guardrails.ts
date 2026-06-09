@@ -11,6 +11,8 @@ export type {
   OpenAIMessage,
   OpenAIReasoningBlock,
 } from '@push/lib/openai-chat-types';
+import type { LlmContentPart, LlmMessage, PushStreamRequest } from '@push/lib/provider-contract';
+import { PUSH_STREAM_WIRE_CONTRACT } from '@push/lib/provider-wire';
 
 const MAX_REASONING_BLOCKS_PER_MESSAGE = 64;
 const MAX_REASONING_BLOCK_SIGNATURE_LENGTH = 16_384;
@@ -347,4 +349,231 @@ export function validateAndNormalizeChatRequest(
       adjustments,
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Neutral wire validator (push.stream.v1)
+//
+// Validates the forward `PushStreamRequestWire` body and normalizes it into a
+// `PushStreamRequest<LlmMessage>` the Worker hands to `toAnthropicMessages`.
+// Shares this file's policy (token clamp, message/part caps) and helpers
+// (`normalizeReasoningBlocks`, `pickCacheControl`) with the legacy OpenAI-shape
+// validator, so both paths enforce the same ceilings. See
+// `docs/runbooks/Anthropic Worker Contract Migration.md`.
+// ---------------------------------------------------------------------------
+
+const WIRE_ALLOWED_MESSAGE_ROLES = new Set(['system', 'user', 'assistant']);
+
+export interface ValidatedWireRequest {
+  request: PushStreamRequest<LlmMessage>;
+  adjustments: string[];
+}
+
+/** Validate + normalize a content-part array (text/image) into `LlmContentPart[]`,
+ *  or return a validation error. Mirrors the legacy validator's part rules so the
+ *  two paths accept the same shapes; `toAnthropicMessages` performs the deeper
+ *  image-URL conversion (and loud-fails on an unrepresentable source). */
+function normalizeWireContentParts(
+  raw: unknown[],
+  messageNumber: number,
+  routeLabel: string,
+): { ok: true; parts: LlmContentPart[] } | { ok: false; status: number; error: string } {
+  const parts: LlmContentPart[] = [];
+  for (let partIndex = 0; partIndex < raw.length; partIndex += 1) {
+    const rawPart = asRecord(raw[partIndex]);
+    if (!rawPart) {
+      return validationError(
+        `${routeLabel} request message ${messageNumber} has an invalid content part.`,
+      );
+    }
+    const cacheControl = pickCacheControl(rawPart);
+    if (rawPart.type === 'text') {
+      if (typeof rawPart.text !== 'string') {
+        return validationError(
+          `${routeLabel} request message ${messageNumber} has a text part without "text".`,
+        );
+      }
+      parts.push({ type: 'text', text: rawPart.text, ...(cacheControl ? { cacheControl } : {}) });
+      continue;
+    }
+    if (rawPart.type === 'image_url') {
+      const imageUrl = asRecord(rawPart.image_url);
+      if (typeof imageUrl?.url !== 'string' || !imageUrl.url.trim()) {
+        return validationError(
+          `${routeLabel} request message ${messageNumber} has an image part without a URL.`,
+        );
+      }
+      parts.push({
+        type: 'image_url',
+        image_url: { url: imageUrl.url },
+        ...(cacheControl ? { cacheControl } : {}),
+      });
+      continue;
+    }
+    return validationError(
+      `${routeLabel} request message ${messageNumber} has an unsupported content part type.`,
+    );
+  }
+  return { ok: true, parts };
+}
+
+export function validateAndNormalizeWireRequest(
+  bodyText: string,
+  policy: ChatRequestPolicy,
+): { ok: true; value: ValidatedWireRequest } | { ok: false; status: number; error: string } {
+  let parsedUnknown: unknown;
+  try {
+    parsedUnknown = JSON.parse(bodyText);
+  } catch {
+    return validationError(`${policy.routeLabel} request: invalid JSON body`);
+  }
+
+  const parsed = asRecord(parsedUnknown);
+  if (!parsed) {
+    return validationError(`${policy.routeLabel} request must be a JSON object.`);
+  }
+  if (parsed.contract !== PUSH_STREAM_WIRE_CONTRACT) {
+    return validationError(
+      `${policy.routeLabel} request has an unrecognized contract (expected "${PUSH_STREAM_WIRE_CONTRACT}").`,
+    );
+  }
+
+  const model = typeof parsed.model === 'string' ? parsed.model.trim() : '';
+  if (!model) {
+    return validationError(`${policy.routeLabel} request is missing "model".`);
+  }
+
+  if (!Array.isArray(parsed.messages) || parsed.messages.length === 0) {
+    return validationError(
+      `${policy.routeLabel} request must include a non-empty "messages" array.`,
+    );
+  }
+  const maxMessages = policy.maxMessages ?? DEFAULT_MAX_MESSAGES;
+  if (parsed.messages.length > maxMessages) {
+    return validationError(
+      `${policy.routeLabel} request has too many messages (${parsed.messages.length}). Limit is ${maxMessages}.`,
+    );
+  }
+  const maxContentPartsPerMessage =
+    policy.maxContentPartsPerMessage ?? DEFAULT_MAX_CONTENT_PARTS_PER_MESSAGE;
+
+  const normalizedMessages: LlmMessage[] = [];
+  for (let index = 0; index < parsed.messages.length; index += 1) {
+    const messageRecord = asRecord(parsed.messages[index]);
+    if (!messageRecord) {
+      return validationError(
+        `${policy.routeLabel} request message ${index + 1} must be an object.`,
+      );
+    }
+    const role = typeof messageRecord.role === 'string' ? messageRecord.role.trim() : '';
+    if (!WIRE_ALLOWED_MESSAGE_ROLES.has(role)) {
+      return validationError(
+        `${policy.routeLabel} request message ${index + 1} has an invalid role.`,
+      );
+    }
+    // Only assistant turns may carry signed reasoning blocks — same posture as
+    // the legacy validator.
+    const reasoningBlocks =
+      role === 'assistant' ? normalizeReasoningBlocks(messageRecord.reasoningBlocks) : undefined;
+
+    const rawContent = messageRecord.content;
+    let content = '';
+    let contentParts: LlmContentPart[] | undefined;
+    if (typeof rawContent === 'string') {
+      content = rawContent;
+    } else if (Array.isArray(rawContent)) {
+      if (rawContent.length === 0) {
+        return validationError(
+          `${policy.routeLabel} request message ${index + 1} has an empty content parts array.`,
+        );
+      }
+      if (rawContent.length > maxContentPartsPerMessage) {
+        return validationError(
+          `${policy.routeLabel} request message ${index + 1} has too many content parts (${rawContent.length}). Limit is ${maxContentPartsPerMessage}.`,
+        );
+      }
+      const partsResult = normalizeWireContentParts(rawContent, index + 1, policy.routeLabel);
+      if (!partsResult.ok) return partsResult;
+      contentParts = partsResult.parts;
+    } else {
+      return validationError(
+        `${policy.routeLabel} request message ${index + 1} has invalid "content".`,
+      );
+    }
+
+    normalizedMessages.push({
+      id: `wire-${index}`,
+      role: role as LlmMessage['role'],
+      content,
+      ...(contentParts ? { contentParts } : {}),
+      timestamp: 0,
+      ...(reasoningBlocks ? { reasoningBlocks } : {}),
+    });
+  }
+
+  const adjustments: string[] = [];
+
+  // Sampling params — finite numbers only (the per-model sampling capability
+  // gate lives in `toAnthropicMessages`, the same single choke point the legacy
+  // path uses; this is just shape validation).
+  for (const field of ['temperature', 'topP'] as const) {
+    const value = parsed[field];
+    if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))) {
+      return validationError(`${policy.routeLabel} request field "${field}" must be a number.`);
+    }
+  }
+
+  let maxTokens: number | undefined;
+  if (parsed.maxTokens !== undefined) {
+    if (
+      typeof parsed.maxTokens !== 'number' ||
+      !Number.isInteger(parsed.maxTokens) ||
+      parsed.maxTokens < 1
+    ) {
+      return validationError(
+        `${policy.routeLabel} request field "maxTokens" must be a positive integer.`,
+      );
+    }
+    maxTokens = parsed.maxTokens;
+    if (maxTokens > policy.maxOutputTokens) {
+      maxTokens = policy.maxOutputTokens;
+      adjustments.push('maxTokens_clamped');
+    }
+  }
+
+  let cacheBreakpointIndices: number[] | undefined;
+  if (parsed.cacheBreakpointIndices !== undefined) {
+    if (
+      !Array.isArray(parsed.cacheBreakpointIndices) ||
+      !parsed.cacheBreakpointIndices.every(
+        (n) => typeof n === 'number' && Number.isInteger(n) && n >= 0,
+      )
+    ) {
+      return validationError(
+        `${policy.routeLabel} request field "cacheBreakpointIndices" must be an array of non-negative integers.`,
+      );
+    }
+    cacheBreakpointIndices = parsed.cacheBreakpointIndices as number[];
+  }
+
+  if (parsed.anthropicWebSearch !== undefined && typeof parsed.anthropicWebSearch !== 'boolean') {
+    return validationError(
+      `${policy.routeLabel} request field "anthropicWebSearch" must be a boolean.`,
+    );
+  }
+
+  const request: PushStreamRequest<LlmMessage> = {
+    provider: 'anthropic',
+    model,
+    messages: normalizedMessages,
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+    ...(typeof parsed.temperature === 'number' ? { temperature: parsed.temperature } : {}),
+    ...(typeof parsed.topP === 'number' ? { topP: parsed.topP } : {}),
+    ...(cacheBreakpointIndices ? { cacheBreakpointIndices } : {}),
+    ...(typeof parsed.anthropicWebSearch === 'boolean'
+      ? { anthropicWebSearch: parsed.anthropicWebSearch }
+      : {}),
+  };
+
+  return { ok: true, value: { request, adjustments } };
 }
