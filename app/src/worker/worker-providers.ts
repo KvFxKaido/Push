@@ -23,6 +23,7 @@ import {
   createAnthropicTranslatedStream,
   toAnthropicMessages,
 } from '@push/lib/openai-anthropic-bridge';
+import { toOpenAIChat } from '@push/lib/openai-chat-serializer';
 import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
 import { ANTHROPIC_MODELS, GOOGLE_MODELS, OPENAI_MODELS } from '@push/lib/provider-models';
 import {
@@ -594,38 +595,78 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
   if (preamble instanceof Response) return preamble;
   const { authHeader, bodyText, requestId } = preamble;
 
-  const normalizedRequest = validateAndNormalizeChatRequest(bodyText, {
+  // Dual-accept (push.stream.v1): a body carrying a `contract` field is the
+  // neutral wire shape serialized straight from PushStreamRequest; anything else
+  // is the legacy OpenAI Chat Completions shape. Deployed clients send no
+  // discriminator and hit the legacy branch verbatim, so this is backward-
+  // compatible; the neutral branch stays dormant until the client flip. See
+  // docs/runbooks/Anthropic Worker Contract Migration.md.
+  const dual = parseDualAcceptRequest(bodyText, {
     routeLabel: 'OpenCode Zen Go',
     maxOutputTokens: 12_288,
   });
-  if (!normalizedRequest.ok) {
-    return Response.json({ error: normalizedRequest.error }, { status: normalizedRequest.status });
+  if (!dual.ok) {
+    return Response.json({ error: dual.error }, { status: dual.status });
   }
-  if (normalizedRequest.value.adjustments.length > 0) {
+  if (dual.adjustments.length > 0) {
     wlog('warn', 'chat_request_adjusted', {
       requestId,
       route: 'api/zen/go/chat',
-      adjustments: normalizedRequest.value.adjustments,
+      adjustments: dual.adjustments,
     });
   }
 
-  const parsedRequest = normalizedRequest.value.parsed;
-  const model = typeof parsedRequest.model === 'string' ? parsedRequest.model.trim() : '';
+  // Both contract kinds converge on `{ model, transport, upstreamBody }`. Zen-Go
+  // carries the model out-of-band — its `/v1/messages` endpoint omits the body
+  // `model`, matching `buildAnthropicMessagesRequest` — so the neutral Anthropic
+  // branch serializes with `emitModel: false`. The OpenAI-compat transport
+  // serializes the neutral request via `toOpenAIChat`; the legacy path forwards
+  // the validated raw body verbatim.
+  const model =
+    dual.contractKind === 'neutral'
+      ? dual.request.model.trim()
+      : typeof dual.parsed.model === 'string'
+        ? dual.parsed.model.trim()
+        : '';
   const transport = getZenGoTransport(model);
   const upstreamUrl =
     transport === 'anthropic'
       ? 'https://opencode.ai/zen/go/v1/messages'
       : 'https://opencode.ai/zen/go/v1/chat/completions';
-  const upstreamBody =
-    transport === 'anthropic'
-      ? JSON.stringify(buildAnthropicMessagesRequest(parsedRequest))
-      : normalizedRequest.value.bodyText;
+
+  let upstreamBody: string;
+  if (dual.contractKind === 'neutral') {
+    try {
+      // toAnthropicMessages / toOpenAIChat throw loudly on a content part they
+      // can't represent. Map that to a 400 rather than the 502 upstream catch.
+      upstreamBody =
+        transport === 'anthropic'
+          ? JSON.stringify(
+              toAnthropicMessages(dual.request, {
+                emitModel: false,
+                enableWebSearch: dual.request.anthropicWebSearch === true,
+              }),
+            )
+          : JSON.stringify(toOpenAIChat(dual.request));
+    } catch (err) {
+      return Response.json(
+        { error: `OpenCode Zen Go request: ${err instanceof Error ? err.message : String(err)}` },
+        { status: 400 },
+      );
+    }
+  } else {
+    upstreamBody =
+      transport === 'anthropic'
+        ? JSON.stringify(buildAnthropicMessagesRequest(dual.parsed))
+        : dual.bodyText;
+  }
 
   wlog('info', 'request', {
     requestId,
     route: 'api/zen/go/chat',
     transport,
     model,
+    contract: dual.contractKind,
     bytes: upstreamBody.length,
   });
 
