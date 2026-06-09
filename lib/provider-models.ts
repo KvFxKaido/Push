@@ -32,7 +32,11 @@ export const OPENROUTER_MAX_SESSION_ID_LENGTH = 256;
 export const ZEN_DEFAULT_MODEL = 'big-pickle';
 export const NVIDIA_DEFAULT_MODEL = 'nvidia/llama-3.1-nemotron-70b-instruct';
 export const KILOCODE_DEFAULT_MODEL = 'google/gemini-3-flash-preview';
-export const BLACKBOX_DEFAULT_MODEL = 'blackboxai/anthropic/claude-haiku-4.5';
+// NOTE: the old default `blackboxai/anthropic/claude-haiku-4.5` is REJECTED by
+// the chat endpoint ("Invalid model name … for your key", probed 2026-06-09) —
+// it isn't in the live catalog and isn't an accepted alias, so the Blackbox
+// default 400'd on every send. This bare id is the accepted haiku-tier model.
+export const BLACKBOX_DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
 export const OPENADAPTER_DEFAULT_MODEL = 'deepseek/deepseek-v3';
 
 // Direct-provider defaults — populated by the scaffolding PR; the streaming /
@@ -152,21 +156,26 @@ export const KILOCODE_MODELS: string[] = [
   'kilo-auto/balanced',
 ];
 
-// Curated from the blackbox `/v1/models` endpoint (2026-05-25): coding-relevant
-// subset of the ~130 available. The old `blackbox-ai`/`blackbox-pro`/
-// `blackbox-search` names are NOT valid model ids — the API rejects them
-// ("Invalid model name … Call `/v1/models`"). All valid ids are
-// `blackboxai/<vendor>/<model>`. Free-text entry still permitted at the UI layer.
+// Fallback list shown when the live `/models` fetch is unavailable — which
+// happens fairly often because the Blackbox gateway returns transient
+// `InternalServerError`/`Connection error` responses (that flakiness is what
+// trips the fetch into this fallback in the first place). Every id below is in
+// the live `/models` catalog and is a real, accepted chat model — verified
+// 2026-06-09 by chat/completions probes that distinguish a genuine
+// "Invalid model name" rejection from transient gateway errors. Removed from the
+// prior list: `z-ai/glm-5` and `moonshotai/kimi-k2.6`, both of which return
+// "Invalid model name" (Blackbox does not serve them). Valid ids are
+// `blackboxai/<vendor>/<model>` or bare dated Anthropic ids; free-text entry is
+// still permitted at the UI layer.
 export const BLACKBOX_MODELS: string[] = [
   BLACKBOX_DEFAULT_MODEL,
-  'blackboxai/anthropic/claude-sonnet-4.6',
+  'blackboxai/anthropic/claude-opus-4.8',
   'blackboxai/anthropic/claude-opus-4.7',
+  'blackboxai/anthropic/claude-sonnet-4.6',
   'blackboxai/openai/gpt-5.5',
   'blackboxai/openai/gpt-5.3-codex',
   'blackboxai/google/gemini-3.1-pro-preview',
   'blackboxai/x-ai/grok-4.3',
-  'blackboxai/z-ai/glm-5',
-  'blackboxai/moonshotai/kimi-k2.6',
   'blackboxai/deepseek/deepseek-v4-flash',
 ];
 
