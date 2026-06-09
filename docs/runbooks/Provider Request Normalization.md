@@ -151,7 +151,7 @@ Repeat both for Gemini. Once no provider depends on OpenAI-shape as an
 intermediate, delete the re-emit-to-OpenAI step and make `toOpenAIChat` an
 explicit peer serializer.
 
-## Gemini parity — Phase 2 ✅ shipped (Phase 1 N/A)
+## Gemini parity — Phases 2 + 3a ✅ shipped (Phase 1 N/A)
 
 `toGeminiGenerateContent(PushStreamRequest)` (in `lib/openai-gemini-bridge.ts`)
 builds the `:generateContent` body straight from the neutral request —
@@ -159,12 +159,18 @@ builds the `:generateContent` body straight from the neutral request —
 (text + base64 image, **failing loudly** on a part it can't represent), and the
 `user`-first padding + `generationConfig` assembly. A shared `assembleGeminiBody`
 single-sources the request-field tail so it and `buildGeminiGenerateContentRequest`
-can only diverge on message conversion. `cli/gemini-stream.ts` consumes it
-directly (request side), dropping the OpenAI-shape round-trip; the response stays
-OpenAI SSE via `createGeminiTranslatedStream` (the Gemini Phase-3a SSE→neutral
-parser is the deferred follow-on). Pinned by a drift corpus (string-content
-equivalence with the legacy path) + multimodal tests + the CLI body-capture
-suite.
+can only diverge on message conversion.
+
+**Phase 3a:** `geminiEventStream` parses the Gemini SSE stream **directly into
+neutral `PushStreamEvent`s** (text-only — no reasoning blocks or pause_turn;
+`stripTemplateTokens` applied for pump-parity). `cli/gemini-stream.ts` now
+consumes `toGeminiGenerateContent` for the request **and** `geminiEventStream` for
+the response, dropping both the OpenAI-shape request round-trip and the
+`createGeminiTranslatedStream → openAISSEPump` response round-trip. The web Worker
+keeps `createGeminiTranslatedStream` for its OpenAI-SSE response wire until the
+response-contract migration. Pinned by drift corpora (request-side string-content
+equivalence + response-side event-for-event equivalence with the legacy path),
+multimodal tests, and the unchanged CLI body-capture suite.
 
 **Phase 1 is a no-op for Gemini.** The Anthropic Phase 1 fixed Opus 4.7+
 *removing* `temperature`/`top_p` (a 400). Gemini accepts `temperature`/`topP`/
