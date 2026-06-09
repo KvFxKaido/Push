@@ -1,17 +1,18 @@
 /**
  * Google Gemini direct PushStream implementation.
  *
- * Hits the Worker proxy at `/api/google/chat`. The Worker
- * (`handleGoogleChat` in `app/src/worker/worker-providers.ts`) translates the
- * OpenAI-shaped body via `buildGeminiGenerateContentRequest`, POSTs to
- * `generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse`
- * with `x-goog-api-key` auth, and returns the response already translated back
- * to OpenAI SSE shape via `createGeminiTranslatedStream`.
+ * Hits the Worker proxy at `/api/google/chat`. The client serializes the neutral
+ * `push.stream.v1` wire body (`toPushStreamWire`) — materialized messages plus
+ * neutral scalars, `contract: "push.stream.v1"`. The Worker (`handleGoogleChat`)
+ * dual-accepts: a `contract` field routes to the neutral branch, which serializes
+ * to Gemini via `toGeminiGenerateContent`, POSTs to
+ * `generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse`,
+ * and returns the response translated back to OpenAI SSE via
+ * `createGeminiTranslatedStream`.
  *
- * From the client adapter's perspective this is identical to any other
- * OpenAI-compatible provider: post OpenAI-shaped JSON, read OpenAI-shaped SSE.
- * Gemini-specific request/response shape lives on the Worker side so the API
- * key never reaches the browser.
+ * Prompt materialization (`toLLMMessages`) stays client-side; the wire carries
+ * already-materialized `messages`. The *response* axis is unchanged — the client
+ * still reads OpenAI-shaped SSE. The API key never reaches the browser.
  *
  * Runs client-side. Timer/abort safety comes from `iterateChatStream`
  * wrapping this stream — no timer machinery lives here.
@@ -20,6 +21,7 @@
 import type { ChatMessage, WorkspaceContext } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
+import { toPushStreamWire } from '@push/lib/provider-wire';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
 import { parseProviderError } from './orchestrator-streaming';
@@ -57,15 +59,17 @@ export async function* geminiStream(
   // (`tavily`, `duckduckgo`, `ollama`) and `'off'` suppress it.
   const grounding = req.googleSearchGrounding ?? isNativeWebSearchEnabled('google', req.model);
 
-  const body: Record<string, unknown> = {
+  // Neutral `push.stream.v1` wire body. Sampling scalars and the grounding flag
+  // ride as neutral fields; the Worker's dual-accept neutral branch serializes
+  // them to Gemini via `toGeminiGenerateContent`.
+  const body = toPushStreamWire(llmMessages, {
+    provider: 'google',
     model: req.model,
-    messages: llmMessages,
-    stream: true,
-    ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
-    ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
-    ...(req.topP !== undefined ? { top_p: req.topP } : {}),
-    ...(grounding ? { google_search_grounding: true } : {}),
-  };
+    maxTokens: req.maxTokens,
+    temperature: req.temperature,
+    topP: req.topP,
+    ...(grounding ? { googleSearchGrounding: true } : {}),
+  });
 
   // The Worker prefers its own server-side GOOGLE_API_KEY when set and ignores
   // the client-side header. Sending the client key as a Bearer when present
