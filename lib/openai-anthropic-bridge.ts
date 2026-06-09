@@ -32,6 +32,29 @@ export function anthropicModelRejectsSamplingParams(model: string | null | undef
   return minor >= 7; // Opus 4.7 / 4.8 / 4.9 …
 }
 
+/**
+ * Separate rule from the Opus 4.7+ *removal* above: every Claude 4+ model
+ * (Opus, Sonnet, and Haiku alike) accepts at most ONE of `temperature` /
+ * `top_p` — sending both returns a 400 (`invalid_request_error`). Claude 3.x
+ * and earlier accepted both. The OpenAI-canonical wire carries both as
+ * first-class fields, so a caller that sets both reaches the serializer with
+ * both populated; this predicate flags the models where that pair is illegal.
+ *
+ * Handles both id shapes: 4.x is `claude-<family>-<major>-…`
+ * (`claude-sonnet-4-6`), while 3.x puts the major right after the prefix
+ * (`claude-3-5-sonnet-…`, `claude-3-opus-…`). Non-Anthropic ids return false.
+ */
+export function anthropicModelEnforcesSamplingExclusivity(
+  model: string | null | undefined,
+): boolean {
+  if (typeof model !== 'string') return false;
+  const id = model.toLowerCase();
+  // 4.x-style: family precedes the major. 3.x-style: major precedes the family.
+  const match = id.match(/claude-(?:opus|sonnet|haiku)-(\d+)/) ?? id.match(/claude-(\d+)/);
+  if (!match) return false;
+  return Number(match[1]) >= 4;
+}
+
 function dataUrlToAnthropicImagePart(dataUrl: string): Record<string, unknown> | null {
   const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
   if (!match) return null;
@@ -316,10 +339,30 @@ function assembleAnthropicBody(parts: AnthropicBodyAssembly): Record<string, unk
       );
     }
   } else {
-    if (typeof parts.temperature === 'number') {
+    const hasTemperature = typeof parts.temperature === 'number';
+    const hasTopP = typeof parts.topP === 'number';
+    // Claude 4+ accepts at most one of temperature / top_p — sending both 400s
+    // (a separate rule from the Opus 4.7+ removal above). When a caller sets
+    // both, keep temperature (the more commonly-meaningful knob) and drop
+    // top_p so the request doesn't hard-fail.
+    const dropTopP =
+      hasTemperature && hasTopP && anthropicModelEnforcesSamplingExclusivity(parts.samplingModel);
+    if (dropTopP) {
+      // Symmetric structured log, mirroring anthropic_sampling_params_stripped:
+      // a user-set param is being dropped, so the strip is visible to ops.
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'anthropic_sampling_top_p_dropped',
+          model: parts.samplingModel,
+          reason: 'temperature_top_p_mutually_exclusive',
+        }),
+      );
+    }
+    if (hasTemperature) {
       body.temperature = parts.temperature;
     }
-    if (typeof parts.topP === 'number') {
+    if (hasTopP && !dropTopP) {
       body.top_p = parts.topP;
     }
   }
