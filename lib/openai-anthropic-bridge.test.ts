@@ -923,6 +923,24 @@ describe('anthropicEventStream — drift vs translate->pump', () => {
         'data: [DONE]',
       ],
     },
+    {
+      // Both paths run text through stripTemplateTokens: mixed text keeps the
+      // prose, drops the control marker.
+      name: 'text with a chat-template control token is stripped',
+      lines: [
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi<|im_end|>"}}',
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
+      ],
+    },
+    {
+      // A delta that is entirely control tokens strips to '' — neither path
+      // emits a text_delta for it.
+      name: 'text that is only a control token yields no text_delta',
+      lines: [
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"<|im_end|>"}}',
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
+      ],
+    },
   ];
 
   for (const { name, lines } of corpus) {

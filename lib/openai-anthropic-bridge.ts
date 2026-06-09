@@ -6,6 +6,7 @@ import type {
 import type { LlmContentPart, LlmMessage, PushStreamRequest } from './provider-contract.ts';
 import type { PushStreamEvent, StreamUsage } from './provider-contract.ts';
 import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
+import { stripTemplateTokens } from './openai-sse-pump.ts';
 
 /**
  * Anthropic removed `temperature`, `top_p`, and `top_k` on Opus 4.7 and every
@@ -1018,11 +1019,21 @@ export async function* anthropicEventStream(
       const idx = typeof parsed.index === 'number' ? parsed.index : -1;
       const delta = parsed.delta as Record<string, unknown> | undefined;
       if (delta?.type === 'text_delta' && typeof delta.text === 'string' && delta.text) {
-        yield { type: 'text_delta', text: delta.text };
+        // Accumulate the RAW text onto the captured block for pause_turn replay
+        // (Anthropic expects its original content[] back verbatim).
         const captured = idx >= 0 ? capturedBlocks.get(idx) : undefined;
         if (captured && captured.type === 'text') {
           captured.text = (typeof captured.text === 'string' ? captured.text : '') + delta.text;
         }
+        // Emit the token through the same chat-template-token strip the
+        // openAISSEPump text branch applies, so the direct path stays
+        // event-for-event identical to the legacy translate→pump path. A delta
+        // that is entirely control tokens strips to '' and yields nothing —
+        // matching the pump. (Anthropic's native API doesn't emit these
+        // markers, so on real traffic this is a no-op; the parity matters for
+        // the drift guarantee and any upstream that proxies template tokens.)
+        const token = stripTemplateTokens(delta.text);
+        if (token) yield { type: 'text_delta', text: token };
         return;
       }
       const state = idx >= 0 ? openBlocks.get(idx) : undefined;
