@@ -604,6 +604,7 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
   const dual = parseDualAcceptRequest(bodyText, {
     routeLabel: 'OpenCode Zen Go',
     maxOutputTokens: 12_288,
+    provider: 'zen',
   });
   if (!dual.ok) {
     return Response.json({ error: dual.error }, { status: dual.status });
@@ -1327,7 +1328,11 @@ export async function handleAnthropicChat(request: Request, env: Env): Promise<R
   if (preamble instanceof Response) return preamble;
   const { authHeader: apiKey, bodyText, requestId } = preamble;
 
-  const policy = { routeLabel: 'Anthropic', maxOutputTokens: 12_288 } as const;
+  const policy = {
+    routeLabel: 'Anthropic',
+    maxOutputTokens: 12_288,
+    provider: 'anthropic',
+  } as const;
 
   // Dual-accept (push.stream.v1): a body carrying a `contract` field is the
   // neutral wire shape, serialized straight from PushStreamRequest; anything
@@ -1522,6 +1527,7 @@ export async function handleGoogleChat(request: Request, env: Env): Promise<Resp
   const dual = parseDualAcceptRequest(bodyText, {
     routeLabel: 'Google Gemini',
     maxOutputTokens: 12_288,
+    provider: 'google',
   });
   if (!dual.ok) {
     return Response.json({ error: dual.error }, { status: dual.status });

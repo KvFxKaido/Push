@@ -11,7 +11,12 @@ export type {
   OpenAIMessage,
   OpenAIReasoningBlock,
 } from '@push/lib/openai-chat-types';
-import type { LlmContentPart, LlmMessage, PushStreamRequest } from '@push/lib/provider-contract';
+import type {
+  AIProviderType,
+  LlmContentPart,
+  LlmMessage,
+  PushStreamRequest,
+} from '@push/lib/provider-contract';
 import { PUSH_STREAM_WIRE_CONTRACT } from '@push/lib/provider-wire';
 
 const MAX_REASONING_BLOCKS_PER_MESSAGE = 64;
@@ -101,6 +106,14 @@ export interface ChatRequestPolicy {
   maxMessages?: number;
   maxContentPartsPerMessage?: number;
   maxChoices?: number;
+  /**
+   * Provider stamped onto the validated neutral request. The endpoint is
+   * provider-specific today (it already commits to an upstream + key), so the
+   * ROUTE is authoritative — a body `provider` can't redirect where the request
+   * goes. Each wire-accepting handler passes its own; defaults to `'anthropic'`
+   * (the first dual-accept route) when unset. Ignored by the legacy validator.
+   */
+  provider?: AIProviderType;
 }
 
 export interface ValidatedChatRequest {
@@ -588,7 +601,10 @@ export function validateAndNormalizeWireRequest(
   }
 
   const request: PushStreamRequest<LlmMessage> = {
-    provider: 'anthropic',
+    // Route-authoritative (see ChatRequestPolicy.provider). The wire's own
+    // `provider` field is advisory — carried for a future provider-agnostic
+    // endpoint — and is not consumed here.
+    provider: policy.provider ?? 'anthropic',
     model,
     messages: normalizedMessages,
     ...(maxTokens !== undefined ? { maxTokens } : {}),

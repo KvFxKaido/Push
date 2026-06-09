@@ -415,6 +415,33 @@ describe('validateAndNormalizeWireRequest', () => {
     expect(result.error).toMatch(/invalid JSON body/);
   });
 
+  it('stamps the route-authoritative provider from policy (not always anthropic)', () => {
+    // The endpoint commits to an upstream + key, so the route wins over any body
+    // `provider`. A Google route must stamp 'google', not the legacy 'anthropic'.
+    const googleResult = validateAndNormalizeWireRequest(
+      JSON.stringify({
+        contract: PUSH_STREAM_WIRE_CONTRACT,
+        // A mismatched body provider must NOT override the route.
+        provider: 'anthropic',
+        model: 'gemini-3.5-flash',
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+      { routeLabel: 'Google Gemini', maxOutputTokens: 12_288, provider: 'google' },
+    );
+    expect(googleResult.ok).toBe(true);
+    if (!googleResult.ok) return;
+    expect(googleResult.value.request.provider).toBe('google');
+
+    // Default stays 'anthropic' when the policy doesn't pin a provider.
+    const defaultResult = validateAndNormalizeWireRequest(
+      body({ messages: [{ role: 'user', content: 'hi' }] }),
+      POLICY,
+    );
+    expect(defaultResult.ok).toBe(true);
+    if (!defaultResult.ok) return;
+    expect(defaultResult.value.request.provider).toBe('anthropic');
+  });
+
   it('preserves cache_control (snake_case) on text + image content parts', () => {
     const result = validateAndNormalizeWireRequest(
       body({
