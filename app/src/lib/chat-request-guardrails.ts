@@ -621,7 +621,7 @@ export function parseDualAcceptRequest(
   let isNeutral = false;
   try {
     const peeked = JSON.parse(bodyText) as { contract?: unknown } | null;
-    isNeutral = Boolean(peeked) && typeof peeked === 'object' && peeked!.contract !== undefined;
+    isNeutral = peeked !== null && typeof peeked === 'object' && peeked.contract !== undefined;
   } catch {
     // Malformed JSON — fall through to the legacy validator for the canonical
     // 400 (the wire validator would produce the same, but legacy is the
