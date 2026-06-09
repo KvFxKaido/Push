@@ -31,6 +31,7 @@ import { type SessionDigest, SESSION_DIGEST_HEADER } from '@push/lib/session-dig
  *  but high enough to skip the cost on warm-up turns. The actual
  *  compaction decision still happens in `manageContext`. */
 const MIN_MESSAGES_BEFORE_PREFETCH = 20;
+import { shouldRetryStreamRound, streamRetryDelayMs } from '@/lib/stream-error';
 import type { ChatMessage, ReasoningBlock, UrlCitation } from '@/types';
 import type { SendLoopContext, StreamRoundResult } from './chat-send-types';
 
@@ -100,12 +101,6 @@ export async function streamAssistantRound(
   // would never be emitted even though the dispatch fork exists.
   // Codex P2 on PR #516.
   const hasSandboxThisRound = Boolean(sandboxIdRef.current || localDaemonBindingRef.current);
-
-  // Set OpenRouter session_id so all requests in this conversation are grouped.
-  // Set unconditionally: the orchestrator may resolve to OpenRouter even when
-  // lockedProvider is something else, and the getter is consume-and-clear so
-  // it won't leak into non-OpenRouter requests.
-  setOpenRouterSessionId(chatId);
 
   let invariantError: Error | null = null;
   try {
@@ -178,141 +173,203 @@ export async function streamAssistantRound(
     linkedLibraryPayload.imageAttachments,
   );
 
-  const error = await new Promise<Error | null>((resolve) => {
-    streamChat(
-      apiMessagesForSend,
-      (token) => {
-        if (abortRef.current) return;
-        const contentKey = `${round}:${accumulated.length}:${token}`;
-        if (processedContentRef.current.has(contentKey)) return;
-        processedContentRef.current.add(contentKey);
-        accumulated += token;
-        emitRunEngineEvent({
-          type: 'ACCUMULATED_UPDATED',
-          timestamp: Date.now(),
-          text: accumulated,
-          thinking: thinkingAccumulated,
-        });
-        updateAgentStatus({ active: true, phase: 'Responding...' }, { chatId, log: false });
-        setConversations((prev) => {
-          const conv = prev[chatId];
-          if (!conv) return prev;
-          const msgs = [...conv.messages];
-          const lastIdx = msgs.length - 1;
-          if (msgs[lastIdx]?.role === 'assistant') {
-            msgs[lastIdx] = { ...msgs[lastIdx], content: accumulated, status: 'streaming' };
-          }
-          return { ...prev, [chatId]: { ...conv, messages: msgs } };
-        });
-      },
-      (usage) => {
-        if (usage && usageHandlerRef.current) {
-          usageHandlerRef.current.trackUsage('k2p5', usage.inputTokens, usage.outputTokens);
-        }
-        resolve(null);
-      },
-      (err) => resolve(err),
-      (thinkingToken) => {
-        if (abortRef.current) return;
-        if (thinkingToken === null) {
+  const attemptStream = (): Promise<Error | null> =>
+    new Promise<Error | null>((resolve) => {
+      // Set OpenRouter session_id so all requests in this conversation are
+      // grouped. Re-armed per attempt because the getter is consume-and-clear,
+      // so a retry would otherwise lose the grouping. Set unconditionally: the
+      // orchestrator may resolve to OpenRouter even when lockedProvider differs,
+      // and the consume-and-clear getter keeps it from leaking to other providers.
+      setOpenRouterSessionId(chatId);
+      streamChat(
+        apiMessagesForSend,
+        (token) => {
+          if (abortRef.current) return;
+          const contentKey = `${round}:${accumulated.length}:${token}`;
+          if (processedContentRef.current.has(contentKey)) return;
+          processedContentRef.current.add(contentKey);
+          accumulated += token;
+          emitRunEngineEvent({
+            type: 'ACCUMULATED_UPDATED',
+            timestamp: Date.now(),
+            text: accumulated,
+            thinking: thinkingAccumulated,
+          });
           updateAgentStatus({ active: true, phase: 'Responding...' }, { chatId, log: false });
-          return;
-        }
-        const thinkingKey = `think:${round}:${thinkingAccumulated.length}:${thinkingToken}`;
-        if (processedContentRef.current.has(thinkingKey)) return;
-        processedContentRef.current.add(thinkingKey);
-        thinkingAccumulated += thinkingToken;
-        emitRunEngineEvent({
-          type: 'ACCUMULATED_UPDATED',
-          timestamp: Date.now(),
-          text: accumulated,
-          thinking: thinkingAccumulated,
-        });
-        updateAgentStatus({ active: true, phase: 'Reasoning...' }, { chatId, log: false });
-        setConversations((prev) => {
-          const conv = prev[chatId];
-          if (!conv) return prev;
-          const msgs = [...conv.messages];
-          const lastIdx = msgs.length - 1;
-          if (msgs[lastIdx]?.role === 'assistant') {
-            msgs[lastIdx] = {
-              ...msgs[lastIdx],
-              thinking: thinkingAccumulated,
-              status: 'streaming',
-            };
-          }
-          return { ...prev, [chatId]: { ...conv, messages: msgs } };
-        });
-      },
-      workspaceContextRef.current ?? undefined,
-      hasSandboxThisRound,
-      scratchpadRef.current?.content,
-      abortControllerRef.current?.signal,
-      lockedProvider,
-      resolvedModel,
-      undefined,
-      todoRef.current ? buildTodoContext(todoRef.current.todos) : undefined,
-      (block) => {
-        if (abortRef.current) return;
-        reasoningBlocks.push(block);
-        // Stamp the in-flight assistant message immediately. Subsequent
-        // setConversations updates in chat-tool-execution / chat-no-tool-path
-        // spread `...msgs[lastIdx]`, so this stamp survives every post-stream
-        // status flip and is what the next `buildLLMMessages` reads.
-        setConversations((prev) => {
-          const conv = prev[chatId];
-          if (!conv) return prev;
-          const msgs = [...conv.messages];
-          const lastIdx = msgs.length - 1;
-          if (msgs[lastIdx]?.role === 'assistant') {
-            msgs[lastIdx] = {
-              ...msgs[lastIdx],
-              reasoningBlocks: [...reasoningBlocks],
-            };
-          }
-          return { ...prev, [chatId]: { ...conv, messages: msgs } };
-        });
-      },
-      {
-        records: sessionDigestRecords,
-        prior: _lastSessionDigests.get(chatId),
-        onEmit: (digest) => {
-          // Persist the digest the model actually saw so next turn's
-          // `priorSessionDigest` is non-empty — what makes the merge
-          // accumulate across turns. `null` means no digest this turn
-          // (no compaction), so don't overwrite an existing entry.
-          if (digest) recordSessionDigest(chatId, digest);
+          setConversations((prev) => {
+            const conv = prev[chatId];
+            if (!conv) return prev;
+            const msgs = [...conv.messages];
+            const lastIdx = msgs.length - 1;
+            if (msgs[lastIdx]?.role === 'assistant') {
+              msgs[lastIdx] = { ...msgs[lastIdx], content: accumulated, status: 'streaming' };
+            }
+            return { ...prev, [chatId]: { ...conv, messages: msgs } };
+          });
         },
-      },
-      linkedLibraryContent,
-      (citations) => {
-        if (abortRef.current) return;
-        let added = false;
-        for (const c of citations) {
-          if (!citationsByUrl.has(c.url)) {
-            citationsByUrl.set(c.url, c);
-            added = true;
+        (usage) => {
+          if (usage && usageHandlerRef.current) {
+            usageHandlerRef.current.trackUsage('k2p5', usage.inputTokens, usage.outputTokens);
           }
-        }
-        if (!added) return;
-        // Stamp the in-flight assistant message. Like the reasoningBlocks
-        // stamp above, later setConversations updates spread `...msgs[lastIdx]`,
-        // so this survives the post-stream status flips and persists for render.
-        const next = [...citationsByUrl.values()];
-        setConversations((prev) => {
-          const conv = prev[chatId];
-          if (!conv) return prev;
-          const lastIdx = conv.messages.length - 1;
-          // Bail before cloning when there's no assistant message to stamp —
-          // avoids a no-op state update + re-render.
-          if (conv.messages[lastIdx]?.role !== 'assistant') return prev;
-          const msgs = [...conv.messages];
-          msgs[lastIdx] = { ...msgs[lastIdx], citations: next };
-          return { ...prev, [chatId]: { ...conv, messages: msgs } };
-        });
-      },
+          resolve(null);
+        },
+        (err) => resolve(err),
+        (thinkingToken) => {
+          if (abortRef.current) return;
+          if (thinkingToken === null) {
+            updateAgentStatus({ active: true, phase: 'Responding...' }, { chatId, log: false });
+            return;
+          }
+          const thinkingKey = `think:${round}:${thinkingAccumulated.length}:${thinkingToken}`;
+          if (processedContentRef.current.has(thinkingKey)) return;
+          processedContentRef.current.add(thinkingKey);
+          thinkingAccumulated += thinkingToken;
+          emitRunEngineEvent({
+            type: 'ACCUMULATED_UPDATED',
+            timestamp: Date.now(),
+            text: accumulated,
+            thinking: thinkingAccumulated,
+          });
+          updateAgentStatus({ active: true, phase: 'Reasoning...' }, { chatId, log: false });
+          setConversations((prev) => {
+            const conv = prev[chatId];
+            if (!conv) return prev;
+            const msgs = [...conv.messages];
+            const lastIdx = msgs.length - 1;
+            if (msgs[lastIdx]?.role === 'assistant') {
+              msgs[lastIdx] = {
+                ...msgs[lastIdx],
+                thinking: thinkingAccumulated,
+                status: 'streaming',
+              };
+            }
+            return { ...prev, [chatId]: { ...conv, messages: msgs } };
+          });
+        },
+        workspaceContextRef.current ?? undefined,
+        hasSandboxThisRound,
+        scratchpadRef.current?.content,
+        abortControllerRef.current?.signal,
+        lockedProvider,
+        resolvedModel,
+        undefined,
+        todoRef.current ? buildTodoContext(todoRef.current.todos) : undefined,
+        (block) => {
+          if (abortRef.current) return;
+          reasoningBlocks.push(block);
+          // Stamp the in-flight assistant message immediately. Subsequent
+          // setConversations updates in chat-tool-execution / chat-no-tool-path
+          // spread `...msgs[lastIdx]`, so this stamp survives every post-stream
+          // status flip and is what the next `buildLLMMessages` reads.
+          setConversations((prev) => {
+            const conv = prev[chatId];
+            if (!conv) return prev;
+            const msgs = [...conv.messages];
+            const lastIdx = msgs.length - 1;
+            if (msgs[lastIdx]?.role === 'assistant') {
+              msgs[lastIdx] = {
+                ...msgs[lastIdx],
+                reasoningBlocks: [...reasoningBlocks],
+              };
+            }
+            return { ...prev, [chatId]: { ...conv, messages: msgs } };
+          });
+        },
+        {
+          records: sessionDigestRecords,
+          prior: _lastSessionDigests.get(chatId),
+          onEmit: (digest) => {
+            // Persist the digest the model actually saw so next turn's
+            // `priorSessionDigest` is non-empty — what makes the merge
+            // accumulate across turns. `null` means no digest this turn
+            // (no compaction), so don't overwrite an existing entry.
+            if (digest) recordSessionDigest(chatId, digest);
+          },
+        },
+        linkedLibraryContent,
+        (citations) => {
+          if (abortRef.current) return;
+          let added = false;
+          for (const c of citations) {
+            if (!citationsByUrl.has(c.url)) {
+              citationsByUrl.set(c.url, c);
+              added = true;
+            }
+          }
+          if (!added) return;
+          // Stamp the in-flight assistant message. Like the reasoningBlocks
+          // stamp above, later setConversations updates spread `...msgs[lastIdx]`,
+          // so this survives the post-stream status flips and persists for render.
+          const next = [...citationsByUrl.values()];
+          setConversations((prev) => {
+            const conv = prev[chatId];
+            if (!conv) return prev;
+            const lastIdx = conv.messages.length - 1;
+            // Bail before cloning when there's no assistant message to stamp —
+            // avoids a no-op state update + re-render.
+            if (conv.messages[lastIdx]?.role !== 'assistant') return prev;
+            const msgs = [...conv.messages];
+            msgs[lastIdx] = { ...msgs[lastIdx], citations: next };
+            return { ...prev, [chatId]: { ...conv, messages: msgs } };
+          });
+        },
+      ).catch((err: unknown) =>
+        // Safety net: if streamChat rejects without having called onDone/onError
+        // (e.g. a throw while building the stream), settle the attempt so it
+        // never hangs. resolve is one-shot, so a late settle after onDone/onError
+        // is a no-op.
+        resolve(err instanceof Error ? err : new Error(String(err))),
+      );
+    });
+
+  // Retry a transient stream failure (gateway 5xx, rate limit, stall/timeout)
+  // — but ONLY before any output streamed this round. Tokens write into the
+  // assistant message live (status:'streaming'), so retrying after partial
+  // output would duplicate or visibly rewrite text the user already saw and
+  // corrupt reasoning/tool-call coherence. A connect-time blip (the common
+  // flaky-gateway case) fails with `accumulated`/`thinking` still empty, which
+  // is exactly what we re-attempt. Mid-stream failures stay terminal.
+  let error: Error | null = null;
+  let retried = false;
+  for (let attempt = 0; ; attempt++) {
+    error = await attemptStream();
+    // Any assistant-visible side effect this round — streamed text, thinking,
+    // signed reasoning blocks, or web-search citations — makes a retry unsafe:
+    // it would duplicate/rewrite what the user already saw, or leave a stale
+    // signed-thinking sidecar on the message that the next turn forwards to the
+    // model. Only a clean pre-output failure (the flaky-gateway connect blip)
+    // is retried.
+    const hasOutput =
+      accumulated.length > 0 ||
+      thinkingAccumulated.length > 0 ||
+      reasoningBlocks.length > 0 ||
+      citationsByUrl.size > 0;
+    if (!shouldRetryStreamRound({ error, aborted: abortRef.current, hasOutput, attempt })) break;
+    retried = true;
+    console.log(
+      JSON.stringify({
+        level: 'warn',
+        event: 'stream_round_retry',
+        round,
+        attempt: attempt + 1,
+        status: (error as { status?: number }).status,
+      }),
     );
-  });
+    await new Promise<void>((resolve) => setTimeout(resolve, streamRetryDelayMs(attempt)));
+    if (abortRef.current) break; // user may have cancelled during backoff
+  }
+  // Gate the exhausted log on !aborted — an abort during backoff exits here too,
+  // but the round loop handles that as a cancel, not a failure.
+  if (error && retried && !abortRef.current) {
+    console.log(
+      JSON.stringify({
+        level: 'warn',
+        event: 'stream_round_retry_exhausted',
+        round,
+        status: (error as { status?: number }).status,
+      }),
+    );
+  }
 
   // Emit a per-turn prompt-snapshot run event so a debug surface can answer
   // "what exactly went to the model on turn N?" without re-running the build.

@@ -31,6 +31,7 @@ import { PROVIDER_URLS } from './providers';
 import { buildExperimentalProxyHeaders } from './experimental-providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
+import { ProviderStreamError } from './stream-error';
 
 export async function* bedrockStream(
   req: PushStreamRequest<ChatMessage>,
@@ -99,7 +100,9 @@ export async function* bedrockStream(
     } catch {
       detail = errBody ? errBody.slice(0, 200) : 'empty body';
     }
-    throw new Error(`AWS Bedrock ${response.status}: ${detail}`);
+    throw new ProviderStreamError(`AWS Bedrock ${response.status}: ${detail}`, {
+      status: response.status,
+    });
   }
 
   if (!response.body) {

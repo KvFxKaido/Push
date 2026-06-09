@@ -21,6 +21,7 @@ import { getOpenAdapterKey } from '@/hooks/useOpenAdapterConfig';
 import { PROVIDER_URLS } from './providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
+import { ProviderStreamError } from './stream-error';
 
 export async function* openadapterStream(
   req: PushStreamRequest<ChatMessage>,
@@ -82,7 +83,9 @@ export async function* openadapterStream(
     } catch {
       detail = errBody ? errBody.slice(0, 200) : 'empty body';
     }
-    throw new Error(`OpenAdapter ${response.status}: ${detail}`);
+    throw new ProviderStreamError(`OpenAdapter ${response.status}: ${detail}`, {
+      status: response.status,
+    });
   }
 
   if (!response.body) {

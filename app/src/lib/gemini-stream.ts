@@ -28,6 +28,7 @@ import { PROVIDER_URLS } from './providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
 import { isNativeWebSearchEnabled } from './web-search-mode';
+import { ProviderStreamError } from './stream-error';
 
 export async function* geminiStream(
   req: PushStreamRequest<ChatMessage>,
@@ -100,7 +101,7 @@ export async function* geminiStream(
     // `Google ${status}: …`, so don't re-prefix here — that produces
     // `Google 401: Google 401: …`.
     const message = detail.startsWith('Google ') ? detail : `Google ${response.status}: ${detail}`;
-    throw new Error(message);
+    throw new ProviderStreamError(message, { status: response.status });
   }
 
   if (!response.body) {

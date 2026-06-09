@@ -23,6 +23,7 @@ import type { WorkspaceContext } from '@/types';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
 import { parseProviderError } from './orchestrator-streaming';
+import { ProviderStreamError } from './stream-error';
 import { getBlackboxKey } from '@/hooks/useBlackboxConfig';
 import { PROVIDER_URLS } from './providers';
 import { toLLMMessages } from './orchestrator';
@@ -88,7 +89,9 @@ export async function* blackboxStream(
     } catch {
       detail = errBody ? errBody.slice(0, 200) : 'empty body';
     }
-    throw new Error(`Blackbox AI ${response.status}: ${detail}`);
+    throw new ProviderStreamError(`Blackbox AI ${response.status}: ${detail}`, {
+      status: response.status,
+    });
   }
 
   if (!response.body) {

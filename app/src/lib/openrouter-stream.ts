@@ -23,6 +23,7 @@ import type { WorkspaceContext } from '@/types';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
 import { isNativeWebSearchEnabled } from './web-search-mode';
+import { ProviderStreamError } from './stream-error';
 
 /**
  * OpenRouter's native server-side web search, expressed as a server tool.
@@ -124,7 +125,9 @@ export async function* openrouterStream(
     } catch {
       detail = errBody ? errBody.slice(0, 200) : 'empty body';
     }
-    throw new Error(`OpenRouter ${response.status}: ${detail}`);
+    throw new ProviderStreamError(`OpenRouter ${response.status}: ${detail}`, {
+      status: response.status,
+    });
   }
 
   if (!response.body) {

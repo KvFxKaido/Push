@@ -45,6 +45,7 @@ import { encodeVertexServiceAccountHeader, normalizeVertexRegion } from './verte
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
 import { isNativeWebSearchEnabled } from './web-search-mode';
+import { ProviderStreamError } from './stream-error';
 
 export async function* vertexStream(
   req: PushStreamRequest<ChatMessage>,
@@ -187,7 +188,9 @@ export async function* vertexStream(
       } catch {
         detail = errBody ? errBody.slice(0, 200) : 'empty body';
       }
-      throw new Error(`Google Vertex ${response.status}: ${detail}`);
+      throw new ProviderStreamError(`Google Vertex ${response.status}: ${detail}`, {
+        status: response.status,
+      });
     }
 
     if (!response.body) {

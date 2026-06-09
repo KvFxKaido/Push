@@ -32,6 +32,7 @@ import { parseProviderError } from './orchestrator-streaming';
 import { PROVIDER_URLS } from './providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
+import { ProviderStreamError } from './stream-error';
 
 export async function* cloudflareStream(
   req: PushStreamRequest<ChatMessage>,
@@ -94,7 +95,9 @@ export async function* cloudflareStream(
     } catch {
       detail = errBody ? errBody.slice(0, 200) : 'empty body';
     }
-    throw new Error(`Cloudflare Workers AI ${response.status}: ${detail}`);
+    throw new ProviderStreamError(`Cloudflare Workers AI ${response.status}: ${detail}`, {
+      status: response.status,
+    });
   }
 
   if (!response.body) {
