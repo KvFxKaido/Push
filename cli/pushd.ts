@@ -632,6 +632,7 @@ function stopRelayClient(opts: { clearAllowlist?: boolean } = {}): void {
 }
 
 import { PROVIDER_CONFIGS, resolveApiKey } from './provider.js';
+import { loadConfig, reapplyProviderConfigToEnv } from './config-store.js';
 import { createDaemonProviderStream } from './daemon-provider-stream.js';
 import {
   executeToolCall,
@@ -7075,6 +7076,39 @@ async function handleListDevices(req, _emitEvent, context) {
   });
 }
 
+/**
+ * Re-read `~/.push/config.json` and force its provider keys/urls/models into
+ * the daemon's `process.env`, overwriting stale values. The TUI fires this
+ * after a config edit (e.g. rotating a provider API key): the daemon resolves
+ * keys live from `process.env` per run (`resolveApiKey`), but inherited its env
+ * at spawn, so without this a long-lived daemon keeps serving the old key while
+ * `config.json` already shows the new one. No values cross the wire — the verb
+ * only triggers a re-read of the local on-disk file, so it's safe over relay.
+ */
+async function handleReloadConfig(req) {
+  let config;
+  try {
+    config = await loadConfig();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(
+      `${JSON.stringify({ level: 'error', event: 'pushd_config_reload_failed', message })}\n`,
+    );
+    return makeErrorResponse(req.requestId, req.type, 'CONFIG_READ_FAILED', message);
+  }
+  const refreshed = reapplyProviderConfigToEnv(config);
+  process.stderr.write(
+    `${JSON.stringify({
+      level: 'info',
+      event: 'pushd_config_reloaded',
+      refreshedCount: refreshed.length,
+      // env var NAMES only (e.g. PUSH_ZEN_API_KEY) — never the secret values.
+      refreshed,
+    })}\n`,
+  );
+  return makeResponse(req.requestId, req.type, null, true, { refreshed });
+}
+
 // ─── Request dispatcher ──────────────────────────────────────────
 
 const HANDLERS = {
@@ -7119,6 +7153,7 @@ const HANDLERS = {
   relay_disable: handleRelayDisable,
   relay_status: handleRelayStatus,
   mint_remote_pair_bundle: handleMintRemotePairBundle,
+  reload_config: handleReloadConfig,
 };
 
 export async function handleRequest(req, emitEvent, context = null) {
