@@ -1,7 +1,7 @@
 # Provider Request Normalization
 
 Date: 2026-06-09
-Status: **draft** (design-in-motion; needs roadmap promotion before the Phase 2/3 work below)
+Status: **draft** (Phases 1 & 2 shipped; Phase 3 needs roadmap promotion)
 Owner: Push
 
 ## Why this exists
@@ -98,13 +98,23 @@ Add a shared `anthropicModelRejectsSamplingParams(model)` predicate and gate
 the CLI, Vertex, Zen-Go, and Worker-direct paths all build their wire body
 through this function, the single fix covers every surface. Emit a structured
 log on the strip (`anthropic_sampling_params_stripped`) so ops can see the guard
-fire. Pin with a unit test in `lib/openai-anthropic-bridge.test.ts`. **This PR.**
+fire. Pin with a unit test in `lib/openai-anthropic-bridge.test.ts`. **✅ Shipped.**
 
-**Phase 2 — direct Anthropic serializer.**
-Introduce `toAnthropicMessages(PushStreamRequest)` as a path that builds the
-Anthropic body straight from the neutral request, behind the existing provider
-dispatch — no big-bang. Anthropic stops round-tripping through OpenAI shape on
-the request side first. Add a drift test pinning the neutral→Anthropic field map.
+**Phase 2 — direct Anthropic serializer. ✅ Shipped.**
+`toAnthropicMessages(PushStreamRequest)` (in `lib/openai-anthropic-bridge.ts`)
+builds the Anthropic body straight from the neutral request — system hoist,
+message conversion, cache-control tagging, and request-field assembly in one
+pass, with no OpenAI Chat Completions intermediate. The request-field tail
+(max_tokens, stream, system flatten/array, the sampling gate, web search) is
+single-sourced through a shared `assembleAnthropicBody` that both this and
+`buildAnthropicMessagesRequest` call, so the two paths can only diverge on
+message conversion. `cli/anthropic-stream.ts` now calls it directly (the CLI is
+in-process, so adopting it there carries no client↔Worker contract risk; the
+web client still POSTs OpenAI shape to the Worker — that's a Phase 3 contract
+change). Equivalence with the old two-step path is pinned byte-for-byte by a
+drift-test corpus in `lib/openai-anthropic-bridge.test.ts`, and the CLI adapter's
+body-capture suite (`cli/tests/anthropic-stream.test.mjs`) is the independent
+oracle for the cache-tagging edges.
 
 **Phase 3 — native SSE → neutral events, then retire the OpenAI-canonical
 assumption.**
