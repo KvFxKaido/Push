@@ -10,6 +10,7 @@ import {
   validateRunEventPayload,
 } from '../../lib/protocol-schema.ts';
 import { isV2DelegationEvent, synthesizeV1DelegationEvent } from '../v1-downgrade.ts';
+import { PUSH_STREAM_WIRE_CONTRACT, toPushStreamWire } from '../../lib/provider-wire.ts';
 
 const FIXED_TS = 1_712_345_678_901;
 
@@ -1024,5 +1025,76 @@ describe('relay envelope schema', () => {
       issues.some((i) => i.path === 'v'),
       true,
     );
+  });
+});
+
+describe('push.stream.v1 wire contract', () => {
+  // The neutral client↔Worker request wire (web chat → dual-accept handlers).
+  // `lib/provider-wire.ts` is the single definition both sides import;
+  // `validateAndNormalizeWireRequest` (app-side) branches on the discriminator
+  // and the dual-accept handlers treat any OTHER contract value as a 400, not
+  // legacy — so a silent rename here would hard-fail every flipped client.
+  // Pin the literal and the emitted field vocabulary per AGENTS.md guardrail #3
+  // (the round-trip serializer↔validator test lives app-side in
+  // `chat-request-guardrails.test.ts`; this is the cross-surface pin).
+  it('pins the contract discriminator', () => {
+    assert.equal(PUSH_STREAM_WIRE_CONTRACT, 'push.stream.v1');
+  });
+
+  it('pins the full field vocabulary toPushStreamWire can emit', () => {
+    const wire = toPushStreamWire(
+      [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+        {
+          role: 'assistant',
+          content: 'ok',
+          reasoning_blocks: [{ type: 'thinking', text: 't', signature: 'sig' }],
+        },
+      ],
+      {
+        provider: 'anthropic',
+        model: 'claude-test',
+        maxTokens: 1024,
+        temperature: 0,
+        topP: 1,
+        cacheBreakpointIndices: [1],
+        anthropicWebSearch: true,
+        googleSearchGrounding: true,
+        replayAssistantTurns: [[{ type: 'text', text: 'paused' }]],
+      },
+    );
+
+    // Every top-level field the serializer can put on the wire, maximally
+    // populated. A new field must be added here AND to the app-side validator
+    // in the same PR; a removed/renamed field fails this pin first.
+    assert.deepEqual(Object.keys(wire).sort(), [
+      'anthropicWebSearch',
+      'cacheBreakpointIndices',
+      'contract',
+      'googleSearchGrounding',
+      'maxTokens',
+      'messages',
+      'model',
+      'provider',
+      'replayAssistantTurns',
+      'temperature',
+      'topP',
+    ]);
+    assert.equal(wire.contract, PUSH_STREAM_WIRE_CONTRACT);
+
+    // Message-level vocabulary: bare turns carry role+content only; assistant
+    // turns with signed reasoning gain camelCase `reasoningBlocks` (renamed
+    // from the materializer's snake_case `reasoning_blocks`).
+    assert.deepEqual(Object.keys(wire.messages[0]).sort(), ['content', 'role']);
+    assert.deepEqual(Object.keys(wire.messages[1]).sort(), ['content', 'role']);
+    assert.deepEqual(Object.keys(wire.messages[2]).sort(), ['content', 'reasoningBlocks', 'role']);
+  });
+
+  it('omits unset optional scalars so minimal bodies stay minimal', () => {
+    const wire = toPushStreamWire([{ role: 'user', content: 'hi' }], {
+      model: 'claude-test',
+    });
+    assert.deepEqual(Object.keys(wire).sort(), ['contract', 'messages', 'model']);
   });
 });
