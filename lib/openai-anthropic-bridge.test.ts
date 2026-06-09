@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { OpenAIChatRequest } from './openai-chat-types.ts';
 import {
+  anthropicModelRejectsSamplingParams,
   buildAnthropicMessagesRequest,
   createAnthropicTranslatedStream,
 } from './openai-anthropic-bridge.ts';
@@ -18,7 +19,59 @@ function createEventStreamResponse(lines: string[]): Response {
   );
 }
 
+describe('anthropicModelRejectsSamplingParams', () => {
+  it('rejects sampling params on Opus 4.7 and later (incl. suffix/tag variants)', () => {
+    for (const model of [
+      'claude-opus-4-7',
+      'claude-opus-4-8',
+      'claude-opus-4-8[1m]',
+      'claude-opus-4-7-20260101',
+      'claude-opus-4.8',
+      'claude-opus-4-7@20260101',
+      'claude-opus-5-0',
+      'CLAUDE-OPUS-4-8',
+    ]) {
+      expect(anthropicModelRejectsSamplingParams(model), model).toBe(true);
+    }
+  });
+
+  it('keeps sampling params on Opus 4.6 and earlier, Sonnet/Haiku, and non-Anthropic models', () => {
+    for (const model of [
+      'claude-opus-4-6',
+      'claude-opus-4-5',
+      'claude-opus-4-1',
+      'claude-opus-4-0',
+      'claude-opus-4-20250514', // dated Opus 4.0 — the date must not read as minor 20250514
+      'claude-sonnet-4-6',
+      'claude-haiku-4-5-20251001',
+      'minimax-m2.5',
+      'gpt-5.4',
+      '',
+    ]) {
+      expect(anthropicModelRejectsSamplingParams(model), model).toBe(false);
+    }
+    expect(anthropicModelRejectsSamplingParams(undefined)).toBe(false);
+    expect(anthropicModelRejectsSamplingParams(null)).toBe(false);
+  });
+});
+
 describe('buildAnthropicMessagesRequest', () => {
+  it('strips temperature/top_p for Opus 4.7+ but forwards them for accepting models', () => {
+    const base = {
+      messages: [{ role: 'user' as const, content: 'Hello' }],
+      stream: true,
+      temperature: 0.1,
+      top_p: 0.9,
+    };
+
+    const opus48 = buildAnthropicMessagesRequest({ ...base, model: 'claude-opus-4-8' });
+    expect(opus48).not.toHaveProperty('temperature');
+    expect(opus48).not.toHaveProperty('top_p');
+
+    const sonnet = buildAnthropicMessagesRequest({ ...base, model: 'claude-sonnet-4-6' });
+    expect(sonnet).toMatchObject({ temperature: 0.1, top_p: 0.9 });
+  });
+
   it('maps OpenAI-style messages into Anthropic messages with a shared system block', () => {
     const request: OpenAIChatRequest = {
       model: 'minimax-m2.5',

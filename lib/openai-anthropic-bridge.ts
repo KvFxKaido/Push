@@ -4,6 +4,32 @@ import type {
   OpenAIReasoningBlock,
 } from './openai-chat-types.ts';
 
+/**
+ * Anthropic removed `temperature`, `top_p`, and `top_k` on Opus 4.7 and every
+ * later Opus (4.8 inherits the same request surface). Sending any of them
+ * returns a 400 (`invalid_request_error`). Sonnet 4.6, Haiku 4.5, and
+ * Opus 4.6-and-earlier still accept them.
+ *
+ * The model id reaching this bridge is the native Anthropic form
+ * (`claude-opus-4-7`, `claude-opus-4-8`, optionally date- or `@`-suffixed, or
+ * the `[1m]` long-context tag). We parse the Opus major/minor and reject 4.7+
+ * (and any future Opus 5+). The single-digit-minor guard `(?!\d)` keeps the
+ * dated 4.0 id `claude-opus-4-20250514` from being misread as "Opus 4.<date>".
+ *
+ * Non-Opus models (and non-Anthropic models that pass through this bridge, e.g.
+ * Zen-Go's `minimax-*`) return false, so their sampling params flow unchanged.
+ */
+export function anthropicModelRejectsSamplingParams(model: string | null | undefined): boolean {
+  if (typeof model !== 'string') return false;
+  const match = model.toLowerCase().match(/claude-opus-(\d+)(?:[-.](\d{1,2})(?!\d))?/);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = match[2] === undefined ? 0 : Number(match[2]);
+  if (major > 4) return true; // future Opus generations inherit the removed surface
+  if (major < 4) return false; // Opus 3 and earlier accepted sampling params
+  return minor >= 7; // Opus 4.7 / 4.8 / 4.9 …
+}
+
 function dataUrlToAnthropicImagePart(dataUrl: string): Record<string, unknown> | null {
   const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
   if (!match) return null;
@@ -216,11 +242,37 @@ export function buildAnthropicMessagesRequest(
       ? systemBlocks
       : systemBlocks.map((p) => p.text).join('\n\n');
   }
-  if (typeof request.temperature === 'number') {
-    body.temperature = request.temperature;
-  }
-  if (typeof request.top_p === 'number') {
-    body.top_p = request.top_p;
+  // Sampling params are gated on model capability. Opus 4.7+ removed
+  // temperature/top_p/top_k (a 400 if sent), and the OpenAI-canonical wire
+  // carries them as first-class fields, so without this guard every caller
+  // that sets a sampling param — including the CLI, which defaults
+  // `temperature: 0.1` on every Anthropic turn — hard-fails on Opus 4.7/4.8.
+  // This is the single choke point: Worker-direct, Vertex, Zen-Go, and the CLI
+  // all build their wire body through `buildAnthropicMessagesRequest`. We never
+  // forward `top_k` (the OpenAI shape doesn't carry it and Anthropic rejects it
+  // on the same models anyway).
+  if (anthropicModelRejectsSamplingParams(request.model)) {
+    if (typeof request.temperature === 'number' || typeof request.top_p === 'number') {
+      // Symmetric structured log: observable behavior (a user-set param is
+      // being dropped) gets a line so the strip is visible to ops rather than
+      // silently swallowed. Pairs with the no-strip path being the default.
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'anthropic_sampling_params_stripped',
+          model: request.model,
+          droppedTemperature: typeof request.temperature === 'number',
+          droppedTopP: typeof request.top_p === 'number',
+        }),
+      );
+    }
+  } else {
+    if (typeof request.temperature === 'number') {
+      body.temperature = request.temperature;
+    }
+    if (typeof request.top_p === 'number') {
+      body.top_p = request.top_p;
+    }
   }
 
   // Anthropic's native server-side web search. The model emits
