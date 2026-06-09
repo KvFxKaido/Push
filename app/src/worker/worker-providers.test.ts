@@ -1588,6 +1588,34 @@ describe('handleVertexChat — neutral wire (dual-accept)', () => {
     expect(body.tools).toEqual([{ type: 'web_search_20250305', name: 'web_search' }]);
   });
 
+  it('forwards neutral replayAssistantTurns on the Claude branch (pause-turn resume)', async () => {
+    const get = captureUpstream();
+    await handleVertexChat(
+      makeNeutralRequest({
+        model: 'claude-sonnet-4-6',
+        messages: [{ role: 'user', content: 'search the web' }],
+        replayAssistantTurns: [
+          [
+            { type: 'text', text: 'Searching' },
+            { type: 'server_tool_use', id: 'su_01', name: 'web_search', input: {} },
+          ],
+        ],
+      }),
+      makeEnv(),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    expect(body.messages).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'search the web' }] },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Searching' },
+          { type: 'server_tool_use', id: 'su_01', name: 'web_search', input: {} },
+        ],
+      },
+    ]);
+  });
+
   it('returns 400 (not 502) when a neutral content part has an unrepresentable image URL', async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);

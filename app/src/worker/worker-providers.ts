@@ -1037,6 +1037,10 @@ export async function handleVertexChat(request: Request, env: Env): Promise<Resp
                 emitModel: false,
                 anthropicVersion: 'vertex-2023-10-16',
                 enableWebSearch: dual.request.anthropicWebSearch === true,
+                // Vertex-Claude does Anthropic server-side web search, which can
+                // pause_turn; forward the client's replayed paused blocks so the
+                // continuation resumes (parity with handleAnthropicChat).
+                replayAssistantTurns: dual.request.replayAssistantTurns,
               }),
             )
           : JSON.stringify(
