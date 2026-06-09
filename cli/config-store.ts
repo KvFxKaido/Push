@@ -205,6 +205,10 @@ function applyProviderEnv(config: PushConfig, overwrite: boolean): string[] {
         setEnvIfMissing(envKey, raw);
         continue;
       }
+      // Only force a non-empty value in. A cleared/absent config key is left
+      // as-is rather than unset: reload is for rotation, and an empty config
+      // value must not clobber a key a launching shell legitimately exported.
+      // (Clearing a key to take effect still needs a daemon restart.)
       const normalized = normalizeConfigEnvValue(raw);
       if (normalized && process.env[envKey] !== normalized) {
         process.env[envKey] = normalized;

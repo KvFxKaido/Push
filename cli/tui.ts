@@ -5292,19 +5292,10 @@ export async function runTUI(options = {}) {
         return;
       }
 
-      // Persist to config
-      if (!config[targetId]) config[targetId] = {};
-      config[targetId].apiKey = secret;
-      await saveConfig(config);
-
-      // Set env var so resolveApiKey() picks it up
-      const envKey = `PUSH_${targetId.toUpperCase()}_API_KEY`;
-      process.env[envKey] = secret;
-
-      // Hot-reload running session if setting for current provider
-      if (targetId === ctx.providerConfig.id) {
-        ctx.apiKey = secret;
-      }
+      // Shared with the config modal: persists, updates this process's env +
+      // the live session key, AND nudges the daemon to reload (so the slash
+      // command isn't a second key-edit path that skips daemon propagation).
+      await saveConfigKey(targetId, secret);
 
       addTranscriptEntry(
         tuiState,
@@ -5331,6 +5322,7 @@ export async function runTUI(options = {}) {
 
       const envKey = `PUSH_${targetId.toUpperCase()}_URL`;
       process.env[envKey] = url;
+      await notifyDaemonConfigReload();
 
       addTranscriptEntry(tuiState, 'status', `Endpoint URL saved for ${targetId}: ${url}`);
       scheduler.flush();
@@ -5345,9 +5337,7 @@ export async function runTUI(options = {}) {
       }
 
       const secret = parts[1];
-      config.tavilyApiKey = secret;
-      await saveConfig(config);
-      process.env.PUSH_TAVILY_API_KEY = secret;
+      await saveConfigKey('tavily', secret); // persists + env + daemon reload
 
       addTranscriptEntry(tuiState, 'status', `Tavily API key saved (${maskSecret(secret)})`);
       scheduler.flush();
