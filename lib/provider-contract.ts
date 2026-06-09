@@ -270,6 +270,18 @@ export interface PushStreamRequest<M extends LlmMessage = LlmMessage> {
    *  native provider search when available, else Exa) and feeds grounded,
    *  cited results back to the model. */
   openrouterWebSearch?: boolean;
+  /**
+   * Pause-turn continuation blocks for the neutral wire. Anthropic's server-side
+   * sampling loop can return `stop_reason: pause_turn` (web search hitting its
+   * iteration cap); the client replays the paused assistant content[] verbatim
+   * on the follow-up request so the model resumes. Each entry is one prior
+   * paused turn's raw Anthropic content array (oldest-first). The Worker forwards
+   * these to `toAnthropicMessages`' `replayAssistantTurns` option, which appends
+   * them as trailing assistant turns. Opaque passthrough — only the Anthropic
+   * neutral path reads it; other gateways ignore it. The legacy OpenAI-shape
+   * path carried the same data inline as `assistant_content_blocks` messages.
+   */
+  replayAssistantTurns?: Array<Array<Record<string, unknown>>>;
 }
 
 export type PushStream<M extends LlmMessage = LlmMessage> = (
