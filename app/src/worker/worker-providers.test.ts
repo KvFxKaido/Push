@@ -23,12 +23,24 @@ import {
   handleGoogleSearch,
   handleOpenRouterChat,
   handleOpenRouterModels,
+  handleVertexChat,
   handleZenChat,
   handleZenGoChat,
   parseGeminiGroundingResponse,
   translateVertexOpenApiBody,
 } from './worker-providers';
 import type { Env } from './worker-middleware';
+
+// Partial-mock the middleware so the Vertex native path is testable without a
+// real Google service account / JWT signing: only `getGoogleAccessToken` is
+// stubbed (it would otherwise sign a JWT and hit the OAuth token endpoint).
+// Everything else — runPreamble, hasVertexNativeCredentials, getVertexNativeConfig
+// — runs for real, so the service-account header decode + region validation are
+// exercised end-to-end.
+vi.mock('./worker-middleware', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./worker-middleware')>();
+  return { ...actual, getGoogleAccessToken: vi.fn(async () => 'fake-vertex-token') };
+});
 
 function makeEnv(overrides: Partial<Env> = {}): Env {
   return {
@@ -1467,6 +1479,177 @@ describe('translateVertexOpenApiBody', () => {
         bodyText,
       ),
     ).toBe(bodyText);
+  });
+});
+
+describe('handleVertexChat — neutral wire (dual-accept)', () => {
+  // base64 of a minimal valid Google service account. private_key is a dummy
+  // string — getGoogleAccessToken is mocked, so JWT signing never runs.
+  const SERVICE_ACCOUNT_HEADER = btoa(
+    JSON.stringify({
+      type: 'service_account',
+      project_id: 'test-project',
+      client_email: 'svc@test-project.iam.gserviceaccount.com',
+      private_key: '-----BEGIN PRIVATE KEY-----\ndummy\n-----END PRIVATE KEY-----\n',
+    }),
+  );
+
+  function makeNeutralRequest(payload: Record<string, unknown>, legacy = false): Request {
+    return new Request('https://push.example.test/api/vertex/chat', {
+      method: 'POST',
+      headers: {
+        Origin: 'https://push.example.test',
+        'Content-Type': 'application/json',
+        'X-Push-Vertex-Service-Account': SERVICE_ACCOUNT_HEADER,
+        'X-Push-Vertex-Region': 'us-east5',
+      },
+      body: JSON.stringify(legacy ? payload : { contract: 'push.stream.v1', ...payload }),
+    });
+  }
+
+  function captureUpstream() {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('', { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }),
+    );
+    return () => captured;
+  }
+
+  it('routes a claude model through toAnthropicMessages with NO body model (model in URL)', async () => {
+    const get = captureUpstream();
+    await handleVertexChat(
+      makeNeutralRequest({
+        model: 'claude-sonnet-4-6',
+        messages: [
+          { role: 'system', content: 'be terse' },
+          { role: 'user', content: 'hi' },
+        ],
+      }),
+      makeEnv(),
+    );
+    const captured = get();
+    expect(captured?.url).toContain(
+      '/publishers/anthropic/models/claude-sonnet-4-6:streamRawPredict',
+    );
+    const body = JSON.parse(captured!.init.body as string);
+    // Vertex carries the model in the URL path — emitModel:false.
+    expect(body).not.toHaveProperty('model');
+    expect(body.anthropic_version).toBe('vertex-2023-10-16');
+    expect(body.system).toBe('be terse');
+    expect(body.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'hi' }] }]);
+  });
+
+  it('routes a non-claude model through toOpenAIChat (model in body, openapi endpoint)', async () => {
+    const get = captureUpstream();
+    await handleVertexChat(
+      makeNeutralRequest({
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+      makeEnv(),
+    );
+    const captured = get();
+    expect(captured?.url).toContain('/endpoints/openapi/chat/completions');
+    const body = JSON.parse(captured!.init.body as string);
+    expect(body.model).toBe('gemini-2.5-pro');
+    expect(body.messages).toEqual([{ role: 'user', content: 'hi' }]);
+    expect(body.stream).toBe(true);
+  });
+
+  it('injects the googleSearch tool on the openapi branch from neutral googleSearchGrounding', async () => {
+    const get = captureUpstream();
+    await handleVertexChat(
+      makeNeutralRequest({
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', content: 'who won' }],
+        googleSearchGrounding: true,
+      }),
+      makeEnv(),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    expect(body.tools).toEqual([{ googleSearch: {} }]);
+  });
+
+  it('enables the native web_search tool on the anthropic branch from anthropicWebSearch', async () => {
+    const get = captureUpstream();
+    await handleVertexChat(
+      makeNeutralRequest({
+        model: 'claude-sonnet-4-6',
+        messages: [{ role: 'user', content: 'hi' }],
+        anthropicWebSearch: true,
+      }),
+      makeEnv(),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    expect(body.tools).toEqual([{ type: 'web_search_20250305', name: 'web_search' }]);
+  });
+
+  it('forwards neutral replayAssistantTurns on the Claude branch (pause-turn resume)', async () => {
+    const get = captureUpstream();
+    await handleVertexChat(
+      makeNeutralRequest({
+        model: 'claude-sonnet-4-6',
+        messages: [{ role: 'user', content: 'search the web' }],
+        replayAssistantTurns: [
+          [
+            { type: 'text', text: 'Searching' },
+            { type: 'server_tool_use', id: 'su_01', name: 'web_search', input: {} },
+          ],
+        ],
+      }),
+      makeEnv(),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    expect(body.messages).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'search the web' }] },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Searching' },
+          { type: 'server_tool_use', id: 'su_01', name: 'web_search', input: {} },
+        ],
+      },
+    ]);
+  });
+
+  it('returns 400 (not 502) when a neutral content part has an unrepresentable image URL', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const response = await handleVertexChat(
+      makeNeutralRequest({
+        model: 'claude-sonnet-4-6',
+        messages: [
+          {
+            role: 'user',
+            content: [{ type: 'image_url', image_url: { url: 'ftp://nope/x.png' } }],
+          },
+        ],
+      }),
+      makeEnv(),
+    );
+    expect(response.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('legacy (no contract) claude body still serializes via buildAnthropicMessagesRequest', async () => {
+    const get = captureUpstream();
+    await handleVertexChat(
+      makeNeutralRequest(
+        { model: 'claude-sonnet-4-6', messages: [{ role: 'user', content: 'hi' }] },
+        true,
+      ),
+      makeEnv(),
+    );
+    const captured = get();
+    expect(captured?.url).toContain('/publishers/anthropic/models/claude-sonnet-4-6');
+    const body = JSON.parse(captured!.init.body as string);
+    // Legacy parity: model still carried out-of-band, anthropic_version present.
+    expect(body).not.toHaveProperty('model');
+    expect(body.anthropic_version).toBe('vertex-2023-10-16');
   });
 });
 

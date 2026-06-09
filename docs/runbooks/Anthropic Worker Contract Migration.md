@@ -194,13 +194,15 @@ ship before client changes**, never the reverse.
    forward verbatim (`buildAnthropicMessagesRequest` / raw `bodyText`).
    Backward-compatible and dormant.
 
-   **Vertex still pending.** Same recipe (anthropic transport →
+   **Vertex ✅ cut (both transports).** Same recipe: anthropic transport →
    `toAnthropicMessages({ emitModel: false, anthropicVersion: 'vertex-2023-10-16' })`,
    OpenAI-compat transport → `toOpenAIChat` + the `googleSearch` grounding
-   injection that `translateVertexOpenApiBody` does today). Held for its own PR
-   because the native path needs a service-account / `getGoogleAccessToken`
-   test harness that doesn't exist yet — building it under-tested would be worse
-   than a focused follow-up.
+   injection (extracted into the shared `appendVertexGoogleSearchTool` so the
+   legacy `translateVertexOpenApiBody` and the neutral branch inject identically).
+   The native path is tested by partial-mocking `getGoogleAccessToken` (the only
+   heavy dependency — JWT signing + OAuth) while running the real
+   `getVertexNativeConfig` / service-account-header decode. **All four server
+   handlers (Anthropic, Google, Zen-Go, Vertex) now dual-accept.**
 
 3. **Flip the client adapter. ✅ Shipped for Anthropic + Gemini.**
    `app/src/lib/anthropic-stream.ts` still runs `toLLMMessages` first (see
@@ -271,8 +273,7 @@ Mapped to the recurring defect classes in `CLAUDE.md` → PR self-review:
 ## Scope boundaries
 
 - **Response/SSE (Phase 3a)** — separate axis; out of scope here.
-- **Zen-Go** — ✅ cut (both transports). **Vertex** — same recipe, separate cut
-  pending its native-credentials test harness.
+- **Zen-Go** — ✅ cut (both transports). **Vertex** — ✅ cut (both transports).
 - **Gemini / OpenAI** — get the same neutral wire once Anthropic lands; the
   provider-agnostic endpoint consolidation is the convergence point.
 

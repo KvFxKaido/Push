@@ -929,6 +929,24 @@ export const handleLegacyVertexModels = createExperimentalModelsHandler(
  *
  * Returns `bodyText` unchanged when grounding isn't requested.
  */
+/** Append Vertex's `googleSearch` grounding tool to an OpenAI-compat body.
+ *  Append rather than overwrite — a hypothetical caller could already have set
+ *  `tools` (Push doesn't today, but be defensive) — and dedupe by checking
+ *  whether the `googleSearch` tool is already present. Shared by the legacy
+ *  `translateVertexOpenApiBody` path and the neutral `toOpenAIChat` branch so
+ *  the injection has one definition. */
+function appendVertexGoogleSearchTool<T extends object>(
+  body: T,
+): T & { tools: Array<Record<string, unknown>> } {
+  const existing = Array.isArray((body as { tools?: unknown }).tools)
+    ? ((body as { tools?: unknown }).tools as Array<Record<string, unknown>>)
+    : [];
+  const hasGoogleSearch = existing.some(
+    (t) => typeof t === 'object' && t !== null && 'googleSearch' in t,
+  );
+  return { ...body, tools: hasGoogleSearch ? existing : [...existing, { googleSearch: {} }] };
+}
+
 export function translateVertexOpenApiBody(
   parsedRequest: { google_search_grounding?: unknown },
   bodyText: string,
@@ -946,15 +964,7 @@ export function translateVertexOpenApiBody(
   // Strip the Push-private flag so Vertex's compat layer doesn't see an
   // unknown root field.
   delete body.google_search_grounding;
-  // Append rather than overwrite: a hypothetical caller could already
-  // have set tools (Push doesn't today, but be defensive). Dedupe by
-  // checking whether the googleSearch tool is already present.
-  const existing = Array.isArray(body.tools) ? (body.tools as Array<Record<string, unknown>>) : [];
-  const hasGoogleSearch = existing.some(
-    (t) => typeof t === 'object' && t !== null && 'googleSearch' in t,
-  );
-  body.tools = hasGoogleSearch ? existing : [...existing, { googleSearch: {} }];
-  return JSON.stringify(body);
+  return JSON.stringify(appendVertexGoogleSearchTool(body));
 }
 
 export async function handleVertexChat(request: Request, env: Env): Promise<Response> {
@@ -971,22 +981,33 @@ export async function handleVertexChat(request: Request, env: Env): Promise<Resp
   if (preamble instanceof Response) return preamble;
   const { bodyText, requestId } = preamble;
 
-  const normalizedRequest = validateAndNormalizeChatRequest(bodyText, {
+  // Dual-accept (push.stream.v1): a body carrying a `contract` field is the
+  // neutral wire shape; anything else is the legacy OpenAI Chat Completions
+  // shape. Deployed clients send no discriminator, so this is backward-
+  // compatible; the neutral branch stays dormant until the client flip. See
+  // docs/runbooks/Anthropic Worker Contract Migration.md.
+  const dual = parseDualAcceptRequest(bodyText, {
     routeLabel: 'Google Vertex',
     maxOutputTokens: 12_288,
+    provider: 'vertex',
   });
-  if (!normalizedRequest.ok) {
-    return Response.json({ error: normalizedRequest.error }, { status: normalizedRequest.status });
+  if (!dual.ok) {
+    return Response.json({ error: dual.error }, { status: dual.status });
   }
-  if (normalizedRequest.value.adjustments.length > 0) {
+  if (dual.adjustments.length > 0) {
     wlog('warn', 'chat_request_adjusted', {
       requestId,
       route: 'api/vertex/chat',
-      adjustments: normalizedRequest.value.adjustments,
+      adjustments: dual.adjustments,
     });
   }
-  const parsedRequest = normalizedRequest.value.parsed;
-  const model = typeof parsedRequest.model === 'string' ? parsedRequest.model.trim() : '';
+
+  const model =
+    dual.contractKind === 'neutral'
+      ? dual.request.model.trim()
+      : typeof dual.parsed.model === 'string'
+        ? dual.parsed.model.trim()
+        : '';
 
   const nativeConfig = getVertexNativeConfig(request);
   if (!nativeConfig.ok) return nativeConfig.response;
@@ -1000,12 +1021,47 @@ export async function handleVertexChat(request: Request, env: Env): Promise<Resp
           model,
         )
       : `${buildVertexOpenApiBaseUrl(nativeConfig.config.serviceAccount.projectId, nativeConfig.config.region)}/chat/completions`;
-  const upstreamBody =
-    transport === 'anthropic'
-      ? JSON.stringify(
-          buildAnthropicMessagesRequest(parsedRequest, { anthropicVersion: 'vertex-2023-10-16' }),
-        )
-      : translateVertexOpenApiBody(parsedRequest, normalizedRequest.value.bodyText);
+
+  // Both contract kinds carry the model out-of-band (Vertex puts it in the URL
+  // path), so the neutral Anthropic branch serializes with `emitModel: false`.
+  // The OpenAI-compat transport serializes via `toOpenAIChat` + the same
+  // `googleSearch` grounding injection the legacy path applies; the legacy path
+  // forwards the validated body verbatim.
+  let upstreamBody: string;
+  if (dual.contractKind === 'neutral') {
+    try {
+      upstreamBody =
+        transport === 'anthropic'
+          ? JSON.stringify(
+              toAnthropicMessages(dual.request, {
+                emitModel: false,
+                anthropicVersion: 'vertex-2023-10-16',
+                enableWebSearch: dual.request.anthropicWebSearch === true,
+                // Vertex-Claude does Anthropic server-side web search, which can
+                // pause_turn; forward the client's replayed paused blocks so the
+                // continuation resumes (parity with handleAnthropicChat).
+                replayAssistantTurns: dual.request.replayAssistantTurns,
+              }),
+            )
+          : JSON.stringify(
+              dual.request.googleSearchGrounding === true
+                ? appendVertexGoogleSearchTool(toOpenAIChat(dual.request))
+                : toOpenAIChat(dual.request),
+            );
+    } catch (err) {
+      return Response.json(
+        { error: `Google Vertex request: ${err instanceof Error ? err.message : String(err)}` },
+        { status: 400 },
+      );
+    }
+  } else {
+    upstreamBody =
+      transport === 'anthropic'
+        ? JSON.stringify(
+            buildAnthropicMessagesRequest(dual.parsed, { anthropicVersion: 'vertex-2023-10-16' }),
+          )
+        : translateVertexOpenApiBody(dual.parsed, dual.bodyText);
+  }
 
   wlog('info', 'request', {
     requestId,
@@ -1013,6 +1069,7 @@ export async function handleVertexChat(request: Request, env: Env): Promise<Resp
     mode: 'native',
     transport,
     model,
+    contract: dual.contractKind,
     region: nativeConfig.config.region,
   });
 
