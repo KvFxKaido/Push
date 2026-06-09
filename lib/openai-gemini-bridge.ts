@@ -1,5 +1,12 @@
 import type { OpenAIChatRequest, OpenAIContentPart } from './openai-chat-types.ts';
-import type { LlmContentPart, LlmMessage, PushStreamRequest } from './provider-contract.ts';
+import type {
+  LlmContentPart,
+  LlmMessage,
+  PushStreamEvent,
+  PushStreamRequest,
+  StreamUsage,
+} from './provider-contract.ts';
+import { stripTemplateTokens } from './openai-sse-pump.ts';
 
 /**
  * OpenAI ↔ Gemini bridge.
@@ -474,4 +481,115 @@ export function createGeminiTranslatedStream(
       }
     },
   });
+}
+
+/**
+ * Phase 3a (Gemini): parse the Gemini `:streamGenerateContent` SSE stream
+ * **directly into neutral `PushStreamEvent`s**, with no OpenAI Chat-Completions
+ * SSE intermediate. The inverse of `createGeminiTranslatedStream` (which rebuilds
+ * OpenAI SSE bytes for the web Worker's response wire) — same parse, neutral
+ * output. The CLI consumes this directly, dropping the old
+ * `createGeminiTranslatedStream → openAISSEPump` serialize-then-reparse
+ * round-trip; the web Worker still uses the translator until the response-contract
+ * migration. The drift test pins the two to emit the same event sequence.
+ *
+ * Gemini is text-only here (no reasoning blocks, no pause_turn): each frame's
+ * candidate text becomes a `text_delta` (through the same `stripTemplateTokens`
+ * the pump applies, for byte-parity), usage is tracked from `usageMetadata`, and
+ * a single terminal `done` is emitted at stream end with the last-seen finish
+ * reason — Gemini sends no `[DONE]` sentinel and carries `finishReason` on its
+ * final candidate frame.
+ */
+export async function* geminiEventStream(
+  upstream: Response,
+  signal?: AbortSignal,
+): AsyncIterable<PushStreamEvent> {
+  const reader = upstream.body?.getReader();
+  if (!reader) {
+    yield { type: 'done', finishReason: 'stop' };
+    return;
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let usage: StreamUsage | undefined;
+  let terminalFinishReason: 'stop' | 'length' = 'stop';
+
+  function* processFrame(raw: string): Generator<PushStreamEvent> {
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    // Gemini emits `data: { ... }` frames under `?alt=sse`; some intermediaries
+    // strip the prefix. Handle both, and ignore a stray `[DONE]`.
+    const jsonStr = trimmed.startsWith('data:') ? trimmed.slice(5).trimStart() : trimmed;
+    if (!jsonStr || jsonStr === '[DONE]') return;
+
+    let parsed: GeminiStreamChunk;
+    try {
+      parsed = JSON.parse(jsonStr) as GeminiStreamChunk;
+    } catch {
+      return;
+    }
+
+    const candidate = parsed.candidates?.[0];
+    const text = extractTextFromCandidate(candidate);
+    if (text) {
+      // Same chat-template-token strip the openAISSEPump text branch applies,
+      // so the direct path stays event-for-event identical to the legacy path.
+      const token = stripTemplateTokens(text);
+      if (token) yield { type: 'text_delta', text: token };
+    }
+
+    if (parsed.usageMetadata) {
+      const inputTokens = parsed.usageMetadata.promptTokenCount ?? usage?.inputTokens ?? 0;
+      const outputTokens = parsed.usageMetadata.candidatesTokenCount ?? usage?.outputTokens ?? 0;
+      const totalTokens = parsed.usageMetadata.totalTokenCount ?? inputTokens + outputTokens;
+      usage = { inputTokens, outputTokens, totalTokens };
+    }
+
+    if (candidate?.finishReason) {
+      terminalFinishReason =
+        mapGeminiFinishReason(candidate.finishReason) === 'length' ? 'length' : 'stop';
+    }
+  }
+
+  const onAbort = () => {
+    reader.cancel().catch(() => {
+      /* reader may already be closed */
+    });
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
+
+  try {
+    while (true) {
+      if (signal?.aborted) return;
+      const { done, value } = await reader.read();
+      if (signal?.aborted) return;
+      if (done) break;
+
+      // Normalize CRLF → LF so the `\n\n` boundary scan matches Google's edge
+      // framing (same defense the translator applies).
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+      let boundary = buffer.indexOf('\n\n');
+      while (boundary !== -1) {
+        const rawEvent = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        yield* processFrame(rawEvent);
+        boundary = buffer.indexOf('\n\n');
+      }
+    }
+
+    if (buffer.trim()) {
+      yield* processFrame(buffer);
+    }
+    // Gemini has no [DONE] sentinel — emit the single terminal `done` at stream
+    // end with the finish reason + usage accumulated from the final frame.
+    yield { type: 'done', finishReason: terminalFinishReason, usage };
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+    try {
+      reader.releaseLock();
+    } catch {
+      /* reader may have been cancelled */
+    }
+  }
 }

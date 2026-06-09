@@ -3,10 +3,11 @@
  *
  * Calls `https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse`
  * directly with `x-goog-api-key`, builds the `:generateContent` body straight
- * from the neutral `PushStreamRequest` via `toGeminiGenerateContent` (no OpenAI
- * Chat-Completions intermediate), then pumps the upstream SSE through
- * `createGeminiTranslatedStream` so the events leave this adapter in OpenAI
- * Chat-Completions shape.
+ * from the neutral `PushStreamRequest` via `toGeminiGenerateContent`, and parses
+ * the upstream SSE directly into neutral `PushStreamEvent`s via
+ * `geminiEventStream` (Phase 3a — no OpenAI-SSE serialize/reparse round-trip; the
+ * web Worker still uses `createGeminiTranslatedStream` for its response wire
+ * until the response-contract migration).
  *
  * Shape mirrors the Worker's `handleGoogleChat`. Difference vs the Worker
  * version: no preamble / rate-limit preflight, and `config.url` is treated
@@ -26,11 +27,7 @@ import type {
   PushStreamEvent,
   PushStreamRequest,
 } from '../lib/provider-contract.ts';
-import {
-  createGeminiTranslatedStream,
-  toGeminiGenerateContent,
-} from '../lib/openai-gemini-bridge.ts';
-import { openAISSEPump } from '../lib/openai-sse-pump.ts';
+import { geminiEventStream, toGeminiGenerateContent } from '../lib/openai-gemini-bridge.ts';
 import { CliProviderError } from './openai-stream.ts';
 import type { ProviderConfig } from './provider.ts';
 
@@ -106,6 +103,5 @@ async function* cliGeminiStream(
     return;
   }
 
-  const translated = createGeminiTranslatedStream(response, model);
-  yield* openAISSEPump({ body: translated, signal: req.signal });
+  yield* geminiEventStream(response, req.signal);
 }

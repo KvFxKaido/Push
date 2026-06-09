@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import type { OpenAIChatRequest } from './openai-chat-types.ts';
-import type { LlmMessage, PushStreamRequest } from './provider-contract.ts';
+import type { LlmMessage, PushStreamEvent, PushStreamRequest } from './provider-contract.ts';
 import {
   buildGeminiGenerateContentRequest,
   createGeminiTranslatedStream,
+  geminiEventStream,
   toGeminiGenerateContent,
 } from './openai-gemini-bridge.ts';
+import { openAISSEPump } from './openai-sse-pump.ts';
 
 function createEventStreamResponse(chunks: string[]): Response {
   const encoder = new TextEncoder();
@@ -423,5 +425,109 @@ describe('toGeminiGenerateContent — multimodal contentParts', () => {
         ],
       }),
     ).toThrow(/cannot represent image/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 3a (Gemini): geminiEventStream — Gemini SSE parsed directly into neutral
+// PushStreamEvents. Pinned event-for-event against the legacy
+// createGeminiTranslatedStream -> openAISSEPump round-trip the CLI used before
+// (and the web Worker still uses for its response wire).
+// ---------------------------------------------------------------------------
+
+async function collectEvents(stream: AsyncIterable<PushStreamEvent>): Promise<PushStreamEvent[]> {
+  const out: PushStreamEvent[] = [];
+  for await (const e of stream) out.push(e);
+  return out;
+}
+
+function legacyGeminiEvents(frames: string[]): Promise<PushStreamEvent[]> {
+  const translated = createGeminiTranslatedStream(createEventStreamResponse(frames), 'gemini-x');
+  return collectEvents(openAISSEPump({ body: translated }));
+}
+
+const frame = (obj: unknown): string => `data: ${JSON.stringify(obj)}\n\n`;
+
+describe('geminiEventStream — drift vs translate->pump', () => {
+  const corpus: Array<{ name: string; frames: string[] }> = [
+    {
+      name: 'multi-frame text + STOP + usage',
+      frames: [
+        frame({ candidates: [{ content: { parts: [{ text: 'Hello' }] } }] }),
+        frame({ candidates: [{ content: { parts: [{ text: ', world' }] } }] }),
+        frame({
+          candidates: [{ content: { parts: [{ text: '!' }] }, finishReason: 'STOP' }],
+          usageMetadata: { promptTokenCount: 4, candidatesTokenCount: 3, totalTokenCount: 7 },
+        }),
+      ],
+    },
+    {
+      name: 'MAX_TOKENS -> length',
+      frames: [
+        frame({
+          candidates: [{ content: { parts: [{ text: 'cut' }] }, finishReason: 'MAX_TOKENS' }],
+        }),
+      ],
+    },
+    {
+      name: 'text with a chat-template control token is stripped',
+      frames: [
+        frame({
+          candidates: [{ content: { parts: [{ text: 'hi<|im_end|>' }] }, finishReason: 'STOP' }],
+        }),
+      ],
+    },
+    {
+      name: 'malformed JSON frame is ignored',
+      frames: [
+        'data: { not valid json\n\n',
+        frame({ candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }] }),
+      ],
+    },
+    {
+      name: 'no usageMetadata -> done without usage',
+      frames: [
+        frame({ candidates: [{ content: { parts: [{ text: 'plain' }] }, finishReason: 'STOP' }] }),
+      ],
+    },
+    {
+      name: 'bare JSON frame (no data: prefix)',
+      frames: [
+        `${JSON.stringify({ candidates: [{ content: { parts: [{ text: 'bare' }] }, finishReason: 'STOP' }] })}\n\n`,
+      ],
+    },
+    {
+      name: 'stream ends without a finishReason frame (clean close -> stop)',
+      frames: [frame({ candidates: [{ content: { parts: [{ text: 'tail' }] } }] })],
+    },
+  ];
+
+  for (const { name, frames } of corpus) {
+    it(`matches the legacy round-trip: ${name}`, async () => {
+      const direct = await collectEvents(geminiEventStream(createEventStreamResponse(frames)));
+      const legacy = await legacyGeminiEvents(frames);
+      expect(direct).toEqual(legacy);
+    });
+  }
+
+  it('emits a terminal done on a bodyless upstream', async () => {
+    const events = await collectEvents(geminiEventStream(new Response(null)));
+    expect(events).toEqual([{ type: 'done', finishReason: 'stop' }]);
+  });
+
+  it('stops cleanly when the signal is already aborted', async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const events = await collectEvents(
+      geminiEventStream(
+        createEventStreamResponse([
+          frame({
+            candidates: [{ content: { parts: [{ text: 'never' }] }, finishReason: 'STOP' }],
+          }),
+        ]),
+        ac.signal,
+      ),
+    );
+    expect(events).toEqual([]);
   });
 });
