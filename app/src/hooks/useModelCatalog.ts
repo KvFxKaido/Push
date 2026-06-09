@@ -636,13 +636,16 @@ export function useModelCatalog(): ModelCatalog {
   const [googleUpdatedAt, setGoogleUpdatedAt] = useState<number | null>(null);
   const [openaiUpdatedAt, setOpenaiUpdatedAt] = useState<number | null>(null);
 
-  // Pending backoff-retry timers, cleared on unmount so a scheduled retry never
-  // fires setState after the hook is gone.
-  const retryTimersRef = useRef<Set<number>>(new Set());
+  // Pending backoff-retry timers, keyed by the provider's stable `setModels`
+  // setter. Keyed (not a flat Set) so a fresh fetch for a provider can cancel
+  // that provider's in-flight retry — otherwise a manual refresh during backoff
+  // would spawn a second concurrent retry chain. Cleared on unmount so a
+  // scheduled retry never fires setState after the hook is gone.
+  const retryTimersRef = useRef<Map<(m: string[]) => void, number>>(new Map());
   useEffect(() => {
     const timers = retryTimersRef.current;
     return () => {
-      for (const id of timers) window.clearTimeout(id);
+      for (const id of timers.values()) window.clearTimeout(id);
       timers.clear();
     };
   }, []);
@@ -665,6 +668,13 @@ export function useModelCatalog(): ModelCatalog {
       failureMessage: string;
     }) => {
       if (!params.hasKey || params.isLoading) return;
+      // Cancel any pending retry for this provider before starting a fresh run,
+      // so a manual refresh during backoff doesn't run two retry chains at once.
+      const pending = retryTimersRef.current.get(params.setModels);
+      if (pending !== undefined) {
+        window.clearTimeout(pending);
+        retryTimersRef.current.delete(params.setModels);
+      }
       const run = async (attempt: number) => {
         params.setLoading(true);
         params.setError(null);
@@ -688,10 +698,10 @@ export function useModelCatalog(): ModelCatalog {
               }),
             );
             const id = window.setTimeout(() => {
-              retryTimersRef.current.delete(id);
+              retryTimersRef.current.delete(params.setModels);
               void run(attempt + 1);
             }, delay);
-            retryTimersRef.current.add(id);
+            retryTimersRef.current.set(params.setModels, id);
           }
         } finally {
           params.setLoading(false);
