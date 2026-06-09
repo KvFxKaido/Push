@@ -259,9 +259,20 @@ export function toGeminiGenerateContent(
 
   for (const m of messages) {
     if (m.role === 'system') {
-      // Gemini's systemInstruction is text-only; the web's system message is a
-      // plain string.
-      pushSystemText(m.content);
+      // Gemini's systemInstruction is text-only. The web's google materializer
+      // emits a plain-string system message (google isn't cacheable, so unlike
+      // the anthropic/openrouter path it never arrays the system content). Still,
+      // honor `contentParts` defensively — if a system message ever arrives in
+      // the content-part form (the wire validator lands array content there with
+      // an empty `content`), reading `content` alone would silently drop the
+      // whole system prompt, mirroring the bug fixed in `toAnthropicMessages`.
+      if (m.contentParts && m.contentParts.length > 0) {
+        for (const part of m.contentParts) {
+          if (part.type === 'text' && part.text.length > 0) pushSystemText(part.text);
+        }
+      } else {
+        pushSystemText(m.content);
+      }
       continue;
     }
     const parts =

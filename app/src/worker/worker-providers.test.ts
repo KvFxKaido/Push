@@ -1911,6 +1911,27 @@ describe('handleGoogleChat — neutral wire (dual-accept)', () => {
     expect('messages' in body).toBe(false);
   });
 
+  it('preserves an array-content system prompt onto systemInstruction (defensive)', async () => {
+    // google isn't cacheable so its web system message is a plain string today,
+    // but if array-content system ever reaches the neutral path the validator
+    // lands it on contentParts with content:''. Guard that toGeminiGenerateContent
+    // reads contentParts for system, else the prompt is silently dropped.
+    const get = captureUpstream();
+    await handleGoogleChat(
+      makeNeutralGoogleRequest({
+        model: 'gemini-3.5-flash',
+        messages: [
+          { role: 'system', content: [{ type: 'text', text: 'Be concise.' }] },
+          { role: 'user', content: 'Hi' },
+        ],
+      }),
+      makeEnv({ GOOGLE_API_KEY: 'AIza' }),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    expect(body.systemInstruction).toEqual({ parts: [{ text: 'Be concise.' }] });
+    expect(body.contents).toEqual([{ role: 'user', parts: [{ text: 'Hi' }] }]);
+  });
+
   it('enables the googleSearch tool from the neutral googleSearchGrounding flag', async () => {
     const get = captureUpstream();
     await handleGoogleChat(

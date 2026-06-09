@@ -371,6 +371,22 @@ describe('toGeminiGenerateContent — drift vs legacy OpenAI-detour path', () =>
     });
     expect(body.generationConfig).toEqual({ temperature: 0.2, topP: 0.8 });
   });
+
+  it('reads a system message from contentParts (defensive — mirrors toAnthropicMessages)', () => {
+    // google isn't cacheable so its system message is normally a plain string,
+    // but if a system message ever arrives in content-part form (validator lands
+    // array content there with content:''), reading `content` alone would drop
+    // the whole system prompt. Honor contentParts defensively.
+    const body = toGeminiGenerateContent({
+      provider: 'google',
+      model: 'gemini-3.5-flash',
+      messages: [
+        llm('s', 'system', '', [{ type: 'text', text: 'be terse' }]),
+        llm('1', 'user', 'hi'),
+      ],
+    });
+    expect(body.systemInstruction).toEqual({ parts: [{ text: 'be terse' }] });
+  });
 });
 
 describe('toGeminiGenerateContent — multimodal contentParts', () => {

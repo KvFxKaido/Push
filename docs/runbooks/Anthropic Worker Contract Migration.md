@@ -2,9 +2,9 @@
 
 Date: 2026-06-09
 Status: **in progress** — Step 0 (multimodal serializer), Steps 1–2 (wire type,
-neutral validator, Worker dual-accept), and **Step 3 for Anthropic** (the web
-client now sends `push.stream.v1`) shipped; Step 3 for Gemini, plus Steps 4–5
-(bake, drop legacy), pending.
+neutral validator, Worker dual-accept), and **Step 3 for Anthropic + Gemini**
+(both web clients now send `push.stream.v1`) shipped; Steps 4–5 (bake, drop
+legacy) pending.
 Owner: Push
 
 This is the Phase 3 "risky part" called out in
@@ -202,7 +202,7 @@ ship before client changes**, never the reverse.
    test harness that doesn't exist yet — building it under-tested would be worse
    than a focused follow-up.
 
-3. **Flip the client adapter. ✅ Shipped for Anthropic.**
+3. **Flip the client adapter. ✅ Shipped for Anthropic + Gemini.**
    `app/src/lib/anthropic-stream.ts` still runs `toLLMMessages` first (see
    "Prompt materialization stays client-side"), then serializes the neutral wire
    via the shared `toPushStreamWire` (`lib/provider-wire.ts`) — materialized
@@ -221,8 +221,13 @@ ship before client changes**, never the reverse.
    carried them, so enabling web prefix caching stays a separate change.
 
    **`toPushStreamWire` is the single forward serializer** (the inverse of
-   `validateAndNormalizeWireRequest`), pinned by a round-trip drift test. Gemini's
-   client flip reuses it — only its `googleSearchGrounding` flag differs.
+   `validateAndNormalizeWireRequest`), pinned by a round-trip drift test.
+   **`app/src/lib/gemini-stream.ts` now flips through it too** — same serializer,
+   only the `googleSearchGrounding` flag differs (no pause-turn loop, that's
+   Anthropic-specific). That cut also closed the sibling system-prompt gap
+   defensively: `toGeminiGenerateContent` now reads `contentParts` for the system
+   role (google isn't cacheable so it isn't a live bug like Anthropic's was, but
+   it's the same asymmetry — fixed proactively).
 
 4. **Bake.** Watch `worker_anthropic_contract` — legacy share decays toward zero
    as old tabs close. No code change; just telemetry.

@@ -192,7 +192,30 @@ describe('geminiStream', () => {
     expect(caught!.message).toBe('Google 401: bad key');
   });
 
-  it('sends google_search_grounding: true when requested', async () => {
+  it('sends the push.stream.v1 neutral wire body (contract + camelCase scalars)', async () => {
+    installStreamFetch(fetchMock);
+    const { geminiStream } = await import('./gemini-stream');
+    const iter = geminiStream({ ...baseRequest, maxTokens: 2048, temperature: 0.4, topP: 0.8 });
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.contract).toBe('push.stream.v1');
+    expect(body.provider).toBe('google');
+    expect(body.model).toBe('gemini-3.1-pro-preview');
+    expect(body.maxTokens).toBe(2048);
+    expect(body.temperature).toBe(0.4);
+    expect(body.topP).toBe(0.8);
+    expect(body.messages).toEqual([{ role: 'user', content: 'hi' }]);
+    expect(body).not.toHaveProperty('max_tokens');
+    expect(body).not.toHaveProperty('top_p');
+    expect(body).not.toHaveProperty('stream');
+  });
+
+  it('sends googleSearchGrounding: true when requested', async () => {
     installStreamFetch(fetchMock);
     const { geminiStream } = await import('./gemini-stream');
     const iter = geminiStream({ ...baseRequest, googleSearchGrounding: true });
@@ -203,7 +226,8 @@ describe('geminiStream', () => {
 
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     const body = JSON.parse(init.body as string);
-    expect(body.google_search_grounding).toBe(true);
+    expect(body.googleSearchGrounding).toBe(true);
+    expect(body).not.toHaveProperty('google_search_grounding');
   });
 
   it('falls back to the web-search-mode pref when the request omits the flag', async () => {
@@ -219,7 +243,7 @@ describe('geminiStream', () => {
 
       const init = fetchMock.mock.calls[0][1] as RequestInit;
       const body = JSON.parse(init.body as string);
-      expect(body.google_search_grounding).toBe(true);
+      expect(body.googleSearchGrounding).toBe(true);
     } finally {
       webSearchMode = 'auto';
     }
@@ -236,7 +260,7 @@ describe('geminiStream', () => {
 
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     const body = JSON.parse(init.body as string);
-    expect(body.google_search_grounding).toBe(true);
+    expect(body.googleSearchGrounding).toBe(true);
   });
 
   it('omits the flag when web search is off', async () => {
@@ -252,7 +276,7 @@ describe('geminiStream', () => {
 
       const init = fetchMock.mock.calls[0][1] as RequestInit;
       const body = JSON.parse(init.body as string);
-      expect(body.google_search_grounding).toBeUndefined();
+      expect(body.googleSearchGrounding).toBeUndefined();
     } finally {
       webSearchMode = 'auto';
     }
@@ -271,7 +295,7 @@ describe('geminiStream', () => {
 
       const init = fetchMock.mock.calls[0][1] as RequestInit;
       const body = JSON.parse(init.body as string);
-      expect(body.google_search_grounding).toBeUndefined();
+      expect(body.googleSearchGrounding).toBeUndefined();
     } finally {
       webSearchMode = 'auto';
     }
