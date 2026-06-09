@@ -7221,3 +7221,52 @@ describe('daemon capability vocabulary drift (#745)', () => {
     assert.deepEqual([...TUI_DAEMON_CAPABILITIES], ['event_v2', 'session_snapshot_v1']);
   });
 });
+
+// ─── reload_config verb ─────────────────────────────────────────
+//
+// The TUI fires this after persisting a provider-key edit so a long-lived
+// daemon (which inherited its key env at spawn, then resolves keys live from
+// process.env per run) picks up the rotated key without a restart. The verb
+// re-reads the on-disk config and force-overwrites the provider env.
+describe('reload_config verb', () => {
+  let savedConfigPath;
+  let savedZenKey;
+  let tmpConfigDir;
+
+  before(async () => {
+    savedConfigPath = process.env.PUSH_CONFIG_PATH;
+    savedZenKey = process.env.PUSH_ZEN_API_KEY;
+    tmpConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-reload-cfg-'));
+  });
+  after(async () => {
+    if (savedConfigPath === undefined) delete process.env.PUSH_CONFIG_PATH;
+    else process.env.PUSH_CONFIG_PATH = savedConfigPath;
+    if (savedZenKey === undefined) delete process.env.PUSH_ZEN_API_KEY;
+    else process.env.PUSH_ZEN_API_KEY = savedZenKey;
+    await fs.rm(tmpConfigDir, { recursive: true, force: true });
+  });
+
+  it('re-reads config.json and overwrites the stale provider key env', async () => {
+    const configPath = path.join(tmpConfigDir, 'config.json');
+    await fs.writeFile(configPath, JSON.stringify({ zen: { apiKey: 'sk-rotated' } }), 'utf8');
+    process.env.PUSH_CONFIG_PATH = configPath;
+    process.env.PUSH_ZEN_API_KEY = 'sk-stale'; // what the daemon inherited at spawn
+
+    const res = await handleRequest(makeRequest('reload_config', {}), () => {});
+
+    assert.equal(res.ok, true, `expected ok, got ${JSON.stringify(res.error)}`);
+    assert.ok(res.payload.refreshed.includes('PUSH_ZEN_API_KEY'));
+    assert.equal(process.env.PUSH_ZEN_API_KEY, 'sk-rotated');
+  });
+
+  it('surfaces a structured error when the config is unreadable', async () => {
+    // ENOENT is swallowed by loadConfig (returns {}), so point at a directory
+    // to force a real read error (EISDIR) instead.
+    process.env.PUSH_CONFIG_PATH = tmpConfigDir;
+
+    const res = await handleRequest(makeRequest('reload_config', {}), () => {});
+
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'CONFIG_READ_FAILED');
+  });
+});

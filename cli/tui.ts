@@ -6598,11 +6598,33 @@ export async function runTUI(options = {}) {
     scheduler.flush();
   }
 
+  // After a config secret is persisted, tell the running daemon to re-read
+  // config.json and overwrite its inherited provider-key env. pushd resolves
+  // keys live from process.env per run but inherited that env at spawn, so
+  // without this nudge a key rotated in the TUI would never reach the daemon
+  // that actually serves the turn — the bug this whole path fixes. Best-effort:
+  // the on-disk write already succeeded, so a daemon that's gone, mid-restart,
+  // or too old to know the verb just picks the key up on its next (re)start.
+  async function notifyDaemonConfigReload() {
+    const client = daemonClient;
+    if (!client?.connected) return;
+    try {
+      await client.request('reload_config', {}, null, 3000);
+    } catch (err) {
+      if (err?.code === 'UNSUPPORTED_REQUEST_TYPE') return; // older daemon — expected
+      const message = err instanceof Error ? err.message : String(err);
+      io.stderr.write(
+        `${JSON.stringify({ level: 'warn', event: 'tui_config_reload_notify_failed', message })}\n`,
+      );
+    }
+  }
+
   async function saveConfigKey(targetId, secret) {
     if (targetId === 'tavily') {
       config.tavilyApiKey = secret;
       await saveConfig(config);
       process.env.PUSH_TAVILY_API_KEY = secret;
+      await notifyDaemonConfigReload();
       return;
     }
 
@@ -6619,6 +6641,8 @@ export async function runTUI(options = {}) {
     if (targetId === ctx.providerConfig.id) {
       ctx.apiKey = secret;
     }
+
+    await notifyDaemonConfigReload();
   }
 
   // ── Exit promise ─────────────────────────────────────────────────

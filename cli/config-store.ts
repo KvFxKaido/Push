@@ -160,55 +160,75 @@ export function applyConfigToEnv(config: PushConfig): void {
     setEnvIfMissing('PUSH_SCRUB_DISABLED', '1');
   }
 
-  const ollama = ensureObject(config.ollama) as ProviderConfig;
-  setEnvIfMissing('PUSH_OLLAMA_URL', ollama.url);
-  setEnvIfMissing('PUSH_OLLAMA_API_KEY', ollama.apiKey);
-  setEnvIfMissing('PUSH_OLLAMA_MODEL', ollama.model);
+  applyProviderEnv(config, false);
+}
 
-  const openrouter = ensureObject(config.openrouter) as ProviderConfig;
-  setEnvIfMissing('PUSH_OPENROUTER_URL', openrouter.url);
-  setEnvIfMissing('PUSH_OPENROUTER_API_KEY', openrouter.apiKey);
-  setEnvIfMissing('PUSH_OPENROUTER_MODEL', openrouter.model);
+// Provider config keys whose `url`/`apiKey`/`model` map to the
+// `PUSH_<ID>_{URL,API_KEY,MODEL}` env vars consumed by `cli/provider.ts`.
+// Single source of truth for both startup application and live reload.
+const PROVIDER_CONFIG_KEYS = [
+  'ollama',
+  'openrouter',
+  'zen',
+  'nvidia',
+  'kilocode',
+  'blackbox',
+  'openadapter',
+  'openai',
+  'anthropic',
+  'google',
+] as const;
 
-  const zen = ensureObject(config.zen) as ProviderConfig;
-  setEnvIfMissing('PUSH_ZEN_URL', zen.url);
-  setEnvIfMissing('PUSH_ZEN_API_KEY', zen.apiKey);
-  setEnvIfMissing('PUSH_ZEN_MODEL', zen.model);
+/**
+ * Apply each provider's `url`/`apiKey`/`model` to `PUSH_<ID>_{URL,API_KEY,MODEL}`.
+ *
+ * `overwrite = false` (startup) defers to any env var already set, so the
+ * launching shell wins. `overwrite = true` (an explicit reload after a TUI
+ * config edit) forces the on-disk value in, so a long-lived daemon picks up a
+ * rotated key without a restart — otherwise `setEnvIfMissing` would keep the
+ * stale value the daemon inherited at spawn. Returns the env var names whose
+ * value actually changed (names only — never the secrets).
+ */
+function applyProviderEnv(config: PushConfig, overwrite: boolean): string[] {
+  const changed: string[] = [];
+  for (const id of PROVIDER_CONFIG_KEYS) {
+    const p = ensureObject(config[id]) as ProviderConfig;
+    const prefix = `PUSH_${id.toUpperCase()}`;
+    const fields: Array<[string, unknown]> = [
+      ['URL', p.url],
+      ['API_KEY', p.apiKey],
+      ['MODEL', p.model],
+    ];
+    for (const [suffix, raw] of fields) {
+      const envKey = `${prefix}_${suffix}`;
+      if (!overwrite) {
+        setEnvIfMissing(envKey, raw);
+        continue;
+      }
+      const normalized = normalizeConfigEnvValue(raw);
+      if (normalized && process.env[envKey] !== normalized) {
+        process.env[envKey] = normalized;
+        changed.push(envKey);
+      }
+    }
+  }
+  return changed;
+}
 
-  const nvidia = ensureObject(config.nvidia) as ProviderConfig;
-  setEnvIfMissing('PUSH_NVIDIA_URL', nvidia.url);
-  setEnvIfMissing('PUSH_NVIDIA_API_KEY', nvidia.apiKey);
-  setEnvIfMissing('PUSH_NVIDIA_MODEL', nvidia.model);
-
-  const kilocode = ensureObject(config.kilocode) as ProviderConfig;
-  setEnvIfMissing('PUSH_KILOCODE_URL', kilocode.url);
-  setEnvIfMissing('PUSH_KILOCODE_API_KEY', kilocode.apiKey);
-  setEnvIfMissing('PUSH_KILOCODE_MODEL', kilocode.model);
-
-  const blackbox = ensureObject(config.blackbox) as ProviderConfig;
-  setEnvIfMissing('PUSH_BLACKBOX_URL', blackbox.url);
-  setEnvIfMissing('PUSH_BLACKBOX_API_KEY', blackbox.apiKey);
-  setEnvIfMissing('PUSH_BLACKBOX_MODEL', blackbox.model);
-
-  const openadapter = ensureObject(config.openadapter) as ProviderConfig;
-  setEnvIfMissing('PUSH_OPENADAPTER_URL', openadapter.url);
-  setEnvIfMissing('PUSH_OPENADAPTER_API_KEY', openadapter.apiKey);
-  setEnvIfMissing('PUSH_OPENADAPTER_MODEL', openadapter.model);
-
-  const openai = ensureObject(config.openai) as ProviderConfig;
-  setEnvIfMissing('PUSH_OPENAI_URL', openai.url);
-  setEnvIfMissing('PUSH_OPENAI_API_KEY', openai.apiKey);
-  setEnvIfMissing('PUSH_OPENAI_MODEL', openai.model);
-
-  const anthropic = ensureObject(config.anthropic) as ProviderConfig;
-  setEnvIfMissing('PUSH_ANTHROPIC_URL', anthropic.url);
-  setEnvIfMissing('PUSH_ANTHROPIC_API_KEY', anthropic.apiKey);
-  setEnvIfMissing('PUSH_ANTHROPIC_MODEL', anthropic.model);
-
-  const google = ensureObject(config.google) as ProviderConfig;
-  setEnvIfMissing('PUSH_GOOGLE_URL', google.url);
-  setEnvIfMissing('PUSH_GOOGLE_API_KEY', google.apiKey);
-  setEnvIfMissing('PUSH_GOOGLE_MODEL', google.model);
+/**
+ * Force the on-disk provider config into the current process env, overwriting
+ * stale values. Used by the pushd `reload_config` verb so a key rotated in the
+ * TUI takes effect on the running daemon (which resolves keys live from
+ * `process.env` per run) without a restart. Returns the changed env var names.
+ */
+export function reapplyProviderConfigToEnv(config: PushConfig): string[] {
+  const changed = applyProviderEnv(config, true);
+  const tavily = normalizeConfigEnvValue(config.tavilyApiKey);
+  if (tavily && process.env.PUSH_TAVILY_API_KEY !== tavily) {
+    process.env.PUSH_TAVILY_API_KEY = tavily;
+    changed.push('PUSH_TAVILY_API_KEY');
+  }
+  return changed;
 }
 
 export function maskSecret(value: unknown): string {
