@@ -60,4 +60,88 @@ export interface PushStreamRequestWire {
   anthropicWebSearch?: boolean;
   /** Enable Gemini's native `googleSearch` grounding tool. */
   googleSearchGrounding?: boolean;
+  /**
+   * Pause-turn continuation: prior paused assistant content[] arrays
+   * (oldest-first), replayed verbatim. Anthropic-only; opaque passthrough. The
+   * legacy OpenAI-shape path carried this inline as `assistant_content_blocks`
+   * messages. See `PushStreamRequest.replayAssistantTurns`.
+   */
+  replayAssistantTurns?: Array<Array<Record<string, unknown>>>;
+}
+
+/**
+ * The materialized-message shape {@link toPushStreamWire} reads. Matches the
+ * web `toLLMMessages` output: `content` is plain text or an ordered content-part
+ * array, and reasoning rides as snake_case `reasoning_blocks` (the materializer's
+ * OpenAI-ish convention). The serializer renames it to the wire's camelCase
+ * `reasoningBlocks`. `id` / `timestamp` (present on the CLI's `LlmMessage`) are
+ * not required — they never cross the wire.
+ */
+export interface WireSerializableMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string | LlmContentPart[];
+  reasoning_blocks?: ReasoningBlock[];
+}
+
+/** Fields a caller supplies to {@link toPushStreamWire} alongside the already
+ *  materialized messages. The serializable subset of `PushStreamRequest`. */
+export interface ToPushStreamWireOptions {
+  model: string;
+  /** Carried for the future provider-agnostic endpoint; handlers ignore it today. */
+  provider?: AIProviderType;
+  maxTokens?: number;
+  temperature?: number;
+  topP?: number;
+  cacheBreakpointIndices?: number[];
+  anthropicWebSearch?: boolean;
+  googleSearchGrounding?: boolean;
+  replayAssistantTurns?: Array<Array<Record<string, unknown>>>;
+}
+
+/**
+ * Serialize already-materialized messages + neutral scalars into the
+ * `push.stream.v1` wire body — the inverse of `validateAndNormalizeWireRequest`.
+ *
+ * Prompt materialization (`toLLMMessages`) stays client-side, so callers pass
+ * the materialized `LlmMessage[]` here; this only drops the non-wire bookkeeping
+ * (`id` / `timestamp`) and collapses `content` vs `contentParts` to the wire's
+ * `content: string | LlmContentPart[]` union. Only assistant turns keep
+ * `reasoningBlocks` (matching the validator's posture). Optional scalars are
+ * omitted when unset so the body stays minimal and round-trips cleanly.
+ *
+ * Single source of truth for the forward wire shape, shared by every client
+ * adapter that flips to neutral (Anthropic today, Gemini next). Pinned against
+ * the validator by a round-trip drift test.
+ */
+export function toPushStreamWire(
+  messages: readonly WireSerializableMessage[],
+  options: ToPushStreamWireOptions,
+): PushStreamRequestWire {
+  const wireMessages: PushStreamWireMessage[] = messages.map((m) => ({
+    role: m.role,
+    content: m.content,
+    // Only assistant turns carry signed reasoning blocks (validator posture);
+    // rename the materializer's snake_case field to the wire's camelCase.
+    ...(m.role === 'assistant' && m.reasoning_blocks && m.reasoning_blocks.length > 0
+      ? { reasoningBlocks: m.reasoning_blocks }
+      : {}),
+  }));
+
+  return {
+    contract: PUSH_STREAM_WIRE_CONTRACT,
+    ...(options.provider ? { provider: options.provider } : {}),
+    model: options.model,
+    messages: wireMessages,
+    ...(typeof options.maxTokens === 'number' ? { maxTokens: options.maxTokens } : {}),
+    ...(typeof options.temperature === 'number' ? { temperature: options.temperature } : {}),
+    ...(typeof options.topP === 'number' ? { topP: options.topP } : {}),
+    ...(options.cacheBreakpointIndices
+      ? { cacheBreakpointIndices: options.cacheBreakpointIndices }
+      : {}),
+    ...(options.anthropicWebSearch ? { anthropicWebSearch: true } : {}),
+    ...(options.googleSearchGrounding ? { googleSearchGrounding: true } : {}),
+    ...(options.replayAssistantTurns && options.replayAssistantTurns.length > 0
+      ? { replayAssistantTurns: options.replayAssistantTurns }
+      : {}),
+  };
 }

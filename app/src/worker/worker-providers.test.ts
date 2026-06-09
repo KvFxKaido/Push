@@ -1749,6 +1749,63 @@ describe('handleAnthropicChat — neutral wire (dual-accept)', () => {
     expect(body.max_tokens).toBe(12_288);
   });
 
+  it('preserves an array-content system prompt (web cacheable shape) onto the upstream system field', async () => {
+    // End-to-end regression guard for the client flip: the cacheable web
+    // materializer sends the system prompt as a content-part array; the validator
+    // lands it on contentParts with content:'' and toAnthropicMessages must read
+    // contentParts for system, else the entire system prompt is dropped upstream.
+    const get = captureUpstream();
+    await handleAnthropicChat(
+      makeNeutralRequest({
+        model: 'claude-sonnet-4-6',
+        messages: [
+          {
+            role: 'system',
+            content: [{ type: 'text', text: 'be terse', cache_control: { type: 'ephemeral' } }],
+          },
+          { role: 'user', content: 'hi' },
+        ],
+      }),
+      makeEnv({ ANTHROPIC_API_KEY: 'sk-ant' }),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    // System prompt + its cache_control survive (array `system` shape).
+    expect(body.system).toEqual([
+      { type: 'text', text: 'be terse', cache_control: { type: 'ephemeral' } },
+    ]);
+    expect(body.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'hi' }] }]);
+  });
+
+  it('appends neutral replayAssistantTurns as trailing assistant turns (pause-turn resume)', async () => {
+    const get = captureUpstream();
+    await handleAnthropicChat(
+      makeNeutralRequest({
+        model: 'claude-sonnet-4-6',
+        messages: [{ role: 'user', content: 'search the web' }],
+        replayAssistantTurns: [
+          [
+            { type: 'text', text: 'Searching' },
+            { type: 'server_tool_use', id: 'su_01', name: 'web_search', input: {} },
+          ],
+        ],
+      }),
+      makeEnv({ ANTHROPIC_API_KEY: 'sk-ant' }),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    // The user turn, then the paused assistant content[] verbatim as the trailing
+    // assistant turn the upstream resumes from.
+    expect(body.messages).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'search the web' }] },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Searching' },
+          { type: 'server_tool_use', id: 'su_01', name: 'web_search', input: {} },
+        ],
+      },
+    ]);
+  });
+
   it('returns 400 (not 502) when a neutral content part has an unrepresentable image URL', async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);

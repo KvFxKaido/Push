@@ -1364,6 +1364,10 @@ export async function handleAnthropicChat(request: Request, env: Env): Promise<R
         toAnthropicMessages(dual.request, {
           modelOverride: model,
           enableWebSearch: dual.request.anthropicWebSearch === true,
+          // Pause-turn continuation: the client replays prior paused assistant
+          // content[] here (web-search iteration-cap resumption). Appended as
+          // trailing assistant turns by toAnthropicMessages.
+          replayAssistantTurns: dual.request.replayAssistantTurns,
         }),
       );
     } catch (err) {

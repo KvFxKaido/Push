@@ -1,9 +1,10 @@
 # Anthropic Worker Contract Migration
 
 Date: 2026-06-09
-Status: **in progress** — Step 0 (multimodal serializer) and Steps 1–2 (wire type,
-neutral validator, Worker dual-accept) shipped; Steps 3–5 (client flip, bake,
-drop legacy) pending.
+Status: **in progress** — Step 0 (multimodal serializer), Steps 1–2 (wire type,
+neutral validator, Worker dual-accept), and **Step 3 for Anthropic** (the web
+client now sends `push.stream.v1`) shipped; Step 3 for Gemini, plus Steps 4–5
+(bake, drop legacy), pending.
 Owner: Push
 
 This is the Phase 3 "risky part" called out in
@@ -201,13 +202,27 @@ ship before client changes**, never the reverse.
    test harness that doesn't exist yet — building it under-tested would be worse
    than a focused follow-up.
 
-3. **Flip the client adapter (ship after step 2 is live).**
-   `app/src/lib/anthropic-stream.ts` **still runs `toLLMMessages` first** (see
-   "Prompt materialization stays client-side"), then stops OpenAI-shaping the
-   envelope and instead serializes `PushStreamRequestWire` — the materialized
-   `messages` plus the neutral scalars — with `contract: "push.stream.v1"`. New
-   tabs now send neutral; old tabs still send legacy; the Worker handles both. The
-   client keeps consuming OpenAI SSE (response axis unchanged).
+3. **Flip the client adapter. ✅ Shipped for Anthropic.**
+   `app/src/lib/anthropic-stream.ts` still runs `toLLMMessages` first (see
+   "Prompt materialization stays client-side"), then serializes the neutral wire
+   via the shared `toPushStreamWire` (`lib/provider-wire.ts`) — materialized
+   `messages` + neutral scalars, `contract: "push.stream.v1"` — instead of an
+   OpenAI-shaped body. New tabs send neutral; old tabs still send legacy; the
+   Worker handles both. The client keeps consuming OpenAI SSE (response axis
+   unchanged).
+
+   **Pause-turn replay went neutral too.** The web-search `pause_turn`
+   continuation used to append an inline `assistant_content_blocks` message; the
+   raw Anthropic content[] (tool_use / web_search blocks) can't re-materialize as
+   text, so the wire gained an opaque `replayAssistantTurns` passthrough field
+   (validated shape-only). The Worker forwards it to `toAnthropicMessages`'
+   `replayAssistantTurns` option, which appends the turns verbatim. Prefix-cache
+   breakpoints are deliberately NOT sent on this path — the legacy body never
+   carried them, so enabling web prefix caching stays a separate change.
+
+   **`toPushStreamWire` is the single forward serializer** (the inverse of
+   `validateAndNormalizeWireRequest`), pinned by a round-trip drift test. Gemini's
+   client flip reuses it — only its `googleSearchGrounding` flag differs.
 
 4. **Bake.** Watch `worker_anthropic_contract` — legacy share decays toward zero
    as old tabs close. No code change; just telemetry.

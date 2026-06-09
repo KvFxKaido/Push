@@ -554,13 +554,19 @@ export function toAnthropicMessages(
         ])
       : convertOpenAIContentToAnthropic(content);
 
-  const pushSystem = (content: string, tagged: boolean): void => {
-    for (const part of toContent(content, tagged)) {
+  // Push the text blocks of a converted content array into `systemBlocks`,
+  // tracking whether any carried a `cache_control` marker (which selects the
+  // array `system` shape downstream). Anthropic's `system` field is text-only.
+  const pushSystemBlocks = (blocks: Array<Record<string, unknown>>): void => {
+    for (const part of blocks) {
       if (part.type === 'text' && typeof part.text === 'string' && part.text.length > 0) {
         if (part.cache_control) systemHasCacheControl = true;
         systemBlocks.push(part);
       }
     }
+  };
+  const pushSystem = (content: string, tagged: boolean): void => {
+    pushSystemBlocks(toContent(content, tagged));
   };
 
   if (hasOverride) {
@@ -574,9 +580,19 @@ export function toAnthropicMessages(
       (!hasOverride && i === 0 && tagLeadingSystem && m.role === 'system');
 
     if (m.role === 'system') {
-      // System blocks are text-only in Anthropic; the web's materialized system
-      // message is always a plain string, so `content` is authoritative here.
-      pushSystem(m.content, tagged);
+      // The web's cacheable materializer (`toLLMMessages` for anthropic /
+      // openrouter) emits the system prompt as a content-part array
+      // (`[{type:'text', text, cache_control}]`) so prompt caching survives. The
+      // wire validator lands that on `contentParts` with an empty `content`, so
+      // honor `contentParts` here — reading `content` alone would silently drop
+      // the entire system prompt (and its cache_control). Mirrors the legacy
+      // `buildAnthropicMessagesRequest` system handling. Plain-string system
+      // messages (CLI, override) still flow through `content`.
+      if (m.contentParts && m.contentParts.length > 0) {
+        pushSystemBlocks(contentPartsToAnthropic(m.contentParts, tagged));
+      } else {
+        pushSystem(m.content, tagged);
+      }
       return;
     }
 

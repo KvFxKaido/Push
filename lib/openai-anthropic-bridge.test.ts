@@ -773,6 +773,32 @@ describe('toAnthropicMessages — drift vs legacy OpenAI-detour path', () => {
     expect(body.model).toBe('claude-sonnet-4-6');
   });
 
+  it('reads a system message from contentParts (cacheable web materializer shape)', () => {
+    // `toLLMMessages` for anthropic/openrouter emits the system prompt as a
+    // content-part array so cache_control survives; the wire validator lands it
+    // on `contentParts` with an empty `content`. Reading `content` alone would
+    // silently drop the whole system prompt — this pins the contentParts path.
+    const body = toAnthropicMessages({
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+      messages: [
+        {
+          id: 's',
+          role: 'system',
+          content: '',
+          timestamp: 0,
+          contentParts: [{ type: 'text', text: 'be terse', cache_control: { type: 'ephemeral' } }],
+        },
+        llm('1', 'user', 'hi'),
+      ],
+    });
+    // System prompt preserved; the cache_control marker selects the array shape.
+    expect(body.system).toEqual([
+      { type: 'text', text: 'be terse', cache_control: { type: 'ephemeral' } },
+    ]);
+    expect(body.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'hi' }] }]);
+  });
+
   it('omits the top-level model when emitModel is false (URL/out-of-band transports)', () => {
     const body = toAnthropicMessages(
       { provider: 'anthropic', model: 'claude-sonnet-4-6', messages: [llm('1', 'user', 'hi')] },

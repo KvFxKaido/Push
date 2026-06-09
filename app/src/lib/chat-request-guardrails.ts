@@ -566,6 +566,27 @@ export function validateAndNormalizeWireRequest(
     }
   }
 
+  // Pause-turn replay turns ride through as an opaque passthrough — each entry is
+  // one prior paused turn's raw Anthropic content[] array. Shape-check (array of
+  // arrays of objects) so a malformed field can't reach `toAnthropicMessages`,
+  // but don't inspect the block contents (provider-internal).
+  let replayAssistantTurns: Array<Array<Record<string, unknown>>> | undefined;
+  if (parsed.replayAssistantTurns !== undefined) {
+    const raw = parsed.replayAssistantTurns;
+    const valid =
+      Array.isArray(raw) &&
+      raw.every(
+        (turn) =>
+          Array.isArray(turn) && turn.every((block) => typeof block === 'object' && block !== null),
+      );
+    if (!valid) {
+      return validationError(
+        `${policy.routeLabel} request field "replayAssistantTurns" must be an array of content-block arrays.`,
+      );
+    }
+    replayAssistantTurns = raw as Array<Array<Record<string, unknown>>>;
+  }
+
   const request: PushStreamRequest<LlmMessage> = {
     provider: 'anthropic',
     model,
@@ -580,6 +601,7 @@ export function validateAndNormalizeWireRequest(
     ...(typeof parsed.googleSearchGrounding === 'boolean'
       ? { googleSearchGrounding: parsed.googleSearchGrounding }
       : {}),
+    ...(replayAssistantTurns ? { replayAssistantTurns } : {}),
   };
 
   return { ok: true, value: { request, adjustments } };
