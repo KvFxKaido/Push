@@ -116,6 +116,17 @@ drift-test corpus in `lib/openai-anthropic-bridge.test.ts`, and the CLI adapter'
 body-capture suite (`cli/tests/anthropic-stream.test.mjs`) is the independent
 oracle for the cache-tagging edges.
 
+*Multimodal follow-up (✅ shipped).* `LlmMessage` gained an additive optional
+`contentParts` field (`string | text/image parts`; `content` stays the text
+string every existing reader uses, so zero ripple). `toAnthropicMessages`
+serializes `contentParts` when present — preserving text + image content
+(base64 `data:` URLs → base64 source, `http(s)` URLs → url source) and tagging
+the last text part for cache breakpoints. Crucially it **fails loudly** (throws)
+on an unsupported or malformed part rather than silently dropping it, the way
+the legacy OpenAI-shape converter does. This is the prerequisite that lets the
+neutral wire carry the web transcript's existing multimodal payloads — without
+it, the Worker request-contract migration (below) would have dropped images.
+
 **Phase 3 — two axes, then retire the OpenAI-canonical assumption.**
 - *Request contract (web).* Move the web client↔Worker request body off OpenAI
   shape onto the neutral wire so the Worker serializes via `toAnthropicMessages`

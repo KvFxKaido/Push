@@ -11,12 +11,35 @@
 // ---------------------------------------------------------------------------
 
 /**
+ * A single content part for multimodal messages. Mirrors the OpenAI-compatible
+ * `image_url` shape the rest of the codebase already uses (web `LLMMessage`,
+ * `OpenAIContentPart`). `image_url.url` is a `data:` base64 URL or an `http(s)`
+ * URL; both are carried losslessly to providers that accept images.
+ */
+export type LlmContentPart =
+  | { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }
+  | { type: 'image_url'; image_url: { url: string }; cache_control?: { type: 'ephemeral' } };
+
+/**
  * Minimum portable message shape understood by all lib/-side agent roles.
  */
 export interface LlmMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
+  /** Plain-text content. Always the text representation of the turn — every
+   *  adapter and the context/summary machinery read this. When the turn also
+   *  carries images, `contentParts` holds the rich representation and wins on
+   *  multimodal-capable paths; `content` stays the text fallback. */
   content: string;
+  /**
+   * Multimodal parts (text + image) for turns that carry images. Additive and
+   * optional: when set, `toAnthropicMessages` serializes these instead of
+   * `content`, preserving image content end-to-end (e.g. the web transcript's
+   * materialized messages) rather than flattening it to `content`'s text. A
+   * part type a target can't represent fails loudly, never silently dropped.
+   * Adapters that don't read this field simply use `content` (text-only).
+   */
+  contentParts?: LlmContentPart[];
   timestamp: number;
   /** Signed reasoning blocks captured on prior assistant turns.
    *  Forwarded verbatim to providers that consume them (currently Anthropic

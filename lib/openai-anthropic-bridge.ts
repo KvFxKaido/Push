@@ -3,7 +3,7 @@ import type {
   OpenAIContentPart,
   OpenAIReasoningBlock,
 } from './openai-chat-types.ts';
-import type { LlmMessage, PushStreamRequest } from './provider-contract.ts';
+import type { LlmContentPart, LlmMessage, PushStreamRequest } from './provider-contract.ts';
 import type { PushStreamEvent, StreamUsage } from './provider-contract.ts';
 import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
 
@@ -121,6 +121,76 @@ function convertOpenAIContentToAnthropic(
   }
 
   return parts.length > 0 ? parts : [{ type: 'text', text: '' }];
+}
+
+/**
+ * Convert an `image_url.url` to an Anthropic image block. A `data:image/…;base64`
+ * URL becomes a base64 source; an `http(s)` URL becomes a `url` source. Anything
+ * else throws — the neutral multimodal path fails loudly rather than dropping an
+ * image the user attached (unlike `dataUrlToAnthropicImagePart`, which returns
+ * null for the OpenAI-shape path's silent best-effort handling).
+ */
+function imageUrlToAnthropicImageBlock(url: string): Record<string, unknown> {
+  const dataPart = dataUrlToAnthropicImagePart(url);
+  if (dataPart) return dataPart;
+  if (/^https?:\/\//i.test(url)) {
+    return { type: 'image', source: { type: 'url', url } };
+  }
+  throw new Error(
+    `toAnthropicMessages: cannot represent image (expected a data:image base64 URL or an http(s) URL): ${url.slice(0, 48)}`,
+  );
+}
+
+/**
+ * Strict multimodal content converter for the neutral `LlmMessage.contentParts`
+ * path. Preserves text + image parts and, unlike `convertOpenAIContentToAnthropic`
+ * (which silently drops anything it doesn't recognize), **throws** on an
+ * unsupported or malformed part — so image content can never be silently lost on
+ * the wire. `tagLast` adds the `cache_control` breakpoint to the final text block,
+ * mirroring the string path's tagging.
+ */
+function contentPartsToAnthropic(
+  parts: readonly LlmContentPart[],
+  tagLast: boolean,
+): Array<Record<string, unknown>> {
+  const blocks: Array<Record<string, unknown>> = [];
+  for (const rawPart of parts) {
+    const part = rawPart as {
+      type?: unknown;
+      text?: unknown;
+      image_url?: unknown;
+      cache_control?: unknown;
+    };
+    if (part.type === 'text' && typeof part.text === 'string') {
+      const block: Record<string, unknown> = { type: 'text', text: part.text };
+      if (part.cache_control) block.cache_control = part.cache_control;
+      blocks.push(block);
+      continue;
+    }
+    if (
+      part.type === 'image_url' &&
+      part.image_url &&
+      typeof part.image_url === 'object' &&
+      typeof (part.image_url as { url?: unknown }).url === 'string'
+    ) {
+      const block = imageUrlToAnthropicImageBlock((part.image_url as { url: string }).url);
+      if (part.cache_control) block.cache_control = part.cache_control;
+      blocks.push(block);
+      continue;
+    }
+    throw new Error(
+      `toAnthropicMessages: unsupported or malformed content part (type: ${JSON.stringify(part.type)})`,
+    );
+  }
+  if (tagLast) {
+    for (let i = blocks.length - 1; i >= 0; i -= 1) {
+      if (blocks[i].type === 'text') {
+        blocks[i].cache_control = { type: 'ephemeral' };
+        break;
+      }
+    }
+  }
+  return blocks.length > 0 ? blocks : [{ type: 'text', text: '' }];
 }
 
 function buildOpenAISseChunk(params: {
@@ -493,11 +563,18 @@ export function toAnthropicMessages(
       (!hasOverride && i === 0 && tagLeadingSystem && m.role === 'system');
 
     if (m.role === 'system') {
+      // System blocks are text-only in Anthropic; the web's materialized system
+      // message is always a plain string, so `content` is authoritative here.
       pushSystem(m.content, tagged);
       return;
     }
 
-    const contentBlocks = toContent(m.content, tagged);
+    // Prefer the rich multimodal representation when present so image content is
+    // carried (and loudly validated), not flattened to `content`'s text.
+    const contentBlocks =
+      m.contentParts && m.contentParts.length > 0
+        ? contentPartsToAnthropic(m.contentParts, tagged)
+        : toContent(m.content, tagged);
     if (m.role === 'assistant') {
       const reasoning = reasoningBlocksToAnthropic(m.reasoningBlocks);
       anthropicMessages.push({

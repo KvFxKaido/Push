@@ -134,11 +134,22 @@ untouched here.
 Each step is independently shippable and backward-compatible. **Worker changes
 ship before client changes**, never the reverse.
 
+0. **Multimodal serializer prerequisite (✅ shipped, separate PR).** Before any of
+   this, `toAnthropicMessages` had to be able to carry the web transcript's
+   **image** content — it previously consumed only string-content `LlmMessage`s.
+   `LlmMessage` now has an additive optional `contentParts` (text/image) field and
+   `toAnthropicMessages` serializes it, **failing loudly** on unsupported parts so
+   images are never silently dropped. See the *Multimodal follow-up* note in
+   [`Provider Request Normalization.md`](<Provider Request Normalization.md>). Without
+   this, Step 2's neutral branch would have dropped images on picture chats.
+
 1. **`PushStreamRequestWire` type + neutral validator (lib, no behavior change).**
    Add the wire type and a `validateAndNormalizeWireRequest` beside the existing
    `validateAndNormalizeChatRequest`, sharing the clamping/model/token policy so
    the neutral path enforces the *same* `maxOutputTokens` ceiling and model
-   checks. Unit-tested in isolation. Ships dormant.
+   checks. The wire message carries `contentParts` for multimodal turns (now
+   supported by `toAnthropicMessages`, per Step 0). Unit-tested in isolation.
+   Ships dormant.
 
 2. **Worker dual-accept (ship FIRST).** In `handleAnthropicChat` (and the Vertex
    / Zen-Go siblings), branch on a discriminator: a top-level

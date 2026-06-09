@@ -953,3 +953,115 @@ describe('anthropicEventStream — drift vs translate->pump', () => {
     expect(events).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Multimodal: toAnthropicMessages serializes LlmMessage.contentParts (text +
+// image), preferring it over `content`, with LOUD failures for unsupported
+// parts so image content can never be silently dropped on the neutral path.
+// ---------------------------------------------------------------------------
+
+describe('toAnthropicMessages — multimodal contentParts', () => {
+  const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+  const userWithParts = (parts: unknown): LlmMessage =>
+    ({
+      id: '1',
+      role: 'user',
+      content: 'text fallback',
+      contentParts: parts,
+      timestamp: 0,
+    }) as unknown as LlmMessage;
+  const reqWith = (m: LlmMessage, extra: Partial<PushStreamRequest<LlmMessage>> = {}) =>
+    toAnthropicMessages({
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+      messages: [m],
+      ...extra,
+    } as PushStreamRequest<LlmMessage>);
+  const firstContent = (body: Record<string, unknown>): Array<Record<string, unknown>> =>
+    (body.messages as Array<{ content: Array<Record<string, unknown>> }>)[0].content;
+
+  it('serializes text + base64 image parts, preferring contentParts over content', () => {
+    const body = reqWith(
+      userWithParts([
+        { type: 'text', text: 'What is this?' },
+        { type: 'image_url', image_url: { url: PNG } },
+      ]),
+    );
+    expect(firstContent(body)).toEqual([
+      { type: 'text', text: 'What is this?' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' } },
+    ]);
+  });
+
+  it('carries an http(s) image URL as a url source', () => {
+    const body = reqWith(
+      userWithParts([{ type: 'image_url', image_url: { url: 'https://example.com/cat.png' } }]),
+    );
+    expect(firstContent(body)[0]).toEqual({
+      type: 'image',
+      source: { type: 'url', url: 'https://example.com/cat.png' },
+    });
+  });
+
+  it('tags the last text part with cache_control at a breakpoint index', () => {
+    const body = reqWith(
+      userWithParts([
+        { type: 'text', text: 'a' },
+        { type: 'image_url', image_url: { url: PNG } },
+        { type: 'text', text: 'b' },
+      ]),
+      { cacheBreakpointIndices: [0] },
+    );
+    const content = firstContent(body);
+    expect(content[2]).toEqual({ type: 'text', text: 'b', cache_control: { type: 'ephemeral' } });
+    expect(content[0].cache_control).toBeUndefined();
+    expect(content[1].cache_control).toBeUndefined();
+  });
+
+  it('prepends signed reasoning blocks before multimodal content on assistant turns', () => {
+    const body = toAnthropicMessages({
+      provider: 'anthropic',
+      model: 'claude-opus-4-7',
+      messages: [
+        {
+          id: '1',
+          role: 'assistant',
+          content: 'x',
+          timestamp: 0,
+          reasoningBlocks: [{ type: 'thinking', text: 't', signature: 's' }],
+          contentParts: [
+            { type: 'text', text: 'see image' },
+            { type: 'image_url', image_url: { url: PNG } },
+          ],
+        },
+      ],
+    } as PushStreamRequest<LlmMessage>);
+    const content = firstContent(body);
+    expect(content[0]).toEqual({ type: 'thinking', thinking: 't', signature: 's' });
+    expect(content[1]).toEqual({ type: 'text', text: 'see image' });
+    expect(content[2]).toMatchObject({ type: 'image', source: { type: 'base64' } });
+  });
+
+  it('falls back to content text when contentParts is empty', () => {
+    const body = reqWith(userWithParts([]));
+    expect(firstContent(body)).toEqual([{ type: 'text', text: 'text fallback' }]);
+  });
+
+  it('throws loudly on an unsupported content part type', () => {
+    expect(() => reqWith(userWithParts([{ type: 'audio', audio: {} }]))).toThrow(
+      /unsupported or malformed content part/,
+    );
+  });
+
+  it('throws loudly on a malformed image part (missing url)', () => {
+    expect(() => reqWith(userWithParts([{ type: 'image_url', image_url: {} }]))).toThrow(
+      /unsupported or malformed content part/,
+    );
+  });
+
+  it('throws loudly on an image URL that is neither data: nor http(s)', () => {
+    expect(() =>
+      reqWith(userWithParts([{ type: 'image_url', image_url: { url: 'ftp://nope/x.png' } }])),
+    ).toThrow(/cannot represent image/);
+  });
+});
