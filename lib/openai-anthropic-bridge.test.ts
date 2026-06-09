@@ -4,6 +4,7 @@ import type { OpenAIChatRequest, OpenAIContentPart, OpenAIMessage } from './open
 import type { LlmMessage, PushStreamRequest } from './provider-contract.ts';
 import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
 import {
+  anthropicModelEnforcesSamplingExclusivity,
   anthropicModelRejectsSamplingParams,
   buildAnthropicMessagesRequest,
   createAnthropicTranslatedStream,
@@ -58,8 +59,45 @@ describe('anthropicModelRejectsSamplingParams', () => {
   });
 });
 
+describe('anthropicModelEnforcesSamplingExclusivity', () => {
+  it('flags Claude 4+ models (Opus/Sonnet/Haiku, any id shape)', () => {
+    for (const model of [
+      'claude-opus-4-8',
+      'claude-opus-4-6',
+      'claude-opus-4-0',
+      'claude-opus-4-20250514', // dated Opus 4.0
+      'claude-sonnet-4-6',
+      'claude-sonnet-4-5',
+      'claude-haiku-4-5-20251001',
+      'claude-opus-5-0',
+      'CLAUDE-SONNET-4-6',
+      'anthropic.claude-sonnet-4-6', // Bedrock-style prefix (not a current code path, but pinned)
+    ]) {
+      expect(anthropicModelEnforcesSamplingExclusivity(model), model).toBe(true);
+    }
+  });
+
+  it('does not flag Claude 3.x or non-Anthropic models', () => {
+    for (const model of [
+      'claude-3-opus-20240229',
+      'claude-3-5-sonnet-20241022',
+      'anthropic.claude-3-5-sonnet-20241022', // Bedrock-style 3.x prefix
+      'claude-3-7-sonnet-20250219',
+      'claude-3-haiku-20240307',
+      'minimax-m2.5',
+      'gpt-5.4',
+      'claude',
+      '',
+    ]) {
+      expect(anthropicModelEnforcesSamplingExclusivity(model), model).toBe(false);
+    }
+    expect(anthropicModelEnforcesSamplingExclusivity(undefined)).toBe(false);
+    expect(anthropicModelEnforcesSamplingExclusivity(null)).toBe(false);
+  });
+});
+
 describe('buildAnthropicMessagesRequest', () => {
-  it('strips temperature/top_p for Opus 4.7+ but forwards them for accepting models', () => {
+  it('strips temperature/top_p for Opus 4.7+, and drops top_p when both set on Claude 4+', () => {
     const base = {
       messages: [{ role: 'user' as const, content: 'Hello' }],
       stream: true,
@@ -67,12 +105,32 @@ describe('buildAnthropicMessagesRequest', () => {
       top_p: 0.9,
     };
 
+    // Opus 4.7+ removed sampling params entirely — both stripped.
     const opus48 = buildAnthropicMessagesRequest({ ...base, model: 'claude-opus-4-8' });
     expect(opus48).not.toHaveProperty('temperature');
     expect(opus48).not.toHaveProperty('top_p');
 
-    const sonnet = buildAnthropicMessagesRequest({ ...base, model: 'claude-sonnet-4-6' });
-    expect(sonnet).toMatchObject({ temperature: 0.1, top_p: 0.9 });
+    // Sonnet 4.6 accepts sampling but is Claude 4+, so temperature and top_p
+    // are mutually exclusive — keep temperature, drop top_p (a 400 otherwise).
+    const sonnetBoth = buildAnthropicMessagesRequest({ ...base, model: 'claude-sonnet-4-6' });
+    expect(sonnetBoth).toMatchObject({ temperature: 0.1 });
+    expect(sonnetBoth).not.toHaveProperty('top_p');
+
+    // Only one of the pair set — forwarded unchanged on Claude 4+.
+    const sonnetTopPOnly = buildAnthropicMessagesRequest({
+      ...base,
+      temperature: undefined,
+      model: 'claude-sonnet-4-6',
+    });
+    expect(sonnetTopPOnly).toMatchObject({ top_p: 0.9 });
+    expect(sonnetTopPOnly).not.toHaveProperty('temperature');
+
+    // Claude 3.x accepts both together — neither dropped.
+    const sonnet35 = buildAnthropicMessagesRequest({
+      ...base,
+      model: 'claude-3-5-sonnet-20241022',
+    });
+    expect(sonnet35).toMatchObject({ temperature: 0.1, top_p: 0.9 });
   });
 
   it('maps OpenAI-style messages into Anthropic messages with a shared system block', () => {
@@ -616,7 +674,7 @@ describe('toAnthropicMessages — drift vs legacy OpenAI-detour path', () => {
       enableWebSearch: false,
     },
     {
-      name: 'Sonnet forwards explicit temperature + top_p',
+      name: 'Sonnet keeps temperature, drops top_p (Claude 4+ mutual exclusion)',
       req: {
         provider: 'anthropic',
         model: 'claude-sonnet-4-6',
@@ -710,6 +768,32 @@ describe('toAnthropicMessages — drift vs legacy OpenAI-detour path', () => {
       messages: [llm('1', 'user', 'hi')],
     });
     expect(body.model).toBe('claude-sonnet-4-6');
+  });
+
+  it('keeps an explicit top_p instead of injecting the default temperature', () => {
+    // The CLI passes temperatureDefault: 0.1. A request that explicitly sets
+    // only top_p must not get the default temperature filled in — on Claude 4+
+    // that would force the exclusivity guard to drop the user's explicit top_p.
+    const body = toAnthropicMessages(
+      {
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-6',
+        topP: 0.3,
+        messages: [llm('1', 'user', 'hi')],
+      },
+      { temperatureDefault: 0.1 },
+    );
+    expect(body).toMatchObject({ top_p: 0.3 });
+    expect(body).not.toHaveProperty('temperature');
+  });
+
+  it('still applies the default temperature when no sampling param is set', () => {
+    const body = toAnthropicMessages(
+      { provider: 'anthropic', model: 'claude-sonnet-4-6', messages: [llm('1', 'user', 'hi')] },
+      { temperatureDefault: 0.1 },
+    );
+    expect(body).toMatchObject({ temperature: 0.1 });
+    expect(body).not.toHaveProperty('top_p');
   });
 
   it('appends pause-turn replay turns as verbatim trailing assistant messages', () => {
