@@ -7,6 +7,33 @@ export function shouldAutoFetchProviderModels(params: {
   return params.hasKey && params.modelCount === 0 && !params.loading && !params.error;
 }
 
+/** Default backoff schedule for retrying a failed provider model-list fetch. */
+export const MODELS_RETRY_BASE_MS = 3000;
+export const MODELS_RETRY_CAP_MS = 30_000;
+export const MODELS_RETRY_MAX_ATTEMPTS = 3;
+
+/**
+ * Backoff delay (ms) before the next retry of a failed model-list fetch, or
+ * `null` once attempts are exhausted (stop retrying).
+ *
+ * `attempt` is the zero-based index of the retry about to be scheduled — i.e.
+ * after the initial fetch fails you call `nextModelsRetryDelayMs(0)` to size
+ * the first retry. Exponential (base · 2^attempt), clamped to `capMs`, capped at
+ * `maxAttempts` retries. Without this, a single transient failure leaves
+ * `shouldAutoFetchProviderModels` permanently false (the `!error` gate) and the
+ * selector is pinned to its hardcoded fallback list for the rest of the session.
+ */
+export function nextModelsRetryDelayMs(
+  attempt: number,
+  opts?: { baseMs?: number; capMs?: number; maxAttempts?: number },
+): number | null {
+  const maxAttempts = opts?.maxAttempts ?? MODELS_RETRY_MAX_ATTEMPTS;
+  if (attempt < 0 || attempt >= maxAttempts) return null;
+  const baseMs = opts?.baseMs ?? MODELS_RETRY_BASE_MS;
+  const capMs = opts?.capMs ?? MODELS_RETRY_CAP_MS;
+  return Math.min(capMs, baseMs * 2 ** attempt);
+}
+
 /**
  * Schedule an auto-fetch: immediate for the active provider, deferred via
  * requestIdleCallback (or setTimeout fallback) for all others.

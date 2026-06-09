@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { scheduleAutoFetch, shouldAutoFetchProviderModels } from './model-catalog-utils';
+import {
+  MODELS_RETRY_MAX_ATTEMPTS,
+  nextModelsRetryDelayMs,
+  scheduleAutoFetch,
+  shouldAutoFetchProviderModels,
+} from './model-catalog-utils';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -27,6 +32,27 @@ describe('shouldAutoFetchProviderModels', () => {
         error: 'Request failed',
       }),
     ).toBe(false);
+  });
+});
+
+describe('nextModelsRetryDelayMs', () => {
+  it('returns exponential backoff delays then null once attempts are exhausted', () => {
+    expect(nextModelsRetryDelayMs(0)).toBe(3000);
+    expect(nextModelsRetryDelayMs(1)).toBe(6000);
+    expect(nextModelsRetryDelayMs(2)).toBe(12000);
+    // default max is 3 retries → attempt index 3 is exhausted
+    expect(nextModelsRetryDelayMs(MODELS_RETRY_MAX_ATTEMPTS)).toBeNull();
+    expect(nextModelsRetryDelayMs(3)).toBeNull();
+  });
+
+  it('clamps to the cap and honors overrides', () => {
+    expect(nextModelsRetryDelayMs(0, { baseMs: 1000, capMs: 5000, maxAttempts: 5 })).toBe(1000);
+    expect(nextModelsRetryDelayMs(3, { baseMs: 1000, capMs: 5000, maxAttempts: 5 })).toBe(5000); // 8000 clamped
+    expect(nextModelsRetryDelayMs(5, { maxAttempts: 5 })).toBeNull();
+  });
+
+  it('treats negative attempts as exhausted (no retry)', () => {
+    expect(nextModelsRetryDelayMs(-1)).toBeNull();
   });
 });
 

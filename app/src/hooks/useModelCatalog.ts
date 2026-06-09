@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   CLOUDFLARE_MODELS,
   getPreferredProvider,
@@ -48,7 +48,11 @@ import { useAzureConfig, useBedrockConfig } from '@/hooks/useExperimentalProvide
 import { useTavilyConfig } from '@/hooks/useTavilyConfig';
 import type { ExperimentalDeployment } from '@/lib/experimental-providers';
 import { useVertexConfig, type VertexConfiguredMode } from '@/hooks/useVertexConfig';
-import { shouldAutoFetchProviderModels, scheduleAutoFetch } from './model-catalog-utils';
+import {
+  shouldAutoFetchProviderModels,
+  scheduleAutoFetch,
+  nextModelsRetryDelayMs,
+} from './model-catalog-utils';
 import type { AIProviderType } from '@/types';
 
 // ---------------------------------------------------------------------------
@@ -632,7 +636,22 @@ export function useModelCatalog(): ModelCatalog {
   const [googleUpdatedAt, setGoogleUpdatedAt] = useState<number | null>(null);
   const [openaiUpdatedAt, setOpenaiUpdatedAt] = useState<number | null>(null);
 
-  // Generic refresh helper
+  // Pending backoff-retry timers, cleared on unmount so a scheduled retry never
+  // fires setState after the hook is gone.
+  const retryTimersRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    const timers = retryTimersRef.current;
+    return () => {
+      for (const id of timers) window.clearTimeout(id);
+      timers.clear();
+    };
+  }, []);
+
+  // Generic refresh helper. On failure it schedules a bounded exponential
+  // backoff retry: without this, a single transient model-list failure sets the
+  // provider's error and `shouldAutoFetchProviderModels` stays false forever
+  // (the `!error` gate), pinning the selector to its hardcoded fallback list for
+  // the rest of the session until a manual refresh/remount.
   const refreshModels = useCallback(
     async (params: {
       hasKey: boolean;
@@ -646,18 +665,39 @@ export function useModelCatalog(): ModelCatalog {
       failureMessage: string;
     }) => {
       if (!params.hasKey || params.isLoading) return;
-      params.setLoading(true);
-      params.setError(null);
-      try {
-        const models = await params.fetchModels();
-        params.setModels(models);
-        params.setUpdatedAt(Date.now());
-        if (models.length === 0) params.setError(params.emptyMessage);
-      } catch (err) {
-        params.setError(err instanceof Error ? err.message : params.failureMessage);
-      } finally {
-        params.setLoading(false);
-      }
+      const run = async (attempt: number) => {
+        params.setLoading(true);
+        params.setError(null);
+        try {
+          const models = await params.fetchModels();
+          params.setModels(models);
+          params.setUpdatedAt(Date.now());
+          if (models.length === 0) params.setError(params.emptyMessage);
+        } catch (err) {
+          params.setError(err instanceof Error ? err.message : params.failureMessage);
+          const delay = nextModelsRetryDelayMs(attempt);
+          if (delay != null) {
+            // Structured log so a slow/flaky provider endpoint is visible to ops
+            // rather than silently degrading to the fallback list.
+            console.log(
+              JSON.stringify({
+                level: 'warn',
+                event: 'provider_models_fetch_retry_scheduled',
+                attempt: attempt + 1,
+                delayMs: delay,
+              }),
+            );
+            const id = window.setTimeout(() => {
+              retryTimersRef.current.delete(id);
+              void run(attempt + 1);
+            }, delay);
+            retryTimersRef.current.add(id);
+          }
+        } finally {
+          params.setLoading(false);
+        }
+      };
+      await run(0);
     },
     [],
   );
