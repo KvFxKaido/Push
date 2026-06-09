@@ -62,9 +62,12 @@ export async function* anthropicStream(
 
   // Neutral `push.stream.v1` wire body. Sampling scalars and the web-search flag
   // ride as neutral fields; the Worker's dual-accept neutral branch serializes
-  // them to Anthropic. Prefix-cache breakpoints are intentionally NOT sent — the
-  // legacy OpenAI-shape body never carried them on this path, so enabling web
-  // prefix caching is a separate, deliberate change, not a flip side effect.
+  // them to Anthropic. System-prompt prefix caching is preserved unchanged: the
+  // cacheable `toLLMMessages` output already bakes `cache_control` into the
+  // system message's content-part array, which rides through the wire and is
+  // honored by `toAnthropicMessages`. The separate `cacheBreakpointIndices`
+  // rolling-tail mechanism is intentionally NOT sent — the legacy OpenAI-shape
+  // body never carried it on this path, so enabling it is a deliberate change.
   const baseBody = toPushStreamWire(llmMessages, {
     provider: 'anthropic',
     model: req.model,
