@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import type { OpenAIChatRequest } from './openai-chat-types.ts';
+import type { OpenAIChatRequest, OpenAIContentPart, OpenAIMessage } from './openai-chat-types.ts';
+import type { LlmMessage, PushStreamRequest } from './provider-contract.ts';
+import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
 import {
+  anthropicModelRejectsSamplingParams,
   buildAnthropicMessagesRequest,
   createAnthropicTranslatedStream,
+  toAnthropicMessages,
 } from './openai-anthropic-bridge.ts';
 
 function createEventStreamResponse(lines: string[]): Response {
@@ -18,7 +22,59 @@ function createEventStreamResponse(lines: string[]): Response {
   );
 }
 
+describe('anthropicModelRejectsSamplingParams', () => {
+  it('rejects sampling params on Opus 4.7 and later (incl. suffix/tag variants)', () => {
+    for (const model of [
+      'claude-opus-4-7',
+      'claude-opus-4-8',
+      'claude-opus-4-8[1m]',
+      'claude-opus-4-7-20260101',
+      'claude-opus-4.8',
+      'claude-opus-4-7@20260101',
+      'claude-opus-5-0',
+      'CLAUDE-OPUS-4-8',
+    ]) {
+      expect(anthropicModelRejectsSamplingParams(model), model).toBe(true);
+    }
+  });
+
+  it('keeps sampling params on Opus 4.6 and earlier, Sonnet/Haiku, and non-Anthropic models', () => {
+    for (const model of [
+      'claude-opus-4-6',
+      'claude-opus-4-5',
+      'claude-opus-4-1',
+      'claude-opus-4-0',
+      'claude-opus-4-20250514', // dated Opus 4.0 — the date must not read as minor 20250514
+      'claude-sonnet-4-6',
+      'claude-haiku-4-5-20251001',
+      'minimax-m2.5',
+      'gpt-5.4',
+      '',
+    ]) {
+      expect(anthropicModelRejectsSamplingParams(model), model).toBe(false);
+    }
+    expect(anthropicModelRejectsSamplingParams(undefined)).toBe(false);
+    expect(anthropicModelRejectsSamplingParams(null)).toBe(false);
+  });
+});
+
 describe('buildAnthropicMessagesRequest', () => {
+  it('strips temperature/top_p for Opus 4.7+ but forwards them for accepting models', () => {
+    const base = {
+      messages: [{ role: 'user' as const, content: 'Hello' }],
+      stream: true,
+      temperature: 0.1,
+      top_p: 0.9,
+    };
+
+    const opus48 = buildAnthropicMessagesRequest({ ...base, model: 'claude-opus-4-8' });
+    expect(opus48).not.toHaveProperty('temperature');
+    expect(opus48).not.toHaveProperty('top_p');
+
+    const sonnet = buildAnthropicMessagesRequest({ ...base, model: 'claude-sonnet-4-6' });
+    expect(sonnet).toMatchObject({ temperature: 0.1, top_p: 0.9 });
+  });
+
   it('maps OpenAI-style messages into Anthropic messages with a shared system block', () => {
     const request: OpenAIChatRequest = {
       model: 'minimax-m2.5',
@@ -419,5 +475,256 @@ describe('createAnthropicTranslatedStream', () => {
       .filter((line) => line.startsWith('data: ') && !line.endsWith('[DONE]'))
       .some((line) => line.includes('reasoning_block'));
     expect(reasoningEmitted).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 2: direct neutral -> Anthropic serializer (toAnthropicMessages)
+//
+// `toAnthropicMessages` builds the Anthropic body straight from the neutral
+// `PushStreamRequest`, replacing the old two-step CLI path (neutral -> OpenAI
+// shape -> buildAnthropicMessagesRequest). This suite pins it byte-for-byte
+// against that legacy detour so Phase 3 can delete the detour with confidence.
+// (The CLI adapter's own body-capture suite, cli/tests/anthropic-stream.test.mjs,
+// is the independent oracle for the cache-tagging edges.)
+// ---------------------------------------------------------------------------
+
+/** Mirrors the pre-Phase-2 `cli/anthropic-stream.ts` cache tagger. */
+function legacyTagWithCacheControl(message: OpenAIMessage): void {
+  if (typeof message.content === 'string') {
+    message.content = [
+      { type: 'text', text: message.content, cache_control: { type: 'ephemeral' } },
+    ];
+    return;
+  }
+  if (Array.isArray(message.content) && message.content.length > 0) {
+    const lastPart: OpenAIContentPart | undefined = message.content[message.content.length - 1];
+    if (lastPart && lastPart.type === 'text') {
+      lastPart.cache_control = { type: 'ephemeral' };
+    }
+  }
+}
+
+/**
+ * Reproduces the exact pre-Phase-2 path: PushStreamRequest -> OpenAI Chat
+ * shape -> buildAnthropicMessagesRequest -> re-attach `model`. This is the
+ * behavior `toAnthropicMessages` must preserve.
+ */
+function legacyDetour(
+  req: PushStreamRequest<LlmMessage>,
+  opts: { model: string; enableWebSearch: boolean },
+): Record<string, unknown> {
+  const openAIMessages: OpenAIMessage[] = [];
+  const systemPrependOffset =
+    typeof req.systemPromptOverride === 'string' && req.systemPromptOverride ? 1 : 0;
+  if (systemPrependOffset === 1) {
+    openAIMessages.push({ role: 'system', content: req.systemPromptOverride as string });
+  }
+  for (const m of req.messages) {
+    const msg: OpenAIMessage = { role: m.role, content: m.content };
+    if (m.reasoningBlocks && m.reasoningBlocks.length > 0) {
+      msg.reasoning_blocks = m.reasoningBlocks;
+    }
+    openAIMessages.push(msg);
+  }
+  const rawBreakpoints = req.cacheBreakpointIndices;
+  if (Array.isArray(rawBreakpoints) && rawBreakpoints.length > 0) {
+    if (openAIMessages[0]?.role === 'system') legacyTagWithCacheControl(openAIMessages[0]);
+    for (const reqIndex of rawBreakpoints.slice(-MAX_ROLLING_CACHE_BREAKPOINTS)) {
+      const wireIndex = reqIndex + systemPrependOffset;
+      const target = openAIMessages[wireIndex];
+      if (!target) continue;
+      if (wireIndex === 0 && openAIMessages[0]?.role === 'system') continue;
+      legacyTagWithCacheControl(target);
+    }
+  }
+  const openAIRequest: OpenAIChatRequest = {
+    model: opts.model,
+    messages: openAIMessages,
+    stream: true,
+    temperature: req.temperature ?? 0.1,
+    ...(req.topP !== undefined ? { top_p: req.topP } : {}),
+    ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
+    ...(opts.enableWebSearch ? { anthropic_web_search: true } : {}),
+  };
+  return { ...buildAnthropicMessagesRequest(openAIRequest), model: opts.model };
+}
+
+function llm(
+  id: string,
+  role: LlmMessage['role'],
+  content: string,
+  reasoningBlocks?: LlmMessage['reasoningBlocks'],
+): LlmMessage {
+  return { id, role, content, timestamp: 0, ...(reasoningBlocks ? { reasoningBlocks } : {}) };
+}
+
+describe('toAnthropicMessages — drift vs legacy OpenAI-detour path', () => {
+  const corpus: Array<{
+    name: string;
+    req: PushStreamRequest<LlmMessage>;
+    enableWebSearch: boolean;
+  }> = [
+    {
+      name: 'single user turn (8192 default, 0.1 temp default)',
+      req: {
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-6',
+        messages: [llm('1', 'user', 'hi')],
+      },
+      enableWebSearch: false,
+    },
+    {
+      name: 'system override + multi-turn + web search',
+      req: {
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-6',
+        systemPromptOverride: 'Be terse.',
+        messages: [
+          llm('1', 'user', 'Hi'),
+          llm('2', 'assistant', 'Hello'),
+          llm('3', 'user', 'More'),
+        ],
+      },
+      enableWebSearch: true,
+    },
+    {
+      name: 'signed reasoning blocks prepended on assistant turn',
+      req: {
+        provider: 'anthropic',
+        model: 'claude-opus-4-7',
+        messages: [
+          llm('1', 'user', 'Why is the sky blue?'),
+          llm('2', 'assistant', 'Rayleigh scattering.', [
+            { type: 'thinking', text: 'Recall optics.', signature: 'sig-abc' },
+            { type: 'redacted_thinking', data: 'enc-xyz' },
+          ]),
+          llm('3', 'user', 'More'),
+        ],
+      },
+      enableWebSearch: false,
+    },
+    {
+      name: 'Opus 4.8 strips temperature + top_p',
+      req: {
+        provider: 'anthropic',
+        model: 'claude-opus-4-8',
+        temperature: 0.4,
+        topP: 0.9,
+        messages: [llm('1', 'user', 'hi')],
+      },
+      enableWebSearch: false,
+    },
+    {
+      name: 'Sonnet forwards explicit temperature + top_p',
+      req: {
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-6',
+        temperature: 0.7,
+        topP: 0.5,
+        messages: [llm('1', 'user', 'hi')],
+      },
+      enableWebSearch: false,
+    },
+    {
+      name: 'cache breakpoints: override system + tail user',
+      req: {
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-6',
+        systemPromptOverride: 'sys',
+        messages: [llm('1', 'user', 'a'), llm('2', 'assistant', 'b'), llm('3', 'user', 'c')],
+        cacheBreakpointIndices: [2],
+      },
+      enableWebSearch: false,
+    },
+    {
+      name: 'cache breakpoints capped at MAX_ROLLING_CACHE_BREAKPOINTS',
+      req: {
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-6',
+        systemPromptOverride: 'sys',
+        messages: [0, 1, 2, 3, 4, 5].map((i) => llm(String(i), 'user', `q${i}`)),
+        cacheBreakpointIndices: [0, 1, 2, 3, 4, 5],
+      },
+      enableWebSearch: true,
+    },
+    {
+      name: 'user-first transcript: breakpoint 0 tags the user turn',
+      req: {
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-6',
+        messages: [llm('0', 'user', 'u0'), llm('1', 'user', 'u1')],
+        cacheBreakpointIndices: [0],
+      },
+      enableWebSearch: false,
+    },
+    {
+      name: 'system role inside messages (no override)',
+      req: {
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-6',
+        messages: [llm('0', 'system', 'sysmsg'), llm('1', 'user', 'u1')],
+        cacheBreakpointIndices: [0, 1],
+      },
+      enableWebSearch: false,
+    },
+    {
+      name: 'explicit maxTokens',
+      req: {
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-6',
+        maxTokens: 2048,
+        messages: [llm('1', 'user', 'hi')],
+      },
+      enableWebSearch: false,
+    },
+    {
+      name: 'empty breakpoints array tags nothing',
+      req: {
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-6',
+        systemPromptOverride: 'sys',
+        messages: [llm('1', 'user', 'hi')],
+        cacheBreakpointIndices: [],
+      },
+      enableWebSearch: false,
+    },
+  ];
+
+  for (const { name, req, enableWebSearch } of corpus) {
+    it(`byte-equal to legacy detour: ${name}`, () => {
+      const direct = toAnthropicMessages(req, {
+        modelOverride: req.model,
+        enableWebSearch,
+        temperatureDefault: 0.1,
+      });
+      const legacy = legacyDetour(req, { model: req.model, enableWebSearch });
+      expect(direct).toEqual(legacy);
+    });
+  }
+
+  it('falls back to req.model when no modelOverride is given, and emits it', () => {
+    const body = toAnthropicMessages({
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+      messages: [llm('1', 'user', 'hi')],
+    });
+    expect(body.model).toBe('claude-sonnet-4-6');
+  });
+
+  it('appends pause-turn replay turns as verbatim trailing assistant messages', () => {
+    const replayA = [{ type: 'text', text: 'paused-a' }];
+    const replayB = [{ type: 'text', text: 'paused-b' }];
+    const body = toAnthropicMessages(
+      { provider: 'anthropic', model: 'claude-sonnet-4-6', messages: [llm('1', 'user', 'hi')] },
+      {
+        modelOverride: 'claude-sonnet-4-6',
+        enableWebSearch: false,
+        replayAssistantTurns: [replayA, replayB],
+      },
+    );
+    const messages = body.messages as Array<Record<string, unknown>>;
+    expect(messages[messages.length - 2]).toEqual({ role: 'assistant', content: replayA });
+    expect(messages[messages.length - 1]).toEqual({ role: 'assistant', content: replayB });
   });
 });

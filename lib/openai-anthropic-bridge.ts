@@ -3,6 +3,34 @@ import type {
   OpenAIContentPart,
   OpenAIReasoningBlock,
 } from './openai-chat-types.ts';
+import type { LlmMessage, PushStreamRequest } from './provider-contract.ts';
+import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
+
+/**
+ * Anthropic removed `temperature`, `top_p`, and `top_k` on Opus 4.7 and every
+ * later Opus (4.8 inherits the same request surface). Sending any of them
+ * returns a 400 (`invalid_request_error`). Sonnet 4.6, Haiku 4.5, and
+ * Opus 4.6-and-earlier still accept them.
+ *
+ * The model id reaching this bridge is the native Anthropic form
+ * (`claude-opus-4-7`, `claude-opus-4-8`, optionally date- or `@`-suffixed, or
+ * the `[1m]` long-context tag). We parse the Opus major/minor and reject 4.7+
+ * (and any future Opus 5+). The single-digit-minor guard `(?!\d)` keeps the
+ * dated 4.0 id `claude-opus-4-20250514` from being misread as "Opus 4.<date>".
+ *
+ * Non-Opus models (and non-Anthropic models that pass through this bridge, e.g.
+ * Zen-Go's `minimax-*`) return false, so their sampling params flow unchanged.
+ */
+export function anthropicModelRejectsSamplingParams(model: string | null | undefined): boolean {
+  if (typeof model !== 'string') return false;
+  const match = model.toLowerCase().match(/claude-opus-(\d+)(?:[-.](\d{1,2})(?!\d))?/);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = match[2] === undefined ? 0 : Number(match[2]);
+  if (major > 4) return true; // future Opus generations inherit the removed surface
+  if (major < 4) return false; // Opus 3 and earlier accepted sampling params
+  return minor >= 7; // Opus 4.7 / 4.8 / 4.9 …
+}
 
 function dataUrlToAnthropicImagePart(dataUrl: string): Record<string, unknown> | null {
   const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
@@ -194,33 +222,106 @@ export function buildAnthropicMessagesRequest(
     }
   }
 
-  const body: Record<string, unknown> = {
-    messages:
-      anthropicMessages.length > 0
-        ? anthropicMessages
-        : [{ role: 'user', content: [{ type: 'text', text: '' }] }],
-    max_tokens:
+  return assembleAnthropicBody({
+    anthropicMessages,
+    systemBlocks,
+    systemHasCacheControl,
+    maxTokens:
       typeof request.max_completion_tokens === 'number'
         ? request.max_completion_tokens
         : typeof request.max_tokens === 'number'
           ? request.max_tokens
           : 8192,
     stream: Boolean(request.stream),
+    samplingModel: request.model,
+    temperature: request.temperature,
+    topP: request.top_p,
+    enableWebSearch: request.anthropic_web_search === true,
+    anthropicVersion: options?.anthropicVersion,
+    // `buildAnthropicMessagesRequest` intentionally omits `model` — callers
+    // re-attach it (the body translation is provider-version-agnostic).
+  });
+}
+
+/**
+ * Final body assembly shared by both entry points — the OpenAI-shape bridge
+ * (`buildAnthropicMessagesRequest`) and the neutral serializer
+ * (`toAnthropicMessages`). Keeping the request-field logic (max_tokens,
+ * stream, system flatten/array, sampling-capability gate, web search) in one
+ * place means the two paths can only drift on message conversion, which the
+ * drift test in `openai-anthropic-bridge.test.ts` pins.
+ */
+interface AnthropicBodyAssembly {
+  anthropicMessages: Array<Record<string, unknown>>;
+  systemBlocks: Array<Record<string, unknown>>;
+  systemHasCacheControl: boolean;
+  maxTokens: number;
+  stream: boolean;
+  /** Model id consulted ONLY for the sampling-capability gate. */
+  samplingModel: string | null | undefined;
+  temperature?: number;
+  topP?: number;
+  enableWebSearch: boolean;
+  anthropicVersion?: string;
+  /**
+   * When set, emitted as the top-level `model`. `buildAnthropicMessagesRequest`
+   * leaves it undefined (its callers re-attach `model`); `toAnthropicMessages`
+   * sets it so the body is complete.
+   */
+  emitModel?: string;
+}
+
+function assembleAnthropicBody(parts: AnthropicBodyAssembly): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    messages:
+      parts.anthropicMessages.length > 0
+        ? parts.anthropicMessages
+        : [{ role: 'user', content: [{ type: 'text', text: '' }] }],
+    max_tokens: parts.maxTokens,
+    stream: parts.stream,
   };
 
-  if (options?.anthropicVersion) {
-    body.anthropic_version = options.anthropicVersion;
+  if (typeof parts.emitModel === 'string' && parts.emitModel.length > 0) {
+    body.model = parts.emitModel;
   }
-  if (systemBlocks.length > 0) {
-    body.system = systemHasCacheControl
-      ? systemBlocks
-      : systemBlocks.map((p) => p.text).join('\n\n');
+  if (parts.anthropicVersion) {
+    body.anthropic_version = parts.anthropicVersion;
   }
-  if (typeof request.temperature === 'number') {
-    body.temperature = request.temperature;
+  if (parts.systemBlocks.length > 0) {
+    body.system = parts.systemHasCacheControl
+      ? parts.systemBlocks
+      : parts.systemBlocks.map((p) => p.text).join('\n\n');
   }
-  if (typeof request.top_p === 'number') {
-    body.top_p = request.top_p;
+
+  // Sampling params are gated on model capability. Opus 4.7+ removed
+  // temperature/top_p/top_k (a 400 if sent), and the OpenAI-canonical wire
+  // carries them as first-class fields, so without this guard every caller
+  // that sets a sampling param — including the CLI, which defaults
+  // `temperature: 0.1` on every Anthropic turn — hard-fails on Opus 4.7/4.8.
+  // We never forward `top_k` (the OpenAI shape doesn't carry it and Anthropic
+  // rejects it on the same models anyway).
+  if (anthropicModelRejectsSamplingParams(parts.samplingModel)) {
+    if (typeof parts.temperature === 'number' || typeof parts.topP === 'number') {
+      // Symmetric structured log: observable behavior (a user-set param is
+      // being dropped) gets a line so the strip is visible to ops rather than
+      // silently swallowed. Pairs with the no-strip path being the default.
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'anthropic_sampling_params_stripped',
+          model: parts.samplingModel,
+          droppedTemperature: typeof parts.temperature === 'number',
+          droppedTopP: typeof parts.topP === 'number',
+        }),
+      );
+    }
+  } else {
+    if (typeof parts.temperature === 'number') {
+      body.temperature = parts.temperature;
+    }
+    if (typeof parts.topP === 'number') {
+      body.top_p = parts.topP;
+    }
   }
 
   // Anthropic's native server-side web search. The model emits
@@ -230,14 +331,162 @@ export function buildAnthropicMessagesRequest(
   // narration including any inline citations. Multi-turn round-trip of
   // the search blocks is lossy — but the model can simply re-search on
   // the next turn, so functionally it works.
-  // Strict `=== true` so a malformed input (e.g. the string `"false"`) can't
-  // accidentally enable the tool. The Worker guardrails don't normalize
-  // Push-private extension fields, so the bridge is the canonical check.
-  if (request.anthropic_web_search === true) {
+  if (parts.enableWebSearch) {
     body.tools = [{ type: 'web_search_20250305', name: 'web_search' }];
   }
 
   return body;
+}
+
+/** Options for the neutral `PushStreamRequest` → Anthropic Messages serializer. */
+export interface ToAnthropicMessagesOptions {
+  /**
+   * `anthropic_version` body field (Vertex's `vertex-2023-10-16`). Omit for
+   * the direct first-party API, which takes the version as a header instead.
+   */
+  anthropicVersion?: string;
+  /**
+   * Whether to attach the native `web_search_20250305` tool. The caller owns
+   * the policy decision (e.g. the CLI's env-driven default-on). Defaults to
+   * `req.anthropicWebSearch === true`.
+   */
+  enableWebSearch?: boolean;
+  /** Model id for the body + sampling gate. Defaults to `req.model`. */
+  modelOverride?: string;
+  /**
+   * Temperature applied when `req.temperature` is unset. The CLI passes 0.1 to
+   * preserve its historical default; the sampling gate still strips it on
+   * Opus 4.7+. Omit for no default.
+   */
+  temperatureDefault?: number;
+  /** max_tokens applied when `req.maxTokens` is unset. Defaults to 8192. */
+  maxTokensDefault?: number;
+  /** Whether to set `stream: true`. Defaults to true. */
+  stream?: boolean;
+  /**
+   * Pause-turn continuation: prior paused assistant `content[]` arrays,
+   * appended verbatim as trailing assistant turns (oldest first). Anthropic
+   * treats them as continuation context, so the text/reasoning reconstruction
+   * is skipped — they ride through raw, mirroring the bridge's
+   * `assistant_content_blocks` handling.
+   */
+  replayAssistantTurns?: Array<Array<Record<string, unknown>>>;
+}
+
+/**
+ * Build a complete Anthropic Messages API body **directly** from the neutral
+ * `PushStreamRequest` — no OpenAI Chat Completions intermediate. This is the
+ * Phase 2 serializer from `docs/runbooks/Provider Request Normalization.md`:
+ * it folds the system-prompt hoist, message conversion, cache-control tagging,
+ * and request-field assembly that the CLI previously did in two steps
+ * (neutral → OpenAI shape, then `buildAnthropicMessagesRequest`) into one pass.
+ *
+ * Behavior is pinned byte-for-byte against the old two-step path by the drift
+ * test in `openai-anthropic-bridge.test.ts` and by the CLI adapter's
+ * body-capture suite (`cli/tests/anthropic-stream.test.mjs`).
+ */
+export function toAnthropicMessages(
+  req: PushStreamRequest<LlmMessage>,
+  options?: ToAnthropicMessagesOptions,
+): Record<string, unknown> {
+  const messages = Array.isArray(req.messages) ? req.messages : [];
+  const hasOverride =
+    typeof req.systemPromptOverride === 'string' && req.systemPromptOverride.length > 0;
+
+  // Resolve cache-control tagging to message indices, reproducing the
+  // wire-tagging that `cli/anthropic-stream.ts` used to do on the OpenAI
+  // intermediate: when any breakpoint is present the leading system block is
+  // tagged, and each (capped) breakpoint index tags its `req.messages` entry.
+  // The leading system is tagged via its own path, so the breakpoint loop
+  // skips index 0 when the head is an untagged-by-override system message —
+  // matching the old `wireIndex === 0 && role === 'system'` guard.
+  const rawBreakpoints = req.cacheBreakpointIndices;
+  const hasBreakpoints = Array.isArray(rawBreakpoints) && rawBreakpoints.length > 0;
+  const leadingIsSystem = hasOverride || messages[0]?.role === 'system';
+  const offset = hasOverride ? 1 : 0;
+  const tagLeadingSystem = hasBreakpoints && leadingIsSystem;
+  const taggedIndices = new Set<number>();
+  if (hasBreakpoints) {
+    for (const reqIndex of (rawBreakpoints as number[]).slice(-MAX_ROLLING_CACHE_BREAKPOINTS)) {
+      if (reqIndex < 0 || reqIndex >= messages.length) continue;
+      const wireIndex = reqIndex + offset;
+      if (wireIndex === 0 && leadingIsSystem) continue;
+      taggedIndices.add(reqIndex);
+    }
+  }
+
+  const systemBlocks: Array<Record<string, unknown>> = [];
+  let systemHasCacheControl = false;
+  const anthropicMessages: Array<Record<string, unknown>> = [];
+
+  // Reuse the leaf content converter so tagged/untagged block shapes match the
+  // bridge exactly: a tagged message is passed as a `cache_control`-bearing
+  // part array, an untagged one as a bare string.
+  const toContent = (content: string, tagged: boolean): Array<Record<string, unknown>> =>
+    tagged
+      ? convertOpenAIContentToAnthropic([
+          { type: 'text', text: content, cache_control: { type: 'ephemeral' } },
+        ])
+      : convertOpenAIContentToAnthropic(content);
+
+  const pushSystem = (content: string, tagged: boolean): void => {
+    for (const part of toContent(content, tagged)) {
+      if (part.type === 'text' && typeof part.text === 'string' && part.text.length > 0) {
+        if (part.cache_control) systemHasCacheControl = true;
+        systemBlocks.push(part);
+      }
+    }
+  };
+
+  if (hasOverride) {
+    pushSystem(req.systemPromptOverride as string, tagLeadingSystem);
+  }
+
+  messages.forEach((m, i) => {
+    const tagged =
+      taggedIndices.has(i) ||
+      // Head system message with no override is tagged via the leading path.
+      (!hasOverride && i === 0 && tagLeadingSystem && m.role === 'system');
+
+    if (m.role === 'system') {
+      pushSystem(m.content, tagged);
+      return;
+    }
+
+    const contentBlocks = toContent(m.content, tagged);
+    if (m.role === 'assistant') {
+      const reasoning = reasoningBlocksToAnthropic(m.reasoningBlocks);
+      anthropicMessages.push({
+        role: 'assistant',
+        content: reasoning.length > 0 ? [...reasoning, ...contentBlocks] : contentBlocks,
+      });
+    } else {
+      anthropicMessages.push({ role: 'user', content: contentBlocks });
+    }
+  });
+
+  for (const blocks of options?.replayAssistantTurns ?? []) {
+    if (blocks.length > 0) {
+      anthropicMessages.push({ role: 'assistant', content: blocks });
+    }
+  }
+
+  const model = options?.modelOverride ?? req.model;
+  return assembleAnthropicBody({
+    anthropicMessages,
+    systemBlocks,
+    systemHasCacheControl,
+    maxTokens:
+      typeof req.maxTokens === 'number' ? req.maxTokens : (options?.maxTokensDefault ?? 8192),
+    stream: options?.stream ?? true,
+    samplingModel: model,
+    temperature:
+      typeof req.temperature === 'number' ? req.temperature : options?.temperatureDefault,
+    topP: req.topP,
+    enableWebSearch: options?.enableWebSearch ?? req.anthropicWebSearch === true,
+    anthropicVersion: options?.anthropicVersion,
+    emitModel: model,
+  });
 }
 
 export function createAnthropicTranslatedStream(
