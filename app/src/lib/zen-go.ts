@@ -11,6 +11,11 @@ export type ZenGoTransport = 'openai' | 'anthropic';
 //   - the MiniMax family (m2.5/m2.7/m3) is published under @ai-sdk/anthropic.
 //     These ids also accept oa-compat, so flipping any MiniMax id back to openai
 //     is a safe one-line change.
+// NOTE: /zen/go/v1/messages is a single fixed URL shared by all of these models,
+// so the model id MUST travel in the request body — `handleZenGoChat` emits it
+// (unlike Vertex, which carries the model in the URL path). Dropping the body
+// `model` here makes the model undispatchable upstream; see the regression
+// where every MiniMax/Qwen id 400'd on a model-less body.
 const ZEN_GO_ANTHROPIC_MODELS = new Set([
   'minimax-m2.5',
   'minimax-m2.7',
