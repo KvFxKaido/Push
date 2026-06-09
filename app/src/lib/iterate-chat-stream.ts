@@ -50,6 +50,7 @@ import {
   SpanKind,
   SpanStatusCode,
 } from './tracing';
+import { ProviderStreamError } from './stream-error';
 
 type IterateChatStreamTimeoutReason = 'event' | 'content' | 'total' | 'user';
 
@@ -207,9 +208,11 @@ export async function iterateChatStream<M extends LlmMessage>(
   }
 
   // Build a single Error instance on timeout so telemetry's
-  // `terminalError` and the caller's `onError` share stack + identity.
+  // `terminalError` and the caller's `onError` share stack + identity. Marked
+  // `retryable` — a stall/timeout before completion is transient, so the chat
+  // round loop may re-attempt it (guarded by the no-partial-output check).
   const buildTimeoutError = (reason: 'event' | 'content' | 'total'): Error =>
-    new Error(renderTimeoutMessage(reason, timeouts ?? {}));
+    new ProviderStreamError(renderTimeoutMessage(reason, timeouts ?? {}), { retryable: true });
 
   // Telemetry counters tallied during iteration.
   let eventCount = 0;

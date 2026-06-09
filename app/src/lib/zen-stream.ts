@@ -19,6 +19,7 @@ import { getZenKey } from '@/hooks/useZenConfig';
 import { PROVIDER_URLS, ZEN_GO_URLS, getZenGoMode } from './providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
+import { ProviderStreamError } from './stream-error';
 
 export async function* zenStream(
   req: PushStreamRequest<ChatMessage>,
@@ -88,7 +89,9 @@ export async function* zenStream(
     } catch {
       detail = errBody ? errBody.slice(0, 200) : 'empty body';
     }
-    throw new Error(`OpenCode Zen ${response.status}: ${detail}`);
+    throw new ProviderStreamError(`OpenCode Zen ${response.status}: ${detail}`, {
+      status: response.status,
+    });
   }
 
   if (!response.body) {

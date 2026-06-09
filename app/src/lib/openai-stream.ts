@@ -25,6 +25,7 @@ import { getOpenAIKey } from '@/hooks/useOpenAIConfig';
 import { PROVIDER_URLS } from './providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
+import { ProviderStreamError } from './stream-error';
 
 export async function* openaiStream(
   req: PushStreamRequest<ChatMessage>,
@@ -89,7 +90,7 @@ export async function* openaiStream(
     // Worker's handleOpenAIChat already prefixes its JSON error with
     // `OpenAI ${status}: …`, so don't re-prefix here.
     const message = detail.startsWith('OpenAI ') ? detail : `OpenAI ${response.status}: ${detail}`;
-    throw new Error(message);
+    throw new ProviderStreamError(message, { status: response.status });
   }
 
   if (!response.body) {

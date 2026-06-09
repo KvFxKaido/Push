@@ -27,6 +27,7 @@ import { PROVIDER_URLS } from './providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
 import { isNativeWebSearchEnabled } from './web-search-mode';
+import { ProviderStreamError } from './stream-error';
 
 export async function* anthropicStream(
   req: PushStreamRequest<ChatMessage>,
@@ -115,7 +116,7 @@ export async function* anthropicStream(
       const message = detail.startsWith('Anthropic ')
         ? detail
         : `Anthropic ${response.status}: ${detail}`;
-      throw new Error(message);
+      throw new ProviderStreamError(message, { status: response.status });
     }
 
     if (!response.body) {

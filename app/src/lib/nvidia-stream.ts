@@ -22,6 +22,7 @@ import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
 import { PROVIDER_URLS } from './providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
+import { ProviderStreamError } from './stream-error';
 
 export async function* nvidiaStream(
   req: PushStreamRequest<ChatMessage>,
@@ -83,7 +84,9 @@ export async function* nvidiaStream(
     } catch {
       detail = errBody ? errBody.slice(0, 200) : 'empty body';
     }
-    throw new Error(`Nvidia NIM ${response.status}: ${detail}`);
+    throw new ProviderStreamError(`Nvidia NIM ${response.status}: ${detail}`, {
+      status: response.status,
+    });
   }
 
   if (!response.body) {

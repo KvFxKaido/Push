@@ -19,6 +19,7 @@ import { getKilocodeKey } from '@/hooks/useKilocodeConfig';
 import { PROVIDER_URLS } from './providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
+import { ProviderStreamError } from './stream-error';
 
 export async function* kilocodeStream(
   req: PushStreamRequest<ChatMessage>,
@@ -84,7 +85,9 @@ export async function* kilocodeStream(
     } catch {
       detail = errBody ? errBody.slice(0, 200) : 'empty body';
     }
-    throw new Error(`Kilo Code ${response.status}: ${detail}`);
+    throw new ProviderStreamError(`Kilo Code ${response.status}: ${detail}`, {
+      status: response.status,
+    });
   }
 
   if (!response.body) {
