@@ -116,6 +116,17 @@ drift-test corpus in `lib/openai-anthropic-bridge.test.ts`, and the CLI adapter'
 body-capture suite (`cli/tests/anthropic-stream.test.mjs`) is the independent
 oracle for the cache-tagging edges.
 
+*Multimodal follow-up (✅ shipped).* `LlmMessage` gained an additive optional
+`contentParts` field (`string | text/image parts`; `content` stays the text
+string every existing reader uses, so zero ripple). `toAnthropicMessages`
+serializes `contentParts` when present — preserving text + image content
+(base64 `data:` URLs → base64 source, `http(s)` URLs → url source) and tagging
+the last text part for cache breakpoints. Crucially it **fails loudly** (throws)
+on an unsupported or malformed part rather than silently dropping it, the way
+the legacy OpenAI-shape converter does. This is the prerequisite that lets the
+neutral wire carry the web transcript's existing multimodal payloads — without
+it, the Worker request-contract migration (below) would have dropped images.
+
 **Phase 3 — two axes, then retire the OpenAI-canonical assumption.**
 - *Request contract (web).* Move the web client↔Worker request body off OpenAI
   shape onto the neutral wire so the Worker serializes via `toAnthropicMessages`
@@ -123,9 +134,18 @@ oracle for the cache-tagging edges.
   it's a network contract between a long-lived browser client and an
   atomically-deployed Worker — so it has its own plan:
   [`Anthropic Worker Contract Migration.md`](<Anthropic Worker Contract Migration.md>).
-- *Response contract (SSE).* Have `createAnthropicTranslatedStream` emit
-  `PushStreamEvent` directly rather than rebuilding OpenAI SSE chunks. Separate,
-  independently shippable axis.
+- *Response contract (SSE). ✅ Phase 3a shipped (CLI).* `anthropicEventStream`
+  (in `lib/openai-anthropic-bridge.ts`) parses Anthropic SSE **directly** into
+  `PushStreamEvent`s — no OpenAI-SSE intermediate. `cli/anthropic-stream.ts` now
+  consumes it, dropping the old `createAnthropicTranslatedStream → openAISSEPump`
+  serialize-then-reparse round-trip. A drift-test corpus pins it event-for-event
+  against that legacy path. The **web Worker still uses
+  `createAnthropicTranslatedStream`** to emit OpenAI SSE over its response wire —
+  that wire is the client↔Worker response contract, so flipping it has the same
+  rolling-deploy risk as the request contract and lands with the response-axis
+  half of the Worker-contract migration (at which point `createAnthropicTranslatedStream`
+  is rebuilt on `anthropicEventStream` or retired). Until then both coexist,
+  guarded by the drift test.
 
 Repeat both for Gemini. Once no provider depends on OpenAI-shape as an
 intermediate, delete the re-emit-to-OpenAI step and make `toOpenAIChat` an

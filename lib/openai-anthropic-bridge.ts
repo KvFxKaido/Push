@@ -3,8 +3,10 @@ import type {
   OpenAIContentPart,
   OpenAIReasoningBlock,
 } from './openai-chat-types.ts';
-import type { LlmMessage, PushStreamRequest } from './provider-contract.ts';
+import type { LlmContentPart, LlmMessage, PushStreamRequest } from './provider-contract.ts';
+import type { PushStreamEvent, StreamUsage } from './provider-contract.ts';
 import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
+import { stripTemplateTokens } from './openai-sse-pump.ts';
 
 /**
  * Anthropic removed `temperature`, `top_p`, and `top_k` on Opus 4.7 and every
@@ -120,6 +122,76 @@ function convertOpenAIContentToAnthropic(
   }
 
   return parts.length > 0 ? parts : [{ type: 'text', text: '' }];
+}
+
+/**
+ * Convert an `image_url.url` to an Anthropic image block. A `data:image/…;base64`
+ * URL becomes a base64 source; an `http(s)` URL becomes a `url` source. Anything
+ * else throws — the neutral multimodal path fails loudly rather than dropping an
+ * image the user attached (unlike `dataUrlToAnthropicImagePart`, which returns
+ * null for the OpenAI-shape path's silent best-effort handling).
+ */
+function imageUrlToAnthropicImageBlock(url: string): Record<string, unknown> {
+  const dataPart = dataUrlToAnthropicImagePart(url);
+  if (dataPart) return dataPart;
+  if (/^https?:\/\//i.test(url)) {
+    return { type: 'image', source: { type: 'url', url } };
+  }
+  throw new Error(
+    `toAnthropicMessages: cannot represent image (expected a data:image base64 URL or an http(s) URL): ${url.slice(0, 48)}`,
+  );
+}
+
+/**
+ * Strict multimodal content converter for the neutral `LlmMessage.contentParts`
+ * path. Preserves text + image parts and, unlike `convertOpenAIContentToAnthropic`
+ * (which silently drops anything it doesn't recognize), **throws** on an
+ * unsupported or malformed part — so image content can never be silently lost on
+ * the wire. `tagLast` adds the `cache_control` breakpoint to the final text block,
+ * mirroring the string path's tagging.
+ */
+function contentPartsToAnthropic(
+  parts: readonly LlmContentPart[],
+  tagLast: boolean,
+): Array<Record<string, unknown>> {
+  const blocks: Array<Record<string, unknown>> = [];
+  for (const rawPart of parts) {
+    const part = rawPart as {
+      type?: unknown;
+      text?: unknown;
+      image_url?: unknown;
+      cache_control?: unknown;
+    };
+    if (part.type === 'text' && typeof part.text === 'string') {
+      const block: Record<string, unknown> = { type: 'text', text: part.text };
+      if (part.cache_control) block.cache_control = part.cache_control;
+      blocks.push(block);
+      continue;
+    }
+    if (
+      part.type === 'image_url' &&
+      part.image_url &&
+      typeof part.image_url === 'object' &&
+      typeof (part.image_url as { url?: unknown }).url === 'string'
+    ) {
+      const block = imageUrlToAnthropicImageBlock((part.image_url as { url: string }).url);
+      if (part.cache_control) block.cache_control = part.cache_control;
+      blocks.push(block);
+      continue;
+    }
+    throw new Error(
+      `toAnthropicMessages: unsupported or malformed content part (type: ${JSON.stringify(part.type)})`,
+    );
+  }
+  if (tagLast) {
+    for (let i = blocks.length - 1; i >= 0; i -= 1) {
+      if (blocks[i].type === 'text') {
+        blocks[i].cache_control = { type: 'ephemeral' };
+        break;
+      }
+    }
+  }
+  return blocks.length > 0 ? blocks : [{ type: 'text', text: '' }];
 }
 
 function buildOpenAISseChunk(params: {
@@ -492,11 +564,18 @@ export function toAnthropicMessages(
       (!hasOverride && i === 0 && tagLeadingSystem && m.role === 'system');
 
     if (m.role === 'system') {
+      // System blocks are text-only in Anthropic; the web's materialized system
+      // message is always a plain string, so `content` is authoritative here.
       pushSystem(m.content, tagged);
       return;
     }
 
-    const contentBlocks = toContent(m.content, tagged);
+    // Prefer the rich multimodal representation when present so image content is
+    // carried (and loudly validated), not flattened to `content`'s text.
+    const contentBlocks =
+      m.contentParts && m.contentParts.length > 0
+        ? contentPartsToAnthropic(m.contentParts, tagged)
+        : toContent(m.content, tagged);
     if (m.role === 'assistant') {
       const reasoning = reasoningBlocksToAnthropic(m.reasoningBlocks);
       anthropicMessages.push({
@@ -837,4 +916,273 @@ export function createAnthropicTranslatedStream(
       }
     },
   });
+}
+
+/**
+ * Phase 3a (see `docs/runbooks/Provider Request Normalization.md`): parse the
+ * Anthropic Messages-API SSE stream **directly into neutral `PushStreamEvent`s**,
+ * with no OpenAI Chat-Completions SSE intermediate. This is the inverse of
+ * `createAnthropicTranslatedStream` (which rebuilds OpenAI SSE bytes for the web
+ * Worker's response wire) — same parse, neutral output.
+ *
+ * The CLI consumes this directly, dropping the old
+ * `createAnthropicTranslatedStream → openAISSEPump` serialize-then-reparse
+ * round-trip. The web Worker still uses `createAnthropicTranslatedStream` until
+ * the response-contract migration (the deferred SSE axis), so both exist for
+ * now; the drift test in `openai-anthropic-bridge.test.ts` pins them to emit the
+ * same `PushStreamEvent` sequence for the same upstream.
+ *
+ * Behavior mirrors the translator exactly: text deltas → `text_delta`; a signed
+ * `thinking` / `redacted_thinking` block, accumulated across its
+ * `content_block_start`/delta/`content_block_stop` frames, → a single
+ * `reasoning_block` at stop (signature-less thinking is dropped — it can't
+ * round-trip); `stop_reason: pause_turn` with captured assistant blocks →
+ * `pause_turn` (else a terminal `done`); otherwise a terminal `done` with the
+ * mapped finish reason and accumulated usage.
+ */
+export async function* anthropicEventStream(
+  upstream: Response,
+  signal?: AbortSignal,
+): AsyncIterable<PushStreamEvent> {
+  const reader = upstream.body?.getReader();
+  if (!reader) {
+    yield { type: 'done', finishReason: 'stop' };
+    return;
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let usage: StreamUsage | undefined;
+  let stopped = false;
+
+  // Per-index thinking/redacted accumulators (signature arrives in its own
+  // delta), plus per-index raw-block capture for pause_turn replay — identical
+  // bookkeeping to `createAnthropicTranslatedStream`.
+  type ThinkingState = { kind: 'thinking'; text: string; signature: string };
+  type RedactedState = { kind: 'redacted_thinking'; data: string };
+  const openBlocks = new Map<number, ThinkingState | RedactedState>();
+  const capturedBlocks = new Map<number, Record<string, unknown>>();
+  const inputJsonBuffers = new Map<number, string>();
+
+  const updateUsage = (usageRec: Record<string, unknown> | undefined): void => {
+    if (!usageRec) return;
+    const inputTokens =
+      typeof usageRec.input_tokens === 'number' ? usageRec.input_tokens : (usage?.inputTokens ?? 0);
+    const outputTokens =
+      typeof usageRec.output_tokens === 'number'
+        ? usageRec.output_tokens
+        : (usage?.outputTokens ?? 0);
+    usage = { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens };
+  };
+
+  function* processLine(rawLine: string): Generator<PushStreamEvent> {
+    if (stopped) return;
+    const line = rawLine.trim();
+    if (!line.startsWith('data:')) return;
+    const jsonStr = line[5] === ' ' ? line.slice(6) : line.slice(5);
+    if (jsonStr === '[DONE]') {
+      yield { type: 'done', finishReason: 'stop', usage };
+      stopped = true;
+      return;
+    }
+
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(jsonStr) as Record<string, unknown>;
+    } catch {
+      return;
+    }
+    const eventType = typeof parsed.type === 'string' ? parsed.type : '';
+
+    if (eventType === 'content_block_start') {
+      const idx = typeof parsed.index === 'number' ? parsed.index : -1;
+      const block = parsed.content_block as Record<string, unknown> | undefined;
+      if (idx >= 0 && block) {
+        if (block.type === 'thinking') {
+          openBlocks.set(idx, {
+            kind: 'thinking',
+            text: typeof block.thinking === 'string' ? block.thinking : '',
+            signature: typeof block.signature === 'string' ? block.signature : '',
+          });
+        } else if (block.type === 'redacted_thinking') {
+          openBlocks.set(idx, {
+            kind: 'redacted_thinking',
+            data: typeof block.data === 'string' ? block.data : '',
+          });
+        }
+        capturedBlocks.set(idx, { ...block });
+      }
+      return;
+    }
+
+    if (eventType === 'content_block_delta') {
+      const idx = typeof parsed.index === 'number' ? parsed.index : -1;
+      const delta = parsed.delta as Record<string, unknown> | undefined;
+      if (delta?.type === 'text_delta' && typeof delta.text === 'string' && delta.text) {
+        // Accumulate the RAW text onto the captured block for pause_turn replay
+        // (Anthropic expects its original content[] back verbatim).
+        const captured = idx >= 0 ? capturedBlocks.get(idx) : undefined;
+        if (captured && captured.type === 'text') {
+          captured.text = (typeof captured.text === 'string' ? captured.text : '') + delta.text;
+        }
+        // Emit the token through the same chat-template-token strip the
+        // openAISSEPump text branch applies, so the direct path stays
+        // event-for-event identical to the legacy translate→pump path. A delta
+        // that is entirely control tokens strips to '' and yields nothing —
+        // matching the pump. (Anthropic's native API doesn't emit these
+        // markers, so on real traffic this is a no-op; the parity matters for
+        // the drift guarantee and any upstream that proxies template tokens.)
+        const token = stripTemplateTokens(delta.text);
+        if (token) yield { type: 'text_delta', text: token };
+        return;
+      }
+      const state = idx >= 0 ? openBlocks.get(idx) : undefined;
+      if (state?.kind === 'thinking') {
+        if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') {
+          state.text += delta.thinking;
+        } else if (delta?.type === 'signature_delta' && typeof delta.signature === 'string') {
+          state.signature += delta.signature;
+        }
+      }
+      if (
+        delta?.type === 'input_json_delta' &&
+        typeof delta.partial_json === 'string' &&
+        idx >= 0
+      ) {
+        inputJsonBuffers.set(idx, (inputJsonBuffers.get(idx) ?? '') + delta.partial_json);
+      }
+      return;
+    }
+
+    if (eventType === 'content_block_stop') {
+      const idx = typeof parsed.index === 'number' ? parsed.index : -1;
+      const state = idx >= 0 ? openBlocks.get(idx) : undefined;
+      if (state) {
+        openBlocks.delete(idx);
+        if (state.kind === 'thinking') {
+          // Signature-less thinking can't round-trip — drop it (text already
+          // streamed via text_delta would be absent here anyway; display is
+          // unaffected). Matches the translator.
+          if (state.signature) {
+            yield {
+              type: 'reasoning_block',
+              block: { type: 'thinking', text: state.text, signature: state.signature },
+            };
+          }
+        } else if (state.data) {
+          yield { type: 'reasoning_block', block: { type: 'redacted_thinking', data: state.data } };
+        }
+      }
+      if (idx >= 0) {
+        const captured = capturedBlocks.get(idx);
+        if (captured) {
+          if (captured.type === 'thinking' && state?.kind === 'thinking') {
+            captured.thinking = state.text;
+            captured.signature = state.signature;
+          } else if (captured.type === 'redacted_thinking' && state?.kind === 'redacted_thinking') {
+            captured.data = state.data;
+          }
+          const pendingJson = inputJsonBuffers.get(idx);
+          if (pendingJson !== undefined) {
+            inputJsonBuffers.delete(idx);
+            if (pendingJson.length > 0) {
+              try {
+                captured.input = JSON.parse(pendingJson);
+              } catch {
+                // Malformed partial JSON — keep whatever shape arrived in
+                // content_block_start (often `{}`).
+              }
+            }
+          }
+        }
+      }
+      return;
+    }
+
+    if (
+      eventType === 'message_start' ||
+      eventType === 'message_delta' ||
+      eventType === 'message_stop'
+    ) {
+      const message = parsed.message as Record<string, unknown> | undefined;
+      const delta = parsed.delta as Record<string, unknown> | undefined;
+      updateUsage(
+        (parsed.usage as Record<string, unknown> | undefined) ||
+          (message?.usage as Record<string, unknown> | undefined) ||
+          (delta?.usage as Record<string, unknown> | undefined),
+      );
+
+      if (eventType === 'message_delta' || eventType === 'message_stop') {
+        const stopReason =
+          typeof delta?.stop_reason === 'string'
+            ? delta.stop_reason
+            : typeof message?.stop_reason === 'string'
+              ? message.stop_reason
+              : null;
+        if (stopReason || eventType === 'message_stop') {
+          const mapped = mapAnthropicStopReason(stopReason);
+          if (mapped === 'pause_turn') {
+            const assistantBlocks = Array.from(capturedBlocks.entries())
+              .sort(([a], [b]) => a - b)
+              .map(([, block]) => block);
+            if (assistantBlocks.length > 0) {
+              yield { type: 'pause_turn', assistantBlocks };
+              stopped = true;
+              return;
+            }
+            yield { type: 'done', finishReason: 'stop', usage };
+            stopped = true;
+            return;
+          }
+          // `mapped` is one of 'stop' | 'length' | 'tool_calls' here.
+          yield { type: 'done', finishReason: mapped as 'stop' | 'length' | 'tool_calls', usage };
+          stopped = true;
+          return;
+        }
+      }
+      return;
+    }
+  }
+
+  const onAbort = () => {
+    reader.cancel().catch(() => {
+      /* reader may already be closed */
+    });
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
+
+  try {
+    while (true) {
+      if (signal?.aborted) return;
+      const { done, value } = await reader.read();
+      if (signal?.aborted) return;
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        yield* processLine(line);
+        if (stopped) return;
+      }
+    }
+
+    // Stream ended without a terminal stop_reason / [DONE]. Flush any trailing
+    // bytes + buffered line, then emit a clean terminal `done` so the consumer
+    // never hangs — mirrors the translator's clean-close path.
+    buffer += decoder.decode();
+    if (buffer.trim()) {
+      yield* processLine(buffer);
+      if (stopped) return;
+    }
+    yield { type: 'done', finishReason: 'stop', usage };
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+    try {
+      reader.releaseLock();
+    } catch {
+      /* reader may have been cancelled */
+    }
+  }
 }

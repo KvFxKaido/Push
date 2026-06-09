@@ -4,12 +4,15 @@ import type { OpenAIChatRequest, OpenAIContentPart, OpenAIMessage } from './open
 import type { LlmMessage, PushStreamRequest } from './provider-contract.ts';
 import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
 import {
+  anthropicEventStream,
   anthropicModelEnforcesSamplingExclusivity,
   anthropicModelRejectsSamplingParams,
   buildAnthropicMessagesRequest,
   createAnthropicTranslatedStream,
   toAnthropicMessages,
 } from './openai-anthropic-bridge.ts';
+import { openAISSEPump } from './openai-sse-pump.ts';
+import type { PushStreamEvent } from './provider-contract.ts';
 
 function createEventStreamResponse(lines: string[]): Response {
   const encoder = new TextEncoder();
@@ -810,5 +813,273 @@ describe('toAnthropicMessages — drift vs legacy OpenAI-detour path', () => {
     const messages = body.messages as Array<Record<string, unknown>>;
     expect(messages[messages.length - 2]).toEqual({ role: 'assistant', content: replayA });
     expect(messages[messages.length - 1]).toEqual({ role: 'assistant', content: replayB });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 3a: anthropicEventStream — Anthropic SSE parsed directly into neutral
+// PushStreamEvents. Pinned byte-for-byte (at the event level) against the
+// legacy createAnthropicTranslatedStream -> openAISSEPump round-trip that the
+// CLI used before, and that the web Worker still uses for its response wire.
+// ---------------------------------------------------------------------------
+
+async function collectEvents(stream: AsyncIterable<PushStreamEvent>): Promise<PushStreamEvent[]> {
+  const out: PushStreamEvent[] = [];
+  for await (const e of stream) out.push(e);
+  return out;
+}
+
+/** The legacy path: translate Anthropic SSE -> OpenAI SSE, then pump it. */
+function legacyEvents(lines: string[]): Promise<PushStreamEvent[]> {
+  const translated = createAnthropicTranslatedStream(createEventStreamResponse(lines), 'claude-x');
+  return collectEvents(openAISSEPump({ body: translated }));
+}
+
+describe('anthropicEventStream — drift vs translate->pump', () => {
+  const corpus: Array<{ name: string; lines: string[] }> = [
+    {
+      name: 'text deltas + end_turn + usage',
+      lines: [
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":11,"output_tokens":0}}}',
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello"}}',
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":" world"}}',
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn","usage":{"input_tokens":11,"output_tokens":5}}}',
+      ],
+    },
+    {
+      name: 'signed thinking block then text',
+      lines: [
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":4,"output_tokens":0}}}',
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Hmm "}}',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"let me think."}}',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig-zzz"}}',
+        'data: {"type":"content_block_stop","index":0}',
+        'data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}',
+        'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Done."}}',
+        'data: {"type":"content_block_stop","index":1}',
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn","usage":{"input_tokens":4,"output_tokens":3}}}',
+      ],
+    },
+    {
+      name: 'redacted_thinking block',
+      lines: [
+        'data: {"type":"message_start","message":{}}',
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"enc-payload-xyz"}}',
+        'data: {"type":"content_block_stop","index":0}',
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
+      ],
+    },
+    {
+      name: 'signature-less thinking is dropped',
+      lines: [
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"orphan"}}',
+        'data: {"type":"content_block_stop","index":0}',
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
+      ],
+    },
+    {
+      name: 'max_tokens -> length',
+      lines: [
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"cut"}}',
+        'data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"}}',
+      ],
+    },
+    {
+      name: 'tool_use -> tool_calls',
+      lines: [
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"calling"}}',
+        'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}',
+      ],
+    },
+    {
+      name: 'pause_turn with captured server-tool blocks',
+      lines: [
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":11,"output_tokens":0}}}',
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Looking up "}}',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"the answer."}}',
+        'data: {"type":"content_block_stop","index":0}',
+        'data: {"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"su_01","name":"web_search","input":{}}}',
+        'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"query\\":"}}',
+        'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\\"tc39 stage 4\\"}"}}',
+        'data: {"type":"content_block_stop","index":1}',
+        'data: {"type":"content_block_start","index":2,"content_block":{"type":"web_search_tool_result","tool_use_id":"su_01","content":[{"type":"web_search_result","url":"https://example.com","title":"TC39"}]}}',
+        'data: {"type":"content_block_stop","index":2}',
+        'data: {"type":"message_delta","delta":{"stop_reason":"pause_turn","usage":{"input_tokens":11,"output_tokens":12}}}',
+      ],
+    },
+    {
+      name: 'clean close without message_stop',
+      lines: [
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"trailing"}}',
+      ],
+    },
+    {
+      name: 'upstream [DONE] sentinel',
+      lines: [
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"x"}}',
+        'data: [DONE]',
+      ],
+    },
+    {
+      // Both paths run text through stripTemplateTokens: mixed text keeps the
+      // prose, drops the control marker.
+      name: 'text with a chat-template control token is stripped',
+      lines: [
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi<|im_end|>"}}',
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
+      ],
+    },
+    {
+      // A delta that is entirely control tokens strips to '' — neither path
+      // emits a text_delta for it.
+      name: 'text that is only a control token yields no text_delta',
+      lines: [
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"<|im_end|>"}}',
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
+      ],
+    },
+  ];
+
+  for (const { name, lines } of corpus) {
+    it(`matches the legacy round-trip: ${name}`, async () => {
+      const direct = await collectEvents(anthropicEventStream(createEventStreamResponse(lines)));
+      const legacy = await legacyEvents(lines);
+      expect(direct).toEqual(legacy);
+    });
+  }
+
+  it('emits a terminal done on a bodyless upstream', async () => {
+    const events = await collectEvents(anthropicEventStream(new Response(null)));
+    expect(events).toEqual([{ type: 'done', finishReason: 'stop' }]);
+  });
+
+  it('stops cleanly when the signal is already aborted', async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const events = await collectEvents(
+      anthropicEventStream(
+        createEventStreamResponse([
+          'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"never"}}',
+          'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
+        ]),
+        ac.signal,
+      ),
+    );
+    expect(events).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Multimodal: toAnthropicMessages serializes LlmMessage.contentParts (text +
+// image), preferring it over `content`, with LOUD failures for unsupported
+// parts so image content can never be silently dropped on the neutral path.
+// ---------------------------------------------------------------------------
+
+describe('toAnthropicMessages — multimodal contentParts', () => {
+  const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+  const userWithParts = (parts: unknown): LlmMessage =>
+    ({
+      id: '1',
+      role: 'user',
+      content: 'text fallback',
+      contentParts: parts,
+      timestamp: 0,
+    }) as unknown as LlmMessage;
+  const reqWith = (m: LlmMessage, extra: Partial<PushStreamRequest<LlmMessage>> = {}) =>
+    toAnthropicMessages({
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+      messages: [m],
+      ...extra,
+    } as PushStreamRequest<LlmMessage>);
+  const firstContent = (body: Record<string, unknown>): Array<Record<string, unknown>> =>
+    (body.messages as Array<{ content: Array<Record<string, unknown>> }>)[0].content;
+
+  it('serializes text + base64 image parts, preferring contentParts over content', () => {
+    const body = reqWith(
+      userWithParts([
+        { type: 'text', text: 'What is this?' },
+        { type: 'image_url', image_url: { url: PNG } },
+      ]),
+    );
+    expect(firstContent(body)).toEqual([
+      { type: 'text', text: 'What is this?' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' } },
+    ]);
+  });
+
+  it('carries an http(s) image URL as a url source', () => {
+    const body = reqWith(
+      userWithParts([{ type: 'image_url', image_url: { url: 'https://example.com/cat.png' } }]),
+    );
+    expect(firstContent(body)[0]).toEqual({
+      type: 'image',
+      source: { type: 'url', url: 'https://example.com/cat.png' },
+    });
+  });
+
+  it('tags the last text part with cache_control at a breakpoint index', () => {
+    const body = reqWith(
+      userWithParts([
+        { type: 'text', text: 'a' },
+        { type: 'image_url', image_url: { url: PNG } },
+        { type: 'text', text: 'b' },
+      ]),
+      { cacheBreakpointIndices: [0] },
+    );
+    const content = firstContent(body);
+    expect(content[2]).toEqual({ type: 'text', text: 'b', cache_control: { type: 'ephemeral' } });
+    expect(content[0].cache_control).toBeUndefined();
+    expect(content[1].cache_control).toBeUndefined();
+  });
+
+  it('prepends signed reasoning blocks before multimodal content on assistant turns', () => {
+    const body = toAnthropicMessages({
+      provider: 'anthropic',
+      model: 'claude-opus-4-7',
+      messages: [
+        {
+          id: '1',
+          role: 'assistant',
+          content: 'x',
+          timestamp: 0,
+          reasoningBlocks: [{ type: 'thinking', text: 't', signature: 's' }],
+          contentParts: [
+            { type: 'text', text: 'see image' },
+            { type: 'image_url', image_url: { url: PNG } },
+          ],
+        },
+      ],
+    } as PushStreamRequest<LlmMessage>);
+    const content = firstContent(body);
+    expect(content[0]).toEqual({ type: 'thinking', thinking: 't', signature: 's' });
+    expect(content[1]).toEqual({ type: 'text', text: 'see image' });
+    expect(content[2]).toMatchObject({ type: 'image', source: { type: 'base64' } });
+  });
+
+  it('falls back to content text when contentParts is empty', () => {
+    const body = reqWith(userWithParts([]));
+    expect(firstContent(body)).toEqual([{ type: 'text', text: 'text fallback' }]);
+  });
+
+  it('throws loudly on an unsupported content part type', () => {
+    expect(() => reqWith(userWithParts([{ type: 'audio', audio: {} }]))).toThrow(
+      /unsupported or malformed content part/,
+    );
+  });
+
+  it('throws loudly on a malformed image part (missing url)', () => {
+    expect(() => reqWith(userWithParts([{ type: 'image_url', image_url: {} }]))).toThrow(
+      /unsupported or malformed content part/,
+    );
+  });
+
+  it('throws loudly on an image URL that is neither data: nor http(s)', () => {
+    expect(() =>
+      reqWith(userWithParts([{ type: 'image_url', image_url: { url: 'ftp://nope/x.png' } }])),
+    ).toThrow(/cannot represent image/);
   });
 });
