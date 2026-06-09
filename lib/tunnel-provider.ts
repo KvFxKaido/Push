@@ -35,7 +35,10 @@
 // ---------------------------------------------------------------------------
 
 /**
- * Supported tunnel backends.
+ * Supported tunnel backends. Single source of truth — both the
+ * `TunnelProviderName` type and the runtime validation in
+ * `resolveTunnelProviderName` derive from this array, so adding a backend
+ * means editing one list.
  *
  *   - `cf-sandbox-proxy` — Worker reverse-proxy into a port inside a Cloudflare
  *     sandbox; mints a session-scoped token and serves `preview.<host>`.
@@ -45,12 +48,15 @@
  *     (`pushd_relay_*` / RelaySessionDO); local-port exposure with no new DNS.
  *   - `none`             — no tunneling available; `open()` rejects NOT_CONFIGURED.
  */
-export type TunnelProviderName =
-  | 'cf-sandbox-proxy'
-  | 'modal-endpoint'
-  | 'cloudflared'
-  | 'relay'
-  | 'none';
+export const TUNNEL_PROVIDER_NAMES = [
+  'cf-sandbox-proxy',
+  'modal-endpoint',
+  'cloudflared',
+  'relay',
+  'none',
+] as const;
+
+export type TunnelProviderName = (typeof TUNNEL_PROVIDER_NAMES)[number];
 
 /** Default backend when nothing is configured. */
 export const DEFAULT_TUNNEL_PROVIDER: TunnelProviderName = 'cf-sandbox-proxy';
@@ -74,15 +80,9 @@ export function resolveTunnelProviderName(options?: {
   if (options?.provider) return options.provider;
   try {
     if (typeof process !== 'undefined' && process.env) {
-      const v = (process.env.PUSH_TUNNEL_PROVIDER ?? '').toLowerCase();
-      if (
-        v === 'cf-sandbox-proxy' ||
-        v === 'modal-endpoint' ||
-        v === 'cloudflared' ||
-        v === 'relay' ||
-        v === 'none'
-      ) {
-        return v;
+      const v = (process.env.PUSH_TUNNEL_PROVIDER ?? '').trim().toLowerCase();
+      if ((TUNNEL_PROVIDER_NAMES as readonly string[]).includes(v)) {
+        return v as TunnelProviderName;
       }
     }
   } catch {
@@ -128,20 +128,33 @@ export interface TunnelProviderCapabilities {
 // Tunnel target + handle
 // ---------------------------------------------------------------------------
 
-/** What to expose. */
-export interface TunnelTarget {
-  /**
-   * `sandbox-port`: a service inside the sandbox identified by `sandboxId`.
-   * `local-port`: a service on the host running the provider.
-   */
-  kind: 'sandbox-port' | 'local-port';
-  /** Port the service listens on. */
-  port: number;
-  /** Required when `kind === 'sandbox-port'`; ignored otherwise. */
-  sandboxId?: string;
-  /** Command that started the service. Observability only — never executed. */
-  startCommand?: string;
-}
+/**
+ * What to expose. A discriminated union on `kind`: `sandboxId` is required
+ * exactly for `sandbox-port` targets and rejected for `local-port` ones, so a
+ * malformed `{ kind: 'sandbox-port', port }` fails to compile rather than
+ * being discovered at runtime by each provider.
+ */
+export type TunnelTarget =
+  | {
+      /** A service inside the managed sandbox identified by `sandboxId`. */
+      kind: 'sandbox-port';
+      /** Port the service listens on. */
+      port: number;
+      /** Which managed sandbox to proxy into. */
+      sandboxId: string;
+      /** Command that started the service. Observability only — never executed. */
+      startCommand?: string;
+    }
+  | {
+      /** A service on the host running the provider (CLI daemon). */
+      kind: 'local-port';
+      /** Port the service listens on. */
+      port: number;
+      /** Not applicable to local ports — typed `never` to reject misuse. */
+      sandboxId?: never;
+      /** Command that started the service. Observability only — never executed. */
+      startCommand?: string;
+    };
 
 /** Options for opening a tunnel. */
 export interface TunnelOpenOptions {
