@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { validateAndNormalizeChatRequest } from './chat-request-guardrails';
+import { PUSH_STREAM_WIRE_CONTRACT } from '@push/lib/provider-wire';
+import {
+  validateAndNormalizeChatRequest,
+  validateAndNormalizeWireRequest,
+} from './chat-request-guardrails';
 
 describe('validateAndNormalizeChatRequest', () => {
   it('forces stream mode and clamps oversized output token requests', () => {
@@ -270,6 +274,175 @@ describe('validateAndNormalizeChatRequest', () => {
       if (!result.ok) return;
       const bodyParsed = JSON.parse(result.value.bodyText);
       expect('cache_control' in bodyParsed.messages[0].content[0]).toBe(false);
+    });
+  });
+});
+
+describe('validateAndNormalizeWireRequest', () => {
+  const POLICY = { routeLabel: 'Anthropic', maxOutputTokens: 12_288 };
+  const body = (extra: Record<string, unknown>) =>
+    JSON.stringify({ contract: PUSH_STREAM_WIRE_CONTRACT, model: 'claude-sonnet-4-6', ...extra });
+
+  it('normalizes a valid neutral request into a PushStreamRequest', () => {
+    const result = validateAndNormalizeWireRequest(
+      body({
+        messages: [
+          { role: 'user', content: 'hello' },
+          { role: 'assistant', content: 'hi there' },
+        ],
+        maxTokens: 4096,
+        temperature: 0.3,
+        anthropicWebSearch: true,
+        cacheBreakpointIndices: [1],
+      }),
+      POLICY,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const req = result.value.request;
+    expect(req.provider).toBe('anthropic');
+    expect(req.model).toBe('claude-sonnet-4-6');
+    expect(req.maxTokens).toBe(4096);
+    expect(req.temperature).toBe(0.3);
+    expect(req.anthropicWebSearch).toBe(true);
+    expect(req.cacheBreakpointIndices).toEqual([1]);
+    expect(req.messages).toEqual([
+      { id: 'wire-0', role: 'user', content: 'hello', timestamp: 0 },
+      { id: 'wire-1', role: 'assistant', content: 'hi there', timestamp: 0 },
+    ]);
+  });
+
+  it('normalizes multimodal array content onto contentParts (content stays the text fallback)', () => {
+    const result = validateAndNormalizeWireRequest(
+      body({
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'what is this?' },
+              { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
+            ],
+          },
+        ],
+      }),
+      POLICY,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const msg = result.value.request.messages[0];
+    expect(msg.content).toBe('');
+    expect(msg.contentParts).toEqual([
+      { type: 'text', text: 'what is this?' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
+    ]);
+  });
+
+  it('clamps maxTokens to the policy ceiling and records the adjustment', () => {
+    const result = validateAndNormalizeWireRequest(
+      body({ messages: [{ role: 'user', content: 'hi' }], maxTokens: 999_999 }),
+      POLICY,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.request.maxTokens).toBe(12_288);
+    expect(result.value.adjustments).toContain('maxTokens_clamped');
+  });
+
+  it('keeps signed reasoning blocks on assistant turns (round-tripped to Anthropic)', () => {
+    const result = validateAndNormalizeWireRequest(
+      body({
+        messages: [
+          { role: 'user', content: 'why?' },
+          {
+            role: 'assistant',
+            content: 'because',
+            reasoningBlocks: [{ type: 'thinking', text: 't', signature: 's' }],
+          },
+        ],
+      }),
+      POLICY,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.request.messages[1].reasoningBlocks).toEqual([
+      { type: 'thinking', text: 't', signature: 's' },
+    ]);
+  });
+
+  it('rejects an unrecognized contract', () => {
+    const result = validateAndNormalizeWireRequest(
+      JSON.stringify({ contract: 'push.stream.v0', model: 'm', messages: [] }),
+      POLICY,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.status).toBe(400);
+    expect(result.error).toMatch(/unrecognized contract/);
+  });
+
+  it('rejects a missing model, empty messages, bad role, non-number temperature, and bad breakpoints', () => {
+    const cases: Array<[Record<string, unknown>, RegExp]> = [
+      [{ model: '', messages: [{ role: 'user', content: 'x' }] }, /missing "model"/],
+      [{ messages: [] }, /non-empty "messages"/],
+      [{ messages: [{ role: 'tool', content: 'x' }] }, /invalid role/],
+      [
+        { messages: [{ role: 'user', content: 'x' }], temperature: 'hot' },
+        /"temperature" must be a number/,
+      ],
+      [
+        { messages: [{ role: 'user', content: 'x' }], cacheBreakpointIndices: [-1] },
+        /"cacheBreakpointIndices" must be an array of non-negative integers/,
+      ],
+      [
+        { messages: [{ role: 'user', content: [{ type: 'audio' }] }] },
+        /unsupported content part type/,
+      ],
+    ];
+    for (const [extra, pattern] of cases) {
+      const result = validateAndNormalizeWireRequest(body(extra), POLICY);
+      expect(result.ok, JSON.stringify(extra)).toBe(false);
+      if (result.ok) continue;
+      expect(result.status).toBe(400);
+      expect(result.error).toMatch(pattern);
+    }
+  });
+
+  it('rejects a malformed JSON body', () => {
+    const result = validateAndNormalizeWireRequest('{not json', POLICY);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/invalid JSON body/);
+  });
+
+  it('preserves cache_control (snake_case) on text + image content parts', () => {
+    const result = validateAndNormalizeWireRequest(
+      body({
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'hi', cache_control: { type: 'ephemeral' } },
+              {
+                type: 'image_url',
+                image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' },
+                cache_control: { type: 'ephemeral' },
+              },
+            ],
+          },
+        ],
+      }),
+      POLICY,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const parts = result.value.request.messages[0].contentParts;
+    // The field must be `cache_control` (what LlmContentPart / toAnthropicMessages
+    // read), NOT camelCase — otherwise the breakpoint is silently dropped.
+    expect(parts?.[0]).toEqual({ type: 'text', text: 'hi', cache_control: { type: 'ephemeral' } });
+    expect(parts?.[1]).toEqual({
+      type: 'image_url',
+      image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' },
+      cache_control: { type: 'ephemeral' },
     });
   });
 });
