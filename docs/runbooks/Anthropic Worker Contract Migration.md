@@ -45,7 +45,8 @@ SSE** so the client's `openAISSEPump` can read it unchanged.
 Three Worker endpoints share this exact recipe (`validateAndNormalizeChatRequest`
 → `buildAnthropicMessagesRequest` → `createAnthropicTranslatedStream`): direct
 Anthropic, Vertex-Anthropic (`anthropicVersion: 'vertex-2023-10-16'`,
-`worker-providers.ts:959`), and Zen-Go-Anthropic (`:616`).
+`app/src/worker/worker-providers.ts:959`), and Zen-Go-Anthropic
+(`app/src/worker/worker-providers.ts:616`).
 
 **Security seam (must be preserved):** the Anthropic API key never reaches the
 browser — the Worker injects it. Any new contract keeps key injection and token
@@ -74,6 +75,38 @@ wire body is the **serializable subset** of `PushStreamRequest` — explicitly
 named `PushStreamRequestWire` type in `lib/` so client and Worker share one
 definition and a drift test pins it (per the new-feature checklist in
 `CLAUDE.md`).
+
+### Prompt materialization stays client-side (the wire carries materialized messages)
+
+A correction surfaced in review (#841): the web adapter does **not** send
+`req.messages` raw. `anthropicStream` first runs
+`toLLMMessages(req.messages, { workspaceContext, hasSandbox, systemPromptOverride,
+scratchpadContent, todoContent, linkedLibraryContent, sessionDigestOptions, … })`,
+which **materializes** repo/tool instructions, sandbox mode, scratchpad/todo/library
+context, and the session digest into the `messages` that go over the wire (today's
+OpenAI `messages` array *is* that `toLLMMessages` output). `toAnthropicMessages`
+only serializes the messages it is handed — it rebuilds none of that.
+
+So the wire carries the **materialized** `LlmMessage[]`, exactly as today — not raw
+`req.messages` plus a `workspaceContext` for the Worker to re-materialize.
+`workspaceContext`, `scratchpadContent`, `todoContent`, `linkedLibraryContent`, and
+the session-digest inputs are **materialization inputs consumed client-side**;
+like `signal` and the callbacks, they never cross the wire (true today, unchanged
+here). The migration is therefore a pure **envelope reshape** — the OpenAI scalar
+fields + Push-private sidecars (`max_tokens`/`temperature`/`top_p`,
+`reasoning_blocks`, `anthropic_web_search`, manual `cache_control` tagging) become
+neutral scalar fields (`maxTokens`/`temperature`/`topP`, `reasoningBlocks`,
+`anthropicWebSearch`, `cacheBreakpointIndices`) around the **same** materialized
+messages. Materialization is orthogonal and stays put.
+
+**Consequence for `PushStreamRequestWire`:** its `messages` are already
+materialized (the system prompt baked in by `toLLMMessages`), so it must **not**
+also carry `systemPromptOverride` — passing both would double the system prompt
+when `toAnthropicMessages` hoists it. The Worker calls `toAnthropicMessages(wire,
+{ … })` with **no** `systemPromptOverride`. The reviewer's alternative — moving
+`toLLMMessages` into the Worker — is **rejected**: it would drag `workspaceContext`,
+sandbox state, and the memory stores server-side (the runtime context that is
+deliberately client-resident) for no benefit to this migration.
 
 Why neutral beats both today's OpenAI-shape and an Anthropic-native wire:
 
@@ -119,10 +152,12 @@ ship before client changes**, never the reverse.
    unaffected** — they send no discriminator and hit the legacy branch verbatim.
 
 3. **Flip the client adapter (ship after step 2 is live).**
-   `app/src/lib/anthropic-stream.ts` stops OpenAI-shaping and instead serializes
-   `PushStreamRequestWire` with `contract: "push.stream.v1"`. New tabs now send
-   neutral; old tabs still send legacy; the Worker handles both. The client keeps
-   consuming OpenAI SSE (response axis unchanged).
+   `app/src/lib/anthropic-stream.ts` **still runs `toLLMMessages` first** (see
+   "Prompt materialization stays client-side"), then stops OpenAI-shaping the
+   envelope and instead serializes `PushStreamRequestWire` — the materialized
+   `messages` plus the neutral scalars — with `contract: "push.stream.v1"`. New
+   tabs now send neutral; old tabs still send legacy; the Worker handles both. The
+   client keeps consuming OpenAI SSE (response axis unchanged).
 
 4. **Bake.** Watch `worker_anthropic_contract` — legacy share decays toward zero
    as old tabs close. No code change; just telemetry.
