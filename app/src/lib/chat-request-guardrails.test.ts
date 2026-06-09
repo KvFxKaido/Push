@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PUSH_STREAM_WIRE_CONTRACT } from '@push/lib/provider-wire';
 import {
+  parseDualAcceptRequest,
   validateAndNormalizeChatRequest,
   validateAndNormalizeWireRequest,
 } from './chat-request-guardrails';
@@ -444,5 +445,92 @@ describe('validateAndNormalizeWireRequest', () => {
       image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' },
       cache_control: { type: 'ephemeral' },
     });
+  });
+});
+
+describe('validateAndNormalizeWireRequest — googleSearchGrounding', () => {
+  const POLICY = { routeLabel: 'Google Gemini', maxOutputTokens: 12_288 };
+  it('accepts a boolean googleSearchGrounding and carries it onto the request', () => {
+    const result = validateAndNormalizeWireRequest(
+      JSON.stringify({
+        contract: PUSH_STREAM_WIRE_CONTRACT,
+        model: 'gemini-3.5-flash',
+        messages: [{ role: 'user', content: 'hi' }],
+        googleSearchGrounding: true,
+      }),
+      POLICY,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.request.googleSearchGrounding).toBe(true);
+  });
+
+  it('rejects a non-boolean googleSearchGrounding', () => {
+    const result = validateAndNormalizeWireRequest(
+      JSON.stringify({
+        contract: PUSH_STREAM_WIRE_CONTRACT,
+        model: 'gemini-3.5-flash',
+        messages: [{ role: 'user', content: 'hi' }],
+        googleSearchGrounding: 'yes',
+      }),
+      POLICY,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/"googleSearchGrounding" must be a boolean/);
+  });
+});
+
+describe('parseDualAcceptRequest', () => {
+  const POLICY = { routeLabel: 'Anthropic', maxOutputTokens: 12_288 };
+
+  it('routes a contract-bearing body to the neutral validator', () => {
+    const r = parseDualAcceptRequest(
+      JSON.stringify({
+        contract: PUSH_STREAM_WIRE_CONTRACT,
+        model: 'claude-sonnet-4-6',
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+      POLICY,
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.contractKind).toBe('neutral');
+    if (r.contractKind !== 'neutral') return;
+    expect(r.request.model).toBe('claude-sonnet-4-6');
+  });
+
+  it('routes a body with no contract field to the legacy validator', () => {
+    const r = parseDualAcceptRequest(
+      JSON.stringify({ model: 'claude-sonnet-4-6', messages: [{ role: 'user', content: 'hi' }] }),
+      POLICY,
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.contractKind).toBe('legacy');
+    if (r.contractKind !== 'legacy') return;
+    expect(r.parsed.model).toBe('claude-sonnet-4-6');
+  });
+
+  it('surfaces the wire validator 400 for an unknown contract (not a legacy downgrade)', () => {
+    const r = parseDualAcceptRequest(
+      JSON.stringify({
+        contract: 'push.stream.v2',
+        model: 'claude-sonnet-4-6',
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+      POLICY,
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.status).toBe(400);
+    expect(r.error).toMatch(/unrecognized contract/);
+  });
+
+  it('falls back to the legacy validator 400 on malformed JSON', () => {
+    const r = parseDualAcceptRequest('{not json', POLICY);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/invalid JSON body/);
   });
 });
