@@ -204,7 +204,7 @@ ship before client changes**, never the reverse.
    `getVertexNativeConfig` / service-account-header decode. **All four server
    handlers (Anthropic, Google, Zen-Go, Vertex) now dual-accept.**
 
-3. **Flip the client adapter. ✅ Shipped for Anthropic + Gemini.**
+3. **Flip the client adapter. ✅ Shipped for Anthropic + Gemini + Vertex (native).**
    `app/src/lib/anthropic-stream.ts` still runs `toLLMMessages` first (see
    "Prompt materialization stays client-side"), then serializes the neutral wire
    via the shared `toPushStreamWire` (`lib/provider-wire.ts`) — materialized
@@ -230,6 +230,15 @@ ship before client changes**, never the reverse.
    defensively: `toGeminiGenerateContent` now reads `contentParts` for the system
    role (google isn't cacheable so it isn't a live bug like Anthropic's was, but
    it's the same asymmetry — fixed proactively).
+
+   **`app/src/lib/vertex-stream.ts` flips conditionally.** Vertex carries both
+   Claude and Gemini under one provider, and its **native** mode hits the
+   dual-accept `handleVertexChat` — so native sends the neutral wire (both search
+   flags ride along; the server picks the transport by model), with the
+   pause-turn loop accumulating `replayAssistantTurns`. Its **legacy** mode
+   (`X-Push-Upstream-Base`) falls through to `handleLegacyVertexChat`, which does
+   NOT dual-accept, so legacy keeps the OpenAI-shape body. A test pins both
+   sides (native → `push.stream.v1`, legacy → OpenAI shape).
 
 4. **Bake.** Watch `worker_anthropic_contract` — legacy share decays toward zero
    as old tabs close. No code change; just telemetry.
