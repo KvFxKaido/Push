@@ -1749,6 +1749,36 @@ describe('handleAnthropicChat — neutral wire (dual-accept)', () => {
     expect(body.max_tokens).toBe(12_288);
   });
 
+  it('appends neutral replayAssistantTurns as trailing assistant turns (pause-turn resume)', async () => {
+    const get = captureUpstream();
+    await handleAnthropicChat(
+      makeNeutralRequest({
+        model: 'claude-sonnet-4-6',
+        messages: [{ role: 'user', content: 'search the web' }],
+        replayAssistantTurns: [
+          [
+            { type: 'text', text: 'Searching' },
+            { type: 'server_tool_use', id: 'su_01', name: 'web_search', input: {} },
+          ],
+        ],
+      }),
+      makeEnv({ ANTHROPIC_API_KEY: 'sk-ant' }),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    // The user turn, then the paused assistant content[] verbatim as the trailing
+    // assistant turn the upstream resumes from.
+    expect(body.messages).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'search the web' }] },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Searching' },
+          { type: 'server_tool_use', id: 'su_01', name: 'web_search', input: {} },
+        ],
+      },
+    ]);
+  });
+
   it('returns 400 (not 502) when a neutral content part has an unrepresentable image URL', async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);

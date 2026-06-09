@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PUSH_STREAM_WIRE_CONTRACT } from '@push/lib/provider-wire';
+import { PUSH_STREAM_WIRE_CONTRACT, toPushStreamWire } from '@push/lib/provider-wire';
 import {
   parseDualAcceptRequest,
   validateAndNormalizeChatRequest,
@@ -445,6 +445,128 @@ describe('validateAndNormalizeWireRequest', () => {
       image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' },
       cache_control: { type: 'ephemeral' },
     });
+  });
+});
+
+describe('validateAndNormalizeWireRequest — replayAssistantTurns', () => {
+  const POLICY = { routeLabel: 'Anthropic', maxOutputTokens: 12_288 };
+  const body = (extra: Record<string, unknown>) =>
+    JSON.stringify({
+      contract: PUSH_STREAM_WIRE_CONTRACT,
+      model: 'claude-sonnet-4-6',
+      messages: [{ role: 'user', content: 'hi' }],
+      ...extra,
+    });
+
+  it('carries an opaque array-of-content-block-arrays onto the request', () => {
+    const turns = [
+      [
+        { type: 'text', text: 'Searching' },
+        { type: 'server_tool_use', id: 'su_01', name: 'web_search', input: {} },
+      ],
+    ];
+    const result = validateAndNormalizeWireRequest(body({ replayAssistantTurns: turns }), POLICY);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Passthrough verbatim — the validator never inspects block contents.
+    expect(result.value.request.replayAssistantTurns).toEqual(turns);
+  });
+
+  it('omits the field when absent', () => {
+    const result = validateAndNormalizeWireRequest(body({}), POLICY);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.request.replayAssistantTurns).toBeUndefined();
+  });
+
+  it.each([
+    ['not an array', { replayAssistantTurns: 'nope' }],
+    ['array of non-arrays', { replayAssistantTurns: [{ type: 'text' }] }],
+    ['array of arrays of non-objects', { replayAssistantTurns: [['text']] }],
+  ])('rejects a malformed replayAssistantTurns (%s)', (_label, extra) => {
+    const result = validateAndNormalizeWireRequest(body(extra), POLICY);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.status).toBe(400);
+    expect(result.error).toMatch(/"replayAssistantTurns" must be an array of content-block arrays/);
+  });
+});
+
+describe('toPushStreamWire ↔ validateAndNormalizeWireRequest round-trip', () => {
+  const POLICY = { routeLabel: 'Anthropic', maxOutputTokens: 12_288 };
+
+  it('serializes to a body the validator accepts, preserving scalars + messages', () => {
+    const wire = toPushStreamWire(
+      [
+        { role: 'user', content: 'hello' },
+        {
+          role: 'assistant',
+          content: 'hi there',
+          reasoning_blocks: [{ type: 'thinking', text: 't', signature: 's' }],
+        },
+      ],
+      {
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-6',
+        maxTokens: 4096,
+        temperature: 0.3,
+        topP: 0.9,
+        anthropicWebSearch: true,
+      },
+    );
+    expect(wire.contract).toBe(PUSH_STREAM_WIRE_CONTRACT);
+    // snake_case `reasoning_blocks` was renamed to the wire's camelCase.
+    expect(wire.messages[1].reasoningBlocks).toEqual([
+      { type: 'thinking', text: 't', signature: 's' },
+    ]);
+
+    const result = validateAndNormalizeWireRequest(JSON.stringify(wire), POLICY);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const req = result.value.request;
+    expect(req.model).toBe('claude-sonnet-4-6');
+    expect(req.maxTokens).toBe(4096);
+    expect(req.temperature).toBe(0.3);
+    expect(req.topP).toBe(0.9);
+    expect(req.anthropicWebSearch).toBe(true);
+    expect(req.messages[0]).toMatchObject({ role: 'user', content: 'hello' });
+    expect(req.messages[1].reasoningBlocks).toEqual([
+      { type: 'thinking', text: 't', signature: 's' },
+    ]);
+  });
+
+  it('round-trips multimodal content-part arrays', () => {
+    const wire = toPushStreamWire(
+      [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'what is this?' },
+            { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
+          ],
+        },
+      ],
+      { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+    );
+    const result = validateAndNormalizeWireRequest(JSON.stringify(wire), POLICY);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.request.messages[0].contentParts).toEqual([
+      { type: 'text', text: 'what is this?' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
+    ]);
+  });
+
+  it('omits unset optional scalars so the body stays minimal', () => {
+    const wire = toPushStreamWire([{ role: 'user', content: 'hi' }], {
+      model: 'claude-sonnet-4-6',
+    });
+    expect(wire).not.toHaveProperty('maxTokens');
+    expect(wire).not.toHaveProperty('temperature');
+    expect(wire).not.toHaveProperty('topP');
+    expect(wire).not.toHaveProperty('provider');
+    expect(wire).not.toHaveProperty('anthropicWebSearch');
+    expect(wire).not.toHaveProperty('replayAssistantTurns');
   });
 });
 
