@@ -113,7 +113,7 @@ async function* cliProviderStream(
   // Cache markers are tagged only for OpenRouter, the one CLI provider known to
   // route to Anthropic models (other gateways ignore them harmlessly, but are
   // conservative pass-throughs until parity is verified).
-  const baseBody: Record<string, unknown> = toOpenAIChat(req, {
+  const baseBody = toOpenAIChat(req, {
     modelOverride: model,
     temperatureDefault: 0.1,
     tagCacheBreakpoints: config.id === 'openrouter',
