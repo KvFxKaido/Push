@@ -23,7 +23,6 @@ import {
   createAnthropicTranslatedStream,
   toAnthropicMessages,
 } from '@push/lib/openai-anthropic-bridge';
-import { PUSH_STREAM_WIRE_CONTRACT } from '@push/lib/provider-wire';
 import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
 import { ANTHROPIC_MODELS, GOOGLE_MODELS, OPENAI_MODELS } from '@push/lib/provider-models';
 import {
@@ -1294,13 +1293,17 @@ export async function handleAnthropicChat(request: Request, env: Env): Promise<R
   // discriminator and hit the legacy branch verbatim, so this is backward-
   // compatible. The neutral branch stays dormant until the client flip.
   // See docs/runbooks/Anthropic Worker Contract Migration.md.
+  // Route on the PRESENCE of a `contract` field, not its exact value: a legacy
+  // OpenAI body never carries `contract`, so any request that includes one is
+  // declaring neutral intent. Routing a typo'd or future `contract` (e.g.
+  // `push.stream.v2`) to the neutral validator means it fails loudly with the
+  // "unrecognized contract" 400 instead of being silently downgraded to the
+  // legacy path (which would drop neutral-only fields like maxTokens/topP).
   let contractKind: 'neutral' | 'legacy';
   try {
     const peeked = JSON.parse(bodyText) as { contract?: unknown } | null;
     contractKind =
-      peeked && typeof peeked === 'object' && peeked.contract === PUSH_STREAM_WIRE_CONTRACT
-        ? 'neutral'
-        : 'legacy';
+      peeked && typeof peeked === 'object' && peeked.contract !== undefined ? 'neutral' : 'legacy';
   } catch {
     // Malformed JSON — let the legacy validator produce the canonical 400.
     contractKind = 'legacy';

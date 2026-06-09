@@ -393,7 +393,11 @@ function normalizeWireContentParts(
           `${routeLabel} request message ${messageNumber} has a text part without "text".`,
         );
       }
-      parts.push({ type: 'text', text: rawPart.text, ...(cacheControl ? { cacheControl } : {}) });
+      parts.push({
+        type: 'text',
+        text: rawPart.text,
+        ...(cacheControl ? { cache_control: cacheControl } : {}),
+      });
       continue;
     }
     if (rawPart.type === 'image_url') {
@@ -406,7 +410,7 @@ function normalizeWireContentParts(
       parts.push({
         type: 'image_url',
         image_url: { url: imageUrl.url },
-        ...(cacheControl ? { cacheControl } : {}),
+        ...(cacheControl ? { cache_control: cacheControl } : {}),
       });
       continue;
     }

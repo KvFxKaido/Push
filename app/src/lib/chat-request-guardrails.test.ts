@@ -413,4 +413,36 @@ describe('validateAndNormalizeWireRequest', () => {
     if (result.ok) return;
     expect(result.error).toMatch(/invalid JSON body/);
   });
+
+  it('preserves cache_control (snake_case) on text + image content parts', () => {
+    const result = validateAndNormalizeWireRequest(
+      body({
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'hi', cache_control: { type: 'ephemeral' } },
+              {
+                type: 'image_url',
+                image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' },
+                cache_control: { type: 'ephemeral' },
+              },
+            ],
+          },
+        ],
+      }),
+      POLICY,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const parts = result.value.request.messages[0].contentParts;
+    // The field must be `cache_control` (what LlmContentPart / toAnthropicMessages
+    // read), NOT camelCase — otherwise the breakpoint is silently dropped.
+    expect(parts?.[0]).toEqual({ type: 'text', text: 'hi', cache_control: { type: 'ephemeral' } });
+    expect(parts?.[1]).toEqual({
+      type: 'image_url',
+      image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' },
+      cache_control: { type: 'ephemeral' },
+    });
+  });
 });

@@ -1656,4 +1656,26 @@ describe('handleAnthropicChat — neutral wire (dual-accept)', () => {
     expect(response.status).toBe(400);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+
+  it('400s an unknown contract value instead of silently downgrading to legacy', async () => {
+    // A `contract` other than push.stream.v1 (typo, or a future v2) is neutral
+    // INTENT — it must hit the wire validator's unrecognized-contract 400, not
+    // be routed to the legacy OpenAI-shape path (which would drop neutral fields).
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const req = new Request('https://push.example.test/api/anthropic/chat', {
+      method: 'POST',
+      headers: { Origin: 'https://push.example.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contract: 'push.stream.v2',
+        model: 'claude-sonnet-4-6',
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    });
+    const response = await handleAnthropicChat(req, makeEnv({ ANTHROPIC_API_KEY: 'sk-ant' }));
+    expect(response.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    const body = await response.json();
+    expect(body.error).toMatch(/unrecognized contract/);
+  });
 });
