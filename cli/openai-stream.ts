@@ -29,7 +29,7 @@ import type {
 } from '../lib/provider-contract.ts';
 import { openAISSEPump } from '../lib/openai-sse-pump.ts';
 import { OPENROUTER_MAX_SESSION_ID_LENGTH } from '../lib/provider-models.ts';
-import { MAX_ROLLING_CACHE_BREAKPOINTS } from '../lib/context-transformer.ts';
+import { toOpenAIChat } from '../lib/openai-chat-serializer.ts';
 import type { ProviderConfig } from './provider.ts';
 
 export class CliProviderError extends Error {
@@ -98,100 +98,26 @@ async function* cliProviderStream(
   //     pass the system prompt as `systemPromptOverride` and start
   //     `messages` at the user turn.
   // Honour both: prepend the override only when present.
-  type WireContent =
-    | string
-    | { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }[];
-  const messages: { role: string; content: WireContent }[] = [];
-  const systemPrependOffset =
-    typeof req.systemPromptOverride === 'string' && req.systemPromptOverride ? 1 : 0;
-  if (systemPrependOffset === 1) {
-    messages.push({ role: 'system', content: req.systemPromptOverride as string });
-  }
-  // `reasoningBlocks` on `LlmMessage` is intentionally NOT forwarded on
-  // the wire here even though the contract now carries it. Every provider
-  // wired through this path (Ollama, OpenRouter, Zen, NVIDIA, Blackbox,
-  // Kilocode, OpenAdapter, plus direct OpenAI) is a strict OpenAI-compat
-  // endpoint, and the Push-private `reasoning_blocks` field would be an
-  // unknown message parameter the upstream may reject. The Anthropic-via-
-  // bridge surface (`cli/anthropic-stream.ts`) is where the field flows
-  // onto the wire — it goes through the bridge, which re-emits the blocks
-  // as the FIRST entries of the upstream assistant `content[]`.
-  for (const m of req.messages) {
-    messages.push({ role: m.role, content: m.content });
-  }
-
-  // Prompt caching: Hermes `system_and_3` strategy. Tag the system message
-  // plus up to 3 rolling-tail messages (`cacheBreakpointIndices`) with
-  // Anthropic-style `cache_control: ephemeral`. Anthropic caps a request at
-  // 4 cache breakpoints; the transformer caps its tail emission at 3, so
-  // `system + indices` stays within the limit. The slice below enforces that
-  // cap at the wire layer too — defense in depth against a caller that
-  // bypasses the transformer and passes a longer indices array directly.
-  //
-  // OpenRouter forwards the marker to Claude models; non-Anthropic routes
-  // ignore it harmlessly. We gate on `config.id === 'openrouter'` because
-  // that's the only CLI provider known to route to Anthropic — other gateway
-  // providers (zen / kilocode / openadapter) are conservative pass-throughs
-  // until parity is verified. Mirrors `app/src/lib/orchestrator.ts` (wire-side
-  // rolling-tail loop near the end of `buildLLMMessages`).
-  const rawBreakpoints = req.cacheBreakpointIndices;
-  const cacheable =
-    config.id === 'openrouter' && Array.isArray(rawBreakpoints) && rawBreakpoints.length > 0;
-  if (cacheable) {
-    if (messages[0]?.role === 'system' && typeof messages[0].content === 'string') {
-      messages[0] = {
-        role: 'system',
-        content: [
-          { type: 'text', text: messages[0].content, cache_control: { type: 'ephemeral' } },
-        ],
-      };
-    }
-    // Hard cap at MAX_ROLLING_CACHE_BREAKPOINTS — slice the most recent N if
-    // the caller provided more. The contract says ≤3; this enforces the
-    // invariant at the wire boundary so we cannot exceed Anthropic's
-    // per-request limit of 4 cache markers even when the contract is violated.
-    const breakpoints = rawBreakpoints!.slice(-MAX_ROLLING_CACHE_BREAKPOINTS);
-    for (const reqIndex of breakpoints) {
-      const wireIndex = reqIndex + systemPrependOffset;
-      const target = messages[wireIndex];
-      if (!target) continue;
-      // The system at wire index 0 already got its own marker above; skip
-      // duplicate tagging if a transformer ever emits 0 in the rolling tail.
-      // The role check matters when there's NO system at wire index 0 (e.g.
-      // a user-first transcript): in that case the rolling tail legitimately
-      // includes index 0 and must be tagged.
-      if (wireIndex === 0 && messages[0]?.role === 'system') continue;
-      if (typeof target.content === 'string') {
-        messages[wireIndex] = {
-          role: target.role,
-          content: [{ type: 'text', text: target.content, cache_control: { type: 'ephemeral' } }],
-        };
-      } else if (Array.isArray(target.content)) {
-        // Already an array (e.g. multimodal or attachment-bearing message
-        // forwarded by a future CLI surface). Tag the last text part — mirrors
-        // the web orchestrator's behavior so multi-part messages don't lose
-        // their cache slot.
-        const lastPart = target.content[target.content.length - 1];
-        if (lastPart && lastPart.type === 'text') {
-          lastPart.cache_control = { type: 'ephemeral' };
-        }
-      }
-    }
-  }
-
   const model = req.model && req.model.trim() ? req.model : config.defaultModel;
 
-  // Match the legacy `streamCompletion` body shape. Temperature defaults to
-  // 0.1 when the request doesn't override it — preserves the deterministic
-  // bias the CLI has always used for tool-driven turns.
-  const baseBody: Record<string, unknown> = {
-    model,
-    messages,
-    stream: true,
-    temperature: req.temperature ?? 0.1,
-    ...(req.topP !== undefined ? { top_p: req.topP } : {}),
-    ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
-  };
+  // Build the OpenAI Chat Completions body directly from the neutral request via
+  // the shared `toOpenAIChat` serializer — system prepend, multimodal
+  // contentParts, sampling, and the Hermes `system_and_3` cache tagging. Two
+  // callers feed messages differently (legacy `engine.ts` packs the system
+  // prompt as messages[0]; lib-side roles pass `systemPromptOverride`);
+  // `toOpenAIChat` honours both. Temperature defaults to 0.1 (the CLI's
+  // deterministic bias for tool-driven turns). reasoning_blocks are dropped:
+  // every provider here is a strict OpenAI-compat endpoint that may reject the
+  // Push-private field — it only round-trips on the Anthropic-bridge surface.
+  //
+  // Cache markers are tagged only for OpenRouter, the one CLI provider known to
+  // route to Anthropic models (other gateways ignore them harmlessly, but are
+  // conservative pass-throughs until parity is verified).
+  const baseBody: Record<string, unknown> = toOpenAIChat(req, {
+    modelOverride: model,
+    temperatureDefault: 0.1,
+    tagCacheBreakpoints: config.id === 'openrouter',
+  });
 
   const body =
     config.id === 'openrouter'

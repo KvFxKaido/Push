@@ -185,11 +185,11 @@ ship before client changes**, never the reverse.
    **Vertex / Zen-Go still pending — and not just "apply the recipe".** Their
    *non-anthropic* transports are OpenAI-compat passthroughs (`bodyText` /
    `translateVertexOpenApiBody`), not Gemini-native, so the neutral branch there
-   needs a net-new `toOpenAIChat(PushStreamRequest)` serializer (the final-phase
-   "explicit peer serializer"). Their *anthropic* transports also omit `model`
-   from the body (model in URL / implied), so `toAnthropicMessages` needs an
-   `emitModel: false` option. Those two pieces are the prerequisite for the
-   Vertex/Zen-Go dual-accept cut.
+   serializes via `toOpenAIChat(PushStreamRequest)` — **now shipped** (the
+   "explicit peer serializer", `lib/openai-chat-serializer.ts`). The one
+   remaining prerequisite: their *anthropic* transports omit `model` from the
+   body (model in URL / implied), so `toAnthropicMessages` needs an
+   `emitModel: false` option before the Vertex/Zen-Go dual-accept cut.
 
 3. **Flip the client adapter (ship after step 2 is live).**
    `app/src/lib/anthropic-stream.ts` **still runs `toLLMMessages` first** (see

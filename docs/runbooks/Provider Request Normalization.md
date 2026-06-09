@@ -179,6 +179,30 @@ there's no capability gate to add. Gemini also has no inline prompt-cache marker
 (its explicit-cache API is a separate endpoint), so `cacheBreakpointIndices` are
 ignored, same as the legacy bridge.
 
+## `toOpenAIChat` — the OpenAI peer serializer ✅ shipped
+
+`toOpenAIChat(PushStreamRequest)` (in `lib/openai-chat-serializer.ts`) is the
+third peer alongside `toAnthropicMessages` / `toGeminiGenerateContent`: it builds
+an OpenAI Chat Completions body straight from the neutral request. OpenAI is
+mostly identity — roles map 1:1 and `LlmContentPart` already *is* the OpenAI
+`image_url` content-part shape — so the work is the explicit choices:
+`reasoningBlocks` are dropped (the Push-private sidecar is OpenAI-compat-unsafe);
+images pass through as `image_url` with **no** per-URL loud-fail (OpenAI accepts
+data + http natively — only an unknown part type throws); and `cache_control`
+tagging is gated behind `tagCacheBreakpoints` (OpenRouter→Anthropic routing only).
+
+`cli/openai-stream.ts` now builds its `baseBody` via `toOpenAIChat` (passing
+`tagCacheBreakpoints: config.id === 'openrouter'`), replacing ~80 lines of
+hand-rolled message/cache building and gaining multimodal support for free; the
+OpenRouter extras (`session_id`, `openrouter:web_search`, broadcast) still wrap
+the base body. The CLI provider suite is the behavior oracle.
+
+This unblocks the **Vertex / Zen-Go** dual-accept cut: their non-anthropic
+transports are OpenAI-compat (not Gemini-native), so their neutral branch
+serializes via `toOpenAIChat`. The remaining prerequisite for that cut is a
+`toAnthropicMessages` `emitModel: false` option (their *anthropic* transports
+omit body `model` — it rides the URL).
+
 ## What NOT to change
 
 - The signed thinking-block round-trip in `buildAnthropicMessagesRequest` /
