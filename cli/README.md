@@ -206,7 +206,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_KILOCODE_MODEL` | Kilo Code model (default: `google/gemini-3-flash-preview`) |
 | `PUSH_BLACKBOX_URL` | Blackbox AI endpoint (default: `https://api.blackbox.ai/chat/completions`) |
 | `PUSH_BLACKBOX_API_KEY` | Blackbox AI API key |
-| `PUSH_BLACKBOX_MODEL` | Blackbox AI model (default: `blackboxai/anthropic/claude-haiku-4.5`) |
+| `PUSH_BLACKBOX_MODEL` | Blackbox AI model (default: `claude-haiku-4-5-20251001`) |
 | `PUSH_OPENADAPTER_URL` | OpenAdapter endpoint (default: `https://api.openadapter.in/v1/chat/completions`) |
 | `PUSH_OPENADAPTER_API_KEY` | OpenAdapter API key |
 | `PUSH_OPENADAPTER_MODEL` | OpenAdapter model (default: `deepseek/deepseek-v3`) |
@@ -241,7 +241,7 @@ The CLI ships ten providers. Seven (`ollama`, `openrouter`, `zen`, `nvidia`, `ki
 | `zen` | `big-pickle` | Yes |
 | `nvidia` | `nvidia/llama-3.1-nemotron-70b-instruct` | Yes |
 | `kilocode` | `google/gemini-3-flash-preview` | Yes |
-| `blackbox` | `blackboxai/anthropic/claude-haiku-4.5` | Yes |
+| `blackbox` | `claude-haiku-4-5-20251001` | Yes |
 | `openadapter` | `deepseek/deepseek-v3` | Yes |
 | `openai` | `gpt-5.4` | Yes |
 | `anthropic` | `claude-sonnet-4-6` | Yes |
