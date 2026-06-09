@@ -2,9 +2,13 @@
 
 Date: 2026-06-09
 Status: **in progress** — Step 0 (multimodal serializer), Steps 1–2 (wire type,
-neutral validator, Worker dual-accept), and **Step 3 for Anthropic + Gemini**
-(both web clients now send `push.stream.v1`) shipped; Steps 4–5 (bake, drop
-legacy) pending.
+neutral validator, dual-accept on all four handlers), and **Step 3 for
+Anthropic + Gemini + Vertex-native** (those web clients now send
+`push.stream.v1`; the **Zen-Go client flip is the remaining Step-3 item**)
+shipped, plus two post-flip fixes (#854 route-authoritative `provider` stamp,
+#857 Zen-Go model-in-body). Step 4 (bake) is **running** — every dual-accept
+handler logs `contract: "legacy" | "neutral"` on its request line; Step 5
+(drop legacy) waits on that telemetry reading zero legacy.
 Owner: Push
 
 This is the Phase 3 "risky part" called out in
@@ -14,6 +18,24 @@ Completions shape. Phase 2 already did this for the CLI (in-process, zero
 contract risk). The web path is harder because the OpenAI shape is a real
 network contract between a long-lived browser client and an
 atomically-deployed Cloudflare Worker — the two cannot change in lockstep.
+
+## Wire status by provider (as of #857)
+
+The system currently runs three wire regimes. This table is the map — update it
+whenever a client flips or a handler changes regime.
+
+| Provider route | Web client → Worker (request) | Worker handler | Worker → client (response) | CLI |
+|---|---|---|---|---|
+| Anthropic `/api/anthropic/chat` | neutral `push.stream.v1` (#852) | dual-accept | OpenAI SSE (`createAnthropicTranslatedStream`) | neutral end-to-end (in-process, no wire) |
+| Gemini `/api/google/chat` | neutral (#853) | dual-accept | OpenAI SSE (`createGeminiTranslatedStream`) | neutral end-to-end |
+| Vertex `/api/vertex/chat` — native mode | neutral, both transports (#856) | dual-accept | OpenAI SSE | — |
+| Vertex — legacy upstream-base mode | OpenAI shape | `handleLegacyVertexChat`, no dual-accept | OpenAI SSE | — |
+| Zen-Go `/api/zen/go/chat` | **OpenAI shape — client flip pending** | dual-accept (#851, neutral branch dormant) | OpenAI SSE | — |
+| OpenAI, OpenRouter, Ollama, NVIDIA, Kilo, Blackbox, Azure, Bedrock, Zen, OpenAdapter | OpenAI shape | `createStreamProxyHandler`, no dual-accept | OpenAI SSE | CLI OpenAI-compat path builds via `toOpenAIChat` |
+
+The **response** column is uniformly OpenAI SSE on the web — the response-axis
+migration (Phase 3a for the web Worker) has not started; only the CLI parses
+provider SSE directly into neutral `PushStreamEvent`s.
 
 ## Current contract (what we're migrating)
 
@@ -240,8 +262,23 @@ ship before client changes**, never the reverse.
    NOT dual-accept, so legacy keeps the OpenAI-shape body. A test pins both
    sides (native → `push.stream.v1`, legacy → OpenAI shape).
 
-4. **Bake.** Watch `worker_anthropic_contract` — legacy share decays toward zero
-   as old tabs close. No code change; just telemetry.
+   **Still pending in Step 3: the Zen-Go client.** `app/src/lib/zen-go.ts` still
+   sends the OpenAI-shape body; `handleZenGoChat`'s neutral branch (shipped in
+   #851) is dormant until that flip.
+
+   **Post-flip fixes (both shipped).** #854: the neutral validator stamps the
+   **route-authoritative** `provider` from `ChatRequestPolicy.provider` — the
+   body's optional `provider` field is never trusted (it exists only for the
+   future provider-agnostic endpoint). #857: the Zen-Go anthropic transport
+   **must** emit `model` in the body — unlike Vertex (model rides the URL path),
+   Zen-Go's `/v1/messages` is one fixed shared URL, so a model-less body can't
+   be dispatched upstream. The earlier "model is out-of-band on anthropic
+   transports" assumption was Vertex-only.
+
+4. **Bake (running now).** Each dual-accept handler emits a `request` log line
+   carrying `contract: "legacy" | "neutral"` (plus `route` and `model`). Watch
+   the legacy share decay toward zero as old tabs close. No code change; just
+   telemetry.
 
 5. **Drop legacy (ship once legacy ≈ 0).** Remove the legacy branch + the
    OpenAI-shape path for this endpoint; the client OpenAI-shaping is already gone
@@ -276,14 +313,17 @@ Mapped to the recurring defect classes in `CLAUDE.md` → PR self-review:
   versioned constant in `lib/`; the drift-detector test pins the wire type so a
   field added to `PushStreamRequest` doesn't silently fail validation on the
   Worker.
-- **Symmetric logs.** The `worker_anthropic_contract` line is emitted on *both*
-  branches (legacy ↔ neutral), not just one — it's load-bearing for step 5.
+- **Symmetric logs.** The `request` line (with `contract: "legacy" | "neutral"`)
+  is emitted on *both* branches, not just one — it's load-bearing for step 5.
 
 ## Scope boundaries
 
-- **Response/SSE (Phase 3a)** — separate axis; out of scope here.
-- **Zen-Go** — ✅ cut (both transports). **Vertex** — ✅ cut (both transports).
-- **Gemini / OpenAI** — get the same neutral wire once Anthropic lands; the
+- **Response/SSE (Phase 3a)** — separate axis; out of scope here. The web
+  Worker still emits OpenAI SSE on every route (see the wire-status table).
+- **Zen-Go** — server ✅ cut (both transports); **client flip pending**.
+  **Vertex** — ✅ cut end-to-end in native mode (both transports).
+- **Gemini** — ✅ cut end-to-end (server #849, client #853). **OpenAI** and the
+  other `createStreamProxyHandler` providers have no dual-accept yet; the
   provider-agnostic endpoint consolidation is the convergence point.
 
 ## References
