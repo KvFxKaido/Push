@@ -1,4 +1,5 @@
 import type { OpenAIChatRequest, OpenAIContentPart } from './openai-chat-types.ts';
+import type { LlmContentPart, LlmMessage, PushStreamRequest } from './provider-contract.ts';
 
 /**
  * OpenAI ↔ Gemini bridge.
@@ -96,12 +97,47 @@ export function buildGeminiGenerateContentRequest(
     });
   }
 
-  // Gemini requires `contents` to be non-empty AND to start with a `user`
-  // turn — `[{ role: 'model', ... }]` 400s with "contents must not start
-  // with a model turn". Pad with an empty user turn in two cases:
-  //   - no non-system messages at all (e.g. system-only opening turn);
-  //   - first non-system message is an assistant, which happens after
-  //     context compaction lops off the user prefix.
+  return assembleGeminiBody({
+    contents,
+    systemText: systemParts.length > 0 ? flattenSystemParts(systemParts) : '',
+    maxOutputTokens:
+      typeof request.max_completion_tokens === 'number'
+        ? request.max_completion_tokens
+        : typeof request.max_tokens === 'number'
+          ? request.max_tokens
+          : undefined,
+    temperature: typeof request.temperature === 'number' ? request.temperature : undefined,
+    topP: typeof request.top_p === 'number' ? request.top_p : undefined,
+    // Strict `=== true` so a malformed input (e.g. the string `"false"`) can't
+    // accidentally enable grounding.
+    enableGoogleSearch: request.google_search_grounding === true,
+  });
+}
+
+/**
+ * Shared final assembly — both `buildGeminiGenerateContentRequest` (OpenAI
+ * shape) and `toGeminiGenerateContent` (neutral) converge here, so the two paths
+ * can only diverge on message conversion. Applies Gemini's user-first-turn
+ * requirement, `generationConfig` placement, the `systemInstruction` hoist, and
+ * the `googleSearch` tool. (Model is NOT in the body — Gemini carries it in the
+ * URL path.)
+ */
+interface GeminiBodyAssembly {
+  contents: Array<Record<string, unknown>>;
+  /** Flattened system text, or `''` when there is no system content. */
+  systemText: string;
+  maxOutputTokens?: number;
+  temperature?: number;
+  topP?: number;
+  enableGoogleSearch: boolean;
+}
+
+function assembleGeminiBody(parts: GeminiBodyAssembly): Record<string, unknown> {
+  const contents = parts.contents;
+  // Gemini requires `contents` non-empty AND starting with a `user` turn —
+  // `[{ role: 'model', ... }]` 400s. Pad with an empty user turn when there are
+  // no non-system messages, or when the first is an assistant (e.g. after
+  // context compaction lops off the user prefix).
   if (contents.length === 0) {
     contents.push({ role: 'user', parts: [{ text: '' }] });
   } else if (contents[0].role === 'model') {
@@ -109,43 +145,134 @@ export function buildGeminiGenerateContentRequest(
   }
 
   const generationConfig: Record<string, unknown> = {};
-  if (typeof request.max_completion_tokens === 'number') {
-    generationConfig.maxOutputTokens = request.max_completion_tokens;
-  } else if (typeof request.max_tokens === 'number') {
-    generationConfig.maxOutputTokens = request.max_tokens;
+  if (typeof parts.maxOutputTokens === 'number') {
+    generationConfig.maxOutputTokens = parts.maxOutputTokens;
   }
-  if (typeof request.temperature === 'number') {
-    generationConfig.temperature = request.temperature;
+  if (typeof parts.temperature === 'number') {
+    generationConfig.temperature = parts.temperature;
   }
-  if (typeof request.top_p === 'number') {
-    generationConfig.topP = request.top_p;
+  if (typeof parts.topP === 'number') {
+    generationConfig.topP = parts.topP;
   }
 
   const body: Record<string, unknown> = { contents };
-
-  if (systemParts.length > 0) {
-    // The flattened-string form is what Gemini's REST examples use and avoids
-    // any per-part shape mismatch with the SDK schema; we lose nothing by
-    // joining since the upstream concatenates the parts into a single system
-    // turn anyway.
-    body.systemInstruction = { parts: [{ text: flattenSystemParts(systemParts) }] };
+  if (parts.systemText) {
+    // Flattened-string form matches Gemini's REST examples; the upstream
+    // concatenates parts into a single system turn anyway.
+    body.systemInstruction = { parts: [{ text: parts.systemText }] };
   }
   if (Object.keys(generationConfig).length > 0) {
     body.generationConfig = generationConfig;
   }
+  if (parts.enableGoogleSearch) {
+    body.tools = [{ googleSearch: {} }];
+  }
+  return body;
+}
 
-  // Strict `=== true` so a malformed input (e.g. the string `"false"`) can't
-  // accidentally enable grounding — the Worker guardrails don't normalize
-  // Push-private extension fields, so the bridge is the canonical check.
-  if (request.google_search_grounding === true) {
-    body.tools = [
-      {
-        googleSearch: {},
-      },
-    ];
+/** Convert an `image_url.url` to a Gemini inline part. Gemini inline image
+ *  content requires a base64 `data:` URL; an http(s) URL (which Gemini would
+ *  only accept as `fileData` with a Google-hosted URI, not arbitrary http)
+ *  throws so an attached image is never silently dropped — the loud-failure
+ *  posture of the neutral path. */
+function geminiInlineImageFromUrl(url: string): Record<string, unknown> {
+  const inline = dataUrlToGeminiInlinePart(url);
+  if (inline) return inline;
+  throw new Error(
+    `toGeminiGenerateContent: cannot represent image (Gemini inline parts require a data:image base64 URL): ${url.slice(0, 48)}`,
+  );
+}
+
+/** Strict multimodal converter for the neutral `LlmMessage.contentParts` path —
+ *  preserves text + image parts and THROWS on an unsupported/malformed part,
+ *  rather than silently dropping it the way `convertOpenAIContentToGeminiParts`
+ *  does on the OpenAI-shape path. */
+function llmContentPartsToGemini(parts: readonly LlmContentPart[]): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  for (const rawPart of parts) {
+    const part = rawPart as { type?: unknown; text?: unknown; image_url?: unknown };
+    if (part.type === 'text' && typeof part.text === 'string') {
+      out.push({ text: part.text });
+      continue;
+    }
+    if (
+      part.type === 'image_url' &&
+      part.image_url &&
+      typeof part.image_url === 'object' &&
+      typeof (part.image_url as { url?: unknown }).url === 'string'
+    ) {
+      out.push(geminiInlineImageFromUrl((part.image_url as { url: string }).url));
+      continue;
+    }
+    throw new Error(
+      `toGeminiGenerateContent: unsupported or malformed content part (type: ${JSON.stringify(part.type)})`,
+    );
+  }
+  return out.length > 0 ? out : [{ text: '' }];
+}
+
+/** Options for the neutral `PushStreamRequest` → Gemini serializer. */
+export interface ToGeminiGenerateContentOptions {
+  /** Attach the native `googleSearch` grounding tool. The caller owns the policy
+   *  decision (the CLI's env-driven default-on). Defaults to
+   *  `req.googleSearchGrounding === true`. */
+  enableGoogleSearch?: boolean;
+  /** Temperature applied when `req.temperature` is unset (the CLI passes 0.1). */
+  temperatureDefault?: number;
+}
+
+/**
+ * Build a Gemini `:generateContent` body **directly** from the neutral
+ * `PushStreamRequest` — no OpenAI Chat Completions intermediate. The Gemini
+ * analog of `toAnthropicMessages`: system hoist into `systemInstruction`,
+ * `user`/`model` role rename, multimodal `contentParts` (text + base64 image,
+ * failing loudly on an unrepresentable part), and `generationConfig` assembly.
+ *
+ * Gemini has **no** model-capability sampling gate (temperature/topP/topK are
+ * accepted across gemini-2.5 / gemini-3.x), so there is no Phase-1-style strip
+ * here. `cacheBreakpointIndices` are ignored — Gemini's explicit-cache API lives
+ * on a different endpoint, so inline cache markers are a no-op (same as the
+ * legacy bridge). Model is NOT emitted: Gemini carries it in the URL path.
+ */
+export function toGeminiGenerateContent(
+  req: PushStreamRequest<LlmMessage>,
+  options?: ToGeminiGenerateContentOptions,
+): Record<string, unknown> {
+  const messages = Array.isArray(req.messages) ? req.messages : [];
+  const hasOverride =
+    typeof req.systemPromptOverride === 'string' && req.systemPromptOverride.length > 0;
+
+  const systemParts: Array<Record<string, unknown>> = [];
+  const contents: Array<Record<string, unknown>> = [];
+
+  const pushSystemText = (text: string): void => {
+    if (text.length > 0) systemParts.push({ text });
+  };
+  if (hasOverride) pushSystemText(req.systemPromptOverride as string);
+
+  for (const m of messages) {
+    if (m.role === 'system') {
+      // Gemini's systemInstruction is text-only; the web's system message is a
+      // plain string.
+      pushSystemText(m.content);
+      continue;
+    }
+    const parts =
+      m.contentParts && m.contentParts.length > 0
+        ? llmContentPartsToGemini(m.contentParts)
+        : [{ text: m.content }];
+    contents.push({ role: m.role === 'assistant' ? 'model' : 'user', parts });
   }
 
-  return body;
+  return assembleGeminiBody({
+    contents,
+    systemText: systemParts.length > 0 ? flattenSystemParts(systemParts) : '',
+    maxOutputTokens: typeof req.maxTokens === 'number' ? req.maxTokens : undefined,
+    temperature:
+      typeof req.temperature === 'number' ? req.temperature : options?.temperatureDefault,
+    topP: typeof req.topP === 'number' ? req.topP : undefined,
+    enableGoogleSearch: options?.enableGoogleSearch ?? req.googleSearchGrounding === true,
+  });
 }
 
 function buildOpenAISseChunk(params: {

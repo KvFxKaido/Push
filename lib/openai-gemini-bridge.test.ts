@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import type { OpenAIChatRequest } from './openai-chat-types.ts';
+import type { LlmMessage, PushStreamRequest } from './provider-contract.ts';
 import {
   buildGeminiGenerateContentRequest,
   createGeminiTranslatedStream,
+  toGeminiGenerateContent,
 } from './openai-gemini-bridge.ts';
 
 function createEventStreamResponse(chunks: string[]): Response {
@@ -242,5 +244,184 @@ describe('createGeminiTranslatedStream', () => {
     expect(out).toContain('"content":" frames"');
     expect(out).toContain('"finish_reason":"stop"');
     expect(out.endsWith('data: [DONE]\n\n')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 2 (Gemini parity): toGeminiGenerateContent — direct neutral -> Gemini
+// serializer. Pinned byte-for-byte against the legacy build-OpenAI-shape-then-
+// bridge path the CLI used before, for the string-content cases that path
+// supported; multimodal is new and tested directly.
+// ---------------------------------------------------------------------------
+
+function llm(
+  id: string,
+  role: LlmMessage['role'],
+  content: string,
+  contentParts?: unknown,
+): LlmMessage {
+  return {
+    id,
+    role,
+    content,
+    timestamp: 0,
+    ...(contentParts ? { contentParts: contentParts as LlmMessage['contentParts'] } : {}),
+  };
+}
+
+/** Reproduces the pre-Phase-2 CLI path: PushStreamRequest -> OpenAI shape ->
+ *  buildGeminiGenerateContentRequest. (Gemini emits no `model` in the body.) */
+function legacyGeminiDetour(
+  req: PushStreamRequest<LlmMessage>,
+  opts: { model: string; enableGoogleSearch: boolean },
+): Record<string, unknown> {
+  const openAIMessages: OpenAIChatRequest['messages'] = [];
+  if (req.systemPromptOverride) {
+    openAIMessages.push({ role: 'system', content: req.systemPromptOverride });
+  }
+  for (const m of req.messages) {
+    openAIMessages.push({ role: m.role, content: m.content });
+  }
+  const openAIRequest: OpenAIChatRequest = {
+    model: opts.model,
+    messages: openAIMessages,
+    stream: true,
+    temperature: req.temperature ?? 0.1,
+    ...(req.topP !== undefined ? { top_p: req.topP } : {}),
+    ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
+    ...(opts.enableGoogleSearch ? { google_search_grounding: true } : {}),
+  };
+  return buildGeminiGenerateContentRequest(openAIRequest);
+}
+
+describe('toGeminiGenerateContent — drift vs legacy OpenAI-detour path', () => {
+  const corpus: Array<{
+    name: string;
+    req: PushStreamRequest<LlmMessage>;
+    enableGoogleSearch: boolean;
+  }> = [
+    {
+      name: 'single user turn (0.1 temperature default)',
+      req: { provider: 'google', model: 'gemini-3.5-flash', messages: [llm('1', 'user', 'hi')] },
+      enableGoogleSearch: false,
+    },
+    {
+      name: 'system override + multi-turn + grounding',
+      req: {
+        provider: 'google',
+        model: 'gemini-3.5-flash',
+        systemPromptOverride: 'Be concise.',
+        messages: [
+          llm('1', 'user', 'Hi'),
+          llm('2', 'assistant', 'Hello'),
+          llm('3', 'user', 'More'),
+        ],
+      },
+      enableGoogleSearch: true,
+    },
+    {
+      name: 'system message inside messages',
+      req: {
+        provider: 'google',
+        model: 'gemini-3.5-flash',
+        messages: [llm('0', 'system', 'sys text'), llm('1', 'user', 'u1')],
+      },
+      enableGoogleSearch: false,
+    },
+    {
+      name: 'explicit temperature + topP + maxTokens (no Phase-1 strip on Gemini)',
+      req: {
+        provider: 'google',
+        model: 'gemini-3.5-flash',
+        temperature: 0.4,
+        topP: 0.9,
+        maxTokens: 2048,
+        messages: [llm('1', 'user', 'hi')],
+      },
+      enableGoogleSearch: false,
+    },
+    {
+      name: 'assistant-first transcript pads a leading user turn',
+      req: {
+        provider: 'google',
+        model: 'gemini-3.5-flash',
+        messages: [llm('1', 'assistant', 'resuming'), llm('2', 'user', 'ok')],
+      },
+      enableGoogleSearch: false,
+    },
+  ];
+
+  for (const { name, req, enableGoogleSearch } of corpus) {
+    it(`byte-equal to legacy detour: ${name}`, () => {
+      const direct = toGeminiGenerateContent(req, { enableGoogleSearch, temperatureDefault: 0.1 });
+      const legacy = legacyGeminiDetour(req, { model: req.model, enableGoogleSearch });
+      expect(direct).toEqual(legacy);
+    });
+  }
+
+  it('forwards both temperature and topP — Gemini has no sampling-param removal', () => {
+    const body = toGeminiGenerateContent({
+      provider: 'google',
+      model: 'gemini-3.5-flash',
+      temperature: 0.2,
+      topP: 0.8,
+      messages: [llm('1', 'user', 'hi')],
+    });
+    expect(body.generationConfig).toEqual({ temperature: 0.2, topP: 0.8 });
+  });
+});
+
+describe('toGeminiGenerateContent — multimodal contentParts', () => {
+  const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+  const userParts = (parts: unknown): LlmMessage => llm('1', 'user', 'text fallback', parts);
+  const firstParts = (body: Record<string, unknown>): Array<Record<string, unknown>> =>
+    (body.contents as Array<{ parts: Array<Record<string, unknown>> }>)[0].parts;
+
+  it('serializes text + base64 image parts as Gemini text + inline_data', () => {
+    const body = toGeminiGenerateContent({
+      provider: 'google',
+      model: 'gemini-3.5-flash',
+      messages: [
+        userParts([
+          { type: 'text', text: 'what is this?' },
+          { type: 'image_url', image_url: { url: PNG } },
+        ]),
+      ],
+    });
+    expect(firstParts(body)).toEqual([
+      { text: 'what is this?' },
+      { inline_data: { mime_type: 'image/png', data: 'iVBORw0KGgo=' } },
+    ]);
+  });
+
+  it('falls back to content text when contentParts is empty', () => {
+    const body = toGeminiGenerateContent({
+      provider: 'google',
+      model: 'gemini-3.5-flash',
+      messages: [userParts([])],
+    });
+    expect(firstParts(body)).toEqual([{ text: 'text fallback' }]);
+  });
+
+  it('throws loudly on an unsupported content part type', () => {
+    expect(() =>
+      toGeminiGenerateContent({
+        provider: 'google',
+        model: 'gemini-3.5-flash',
+        messages: [userParts([{ type: 'audio', audio: {} }])],
+      }),
+    ).toThrow(/unsupported or malformed content part/);
+  });
+
+  it('throws loudly on a non-data image URL (Gemini inline needs base64)', () => {
+    expect(() =>
+      toGeminiGenerateContent({
+        provider: 'google',
+        model: 'gemini-3.5-flash',
+        messages: [
+          userParts([{ type: 'image_url', image_url: { url: 'https://example.com/c.png' } }]),
+        ],
+      }),
+    ).toThrow(/cannot represent image/);
   });
 });

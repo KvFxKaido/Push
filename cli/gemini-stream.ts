@@ -2,10 +2,11 @@
  * CLI native-Gemini PushStream.
  *
  * Calls `https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse`
- * directly with `x-goog-api-key`, translates the OpenAI-shaped body via the
- * shared bridge (`lib/openai-gemini-bridge.ts`), then pumps the upstream
- * SSE through `createGeminiTranslatedStream` so the events leave this
- * adapter in OpenAI Chat-Completions shape.
+ * directly with `x-goog-api-key`, builds the `:generateContent` body straight
+ * from the neutral `PushStreamRequest` via `toGeminiGenerateContent` (no OpenAI
+ * Chat-Completions intermediate), then pumps the upstream SSE through
+ * `createGeminiTranslatedStream` so the events leave this adapter in OpenAI
+ * Chat-Completions shape.
  *
  * Shape mirrors the Worker's `handleGoogleChat`. Difference vs the Worker
  * version: no preamble / rate-limit preflight, and `config.url` is treated
@@ -26,11 +27,10 @@ import type {
   PushStreamRequest,
 } from '../lib/provider-contract.ts';
 import {
-  buildGeminiGenerateContentRequest,
   createGeminiTranslatedStream,
+  toGeminiGenerateContent,
 } from '../lib/openai-gemini-bridge.ts';
 import { openAISSEPump } from '../lib/openai-sse-pump.ts';
-import type { OpenAIChatRequest, OpenAIMessage } from '../lib/openai-chat-types.ts';
 import { CliProviderError } from './openai-stream.ts';
 import type { ProviderConfig } from './provider.ts';
 
@@ -70,25 +70,17 @@ async function* cliGeminiStream(
 ): AsyncIterable<PushStreamEvent> {
   const model = req.model && req.model.trim() ? req.model : config.defaultModel;
 
-  const openAIMessages: OpenAIMessage[] = [];
-  if (req.systemPromptOverride) {
-    openAIMessages.push({ role: 'system', content: req.systemPromptOverride });
-  }
-  for (const m of req.messages) {
-    openAIMessages.push({ role: m.role, content: m.content });
-  }
-
-  const openAIRequest: OpenAIChatRequest = {
-    model,
-    messages: openAIMessages,
-    stream: true,
-    temperature: req.temperature ?? 0.1,
-    ...(req.topP !== undefined ? { top_p: req.topP } : {}),
-    ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
-    ...(resolveGoogleSearchGrounding(req) ? { google_search_grounding: true } : {}),
-  };
-
-  const upstreamBody = JSON.stringify(buildGeminiGenerateContentRequest(openAIRequest));
+  // Direct neutral → Gemini serialization (no OpenAI Chat-Completions
+  // intermediate — see docs/runbooks/Provider Request Normalization.md). The
+  // serializer carries multimodal `contentParts` and fails loudly on a part it
+  // can't represent; `temperatureDefault: 0.1` preserves the CLI's historical
+  // default.
+  const upstreamBody = JSON.stringify(
+    toGeminiGenerateContent(req, {
+      enableGoogleSearch: resolveGoogleSearchGrounding(req),
+      temperatureDefault: 0.1,
+    }),
+  );
   const upstreamUrl = buildGeminiUpstreamUrl(config.url, model);
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };

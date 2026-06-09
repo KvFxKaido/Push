@@ -151,6 +151,28 @@ Repeat both for Gemini. Once no provider depends on OpenAI-shape as an
 intermediate, delete the re-emit-to-OpenAI step and make `toOpenAIChat` an
 explicit peer serializer.
 
+## Gemini parity — Phase 2 ✅ shipped (Phase 1 N/A)
+
+`toGeminiGenerateContent(PushStreamRequest)` (in `lib/openai-gemini-bridge.ts`)
+builds the `:generateContent` body straight from the neutral request —
+`systemInstruction` hoist, `user`/`model` role rename, multimodal `contentParts`
+(text + base64 image, **failing loudly** on a part it can't represent), and the
+`user`-first padding + `generationConfig` assembly. A shared `assembleGeminiBody`
+single-sources the request-field tail so it and `buildGeminiGenerateContentRequest`
+can only diverge on message conversion. `cli/gemini-stream.ts` consumes it
+directly (request side), dropping the OpenAI-shape round-trip; the response stays
+OpenAI SSE via `createGeminiTranslatedStream` (the Gemini Phase-3a SSE→neutral
+parser is the deferred follow-on). Pinned by a drift corpus (string-content
+equivalence with the legacy path) + multimodal tests + the CLI body-capture
+suite.
+
+**Phase 1 is a no-op for Gemini.** The Anthropic Phase 1 fixed Opus 4.7+
+*removing* `temperature`/`top_p` (a 400). Gemini accepts `temperature`/`topP`/
+`topK` across gemini-2.5 / gemini-3.x — there is no sampling-param removal, so
+there's no capability gate to add. Gemini also has no inline prompt-cache markers
+(its explicit-cache API is a separate endpoint), so `cacheBreakpointIndices` are
+ignored, same as the legacy bridge.
+
 ## What NOT to change
 
 - The signed thinking-block round-trip in `buildAnthropicMessagesRequest` /
