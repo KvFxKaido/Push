@@ -458,6 +458,65 @@ describe('vertexStream', () => {
     );
   });
 
+  it('legacy mode replays pause_turn inline (OpenAI shape) and accumulates across pauses', async () => {
+    // Legacy mode keeps the OpenAI body, so pause_turn replay rides inline as
+    // `assistant_content_blocks` messages (not the neutral replayAssistantTurns).
+    // Two pauses must accumulate cumulatively in the third request's messages.
+    vi.doMock('@/hooks/useVertexConfig', () => ({
+      getVertexBaseUrl: () =>
+        'https://us-central1-aiplatform.googleapis.com/v1beta1/projects/test-project/locations/us-central1/endpoints/openapi',
+      getVertexKey: () => 'test-key',
+      getVertexMode: () => 'legacy' as const,
+      getVertexRegion: () => 'us-central1',
+    }));
+    const responses: Array<ControllableStream> = [];
+    const queue = [
+      () => makeControllableStream(),
+      () => makeControllableStream(),
+      () => makeControllableStream(),
+    ];
+    fetchMock.mockImplementation(async (_url: unknown, init?: RequestInit) => {
+      if (init?.signal?.aborted) throw new DOMException('aborted', 'AbortError');
+      const s = (queue.shift() ?? (() => makeControllableStream()))();
+      responses.push(s);
+      init?.signal?.addEventListener('abort', () => s.abort());
+      return s.response;
+    });
+    const { vertexStream } = await import('./vertex-stream');
+    const events = collect(vertexStream(baseRequest));
+
+    const pauseFrame = (id: string) =>
+      JSON.stringify({
+        choices: [
+          {
+            finish_reason: 'pause_turn',
+            delta: { assistant_content_blocks: [{ type: 'text', text: id }] },
+          },
+        ],
+      });
+
+    await new Promise((r) => setTimeout(r, 0));
+    responses[0].push(pauseFrame('A'));
+    responses[0].finish();
+    await new Promise((r) => setTimeout(r, 5));
+    responses[1].push(pauseFrame('B'));
+    responses[1].finish();
+    await new Promise((r) => setTimeout(r, 5));
+    responses[2].push(JSON.stringify({ choices: [{ finish_reason: 'stop', delta: {} }] }));
+    responses[2].finish();
+    await events;
+
+    // Third request: OpenAI shape, with both paused turns appended after the
+    // original user turn, oldest-first.
+    const thirdBody = JSON.parse(fetchMock.mock.calls[2][1]!.body as string);
+    expect(thirdBody.contract).toBeUndefined();
+    expect(thirdBody.messages).toEqual([
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', assistant_content_blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', assistant_content_blocks: [{ type: 'text', text: 'B' }] },
+    ]);
+  });
+
   it('legacy mode throws when the configured base URL is missing or invalid', async () => {
     vi.doMock('@/hooks/useVertexConfig', () => ({
       getVertexBaseUrl: () => '',
