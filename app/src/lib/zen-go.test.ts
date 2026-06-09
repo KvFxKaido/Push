@@ -23,9 +23,10 @@ describe('zen-go', () => {
         'minimax-m3',
         'qwen3.6-plus',
         'qwen3.7-max',
+        'qwen3.7-plus',
       ]),
     );
-    expect(ZEN_GO_MODELS).toHaveLength(13);
+    expect(ZEN_GO_MODELS).toHaveLength(14);
   });
 
   it('exposes an explicit default model', () => {
@@ -37,13 +38,15 @@ describe('zen-go', () => {
     expect(getZenGoTransport('glm-5.1')).toBe('openai');
     expect(getZenGoTransport('kimi-k2.5')).toBe('openai');
     expect(getZenGoTransport('kimi-k2.6')).toBe('openai');
-    expect(getZenGoTransport('qwen3.6-plus')).toBe('openai');
     expect(getZenGoTransport('minimax-m2.7')).toBe('anthropic');
     expect(getZenGoTransport('minimax-m2.5')).toBe('anthropic');
     expect(getZenGoTransport('minimax-m3')).toBe('anthropic');
-    // qwen3.7-max rejects the oa-compat format on the live Go endpoint, so it
-    // must route over the Anthropic Messages transport.
+    // The Qwen family publishes on the Anthropic Messages endpoint. qwen3.7-max
+    // also rejects the oa-compat format on the live Go endpoint, so routing it
+    // over the OpenAI transport would hard-fail on first use.
+    expect(getZenGoTransport('qwen3.6-plus')).toBe('anthropic');
     expect(getZenGoTransport('qwen3.7-max')).toBe('anthropic');
+    expect(getZenGoTransport('qwen3.7-plus')).toBe('anthropic');
     expect(getZenGoTransport('deepseek-v4-pro')).toBe('openai');
     expect(getZenGoTransport('deepseek-v4-flash')).toBe('openai');
     expect(getZenGoTransport('mimo-v2.5')).toBe('openai');
