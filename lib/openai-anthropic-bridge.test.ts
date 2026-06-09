@@ -773,6 +773,32 @@ describe('toAnthropicMessages — drift vs legacy OpenAI-detour path', () => {
     expect(body.model).toBe('claude-sonnet-4-6');
   });
 
+  it('omits the top-level model when emitModel is false (URL/out-of-band transports)', () => {
+    const body = toAnthropicMessages(
+      { provider: 'anthropic', model: 'claude-sonnet-4-6', messages: [llm('1', 'user', 'hi')] },
+      { emitModel: false },
+    );
+    expect(body).not.toHaveProperty('model');
+    // The body is otherwise complete — messages still serialize.
+    expect(body.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'hi' }] }]);
+  });
+
+  it('emitModel:false still runs the sampling-capability gate on the resolved model', () => {
+    // Opus 4.7+ removed temperature/top_p — the gate must strip them even though
+    // the model id is not emitted into the body.
+    const body = toAnthropicMessages(
+      {
+        provider: 'anthropic',
+        model: 'claude-opus-4-7',
+        temperature: 0.5,
+        messages: [llm('1', 'user', 'hi')],
+      },
+      { emitModel: false },
+    );
+    expect(body).not.toHaveProperty('model');
+    expect(body).not.toHaveProperty('temperature');
+  });
+
   it('keeps an explicit top_p instead of injecting the default temperature', () => {
     // The CLI passes temperatureDefault: 0.1. A request that explicitly sets
     // only top_p must not get the default temperature filled in — on Claude 4+

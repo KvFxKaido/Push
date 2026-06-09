@@ -479,6 +479,16 @@ export interface ToAnthropicMessagesOptions {
   /** Whether to set `stream: true`. Defaults to true. */
   stream?: boolean;
   /**
+   * Whether to emit the top-level `model` field. Defaults to true — the direct
+   * Anthropic API requires `model` in the body. Set false for transports that
+   * carry the model out-of-band: Vertex puts it in the URL path, and Zen-Go's
+   * `/v1/messages` omits it. This mirrors `buildAnthropicMessagesRequest`, whose
+   * body never includes `model` (its callers re-attach it where the endpoint
+   * needs it). The sampling-capability gate still uses the resolved model
+   * regardless of this flag.
+   */
+  emitModel?: boolean;
+  /**
    * Pause-turn continuation: prior paused assistant `content[]` arrays,
    * appended verbatim as trailing assistant turns (oldest first). Anthropic
    * treats them as continuation context, so the text/reasoning reconstruction
@@ -615,7 +625,9 @@ export function toAnthropicMessages(
     topP: req.topP,
     enableWebSearch: options?.enableWebSearch ?? req.anthropicWebSearch === true,
     anthropicVersion: options?.anthropicVersion,
-    emitModel: model,
+    // `model` stays the sampling-gate input above; only the top-level body
+    // field is suppressed when the transport carries the model out-of-band.
+    emitModel: options?.emitModel === false ? undefined : model,
   });
 }
 
