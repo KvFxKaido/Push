@@ -128,8 +128,13 @@ function makeSseScanner() {
         const data = t.slice(5).trim();
         if (data === '[DONE]') { out.done = true; continue; }
         try {
-          const delta = JSON.parse(data).choices?.[0]?.delta?.content;
-          if (typeof delta === 'string' && delta.length) { out.gotDelta = true; out.deltaChars += delta.length; }
+          // First token of ANY kind — reasoning models stream
+          // reasoning_content before (or instead of) content.
+          const d = JSON.parse(data).choices?.[0]?.delta;
+          const delta = (typeof d?.content === 'string' && d.content.length) ? d.content
+            : (typeof d?.reasoning_content === 'string' && d.reasoning_content.length) ? d.reasoning_content
+            : null;
+          if (delta !== null) { out.gotDelta = true; out.deltaChars += delta.length; }
         } catch {}
       }
       idx = buffer.indexOf('\\n\\n');

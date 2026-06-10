@@ -164,10 +164,21 @@ function scanSseChunk(state: SseScanState, chunk: string): string[] {
       }
       try {
         const parsed = JSON.parse(data) as {
-          choices?: Array<{ delta?: { content?: string } }>;
+          choices?: Array<{ delta?: { content?: string; reasoning_content?: string } }>;
         };
-        const delta = parsed.choices?.[0]?.delta?.content;
-        if (typeof delta === 'string' && delta.length > 0) deltas.push(delta);
+        // A latency instrument clocks the first streamed token of ANY
+        // kind: reasoning models (glm-5.1) emit reasoning_content long
+        // before — or, with a small max_tokens budget, instead of —
+        // content. Counting only `content` left TTFT empty across the
+        // whole 2026-06-10 phone measurement run.
+        const d = parsed.choices?.[0]?.delta;
+        const delta =
+          typeof d?.content === 'string' && d.content.length > 0
+            ? d.content
+            : typeof d?.reasoning_content === 'string' && d.reasoning_content.length > 0
+              ? d.reasoning_content
+              : null;
+        if (delta !== null) deltas.push(delta);
       } catch {
         // Heartbeats / non-JSON control frames — skip quietly.
       }

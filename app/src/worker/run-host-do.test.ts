@@ -101,6 +101,27 @@ describe('POST /spike/server-turn', () => {
     expect(body.detail).toContain('upstream auth failed');
   });
 
+  it('counts reasoning_content deltas as tokens (reasoning models)', async () => {
+    // glm-5.1 (a reasoning variant) can spend the whole token budget on
+    // reasoning_content — the 2026-06-10 phone run measured TTFT=null on
+    // every arm because only `content` was counted.
+    const reasoningBody = [
+      'data: {"choices":[{"delta":{"reasoning_content":"thinking "}}]}',
+      '',
+      'data: {"choices":[{"delta":{"reasoning_content":"hard"}}]}',
+      '',
+      'data: [DONE]',
+      '',
+      '',
+    ].join('\n');
+    mocks.resolveProviderHandler.mockReturnValue(async () => sseResponse(reasoningBody));
+    const res = await makeHost().fetch(spikeRequest('/spike/server-turn', VALID_BODY));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.contentChars).toBe('thinking hard'.length);
+    expect(typeof body.serverFirstTokenMs).toBe('number');
+  });
+
   it('rejects a body without provider/model', async () => {
     const res = await makeHost().fetch(spikeRequest('/spike/server-turn', { model: 'x' }));
     expect(res.status).toBe(400);
