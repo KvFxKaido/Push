@@ -9,6 +9,7 @@
 import { STORE, get, put, del } from './app-db';
 import { safeStorageGet, safeStorageRemove } from './safe-storage';
 import type { RunCheckpoint } from '@/types';
+import type { RunCheckpointV1 } from '@push/lib/run-checkpoint';
 
 const LEGACY_KEY_PREFIX = 'run_checkpoint_';
 
@@ -51,4 +52,30 @@ export async function clearCheckpoint(chatId: string): Promise<void> {
   }
   // Also clear legacy key if present
   safeStorageRemove(`${LEGACY_KEY_PREFIX}${chatId}`);
+}
+
+// ---------------------------------------------------------------------------
+// RunCheckpointV1 (Durable Runs Phase 1) — self-contained per-turn records.
+// Separate store from the legacy delta checkpoint; both keyed by chatId.
+// ---------------------------------------------------------------------------
+
+/** Throws on IndexedDB failure — the capture layer owns the structured log. */
+export async function saveCheckpointV1(checkpoint: RunCheckpointV1): Promise<void> {
+  await put(STORE.runCheckpointsV1, checkpoint);
+}
+
+export async function loadCheckpointV1(chatId: string): Promise<RunCheckpointV1 | null> {
+  try {
+    return (await get<RunCheckpointV1>(STORE.runCheckpointsV1, chatId)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function clearCheckpointV1(chatId: string): Promise<void> {
+  try {
+    await del(STORE.runCheckpointsV1, chatId);
+  } catch {
+    // Best-effort
+  }
 }

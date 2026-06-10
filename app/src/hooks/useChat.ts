@@ -308,13 +308,13 @@ export function useChat(
     sendMessageRef,
     isStreaming,
     activeChatId,
+    getVerificationPolicyForChat,
   });
 
   // Composition wrapper: useVerificationState owns the ref + conversation
-  // write; useRunEngine owns the journal ref + persistRunJournal. When
-  // verification state updates for the in-flight run's chat, the journal
-  // also updates. Keeping this composition in useChat avoids a circular
-  // dep between the two hooks.
+  // write; useRunEngine owns the journal ref + persistRunJournal. When the
+  // in-flight run's verification state updates, the journal also updates.
+  // Composing here in useChat avoids a circular dep between the two hooks.
   const persistVerificationState = useCallback(
     (chatId: string, verificationState: VerificationRuntimeState) => {
       writeVerificationStateForChat(chatId, verificationState);

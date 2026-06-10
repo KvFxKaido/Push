@@ -39,6 +39,11 @@ import {
   recordResumeEvent,
   saveRunCheckpoint,
 } from '@/lib/checkpoint-manager';
+import { captureRunCheckpointV1 } from '@/lib/run-checkpoint-capture';
+import { getApprovalMode } from '@/lib/approval-mode';
+import { getZenGoMode } from '@/lib/providers';
+import type { RunCheckpointReason } from '@push/lib/run-checkpoint';
+import type { VerificationPolicy } from '@push/lib/verification-policy';
 import { isRunActive, type RunEnginePhase, type RunEngineState } from '@/lib/run-engine';
 import { setConversationAgentEvents } from '@/lib/chat-runtime-state';
 import type { LoopPhase } from '@/types';
@@ -106,6 +111,9 @@ export interface ChatCheckpointParams {
   // Streaming state (drives the detection effect)
   isStreaming: boolean;
   activeChatId: string;
+  // Durable Runs Phase 1: V1 checkpoints carry the chat's verification
+  // policy so an adopted run keeps the same verification semantics.
+  getVerificationPolicyForChat: (chatId: string | null | undefined) => VerificationPolicy;
 }
 
 // ---------------------------------------------------------------------------
@@ -146,6 +154,7 @@ export function useChatCheckpoint({
   sendMessageRef,
   isStreaming,
   activeChatId,
+  getVerificationPolicyForChat,
 }: ChatCheckpointParams) {
   // --- Checkpoint refs ---
   // Only apiMessages remains as a separate ref; everything else is read
@@ -234,6 +243,68 @@ export function useChatCheckpoint({
     [activeChatIdRef, appendAgentEvent, setAgentStatus],
   );
 
+  // --- V1 capture (Durable Runs Phase 1) ---
+  // Builds the self-contained RunCheckpointV1 next to every legacy save.
+  // Adoption requires a repo+branch scope; chats without one (no workspace)
+  // can't be adopted, so the capture is skipped with its own log event —
+  // distinct from `run_checkpoint_invalid`, which signals a capture bug.
+
+  const captureV1Checkpoint = useCallback(
+    (
+      chatId: string,
+      reason: RunCheckpointReason,
+      overrides?: { accumulated?: string; thinkingAccumulated?: string; savedDiff?: string },
+    ) => {
+      const engineState = runEngineStateRef.current;
+      const repoFullName = repoRef.current || '';
+      const branch =
+        branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || '';
+      if (!repoFullName || !branch) {
+        console.log(
+          JSON.stringify({
+            level: 'info',
+            event: 'run_checkpoint_skipped',
+            chatId,
+            reason,
+            missing: !repoFullName ? 'repoFullName' : 'branch',
+          }),
+        );
+        return;
+      }
+
+      captureRunCheckpointV1({
+        chatId,
+        repoFullName,
+        branch,
+        workspaceSessionId: workspaceSessionIdRef.current || undefined,
+        round: engineState.round,
+        phase: toLoopPhase(engineState.phase),
+        reason,
+        apiMessages: checkpointApiMessagesRef.current,
+        accumulated: overrides?.accumulated ?? engineState.accumulatedText,
+        thinkingAccumulated: overrides?.thinkingAccumulated ?? engineState.accumulatedThinking,
+        provider: engineState.provider,
+        model: engineState.model,
+        approvalMode: getApprovalMode(),
+        verificationPolicy: getVerificationPolicyForChat(chatId),
+        zenGo: engineState.provider === 'zen' ? getZenGoMode() : undefined,
+        workingMemory: lastCoderStateRef.current,
+        sandboxSessionId: sandboxIdRef.current,
+        savedDiff: overrides?.savedDiff,
+        userAborted: abortRef.current || undefined,
+      });
+    },
+    [
+      abortRef,
+      branchInfoRef,
+      getVerificationPolicyForChat,
+      repoRef,
+      runEngineStateRef,
+      sandboxIdRef,
+      workspaceSessionIdRef,
+    ],
+  );
+
   // --- saveExpiryCheckpoint ---
 
   const saveExpiryCheckpoint = useCallback(
@@ -265,37 +336,62 @@ export function useChatCheckpoint({
       });
 
       saveRunCheckpoint(checkpoint);
+      captureV1Checkpoint(chatId, 'expiry', {
+        accumulated: '',
+        thinkingAccumulated: '',
+        savedDiff: savedDiff || undefined,
+      });
     },
-    [activeChatId, branchInfoRef, repoRef, runEngineStateRef, sandboxIdRef, workspaceSessionIdRef],
+    [
+      activeChatId,
+      branchInfoRef,
+      captureV1Checkpoint,
+      repoRef,
+      runEngineStateRef,
+      sandboxIdRef,
+      workspaceSessionIdRef,
+    ],
   );
 
   // --- flushCheckpoint ---
 
-  const flushCheckpoint = useCallback(() => {
-    const engineState = runEngineStateRef.current;
-    if (!engineState.chatId || !isRunActive(engineState)) return;
+  const flushCheckpoint = useCallback(
+    (reason: RunCheckpointReason = 'interrupt') => {
+      const engineState = runEngineStateRef.current;
+      if (!engineState.chatId || !isRunActive(engineState)) return;
 
-    const checkpoint = buildRunCheckpoint({
-      chatId: engineState.chatId,
-      round: engineState.round,
-      phase: toLoopPhase(engineState.phase),
-      baseMessageCount: engineState.baseMessageCount,
-      apiMessages: checkpointApiMessagesRef.current,
-      accumulated: engineState.accumulatedText,
-      thinkingAccumulated: engineState.accumulatedThinking,
-      lastCoderState: lastCoderStateRef.current,
-      provider: engineState.provider as AIProviderType,
-      model: engineState.model,
-      sandboxSessionId: sandboxIdRef.current || '',
-      activeBranch:
-        branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || '',
-      repoId: repoRef.current || '',
-      userAborted: abortRef.current || undefined,
-      workspaceSessionId: workspaceSessionIdRef.current || undefined,
-    });
+      const checkpoint = buildRunCheckpoint({
+        chatId: engineState.chatId,
+        round: engineState.round,
+        phase: toLoopPhase(engineState.phase),
+        baseMessageCount: engineState.baseMessageCount,
+        apiMessages: checkpointApiMessagesRef.current,
+        accumulated: engineState.accumulatedText,
+        thinkingAccumulated: engineState.accumulatedThinking,
+        lastCoderState: lastCoderStateRef.current,
+        provider: engineState.provider as AIProviderType,
+        model: engineState.model,
+        sandboxSessionId: sandboxIdRef.current || '',
+        activeBranch:
+          branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || '',
+        repoId: repoRef.current || '',
+        userAborted: abortRef.current || undefined,
+        workspaceSessionId: workspaceSessionIdRef.current || undefined,
+      });
 
-    saveRunCheckpoint(checkpoint);
-  }, [abortRef, branchInfoRef, repoRef, runEngineStateRef, sandboxIdRef, workspaceSessionIdRef]);
+      saveRunCheckpoint(checkpoint);
+      captureV1Checkpoint(engineState.chatId, reason);
+    },
+    [
+      abortRef,
+      branchInfoRef,
+      captureV1Checkpoint,
+      repoRef,
+      runEngineStateRef,
+      sandboxIdRef,
+      workspaceSessionIdRef,
+    ],
+  );
 
   // --- Visibility change: flush on tab hide ---
 

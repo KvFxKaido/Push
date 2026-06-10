@@ -170,6 +170,11 @@ describe('runRoundLoop', () => {
       .map(([, event]) => event as { type: string; outcome?: string })
       .find((e) => e.type === 'assistant.turn_end');
     expect(turnEnd?.outcome).toBe('completed');
+    // Durable Runs Phase 1: only the pre-tools (TOOLS_STARTED) capture fires
+    // on a breaking turn — the post-tools boundary capture is for continuing
+    // rounds only (the no-tool completion path returns apiMessages without
+    // the final assistant answer, so capturing at break would go stale).
+    expect(h.flushCheckpoint.mock.calls).toEqual([['turn']]);
   });
 
   it('runs multiple rounds when processAssistantTurn returns continue', async () => {
@@ -215,6 +220,9 @@ describe('runRoundLoop', () => {
     expect(result.loopCompletedNormally).toBe(true);
     expect(mockStreamAssistantRound).toHaveBeenCalledTimes(2);
     expect(emittedTypes(h.emitRunEngineEvent)).toContain('TURN_CONTINUED');
+    // Round 0 (continue): pre-tools + post-tools turn-boundary captures.
+    // Round 1 (break): pre-tools only.
+    expect(h.flushCheckpoint.mock.calls).toEqual([['turn'], ['turn'], ['turn']]);
     // Round 1 (round > 0) should have appended a fresh streaming assistant draft.
     const messages = h.conversationsRef.current['chat-1'].messages;
     const streamingDrafts = messages.filter(

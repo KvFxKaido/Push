@@ -131,6 +131,7 @@ describe('useChatCheckpoint', () => {
       sendMessageRef: { current: null },
       isStreaming: false,
       activeChatId: 'chat-1',
+      getVerificationPolicyForChat: () => ({ name: 'Standard', rules: [] }),
     });
 
     const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_000);
@@ -185,6 +186,7 @@ describe('useChatCheckpoint', () => {
       sendMessageRef: { current: sendMessage },
       isStreaming: false,
       activeChatId: 'chat-1',
+      getVerificationPolicyForChat: () => ({ name: 'Standard', rules: [] }),
     });
 
     await hook.resumeInterruptedRun();

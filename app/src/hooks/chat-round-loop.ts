@@ -194,7 +194,7 @@ function drainPendingSteerIfAny(args: SteerDrainArgs, deps: SteerDrainDeps): Ste
   }
 
   loopCtx.checkpointRefs.apiMessages.current = nextApiMessages;
-  loopCtx.flushCheckpoint();
+  loopCtx.flushCheckpoint('turn');
   loopCtx.emitRunEngineEvent({ type: 'TURN_STEERED', timestamp: Date.now() });
   loopCtx.appendRunEvent(chatId, { type: 'assistant.turn_end', round, outcome: 'steered' });
 
@@ -436,7 +436,10 @@ export async function runRoundLoop(
     }
 
     loopCtx.emitRunEngineEvent({ type: 'TOOLS_STARTED', timestamp: Date.now() });
-    loopCtx.flushCheckpoint();
+    // 'turn': the streamed assistant turn is in the transcript and tools are
+    // about to run — the adoption-grade capture point. If the client dies
+    // during tool execution, an adopted run resumes by re-running the batch.
+    loopCtx.flushCheckpoint('turn');
     markJournalCheckpointIfPresent(runJournalEntryRef, persistRunJournal);
 
     const turnResult = await processAssistantTurn(
@@ -476,6 +479,14 @@ export async function runRoundLoop(
     loopCtx.appendRunEvent(chatId, { type: 'assistant.turn_end', round, outcome: turnOutcome });
     fireWorkspacePatchCapture(round, turnOutcome);
     if (turnResult.loopAction === 'break') break;
+    // Turn boundary, continuing rounds only: tool results are in the
+    // transcript, so an adopted run restarts the next round without
+    // re-running tools. Breaking turns skip the capture — the run is over
+    // (finalize clears the checkpoint on normal completion), and the no-tool
+    // completion path returns apiMessages WITHOUT the final assistant
+    // answer, so a capture here would overwrite the record with a stale
+    // transcript (Codex P2 on #874).
+    loopCtx.flushCheckpoint('turn');
     loopCtx.emitRunEngineEvent({ type: 'TURN_CONTINUED', timestamp: Date.now() });
   }
 

@@ -8,11 +8,15 @@ const mockLoadCheckpoint = vi
 const mockSaveCheckpoint = vi
   .fn<(checkpoint: RunCheckpoint) => Promise<void>>()
   .mockResolvedValue(undefined);
+const mockClearCheckpointV1 = vi
+  .fn<(chatId: string) => Promise<void>>()
+  .mockResolvedValue(undefined);
 
 vi.mock('./checkpoint-store', () => ({
   clearCheckpoint: (...args: unknown[]) => mockClearCheckpoint(...(args as [string])),
   loadCheckpoint: (...args: unknown[]) => mockLoadCheckpoint(...(args as [string])),
   saveCheckpoint: (...args: unknown[]) => mockSaveCheckpoint(...(args as [RunCheckpoint])),
+  clearCheckpointV1: (...args: unknown[]) => mockClearCheckpointV1(...(args as [string])),
 }));
 
 let fakeLocalStorage: Record<string, string> = {};
