@@ -96,8 +96,9 @@ consumer). Agent `sandbox_exec` adoption **shipped in PR #863**
 (2026-06-09): always-detached on capable backends with buffered exec as
 the 404-only capability fallback, `terminalReason` provenance on every
 runner result, Stop wired to server-side interrupt, and a
-double-execution guard on ambiguous start failures. Live-tail UI from
-`onProgress` remains the open stretch.
+double-execution guard on ambiguous start failures. The live-tail UI
+shipped in PR #867 (2026-06-10): the agent status bar streams the latest
+output line of a running `sandbox_exec` via `app/src/lib/exec-progress.ts`.
 
 Source note:
 [`Background Execution`](<../archive/decisions/Background Execution — Detached Process and Resumable Cursor Logs.md>).
@@ -197,8 +198,8 @@ Design note:
    becomes painful or adjacent CF work makes it cheap.
 5. ~~Finish provider support for detached background execution where it
    improves real workflows~~ — agent `sandbox_exec` adoption shipped in PR
-   #863 (2026-06-09); remaining: live-tail UI, Modal-side routes if Modal
-   ever returns to primary duty.
+   #863 (2026-06-09) and the live-tail UI in PR #867 (2026-06-10);
+   remaining: Modal-side routes if Modal ever returns to primary duty.
 6. Tighten any remaining daemon session-verb auth gaps.
 7. Keep Git/RPC broker work behind parity harnesses until the cross-language tax
    is measured.
