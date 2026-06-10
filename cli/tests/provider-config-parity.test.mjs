@@ -93,10 +93,12 @@ describe('provider config parity', () => {
     for (const providerId of providerIds) {
       const entry = extractCliProviderEntry(cliProviderSource, providerId);
       assert.equal(entry.id, providerId);
+      // `defaultModel` is a live getter (reload_config contract) — match the
+      // `get defaultModel() { return process.env.X || CONST; }` shape.
       assert.match(
         entry.entry,
         new RegExp(
-          `defaultModel:\\s*process\\.env\\.[A-Z0-9_]+\\s*\\|\\|\\s*${defaultConstByProvider[providerId]}`,
+          `get defaultModel\\(\\)\\s*\\{\\s*return\\s*process\\.env\\.[A-Z0-9_]+\\s*\\|\\|\\s*${defaultConstByProvider[providerId]}`,
         ),
         `Expected ${providerId} default model to reference ${defaultConstByProvider[providerId]}`,
       );

@@ -55,14 +55,16 @@ function extractCliProviderEntries(source) {
 
   for (const match of block.matchAll(entryRegex)) {
     const [, providerId, entryBody] = match;
-    // `url:` and `defaultModel:` may span multiple lines when the value is a
-    // long `process.env.X || process.env.Y || 'fallback'` chain (see the
-    // `ollama` entry in cli/provider.ts). `[\s\S]+?` matches across newlines
-    // non-greedily, and the `,\s*\n` terminator anchors on a comma at the
-    // end of the line so we don't accidentally stop at a comma inside an
-    // array or function argument list.
-    const urlLine = entryBody.match(/url:\s*([\s\S]+?),\s*\n/);
-    const defaultModelLine = entryBody.match(/defaultModel:\s*([\s\S]+?),\s*\n/);
+    // `url` and `defaultModel` are live getters (`get url() { return …; }`) —
+    // env is observed at READ time so pushd's reload_config takes effect (see
+    // the PROVIDER_CONFIGS comment in cli/provider.ts). The return expression
+    // may span multiple lines for a long `process.env.X || process.env.Y ||
+    // 'fallback'` chain (see `ollama`); `[\s\S]+?` matches across newlines
+    // non-greedily and the `;` terminator anchors the end of the return.
+    const urlLine = entryBody.match(/get url\(\)\s*\{\s*return\s*([\s\S]+?);\s*\}/);
+    const defaultModelLine = entryBody.match(
+      /get defaultModel\(\)\s*\{\s*return\s*([\s\S]+?);\s*\}/,
+    );
     const requiresKeyLine = entryBody.match(/requiresKey:\s*(true|false)/);
 
     assert.ok(urlLine, `Expected ${providerId} to define url`);
