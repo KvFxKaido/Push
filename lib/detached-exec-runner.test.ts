@@ -289,4 +289,149 @@ describe('runDetachedToCompletion', () => {
     expect(result.error).toMatch(/deadline/);
     expect(p.interrupted()).toBe(true);
   });
+
+  it('ramps through the default poll schedule and repeats the last entry', async () => {
+    const delays: number[] = [];
+    const p = makePrimitives({
+      statuses: [
+        { running: true, exitCode: null },
+        { running: true, exitCode: null },
+        { running: true, exitCode: null },
+        { running: true, exitCode: null },
+        { running: true, exitCode: null },
+        { running: false, exitCode: 0 },
+      ],
+      fullStdout: '',
+    });
+
+    await runDetachedToCompletion(p, 'cmd', {
+      sleep: async (ms) => {
+        delays.push(ms);
+      },
+      now: () => 0,
+    });
+
+    // Five running polls → five sleeps: the default ramp, then the cap repeats.
+    expect(delays).toEqual([250, 500, 1000, 1500, 1500]);
+  });
+
+  it('honors a fixed numeric pollIntervalMs', async () => {
+    const delays: number[] = [];
+    const p = makePrimitives({
+      statuses: [
+        { running: true, exitCode: null },
+        { running: true, exitCode: null },
+        { running: false, exitCode: 0 },
+      ],
+      fullStdout: '',
+    });
+
+    await runDetachedToCompletion(p, 'cmd', {
+      pollIntervalMs: 42,
+      sleep: async (ms) => {
+        delays.push(ms);
+      },
+      now: () => 0,
+    });
+
+    expect(delays).toEqual([42, 42]);
+  });
+
+  it('resolves exit-124 without starting when the signal is already aborted', async () => {
+    // Must RESOLVE, not throw — a throw is the caller's "never started, fall
+    // back to buffered exec" signal, which would re-run a cancelled command.
+    const p = makePrimitives({ statuses: [], fullStdout: '' });
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await runDetachedToCompletion(p, 'cmd', {
+      abortSignal: controller.signal,
+      sleep: async () => {},
+      now: () => 0,
+    });
+
+    expect(result.exitCode).toBe(124);
+    expect(result.error).toMatch(/cancelled before it started/);
+    expect(p.start).not.toHaveBeenCalled();
+  });
+
+  it('interrupts, drains the tail, and resolves exit-124 on mid-run abort', async () => {
+    const controller = new AbortController();
+    const p = makePrimitives({
+      statuses: [{ running: true, exitCode: null }], // never finishes on its own
+      fullStdout: 'partial output before cancel',
+    });
+
+    const result = await runDetachedToCompletion(p, 'cmd', {
+      abortSignal: controller.signal,
+      sleep: async () => {
+        controller.abort(); // cancel lands between polls
+      },
+      now: () => 0,
+    });
+
+    expect(result.exitCode).toBe(124);
+    expect(result.error).toMatch(/cancelled and interrupted/);
+    expect(p.interrupted()).toBe(true);
+    expect(result.stdout).toBe('partial output before cancel'); // tail drained
+  });
+
+  it('prefers the real exit code when abort races a completed process', async () => {
+    const controller = new AbortController();
+    const p = makePrimitives({
+      statuses: [
+        { running: true, exitCode: null },
+        { running: false, exitCode: 0 }, // finished by the time abort is seen
+      ],
+      fullStdout: 'done\n',
+    });
+
+    const result = await runDetachedToCompletion(p, 'cmd', {
+      abortSignal: controller.signal,
+      sleep: async () => {
+        controller.abort();
+      },
+      now: () => 0,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.error).toBeUndefined();
+    expect(p.interrupted()).toBe(false); // a completed process is never killed
+  });
+
+  it('caps accumulated output to the tail and flags truncation', async () => {
+    const chunks: string[] = [];
+    const p = makePrimitives({
+      statuses: [{ running: false, exitCode: 0 }],
+      fullStdout: 'abcdefghijklmnop', // 16 chars
+    });
+
+    const result = await runDetachedToCompletion(p, 'cmd', {
+      maxAccumulatedChars: 10,
+      sleep: async () => {},
+      now: () => 0,
+      onProgress: (c) => c.stdout && chunks.push(c.stdout),
+    });
+
+    expect(result.stdout).toBe('ghijklmnop'); // last 10 — the tail holds the failure
+    expect(result.truncated).toBe(true);
+    expect(chunks).toEqual(['abcdefghijklmnop']); // onProgress sees full chunks
+  });
+
+  it('does not split a surrogate pair at the trim boundary', async () => {
+    const p = makePrimitives({
+      statuses: [{ running: false, exitCode: 0 }],
+      fullStdout: '\u{1D11E}\u{1D11E}', // two astral chars, 4 UTF-16 units
+    });
+
+    const result = await runDetachedToCompletion(p, 'cmd', {
+      maxAccumulatedChars: 3,
+      sleep: async () => {},
+      now: () => 0,
+    });
+
+    // Naive trim would keep 3 units starting mid-pair; the guard advances one.
+    expect(result.stdout).toBe('\u{1D11E}');
+    expect(result.truncated).toBe(true);
+  });
 });

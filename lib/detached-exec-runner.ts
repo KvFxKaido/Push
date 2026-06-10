@@ -15,10 +15,11 @@
  * trivially unit-testable. `sleep`/`now` are injectable for the same reason.
  *
  * Loop-exit discipline (per the repo's "every await in a loop must prove it can
- * exit on terminal conditions" rule): the poll loop terminates on exactly three
+ * exit on terminal conditions" rule): the poll loop terminates on exactly four
  * conditions — the process reports not-running, the overall deadline is exceeded
- * (we interrupt, then return what we have flagged as an error), or the process
- * record disappears (NOT_FOUND mid-run). There is no happy-path-only await.
+ * (we interrupt, then return what we have flagged as an error), the abort signal
+ * fires (same interrupt-and-return shape, exit 124), or the process record
+ * disappears (NOT_FOUND mid-run). There is no happy-path-only await.
  */
 
 import type { ExecResult } from './sandbox-provider';
@@ -57,8 +58,30 @@ export interface RunDetachedOptions {
   workdir?: string;
   /** Overall wall-clock budget for the whole run. Default 10 minutes. */
   overallTimeoutMs?: number;
-  /** Delay between status/log polls. Default 1500ms. */
-  pollIntervalMs?: number;
+  /**
+   * Delay between status/log polls. A number polls at a fixed cadence; an
+   * array ramps through its entries and then repeats the last one — so short
+   * commands resolve within the fast early polls while long runs settle to
+   * the final cadence. Default [250, 500, 1000, 1500].
+   */
+  pollIntervalMs?: number | readonly number[];
+  /**
+   * Cooperative cancel. If already aborted, the run resolves exit-124 WITHOUT
+   * starting the process (it does not throw — a throw means "never started,
+   * fall back to buffered exec", which would re-run a command the user just
+   * cancelled). Once started, an abort interrupts the process, drains the log
+   * tail, and resolves exit-124. Checked once per poll iteration, so cancel
+   * latency is bounded by the current poll delay.
+   */
+  abortSignal?: AbortSignal;
+  /**
+   * Cap on accumulated output per stream, in UTF-16 code units (≈ bytes for
+   * ASCII-heavy tool output). When exceeded the HEAD is dropped — for long
+   * runs the tail holds the failure — and the result is flagged `truncated`.
+   * `onProgress` always receives full chunks; only accumulation is capped.
+   * Default 256k per stream.
+   */
+  maxAccumulatedChars?: number;
   /** Called with each incremental chunk as it's drained (live progress). */
   onProgress?: (chunk: { stdout: string; stderr: string }) => void;
   /** Injectable for tests; defaults to real timers. */
@@ -67,7 +90,8 @@ export interface RunDetachedOptions {
 }
 
 const DEFAULT_OVERALL_TIMEOUT_MS = 600_000;
-const DEFAULT_POLL_INTERVAL_MS = 1500;
+const DEFAULT_POLL_SCHEDULE_MS: readonly number[] = [250, 500, 1000, 1500];
+const DEFAULT_MAX_ACCUMULATED_CHARS = 256_000;
 
 function isNotFound(err: unknown): boolean {
   const code = (err as { statusCode?: number; code?: string } | null | undefined) ?? {};
@@ -87,13 +111,31 @@ export async function runDetachedToCompletion(
   options: RunDetachedOptions = {},
 ): Promise<ExecResult> {
   const overallTimeoutMs = options.overallTimeoutMs ?? DEFAULT_OVERALL_TIMEOUT_MS;
-  const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+  const pollSchedule = options.pollIntervalMs ?? DEFAULT_POLL_SCHEDULE_MS;
+  const pollDelayMs = (iteration: number): number =>
+    typeof pollSchedule === 'number'
+      ? pollSchedule
+      : pollSchedule[Math.min(iteration, pollSchedule.length - 1)];
+  const maxAccumulatedChars = options.maxAccumulatedChars ?? DEFAULT_MAX_ACCUMULATED_CHARS;
   const sleep = options.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const now = options.now ?? (() => Date.now());
 
+  // A pre-aborted run must not start at all — and must NOT throw, since a
+  // throw means "never started → fall back to buffered exec", which would
+  // run a command the user just cancelled.
+  if (options.abortSignal?.aborted) {
+    return {
+      stdout: '',
+      stderr: '',
+      exitCode: 124,
+      truncated: false,
+      error: 'command was cancelled before it started',
+    };
+  }
+
   // Contract: this function throws ONLY if the command never started. Every
-  // post-start outcome (clean exit, abnormal exit, lost contact, deadline)
-  // resolves to an ExecResult. That lets the caller treat a throw
+  // post-start outcome (clean exit, abnormal exit, lost contact, deadline,
+  // cancel) resolves to an ExecResult. That lets the caller treat a throw
   // unambiguously as "start failed → fall back to buffered exec" without risk
   // of re-running a command that is already executing detached.
   const { processId } = await primitives.start(command, { workdir: options.workdir });
@@ -103,15 +145,28 @@ export async function runDetachedToCompletion(
   let cursorStderr = 0;
   let stdout = '';
   let stderr = '';
+  let truncatedHead = false;
+
+  // Keep the accumulated tail within the cap, dropping from the head. Trim on
+  // a surrogate-pair boundary so the kept tail never starts mid-codepoint.
+  const appendCapped = (acc: string, chunk: string): string => {
+    const joined = acc + chunk;
+    if (joined.length <= maxAccumulatedChars) return joined;
+    truncatedHead = true;
+    let from = joined.length - maxAccumulatedChars;
+    const code = joined.charCodeAt(from);
+    if (code >= 0xdc00 && code <= 0xdfff) from++;
+    return joined.slice(from);
+  };
 
   const drain = async (): Promise<void> => {
     const slice = await primitives.logs(processId, { cursorStdout, cursorStderr });
     if (slice.stdout) {
-      stdout += slice.stdout;
+      stdout = appendCapped(stdout, slice.stdout);
       options.onProgress?.({ stdout: slice.stdout, stderr: '' });
     }
     if (slice.stderr) {
-      stderr += slice.stderr;
+      stderr = appendCapped(stderr, slice.stderr);
       options.onProgress?.({ stdout: '', stderr: slice.stderr });
     }
     cursorStdout = slice.nextCursorStdout;
@@ -149,12 +204,31 @@ export async function runDetachedToCompletion(
           stdout,
           stderr,
           exitCode: -1,
-          truncated: false,
+          truncated: truncatedHead,
           error: 'background process ended without an exit code (killed or errored)',
         }
-      : { stdout, stderr, exitCode: st.exitCode, truncated: false };
+      : { stdout, stderr, exitCode: st.exitCode, truncated: truncatedHead };
 
-  for (;;) {
+  for (let iteration = 0; ; iteration++) {
+    if (options.abortSignal?.aborted) {
+      // User cancel. The process may have JUST finished — prefer the real
+      // result over a synthetic 124 (same re-check the deadline path does).
+      const finalStatus = await primitives.status(processId).catch(() => null);
+      if (finalStatus && !finalStatus.running) {
+        await drainToEnd();
+        return finishedResult(finalStatus);
+      }
+      await primitives.interrupt(processId).catch(() => {});
+      await drainToEnd();
+      return {
+        stdout,
+        stderr,
+        exitCode: 124, // mirror shell `timeout`/SIGTERM convention, same as the deadline path
+        truncated: truncatedHead,
+        error: 'command was cancelled and interrupted',
+      };
+    }
+
     let st: DetachedStatusResult;
     try {
       st = await primitives.status(processId);
@@ -171,7 +245,7 @@ export async function runDetachedToCompletion(
         stdout,
         stderr,
         exitCode: -1,
-        truncated: false,
+        truncated: truncatedHead,
         error: isNotFound(err)
           ? 'background process record disappeared before completion'
           : `lost contact with background process: ${err instanceof Error ? err.message : String(err)}`,
@@ -207,11 +281,11 @@ export async function runDetachedToCompletion(
         stdout,
         stderr,
         exitCode: 124, // mirror shell `timeout`'s exit code for a killed command
-        truncated: false,
+        truncated: truncatedHead,
         error: `command exceeded ${overallTimeoutMs}ms overall deadline and was interrupted`,
       };
     }
 
-    await sleep(pollIntervalMs);
+    await sleep(pollDelayMs(iteration));
   }
 }
