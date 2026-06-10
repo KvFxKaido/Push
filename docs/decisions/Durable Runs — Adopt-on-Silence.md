@@ -131,6 +131,39 @@ strict-mode drift pin (same discipline as `protocol-schema.ts`). Resumable
 Sessions checkpoints are the starting point; the gap analysis (what they drop
 that adoption needs) is the first task.
 
+#### Phase 1 gap analysis (2026-06-10)
+
+The Resumable Sessions checkpoint (`app/src/types` `RunCheckpoint`,
+captured in `useChatCheckpoint.ts`, stored in IndexedDB) is a
+**client-anchored delta**: it indexes into the browser's IndexedDB
+conversation (`baseMessageCount` + ≤50KB `deltaMessages`) and its resume
+path re-derives everything else from live browser state. Each
+client-local dependency is an adoption gap:
+
+| adoption needs | today | gap class |
+|---|---|---|
+| full LLM-visible transcript | `baseMessageCount` index into IndexedDB + trimmed delta | self-containment |
+| working memory | `lastCoderState` JSON string, used display-only in the reconciliation message | fidelity |
+| user-goal anchor | not captured | fidelity |
+| approval mode + pending-gate state | read from settings / daemon queues at dispatch time | adopted-mode semantics |
+| verification policy | not captured (CoderJobStartInput carries it for background jobs) | fidelity |
+| provider lock incl. transport opts | provider+model only; `zenGo` lives in localStorage | fidelity |
+| reasoning blocks (Anthropic signed round-trip) | live inside IndexedDB conversation messages | self-containment |
+| run-event seq anchor | not captured | Phase 3 attach |
+| sandbox owner token / provider keys / GitHub token | live refs — correctly NOT in the checkpoint | **out-of-band by design**: provisioned at adoption time (the `CoderJobStartInput` precedent); the schema *enforces* this with a credential-field blocklist |
+| mid-flight task-graph state | lost on interrupt | accepted v1 loss — resume restarts the triggering tool call |
+| scratchpad/todo chat-hook state | browser localStorage | already a Phase 2 design point (§Phase 2) |
+
+**Shipped:** `lib/run-checkpoint.ts` defines `RunCheckpointV1`
+(self-contained transcript + loop state; credentials structurally
+rejected; permissive on benign extras) with hand-rolled validators and
+the exact field vocabulary pinned by
+`cli/tests/run-checkpoint-drift.test.mjs`. Remaining Phase 1 work:
+capture-side wiring (the web loop writing this shape per turn — today's
+capture only fires on `visibilitychange`/expiry) and the size/cost
+measurement (`estimateRunCheckpointBytes` is the instrument; tier if
+needed).
+
 ### Phase 2 — RunHost DO + adoption
 
 - Delegation collapse lands first (behind a flag, measured via Phase 0 evals).
