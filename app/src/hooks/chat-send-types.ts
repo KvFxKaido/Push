@@ -115,7 +115,10 @@ export interface SendLoopContext {
   ) => void;
   appendRunEvent: (chatId: string, event: RunEventInput) => void;
   emitRunEngineEvent: (event: RunEngineEvent) => void;
-  flushCheckpoint: () => void;
+  /** Persist legacy + V1 checkpoints. `reason` annotates the V1 record:
+   *  'turn' for steady-state in-run captures, 'interrupt' (default) for
+   *  protective flushes like visibilitychange. */
+  flushCheckpoint: (reason?: import('@push/lib/run-checkpoint').RunCheckpointReason) => void;
   getVerificationState: (chatId: string) => VerificationRuntimeState;
   updateVerificationState: (
     chatId: string,

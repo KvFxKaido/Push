@@ -8,6 +8,7 @@ import type {
 import type { SandboxStatusResult } from './sandbox-client';
 import {
   clearCheckpoint as clearCheckpointFromDB,
+  clearCheckpointV1,
   loadCheckpoint as loadCheckpointFromDB,
   saveCheckpoint as saveCheckpointToDB,
 } from './checkpoint-store';
@@ -234,6 +235,9 @@ export function saveRunCheckpoint(checkpoint: RunCheckpoint): void {
 
 export function clearRunCheckpoint(chatId: string): void {
   void clearCheckpointFromDB(chatId);
+  // The V1 record shares the legacy checkpoint's lifecycle: any path that
+  // invalidates one invalidates both.
+  void clearCheckpointV1(chatId);
 }
 
 export async function detectInterruptedRun(

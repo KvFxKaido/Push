@@ -170,6 +170,9 @@ describe('runRoundLoop', () => {
       .map(([, event]) => event as { type: string; outcome?: string })
       .find((e) => e.type === 'assistant.turn_end');
     expect(turnEnd?.outcome).toBe('completed');
+    // Durable Runs Phase 1: both in-round capture points fire with 'turn' —
+    // pre-tools (TOOLS_STARTED) and the post-tools turn boundary.
+    expect(h.flushCheckpoint.mock.calls).toEqual([['turn'], ['turn']]);
   });
 
   it('runs multiple rounds when processAssistantTurn returns continue', async () => {

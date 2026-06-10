@@ -158,11 +158,25 @@ client-local dependency is an adoption gap:
 (self-contained transcript + loop state; credentials structurally
 rejected; permissive on benign extras) with hand-rolled validators and
 the exact field vocabulary pinned by
-`cli/tests/run-checkpoint-drift.test.mjs`. Remaining Phase 1 work:
-capture-side wiring (the web loop writing this shape per turn — today's
-capture only fires on `visibilitychange`/expiry) and the size/cost
-measurement (`estimateRunCheckpointBytes` is the instrument; tier if
-needed).
+`cli/tests/run-checkpoint-drift.test.mjs`.
+
+**Shipped (capture-side wiring):** the web loop now writes a V1
+checkpoint per turn. `app/src/lib/run-checkpoint-capture.ts` builds the
+record from live loop state (wire-faithful transcript incl. attachments
+→ contentParts and reasoning blocks; `userGoal` from the latest real
+user message; approval mode / verification policy / zen-Go flag read at
+capture time) and persists to the `run_checkpoints_v1` IndexedDB store
+next to the legacy delta checkpoint. Capture points: pre-tools
+(`TOOLS_STARTED`), post-tools turn boundary, and steer drains — all
+`reason: 'turn'`; `visibilitychange` flushes as `'interrupt'`, expiry as
+`'expiry'`. Lifecycle is shared with the legacy checkpoint (every clear
+path clears both). Every write logs `run_checkpoint_captured` with
+`estimateRunCheckpointBytes` (symmetric: `run_checkpoint_invalid`,
+`run_checkpoint_write_failed`, `run_checkpoint_skipped` for
+no-repo-scope chats). Remaining Phase 1 work: read the observed byte
+sizes off real runs and decide whether tiering is needed before the
+Phase 2 DO transport (DO storage values cap at 128 KiB per key —
+transcripts above that need chunking or R2 spill).
 
 ### Phase 2 — RunHost DO + adoption
 

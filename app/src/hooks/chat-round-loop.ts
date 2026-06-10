@@ -194,7 +194,7 @@ function drainPendingSteerIfAny(args: SteerDrainArgs, deps: SteerDrainDeps): Ste
   }
 
   loopCtx.checkpointRefs.apiMessages.current = nextApiMessages;
-  loopCtx.flushCheckpoint();
+  loopCtx.flushCheckpoint('turn');
   loopCtx.emitRunEngineEvent({ type: 'TURN_STEERED', timestamp: Date.now() });
   loopCtx.appendRunEvent(chatId, { type: 'assistant.turn_end', round, outcome: 'steered' });
 
@@ -436,7 +436,10 @@ export async function runRoundLoop(
     }
 
     loopCtx.emitRunEngineEvent({ type: 'TOOLS_STARTED', timestamp: Date.now() });
-    loopCtx.flushCheckpoint();
+    // 'turn': the streamed assistant turn is in the transcript and tools are
+    // about to run — the adoption-grade capture point. If the client dies
+    // during tool execution, an adopted run resumes by re-running the batch.
+    loopCtx.flushCheckpoint('turn');
     markJournalCheckpointIfPresent(runJournalEntryRef, persistRunJournal);
 
     const turnResult = await processAssistantTurn(
@@ -455,6 +458,10 @@ export async function runRoundLoop(
     apiMessages = turnResult.nextApiMessages;
     toolCallRecoveryState = turnResult.nextRecoveryState;
     loopCtx.checkpointRefs.apiMessages.current = apiMessages;
+    // Turn boundary: tool results are in the transcript. This is the
+    // per-turn capture Durable Runs adoption resumes from — a checkpoint
+    // here means the next round restarts cleanly without re-running tools.
+    loopCtx.flushCheckpoint('turn');
 
     const afterTurnDrain = drainPendingSteerIfAny(
       { round, apiMessages, draftAssistant: null },
