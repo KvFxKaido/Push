@@ -1335,6 +1335,12 @@ export async function execLongRunningInSandbox(
     workdir?: string;
     markWorkspaceMutated?: boolean;
     overallTimeoutMs?: number;
+    /**
+     * Cooperative cancel for the detached path (interrupt + drain + exit
+     * 124). The buffered fallback cannot cancel mid-run — an abort there
+     * surfaces only when the call completes, same as before this option.
+     */
+    abortSignal?: AbortSignal;
     onProgress?: (chunk: { stdout: string; stderr: string }) => void;
   },
 ): Promise<ExecResult> {
@@ -1348,6 +1354,7 @@ export async function execLongRunningInSandbox(
     return await runDetachedToCompletion(primitives, command, {
       workdir: opts?.workdir,
       overallTimeoutMs: opts?.overallTimeoutMs,
+      abortSignal: opts?.abortSignal,
       onProgress: opts?.onProgress,
     });
   } catch (err) {

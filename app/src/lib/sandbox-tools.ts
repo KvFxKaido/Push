@@ -527,11 +527,40 @@ export async function executeSandboxToolCall(
             throw caught;
           }
         } else {
-          result = markWorkspaceMutated
-            ? await execInSandbox(sandboxId, call.args.command, normalizedWorkdir, {
-                markWorkspaceMutated: true,
-              })
-            : await execInSandbox(sandboxId, call.args.command, normalizedWorkdir);
+          // Cloud path: detached background exec — no buffered ~165s ceiling,
+          // so long test/build runs can actually complete. Falls back to
+          // buffered exec inside execLongRunningInSandbox when the backend
+          // lacks the routes (Modal 404s the start; `background_exec_fallback`
+          // is logged there). Every status/log poll stamps idle accounting,
+          // so a long run can never look idle to the hibernation reaper.
+          console.log(
+            JSON.stringify({ level: 'info', event: 'sandbox_exec_detached_dispatch', sandboxId }),
+          );
+          result = await execLongRunningInSandbox(sandboxId, call.args.command, {
+            workdir: normalizedWorkdir,
+            markWorkspaceMutated,
+            abortSignal: options?.abortSignal,
+          });
+
+          // User cancel (Stop) — the runner interrupted the detached process
+          // and resolved 124. Synthesize the same envelope as the local-pc
+          // path: cancel is a user-initiated state, not an error class. The
+          // deadline also exits 124, so gate on the signal actually aborting.
+          if (options?.abortSignal?.aborted && result.exitCode === 124) {
+            const durationMs = Date.now() - start;
+            const cardData: SandboxCardData = {
+              command: call.args.command,
+              stdout: result.stdout,
+              stderr: result.stderr,
+              exitCode: 124,
+              truncated: result.truncated,
+              durationMs,
+            };
+            return {
+              text: `[Tool Result — sandbox_exec]\nCommand: ${call.args.command}\nExit code: 124\nCancelled by user.`,
+              card: { type: 'sandbox', data: cardData },
+            };
+          }
         }
         const durationMs = Date.now() - start;
 
@@ -583,6 +612,14 @@ export async function executeSandboxToolCall(
         if (reduced.stdout) lines.push(`\nStdout:\n${sanitizeUntrustedSource(reduced.stdout)}`);
         if (reduced.stderr) lines.push(`\nStderr:\n${sanitizeUntrustedSource(reduced.stderr)}`);
         if (result.truncated) lines.push(`\n[Output truncated]`);
+        // Runner-level terminal note — exit 124 with an error message is the
+        // detached runner's overall-deadline interrupt (user cancel returned
+        // its own envelope above; -1 unreachable is handled earlier). Without
+        // this line the model sees a bare 124 and can't tell deadline from a
+        // command that exited 124 on its own.
+        if (result.exitCode === 124 && result.error) {
+          lines.push(`\n[Note] ${sanitizeUntrustedSource(result.error)}`);
+        }
 
         // On non-zero exit, append a corrective hint if stderr matches a known pattern
         if (result.exitCode !== 0 && result.stderr) {

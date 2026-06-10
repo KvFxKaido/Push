@@ -14,6 +14,7 @@ const { mockRecordWriteFileMetric, mockRecordReadFileMetric } = vi.hoisted(() =>
 // Mock sandbox-client so no real HTTP calls are made.
 vi.mock('./sandbox-client', () => ({
   execInSandbox: vi.fn(),
+  execLongRunningInSandbox: vi.fn(),
   findReferencesInSandbox: vi.fn(),
   getSandboxEnvironment: vi.fn(),
   readFromSandbox: vi.fn(),
@@ -303,6 +304,101 @@ describe('executeSandboxToolCall -- sandbox_verify_workspace', () => {
     expect(result.text).toContain('Output from failed step (Typecheck):');
     expect(result.text).toContain('typecheck boom');
     expect(result.text).toContain('rerun test() or typecheck() directly');
+  });
+});
+
+describe('executeSandboxToolCall -- sandbox_exec detached path', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+  });
+
+  it('routes cloud exec through the detached runner with workdir + abort signal', async () => {
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValue({
+      exitCode: 0,
+      stdout: 'hi',
+      stderr: '',
+      truncated: false,
+    });
+    const controller = new AbortController();
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'echo hi' } },
+      'sb-123',
+      { abortSignal: controller.signal },
+    );
+
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith('sb-123', 'echo hi', {
+      workdir: undefined,
+      markWorkspaceMutated: false,
+      abortSignal: controller.signal,
+    });
+    // The buffered client is never called directly — the fallback lives
+    // inside execLongRunningInSandbox.
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+    expect(result.text).toContain('Exit code: 0');
+    expect(result.structuredError).toBeUndefined();
+  });
+
+  it('returns the Cancelled-by-user envelope when the abort signal fired', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValue({
+      exitCode: 124,
+      stdout: 'partial test output',
+      stderr: '',
+      truncated: false,
+      error: 'command was cancelled and interrupted',
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'npm test' } },
+      'sb-123',
+      { abortSignal: controller.signal },
+    );
+
+    expect(result.text).toContain('Cancelled by user');
+    expect(result.text).toContain('Exit code: 124');
+    // Cancel is a user-initiated state, not an error class.
+    expect(result.structuredError).toBeUndefined();
+  });
+
+  it('surfaces the runner deadline note on a non-aborted exit 124', async () => {
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValue({
+      exitCode: 124,
+      stdout: 'still going...',
+      stderr: '',
+      truncated: false,
+      error: 'command exceeded 600000ms overall deadline and was interrupted',
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'sleep 1000' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Exit code: 124');
+    // Without the note a bare 124 is indistinguishable from a command that
+    // exited 124 on its own.
+    expect(result.text).toContain('exceeded 600000ms overall deadline');
+  });
+
+  it('maps exit -1 from the detached path to SANDBOX_UNREACHABLE', async () => {
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValue({
+      exitCode: -1,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      error: 'lost contact with background process: boom',
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'echo hi' } },
+      'sb-123',
+    );
+
+    expect(result.structuredError?.type).toBe('SANDBOX_UNREACHABLE');
+    expect(result.text).toContain('no longer reachable');
   });
 });
 
@@ -2254,7 +2350,8 @@ describe('sandbox path normalization', () => {
   });
 
   it('normalizes workspace-prefixed exec workdir', async () => {
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockReset();
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValue({
       stdout: '',
       stderr: '',
       exitCode: 0,
@@ -2266,7 +2363,11 @@ describe('sandbox path normalization', () => {
       'sb-123',
     );
 
-    expect(sandboxClient.execInSandbox).toHaveBeenCalledWith('sb-123', 'pwd', '/workspace/app');
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith('sb-123', 'pwd', {
+      workdir: '/workspace/app',
+      markWorkspaceMutated: false,
+      abortSignal: undefined,
+    });
   });
 
   it('formats sandbox_find_references results with relative paths', async () => {
@@ -2312,13 +2413,13 @@ describe('sandbox path normalization', () => {
     const path = '/workspace/src/stale-after-exec.ts';
     fileLedger.reset();
     vi.mocked(sandboxClient.readFromSandbox).mockReset();
-    vi.mocked(sandboxClient.execInSandbox).mockReset();
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockReset();
     vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
       content: 'export const value = 1;\n',
       truncated: false,
       version: 'v1',
     });
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValue({
       stdout: '',
       stderr: '',
       exitCode: 0,
@@ -2335,11 +2436,10 @@ describe('sandbox path normalization', () => {
 
     expect(execResult.text).toContain('Marked 1 previously-read file(s) as stale');
     expect(fileLedger.getState(path)?.kind).toBe('stale');
-    expect(sandboxClient.execInSandbox).toHaveBeenLastCalledWith(
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenLastCalledWith(
       'sb-123',
       'touch /workspace/.push-write-test',
-      undefined,
-      { markWorkspaceMutated: true },
+      { workdir: undefined, markWorkspaceMutated: true, abortSignal: undefined },
     );
   });
 
@@ -2347,14 +2447,14 @@ describe('sandbox path normalization', () => {
     const path = '/workspace/src/read-only-exec.ts';
     fileLedger.reset();
     vi.mocked(sandboxClient.readFromSandbox).mockReset();
-    vi.mocked(sandboxClient.execInSandbox).mockReset();
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockReset();
     vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
       content: 'export const value = 1;\n',
       truncated: false,
       version: 'v1',
       workspace_revision: 2,
     });
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValue({
       stdout: '/workspace\n',
       stderr: '',
       exitCode: 0,
@@ -2370,7 +2470,11 @@ describe('sandbox path normalization', () => {
 
     expect(execResult.text).not.toContain('Marked 1 previously-read file(s) as stale');
     expect(fileLedger.getState(path)?.kind).toBe('fully_read');
-    expect(sandboxClient.execInSandbox).toHaveBeenLastCalledWith('sb-123', 'pwd', undefined);
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenLastCalledWith('sb-123', 'pwd', {
+      workdir: undefined,
+      markWorkspaceMutated: false,
+      abortSignal: undefined,
+    });
   });
 
   // Git-guard tests moved to `lib/default-pre-hooks.test.ts` — the
