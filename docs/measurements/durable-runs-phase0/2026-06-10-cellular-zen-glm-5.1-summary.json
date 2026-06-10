@@ -1,0 +1,9 @@
+{
+  "page": "durable-runs-latency-spike/v1",
+  "when": "2026-06-10T17:59:00.061Z",
+  "network": "cellular",
+  "spec": { "provider": "zen", "zenGo": false, "model": "glm-5.1", "maxTokens": 256 },
+  "trials": 6,
+  "note": "TTFT/chars null across all arms — glm-5.1 reasoning variant burned the 256-token budget on reasoning_content; scanners only count delta.content. Medians (ms): direct ttfb 751 total 3494; relay do-ack-ttfb 453 upstreamFirstChunk 728 total 3688; ws connect 250 upstreamHeaders 223 serverTotal 3498; server-turn headers 233 serverTotal 3312 clientRT 3469. Phone-overhead per request (clientRT - serverTotal) median ~180ms.",
+  "raw": "full JSON in session transcript 2026-06-10"
+}

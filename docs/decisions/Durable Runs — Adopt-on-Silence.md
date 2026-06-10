@@ -1,6 +1,6 @@
 # Durable Runs — Adopt-on-Silence
 
-**Status:** Draft — promoted to `ROADMAP.md` (first priority) 2026-06-10; design committed, implementation pending. Phase 0 is the gate: the latency spike and eval harness must land before Phase 2 is built.
+**Status:** Draft — promoted to `ROADMAP.md` (first priority) 2026-06-10; design committed, implementation pending. Phase 0 is COMPLETE (latency spike #870, eval harness #871; numbers in [Phase 0 results](#phase-0-results-2026-06-10) below — latency does not block Phase 2). Phase 1 is unblocked.
 
 **Date:** 2026-06-10
 
@@ -69,6 +69,58 @@ remainder, storage substrate) are untouched and remain sequenced behind it.
   tool-error rate). Required by this track's Phase 2 comparison AND the
   delegation-collapse A/B, which is currently gated on measurement that does
   not exist. Lives as its own small runner; not CI-gating initially.
+
+#### Phase 0 results (2026-06-10)
+
+Both instruments shipped: latency spike (#870, `RunHost` DO +
+`/api/runhost/spike/page`) and eval harness (#871,
+`scripts/eval/run-evals.ts`, 12-task manifest, smoke-validated on
+zen/deepseek-v4-flash).
+
+**Latency spike.** Android Chrome 149, cellular (good LTE), prod Worker,
+provider `zen`, 6 interleaved trials per arm. Raw JSON in
+`docs/measurements/durable-runs-phase0/`. Two runs: `glm-5.1` (TTFT not
+captured — the reasoning variant spent the 256-token budget on
+`reasoning_content`, which the spike's scanners don't count) and
+`deepseek-v4-flash` (full data). Medians, ms:
+
+| metric | direct (today) | relay-SSE via DO | relay-WS via DO | server-turn (DO only) |
+|---|---|---|---|---|
+| first token at consumer | 3545 | 3870 | 3592 | 3958 (at the DO) |
+| total turn | 3897 | 4577 | 3973 | 4691 |
+
+Decomposed fixed costs (consistent across both runs):
+
+- **phone↔edge, per HTTP request:** ~180–190 ms (server-turn
+  `clientRoundTrip − serverTotal`, paired within trial)
+- **WS delivery DO→phone, first token:** ~140 ms; **WS connect:**
+  ~250–330 ms one-time
+- **DO→provider response headers:** ~225 ms on glm-5.1;
+  deepseek-v4-flash holds headers until near first token (1.5–2.8 s),
+  so header-time is model-specific
+
+Reads:
+
+1. **Provider variance dominates transport** — upstream first-chunk time
+   ranged 0.9–3.4 s across trials of one model; cross-arm differences in
+   medians at n=6 are within that noise. No arm is pathological.
+2. **WS-from-DO is NOT ugly** — the re-scope contingency in Phase 0's
+   design does not trigger. ~140 ms added first-token latency over a
+   connected socket, ~330 ms to connect once.
+3. **Latency stance supported in the weak form:** server-side turns are
+   not slower, and each tool round trip an adopted run avoids costs the
+   attached path ~2 phone hops (~190 ms each on good LTE). The benefit
+   scales with tool-call count and with radio quality degradation; on
+   good cellular it is modest, not dramatic.
+4. The attached path keeps today's behavior by construction, so none of
+   this is a regression risk — it bounds the cost of the *adopted* and
+   *viewer* paths.
+
+**Verdict: Phase 2 is not blocked on latency. Phase 1 may proceed.**
+Caveats for re-measurement: n=6, one provider, good-LTE cellular;
+worth re-running on bad radio before tuning the heartbeat/adoption
+threshold, and the spike page needs a `reasoning_content`-aware scanner
+for reasoning models.
 
 ### Phase 1 — Checkpoint fidelity
 

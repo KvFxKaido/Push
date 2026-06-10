@@ -1,0 +1,174 @@
+{
+  "page": "durable-runs-latency-spike/v1",
+  "when": "2026-06-10T18:03:50.575Z",
+  "ua": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36",
+  "network": "cellular",
+  "spec": { "provider": "zen", "zenGo": false, "model": "deepseek-v4-flash", "maxTokens": 256 },
+  "trials": 6,
+  "arms": {
+    "direct": {
+      "samples": [
+        { "ttfbMs": 2838.4, "ttftMs": 3625.9, "totalMs": 4015.8, "chars": 275 },
+        { "ttfbMs": 999.6, "ttftMs": 1796.9, "totalMs": 2251.6, "chars": 275 },
+        { "ttfbMs": 2749.4, "ttftMs": 4780.6, "totalMs": 4784.8, "chars": 275 },
+        { "ttfbMs": 2542.2, "ttftMs": 3464.4, "totalMs": 3778, "chars": 275 },
+        { "ttfbMs": 1110.8, "ttftMs": 1979.5, "totalMs": 2393, "chars": 275 },
+        { "ttfbMs": 1516.4, "ttftMs": 5083.7, "totalMs": 6416.8, "chars": 275 }
+      ],
+      "errors": []
+    },
+    "relay": {
+      "samples": [
+        {
+          "ttfbMs": 3160.6,
+          "ttftMs": 4494.5,
+          "totalMs": 5058,
+          "chars": 275,
+          "doUpstreamFirstByteMs": 2737
+        },
+        {
+          "ttfbMs": 1209,
+          "ttftMs": 2143.4,
+          "totalMs": 2843.2,
+          "chars": 275,
+          "doUpstreamFirstByteMs": 1022
+        },
+        {
+          "ttfbMs": 1557,
+          "ttftMs": 2797.6,
+          "totalMs": 3180.3,
+          "chars": 275,
+          "doUpstreamFirstByteMs": 1383
+        },
+        {
+          "ttfbMs": 3583,
+          "ttftMs": 12528.6,
+          "totalMs": 13423.5,
+          "chars": 275,
+          "doUpstreamFirstByteMs": 3405
+        },
+        {
+          "ttfbMs": 1075.9,
+          "ttftMs": 3245.3,
+          "totalMs": 4096,
+          "chars": 275,
+          "doUpstreamFirstByteMs": 913
+        },
+        {
+          "ttfbMs": 1353.8,
+          "ttftMs": 4526.8,
+          "totalMs": 5893.3,
+          "chars": 275,
+          "doUpstreamFirstByteMs": 1208
+        }
+      ],
+      "errors": []
+    },
+    "ws": {
+      "samples": [
+        {
+          "connectMs": 424.3,
+          "ttftMs": 3578.6,
+          "totalMs": 3677.3,
+          "chars": 39,
+          "serverFirstByteMs": 1687,
+          "serverFirstTokenMs": 3435,
+          "serverTotalMs": 3495
+        },
+        {
+          "connectMs": 414.5,
+          "ttftMs": 2044,
+          "totalMs": 2424.8,
+          "chars": 275,
+          "serverFirstByteMs": 922,
+          "serverFirstTokenMs": 1845,
+          "serverTotalMs": 2222
+        },
+        {
+          "connectMs": 215.4,
+          "ttftMs": 3479.9,
+          "totalMs": 3910.7,
+          "chars": 275,
+          "serverFirstByteMs": 2385,
+          "serverFirstTokenMs": 3365,
+          "serverTotalMs": 3748
+        },
+        {
+          "connectMs": 216,
+          "ttftMs": 4786.8,
+          "totalMs": 6112.7,
+          "chars": 275,
+          "serverFirstByteMs": 1009,
+          "serverFirstTokenMs": 4658,
+          "serverTotalMs": 5943
+        },
+        {
+          "connectMs": 463.8,
+          "ttftMs": 4192.9,
+          "totalMs": 4899.5,
+          "chars": 275,
+          "serverFirstByteMs": 1315,
+          "serverFirstTokenMs": 4049,
+          "serverTotalMs": 4723
+        },
+        {
+          "connectMs": 245.7,
+          "ttftMs": 3606,
+          "totalMs": 4035.6,
+          "chars": 275,
+          "serverFirstByteMs": 2477,
+          "serverFirstTokenMs": 3467,
+          "serverTotalMs": 3850
+        }
+      ],
+      "errors": []
+    },
+    "server": {
+      "samples": [
+        {
+          "clientRoundTripMs": 3706.3,
+          "serverFirstByteMs": 2233,
+          "serverFirstTokenMs": 3108,
+          "serverTotalMs": 3472,
+          "chars": 275
+        },
+        {
+          "clientRoundTripMs": 5268.1,
+          "serverFirstByteMs": 1484,
+          "serverFirstTokenMs": 3701,
+          "serverTotalMs": 5080,
+          "chars": 275
+        },
+        {
+          "clientRoundTripMs": 4806.2,
+          "serverFirstByteMs": 2792,
+          "serverFirstTokenMs": 4214,
+          "serverTotalMs": 4613,
+          "chars": 275
+        },
+        {
+          "clientRoundTripMs": 4631,
+          "serverFirstByteMs": 1588,
+          "serverFirstTokenMs": 3445,
+          "serverTotalMs": 4392,
+          "chars": 275
+        },
+        {
+          "clientRoundTripMs": 4940.6,
+          "serverFirstByteMs": 2725,
+          "serverFirstTokenMs": 4286,
+          "serverTotalMs": 4768,
+          "chars": 275
+        },
+        {
+          "clientRoundTripMs": 4911.7,
+          "serverFirstByteMs": 2800,
+          "serverFirstTokenMs": 4222,
+          "serverTotalMs": 4779,
+          "chars": 275
+        }
+      ],
+      "errors": []
+    }
+  }
+}
