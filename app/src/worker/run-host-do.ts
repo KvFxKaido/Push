@@ -399,7 +399,17 @@ export class RunHost {
         409,
       );
     }
-    if (cp.runId && cp.runId !== record.runId) {
+    // `runId` is optional in RunCheckpointV1 (the legacy IndexedDB path omits
+    // it), but the hosted path REQUIRES it: the DO is scoped only by
+    // repo/branch/chat, runs supersede each other on that scope, so a
+    // checkpoint that can't be bound to the current run could persist a
+    // superseded run's transcript over the live one and seed adoption from
+    // the wrong place. Missing → 400; present-but-stale → 409.
+    if (!cp.runId) {
+      rhLog('warn', 'run_host_checkpoint_missing_run_id', { recordRunId: record.runId });
+      return json({ error: 'MISSING_RUN_ID', message: 'hosted checkpoints must carry runId' }, 400);
+    }
+    if (cp.runId !== record.runId) {
       rhLog('warn', 'run_host_checkpoint_run_mismatch', {
         recordRunId: record.runId,
         checkpointRunId: cp.runId,
@@ -483,7 +493,14 @@ export class RunHost {
       rhLog('warn', 'run_host_heartbeat_no_record', { runId: runId || null });
       return json({ error: 'NOT_REGISTERED' }, 409);
     }
-    if (runId && runId !== record.runId) {
+    // Require a present, matching runId — a beat that can't be bound to the
+    // current run (missing, or from a superseded run on the same scope) must
+    // not bump the live run's clock. Missing → 400; present-but-stale → 409.
+    if (!runId) {
+      rhLog('warn', 'run_host_heartbeat_missing_run_id', { recordRunId: record.runId });
+      return json({ error: 'MISSING_RUN_ID' }, 400);
+    }
+    if (runId !== record.runId) {
       rhLog('warn', 'run_host_heartbeat_run_mismatch', {
         recordRunId: record.runId,
         beatRunId: runId,
@@ -517,7 +534,16 @@ export class RunHost {
       rhLog('info', 'run_host_release_noop', { runId: runId || null });
       return json({ ok: true, released: false });
     }
-    if (runId && runId !== record.runId) {
+    // Release is destructive (drops the record + checkpoint), so it must
+    // prove it targets the CURRENT run — a stale/malformed release without a
+    // matching runId could otherwise tear down a newer run that superseded
+    // the caller's on the same scope. Missing → 400; present-but-stale → 409.
+    // Both refuse to delete.
+    if (!runId) {
+      rhLog('warn', 'run_host_release_missing_run_id', { recordRunId: record.runId });
+      return json({ error: 'MISSING_RUN_ID' }, 400);
+    }
+    if (runId !== record.runId) {
       rhLog('warn', 'run_host_release_run_mismatch', {
         recordRunId: record.runId,
         releaseRunId: runId,

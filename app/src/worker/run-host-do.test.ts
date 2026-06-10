@@ -376,6 +376,18 @@ describe('run ledger: checkpoint', () => {
     expect(((await res.json()) as Record<string, unknown>).error).toBe('RUN_MISMATCH');
   });
 
+  it('rejects a hosted checkpoint with no runId (400) — cannot bind to a run', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    await register(host);
+    const res = await host.fetch(
+      ledgerRequest('/run/checkpoint', 'PUT', { checkpoint: makeCheckpoint({ runId: undefined }) }),
+    );
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as Record<string, unknown>).error).toBe('MISSING_RUN_ID');
+    expect(storage.map.has('run:checkpoint')).toBe(false);
+  });
+
   it('rejects an oversize checkpoint loudly (413) rather than failing the put', async () => {
     const storage = makeStorage();
     const host = makeLedgerHost(storage);
@@ -432,6 +444,15 @@ describe('run ledger: heartbeat + release', () => {
     expect(res.status).toBe(409);
   });
 
+  it('heartbeat without a runId is 400 — cannot bind to the run', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    await register(host);
+    const res = await host.fetch(ledgerRequest('/run/heartbeat', 'POST', {}));
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as Record<string, unknown>).error).toBe('MISSING_RUN_ID');
+  });
+
   it('heartbeat on an adoptable run records liveness but does not resurrect it', async () => {
     const storage = makeStorage();
     storage.map.set('run:record', {
@@ -477,6 +498,30 @@ describe('run ledger: heartbeat + release', () => {
     );
     expect(res.status).toBe(200);
     expect(((await res.json()) as Record<string, unknown>).released).toBe(false);
+  });
+
+  it('refuses to tear down a live run on a release with no runId (400)', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    await register(host);
+    await host.fetch(ledgerRequest('/run/checkpoint', 'PUT', { checkpoint: makeCheckpoint() }));
+    const res = await host.fetch(ledgerRequest('/run/release', 'POST', {}));
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as Record<string, unknown>).error).toBe('MISSING_RUN_ID');
+    // The live run survives — nothing deleted.
+    expect(storage.map.has('run:record')).toBe(true);
+    expect(storage.map.has('run:checkpoint')).toBe(true);
+  });
+
+  it('refuses to tear down a superseding run on a stale release (409)', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    await register(host);
+    await register(host, { runId: 'run-2' }); // run-2 supersedes run-1 on this scope
+    const res = await host.fetch(ledgerRequest('/run/release', 'POST', { runId: 'run-1' }));
+    expect(res.status).toBe(409);
+    expect(storage.map.has('run:record')).toBe(true);
+    expect((storage.map.get('run:record') as Record<string, unknown>).runId).toBe('run-2');
   });
 
   it('status for an unknown run is 404', async () => {
