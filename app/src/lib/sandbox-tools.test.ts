@@ -364,6 +364,38 @@ describe('executeSandboxToolCall -- sandbox_exec detached path', () => {
     expect(result.structuredError).toBeUndefined();
   });
 
+  it('stales previously-read files when a mutating command is cancelled mid-run', async () => {
+    // A mid-run cancel means the process RAN until interrupted — a mutating
+    // command may already have changed files before the user hit Stop.
+    const path = '/workspace/src/cancelled-mid-run.ts';
+    fileLedger.reset();
+    vi.mocked(sandboxClient.readFromSandbox).mockReset();
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'export const value = 1;\n',
+      truncated: false,
+      version: 'v1',
+    });
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValue({
+      exitCode: 124,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      error: 'command was cancelled and interrupted',
+      terminalReason: 'cancelled',
+    });
+
+    await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
+    expect(fileLedger.getState(path)?.kind).toBe('fully_read');
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'touch /workspace/.push-write-test' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Cancelled by user');
+    expect(fileLedger.getState(path)?.kind).toBe('stale');
+  });
+
   it("keeps a command's own exit 124 even when Stop is pressed concurrently", async () => {
     // The command used `timeout` itself and exited 124 on its own
     // (terminalReason 'completed') while the user happened to abort. The

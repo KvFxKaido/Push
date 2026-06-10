@@ -551,6 +551,15 @@ export async function executeSandboxToolCall(
           // command that exits 124 on its own while Stop happens to be
           // pressed reports 'completed' and must keep its real result.
           if (result.terminalReason === 'cancelled') {
+            // A mid-run cancel means the process RAN until it was interrupted
+            // — a mutating command may already have changed files. Invalidate
+            // the same way a completed run does (the pre-start cancel case is
+            // a conservative false positive, which is acceptable).
+            if (markWorkspaceMutated) {
+              clearFileVersionCache(sandboxId);
+              clearPrefetchedEditFileCache(sandboxId);
+              fileLedger.markAllStale();
+            }
             const durationMs = Date.now() - start;
             const cardData: SandboxCardData = {
               command: call.args.command,

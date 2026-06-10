@@ -1242,12 +1242,12 @@ export async function execInSandbox(
 // ---------------------------------------------------------------------------
 // Background execution (detached process + resumable cursor logs)
 //
-// Thin fetch wrappers over the CF-only /api/sandbox-cf/exec-* routes, plus
+// Thin fetch wrappers over the provider-selected /api/sandbox/exec-* routes
+// (implemented by the CF handler; Modal's handler 404s them), plus
 // `execLongRunningInSandbox` which drives the shared `runDetachedToCompletion`
-// kernel and falls back to buffered `execInSandbox` when the active backend
-// lacks the routes (Modal — its handler 404s the unknown route). Used for
-// commands that can outrun the buffered per-exec deadline, e.g. a cold
-// `npm install`.
+// kernel and falls back to buffered `execInSandbox` when the backend lacks
+// the routes. Used for commands that can outrun the buffered per-exec
+// deadline, e.g. a long test suite or a cold `npm install`.
 // ---------------------------------------------------------------------------
 
 async function execStartInSandbox(
