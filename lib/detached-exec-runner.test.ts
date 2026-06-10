@@ -352,6 +352,7 @@ describe('runDetachedToCompletion', () => {
 
     expect(result.exitCode).toBe(124);
     expect(result.error).toMatch(/cancelled before it started/);
+    expect(result.terminalReason).toBe('cancelled');
     expect(p.start).not.toHaveBeenCalled();
   });
 
@@ -372,6 +373,7 @@ describe('runDetachedToCompletion', () => {
 
     expect(result.exitCode).toBe(124);
     expect(result.error).toMatch(/cancelled and interrupted/);
+    expect(result.terminalReason).toBe('cancelled');
     expect(p.interrupted()).toBe(true);
     expect(result.stdout).toBe('partial output before cancel'); // tail drained
   });
@@ -433,5 +435,117 @@ describe('runDetachedToCompletion', () => {
     // Naive trim would keep 3 units starting mid-pair; the guard advances one.
     expect(result.stdout).toBe('\u{1D11E}');
     expect(result.truncated).toBe(true);
+  });
+
+  it('carries terminal provenance on completion, deadline, and lost-contact', async () => {
+    const clean = await runDetachedToCompletion(
+      makePrimitives({ statuses: [{ running: false, exitCode: 0 }], fullStdout: '' }),
+      'cmd',
+      { sleep: async () => {}, now: () => 0 },
+    );
+    expect(clean.terminalReason).toBe('completed');
+
+    let t = 0;
+    const deadline = await runDetachedToCompletion(
+      makePrimitives({ statuses: [{ running: true, exitCode: null }], fullStdout: '' }),
+      'cmd',
+      {
+        overallTimeoutMs: 1000,
+        sleep: async () => {},
+        now: () => {
+          const v = t;
+          t += 5000;
+          return v;
+        },
+      },
+    );
+    expect(deadline.terminalReason).toBe('deadline');
+
+    const lost = await runDetachedToCompletion(
+      makePrimitives({
+        statuses: [{ running: true, exitCode: null }],
+        fullStdout: '',
+        statusErrorAt: 1,
+      }),
+      'cmd',
+      { sleep: async () => {}, now: () => 0 },
+    );
+    expect(lost.terminalReason).toBe('lost-contact');
+  });
+
+  it('bounds the terminal drain when the process survives the interrupt', async () => {
+    // A chatty process that outlives a swallowed kill keeps its log cursor
+    // advancing forever. The post-interrupt drain must be bounded or the
+    // deadline path never returns (this test hangs without the bound).
+    let offset = 0;
+    const primitives: DetachedExecPrimitives = {
+      start: async () => ({ processId: 'p' }),
+      status: async () => ({ running: true, exitCode: null }),
+      logs: async () => {
+        offset += 1;
+        return { stdout: 'x', stderr: '', nextCursorStdout: offset, nextCursorStderr: 0 };
+      },
+      interrupt: async () => {}, // "kill" silently does nothing
+    };
+
+    let t = 0;
+    const result = await runDetachedToCompletion(primitives, 'cmd', {
+      overallTimeoutMs: 1000,
+      sleep: async () => {},
+      now: () => {
+        const v = t;
+        t += 5000;
+        return v;
+      },
+    });
+
+    expect(result.exitCode).toBe(124);
+    expect(result.terminalReason).toBe('deadline');
+  });
+
+  it('advances cursors even when an onProgress listener throws (no duplicated output)', async () => {
+    const p = makePrimitives({
+      statuses: [
+        { running: true, exitCode: null },
+        { running: false, exitCode: 0 },
+      ],
+      fullStdout: 'abc',
+    });
+    let calls = 0;
+
+    const result = await runDetachedToCompletion(p, 'cmd', {
+      sleep: async () => {},
+      now: () => 0,
+      onProgress: () => {
+        calls++;
+        throw new Error('listener bug');
+      },
+    });
+
+    // Without cursor-first ordering the same slice re-appends on every poll.
+    expect(result.stdout).toBe('abc');
+    expect(result.exitCode).toBe(0);
+    expect(calls).toBeGreaterThan(0);
+  });
+
+  it('treats an empty poll-schedule array as the default ramp', async () => {
+    const delays: number[] = [];
+    const p = makePrimitives({
+      statuses: [
+        { running: true, exitCode: null },
+        { running: false, exitCode: 0 },
+      ],
+      fullStdout: '',
+    });
+
+    await runDetachedToCompletion(p, 'cmd', {
+      pollIntervalMs: [],
+      sleep: async (ms) => {
+        delays.push(ms);
+      },
+      now: () => 0,
+    });
+
+    expect(delays).toEqual([250]); // not [undefined] / tight loop
   });
 });

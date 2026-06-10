@@ -24,6 +24,32 @@
 
 import type { ExecResult } from './sandbox-provider';
 
+/**
+ * How a detached run reached its terminal state — provenance the exit code
+ * alone cannot carry (124 can be a deadline interrupt, a user cancel, or the
+ * command's own exit; -1 can be never-started or lost-mid-run, which differ
+ * in whether the command may have mutated the workspace).
+ */
+export type DetachedTerminalReason =
+  /** The process exited on its own (exit code may be non-zero or missing). */
+  | 'completed'
+  /** The abort signal fired; the process was interrupted (or never started). */
+  | 'cancelled'
+  /** The overall wall-clock budget was exceeded; the process was interrupted. */
+  | 'deadline'
+  /** Started, then status/record became unreadable — outcome unknown. */
+  | 'lost-contact'
+  /**
+   * The start call failed without confirming whether the process launched.
+   * Never produced by this runner (an unstarted run throws); set by transport
+   * wrappers that decline to retry an ambiguous start.
+   */
+  | 'start-unconfirmed';
+
+export interface DetachedExecResult extends ExecResult {
+  terminalReason: DetachedTerminalReason;
+}
+
 export interface DetachedStartResult {
   processId: string;
 }
@@ -92,6 +118,14 @@ export interface RunDetachedOptions {
 const DEFAULT_OVERALL_TIMEOUT_MS = 600_000;
 const DEFAULT_POLL_SCHEDULE_MS: readonly number[] = [250, 500, 1000, 1500];
 const DEFAULT_MAX_ACCUMULATED_CHARS = 256_000;
+// Drain-round bounds. After a CONFIRMED stop the buffer is finite, so the
+// generous bound only guards pathology. After a best-effort interrupt (abort/
+// deadline) or a status failure the process may still be running and writing —
+// an unbounded cursor drain against a chatty survivor would never terminate
+// (the kill is `.catch(() => {})`-swallowed), so those paths get a tight bound
+// and accept losing the true tail.
+const CONFIRMED_STOP_DRAIN_ROUNDS = 500;
+const UNCONFIRMED_DRAIN_ROUNDS = 25;
 
 function isNotFound(err: unknown): boolean {
   const code = (err as { statusCode?: number; code?: string } | null | undefined) ?? {};
@@ -109,9 +143,16 @@ export async function runDetachedToCompletion(
   primitives: DetachedExecPrimitives,
   command: string,
   options: RunDetachedOptions = {},
-): Promise<ExecResult> {
+): Promise<DetachedExecResult> {
   const overallTimeoutMs = options.overallTimeoutMs ?? DEFAULT_OVERALL_TIMEOUT_MS;
-  const pollSchedule = options.pollIntervalMs ?? DEFAULT_POLL_SCHEDULE_MS;
+  // An empty schedule array would index to `undefined` and turn the poll loop
+  // into a tight spin — treat it as "use the default".
+  const pollSchedule =
+    typeof options.pollIntervalMs === 'number'
+      ? options.pollIntervalMs
+      : options.pollIntervalMs && options.pollIntervalMs.length > 0
+        ? options.pollIntervalMs
+        : DEFAULT_POLL_SCHEDULE_MS;
   const pollDelayMs = (iteration: number): number =>
     typeof pollSchedule === 'number'
       ? pollSchedule
@@ -130,6 +171,7 @@ export async function runDetachedToCompletion(
       exitCode: 124,
       truncated: false,
       error: 'command was cancelled before it started',
+      terminalReason: 'cancelled',
     };
   }
 
@@ -161,27 +203,40 @@ export async function runDetachedToCompletion(
 
   const drain = async (): Promise<void> => {
     const slice = await primitives.logs(processId, { cursorStdout, cursorStderr });
+    // Advance cursors BEFORE consuming the slice: if a consumer throws, a
+    // stale cursor would re-read and re-append the same slice on every later
+    // poll (duplicated output until the cap). Advancing first loses at most
+    // this one slice; it never duplicates.
+    cursorStdout = slice.nextCursorStdout;
+    cursorStderr = slice.nextCursorStderr;
     if (slice.stdout) {
       stdout = appendCapped(stdout, slice.stdout);
-      options.onProgress?.({ stdout: slice.stdout, stderr: '' });
+      try {
+        options.onProgress?.({ stdout: slice.stdout, stderr: '' });
+      } catch {
+        // progress is best-effort; a throwing listener must not affect the run
+      }
     }
     if (slice.stderr) {
       stderr = appendCapped(stderr, slice.stderr);
-      options.onProgress?.({ stdout: '', stderr: slice.stderr });
+      try {
+        options.onProgress?.({ stdout: '', stderr: slice.stderr });
+      } catch {
+        // progress is best-effort; a throwing listener must not affect the run
+      }
     }
-    cursorStdout = slice.nextCursorStdout;
-    cursorStderr = slice.nextCursorStderr;
   };
 
-  // Drain repeatedly until no new bytes arrive. Each `logs` read is capped
-  // (the worker returns at most one cap-sized slice per call), so a single
-  // `drain()` can leave a large final burst unread. Safe to loop ONLY once the
-  // process has stopped — the buffer is then finite and every iteration must
-  // advance a cursor or terminate, so it can't spin forever. Used on the
-  // terminal paths; the per-poll mid-run drain stays single-shot to keep the
-  // loop responsive.
-  const drainToEnd = async (): Promise<void> => {
-    for (;;) {
+  // Drain repeatedly until no new bytes arrive or the round bound is hit.
+  // Each `logs` read is capped (the worker returns at most one cap-sized
+  // slice per call), so a single `drain()` can leave a large final burst
+  // unread. The bound matters on the interrupt/lost-contact paths: there the
+  // process may have survived a swallowed kill and still be writing, and an
+  // unbounded cursor-following loop against it would never terminate. Used on
+  // the terminal paths; the per-poll mid-run drain stays single-shot to keep
+  // the loop responsive.
+  const drainToEnd = async (maxRounds: number): Promise<void> => {
+    for (let round = 0; round < maxRounds; round++) {
       const beforeStdout = cursorStdout;
       const beforeStderr = cursorStderr;
       try {
@@ -198,7 +253,7 @@ export async function runDetachedToCompletion(
   // before the runtime recorded a code) — surface that as a failure rather
   // than masking it as exit 0, since callers gate on `exitCode !== 0`. Reads
   // the current accumulated stdout/stderr at call time.
-  const finishedResult = (st: DetachedStatusResult): ExecResult =>
+  const finishedResult = (st: DetachedStatusResult): DetachedExecResult =>
     st.exitCode == null
       ? {
           stdout,
@@ -206,8 +261,15 @@ export async function runDetachedToCompletion(
           exitCode: -1,
           truncated: truncatedHead,
           error: 'background process ended without an exit code (killed or errored)',
+          terminalReason: 'completed',
         }
-      : { stdout, stderr, exitCode: st.exitCode, truncated: truncatedHead };
+      : {
+          stdout,
+          stderr,
+          exitCode: st.exitCode,
+          truncated: truncatedHead,
+          terminalReason: 'completed',
+        };
 
   for (let iteration = 0; ; iteration++) {
     if (options.abortSignal?.aborted) {
@@ -215,17 +277,18 @@ export async function runDetachedToCompletion(
       // result over a synthetic 124 (same re-check the deadline path does).
       const finalStatus = await primitives.status(processId).catch(() => null);
       if (finalStatus && !finalStatus.running) {
-        await drainToEnd();
+        await drainToEnd(CONFIRMED_STOP_DRAIN_ROUNDS);
         return finishedResult(finalStatus);
       }
       await primitives.interrupt(processId).catch(() => {});
-      await drainToEnd();
+      await drainToEnd(UNCONFIRMED_DRAIN_ROUNDS);
       return {
         stdout,
         stderr,
         exitCode: 124, // mirror shell `timeout`/SIGTERM convention, same as the deadline path
         truncated: truncatedHead,
         error: 'command was cancelled and interrupted',
+        terminalReason: 'cancelled',
       };
     }
 
@@ -240,7 +303,7 @@ export async function runDetachedToCompletion(
       // other persistent error (retries already exhausted in the transport)
       // means we've lost contact and can't determine the outcome. Both are
       // failures the caller surfaces, not restarts.
-      await drainToEnd();
+      await drainToEnd(UNCONFIRMED_DRAIN_ROUNDS);
       return {
         stdout,
         stderr,
@@ -249,12 +312,13 @@ export async function runDetachedToCompletion(
         error: isNotFound(err)
           ? 'background process record disappeared before completion'
           : `lost contact with background process: ${err instanceof Error ? err.message : String(err)}`,
+        terminalReason: 'lost-contact',
       };
     }
 
     if (!st.running) {
       // Process stopped — fully catch up on any final burst before returning.
-      await drainToEnd();
+      await drainToEnd(CONFIRMED_STOP_DRAIN_ROUNDS);
       return finishedResult(st);
     }
 
@@ -272,17 +336,18 @@ export async function runDetachedToCompletion(
       // completed right at the boundary isn't mislabeled exit 124.
       const finalStatus = await primitives.status(processId).catch(() => null);
       if (finalStatus && !finalStatus.running) {
-        await drainToEnd();
+        await drainToEnd(CONFIRMED_STOP_DRAIN_ROUNDS);
         return finishedResult(finalStatus);
       }
       await primitives.interrupt(processId).catch(() => {});
-      await drainToEnd();
+      await drainToEnd(UNCONFIRMED_DRAIN_ROUNDS);
       return {
         stdout,
         stderr,
         exitCode: 124, // mirror shell `timeout`'s exit code for a killed command
         truncated: truncatedHead,
         error: `command exceeded ${overallTimeoutMs}ms overall deadline and was interrupted`,
+        terminalReason: 'deadline',
       };
     }
 

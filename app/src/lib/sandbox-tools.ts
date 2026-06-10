@@ -455,6 +455,8 @@ export async function executeSandboxToolCall(
           truncated: boolean;
           timedOut?: boolean;
           error?: string;
+          /** Detached-path provenance; absent on local-pc and buffered-fallback results. */
+          terminalReason?: import('@push/lib/detached-exec-runner').DetachedTerminalReason;
         };
         if (options?.localDaemonBinding) {
           try {
@@ -543,10 +545,12 @@ export async function executeSandboxToolCall(
           });
 
           // User cancel (Stop) — the runner interrupted the detached process
-          // and resolved 124. Synthesize the same envelope as the local-pc
-          // path: cancel is a user-initiated state, not an error class. The
-          // deadline also exits 124, so gate on the signal actually aborting.
-          if (options?.abortSignal?.aborted && result.exitCode === 124) {
+          // and resolved with cancel provenance. Synthesize the same envelope
+          // as the local-pc path: cancel is a user-initiated state, not an
+          // error class. Gate on terminalReason, NOT the live signal — a
+          // command that exits 124 on its own while Stop happens to be
+          // pressed reports 'completed' and must keep its real result.
+          if (result.terminalReason === 'cancelled') {
             const durationMs = Date.now() - start;
             const cardData: SandboxCardData = {
               command: call.args.command,
@@ -564,27 +568,42 @@ export async function executeSandboxToolCall(
         }
         const durationMs = Date.now() - start;
 
-        // Exit code -1 means the command was never dispatched — the container
-        // is unreachable (expired, terminated, or unhealthy).
+        // Exit code -1 historically meant "the command was never dispatched"
+        // (buffered path, container unreachable). The detached path adds two
+        // post-start -1 cases that must NOT make that claim: 'lost-contact'
+        // (started, outcome unknown) and 'start-unconfirmed' (may or may not
+        // have launched; deliberately not retried to avoid double execution).
         if (result.exitCode === -1) {
           const reason = result.error || 'Sandbox unavailable';
+          const mayHaveRun =
+            result.terminalReason === 'lost-contact' ||
+            result.terminalReason === 'start-unconfirmed';
+          // A mutating command that MAY have run must invalidate caches the
+          // same way a confirmed run does — the workspace state is unknown.
+          if (mayHaveRun && markWorkspaceMutated) {
+            clearFileVersionCache(sandboxId);
+            clearPrefetchedEditFileCache(sandboxId);
+            fileLedger.markAllStale();
+          }
           const err = classifyError(reason, call.args.command);
-          // Override to SANDBOX_UNREACHABLE since -1 always means the container is gone
           err.type = 'SANDBOX_UNREACHABLE';
           err.retryable = false;
           const cardData: SandboxCardData = {
             command: call.args.command,
-            stdout: '',
-            stderr: reason,
+            stdout: result.stdout,
+            stderr: result.stderr || reason,
             exitCode: -1,
-            truncated: false,
+            truncated: result.truncated,
             durationMs,
           };
+          const detail =
+            result.terminalReason === 'lost-contact'
+              ? `Lost contact with the command AFTER it started — its outcome is unknown and it may have completed or mutated the workspace. ${reason}\nRe-read any files you depend on before editing; do not assume the command did not run.`
+              : result.terminalReason === 'start-unconfirmed'
+                ? `The command's background start failed without confirmation — it may or may not have run. ${reason}\nIt was deliberately NOT retried (a retry could execute it twice). Verify the workspace state before re-running.`
+                : `Command was not executed. ${reason}\nThe sandbox container is no longer reachable. Please restart the sandbox to continue.`;
           return {
-            text: formatStructuredError(
-              err,
-              `[Tool Error — sandbox_exec]\nCommand was not executed. ${reason}\nThe sandbox container is no longer reachable. Please restart the sandbox to continue.`,
-            ),
+            text: formatStructuredError(err, `[Tool Error — sandbox_exec]\n${detail}`),
             card: { type: 'sandbox', data: cardData },
             structuredError: err,
           };

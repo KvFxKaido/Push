@@ -340,7 +340,7 @@ describe('executeSandboxToolCall -- sandbox_exec detached path', () => {
     expect(result.structuredError).toBeUndefined();
   });
 
-  it('returns the Cancelled-by-user envelope when the abort signal fired', async () => {
+  it('returns the Cancelled-by-user envelope on cancel provenance', async () => {
     const controller = new AbortController();
     controller.abort();
     vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValue({
@@ -349,6 +349,7 @@ describe('executeSandboxToolCall -- sandbox_exec detached path', () => {
       stderr: '',
       truncated: false,
       error: 'command was cancelled and interrupted',
+      terminalReason: 'cancelled',
     });
 
     const result = await executeSandboxToolCall(
@@ -363,13 +364,38 @@ describe('executeSandboxToolCall -- sandbox_exec detached path', () => {
     expect(result.structuredError).toBeUndefined();
   });
 
-  it('surfaces the runner deadline note on a non-aborted exit 124', async () => {
+  it("keeps a command's own exit 124 even when Stop is pressed concurrently", async () => {
+    // The command used `timeout` itself and exited 124 on its own
+    // (terminalReason 'completed') while the user happened to abort. The
+    // result must NOT be relabeled "Cancelled by user".
+    const controller = new AbortController();
+    controller.abort();
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValue({
+      exitCode: 124,
+      stdout: 'timed out internally',
+      stderr: '',
+      truncated: false,
+      terminalReason: 'completed',
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'timeout 5 ./slow.sh' } },
+      'sb-123',
+      { abortSignal: controller.signal },
+    );
+
+    expect(result.text).toContain('Exit code: 124');
+    expect(result.text).not.toContain('Cancelled by user');
+  });
+
+  it('surfaces the runner deadline note on a deadline exit 124', async () => {
     vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValue({
       exitCode: 124,
       stdout: 'still going...',
       stderr: '',
       truncated: false,
       error: 'command exceeded 600000ms overall deadline and was interrupted',
+      terminalReason: 'deadline',
     });
 
     const result = await executeSandboxToolCall(
@@ -381,15 +407,16 @@ describe('executeSandboxToolCall -- sandbox_exec detached path', () => {
     // Without the note a bare 124 is indistinguishable from a command that
     // exited 124 on its own.
     expect(result.text).toContain('exceeded 600000ms overall deadline');
+    expect(result.text).not.toContain('Cancelled by user');
   });
 
-  it('maps exit -1 from the detached path to SANDBOX_UNREACHABLE', async () => {
+  it('maps a buffered-style -1 (no provenance) to "was not executed"', async () => {
     vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValue({
       exitCode: -1,
       stdout: '',
       stderr: '',
       truncated: false,
-      error: 'lost contact with background process: boom',
+      error: 'Sandbox unavailable',
     });
 
     const result = await executeSandboxToolCall(
@@ -398,7 +425,60 @@ describe('executeSandboxToolCall -- sandbox_exec detached path', () => {
     );
 
     expect(result.structuredError?.type).toBe('SANDBOX_UNREACHABLE');
+    expect(result.text).toContain('Command was not executed');
     expect(result.text).toContain('no longer reachable');
+  });
+
+  it('does not claim "not executed" on lost-contact, and stales reads for mutating commands', async () => {
+    const path = '/workspace/src/lost-contact.ts';
+    fileLedger.reset();
+    vi.mocked(sandboxClient.readFromSandbox).mockReset();
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'export const value = 1;\n',
+      truncated: false,
+      version: 'v1',
+    });
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValue({
+      exitCode: -1,
+      stdout: 'partial',
+      stderr: '',
+      truncated: false,
+      error: 'lost contact with background process: boom',
+      terminalReason: 'lost-contact',
+    });
+
+    await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
+    expect(fileLedger.getState(path)?.kind).toBe('fully_read');
+
+    const result = await executeSandboxToolCall(
+      // Mutating command — the workspace may have changed before contact was lost.
+      { tool: 'sandbox_exec', args: { command: 'touch /workspace/.push-write-test' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('outcome is unknown');
+    expect(result.text).not.toContain('Command was not executed');
+    expect(fileLedger.getState(path)?.kind).toBe('stale');
+  });
+
+  it('flags an unconfirmed start without retrying', async () => {
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValue({
+      exitCode: -1,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      error: 'background exec start failed without confirmation: gateway timeout',
+      terminalReason: 'start-unconfirmed',
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: './deploy.sh' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('may or may not have run');
+    expect(result.text).toContain('NOT retried');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
   });
 });
 
