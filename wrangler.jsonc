@@ -217,6 +217,10 @@
       {
         "name": "PrReviewJob",
         "class_name": "PrReviewJob"
+      },
+      {
+        "name": "RUN_HOST",
+        "class_name": "RunHost"
       }
     ]
   },
@@ -249,6 +253,15 @@
       // backend holds per-PR review status + an event log (dedupe by delivery
       // id, coalesce by head SHA). See docs/decisions/Webhook-Triggered PR Review.md.
       "new_sqlite_classes": ["PrReviewJob"]
+    },
+    {
+      "tag": "v5",
+      // RunHost — Durable Runs (Adopt-on-Silence) track. The namespace is
+      // durable infrastructure (Phase 2 puts the adoption loop + checkpoint
+      // persistence here); its current contents are the Phase-0 latency-spike
+      // endpoints only, which use no durable storage. See
+      // docs/decisions/Durable Runs — Adopt-on-Silence.md.
+      "new_sqlite_classes": ["RunHost"]
     }
   ],
   // Daily snapshot index walk — emits aggregate metrics so we can size the

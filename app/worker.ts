@@ -75,6 +75,7 @@ import { handleJobsRoute, matchJobsRoute } from './src/worker/worker-coder-job';
 import { handlePrReviewRoute, matchPrReviewRoute } from './src/worker/worker-pr-review';
 import { handleSettingsRoute, matchSettingsRoute } from './src/worker/worker-settings';
 import { handleRelayRequest, matchRelayRoute } from './src/worker/relay-routes';
+import { handleRunHostRoute, matchRunHostRoute } from './src/worker/run-host-routes';
 import { handleStats } from './src/worker/worker-stats';
 import {
   handleArtifactsCreate,
@@ -110,6 +111,11 @@ export { PrReviewJob } from './src/worker/pr-review-job-do';
 // Remote Sessions relay DO — Phase 2.b scaffold. Bound as `RELAY_SESSIONS`
 // in wrangler.jsonc; routes live in `relay-routes.ts`.
 export { RelaySessionDO } from './src/worker/relay-do';
+
+// RunHost DO — Durable Runs (Adopt-on-Silence). Bound as `RUN_HOST` in
+// wrangler.jsonc; Phase 0 hosts the latency-spike endpoints only (routes in
+// `run-host-routes.ts`).
+export { RunHost } from './src/worker/run-host-do';
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -201,6 +207,17 @@ export default {
       if (settingsAction) {
         return withRequestIdOnResponse(
           await handleSettingsRoute(requestWithId, env, settingsAction),
+          requestId,
+          requestWithId,
+          env,
+        );
+      }
+
+      // Durable Runs Phase 0 — latency-spike endpoints on the RunHost DO.
+      const runHostAction = matchRunHostRoute(url.pathname, request.method);
+      if (runHostAction) {
+        return withRequestIdOnResponse(
+          await handleRunHostRoute(requestWithId, env, runHostAction),
           requestId,
           requestWithId,
           env,
