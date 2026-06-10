@@ -74,6 +74,24 @@ const DEFAULT_MODEL = DEFAULT_PR_REVIEW_MODEL;
 const ORPHAN_GRACE_MS = 2 * 60_000;
 const ORPHAN_ALARM_MS = 15 * 60_000;
 const REVIEW_TIMEOUT_MS = 15 * 60_000;
+// A review attempt that dies without a result (DO evicted by a deploy, or a
+// stalled provider stream hitting the wall-clock) is re-enqueued ONCE with this
+// suffix on its delivery id. The suffix doubles as the attempt counter: a dead
+// retry is final. Derived ids stay unique (webhook delivery ids are UUIDs and
+// never end with this suffix) and ride the existing dedupe/supersede logic
+// unchanged. Charset constraint: the suffix must stay within the cancel
+// route's deliveryId pattern (`[A-Za-z0-9._-]` in worker-pr-review.ts) or
+// running retries become uncancellable from the UI.
+const AUTO_RETRY_SUFFIX = '.auto-retry';
+// Origin for retries of rows persisted before the `origin` column existed. The
+// stream adapter only uses it to construct an in-process synthetic Request URL,
+// so any parseable origin works.
+const RETRY_FALLBACK_ORIGIN = 'https://push.internal';
+// What a dead review's check-run should tell a human. New commits do NOT
+// trigger reviews (`synchronize` is deliberately not a reviewable action in
+// github-webhook.ts), so the old "push a new commit" advice was a dead end.
+const TERMINAL_RETRY_ADVICE =
+  'New commits do not trigger reviews — close and reopen the PR to run a fresh review.';
 
 /** Start payload the webhook receiver POSTs to the DO. */
 export interface PrReviewStartInput extends ReviewablePullRequest {
@@ -177,6 +195,7 @@ CREATE TABLE IF NOT EXISTS review (
   head_ref TEXT NOT NULL,
   installation_id TEXT NOT NULL,
   is_cross_fork INTEGER NOT NULL,
+  origin TEXT,
   status TEXT NOT NULL,
   comments_posted INTEGER,
   posted INTEGER,
@@ -207,6 +226,7 @@ interface ReviewRow {
   head_ref: string;
   installation_id: string;
   is_cross_fork: number;
+  origin: string | null;
   status: PrReviewStatusSnapshot['status'];
   comments_posted: number | null;
   posted: number | null;
@@ -253,6 +273,9 @@ export class PrReviewJob {
     }
     if (!have.has('check_run_id')) {
       this.ctx.storage.sql.exec('ALTER TABLE review ADD COLUMN check_run_id INTEGER');
+    }
+    if (!have.has('origin')) {
+      this.ctx.storage.sql.exec('ALTER TABLE review ADD COLUMN origin TEXT');
     }
   }
 
@@ -317,6 +340,8 @@ export class PrReviewJob {
         pr: row.pr_number,
       });
 
+      const retried = this.maybeRetryDeadReview(row, 'timeout');
+
       // Best-effort check-run finalization per row: a single network hiccup
       // must not skip abort+DB-update for other timed-out rows.
       try {
@@ -328,11 +353,16 @@ export class PrReviewJob {
             token,
             row.check_run_id ?? null,
             'neutral',
-            {
-              title: 'Review timed out',
-              summary:
-                'The review exceeded its wall-clock budget. Push a new commit or re-run to retry.',
-            },
+            retried
+              ? {
+                  title: 'Review retrying',
+                  summary:
+                    'The first attempt exceeded its wall-clock budget (stalled provider stream) and was terminated. A second attempt is running and will report on its own check-run.',
+                }
+              : {
+                  title: 'Review timed out',
+                  summary: `The review exceeded its wall-clock budget and its automatic retry was already used. ${TERMINAL_RETRY_ADVICE}`,
+                },
           );
         }
       } catch (err) {
@@ -426,19 +456,7 @@ export class PrReviewJob {
       // double-post and leave the late in-progress run hanging "Reviewing…".
     }
 
-    this.ctx.storage.sql.exec(
-      `INSERT INTO review (delivery_id, repo, pr_number, head_sha, base_ref, head_ref, installation_id, is_cross_fork, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
-      input.deliveryId,
-      input.repoFullName,
-      input.prNumber,
-      input.headSha,
-      input.baseRef,
-      input.headRef,
-      input.installationId,
-      input.isCrossFork ? 1 : 0,
-      Date.now(),
-    );
+    this.insertQueuedReview(input);
     this.emit(input.deliveryId, 'review.queued', { headSha: input.headSha });
 
     // Register in the cross-PR discovery index so this review is reachable from
@@ -460,6 +478,94 @@ export class PrReviewJob {
     return json({ status: 'queued' }, 202);
   }
 
+  private insertQueuedReview(input: PrReviewStartInput): void {
+    this.ctx.storage.sql.exec(
+      `INSERT INTO review (delivery_id, repo, pr_number, head_sha, base_ref, head_ref, installation_id, is_cross_fork, origin, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
+      input.deliveryId,
+      input.repoFullName,
+      input.prNumber,
+      input.headSha,
+      input.baseRef,
+      input.headRef,
+      input.installationId,
+      input.isCrossFork ? 1 : 0,
+      input.origin,
+      Date.now(),
+    );
+  }
+
+  /**
+   * Re-enqueue a review attempt that died without producing a result — the DO
+   * was evicted mid-run (every production deploy does this to any in-flight
+   * review) or the provider stream stalled past the wall-clock budget. Exactly
+   * one retry per original delivery: the retry id carries AUTO_RETRY_SUFFIX,
+   * and a dead retry is final. Returns true when a retry was kicked (callers
+   * pick the check-run wording off this).
+   */
+  private maybeRetryDeadReview(row: ReviewRow, cause: 'orphaned' | 'timeout'): boolean {
+    try {
+      return this.retryDeadReview(row, cause);
+    } catch (err) {
+      // A storage hiccup enqueuing the retry must not throw into the sweep or
+      // the alarm handler — the original row is already finalized; losing the
+      // retry degrades to the pre-retry behavior, loudly.
+      log('error', 'pr_review_retry_enqueue_failed', {
+        deliveryId: row.delivery_id,
+        cause,
+        message: err instanceof Error ? err.message : String(err),
+      });
+      return false;
+    }
+  }
+
+  private retryDeadReview(row: ReviewRow, cause: 'orphaned' | 'timeout'): boolean {
+    if (row.delivery_id.endsWith(AUTO_RETRY_SUFFIX)) return false;
+    const retryId = row.delivery_id + AUTO_RETRY_SUFFIX;
+    // Idempotence across alarm re-fires / first-fetch sweeps: if the retry row
+    // already exists (whatever its state), never enqueue a third attempt.
+    const existing = this.ctx.storage.sql
+      .exec('SELECT status FROM review WHERE delivery_id = ?', retryId)
+      .toArray();
+    if (existing.length) return false;
+
+    const input: PrReviewStartInput = {
+      deliveryId: retryId,
+      repoFullName: row.repo,
+      prNumber: row.pr_number,
+      headSha: row.head_sha,
+      baseRef: row.base_ref,
+      headRef: row.head_ref,
+      installationId: row.installation_id,
+      isCrossFork: row.is_cross_fork === 1,
+      origin: row.origin ?? RETRY_FALLBACK_ORIGIN,
+    };
+    this.insertQueuedReview(input);
+    this.emit(retryId, 'review.queued', {
+      headSha: row.head_sha,
+      retryOf: row.delivery_id,
+      cause,
+    });
+    log('info', 'pr_review_auto_retry', {
+      deliveryId: row.delivery_id,
+      retryId,
+      cause,
+      repo: row.repo,
+      pr: row.pr_number,
+    });
+    this.ctx.waitUntil(
+      recordInflightReview(this.env, {
+        repo: row.repo,
+        prNumber: row.pr_number,
+        deliveryId: retryId,
+        headSha: row.head_sha,
+        createdAt: Date.now(),
+      }),
+    );
+    this.ctx.waitUntil(this.runReview(input));
+    return true;
+  }
+
   private async runReview(input: PrReviewStartInput): Promise<void> {
     const controller = new AbortController();
     this.abortControllers.set(input.deliveryId, controller);
@@ -472,7 +578,16 @@ export class PrReviewJob {
 
     // Arm the persistent orphan backstop: if this DO is evicted mid-review, the
     // alarm still fires at the deadline and finalizes the hung row + check-run.
-    await this.ctx.storage.setAlarm(Date.now() + ORPHAN_ALARM_MS);
+    // Merge with any earlier pending alarm (DOs hold a single alarm) — an
+    // auto-retry kicked from inside the alarm/sweep path must not push out a
+    // sooner grace-recheck by blindly overwriting it.
+    const backstop = Date.now() + ORPHAN_ALARM_MS;
+    const pendingAlarm = await this.ctx.storage.getAlarm();
+    await this.ctx.storage.setAlarm(
+      pendingAlarm != null && pendingAlarm > Date.now() && pendingAlarm < backstop
+        ? pendingAlarm
+        : backstop,
+    );
 
     // Open the visible "Reviewing…" check-run (best-effort; null without creds).
     const checkToken = await this.mintInstallationToken(input.installationId);
@@ -665,7 +780,20 @@ export class PrReviewJob {
     if (!deliveryId) return json({ error: 'MISSING_FIELDS', fields: ['deliveryId'] }, 400);
     const row = this.reviewRow(deliveryId);
     if (!row) return json({ error: 'NOT_FOUND', deliveryId }, 404);
-    if (row.status !== 'queued' && row.status !== 'running') {
+
+    const cancelledTarget = this.cancelReviewRow(row);
+
+    // Cascade to the auto-retry child. The first-fetch orphan sweep can race a
+    // cancel aimed at a dead original: by the time the cancel lands, the sweep
+    // has already failed the original AND enqueued its retry — so honoring the
+    // user's intent means killing the retry too, whichever ordering won.
+    let cancelledRetry = false;
+    if (!deliveryId.endsWith(AUTO_RETRY_SUFFIX)) {
+      const retryRow = this.reviewRow(deliveryId + AUTO_RETRY_SUFFIX);
+      if (retryRow) cancelledRetry = this.cancelReviewRow(retryRow);
+    }
+
+    if (!cancelledTarget && !cancelledRetry) {
       return json(
         {
           error: 'NOT_CANCELLABLE',
@@ -675,18 +803,24 @@ export class PrReviewJob {
         409,
       );
     }
+    return json({ status: 'cancelled' }, 200);
+  }
+
+  /** Cancel one non-terminal row; returns false when it was already terminal. */
+  private cancelReviewRow(row: ReviewRow): boolean {
+    if (row.status !== 'queued' && row.status !== 'running') return false;
 
     this.ctx.storage.sql.exec(
       "UPDATE review SET status = 'cancelled', finished_at = ? WHERE delivery_id = ?",
       Date.now(),
-      deliveryId,
+      row.delivery_id,
     );
-    const controller = this.abortControllers.get(deliveryId);
+    const controller = this.abortControllers.get(row.delivery_id);
     if (controller && !controller.signal.aborted) controller.abort();
-    this.abortControllers.delete(deliveryId);
-    this.emit(deliveryId, 'review.cancelled', {});
+    this.abortControllers.delete(row.delivery_id);
+    this.emit(row.delivery_id, 'review.cancelled', {});
     log('info', 'pr_review_cancelled', {
-      deliveryId,
+      deliveryId: row.delivery_id,
       repo: row.repo,
       pr: row.pr_number,
       priorStatus: row.status,
@@ -703,7 +837,7 @@ export class PrReviewJob {
     if (!controller) {
       this.ctx.waitUntil(this.closeCheckCancelledFromRow(row));
     }
-    return json({ status: 'cancelled' }, 200);
+    return true;
   }
 
   private reviewRow(deliveryId: string): ReviewRow | null {
@@ -902,6 +1036,7 @@ export class PrReviewJob {
           pr: row.pr_number,
           priorStatus: row.status,
         });
+        const retried = this.maybeRetryDeadReview(row, 'orphaned');
         const token = await this.mintInstallationToken(row.installation_id);
         if (token) {
           await this.finalizeCheckRun(
@@ -910,11 +1045,16 @@ export class PrReviewJob {
             token,
             row.check_run_id ?? null,
             'neutral',
-            {
-              title: 'Review incomplete',
-              summary:
-                'The review did not finish (the worker restarted or it exceeded its time budget). Push a new commit or re-run to retry.',
-            },
+            retried
+              ? {
+                  title: 'Review retrying',
+                  summary:
+                    'The first attempt did not finish (the worker restarted mid-run — production deploys evict in-flight reviews). A second attempt is running and will report on its own check-run.',
+                }
+              : {
+                  title: 'Review incomplete',
+                  summary: `The review did not finish (the worker restarted or it exceeded its time budget) and its automatic retry was already used. ${TERMINAL_RETRY_ADVICE}`,
+                },
           );
         }
       }

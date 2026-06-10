@@ -53,6 +53,7 @@ interface ReviewRow {
   head_ref: string;
   installation_id: string;
   is_cross_fork: number;
+  origin: string | null;
   status: string;
   comments_posted: number | null;
   posted: number | null;
@@ -109,8 +110,9 @@ function createMockCtx() {
         head_ref,
         installation_id,
         is_cross_fork,
+        origin,
         created_at,
-      ] = p as [string, string, number, string, string, string, string, number, number];
+      ] = p as [string, string, number, string, string, string, string, number, string, number];
       reviews.set(delivery_id, {
         delivery_id,
         repo,
@@ -120,6 +122,7 @@ function createMockCtx() {
         head_ref,
         installation_id,
         is_cross_fork,
+        origin,
         status: 'queued',
         comments_posted: null,
         posted: null,
@@ -564,6 +567,7 @@ describe('PrReviewJob cancel', () => {
       head_ref: 'feature/x',
       installation_id: '42',
       is_cross_fork: 0,
+      origin: 'https://push.example',
       status: 'running',
       comments_posted: null,
       posted: null,
@@ -683,6 +687,7 @@ describe('PrReviewJob orphan sweep', () => {
       head_ref: 'feature/x',
       installation_id: '42',
       is_cross_fork: 0,
+      origin: 'https://push.example',
       status: 'running',
       comments_posted: null,
       posted: null,
@@ -865,5 +870,183 @@ describe('PrReviewJob cross-PR in-flight index', () => {
     const res = await do_.fetch(startRequest(startInput()));
     expect(res.status).toBe(202);
     await Promise.allSettled(mock.pending);
+  });
+});
+
+describe('PrReviewJob auto-retry', () => {
+  const APP_ENV = { GITHUB_APP_ID: 'app', GITHUB_APP_PRIVATE_KEY: 'key' } as unknown as Env;
+
+  function deadRow(overrides: Partial<ReviewRow> & { delivery_id: string }): ReviewRow {
+    return {
+      repo: 'octo/repo',
+      pr_number: 7,
+      head_sha: 'shaX',
+      base_ref: 'main',
+      head_ref: 'feature/x',
+      installation_id: '42',
+      is_cross_fork: 0,
+      origin: 'https://push.example',
+      status: 'running',
+      comments_posted: null,
+      posted: null,
+      result_json: null,
+      error_text: null,
+      created_at: Date.now() - 30 * 60_000,
+      started_at: Date.now() - 30 * 60_000,
+      finished_at: null,
+      check_run_id: null,
+      ...overrides,
+    };
+  }
+
+  async function settle(pending: Promise<unknown>[]): Promise<void> {
+    // The retry's runReview (and its index write) are added to `pending` while
+    // the sweep itself is settling, so one pass isn't enough.
+    for (let i = 0; i < 3; i++) await Promise.allSettled(pending);
+  }
+
+  it('re-enqueues a dead first attempt once and completes on the retry', async () => {
+    const mock = createMockCtx();
+    mock.reviews.set('dead', deadRow({ delivery_id: 'dead', check_run_id: 501 }));
+    __setPrReviewExecutorOverride('dead.auto-retry', async () => ({
+      result: RESULT,
+      commentsPosted: 0,
+      posted: true,
+    }));
+
+    const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
+    await do_.fetch(new Request('https://do/list')); // kicks the first-fetch sweep
+    await settle(mock.pending);
+
+    expect(mock.reviews.get('dead')!.status).toBe('failed');
+    const retry = mock.reviews.get('dead.auto-retry');
+    expect(retry?.status).toBe('completed');
+    expect(retry?.origin).toBe('https://push.example');
+
+    const queued = mock.events.find(
+      (e) => e.delivery_id === 'dead.auto-retry' && e.type === 'review.queued',
+    );
+    expect(JSON.parse(queued!.payload_json)).toMatchObject({ retryOf: 'dead', cause: 'orphaned' });
+
+    // The dead attempt's check-run closes with the retrying notice, not the
+    // terminal advice.
+    const finalize = vi.mocked(finalizeReviewCheckRun).mock.calls.find((c) => c[1] === 501);
+    expect((finalize![3] as { title: string }).title).toBe('Review retrying');
+  });
+
+  it('a dead retry is final: terminal advice, no third attempt', async () => {
+    const mock = createMockCtx();
+    mock.reviews.set(
+      'dead.auto-retry',
+      deadRow({ delivery_id: 'dead.auto-retry', check_run_id: 502 }),
+    );
+
+    const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
+    await do_.fetch(new Request('https://do/list'));
+    await settle(mock.pending);
+
+    expect(mock.reviews.get('dead.auto-retry')!.status).toBe('failed');
+    expect([...mock.reviews.keys()].some((k) => k.endsWith('.auto-retry.auto-retry'))).toBe(false);
+
+    const finalize = vi.mocked(finalizeReviewCheckRun).mock.calls.find((c) => c[1] === 502);
+    const out = finalize![3] as { title: string; summary: string };
+    expect(out.title).toBe('Review incomplete');
+    expect(out.summary).toContain('close and reopen');
+    expect(out.summary).not.toContain('Push a new commit');
+  });
+
+  it('retries a live review that stalls past the wall-clock budget', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
+
+    __setPrReviewExecutorOverride(
+      'stalled',
+      (_input, _env, signal) =>
+        new Promise((_, reject) => {
+          // Guard the pre-aborted case: the sweep can abort before this
+          // executor is even invoked, and addEventListener on an
+          // already-aborted signal never fires.
+          if (signal.aborted) return reject(new Error('aborted'));
+          signal.addEventListener('abort', () => reject(new Error('aborted')));
+        }),
+    );
+    __setPrReviewExecutorOverride('stalled.auto-retry', async () => ({
+      result: RESULT,
+      commentsPosted: 1,
+      posted: true,
+    }));
+
+    await do_.fetch(startRequest(startInput({ deliveryId: 'stalled' })));
+    await Promise.resolve();
+    await Promise.resolve();
+    mock.reviews.get('stalled')!.started_at = Date.now() - 16 * 60_000;
+
+    await do_.alarm();
+    await vi.waitFor(() => {
+      expect(mock.reviews.get('stalled')!.status).toBe('failed');
+      expect(mock.reviews.get('stalled.auto-retry')?.status).toBe('completed');
+    });
+    const queued = mock.events.find(
+      (e) => e.delivery_id === 'stalled.auto-retry' && e.type === 'review.queued',
+    );
+    expect(JSON.parse(queued!.payload_json)).toMatchObject({ cause: 'timeout' });
+  });
+
+  it('does not duplicate the retry when the sweep runs twice', async () => {
+    const mock = createMockCtx();
+    mock.reviews.set('dead', deadRow({ delivery_id: 'dead' }));
+    // The retry itself hangs (no override → default executor throws on missing
+    // creds and the row fails) — what matters is a second sweep not minting
+    // a third row or re-running the retry id.
+    const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
+    await do_.fetch(new Request('https://do/list'));
+    await settle(mock.pending);
+    const rowsAfterFirst = mock.reviews.size;
+
+    await do_.alarm(); // second sweep pass
+    await settle(mock.pending);
+
+    expect(mock.reviews.size).toBe(rowsAfterFirst);
+    const queuedEvents = mock.events.filter(
+      (e) => e.delivery_id === 'dead.auto-retry' && e.type === 'review.queued',
+    );
+    expect(queuedEvents.length).toBe(1);
+  });
+
+  it('cancelling a dead original cascades to its running retry', async () => {
+    const mock = createMockCtx();
+    // The sweep already failed the original and enqueued the retry before the
+    // user's cancel landed (the first-fetch sweep races a cancel aimed at a
+    // dead row). The cancel must still honor the intent and kill the retry.
+    mock.reviews.set('dead', deadRow({ delivery_id: 'dead', status: 'failed' }));
+    mock.reviews.set(
+      'dead.auto-retry',
+      deadRow({
+        delivery_id: 'dead.auto-retry',
+        status: 'running',
+        created_at: Date.now(),
+        started_at: Date.now(),
+      }),
+    );
+
+    const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
+    const res = await do_.fetch(
+      new Request('https://do/cancel', {
+        method: 'POST',
+        body: JSON.stringify({ deliveryId: 'dead' }),
+      }),
+    );
+    await settle(mock.pending);
+
+    expect(res.status).toBe(200);
+    expect(mock.reviews.get('dead')!.status).toBe('failed'); // already terminal, untouched
+    expect(mock.reviews.get('dead.auto-retry')!.status).toBe('cancelled');
+  });
+
+  it('retry ids stay within the cancel route delivery-id charset', () => {
+    // Drift pin against DELIVERY_ID_RE in worker-pr-review.ts — a suffix
+    // outside that charset makes running retries uncancellable from the UI
+    // (the route 400s before reaching the DO).
+    expect('f8412450-6486-11f1-93e3-ca04881784b9.auto-retry').toMatch(/^[A-Za-z0-9._-]{1,200}$/);
   });
 });
