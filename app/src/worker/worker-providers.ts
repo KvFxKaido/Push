@@ -597,9 +597,10 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
 
   // Dual-accept (push.stream.v1): a body carrying a `contract` field is the
   // neutral wire shape serialized straight from PushStreamRequest; anything else
-  // is the legacy OpenAI Chat Completions shape. Deployed clients send no
-  // discriminator and hit the legacy branch verbatim, so this is backward-
-  // compatible; the neutral branch stays dormant until the client flip. See
+  // is the legacy OpenAI Chat Completions shape. Zen-Go is the one client NOT
+  // yet flipped — `zenStream` (`app/src/lib/zen-stream.ts`) still builds the
+  // OpenAI body for the Go endpoint, so the neutral branch here stays dormant
+  // until that flip. See
   // docs/runbooks/Anthropic Worker Contract Migration.md.
   const dual = parseDualAcceptRequest(bodyText, {
     routeLabel: 'OpenCode Zen Go',
@@ -984,8 +985,10 @@ export async function handleVertexChat(request: Request, env: Env): Promise<Resp
 
   // Dual-accept (push.stream.v1): a body carrying a `contract` field is the
   // neutral wire shape; anything else is the legacy OpenAI Chat Completions
-  // shape. Deployed clients send no discriminator, so this is backward-
-  // compatible; the neutral branch stays dormant until the client flip. See
+  // shape. Native-mode clients send neutral since the #856 flip; a legacy body
+  // here is a pre-flip tab (upstream-base mode routes to handleLegacyVertexChat
+  // instead). The legacy branch retires at Step 5 once the `request` log's
+  // `contract` field reads zero legacy. See
   // docs/runbooks/Anthropic Worker Contract Migration.md.
   const dual = parseDualAcceptRequest(bodyText, {
     routeLabel: 'Google Vertex',
@@ -1394,9 +1397,10 @@ export async function handleAnthropicChat(request: Request, env: Env): Promise<R
 
   // Dual-accept (push.stream.v1): a body carrying a `contract` field is the
   // neutral wire shape, serialized straight from PushStreamRequest; anything
-  // else is the legacy OpenAI Chat Completions shape. Deployed clients send no
-  // discriminator and hit the legacy branch verbatim, so this is backward-
-  // compatible; the neutral branch stays dormant until the client flip. See
+  // else is the legacy OpenAI Chat Completions shape. The web client sends
+  // neutral since the #852 flip, so a legacy body here is a pre-flip tab; the
+  // legacy branch retires at Step 5 once the `request` log's `contract` field
+  // reads zero legacy. See
   // docs/runbooks/Anthropic Worker Contract Migration.md.
   const dual = parseDualAcceptRequest(bodyText, policy);
   if (!dual.ok) {
@@ -1580,8 +1584,10 @@ export async function handleGoogleChat(request: Request, env: Env): Promise<Resp
 
   // Dual-accept (push.stream.v1): neutral wire serialized via
   // `toGeminiGenerateContent`, else the legacy OpenAI→Gemini translation. The
-  // neutral branch is dormant until the client flip (deployed clients send no
-  // discriminator). See docs/runbooks/Anthropic Worker Contract Migration.md.
+  // web client sends neutral since the #853 flip, so a legacy body here is a
+  // pre-flip tab; the legacy branch retires at Step 5 once the `request` log's
+  // `contract` field reads zero legacy. See
+  // docs/runbooks/Anthropic Worker Contract Migration.md.
   const dual = parseDualAcceptRequest(bodyText, {
     routeLabel: 'Google Gemini',
     maxOutputTokens: 12_288,

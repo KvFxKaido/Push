@@ -1,7 +1,13 @@
 # Provider Request Normalization
 
 Date: 2026-06-09
-Status: **draft** (Phases 1 & 2 shipped; Phase 3 needs roadmap promotion)
+Status: **in progress** — Phases 1–2, the `toOpenAIChat` peer serializer, and
+Phase 3a (CLI direct SSE→events, Anthropic + Gemini) shipped. The Phase 3
+**request** axis shipped for Anthropic, Gemini, and Vertex-native (Zen-Go
+client flip pending) — see
+[`Anthropic Worker Contract Migration.md`](<Anthropic Worker Contract Migration.md>)
+for the per-provider wire-status table. The remaining work is the **web
+response axis** (the Worker still re-emits OpenAI SSE) and the long proxy tail.
 Owner: Push
 
 ## Why this exists
@@ -197,11 +203,14 @@ hand-rolled message/cache building and gaining multimodal support for free; the
 OpenRouter extras (`session_id`, `openrouter:web_search`, broadcast) still wrap
 the base body. The CLI provider suite is the behavior oracle.
 
-This unblocks the **Vertex / Zen-Go** dual-accept cut: their non-anthropic
-transports are OpenAI-compat (not Gemini-native), so their neutral branch
-serializes via `toOpenAIChat`. The remaining prerequisite for that cut is a
-`toAnthropicMessages` `emitModel: false` option (their *anthropic* transports
-omit body `model` — it rides the URL).
+This unblocked the **Vertex / Zen-Go** dual-accept cut (✅ both shipped): their
+non-anthropic transports are OpenAI-compat (not Gemini-native), so their
+neutral branch serializes via `toOpenAIChat`. The `toAnthropicMessages`
+`emitModel: false` option shipped with it — but note the model-location split
+that #857 corrected: only **Vertex** carries the model out-of-band (in the URL
+path), so only Vertex passes `emitModel: false`. **Zen-Go**'s `/v1/messages` is
+one fixed shared URL — the model must ride the body on both its branches, or
+upstream dispatch fails on every anthropic-transport model.
 
 ## What NOT to change
 
