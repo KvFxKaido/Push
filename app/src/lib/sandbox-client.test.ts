@@ -26,7 +26,10 @@ vi.stubGlobal('fetch', mockFetch);
 import {
   clearSandboxEnvironment,
   createSandbox,
+  execInSandbox,
   getSandboxLifecycleEvents,
+  hasInFlightSandboxCalls,
+  msSinceLastSandboxCall,
   parseEnvironmentProbe,
   SANDBOX_TS_ARROW_FUNCTION_REGEX,
   setSandboxOwnerToken,
@@ -954,5 +957,49 @@ describe('execInSandbox — timeout retry behavior', () => {
     const { execInSandbox } = await import('./sandbox-client');
     await expect(execInSandbox('sb-1', 'echo hi')).rejects.toThrow();
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Idle tracking — the hibernation reaper's view of activity
+// ---------------------------------------------------------------------------
+
+describe('idle tracking', () => {
+  it('stamps the idle clock when a call fails, not just on success', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000_000);
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 400,
+        text: () => Promise.resolve('bad request'),
+      });
+      await expect(execInSandbox('sb-idle', 'true')).rejects.toThrow();
+
+      vi.setSystemTime(1_005_000);
+      expect(msSinceLastSandboxCall()).toBe(5_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports in-flight calls so the reaper can defer hibernation', async () => {
+    let release!: (value: unknown) => void;
+    mockFetch.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    const pending = execInSandbox('sb-inflight', 'true');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(hasInFlightSandboxCalls()).toBe(true);
+
+    release({
+      ok: true,
+      json: () => Promise.resolve({ stdout: '', stderr: '', exit_code: 0, truncated: false }),
+    });
+    await pending;
+    expect(hasInFlightSandboxCalls()).toBe(false);
   });
 });

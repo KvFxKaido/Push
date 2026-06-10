@@ -27,6 +27,7 @@ import {
   hibernateSandbox,
   restoreFromSnapshot,
   msSinceLastSandboxCall,
+  hasInFlightSandboxCalls,
   suppressIdleTouch,
 } from '@/lib/sandbox-client';
 import type { GitCommitIdentity } from '@/lib/sandbox-client';
@@ -256,7 +257,8 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
   // Idle hibernation timer — snapshot the sandbox after 8 min of no tool calls.
   // The snapshot preserves the full working tree so restore is fast. Without this,
   // the container silently dies at the 1-hour Modal timeout and the user loses
-  // all uncommitted state.
+  // all uncommitted state. "Idle" means no completed call AND nothing in flight —
+  // a long-running exec must not get the container hibernated out from under it.
   useEffect(() => {
     if (status !== 'ready') return;
     const id = sandboxIdRef.current;
@@ -268,6 +270,13 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
 
       // Don't hibernate if something else already changed the status.
       if (statusRef.current !== 'ready') return;
+
+      if (hasInFlightSandboxCalls()) {
+        console.log(
+          `[useSandbox] Idle ${Math.round(idle / 1000)}s but a sandbox call is in flight — deferring hibernation`,
+        );
+        return;
+      }
 
       console.log(`[useSandbox] Idle for ${Math.round(idle / 1000)}s — hibernating sandbox ${id}`);
 

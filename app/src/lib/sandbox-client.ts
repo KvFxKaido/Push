@@ -270,6 +270,7 @@ const sandboxOwnerTokensById = new Map<string, string>();
 
 let lastSandboxCallAt = 0;
 let suppressActivityTouchCount = 0;
+let inFlightSandboxCalls = 0;
 
 function touchSandboxActivity(): void {
   if (suppressActivityTouchCount > 0) {
@@ -279,9 +280,19 @@ function touchSandboxActivity(): void {
   lastSandboxCallAt = Date.now();
 }
 
-/** Returns ms since the last sandbox API call, or Infinity if no call has been made. */
+/** Returns ms since the last completed sandbox API call (success or failure), or Infinity if no call has been made. */
 export function msSinceLastSandboxCall(): number {
   return lastSandboxCallAt ? Date.now() - lastSandboxCallAt : Infinity;
+}
+
+/**
+ * True while any sandbox API call is awaiting a response. The idle hibernation
+ * timer must treat in-flight work as activity — a long-running exec (or one
+ * riding retry backoff) can hold a single call open past the idle threshold
+ * without ever stamping the clock.
+ */
+export function hasInFlightSandboxCalls(): boolean {
+  return inFlightSandboxCalls > 0;
 }
 
 /**
@@ -986,6 +997,7 @@ async function sandboxFetch<T>(
     async (span) => {
       const requestId = createRequestId('sandbox');
       let retryCount = 0;
+      inFlightSandboxCalls++;
 
       try {
         const result = await withRetry(
@@ -1042,7 +1054,6 @@ async function sandboxFetch<T>(
           },
         );
 
-        touchSandboxActivity();
         setSpanAttributes(span, {
           'push.request_id': requestId,
           'push.retry_count': retryCount,
@@ -1056,6 +1067,12 @@ async function sandboxFetch<T>(
         });
         throw error;
       } finally {
+        inFlightSandboxCalls--;
+        // Stamp on completion regardless of outcome — a failed or timed-out
+        // call is still activity. Success-only stamping let a streak of
+        // timed-out long execs read as 8 minutes of idleness, so the reaper
+        // hibernated the container out from under an active round.
+        touchSandboxActivity();
         span.end();
       }
     },

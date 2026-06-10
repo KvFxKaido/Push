@@ -14,6 +14,7 @@ const sandboxClient = vi.hoisted(() => ({
   hibernateSandbox: vi.fn(),
   restoreFromSnapshot: vi.fn(),
   msSinceLastSandboxCall: vi.fn(() => 0),
+  hasInFlightSandboxCalls: vi.fn(() => false),
   suppressIdleTouch: vi.fn(),
 }));
 
