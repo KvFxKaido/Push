@@ -7,12 +7,17 @@
  */
 
 const DB_NAME = 'push-app-db';
-const DB_VERSION = 6;
+const DB_VERSION = 7;
 
 export const STORE = {
   conversations: 'conversations',
   modelMetadata: 'model_metadata',
   checkpoints: 'checkpoints',
+  // Durable Runs Phase 1: self-contained per-turn RunCheckpointV1 records
+  // (lib/run-checkpoint.ts). Separate store from `checkpoints` because both
+  // are keyed by chatId and the legacy client-anchored delta keeps its own
+  // lifecycle until the RunHost adoption path replaces it.
+  runCheckpointsV1: 'run_checkpoints_v1',
   usageLog: 'usage_log',
   runJournal: 'run_journal',
   memoryRecords: 'memory_records',
@@ -88,6 +93,12 @@ function openDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORE.checkpoints)) {
         const ckStore = db.createObjectStore(STORE.checkpoints, { keyPath: 'chatId' });
         ckStore.createIndex('savedAt', 'savedAt', { unique: false });
+      }
+
+      // Per-turn RunCheckpointV1 — one per chat (Durable Runs Phase 1)
+      if (!db.objectStoreNames.contains(STORE.runCheckpointsV1)) {
+        const v1Store = db.createObjectStore(STORE.runCheckpointsV1, { keyPath: 'chatId' });
+        v1Store.createIndex('savedAt', 'savedAt', { unique: false });
       }
 
       // Usage log — auto-increment ID, indexed by timestamp
