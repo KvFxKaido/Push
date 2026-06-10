@@ -34,7 +34,7 @@
  */
 
 import type { ApprovalMode } from './approval-gates.ts';
-import type { ReasoningBlock } from './provider-contract.ts';
+import type { LlmContentPart, ReasoningBlock } from './provider-contract.ts';
 import { type ValidationIssue, isStrictModeEnabled } from './protocol-schema.ts';
 import type { LoopPhase } from './runtime-contract.ts';
 import type { VerificationPolicy } from './verification-policy.ts';
@@ -60,10 +60,15 @@ const PHASES: ReadonlySet<string> = new Set([
 const APPROVAL_MODES: ReadonlySet<string> = new Set(['supervised', 'autonomous', 'full-auto']);
 
 /** One LLM-visible transcript entry. Reasoning blocks ride along so
- * Anthropic signed-reasoning turns round-trip verbatim after adoption. */
+ * Anthropic signed-reasoning turns round-trip verbatim after adoption;
+ * `contentParts` carries the multimodal representation (images/attachments)
+ * for turns that have one — `content` stays the text fallback, exactly the
+ * `LlmMessage` contract. A string-only transcript would silently resume
+ * image-bearing runs as text-only. */
 export interface RunCheckpointMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  contentParts?: LlmContentPart[];
   reasoningBlocks?: ReasoningBlock[];
   isToolCall?: boolean;
   isToolResult?: boolean;
@@ -172,10 +177,47 @@ export const RUN_CHECKPOINT_OPTIONAL_FIELDS = [
 /**
  * Hard boundary: a checkpoint is durable storage, and credentials never
  * enter durable storage (Universal Session Bearer / owner-token discipline).
- * Top-level field names matching this pattern fail validation outright —
- * adoption-time provisioning is the only path for secrets.
+ * Field names matching this pattern fail validation outright — at ANY
+ * nesting depth, so a sanctioned object field (`providerOptions`,
+ * `workingMemory`, a benign unknown extra) can't smuggle a secret through.
+ * Adoption-time provisioning is the only path for secrets.
+ *
+ * Exemption: `reasoningBlocks` subtrees are provider-signed verbatim blobs
+ * (`ReasoningBlock` union) that must round-trip byte-identical; their keys
+ * are provider vocabulary, not ours, so they're skipped.
  */
 export const CREDENTIAL_FIELD_PATTERN = /token|secret|password|credential|bearer|api.?key/i;
+
+const CREDENTIAL_SCAN_EXEMPT_KEYS: ReadonlySet<string> = new Set(['reasoningBlocks']);
+const CREDENTIAL_SCAN_MAX_DEPTH = 12;
+
+function scanCredentialKeys(
+  value: unknown,
+  path: string,
+  issues: ValidationIssue[],
+  depth = 0,
+): void {
+  if (depth > CREDENTIAL_SCAN_MAX_DEPTH) return;
+  if (Array.isArray(value)) {
+    value.forEach((entry, i) => scanCredentialKeys(entry, `${path}[${i}]`, issues, depth + 1));
+    return;
+  }
+  if (!isPlainObject(value)) return;
+  for (const [key, child] of Object.entries(value)) {
+    const childPath = path ? `${path}.${key}` : key;
+    if (CREDENTIAL_FIELD_PATTERN.test(key)) {
+      issues.push(
+        issue(
+          childPath,
+          `credential-shaped field "${childPath}" must never be stored in a checkpoint`,
+        ),
+      );
+      continue;
+    }
+    if (CREDENTIAL_SCAN_EXEMPT_KEYS.has(key)) continue;
+    scanCredentialKeys(child, childPath, issues, depth + 1);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Validation — hand-rolled, dependency-free, permissive on benign extras
@@ -187,6 +229,25 @@ function issue(path: string, message: string): ValidationIssue {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function validateContentPart(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isPlainObject(value)) {
+    issues.push(issue(path, 'content part must be an object'));
+    return;
+  }
+  if (value.type === 'text') {
+    if (typeof value.text !== 'string') {
+      issues.push(issue(`${path}.text`, 'text part must carry a string `text`'));
+    }
+  } else if (value.type === 'image_url') {
+    const imageUrl = value.image_url;
+    if (!isPlainObject(imageUrl) || typeof imageUrl.url !== 'string') {
+      issues.push(issue(`${path}.image_url`, 'image_url part must carry `image_url.url` string'));
+    }
+  } else {
+    issues.push(issue(`${path}.type`, `unknown content part type: ${String(value.type)}`));
+  }
 }
 
 function validateMessage(value: unknown, path: string, issues: ValidationIssue[]): void {
@@ -201,6 +262,15 @@ function validateMessage(value: unknown, path: string, issues: ValidationIssue[]
   if (typeof value.content !== 'string') {
     issues.push(issue(`${path}.content`, 'content must be a string'));
   }
+  if (value.contentParts !== undefined) {
+    if (!Array.isArray(value.contentParts)) {
+      issues.push(issue(`${path}.contentParts`, 'contentParts must be an array when present'));
+    } else {
+      value.contentParts.forEach((p, i) =>
+        validateContentPart(p, `${path}.contentParts[${i}]`, issues),
+      );
+    }
+  }
   if (value.reasoningBlocks !== undefined && !Array.isArray(value.reasoningBlocks)) {
     issues.push(issue(`${path}.reasoningBlocks`, 'reasoningBlocks must be an array when present'));
   }
@@ -213,15 +283,9 @@ export function validateRunCheckpoint(value: unknown): ValidationIssue[] {
     return [issue('', 'checkpoint must be an object')];
   }
 
-  // Credential boundary first — reject before anything else so a leaked
-  // secret never survives on a technicality of field ordering.
-  for (const key of Object.keys(value)) {
-    if (CREDENTIAL_FIELD_PATTERN.test(key)) {
-      issues.push(
-        issue(key, `credential-shaped field "${key}" must never be stored in a checkpoint`),
-      );
-    }
-  }
+  // Credential boundary first — deep scan, so nested objects (sanctioned
+  // or unknown-extra) can't smuggle a secret past a top-level-only check.
+  scanCredentialKeys(value, '', issues);
 
   if (value.v !== RUN_CHECKPOINT_VERSION) {
     issues.push(issue('v', `expected version ${RUN_CHECKPOINT_VERSION}, got ${String(value.v)}`));

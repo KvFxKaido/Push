@@ -110,6 +110,44 @@ test('pin: credential-shaped field names are rejected outright', () => {
   }
 });
 
+test('pin: credential scan is DEEP — nested objects cannot smuggle secrets', () => {
+  // Through a sanctioned object field…
+  const viaProviderOptions = makeCheckpoint({
+    providerOptions: { zenGo: true, apiKey: 'sk-leaked' },
+  });
+  assert.ok(
+    validateRunCheckpoint(viaProviderOptions).some(
+      (i) => i.path === 'providerOptions.apiKey' && i.message.includes('credential-shaped'),
+    ),
+    'providerOptions.apiKey must fail validation',
+  );
+  // …through working memory…
+  const viaWorkingMemory = makeCheckpoint({
+    workingMemory: { plan: 'x', observations: [{ note: 'y', githubToken: 'ghp_leaked' }] },
+  });
+  assert.ok(
+    validateRunCheckpoint(viaWorkingMemory).some((i) => i.path.endsWith('githubToken')),
+    'nested array-of-objects credential must fail validation',
+  );
+  // …and through a benign unknown extra.
+  const viaExtra = makeCheckpoint({ futureField: { inner: { ownerToken: 'leaked' } } });
+  assert.ok(
+    validateRunCheckpoint(viaExtra).some((i) => i.path === 'futureField.inner.ownerToken'),
+    'unknown-extra nested credential must fail validation',
+  );
+  // reasoningBlocks subtrees are provider-signed verbatim blobs — exempt.
+  const viaReasoning = makeCheckpoint({
+    messages: [
+      {
+        role: 'assistant',
+        content: 'x',
+        reasoningBlocks: [{ type: 'thinking', text: 'hm', signature: 'sig', token_count: 9 }],
+      },
+    ],
+  });
+  assert.deepEqual(validateRunCheckpoint(viaReasoning), []);
+});
+
 // ---------------------------------------------------------------------------
 // Validator behavior
 // ---------------------------------------------------------------------------
@@ -163,6 +201,39 @@ test('messages are structurally validated', () => {
   assert.ok(
     validateRunCheckpoint(badReasoning).some((i) => i.path === 'messages[0].reasoningBlocks'),
   );
+});
+
+test('multimodal contentParts round-trip: valid parts pass, malformed parts fail', () => {
+  const good = makeCheckpoint({
+    messages: [
+      {
+        role: 'user',
+        content: 'see attached',
+        contentParts: [
+          { type: 'text', text: 'see attached' },
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
+        ],
+      },
+    ],
+  });
+  assert.deepEqual(validateRunCheckpoint(good), []);
+
+  const badType = makeCheckpoint({
+    messages: [{ role: 'user', content: 'x', contentParts: [{ type: 'video', src: 'v' }] }],
+  });
+  assert.ok(
+    validateRunCheckpoint(badType).some((i) => i.path === 'messages[0].contentParts[0].type'),
+  );
+  const badImage = makeCheckpoint({
+    messages: [{ role: 'user', content: 'x', contentParts: [{ type: 'image_url' }] }],
+  });
+  assert.ok(
+    validateRunCheckpoint(badImage).some((i) => i.path === 'messages[0].contentParts[0].image_url'),
+  );
+  const notArray = makeCheckpoint({
+    messages: [{ role: 'user', content: 'x', contentParts: 'nope' }],
+  });
+  assert.ok(validateRunCheckpoint(notArray).some((i) => i.path === 'messages[0].contentParts'));
 });
 
 test('benign unknown extras pass (additive evolution stays cheap)', () => {
