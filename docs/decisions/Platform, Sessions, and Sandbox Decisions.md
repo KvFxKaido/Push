@@ -92,8 +92,12 @@ supports it, and transparently fall back when it does not.
 
 Mechanism shipped in PR #789 (routes + provider wiring +
 `lib/detached-exec-runner.ts` + the verification `npm install` as first
-consumer). Agent `sandbox_exec` adoption promoted to `ROADMAP.md`
-2026-06-09 (Background Exec Adoption — `sandbox_exec` Detached Path).
+consumer). Agent `sandbox_exec` adoption **shipped in PR #863**
+(2026-06-09): always-detached on capable backends with buffered exec as
+the 404-only capability fallback, `terminalReason` provenance on every
+runner result, Stop wired to server-side interrupt, and a
+double-execution guard on ambiguous start failures. Live-tail UI from
+`onProgress` remains the open stretch.
 
 Source note:
 [`Background Execution`](<../archive/decisions/Background Execution — Detached Process and Resumable Cursor Logs.md>).
@@ -191,9 +195,10 @@ Design note:
    settings-unification scope (#11).
 4. Promote Cloudflare native backup migration when the current snapshot ceiling
    becomes painful or adjacent CF work makes it cheap.
-5. Finish provider support for detached background execution where it improves
-   real workflows — agent `sandbox_exec` adoption promoted to `ROADMAP.md`
-   2026-06-09.
+5. ~~Finish provider support for detached background execution where it
+   improves real workflows~~ — agent `sandbox_exec` adoption shipped in PR
+   #863 (2026-06-09); remaining: live-tail UI, Modal-side routes if Modal
+   ever returns to primary duty.
 6. Tighten any remaining daemon session-verb auth gaps.
 7. Keep Git/RPC broker work behind parity harnesses until the cross-language tax
    is measured.
