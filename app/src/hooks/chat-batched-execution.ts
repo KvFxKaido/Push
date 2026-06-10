@@ -32,6 +32,7 @@ import {
   markLastAssistantToolCall,
 } from '@/lib/chat-tool-messages';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
+import { createExecProgressTail } from '@/lib/exec-progress';
 import { createId } from '@push/lib/id-utils';
 import { workspaceModeToExecutionMode } from '@push/lib/capabilities';
 import type { DetectedToolCalls } from '@/lib/tool-dispatch';
@@ -416,13 +417,15 @@ export async function executeBatchedToolCalls(
   if (detected.mutating) {
     const mutCall = detected.mutating;
     const mutExecutionId = createId();
+    const mutStatusLabel = getToolStatusLabel(mutCall);
+    const mutExecStart = Date.now();
     console.log(`[Push] Trailing mutation after parallel reads:`, mutCall);
     updateAgentStatus(
       {
         active: true,
-        phase: getToolStatusLabel(mutCall),
+        phase: mutStatusLabel,
         detail: getToolStatusDetail(mutCall),
-        startedAt: Date.now(),
+        startedAt: mutExecStart,
       },
       { chatId },
     );
@@ -472,6 +475,18 @@ export async function executeBatchedToolCalls(
         durationMs: Date.now() - delegateStart,
       };
     } else {
+      // Live tail for the cloud detached-exec path — same shape as the
+      // single-tool branch (see chat-single-tool-execution.ts).
+      const execProgressTail =
+        mutCall.source === 'sandbox' && mutCall.call.tool === 'sandbox_exec'
+          ? createExecProgressTail({
+              onTail: (line) =>
+                updateAgentStatus(
+                  { active: true, phase: mutStatusLabel, detail: line, startedAt: mutExecStart },
+                  { chatId },
+                ),
+            })
+          : undefined;
       const mutCtx: ToolExecRunContext = {
         repoFullName: repoRef.current,
         chatId,
@@ -484,6 +499,7 @@ export async function executeBatchedToolCalls(
         provider: lockedProvider,
         model: resolvedModel,
         abortSignal: abortControllerRef.current?.signal,
+        onExecProgress: execProgressTail,
       };
       mutRawResult = await executeToolWithChatHooks(mutCall, mutCtx, {
         scratchpadRef,

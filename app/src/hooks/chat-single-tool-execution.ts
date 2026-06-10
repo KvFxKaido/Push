@@ -39,6 +39,7 @@ import {
   markLastAssistantToolCall,
 } from '@/lib/chat-tool-messages';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
+import { createExecProgressTail } from '@/lib/exec-progress';
 import { isReadOnlyToolCall, type AnyToolCall } from '@/lib/tool-dispatch';
 import { evaluateVerificationState, formatVerificationBlock } from '@/lib/verification-runtime';
 import { createId } from '@push/lib/id-utils';
@@ -197,6 +198,19 @@ export async function executeSingleToolCall(
       agent: getDelegateCompletionAgent(toolCall),
     });
   } else {
+    // Live tail for the cloud detached-exec path: stream the latest output
+    // line into the status bar's `detail` slot (phase + startedAt stay put so
+    // the elapsed timer keeps ticking). Local-pc execs ignore the observer.
+    const execProgressTail =
+      toolCall.source === 'sandbox' && toolCall.call.tool === 'sandbox_exec'
+        ? createExecProgressTail({
+            onTail: (line) =>
+              updateAgentStatus(
+                { active: true, phase: statusLabel, detail: line, startedAt: toolExecStart },
+                { chatId },
+              ),
+          })
+        : undefined;
     const singleCtx: ToolExecRunContext = {
       repoFullName: repoRef.current,
       chatId,
@@ -209,6 +223,7 @@ export async function executeSingleToolCall(
       provider: lockedProvider,
       model: resolvedModel,
       abortSignal: abortControllerRef.current?.signal,
+      onExecProgress: execProgressTail,
     };
     singleRawResult = await executeTool(toolCall, singleCtx);
     toolExecResult = singleRawResult.raw;

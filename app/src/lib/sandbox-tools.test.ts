@@ -340,6 +340,30 @@ describe('executeSandboxToolCall -- sandbox_exec detached path', () => {
     expect(result.structuredError).toBeUndefined();
   });
 
+  it('forwards the live-output observer to the detached runner', async () => {
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValue({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+    });
+    const onExecProgress = vi.fn();
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'npm test' } },
+      'sb-123',
+      {
+        onExecProgress,
+      },
+    );
+
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith(
+      'sb-123',
+      'npm test',
+      expect.objectContaining({ onProgress: onExecProgress }),
+    );
+  });
+
   it('returns the Cancelled-by-user envelope on cancel provenance', async () => {
     const controller = new AbortController();
     controller.abort();

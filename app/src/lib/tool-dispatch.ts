@@ -778,6 +778,7 @@ export async function executeAnyToolCall(
   localDaemonBinding?: ToolDispatchBinding,
   abortSignal?: AbortSignal,
   executionMode?: import('@push/lib/capabilities').ExecutionMode,
+  onExecProgress?: (chunk: { stdout: string; stderr: string }) => void,
 ): Promise<ToolExecutionResult> {
   const runtime = new WebToolExecutionRuntime();
   return runtime.execute(toolCall, {
@@ -796,6 +797,7 @@ export async function executeAnyToolCall(
     localDaemonBinding,
     abortSignal,
     executionMode,
+    onExecProgress,
   }) as Promise<ToolExecutionResult>;
 }
 

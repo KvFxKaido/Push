@@ -108,6 +108,12 @@ export interface ToolExecRunContext {
    * that don't observe a signal ignore it.
    */
   abortSignal?: AbortSignal;
+  /**
+   * Live-output observer for long-running `sandbox_exec` (cloud detached
+   * path). The chat hooks wire this to a throttled status-bar tail (see
+   * `exec-progress.ts`); absent means no live tail (delegated/CLI paths).
+   */
+  onExecProgress?: (chunk: { stdout: string; stderr: string }) => void;
 }
 
 /** Raw result from executing a tool call (before building the ChatMessage). */
@@ -175,6 +181,7 @@ export async function executeTool(
           ctx.localDaemonBinding,
           ctx.abortSignal,
           ctx.executionMode,
+          ctx.onExecProgress,
         );
       }
 

@@ -542,6 +542,7 @@ export async function executeSandboxToolCall(
             workdir: normalizedWorkdir,
             markWorkspaceMutated,
             abortSignal: options?.abortSignal,
+            onProgress: options?.onExecProgress,
           });
 
           // User cancel (Stop) — the runner interrupted the detached process
