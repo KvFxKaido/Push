@@ -39,6 +39,7 @@ import {
 } from '@/lib/checkpoint-manager';
 import { type ActiveProvider } from '@/lib/orchestrator';
 import { type RunEngineState, type RunEngineEvent } from '@/lib/run-engine';
+import { releaseRunFromHost } from '@/lib/run-host-transport';
 import { createId } from './chat-persistence';
 import type { AgentStatus, ChatMessage, Conversation, QueuedFollowUp } from '@/types';
 
@@ -204,6 +205,7 @@ export function finalizeRunSession(
 
   // Capture tab lock id before the terminal event clears it.
   const tabLockToRelease = refs.runEngineStateRef.current.tabLockId;
+  const runIdToRelease = refs.runEngineStateRef.current.runId;
 
   const currentRunPhase = refs.runEngineStateRef.current.phase;
   const runAlreadyTerminal =
@@ -232,6 +234,10 @@ export function finalizeRunSession(
     clearInterval(refs.tabLockIntervalRef.current);
     refs.tabLockIntervalRef.current = null;
   }
+
+  // RunHost ledger teardown on every terminal path — a completed/aborted
+  // run left `watched` on the host would lapse into a false adoption.
+  releaseRunFromHost(runIdToRelease);
 
   // Pending steer is cleared regardless of whether the user navigated
   // away — hoisted out of the branch below per Gemini review feedback.

@@ -277,6 +277,9 @@ export function useChatCheckpoint({
         repoFullName,
         branch,
         workspaceSessionId: workspaceSessionIdRef.current || undefined,
+        // RunHost identity: only an active run is registered/mirrored on the
+        // host — an expiry save after the run ended stays local-only.
+        runId: isRunActive(engineState) ? engineState.runId : undefined,
         round: engineState.round,
         phase: toLoopPhase(engineState.phase),
         reason,

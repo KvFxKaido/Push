@@ -1,6 +1,6 @@
 # Durable Runs — Adopt-on-Silence
 
-**Status:** Draft — promoted to `ROADMAP.md` (first priority) 2026-06-10; design committed, implementation in progress. Phase 0 is COMPLETE (latency spike #870, eval harness #871; numbers in [Phase 0 results](#phase-0-results-2026-06-10) below — latency does not block Phase 2). Phase 1 is COMPLETE (schema #873, capture #874). Phase 2 is IN PROGRESS: the delegation-collapse precondition is in place (the inline route + flag in `delegation-mode-settings.ts`, A/B-measurable via the eval harness `--delegate` arm), and the **adoption substrate** has landed — the `RunHost` DO now owns the heartbeat ledger, per-run checkpoint persistence, and the watched→adoptable adoption *decision* (see [Phase 2 substrate](#phase-2-substrate-shipped-2026-06-10)). The server-side loop that continues an adopted run is the next piece.
+**Status:** Draft — promoted to `ROADMAP.md` (first priority) 2026-06-10; design committed, implementation in progress. Phase 0 is COMPLETE (latency spike #870, eval harness #871; numbers in [Phase 0 results](#phase-0-results-2026-06-10) below — latency does not block Phase 2). Phase 1 is COMPLETE (schema #873, capture #874). Phase 2 is IN PROGRESS: the delegation-collapse precondition is in place (the inline route + flag in `delegation-mode-settings.ts`, A/B-measurable via the eval harness `--delegate` arm), and the **adoption substrate** has landed — the `RunHost` DO now owns the heartbeat ledger, per-run checkpoint persistence, and the watched→adoptable adoption *decision* (see [Phase 2 substrate](#phase-2-substrate-shipped-2026-06-10)) — and the **client transport** has landed: every web run now registers with the host, mirrors its per-turn checkpoint, heartbeats, and releases on terminal (see [Phase 2 client transport](#phase-2-client-transport-shipped-2026-06-10)). The server-side loop that continues an adopted run is the next piece.
 
 **Date:** 2026-06-10
 
@@ -234,6 +234,40 @@ rather than alongside it:
   (the `mode` is captured in the record, not yet acted on); orphan-sweep
   cross-eviction recovery (the run record survives eviction; relaunching the
   loop on wake is the loop PR's job).
+
+#### Phase 2 client transport (shipped 2026-06-10)
+
+The web shell now feeds the substrate — real runs populate the ledger, so
+the `run_host_checkpoint_persisted` byte logs the tiering decision is
+waiting on come from production traffic, and the loop PR lands against a
+host that actually has adoptable runs:
+
+- **`app/src/lib/run-host-transport.ts`** — the owning coordinator
+  (new-feature checklist #2: named home, not `useChat.ts`). Lazy
+  registration: the first published checkpoint registers the run — `runId`,
+  scope, approval mode, and round all ride on the checkpoint itself, so
+  there is no parallel bookkeeping to drift. Then per-turn checkpoint PUTs,
+  a heartbeat keepalive at the server-announced cadence
+  (`heartbeatIntervalMs` from register, falling back to
+  `RUN_HOST_HEARTBEAT_INTERVAL_MS`), and release on every terminal path
+  (from `finalizeRunSession`, so completed/aborted/threw all tear down).
+  Fire-and-forget discipline throughout: the transport never throws into
+  the round loop, and every branch logs symmetrically
+  (`run_host_client_registered` ↔ `_register_failed`,
+  `_checkpoint_sent` ↔ `_checkpoint_failed` ↔ `_checkpoint_oversize`, …).
+- **Pull-back-local** — a heartbeat answered with `state: 'adoptable'`
+  re-registers the run (the host's documented reclaim contract). Browser
+  timer throttling in hidden tabs is deliberate behavior, not a defect: a
+  backgrounded phone stops beating and the run becomes adoptable; a tab
+  that comes back reclaims it.
+- **`runId` now rides on captured checkpoints** —
+  `run-checkpoint-capture.ts` carries the engine's run id (only while a run
+  is active), which the hosted checkpoint endpoint requires; expiry saves
+  after a run ended stay local-only so the host never watches a run that
+  isn't running.
+- **NOT_CONFIGURED latch** — a 503 register (no `RUN_HOST` binding)
+  disables the transport for the session after one log line; deployments
+  without the DO see zero retry noise.
 
 ### Phase 3 — Attach/viewer
 

@@ -38,6 +38,11 @@ vi.mock('./chat-persistence', async (importOriginal) => {
   };
 });
 
+const mockReleaseRunFromHost = vi.fn();
+vi.mock('@/lib/run-host-transport', () => ({
+  releaseRunFromHost: (...args: unknown[]) => mockReleaseRunFromHost(...args),
+}));
+
 function makeRunState(overrides: Partial<RunEngineState> = {}): RunEngineState {
   return {
     phase: 'streaming_llm',
@@ -188,6 +193,38 @@ describe('finalizeRunSession — cleanup side effects', () => {
     // The pending cancel-status timer will clear the agent status itself
     // when it fires; finalize must not stomp on it.
     expect(callbacks.agentStatusCalls).toEqual([]);
+  });
+
+  it('releases the run on the RunHost ledger on both terminal paths', () => {
+    finalizeRunSession(
+      { chatId: 'chat-1', loopCompletedNormally: true },
+      makeRefs({ runEngineStateRef: { current: makeRunState({ runId: 'run-42' }) } }),
+      makeCallbacks(),
+    );
+    expect(mockReleaseRunFromHost).toHaveBeenCalledWith('run-42');
+
+    mockReleaseRunFromHost.mockClear();
+    finalizeRunSession(
+      { chatId: 'chat-1', loopCompletedNormally: false },
+      makeRefs({ runEngineStateRef: { current: makeRunState({ runId: 'run-43' }) } }),
+      makeCallbacks(),
+    );
+    expect(mockReleaseRunFromHost).toHaveBeenCalledWith('run-43');
+  });
+
+  it('still releases the run when the engine already recorded a terminal phase', () => {
+    // runAlreadyTerminal only suppresses the duplicate terminal *event* —
+    // it must not skip the RunHost release.
+    const callbacks = makeCallbacks();
+    finalizeRunSession(
+      { chatId: 'chat-1', loopCompletedNormally: true },
+      makeRefs({
+        runEngineStateRef: { current: makeRunState({ phase: 'completed', runId: 'run-44' }) },
+      }),
+      callbacks,
+    );
+    expect(callbacks.emittedEvents.map((e) => e.type)).not.toContain('LOOP_COMPLETED');
+    expect(mockReleaseRunFromHost).toHaveBeenCalledWith('run-44');
   });
 
   it('clears the run checkpoint only when loopCompletedNormally is true', () => {
