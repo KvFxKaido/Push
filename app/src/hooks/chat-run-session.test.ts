@@ -38,6 +38,11 @@ vi.mock('./chat-persistence', async (importOriginal) => {
   };
 });
 
+const mockReleaseRunFromHost = vi.fn();
+vi.mock('@/lib/run-host-transport', () => ({
+  releaseRunFromHost: (...args: unknown[]) => mockReleaseRunFromHost(...args),
+}));
+
 function makeRunState(overrides: Partial<RunEngineState> = {}): RunEngineState {
   return {
     phase: 'streaming_llm',
@@ -188,6 +193,23 @@ describe('finalizeRunSession — cleanup side effects', () => {
     // The pending cancel-status timer will clear the agent status itself
     // when it fires; finalize must not stomp on it.
     expect(callbacks.agentStatusCalls).toEqual([]);
+  });
+
+  it('releases the run on the RunHost ledger on both terminal paths', () => {
+    finalizeRunSession(
+      { chatId: 'chat-1', loopCompletedNormally: true },
+      makeRefs({ runEngineStateRef: { current: makeRunState({ runId: 'run-42' }) } }),
+      makeCallbacks(),
+    );
+    expect(mockReleaseRunFromHost).toHaveBeenCalledWith('run-42');
+
+    mockReleaseRunFromHost.mockClear();
+    finalizeRunSession(
+      { chatId: 'chat-1', loopCompletedNormally: false },
+      makeRefs({ runEngineStateRef: { current: makeRunState({ runId: 'run-43' }) } }),
+      makeCallbacks(),
+    );
+    expect(mockReleaseRunFromHost).toHaveBeenCalledWith('run-43');
   });
 
   it('clears the run checkpoint only when loopCompletedNormally is true', () => {

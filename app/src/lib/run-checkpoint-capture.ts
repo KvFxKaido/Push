@@ -27,12 +27,17 @@ import type { ApprovalMode } from '@push/lib/approval-gates';
 import type { VerificationPolicy } from '@push/lib/verification-policy';
 import type { ChatMessage, CoderWorkingMemory, LoopPhase } from '@/types';
 import { saveCheckpointV1 } from './checkpoint-store';
+import { publishRunCheckpointToHost } from './run-host-transport';
 
 export interface RunCheckpointV1Snapshot {
   chatId: string;
   repoFullName: string;
   branch: string;
   workspaceSessionId?: string;
+  /** The engine's run id, present only while a run is active. Carries the
+   * RunHost registration identity — captures without one (expiry saves)
+   * stay local and are never mirrored to the host. */
+  runId?: string;
   round: number;
   phase: LoopPhase;
   reason: RunCheckpointReason;
@@ -125,6 +130,7 @@ export function buildRunCheckpointV1(snapshot: RunCheckpointV1Snapshot): RunChec
     repoFullName: snapshot.repoFullName,
     branch: snapshot.branch,
     workspaceSessionId: snapshot.workspaceSessionId,
+    runId: snapshot.runId || undefined,
     round: snapshot.round,
     phase: snapshot.phase,
     savedAt: Date.now(),
@@ -158,6 +164,10 @@ export function buildRunCheckpointV1(snapshot: RunCheckpointV1Snapshot): RunChec
  * structured logs cover every exit:
  *
  *   run_checkpoint_captured ↔ run_checkpoint_invalid ↔ run_checkpoint_write_failed
+ *
+ * A valid checkpoint is also mirrored to the RunHost ledger (Phase 2 client
+ * transport) — independently of the local save, so an IndexedDB failure
+ * never blocks adoption and vice versa.
  */
 export function captureRunCheckpointV1(snapshot: RunCheckpointV1Snapshot): void {
   const checkpoint = buildRunCheckpointV1(snapshot);
@@ -179,6 +189,8 @@ export function captureRunCheckpointV1(snapshot: RunCheckpointV1Snapshot): void 
     );
     return;
   }
+
+  publishRunCheckpointToHost(checkpoint);
 
   const bytes = estimateRunCheckpointBytes(checkpoint);
   void saveCheckpointV1(checkpoint)

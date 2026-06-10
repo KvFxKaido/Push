@@ -10,6 +10,13 @@ const storeMocks = vi.hoisted(() => ({
 }));
 vi.mock('./checkpoint-store', () => storeMocks);
 
+// The RunHost mirror is fire-and-forget; capture tests only assert the
+// hand-off (the transport's own behavior lives in run-host-transport.test.ts).
+const transportMocks = vi.hoisted(() => ({
+  publishRunCheckpointToHost: vi.fn<(checkpoint: unknown) => void>(),
+}));
+vi.mock('./run-host-transport', () => transportMocks);
+
 const { buildRunCheckpointV1, captureRunCheckpointV1, deriveUserGoal, toRunCheckpointMessages } =
   await import('./run-checkpoint-capture');
 
@@ -52,6 +59,7 @@ function makeSnapshot(overrides: Partial<RunCheckpointV1Snapshot> = {}): RunChec
 beforeEach(() => {
   storeMocks.saveCheckpointV1.mockClear();
   storeMocks.saveCheckpointV1.mockResolvedValue(undefined);
+  transportMocks.publishRunCheckpointToHost.mockClear();
 });
 
 afterEach(() => {
@@ -149,6 +157,12 @@ describe('buildRunCheckpointV1', () => {
     expect(checkpoint.messages).toHaveLength(3);
   });
 
+  it('carries the run id only when the snapshot has one', () => {
+    expect(buildRunCheckpointV1(makeSnapshot({ runId: 'run-7' })).runId).toBe('run-7');
+    expect(buildRunCheckpointV1(makeSnapshot()).runId).toBeUndefined();
+    expect(buildRunCheckpointV1(makeSnapshot({ runId: '' })).runId).toBeUndefined();
+  });
+
   it('carries the zen Go transport flag only when set', () => {
     expect(buildRunCheckpointV1(makeSnapshot({ zenGo: true })).providerOptions).toEqual({
       zenGo: true,
@@ -200,11 +214,33 @@ describe('captureRunCheckpointV1', () => {
     });
   });
 
+  it('mirrors a valid checkpoint to the RunHost transport', () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    captureRunCheckpointV1(makeSnapshot({ runId: 'run-7' }));
+
+    expect(transportMocks.publishRunCheckpointToHost).toHaveBeenCalledTimes(1);
+    expect(transportMocks.publishRunCheckpointToHost).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: 'run-7', chatId: 'chat-1', round: 2 }),
+    );
+  });
+
+  it('mirrors to the host even when the local store rejects', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    storeMocks.saveCheckpointV1.mockRejectedValueOnce(new Error('quota exceeded'));
+    captureRunCheckpointV1(makeSnapshot({ runId: 'run-7' }));
+
+    await vi.waitFor(() => {
+      expect(transportMocks.publishRunCheckpointToHost).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('skips persistence and warns when the checkpoint is invalid', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     captureRunCheckpointV1(makeSnapshot({ provider: '' }));
 
     expect(storeMocks.saveCheckpointV1).not.toHaveBeenCalled();
+    expect(transportMocks.publishRunCheckpointToHost).not.toHaveBeenCalled();
     const warned = warnSpy.mock.calls
       .map((c) => c[0])
       .filter((line): line is string => typeof line === 'string')
