@@ -90,6 +90,11 @@ Buffered `exec()` remains fine for small commands. Long-running commands should
 use detached background execution with resumable cursor logs when the provider
 supports it, and transparently fall back when it does not.
 
+Mechanism shipped in PR #789 (routes + provider wiring +
+`lib/detached-exec-runner.ts` + the verification `npm install` as first
+consumer). Agent `sandbox_exec` adoption promoted to `ROADMAP.md`
+2026-06-09 (Background Exec Adoption — `sandbox_exec` Detached Path).
+
 Source note:
 [`Background Execution`](<../archive/decisions/Background Execution — Detached Process and Resumable Cursor Logs.md>).
 
@@ -187,7 +192,8 @@ Design note:
 4. Promote Cloudflare native backup migration when the current snapshot ceiling
    becomes painful or adjacent CF work makes it cheap.
 5. Finish provider support for detached background execution where it improves
-   real workflows.
+   real workflows — agent `sandbox_exec` adoption promoted to `ROADMAP.md`
+   2026-06-09.
 6. Tighten any remaining daemon session-verb auth gaps.
 7. Keep Git/RPC broker work behind parity harnesses until the cross-language tax
    is measured.
