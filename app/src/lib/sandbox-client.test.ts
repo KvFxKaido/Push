@@ -26,10 +26,14 @@ vi.stubGlobal('fetch', mockFetch);
 import {
   clearSandboxEnvironment,
   createSandbox,
+  execInSandbox,
   getSandboxLifecycleEvents,
+  hasInFlightSandboxCalls,
+  msSinceLastSandboxCall,
   parseEnvironmentProbe,
   SANDBOX_TS_ARROW_FUNCTION_REGEX,
   setSandboxOwnerToken,
+  suppressIdleTouch,
 } from './sandbox-client';
 import { SANDBOX_USER_TOKEN_ACK_KEY, USER_TOKEN_GATE_MESSAGE } from './sandbox-auth-gate';
 
@@ -954,5 +958,86 @@ describe('execInSandbox — timeout retry behavior', () => {
     const { execInSandbox } = await import('./sandbox-client');
     await expect(execInSandbox('sb-1', 'echo hi')).rejects.toThrow();
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Idle tracking — the hibernation reaper's view of activity
+// ---------------------------------------------------------------------------
+
+describe('idle tracking', () => {
+  it('stamps the idle clock when a call fails, not just on success', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000_000);
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 400,
+        text: () => Promise.resolve('bad request'),
+      });
+      await expect(execInSandbox('sb-idle', 'true')).rejects.toThrow();
+      expect(hasInFlightSandboxCalls()).toBe(false);
+
+      vi.setSystemTime(1_005_000);
+      expect(msSinceLastSandboxCall()).toBe(5_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports in-flight calls so the reaper can defer hibernation', async () => {
+    let release!: (value: unknown) => void;
+    mockFetch.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    const pending = execInSandbox('sb-inflight', 'true');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(hasInFlightSandboxCalls()).toBe(true);
+
+    release({
+      ok: true,
+      json: () => Promise.resolve({ stdout: '', stderr: '', exit_code: 0, truncated: false }),
+    });
+    await pending;
+    expect(hasInFlightSandboxCalls()).toBe(false);
+  });
+
+  it('suppressed maintenance calls neither stamp the clock nor count as in flight', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(2_000_000);
+      // Stamp the clock with a normal (tracked) call.
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ stdout: '', stderr: '', exit_code: 0, truncated: false }),
+      });
+      await execInSandbox('sb-maint', 'true');
+      vi.setSystemTime(2_010_000);
+
+      // Suppression is consumed synchronously at sandboxFetch entry, so the
+      // pending suppressed call is invisible to the in-flight counter.
+      suppressIdleTouch();
+      let release!: (value: unknown) => void;
+      mockFetch.mockReturnValueOnce(
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+      );
+      const pending = execInSandbox('sb-maint', 'true');
+      expect(hasInFlightSandboxCalls()).toBe(false);
+
+      release({
+        ok: true,
+        json: () => Promise.resolve({ stdout: '', stderr: '', exit_code: 0, truncated: false }),
+      });
+      await pending;
+      // The suppressed call's completion did not stamp the idle clock.
+      expect(msSinceLastSandboxCall()).toBe(10_000);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
