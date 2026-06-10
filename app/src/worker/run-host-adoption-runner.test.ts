@@ -321,9 +321,26 @@ describe('runAdoptedLoop', () => {
     expect(state.alarmAt).not.toBeNull();
   });
 
-  it('failure at the relaunch cap parks adoptable with NO retry alarm', async () => {
+  it('failure grants the full relaunch budget: a count reaching the cap still retries', async () => {
+    // Increment-before-launch means the count includes the upcoming retry, so
+    // count === cap is the LAST permitted relaunch — the same budget the
+    // orphan watchdog grants. (`<` here was an off-by-one that gave failures
+    // one fewer relaunch than evictions.)
     const state = makeHostState(
       makeRecord({ adoptionRelaunches: RUN_HOST_MAX_ADOPTION_RELAUNCHES - 1 }),
+    );
+    mocks.runCoderAgent.mockRejectedValue(new Error('still broken'));
+
+    await runAdoptedLoop(loopArgs(state));
+
+    expect(state.record?.state).toBe('adoptable');
+    expect(state.record?.adoptionRelaunches).toBe(RUN_HOST_MAX_ADOPTION_RELAUNCHES);
+    expect(state.alarmAt).not.toBeNull();
+  });
+
+  it('failure past the relaunch cap parks adoptable with NO retry alarm', async () => {
+    const state = makeHostState(
+      makeRecord({ adoptionRelaunches: RUN_HOST_MAX_ADOPTION_RELAUNCHES }),
     );
     state.alarmAt = 123;
     mocks.runCoderAgent.mockRejectedValue(new Error('still broken'));
@@ -331,7 +348,7 @@ describe('runAdoptedLoop', () => {
     await runAdoptedLoop(loopArgs(state));
 
     expect(state.record?.state).toBe('adoptable');
-    expect(state.record?.adoptionRelaunches).toBe(RUN_HOST_MAX_ADOPTION_RELAUNCHES);
+    expect(state.record?.adoptionRelaunches).toBe(RUN_HOST_MAX_ADOPTION_RELAUNCHES + 1);
     expect(state.alarmAt).toBeNull();
   });
 

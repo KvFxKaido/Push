@@ -316,10 +316,15 @@ client's re-register aborts the server loop (AbortController + an
 `adoptionId` ownership check on every per-round checkpoint — the loop stops
 without writing once ownership is lost) before the record returns to
 `watched`; the register response carries `reclaimedFromAdopted` +
-`hostRound` so the divergence is visible. While adopted, client checkpoint
-PUTs get `409 RUN_ADOPTED`, which makes the transport drop its registration
+`hostRound` so the divergence is visible. Checkpoint PUTs are accepted only
+from the attached owner of a `watched` run — any detached state
+(`adoptable`/`adopted`) gets `409 RUN_NOT_WATCHED`, which makes the
+transport drop its registration
 and re-register on the next publish — the same reclaim path heartbeats take
-(a beat answered `adopted`, like `adoptable`, triggers re-register). The
+(a beat answered `adopted`, like `adoptable`, triggers re-register). This
+also closes the torn-read race where a late client checkpoint landing while
+the adoption launcher was mid-provisioning would be accepted and then
+overwritten by the loop's first persisted round. The
 double-execution window is bounded: at most one already-in-flight tool call
 can overlap a reclaim, the same bounded race the CoderJob orphan path
 documents. The client's local transcript may lag the host's checkpoint until

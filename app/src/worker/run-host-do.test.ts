@@ -693,7 +693,7 @@ describe('run ledger: adopted lifecycle', () => {
     expect(record.adoptionId).toBeUndefined();
   });
 
-  it('rejects a client checkpoint while adopted (409 RUN_ADOPTED)', async () => {
+  it('rejects a client checkpoint while adopted (409 RUN_NOT_WATCHED)', async () => {
     const storage = makeStorage();
     const host = makeLedgerHost(storage);
     await adoptRun(host, storage);
@@ -701,7 +701,31 @@ describe('run ledger: adopted lifecycle', () => {
       ledgerRequest('/run/checkpoint', 'PUT', { checkpoint: makeCheckpoint() }),
     );
     expect(res.status).toBe(409);
-    expect(((await res.json()) as Record<string, unknown>).error).toBe('RUN_ADOPTED');
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.error).toBe('RUN_NOT_WATCHED');
+    expect(body.state).toBe('adopted');
+  });
+
+  it('rejects a client checkpoint while adoptable — no torn read under the adoption launcher', async () => {
+    // A late client checkpoint landing while startAdoption is mid-await
+    // would otherwise be accepted and then silently overwritten by the
+    // loop's first persisted round (adoption launches from the checkpoint it
+    // read BEFORE this write). The 409 routes the client into the
+    // re-register reclaim path instead.
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    seedWatchedLapsedRun(storage, { state: 'adoptable' });
+    const before = storage.map.get('run:checkpoint');
+    const res = await host.fetch(
+      ledgerRequest('/run/checkpoint', 'PUT', { checkpoint: makeCheckpoint({ round: 9 }) }),
+    );
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.error).toBe('RUN_NOT_WATCHED');
+    expect(body.state).toBe('adoptable');
+    // The stored adoption source is untouched.
+    expect(storage.map.get('run:checkpoint')).toBe(before);
+    expect((storage.map.get('run:record') as Record<string, unknown>).round).toBe(4);
   });
 
   it('heartbeat on an adopted run reports the state so the client can reclaim', async () => {

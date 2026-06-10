@@ -468,19 +468,31 @@ export class RunHost {
         409,
       );
     }
-    if (record.state === 'adopted') {
-      // The server loop owns the checkpoint while adopted — accepting a
-      // client write here would stomp server-side progress and set up
-      // double-execution. 409 makes the transport drop its registration and
+    if (record.state !== 'watched') {
+      // Checkpoints are only accepted from the attached owner of a `watched`
+      // run. While `adopted` the server loop owns the checkpoint — accepting
+      // a client write would stomp server-side progress and set up
+      // double-execution. While `adoptable` the adoption launcher may
+      // already be mid-provisioning against the checkpoint it just read —
+      // accepting a fresher write here would be silently lost when the
+      // loop's first persisted round overwrites it (it would also contradict
+      // the one-way contract: a live client takes the run back via register,
+      // never implicitly). 409 makes the transport drop its registration and
       // re-register on the next publish, which is exactly the reclaim path
-      // (register aborts the loop, then checkpoints flow again).
-      rhLog('warn', 'run_host_checkpoint_rejected_adopted', {
+      // (register preempts/aborts the server loop, then checkpoints flow
+      // again).
+      rhLog('warn', 'run_host_checkpoint_rejected_not_watched', {
         runId: record.runId,
+        state: record.state,
         round: cp.round,
         hostRound: record.round,
       });
       return json(
-        { error: 'RUN_ADOPTED', message: 're-register to reclaim the run before checkpointing' },
+        {
+          error: 'RUN_NOT_WATCHED',
+          state: record.state,
+          message: 're-register to reclaim the run before checkpointing',
+        },
         409,
       );
     }
@@ -517,10 +529,9 @@ export class RunHost {
     record.midFlight = cp.userAborted !== true;
     record.mode = cp.approvalMode;
     if (hostOrigin) record.origin = hostOrigin;
-    // A checkpoint from a still-attached client keeps the run watched; an
-    // adopted/released run shouldn't be receiving in-page checkpoints, but if
-    // one races in, the write is recorded without resurrecting the state (the
-    // re-arm is `watched`-gated).
+    // Only `watched` runs reach this write (the RUN_NOT_WATCHED guard above),
+    // so persisting + re-arming here never races the adoption launcher or
+    // resurrects a detached run.
     await this.state.storage.put(RECORD_KEY, record);
     await this.armSilenceAlarmIfWatched(record, now);
     rhLog('info', 'run_host_checkpoint_persisted', {

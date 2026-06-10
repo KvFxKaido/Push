@@ -18,7 +18,8 @@
  *     or `'adopted'` means the host lapsed us while we were actually alive
  *     (radio gap, throttled tab that came back). Re-register to reclaim the
  *     run; on `'adopted'` the register is also what stops the server-side
- *     loop (register always wins). A checkpoint 409 while adopted takes the
+ *     loop (register always wins). A checkpoint 409 while the host considers
+ *     the run detached (`RUN_NOT_WATCHED`, adoptable or adopted) takes the
  *     same path: drop registration, re-register on the next publish.
  *   - **Release** — `finalizeRunSession` releases on every terminal path so
  *     a normally completed run never lingers `watched` and gets adopted.

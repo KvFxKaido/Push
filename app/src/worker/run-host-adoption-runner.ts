@@ -416,7 +416,12 @@ export async function runAdoptedLoop(args: RunAdoptedLoopArgs): Promise<void> {
     current.state = 'adoptable';
     current.lastError = message.slice(0, 500);
     await hooks.saveRecord(current);
-    const willRetry = relaunches < RUN_HOST_MAX_ADOPTION_RELAUNCHES;
+    // `<=`: `adoptionRelaunches` counts launches CONSUMED including the one
+    // this retry alarm will trigger (increment-before-launch), so a count
+    // equal to the cap is the last permitted relaunch — the same budget the
+    // orphan watchdog grants (`decideAdoptedAlarm` expires only at >= cap
+    // BEFORE incrementing).
+    const willRetry = relaunches <= RUN_HOST_MAX_ADOPTION_RELAUNCHES;
     if (willRetry) {
       // Park adoptable with a retry alarm — the DO's adoptable wake re-runs
       // provisioning and relaunches. A reclaiming client still wins: register
