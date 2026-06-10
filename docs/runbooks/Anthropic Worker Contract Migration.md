@@ -262,9 +262,10 @@ ship before client changes**, never the reverse.
    NOT dual-accept, so legacy keeps the OpenAI-shape body. A test pins both
    sides (native → `push.stream.v1`, legacy → OpenAI shape).
 
-   **Still pending in Step 3: the Zen-Go client.** `app/src/lib/zen-go.ts` still
-   sends the OpenAI-shape body; `handleZenGoChat`'s neutral branch (shipped in
-   #851) is dormant until that flip.
+   **Still pending in Step 3: the Zen-Go client.** `zenStream`
+   (`app/src/lib/zen-stream.ts`) still builds the OpenAI-shape body for the Go
+   endpoint; `handleZenGoChat`'s neutral branch (shipped in #851) is dormant
+   until that flip.
 
    **Post-flip fixes (both shipped).** #854: the neutral validator stamps the
    **route-authoritative** `provider` from `ChatRequestPolicy.provider` — the

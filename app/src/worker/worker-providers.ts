@@ -598,8 +598,9 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
   // Dual-accept (push.stream.v1): a body carrying a `contract` field is the
   // neutral wire shape serialized straight from PushStreamRequest; anything else
   // is the legacy OpenAI Chat Completions shape. Zen-Go is the one client NOT
-  // yet flipped — `app/src/lib/zen-go.ts` still sends the OpenAI shape, so the
-  // neutral branch here stays dormant until that flip. See
+  // yet flipped — `zenStream` (`app/src/lib/zen-stream.ts`) still builds the
+  // OpenAI body for the Go endpoint, so the neutral branch here stays dormant
+  // until that flip. See
   // docs/runbooks/Anthropic Worker Contract Migration.md.
   const dual = parseDualAcceptRequest(bodyText, {
     routeLabel: 'OpenCode Zen Go',
