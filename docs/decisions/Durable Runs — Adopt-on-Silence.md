@@ -1,6 +1,6 @@
 # Durable Runs — Adopt-on-Silence
 
-**Status:** Draft — promoted to `ROADMAP.md` (first priority) 2026-06-10; design committed, implementation pending. Phase 0 is COMPLETE (latency spike #870, eval harness #871; numbers in [Phase 0 results](#phase-0-results-2026-06-10) below — latency does not block Phase 2). Phase 1 is unblocked.
+**Status:** Draft — promoted to `ROADMAP.md` (first priority) 2026-06-10; design committed, implementation in progress. Phase 0 is COMPLETE (latency spike #870, eval harness #871; numbers in [Phase 0 results](#phase-0-results-2026-06-10) below — latency does not block Phase 2). Phase 1 is COMPLETE (schema #873, capture #874). Phase 2 is IN PROGRESS: the delegation-collapse precondition is in place (the inline route + flag in `delegation-mode-settings.ts`, A/B-measurable via the eval harness `--delegate` arm), and the **adoption substrate** has landed — the `RunHost` DO now owns the heartbeat ledger, per-run checkpoint persistence, and the watched→adoptable adoption *decision* (see [Phase 2 substrate](#phase-2-substrate-shipped-2026-06-10)). The server-side loop that continues an adopted run is the next piece.
 
 **Date:** 2026-06-10
 
@@ -173,10 +173,16 @@ next to the legacy delta checkpoint. Capture points: pre-tools
 path clears both). Every write logs `run_checkpoint_captured` with
 `estimateRunCheckpointBytes` (symmetric: `run_checkpoint_invalid`,
 `run_checkpoint_write_failed`, `run_checkpoint_skipped` for
-no-repo-scope chats). Remaining Phase 1 work: read the observed byte
-sizes off real runs and decide whether tiering is needed before the
-Phase 2 DO transport (DO storage values cap at 128 KiB per key —
-transcripts above that need chunking or R2 spill).
+no-repo-scope chats). The DO-key cap (128 KiB per storage value) is now
+**enforced at the host consumer**: the Phase 2 `RunHost` checkpoint
+endpoint rejects an oversize checkpoint loudly (`413
+CHECKPOINT_TOO_LARGE` + `run_host_checkpoint_rejected_oversize`) rather
+than letting `storage.put` fail opaquely or truncate, and logs the
+observed byte size on every accepted write
+(`run_host_checkpoint_persisted` with `bytes`). The tiering decision
+(chunking vs R2 spill) is still open, but it is now answerable from real
+persisted-byte logs instead of estimates — and an oversize run fails
+visibly in the meantime rather than silently losing fidelity.
 
 ### Phase 2 — RunHost DO + adoption
 
@@ -193,6 +199,41 @@ transcripts above that need chunking or R2 spill).
 - Chat-hook tools (scratchpad/todo) execute in-page today; while adopted they
   execute against the server-side store or are deferred with a model-readable
   note. Decide during Phase 2 design; do not silently drop them.
+
+#### Phase 2 substrate (shipped 2026-06-10)
+
+The heartbeat ledger + checkpoint persistence + adoption *decision* landed
+ahead of the server-side loop, so the loop is built on a tested substrate
+rather than alongside it:
+
+- **`lib/run-host-adoption.ts`** — the canonical run-lifecycle vocabulary and
+  the pure adoption kernel, drift-pinned by
+  `cli/tests/run-host-adoption.test.mjs` (lifecycle states, record fields,
+  constants — same discipline as `run-checkpoint.ts`). Lifecycle:
+  `watched → adoptable → adopted → released/ended`. `decideAdoption(record,
+  now)` is pure (the DO supplies the clock and applies the result); it only
+  adopts a `watched`, mid-flight run that has a checkpoint and whose
+  heartbeats have lapsed past `RUN_HOST_SILENCE_THRESHOLD_MS` (45 s, ≥3× the
+  15 s client cadence so one dropped beat never trips adoption). The
+  scope→instance map `runHostInstanceId(repoFullName+branch+chatId)` is the
+  durable handle a reopening client reconstructs to attach (Phase 3), no
+  server-minted id needed.
+- **`app/src/worker/run-host-do.ts`** — the DO is now a thin storage/alarm
+  wrapper around that kernel. Endpoints (`/api/runhost/run/*`, behind the
+  universal session gate, instance derived server-side from scope):
+  `register` (open/refresh → `watched`, arm the silence alarm), `checkpoint`
+  (validate incl. the credential blocklist, enforce the 128 KiB cap, persist,
+  re-arm), `heartbeat` (keepalive), `release` (pull-back-local / teardown),
+  `status`. One singleton alarm (CoderJob discipline) is the silence
+  detector; on lapse it transitions the run to `adoptable` and logs — and
+  **parks there**, because the server-side loop that consumes `adoptable` is
+  the next piece. Every alarm branch logs symmetrically (`run_host_run_adoptable`
+  ↔ `run_host_alarm_rearmed` ↔ `run_host_alarm_idle`).
+- **Deferred to the loop PR:** running the kernels server-side from
+  `adoptable`; the supervised-pause / full-auto-continue mode semantics
+  (the `mode` is captured in the record, not yet acted on); orphan-sweep
+  cross-eviction recovery (the run record survives eviction; relaunching the
+  loop on wake is the loop PR's job).
 
 ### Phase 3 — Attach/viewer
 

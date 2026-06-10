@@ -1,12 +1,20 @@
 /**
  * RunHost Durable Object — Durable Runs (Adopt-on-Silence) track.
  *
- * The binding + v5 migration are durable infrastructure for the track
- * (Phase 2 puts the adoption loop, heartbeat ledger, and checkpoint
- * persistence here). Everything else in this file is **Phase 0 spike
- * code** — throwaway latency instruments whose numbers get recorded in
- * `docs/decisions/Durable Runs — Adopt-on-Silence.md` and then deleted
- * when Phase 2 replaces the internals.
+ * The binding + v5 migration are durable infrastructure for the track. Two
+ * surfaces coexist in this class today:
+ *
+ *   - **Phase 2 substrate (durable):** the `/run/*` endpoints + the silence
+ *     `alarm()`. These own the heartbeat ledger, per-run checkpoint
+ *     persistence, and the watched→adoptable adoption *decision* (the pure
+ *     logic lives in `@push/lib/run-host-adoption`; this class is the
+ *     storage/alarm wrapper). The server-side loop that continues an adopted
+ *     run is the next PR — when a run becomes adoptable, this class parks it
+ *     and logs; it does not yet run the loop.
+ *   - **Phase 0 spike (throwaway):** the `/spike/*` latency instruments whose
+ *     numbers get recorded in `docs/decisions/Durable Runs —
+ *     Adopt-on-Silence.md`. No durable storage; deleted once the
+ *     re-measurement caveats in that doc are closed.
  *
  * Spike endpoints (reached via /api/runhost/spike/* — see
  * run-host-routes.ts):
@@ -35,8 +43,38 @@
 
 import type { DurableObjectState, WebSocket as CfWebSocket } from '@cloudflare/workers-types';
 import type { AIProviderType } from '@push/lib/provider-contract';
+import {
+  type RunHostRecord,
+  type RunHostScope,
+  RUN_HOST_HEARTBEAT_INTERVAL_MS,
+  RUN_HOST_PROTOCOL_VERSION,
+  RUN_HOST_SILENCE_THRESHOLD_MS,
+  checkpointExceedsHostCap,
+  decideAdoption,
+  isCompleteScope,
+} from '@push/lib/run-host-adoption';
+import {
+  type RunCheckpointV1,
+  estimateRunCheckpointBytes,
+  validateRunCheckpoint,
+} from '@push/lib/run-checkpoint';
+import type { ApprovalMode } from '@push/lib/approval-gates';
 import { resolveProviderHandler } from './coder-job-stream-adapter';
 import type { Env } from './worker-middleware';
+
+// ---------------------------------------------------------------------------
+// Phase 2 substrate — storage keys + structured log helper
+// ---------------------------------------------------------------------------
+
+/** One record + one checkpoint per DO instance (one run per scoped chat). */
+const RECORD_KEY = 'run:record';
+const CHECKPOINT_KEY = 'run:checkpoint';
+
+const APPROVAL_MODES: ReadonlySet<string> = new Set(['supervised', 'autonomous', 'full-auto']);
+
+function rhLog(level: 'info' | 'warn', event: string, ctx: Record<string, unknown>): void {
+  console.log(JSON.stringify({ level, event, ...ctx }));
+}
 
 // ---------------------------------------------------------------------------
 // Spike request shape
@@ -194,13 +232,32 @@ function scanSseChunk(state: SseScanState, chunk: string): string[] {
 
 export class RunHost {
   private readonly env: Env;
+  private readonly state: DurableObjectState;
 
-  constructor(_state: DurableObjectState, env: Env) {
+  constructor(state: DurableObjectState, env: Env) {
     this.env = env;
+    this.state = state;
   }
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    // --- Phase 2 substrate: the durable run ledger ---
+    if (url.pathname === '/run/register' && request.method === 'POST') {
+      return this.runRegister(request);
+    }
+    if (url.pathname === '/run/checkpoint' && request.method === 'PUT') {
+      return this.runCheckpoint(request);
+    }
+    if (url.pathname === '/run/heartbeat' && request.method === 'POST') {
+      return this.runHeartbeat(request);
+    }
+    if (url.pathname === '/run/release' && request.method === 'POST') {
+      return this.runRelease(request);
+    }
+    if (url.pathname === '/run/status' && request.method === 'GET') {
+      return this.runStatus();
+    }
+    // --- Phase 0 spike: throwaway latency instruments ---
     if (url.pathname === '/spike/relay' && request.method === 'POST') {
       return this.spikeRelay(request);
     }
@@ -211,6 +268,298 @@ export class RunHost {
       return this.spikeWs(request);
     }
     return json({ error: 'NOT_FOUND' }, 404);
+  }
+
+  // -------------------------------------------------------------------------
+  // Phase 2 substrate — run ledger
+  // -------------------------------------------------------------------------
+
+  private async loadRecord(): Promise<RunHostRecord | null> {
+    return (await this.state.storage.get<RunHostRecord>(RECORD_KEY)) ?? null;
+  }
+
+  /** Push the silence deadline out one threshold from now. `setAlarm`
+   * replaces any prior schedule (DO alarms are singletons), so each heartbeat
+   * is a keepalive — the same one-alarm discipline as the CoderJob DO. */
+  private async armSilenceAlarm(now: number): Promise<void> {
+    await this.state.storage.setAlarm(now + RUN_HOST_SILENCE_THRESHOLD_MS);
+  }
+
+  /**
+   * POST /run/register — open (or refresh) the run for a scope. Sets state
+   * `watched`, stamps the heartbeat, arms the silence alarm. Idempotent for a
+   * re-register of the same run; a different runId on the same scoped DO is a
+   * new run superseding the old (the prior checkpoint is dropped).
+   */
+  private async runRegister(request: Request): Promise<Response> {
+    let raw: unknown;
+    try {
+      raw = await request.json();
+    } catch {
+      return json({ error: 'INVALID_BODY', message: 'POST body must be JSON' }, 400);
+    }
+    const body = raw as Record<string, unknown>;
+    const runId = typeof body.runId === 'string' ? body.runId : '';
+    const scope = body.scope;
+    const mode = typeof body.mode === 'string' ? body.mode : '';
+    const round = typeof body.round === 'number' ? body.round : 0;
+    if (!runId || !isCompleteScope(scope) || !APPROVAL_MODES.has(mode)) {
+      rhLog('warn', 'run_host_register_invalid', {
+        hasRunId: Boolean(runId),
+        scopeOk: isCompleteScope(scope),
+        mode,
+      });
+      return json(
+        { error: 'INVALID_BODY', message: 'runId, complete scope, and approval mode are required' },
+        400,
+      );
+    }
+
+    const now = Date.now();
+    const prior = await this.loadRecord();
+    if (prior && prior.runId !== runId) {
+      await this.state.storage.delete(CHECKPOINT_KEY);
+      rhLog('info', 'run_host_run_superseded', {
+        scope: scope as RunHostScope,
+        priorRunId: prior.runId,
+        runId,
+      });
+    }
+
+    const record: RunHostRecord = {
+      v: RUN_HOST_PROTOCOL_VERSION,
+      runId,
+      scope: scope as RunHostScope,
+      mode: mode as ApprovalMode,
+      state: 'watched',
+      registeredAt: prior && prior.runId === runId ? prior.registeredAt : now,
+      lastHeartbeatAt: now,
+      hasCheckpoint: prior && prior.runId === runId ? prior.hasCheckpoint : false,
+      midFlight: true,
+      round,
+    };
+    await this.state.storage.put(RECORD_KEY, record);
+    await this.armSilenceAlarm(now);
+    rhLog('info', 'run_host_run_registered', {
+      runId,
+      scope: record.scope,
+      mode: record.mode,
+      resumed: Boolean(prior && prior.runId === runId),
+    });
+    return json({
+      ok: true,
+      state: record.state,
+      heartbeatIntervalMs: RUN_HOST_HEARTBEAT_INTERVAL_MS,
+    });
+  }
+
+  /**
+   * PUT /run/checkpoint — persist the latest RunCheckpointV1 and refresh the
+   * ledger. Validates the checkpoint (the credential-field blocklist runs
+   * here) and enforces the DO-storage byte cap loudly rather than letting the
+   * `put` fail opaquely. Doubles as a heartbeat.
+   */
+  private async runCheckpoint(request: Request): Promise<Response> {
+    let raw: unknown;
+    try {
+      raw = await request.json();
+    } catch {
+      return json({ error: 'INVALID_BODY', message: 'PUT body must be JSON' }, 400);
+    }
+    const checkpoint = (raw as Record<string, unknown>)?.checkpoint;
+    const issues = validateRunCheckpoint(checkpoint);
+    if (issues.length > 0) {
+      rhLog('warn', 'run_host_checkpoint_invalid', {
+        issues: issues.slice(0, 6).map((i) => `${i.path}: ${i.message}`),
+      });
+      return json({ error: 'INVALID_CHECKPOINT', issues: issues.slice(0, 6) }, 400);
+    }
+    const cp = checkpoint as RunCheckpointV1;
+
+    const record = await this.loadRecord();
+    if (!record) {
+      rhLog('warn', 'run_host_checkpoint_no_record', { runId: cp.runId ?? null });
+      return json(
+        { error: 'NOT_REGISTERED', message: 'register the run before checkpointing' },
+        409,
+      );
+    }
+    if (cp.runId && cp.runId !== record.runId) {
+      rhLog('warn', 'run_host_checkpoint_run_mismatch', {
+        recordRunId: record.runId,
+        checkpointRunId: cp.runId,
+      });
+      return json(
+        { error: 'RUN_MISMATCH', message: 'checkpoint runId does not match the run' },
+        409,
+      );
+    }
+
+    const bytes = estimateRunCheckpointBytes(cp);
+    if (checkpointExceedsHostCap(bytes)) {
+      // The tiering follow-up (chunking / R2 spill) is Phase 1's deferred
+      // decision; until it lands, reject loudly so this never degrades into a
+      // silent put failure or a truncated transcript.
+      rhLog('warn', 'run_host_checkpoint_rejected_oversize', {
+        runId: record.runId,
+        bytes,
+        round: cp.round,
+      });
+      return json({ error: 'CHECKPOINT_TOO_LARGE', bytes }, 413);
+    }
+
+    const now = Date.now();
+    await this.state.storage.put(CHECKPOINT_KEY, cp);
+    record.hasCheckpoint = true;
+    record.lastHeartbeatAt = now;
+    record.round = cp.round;
+    record.midFlight = cp.userAborted !== true;
+    record.mode = cp.approvalMode;
+    // A checkpoint from a still-attached client keeps the run watched; an
+    // adopted/released run shouldn't be receiving in-page checkpoints, but if
+    // one races in, the write is recorded without resurrecting the state.
+    await this.state.storage.put(RECORD_KEY, record);
+    await this.armSilenceAlarm(now);
+    rhLog('info', 'run_host_checkpoint_persisted', {
+      runId: record.runId,
+      round: cp.round,
+      bytes,
+      midFlight: record.midFlight,
+    });
+    return json({ ok: true, bytes, round: cp.round });
+  }
+
+  /**
+   * POST /run/heartbeat — a lightweight keepalive (no checkpoint). Bumps the
+   * heartbeat clock and re-arms the silence alarm.
+   */
+  private async runHeartbeat(request: Request): Promise<Response> {
+    let raw: unknown;
+    try {
+      raw = await request.json();
+    } catch {
+      return json({ error: 'INVALID_BODY', message: 'POST body must be JSON' }, 400);
+    }
+    const runId =
+      typeof (raw as Record<string, unknown>)?.runId === 'string'
+        ? ((raw as Record<string, unknown>).runId as string)
+        : '';
+    const record = await this.loadRecord();
+    if (!record) {
+      rhLog('warn', 'run_host_heartbeat_no_record', { runId: runId || null });
+      return json({ error: 'NOT_REGISTERED' }, 409);
+    }
+    if (runId && runId !== record.runId) {
+      rhLog('warn', 'run_host_heartbeat_run_mismatch', {
+        recordRunId: record.runId,
+        beatRunId: runId,
+      });
+      return json({ error: 'RUN_MISMATCH' }, 409);
+    }
+    const now = Date.now();
+    record.lastHeartbeatAt = now;
+    await this.state.storage.put(RECORD_KEY, record);
+    await this.armSilenceAlarm(now);
+    rhLog('info', 'run_host_heartbeat', { runId: record.runId, state: record.state });
+    return json({ ok: true, state: record.state });
+  }
+
+  /**
+   * POST /run/release — the client pulled the run back local or the run
+   * ended. Tear down: clear the alarm and drop the ledger + checkpoint.
+   */
+  private async runRelease(request: Request): Promise<Response> {
+    let raw: unknown;
+    try {
+      raw = await request.json();
+    } catch {
+      return json({ error: 'INVALID_BODY', message: 'POST body must be JSON' }, 400);
+    }
+    const runId =
+      typeof (raw as Record<string, unknown>)?.runId === 'string'
+        ? ((raw as Record<string, unknown>).runId as string)
+        : '';
+    const record = await this.loadRecord();
+    if (!record) {
+      rhLog('info', 'run_host_release_noop', { runId: runId || null });
+      return json({ ok: true, released: false });
+    }
+    if (runId && runId !== record.runId) {
+      rhLog('warn', 'run_host_release_run_mismatch', {
+        recordRunId: record.runId,
+        releaseRunId: runId,
+      });
+      return json({ error: 'RUN_MISMATCH' }, 409);
+    }
+    await this.state.storage.deleteAlarm();
+    await this.state.storage.delete(RECORD_KEY);
+    await this.state.storage.delete(CHECKPOINT_KEY);
+    rhLog('info', 'run_host_run_released', { runId: record.runId, fromState: record.state });
+    return json({ ok: true, released: true });
+  }
+
+  /** GET /run/status — lifecycle snapshot for observability / attach probes. */
+  private async runStatus(): Promise<Response> {
+    const record = await this.loadRecord();
+    if (!record) {
+      return json({ error: 'NOT_FOUND' }, 404);
+    }
+    return json({
+      ok: true,
+      runId: record.runId,
+      state: record.state,
+      lastHeartbeatAt: record.lastHeartbeatAt,
+      ageMs: Date.now() - record.lastHeartbeatAt,
+      hasCheckpoint: record.hasCheckpoint,
+      midFlight: record.midFlight,
+      round: record.round,
+    });
+  }
+
+  /**
+   * Silence alarm. Singleton: each heartbeat/checkpoint/register re-arms it,
+   * so a wake means the deadline lapsed for the schedule in force at arm
+   * time. Recompute against the live record — a heartbeat may have landed
+   * after the alarm was scheduled but before it fired. Every branch logs
+   * (symmetric: adopted ↔ re-armed ↔ the idle reasons), and the alarm is
+   * either re-armed or cleared on every path so a watched run can't be left
+   * with no backstop.
+   */
+  async alarm(): Promise<void> {
+    const record = await this.loadRecord();
+    if (!record) {
+      rhLog('info', 'run_host_alarm_no_record', {});
+      return;
+    }
+    const now = Date.now();
+    const decision = decideAdoption(record, now);
+    if (decision.action === 'adopt') {
+      record.state = 'adoptable';
+      await this.state.storage.put(RECORD_KEY, record);
+      // Park here — the server-side loop that consumes `adoptable` is the
+      // next PR. Clear the alarm so the run isn't repeatedly re-evaluated.
+      await this.state.storage.deleteAlarm();
+      rhLog('info', 'run_host_run_adoptable', {
+        runId: record.runId,
+        scope: record.scope,
+        round: record.round,
+        silentMs: now - record.lastHeartbeatAt,
+      });
+      return;
+    }
+    if (decision.action === 'rearm' && typeof decision.reArmAt === 'number') {
+      await this.state.storage.setAlarm(decision.reArmAt);
+      rhLog('info', 'run_host_alarm_rearmed', {
+        runId: record.runId,
+        reason: decision.reason,
+        reArmAt: decision.reArmAt,
+      });
+      return;
+    }
+    // Idle: nothing for the alarm to do. Clear it rather than leave a stale
+    // schedule on a released/ended/adopted run.
+    await this.state.storage.deleteAlarm();
+    rhLog('info', 'run_host_alarm_idle', { runId: record.runId, reason: decision.reason });
   }
 
   /** Resolve handler + build the provider Request, or produce an error
