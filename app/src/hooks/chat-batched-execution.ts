@@ -480,11 +480,18 @@ export async function executeBatchedToolCalls(
       const execProgressTail =
         mutCall.source === 'sandbox' && mutCall.call.tool === 'sandbox_exec'
           ? createExecProgressTail({
-              onTail: (line) =>
+              onTail: (line) => {
+                // A cancel mid-drain must not resurrect the running status —
+                // the runner still drains the log tail after an abort.
+                if (abortRef.current) return;
                 updateAgentStatus(
                   { active: true, phase: mutStatusLabel, detail: line, startedAt: mutExecStart },
-                  { chatId },
-                ),
+                  // log:false — transient display state; logging would churn
+                  // the agent-event log at throttle rate and persist
+                  // attacker-controlled output into conversation state.
+                  { chatId, log: false },
+                );
+              },
             })
           : undefined;
       const mutCtx: ToolExecRunContext = {

@@ -204,11 +204,19 @@ export async function executeSingleToolCall(
     const execProgressTail =
       toolCall.source === 'sandbox' && toolCall.call.tool === 'sandbox_exec'
         ? createExecProgressTail({
-            onTail: (line) =>
+            onTail: (line) => {
+              // A cancel mid-drain must not resurrect the running status —
+              // the runner still drains the log tail after an abort.
+              if (abortRef.current) return;
               updateAgentStatus(
                 { active: true, phase: statusLabel, detail: line, startedAt: toolExecStart },
-                { chatId },
-              ),
+                // log:false — tails are transient display state. Logging them
+                // would churn the 200-entry agent-event log at throttle rate
+                // AND persist attacker-controlled command output into
+                // conversation state / console copy.
+                { chatId, log: false },
+              );
+            },
           })
         : undefined;
     const singleCtx: ToolExecRunContext = {
