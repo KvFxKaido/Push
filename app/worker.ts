@@ -213,7 +213,8 @@ export default {
         );
       }
 
-      // Durable Runs Phase 0 — latency-spike endpoints on the RunHost DO.
+      // Durable Runs — RunHost DO endpoints: the Phase 2 run ledger
+      // (/api/runhost/run/*) and the Phase 0 latency spike (/api/runhost/spike/*).
       const runHostAction = matchRunHostRoute(url.pathname, request.method);
       if (runHostAction) {
         return withRequestIdOnResponse(
