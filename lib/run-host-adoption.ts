@@ -64,7 +64,11 @@ export const RUN_HOST_HEARTBEAT_INTERVAL_MS = 15_000;
  *   - `adoptable` — heartbeats lapsed mid-flight; the host SHOULD adopt the
  *                   run from its last checkpoint. (The server-side loop that
  *                   consumes this state is the next PR; this scaffolding
- *                   parks here and logs.)
+ *                   parks here and logs.) One-way: a late heartbeat or
+ *                   checkpoint does NOT resurrect an `adoptable` run to
+ *                   `watched` (that would race the loop about to start). A
+ *                   still-alive client takes it back only via an explicit
+ *                   re-register (pull-back-local).
  *   - `adopted`   — the host is running the loop server-side. Reserved for
  *                   the loop PR; no transition sets it yet.
  *   - `released`  — a client pulled the run back local, or explicitly tore it

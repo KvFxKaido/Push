@@ -313,6 +313,17 @@ describe('run ledger: register', () => {
     expect(storage.map.has('run:checkpoint')).toBe(false);
     expect((storage.map.get('run:record') as Record<string, unknown>).runId).toBe('run-2');
   });
+
+  it('preserves the prior round on a same-run re-register that omits it', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    await register(host);
+    await host.fetch(ledgerRequest('/run/checkpoint', 'PUT', { checkpoint: makeCheckpoint() }));
+    expect((storage.map.get('run:record') as Record<string, unknown>).round).toBe(4);
+    // Reconnect without echoing the round — it must not regress to 0.
+    await register(host, { round: undefined });
+    expect((storage.map.get('run:record') as Record<string, unknown>).round).toBe(4);
+  });
 });
 
 describe('run ledger: checkpoint', () => {
@@ -372,11 +383,16 @@ describe('run ledger: checkpoint', () => {
     const huge = makeCheckpoint({
       messages: [{ role: 'user', content: 'x'.repeat(140 * 1024) }],
     });
+    storage.alarmAt = null;
     const res = await host.fetch(ledgerRequest('/run/checkpoint', 'PUT', { checkpoint: huge }));
     expect(res.status).toBe(413);
     expect(((await res.json()) as Record<string, unknown>).error).toBe('CHECKPOINT_TOO_LARGE');
     // The put was rejected — no checkpoint persisted.
     expect(storage.map.has('run:checkpoint')).toBe(false);
+    // …but the provably-alive client's beat still counts: the clock is bumped
+    // and the silence alarm re-armed, so it doesn't lapse into adoptable.
+    expect(storage.alarmAt).not.toBeNull();
+    expect((storage.map.get('run:record') as Record<string, unknown>).hasCheckpoint).toBe(false);
   });
 
   it('marks an aborted checkpoint not-mid-flight', async () => {
@@ -414,6 +430,32 @@ describe('run ledger: heartbeat + release', () => {
       ledgerRequest('/run/heartbeat', 'POST', { runId: 'run-1' }),
     );
     expect(res.status).toBe(409);
+  });
+
+  it('heartbeat on an adoptable run records liveness but does not resurrect it', async () => {
+    const storage = makeStorage();
+    storage.map.set('run:record', {
+      v: 1,
+      runId: 'run-1',
+      scope: SCOPE,
+      mode: 'supervised',
+      state: 'adoptable',
+      registeredAt: 1,
+      lastHeartbeatAt: 1,
+      hasCheckpoint: true,
+      midFlight: true,
+      round: 4,
+    });
+    storage.alarmAt = null;
+    const res = await makeLedgerHost(storage).fetch(
+      ledgerRequest('/run/heartbeat', 'POST', { runId: 'run-1' }),
+    );
+    expect(res.status).toBe(200);
+    // The client learns it must re-register (pull-back-local) to take it back.
+    expect(((await res.json()) as Record<string, unknown>).state).toBe('adoptable');
+    expect((storage.map.get('run:record') as Record<string, unknown>).state).toBe('adoptable');
+    // No re-arm — the one-way `adoptable` contract.
+    expect(storage.alarmAt).toBeNull();
   });
 
   it('release tears down the record, checkpoint, and alarm', async () => {

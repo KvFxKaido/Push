@@ -278,11 +278,23 @@ export class RunHost {
     return (await this.state.storage.get<RunHostRecord>(RECORD_KEY)) ?? null;
   }
 
-  /** Push the silence deadline out one threshold from now. `setAlarm`
-   * replaces any prior schedule (DO alarms are singletons), so each heartbeat
-   * is a keepalive — the same one-alarm discipline as the CoderJob DO. */
-  private async armSilenceAlarm(now: number): Promise<void> {
-    await this.state.storage.setAlarm(now + RUN_HOST_SILENCE_THRESHOLD_MS);
+  /**
+   * Push the silence deadline out one threshold from now, but ONLY while the
+   * run is still `watched`. `setAlarm` replaces any prior schedule (DO alarms
+   * are singletons), so each heartbeat is a keepalive — the same one-alarm
+   * discipline as the CoderJob DO.
+   *
+   * The `watched` gate enforces the one-way `adoptable` contract: once the
+   * alarm has flipped a run to `adoptable`, a late heartbeat or checkpoint
+   * does NOT resurrect it (that would race the server-side loop that is about
+   * to start). A provably-alive client takes the run back through an explicit
+   * re-register (pull-back-local), never implicitly. Re-arming a non-watched
+   * run would only schedule an alarm that immediately decides `idle`.
+   */
+  private async armSilenceAlarmIfWatched(record: RunHostRecord, now: number): Promise<void> {
+    if (record.state === 'watched') {
+      await this.state.storage.setAlarm(now + RUN_HOST_SILENCE_THRESHOLD_MS);
+    }
   }
 
   /**
@@ -336,10 +348,13 @@ export class RunHost {
       lastHeartbeatAt: now,
       hasCheckpoint: prior && prior.runId === runId ? prior.hasCheckpoint : false,
       midFlight: true,
-      round,
+      // Preserve the prior round on a same-run re-register (reconnect) — a
+      // client that doesn't echo its round must not regress the observable
+      // round to 0; the next checkpoint is authoritative either way.
+      round: prior && prior.runId === runId ? prior.round : round,
     };
     await this.state.storage.put(RECORD_KEY, record);
-    await this.armSilenceAlarm(now);
+    await this.armSilenceAlarmIfWatched(record, now);
     rhLog('info', 'run_host_run_registered', {
       runId,
       scope: record.scope,
@@ -400,6 +415,17 @@ export class RunHost {
       // The tiering follow-up (chunking / R2 spill) is Phase 1's deferred
       // decision; until it lands, reject loudly so this never degrades into a
       // silent put failure or a truncated transcript.
+      //
+      // The client that sent this is provably alive — count the rejected
+      // checkpoint as a heartbeat (bump the clock, re-arm) so a client whose
+      // checkpoints all hit the cap doesn't silently lapse into `adoptable`
+      // while actively streaming, which would set up a double-execution once
+      // the server-side loop lands. The transcript isn't persisted; the
+      // liveness signal is.
+      const rejectedAt = Date.now();
+      record.lastHeartbeatAt = rejectedAt;
+      await this.state.storage.put(RECORD_KEY, record);
+      await this.armSilenceAlarmIfWatched(record, rejectedAt);
       rhLog('warn', 'run_host_checkpoint_rejected_oversize', {
         runId: record.runId,
         bytes,
@@ -417,9 +443,10 @@ export class RunHost {
     record.mode = cp.approvalMode;
     // A checkpoint from a still-attached client keeps the run watched; an
     // adopted/released run shouldn't be receiving in-page checkpoints, but if
-    // one races in, the write is recorded without resurrecting the state.
+    // one races in, the write is recorded without resurrecting the state (the
+    // re-arm is `watched`-gated).
     await this.state.storage.put(RECORD_KEY, record);
-    await this.armSilenceAlarm(now);
+    await this.armSilenceAlarmIfWatched(record, now);
     rhLog('info', 'run_host_checkpoint_persisted', {
       runId: record.runId,
       round: cp.round,
@@ -431,7 +458,14 @@ export class RunHost {
 
   /**
    * POST /run/heartbeat — a lightweight keepalive (no checkpoint). Bumps the
-   * heartbeat clock and re-arms the silence alarm.
+   * heartbeat clock and re-arms the silence alarm while the run is `watched`.
+   *
+   * If the run has already gone `adoptable`, a heartbeat records the liveness
+   * signal but does NOT resurrect it (the re-arm is `watched`-gated): the
+   * response carries `state: 'adoptable'` so the client can react by
+   * re-registering (pull-back-local). The common-case `watched` beat is not
+   * logged — at one beat per ~15 s per run that line is pure volume; the
+   * no-record / mismatch branches still log.
    */
   private async runHeartbeat(request: Request): Promise<Response> {
     let raw: unknown;
@@ -459,8 +493,7 @@ export class RunHost {
     const now = Date.now();
     record.lastHeartbeatAt = now;
     await this.state.storage.put(RECORD_KEY, record);
-    await this.armSilenceAlarm(now);
-    rhLog('info', 'run_host_heartbeat', { runId: record.runId, state: record.state });
+    await this.armSilenceAlarmIfWatched(record, now);
     return json({ ok: true, state: record.state });
   }
 

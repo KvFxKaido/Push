@@ -80,9 +80,9 @@ test('pin: exact record field vocabulary', () => {
 test('pin: load-bearing constants', () => {
   // The DO-storage value cap — a checkpoint above this needs tiering.
   assert.equal(RUN_HOST_CHECKPOINT_MAX_BYTES, 128 * 1024);
-  // Threshold must stay comfortably above the cadence so one dropped beat
-  // never trips adoption.
-  assert.ok(RUN_HOST_SILENCE_THRESHOLD_MS >= RUN_HOST_HEARTBEAT_INTERVAL_MS * 2);
+  // The documented invariant: ≥3× the cadence, so two dropped beats in a
+  // row still don't trip adoption. Pin the stated guarantee, not a weaker one.
+  assert.ok(RUN_HOST_SILENCE_THRESHOLD_MS >= RUN_HOST_HEARTBEAT_INTERVAL_MS * 3);
   assert.equal(RUN_HOST_HEARTBEAT_INTERVAL_MS, 15_000);
   assert.equal(RUN_HOST_SILENCE_THRESHOLD_MS, 45_000);
 });
