@@ -162,8 +162,17 @@ export function extractCliRunFields(parsed: unknown): CliRunFields {
   };
 }
 
+/**
+ * Completion requires positive acceptance EVIDENCE, not just absence of
+ * failure: every manifest task has acceptance commands, so a trial with
+ * `acceptancePassed === null` means nothing verified the work — the
+ * delegated CLI path emits no top-level acceptance block, and treating
+ * that as completed would corrupt the A/B completion metric. The runner
+ * closes the gap by executing the acceptance commands itself when the
+ * CLI didn't report them (see runHarnessAcceptance in run-evals.ts).
+ */
 export function isCompleted(fields: CliRunFields): boolean {
-  return fields.outcome === 'success' && fields.acceptancePassed !== false;
+  return fields.outcome === 'success' && fields.acceptancePassed === true;
 }
 
 // ---------------------------------------------------------------------------

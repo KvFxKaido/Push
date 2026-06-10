@@ -188,9 +188,12 @@ test('extractCliRunFields reads both plain and delegated round counters', () => 
 
   const errored = extractCliRunFields({ outcome: 'error' });
   assert.ok(!isCompleted(errored));
-  // No acceptance block at all (e.g. delegated path) — outcome decides.
+  // No acceptance block (the delegated path emits none): completion
+  // requires positive evidence, so this must NOT score as completed —
+  // the runner re-verifies via runHarnessAcceptance instead.
   const noAcceptance = extractCliRunFields({ outcome: 'success', rounds: 1 });
-  assert.ok(isCompleted(noAcceptance));
+  assert.equal(noAcceptance.acceptancePassed, null);
+  assert.ok(!isCompleted(noAcceptance));
 });
 
 test('countSessionEvents tallies tool calls, errors, and regression signals', () => {

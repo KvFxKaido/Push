@@ -230,6 +230,30 @@ async function readSessionEvents(sessionId: string): Promise<unknown[]> {
 // Trial
 // ---------------------------------------------------------------------------
 
+/**
+ * Harness-side acceptance fallback: the delegated CLI path doesn't emit a
+ * top-level `acceptance` block in its `--json` output, and completion
+ * requires positive evidence (isCompleted). When the CLI didn't report
+ * acceptance, run the manifest commands directly in the trial workspace —
+ * same shell semantics as runAcceptanceChecks, scrubbed env.
+ */
+function runHarnessAcceptance(task: EvalTask, workspace: string): boolean {
+  const env = { ...process.env };
+  delete env.NODE_OPTIONS;
+  delete env.NODE_TEST_CONTEXT;
+  for (const cmd of task.accept) {
+    const res = spawnSync(cmd, {
+      cwd: workspace,
+      shell: true,
+      stdio: 'pipe',
+      timeout: 120_000,
+      env,
+    });
+    if (res.status !== 0) return false;
+  }
+  return true;
+}
+
 async function runTrial(task: EvalTask, trial: number): Promise<TrialResult> {
   const workspace = await createWorkspace(task, trial);
   const args = [
@@ -256,6 +280,13 @@ async function runTrial(task: EvalTask, trial: number): Promise<TrialResult> {
   const { parsed, error: jsonParseError } = parseCliJsonOutput(stdout);
   const fields = extractCliRunFields(parsed);
   if (timedOut) fields.outcome = 'harness_timeout';
+
+  // Acceptance evidence fallback (Codex P1): if the CLI claims success but
+  // reported no acceptance block (the delegated path doesn't emit one),
+  // verify the work here — never score a completion nobody checked.
+  if (!timedOut && fields.outcome === 'success' && fields.acceptancePassed === null) {
+    fields.acceptancePassed = runHarnessAcceptance(task, workspace);
+  }
 
   const events = fields.sessionId ? await readSessionEvents(fields.sessionId) : [];
   const counts = countSessionEvents(events);
