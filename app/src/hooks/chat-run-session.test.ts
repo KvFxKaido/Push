@@ -212,6 +212,21 @@ describe('finalizeRunSession — cleanup side effects', () => {
     expect(mockReleaseRunFromHost).toHaveBeenCalledWith('run-43');
   });
 
+  it('still releases the run when the engine already recorded a terminal phase', () => {
+    // runAlreadyTerminal only suppresses the duplicate terminal *event* —
+    // it must not skip the RunHost release.
+    const callbacks = makeCallbacks();
+    finalizeRunSession(
+      { chatId: 'chat-1', loopCompletedNormally: true },
+      makeRefs({
+        runEngineStateRef: { current: makeRunState({ phase: 'completed', runId: 'run-44' }) },
+      }),
+      callbacks,
+    );
+    expect(callbacks.emittedEvents.map((e) => e.type)).not.toContain('LOOP_COMPLETED');
+    expect(mockReleaseRunFromHost).toHaveBeenCalledWith('run-44');
+  });
+
   it('clears the run checkpoint only when loopCompletedNormally is true', () => {
     finalizeRunSession(
       { chatId: 'chat-1', loopCompletedNormally: true },

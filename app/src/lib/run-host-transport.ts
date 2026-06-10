@@ -38,6 +38,7 @@ import {
   type RunHostScope,
 } from '@push/lib/run-host-adoption';
 import type { RunCheckpointV1 } from '@push/lib/run-checkpoint';
+import { resolveApiUrl } from './api-url';
 
 const REGISTER_PATH = '/api/runhost/run/register';
 const CHECKPOINT_PATH = '/api/runhost/run/checkpoint';
@@ -45,7 +46,11 @@ const HEARTBEAT_PATH = '/api/runhost/run/heartbeat';
 const RELEASE_PATH = '/api/runhost/run/release';
 
 /** `fetch` keepalive caps in-flight body bytes (~64 KiB); stay under it so a
- * final flush from a hiding tab still ships. Larger bodies go without. */
+ * final flush from a hiding tab still ships. Larger bodies go without. The
+ * cap is in BYTES, so the check must measure encoded UTF-8 length —
+ * `string.length` counts UTF-16 code units and undercounts CJK/emoji-heavy
+ * transcripts, which would mark an over-quota body keepalive and get the
+ * request rejected outright. */
 const KEEPALIVE_BODY_LIMIT_BYTES = 56 * 1024;
 
 interface RunHandle {
@@ -78,11 +83,13 @@ function log(level: 'info' | 'warn', event: string, ctx: Record<string, unknown>
 
 function post(path: string, body: unknown, method: 'POST' | 'PUT' = 'POST'): Promise<Response> {
   const payload = JSON.stringify(body);
-  return fetch(path, {
+  // resolveApiUrl: relative paths don't reach the Worker from the Capacitor
+  // native shell (they resolve against the bundled HTML origin).
+  return fetch(resolveApiUrl(path), {
     method,
     headers: { 'content-type': 'application/json' },
     body: payload,
-    keepalive: payload.length <= KEEPALIVE_BODY_LIMIT_BYTES,
+    keepalive: new TextEncoder().encode(payload).length <= KEEPALIVE_BODY_LIMIT_BYTES,
   });
 }
 
@@ -121,6 +128,10 @@ async function registerRun(handle: RunHandle): Promise<boolean> {
   // success landing now must not start a heartbeat loop on a dead handle,
   // and the record the host just opened must be torn back down (it has no
   // checkpoint, so it could never be adopted, but don't leave the litter).
+  // This release can itself race a *newer* run's register on the same
+  // scope; that's safe because the host keys release by runId, not scope —
+  // a stale runId against a superseded record is a 409 no-op (see
+  // run-host-do.ts runRelease).
   if (!activeRuns.has(handle.runId)) {
     void post(RELEASE_PATH, { runId: handle.runId, scope: handle.scope }).catch(() => {});
     log('info', 'run_host_client_released', { runId: handle.runId, racedRegister: true });
@@ -345,4 +356,14 @@ export function __resetRunHostTransportForTests(): void {
   for (const handle of activeRuns.values()) stopHeartbeat(handle);
   activeRuns.clear();
   disabledForSession = false;
+}
+
+// Dev-only (Vite HMR): a module swap replaces `activeRuns` but the old
+// incarnation's interval timers would keep beating against dead handles.
+// Clear them on dispose; the next published checkpoint re-registers through
+// the new module. Production builds strip this block.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    for (const handle of activeRuns.values()) stopHeartbeat(handle);
+  });
 }
