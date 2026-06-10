@@ -151,7 +151,13 @@ async function handleRunAction(
   const id = env.RUN_HOST!.idFromName(runHostInstanceId(scope));
   const stub = env.RUN_HOST!.get(id);
   const doPath = `/run/${action.slice('run.'.length)}`;
-  const forwarded = new Request(`https://do${doPath}`, {
+  // Server-derived deployment origin, stamped unconditionally (a
+  // client-supplied value can never win — the spikeOrigin stance). The DO
+  // persists it on the record so adoption-time provisioning can build
+  // internal provider/sandbox Requests after the client is gone.
+  const targetUrl = new URL(`https://do${doPath}`);
+  targetUrl.searchParams.set('hostOrigin', requestUrl.origin);
+  const forwarded = new Request(targetUrl.toString(), {
     method: request.method,
     headers: { 'content-type': 'application/json' },
     body: forwardBody,

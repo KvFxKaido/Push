@@ -277,6 +277,22 @@ describe('heartbeat loop', () => {
     expect(calls[1].body).toMatchObject({ runId: 'run-1', round: 5 });
   });
 
+  it('re-registers (reclaim) when a beat reports state adopted — register stops the server loop', async () => {
+    publishRunCheckpointToHost(makeCheckpoint({ round: 7 }));
+    await flush();
+    calls = [];
+
+    scripted = [jsonResponse({ ok: true, state: 'adopted' })];
+    await vi.advanceTimersByTimeAsync(RUN_HOST_HEARTBEAT_INTERVAL_MS);
+    await flush();
+
+    expect(calls.map((c) => c.path)).toEqual([
+      '/api/runhost/run/heartbeat',
+      '/api/runhost/run/register',
+    ]);
+    expect(calls[1].body).toMatchObject({ runId: 'run-1', round: 7 });
+  });
+
   it('stops the loop on a 409 (run released or superseded on the host)', async () => {
     publishRunCheckpointToHost(makeCheckpoint());
     await flush();

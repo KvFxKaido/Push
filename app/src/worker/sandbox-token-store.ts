@@ -109,6 +109,24 @@ function isTokenRecord(v: unknown): v is TokenRecord {
 }
 
 /**
+ * Read the stored owner token for a sandboxId, or null when no (valid)
+ * record exists. Server-internal ONLY: this is the out-of-band credential
+ * provisioning path for runs the Worker itself continues (RunHost adoption —
+ * the checkpoint carries the sandbox *identity*, never the token; the host
+ * re-derives the secret here at adoption time, the CoderJobStartInput
+ * precedent). Never expose this through a client-reachable route — clients
+ * get the token exactly once, in the create response.
+ */
+export async function readOwnerToken(
+  store: KVNamespace | undefined,
+  sandboxId: string,
+): Promise<string | null> {
+  if (!store || !sandboxId) return null;
+  const raw = await store.get(`${KEY_PREFIX}${sandboxId}`, 'json');
+  return isTokenRecord(raw) ? raw.token : null;
+}
+
+/**
  * Remove a sandbox's token record. Called from routeCleanup after the DO
  * is destroyed. Idempotent — deleting a missing key is a no-op on KV.
  */

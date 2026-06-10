@@ -15,8 +15,12 @@
  *     not a bug: a backgrounded phone stops beating, the host flips the run
  *     `adoptable`, and adopt-on-silence does its job.
  *   - **Pull-back-local** — a heartbeat answered with `state: 'adoptable'`
- *     means the host lapsed us while we were actually alive (radio gap,
- *     throttled tab that came back). Re-register to reclaim the run.
+ *     or `'adopted'` means the host lapsed us while we were actually alive
+ *     (radio gap, throttled tab that came back). Re-register to reclaim the
+ *     run; on `'adopted'` the register is also what stops the server-side
+ *     loop (register always wins). A checkpoint 409 while the host considers
+ *     the run detached (`RUN_NOT_WATCHED`, adoptable or adopted) takes the
+ *     same path: drop registration, re-register on the next publish.
  *   - **Release** — `finalizeRunSession` releases on every terminal path so
  *     a normally completed run never lingers `watched` and gets adopted.
  *
@@ -192,14 +196,17 @@ async function beat(handle: RunHandle): Promise<void> {
     return;
   }
   const body = (await res.json().catch(() => ({}))) as { state?: string };
-  if (body.state === 'adoptable') {
+  if (body.state === 'adoptable' || body.state === 'adopted') {
     // We lapsed (throttled tab, radio gap) but we're demonstrably alive and
-    // still running the loop in-page — reclaim the run before the
-    // server-side loop picks it up.
+    // still running the loop in-page — reclaim the run. `adoptable` means
+    // the server loop hasn't started; `adopted` means it HAS, and this
+    // re-register is what stops it (register always wins — the host aborts
+    // the server loop before flipping the record back to `watched`), so the
+    // window where both homes run is bounded by one heartbeat interval.
     handle.registered = false;
     const reclaimed = await registerRun(handle);
     if (reclaimed) {
-      log('info', 'run_host_client_reclaimed', { runId: handle.runId });
+      log('info', 'run_host_client_reclaimed', { runId: handle.runId, hostState: body.state });
     }
   }
 }

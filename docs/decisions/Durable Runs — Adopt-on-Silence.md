@@ -1,6 +1,6 @@
 # Durable Runs — Adopt-on-Silence
 
-**Status:** Draft — promoted to `ROADMAP.md` (first priority) 2026-06-10; design committed, implementation in progress. Phase 0 is COMPLETE (latency spike #870, eval harness #871; numbers in [Phase 0 results](#phase-0-results-2026-06-10) below — latency does not block Phase 2). Phase 1 is COMPLETE (schema #873, capture #874). Phase 2 is IN PROGRESS: the delegation-collapse precondition is in place (the inline route + flag in `delegation-mode-settings.ts`, A/B-measurable via the eval harness `--delegate` arm), and the **adoption substrate** has landed — the `RunHost` DO now owns the heartbeat ledger, per-run checkpoint persistence, and the watched→adoptable adoption *decision* (see [Phase 2 substrate](#phase-2-substrate-shipped-2026-06-10)) — and the **client transport** has landed: every web run now registers with the host, mirrors its per-turn checkpoint, heartbeats, and releases on terminal (see [Phase 2 client transport](#phase-2-client-transport-shipped-2026-06-10)). The server-side loop that continues an adopted run is the next piece.
+**Status:** Current — Phases 0–2 COMPLETE; Phase 3 (attach/viewer) is the next piece. Phase 0: latency spike #870, eval harness #871 (numbers in [Phase 0 results](#phase-0-results-2026-06-10) — latency does not block Phase 2). Phase 1: schema #873, capture #874. Phase 2: the delegation-collapse precondition (the inline route + flag in `delegation-mode-settings.ts`, A/B-measurable via the eval harness `--delegate` arm), the **adoption substrate** (heartbeat ledger, checkpoint persistence, watched→adoptable decision — see [Phase 2 substrate](#phase-2-substrate-shipped-2026-06-10)), the **client transport** (register/mirror/heartbeat/release + pull-back-local — see [Phase 2 client transport](#phase-2-client-transport-shipped-2026-06-10)), and the **server-side loop** that consumes `adoptable` (see [Phase 2 server-side loop](#phase-2-server-side-loop-shipped-2026-06-10)).
 
 **Date:** 2026-06-10
 
@@ -229,11 +229,10 @@ rather than alongside it:
   **parks there**, because the server-side loop that consumes `adoptable` is
   the next piece. Every alarm branch logs symmetrically (`run_host_run_adoptable`
   ↔ `run_host_alarm_rearmed` ↔ `run_host_alarm_idle`).
-- **Deferred to the loop PR:** running the kernels server-side from
-  `adoptable`; the supervised-pause / full-auto-continue mode semantics
-  (the `mode` is captured in the record, not yet acted on); orphan-sweep
-  cross-eviction recovery (the run record survives eviction; relaunching the
-  loop on wake is the loop PR's job).
+- ~~**Deferred to the loop PR:**~~ all four deferred items shipped in the
+  loop PR below: running the kernels server-side from `adoptable`, the
+  supervised-pause / full-auto-continue mode semantics, orphan-sweep
+  cross-eviction recovery, and the chat-hook/follow-up question.
 
 #### Phase 2 client transport (shipped 2026-06-10)
 
@@ -268,6 +267,100 @@ host that actually has adoptable runs:
 - **NOT_CONFIGURED latch** — a 503 register (no `RUN_HOST` binding)
   disables the transport for the session after one log line; deployments
   without the DO see zero retry noise.
+
+#### Phase 2 server-side loop (shipped 2026-06-10)
+
+The host now consumes `adoptable`: on heartbeat lapse the run is adopted and
+continued server-side from its stored `RunCheckpointV1`.
+
+**Architecture.** An adopted run continues on the **coder kernel**
+(`lib/coder-agent.ts`) — the one `lib/` role kernel already proven
+dual-homed (in-page delegated + CoderJob DO). That is the delegation-collapse
+payoff: the simplified orchestrator loop and the inline coder loop converge,
+so adoption seeds the kernel from the checkpoint transcript
+(`lib/run-adoption-loop.ts` maps checkpoint → `resumeState`, appending a
+model-readable `[RUN_ADOPTED]` context note) instead of growing a second
+orchestrator home. The DO-side assembly
+(`app/src/worker/run-host-adoption-runner.ts`) reuses the CoderJob adapter
+stack verbatim — stream/executor/detector adapters call Worker handlers as
+functions with `env`. Pure decisions (watchdog, relaunch cap, wall clock)
+live in `lib/run-host-adoption.ts` (`decideAdoptedAlarm`), drift-pinned next
+to `decideAdoption`.
+
+**Credentials are provisioned out-of-band at adoption time** (the
+CoderJobStartInput precedent): the checkpoint carries the sandbox *identity*
+(`sandboxSessionId`); the host re-derives the owner token from the
+SANDBOX_TOKENS KV (`readOwnerToken`, server-internal). Provider keys live in
+Worker env; the deployment origin is stamped server-derived by the route
+layer and persisted on the record. A blocked provisioning (token expired,
+unsupported provider, pre-loop record without an origin) parks the run
+`adoptable` LOUDLY (`run_host_adoption_blocked` + alarm cleared) — the
+client pull-back contract still applies.
+
+**Mode semantics.** Full-auto/autonomous runs continue uninterrupted (AFK is
+their meaning). Supervised runs evaluate `lib/approval-gates` before every
+sandbox/web-search call; an `ask_user` decision (destructive exec,
+direct-git override, remote side effect — or a literal `ask_user` call)
+PAUSES the run: the gate's `[RUN_PAUSED_FOR_APPROVAL]` note lands in the
+transcript, the per-round checkpoint persists it, `pausedForApproval` rides
+on the record, the watchdog stands down, and the run waits for a returning
+client to reclaim it. Delivery rules hold by construction: the background
+executor doesn't wire the audited commit tools (`sandbox_prepare_commit` /
+`sandbox_push` return structured blocks) and direct `git commit/push/merge`
+is guard-blocked, so an adopted run can explore/edit/test but cannot land
+unaudited history — the Auditor gate is never bypassed because commits wait
+for an attended surface.
+
+**Reclaim handoff (chosen semantics): register always wins.** A returning
+client's re-register aborts the server loop (AbortController + an
+`adoptionId` ownership check on every per-round checkpoint — the loop stops
+without writing once ownership is lost) before the record returns to
+`watched`; the register response carries `reclaimedFromAdopted` +
+`hostRound` so the divergence is visible. Checkpoint PUTs are accepted only
+from the attached owner of a `watched` run — any detached state
+(`adoptable`/`adopted`) gets `409 RUN_NOT_WATCHED`, which makes the
+transport drop its registration
+and re-register on the next publish — the same reclaim path heartbeats take
+(a beat answered `adopted`, like `adoptable`, triggers re-register). This
+also closes the torn-read race where a late client checkpoint landing while
+the adoption launcher was mid-provisioning would be accepted and then
+overwritten by the loop's first persisted round. The
+double-execution window is bounded: at most one already-in-flight tool call
+can overlap a reclaim, the same bounded race the CoderJob orphan path
+documents. The client's local transcript may lag the host's checkpoint until
+Phase 3 attach hydration; the host copy remains the adoption source if
+heartbeats lapse again.
+
+**Orphan recovery.** While adopted, a durable watchdog alarm
+(`RUN_HOST_ADOPTED_WATCHDOG_MS`) is re-armed on every per-round checkpoint.
+After a DO eviction the alarm survives in storage, fires, finds no live loop
+in memory, and relaunches from the last persisted checkpoint — bounded by a
+persisted `adoptionRelaunches` cap (`RUN_HOST_MAX_ADOPTION_RELAUNCHES`,
+increment-before-launch) and a wall-clock budget
+(`RUN_HOST_ADOPTED_WALL_CLOCK_MS`), after which the run is expired loudly.
+Loop failures park `adoptable` with a bounded retry alarm under the same
+cap. Server-side progress is checkpointed every round (`checkpointCadenceRounds: 1`
+— there is no client mirror, so the durable copy is the only copy) in the
+same `RunCheckpointV1` schema both homes write.
+
+**Resolved: chat-hook tools and queued user follow-ups.** Chat-hook /
+orchestrator-only tool families (`scratchpad`, `todo`, `delegate`,
+`ask-user`, `artifacts`, `github` — pinned in
+`cli/tests/run-adoption-loop.test.mjs`) are **deferred with a model-readable
+note** recorded in the transcript, never silently dropped (the in-page
+stores don't exist server-side; the CoderJob memory-tools precedent). Queued
+user follow-ups need no server-side queue in v1: there is no channel into an
+adopted run until Phase 3 attach, and a user typing a follow-up implies a
+returned client — whose re-register reclaims the run and drains its queue
+locally, exactly today's behavior.
+
+**Known v1 limits** (accepted, revisit with Phase 3): a sandbox that died
+while the run was unattended is not re-provisioned (no workspace-snapshot
+infra on this path — adoption retries are bounded and then park
+`adoptable`); multimodal `contentParts` degrade to their text fallback on
+the server-side wire (the checkpoint preserves them for the client); the
+final assistant summary lives in the terminal checkpoint awaiting Phase 3
+hydration.
 
 ### Phase 3 — Attach/viewer
 

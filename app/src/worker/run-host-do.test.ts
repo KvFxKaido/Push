@@ -11,10 +11,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   resolveProviderHandler: vi.fn(),
+  provisionAdoption: vi.fn(),
+  runAdoptedLoop: vi.fn(),
 }));
 
 vi.mock('./coder-job-stream-adapter', () => ({
   resolveProviderHandler: mocks.resolveProviderHandler,
+}));
+
+vi.mock('./run-host-adoption-runner', () => ({
+  provisionAdoption: mocks.provisionAdoption,
+  runAdoptedLoop: mocks.runAdoptedLoop,
 }));
 
 import { RunHost } from './run-host-do';
@@ -58,6 +65,16 @@ const VALID_BODY = { provider: 'zen', model: 'glm-5.1', prompt: 'ping' };
 beforeEach(() => {
   mocks.resolveProviderHandler.mockReset();
   mocks.resolveProviderHandler.mockReturnValue(async () => sseResponse());
+  mocks.provisionAdoption.mockReset();
+  mocks.provisionAdoption.mockResolvedValue({
+    ok: true,
+    origin: 'https://push.test',
+    sandboxId: 'sb-1',
+    ownerToken: 'owner-token',
+  });
+  mocks.runAdoptedLoop.mockReset();
+  // Default: a loop that runs "forever" (tests abort or re-mock it).
+  mocks.runAdoptedLoop.mockReturnValue(new Promise<void>(() => {}));
 });
 
 describe('matchRunHostRoute', () => {
@@ -230,7 +247,12 @@ type Storage = ReturnType<typeof makeStorage>;
 
 function makeLedgerHost(storage: Storage): RunHost {
   return new RunHost(
-    { storage } as unknown as ConstructorParameters<typeof RunHost>[0],
+    {
+      storage,
+      waitUntil: (p: Promise<unknown>) => {
+        void p.catch(() => {});
+      },
+    } as unknown as ConstructorParameters<typeof RunHost>[0],
     {} as unknown as Env,
   );
 }
@@ -530,27 +552,86 @@ describe('run ledger: heartbeat + release', () => {
   });
 });
 
+function seedWatchedLapsedRun(storage: Storage, overrides: Record<string, unknown> = {}): void {
+  storage.map.set('run:record', {
+    v: 1,
+    runId: 'run-1',
+    scope: SCOPE,
+    mode: 'supervised',
+    state: 'watched',
+    registeredAt: 1,
+    lastHeartbeatAt: Date.now() - 10 * 60_000,
+    hasCheckpoint: true,
+    midFlight: true,
+    round: 4,
+    origin: 'https://push.test',
+    ...overrides,
+  });
+  storage.map.set('run:checkpoint', makeCheckpoint());
+}
+
 describe('run ledger: silence alarm', () => {
-  it('transitions a lapsed, mid-flight run to adoptable and clears the alarm', async () => {
+  it('adopts a lapsed, mid-flight run: state adopted, watchdog armed, loop launched', async () => {
     const storage = makeStorage();
-    // Seed a watched run whose last heartbeat is well past the threshold.
-    storage.map.set('run:record', {
-      v: 1,
-      runId: 'run-1',
-      scope: SCOPE,
-      mode: 'supervised',
-      state: 'watched',
-      registeredAt: 1,
-      lastHeartbeatAt: Date.now() - 10 * 60_000,
-      hasCheckpoint: true,
-      midFlight: true,
-      round: 4,
-    });
+    seedWatchedLapsedRun(storage);
+    storage.alarmAt = 123;
+    await makeLedgerHost(storage).alarm();
+    const record = storage.map.get('run:record') as Record<string, unknown>;
+    expect(record.state).toBe('adopted');
+    expect(typeof record.adoptionId).toBe('string');
+    expect(typeof record.adoptedAt).toBe('number');
+    // Watchdog armed so an eviction is recoverable.
+    expect(storage.alarmAt).not.toBeNull();
+    expect(mocks.runAdoptedLoop).toHaveBeenCalledTimes(1);
+    const args = mocks.runAdoptedLoop.mock.calls[0][0] as Record<string, unknown>;
+    expect(args.ownerToken).toBe('owner-token');
+    expect(args.origin).toBe('https://push.test');
+    expect(args.sandboxId).toBe('sb-1');
+  });
+
+  it('parks adoptable LOUDLY (alarm cleared, no loop) when provisioning is blocked', async () => {
+    const storage = makeStorage();
+    seedWatchedLapsedRun(storage);
+    mocks.provisionAdoption.mockResolvedValue({ ok: false, reason: 'no_sandbox_credentials' });
     storage.alarmAt = 123;
     await makeLedgerHost(storage).alarm();
     expect((storage.map.get('run:record') as Record<string, unknown>).state).toBe('adoptable');
-    // Parked — the alarm is cleared (the server-side loop is the next PR).
     expect(storage.alarmAt).toBeNull();
+    expect(mocks.runAdoptedLoop).not.toHaveBeenCalled();
+  });
+
+  it('a register landing during provisioning preempts the adoption (no hijack)', async () => {
+    const storage = makeStorage();
+    seedWatchedLapsedRun(storage);
+    // Simulate a reclaim interleaving at the provisioning await: by the time
+    // the KV read resolves, a live client re-registered and the record is
+    // `watched` again with the silence alarm armed.
+    mocks.provisionAdoption.mockImplementation(async () => {
+      const record = storage.map.get('run:record') as Record<string, unknown>;
+      storage.map.set('run:record', { ...record, state: 'watched' });
+      storage.alarmAt = Date.now() + 45_000;
+      return { ok: true, origin: 'https://push.test', sandboxId: 'sb-1', ownerToken: 'tok' };
+    });
+    await makeLedgerHost(storage).alarm();
+    const record = storage.map.get('run:record') as Record<string, unknown>;
+    expect(record.state).toBe('watched');
+    expect(record.adoptionId).toBeUndefined();
+    expect(mocks.runAdoptedLoop).not.toHaveBeenCalled();
+    // The racing register's silence alarm survives — preemption touches nothing.
+    expect(storage.alarmAt).not.toBeNull();
+  });
+
+  it('parks adoptable when no checkpoint exists to adopt from', async () => {
+    const storage = makeStorage();
+    seedWatchedLapsedRun(storage);
+    storage.map.delete('run:checkpoint');
+    // hasCheckpoint must be true to reach adoption at all — simulate a record
+    // whose checkpoint vanished (storage divergence) to prove the fail-closed
+    // park rather than a crash.
+    await makeLedgerHost(storage).alarm();
+    expect((storage.map.get('run:record') as Record<string, unknown>).state).toBe('adoptable');
+    expect(storage.alarmAt).toBeNull();
+    expect(mocks.runAdoptedLoop).not.toHaveBeenCalled();
   });
 
   it('re-arms a run still within the silence window', async () => {
@@ -577,5 +658,193 @@ describe('run ledger: silence alarm', () => {
     const storage = makeStorage();
     await makeLedgerHost(storage).alarm();
     expect(storage.alarmAt).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 2 loop — adopted lifecycle (reclaim, watchdog, orphan relaunch)
+// ---------------------------------------------------------------------------
+
+/** Drive a host through silence-adoption so the in-memory loop handle is
+ * live, and return the abort controller the DO handed the runner. */
+async function adoptRun(host: RunHost, storage: Storage): Promise<AbortController> {
+  seedWatchedLapsedRun(storage);
+  await host.alarm();
+  expect(mocks.runAdoptedLoop).toHaveBeenCalledTimes(1);
+  const args = mocks.runAdoptedLoop.mock.calls[0][0] as { abort: AbortController };
+  return args.abort;
+}
+
+describe('run ledger: adopted lifecycle', () => {
+  it('register reclaims an adopted run: loop aborted, state watched, response says so', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    const abort = await adoptRun(host, storage);
+    expect(abort.signal.aborted).toBe(false);
+
+    const res = await register(host);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.reclaimedFromAdopted).toBe(true);
+    expect(body.hostRound).toBe(4);
+    expect(abort.signal.aborted).toBe(true);
+    const record = storage.map.get('run:record') as Record<string, unknown>;
+    expect(record.state).toBe('watched');
+    expect(record.adoptionId).toBeUndefined();
+  });
+
+  it('rejects a client checkpoint while adopted (409 RUN_NOT_WATCHED)', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    await adoptRun(host, storage);
+    const res = await host.fetch(
+      ledgerRequest('/run/checkpoint', 'PUT', { checkpoint: makeCheckpoint() }),
+    );
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.error).toBe('RUN_NOT_WATCHED');
+    expect(body.state).toBe('adopted');
+  });
+
+  it('rejects a client checkpoint while adoptable — no torn read under the adoption launcher', async () => {
+    // A late client checkpoint landing while startAdoption is mid-await
+    // would otherwise be accepted and then silently overwritten by the
+    // loop's first persisted round (adoption launches from the checkpoint it
+    // read BEFORE this write). The 409 routes the client into the
+    // re-register reclaim path instead.
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    seedWatchedLapsedRun(storage, { state: 'adoptable' });
+    const before = storage.map.get('run:checkpoint');
+    const res = await host.fetch(
+      ledgerRequest('/run/checkpoint', 'PUT', { checkpoint: makeCheckpoint({ round: 9 }) }),
+    );
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.error).toBe('RUN_NOT_WATCHED');
+    expect(body.state).toBe('adoptable');
+    // The stored adoption source is untouched.
+    expect(storage.map.get('run:checkpoint')).toBe(before);
+    expect((storage.map.get('run:record') as Record<string, unknown>).round).toBe(4);
+  });
+
+  it('heartbeat on an adopted run reports the state so the client can reclaim', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    await adoptRun(host, storage);
+    const res = await host.fetch(ledgerRequest('/run/heartbeat', 'POST', { runId: 'run-1' }));
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as Record<string, unknown>).state).toBe('adopted');
+  });
+
+  it('release of an adopted run aborts the loop and tears down', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    const abort = await adoptRun(host, storage);
+    const res = await host.fetch(ledgerRequest('/run/release', 'POST', { runId: 'run-1' }));
+    expect(res.status).toBe(200);
+    expect(abort.signal.aborted).toBe(true);
+    expect(storage.map.has('run:record')).toBe(false);
+  });
+
+  it('watchdog re-arms while the loop is alive in this isolate', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    await adoptRun(host, storage);
+    storage.alarmAt = null;
+    await host.alarm();
+    expect(storage.alarmAt).not.toBeNull();
+    // No relaunch — still the original loop.
+    expect(mocks.runAdoptedLoop).toHaveBeenCalledTimes(1);
+  });
+
+  it('watchdog relaunches an orphaned loop after a DO eviction (new isolate)', async () => {
+    const storage = makeStorage();
+    const first = makeLedgerHost(storage);
+    await adoptRun(first, storage);
+    const beforeId = (storage.map.get('run:record') as Record<string, unknown>).adoptionId;
+
+    // A fresh host over the same storage = the post-eviction isolate: the
+    // record survives, the in-memory loop handle does not.
+    const second = makeLedgerHost(storage);
+    await second.alarm();
+    const record = storage.map.get('run:record') as Record<string, unknown>;
+    expect(record.state).toBe('adopted');
+    expect(record.adoptionRelaunches).toBe(1);
+    expect(record.adoptionId).not.toBe(beforeId);
+    expect(mocks.runAdoptedLoop).toHaveBeenCalledTimes(2);
+  });
+
+  it('watchdog expires an orphaned run once the relaunch cap is exhausted', async () => {
+    const storage = makeStorage();
+    const first = makeLedgerHost(storage);
+    await adoptRun(first, storage);
+    const record = storage.map.get('run:record') as Record<string, unknown>;
+    record.adoptionRelaunches = 2; // RUN_HOST_MAX_ADOPTION_RELAUNCHES
+    storage.map.set('run:record', record);
+
+    const second = makeLedgerHost(storage);
+    await second.alarm();
+    const after = storage.map.get('run:record') as Record<string, unknown>;
+    expect(after.state).toBe('ended');
+    expect(after.midFlight).toBe(false);
+    expect(storage.alarmAt).toBeNull();
+    expect(mocks.runAdoptedLoop).toHaveBeenCalledTimes(1);
+  });
+
+  it('watchdog never relaunches a run paused at a supervised approval gate', async () => {
+    const storage = makeStorage();
+    const first = makeLedgerHost(storage);
+    await adoptRun(first, storage);
+    const record = storage.map.get('run:record') as Record<string, unknown>;
+    record.pausedForApproval = { approvalId: 'adopt-sandbox_push-r5', kind: 'remote_side_effect' };
+    storage.map.set('run:record', record);
+
+    const second = makeLedgerHost(storage);
+    await second.alarm();
+    expect((storage.map.get('run:record') as Record<string, unknown>).state).toBe('adopted');
+    expect(storage.alarmAt).toBeNull();
+    expect(mocks.runAdoptedLoop).toHaveBeenCalledTimes(1);
+  });
+
+  it('a paused run is reclaimable: register clears the pause and goes watched', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    await adoptRun(host, storage);
+    const record = storage.map.get('run:record') as Record<string, unknown>;
+    record.pausedForApproval = { approvalId: 'a-1', kind: 'remote_side_effect' };
+    storage.map.set('run:record', record);
+
+    const res = await register(host);
+    expect(res.status).toBe(200);
+    const after = storage.map.get('run:record') as Record<string, unknown>;
+    expect(after.state).toBe('watched');
+    expect(after.pausedForApproval).toBeUndefined();
+  });
+
+  it('status exposes the adoption observability fields', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    await adoptRun(host, storage);
+    const res = await host.fetch(ledgerRequest('/run/status', 'GET'));
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.state).toBe('adopted');
+    expect(typeof body.adoptedAt).toBe('number');
+  });
+
+  it('register persists the route-stamped hostOrigin on the record', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    const res = await host.fetch(
+      new Request('https://do/run/register?hostOrigin=https%3A%2F%2Fpush.example', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ runId: 'run-1', scope: SCOPE, mode: 'supervised', round: 0 }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect((storage.map.get('run:record') as Record<string, unknown>).origin).toBe(
+      'https://push.example',
+    );
   });
 });

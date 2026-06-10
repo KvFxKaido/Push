@@ -12,11 +12,13 @@
  * (`cli/tests/run-host-adoption.test.mjs`, same discipline as
  * `run-checkpoint.ts` / `protocol-schema.ts`).
  *
- * Scaffolding scope: this lands the ledger + the adoption *decision*. The
- * server-side loop that actually continues an adopted run (running the same
- * `lib/` kernels host-agnostically) is the next PR — when `decideAdoption`
- * returns `adopt`, the DO transitions the run to `adoptable` and logs; it does
- * NOT yet run the loop.
+ * Phase 2 loop scope: alongside the silence decision (`decideAdoption`), this
+ * module owns the adopted-run watchdog decision (`decideAdoptedAlarm`) — the
+ * pure kernel behind orphan relaunch after a DO eviction, the wall-clock
+ * backstop, and the relaunch cap. The loop body itself (mapping a stored
+ * checkpoint into the coder kernel, deferral notes, supervised pause) lives in
+ * `lib/run-adoption-loop.ts`; the DO-side assembly lives in
+ * `app/src/worker/run-host-adoption-runner.ts`.
  */
 
 import type { ApprovalMode } from './approval-gates.ts';
@@ -51,6 +53,31 @@ export const RUN_HOST_SILENCE_THRESHOLD_MS = 45_000;
  */
 export const RUN_HOST_HEARTBEAT_INTERVAL_MS = 15_000;
 
+/**
+ * Watchdog cadence while a run is `adopted`. The loop re-arms the alarm at
+ * this interval (each per-round checkpoint), so after a DO eviction the alarm
+ * survives in durable storage, fires, finds no live loop in memory, and
+ * relaunches from the last persisted checkpoint — the orphan-sweep recovery
+ * the CoderJob DO does via its first-fetch sweep, expressed as an alarm
+ * because an adopted run has no client traffic to wake the DO.
+ */
+export const RUN_HOST_ADOPTED_WATCHDOG_MS = 60_000;
+
+/**
+ * Max times an adopted run is relaunched after a DO eviction or a loop
+ * failure. Persisted on the record (`adoptionRelaunches`) so the cap survives
+ * evictions — the same anti-restart-loop discipline as the CoderJob DO's
+ * MAX_DO_RESTART_RESUMES.
+ */
+export const RUN_HOST_MAX_ADOPTION_RELAUNCHES = 2;
+
+/**
+ * Wall-clock budget for a single adoption (from `adoptedAt`). The kernel's
+ * own round cap bounds rounds; this bounds time, so a stalled provider or
+ * sandbox can't keep an adopted run alive forever. CoderJob parity (60 min).
+ */
+export const RUN_HOST_ADOPTED_WALL_CLOCK_MS = 60 * 60 * 1000;
+
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
@@ -62,15 +89,20 @@ export const RUN_HOST_HEARTBEAT_INTERVAL_MS = 15_000;
  *                   in-page (today's behavior, byte-for-byte). The alarm
  *                   watches for heartbeat lapse.
  *   - `adoptable` — heartbeats lapsed mid-flight; the host SHOULD adopt the
- *                   run from its last checkpoint. (The server-side loop that
- *                   consumes this state is the next PR; this scaffolding
- *                   parks here and logs.) One-way: a late heartbeat or
- *                   checkpoint does NOT resurrect an `adoptable` run to
- *                   `watched` (that would race the loop about to start). A
- *                   still-alive client takes it back only via an explicit
- *                   re-register (pull-back-local).
- *   - `adopted`   — the host is running the loop server-side. Reserved for
- *                   the loop PR; no transition sets it yet.
+ *                   run from its last checkpoint. The DO attempts adoption
+ *                   immediately on this transition; a run parks here only
+ *                   when provisioning is blocked (no credentials, no
+ *                   checkpoint, unsupported provider) or the relaunch cap is
+ *                   exhausted. One-way: a late heartbeat or checkpoint does
+ *                   NOT resurrect an `adoptable` run to `watched` (that
+ *                   would race the loop about to start). A still-alive
+ *                   client takes it back only via an explicit re-register
+ *                   (pull-back-local).
+ *   - `adopted`   — the host is running the loop server-side (or has paused
+ *                   it at a supervised approval gate — `pausedForApproval`
+ *                   set). A client re-register reclaims the run: register
+ *                   always wins, the server loop aborts at its next
+ *                   ownership check, and the record returns to `watched`.
  *   - `released`  — a client pulled the run back local, or explicitly tore it
  *                   down. Terminal for the alarm.
  *   - `ended`     — the run reached a terminal state (completed or aborted).
@@ -86,8 +118,21 @@ export const RUN_LIFECYCLE_STATES: readonly RunLifecycleState[] = [
   'ended',
 ];
 
-/** The states from which the silence alarm can still act. */
-export const RUN_LIFECYCLE_ALARM_ACTIVE_STATES: readonly RunLifecycleState[] = ['watched'];
+/**
+ * The states in which an alarm may legitimately be scheduled, and what a
+ * wake means there:
+ *   - `watched`   — the silence detector (`decideAdoption`).
+ *   - `adoptable` — a scheduled adoption retry after a loop failure (a run
+ *                   parked adoptable for a *blocked* reason has its alarm
+ *                   cleared, so a wake here always means "retry").
+ *   - `adopted`   — the loop watchdog (`decideAdoptedAlarm`): liveness
+ *                   re-arm, orphan relaunch after eviction, wall-clock cap.
+ */
+export const RUN_LIFECYCLE_ALARM_ACTIVE_STATES: readonly RunLifecycleState[] = [
+  'watched',
+  'adoptable',
+  'adopted',
+];
 
 // ---------------------------------------------------------------------------
 // Scope → instance
@@ -161,6 +206,33 @@ export interface RunHostRecord {
   midFlight: boolean;
   /** Latest checkpoint round, for status/observability. */
   round: number;
+
+  // --- Adoption-loop fields (all optional: pre-loop records lack them) ---
+
+  /** Deployment origin, stamped server-derived by the route layer on
+   * register/checkpoint and persisted here so adoption-time provisioning can
+   * build internal Requests (stream/executor adapters) without trusting any
+   * client value. */
+  origin?: string;
+  /** Epoch-ms the current adoption began (state flipped to `adopted`). */
+  adoptedAt?: number;
+  /** Identity of the in-flight adoption. The loop checks it on every
+   * per-round checkpoint; a client re-register clears it, which is how the
+   * server loop learns it was reclaimed and stops without writing. */
+  adoptionId?: string;
+  /** Times this run has been (re)launched server-side. Persisted so the cap
+   * (`RUN_HOST_MAX_ADOPTION_RELAUNCHES`) survives DO evictions. */
+  adoptionRelaunches?: number;
+  /** Set when a supervised adopted run paused at an approval gate. The
+   * watchdog never relaunches a paused run; a returning client reclaims it. */
+  pausedForApproval?: {
+    approvalId: string;
+    kind: string;
+    title?: string;
+    summary?: string;
+  } | null;
+  /** Last loop failure, for status/observability. */
+  lastError?: string;
 }
 
 export const RUN_HOST_RECORD_FIELDS = [
@@ -174,6 +246,17 @@ export const RUN_HOST_RECORD_FIELDS = [
   'hasCheckpoint',
   'midFlight',
   'round',
+] as const;
+
+/** The optional adoption-loop additions to the record vocabulary, pinned
+ * separately so the base Phase 2 substrate fields stay byte-stable. */
+export const RUN_HOST_RECORD_ADOPTION_FIELDS = [
+  'origin',
+  'adoptedAt',
+  'adoptionId',
+  'adoptionRelaunches',
+  'pausedForApproval',
+  'lastError',
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -199,15 +282,16 @@ export interface AdoptionDecision {
  * none of them is silent.
  *
  * Decision order (most-terminal first):
- *   1. Not in an alarm-active state → idle (released/ended/adopted/adoptable
- *      are not the alarm's to touch).
+ *   1. Not `watched` → idle (the silence detector only ever adopts a watched
+ *      run; adoptable/adopted alarm wakes are dispatched to the retry /
+ *      watchdog paths by the DO, not here).
  *   2. No checkpoint yet → idle (nothing to adopt from).
  *   3. Not mid-flight → idle (a finished run is not resurrected).
  *   4. Heartbeats lapsed past the threshold → adopt.
  *   5. Otherwise → re-arm at lastHeartbeat + threshold (still watched).
  */
 export function decideAdoption(record: RunHostRecord, now: number): AdoptionDecision {
-  if (!RUN_LIFECYCLE_ALARM_ACTIVE_STATES.includes(record.state)) {
+  if (record.state !== 'watched') {
     return { action: 'idle', reason: `state_${record.state}` };
   }
   if (!record.hasCheckpoint) {
@@ -231,4 +315,61 @@ export function decideAdoption(record: RunHostRecord, now: number): AdoptionDeci
  * rejects on `true` rather than attempting the put. */
 export function checkpointExceedsHostCap(bytes: number): boolean {
   return bytes > RUN_HOST_CHECKPOINT_MAX_BYTES;
+}
+
+// ---------------------------------------------------------------------------
+// The adopted-run watchdog decision (pure)
+// ---------------------------------------------------------------------------
+
+export type AdoptedAlarmAction = 'idle' | 'rearm' | 'relaunch' | 'expire';
+
+export interface AdoptedAlarmDecision {
+  action: AdoptedAlarmAction;
+  /** When `action === 'rearm'`, the epoch-ms the watchdog should next fire. */
+  reArmAt?: number;
+  /** Stable token naming the branch taken, for the DO's symmetric alarm log. */
+  reason: string;
+}
+
+/**
+ * Decide what a watchdog wake should do for an `adopted` run. Pure: the DO
+ * supplies the record, the clock, and whether the loop is alive in this
+ * isolate's memory (a cold-started DO has no live loop — that's exactly the
+ * orphan case the watchdog exists to recover).
+ *
+ * Decision order (most-terminal first):
+ *   1. Not `adopted` → idle (not the watchdog's run).
+ *   2. Paused at a supervised approval gate → idle (nothing to relaunch; the
+ *      run waits for a returning client to reclaim it).
+ *   3. Wall-clock budget exhausted → expire (the DO aborts the loop, ends
+ *      the run, and logs — the CoderJob alarm-backstop pattern).
+ *   4. Loop alive in memory → re-arm (pure liveness keepalive).
+ *   5. Loop dead, relaunch cap exhausted → expire.
+ *   6. Loop dead, cap remaining → relaunch from the last checkpoint.
+ */
+export function decideAdoptedAlarm(
+  record: RunHostRecord,
+  ctx: { now: number; loopAlive: boolean },
+): AdoptedAlarmDecision {
+  if (record.state !== 'adopted') {
+    return { action: 'idle', reason: `state_${record.state}` };
+  }
+  if (record.pausedForApproval) {
+    return { action: 'idle', reason: 'paused_for_approval' };
+  }
+  const adoptedAt = record.adoptedAt ?? record.lastHeartbeatAt;
+  if (ctx.now - adoptedAt >= RUN_HOST_ADOPTED_WALL_CLOCK_MS) {
+    return { action: 'expire', reason: 'wall_clock_exhausted' };
+  }
+  if (ctx.loopAlive) {
+    return {
+      action: 'rearm',
+      reArmAt: ctx.now + RUN_HOST_ADOPTED_WATCHDOG_MS,
+      reason: 'loop_alive',
+    };
+  }
+  if ((record.adoptionRelaunches ?? 0) >= RUN_HOST_MAX_ADOPTION_RELAUNCHES) {
+    return { action: 'expire', reason: 'relaunch_cap_exhausted' };
+  }
+  return { action: 'relaunch', reason: 'loop_orphaned' };
 }
