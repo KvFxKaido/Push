@@ -208,7 +208,12 @@ export class RunHost {
     request: Request,
     rawBody: unknown,
   ):
-    | { ok: true; dispatch: () => Promise<Response>; spec: SpikeChatRequest }
+    | {
+        ok: true;
+        dispatch: () => Promise<Response>;
+        clearDeadline: () => void;
+        spec: SpikeChatRequest;
+      }
     | { ok: false; response: Response } {
     const spec = parseSpikeBody(rawBody);
     if (!spec) {
@@ -234,17 +239,25 @@ export class RunHost {
         response: json({ error: 'UNSUPPORTED_PROVIDER', provider: spec.provider }, 400),
       };
     }
+    // The deadline covers the WHOLE turn, not just time-to-headers: a
+    // provider that returns SSE headers and then stalls mid-body must
+    // still get aborted. dispatch() therefore does NOT clear the timer on
+    // resolve — each arm calls clearDeadline() when its stream actually
+    // finishes (or lets the abort fire, which cancels the upstream body
+    // and errors any pipe reading from it).
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), SPIKE_TURN_TIMEOUT_MS);
+    const clearDeadline = () => clearTimeout(timeout);
     const providerRequest = buildProviderRequest(origin, spec, controller.signal);
     const dispatch = async () => {
       try {
         return await handler(providerRequest, this.env);
-      } finally {
-        clearTimeout(timeout);
+      } catch (err) {
+        clearDeadline();
+        throw err;
       }
     };
-    return { ok: true, dispatch, spec };
+    return { ok: true, dispatch, clearDeadline, spec };
   }
 
   /**
@@ -267,6 +280,7 @@ export class RunHost {
     const dispatchedAt = Date.now();
     const upstream = await prepared.dispatch();
     if (!upstream.ok || !upstream.body) {
+      prepared.clearDeadline();
       const errText = await upstream.text().catch(() => '');
       return json(
         { error: 'PROVIDER_ERROR', status: upstream.status, detail: errText.slice(0, 300) },
@@ -276,6 +290,7 @@ export class RunHost {
 
     const encoder = new TextEncoder();
     let firstChunk = true;
+    const clearDeadline = prepared.clearDeadline;
     const marked = upstream.body.pipeThrough(
       new TransformStream<Uint8Array, Uint8Array>({
         start(ctrl) {
@@ -289,6 +304,15 @@ export class RunHost {
             );
           }
           ctrl.enqueue(chunk);
+        },
+        // Stream finished — the turn deadline has done its job. If the
+        // upstream stalls instead, the deadline aborts the provider fetch,
+        // which errors this pipe and unblocks the client's reader rather
+        // than hanging it. (No `cancel` hook — TS's Transformer type lacks
+        // it; a timer that fires after the client cancelled just aborts an
+        // already-cancelled upstream, a no-op.)
+        flush() {
+          clearDeadline();
         },
       }),
     );
@@ -320,6 +344,7 @@ export class RunHost {
     const t0 = Date.now();
     const upstream = await prepared.dispatch();
     if (!upstream.ok || !upstream.body) {
+      prepared.clearDeadline();
       const errText = await upstream.text().catch(() => '');
       return json(
         { error: 'PROVIDER_ERROR', status: upstream.status, detail: errText.slice(0, 300) },
@@ -348,12 +373,21 @@ export class RunHost {
         if (scan.done) break;
       }
     } catch (err) {
+      // Free the upstream before responding — the deadline race leaves a
+      // pending read on the reader.
+      await reader.cancel().catch(() => {});
       return json(
         { error: 'TURN_TIMEOUT', message: err instanceof Error ? err.message : 'stream stalled' },
         504,
       );
     } finally {
-      reader.releaseLock();
+      prepared.clearDeadline();
+      try {
+        reader.releaseLock();
+      } catch {
+        // releaseLock throws while a read is pending (the timeout race) —
+        // the reader was already cancelled, nothing left to free.
+      }
     }
 
     return json({
@@ -431,6 +465,7 @@ export class RunHost {
     server.send(JSON.stringify({ t: 'open', doDispatch: t0 }));
     const upstream = await prepared.dispatch();
     if (!upstream.ok || !upstream.body) {
+      prepared.clearDeadline();
       const errText = await upstream.text().catch(() => '');
       server.send(
         JSON.stringify({
@@ -461,8 +496,19 @@ export class RunHost {
         }
         if (scan.done) break;
       }
+    } catch (err) {
+      // Free the upstream, then rethrow so the call-site catch reports the
+      // timeout over the socket and closes it.
+      await reader.cancel().catch(() => {});
+      throw err;
     } finally {
-      reader.releaseLock();
+      prepared.clearDeadline();
+      try {
+        reader.releaseLock();
+      } catch {
+        // releaseLock throws while a read is pending (the timeout race) —
+        // the reader was already cancelled, nothing left to free.
+      }
     }
 
     server.send(
