@@ -52,6 +52,13 @@ export interface SandboxExecutionOptions {
    * timeout (Phase 1 had no mid-run cancel surface).
    */
   abortSignal?: AbortSignal;
+  /**
+   * Live-output observer for the cloud `sandbox_exec` detached path: invoked
+   * with each drained stdout/stderr chunk so the chat layer can render a live
+   * tail in the agent status bar. Observational only; ignored by the local-pc
+   * route and the buffered fallback inside `execLongRunningInSandbox`.
+   */
+  onExecProgress?: (chunk: { stdout: string; stderr: string }) => void;
 }
 
 export type SandboxPatchsetEdit =

@@ -189,6 +189,17 @@ export interface ToolExecutionContext<THooks = unknown, TGates = unknown> {
    * CLI callers leave this undefined.
    */
   abortSignal?: AbortSignal;
+  /**
+   * Live-output observer for long-running `sandbox_exec` calls. The web
+   * surface's detached background-exec path invokes it with each drained
+   * stdout/stderr chunk so the chat layer can render a live tail in the
+   * agent status bar. Purely observational — never alters tool behavior —
+   * and best-effort: executors may ignore it (local-pc, buffered fallback)
+   * and a throwing observer must not affect the run (the detached runner
+   * already guards its onProgress callbacks). CLI callers leave this
+   * undefined today; the CLI spinner is the natural second consumer.
+   */
+  onExecProgress?: (chunk: { stdout: string; stderr: string }) => void;
 }
 
 // ---------------------------------------------------------------------------
