@@ -104,9 +104,12 @@ export async function startMockProviderServer(opts = {}) {
 }
 
 /**
- * Mutate `PROVIDER_CONFIGS[providerId]` + env to point at a mock.
- * Returns a restore function that un-mutates both. Must be called
- * BEFORE the test issues any request that would call the provider.
+ * Point `PROVIDER_CONFIGS[providerId]` at a mock via env. `url` and
+ * `defaultModel` are live getters over `process.env` (the reload_config
+ * contract), so the env var IS the override point — direct property
+ * assignment would throw on the setter-less getter. Returns a restore
+ * function that un-patches the env. Must be called BEFORE the test issues
+ * any request that would call the provider.
  *
  * @param {string} providerId
  * @param {{ url: string, apiKey: string }} patch
@@ -117,8 +120,9 @@ export function patchProviderConfig(providerId, { url, apiKey }) {
   if (!config) {
     throw new Error(`patchProviderConfig: unknown provider "${providerId}"`);
   }
-  const originalUrl = config.url;
-  config.url = url;
+  const urlEnv = `PUSH_${providerId.toUpperCase()}_URL`;
+  const originalUrl = process.env[urlEnv];
+  process.env[urlEnv] = url;
 
   const keyEnv = config.apiKeyEnv[0];
   const originalKey = process.env[keyEnv];
@@ -128,7 +132,11 @@ export function patchProviderConfig(providerId, { url, apiKey }) {
   return function restore() {
     if (restored) return;
     restored = true;
-    config.url = originalUrl;
+    if (originalUrl === undefined) {
+      delete process.env[urlEnv];
+    } else {
+      process.env[urlEnv] = originalUrl;
+    }
     if (originalKey === undefined) {
       delete process.env[keyEnv];
     } else {

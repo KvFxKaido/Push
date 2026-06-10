@@ -160,6 +160,73 @@ describe('resolveApiKey', () => {
   });
 });
 
+// ─── live env resolution (url / defaultModel getters) ───────────
+
+describe('PROVIDER_CONFIGS live env resolution', () => {
+  // `url` and `defaultModel` must observe `process.env` at READ time, not
+  // module-import time — pushd's `reload_config` verb mutates env on the
+  // running daemon and the next request has to pick the new values up.
+  // These pins are what keep a future refactor from quietly reverting the
+  // getters to spawn-time snapshots (the #858 half-fix).
+  it('url reflects an env change made after module import', () => {
+    const restore = withEnv({ PUSH_ZEN_URL: undefined });
+    try {
+      const baseline = PROVIDER_CONFIGS.zen.url;
+      process.env.PUSH_ZEN_URL = 'https://rotated.example/v1/chat/completions';
+      assert.equal(PROVIDER_CONFIGS.zen.url, 'https://rotated.example/v1/chat/completions');
+      delete process.env.PUSH_ZEN_URL;
+      assert.equal(PROVIDER_CONFIGS.zen.url, baseline);
+    } finally {
+      restore();
+    }
+  });
+
+  it('defaultModel reflects an env change made after module import', () => {
+    const restore = withEnv({ PUSH_ZEN_MODEL: undefined });
+    try {
+      const baseline = PROVIDER_CONFIGS.zen.defaultModel;
+      process.env.PUSH_ZEN_MODEL = 'rotated-model';
+      assert.equal(PROVIDER_CONFIGS.zen.defaultModel, 'rotated-model');
+      delete process.env.PUSH_ZEN_MODEL;
+      assert.equal(PROVIDER_CONFIGS.zen.defaultModel, baseline);
+    } finally {
+      restore();
+    }
+  });
+
+  it('reload_config end-to-end: reapplyProviderConfigToEnv lands in PROVIDER_CONFIGS', async () => {
+    const { reapplyProviderConfigToEnv } = await import('../config-store.ts');
+    const restore = withEnv({
+      PUSH_OPENROUTER_URL: 'https://stale.example/v1/chat/completions',
+      PUSH_OPENROUTER_MODEL: 'stale-model',
+    });
+    try {
+      assert.equal(PROVIDER_CONFIGS.openrouter.url, 'https://stale.example/v1/chat/completions');
+      const changed = reapplyProviderConfigToEnv({
+        openrouter: {
+          url: 'https://fresh.example/v1/chat/completions',
+          model: 'fresh-model',
+        },
+      });
+      assert.ok(changed.includes('PUSH_OPENROUTER_URL'));
+      assert.ok(changed.includes('PUSH_OPENROUTER_MODEL'));
+      assert.equal(PROVIDER_CONFIGS.openrouter.url, 'https://fresh.example/v1/chat/completions');
+      assert.equal(PROVIDER_CONFIGS.openrouter.defaultModel, 'fresh-model');
+    } finally {
+      restore();
+    }
+  });
+
+  it('every provider resolves url and defaultModel live, not from an import snapshot', () => {
+    for (const [id, config] of Object.entries(PROVIDER_CONFIGS)) {
+      const urlDesc = Object.getOwnPropertyDescriptor(config, 'url');
+      const modelDesc = Object.getOwnPropertyDescriptor(config, 'defaultModel');
+      assert.equal(typeof urlDesc?.get, 'function', `${id}.url must be a live getter`);
+      assert.equal(typeof modelDesc?.get, 'function', `${id}.defaultModel must be a live getter`);
+    }
+  });
+});
+
 // ─── getProviderList ────────────────────────────────────────────
 
 describe('getProviderList', () => {
