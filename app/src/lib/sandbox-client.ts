@@ -273,11 +273,22 @@ let suppressActivityTouchCount = 0;
 let inFlightSandboxCalls = 0;
 
 function touchSandboxActivity(): void {
+  lastSandboxCallAt = Date.now();
+}
+
+/**
+ * Consume one pending suppression, if any. Called at `sandboxFetch` ENTRY —
+ * synchronously, before the first await — so a `suppressIdleTouch()` placed
+ * immediately before a maintenance call can't be stolen by a concurrent
+ * call's completion, and the suppressed call is excluded from idle
+ * accounting for its whole lifetime (no stamp, no in-flight count).
+ */
+function consumeIdleTouchSuppression(): boolean {
   if (suppressActivityTouchCount > 0) {
     suppressActivityTouchCount--;
-    return;
+    return true;
   }
-  lastSandboxCallAt = Date.now();
+  return false;
 }
 
 /** Returns ms since the last completed sandbox API call (success or failure), or Infinity if no call has been made. */
@@ -296,8 +307,13 @@ export function hasInFlightSandboxCalls(): boolean {
 }
 
 /**
- * Suppress the next N sandboxFetch calls from resetting the idle clock.
- * Used for health-check probes that shouldn't defeat idle hibernation.
+ * Mark the next N sandboxFetch calls as maintenance traffic, invisible to
+ * idle accounting: they neither stamp the idle clock nor count as in-flight
+ * work for the hibernation reaper. Used for health-check probes (which must
+ * not defeat idle hibernation) and the reaper's own hibernate call (whose
+ * failure must not push the retry out by a full idle window). Suppression is
+ * consumed synchronously at call entry — call this immediately before the
+ * maintenance call.
  */
 export function suppressIdleTouch(count = 1): void {
   suppressActivityTouchCount += count;
@@ -997,7 +1013,8 @@ async function sandboxFetch<T>(
     async (span) => {
       const requestId = createRequestId('sandbox');
       let retryCount = 0;
-      inFlightSandboxCalls++;
+      const trackActivity = !consumeIdleTouchSuppression();
+      if (trackActivity) inFlightSandboxCalls++;
 
       try {
         const result = await withRetry(
@@ -1067,12 +1084,14 @@ async function sandboxFetch<T>(
         });
         throw error;
       } finally {
-        inFlightSandboxCalls--;
-        // Stamp on completion regardless of outcome — a failed or timed-out
-        // call is still activity. Success-only stamping let a streak of
-        // timed-out long execs read as 8 minutes of idleness, so the reaper
-        // hibernated the container out from under an active round.
-        touchSandboxActivity();
+        if (trackActivity) {
+          inFlightSandboxCalls--;
+          // Stamp on completion regardless of outcome — a failed or timed-out
+          // call is still activity. Success-only stamping let a streak of
+          // timed-out long execs read as 8 minutes of idleness, so the reaper
+          // hibernated the container out from under an active round.
+          touchSandboxActivity();
+        }
         span.end();
       }
     },

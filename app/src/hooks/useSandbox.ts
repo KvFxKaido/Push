@@ -110,6 +110,9 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
   const reconnectingRef = useRef(false);
   const reconnectPromiseRef = useRef<Promise<string | null> | null>(null);
   const startPromiseRef = useRef<Promise<string | null> | null>(null);
+  // Declared after the refs the test harness syncs by index (see
+  // useSandbox.test.ts syncRefsFromState) so it doesn't shift them.
+  const idleHibernatePendingRef = useRef(false);
   const activeSessionStorageKey = useMemo(
     () => buildSandboxSessionStorageKey(activeRepoFullName, activeBranch),
     [activeRepoFullName, activeBranch],
@@ -278,11 +281,21 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
         return;
       }
 
+      // A hibernate from a prior tick may still be pending — it's suppressed
+      // (invisible to the in-flight counter), so guard explicitly against
+      // launching a second one.
+      if (idleHibernatePendingRef.current) return;
+      idleHibernatePendingRef.current = true;
+
       console.log(`[useSandbox] Idle for ${Math.round(idle / 1000)}s — hibernating sandbox ${id}`);
 
       // Capture the owner token BEFORE hibernate clears it.
       const ownerToken = getSandboxOwnerToken(id) || '';
 
+      // The reaper's own hibernate is maintenance, not activity: a FAILED
+      // attempt must not stamp the idle clock, or the 60s-tick retry slips
+      // out by a full idle window.
+      suppressIdleTouch();
       hibernateSandbox(id, { repoFullName: activeRepoFullName, branch: activeBranch })
         .then((result) => {
           if (!result.ok || !result.snapshotId) {
@@ -314,6 +327,9 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
         })
         .catch((err: unknown) => {
           console.debug('[useSandbox] Idle hibernate error:', err);
+        })
+        .finally(() => {
+          idleHibernatePendingRef.current = false;
         });
     }, IDLE_CHECK_INTERVAL_MS);
 
