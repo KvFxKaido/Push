@@ -458,10 +458,6 @@ export async function runRoundLoop(
     apiMessages = turnResult.nextApiMessages;
     toolCallRecoveryState = turnResult.nextRecoveryState;
     loopCtx.checkpointRefs.apiMessages.current = apiMessages;
-    // Turn boundary: tool results are in the transcript. This is the
-    // per-turn capture Durable Runs adoption resumes from — a checkpoint
-    // here means the next round restarts cleanly without re-running tools.
-    loopCtx.flushCheckpoint('turn');
 
     const afterTurnDrain = drainPendingSteerIfAny(
       { round, apiMessages, draftAssistant: null },
@@ -483,6 +479,14 @@ export async function runRoundLoop(
     loopCtx.appendRunEvent(chatId, { type: 'assistant.turn_end', round, outcome: turnOutcome });
     fireWorkspacePatchCapture(round, turnOutcome);
     if (turnResult.loopAction === 'break') break;
+    // Turn boundary, continuing rounds only: tool results are in the
+    // transcript, so an adopted run restarts the next round without
+    // re-running tools. Breaking turns skip the capture — the run is over
+    // (finalize clears the checkpoint on normal completion), and the no-tool
+    // completion path returns apiMessages WITHOUT the final assistant
+    // answer, so a capture here would overwrite the record with a stale
+    // transcript (Codex P2 on #874).
+    loopCtx.flushCheckpoint('turn');
     loopCtx.emitRunEngineEvent({ type: 'TURN_CONTINUED', timestamp: Date.now() });
   }
 
