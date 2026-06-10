@@ -97,6 +97,11 @@ export interface Env {
   // PR reviews. Optional so envs without the migration boot; the webhook fails
   // closed with NOT_CONFIGURED when missing.
   PrReviewJob?: DurableObjectNamespace;
+  // RunHost Durable Object binding — Durable Runs (Adopt-on-Silence) track.
+  // Phase 0 hosts only the latency-spike endpoints (/api/runhost/spike/*);
+  // Phase 2 puts the adoption loop here. Optional so envs without the v5
+  // migration boot; the route fails closed with NOT_CONFIGURED when missing.
+  RUN_HOST?: DurableObjectNamespace;
   // Remote Sessions relay — per-session DO holding the WS pair between
   // pushd and the phone client (Phase 2.b scaffold). Optional binding so
   // pre-migration deploys still boot; /api/relay/v1/* returns 503

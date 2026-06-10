@@ -64,9 +64,14 @@ export interface CoderJobStreamAdapterArgs {
   zenGo?: boolean;
 }
 
-type ProviderHandler = (request: Request, env: Env) => Promise<Response>;
+export type ProviderHandler = (request: Request, env: Env) => Promise<Response>;
 
-function resolveProviderHandler(provider: AIProviderType, zenGo: boolean): ProviderHandler | null {
+/** Exported for reuse by other DO-side callers (RunHost latency spike) —
+ * single source of truth for "which providers can a DO dispatch directly". */
+export function resolveProviderHandler(
+  provider: AIProviderType,
+  zenGo: boolean,
+): ProviderHandler | null {
   switch (provider) {
     case 'openrouter':
       return handleOpenRouterChat as unknown as ProviderHandler;
