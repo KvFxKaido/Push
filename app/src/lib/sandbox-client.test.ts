@@ -27,6 +27,7 @@ import {
   clearSandboxEnvironment,
   createSandbox,
   execInSandbox,
+  execLongRunningInSandbox,
   getSandboxLifecycleEvents,
   hasInFlightSandboxCalls,
   msSinceLastSandboxCall,
@@ -1039,5 +1040,60 @@ describe('idle tracking', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// execLongRunningInSandbox — start-failure handling (double-execution guard)
+// ---------------------------------------------------------------------------
+
+describe('execLongRunningInSandbox — start failures', () => {
+  it('falls back to buffered exec only on a definitive 404', async () => {
+    mockFetch
+      .mockResolvedValueOnce({ ok: false, status: 404, text: () => Promise.resolve('no route') })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({ stdout: 'buffered ran', stderr: '', exit_code: 0, truncated: false }),
+      });
+
+    const result = await execLongRunningInSandbox('sb-modal', 'echo hi');
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe('buffered ran');
+    expect(result.terminalReason).toBeUndefined(); // buffered results carry no provenance
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch.mock.calls[0][0]).toBe('/api/sandbox/exec-start');
+    expect(mockFetch.mock.calls[1][0]).toBe('/api/sandbox/exec');
+  });
+
+  it('does NOT fall back on an ambiguous start failure (possible double execution)', async () => {
+    // 504: the worker may have launched the process before the response was
+    // lost. Re-running via buffered exec could execute the command twice.
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 504,
+      text: () => Promise.resolve(JSON.stringify({ error: 'gateway timeout' })),
+    });
+
+    const result = await execLongRunningInSandbox('sb-cf', 'deploy.sh');
+
+    expect(result.exitCode).toBe(-1);
+    expect(result.terminalReason).toBe('start-unconfirmed');
+    expect(result.error).toMatch(/without confirmation/);
+    expect(mockFetch).toHaveBeenCalledTimes(1); // no buffered retry
+  });
+
+  it('never falls back when the abort signal fired during start', async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await execLongRunningInSandbox('sb-cf', 'npm test', {
+      abortSignal: controller.signal,
+    });
+
+    expect(result.exitCode).toBe(124);
+    expect(result.terminalReason).toBe('cancelled');
+    expect(mockFetch).not.toHaveBeenCalled(); // pre-aborted: nothing starts
   });
 });

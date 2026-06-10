@@ -15,6 +15,7 @@ import {
 import {
   runDetachedToCompletion,
   type DetachedExecPrimitives,
+  type DetachedTerminalReason,
 } from '@push/lib/detached-exec-runner';
 import { resolveApiUrl } from './api-url';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
@@ -1241,12 +1242,12 @@ export async function execInSandbox(
 // ---------------------------------------------------------------------------
 // Background execution (detached process + resumable cursor logs)
 //
-// Thin fetch wrappers over the CF-only /api/sandbox-cf/exec-* routes, plus
+// Thin fetch wrappers over the provider-selected /api/sandbox/exec-* routes
+// (implemented by the CF handler; Modal's handler 404s them), plus
 // `execLongRunningInSandbox` which drives the shared `runDetachedToCompletion`
-// kernel and falls back to buffered `execInSandbox` when the active backend
-// lacks the routes (Modal — its handler 404s the unknown route). Used for
-// commands that can outrun the buffered per-exec deadline, e.g. a cold
-// `npm install`.
+// kernel and falls back to buffered `execInSandbox` when the backend lacks
+// the routes. Used for commands that can outrun the buffered per-exec
+// deadline, e.g. a long test suite or a cold `npm install`.
 // ---------------------------------------------------------------------------
 
 async function execStartInSandbox(
@@ -1335,9 +1336,15 @@ export async function execLongRunningInSandbox(
     workdir?: string;
     markWorkspaceMutated?: boolean;
     overallTimeoutMs?: number;
+    /**
+     * Cooperative cancel for the detached path (interrupt + drain + exit
+     * 124). The buffered fallback cannot cancel mid-run — an abort there
+     * surfaces only when the call completes, same as before this option.
+     */
+    abortSignal?: AbortSignal;
     onProgress?: (chunk: { stdout: string; stderr: string }) => void;
   },
-): Promise<ExecResult> {
+): Promise<ExecResult & { terminalReason?: DetachedTerminalReason }> {
   const primitives: DetachedExecPrimitives = {
     start: (cmd, o) => execStartInSandbox(sandboxId, cmd, { workdir: o.workdir }),
     status: (processId) => execStatusInSandbox(sandboxId, processId),
@@ -1348,25 +1355,74 @@ export async function execLongRunningInSandbox(
     return await runDetachedToCompletion(primitives, command, {
       workdir: opts?.workdir,
       overallTimeoutMs: opts?.overallTimeoutMs,
+      abortSignal: opts?.abortSignal,
       onProgress: opts?.onProgress,
     });
   } catch (err) {
-    // runDetachedToCompletion throws ONLY when the command never started — a
-    // backend without background routes (404, e.g. Modal), or a launch that
-    // failed/timed out. Buffered exec is the always-safe pre-feature path, so
-    // fall back to it regardless of the specific start error. Log the downgrade
-    // (symmetric-structured-logs): a silent fallback would hide both a
-    // misconfigured CF backend that never uses the detached path AND the loss
-    // of live progress for the caller's onProgress.
+    // runDetachedToCompletion throws ONLY when the start call failed. What we
+    // do next depends on how it failed:
     const statusCode = (err as { statusCode?: number }).statusCode;
+    const message = err instanceof Error ? err.message : String(err);
+
+    // The user cancelled while start was in flight — never fall back, that
+    // would run the command they just cancelled.
+    if (opts?.abortSignal?.aborted) {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          event: 'background_exec_start_cancelled',
+          sandboxId,
+          statusCode: statusCode ?? null,
+        }),
+      );
+      return {
+        stdout: '',
+        stderr: '',
+        exitCode: 124,
+        truncated: false,
+        error: 'command was cancelled before it started',
+        terminalReason: 'cancelled',
+      };
+    }
+
+    // Only a definitive 404 is safe to retry buffered: either the backend has
+    // no background routes (Modal) or the sandbox is gone (buffered exec then
+    // fails with the same not-found, producing the right unreachable result).
+    // Any OTHER start failure — timeout, 5xx, network — is AMBIGUOUS: the
+    // worker may have launched the process before the response was lost, and
+    // re-running via buffered exec would execute the command twice. Surface
+    // the ambiguity instead.
+    if (statusCode !== 404) {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          event: 'background_exec_start_unconfirmed',
+          sandboxId,
+          statusCode: statusCode ?? null,
+          message,
+        }),
+      );
+      return {
+        stdout: '',
+        stderr: '',
+        exitCode: -1,
+        truncated: false,
+        error: `background exec start failed without confirmation: ${message}`,
+        terminalReason: 'start-unconfirmed',
+      };
+    }
+
+    // Log the downgrade (symmetric-structured-logs): a silent fallback would
+    // hide both a misconfigured CF backend that never uses the detached path
+    // AND the loss of live progress for the caller's onProgress.
     console.warn(
       JSON.stringify({
         level: 'warn',
         event: 'background_exec_fallback',
         sandboxId,
-        statusCode: statusCode ?? null,
+        statusCode,
         hadProgressListener: Boolean(opts?.onProgress),
-        message: err instanceof Error ? err.message : String(err),
+        message,
       }),
     );
     return await execInSandbox(sandboxId, command, opts?.workdir, {

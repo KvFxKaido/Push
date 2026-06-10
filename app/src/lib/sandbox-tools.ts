@@ -455,6 +455,8 @@ export async function executeSandboxToolCall(
           truncated: boolean;
           timedOut?: boolean;
           error?: string;
+          /** Detached-path provenance; absent on local-pc and buffered-fallback results. */
+          terminalReason?: import('@push/lib/detached-exec-runner').DetachedTerminalReason;
         };
         if (options?.localDaemonBinding) {
           try {
@@ -527,35 +529,90 @@ export async function executeSandboxToolCall(
             throw caught;
           }
         } else {
-          result = markWorkspaceMutated
-            ? await execInSandbox(sandboxId, call.args.command, normalizedWorkdir, {
-                markWorkspaceMutated: true,
-              })
-            : await execInSandbox(sandboxId, call.args.command, normalizedWorkdir);
+          // Cloud path: detached background exec — no buffered ~165s ceiling,
+          // so long test/build runs can actually complete. Falls back to
+          // buffered exec inside execLongRunningInSandbox when the backend
+          // lacks the routes (Modal 404s the start; `background_exec_fallback`
+          // is logged there). Every status/log poll stamps idle accounting,
+          // so a long run can never look idle to the hibernation reaper.
+          console.log(
+            JSON.stringify({ level: 'info', event: 'sandbox_exec_detached_dispatch', sandboxId }),
+          );
+          result = await execLongRunningInSandbox(sandboxId, call.args.command, {
+            workdir: normalizedWorkdir,
+            markWorkspaceMutated,
+            abortSignal: options?.abortSignal,
+          });
+
+          // User cancel (Stop) — the runner interrupted the detached process
+          // and resolved with cancel provenance. Synthesize the same envelope
+          // as the local-pc path: cancel is a user-initiated state, not an
+          // error class. Gate on terminalReason, NOT the live signal — a
+          // command that exits 124 on its own while Stop happens to be
+          // pressed reports 'completed' and must keep its real result.
+          if (result.terminalReason === 'cancelled') {
+            // A mid-run cancel means the process RAN until it was interrupted
+            // — a mutating command may already have changed files. Invalidate
+            // the same way a completed run does (the pre-start cancel case is
+            // a conservative false positive, which is acceptable).
+            if (markWorkspaceMutated) {
+              clearFileVersionCache(sandboxId);
+              clearPrefetchedEditFileCache(sandboxId);
+              fileLedger.markAllStale();
+            }
+            const durationMs = Date.now() - start;
+            const cardData: SandboxCardData = {
+              command: call.args.command,
+              stdout: result.stdout,
+              stderr: result.stderr,
+              exitCode: 124,
+              truncated: result.truncated,
+              durationMs,
+            };
+            return {
+              text: `[Tool Result — sandbox_exec]\nCommand: ${call.args.command}\nExit code: 124\nCancelled by user.`,
+              card: { type: 'sandbox', data: cardData },
+            };
+          }
         }
         const durationMs = Date.now() - start;
 
-        // Exit code -1 means the command was never dispatched — the container
-        // is unreachable (expired, terminated, or unhealthy).
+        // Exit code -1 historically meant "the command was never dispatched"
+        // (buffered path, container unreachable). The detached path adds two
+        // post-start -1 cases that must NOT make that claim: 'lost-contact'
+        // (started, outcome unknown) and 'start-unconfirmed' (may or may not
+        // have launched; deliberately not retried to avoid double execution).
         if (result.exitCode === -1) {
           const reason = result.error || 'Sandbox unavailable';
+          const mayHaveRun =
+            result.terminalReason === 'lost-contact' ||
+            result.terminalReason === 'start-unconfirmed';
+          // A mutating command that MAY have run must invalidate caches the
+          // same way a confirmed run does — the workspace state is unknown.
+          if (mayHaveRun && markWorkspaceMutated) {
+            clearFileVersionCache(sandboxId);
+            clearPrefetchedEditFileCache(sandboxId);
+            fileLedger.markAllStale();
+          }
           const err = classifyError(reason, call.args.command);
-          // Override to SANDBOX_UNREACHABLE since -1 always means the container is gone
           err.type = 'SANDBOX_UNREACHABLE';
           err.retryable = false;
           const cardData: SandboxCardData = {
             command: call.args.command,
-            stdout: '',
-            stderr: reason,
+            stdout: result.stdout,
+            stderr: result.stderr || reason,
             exitCode: -1,
-            truncated: false,
+            truncated: result.truncated,
             durationMs,
           };
+          const detail =
+            result.terminalReason === 'lost-contact'
+              ? `Lost contact with the command AFTER it started — its outcome is unknown and it may have completed or mutated the workspace. ${reason}\nRe-read any files you depend on before editing; do not assume the command did not run.`
+              : result.terminalReason === 'start-unconfirmed'
+                ? `The command's background start failed without confirmation — it may or may not have run. ${reason}\nIt was deliberately NOT retried (a retry could execute it twice). Verify the workspace state before re-running.`
+                : `Command was not executed. ${reason}\nThe sandbox container is no longer reachable. Please restart the sandbox to continue.`;
           return {
-            text: formatStructuredError(
-              err,
-              `[Tool Error — sandbox_exec]\nCommand was not executed. ${reason}\nThe sandbox container is no longer reachable. Please restart the sandbox to continue.`,
-            ),
+            text: formatStructuredError(err, `[Tool Error — sandbox_exec]\n${detail}`),
             card: { type: 'sandbox', data: cardData },
             structuredError: err,
           };
@@ -583,6 +640,14 @@ export async function executeSandboxToolCall(
         if (reduced.stdout) lines.push(`\nStdout:\n${sanitizeUntrustedSource(reduced.stdout)}`);
         if (reduced.stderr) lines.push(`\nStderr:\n${sanitizeUntrustedSource(reduced.stderr)}`);
         if (result.truncated) lines.push(`\n[Output truncated]`);
+        // Runner-level terminal note — exit 124 with an error message is the
+        // detached runner's overall-deadline interrupt (user cancel returned
+        // its own envelope above; -1 unreachable is handled earlier). Without
+        // this line the model sees a bare 124 and can't tell deadline from a
+        // command that exited 124 on its own.
+        if (result.exitCode === 124 && result.error) {
+          lines.push(`\n[Note] ${sanitizeUntrustedSource(result.error)}`);
+        }
 
         // On non-zero exit, append a corrective hint if stderr matches a known pattern
         if (result.exitCode !== 0 && result.stderr) {
