@@ -660,6 +660,14 @@ export interface CoderAgentOptions<TCall, TCard> {
    * a freshly-restored sandbox whose filesystem matches this state.
    */
   resumeState?: CoderCheckpointState<TCard>;
+
+  /**
+   * How often (in rounds) `callbacks.onCheckpoint` fires. Defaults to the
+   * kernel's `CODER_CHECKPOINT_CADENCE_ROUNDS` (background-job cadence). The
+   * adopted-run host sets 1 so every round persists — server-side progress
+   * has no client mirror, so the durable checkpoint is the only copy.
+   */
+  checkpointCadenceRounds?: number;
 }
 
 /**
@@ -831,6 +839,8 @@ export async function runCoderAgent<TCall, TCard>(
   // Harness profile — controls scaffolding level
   const maxRounds = harnessMaxRounds ?? MAX_CODER_ROUNDS;
   const contextResetsEnabled = harnessContextResetsEnabled ?? false;
+  const checkpointCadenceRounds =
+    options.checkpointCadenceRounds ?? CODER_CHECKPOINT_CADENCE_ROUNDS;
 
   // Agent-internal working memory — survives context trimming via injection
   const workingMemory: CoderWorkingMemory = resumeState ? { ...resumeState.workingMemory } : {};
@@ -934,7 +944,7 @@ export async function runCoderAgent<TCall, TCard>(
     // filesystem the host snapshots matches the state captured here. Awaited so
     // nothing mutates `messages`/`workingMemory` mid-snapshot; best-effort so a
     // checkpoint failure never aborts the run.
-    if (callbacks.onCheckpoint && round > 0 && round % CODER_CHECKPOINT_CADENCE_ROUNDS === 0) {
+    if (callbacks.onCheckpoint && round > 0 && round % checkpointCadenceRounds === 0) {
       try {
         await callbacks.onCheckpoint({ round, messages, workingMemory, cards: allCards });
       } catch (err) {

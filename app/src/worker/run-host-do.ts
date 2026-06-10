@@ -4,13 +4,15 @@
  * The binding + v5 migration are durable infrastructure for the track. Two
  * surfaces coexist in this class today:
  *
- *   - **Phase 2 substrate (durable):** the `/run/*` endpoints + the silence
- *     `alarm()`. These own the heartbeat ledger, per-run checkpoint
- *     persistence, and the watched→adoptable adoption *decision* (the pure
- *     logic lives in `@push/lib/run-host-adoption`; this class is the
- *     storage/alarm wrapper). The server-side loop that continues an adopted
- *     run is the next PR — when a run becomes adoptable, this class parks it
- *     and logs; it does not yet run the loop.
+ *   - **Phase 2 (durable):** the `/run/*` endpoints + the `alarm()`
+ *     dispatcher. These own the heartbeat ledger, per-run checkpoint
+ *     persistence, the watched→adoptable silence decision, and the
+ *     server-side loop that consumes `adoptable`: on lapse the run is
+ *     adopted and continued from its checkpoint by
+ *     `run-host-adoption-runner.ts` (the pure decisions live in
+ *     `@push/lib/run-host-adoption`; this class stays the storage/alarm
+ *     wrapper). Register always wins: a returning client's re-register
+ *     aborts the loop (reclaim) before the record returns to `watched`.
  *   - **Phase 0 spike (throwaway):** the `/spike/*` latency instruments whose
  *     numbers get recorded in `docs/decisions/Durable Runs —
  *     Adopt-on-Silence.md`. No durable storage; deleted once the
@@ -46,10 +48,13 @@ import type { AIProviderType } from '@push/lib/provider-contract';
 import {
   type RunHostRecord,
   type RunHostScope,
+  RUN_HOST_ADOPTED_WATCHDOG_MS,
   RUN_HOST_HEARTBEAT_INTERVAL_MS,
+  RUN_HOST_MAX_ADOPTION_RELAUNCHES,
   RUN_HOST_PROTOCOL_VERSION,
   RUN_HOST_SILENCE_THRESHOLD_MS,
   checkpointExceedsHostCap,
+  decideAdoptedAlarm,
   decideAdoption,
   isCompleteScope,
 } from '@push/lib/run-host-adoption';
@@ -60,6 +65,7 @@ import {
 } from '@push/lib/run-checkpoint';
 import type { ApprovalMode } from '@push/lib/approval-gates';
 import { resolveProviderHandler } from './coder-job-stream-adapter';
+import { provisionAdoption, runAdoptedLoop } from './run-host-adoption-runner';
 import type { Env } from './worker-middleware';
 
 // ---------------------------------------------------------------------------
@@ -234,6 +240,11 @@ export class RunHost {
   private readonly env: Env;
   private readonly state: DurableObjectState;
 
+  /** The in-flight adopted loop, if this isolate is running one. Lost on
+   * eviction by design — the watchdog alarm + persisted record recover it
+   * (`decideAdoptedAlarm` sees `loopAlive: false` and relaunches). */
+  private adoption: { id: string; controller: AbortController } | null = null;
+
   constructor(state: DurableObjectState, env: Env) {
     this.env = env;
     this.state = state;
@@ -298,10 +309,29 @@ export class RunHost {
   }
 
   /**
+   * Stop the in-flight adopted loop, if any. Called when a register
+   * (reclaim), release, or watchdog expiry takes the run away from the loop;
+   * the runner observes the abort (and the record's ownership change) and
+   * exits without writing.
+   */
+  private abortAdoptionLoop(cause: string): void {
+    if (!this.adoption) return;
+    rhLog('info', 'run_host_loop_abort_requested', { adoptionId: this.adoption.id, cause });
+    this.adoption.controller.abort();
+    this.adoption = null;
+  }
+
+  /**
    * POST /run/register — open (or refresh) the run for a scope. Sets state
    * `watched`, stamps the heartbeat, arms the silence alarm. Idempotent for a
    * re-register of the same run; a different runId on the same scoped DO is a
    * new run superseding the old (the prior checkpoint is dropped).
+   *
+   * Reclaim contract: register ALWAYS wins. If the run is `adopted`, the
+   * server loop is aborted here and the response says so — the returning
+   * client continues locally from its own state, and the host's checkpoint
+   * (which may be ahead of the client's transcript until Phase 3 attach
+   * hydration) remains the adoption source if heartbeats lapse again.
    */
   private async runRegister(request: Request): Promise<Response> {
     let raw: unknown;
@@ -310,6 +340,7 @@ export class RunHost {
     } catch {
       return json({ error: 'INVALID_BODY', message: 'POST body must be JSON' }, 400);
     }
+    const hostOrigin = new URL(request.url).searchParams.get('hostOrigin') ?? undefined;
     const body = raw as Record<string, unknown>;
     const runId = typeof body.runId === 'string' ? body.runId : '';
     const scope = body.scope;
@@ -329,6 +360,16 @@ export class RunHost {
 
     const now = Date.now();
     const prior = await this.loadRecord();
+    const reclaimedFromAdopted = prior?.state === 'adopted';
+    if (reclaimedFromAdopted) {
+      this.abortAdoptionLoop('register');
+      rhLog('info', 'run_host_run_reclaimed', {
+        priorRunId: prior!.runId,
+        runId,
+        hostRound: prior!.round,
+        paused: Boolean(prior!.pausedForApproval),
+      });
+    }
     if (prior && prior.runId !== runId) {
       await this.state.storage.delete(CHECKPOINT_KEY);
       rhLog('info', 'run_host_run_superseded', {
@@ -352,6 +393,9 @@ export class RunHost {
       // client that doesn't echo its round must not regress the observable
       // round to 0; the next checkpoint is authoritative either way.
       round: prior && prior.runId === runId ? prior.round : round,
+      // Server-derived (route-layer stamp); adoption provisioning needs it.
+      // A fresh stamp wins; otherwise keep what we had.
+      ...(hostOrigin || prior?.origin ? { origin: hostOrigin ?? prior?.origin } : {}),
     };
     await this.state.storage.put(RECORD_KEY, record);
     await this.armSilenceAlarmIfWatched(record, now);
@@ -360,11 +404,15 @@ export class RunHost {
       scope: record.scope,
       mode: record.mode,
       resumed: Boolean(prior && prior.runId === runId),
+      reclaimed: reclaimedFromAdopted,
     });
     return json({
       ok: true,
       state: record.state,
       heartbeatIntervalMs: RUN_HOST_HEARTBEAT_INTERVAL_MS,
+      // Phase 3 attach hydration hooks: tell a reclaiming client the host
+      // continued the run and how far it got, so the divergence is visible.
+      ...(reclaimedFromAdopted ? { reclaimedFromAdopted: true, hostRound: prior!.round } : {}),
     });
   }
 
@@ -381,6 +429,7 @@ export class RunHost {
     } catch {
       return json({ error: 'INVALID_BODY', message: 'PUT body must be JSON' }, 400);
     }
+    const hostOrigin = new URL(request.url).searchParams.get('hostOrigin') ?? undefined;
     const checkpoint = (raw as Record<string, unknown>)?.checkpoint;
     const issues = validateRunCheckpoint(checkpoint);
     if (issues.length > 0) {
@@ -419,6 +468,22 @@ export class RunHost {
         409,
       );
     }
+    if (record.state === 'adopted') {
+      // The server loop owns the checkpoint while adopted — accepting a
+      // client write here would stomp server-side progress and set up
+      // double-execution. 409 makes the transport drop its registration and
+      // re-register on the next publish, which is exactly the reclaim path
+      // (register aborts the loop, then checkpoints flow again).
+      rhLog('warn', 'run_host_checkpoint_rejected_adopted', {
+        runId: record.runId,
+        round: cp.round,
+        hostRound: record.round,
+      });
+      return json(
+        { error: 'RUN_ADOPTED', message: 're-register to reclaim the run before checkpointing' },
+        409,
+      );
+    }
 
     const bytes = estimateRunCheckpointBytes(cp);
     if (checkpointExceedsHostCap(bytes)) {
@@ -451,6 +516,7 @@ export class RunHost {
     record.round = cp.round;
     record.midFlight = cp.userAborted !== true;
     record.mode = cp.approvalMode;
+    if (hostOrigin) record.origin = hostOrigin;
     // A checkpoint from a still-attached client keeps the run watched; an
     // adopted/released run shouldn't be receiving in-page checkpoints, but if
     // one races in, the write is recorded without resurrecting the state (the
@@ -470,10 +536,11 @@ export class RunHost {
    * POST /run/heartbeat — a lightweight keepalive (no checkpoint). Bumps the
    * heartbeat clock and re-arms the silence alarm while the run is `watched`.
    *
-   * If the run has already gone `adoptable`, a heartbeat records the liveness
-   * signal but does NOT resurrect it (the re-arm is `watched`-gated): the
-   * response carries `state: 'adoptable'` so the client can react by
-   * re-registering (pull-back-local). The common-case `watched` beat is not
+   * If the run has gone `adoptable` (or `adopted`), a heartbeat records the
+   * liveness signal but does NOT resurrect it (the re-arm is
+   * `watched`-gated): the response carries the state so the client can react
+   * by re-registering (pull-back-local; on `adopted` the register is also
+   * what stops the server loop). The common-case `watched` beat is not
    * logged — at one beat per ~15 s per run that line is pure volume; the
    * no-record / mismatch branches still log.
    */
@@ -550,6 +617,9 @@ export class RunHost {
       });
       return json({ error: 'RUN_MISMATCH' }, 409);
     }
+    if (record.state === 'adopted') {
+      this.abortAdoptionLoop('release');
+    }
     await this.state.storage.deleteAlarm();
     await this.state.storage.delete(RECORD_KEY);
     await this.state.storage.delete(CHECKPOINT_KEY);
@@ -572,17 +642,27 @@ export class RunHost {
       hasCheckpoint: record.hasCheckpoint,
       midFlight: record.midFlight,
       round: record.round,
+      ...(record.adoptedAt !== undefined ? { adoptedAt: record.adoptedAt } : {}),
+      ...(record.adoptionRelaunches !== undefined
+        ? { adoptionRelaunches: record.adoptionRelaunches }
+        : {}),
+      ...(record.pausedForApproval ? { pausedForApproval: record.pausedForApproval } : {}),
+      ...(record.lastError ? { lastError: record.lastError } : {}),
     });
   }
 
   /**
-   * Silence alarm. Singleton: each heartbeat/checkpoint/register re-arms it,
-   * so a wake means the deadline lapsed for the schedule in force at arm
-   * time. Recompute against the live record — a heartbeat may have landed
-   * after the alarm was scheduled but before it fired. Every branch logs
-   * (symmetric: adopted ↔ re-armed ↔ the idle reasons), and the alarm is
-   * either re-armed or cleared on every path so a watched run can't be left
-   * with no backstop.
+   * Alarm dispatcher. Singleton; what a wake means depends on the run's
+   * state (see RUN_LIFECYCLE_ALARM_ACTIVE_STATES):
+   *
+   *   - `watched`   — silence detector (`decideAdoption`): lapse → adopt.
+   *   - `adoptable` — a scheduled adoption retry after a loop failure.
+   *   - `adopted`   — loop watchdog (`decideAdoptedAlarm`): liveness re-arm,
+   *                   orphan relaunch after a DO eviction, wall-clock cap.
+   *
+   * Every branch logs (symmetric: adopted ↔ re-armed ↔ relaunched ↔ expired
+   * ↔ the idle reasons), and the alarm is either re-armed or cleared on
+   * every path so an active run can't be left with no backstop.
    */
   async alarm(): Promise<void> {
     const record = await this.loadRecord();
@@ -591,19 +671,33 @@ export class RunHost {
       return;
     }
     const now = Date.now();
+
+    if (record.state === 'adopted') {
+      await this.runAdoptedWatchdog(record, now);
+      return;
+    }
+
+    if (record.state === 'adoptable') {
+      // The only armed-alarm path into `adoptable` is a scheduled retry
+      // after a loop failure (blocked adoptions clear the alarm and park).
+      await this.startAdoption(record, 'retry');
+      return;
+    }
+
     const decision = decideAdoption(record, now);
     if (decision.action === 'adopt') {
       record.state = 'adoptable';
       await this.state.storage.put(RECORD_KEY, record);
-      // Park here — the server-side loop that consumes `adoptable` is the
-      // next PR. Clear the alarm so the run isn't repeatedly re-evaluated.
-      await this.state.storage.deleteAlarm();
       rhLog('info', 'run_host_run_adoptable', {
         runId: record.runId,
         scope: record.scope,
         round: record.round,
         silentMs: now - record.lastHeartbeatAt,
       });
+      // Consume `adoptable` immediately: launch the server-side loop (or
+      // park loudly if provisioning is blocked — startAdoption manages the
+      // alarm on every branch).
+      await this.startAdoption(record, 'silence');
       return;
     }
     if (decision.action === 'rearm' && typeof decision.reArmAt === 'number') {
@@ -616,9 +710,161 @@ export class RunHost {
       return;
     }
     // Idle: nothing for the alarm to do. Clear it rather than leave a stale
-    // schedule on a released/ended/adopted run.
+    // schedule on a released/ended run.
     await this.state.storage.deleteAlarm();
     rhLog('info', 'run_host_alarm_idle', { runId: record.runId, reason: decision.reason });
+  }
+
+  /** Watchdog wake for an `adopted` run — apply `decideAdoptedAlarm`. */
+  private async runAdoptedWatchdog(record: RunHostRecord, now: number): Promise<void> {
+    const loopAlive = this.adoption !== null && this.adoption.id === record.adoptionId;
+    const decision = decideAdoptedAlarm(record, { now, loopAlive });
+    switch (decision.action) {
+      case 'rearm': {
+        await this.state.storage.setAlarm(decision.reArmAt ?? now + RUN_HOST_ADOPTED_WATCHDOG_MS);
+        rhLog('info', 'run_host_watchdog_rearmed', {
+          runId: record.runId,
+          reason: decision.reason,
+        });
+        return;
+      }
+      case 'relaunch': {
+        // The loop died with a prior isolate (eviction). Increment the
+        // persisted relaunch count BEFORE launching — the CoderJob
+        // discipline: a relaunch that dies pre-checkpoint must still consume
+        // budget, or it cycles forever.
+        record.adoptionRelaunches = (record.adoptionRelaunches ?? 0) + 1;
+        record.state = 'adoptable';
+        record.adoptionId = undefined;
+        await this.state.storage.put(RECORD_KEY, record);
+        rhLog('info', 'run_host_orphan_wake', {
+          runId: record.runId,
+          round: record.round,
+          relaunches: record.adoptionRelaunches,
+        });
+        await this.startAdoption(record, 'orphan_relaunch');
+        return;
+      }
+      case 'expire': {
+        this.abortAdoptionLoop('expire');
+        record.state = 'ended';
+        record.midFlight = false;
+        record.lastError = `adopted run expired: ${decision.reason}`;
+        await this.state.storage.put(RECORD_KEY, record);
+        await this.state.storage.deleteAlarm();
+        rhLog('warn', 'run_host_run_expired', { runId: record.runId, reason: decision.reason });
+        return;
+      }
+      default: {
+        await this.state.storage.deleteAlarm();
+        rhLog('info', 'run_host_watchdog_idle', { runId: record.runId, reason: decision.reason });
+        return;
+      }
+    }
+  }
+
+  /**
+   * Launch the server-side loop for an `adoptable` run. Provisioning is
+   * out-of-band (sandbox owner token from KV, provider keys in env, origin
+   * from the route stamp persisted on the record); a blocked adoption parks
+   * `adoptable` LOUDLY with the alarm cleared — the client pull-back
+   * contract still applies, nothing retries silently.
+   */
+  private async startAdoption(record: RunHostRecord, trigger: string): Promise<void> {
+    const checkpoint = (await this.state.storage.get<RunCheckpointV1>(CHECKPOINT_KEY)) ?? null;
+    const provision = checkpoint ? await provisionAdoption(this.env, record, checkpoint) : null;
+
+    // Pre-flip re-check (the CoderJob pre/post-restore re-check discipline):
+    // the checkpoint read and provisioning above are awaits, and a register
+    // (reclaim) or release can interleave at any await in a DO. Only an
+    // `adoptable` record of the same run may be flipped to `adopted` —
+    // otherwise the host would silently hijack a run a live client just took
+    // back. The preempted branch touches NOTHING (in particular not the
+    // alarm, which the racing register may have just armed for `watched`).
+    const current = await this.loadRecord();
+    if (!current || current.runId !== record.runId || current.state !== 'adoptable') {
+      rhLog('info', 'run_host_adoption_preempted', {
+        runId: record.runId,
+        trigger,
+        state: current?.state ?? null,
+      });
+      return;
+    }
+
+    const park = async (reason: string): Promise<void> => {
+      await this.state.storage.deleteAlarm();
+      rhLog('warn', 'run_host_adoption_blocked', { runId: current.runId, trigger, reason });
+    };
+    if ((current.adoptionRelaunches ?? 0) > RUN_HOST_MAX_ADOPTION_RELAUNCHES) {
+      await park('relaunch_cap_exhausted');
+      return;
+    }
+    if (!checkpoint || !provision) {
+      await park('no_checkpoint');
+      return;
+    }
+    if (!provision.ok) {
+      await park(provision.reason);
+      return;
+    }
+
+    const now = Date.now();
+    const adoptionId = crypto.randomUUID();
+    current.state = 'adopted';
+    current.adoptedAt = now;
+    current.adoptionId = adoptionId;
+    current.pausedForApproval = null;
+    await this.state.storage.put(RECORD_KEY, current);
+    await this.state.storage.setAlarm(now + RUN_HOST_ADOPTED_WATCHDOG_MS);
+    rhLog('info', 'run_host_run_adopted', {
+      runId: current.runId,
+      scope: current.scope,
+      trigger,
+      round: current.round,
+      mode: current.mode,
+      relaunches: current.adoptionRelaunches ?? 0,
+    });
+
+    const controller = new AbortController();
+    this.adoption = { id: adoptionId, controller };
+    this.state.waitUntil(
+      runAdoptedLoop({
+        env: this.env,
+        record: current,
+        checkpoint,
+        origin: provision.origin,
+        sandboxId: provision.sandboxId,
+        ownerToken: provision.ownerToken,
+        abort: controller,
+        hooks: {
+          loadRecord: () => this.loadRecord(),
+          saveRecord: async (r) => {
+            await this.state.storage.put(RECORD_KEY, r);
+          },
+          saveCheckpoint: async (cp) => {
+            await this.state.storage.put(CHECKPOINT_KEY, cp);
+          },
+          armAlarm: async (at) => {
+            await this.state.storage.setAlarm(at);
+          },
+          clearAlarm: async () => {
+            await this.state.storage.deleteAlarm();
+          },
+        },
+      })
+        .catch((err: unknown) => {
+          // The runner handles its own failures; this is the backstop for a
+          // crash in the runner's bookkeeping itself.
+          rhLog('warn', 'run_host_loop_crashed', {
+            runId: record.runId,
+            adoptionId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        })
+        .finally(() => {
+          if (this.adoption?.id === adoptionId) this.adoption = null;
+        }),
+    );
   }
 
   /** Resolve handler + build the provider Request, or produce an error

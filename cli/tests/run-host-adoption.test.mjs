@@ -14,14 +14,19 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 
 import {
+  RUN_HOST_ADOPTED_WALL_CLOCK_MS,
+  RUN_HOST_ADOPTED_WATCHDOG_MS,
   RUN_HOST_CHECKPOINT_MAX_BYTES,
   RUN_HOST_HEARTBEAT_INTERVAL_MS,
+  RUN_HOST_MAX_ADOPTION_RELAUNCHES,
   RUN_HOST_PROTOCOL_VERSION,
+  RUN_HOST_RECORD_ADOPTION_FIELDS,
   RUN_HOST_RECORD_FIELDS,
   RUN_HOST_SILENCE_THRESHOLD_MS,
   RUN_LIFECYCLE_ALARM_ACTIVE_STATES,
   RUN_LIFECYCLE_STATES,
   checkpointExceedsHostCap,
+  decideAdoptedAlarm,
   decideAdoption,
   isCompleteScope,
   runHostInstanceId,
@@ -58,8 +63,10 @@ test('pin: exact lifecycle state set + alarm-active subset', () => {
     [...RUN_LIFECYCLE_STATES],
     ['watched', 'adoptable', 'adopted', 'released', 'ended'],
   );
-  // Only `watched` runs are the silence alarm's to act on.
-  assert.deepEqual([...RUN_LIFECYCLE_ALARM_ACTIVE_STATES], ['watched']);
+  // The alarm now serves three roles (Phase 2 loop): silence detector on
+  // `watched`, scheduled adoption retry on `adoptable`, loop watchdog /
+  // orphan relaunch on `adopted`. Terminal states stay alarm-free.
+  assert.deepEqual([...RUN_LIFECYCLE_ALARM_ACTIVE_STATES], ['watched', 'adoptable', 'adopted']);
 });
 
 test('pin: exact record field vocabulary', () => {
@@ -75,6 +82,16 @@ test('pin: exact record field vocabulary', () => {
     'state',
     'v',
   ]);
+  // Adoption-loop additions are all OPTIONAL on the record (pre-loop records
+  // lack them) and pinned separately so the base vocabulary stays stable.
+  assert.deepEqual([...RUN_HOST_RECORD_ADOPTION_FIELDS].sort(), [
+    'adoptedAt',
+    'adoptionId',
+    'adoptionRelaunches',
+    'lastError',
+    'origin',
+    'pausedForApproval',
+  ]);
 });
 
 test('pin: load-bearing constants', () => {
@@ -85,6 +102,11 @@ test('pin: load-bearing constants', () => {
   assert.ok(RUN_HOST_SILENCE_THRESHOLD_MS >= RUN_HOST_HEARTBEAT_INTERVAL_MS * 3);
   assert.equal(RUN_HOST_HEARTBEAT_INTERVAL_MS, 15_000);
   assert.equal(RUN_HOST_SILENCE_THRESHOLD_MS, 45_000);
+  // Adopted-loop constants: watchdog cadence, bounded relaunches, wall-clock
+  // backstop (CoderJob parity).
+  assert.equal(RUN_HOST_ADOPTED_WATCHDOG_MS, 60_000);
+  assert.equal(RUN_HOST_MAX_ADOPTION_RELAUNCHES, 2);
+  assert.equal(RUN_HOST_ADOPTED_WALL_CLOCK_MS, 60 * 60 * 1000);
 });
 
 // ---------------------------------------------------------------------------
@@ -173,4 +195,75 @@ test('decision order: state is checked before checkpoint/mid-flight', () => {
     Date.now(),
   );
   assert.equal(decision.reason, 'state_released');
+});
+
+// ---------------------------------------------------------------------------
+// decideAdoptedAlarm — every branch
+// ---------------------------------------------------------------------------
+
+function makeAdoptedRecord(overrides = {}) {
+  return makeRecord({
+    state: 'adopted',
+    adoptedAt: 1781000000000,
+    adoptionId: 'adoption-1',
+    adoptionRelaunches: 0,
+    ...overrides,
+  });
+}
+
+test('adopted watchdog: idle when the record is not adopted', () => {
+  const decision = decideAdoptedAlarm(makeRecord(), { now: Date.now(), loopAlive: false });
+  assert.equal(decision.action, 'idle');
+  assert.equal(decision.reason, 'state_watched');
+});
+
+test('adopted watchdog: idle when paused at a supervised approval gate', () => {
+  const record = makeAdoptedRecord({
+    pausedForApproval: { approvalId: 'adopt-sandbox_push-r5', kind: 'remote_side_effect' },
+  });
+  const decision = decideAdoptedAlarm(record, {
+    now: record.adoptedAt + 5_000,
+    loopAlive: false,
+  });
+  assert.equal(decision.action, 'idle');
+  assert.equal(decision.reason, 'paused_for_approval');
+});
+
+test('adopted watchdog: expires a run past the wall-clock budget', () => {
+  const record = makeAdoptedRecord();
+  const decision = decideAdoptedAlarm(record, {
+    now: record.adoptedAt + RUN_HOST_ADOPTED_WALL_CLOCK_MS,
+    loopAlive: true,
+  });
+  assert.equal(decision.action, 'expire');
+  assert.equal(decision.reason, 'wall_clock_exhausted');
+});
+
+test('adopted watchdog: re-arms while the loop is alive', () => {
+  const record = makeAdoptedRecord();
+  const now = record.adoptedAt + 60_000;
+  const decision = decideAdoptedAlarm(record, { now, loopAlive: true });
+  assert.equal(decision.action, 'rearm');
+  assert.equal(decision.reArmAt, now + RUN_HOST_ADOPTED_WATCHDOG_MS);
+  assert.equal(decision.reason, 'loop_alive');
+});
+
+test('adopted watchdog: relaunches an orphaned loop (DO eviction)', () => {
+  const record = makeAdoptedRecord();
+  const decision = decideAdoptedAlarm(record, {
+    now: record.adoptedAt + 60_000,
+    loopAlive: false,
+  });
+  assert.equal(decision.action, 'relaunch');
+  assert.equal(decision.reason, 'loop_orphaned');
+});
+
+test('adopted watchdog: expires when the relaunch cap is exhausted', () => {
+  const record = makeAdoptedRecord({ adoptionRelaunches: RUN_HOST_MAX_ADOPTION_RELAUNCHES });
+  const decision = decideAdoptedAlarm(record, {
+    now: record.adoptedAt + 60_000,
+    loopAlive: false,
+  });
+  assert.equal(decision.action, 'expire');
+  assert.equal(decision.reason, 'relaunch_cap_exhausted');
 });
