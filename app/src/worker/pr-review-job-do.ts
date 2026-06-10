@@ -77,9 +77,12 @@ const REVIEW_TIMEOUT_MS = 15 * 60_000;
 // A review attempt that dies without a result (DO evicted by a deploy, or a
 // stalled provider stream hitting the wall-clock) is re-enqueued ONCE with this
 // suffix on its delivery id. The suffix doubles as the attempt counter: a dead
-// retry is final. Derived ids stay unique (webhook delivery ids never contain
-// '#') and ride the existing dedupe/supersede logic unchanged.
-const AUTO_RETRY_SUFFIX = '#auto-retry';
+// retry is final. Derived ids stay unique (webhook delivery ids are UUIDs and
+// never end with this suffix) and ride the existing dedupe/supersede logic
+// unchanged. Charset constraint: the suffix must stay within the cancel
+// route's deliveryId pattern (`[A-Za-z0-9._-]` in worker-pr-review.ts) or
+// running retries become uncancellable from the UI.
+const AUTO_RETRY_SUFFIX = '.auto-retry';
 // Origin for retries of rows persisted before the `origin` column existed. The
 // stream adapter only uses it to construct an in-process synthetic Request URL,
 // so any parseable origin works.
@@ -501,6 +504,22 @@ export class PrReviewJob {
    * pick the check-run wording off this).
    */
   private maybeRetryDeadReview(row: ReviewRow, cause: 'orphaned' | 'timeout'): boolean {
+    try {
+      return this.retryDeadReview(row, cause);
+    } catch (err) {
+      // A storage hiccup enqueuing the retry must not throw into the sweep or
+      // the alarm handler — the original row is already finalized; losing the
+      // retry degrades to the pre-retry behavior, loudly.
+      log('error', 'pr_review_retry_enqueue_failed', {
+        deliveryId: row.delivery_id,
+        cause,
+        message: err instanceof Error ? err.message : String(err),
+      });
+      return false;
+    }
+  }
+
+  private retryDeadReview(row: ReviewRow, cause: 'orphaned' | 'timeout'): boolean {
     if (row.delivery_id.endsWith(AUTO_RETRY_SUFFIX)) return false;
     const retryId = row.delivery_id + AUTO_RETRY_SUFFIX;
     // Idempotence across alarm re-fires / first-fetch sweeps: if the retry row
@@ -761,7 +780,20 @@ export class PrReviewJob {
     if (!deliveryId) return json({ error: 'MISSING_FIELDS', fields: ['deliveryId'] }, 400);
     const row = this.reviewRow(deliveryId);
     if (!row) return json({ error: 'NOT_FOUND', deliveryId }, 404);
-    if (row.status !== 'queued' && row.status !== 'running') {
+
+    const cancelledTarget = this.cancelReviewRow(row);
+
+    // Cascade to the auto-retry child. The first-fetch orphan sweep can race a
+    // cancel aimed at a dead original: by the time the cancel lands, the sweep
+    // has already failed the original AND enqueued its retry — so honoring the
+    // user's intent means killing the retry too, whichever ordering won.
+    let cancelledRetry = false;
+    if (!deliveryId.endsWith(AUTO_RETRY_SUFFIX)) {
+      const retryRow = this.reviewRow(deliveryId + AUTO_RETRY_SUFFIX);
+      if (retryRow) cancelledRetry = this.cancelReviewRow(retryRow);
+    }
+
+    if (!cancelledTarget && !cancelledRetry) {
       return json(
         {
           error: 'NOT_CANCELLABLE',
@@ -771,18 +803,24 @@ export class PrReviewJob {
         409,
       );
     }
+    return json({ status: 'cancelled' }, 200);
+  }
+
+  /** Cancel one non-terminal row; returns false when it was already terminal. */
+  private cancelReviewRow(row: ReviewRow): boolean {
+    if (row.status !== 'queued' && row.status !== 'running') return false;
 
     this.ctx.storage.sql.exec(
       "UPDATE review SET status = 'cancelled', finished_at = ? WHERE delivery_id = ?",
       Date.now(),
-      deliveryId,
+      row.delivery_id,
     );
-    const controller = this.abortControllers.get(deliveryId);
+    const controller = this.abortControllers.get(row.delivery_id);
     if (controller && !controller.signal.aborted) controller.abort();
-    this.abortControllers.delete(deliveryId);
-    this.emit(deliveryId, 'review.cancelled', {});
+    this.abortControllers.delete(row.delivery_id);
+    this.emit(row.delivery_id, 'review.cancelled', {});
     log('info', 'pr_review_cancelled', {
-      deliveryId,
+      deliveryId: row.delivery_id,
       repo: row.repo,
       pr: row.pr_number,
       priorStatus: row.status,
@@ -799,7 +837,7 @@ export class PrReviewJob {
     if (!controller) {
       this.ctx.waitUntil(this.closeCheckCancelledFromRow(row));
     }
-    return json({ status: 'cancelled' }, 200);
+    return true;
   }
 
   private reviewRow(deliveryId: string): ReviewRow | null {
