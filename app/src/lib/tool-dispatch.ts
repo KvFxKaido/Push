@@ -556,13 +556,71 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
  * Web adds the `droppedCandidates: []` field to fit `DetectedToolCalls`;
  * the shared kernel returns the minimal four-field shape.
  */
+function normalizeMutationPathKey(path: string): string {
+  let normalized = path.trim().replace(/\\/g, '/').replace(/\/+/g, '/');
+  if (normalized.startsWith('/workspace/')) normalized = normalized.slice('/workspace/'.length);
+  if (normalized === '/workspace') normalized = '.';
+  normalized = normalized.replace(/^\.\//, '');
+  return normalized || '.';
+}
+
+function getFileMutationPathKeys(toolCall: AnyToolCall): string[] {
+  if (toolCall.source !== 'sandbox') return [];
+  const { call } = toolCall;
+  switch (call.tool) {
+    case 'sandbox_write_file':
+    case 'sandbox_edit_file':
+    case 'sandbox_edit_range':
+    case 'sandbox_search_replace':
+      return [normalizeMutationPathKey(call.args.path)];
+    case 'sandbox_apply_patchset':
+      return [
+        ...new Set(
+          call.args.edits
+            .map((edit) => normalizeMutationPathKey(edit.path))
+            .filter((path) => path.length > 0),
+        ),
+      ];
+    default:
+      return [];
+  }
+}
+
+function splitOverlappingFileMutations(fileMutations: AnyToolCall[]): {
+  accepted: AnyToolCall[];
+  rejected: AnyToolCall[];
+} {
+  const seenPaths = new Set<string>();
+  const accepted: AnyToolCall[] = [];
+  const rejected: AnyToolCall[] = [];
+
+  for (const call of fileMutations) {
+    const pathKeys = getFileMutationPathKeys(call);
+    const conflicts = pathKeys.some((path) => seenPaths.has(path));
+    if (conflicts) {
+      rejected.push(call);
+      continue;
+    }
+    accepted.push(call);
+    for (const path of pathKeys) seenPaths.add(path);
+  }
+
+  return { accepted, rejected };
+}
+
 function classifyDetectedCalls(allCalls: AnyToolCall[]): DetectedToolCalls {
   const grouped = groupCallsByPhase<AnyToolCall>(
     allCalls,
     { isReadOnly: isReadOnlyToolCall, isFileMutation: isFileMutationToolCall },
     { maxParallelReads: MAX_PARALLEL_TOOL_CALLS, maxFileMutationBatch: MAX_FILE_MUTATION_BATCH },
   );
-  return { ...grouped, droppedCandidates: [] };
+  const splitFileMutations = splitOverlappingFileMutations(grouped.fileMutations);
+  return {
+    ...grouped,
+    fileMutations: splitFileMutations.accepted,
+    extraMutations: [...splitFileMutations.rejected, ...grouped.extraMutations],
+    droppedCandidates: [],
+  };
 }
 
 /** Extract the tool name from a unified tool call. */

@@ -644,6 +644,34 @@ describe('detectAllToolCalls', () => {
     }
   });
 
+  it('rejects overlapping file mutations for the same path in one turn', () => {
+    const text = [
+      '{"tool":"sandbox_edit_file","args":{"path":"/workspace/src/api.ts","edits":[{"op":"replace_line","ref":"1:abcdef0","content":"one"}]}}',
+      '{"tool":"sandbox_search_replace","args":{"path":"src/api.ts","search":"old","replace":"new"}}',
+    ].join('\n');
+
+    const detected = detectAllToolCalls(text);
+    expect(detected.fileMutations).toHaveLength(1);
+    expect(detected.extraMutations).toHaveLength(1);
+    if (detected.extraMutations[0]?.source === 'sandbox') {
+      expect(detected.extraMutations[0].call.tool).toBe('sandbox_search_replace');
+    }
+  });
+
+  it('rejects an edit that overlaps a patchset path in the same turn', () => {
+    const text = [
+      '{"tool":"sandbox_apply_patchset","args":{"edits":[{"path":"/workspace/src/api.ts","ops":[{"op":"replace_line","ref":"1:abcdef0","content":"one"}]}]}}',
+      '{"tool":"sandbox_edit_range","args":{"path":"src/api.ts","start_line":1,"end_line":1,"content":"two"}}',
+    ].join('\n');
+
+    const detected = detectAllToolCalls(text);
+    expect(detected.fileMutations).toHaveLength(1);
+    expect(detected.extraMutations).toHaveLength(1);
+    if (detected.extraMutations[0]?.source === 'sandbox') {
+      expect(detected.extraMutations[0].call.tool).toBe('sandbox_edit_range');
+    }
+  });
+
   it('batches file mutations followed by one trailing side-effect', () => {
     // [write, edit, exec] — 2 file mutations batch + 1 trailing exec
     const text = [

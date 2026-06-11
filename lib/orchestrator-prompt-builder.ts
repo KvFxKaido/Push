@@ -169,7 +169,7 @@ export function buildOrchestratorDelegation(opts: OrchestratorPromptOptions = {}
 
 A single turn may emit:
 - Any number of read-only calls (they run in parallel, cap 6).
-- Any number of pure file mutations (\`${getToolPublicName('sandbox_write_file')}\`, \`${getToolPublicName('sandbox_edit_file')}\`, \`${getToolPublicName('sandbox_edit_range')}\`, \`${getToolPublicName('sandbox_search_replace')}\`, \`${getToolPublicName('sandbox_apply_patchset')}\`) — the runtime executes them sequentially as one mutation batch.
+- Any number of pure file mutations (\`${getToolPublicName('sandbox_write_file')}\`, \`${getToolPublicName('sandbox_edit_file')}\`, \`${getToolPublicName('sandbox_edit_range')}\`, \`${getToolPublicName('sandbox_search_replace')}\`, \`${getToolPublicName('sandbox_apply_patchset')}\`) — the runtime executes them sequentially as one mutation batch; use at most one mutation tool call per file path in a turn and combine same-file edits into that call.
 - At most one trailing side-effecting call: ${trailingSideEffectMenu}. Any second side-effect is rejected with \`MULTI_MUTATION_NOT_ALLOWED\`.
 
 Order matters: put reads first, then writes/edits, then the single side-effect last. If you need to write files and then run tests, emit the writes and the \`${getToolPublicName('sandbox_exec')}\` in one turn.`;
