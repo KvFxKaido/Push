@@ -63,10 +63,12 @@ interface ReviewRow {
   started_at: number | null;
   finished_at: number | null;
   check_run_id: number | null;
+  relaunch_count: number;
 }
 
 function createMockCtx() {
   const reviews = new Map<string, ReviewRow>();
+  const checkpoints = new Map<string, { state_json: string; round: number; updated_at: number }>();
   const events: Array<{ seq: number; delivery_id: string; type: string; payload_json: string }> =
     [];
   const pending: Promise<unknown>[] = [];
@@ -74,8 +76,37 @@ function createMockCtx() {
 
   function run(sql: string, p: unknown[]): Record<string, unknown>[] {
     if (/^CREATE /i.test(sql) || /^ALTER TABLE/i.test(sql)) return [];
-    // ensureResultColumn() probes for result_json; report it present.
-    if (/^PRAGMA table_info\(review\)/i.test(sql)) return [{ name: 'result_json' }];
+    // ensureColumns() probes for the post-v1 columns; report all present so
+    // the mock never has to model ALTER.
+    if (/^PRAGMA table_info\(review\)/i.test(sql))
+      return [
+        { name: 'result_json' },
+        { name: 'posted' },
+        { name: 'check_run_id' },
+        { name: 'origin' },
+        { name: 'relaunch_count' },
+      ];
+    if (/^INSERT INTO review_checkpoint/i.test(sql)) {
+      checkpoints.set(p[0] as string, {
+        state_json: p[1] as string,
+        round: p[2] as number,
+        updated_at: p[3] as number,
+      });
+      return [];
+    }
+    if (/^SELECT state_json, round, updated_at FROM review_checkpoint/i.test(sql)) {
+      const c = checkpoints.get(p[0] as string);
+      return c ? [{ ...c }] : [];
+    }
+    if (/^DELETE FROM review_checkpoint/i.test(sql)) {
+      checkpoints.delete(p[0] as string);
+      return [];
+    }
+    if (/^UPDATE review SET relaunch_count = relaunch_count \+ 1/i.test(sql)) {
+      const r = reviews.get(p[0] as string);
+      if (r) r.relaunch_count += 1;
+      return [];
+    }
     if (/^SELECT status FROM review WHERE delivery_id/i.test(sql)) {
       const r = reviews.get(p[0] as string);
       return r ? [{ status: r.status }] : [];
@@ -132,6 +163,7 @@ function createMockCtx() {
         started_at: null,
         finished_at: null,
         check_run_id: null,
+        relaunch_count: 0,
       });
       return [];
     }
@@ -215,7 +247,7 @@ function createMockCtx() {
       pending.push(p);
     },
   };
-  return { ctx, reviews, events, pending, alarms };
+  return { ctx, reviews, checkpoints, events, pending, alarms };
 }
 
 const RESULT: ReviewResult = {
@@ -560,6 +592,7 @@ describe('PrReviewJob cancel', () => {
     // skips it rather than failing it before the cancel lands.
     mock.reviews.set('orphan', {
       delivery_id: 'orphan',
+      relaunch_count: 0,
       repo: 'octo/repo',
       pr_number: 7,
       head_sha: 'shaA',
@@ -697,6 +730,7 @@ describe('PrReviewJob orphan sweep', () => {
       started_at: Date.now(),
       finished_at: null,
       check_run_id: null,
+      relaunch_count: 0,
       ...overrides,
     };
   }
@@ -820,6 +854,204 @@ describe('PrReviewJob orphan sweep', () => {
   });
 });
 
+// Relaunch-from-checkpoint: the recovery path for the diagnosed failure mode
+// (2026-06-11, PR #887) — the runtime reclaims the DO instance ~1–3 min into
+// an unwatched review, so from-scratch retries can never converge. Per-round
+// checkpoints + watchdog relaunch make progress monotone.
+describe('PrReviewJob relaunch-from-checkpoint', () => {
+  function liveRow(overrides: Partial<ReviewRow> & { delivery_id: string }): ReviewRow {
+    return {
+      repo: 'octo/repo',
+      pr_number: 31,
+      head_sha: 'shaR',
+      base_ref: 'main',
+      head_ref: 'feature/r',
+      installation_id: '42',
+      is_cross_fork: 0,
+      origin: 'https://push.example',
+      status: 'running',
+      comments_posted: null,
+      posted: null,
+      result_json: null,
+      error_text: null,
+      created_at: Date.now() - 5 * 60_000,
+      started_at: Date.now() - 4 * 60_000,
+      finished_at: null,
+      check_run_id: 77,
+      relaunch_count: 0,
+      ...overrides,
+    };
+  }
+
+  const CKPT_STATE = {
+    messages: [{ id: 'deep-review-diff', role: 'user' as const, content: 'diff', timestamp: 1 }],
+    nextRound: 3,
+    totalToolCalls: 4,
+    usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+  };
+
+  function plantCheckpoint(
+    mock: ReturnType<typeof createMockCtx>,
+    deliveryId: string,
+    updatedAt = Date.now() - 60_000,
+  ) {
+    mock.checkpoints.set(deliveryId, {
+      state_json: JSON.stringify(CKPT_STATE),
+      round: CKPT_STATE.nextRound,
+      updated_at: updatedAt,
+    });
+  }
+
+  it('persists per-round checkpoints during a run and clears them on completion', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
+    let sizeMidRun = 0;
+    __setPrReviewExecutorOverride('ck1', async (_i, _e, _s, hooks) => {
+      hooks?.onRoundState?.({ ...CKPT_STATE, nextRound: 1 });
+      hooks?.onRoundState?.({ ...CKPT_STATE, nextRound: 2 });
+      sizeMidRun = mock.checkpoints.size;
+      return { result: RESULT, commentsPosted: 0, posted: true };
+    });
+    await do_.fetch(startRequest(startInput({ deliveryId: 'ck1' })));
+    await Promise.allSettled(mock.pending);
+
+    expect(sizeMidRun).toBe(1); // upserted per round, one row per delivery
+    expect(mock.checkpoints.size).toBe(0); // terminal exit cleared it
+    expect(mock.reviews.get('ck1')!.status).toBe('completed');
+  });
+
+  it('relaunches an orphaned checkpointed review from its last round, same delivery + check-run', async () => {
+    const mock = createMockCtx();
+    mock.reviews.set('dead', liveRow({ delivery_id: 'dead' }));
+    plantCheckpoint(mock, 'dead');
+
+    let seenResume: unknown = null;
+    __setPrReviewExecutorOverride('dead', async (_i, _e, _s, hooks) => {
+      seenResume = hooks?.resumeState ?? null;
+      return { result: RESULT, commentsPosted: 0, posted: true };
+    });
+
+    // Fresh instance over the same storage = the post-eviction wake.
+    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
+    await do_.alarm();
+    await Promise.allSettled(mock.pending);
+
+    expect(seenResume).toMatchObject({ nextRound: 3, totalToolCalls: 4 });
+    const row = mock.reviews.get('dead')!;
+    expect(row.status).toBe('completed');
+    expect(row.relaunch_count).toBe(1);
+    expect(row.check_run_id).toBe(77); // reused, not re-created
+    expect(
+      mock.events.some((e) => e.delivery_id === 'dead' && e.type === 'review.relaunched'),
+    ).toBe(true);
+    // No from-scratch retry was burned on a relaunchable death.
+    expect([...mock.reviews.keys()].some((k) => k.endsWith('.auto-retry'))).toBe(false);
+    expect(mock.checkpoints.has('dead')).toBe(false);
+  });
+
+  it('relaunch survives repeated deaths — the cap is persisted, not per-instance', async () => {
+    const mock = createMockCtx();
+    mock.reviews.set('dead', liveRow({ delivery_id: 'dead', relaunch_count: 7 }));
+    plantCheckpoint(mock, 'dead');
+    __setPrReviewExecutorOverride('dead', async () => ({
+      result: RESULT,
+      commentsPosted: 0,
+      posted: true,
+    }));
+    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
+    await do_.alarm();
+    await Promise.allSettled(mock.pending);
+    expect(mock.reviews.get('dead')!.relaunch_count).toBe(8);
+    expect(mock.reviews.get('dead')!.status).toBe('completed');
+  });
+
+  it('falls to the terminal orphan path once the relaunch cap is exhausted', async () => {
+    const mock = createMockCtx();
+    mock.reviews.set(
+      'spent',
+      liveRow({
+        delivery_id: 'spent',
+        relaunch_count: 10,
+        started_at: Date.now() - 10 * 60_000,
+      }),
+    );
+    plantCheckpoint(mock, 'spent');
+    __setPrReviewExecutorOverride('spent.auto-retry', async () => ({
+      result: RESULT,
+      commentsPosted: 0,
+      posted: true,
+    }));
+
+    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
+    await do_.alarm();
+    await Promise.allSettled(mock.pending);
+
+    expect(mock.reviews.get('spent')!.status).toBe('failed');
+    expect(mock.checkpoints.has('spent')).toBe(false);
+    // Existing semantics preserved: the terminal orphan path still gets its
+    // one from-scratch auto-retry.
+    expect(mock.reviews.get('spent.auto-retry')).toBeDefined();
+  });
+
+  it('anchors the stall timeout on checkpoint progress, not the run start', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
+    let aborted = false;
+    __setPrReviewExecutorOverride(
+      'slow',
+      (_i, _e, signal) =>
+        new Promise((_, reject) => {
+          signal.addEventListener('abort', () => {
+            aborted = true;
+            reject(new Error('aborted'));
+          });
+        }),
+    );
+    await do_.fetch(startRequest(startInput({ deliveryId: 'slow', prNumber: 33 })));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // 16 min since start, but a checkpoint landed 1 min ago: still working.
+    mock.reviews.get('slow')!.started_at = Date.now() - 16 * 60_000;
+    plantCheckpoint(mock, 'slow', Date.now() - 60_000);
+    await do_.alarm();
+    expect(aborted).toBe(false);
+    expect(mock.reviews.get('slow')!.status).toBe('running');
+
+    // No progress for 16 min: stalled — force-fail.
+    plantCheckpoint(mock, 'slow', Date.now() - 16 * 60_000);
+    await do_.alarm();
+    await Promise.allSettled(mock.pending);
+    expect(aborted).toBe(true);
+    expect(mock.reviews.get('slow')!.status).toBe('failed');
+  });
+
+  it('cancel clears the checkpoint so a sweep cannot resurrect a cancelled review', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
+    __setPrReviewExecutorOverride('c1', (_i, _e, signal, hooks) => {
+      hooks?.onRoundState?.({ ...CKPT_STATE, nextRound: 2 });
+      return new Promise((_, reject) =>
+        signal.addEventListener('abort', () => reject(new Error('aborted'))),
+      );
+    });
+    await do_.fetch(startRequest(startInput({ deliveryId: 'c1', prNumber: 34 })));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mock.checkpoints.has('c1')).toBe(true);
+
+    const res = await do_.fetch(cancelRequest('c1'));
+    expect(res.status).toBe(200);
+    await Promise.allSettled(mock.pending);
+    expect(mock.reviews.get('c1')!.status).toBe('cancelled');
+    expect(mock.checkpoints.has('c1')).toBe(false);
+    // A later alarm must not relaunch it.
+    await do_.alarm();
+    await Promise.allSettled(mock.pending);
+    expect(mock.reviews.get('c1')!.status).toBe('cancelled');
+  });
+});
+
 describe('PrReviewJob cross-PR in-flight index', () => {
   it('records the review in the SNAPSHOT_INDEX index on start', async () => {
     const mock = createMockCtx();
@@ -895,6 +1127,7 @@ describe('PrReviewJob auto-retry', () => {
       started_at: Date.now() - 30 * 60_000,
       finished_at: null,
       check_run_id: null,
+      relaunch_count: 0,
       ...overrides,
     };
   }

@@ -146,9 +146,33 @@ export interface DroppedToolCallCandidate {
  * needs a status callback and an optional abort signal. Web shim maps its
  * own `DeepReviewCallbacks` onto this shape 1:1.
  */
+/**
+ * Everything the round loop needs to continue a deep review in a fresh
+ * process/isolate: the transcript (system prompt and diff are rebuilt
+ * deterministically from options, so they are NOT carried), the next round
+ * index (absolute — MAX_DEEP_REVIEW_ROUNDS bounds total work across any
+ * number of resumes), the tool-call count (feeds the no-investigation
+ * guard), and the usage accumulator. JSON-serializable by construction —
+ * `LlmMessage` content is plain text on this path.
+ */
+export interface DeepReviewerResumeState {
+  messages: LlmMessage[];
+  nextRound: number;
+  totalToolCalls: number;
+  usage: StreamUsage;
+}
+
 export interface DeepReviewerCallbacks {
   onStatus: (phase: string, detail?: string) => void;
   signal?: AbortSignal;
+  /**
+   * Fired once at the top of every round with the state a resume would need
+   * to re-enter the loop exactly here (i.e. after the previous round's
+   * messages — tool results, nudges — were appended). Consumers that
+   * checkpoint MUST serialize synchronously: `messages` is the loop's live
+   * array, not a copy.
+   */
+  onRoundState?: (state: DeepReviewerResumeState) => void;
 }
 
 /**
@@ -223,6 +247,17 @@ export interface DeepReviewerOptions<TCall, TCard> extends ReviewerOptions {
    * the reviewer can't execute memory leave it undefined (LCM).
    */
   memoryToolProtocol?: string;
+
+  /**
+   * Re-enter the round loop from a prior `onRoundState` snapshot instead of
+   * starting fresh. The system prompt, annotated diff, and coverage stats are
+   * rebuilt deterministically from the other options — only the loop state
+   * carries over. Round indices stay absolute, so MAX_DEEP_REVIEW_ROUNDS
+   * bounds total work across any number of resumes. Added for the PrReviewJob
+   * relaunch-from-checkpoint path (the DO instance does not survive unwatched
+   * multi-minute reviews; see the CoderJob/RunHost dual-home precedent).
+   */
+  resumeState?: DeepReviewerResumeState;
 }
 
 // ---------------------------------------------------------------------------
@@ -513,6 +548,7 @@ export async function runDeepReviewer<TCall, TCard>(
     webSearchAvailable = true,
     sandboxToolProtocol,
     memoryToolProtocol,
+    resumeState,
   } = options;
 
   const activeProvider: AIProviderType = provider;
@@ -566,7 +602,9 @@ export async function runDeepReviewer<TCall, TCard>(
     truncated: filesReviewed < totalFiles,
   } as const;
 
-  const messages: LlmMessage[] = [
+  // On resume the transcript (which embeds the round-1 diff message) carries
+  // over verbatim; a fresh run seeds it with the annotated diff.
+  const messages: LlmMessage[] = resumeState?.messages ?? [
     {
       id: 'deep-review-diff',
       role: 'user',
@@ -587,14 +625,17 @@ export async function runDeepReviewer<TCall, TCard>(
         })
     : stream;
 
-  let totalToolCalls = 0;
+  let totalToolCalls = resumeState?.totalToolCalls ?? 0;
   let allAccumulated = '';
 
   // Sum token usage across every model round (and the final forced-output
   // call). Stays all-zero when the provider stream reports no usage; in that
   // case `finalizeUsage()` returns undefined so the ReviewResult omits the
-  // field rather than claiming a misleading 0.
-  const usageAcc: StreamUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  // field rather than claiming a misleading 0. Resume carries the prior
+  // attempts' sums so the final ReviewResult reports the whole review.
+  const usageAcc: StreamUsage = resumeState
+    ? { ...resumeState.usage }
+    : { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
   const addUsage = (u?: StreamUsage) => {
     if (!u) return;
     usageAcc.inputTokens += u.inputTokens;
@@ -606,10 +647,20 @@ export async function runDeepReviewer<TCall, TCard>(
       ? usageAcc
       : undefined;
 
-  for (let round = 0; round < MAX_DEEP_REVIEW_ROUNDS; round++) {
+  for (let round = resumeState?.nextRound ?? 0; round < MAX_DEEP_REVIEW_ROUNDS; round++) {
     if (callbacks.signal?.aborted) {
       throw new DOMException('Deep review cancelled by user.', 'AbortError');
     }
+
+    // Single checkpoint seam: the state at the top of round N is exactly the
+    // state after round N-1 finished appending its messages, on every path
+    // (tool results, nudges, parse errors). Consumers serialize synchronously.
+    callbacks.onRoundState?.({
+      messages,
+      nextRound: round,
+      totalToolCalls,
+      usage: { ...usageAcc },
+    });
 
     const roundNum = round + 1;
     callbacks.onStatus('Deep review investigating...', `Round ${roundNum}`);
