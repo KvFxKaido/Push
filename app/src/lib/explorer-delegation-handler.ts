@@ -215,8 +215,11 @@ export async function handleExplorerDelegation(
 
     const explorerOutcome: DelegationOutcome = {
       agent: 'explorer',
-      status:
-        explorerResult.rounds > 0 && explorerResult.summary.trim() ? 'complete' : 'inconclusive',
+      status: explorerResult.hitRoundCap
+        ? 'incomplete'
+        : explorerResult.rounds > 0 && explorerResult.summary.trim()
+          ? 'complete'
+          : 'inconclusive',
       summary: explorerResult.summary,
       evidence: explorerResult.summary.trim()
         ? [{ kind: 'observation', label: 'Investigation findings' }]
@@ -224,7 +227,9 @@ export async function handleExplorerDelegation(
       checks: [],
       gateVerdicts: [],
       missingRequirements: [],
-      nextRequiredAction: null,
+      nextRequiredAction: explorerResult.hitRoundCap
+        ? 'Investigation hit round cap — re-explore with a narrower scope or proceed with partial findings'
+        : null,
       rounds: explorerResult.rounds,
       checkpoints: 0,
       elapsedMs: Date.now() - explorerStartMs,

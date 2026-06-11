@@ -352,6 +352,8 @@ export interface ExplorerAgentResult<TCard> {
   summary: string;
   cards: TCard[];
   rounds: number;
+  /** True when the loop exhausted MAX_EXPLORER_ROUNDS without a clean finish. */
+  hitRoundCap?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -691,9 +693,18 @@ export async function runExplorerAgent<TCall, TCard>(
     };
   }
 
+  callbacks.onStatus('Explorer stopped', `Hit ${MAX_EXPLORER_ROUNDS} round limit`);
+  console.log(
+    JSON.stringify({
+      level: 'warn',
+      event: 'explorer_round_cap_hit',
+      rounds: MAX_EXPLORER_ROUNDS,
+    }),
+  );
   return {
     summary: `[Explorer stopped after ${MAX_EXPLORER_ROUNDS} rounds — investigation may be incomplete. Return the strongest current findings with file/line evidence and recommend the next move.]`,
     cards,
     rounds: MAX_EXPLORER_ROUNDS,
+    hitRoundCap: true,
   };
 }
