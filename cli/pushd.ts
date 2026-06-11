@@ -3231,13 +3231,15 @@ async function runExplorerForTaskGraph(sessionId, entry, node, signal, preambleE
 
   const delegationOutcome = {
     agent: 'explorer',
-    status: 'complete',
+    status: result.hitRoundCap ? 'incomplete' : 'complete',
     summary: result.summary,
     evidence: [],
     checks: [],
     gateVerdicts: [],
     missingRequirements: [],
-    nextRequiredAction: null,
+    nextRequiredAction: result.hitRoundCap
+      ? 'Investigation hit round cap — re-explore with a narrower scope or proceed with partial findings'
+      : null,
     rounds: result.rounds,
     checkpoints: 0,
     elapsedMs: Date.now() - startedAt,
@@ -4673,13 +4675,15 @@ async function handleDelegateExplorer(req) {
 
       outcome = {
         agent: 'explorer',
-        status: 'complete',
+        status: result.hitRoundCap ? 'incomplete' : 'complete',
         summary: result.summary,
         evidence: [],
         checks: [],
         gateVerdicts: [],
         missingRequirements: [],
-        nextRequiredAction: null,
+        nextRequiredAction: result.hitRoundCap
+          ? 'Investigation hit round cap — re-explore with a narrower scope or proceed with partial findings'
+          : null,
         rounds: result.rounds,
         checkpoints: 0,
         elapsedMs: Date.now() - startedAt,
