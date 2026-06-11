@@ -1,6 +1,6 @@
 # Durable Runs — Adopt-on-Silence
 
-**Status:** Current — Phases 0–3 COMPLETE. Phase 0: latency spike #870, eval harness #871 (numbers in [Phase 0 results](#phase-0-results-2026-06-10) — latency does not block Phase 2). Phase 1: schema #873, capture #874. Phase 2: the delegation-collapse precondition (the inline route + flag in `delegation-mode-settings.ts`, A/B-measurable via the eval harness `--delegate` arm), the **adoption substrate** (heartbeat ledger, checkpoint persistence, watched→adoptable decision — see [Phase 2 substrate](#phase-2-substrate-shipped-2026-06-10)), the **client transport** (register/mirror/heartbeat/release + pull-back-local — see [Phase 2 client transport](#phase-2-client-transport-shipped-2026-06-10)), and the **server-side loop** that consumes `adoptable` (see [Phase 2 server-side loop](#phase-2-server-side-loop-shipped-2026-06-10)). Phase 3: the **attach/viewer** — bearer-authenticated reattach, snapshot hydration, approve/deny pending gates, stop, pull-back-local (see [Phase 3 attach/viewer](#phase-3-attachviewer-shipped-2026-06-11)).
+**Status:** Current — Phases 0–3 COMPLETE. Phase 0: latency spike #870, eval harness #871 (numbers in [Phase 0 results](#phase-0-results-2026-06-10) — latency does not block Phase 2). Phase 1: schema #873, capture #874. Phase 2: the delegation-collapse precondition (the inline route + flag in `delegation-mode-settings.ts`; A/B measured 2026-06-11 — direct ≥ delegated on every axis, see [Delegation-collapse A/B](#delegation-collapse-ab-measured-2026-06-11)), the **adoption substrate** (heartbeat ledger, checkpoint persistence, watched→adoptable decision — see [Phase 2 substrate](#phase-2-substrate-shipped-2026-06-10)), the **client transport** (register/mirror/heartbeat/release + pull-back-local — see [Phase 2 client transport](#phase-2-client-transport-shipped-2026-06-10)), and the **server-side loop** that consumes `adoptable` (see [Phase 2 server-side loop](#phase-2-server-side-loop-shipped-2026-06-10)). Phase 3: the **attach/viewer** — bearer-authenticated reattach, snapshot hydration, approve/deny pending gates, stop, pull-back-local (see [Phase 3 attach/viewer](#phase-3-attachviewer-shipped-2026-06-11)).
 
 **Date:** 2026-06-10
 
@@ -67,8 +67,10 @@ remainder, storage substrate) are untouched and remain sequenced behind it.
 - **Agent eval harness:** ~10–20 repeatable agent tasks against the live
   stack with scored outcomes (task completion, turn count, wall-clock,
   tool-error rate). Required by this track's Phase 2 comparison AND the
-  delegation-collapse A/B, which is currently gated on measurement that does
-  not exist. Lives as its own small runner; not CI-gating initially.
+  delegation-collapse A/B, which at design time was gated on measurement that
+  did not exist (since taken — see
+  [Delegation-collapse A/B](#delegation-collapse-ab-measured-2026-06-11)).
+  Lives as its own small runner; not CI-gating initially.
 
 #### Phase 0 results (2026-06-10)
 
@@ -186,7 +188,8 @@ visibly in the meantime rather than silently losing fidelity.
 
 ### Phase 2 — RunHost DO + adoption
 
-- Delegation collapse lands first (behind a flag, measured via Phase 0 evals).
+- Delegation collapse lands first (behind a flag, measured via Phase 0 evals —
+  done; results below).
 - `RunHost` DO owns: heartbeat ledger, adoption decision (silence threshold,
   only adopts a run that is mid-flight), the server-side loop over the same
   kernels, checkpoint persistence, orphan/alarm hygiene per the CoderJob and
@@ -361,6 +364,89 @@ infra on this path — adoption retries are bounded and then park
 the server-side wire (the checkpoint preserves them for the client); the
 final assistant summary lives in the terminal checkpoint awaiting Phase 3
 hydration.
+
+#### Delegation-collapse A/B (measured 2026-06-11)
+
+The measurement the collapse was gated on. Full 12-task suite
+(`scripts/eval/run-evals.ts`), `zen/glm-5.1`, 1 trial/task, arms run
+sequentially on the same machine. Raw results in
+`docs/measurements/delegation-collapse-ab/`.
+
+**v1 run (defective instruments — superseded by v2 below):**
+
+| metric | direct (inline proxy) | delegated (task-graph) |
+|---|---|---|
+| harness completion | 10/12 | 10/12 |
+| **acceptance-pass** (work actually correct) | **12/12** | **10/12** |
+| median rounds | 5 | 5 |
+| median wall-clock | 41.5 s | 63 s (+52%) |
+| tool-error rate | 25% (19/76) | 30% (26/88) |
+| malformed tool calls | 3 | 3 |
+
+**v1 verdict: direct ≥ delegated on every axis.** The headline completion
+tie hides a qualitative split in failure classes:
+
+- Direct's two "failures" were **loop-detector aborts after acceptance had
+  already passed** — the model finished the edit, then repeated an identical
+  tool call 3× instead of emitting its final answer. Work done, exit messy.
+- Delegated's two failures were **failures of the work**: one
+  `delegation_failed` at rounds 0 (the handoff itself died — same loop quirk
+  firing *before* any work, plus 2 malformed calls in the handoff), and one
+  **false-positive success** (`guard-error-handling`: exit 0, outcome
+  success, acceptance failed). The direct arm passed that task in 3 rounds /
+  27 s.
+
+The per-task miniature: `extract-helper` — 47 s direct vs 2 m 51 s delegated
+with a 50% tool-error rate (12/24). The wrapper added churn, not quality.
+
+**Instrument defects (diagnosed same day, fixed in PR #886).** Tracing the
+direct arm's two aborts dissolved the apparent glm-5.1 stop-behavior quirk
+into two defects in the measurement stack itself — in every abort the model
+had finished the work and was trying to *verify* it:
+
+1. **The harness ran agents that couldn't execute anything.** `push run`
+   headless blocks `exec` without `--allow-exec`, so every verification
+   attempt errored (`EXEC_DISABLED`) — 15 of direct's 19 and 17 of
+   delegated's 26 "tool errors" were these blocks and their skipped
+   batch-mates (real error rate ~5–6%, not 25–30%) — and the models were
+   pushed into re-reading files as their only verification affordance.
+2. **The CLI exact-repeat breaker counted cumulatively across the whole
+   run** (`cli/engine.ts`) — never reset by intervening calls, no warn rung.
+   Three productive reads of one small file across six turns = abort. The
+   web tracker and coder kernel never had this defect; the CLI was the
+   outlier. Fixed by converging on the web's consecutive-identical
+   semantics, with drift pins against regrowth.
+
+**v2 run (fixed instruments, same stack and protocol):**
+
+| metric | direct (inline proxy) | delegated (task-graph) |
+|---|---|---|
+| completion | 11/12 | 11/12 |
+| median rounds | 5 | 5 |
+| median wall-clock | **33.3 s** | 59.3 s (+78%) |
+| tool-error rate | 17% (12/71) | 18% (15/83) |
+
+Zero loop aborts, zero `EXEC_DISABLED`, zero error events on the direct arm.
+Each arm dropped one *different* task: direct failed `write-docs-section` at
+the round cap (the fenced-JSON-containing-triple-backticks struggle — real
+protocol friction); delegated failed `guard-error-handling` as
+`delegation_failed` at rounds 0 — **2 m 26 s producing zero tool calls** —
+the second dead handoff across runs, a failure class only the wrapper has.
+
+**Verdict (v2, final): quality ties; the wrapper costs ~78% wall-clock and
+owns a unique failure mode (the handoff itself dying).** The "inline ≥
+delegated before deleting the Planner/brief" gate (Single-Agent Loop step 1)
+is met. Default flip + Planner/brief deletion are unblocked as runtime work;
+tracked on the ROADMAP, not here.
+
+**Caveats:** n=1 per task; one model; the CLI `--delegate` task-graph path is
+a proxy for the web delegated arc, not the arc itself.
+
+**Model-facing findings the fixed eval now surfaces (follow-on candidates):**
+the fenced-JSON tool protocol fights file content containing triple backticks
+(glm worked around it with `\u0060` escapes once, burned 14 rounds
+on it the next time); and `edit_file` "Invalid ref" errors cluster (~6/arm)
+where the model passes prose or line numbers instead of hashline refs.
 
 ### Phase 3 — Attach/viewer
 

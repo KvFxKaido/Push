@@ -1,7 +1,7 @@
 # Agent Runtime Decisions
 
 Status: **Current**
-Reviewed: 2026-06-07
+Reviewed: 2026-06-11
 
 This is the live decision surface for Push's agent runtime. Archived source
 notes live in [`../archive/decisions/`](../archive/decisions/README.md).
@@ -30,7 +30,19 @@ boundaries, and event compatibility.
 
 Status:
 - Roadmap-tracked: inline `delegation-mode` exists behind a flag.
-- Pending: make lead-drives-engine-inline the default after measurement.
+- **Measured (2026-06-11, two runs): quality ties, the wrapper costs ~78%
+  wall-clock and owns a unique failure mode** — v2 on fixed instruments:
+  completion 11/12 both arms, median wall 33.3 s direct vs 59.3 s delegated,
+  tool-error 17% vs 18%; delegated's failure was the handoff itself dying
+  (2 m 26 s, zero tool calls), the second dead handoff across runs. The v1
+  run's apparent direct-arm failures were instrument defects (cumulative CLI
+  loop breaker + harness without `--allow-exec`), fixed in PR #886. Full
+  12-task eval suite on zen/glm-5.1; results in
+  `docs/measurements/delegation-collapse-ab/`, analysis in
+  [`Durable Runs — Adopt-on-Silence`](<Durable Runs — Adopt-on-Silence.md>)
+  §Delegation-collapse A/B.
+- Pending: flip lead-drives-engine-inline to the default and delete the
+  Planner/brief — the measurement gate is met; this is now runtime work.
 - Protected: event compatibility, runtime safety boundary, progress/liveness.
 
 Source notes:
