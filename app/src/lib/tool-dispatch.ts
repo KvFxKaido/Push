@@ -559,9 +559,19 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
 function normalizeMutationPathKey(path: string): string {
   let normalized = path.trim().replace(/\\/g, '/').replace(/\/+/g, '/');
   if (normalized.startsWith('/workspace/')) normalized = normalized.slice('/workspace/'.length);
-  if (normalized === '/workspace') normalized = '.';
-  normalized = normalized.replace(/^\.\//, '');
-  return normalized || '.';
+  else if (normalized === '/workspace') normalized = '.';
+  // Resolve . and .. segments so alias paths like `src/../api.ts` collide with `api.ts`.
+  const segments = normalized.split('/');
+  const resolved: string[] = [];
+  for (const seg of segments) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') {
+      resolved.pop();
+      continue;
+    }
+    resolved.push(seg);
+  }
+  return resolved.join('/') || '.';
 }
 
 function getFileMutationPathKeys(toolCall: AnyToolCall): string[] {
