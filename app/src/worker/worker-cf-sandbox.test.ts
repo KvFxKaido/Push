@@ -6,6 +6,7 @@ import {
   MAX_SNAPSHOT_BYTES,
   restoreWorkspaceSnapshot,
   SANDBOX_EXEC_TIMEOUT_MS,
+  SandboxExecDeadlineError,
 } from './worker-cf-sandbox';
 import type { Env } from './worker-middleware';
 import { MAX_TOKEN_BYTES } from './sandbox-token-store';
@@ -740,8 +741,70 @@ describe('handleCloudflareSandbox hardened connect and diff paths', () => {
       error: 'Sandbox is not reachable',
       code: 'NOT_FOUND',
     });
-    expect(sandbox.exec).toHaveBeenCalledTimes(2);
+    // 1 auth token read + 3 probe attempts: the liveness probe retries
+    // transient failures before declaring the sandbox dead, so a 404 now
+    // requires every attempt to fail.
+    expect(sandbox.exec).toHaveBeenCalledTimes(4);
     expect(sandbox.exec).toHaveBeenNthCalledWith(2, 'true');
+    expect(sandbox.exec).toHaveBeenNthCalledWith(4, 'true');
+  });
+
+  it('connect survives a transient liveness blip via probe retry', async () => {
+    const sandbox = mockSandbox();
+    let probeCalls = 0;
+    withOwnerTokenAuthExec(sandbox, async (command) => {
+      if (command === 'true') {
+        probeCalls += 1;
+        if (probeCalls === 1) throw new Error('network blip');
+        return { stdout: '', stderr: '', exitCode: 0 };
+      }
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+
+    const response = await callRoute('connect', { sandbox_id: 'sb-blip' });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      sandbox_id: 'sb-blip',
+      status: 'ready',
+    });
+    expect(probeCalls).toBe(2);
+  });
+
+  it('connect reports a wedged container as 504 TIMEOUT without retrying', async () => {
+    const sandbox = mockSandbox();
+    withOwnerTokenAuthExec(sandbox, async (command) => {
+      if (command === 'true') throw new SandboxExecDeadlineError(150_000);
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+
+    const response = await callRoute('connect', { sandbox_id: 'sb-wedged' });
+
+    // 504, not 404: callers treat 404 as "sandbox gone" and recreate, which
+    // would orphan a container that is wedged but may still hold uncommitted
+    // work. A deadline expiry also must not retry — the budget is burned.
+    expect(response.status).toBe(504);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Sandbox is not responding',
+      code: 'TIMEOUT',
+    });
+    expect(sandbox.exec).toHaveBeenCalledTimes(2);
+  });
+
+  it('classifies a disk-full write failure as DISK_FULL, not CONTAINER_ERROR', async () => {
+    const sandbox = mockSandbox();
+    sandbox.writeFile.mockRejectedValueOnce(
+      new Error('write /workspace/big.bin: no space left on device'),
+    );
+
+    const response = await callRoute('write', {
+      sandbox_id: 'sb-1',
+      path: 'big.bin',
+      content: 'x',
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({ code: 'DISK_FULL' });
   });
 
   it('falls back to KV auth for cleanup when the sandbox token file is gone', async () => {

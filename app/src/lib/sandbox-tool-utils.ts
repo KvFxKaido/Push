@@ -151,6 +151,16 @@ export function diagnoseExecFailure(stderr: string): string | null {
     return `Permission denied. Try prefixing the command with sudo, or check file permissions with ls -la.`;
   }
 
+  // Disk full — cleaning up beats restarting: a sandbox restart loses
+  // uncommitted work and the fresh workspace has the same size budget.
+  if (
+    lower.includes('no space left') ||
+    lower.includes('enospc') ||
+    lower.includes('disk quota exceeded')
+  ) {
+    return `The workspace is out of disk space. Free space before re-running: delete build artifacts and caches (e.g. rm -rf node_modules/.cache dist coverage). Do NOT restart the sandbox — that loses uncommitted changes without raising the space budget.`;
+  }
+
   // No such file or directory (not a "command not found" — more like a bad path arg)
   if (
     (lower.includes('no such file or directory') || lower.includes('enoent')) &&

@@ -105,6 +105,8 @@ export function mapCfErrorCode(code: string | undefined, httpStatus: number): Sa
       return 'NOT_FOUND';
     case 'CONTAINER_ERROR':
       return 'CONTAINER_ERROR';
+    case 'DISK_FULL':
+      return 'DISK_FULL';
     case 'STALE_FILE':
       return 'STALE_FILE';
     case 'WORKSPACE_CHANGED':

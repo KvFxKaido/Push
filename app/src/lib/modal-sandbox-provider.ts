@@ -87,11 +87,15 @@ function toSandboxError(err: unknown): SandboxError {
     UNKNOWN: 'UNKNOWN',
   };
 
-  // Refine NETWORK_ERROR into more specific codes when possible
+  // Refine NETWORK_ERROR into more specific codes when possible. Bare codes
+  // (NOT_FOUND, DISK_FULL) come from the CF handler, which can serve the
+  // shared /api/sandbox/* route when PUSH_SANDBOX_PROVIDER=cloudflare — so
+  // this adapter must understand them too.
   let code = codeMap[toolErrorType] ?? 'UNKNOWN';
   if (rawCode === 'MODAL_NOT_CONFIGURED') code = 'NOT_CONFIGURED';
-  if (rawCode === 'MODAL_NOT_FOUND') code = 'NOT_FOUND';
+  if (rawCode === 'MODAL_NOT_FOUND' || rawCode === 'NOT_FOUND') code = 'NOT_FOUND';
   if (rawCode === 'CONTAINER_ERROR' || rawCode === 'MODAL_ERROR') code = 'CONTAINER_ERROR';
+  if (rawCode === 'DISK_FULL') code = 'DISK_FULL';
 
   return new SandboxError(message, code);
 }

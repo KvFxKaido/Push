@@ -509,6 +509,146 @@ describe('CoderJob DO — end-to-end', () => {
     expect(jobRow.error_text ?? '').toContain('provider exploded');
   });
 
+  it('fails fast when the pre-run liveness probe reports the sandbox dead', async () => {
+    const { ctx, storage, waitUntilPromises } = makeCtx();
+    const input = makeStartInput({ jobId: 'job-probe-dead' });
+
+    let probed: string | null = null;
+    __setCoderJobServiceOverrides(input.jobId, {
+      detectors: stubDetectors,
+      executor: stubExecutor,
+      stream: makeNoToolStreamFn('should never stream'),
+      livenessProbe: async (sandboxId) => {
+        probed = sandboxId;
+        return { alive: false, reason: 'dead', attempts: 3, error: 'container gone' };
+      },
+    });
+
+    const job = new CoderJob(ctx, makeEnv());
+    const response = await job.fetch(
+      new Request('https://do/start', {
+        method: 'POST',
+        body: JSON.stringify(input),
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    expect(response.status).toBe(202);
+    await Promise.all(waitUntilPromises);
+
+    expect(probed).toBe('sb-1');
+    // Fail-fast: no model round runs (no prompt snapshot), the job lands in
+    // 'failed' with an actionable message instead of hanging until the first
+    // kernel exec discovers the dead sandbox.
+    const eventTypes = storage.events.map((e) => e.type);
+    expect(eventTypes).toEqual(['job.started', 'job.failed']);
+    const jobRow = storage.jobs.get(input.jobId)!;
+    expect(jobRow.status).toBe('failed');
+    expect(jobRow.error_text ?? '').toMatch(/before the job started/i);
+  });
+
+  it('runs normally when the pre-run liveness probe reports alive', async () => {
+    const { ctx, storage, waitUntilPromises } = makeCtx();
+    const input = makeStartInput({ jobId: 'job-probe-alive' });
+
+    __setCoderJobServiceOverrides(input.jobId, {
+      detectors: stubDetectors,
+      executor: stubExecutor,
+      stream: makeNoToolStreamFn('Task complete.'),
+      livenessProbe: async () => ({ alive: true, attempts: 1 }),
+    });
+
+    const job = new CoderJob(ctx, makeEnv());
+    await job.fetch(
+      new Request('https://do/start', {
+        method: 'POST',
+        body: JSON.stringify(input),
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    await Promise.all(waitUntilPromises);
+
+    expect(storage.jobs.get(input.jobId)!.status).toBe('completed');
+  });
+
+  it('captureCheckpoint retries transient snapshot failures before persisting', async () => {
+    vi.useFakeTimers();
+    try {
+      const { ctx, storage } = makeCtx();
+      const job = new CoderJob(ctx, makeEnv());
+
+      let calls = 0;
+      __setCoderJobServiceOverrides('job-cp-retry', {
+        snapshot: async () => {
+          calls += 1;
+          if (calls < 3) return { ok: false, error: 'transient R2 blip', status: 500 };
+          return { ok: true, snapshotId: 'snapshot:retry-ok', restoreToken: 'rt', sizeBytes: 1 };
+        },
+      });
+
+      const capture = (
+        job as unknown as {
+          captureCheckpoint(jobId: string, sandboxId: string, state: unknown): Promise<void>;
+        }
+      ).captureCheckpoint('job-cp-retry', 'sb-1', {
+        round: 5,
+        messages: [],
+        workingMemory: null,
+        cards: [],
+      });
+      await vi.advanceTimersByTimeAsync(10_000);
+      await capture;
+
+      expect(calls).toBe(3);
+      expect(storage.checkpoints.get('job-cp-retry')).toMatchObject({
+        snapshot_id: 'snapshot:retry-ok',
+        round: 5,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('captureCheckpoint does not retry deterministic failures (too-large, not-configured)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { ctx, storage } = makeCtx();
+    const job = new CoderJob(ctx, makeEnv());
+
+    let calls = 0;
+    __setCoderJobServiceOverrides('job-cp-large', {
+      snapshot: async () => {
+        calls += 1;
+        return { ok: false, error: 'archive exceeds cap', status: 413 };
+      },
+    });
+
+    await (
+      job as unknown as {
+        captureCheckpoint(jobId: string, sandboxId: string, state: unknown): Promise<void>;
+      }
+    ).captureCheckpoint('job-cp-large', 'sb-1', {
+      round: 10,
+      messages: [],
+      workingMemory: null,
+      cards: [],
+    });
+
+    expect(calls).toBe(1);
+    expect(storage.checkpoints.has('job-cp-large')).toBe(false);
+    // Too-large gets its own event name — it recurs every cadence once the
+    // workspace outgrows the cap, and the remediation differs from a
+    // transient storage failure.
+    const events = warn.mock.calls
+      .map((args) => {
+        try {
+          return JSON.parse(args[0] as string) as { event?: string };
+        } catch {
+          return null;
+        }
+      })
+      .filter((entry): entry is { event: string } => Boolean(entry?.event));
+    expect(events.map((e) => e.event)).toContain('coder_checkpoint_too_large');
+  });
+
   it('rejects /start with an unsupported role at the DO layer (defense in depth)', async () => {
     const { ctx, storage } = makeCtx();
     const job = new CoderJob(ctx, makeEnv());

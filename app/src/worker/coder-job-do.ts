@@ -34,8 +34,11 @@ import {
 } from '@push/lib/coder-agent';
 import {
   createWorkspaceSnapshot,
+  probeSandboxLiveness,
   restoreWorkspaceSnapshot,
   SNAPSHOT_KEY_PREFIX,
+  type CreateSnapshotResult,
+  type SandboxLivenessResult,
 } from './worker-cf-sandbox';
 import {
   buildCoderDetectors,
@@ -187,6 +190,14 @@ export interface CoderJobServiceOverrides {
    *  is a Web loader that fetches sibling DOs via env.CoderJob; tests
    *  inject a stub. */
   contextLoader?: ContextLoader;
+  /** Pre-run sandbox liveness probe. Default probes via the CF Sandbox SDK
+   *  when env.Sandbox is bound and no executor stub is injected; tests
+   *  inject a stub to exercise the dead-at-start fail-fast path. */
+  livenessProbe?: (sandboxId: string) => Promise<SandboxLivenessResult>;
+  /** Workspace snapshot fn for checkpoint capture. Default is
+   *  createWorkspaceSnapshot against this DO's env; tests inject a stub to
+   *  exercise the transient-failure retry path. */
+  snapshot?: (args: { sandboxId: string }) => Promise<CreateSnapshotResult>;
 }
 
 const SERVICE_OVERRIDES = new Map<string, CoderJobServiceOverrides>();
@@ -210,6 +221,20 @@ export const MAX_JOB_WALL_CLOCK_MS = 60 * 60 * 1000;
 // sandbox death. Bounded so a sandbox that keeps dying (bad image, infra issue)
 // can't restore-and-retry forever — after this the job fails as before.
 export const MAX_JOB_RESUMES = 2;
+
+// Deadline for the pre-run liveness probe. Much shorter than the 150s
+// per-exec deadline: the probe is a trivial `true`, so anything slower than
+// this means the container is not going to serve the job anyway, and a
+// background job shouldn't sit minutes in "running" before the first real
+// exec discovers the sandbox died between session activity and job dispatch.
+const JOB_START_PROBE_DEADLINE_MS = 30_000;
+
+// Backoff between checkpoint-snapshot retries. A checkpoint that silently
+// fails on a transient R2/exec blip means the next sandbox death cold-resumes
+// from a stale round (or not at all), so a failed snapshot is worth two more
+// attempts before giving up. Only status-500 failures retry — 413 (workspace
+// over the snapshot cap) and 503 (storage not configured) are deterministic.
+const CHECKPOINT_SNAPSHOT_BACKOFF_MS = [1_000, 3_000];
 
 // Max times a single job will auto-resume after a DO eviction (deploy, isolate
 // crash, hibernate without a live waitUntil). Independent from MAX_JOB_RESUMES:
@@ -690,6 +715,40 @@ export class CoderJob {
     let ownerToken = seed?.ownerToken ?? input.ownerToken;
     let resumeState: CoderCheckpointState<ChatCard> | undefined = seed?.resumeState;
     let resumesUsed = 0;
+
+    // Fail fast on a sandbox that died between session activity and job
+    // dispatch. Without this probe the first sign of trouble is the kernel's
+    // first tool exec — after a full model round has streamed — so the user
+    // watches "job running" for minutes before the unreachable error lands.
+    // Skipped for seeded resumes (the orphan sweep just restored that sandbox)
+    // and for test runs that stub the executor without a real sandbox.
+    const livenessProbe =
+      overrides.livenessProbe ??
+      (this.env.Sandbox && !overrides.executor
+        ? (id: string) =>
+            probeSandboxLiveness(this.env, id, { deadlineMs: JOB_START_PROBE_DEADLINE_MS })
+        : undefined);
+    if (!seed && livenessProbe) {
+      const probe = await livenessProbe(sandboxId);
+      if (!probe.alive) {
+        console.warn(
+          JSON.stringify({
+            level: 'warn',
+            event: 'coder_job_start_sandbox_unreachable',
+            jobId: input.jobId,
+            sandboxId,
+            reason: probe.reason,
+            attempts: probe.attempts,
+            error: probe.error,
+          }),
+        );
+        throw new Error(
+          probe.reason === 'wedged'
+            ? `Sandbox stopped responding before the job started (probe exceeded ${JOB_START_PROBE_DEADLINE_MS}ms). Retry once the sandbox recovers, or restart it and re-delegate.`
+            : 'Sandbox was lost before the job started. Restart the sandbox and re-delegate the task.',
+        );
+      }
+    }
 
     for (;;) {
       const executor =
@@ -1428,16 +1487,35 @@ export class CoderJob {
     state: CoderCheckpointState<ChatCard>,
   ): Promise<void> {
     const prior = this.readCheckpoint(jobId);
-    const snap = await createWorkspaceSnapshot(this.env, { sandboxId });
+    const snapshotFn =
+      SERVICE_OVERRIDES.get(jobId)?.snapshot ??
+      ((args: { sandboxId: string }) => createWorkspaceSnapshot(this.env, args));
+    // Retry transient (status-500) snapshot failures with backoff: a single
+    // R2/exec blip otherwise skips this checkpoint silently, and the next
+    // sandbox death resumes from a round several checkpoints stale. 413 and
+    // 503 are deterministic and exit the loop immediately.
+    let attempts = 1;
+    let snap = await snapshotFn({ sandboxId });
+    for (const delayMs of CHECKPOINT_SNAPSHOT_BACKOFF_MS) {
+      if (snap.ok || snap.status !== 500) break;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      attempts += 1;
+      snap = await snapshotFn({ sandboxId });
+    }
     if (!snap.ok) {
       // Surface the lost checkpoint in logs — onStatus is a no-op here, so this
       // is the only diagnostic trail for a snapshot a future resume may need.
+      // Too-large gets its own event name: it recurs every cadence once the
+      // workspace outgrows the snapshot cap, and the remediation (commit/push
+      // or clean large artifacts) is nothing like a transient storage failure.
       console.warn(
         JSON.stringify({
           level: 'warn',
-          event: 'coder_checkpoint_failed',
+          event: snap.status === 413 ? 'coder_checkpoint_too_large' : 'coder_checkpoint_failed',
           jobId,
           round: state.round,
+          status: snap.status,
+          attempts,
           error: snap.error,
         }),
       );

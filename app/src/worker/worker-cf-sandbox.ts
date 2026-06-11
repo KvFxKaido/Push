@@ -161,6 +161,53 @@ function withExecDeadline<T>(
   });
 }
 
+// Backoff schedule between liveness-probe attempts. Two short retries: a
+// genuine network blip or DO handoff recovers within a second, while a dead
+// container fails all three attempts in under a second of added latency.
+const LIVENESS_PROBE_BACKOFF_MS = [200, 600];
+
+export type SandboxLivenessResult =
+  | { alive: true; attempts: number }
+  | { alive: false; reason: 'wedged' | 'dead'; attempts: number; error: string };
+
+/**
+ * Probe a sandbox with a trivial exec, retrying transient failures before
+ * declaring it gone. Consumers treat "dead" as authorization to recreate the
+ * sandbox — which orphans the container and its uncommitted work if it was
+ * actually alive — so a single transient failure must never produce "dead".
+ *
+ * A deadline expiry is reported as "wedged" without retrying: the container
+ * is stalled rather than blipping, retries would stack more long waits onto
+ * an already-burned request budget, and recovery (wait / retry later) differs
+ * from recovery for a dead container (recreate).
+ */
+export async function probeSandboxLiveness(
+  env: Env,
+  sandboxId: string,
+  opts?: { deadlineMs?: number },
+): Promise<SandboxLivenessResult> {
+  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  const maxAttempts = LIVENESS_PROBE_BACKOFF_MS.length + 1;
+  let lastError = '';
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = (await withExecDeadline(sandbox.exec('true'), opts?.deadlineMs)) as {
+        exitCode?: number;
+      };
+      if ((res.exitCode ?? 1) === 0) return { alive: true, attempts: attempt };
+      lastError = `liveness probe exited ${res.exitCode}`;
+    } catch (err) {
+      if (err instanceof SandboxExecDeadlineError) {
+        return { alive: false, reason: 'wedged', attempts: attempt, error: err.message };
+      }
+      lastError = err instanceof Error ? err.message : String(err);
+    }
+    const delayMs = LIVENESS_PROBE_BACKOFF_MS[attempt - 1];
+    if (delayMs !== undefined) await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  return { alive: false, reason: 'dead', attempts: maxAttempts, error: lastError };
+}
+
 type Json = Record<string, unknown>;
 
 export async function handleCloudflareSandbox(
@@ -565,11 +612,36 @@ async function routeConnect(env: Env, body: Json): Promise<Response> {
   // swallows exec errors (returning an empty payload) so we can't rely on it
   // to signal a dead sandbox — do the probe explicitly here and surface 404
   // when it fails so callers fall back to create/restore.
-  const liveness = (await withExecDeadline(sandbox.exec('true')).catch((err) => ({
-    __error: err,
-  }))) as { exitCode?: number } | { __error: unknown };
-  if ('__error' in liveness || (liveness as { exitCode?: number }).exitCode !== 0) {
+  //
+  // The probe retries transient failures and reports a wedged container
+  // (deadline expiry) as 504 TIMEOUT — same vocabulary as the auth gate's
+  // deadline handling — instead of folding every failure into 404. Callers
+  // treat 404 as "sandbox gone" and fall back to create, so a transient blip
+  // here used to orphan a live container along with its uncommitted work.
+  // By this point the auth gate has just read the owner-token file via exec
+  // successfully, so a probe failure is more likely a blip than a death.
+  const probe = await probeSandboxLiveness(env, sandboxId);
+  if (!probe.alive) {
+    if (probe.reason === 'wedged') {
+      wlog('warn', 'cf_connect_probe_wedged', {
+        sandboxId,
+        attempts: probe.attempts,
+        message: probe.error,
+      });
+      return Response.json(
+        { error: 'Sandbox is not responding', code: 'TIMEOUT' },
+        { status: 504 },
+      );
+    }
+    wlog('warn', 'cf_connect_probe_dead', {
+      sandboxId,
+      attempts: probe.attempts,
+      message: probe.error,
+    });
     return Response.json({ error: 'Sandbox is not reachable', code: 'NOT_FOUND' }, { status: 404 });
+  }
+  if (probe.attempts > 1) {
+    wlog('info', 'cf_connect_probe_recovered', { sandboxId, attempts: probe.attempts });
   }
 
   const environment = await probeEnvironment(sandbox);
@@ -2039,6 +2111,10 @@ function decodedBase64Size(base64: string): number {
 
 function classifyCfError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
+  // Disk-full before the broader buckets: the recovery is "delete files",
+  // not "restart the sandbox" (which loses uncommitted work), so folding it
+  // into CONTAINER_ERROR sends users to exactly the wrong remediation.
+  if (/no space left|enospc|disk quota exceeded/i.test(msg)) return 'DISK_FULL';
   if (/timeout/i.test(msg)) return 'TIMEOUT';
   if (/not found|no such/i.test(msg)) return 'NOT_FOUND';
   if (/container|crashed|unhealthy/i.test(msg)) return 'CONTAINER_ERROR';
