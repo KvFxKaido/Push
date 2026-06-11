@@ -37,15 +37,18 @@ import type { UseBackgroundCoderJobResult } from './useBackgroundCoderJob';
  *  Tab races, toggle flips, and reconnects all converge on this single
  *  source of truth (persisted in IndexedDB via `pendingJobIds`). */
 /**
- * `useChat.sendMessage`'s engine-routing decision, with the eligibility
- * check the route's preconditions demand: `startBackgroundMainChatTurn`
- * hard-requires an active repo AND a branch (the sandbox is lazily
- * ensured), so a no-repo workspace (scratch / chat / local-pc) must stay
- * on the foreground loop instead of routing every send into a guaranteed
- * precondition error — load-bearing now that `inline` delegation-mode is
- * the default (Codex P1, PR #887). Lives here, not in useChat.ts, per the
- * max-lines guard; the trigger-precedence kernel stays in
- * `delegation-mode-settings.ts`.
+ * `useChat.sendMessage`'s turn-dispatch decision, with the per-route
+ * eligibility checks the preconditions demand. Both routes hard-require an
+ * active repo AND a branch (the sandbox is lazily ensured), so a no-repo
+ * workspace (scratch / chat / local-pc) stays on the foreground
+ * Orchestrator loop instead of routing every send into a guaranteed
+ * precondition error (Codex P1, PR #887). The provider-capability fold
+ * applies to the ENGINE route only: a Settings-key-only provider would
+ * 401 in the CoderJob DO (#889/#890), but the inline lane is a foreground
+ * run where browser-held keys work directly — gating it would needlessly
+ * bounce those providers to the Orchestrator wrapper. Lives here, not in
+ * useChat.ts, per the max-lines guard; the trigger-precedence kernel stays
+ * in `delegation-mode-settings.ts`.
  */
 export function resolveSendEngineTrigger(opts: {
   hasAttachments: boolean;
@@ -76,16 +79,20 @@ export function resolveSendEngineTrigger(opts: {
     fallbackProvider: getActiveProvider(),
     isProviderAvailable,
   });
+  const repoBranchReady = Boolean(opts.repoRef.current && branch);
   return resolveTurnEngineTrigger({
     hasAttachments: opts.hasAttachments,
-    // Engine turns run server-side, where only Worker-held provider
+    // Engine turns run server-side, where only server-held provider
     // credentials exist — a provider keyed solely via in-app Settings must
-    // stay on the foreground loop (which forwards the key per-request) or
-    // the job 401s at dispatch. See provider-engine-capability.ts.
-    // `provider` is an ActiveProvider, a subset of AIProviderType — the
-    // implicit widening here is safe today; if ActiveProvider ever diverges,
-    // an unknown value resolves optimistically true (same as any unknown).
-    engineEligible: Boolean(opts.repoRef.current && branch) && isProviderEngineCapable(provider),
+    // stay off the engine or the job 401s at dispatch. See
+    // provider-engine-capability.ts. `provider` is an ActiveProvider, a
+    // subset of AIProviderType — the implicit widening here is safe today;
+    // if ActiveProvider ever diverges, an unknown value resolves
+    // optimistically true (same as any unknown).
+    engineEligible: repoBranchReady && isProviderEngineCapable(provider),
+    // The inline lane is a foreground run — browser-held Settings keys
+    // work directly, so no capability fold here.
+    inlineEligible: repoBranchReady,
   });
 }
 

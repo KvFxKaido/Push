@@ -1,7 +1,9 @@
 # Inline Foreground Lane — Local While Watched
 
 Date: 2026-06-11
-Status: **Draft** — design committed, nothing built. Convergence point of the
+Status: **Current** — shipped 2026-06-11 in two PRs: the kernel-run builder
+extraction (`app/src/lib/inline-coder-run.ts`, PR 1) and the lane + routing
+flip (`app/src/hooks/chat-send-inline.ts`, PR 2). Convergence point of the
 Coder Delegation Collapse (archived audit) and Durable Runs — Adopt-on-Silence
 (Current) tracks.
 Owner: Push
@@ -156,13 +158,17 @@ existing eval harness.
    block into the preamble for v1 (mirrors the DO's `formatPriorTurnsPreamble`
    shape, but from the local transcript). Seeding the kernel's message array
    directly is richer but touches resume-state semantics — defer.
+   *Shipped as recommended:* `buildInlineTurnPreamble` (last 6 non-tool
+   turns, 700-char clip per turn).
 2. **Mid-run steering.** `routeActiveRunInput` queues follow-ups for
    foreground runs today; v1 keeps queue-until-done. Injecting steering into a
    running kernel is its own track.
 3. **`background-mode` + `inline` both on**: background wins (explicit detach
    is the more specific intent now — note this inverts the old precedence
    where inline-delegation won the *label*; re-pin in
-   `delegation-mode-settings` tests).
+   `delegation-mode-settings` tests). *Shipped:* precedence inverted in
+   `resolveTurnEngineTrigger`, re-pinned, with engine-ineligible
+   background turns falling back to the inline lane.
 4. **Engine-inline measurement variant**: keep `startMainChatJob` reachable
    for the eval harness (it is, via background-mode) — no third preference
    value needed.

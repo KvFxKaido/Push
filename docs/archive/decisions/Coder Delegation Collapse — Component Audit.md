@@ -2,6 +2,19 @@
 
 Date: 2026-06-02 (cross-linked 2026-06-03)
 Status: **ROADMAP-tracked (first priority, promoted 2026-06-03); step 1 landed behind a flag (2026-06-03), still default-off and unmeasured.** Sequenced *first* in the combined "Single-Agent Loop + Branch-at-Commit Persistence" item — category-2 cut goes behind a flag and is measured against the delegated path before any deletion. **Step 1 shipped:** a `delegation-mode` preference (`delegated` default | `inline`) routes interactive turns to the durable single-agent engine (`startMainChatJob`) when `inline`, reusing — and deliberately decoupled-in-framing from — the existing background-mode engine route; both arcs now emit comparable measurement (`coder_delegation_measured` on the delegated arc, `delegation_engine_job_started` + the CoderJob DO's `coder_job_*` logs on the inline arc). The Planner/brief are NOT deleted. Flip to `Current` when the lead-drives-the-engine-inline path is the *default* (after the A/B gate clears).
+
+> **2026-06-11 update (post-flip):** the A/B gate cleared and `inline`
+> became the default (#887) on the engine seam — and the seam then moved.
+> The step-1 "inline = engine turn" routing was superseded by
+> [`Inline Foreground Lane — Local While Watched.md`](../../decisions/Inline%20Foreground%20Lane%20—%20Local%20While%20Watched.md)
+> (Current): inline turns now run the coder kernel **in the browser as the
+> lead agent** (`chat-send-inline.ts` + `inline-coder-run.ts`), with the
+> CoderJob DO engine reachable via the explicit background-mode toggle and
+> `startMainChatJob` retained for the eval harness. The collapse itself
+> (no Orchestrator handoff / no Planner / no brief on inline turns) stands;
+> the measurement vocabulary gained `inline_turn_started` /
+> `inline_turn_completed` for the foreground lane. Categories 2–5 and the
+> deletion gate are unchanged.
 Owner: Push
 Related: [`Main as Scratchpad — Branch on Graduation.md`](Main%20as%20Scratchpad%20—%20Branch%20on%20Graduation.md) — **pairs with this track.** Same move (frontier-lead expired a scaffolding layer → cut the wrapper, keep the engine), same two durable floors (job engine + snapshot). Its `auto-branch-on-commit` is the durability story for the collapsed single-agent loop, and a *headless detached engine run* (more central after this collapse) can't answer a prompt — which is independent evidence auto-branch beats a prompt. **Note the Auditor reconciliation in Category 4 below.**
 

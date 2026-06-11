@@ -1,12 +1,15 @@
-// Pins the routing decision for the Coder Delegation Collapse step-1 A/B
-// (see `docs/decisions/Coder Delegation Collapse — Component Audit.md`).
-// `resolveTurnEngineTrigger` is the single source of truth for "does this
-// turn bypass the Orchestrator and run on the durable engine?", reading
-// both named triggers (the `inline` delegation-mode experiment and legacy
-// background-mode). The setter/hook need a DOM and are covered by manual
-// flips; the resolver + getters carry the branching logic, so they are
-// what gets pinned here. Mocks `./safe-storage` because the app test
-// suite runs in the `node` environment with no real localStorage.
+// Pins the turn dispatch table for the Inline Foreground Lane (see
+// `docs/decisions/Inline Foreground Lane — Local While Watched.md`).
+// `resolveTurnEngineTrigger` is the single source of truth for which
+// runtime a turn takes: 'background-mode' → CoderJob DO engine,
+// 'inline-delegation' → foreground inline lane, null → foreground
+// Orchestrator loop. Precedence is background-mode first (explicit detach
+// is the more specific intent — open question 3, INVERTING the pre-lane
+// rule where inline won the measurement label). The setter/hook need a
+// DOM and are covered by manual flips; the resolver + getters carry the
+// branching logic, so they are what gets pinned here. Mocks
+// `./safe-storage` because the app test suite runs in the `node`
+// environment with no real localStorage.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -33,17 +36,18 @@ import {
 const INLINE_KEY = 'push:delegation-mode-preference';
 const BG_KEY = 'push:background-mode-preference';
 
+/** Both routes satisfiable — the common repo-workspace shape. */
+const ELIGIBLE = { hasAttachments: false, engineEligible: true, inlineEligible: true };
+
 beforeEach(() => {
   storage.map.clear();
 });
 
 describe('delegation-mode-settings', () => {
-  it('defaults to inline (engine trigger) when no flags are set — the 2026-06-11 flip', () => {
+  it('defaults to inline (foreground lane trigger) when no flags are set — the 2026-06-11 flip', () => {
     expect(getDelegationMode()).toBe('inline');
     expect(isInlineDelegationEnabled()).toBe(true);
-    expect(resolveTurnEngineTrigger({ hasAttachments: false, engineEligible: true })).toBe(
-      'inline-delegation',
-    );
+    expect(resolveTurnEngineTrigger(ELIGIBLE)).toBe('inline-delegation');
   });
 
   it('only treats the exact "delegated" value as the opt-out (forward-compat with unknown values)', () => {
@@ -56,57 +60,69 @@ describe('delegation-mode-settings', () => {
     expect(isInlineDelegationEnabled()).toBe(false);
   });
 
-  it('keeps the delegated opt-out on the foreground loop (no engine trigger)', () => {
+  it('keeps the delegated opt-out on the foreground Orchestrator loop (null)', () => {
     storage.map.set(INLINE_KEY, 'delegated');
-    expect(resolveTurnEngineTrigger({ hasAttachments: false, engineEligible: true })).toBeNull();
+    expect(resolveTurnEngineTrigger(ELIGIBLE)).toBeNull();
   });
 
-  it('routes a delegated opt-out to background-mode when the legacy flag is also on', () => {
+  it('routes a delegated opt-out to background-mode when the detach toggle is on', () => {
     storage.map.set(INLINE_KEY, 'delegated');
     storage.map.set(BG_KEY, '1');
-    expect(resolveTurnEngineTrigger({ hasAttachments: false, engineEligible: true })).toBe(
-      'background-mode',
-    );
+    expect(resolveTurnEngineTrigger(ELIGIBLE)).toBe('background-mode');
   });
 
-  it('routes to inline-delegation when delegation-mode is inline', () => {
+  it('routes to the inline lane when delegation-mode is inline', () => {
     storage.map.set(INLINE_KEY, 'inline');
-    expect(resolveTurnEngineTrigger({ hasAttachments: false, engineEligible: true })).toBe(
-      'inline-delegation',
-    );
+    expect(resolveTurnEngineTrigger(ELIGIBLE)).toBe('inline-delegation');
   });
 
-  it('labels the trigger inline-delegation when the legacy background flag is on under the inline default', () => {
-    // Post-flip, inline is on by default, and it takes precedence for the
-    // measurement label — background-mode can only be the winning trigger
-    // for users who opted back out to 'delegated' (covered above).
-    storage.map.set(BG_KEY, '1');
-    expect(resolveTurnEngineTrigger({ hasAttachments: false, engineEligible: true })).toBe(
-      'inline-delegation',
-    );
-  });
-
-  it('gives inline-delegation precedence when both triggers are on', () => {
+  it('gives background-mode precedence when both triggers are on — explicit detach wins (open question 3 re-pin)', () => {
+    // INVERTS the pre-lane precedence: before the Inline Foreground Lane the
+    // two triggers shared one engine route and 'inline-delegation' merely won
+    // the measurement label. Now they name different runtimes, and the
+    // explicit detach toggle is the more specific intent.
     storage.map.set(INLINE_KEY, 'inline');
     storage.map.set(BG_KEY, '1');
-    expect(resolveTurnEngineTrigger({ hasAttachments: false, engineEligible: true })).toBe(
-      'inline-delegation',
-    );
+    expect(resolveTurnEngineTrigger(ELIGIBLE)).toBe('background-mode');
+    // Same under the inline default (no explicit mode write).
+    storage.map.clear();
+    storage.map.set(BG_KEY, '1');
+    expect(resolveTurnEngineTrigger(ELIGIBLE)).toBe('background-mode');
   });
 
-  it('forces the Orchestrator loop (null) when the engine route is not satisfiable — no-repo workspaces', () => {
+  it('falls back from an ineligible engine route to the inline lane — the capability fold is engine-only', () => {
+    // A Settings-key-only provider can't run in the CoderJob DO (#889/#890),
+    // but the inline lane is a foreground run where browser-held keys work.
+    // background-mode on + engine-ineligible + inline default → inline lane.
+    storage.map.set(BG_KEY, '1');
+    expect(
+      resolveTurnEngineTrigger({
+        hasAttachments: false,
+        engineEligible: false,
+        inlineEligible: true,
+      }),
+    ).toBe('inline-delegation');
+  });
+
+  it('forces the Orchestrator loop (null) when neither route is satisfiable — no-repo workspaces', () => {
     // Codex P1 (PR #887): with inline as the DEFAULT, a scratch/chat/local-pc
-    // workspace (no active repo/branch) must stay on the foreground loop —
-    // the engine route hard-requires repo + branch and would reject every
-    // send. Applies to the explicit background-mode opt-in too.
-    expect(resolveTurnEngineTrigger({ hasAttachments: false, engineEligible: false })).toBeNull();
+    // workspace (no active repo/branch) must stay on the foreground
+    // Orchestrator loop — both bypass routes hard-require repo + branch.
+    const ineligible = { hasAttachments: false, engineEligible: false, inlineEligible: false };
+    expect(resolveTurnEngineTrigger(ineligible)).toBeNull();
     storage.map.set(BG_KEY, '1');
-    expect(resolveTurnEngineTrigger({ hasAttachments: false, engineEligible: false })).toBeNull();
+    expect(resolveTurnEngineTrigger(ineligible)).toBeNull();
   });
 
   it('forces the Orchestrator loop (null) when attachments are present, regardless of flags', () => {
     storage.map.set(INLINE_KEY, 'inline');
     storage.map.set(BG_KEY, '1');
-    expect(resolveTurnEngineTrigger({ hasAttachments: true, engineEligible: true })).toBeNull();
+    expect(
+      resolveTurnEngineTrigger({
+        hasAttachments: true,
+        engineEligible: true,
+        inlineEligible: true,
+      }),
+    ).toBeNull();
   });
 });

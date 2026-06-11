@@ -7,12 +7,15 @@
  * Two modes, A/B-comparable, with the delegated arc kept intact:
  *
  *   - `inline` (default since 2026-06-11) — the single-agent collapse. The
- *     user's raw turn is run directly by the durable job engine
- *     (`startMainChatJob`) with NO Orchestrator handoff, NO Planner, and
- *     NO synthesized brief. This reuses the exact engine the
- *     background-mode path already exercises (`chat-send-background.ts` →
- *     `startMainChatJob` → CoderJob DO). Step 1 proved it behind a flag
- *     before the flip: the A/B measured twice (v1 + v2 on fixed
+ *     user's raw turn runs the coder kernel directly with NO Orchestrator
+ *     handoff, NO Planner, and NO synthesized brief. Originally (#887)
+ *     this routed to the durable job engine; since the Inline Foreground
+ *     Lane it runs **in the browser as the lead agent**
+ *     (`chat-send-inline.ts`), streaming into the chat transcript and
+ *     registered with RunHost so silence → adoption keeps it durable —
+ *     "local while watched". The engine route remains reachable via the
+ *     explicit background-mode toggle. Step 1 proved the collapse behind
+ *     a flag before the flip: the A/B measured twice (v1 + v2 on fixed
  *     instruments) with quality tied and the wrapper costing ~78%
  *     wall-clock plus a unique dead-handoff failure mode.
  *   - `delegated` (opt-out) — the historical wrapper arc, retained until
@@ -26,23 +29,20 @@
  *
  * ## Relationship to background-mode (deliberately decoupled framing)
  *
- * `background-mode-settings.ts` and this module currently converge on the
- * same runtime route — both send the raw turn to the durable engine via
- * `startBackgroundMainChatTurn`. They are kept as *separate inputs*
- * on purpose:
+ * `background-mode-settings.ts` and this module are *separate inputs* on
+ * purpose, and since the Inline Foreground Lane they route to separate
+ * runtimes:
  *
  *   - background-mode is framed as "run this turn detached" (a UX/runtime
- *     property — the turn surfaces via JobCard, never enters apiMessages).
+ *     property — the turn surfaces via JobCard, never enters apiMessages)
+ *     and keeps the CoderJob DO engine route.
  *   - delegation-mode `inline` is framed as "collapse the delegation
- *     wrapper" (an architecture experiment — measure the single-agent loop
- *     against the delegated arc).
+ *     wrapper" (an architecture decision — single-agent loop, no
+ *     Orchestrator handoff) and runs the kernel in the foreground.
  *
- * They share a mechanism today but answer different questions, so the
- * route decision (`shouldRouteTurnToEngine`) treats them as an OR of two
- * named triggers rather than one flag. Either being on routes the turn to
- * the engine; the measurement log records *which* trigger fired so the
- * before-deleting gate can tell collapse-experiment turns apart from
- * plain detached sends.
+ * The route decision (`resolveTurnEngineTrigger`) stays centralized so
+ * callers never re-derive the precedence; the measurement logs record
+ * which trigger fired so the arcs stay A/B-comparable.
  *
  * Storage key mirrors the background-mode naming convention (a mode
  * *preference*, not a permanent capability) so a future per-chat override
@@ -54,6 +54,16 @@
 import { useEffect, useState } from 'react';
 import { isBackgroundModeEnabled } from './background-mode-settings';
 import { safeStorageGet, safeStorageSet } from './safe-storage';
+
+// 2026-06-11 (Inline Foreground Lane): `inline` no longer routes to the
+// durable engine. The trigger vocabulary below is unchanged, but the two
+// triggers now name two different RUNTIMES: `background-mode` keeps the
+// CoderJob DO engine + JobCard; `inline-delegation` dispatches to the
+// foreground inline lane (`chat-send-inline.ts`) — the coder kernel running
+// in the browser as the lead agent, streaming into the chat transcript.
+// Precedence also inverted: background-mode (explicit detach) now wins over
+// inline when both are on, because detaching is the more specific intent
+// (decision doc, open question 3).
 
 export type DelegationMode = 'delegated' | 'inline';
 
@@ -83,51 +93,61 @@ export function setDelegationMode(mode: DelegationMode): void {
 }
 
 /**
- * The two non-null ways a turn bypasses the Orchestrator and runs on the
- * durable engine. Exported on its own so `chat-send-background.ts` types
- * its forwarded `engineTrigger` from this single source rather than
- * re-declaring the union (which would drift if a third trigger lands —
- * Copilot review, PR #773).
+ * The two non-null ways a turn bypasses the Orchestrator wrapper. Exported
+ * on its own so `chat-send-background.ts` types its forwarded
+ * `engineTrigger` from this single source rather than re-declaring the
+ * union (which would drift if a third trigger lands — Copilot review, PR
+ * #773). Since the Inline Foreground Lane, only `background-mode` is an
+ * engine route; `inline-delegation` names the foreground inline lane.
  */
 export type EngineTrigger = 'inline-delegation' | 'background-mode';
 
 /**
- * The named trigger that caused a turn to route to the durable engine,
+ * The named trigger that bypasses the Orchestrator wrapper for this turn,
  * or `null` when the turn stays on the foreground Orchestrator loop.
- * `inline-delegation` wins precedence over `background-mode` for the
- * measurement label when both are on — the collapse experiment is the
- * more specific intent.
+ * `background-mode` wins precedence over `inline-delegation` when both are
+ * on — explicit detach is the more specific intent now that the two
+ * triggers route to different runtimes (inverts the pre-lane precedence,
+ * which only picked the measurement label; decision doc open question 3).
  */
 export type TurnEngineTrigger = EngineTrigger | null;
 
 /**
- * Single source of truth for "does this turn bypass the Orchestrator and
- * run on the durable engine?". Reads both named triggers so the routing
- * decision is centralized — callers never re-derive the OR. Returns the
- * winning trigger (or `null` for the Orchestrator loop) so the caller can
- * both branch and label its measurement log from one value.
+ * Single source of truth for the turn dispatch table (decision doc,
+ * §"Decision"):
  *
- * Attachments force the Orchestrator loop regardless of flags: the
- * background/engine envelope does not carry attachments yet (see
- * `useChat.sendMessage`'s `!hasAttachments` guard, which this subsumes).
+ *   | Turn shape                                   | Route                       |
+ *   |----------------------------------------------|-----------------------------|
+ *   | `background-mode` on, engine-eligible        | CoderJob DO engine + JobCard|
+ *   | `inline` mode (default), repo+branch         | Foreground inline lane      |
+ *   | Attachments, no-repo workspaces              | Foreground Orchestrator loop|
+ *   | `delegated` opt-out                          | Foreground Orchestrator loop|
  *
- * `engineEligible` is the caller's word that the engine route is actually
- * satisfiable — an active repo AND a branch (`startBackgroundMainChatTurn`
- * hard-requires both; the sandbox is lazily ensured). With inline as the
- * DEFAULT, a no-repo workspace (scratch / chat / local-pc) would otherwise
- * route every normal send into a guaranteed precondition error instead of
- * the foreground loop that serves those workspaces fine (Codex P1, PR
- * #887). This also subsumes the same latent failure for explicit
- * background-mode opt-ins: ineligible turns fall back to the foreground
- * loop rather than erroring.
+ * Attachments force the Orchestrator loop regardless of flags: neither the
+ * engine envelope nor the inline lane's kernel preamble carries them yet.
+ *
+ * The two eligibility flags are the caller's word that each route's
+ * preconditions are satisfiable, and they differ deliberately:
+ *
+ *   - `engineEligible` — repo + branch + an engine-capable provider.
+ *     Engine turns run server-side where only Worker-held or user-stored
+ *     server-side keys exist (#889/#890), so a Settings-key-only provider
+ *     must not detach.
+ *   - `inlineEligible` — repo + branch only. The inline lane is a
+ *     foreground run: browser-held Settings keys work directly, so the
+ *     provider-capability fold does NOT apply (the gate moved to
+ *     background-mode and adoption only). No-repo workspaces (scratch /
+ *     chat / local-pc) fall through to the Orchestrator loop that serves
+ *     them fine (Codex P1, PR #887).
  */
 export function resolveTurnEngineTrigger(opts: {
   hasAttachments: boolean;
   engineEligible: boolean;
+  inlineEligible: boolean;
 }): TurnEngineTrigger {
-  if (opts.hasAttachments || !opts.engineEligible) return null;
-  if (isInlineDelegationEnabled()) return 'inline-delegation';
-  if (isBackgroundModeEnabled()) return 'background-mode';
+  if (opts.hasAttachments) return null;
+  if (isBackgroundModeEnabled() && opts.engineEligible) return 'background-mode';
+  if (isInlineDelegationEnabled() && opts.inlineEligible) return 'inline-delegation';
   return null;
 }
 
