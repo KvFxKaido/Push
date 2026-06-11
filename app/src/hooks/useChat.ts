@@ -598,10 +598,10 @@ export function useChat(
       const trimmedText = text.trim();
       const hasAttachments = Boolean(attachments && attachments.length > 0);
       if (!trimmedText && !hasAttachments) return;
-      // Engine routing + eligibility: see resolveSendEngineTrigger (chat-send-background.ts).
-      const engineTrigger = resolveSendEngineTrigger({ hasAttachments, repoRef, branchInfoRef });
-      const routeToEngine = engineTrigger !== null;
       const targetChat = options?.chatId || activeChatIdRef.current;
+      // biome-ignore format: engine routing + eligibility live in resolveSendEngineTrigger (chat-send-background.ts); opts stay inline for the file line cap.
+      const engineTrigger = resolveSendEngineTrigger({ hasAttachments, repoRef, branchInfoRef, conversationsRef, chatId: targetChat, requestedProvider: options?.provider ?? null });
+      const routeToEngine = engineTrigger !== null;
       if (targetChat && hasActiveBackgroundJob(conversationsRef.current[targetChat])) return;
 
       const routed = routeActiveRunInput(

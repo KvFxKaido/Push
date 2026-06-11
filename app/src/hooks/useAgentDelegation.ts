@@ -1,6 +1,7 @@
 import type React from 'react';
 import { useCallback } from 'react';
 import { type ActiveProvider } from '@/lib/orchestrator';
+import { isProviderEngineCapable } from '@/lib/provider-engine-capability';
 import {
   handleExplorerDelegation,
   type ExplorerHandlerContext,
@@ -440,7 +441,15 @@ export function useAgentDelegation({
         // deliberately explicit — see docs/runbooks/Background Coder
         // Tasks Phase 1.md §"Client integration" for the locked-in
         // semantics.
-        if (backgroundCoderJob && isBackgroundModeEnabledForChat?.(chatId)) {
+        // Engine capability: the DO job authenticates providers with
+        // Worker-held credentials only, so a Settings-key-only provider
+        // must take the foreground delegated arc below instead of a job
+        // that 401s at dispatch (see provider-engine-capability.ts).
+        if (
+          backgroundCoderJob &&
+          isBackgroundModeEnabledForChat?.(chatId) &&
+          isProviderEngineCapable(lockedProviderForChat)
+        ) {
           const placeholder = await startBackgroundCoderJob({
             chatId,
             toolCall: toolCall as CoderToolCall,
