@@ -16,6 +16,9 @@ import { test } from 'node:test';
 import {
   RUN_HOST_ADOPTED_WALL_CLOCK_MS,
   RUN_HOST_ADOPTED_WATCHDOG_MS,
+  RUN_HOST_ATTACH_POLL_INTERVAL_MS,
+  RUN_HOST_ATTACH_SNAPSHOT_FIELDS,
+  RUN_HOST_ATTACH_SNAPSHOT_OPTIONAL_FIELDS,
   RUN_HOST_CHECKPOINT_MAX_BYTES,
   RUN_HOST_HEARTBEAT_INTERVAL_MS,
   RUN_HOST_MAX_ADOPTION_RELAUNCHES,
@@ -25,6 +28,7 @@ import {
   RUN_HOST_SILENCE_THRESHOLD_MS,
   RUN_LIFECYCLE_ALARM_ACTIVE_STATES,
   RUN_LIFECYCLE_STATES,
+  buildAttachSnapshot,
   checkpointExceedsHostCap,
   decideAdoptedAlarm,
   decideAdoption,
@@ -84,12 +88,33 @@ test('pin: exact record field vocabulary', () => {
   ]);
   // Adoption-loop additions are all OPTIONAL on the record (pre-loop records
   // lack them) and pinned separately so the base vocabulary stays stable.
+  // `resolvedApproval` is the Phase 3 attach-control addition.
   assert.deepEqual([...RUN_HOST_RECORD_ADOPTION_FIELDS].sort(), [
     'adoptedAt',
     'adoptionId',
     'adoptionRelaunches',
     'lastError',
     'origin',
+    'pausedForApproval',
+    'resolvedApproval',
+  ]);
+});
+
+test('pin: attach snapshot field vocabulary (Phase 3)', () => {
+  assert.deepEqual([...RUN_HOST_ATTACH_SNAPSHOT_FIELDS].sort(), [
+    'checkpointSavedAt',
+    'lastHeartbeatAt',
+    'midFlight',
+    'mode',
+    'round',
+    'runId',
+    'state',
+    'v',
+  ]);
+  assert.deepEqual([...RUN_HOST_ATTACH_SNAPSHOT_OPTIONAL_FIELDS].sort(), [
+    'adoptedAt',
+    'checkpoint',
+    'lastError',
     'pausedForApproval',
   ]);
 });
@@ -107,6 +132,9 @@ test('pin: load-bearing constants', () => {
   assert.equal(RUN_HOST_ADOPTED_WATCHDOG_MS, 60_000);
   assert.equal(RUN_HOST_MAX_ADOPTION_RELAUNCHES, 2);
   assert.equal(RUN_HOST_ADOPTED_WALL_CLOCK_MS, 60 * 60 * 1000);
+  // Phase 3 attach cursor-follow cadence — read-only polls, so it may sit
+  // under the heartbeat cadence without affecting adoption decisions.
+  assert.equal(RUN_HOST_ATTACH_POLL_INTERVAL_MS, 10_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -266,4 +294,74 @@ test('adopted watchdog: expires when the relaunch cap is exhausted', () => {
   });
   assert.equal(decision.action, 'expire');
   assert.equal(decision.reason, 'relaunch_cap_exhausted');
+});
+
+// ---------------------------------------------------------------------------
+// buildAttachSnapshot (Phase 3) — cursor semantics
+// ---------------------------------------------------------------------------
+
+function makeStoredCheckpoint(savedAt) {
+  return {
+    v: 1,
+    chatId: SCOPE.chatId,
+    repoFullName: SCOPE.repoFullName,
+    branch: SCOPE.branch,
+    runId: 'run-1',
+    round: 5,
+    phase: 'executing_tools',
+    savedAt,
+    reason: 'turn',
+    messages: [{ role: 'user', content: 'goal' }],
+    accumulated: '',
+    thinkingAccumulated: '',
+    userGoal: 'goal',
+    provider: 'zen',
+    model: 'glm-5.1',
+    approvalMode: 'supervised',
+  };
+}
+
+test('attach snapshot: first attach (no cursor) includes the checkpoint', () => {
+  const record = makeRecord({ state: 'adopted', round: 5 });
+  const cp = makeStoredCheckpoint(1781000050000);
+  const snapshot = buildAttachSnapshot(record, cp, null);
+  assert.equal(snapshot.v, RUN_HOST_PROTOCOL_VERSION);
+  assert.equal(snapshot.runId, 'run-1');
+  assert.equal(snapshot.state, 'adopted');
+  assert.equal(snapshot.checkpointSavedAt, cp.savedAt);
+  assert.deepEqual(snapshot.checkpoint, cp);
+});
+
+test('attach snapshot: a stale cursor gets the fresher checkpoint; a current cursor does not', () => {
+  const record = makeRecord();
+  const cp = makeStoredCheckpoint(1781000050000);
+  const stale = buildAttachSnapshot(record, cp, cp.savedAt - 1);
+  assert.deepEqual(stale.checkpoint, cp);
+  const current = buildAttachSnapshot(record, cp, cp.savedAt);
+  assert.equal(current.checkpoint, undefined);
+  assert.equal(current.checkpointSavedAt, cp.savedAt);
+});
+
+test('attach snapshot: no stored checkpoint → null cursor, no checkpoint field', () => {
+  const snapshot = buildAttachSnapshot(makeRecord({ hasCheckpoint: false }), null, null);
+  assert.equal(snapshot.checkpointSavedAt, null);
+  assert.equal(snapshot.checkpoint, undefined);
+});
+
+test('attach snapshot: carries the pause and error surfaces when present', () => {
+  const record = makeRecord({
+    state: 'adopted',
+    adoptedAt: 1781000010000,
+    pausedForApproval: {
+      approvalId: 'adopt-sandbox_exec-r5',
+      kind: 'destructive_sandbox',
+      tool: 'sandbox_exec',
+    },
+    lastError: 'provider stalled',
+  });
+  const snapshot = buildAttachSnapshot(record, makeStoredCheckpoint(1781000050000), null);
+  assert.equal(snapshot.adoptedAt, 1781000010000);
+  assert.equal(snapshot.pausedForApproval.approvalId, 'adopt-sandbox_exec-r5');
+  assert.equal(snapshot.pausedForApproval.tool, 'sandbox_exec');
+  assert.equal(snapshot.lastError, 'provider stalled');
 });

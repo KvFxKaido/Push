@@ -22,6 +22,7 @@
  */
 
 import type { ApprovalMode } from './approval-gates.ts';
+import type { RunCheckpointV1 } from './run-checkpoint.ts';
 
 export const RUN_HOST_PROTOCOL_VERSION = 1 as const;
 
@@ -77,6 +78,14 @@ export const RUN_HOST_MAX_ADOPTION_RELAUNCHES = 2;
  * sandbox can't keep an adopted run alive forever. CoderJob parity (60 min).
  */
 export const RUN_HOST_ADOPTED_WALL_CLOCK_MS = 60 * 60 * 1000;
+
+/**
+ * How often an attached viewer polls `/run/attach` for cursor-follow while
+ * the run is detached (adoptable/adopted). Read-only — polls never count as
+ * heartbeats, so a viewer can watch an adopted run without resurrecting it.
+ * Exported so the client and any future host hint agree from one constant.
+ */
+export const RUN_HOST_ATTACH_POLL_INTERVAL_MS = 10_000;
 
 // ---------------------------------------------------------------------------
 // Lifecycle
@@ -224,15 +233,45 @@ export interface RunHostRecord {
    * (`RUN_HOST_MAX_ADOPTION_RELAUNCHES`) survives DO evictions. */
   adoptionRelaunches?: number;
   /** Set when a supervised adopted run paused at an approval gate. The
-   * watchdog never relaunches a paused run; a returning client reclaims it. */
+   * watchdog never relaunches a paused run; a returning client reclaims it —
+   * or resolves the gate via `/run/approval` (Phase 3), which relaunches the
+   * loop with `resolvedApproval` set. */
   pausedForApproval?: {
     approvalId: string;
     kind: string;
+    /** The gated tool, carried explicitly so an approval grant can be
+     * matched on relaunch without parsing it back out of the approvalId. */
+    tool?: string;
+    /** Fingerprint of the gated call's arguments — binds the grant to the
+     * specific action the user approved (see RunCheckpointPendingApproval). */
+    argsFingerprint?: string;
     title?: string;
     summary?: string;
   } | null;
+  /** A user decision on the pending gate (Phase 3 attach controls). Set by
+   * the approval endpoint when it relaunches a paused run; consumed by that
+   * launch (cleared when the record flips `adopted`) so the grant is
+   * one-shot — a crash-relaunch re-pauses rather than re-using it. */
+  resolvedApproval?: RunHostResolvedApproval | null;
   /** Last loop failure, for status/observability. */
   lastError?: string;
+}
+
+/** A user's decision on a paused supervised gate, delivered through the
+ * Phase 3 attach surface. */
+export interface RunHostResolvedApproval {
+  approvalId: string;
+  /** The gated tool the decision applies to (from `pausedForApproval`). */
+  tool: string;
+  /** Fingerprint of the arguments the user approved (from
+   * `pausedForApproval`). An approve grant only matches a call with the
+   * SAME fingerprint — a same-tool call with different arguments
+   * re-pauses. Absent only on records paused before fingerprinting
+   * shipped; those grants degrade to tool-level matching. */
+  argsFingerprint?: string;
+  kind: string;
+  decision: 'approve' | 'deny';
+  decidedAt: number;
 }
 
 export const RUN_HOST_RECORD_FIELDS = [
@@ -256,6 +295,7 @@ export const RUN_HOST_RECORD_ADOPTION_FIELDS = [
   'adoptionId',
   'adoptionRelaunches',
   'pausedForApproval',
+  'resolvedApproval',
   'lastError',
 ] as const;
 
@@ -315,6 +355,88 @@ export function decideAdoption(record: RunHostRecord, now: number): AdoptionDeci
  * rejects on `true` rather than attempting the put. */
 export function checkpointExceedsHostCap(bytes: number): boolean {
   return bytes > RUN_HOST_CHECKPOINT_MAX_BYTES;
+}
+
+// ---------------------------------------------------------------------------
+// The attach snapshot (Phase 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * What `/run/attach` returns to a reopening client: the run's lifecycle
+ * summary plus — when it's fresher than the caller's cursor — the stored
+ * checkpoint itself. The checkpoint IS the snapshot (the RunHost analogue of
+ * pushd's `get_session_snapshot` packet); `checkpointSavedAt` is the cursor a
+ * viewer echoes back as `sinceSavedAt` to cursor-follow the host's per-round
+ * persistence without re-downloading an unchanged transcript.
+ *
+ * Read-only by design: serving an attach never bumps the heartbeat clock or
+ * mutates the record, so a viewer can watch an adopted run without
+ * resurrecting it (control flows through register / approval / stop /
+ * release, all explicit).
+ */
+export interface RunHostAttachSnapshot {
+  v: typeof RUN_HOST_PROTOCOL_VERSION;
+  runId: string;
+  state: RunLifecycleState;
+  mode: ApprovalMode;
+  round: number;
+  midFlight: boolean;
+  lastHeartbeatAt: number;
+  /** `savedAt` of the host's stored checkpoint — the attach cursor. Null
+   * when no checkpoint has been persisted yet. */
+  checkpointSavedAt: number | null;
+  /** Present when the stored checkpoint is fresher than `sinceSavedAt`. */
+  checkpoint?: RunCheckpointV1;
+  adoptedAt?: number;
+  pausedForApproval?: RunHostRecord['pausedForApproval'];
+  lastError?: string;
+}
+
+export const RUN_HOST_ATTACH_SNAPSHOT_FIELDS = [
+  'v',
+  'runId',
+  'state',
+  'mode',
+  'round',
+  'midFlight',
+  'lastHeartbeatAt',
+  'checkpointSavedAt',
+] as const;
+
+export const RUN_HOST_ATTACH_SNAPSHOT_OPTIONAL_FIELDS = [
+  'checkpoint',
+  'adoptedAt',
+  'pausedForApproval',
+  'lastError',
+] as const;
+
+/**
+ * Assemble the attach snapshot for a record + stored checkpoint at cursor
+ * `sinceSavedAt` (null = first attach, always include the checkpoint when
+ * one exists). Pure — the DO supplies storage reads and serves the result.
+ */
+export function buildAttachSnapshot(
+  record: RunHostRecord,
+  checkpoint: RunCheckpointV1 | null,
+  sinceSavedAt: number | null,
+): RunHostAttachSnapshot {
+  const savedAt = checkpoint?.savedAt ?? null;
+  const fresh =
+    checkpoint !== null && savedAt !== null && (sinceSavedAt === null || savedAt > sinceSavedAt);
+  return {
+    v: RUN_HOST_PROTOCOL_VERSION,
+    runId: record.runId,
+    state: record.state,
+    mode: record.mode,
+    round: record.round,
+    midFlight: record.midFlight,
+    lastHeartbeatAt: record.lastHeartbeatAt,
+    checkpointSavedAt: savedAt,
+    ...(fresh ? { checkpoint: checkpoint } : {}),
+    ...(record.adoptedAt !== undefined ? { adoptedAt: record.adoptedAt } : {}),
+    ...(record.pausedForApproval ? { pausedForApproval: record.pausedForApproval } : {}),
+    ...(record.lastError ? { lastError: record.lastError } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -15,6 +15,16 @@
  *     POST /api/runhost/run/release     — pull-back-local / teardown.
  *     GET  /api/runhost/run/status      — lifecycle snapshot.
  *
+ *   **Phase 3 attach/viewer — also under `/api/runhost/run/*`:**
+ *     GET  /api/runhost/run/attach     — snapshot hydration + cursor-follow
+ *                                        (`?sinceSavedAt=` echoes the last
+ *                                        seen checkpoint cursor).
+ *     POST /api/runhost/run/stop       — end the run server-side (keeps the
+ *                                        checkpoint for final hydration).
+ *     POST /api/runhost/run/approval   — approve/deny the gate a supervised
+ *                                        adopted run paused on; relaunches
+ *                                        the loop with the decision.
+ *
  *   **Phase 0 spike (throwaway) — `/api/runhost/spike/*`:** latency
  *   instruments pinned to a single shared instance ("latency-spike").
  *     GET  /api/runhost/spike/page        — HTML measurement harness.
@@ -40,7 +50,10 @@ export type RunRouteAction =
   | 'run.checkpoint'
   | 'run.heartbeat'
   | 'run.release'
-  | 'run.status';
+  | 'run.status'
+  | 'run.attach'
+  | 'run.stop'
+  | 'run.approval';
 export type RunHostAction = SpikeRouteAction | RunRouteAction;
 
 function isRunAction(action: RunHostAction): action is RunRouteAction {
@@ -56,6 +69,10 @@ export function matchRunHostRoute(pathname: string, method: string): RunHostActi
   if (rest === 'run/heartbeat' && method === 'POST') return 'run.heartbeat';
   if (rest === 'run/release' && method === 'POST') return 'run.release';
   if (rest === 'run/status' && method === 'GET') return 'run.status';
+  // Phase 3 attach/viewer — snapshot hydration + pending-gate controls.
+  if (rest === 'run/attach' && method === 'GET') return 'run.attach';
+  if (rest === 'run/stop' && method === 'POST') return 'run.stop';
+  if (rest === 'run/approval' && method === 'POST') return 'run.approval';
   // Phase 0 spike — latency instruments.
   if (rest === 'spike/page' && method === 'GET') return 'page';
   // Separate same-origin script file so the strict global CSP
@@ -125,7 +142,7 @@ async function handleRunAction(
   let forwardBody: string | undefined;
   let scope: RunHostScope | null;
 
-  if (action === 'run.status') {
+  if (action === 'run.status' || action === 'run.attach') {
     scope = scopeFromQuery(requestUrl);
   } else {
     let raw: unknown;
@@ -157,6 +174,12 @@ async function handleRunAction(
   // internal provider/sandbox Requests after the client is gone.
   const targetUrl = new URL(`https://do${doPath}`);
   targetUrl.searchParams.set('hostOrigin', requestUrl.origin);
+  if (action === 'run.attach') {
+    // The attach cursor rides the query; everything else about the request
+    // is server-derived (scope → instance, origin stamp).
+    const since = requestUrl.searchParams.get('sinceSavedAt');
+    if (since !== null) targetUrl.searchParams.set('sinceSavedAt', since);
+  }
   const forwarded = new Request(targetUrl.toString(), {
     method: request.method,
     headers: { 'content-type': 'application/json' },

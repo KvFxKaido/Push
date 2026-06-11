@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { RotateCcw, X } from 'lucide-react';
+import { ArrowDownToLine, Ban, Check, RotateCcw, Square, X } from 'lucide-react';
+import type { RunHostAttachHandle } from '@/hooks/useRunHostAttach';
 import type {
   ChatMessage,
   AgentStatus,
@@ -101,6 +102,87 @@ function ResumeBanner({
   );
 }
 
+// --- Run-host attach banner (Durable Runs Phase 3) ---
+
+/**
+ * Surface for a run that lived on (or finished) server-side while this
+ * client was away. The transcript is hydrated automatically by
+ * `useRunHostAttach`; this banner is the control surface — approve/deny a
+ * paused gate, stop the server-side run, or pull it back local.
+ */
+function RunHostAttachBanner({ attach }: { attach: RunHostAttachHandle }) {
+  const run = attach.hostRun;
+  if (!run) return null;
+
+  const paused = run.state === 'adopted' && run.pausedForApproval ? run.pausedForApproval : null;
+  const ended = run.state === 'ended' || !run.midFlight;
+
+  const title = paused
+    ? (paused.title ?? 'Approval required')
+    : ended
+      ? 'Run finished server-side'
+      : run.state === 'adopted'
+        ? 'Run continuing server-side'
+        : 'Run waiting server-side';
+  const detail = paused
+    ? (paused.summary ?? paused.kind)
+    : ended
+      ? `Transcript synced · round ${run.round + 1}`
+      : run.lastError
+        ? run.lastError
+        : `Round ${run.round + 1} · transcript follows live`;
+
+  const pill = `${HUB_MATERIAL_PILL_BUTTON_CLASS} gap-1.5 px-3 text-sky-200 disabled:opacity-50`;
+  return (
+    <div
+      className={`mx-4 mt-5 mb-1 flex items-center justify-between gap-3 px-1 py-2.5 ${HUB_TOP_BANNER_STRIP_CLASS} border-sky-500/25`}
+    >
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium text-sky-200">{title}</p>
+        <p className="text-push-xs text-sky-200/60 mt-0.5 truncate">{detail}</p>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {paused && (
+          <>
+            <button onClick={attach.approveHostGate} disabled={run.busy} className={pill}>
+              <Check className="h-3 w-3" />
+              <span>Approve</span>
+            </button>
+            <button onClick={attach.denyHostGate} disabled={run.busy} className={pill}>
+              <Ban className="h-3 w-3" />
+              <span>Deny</span>
+            </button>
+          </>
+        )}
+        {!ended && (
+          <button onClick={attach.pullHostRunLocal} disabled={run.busy} className={pill}>
+            <ArrowDownToLine className="h-3 w-3" />
+            <span>Continue here</span>
+          </button>
+        )}
+        {!ended && !paused && (
+          <button
+            onClick={attach.stopHostRun}
+            disabled={run.busy}
+            className={pill}
+            aria-label="Stop server-side run"
+          >
+            <Square className="h-3 w-3" />
+            <span>Stop</span>
+          </button>
+        )}
+        <button
+          onClick={attach.dismissHostRun}
+          className="flex h-7 w-7 items-center justify-center rounded-full text-sky-200/40 transition-colors hover:bg-sky-900/20 hover:text-sky-200/70 active:scale-95"
+          aria-label="Dismiss"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 interface ChatContainerProps {
   messages: ChatMessage[];
   agentStatus: AgentStatus;
@@ -113,6 +195,8 @@ interface ChatContainerProps {
   interruptedCheckpoint?: RunCheckpoint | null;
   onResumeRun?: () => void;
   onDismissResume?: () => void;
+  /** Durable Runs Phase 3 — attach/viewer controls for a server-side run. */
+  runHostAttach?: RunHostAttachHandle | null;
   ciStatus?: CIStatus | null;
   onDiagnoseCI?: () => void;
   onEditUserMessage?: (messageId: string) => void;
@@ -210,6 +294,7 @@ export function ChatContainer({
   interruptedCheckpoint,
   onResumeRun,
   onDismissResume,
+  runHostAttach,
   ciStatus,
   onDiagnoseCI,
   onEditUserMessage,
@@ -265,7 +350,8 @@ export function ChatContainer({
   if (messages.length === 0) {
     return (
       <div className="flex flex-1 flex-col overflow-hidden">
-        {interruptedCheckpoint && onResumeRun && onDismissResume && (
+        {runHostAttach?.hostRun && <RunHostAttachBanner attach={runHostAttach} />}
+        {!runHostAttach?.hostRun && interruptedCheckpoint && onResumeRun && onDismissResume && (
           <ResumeBanner
             checkpoint={interruptedCheckpoint}
             onResume={onResumeRun}
@@ -286,7 +372,8 @@ export function ChatContainer({
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      {interruptedCheckpoint && onResumeRun && onDismissResume && (
+      {runHostAttach?.hostRun && <RunHostAttachBanner attach={runHostAttach} />}
+      {!runHostAttach?.hostRun && interruptedCheckpoint && onResumeRun && onDismissResume && (
         <ResumeBanner
           checkpoint={interruptedCheckpoint}
           onResume={onResumeRun}

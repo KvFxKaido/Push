@@ -47,12 +47,14 @@ import type { DurableObjectState, WebSocket as CfWebSocket } from '@cloudflare/w
 import type { AIProviderType } from '@push/lib/provider-contract';
 import {
   type RunHostRecord,
+  type RunHostResolvedApproval,
   type RunHostScope,
   RUN_HOST_ADOPTED_WATCHDOG_MS,
   RUN_HOST_HEARTBEAT_INTERVAL_MS,
   RUN_HOST_MAX_ADOPTION_RELAUNCHES,
   RUN_HOST_PROTOCOL_VERSION,
   RUN_HOST_SILENCE_THRESHOLD_MS,
+  buildAttachSnapshot,
   checkpointExceedsHostCap,
   decideAdoptedAlarm,
   decideAdoption,
@@ -267,6 +269,16 @@ export class RunHost {
     }
     if (url.pathname === '/run/status' && request.method === 'GET') {
       return this.runStatus();
+    }
+    // --- Phase 3 attach/viewer: snapshot hydration + pending-gate controls ---
+    if (url.pathname === '/run/attach' && request.method === 'GET') {
+      return this.runAttach(request);
+    }
+    if (url.pathname === '/run/stop' && request.method === 'POST') {
+      return this.runStop(request);
+    }
+    if (url.pathname === '/run/approval' && request.method === 'POST') {
+      return this.runApproval(request);
     }
     // --- Phase 0 spike: throwaway latency instruments ---
     if (url.pathname === '/spike/relay' && request.method === 'POST') {
@@ -663,6 +675,188 @@ export class RunHost {
   }
 
   /**
+   * GET /run/attach — the Phase 3 attach/viewer snapshot. Returns the run's
+   * lifecycle summary plus the stored checkpoint when it's fresher than the
+   * caller's `sinceSavedAt` cursor (absent cursor = first attach, full
+   * snapshot). Read-only: serving an attach never bumps the heartbeat clock
+   * or mutates the record, so a viewer can cursor-follow an adopted run
+   * without resurrecting it — control flows through register / approval /
+   * stop / release, all explicit.
+   */
+  private async runAttach(request: Request): Promise<Response> {
+    const record = await this.loadRecord();
+    if (!record) {
+      return json({ error: 'NOT_FOUND' }, 404);
+    }
+    const sinceParam = new URL(request.url).searchParams.get('sinceSavedAt');
+    const sinceSavedAt =
+      sinceParam !== null && /^\d+$/.test(sinceParam) ? Number(sinceParam) : null;
+    const checkpoint = (await this.state.storage.get<RunCheckpointV1>(CHECKPOINT_KEY)) ?? null;
+    const snapshot = buildAttachSnapshot(record, checkpoint, sinceSavedAt);
+    // Log only when a transcript actually ships — cursor polls that return
+    // "nothing new" are one line per viewer per 10 s of pure volume (the
+    // heartbeat logging stance), and they change nothing observable.
+    if (snapshot.checkpoint) {
+      rhLog('info', 'run_host_attach_served', {
+        runId: record.runId,
+        state: record.state,
+        round: record.round,
+        cursor: sinceSavedAt,
+      });
+    }
+    return json({ ok: true, ...snapshot });
+  }
+
+  /**
+   * POST /run/stop — attached-viewer control: end the run server-side. Stops
+   * an in-flight adopted loop, marks the run `ended`, clears the alarm — but
+   * KEEPS the checkpoint, so the viewer can still hydrate the final
+   * transcript (release is the cleanup that drops storage). Idempotent on an
+   * already-terminal run. Same runId-binding rules as release: a stop that
+   * can't prove it targets the current run must not end a newer one.
+   */
+  private async runStop(request: Request): Promise<Response> {
+    let raw: unknown;
+    try {
+      raw = await request.json();
+    } catch {
+      return json({ error: 'INVALID_BODY', message: 'POST body must be JSON' }, 400);
+    }
+    const runId =
+      typeof (raw as Record<string, unknown>)?.runId === 'string'
+        ? ((raw as Record<string, unknown>).runId as string)
+        : '';
+    const record = await this.loadRecord();
+    if (!record) {
+      rhLog('info', 'run_host_stop_noop', { runId: runId || null });
+      return json({ ok: true, stopped: false });
+    }
+    if (!runId) {
+      rhLog('warn', 'run_host_stop_missing_run_id', { recordRunId: record.runId });
+      return json({ error: 'MISSING_RUN_ID' }, 400);
+    }
+    if (runId !== record.runId) {
+      rhLog('warn', 'run_host_stop_run_mismatch', {
+        recordRunId: record.runId,
+        stopRunId: runId,
+      });
+      return json({ error: 'RUN_MISMATCH' }, 409);
+    }
+    if (record.state === 'ended' || record.state === 'released') {
+      return json({ ok: true, stopped: false, state: record.state });
+    }
+    const fromState = record.state;
+    if (record.state === 'adopted') {
+      this.abortAdoptionLoop('stop');
+    }
+    record.state = 'ended';
+    record.midFlight = false;
+    record.pausedForApproval = null;
+    record.resolvedApproval = null;
+    await this.state.storage.put(RECORD_KEY, record);
+    await this.state.storage.deleteAlarm();
+    rhLog('info', 'run_host_run_stopped', { runId: record.runId, fromState });
+    return json({ ok: true, stopped: true, fromState });
+  }
+
+  /**
+   * POST /run/approval — attached-viewer control: resolve the gate a
+   * supervised adopted run paused on. Records the decision on the record and
+   * relaunches the loop, which seeds the kernel with a model-readable
+   * resolution note and (on approve) a one-shot execution grant for the
+   * gated tool. Only a paused `adopted` run has a gate to resolve — anything
+   * else is a 409 so a stale approval can never trigger an action the model
+   * isn't waiting on.
+   */
+  private async runApproval(request: Request): Promise<Response> {
+    let raw: unknown;
+    try {
+      raw = await request.json();
+    } catch {
+      return json({ error: 'INVALID_BODY', message: 'POST body must be JSON' }, 400);
+    }
+    const body = raw as Record<string, unknown>;
+    const runId = typeof body.runId === 'string' ? body.runId : '';
+    const approvalId = typeof body.approvalId === 'string' ? body.approvalId : '';
+    const decision = body.decision === 'approve' || body.decision === 'deny' ? body.decision : null;
+    if (!decision || !approvalId) {
+      return json(
+        { error: 'INVALID_BODY', message: 'approvalId and decision (approve|deny) are required' },
+        400,
+      );
+    }
+    const record = await this.loadRecord();
+    if (!record) {
+      rhLog('warn', 'run_host_approval_no_record', { runId: runId || null, approvalId });
+      return json({ error: 'NOT_REGISTERED' }, 409);
+    }
+    if (!runId) {
+      rhLog('warn', 'run_host_approval_missing_run_id', { recordRunId: record.runId });
+      return json({ error: 'MISSING_RUN_ID' }, 400);
+    }
+    if (runId !== record.runId) {
+      rhLog('warn', 'run_host_approval_run_mismatch', {
+        recordRunId: record.runId,
+        approvalRunId: runId,
+      });
+      return json({ error: 'RUN_MISMATCH' }, 409);
+    }
+    if (record.state !== 'adopted' || !record.pausedForApproval) {
+      rhLog('warn', 'run_host_approval_not_paused', {
+        runId: record.runId,
+        state: record.state,
+        approvalId,
+      });
+      return json({ error: 'NO_PENDING_APPROVAL', state: record.state }, 409);
+    }
+    if (record.pausedForApproval.approvalId !== approvalId) {
+      rhLog('warn', 'run_host_approval_id_mismatch', {
+        runId: record.runId,
+        pendingApprovalId: record.pausedForApproval.approvalId,
+        approvalId,
+      });
+      return json(
+        { error: 'APPROVAL_MISMATCH', pendingApprovalId: record.pausedForApproval.approvalId },
+        409,
+      );
+    }
+
+    // Pre-`tool`-field records: recover the tool from the deterministic
+    // approvalId shape (`adopt-<tool>-r<round>`).
+    const tool =
+      record.pausedForApproval.tool ?? /^adopt-(.+)-r\d+$/.exec(approvalId)?.[1] ?? approvalId;
+    const resolution: RunHostResolvedApproval = {
+      approvalId,
+      tool,
+      // Binds the grant to the exact arguments the user approved — the gate
+      // re-pauses a same-tool call whose fingerprint differs.
+      ...(record.pausedForApproval.argsFingerprint
+        ? { argsFingerprint: record.pausedForApproval.argsFingerprint }
+        : {}),
+      kind: record.pausedForApproval.kind,
+      decision,
+      decidedAt: Date.now(),
+    };
+    // The paused loop already aborted itself; this covers a pause whose
+    // bookkeeping is still mid-flight in this isolate.
+    this.abortAdoptionLoop('approval');
+    record.pausedForApproval = null;
+    record.resolvedApproval = resolution;
+    record.state = 'adoptable';
+    record.adoptionId = undefined;
+    await this.state.storage.put(RECORD_KEY, record);
+    rhLog('info', 'run_host_approval_resolved', {
+      runId: record.runId,
+      approvalId,
+      tool,
+      decision,
+    });
+    await this.startAdoption(record, 'approval');
+    const after = await this.loadRecord();
+    return json({ ok: true, decision, state: after?.state ?? record.state });
+  }
+
+  /**
    * Alarm dispatcher. Singleton; what a wake means depends on the run's
    * state (see RUN_LIFECYCLE_ALARM_ACTIVE_STATES):
    *
@@ -821,10 +1015,16 @@ export class RunHost {
 
     const now = Date.now();
     const adoptionId = crypto.randomUUID();
+    // A pending approval resolution is consumed by THIS launch (one-shot):
+    // it seeds the resolution note + grant below, and the cleared record
+    // means a crash-relaunch re-pauses at the gate instead of re-using a
+    // grant the user gave to a different attempt.
+    const resolvedApproval = current.resolvedApproval ?? null;
     current.state = 'adopted';
     current.adoptedAt = now;
     current.adoptionId = adoptionId;
     current.pausedForApproval = null;
+    current.resolvedApproval = null;
     await this.state.storage.put(RECORD_KEY, current);
     await this.state.storage.setAlarm(now + RUN_HOST_ADOPTED_WATCHDOG_MS);
     rhLog('info', 'run_host_run_adopted', {
@@ -846,6 +1046,7 @@ export class RunHost {
         origin: provision.origin,
         sandboxId: provision.sandboxId,
         ownerToken: provision.ownerToken,
+        resolvedApproval,
         abort: controller,
         hooks: {
           loadRecord: () => this.loadRecord(),

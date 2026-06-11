@@ -279,12 +279,13 @@ export function useChat(
     clearPendingSteer,
   } = usePendingSteer({ isMountedRef });
 
-  // --- Checkpoint + resume lifecycle ---
+  // --- Checkpoint + resume lifecycle (incl. Phase 3 run-host attach) ---
   const {
     updateAgentStatus,
     interruptedCheckpoint,
     resumeInterruptedRun,
     dismissResume,
+    runHostAttach,
     saveExpiryCheckpoint,
     flushCheckpoint,
     checkpointRefs,
@@ -931,18 +932,16 @@ export function useChat(
 
     // Context usage (for meter UI)
     contextUsage,
-
-    // Abort stream
     abortStream,
 
-    // Resumable Sessions
+    // Resumable Sessions + Durable Runs Phase 3 attach
     interruptedCheckpoint,
     resumeInterruptedRun,
     dismissResume,
+    runHostAttach,
     saveExpiryCheckpoint,
     ciStatus,
     diagnoseCIFailure,
-
     replayOnFreshSandbox,
     forkBranchFromUI,
     mergeBranchInUI,
