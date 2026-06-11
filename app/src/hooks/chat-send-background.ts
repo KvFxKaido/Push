@@ -57,8 +57,10 @@ export function resolveSendEngineTrigger(opts: {
    *  will lock BEFORE `prepareSendContext` resolves it for real. The peek
    *  reuses `resolveChatProviderSelection` with the same inputs prepare
    *  passes, so the two can only disagree if that call drifts — keep them
-   *  in lockstep. `chatId` may be null (new chat): no existing lock, same
-   *  as prepare sees. */
+   *  in lockstep. `chatId` may be null (new chat), and a non-null `chatId`
+   *  whose conversation hasn't landed in the store yet hits the same
+   *  null-provider fallback — both resolve through `getActiveProvider()`,
+   *  exactly as prepare will. */
   conversationsRef: React.MutableRefObject<Record<string, Conversation>>;
   chatId: string | null;
   requestedProvider?: AIProviderType | null;
@@ -80,6 +82,9 @@ export function resolveSendEngineTrigger(opts: {
     // credentials exist — a provider keyed solely via in-app Settings must
     // stay on the foreground loop (which forwards the key per-request) or
     // the job 401s at dispatch. See provider-engine-capability.ts.
+    // `provider` is an ActiveProvider, a subset of AIProviderType — the
+    // implicit widening here is safe today; if ActiveProvider ever diverges,
+    // an unknown value resolves optimistically true (same as any unknown).
     engineEligible: Boolean(opts.repoRef.current && branch) && isProviderEngineCapable(provider),
   });
 }
