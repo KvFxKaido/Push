@@ -115,6 +115,25 @@ export function applyEnvExecDeadline(env: Env): void {
 const CONTAINER_EXEC_TIMEOUT_SECONDS = 140;
 const CONTAINER_EXEC_KILL_GRACE_SECONDS = 5;
 
+// Resource caps applied to every user exec (foreground and detached). The
+// container has a fixed memory budget, but tools size their worker pools for
+// the host: node --test and vitest fan out per `availableParallelism()`, which
+// inside a container reflects host CPUs, not the cgroup quota. An uncapped
+// test-suite run OOMs the container, and the kernel killing it takes the
+// sandbox — and the session riding on it — down mid-run. SDK exec `env`
+// overlays the container env for the duration of the command only, and a
+// caller can still override per-invocation with a shell prefix
+// (`NODE_OPTIONS=… npm test`). `--test-concurrency` is not NODE_OPTIONS-safe
+// (Node rejects it), so node --test parallelism is bounded indirectly by the
+// per-process heap cap plus Node 20.3+'s cgroup-aware availableParallelism.
+const SANDBOX_EXEC_RESOURCE_ENV: Record<string, string> = {
+  NODE_OPTIONS: '--max-old-space-size=1024',
+  VITEST_MAX_THREADS: '2',
+  VITEST_MIN_THREADS: '1',
+  VITEST_MAX_FORKS: '2',
+  VITEST_MIN_FORKS: '1',
+};
+
 export class SandboxExecDeadlineError extends Error {
   readonly timeoutMs: number;
   constructor(timeoutMs: number) {
@@ -608,13 +627,11 @@ async function routeExec(env: Env, body: Json): Promise<Response> {
     `timeout -k ${CONTAINER_EXEC_KILL_GRACE_SECONDS} ` +
     `${CONTAINER_EXEC_TIMEOUT_SECONDS} ` +
     `bash -c ${shellSingleQuote(command)}`;
-  const execOptions =
-    workdir || clampedTimeoutMs !== undefined
-      ? {
-          ...(workdir ? { cwd: workdir } : {}),
-          ...(clampedTimeoutMs !== undefined ? { timeout: clampedTimeoutMs } : {}),
-        }
-      : undefined;
+  const execOptions = {
+    env: SANDBOX_EXEC_RESOURCE_ENV,
+    ...(workdir ? { cwd: workdir } : {}),
+    ...(clampedTimeoutMs !== undefined ? { timeout: clampedTimeoutMs } : {}),
+  };
   const result = await withExecDeadline(
     sandbox.exec(wrappedCommand, execOptions),
     // When the caller asked for a shorter deadline, fire the worker-side race at
@@ -681,6 +698,7 @@ async function routeExecStart(env: Env, body: Json): Promise<Response> {
   // the point of detaching — except by the optional caller-supplied timeout.
   const proc = (await withExecDeadline(
     sandbox.startProcess(command, {
+      env: SANDBOX_EXEC_RESOURCE_ENV,
       ...(workdir ? { cwd: workdir } : {}),
       ...(timeoutMs !== undefined && timeoutMs > 0 ? { timeout: timeoutMs } : {}),
       autoCleanup: false,
