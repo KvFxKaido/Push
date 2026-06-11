@@ -650,6 +650,20 @@ export async function executeSandboxToolCall(
           lines.push(`\n[Note] ${sanitizeUntrustedSource(result.error)}`);
         }
 
+        // Exit 137 = SIGKILL. Inside the sandbox that is almost always the
+        // container's out-of-memory killer, not a user signal — and the model
+        // retrying the identical command is what escalates a killed child
+        // process into a dead container (and a lost session). Name the cause
+        // and the fix instead of letting it read as a generic test failure.
+        if (result.exitCode === 137) {
+          lines.push(
+            `\n[Note] Exit 137 — the process was killed (SIGKILL), most likely by the sandbox's out-of-memory killer. ` +
+              `Do NOT re-run the same command unchanged; repeated OOM kills can take down the whole sandbox. ` +
+              `Reduce memory pressure instead: run a narrower test subset, or cap parallelism ` +
+              `(e.g. \`--test-concurrency=1\` for node --test, \`--maxWorkers=1\` for vitest/jest).`,
+          );
+        }
+
         // On non-zero exit, append a corrective hint if stderr matches a known pattern
         if (result.exitCode !== 0 && result.stderr) {
           const hint = diagnoseExecFailure(result.stderr);
