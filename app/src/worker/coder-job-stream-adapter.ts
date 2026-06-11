@@ -30,6 +30,7 @@ import type {
   StreamUsage,
 } from '@push/lib/provider-contract';
 import type { ChatMessage } from '@/types';
+import { getUserProviderKey } from './user-secrets';
 import type { Env } from './worker-middleware';
 import {
   handleAnthropicChat,
@@ -62,6 +63,14 @@ export interface CoderJobStreamAdapterArgs {
    * Worker can't read — so server-side callers (the PR-review DO) opt in
    * explicitly. Ignored for non-`zen` providers. */
   zenGo?: boolean;
+  /** Server-stamped identity of the run/job owner. When set, the adapter
+   * resolves the owner's stored provider key (user-secrets KV) per dispatch
+   * and injects it as the synthetic request's Authorization header — the
+   * same slot a browser-forwarded Settings key occupies on the foreground
+   * path, so `standardAuth`'s precedence (Worker env secret first, then this
+   * header) is unchanged. Absent (e.g. the PR-review DO's webhook path) the
+   * dispatch is env-credentials-only, exactly as before. */
+  ownerUserId?: string;
 }
 
 export type ProviderHandler = (request: Request, env: Env) => Promise<Response>;
@@ -154,6 +163,12 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
         stream_options: { include_usage: true },
       });
 
+      // Owner's stored key, resolved fresh per dispatch (key rotation or
+      // deletion mid-job takes effect on the next round; nothing is cached
+      // in job state). `standardAuth` still prefers the Worker env secret,
+      // so this only matters for providers without one.
+      const userKey = await getUserProviderKey(args.env, args.ownerUserId, args.provider);
+
       const request = new Request(
         `${origin}/api/${zenGo ? 'zen/go' : providerSlug(args.provider)}/chat`,
         {
@@ -166,6 +181,7 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
             // synthetic internal Request and all background jobs share one
             // bucket — a single burst can 429 every other running job.
             'X-Forwarded-For': `job:${args.jobId}`,
+            ...(userKey ? { Authorization: `Bearer ${userKey}` } : {}),
           },
           body,
           signal,

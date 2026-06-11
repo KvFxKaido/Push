@@ -10,6 +10,11 @@
  */
 
 import { useState, useCallback } from 'react';
+import {
+  deleteProviderKeyFromServer,
+  providerForStorageKey,
+  syncProviderKeyToServer,
+} from '@/lib/provider-key-sync';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 
 // ---------------------------------------------------------------------------
@@ -51,6 +56,12 @@ export function useApiKeyConfig(
       if (!trimmed) return;
       safeStorageSet(storageKey, trimmed);
       setKeyState(trimmed);
+      // Mirror to the identity-keyed server store so engine-routed turns
+      // (which run server-side and never see localStorage) can use this key.
+      // Best-effort: failure is logged inside the sync module and never
+      // blocks the local save — the foreground path works either way.
+      const provider = providerForStorageKey(storageKey);
+      if (provider) void syncProviderKeyToServer(provider, trimmed);
     },
     [storageKey],
   );
@@ -58,6 +69,8 @@ export function useApiKeyConfig(
   const clearKey = useCallback(() => {
     safeStorageRemove(storageKey);
     setKeyState(envVar || null);
+    const provider = providerForStorageKey(storageKey);
+    if (provider) void deleteProviderKeyFromServer(provider);
   }, [storageKey, envVar]);
 
   const hasKey = Boolean(key);

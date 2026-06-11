@@ -9,16 +9,20 @@
  * So a provider is engine-capable only when BOTH hold:
  *
  *   1. the DO can dispatch it directly (`resolveProviderHandler` non-null), and
- *   2. its credentials are resolvable server-side (Worker env secret, or the
- *      Workers AI binding for `cloudflare`).
+ *   2. its credentials are resolvable server-side: a Worker env secret, the
+ *      Workers AI binding for `cloudflare`, or a user-stored key in the
+ *      identity-keyed secrets store (`user-secrets.ts`) — the same store the
+ *      DO injects from at dispatch, so this probe and the dispatch path can't
+ *      disagree about which credentials exist.
  *
- * Providers configured only via in-app Settings keys (browser-held, forwarded
- * per-request by the foreground loop) fail an engine-routed turn instantly
- * with the provider's `keyMissingError` — the client uses this map to keep
- * those turns on the foreground loop instead (see
+ * Providers with NO server-resolvable credentials fail an engine-routed turn
+ * instantly with the provider's `keyMissingError` — the client uses this map
+ * to keep those turns on the foreground loop instead (see
  * `app/src/lib/provider-engine-capability.ts`).
  *
- * The response is booleans only — never key material, never key shape.
+ * The response is booleans only — never key material, never key shape. The
+ * answer is per-identity (session-resolved), which is why the handler resolves
+ * the caller before building the map.
  *
  * Drift note: the env-key names here mirror each handler's
  * `standardAuth('<KEY>')` literal in `worker-providers.ts` (and
@@ -27,28 +31,15 @@
  * load-bearing copies — change them in lockstep.
  */
 
-import type { AIProviderType } from '@push/lib/provider-contract';
+import { ALL_PROVIDERS, type AIProviderType } from '@push/lib/provider-contract';
 import { resolveProviderHandler } from './coder-job-stream-adapter';
+import { resolveSettingsUserId } from './settings-config';
+import { listUserProviderKeyMeta } from './user-secrets';
 import type { Env } from './worker-middleware';
 
-/** Every member of `AIProviderType`, for exhaustive map construction. */
-export const ALL_PROVIDERS: readonly AIProviderType[] = [
-  'ollama',
-  'openrouter',
-  'cloudflare',
-  'zen',
-  'nvidia',
-  'blackbox',
-  'azure',
-  'kilocode',
-  'openadapter',
-  'bedrock',
-  'vertex',
-  'anthropic',
-  'openai',
-  'google',
-  'demo',
-] as const;
+// Re-exported for existing importers; the canonical home moved to the shared
+// provider contract so user-secrets.ts can validate without an import cycle.
+export { ALL_PROVIDERS };
 
 /**
  * Server-side credential presence per provider. `cloudflare` authenticates via
@@ -70,18 +61,23 @@ const PROVIDER_ENV_KEY: Partial<Record<AIProviderType, keyof Env>> = {
   google: 'GOOGLE_API_KEY',
 };
 
-function hasServerCredentials(provider: AIProviderType, env: Env): boolean {
+function hasEnvCredentials(provider: AIProviderType, env: Env): boolean {
   if (provider === 'cloudflare') return Boolean(env.AI);
   const envKey = PROVIDER_ENV_KEY[provider];
   if (!envKey) return false;
   return Boolean(env[envKey]);
 }
 
-/** True when an engine-routed (server-side) turn can run on this provider. */
+/**
+ * True when an engine-routed (server-side) turn can run on this provider with
+ * Worker-env credentials alone. The identity-aware answer (env OR user-stored
+ * key) lives in the handler; this sync form serves callers with no request
+ * context (e.g. the PR-review DO's env-only dispatch).
+ */
 export function isProviderEngineCapable(provider: AIProviderType, env: Env): boolean {
   // zenGo only changes which Zen endpoint is hit — same key, same handler
   // family — so the plain resolution answers for both.
-  return resolveProviderHandler(provider, false) !== null && hasServerCredentials(provider, env);
+  return resolveProviderHandler(provider, false) !== null && hasEnvCredentials(provider, env);
 }
 
 export interface ProviderEngineCapabilities {
@@ -90,15 +86,22 @@ export interface ProviderEngineCapabilities {
 
 /**
  * GET /api/providers/engine-capabilities — the full per-provider map in one
- * round trip. `no-store` so a secret rotation is visible on the next fetch
- * rather than a cache TTL later.
+ * round trip, for the session-resolved caller. `no-store` so a secret
+ * rotation or a just-saved user key is visible on the next fetch rather than
+ * a cache TTL later.
  */
 export async function handleProviderEngineCapabilities(
-  _request: Request,
+  request: Request,
   env: Env,
 ): Promise<Response> {
+  const identity = await resolveSettingsUserId(request, env);
+  const userKeys = await listUserProviderKeyMeta(env, identity.userId);
   const providers = Object.fromEntries(
-    ALL_PROVIDERS.map((provider) => [provider, isProviderEngineCapable(provider, env)]),
+    ALL_PROVIDERS.map((provider) => [
+      provider,
+      resolveProviderHandler(provider, false) !== null &&
+        (hasEnvCredentials(provider, env) || Boolean(userKeys[provider])),
+    ]),
   ) as Record<AIProviderType, boolean>;
   const body: ProviderEngineCapabilities = { providers };
   return Response.json(body, { headers: { 'Cache-Control': 'no-store' } });

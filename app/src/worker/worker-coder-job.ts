@@ -23,6 +23,7 @@
 import type { AgentRole } from '@push/lib/runtime-contract';
 import { getClientIp, validateOrigin, type Env } from './worker-middleware';
 import { SUPPORTED_AGENT_JOB_ROLES } from './agent-job-roles';
+import { resolveSettingsUserId } from './settings-config';
 import type { CoderJobStartInput } from './coder-job-do';
 
 const JOBS_PREFIX = '/api/jobs/';
@@ -108,20 +109,24 @@ async function handleStart(request: Request, env: Env): Promise<Response> {
     return json({ error: 'INVALID_BODY', message: 'POST body must be a JSON object.' }, 400);
   }
 
-  // jobId and origin are NEVER trusted from the client:
+  // jobId, origin, and ownerUserId are NEVER trusted from the client:
   //  - Client-supplied jobId would undermine the unguessable-ID
   //    property that /events and /status rely on for access control
   //    (no auth layer beyond "know the id" in Phase 1).
   //  - Client-supplied origin would be an SSRF footgun once the DO
   //    executor starts doing absolute-URL fetches.
-  // Both are stripped before forwarding to the DO.
+  //  - Client-supplied ownerUserId would let a request dispatch with
+  //    another identity's stored provider keys (user-secrets.ts).
+  // All three are stripped before forwarding to the DO.
   const {
     jobId: _ignoredJobId,
     origin: _ignoredOrigin,
+    ownerUserId: _ignoredOwner,
     ...startFields
   } = parsed as Partial<CoderJobStartInput>;
   void _ignoredJobId;
   void _ignoredOrigin;
+  void _ignoredOwner;
 
   // Reject unknown / unsupported roles cheaply at the route layer so
   // the DO doesn't get a half-persisted run for a role we can't
@@ -147,11 +152,17 @@ async function handleStart(request: Request, env: Env): Promise<Response> {
 
   const jobId = crypto.randomUUID();
   const origin = new URL(request.url).origin;
+  // Server-resolved identity (session → allowlist owner → anon), persisted in
+  // input_json so the DO can inject this user's stored provider key at
+  // dispatch time. Identity only — the key itself is fetched from KV per
+  // dispatch and never persisted in job state (the out-of-band rule).
+  const identity = await resolveSettingsUserId(request, env);
   const input: CoderJobStartInput = {
-    ...(startFields as Omit<CoderJobStartInput, 'jobId' | 'origin' | 'role'>),
+    ...(startFields as Omit<CoderJobStartInput, 'jobId' | 'origin' | 'role' | 'ownerUserId'>),
     role: 'coder',
     jobId,
     origin,
+    ownerUserId: identity.userId,
   };
 
   const missing = requiredStartFields(input);

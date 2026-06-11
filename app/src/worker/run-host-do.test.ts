@@ -1119,3 +1119,38 @@ describe('run ledger: approval (Phase 3)', () => {
     expect(mocks.runAdoptedLoop).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('run ledger: ownerUserId stamp', () => {
+  it('persists the route-stamped ownerUser on register and keeps it across re-register', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    const res = await host.fetch(
+      ledgerRequest('/run/register?ownerUser=107059169', 'POST', {
+        runId: 'run-1',
+        scope: SCOPE,
+        mode: 'supervised',
+        round: 0,
+      }),
+    );
+    expect(res.status).toBe(200);
+    let record = storage.map.get('run:record') as Record<string, unknown>;
+    expect(record.ownerUserId).toBe('107059169');
+
+    // A re-register without the stamp (defensive: route always stamps, but a
+    // missing param must not erase the persisted identity).
+    await register(host);
+    record = storage.map.get('run:record') as Record<string, unknown>;
+    expect(record.ownerUserId).toBe('107059169');
+  });
+
+  it('persists the stamp from a checkpoint write', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    await register(host);
+    await host.fetch(
+      ledgerRequest('/run/checkpoint?ownerUser=anon', 'PUT', { checkpoint: makeCheckpoint() }),
+    );
+    const record = storage.map.get('run:record') as Record<string, unknown>;
+    expect(record.ownerUserId).toBe('anon');
+  });
+});

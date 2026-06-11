@@ -76,6 +76,32 @@ export type AIProviderType =
   | 'google'
   | 'demo';
 
+/** Every member of `AIProviderType`, for runtime validation and exhaustive
+ * map construction (the type alone erases at runtime). Keep in lockstep with
+ * the union above — `satisfies` pins membership, and the Worker capability
+ * test pins exhaustiveness against the DO's dispatch switch. */
+export const ALL_PROVIDERS = [
+  'ollama',
+  'openrouter',
+  'cloudflare',
+  'zen',
+  'nvidia',
+  'blackbox',
+  'azure',
+  'kilocode',
+  'openadapter',
+  'bedrock',
+  'vertex',
+  'anthropic',
+  'openai',
+  'google',
+  'demo',
+] as const satisfies readonly AIProviderType[];
+
+export function isKnownProvider(value: unknown): value is AIProviderType {
+  return typeof value === 'string' && (ALL_PROVIDERS as readonly string[]).includes(value);
+}
+
 // ---------------------------------------------------------------------------
 // Streaming envelope
 // ---------------------------------------------------------------------------

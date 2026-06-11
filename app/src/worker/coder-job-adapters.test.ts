@@ -35,6 +35,7 @@ vi.mock('./worker-providers', () => providerHandlerMocks);
 
 import { createWebExecutorAdapter } from './coder-job-executor-adapter';
 import { createWebStreamAdapter } from './coder-job-stream-adapter';
+import { putUserProviderKey } from './user-secrets';
 import type { SandboxToolCall } from './coder-job-detector-adapter';
 import type { Env } from './worker-middleware';
 import type { ChatMessage } from '@/types';
@@ -1076,5 +1077,78 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
     expect(errors).toEqual([]);
     expect(tokens.join('')).toBe('ok');
     expect(providerHandlerMocks.handleZenGoChat).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('createWebStreamAdapter — user-stored key injection', () => {
+  beforeEach(() => {
+    Object.values(providerHandlerMocks).forEach((fn) => fn.mockReset());
+  });
+
+  function kvEnv(store = new Map<string, string>()): Env {
+    return {
+      ...env(),
+      PUSH_SESSION_SECRET: 'test-session-secret',
+      SNAPSHOT_INDEX: {
+        get: async (k: string) => store.get(k) ?? null,
+        put: async (k: string, v: string) => {
+          store.set(k, v);
+        },
+      },
+    } as unknown as Env;
+  }
+
+  it('injects the owner-stored key as the Authorization header', async () => {
+    const e = kvEnv();
+    await putUserProviderKey(e, '107059169', 'openrouter', 'sk-or-user-stored');
+    providerHandlerMocks.handleOpenRouterChat.mockResolvedValue(
+      new Response('data: [DONE]\n\n', {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      }),
+    );
+    const stream = createWebStreamAdapter({
+      env: e,
+      origin: 'https://push.example.test',
+      provider: 'openrouter',
+      modelId: 'm',
+      jobId: 'job-key-1',
+      ownerUserId: '107059169',
+    });
+    for await (const event of stream({
+      provider: 'openrouter',
+      model: 'm',
+      messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }],
+    })) {
+      void event; // drain
+    }
+    const req = providerHandlerMocks.handleOpenRouterChat.mock.calls[0]![0] as Request;
+    expect(req.headers.get('Authorization')).toBe('Bearer sk-or-user-stored');
+  });
+
+  it('sends no Authorization header without an ownerUserId or stored key', async () => {
+    providerHandlerMocks.handleOpenRouterChat.mockResolvedValue(
+      new Response('data: [DONE]\n\n', {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      }),
+    );
+    const stream = createWebStreamAdapter({
+      env: kvEnv(),
+      origin: 'https://push.example.test',
+      provider: 'openrouter',
+      modelId: 'm',
+      jobId: 'job-key-2',
+      ownerUserId: 'someone-with-no-keys',
+    });
+    for await (const event of stream({
+      provider: 'openrouter',
+      model: 'm',
+      messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }],
+    })) {
+      void event; // drain
+    }
+    const req = providerHandlerMocks.handleOpenRouterChat.mock.calls[0]![0] as Request;
+    expect(req.headers.get('Authorization')).toBeNull();
   });
 });

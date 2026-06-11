@@ -353,6 +353,7 @@ export class RunHost {
       return json({ error: 'INVALID_BODY', message: 'POST body must be JSON' }, 400);
     }
     const hostOrigin = new URL(request.url).searchParams.get('hostOrigin') ?? undefined;
+    const ownerUser = new URL(request.url).searchParams.get('ownerUser') ?? undefined;
     const body = raw as Record<string, unknown>;
     const runId = typeof body.runId === 'string' ? body.runId : '';
     const scope = body.scope;
@@ -405,9 +406,10 @@ export class RunHost {
       // client that doesn't echo its round must not regress the observable
       // round to 0; the next checkpoint is authoritative either way.
       round: prior && prior.runId === runId ? prior.round : round,
-      // Server-derived (route-layer stamp); adoption provisioning needs it.
-      // A fresh stamp wins; otherwise keep what we had.
+      // Server-derived (route-layer stamps); adoption provisioning needs
+      // them. A fresh stamp wins; otherwise keep what we had.
       ...(hostOrigin || prior?.origin ? { origin: hostOrigin ?? prior?.origin } : {}),
+      ...(ownerUser || prior?.ownerUserId ? { ownerUserId: ownerUser ?? prior?.ownerUserId } : {}),
     };
     await this.state.storage.put(RECORD_KEY, record);
     await this.armSilenceAlarmIfWatched(record, now);
@@ -442,6 +444,7 @@ export class RunHost {
       return json({ error: 'INVALID_BODY', message: 'PUT body must be JSON' }, 400);
     }
     const hostOrigin = new URL(request.url).searchParams.get('hostOrigin') ?? undefined;
+    const ownerUser = new URL(request.url).searchParams.get('ownerUser') ?? undefined;
     const checkpoint = (raw as Record<string, unknown>)?.checkpoint;
     const issues = validateRunCheckpoint(checkpoint);
     if (issues.length > 0) {
@@ -541,6 +544,7 @@ export class RunHost {
     record.midFlight = cp.userAborted !== true;
     record.mode = cp.approvalMode;
     if (hostOrigin) record.origin = hostOrigin;
+    if (ownerUser) record.ownerUserId = ownerUser;
     // Only `watched` runs reach this write (the RUN_NOT_WATCHED guard above),
     // so persisting + re-arming here never races the adoption launcher or
     // resurrects a detached run.

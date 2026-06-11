@@ -119,3 +119,115 @@ describe('/api/settings guards', () => {
     expect(res.status).toBe(429);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Provider keys (/api/settings/provider-keys) — the user-secrets fold
+// ---------------------------------------------------------------------------
+
+function makeKeysRequest(method: 'GET' | 'PUT' | 'DELETE', body?: unknown) {
+  return new Request('https://push.example.test/api/settings/provider-keys', {
+    method,
+    headers: {
+      Origin: 'https://push.example.test',
+      'content-type': 'application/json',
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+function makeKeysEnv(store = new Map<string, string>()) {
+  return makeEnv({ PUSH_SESSION_SECRET: 'test-session-secret' } as Partial<Env>, store);
+}
+
+describe('matchSettingsRoute — provider keys', () => {
+  it('matches GET/PUT/DELETE on /api/settings/provider-keys', () => {
+    expect(matchSettingsRoute('/api/settings/provider-keys', 'GET')).toBe('keys-list');
+    expect(matchSettingsRoute('/api/settings/provider-keys', 'PUT')).toBe('keys-put');
+    expect(matchSettingsRoute('/api/settings/provider-keys', 'DELETE')).toBe('keys-delete');
+    expect(matchSettingsRoute('/api/settings/provider-keys', 'POST')).toBeNull();
+  });
+});
+
+describe('/api/settings/provider-keys', () => {
+  it('stores a key and lists presence metadata without key material', async () => {
+    const store = new Map<string, string>();
+    const env = makeKeysEnv(store);
+    const put = await handleSettingsRoute(
+      makeKeysRequest('PUT', { provider: 'openrouter', key: 'sk-or-secret-7890' }),
+      env,
+      'keys-put',
+    );
+    expect(put.status).toBe(200);
+
+    const list = await handleSettingsRoute(makeKeysRequest('GET'), env, 'keys-list');
+    expect(list.status).toBe(200);
+    const body = (await list.json()) as {
+      providers: Record<string, { last4: string; updatedAt: number }>;
+    };
+    expect(body.providers.openrouter).toMatchObject({ last4: '7890' });
+    expect(JSON.stringify(body)).not.toContain('sk-or-secret-7890');
+  });
+
+  it('deletes a stored key', async () => {
+    const store = new Map<string, string>();
+    const env = makeKeysEnv(store);
+    await handleSettingsRoute(
+      makeKeysRequest('PUT', { provider: 'ollama', key: 'k-1234' }),
+      env,
+      'keys-put',
+    );
+    const del = await handleSettingsRoute(
+      makeKeysRequest('DELETE', { provider: 'ollama' }),
+      env,
+      'keys-delete',
+    );
+    expect(del.status).toBe(200);
+    const list = await handleSettingsRoute(makeKeysRequest('GET'), env, 'keys-list');
+    const body = (await list.json()) as { providers: Record<string, unknown> };
+    expect(body.providers.ollama).toBeUndefined();
+  });
+
+  it('rejects unknown providers, empty keys, and bad bodies with 400', async () => {
+    const env = makeKeysEnv();
+    expect(
+      (
+        await handleSettingsRoute(
+          makeKeysRequest('PUT', { provider: 'mistral', key: 'k' }),
+          env,
+          'keys-put',
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await handleSettingsRoute(
+          makeKeysRequest('PUT', { provider: 'ollama', key: '  ' }),
+          env,
+          'keys-put',
+        )
+      ).status,
+    ).toBe(400);
+    expect((await handleSettingsRoute(makeKeysRequest('PUT'), env, 'keys-put')).status).toBe(400);
+  });
+
+  it('fails closed with 503 NOT_CONFIGURED when PUSH_SESSION_SECRET is absent', async () => {
+    const env = makeEnv();
+    const res = await handleSettingsRoute(
+      makeKeysRequest('PUT', { provider: 'ollama', key: 'k-1' }),
+      env,
+      'keys-put',
+    );
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('NOT_CONFIGURED');
+  });
+
+  it('rejects a disallowed origin with 403 (same guard as /api/settings)', async () => {
+    const req = new Request('https://push.example.test/api/settings/provider-keys', {
+      method: 'GET',
+      headers: { Origin: 'https://evil.example' },
+    });
+    const res = await handleSettingsRoute(req, makeKeysEnv(), 'keys-list');
+    expect(res.status).toBe(403);
+  });
+});

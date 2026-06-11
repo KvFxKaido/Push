@@ -132,6 +132,13 @@ export interface CoderJobStartInput {
   /** Reference to durable chat/session state. PR 2 persists this in
    *  input_json without dereferencing it; PR 3 wires the loader. */
   chatRef?: ChatRef;
+  /** Server-resolved GitHub identity of the job owner (session → allowlist
+   *  owner → anon), stamped at the route layer — NEVER client-trusted (a
+   *  spoofed value would dispatch with another identity's stored provider
+   *  keys). Identity only: the stream adapter resolves the actual key from
+   *  the user-secrets KV per dispatch; credentials are never persisted in
+   *  job state. */
+  ownerUserId?: string;
 }
 
 /** Discriminated union of every role-aware AgentJob input. PR 1 wires
@@ -668,6 +675,7 @@ export class CoderJob {
         provider: input.provider,
         modelId: input.model,
         jobId: input.jobId,
+        ownerUserId: input.ownerUserId,
       });
     // PR 3: Resolve prior-turn context via the chatRef chain. The default
     // Web loader walks env.CoderJob hop-by-hop; tests inject a stub via
