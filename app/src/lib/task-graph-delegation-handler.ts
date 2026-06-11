@@ -397,8 +397,9 @@ export async function handleTaskGraphDelegation(
 
         const explorerOutcome: DelegationOutcome = {
           agent: 'explorer',
-          status:
-            explorerResult.rounds > 0 && explorerResult.summary.trim()
+          status: explorerResult.hitRoundCap
+            ? 'incomplete'
+            : explorerResult.rounds > 0 && explorerResult.summary.trim()
               ? 'complete'
               : 'inconclusive',
           summary: explorerResult.summary,
@@ -408,7 +409,9 @@ export async function handleTaskGraphDelegation(
           checks: [],
           gateVerdicts: [],
           missingRequirements: [],
-          nextRequiredAction: null,
+          nextRequiredAction: explorerResult.hitRoundCap
+            ? 'Investigation hit round cap — re-explore with a narrower scope or proceed with partial findings'
+            : null,
           rounds: explorerResult.rounds,
           checkpoints: 0,
           elapsedMs: Date.now() - explorerStartMs,
@@ -912,13 +915,14 @@ export async function handleTaskGraphDelegation(
           summary: graphAuditResult.summary,
         });
       }
+      const anyNodeIncomplete = nodeOutcomes.some((o) => o.status === 'incomplete');
       const status: DelegationStatus = graphResult.aborted
         ? 'inconclusive'
         : graphAuditResult
           ? graphAuditResult.verdict === 'complete'
             ? 'complete'
             : 'incomplete'
-          : graphResult.success
+          : graphResult.success && !anyNodeIncomplete
             ? 'complete'
             : 'incomplete';
       const missingRequirements = graphResult.aborted

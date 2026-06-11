@@ -228,6 +228,7 @@ export async function runExplorerAgent(
     summary: result.summary,
     cards: result.cards,
     rounds: result.rounds,
+    hitRoundCap: result.hitRoundCap,
     capabilitySnapshot: capabilityLedger.snapshot(),
   };
 }

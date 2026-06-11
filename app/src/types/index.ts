@@ -1414,6 +1414,8 @@ export interface ExplorerResult {
   summary: string;
   cards: ChatCard[];
   rounds: number;
+  /** True when the loop exhausted MAX_EXPLORER_ROUNDS without a clean finish. */
+  hitRoundCap?: boolean;
   /** Post-run capability audit: declared vs actually-used capabilities. */
   capabilitySnapshot?: import('../lib/capabilities').CapabilityLedgerSnapshot;
 }
