@@ -110,9 +110,22 @@ export type TurnEngineTrigger = EngineTrigger | null;
  * Attachments force the Orchestrator loop regardless of flags: the
  * background/engine envelope does not carry attachments yet (see
  * `useChat.sendMessage`'s `!hasAttachments` guard, which this subsumes).
+ *
+ * `engineEligible` is the caller's word that the engine route is actually
+ * satisfiable — an active repo AND a branch (`startBackgroundMainChatTurn`
+ * hard-requires both; the sandbox is lazily ensured). With inline as the
+ * DEFAULT, a no-repo workspace (scratch / chat / local-pc) would otherwise
+ * route every normal send into a guaranteed precondition error instead of
+ * the foreground loop that serves those workspaces fine (Codex P1, PR
+ * #887). This also subsumes the same latent failure for explicit
+ * background-mode opt-ins: ineligible turns fall back to the foreground
+ * loop rather than erroring.
  */
-export function resolveTurnEngineTrigger(opts: { hasAttachments: boolean }): TurnEngineTrigger {
-  if (opts.hasAttachments) return null;
+export function resolveTurnEngineTrigger(opts: {
+  hasAttachments: boolean;
+  engineEligible: boolean;
+}): TurnEngineTrigger {
+  if (opts.hasAttachments || !opts.engineEligible) return null;
   if (isInlineDelegationEnabled()) return 'inline-delegation';
   if (isBackgroundModeEnabled()) return 'background-mode';
   return null;
