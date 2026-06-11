@@ -92,7 +92,8 @@ function toSandboxError(err: unknown): SandboxError {
   // shared /api/sandbox/* route when PUSH_SANDBOX_PROVIDER=cloudflare — so
   // this adapter must understand them too.
   let code = codeMap[toolErrorType] ?? 'UNKNOWN';
-  if (rawCode === 'MODAL_NOT_CONFIGURED') code = 'NOT_CONFIGURED';
+  if (rawCode === 'MODAL_NOT_CONFIGURED' || rawCode === 'CF_NOT_CONFIGURED')
+    code = 'NOT_CONFIGURED';
   if (rawCode === 'MODAL_NOT_FOUND' || rawCode === 'NOT_FOUND') code = 'NOT_FOUND';
   if (rawCode === 'CONTAINER_ERROR' || rawCode === 'MODAL_ERROR') code = 'CONTAINER_ERROR';
   if (rawCode === 'DISK_FULL') code = 'DISK_FULL';
