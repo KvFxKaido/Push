@@ -558,8 +558,14 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
  */
 function normalizeMutationPathKey(path: string): string {
   let normalized = path.trim().replace(/\\/g, '/').replace(/\/+/g, '/');
-  if (normalized.startsWith('/workspace/')) normalized = normalized.slice('/workspace/'.length);
-  else if (normalized === '/workspace') normalized = '.';
+  const isAbsolute = normalized.startsWith('/');
+  let isWorkspaceRelative = false;
+  if (normalized.startsWith('/workspace/')) {
+    normalized = normalized.slice('/workspace/'.length);
+    isWorkspaceRelative = true;
+  } else if (normalized === '/workspace') {
+    return '.';
+  }
   // Resolve . and .. segments so alias paths like `src/../api.ts` collide with `api.ts`.
   const segments = normalized.split('/');
   const resolved: string[] = [];
@@ -571,7 +577,10 @@ function normalizeMutationPathKey(path: string): string {
     }
     resolved.push(seg);
   }
-  return resolved.join('/') || '.';
+  const joined = resolved.join('/') || '.';
+  // Preserve the absolute root for non-workspace paths so /tmp/out.txt and
+  // a workspace-relative tmp/out.txt don't collide.
+  return isAbsolute && !isWorkspaceRelative ? `/${joined}` : joined;
 }
 
 function getFileMutationPathKeys(toolCall: AnyToolCall): string[] {

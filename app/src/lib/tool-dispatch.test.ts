@@ -686,6 +686,18 @@ describe('detectAllToolCalls', () => {
     }
   });
 
+  it('does not collide absolute non-workspace paths with workspace-relative ones', () => {
+    // /tmp/out.txt and workspace-relative tmp/out.txt are different targets
+    const text = [
+      '{"tool":"sandbox_write_file","args":{"path":"/tmp/out.txt","content":"one"}}',
+      '{"tool":"sandbox_write_file","args":{"path":"tmp/out.txt","content":"two"}}',
+    ].join('\n');
+
+    const detected = detectAllToolCalls(text);
+    expect(detected.fileMutations).toHaveLength(2);
+    expect(detected.extraMutations).toHaveLength(0);
+  });
+
   it('batches file mutations followed by one trailing side-effect', () => {
     // [write, edit, exec] — 2 file mutations batch + 1 trailing exec
     const text = [
