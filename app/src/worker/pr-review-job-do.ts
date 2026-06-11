@@ -30,7 +30,7 @@ import type {
 } from '@push/lib/provider-contract';
 import { resolveReviewGuidance } from '@push/lib/review-guidance';
 import { buildReviewerContextBlock } from '@push/lib/role-context';
-import { runDeepReviewer } from '@push/lib/deep-reviewer-agent';
+import { runDeepReviewer, type DeepReviewerResumeState } from '@push/lib/deep-reviewer-agent';
 import {
   createInProgressReviewCheckRun,
   createReviewCheckRun,
@@ -64,16 +64,28 @@ const DEFAULT_MODEL = DEFAULT_PR_REVIEW_MODEL;
 // `running` and its check-run hanging "Reviewing…" forever (the in-process
 // finalize paths never get to execute). The sweep fails such rows and closes
 // their check-run. GRACE keeps the sweep from racing a just-started delivery
-// whose runReview hasn't registered its abort controller yet; ALARM is the
-// persistent backstop that fires even with no further traffic (it survives the
-// eviction), set comfortably past the deep reviewer's wall-clock budget (~14m).
-// REVIEW_TIMEOUT_MS is the max wall-clock budget for a single live review before
-// it is force-failed. ORPHAN_ALARM_MS is the sweep cadence / initial alarm arm.
-// Both are 15 min today but are intentionally separate: the orphan cadence is a
-// detection heuristic while the review budget is a hard max-runtime policy.
+// whose runReview hasn't registered its abort controller yet.
+// REVIEW_TIMEOUT_MS is the max time WITHOUT PROGRESS (last checkpoint, else
+// start) before a live review is force-failed as stalled; total model work is
+// bounded separately by MAX_DEEP_REVIEW_ROUNDS, so a review that keeps
+// completing rounds may legitimately run longer than this end to end.
 const ORPHAN_GRACE_MS = 2 * 60_000;
-const ORPHAN_ALARM_MS = 15 * 60_000;
 const REVIEW_TIMEOUT_MS = 15 * 60_000;
+// The runtime reclaims a DO instance ~1–3 min after its triggering event
+// settles, taking the in-memory runReview promise with it — diagnosed live on
+// PR #887 (2026-06-11): the original died <4 min in with no deploy, the retry
+// made exactly 2 provider rounds after the alarm then evaporated. Unwatched
+// reviews therefore CANNOT finish in one attempt; the fix is the
+// CoderJob/RunHost discipline — per-round checkpoints + a short-cadence
+// watchdog + relaunch-from-checkpoint, so progress is monotone and repeated
+// evictions converge. WATCHDOG is the detection cadence while any review is
+// live; MAX_REVIEW_RELAUNCHES
+// bounds total relaunches per delivery (persisted in `relaunch_count`, so the
+// cap survives the very evictions it counts). Each relaunch banks at least
+// the rounds its checkpoint captured; MAX_DEEP_REVIEW_ROUNDS bounds total
+// model work, so the cap is a runaway backstop, not a progress budget.
+const REVIEW_WATCHDOG_MS = 90_000;
+const MAX_REVIEW_RELAUNCHES = 10;
 // A review attempt that dies without a result (DO evicted by a deploy, or a
 // stalled provider stream hitting the wall-clock) is re-enqueued ONCE with this
 // suffix on its delivery id. The suffix doubles as the attempt counter: a dead
@@ -160,11 +172,21 @@ export function repoGatingEnabled(repo: string, gatingReposEnv: string | undefin
   return allowed.has(repo.toLowerCase());
 }
 
+/** Checkpoint/resume hooks the DO threads into the executor. Optional fourth
+ *  parameter so test overrides (and any 3-arg executor) stay assignable. */
+export interface PrReviewExecutorHooks {
+  /** Seed the deep-reviewer loop from a persisted checkpoint (relaunch path). */
+  resumeState?: DeepReviewerResumeState;
+  /** Per-round state snapshot — the DO persists it synchronously. */
+  onRoundState?: (state: DeepReviewerResumeState) => void;
+}
+
 /** Injectable model/network leaf — see `__setPrReviewExecutorOverride`. */
 export type PrReviewExecutor = (
   input: PrReviewStartInput,
   env: Env,
   signal: AbortSignal,
+  hooks?: PrReviewExecutorHooks,
 ) => Promise<PrReviewOutcome>;
 
 const EXECUTOR_OVERRIDES = new Map<string, PrReviewExecutor>();
@@ -215,6 +237,13 @@ CREATE TABLE IF NOT EXISTS event (
   type TEXT NOT NULL,
   payload_json TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS review_checkpoint (
+  delivery_id TEXT PRIMARY KEY,
+  state_json TEXT NOT NULL,
+  round INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
 `;
 
 interface ReviewRow {
@@ -236,6 +265,7 @@ interface ReviewRow {
   started_at: number | null;
   finished_at: number | null;
   check_run_id: number | null;
+  relaunch_count: number;
 }
 
 export class PrReviewJob {
@@ -277,6 +307,75 @@ export class PrReviewJob {
     if (!have.has('origin')) {
       this.ctx.storage.sql.exec('ALTER TABLE review ADD COLUMN origin TEXT');
     }
+    if (!have.has('relaunch_count')) {
+      this.ctx.storage.sql.exec(
+        'ALTER TABLE review ADD COLUMN relaunch_count INTEGER NOT NULL DEFAULT 0',
+      );
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Per-round checkpoints — the relaunch substrate. All sync (sql.exec), so
+  // callers inside sweep loops stay race-free within an event-loop turn.
+  // -------------------------------------------------------------------------
+
+  private writeCheckpoint(deliveryId: string, state: DeepReviewerResumeState): void {
+    const json = JSON.stringify(state);
+    this.ctx.storage.sql.exec(
+      'INSERT INTO review_checkpoint (delivery_id, state_json, round, updated_at) VALUES (?, ?, ?, ?) ' +
+        'ON CONFLICT(delivery_id) DO UPDATE SET state_json = excluded.state_json, round = excluded.round, updated_at = excluded.updated_at',
+      deliveryId,
+      json,
+      state.nextRound,
+      Date.now(),
+    );
+    log('info', 'pr_review_checkpoint_captured', {
+      deliveryId,
+      round: state.nextRound,
+      bytes: json.length,
+    });
+  }
+
+  private readCheckpoint(
+    deliveryId: string,
+  ): { state: DeepReviewerResumeState; round: number; updatedAt: number } | null {
+    const rows = this.ctx.storage.sql
+      .exec(
+        'SELECT state_json, round, updated_at FROM review_checkpoint WHERE delivery_id = ?',
+        deliveryId,
+      )
+      .toArray() as Array<{ state_json: string; round: number; updated_at: number }>;
+    if (!rows.length) return null;
+    try {
+      return {
+        state: JSON.parse(rows[0].state_json) as DeepReviewerResumeState,
+        round: rows[0].round,
+        updatedAt: rows[0].updated_at,
+      };
+    } catch (err) {
+      // A corrupt checkpoint must not wedge the sweep — drop it loudly so the
+      // row falls back to the from-scratch retry path.
+      log('error', 'pr_review_checkpoint_parse_failed', {
+        deliveryId,
+        message: err instanceof Error ? err.message : String(err),
+      });
+      this.clearCheckpoint(deliveryId);
+      return null;
+    }
+  }
+
+  private clearCheckpoint(deliveryId: string): void {
+    this.ctx.storage.sql.exec('DELETE FROM review_checkpoint WHERE delivery_id = ?', deliveryId);
+  }
+
+  /** Pull the next alarm to ≤ now + REVIEW_WATCHDOG_MS without pushing out a
+   *  sooner one (single-alarm discipline, same merge rule as runReview). */
+  private async armWatchdogMergeSooner(): Promise<void> {
+    const target = Date.now() + REVIEW_WATCHDOG_MS;
+    const pending = await this.ctx.storage.getAlarm();
+    await this.ctx.storage.setAlarm(
+      pending != null && pending > Date.now() && pending < target ? pending : target,
+    );
   }
 
   /**
@@ -303,8 +402,14 @@ export class PrReviewJob {
     for (const row of pending) {
       if (row.status !== 'running' || row.started_at == null) continue;
       if (!this.abortControllers.has(row.delivery_id)) continue;
-      const deadline = row.started_at + REVIEW_TIMEOUT_MS;
-      nextAlarm = nextAlarm == null ? deadline : Math.min(nextAlarm, deadline);
+      // While any review is live (including one just relaunched by the sweep
+      // above), the next alarm is the WATCHDOG cadence — instance death must
+      // be noticed in ~90s so the relaunch chain outruns the eviction cycle.
+      // The 15-min progress deadline is enforced by failTimedOutReviews on
+      // each firing; it never needs to be the armed target since the watchdog
+      // fires far more often.
+      const candidate = now + REVIEW_WATCHDOG_MS;
+      nextAlarm = nextAlarm == null ? candidate : Math.min(nextAlarm, candidate);
     }
     if (nextAlarm != null) {
       await this.ctx.storage.setAlarm(Math.max(Date.now() + 1_000, nextAlarm));
@@ -320,7 +425,15 @@ export class PrReviewJob {
       if (row.status !== 'running' || row.started_at == null) continue;
       const controller = this.abortControllers.get(row.delivery_id);
       if (!controller) continue;
-      if (now - row.started_at < REVIEW_TIMEOUT_MS) continue;
+      // Progress-anchored deadline: a review that keeps checkpointing rounds
+      // is working, not stalled — the budget measures time since the LAST
+      // progress, not since the (possibly much earlier, relaunch-spanning)
+      // start. Total model work stays bounded by MAX_DEEP_REVIEW_ROUNDS.
+      const progressAnchor = Math.max(
+        row.started_at,
+        this.readCheckpoint(row.delivery_id)?.updatedAt ?? 0,
+      );
+      if (now - progressAnchor < REVIEW_TIMEOUT_MS) continue;
 
       if (!controller.signal.aborted) controller.abort();
       this.abortControllers.delete(row.delivery_id);
@@ -443,6 +556,10 @@ export class PrReviewJob {
         row.delivery_id,
       );
       this.abortControllers.get(row.delivery_id)?.abort();
+      // Terminal: a superseded row must never be relaunched from its stale
+      // checkpoint by a later sweep (an orphaned superseded row has no
+      // in-process finally to clear it).
+      this.clearCheckpoint(row.delivery_id);
       this.emit(row.delivery_id, 'review.superseded', { byHeadSha: input.headSha });
       log('info', 'pr_review_superseded', {
         deliveryId: row.delivery_id,
@@ -566,22 +683,30 @@ export class PrReviewJob {
     return true;
   }
 
-  private async runReview(input: PrReviewStartInput): Promise<void> {
+  private async runReview(
+    input: PrReviewStartInput,
+    resume?: { state: DeepReviewerResumeState },
+  ): Promise<void> {
     const controller = new AbortController();
+    // Registration is SYNCHRONOUS (before the first await) — the sweep's
+    // "running row without a controller ⇒ owning instance is dead" inference
+    // and the relaunch path's race-freedom both depend on it.
     this.abortControllers.set(input.deliveryId, controller);
     this.ctx.storage.sql.exec(
       "UPDATE review SET status = 'running', started_at = ? WHERE delivery_id = ?",
       Date.now(),
       input.deliveryId,
     );
-    this.emit(input.deliveryId, 'review.started', {});
+    this.emit(input.deliveryId, resume ? 'review.relaunched' : 'review.started', {
+      ...(resume ? { fromRound: resume.state.nextRound } : {}),
+    });
 
-    // Arm the persistent orphan backstop: if this DO is evicted mid-review, the
-    // alarm still fires at the deadline and finalizes the hung row + check-run.
-    // Merge with any earlier pending alarm (DOs hold a single alarm) — an
-    // auto-retry kicked from inside the alarm/sweep path must not push out a
-    // sooner grace-recheck by blindly overwriting it.
-    const backstop = Date.now() + ORPHAN_ALARM_MS;
+    // Arm the watchdog: while a review is live the alarm fires at a short
+    // cadence so an instance death is noticed in ~REVIEW_WATCHDOG_MS, not at
+    // the 15-min backstop. Merge with any earlier pending alarm (DOs hold a
+    // single alarm) — a relaunch/retry kicked from inside the alarm/sweep path
+    // must not push out a sooner grace-recheck by blindly overwriting it.
+    const backstop = Date.now() + REVIEW_WATCHDOG_MS;
     const pendingAlarm = await this.ctx.storage.getAlarm();
     await this.ctx.storage.setAlarm(
       pendingAlarm != null && pendingAlarm > Date.now() && pendingAlarm < backstop
@@ -589,13 +714,43 @@ export class PrReviewJob {
         : backstop,
     );
 
-    // Open the visible "Reviewing…" check-run (best-effort; null without creds).
+    // Open the visible "Reviewing…" check-run (best-effort; null without
+    // creds). A relaunch reuses the original attempt's check-run instead of
+    // stacking a new one per resume.
+    const existingCheckRunId = this.reviewRow(input.deliveryId)?.check_run_id ?? null;
     const checkToken = await this.mintInstallationToken(input.installationId);
-    const checkRunId = checkToken ? await this.startCheckRun(input, checkToken) : null;
+    const checkRunId =
+      existingCheckRunId ?? (checkToken ? await this.startCheckRun(input, checkToken) : null);
 
     const executor = EXECUTOR_OVERRIDES.get(input.deliveryId) ?? defaultPrReviewExecutor;
     try {
-      const outcome = await executor(input, this.env, controller.signal);
+      const outcome = await executor(input, this.env, controller.signal, {
+        resumeState: resume?.state,
+        onRoundState: (state) => {
+          // Synchronous persist (the lib hands us its live array — serialize
+          // now). Re-arming the watchdog is async; fire-and-forget under
+          // waitUntil so a slow storage op never blocks the round loop.
+          try {
+            this.writeCheckpoint(input.deliveryId, state);
+          } catch (err) {
+            log('error', 'pr_review_checkpoint_write_failed', {
+              deliveryId: input.deliveryId,
+              round: state.nextRound,
+              message: err instanceof Error ? err.message : String(err),
+            });
+          }
+          this.ctx.waitUntil(
+            this.armWatchdogMergeSooner().catch((err) => {
+              // Non-fatal: the alarm armed at runReview start (≤ WATCHDOG away)
+              // still fires; losing the re-arm only delays death detection.
+              log('warn', 'pr_review_watchdog_rearm_failed', {
+                deliveryId: input.deliveryId,
+                message: err instanceof Error ? err.message : String(err),
+              });
+            }),
+          );
+        },
+      });
       // A late alarm/supersede may have flipped status while we ran; don't clobber it.
       const current = this.reviewRow(input.deliveryId);
       if (current?.status !== 'running') {
@@ -740,6 +895,12 @@ export class PrReviewJob {
       }
     } finally {
       this.abortControllers.delete(input.deliveryId);
+      // Every in-process exit is terminal for this attempt (completed, failed,
+      // cancelled, superseded) — the checkpoint has served its purpose. The
+      // relaunch path never reaches here: it exists precisely for promises
+      // that died WITH the instance, where no finally runs and the persisted
+      // checkpoint is the survivor.
+      this.clearCheckpoint(input.deliveryId);
     }
   }
 
@@ -818,6 +979,8 @@ export class PrReviewJob {
     const controller = this.abortControllers.get(row.delivery_id);
     if (controller && !controller.signal.aborted) controller.abort();
     this.abortControllers.delete(row.delivery_id);
+    // Terminal for orphaned cancels too (no in-process finally will run).
+    this.clearCheckpoint(row.delivery_id);
     this.emit(row.delivery_id, 'review.cancelled', {});
     log('info', 'pr_review_cancelled', {
       deliveryId: row.delivery_id,
@@ -1017,6 +1180,62 @@ export class PrReviewJob {
       let graceSkipped = false;
       for (const row of rows) {
         if (this.abortControllers.has(row.delivery_id)) continue; // live in this instance
+
+        // Relaunch-from-checkpoint, the primary recovery path: a running row
+        // with a checkpoint and no live controller means the owning instance
+        // died mid-review (registration is synchronous, so there is no
+        // startup race a checkpointed row could be in — the grace window is
+        // for rows that died before round 1). Resume the SAME delivery from
+        // its last round instead of failing it: progress is monotone, so
+        // repeated evictions converge where from-scratch retries cannot
+        // (the death interval is shorter than a full review). The entire
+        // decide+increment+launch sequence below is synchronous, so a
+        // concurrent sweep in the same instance sees the controller
+        // registered and skips.
+        if (row.status === 'running') {
+          const checkpoint = this.readCheckpoint(row.delivery_id);
+          if (checkpoint && row.relaunch_count < MAX_REVIEW_RELAUNCHES) {
+            this.ctx.storage.sql.exec(
+              'UPDATE review SET relaunch_count = relaunch_count + 1 WHERE delivery_id = ?',
+              row.delivery_id,
+            );
+            log('warn', 'pr_review_relaunched', {
+              deliveryId: row.delivery_id,
+              repo: row.repo,
+              pr: row.pr_number,
+              attempt: row.relaunch_count + 1,
+              fromRound: checkpoint.round,
+            });
+            this.ctx.waitUntil(
+              this.runReview(
+                {
+                  deliveryId: row.delivery_id,
+                  repoFullName: row.repo,
+                  prNumber: row.pr_number,
+                  headSha: row.head_sha,
+                  baseRef: row.base_ref,
+                  headRef: row.head_ref,
+                  installationId: row.installation_id,
+                  isCrossFork: row.is_cross_fork === 1,
+                  origin: row.origin ?? RETRY_FALLBACK_ORIGIN,
+                },
+                { state: checkpoint.state },
+              ),
+            );
+            continue;
+          }
+          if (checkpoint && row.relaunch_count >= MAX_REVIEW_RELAUNCHES) {
+            log('error', 'pr_review_relaunch_cap_exhausted', {
+              deliveryId: row.delivery_id,
+              repo: row.repo,
+              pr: row.pr_number,
+              relaunches: row.relaunch_count,
+              lastRound: checkpoint.round,
+            });
+            // Fall through to the terminal orphan path below.
+          }
+        }
+
         if ((row.started_at ?? row.created_at) > cutoff) {
           graceSkipped = true; // too fresh — recheck after the grace window
           continue;
@@ -1030,6 +1249,7 @@ export class PrReviewJob {
           row.delivery_id,
         );
         this.emit(row.delivery_id, 'review.failed', { errorType: 'orphaned', message });
+        this.clearCheckpoint(row.delivery_id);
         log('warn', 'pr_review_orphan_swept', {
           deliveryId: row.delivery_id,
           repo: row.repo,
@@ -1097,7 +1317,7 @@ export class PrReviewJob {
  * stream and tool loop, so the DO's `signal` (aborted on supersede) stops an
  * in-flight review mid-round rather than running to the per-round timeout.
  */
-export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, signal) => {
+export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, signal, hooks) => {
   if (!env.GITHUB_APP_ID || !env.GITHUB_APP_PRIVATE_KEY) {
     throw new Error('GitHub App credentials are not configured (GITHUB_APP_ID / PRIVATE_KEY).');
   }
@@ -1185,8 +1405,9 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
       // prompt entirely so the model never attempts an unavailable tool.
       webSearchToolProtocol: '',
       webSearchAvailable: false,
+      resumeState: hooks?.resumeState,
     },
-    { onStatus: () => {}, signal },
+    { onStatus: () => {}, signal, onRoundState: hooks?.onRoundState },
   );
   if (signal.aborted) throw new Error('aborted');
 
