@@ -177,6 +177,15 @@ const ERROR_MESSAGES: Record<string, string> = {
     'Sandbox container error. The container may be unhealthy — try restarting the sandbox.',
   CONTAINER_ERROR: 'Sandbox container is unhealthy. Restarting the sandbox may fix this.',
   MODAL_UNKNOWN_ERROR: 'An unexpected sandbox error occurred.',
+  // CF worker codes (worker-cf-sandbox.ts). TIMEOUT is the worker-side exec
+  // deadline — the command may still be running, which is a different
+  // situation from the in-container `timeout` kill (exit 124 with partial
+  // output) and from a dead sandbox.
+  TIMEOUT:
+    'The sandbox stopped responding before the operation finished. It may still be running — verify its effects before re-running.',
+  NOT_FOUND: 'Sandbox not found or expired. Start a new sandbox to continue.',
+  DISK_FULL:
+    'The sandbox workspace is out of disk space. Delete build artifacts or caches to free space — restarting the sandbox loses uncommitted work.',
 };
 
 function formatSandboxError(status: number, body: string): Error {
@@ -222,6 +231,25 @@ export function mapSandboxErrorCode(code: string): ToolErrorType {
       return 'STALE_FILE';
     case 'WORKSPACE_CHANGED':
       return 'WORKSPACE_CHANGED';
+    // CF worker codes — previously fell through to UNKNOWN, so a worker-side
+    // exec deadline ("sandbox unresponsive, outcome unknown") was
+    // indistinguishable from any other failure in structured tool errors.
+    case 'TIMEOUT':
+      return 'EXEC_TIMEOUT';
+    // NOT_FOUND → SANDBOX_UNREACHABLE mirrors MODAL_NOT_FOUND above; the
+    // ToolErrorType vocabulary has no "sandbox definitively gone" member.
+    // This mapping is NOT the gone-detector: recovery paths decide
+    // definitive-vs-transient via isDefinitivelyGoneMessage() on message
+    // text, and toSandboxError (modal-sandbox-provider.ts) refines the raw
+    // code back to SandboxError NOT_FOUND before callers branch on it.
+    case 'NOT_FOUND':
+    case 'CF_ERROR':
+    case 'CF_NOT_CONFIGURED':
+      return 'SANDBOX_UNREACHABLE';
+    case 'AUTH_FAILURE':
+      return 'AUTH_FAILURE';
+    case 'DISK_FULL':
+      return 'WRITE_FAILED';
     default:
       return 'UNKNOWN';
   }

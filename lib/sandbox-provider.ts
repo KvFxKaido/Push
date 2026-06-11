@@ -336,6 +336,10 @@ export type SandboxErrorCode =
   | 'TIMEOUT'
   | 'NETWORK_ERROR'
   | 'CONTAINER_ERROR'
+  // Workspace volume is out of space. Distinct from CONTAINER_ERROR because
+  // the remediation is "delete files", not "restart the sandbox" — a restart
+  // loses uncommitted work without fixing anything.
+  | 'DISK_FULL'
   | 'STALE_FILE'
   | 'WORKSPACE_CHANGED'
   | 'SNAPSHOT_NOT_FOUND'
