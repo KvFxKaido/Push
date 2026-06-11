@@ -61,6 +61,7 @@ import {
   RUN_HOST_MAX_ADOPTION_RELAUNCHES,
   checkpointExceedsHostCap,
   type RunHostRecord,
+  type RunHostResolvedApproval,
 } from '@push/lib/run-host-adoption';
 import {
   estimateRunCheckpointBytes,
@@ -157,6 +158,10 @@ export interface RunAdoptedLoopArgs {
   origin: string;
   sandboxId: string;
   ownerToken: string;
+  /** A user decision on the gate this relaunch resumes from (Phase 3 attach
+   * controls): seeds the resolution note in the transcript and configures
+   * the tool gate's one-shot grant / sticky denial. */
+  resolvedApproval?: RunHostResolvedApproval | null;
   /** Host-held controller. The DO aborts it on register (reclaim), release,
    * and watchdog expiry; the runner aborts it itself on a supervised pause. */
   abort: AbortController;
@@ -173,6 +178,7 @@ type LoopOutcome = 'completed' | 'paused' | 'reclaimed' | 'failed';
  */
 export async function runAdoptedLoop(args: RunAdoptedLoopArgs): Promise<void> {
   const { env, record, checkpoint, origin, sandboxId, ownerToken, abort, hooks } = args;
+  const resolvedApproval = args.resolvedApproval ?? null;
   const adoptionId = record.adoptionId ?? '';
   const runId = record.runId;
 
@@ -241,6 +247,7 @@ export async function runAdoptedLoop(args: RunAdoptedLoopArgs): Promise<void> {
     onPause: (pending) => {
       pendingPause = pending;
     },
+    resolvedApproval,
   });
 
   /**
@@ -334,7 +341,7 @@ export async function runAdoptedLoop(args: RunAdoptedLoopArgs): Promise<void> {
     approvalModeBlock: buildApprovalModeBlock(record.mode),
     evaluateAfterModel: buildCoderEvaluateAfterModel(services),
     harnessMaxRounds: checkpoint.round + ADOPTION_EXTRA_ROUNDS,
-    resumeState: runCheckpointToCoderResumeState<ChatCard>(checkpoint),
+    resumeState: runCheckpointToCoderResumeState<ChatCard>(checkpoint, { resolvedApproval }),
     // Server-side progress has no client mirror; persist every round.
     checkpointCadenceRounds: 1,
   };

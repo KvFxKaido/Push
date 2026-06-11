@@ -1,6 +1,6 @@
 # Durable Runs — Adopt-on-Silence
 
-**Status:** Current — Phases 0–2 COMPLETE; Phase 3 (attach/viewer) is the next piece. Phase 0: latency spike #870, eval harness #871 (numbers in [Phase 0 results](#phase-0-results-2026-06-10) — latency does not block Phase 2). Phase 1: schema #873, capture #874. Phase 2: the delegation-collapse precondition (the inline route + flag in `delegation-mode-settings.ts`, A/B-measurable via the eval harness `--delegate` arm), the **adoption substrate** (heartbeat ledger, checkpoint persistence, watched→adoptable decision — see [Phase 2 substrate](#phase-2-substrate-shipped-2026-06-10)), the **client transport** (register/mirror/heartbeat/release + pull-back-local — see [Phase 2 client transport](#phase-2-client-transport-shipped-2026-06-10)), and the **server-side loop** that consumes `adoptable` (see [Phase 2 server-side loop](#phase-2-server-side-loop-shipped-2026-06-10)).
+**Status:** Current — Phases 0–3 COMPLETE. Phase 0: latency spike #870, eval harness #871 (numbers in [Phase 0 results](#phase-0-results-2026-06-10) — latency does not block Phase 2). Phase 1: schema #873, capture #874. Phase 2: the delegation-collapse precondition (the inline route + flag in `delegation-mode-settings.ts`, A/B-measurable via the eval harness `--delegate` arm), the **adoption substrate** (heartbeat ledger, checkpoint persistence, watched→adoptable decision — see [Phase 2 substrate](#phase-2-substrate-shipped-2026-06-10)), the **client transport** (register/mirror/heartbeat/release + pull-back-local — see [Phase 2 client transport](#phase-2-client-transport-shipped-2026-06-10)), and the **server-side loop** that consumes `adoptable` (see [Phase 2 server-side loop](#phase-2-server-side-loop-shipped-2026-06-10)). Phase 3: the **attach/viewer** — bearer-authenticated reattach, snapshot hydration, approve/deny pending gates, stop, pull-back-local (see [Phase 3 attach/viewer](#phase-3-attachviewer-shipped-2026-06-11)).
 
 **Date:** 2026-06-10
 
@@ -370,6 +370,69 @@ stop, approve/deny pending gates, pull-back-local. The TUI/pushd surface is
 unaffected (pushd is already CLI's durable home); a later phase may let the
 web client attach to either home through one vocabulary — that is the point
 where this track and Session Continuity merge.
+
+#### Phase 3 attach/viewer (shipped 2026-06-11)
+
+**Bearer stance.** `/api/runhost/run/*` sits behind the universal
+GitHub-identity session gate, which IS the bearer for the same-origin web
+surface — no tokenless class, no separate mint (the pushd attach-token
+universe stays the CLI's own). The DO instance is reconstructed server-side
+from the durable scope, exactly as the Phase 2 substrate planned.
+
+**Snapshot + cursor-follow.** `GET /run/attach` is the RunHost analogue of
+pushd's `get_session_snapshot` packet: lifecycle summary + the stored
+`RunCheckpointV1` when it's fresher than the caller's `sinceSavedAt` cursor
+(`buildAttachSnapshot` in `lib/run-host-adoption.ts`, field-pinned next to
+the record vocabulary). The checkpoint IS the snapshot — and since the
+adopted loop persists every round, `savedAt` is the natural cursor grain, so
+cursor-follow is a read-only 10 s poll (`RUN_HOST_ATTACH_POLL_INTERVAL_MS`)
+that ships only the rounds the viewer hasn't seen. Attach never bumps the
+heartbeat clock: watching can't resurrect a run (control stays explicit —
+register/approval/stop/release). Event-grain streaming (the `lastEventSeq`
+anchor, WS delivery per the Phase 0 spike) remains the open refinement; the
+adopted loop does not emit run events yet.
+
+**Hydration.** `useRunHostAttach` (mounted from `useChatCheckpoint`, the
+resume-lifecycle owner) folds the host transcript into the conversation via
+`planTranscriptHydration`: the anchor is the client's own last mirrored V1
+checkpoint, everything past it is the server-side gap, appended as
+ChatMessages (wire-replayable — the next send seeds from the conversation).
+After each hydration the host copy is saved as the new local anchor, making
+re-attach idempotent. No-anchor and compaction cases degrade to a
+whole-transcript replace, logged. Runtime scaffolding notes keep their
+verbatim `content` for the model but render a one-line `displayContent`.
+
+**Controls.**
+- *Approve/deny* (`POST /run/approval`): only a paused `adopted` run with a
+  matching `approvalId` accepts a decision (409 otherwise — a stale approval
+  can never fire an action the model isn't waiting on). The decision rides
+  the record as `resolvedApproval`, consumed by exactly one relaunch: the
+  seed gains a model-readable `[APPROVAL_RESOLVED]` note and the tool gate
+  gets a one-shot execution grant for the named tool (approve) or a sticky
+  model-readable denial (deny). A crash-relaunch re-pauses rather than
+  re-using a grant the user gave a different attempt. `pausedForApproval`
+  now carries `tool` explicitly for grant matching (old records fall back to
+  parsing the deterministic approvalId).
+- *Stop* (`POST /run/stop`): aborts the loop, marks `ended`, clears the
+  alarm — and KEEPS the checkpoint so the final transcript stays hydratable;
+  release remains the storage cleanup.
+- *Pull-back-local*: final hydration → `release` → a `[RUN_RECLAIMED]` user
+  turn continues the run in-page (mid-flight runs only); the legacy
+  interrupted-run checkpoint is cleared so the stale ResumeBanner doesn't
+  double-offer.
+
+**UI.** One banner (`RunHostAttachBanner` in `ChatContainer`, suppressing
+the legacy ResumeBanner while present) renders the four viewer states:
+paused-for-approval (Approve/Deny/Continue here), running server-side
+(Stop/Continue here), parked (`adoptable` + `lastError`), and finished
+(transcript synced; dismiss releases). A user send while viewing follows the
+Phase 2 contract unchanged: the new run's register supersedes and aborts the
+server loop.
+
+**Known limits** (accepted): hydration needs an existing local conversation
+(cross-device attach waits on chat sync); secondary clients are viewers by
+construction (non-goal held); ask_user pauses resolve as proceed/stop
+notes, not free-text replies — a reply is a pull-back + typed follow-up.
 
 ## Non-goals (v1)
 

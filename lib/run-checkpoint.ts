@@ -79,6 +79,9 @@ export interface RunCheckpointMessage {
 export interface RunCheckpointPendingApproval {
   approvalId: string;
   kind: string;
+  /** The gated tool, carried explicitly so a Phase 3 approval grant can be
+   * matched on relaunch without parsing the approvalId. */
+  tool?: string;
   title?: string;
   summary?: string;
 }
@@ -351,6 +354,12 @@ export function validateRunCheckpoint(value: unknown): ValidationIssue[] {
       }
       if (typeof value.pendingApproval.kind !== 'string') {
         issues.push(issue('pendingApproval.kind', 'must be a string'));
+      }
+      if (
+        value.pendingApproval.tool !== undefined &&
+        typeof value.pendingApproval.tool !== 'string'
+      ) {
+        issues.push(issue('pendingApproval.tool', 'must be a string when present'));
       }
     }
   }

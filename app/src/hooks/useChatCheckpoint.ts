@@ -49,6 +49,7 @@ import { setConversationAgentEvents } from '@/lib/chat-runtime-state';
 import type { LoopPhase } from '@/types';
 import { sandboxStatus, type SandboxStatusResult } from '@/lib/sandbox-client';
 import { createId } from '@/hooks/chat-persistence';
+import { useRunHostAttach } from './useRunHostAttach';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -169,6 +170,21 @@ export function useChatCheckpoint({
 
   // Resume state
   const [interruptedCheckpoint, setInterruptedCheckpoint] = useState<RunCheckpoint | null>(null);
+
+  // Durable Runs Phase 3: attach/viewer for runs that lived on (or finished)
+  // server-side while this client was away. Lives here because it shares the
+  // resume path's seams: conversation mutation, the send ref, and the same
+  // idle-detection inputs.
+  const runHostAttach = useRunHostAttach({
+    activeChatId,
+    isStreaming,
+    runEngineStateRef,
+    repoRef,
+    branchInfoRef,
+    setConversations,
+    dirtyConversationIdsRef,
+    sendMessageRef,
+  });
 
   // --- Agent event tracking ---
 
@@ -629,6 +645,8 @@ export function useChatCheckpoint({
     interruptedCheckpoint,
     resumeInterruptedRun,
     dismissResume,
+    // Durable Runs Phase 3 attach/viewer
+    runHostAttach,
     // Checkpoint I/O
     saveExpiryCheckpoint,
     flushCheckpoint,

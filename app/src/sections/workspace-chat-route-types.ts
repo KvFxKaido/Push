@@ -12,6 +12,7 @@ import type { ScratchpadMemory } from '@/hooks/useScratchpad';
 import type { TodoItem } from '@/lib/todo-tools';
 import type { SnapshotManager } from '@/hooks/useSnapshotManager';
 import type { SandboxStatus } from '@/hooks/useSandbox';
+import type { RunHostAttachHandle } from '@/hooks/useRunHostAttach';
 import type {
   ActiveRepo,
   AgentStatus,
@@ -133,6 +134,9 @@ export interface ChatRouteConversationProps {
   interruptedCheckpoint: RunCheckpoint | null;
   resumeInterruptedRun: () => void;
   dismissResume: () => void;
+  /** Durable Runs Phase 3: attach/viewer for a run that lived on (or
+   * finished) server-side while this client was away. */
+  runHostAttach: RunHostAttachHandle;
   saveExpiryCheckpoint: (savedDiff: string) => void;
   ciStatus: CIStatus | null;
   diagnoseCIFailure: () => void;

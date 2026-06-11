@@ -45,6 +45,7 @@ import type {
   DetectedToolCalls,
 } from './coder-agent.ts';
 import { type TaggedCallShape, isCoderInternalToolName } from './coder-agent-bindings.ts';
+import type { RunHostResolvedApproval } from './run-host-adoption.ts';
 import type {
   RunCheckpointMessage,
   RunCheckpointPendingApproval,
@@ -64,6 +65,10 @@ export const ADOPTION_DEFERRED_NOTE_MARKER = '[TOOL_DEFERRED]';
 
 /** Marker on the pause note a supervised approval gate produces. */
 export const ADOPTION_PAUSE_NOTE_MARKER = '[RUN_PAUSED_FOR_APPROVAL]';
+
+/** Marker on the note carrying a user's approve/deny decision into a
+ * relaunched run (Phase 3 attach controls). */
+export const ADOPTION_APPROVAL_RESOLVED_NOTE_MARKER = '[APPROVAL_RESOLVED]';
 
 /**
  * Tool-call sources that cannot execute while the run is hosted server-side.
@@ -143,14 +148,39 @@ export function buildAdoptionResumeNote(checkpoint: RunCheckpointV1): string {
 }
 
 /**
+ * The model-readable note carrying a user's decision on the gate the run
+ * paused at. Appended to the resume seed AFTER the adoption note when a
+ * relaunch was triggered by `/run/approval` (Phase 3): the transcript already
+ * ends with the pause note, so this is the answer the model was told to wait
+ * for. The enforcement half lives in `createAdoptionToolGate`'s
+ * `resolvedApproval` option — the note documents it, code enforces it.
+ */
+export function buildApprovalResolutionNote(resolution: RunHostResolvedApproval): string {
+  if (resolution.decision === 'approve') {
+    return (
+      `${ADOPTION_APPROVAL_RESOLVED_NOTE_MARKER} The user APPROVED the pending action ` +
+      `(${resolution.tool}, ${resolution.kind}). You may now perform that action once — retry the ` +
+      `tool call that paused the run, then continue the task.`
+    );
+  }
+  return (
+    `${ADOPTION_APPROVAL_RESOLVED_NOTE_MARKER} The user DENIED the pending action ` +
+    `(${resolution.tool}, ${resolution.kind}). Do not retry it. Continue the task another way, or ` +
+    `summarize what you completed and what remains.`
+  );
+}
+
+/**
  * Map a stored RunCheckpointV1 into the coder kernel's resume seed. The
  * transcript is taken verbatim (plus the adoption note appended as the
- * latest user turn); working memory carries over; cards start empty — the
+ * latest user turn, plus the approval-resolution note when this relaunch
+ * carries one); working memory carries over; cards start empty — the
  * client that owns the original cards is gone, and a reclaiming client
  * rebuilds UI state from its own store.
  */
 export function runCheckpointToCoderResumeState<TCard = unknown>(
   checkpoint: RunCheckpointV1,
+  opts?: { resolvedApproval?: RunHostResolvedApproval | null },
 ): CoderCheckpointState<TCard> {
   const messages = checkpoint.messages.map(toCoderLoopMessage);
   messages.push({
@@ -159,6 +189,14 @@ export function runCheckpointToCoderResumeState<TCard = unknown>(
     content: buildAdoptionResumeNote(checkpoint),
     timestamp: 0,
   });
+  if (opts?.resolvedApproval) {
+    messages.push({
+      id: 'adopted-approval-resolution',
+      role: 'user',
+      content: buildApprovalResolutionNote(opts.resolvedApproval),
+      timestamp: 0,
+    });
+  }
   return {
     round: checkpoint.round,
     messages,
@@ -255,6 +293,14 @@ export interface AdoptionToolGateOptions<TCall extends TaggedCallShape, TCard> {
    * return value carries the model-readable pause note in the same turn.
    */
   onPause: (pending: RunCheckpointPendingApproval) => void;
+  /**
+   * A user decision on the gate this relaunch resumes from (Phase 3 attach
+   * controls). `approve` grants ONE matching execution of the gated tool —
+   * consumed on first use, so the user approved an action, not a category.
+   * `deny` is sticky for this adoption: matching gate hits return a
+   * model-readable denial instead of pausing again.
+   */
+  resolvedApproval?: RunHostResolvedApproval | null;
   /** Override the default gate registry (tests). */
   gates?: ApprovalGateRegistry;
 }
@@ -285,6 +331,11 @@ export function createAdoptionToolGate<TCall extends TaggedCallShape, TCard>(
 ) => Promise<CoderToolExecResult<TCard>> {
   const gates = options.gates ?? createDefaultApprovalGates({ modeProvider: () => options.mode });
   let pauseIssued = false;
+  // One-shot approve grant: consumed by the first matching gate hit. Deny
+  // stays sticky (repeat denials are harmless and model-readable).
+  let approveGrant =
+    options.resolvedApproval?.decision === 'approve' ? options.resolvedApproval : null;
+  const denied = options.resolvedApproval?.decision === 'deny' ? options.resolvedApproval : null;
 
   const pause = (
     tool: string,
@@ -295,6 +346,7 @@ export function createAdoptionToolGate<TCall extends TaggedCallShape, TCard>(
     const pending: RunCheckpointPendingApproval = {
       approvalId: `adopt-${tool}-r${round}`,
       kind,
+      tool,
       title: `Approval required: ${tool}`,
       summary,
     };
@@ -318,6 +370,22 @@ export function createAdoptionToolGate<TCall extends TaggedCallShape, TCard>(
     const tool = call.call.tool;
 
     if (source === 'ask-user' && options.mode === 'supervised') {
+      // A resolved ask_user gate is its own answer: approve means "proceed
+      // on best judgment", deny means "don't" — either way the resolution
+      // note in the seed carries it; answer once instead of re-pausing.
+      if (approveGrant && approveGrant.tool === tool) {
+        approveGrant = null;
+        return {
+          kind: 'executed',
+          resultText: `${ADOPTION_APPROVAL_RESOLVED_NOTE_MARKER} The user already answered this pause: proceed on your best judgment.`,
+        };
+      }
+      if (denied && denied.tool === tool) {
+        return {
+          kind: 'executed',
+          resultText: `${ADOPTION_APPROVAL_RESOLVED_NOTE_MARKER} The user declined this request for input. Proceed without it or wrap up.`,
+        };
+      }
       return pause(
         tool,
         execCtx.round,
@@ -336,6 +404,16 @@ export function createAdoptionToolGate<TCall extends TaggedCallShape, TCard>(
     );
     if (gateResult) {
       if (gateResult.decision === 'ask_user') {
+        if (approveGrant && approveGrant.tool === tool) {
+          approveGrant = null;
+          return options.execute(call, execCtx);
+        }
+        if (denied && denied.tool === tool) {
+          return {
+            kind: 'denied',
+            reason: `The user denied this action (${denied.kind}). Do not retry it.`,
+          };
+        }
         return pause(tool, execCtx.round, gateResult.category, gateResult.reason);
       }
       return { kind: 'denied', reason: gateResult.reason };

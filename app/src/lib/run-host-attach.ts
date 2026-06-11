@@ -1,0 +1,286 @@
+/**
+ * run-host-attach.ts — Durable Runs Phase 3 attach/viewer client.
+ *
+ * The reopened-client half of adopt-on-silence: probe the RunHost ledger for
+ * a run that lived on (or finished) server-side while this device was away,
+ * hydrate the chat transcript from the host's stored `RunCheckpointV1`, and
+ * drive the attach controls (approve/deny the paused gate, stop,
+ * pull-back-local via release).
+ *
+ * Auth note: every call here rides `/api/runhost/run/*`, which sits behind
+ * the universal GitHub-identity session gate — that IS the bearer for the
+ * same-origin web surface (no tokenless class; the track's "bearer-
+ * authenticated attach" requirement). The DO instance is derived server-side
+ * from the durable scope, so the only thing this client supplies is the
+ * scope it already owns.
+ *
+ * This module is fetch + pure hydration planning; the polling lifecycle and
+ * conversation mutation live in `app/src/hooks/useRunHostAttach.ts` (the
+ * owning coordinator — new-feature checklist #2).
+ */
+
+import {
+  RUN_LIFECYCLE_STATES,
+  isCompleteScope,
+  type RunHostAttachSnapshot,
+  type RunHostScope,
+  type RunLifecycleState,
+} from '@push/lib/run-host-adoption';
+import {
+  ADOPTION_APPROVAL_RESOLVED_NOTE_MARKER,
+  ADOPTION_RESUME_NOTE_MARKER,
+} from '@push/lib/run-adoption-loop';
+import {
+  validateRunCheckpoint,
+  type RunCheckpointMessage,
+  type RunCheckpointV1,
+} from '@push/lib/run-checkpoint';
+import { createId } from '@push/lib/id-utils';
+import type { ChatMessage } from '@/types';
+import { resolveApiUrl } from './api-url';
+
+const ATTACH_PATH = '/api/runhost/run/attach';
+const APPROVAL_PATH = '/api/runhost/run/approval';
+const STOP_PATH = '/api/runhost/run/stop';
+const RELEASE_PATH = '/api/runhost/run/release';
+
+function log(level: 'info' | 'warn', event: string, ctx: Record<string, unknown>): void {
+  const line = JSON.stringify({ level, event, ...ctx });
+  if (level === 'warn') console.warn(line);
+  else console.log(line);
+}
+
+// ---------------------------------------------------------------------------
+// Attach fetch
+// ---------------------------------------------------------------------------
+
+export type RunHostAttachResult =
+  /** No run on the host for this scope (or the deployment has no RUN_HOST
+   * binding) — nothing to attach to. */
+  | { kind: 'none'; reason: 'not_found' | 'not_configured' | 'incomplete_scope' }
+  | { kind: 'error'; status?: number; message: string }
+  | { kind: 'snapshot'; snapshot: RunHostAttachSnapshot };
+
+const LIFECYCLE: ReadonlySet<string> = new Set(RUN_LIFECYCLE_STATES);
+
+/** Defensive parse of the attach response — the shape is ours, but a proxy
+ * error page or a partial deploy must degrade to 'error', not a crash. */
+function parseAttachSnapshot(raw: unknown): RunHostAttachSnapshot | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const body = raw as Record<string, unknown>;
+  if (
+    typeof body.runId !== 'string' ||
+    body.runId.length === 0 ||
+    typeof body.state !== 'string' ||
+    !LIFECYCLE.has(body.state) ||
+    typeof body.round !== 'number' ||
+    typeof body.midFlight !== 'boolean'
+  ) {
+    return null;
+  }
+  if (body.checkpoint !== undefined && validateRunCheckpoint(body.checkpoint).length > 0) {
+    return null;
+  }
+  return body as unknown as RunHostAttachSnapshot;
+}
+
+export async function fetchRunHostAttach(
+  scope: RunHostScope,
+  sinceSavedAt: number | null,
+): Promise<RunHostAttachResult> {
+  if (!isCompleteScope(scope)) {
+    return { kind: 'none', reason: 'incomplete_scope' };
+  }
+  const params = new URLSearchParams({
+    repoFullName: scope.repoFullName,
+    branch: scope.branch,
+    chatId: scope.chatId,
+  });
+  if (sinceSavedAt !== null) params.set('sinceSavedAt', String(sinceSavedAt));
+  let res: Response;
+  try {
+    res = await fetch(resolveApiUrl(`${ATTACH_PATH}?${params.toString()}`));
+  } catch (err: unknown) {
+    return { kind: 'error', message: err instanceof Error ? err.message : String(err) };
+  }
+  if (res.status === 404) return { kind: 'none', reason: 'not_found' };
+  if (res.status === 503) return { kind: 'none', reason: 'not_configured' };
+  if (!res.ok) {
+    return { kind: 'error', status: res.status, message: `attach failed (${res.status})` };
+  }
+  const raw: unknown = await res.json().catch(() => null);
+  const snapshot = parseAttachSnapshot(raw);
+  if (!snapshot) {
+    log('warn', 'run_host_attach_parse_failed', { chatId: scope.chatId });
+    return { kind: 'error', status: res.status, message: 'attach response malformed' };
+  }
+  return { kind: 'snapshot', snapshot };
+}
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+export interface RunHostControlResult {
+  ok: boolean;
+  status?: number;
+  state?: RunLifecycleState;
+  message?: string;
+}
+
+async function postControl(
+  path: string,
+  body: Record<string, unknown>,
+): Promise<RunHostControlResult> {
+  let res: Response;
+  try {
+    res = await fetch(resolveApiUrl(path), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (err: unknown) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) };
+  }
+  const parsed = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) {
+    return {
+      ok: false,
+      status: res.status,
+      message: typeof parsed.error === 'string' ? parsed.error : `request failed (${res.status})`,
+    };
+  }
+  return {
+    ok: true,
+    status: res.status,
+    state:
+      typeof parsed.state === 'string' && LIFECYCLE.has(parsed.state)
+        ? (parsed.state as RunLifecycleState)
+        : undefined,
+  };
+}
+
+export function submitRunHostApproval(
+  scope: RunHostScope,
+  runId: string,
+  approvalId: string,
+  decision: 'approve' | 'deny',
+): Promise<RunHostControlResult> {
+  return postControl(APPROVAL_PATH, { scope, runId, approvalId, decision });
+}
+
+export function stopRunHostRun(scope: RunHostScope, runId: string): Promise<RunHostControlResult> {
+  return postControl(STOP_PATH, { scope, runId });
+}
+
+export function releaseRunHostRun(
+  scope: RunHostScope,
+  runId: string,
+): Promise<RunHostControlResult> {
+  return postControl(RELEASE_PATH, { scope, runId });
+}
+
+// ---------------------------------------------------------------------------
+// Transcript hydration (pure planning — the hook applies the plan)
+// ---------------------------------------------------------------------------
+
+/** Friendlier display text for the runtime scaffolding notes the adoption
+ * loop writes into the transcript — the model needs the full note verbatim
+ * (it stays in `content`, which is what the next send replays); the human
+ * reading the chat needs one line. */
+function displayLabelForNote(content: string): string | null {
+  if (content.startsWith(ADOPTION_RESUME_NOTE_MARKER)) {
+    return 'Run continued server-side while you were away.';
+  }
+  if (content.startsWith(ADOPTION_APPROVAL_RESOLVED_NOTE_MARKER)) {
+    return 'Approval decision delivered to the server-side run.';
+  }
+  return null;
+}
+
+/** Convert a slice of host checkpoint messages into displayable (and
+ * replayable — the next send seeds its wire history from the conversation)
+ * ChatMessages. System turns never enter the conversation (the wire builder
+ * re-derives them); tool turns become the synthetic tool-result user
+ * messages the transcript renderer already collapses. */
+export function checkpointMessagesToChatMessages(
+  messages: readonly RunCheckpointMessage[],
+): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  for (const msg of messages) {
+    if (msg.role === 'system') continue;
+    const role = msg.role === 'assistant' ? 'assistant' : 'user';
+    const displayContent =
+      role === 'user' ? (displayLabelForNote(msg.content) ?? undefined) : undefined;
+    out.push({
+      id: createId(),
+      role,
+      content: msg.content,
+      ...(displayContent ? { displayContent } : {}),
+      timestamp: Date.now(),
+      status: 'done',
+      ...(msg.reasoningBlocks && role === 'assistant'
+        ? { reasoningBlocks: msg.reasoningBlocks }
+        : {}),
+      ...(msg.isToolCall ? { isToolCall: true } : {}),
+      ...(msg.isToolResult || msg.role === 'tool' ? { isToolResult: true } : {}),
+    });
+  }
+  return out;
+}
+
+export interface TranscriptHydrationPlan {
+  /** `append` adds the gap suffix to the existing conversation; `replace`
+   * swaps the whole transcript in (no safe alignment anchor). */
+  mode: 'append' | 'replace';
+  messages: ChatMessage[];
+  /** Host message count this plan brings the client up to — becomes the next
+   * hydration anchor. */
+  hostMessageCount: number;
+}
+
+/**
+ * Decide how to fold the host transcript into the local conversation.
+ *
+ * `anchorCount` is the number of host-side checkpoint messages already
+ * represented locally — the message count of the client's own last mirrored
+ * V1 checkpoint for the same run (0 when there isn't one). The host
+ * transcript's prefix up to that anchor is, by construction, the transcript
+ * this client mirrored up before going silent, so everything past it is the
+ * server-side gap.
+ *
+ * Fallbacks are deliberate:
+ *   - anchor 0 + empty conversation → append everything (fresh client).
+ *   - anchor 0 + non-empty conversation → replace (no safe alignment).
+ *   - host shorter than the anchor → replace (server-side context
+ *     compaction rewrote the prefix; counts no longer align).
+ *   - nothing past the anchor → null (nothing new to hydrate).
+ */
+export function planTranscriptHydration(args: {
+  hostCheckpoint: RunCheckpointV1;
+  anchorCount: number;
+  localMessageCount: number;
+}): TranscriptHydrationPlan | null {
+  const host = args.hostCheckpoint.messages;
+  if (args.anchorCount > 0) {
+    if (host.length === args.anchorCount) return null;
+    if (host.length < args.anchorCount) {
+      return {
+        mode: 'replace',
+        messages: checkpointMessagesToChatMessages(host),
+        hostMessageCount: host.length,
+      };
+    }
+    return {
+      mode: 'append',
+      messages: checkpointMessagesToChatMessages(host.slice(args.anchorCount)),
+      hostMessageCount: host.length,
+    };
+  }
+  if (host.length === 0) return null;
+  return {
+    mode: args.localMessageCount === 0 ? 'append' : 'replace',
+    messages: checkpointMessagesToChatMessages(host),
+    hostMessageCount: host.length,
+  };
+}

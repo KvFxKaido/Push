@@ -94,6 +94,15 @@ describe('matchRunHostRoute', () => {
     expect(matchRunHostRoute('/api/runhost/run/status', 'GET')).toBe('run.status');
   });
 
+  it('matches the Phase 3 attach/viewer routes with their methods', () => {
+    expect(matchRunHostRoute('/api/runhost/run/attach', 'GET')).toBe('run.attach');
+    expect(matchRunHostRoute('/api/runhost/run/stop', 'POST')).toBe('run.stop');
+    expect(matchRunHostRoute('/api/runhost/run/approval', 'POST')).toBe('run.approval');
+    expect(matchRunHostRoute('/api/runhost/run/attach', 'POST')).toBeNull();
+    expect(matchRunHostRoute('/api/runhost/run/stop', 'GET')).toBeNull();
+    expect(matchRunHostRoute('/api/runhost/run/approval', 'GET')).toBeNull();
+  });
+
   it('rejects wrong methods and unknown paths', () => {
     expect(matchRunHostRoute('/api/runhost/spike/relay', 'GET')).toBeNull();
     expect(matchRunHostRoute('/api/runhost/spike/page', 'POST')).toBeNull();
@@ -846,5 +855,262 @@ describe('run ledger: adopted lifecycle', () => {
     expect((storage.map.get('run:record') as Record<string, unknown>).origin).toBe(
       'https://push.example',
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 3 — attach/viewer snapshot + pending-gate controls
+// ---------------------------------------------------------------------------
+
+/** Drive a host into the supervised-paused state a returning viewer sees. */
+async function pauseAdoptedRun(
+  host: RunHost,
+  storage: Storage,
+  pause: Record<string, unknown> = {
+    approvalId: 'adopt-sandbox_push-r5',
+    kind: 'remote_side_effect',
+    tool: 'sandbox_push',
+  },
+): Promise<AbortController> {
+  const abort = await adoptRun(host, storage);
+  const record = storage.map.get('run:record') as Record<string, unknown>;
+  record.pausedForApproval = pause;
+  storage.map.set('run:record', record);
+  return abort;
+}
+
+describe('run ledger: attach (Phase 3)', () => {
+  it('attach for an unknown scope is 404', async () => {
+    const res = await makeLedgerHost(makeStorage()).fetch(ledgerRequest('/run/attach', 'GET'));
+    expect(res.status).toBe(404);
+  });
+
+  it('first attach returns the full snapshot including the stored checkpoint', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    await register(host);
+    await host.fetch(ledgerRequest('/run/checkpoint', 'PUT', { checkpoint: makeCheckpoint() }));
+    const res = await host.fetch(ledgerRequest('/run/attach', 'GET'));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.ok).toBe(true);
+    expect(body.runId).toBe('run-1');
+    expect(body.state).toBe('watched');
+    expect(body.round).toBe(4);
+    expect(body.checkpointSavedAt).toBe(1781000000000);
+    expect((body.checkpoint as Record<string, unknown>).round).toBe(4);
+  });
+
+  it('a current cursor skips the checkpoint body; a stale one gets it', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    await register(host);
+    await host.fetch(ledgerRequest('/run/checkpoint', 'PUT', { checkpoint: makeCheckpoint() }));
+    const current = await host.fetch(
+      ledgerRequest('/run/attach?sinceSavedAt=1781000000000', 'GET'),
+    );
+    const currentBody = (await current.json()) as Record<string, unknown>;
+    expect(currentBody.checkpoint).toBeUndefined();
+    expect(currentBody.checkpointSavedAt).toBe(1781000000000);
+    const stale = await host.fetch(ledgerRequest('/run/attach?sinceSavedAt=1780999999999', 'GET'));
+    expect(((await stale.json()) as Record<string, unknown>).checkpoint).toBeDefined();
+  });
+
+  it('attach is read-only: no heartbeat bump, no alarm change, no state change', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    await adoptRun(host, storage);
+    const before = storage.map.get('run:record') as Record<string, unknown>;
+    const beforeBeat = before.lastHeartbeatAt;
+    const beforeAlarm = storage.alarmAt;
+    const res = await host.fetch(ledgerRequest('/run/attach', 'GET'));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.state).toBe('adopted');
+    const after = storage.map.get('run:record') as Record<string, unknown>;
+    expect(after.lastHeartbeatAt).toBe(beforeBeat);
+    expect(after.state).toBe('adopted');
+    expect(storage.alarmAt).toBe(beforeAlarm);
+  });
+
+  it('attach surfaces the pending gate of a paused run', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    await pauseAdoptedRun(host, storage);
+    const res = await host.fetch(ledgerRequest('/run/attach', 'GET'));
+    const body = (await res.json()) as Record<string, unknown>;
+    const paused = body.pausedForApproval as Record<string, unknown>;
+    expect(paused.approvalId).toBe('adopt-sandbox_push-r5');
+    expect(paused.tool).toBe('sandbox_push');
+  });
+});
+
+describe('run ledger: stop (Phase 3)', () => {
+  it('stops an adopted run: loop aborted, ended, alarm cleared, checkpoint KEPT', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    const abort = await adoptRun(host, storage);
+    const res = await host.fetch(ledgerRequest('/run/stop', 'POST', { runId: 'run-1' }));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.stopped).toBe(true);
+    expect(body.fromState).toBe('adopted');
+    expect(abort.signal.aborted).toBe(true);
+    const record = storage.map.get('run:record') as Record<string, unknown>;
+    expect(record.state).toBe('ended');
+    expect(record.midFlight).toBe(false);
+    expect(storage.alarmAt).toBeNull();
+    // The final transcript stays hydratable until release.
+    expect(storage.map.has('run:checkpoint')).toBe(true);
+  });
+
+  it('stop is idempotent on a terminal run', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    await adoptRun(host, storage);
+    await host.fetch(ledgerRequest('/run/stop', 'POST', { runId: 'run-1' }));
+    const res = await host.fetch(ledgerRequest('/run/stop', 'POST', { runId: 'run-1' }));
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as Record<string, unknown>).stopped).toBe(false);
+  });
+
+  it('stop without a record is a no-op; missing/stale runId refuses (400/409)', async () => {
+    const noRecord = await makeLedgerHost(makeStorage()).fetch(
+      ledgerRequest('/run/stop', 'POST', { runId: 'run-1' }),
+    );
+    expect(noRecord.status).toBe(200);
+    expect(((await noRecord.json()) as Record<string, unknown>).stopped).toBe(false);
+
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    await register(host);
+    const missing = await host.fetch(ledgerRequest('/run/stop', 'POST', {}));
+    expect(missing.status).toBe(400);
+    const stale = await host.fetch(ledgerRequest('/run/stop', 'POST', { runId: 'run-0' }));
+    expect(stale.status).toBe(409);
+    expect((storage.map.get('run:record') as Record<string, unknown>).state).toBe('watched');
+  });
+});
+
+describe('run ledger: approval (Phase 3)', () => {
+  it('approve relaunches the loop with a one-shot grant and clears the pause', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    await pauseAdoptedRun(host, storage);
+    const res = await host.fetch(
+      ledgerRequest('/run/approval', 'POST', {
+        runId: 'run-1',
+        approvalId: 'adopt-sandbox_push-r5',
+        decision: 'approve',
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.ok).toBe(true);
+    expect(body.decision).toBe('approve');
+    expect(body.state).toBe('adopted');
+
+    expect(mocks.runAdoptedLoop).toHaveBeenCalledTimes(2);
+    const args = mocks.runAdoptedLoop.mock.calls[1][0] as {
+      resolvedApproval: Record<string, unknown>;
+    };
+    expect(args.resolvedApproval.decision).toBe('approve');
+    expect(args.resolvedApproval.tool).toBe('sandbox_push');
+    expect(args.resolvedApproval.approvalId).toBe('adopt-sandbox_push-r5');
+
+    const record = storage.map.get('run:record') as Record<string, unknown>;
+    expect(record.state).toBe('adopted');
+    expect(record.pausedForApproval).toBeNull();
+    // Consumed by the launch — a crash-relaunch re-pauses, not re-grants.
+    expect(record.resolvedApproval).toBeNull();
+    expect(storage.alarmAt).not.toBeNull();
+  });
+
+  it('deny relaunches with the denial; tool recovered from the approvalId when unset', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    // Pre-`tool`-field pause record (older loop version).
+    await pauseAdoptedRun(host, storage, {
+      approvalId: 'adopt-sandbox_exec-r7',
+      kind: 'destructive_sandbox',
+    });
+    const res = await host.fetch(
+      ledgerRequest('/run/approval', 'POST', {
+        runId: 'run-1',
+        approvalId: 'adopt-sandbox_exec-r7',
+        decision: 'deny',
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.runAdoptedLoop).toHaveBeenCalledTimes(2);
+    const args = mocks.runAdoptedLoop.mock.calls[1][0] as {
+      resolvedApproval: Record<string, unknown>;
+    };
+    expect(args.resolvedApproval.decision).toBe('deny');
+    expect(args.resolvedApproval.tool).toBe('sandbox_exec');
+  });
+
+  it('rejects a decision when nothing is paused (409 NO_PENDING_APPROVAL)', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    await adoptRun(host, storage); // adopted but NOT paused
+    const res = await host.fetch(
+      ledgerRequest('/run/approval', 'POST', {
+        runId: 'run-1',
+        approvalId: 'adopt-sandbox_push-r5',
+        decision: 'approve',
+      }),
+    );
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as Record<string, unknown>).error).toBe('NO_PENDING_APPROVAL');
+    expect(mocks.runAdoptedLoop).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a stale approvalId (409 APPROVAL_MISMATCH) — the gate moved on', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    await pauseAdoptedRun(host, storage);
+    const res = await host.fetch(
+      ledgerRequest('/run/approval', 'POST', {
+        runId: 'run-1',
+        approvalId: 'adopt-other_tool-r2',
+        decision: 'approve',
+      }),
+    );
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.error).toBe('APPROVAL_MISMATCH');
+    expect(body.pendingApprovalId).toBe('adopt-sandbox_push-r5');
+    expect(mocks.runAdoptedLoop).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects malformed decisions and unbound runIds (400/409)', async () => {
+    const storage = makeStorage();
+    const host = makeLedgerHost(storage);
+    await pauseAdoptedRun(host, storage);
+    const badDecision = await host.fetch(
+      ledgerRequest('/run/approval', 'POST', {
+        runId: 'run-1',
+        approvalId: 'adopt-sandbox_push-r5',
+        decision: 'maybe',
+      }),
+    );
+    expect(badDecision.status).toBe(400);
+    const missingRun = await host.fetch(
+      ledgerRequest('/run/approval', 'POST', {
+        approvalId: 'adopt-sandbox_push-r5',
+        decision: 'approve',
+      }),
+    );
+    expect(missingRun.status).toBe(400);
+    const staleRun = await host.fetch(
+      ledgerRequest('/run/approval', 'POST', {
+        runId: 'run-9',
+        approvalId: 'adopt-sandbox_push-r5',
+        decision: 'approve',
+      }),
+    );
+    expect(staleRun.status).toBe(409);
+    expect(mocks.runAdoptedLoop).toHaveBeenCalledTimes(1);
   });
 });

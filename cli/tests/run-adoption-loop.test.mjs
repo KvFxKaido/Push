@@ -13,6 +13,7 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 
 import {
+  ADOPTION_APPROVAL_RESOLVED_NOTE_MARKER,
   ADOPTION_DEFERRED_NOTE_MARKER,
   ADOPTION_DEFERRED_TOOL_SOURCES,
   ADOPTION_EXTRA_ROUNDS,
@@ -21,6 +22,7 @@ import {
   buildAdoptionDeferralNote,
   buildAdoptionDetectors,
   buildAdoptionResumeNote,
+  buildApprovalResolutionNote,
   coderStateToRunCheckpoint,
   createAdoptionToolGate,
   runCheckpointToCoderResumeState,
@@ -70,6 +72,7 @@ test('pin: note markers + extra-rounds budget', () => {
   assert.equal(ADOPTION_RESUME_NOTE_MARKER, '[RUN_ADOPTED]');
   assert.equal(ADOPTION_DEFERRED_NOTE_MARKER, '[TOOL_DEFERRED]');
   assert.equal(ADOPTION_PAUSE_NOTE_MARKER, '[RUN_PAUSED_FOR_APPROVAL]');
+  assert.equal(ADOPTION_APPROVAL_RESOLVED_NOTE_MARKER, '[APPROVAL_RESOLVED]');
   assert.equal(ADOPTION_EXTRA_ROUNDS, 30);
 });
 
@@ -170,7 +173,7 @@ test('coderStateToRunCheckpoint records a pending approval when paused', () => {
 // The adoption tool gate
 // ---------------------------------------------------------------------------
 
-function makeGate({ mode, onPause = () => {}, executed = [] } = {}) {
+function makeGate({ mode, onPause = () => {}, executed = [], resolvedApproval = null } = {}) {
   return createAdoptionToolGate({
     mode,
     execute: async (call) => {
@@ -179,6 +182,7 @@ function makeGate({ mode, onPause = () => {}, executed = [] } = {}) {
     },
     hookContext: { sandboxId: 'sb-1', allowedRepo: 'KvFxKaido/Push' },
     onPause,
+    resolvedApproval,
   });
 }
 
@@ -279,6 +283,136 @@ test('onPause fires once even if the model retries gated calls', async () => {
   const gate = makeGate({ mode: 'supervised', onPause: (p) => pauses.push(p) });
   await gate({ source: 'sandbox', call: { tool: 'sandbox_push', args: {} } }, { round: 5 });
   await gate({ source: 'sandbox', call: { tool: 'sandbox_push', args: {} } }, { round: 6 });
+  assert.equal(pauses.length, 1);
+});
+
+test('the pending approval names the gated tool explicitly (Phase 3 grant matching)', async () => {
+  const pauses = [];
+  const gate = makeGate({ mode: 'supervised', onPause: (p) => pauses.push(p) });
+  await gate({ source: 'sandbox', call: { tool: 'sandbox_push', args: {} } }, { round: 5 });
+  assert.equal(pauses[0].tool, 'sandbox_push');
+});
+
+// ---------------------------------------------------------------------------
+// Approval resolution (Phase 3 attach controls)
+// ---------------------------------------------------------------------------
+
+function makeResolution(decision, tool = 'sandbox_push') {
+  return {
+    approvalId: `adopt-${tool}-r5`,
+    tool,
+    kind: 'remote_side_effect',
+    decision,
+    decidedAt: 1781000002000,
+  };
+}
+
+test('resolution notes are marked and carry the decision', () => {
+  const approve = buildApprovalResolutionNote(makeResolution('approve'));
+  assert.ok(approve.startsWith(ADOPTION_APPROVAL_RESOLVED_NOTE_MARKER));
+  assert.match(approve, /APPROVED/);
+  assert.match(approve, /sandbox_push/);
+  const deny = buildApprovalResolutionNote(makeResolution('deny'));
+  assert.ok(deny.startsWith(ADOPTION_APPROVAL_RESOLVED_NOTE_MARKER));
+  assert.match(deny, /DENIED/);
+  assert.match(deny, /Do not retry/);
+});
+
+test('resume seed appends the resolution note after the adoption note', () => {
+  const cp = makeCheckpoint();
+  const seed = runCheckpointToCoderResumeState(cp, { resolvedApproval: makeResolution('approve') });
+  assert.equal(seed.messages.length, cp.messages.length + 2);
+  const adoptionNote = seed.messages[seed.messages.length - 2];
+  const resolutionNote = seed.messages[seed.messages.length - 1];
+  assert.ok(adoptionNote.content.startsWith(ADOPTION_RESUME_NOTE_MARKER));
+  assert.equal(resolutionNote.role, 'user');
+  assert.ok(resolutionNote.content.startsWith(ADOPTION_APPROVAL_RESOLVED_NOTE_MARKER));
+});
+
+test('approve grant: the gated tool executes exactly once, then gates normally again', async () => {
+  const executed = [];
+  const pauses = [];
+  const gate = makeGate({
+    mode: 'supervised',
+    executed,
+    onPause: (p) => pauses.push(p),
+    resolvedApproval: makeResolution('approve'),
+  });
+  const first = await gate(
+    { source: 'sandbox', call: { tool: 'sandbox_push', args: {} } },
+    { round: 5 },
+  );
+  assert.equal(first.resultText, 'ran sandbox_push');
+  assert.deepEqual(executed, ['sandbox_push']);
+  assert.deepEqual(pauses, []);
+  // The grant was for ONE action — a second hit pauses like any other.
+  const second = await gate(
+    { source: 'sandbox', call: { tool: 'sandbox_push', args: {} } },
+    { round: 6 },
+  );
+  assert.ok(second.resultText.startsWith(ADOPTION_PAUSE_NOTE_MARKER));
+  assert.equal(pauses.length, 1);
+  assert.deepEqual(executed, ['sandbox_push']);
+});
+
+test('approve grant: only the named tool is granted; other gated tools still pause', async () => {
+  const executed = [];
+  const pauses = [];
+  const gate = makeGate({
+    mode: 'supervised',
+    executed,
+    onPause: (p) => pauses.push(p),
+    resolvedApproval: makeResolution('approve', 'sandbox_push'),
+  });
+  const other = await gate(
+    { source: 'sandbox', call: { tool: 'sandbox_exec', args: { command: 'git reset --hard' } } },
+    { round: 5 },
+  );
+  assert.ok(other.resultText.startsWith(ADOPTION_PAUSE_NOTE_MARKER));
+  assert.deepEqual(executed, []);
+});
+
+test('deny: matching gate hits return a model-readable denial, sticky, never pause', async () => {
+  const executed = [];
+  const pauses = [];
+  const gate = makeGate({
+    mode: 'supervised',
+    executed,
+    onPause: (p) => pauses.push(p),
+    resolvedApproval: makeResolution('deny'),
+  });
+  for (let round = 5; round < 7; round++) {
+    const result = await gate(
+      { source: 'sandbox', call: { tool: 'sandbox_push', args: {} } },
+      { round },
+    );
+    assert.equal(result.kind, 'denied');
+    assert.match(result.reason, /denied/i);
+  }
+  assert.deepEqual(executed, []);
+  assert.deepEqual(pauses, []);
+});
+
+test('resolved ask_user answers once instead of re-pausing', async () => {
+  const pauses = [];
+  const gate = makeGate({
+    mode: 'supervised',
+    onPause: (p) => pauses.push(p),
+    resolvedApproval: makeResolution('approve', 'ask_user'),
+  });
+  const answered = await gate(
+    { source: 'ask-user', call: { tool: 'ask_user', args: { question: '?' } } },
+    { round: 5 },
+  );
+  assert.equal(answered.kind, 'executed');
+  assert.ok(answered.resultText.startsWith(ADOPTION_APPROVAL_RESOLVED_NOTE_MARKER));
+  assert.deepEqual(pauses, []);
+  // One-shot: the next ask pauses again.
+  const next = await gate(
+    { source: 'ask-user', call: { tool: 'ask_user', args: { question: '??' } } },
+    { round: 6 },
+  );
+  assert.ok(next.resultText.startsWith(ADOPTION_PAUSE_NOTE_MARKER));
   assert.equal(pauses.length, 1);
 });
 
