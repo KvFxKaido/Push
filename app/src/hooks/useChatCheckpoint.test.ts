@@ -19,6 +19,7 @@ const checkpointMocks = vi.hoisted(() => ({
   checkpointRequiresLiveSandboxStatus: vi.fn(),
   clearRunCheckpoint: vi.fn(),
   detectInterruptedRun: vi.fn(),
+  fetchSandboxDiff: vi.fn(),
   recordResumeEvent: vi.fn(),
   saveRunCheckpoint: vi.fn(),
   sandboxStatus: vi.fn(),
@@ -47,6 +48,7 @@ vi.mock('@/lib/checkpoint-manager', () => ({
 }));
 
 vi.mock('@/lib/sandbox-client', () => ({
+  fetchSandboxDiff: (...args: unknown[]) => checkpointMocks.fetchSandboxDiff(...args),
   sandboxStatus: (...args: unknown[]) => checkpointMocks.sandboxStatus(...args),
 }));
 
@@ -95,6 +97,7 @@ describe('useChatCheckpoint', () => {
     checkpointMocks.checkpointRequiresLiveSandboxStatus.mockReset();
     checkpointMocks.clearRunCheckpoint.mockReset();
     checkpointMocks.detectInterruptedRun.mockReset();
+    checkpointMocks.fetchSandboxDiff.mockReset();
     checkpointMocks.recordResumeEvent.mockReset();
     checkpointMocks.saveRunCheckpoint.mockReset();
     checkpointMocks.sandboxStatus.mockReset();
@@ -295,5 +298,67 @@ describe('useChatCheckpoint', () => {
     expect(conversations['chat-1'].messages.at(-1)?.content).toContain(
       'the sandbox is no longer available',
     );
+  });
+
+  it('folds a mid-run diff snapshot into the next checkpoint flush', async () => {
+    checkpointMocks.fetchSandboxDiff.mockResolvedValue('diff --git a/mid.ts b/mid.ts');
+
+    let agentEventsByChat: Record<string, AgentStatusEvent[]> = {};
+    const agentEventsByChatRef = { current: agentEventsByChat };
+
+    const hook = useChatCheckpoint({
+      runEngineStateRef: {
+        current: {
+          ...IDLE_RUN_STATE,
+          chatId: 'chat-1',
+          phase: 'executing_tools',
+          round: 2,
+          provider: 'openrouter',
+          model: 'test-model',
+        },
+      },
+      sandboxIdRef: { current: 'sandbox-1' },
+      branchInfoRef: { current: { currentBranch: 'feature/checkpoint', defaultBranch: 'main' } },
+      // No repo: keeps captureV1Checkpoint on its skip path so this test
+      // exercises only the legacy buildRunCheckpoint snapshot.
+      repoRef: { current: null },
+      workspaceSessionIdRef: { current: 'workspace-1' },
+      ensureSandboxRef: { current: null },
+      abortRef: { current: false },
+      setConversations: vi.fn(),
+      dirtyConversationIdsRef: { current: new Set<string>() },
+      conversations: makeConversation(),
+      setAgentStatus: vi.fn(),
+      agentEventsByChatRef,
+      replaceAgentEvents: (next) => {
+        agentEventsByChat = next;
+        agentEventsByChatRef.current = agentEventsByChat;
+      },
+      activeChatIdRef: { current: 'chat-1' },
+      sendMessageRef: { current: null },
+      isStreaming: true,
+      activeChatId: 'chat-1',
+      getVerificationPolicyForChat: () => ({ name: 'Standard', rules: [] }),
+    });
+
+    // First flush: no snapshot yet — kicks the async capture.
+    hook.flushCheckpoint();
+    expect(checkpointMocks.buildRunCheckpoint).toHaveBeenCalledTimes(1);
+    expect(checkpointMocks.buildRunCheckpoint.mock.calls[0][0]).toMatchObject({
+      savedDiff: undefined,
+    });
+
+    // Let the capture promise settle.
+    await vi.waitFor(() => {
+      expect(checkpointMocks.fetchSandboxDiff).toHaveBeenCalledWith('sandbox-1');
+    });
+    await Promise.resolve();
+
+    // Second flush: the stashed snapshot rides along.
+    hook.flushCheckpoint();
+    expect(checkpointMocks.buildRunCheckpoint).toHaveBeenCalledTimes(2);
+    expect(checkpointMocks.buildRunCheckpoint.mock.calls[1][0]).toMatchObject({
+      savedDiff: 'diff --git a/mid.ts b/mid.ts',
+    });
   });
 });
