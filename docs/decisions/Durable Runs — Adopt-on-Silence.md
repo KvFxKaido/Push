@@ -397,10 +397,14 @@ resume-lifecycle owner) folds the host transcript into the conversation via
 `planTranscriptHydration`: the anchor is the client's own last mirrored V1
 checkpoint, everything past it is the server-side gap, appended as
 ChatMessages (wire-replayable — the next send seeds from the conversation).
-After each hydration the host copy is saved as the new local anchor, making
-re-attach idempotent. No-anchor and compaction cases degrade to a
-whole-transcript replace, logged. Runtime scaffolding notes keep their
-verbatim `content` for the model but render a one-line `displayContent`.
+Multimodal `contentParts` are rebuilt as attachments on hydration (the exact
+inverse of the capture-side encoding), so images and attached files survive
+pull-back instead of degrading to the text fallback; unrecognized parts fold
+into `content` verbatim rather than dropping. After each hydration the host
+copy is saved as the new local anchor, making re-attach idempotent.
+No-anchor and compaction cases degrade to a whole-transcript replace,
+logged. Runtime scaffolding notes keep their verbatim `content` for the
+model but render a one-line `displayContent`.
 
 **Controls.**
 - *Approve/deny* (`POST /run/approval`): only a paused `adopted` run with a
@@ -408,11 +412,16 @@ verbatim `content` for the model but render a one-line `displayContent`.
   can never fire an action the model isn't waiting on). The decision rides
   the record as `resolvedApproval`, consumed by exactly one relaunch: the
   seed gains a model-readable `[APPROVAL_RESOLVED]` note and the tool gate
-  gets a one-shot execution grant for the named tool (approve) or a sticky
-  model-readable denial (deny). A crash-relaunch re-pauses rather than
-  re-using a grant the user gave a different attempt. `pausedForApproval`
-  now carries `tool` explicitly for grant matching (old records fall back to
-  parsing the deterministic approvalId).
+  gets a one-shot execution grant (approve) or a sticky model-readable
+  denial (deny). The grant is bound to **tool + argument fingerprint**
+  (`fingerprintApprovalArgs`, canonical-JSON FNV-1a captured at pause time)
+  — the user approves a specific action, not a tool family, so a same-tool
+  call with different arguments after the resolution note re-pauses instead
+  of riding the grant. A crash-relaunch re-pauses rather than re-using a
+  grant the user gave a different attempt. `pausedForApproval` now carries
+  `tool` + `argsFingerprint` explicitly (pre-fingerprint records degrade to
+  tool-level matching, and tool falls back to parsing the deterministic
+  approvalId).
 - *Stop* (`POST /run/stop`): aborts the loop, marks `ended`, clears the
   alarm — and KEEPS the checkpoint so the final transcript stays hydratable;
   release remains the storage cleanup.

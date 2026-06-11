@@ -25,6 +25,7 @@ import {
   buildApprovalResolutionNote,
   coderStateToRunCheckpoint,
   createAdoptionToolGate,
+  fingerprintApprovalArgs,
   runCheckpointToCoderResumeState,
 } from '../../lib/run-adoption-loop.ts';
 import { validateRunCheckpoint } from '../../lib/run-checkpoint.ts';
@@ -286,21 +287,33 @@ test('onPause fires once even if the model retries gated calls', async () => {
   assert.equal(pauses.length, 1);
 });
 
-test('the pending approval names the gated tool explicitly (Phase 3 grant matching)', async () => {
+test('the pending approval names the gated tool + argument fingerprint (Phase 3 grant binding)', async () => {
   const pauses = [];
   const gate = makeGate({ mode: 'supervised', onPause: (p) => pauses.push(p) });
   await gate({ source: 'sandbox', call: { tool: 'sandbox_push', args: {} } }, { round: 5 });
   assert.equal(pauses[0].tool, 'sandbox_push');
+  assert.equal(pauses[0].argsFingerprint, fingerprintApprovalArgs({}));
+});
+
+test('fingerprintApprovalArgs is canonical: key order and nesting do not change it', () => {
+  const a = fingerprintApprovalArgs({ command: 'rm -rf build', opts: { force: true, dry: false } });
+  const b = fingerprintApprovalArgs({ opts: { dry: false, force: true }, command: 'rm -rf build' });
+  assert.equal(a, b);
+  assert.notEqual(a, fingerprintApprovalArgs({ command: 'rm -rf src' }));
+  assert.match(a, /^[0-9a-f]{16}$/);
 });
 
 // ---------------------------------------------------------------------------
 // Approval resolution (Phase 3 attach controls)
 // ---------------------------------------------------------------------------
 
-function makeResolution(decision, tool = 'sandbox_push') {
+function makeResolution(decision, tool = 'sandbox_push', args = {}) {
   return {
     approvalId: `adopt-${tool}-r5`,
     tool,
+    // Bound to the arguments the user approved — the gate tests below call
+    // the gated tools with `args: {}` unless they're proving the mismatch.
+    argsFingerprint: fingerprintApprovalArgs(args),
     kind: 'remote_side_effect',
     decision,
     decidedAt: 1781000002000,
@@ -352,6 +365,49 @@ test('approve grant: the gated tool executes exactly once, then gates normally a
   );
   assert.ok(second.resultText.startsWith(ADOPTION_PAUSE_NOTE_MARKER));
   assert.equal(pauses.length, 1);
+  assert.deepEqual(executed, ['sandbox_push']);
+});
+
+test('approve grant: same tool with DIFFERENT arguments re-pauses instead of riding the grant', async () => {
+  const executed = [];
+  const pauses = [];
+  const approvedArgs = { command: 'git push origin feat/x' };
+  const gate = makeGate({
+    mode: 'supervised',
+    executed,
+    onPause: (p) => pauses.push(p),
+    resolvedApproval: makeResolution('approve', 'sandbox_exec', approvedArgs),
+  });
+  // The model retries the gated tool but with a different destructive
+  // command — the user never saw this action, so it must not execute.
+  const different = await gate(
+    { source: 'sandbox', call: { tool: 'sandbox_exec', args: { command: 'git reset --hard' } } },
+    { round: 5 },
+  );
+  assert.ok(different.resultText.startsWith(ADOPTION_PAUSE_NOTE_MARKER));
+  assert.deepEqual(executed, []);
+  assert.equal(pauses.length, 1);
+  // The fresh pause carries the NEW action's fingerprint for the next round.
+  assert.equal(pauses[0].argsFingerprint, fingerprintApprovalArgs({ command: 'git reset --hard' }));
+  // The exact approved action still executes (grant not consumed by the miss).
+  const approved = await gate(
+    { source: 'sandbox', call: { tool: 'sandbox_exec', args: approvedArgs } },
+    { round: 6 },
+  );
+  assert.equal(approved.resultText, 'ran sandbox_exec');
+  assert.deepEqual(executed, ['sandbox_exec']);
+});
+
+test('a fingerprint-less grant (pre-fingerprint pause record) degrades to tool-level matching', async () => {
+  const executed = [];
+  const legacy = makeResolution('approve', 'sandbox_push');
+  delete legacy.argsFingerprint;
+  const gate = makeGate({ mode: 'supervised', executed, resolvedApproval: legacy });
+  const result = await gate(
+    { source: 'sandbox', call: { tool: 'sandbox_push', args: { remote: 'origin' } } },
+    { round: 5 },
+  );
+  assert.equal(result.resultText, 'ran sandbox_push');
   assert.deepEqual(executed, ['sandbox_push']);
 });
 

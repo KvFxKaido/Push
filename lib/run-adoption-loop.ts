@@ -273,6 +273,44 @@ export function buildAdoptionDeferralNote(source: string, tool: string): string 
 }
 
 // ---------------------------------------------------------------------------
+// Approval-grant binding
+// ---------------------------------------------------------------------------
+
+/** Canonical JSON: stable key order at every depth, so two emissions of the
+ * same arguments fingerprint identically regardless of property order. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(',')}]`;
+  }
+  if (typeof value === 'object' && value !== null) {
+    const record = value as Record<string, unknown>;
+    const keys = Object.keys(record).sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson(record[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+/**
+ * Deterministic fingerprint of a gated call's arguments (FNV-1a 64-bit over
+ * the canonical JSON). An approval grant is bound to tool + fingerprint so
+ * the user approves a specific action, not a tool family: a same-tool call
+ * with different arguments after the resolution note re-pauses instead of
+ * riding the grant. Not a cryptographic commitment — the gate is a consent
+ * boundary for a cooperating-but-fallible model, and the enforcement that
+ * matters (delivery rules, git blocks, capability gating) stays in the
+ * executor underneath.
+ */
+export function fingerprintApprovalArgs(args: Record<string, unknown>): string {
+  const canonical = canonicalJson(args);
+  let hash = 0xcbf29ce484222325n;
+  for (let i = 0; i < canonical.length; i++) {
+    hash ^= BigInt(canonical.charCodeAt(i));
+    hash = (hash * 0x100000001b3n) & 0xffffffffffffffffn;
+  }
+  return hash.toString(16).padStart(16, '0');
+}
+
+// ---------------------------------------------------------------------------
 // The adoption tool gate
 // ---------------------------------------------------------------------------
 
@@ -331,22 +369,33 @@ export function createAdoptionToolGate<TCall extends TaggedCallShape, TCard>(
 ) => Promise<CoderToolExecResult<TCard>> {
   const gates = options.gates ?? createDefaultApprovalGates({ modeProvider: () => options.mode });
   let pauseIssued = false;
-  // One-shot approve grant: consumed by the first matching gate hit. Deny
-  // stays sticky (repeat denials are harmless and model-readable).
+  // One-shot approve grant: consumed by the first gate hit matching BOTH the
+  // tool and the argument fingerprint the user approved — a same-tool call
+  // with different arguments is a different action and re-pauses (a grant
+  // missing its fingerprint predates fingerprinting and degrades to
+  // tool-level matching). Deny stays sticky at tool level (conservative:
+  // repeat denials execute nothing and stay model-readable).
   let approveGrant =
     options.resolvedApproval?.decision === 'approve' ? options.resolvedApproval : null;
   const denied = options.resolvedApproval?.decision === 'deny' ? options.resolvedApproval : null;
+  const grantMatches = (tool: string, argsFingerprint: string): boolean =>
+    approveGrant !== null &&
+    approveGrant.tool === tool &&
+    (approveGrant.argsFingerprint === undefined ||
+      approveGrant.argsFingerprint === argsFingerprint);
 
   const pause = (
     tool: string,
     round: number,
     kind: string,
     summary: string,
+    argsFingerprint: string,
   ): CoderToolExecResult<TCard> => {
     const pending: RunCheckpointPendingApproval = {
       approvalId: `adopt-${tool}-r${round}`,
       kind,
       tool,
+      argsFingerprint,
       title: `Approval required: ${tool}`,
       summary,
     };
@@ -368,11 +417,15 @@ export function createAdoptionToolGate<TCall extends TaggedCallShape, TCard>(
   return async (call, execCtx) => {
     const source = call.source;
     const tool = call.call.tool;
+    const args = (call.call.args ?? {}) as Record<string, unknown>;
+    const argsFingerprint = fingerprintApprovalArgs(args);
 
     if (source === 'ask-user' && options.mode === 'supervised') {
       // A resolved ask_user gate is its own answer: approve means "proceed
       // on best judgment", deny means "don't" — either way the resolution
       // note in the seed carries it; answer once instead of re-pausing.
+      // Tool-level match is deliberate here: the answer is to the pause
+      // itself and executes nothing, so argument binding adds no safety.
       if (approveGrant && approveGrant.tool === tool) {
         approveGrant = null;
         return {
@@ -391,20 +444,17 @@ export function createAdoptionToolGate<TCall extends TaggedCallShape, TCard>(
         execCtx.round,
         'ask_user',
         'The model asked for user input mid-run while the run was executing server-side.',
+        argsFingerprint,
       );
     }
     if (DEFERRED_SOURCES.has(source)) {
       return { kind: 'executed', resultText: buildAdoptionDeferralNote(source, tool) };
     }
 
-    const gateResult = await gates.evaluate(
-      tool,
-      (call.call.args ?? {}) as Record<string, unknown>,
-      options.hookContext,
-    );
+    const gateResult = await gates.evaluate(tool, args, options.hookContext);
     if (gateResult) {
       if (gateResult.decision === 'ask_user') {
-        if (approveGrant && approveGrant.tool === tool) {
+        if (grantMatches(tool, argsFingerprint)) {
           approveGrant = null;
           return options.execute(call, execCtx);
         }
@@ -414,7 +464,10 @@ export function createAdoptionToolGate<TCall extends TaggedCallShape, TCard>(
             reason: `The user denied this action (${denied.kind}). Do not retry it.`,
           };
         }
-        return pause(tool, execCtx.round, gateResult.category, gateResult.reason);
+        // Same tool but different arguments than the user approved lands
+        // here too: it's a different action, so it pauses with a fresh
+        // fingerprint rather than riding the grant.
+        return pause(tool, execCtx.round, gateResult.category, gateResult.reason, argsFingerprint);
       }
       return { kind: 'denied', reason: gateResult.reason };
     }

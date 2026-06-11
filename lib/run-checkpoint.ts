@@ -82,6 +82,12 @@ export interface RunCheckpointPendingApproval {
   /** The gated tool, carried explicitly so a Phase 3 approval grant can be
    * matched on relaunch without parsing the approvalId. */
   tool?: string;
+  /** Deterministic fingerprint of the gated call's arguments
+   * (`fingerprintApprovalArgs` in run-adoption-loop.ts). An approval grant
+   * is bound to tool + fingerprint, so the user approves THIS action — a
+   * same-tool call with different arguments re-pauses instead of riding
+   * the grant. */
+  argsFingerprint?: string;
   title?: string;
   summary?: string;
 }
@@ -360,6 +366,12 @@ export function validateRunCheckpoint(value: unknown): ValidationIssue[] {
         typeof value.pendingApproval.tool !== 'string'
       ) {
         issues.push(issue('pendingApproval.tool', 'must be a string when present'));
+      }
+      if (
+        value.pendingApproval.argsFingerprint !== undefined &&
+        typeof value.pendingApproval.argsFingerprint !== 'string'
+      ) {
+        issues.push(issue('pendingApproval.argsFingerprint', 'must be a string when present'));
       }
     }
   }

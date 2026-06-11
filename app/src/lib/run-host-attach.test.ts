@@ -70,6 +70,58 @@ describe('checkpointMessagesToChatMessages', () => {
     expect(msg.displayContent).toMatch(/continued server-side/i);
   });
 
+  it('rebuilds image contentParts as image attachments (pixels survive replay)', () => {
+    const url = 'data:image/png;base64,iVBORw0KGgo=';
+    const [msg] = checkpointMessagesToChatMessages([
+      {
+        role: 'user',
+        content: 'what is in this screenshot?',
+        contentParts: [
+          { type: 'text', text: 'what is in this screenshot?' },
+          { type: 'image_url', image_url: { url } },
+        ],
+      },
+    ]);
+    expect(msg.content).toBe('what is in this screenshot?');
+    expect(msg.attachments).toHaveLength(1);
+    expect(msg.attachments?.[0].type).toBe('image');
+    expect(msg.attachments?.[0].content).toBe(url);
+    expect(msg.attachments?.[0].mimeType).toBe('image/png');
+  });
+
+  it('rebuilds attached-file text parts as document attachments (capture-path inverse)', () => {
+    const [msg] = checkpointMessagesToChatMessages([
+      {
+        role: 'user',
+        content: 'review this config',
+        contentParts: [
+          { type: 'text', text: 'review this config' },
+          { type: 'text', text: '[Attached file: wrangler.jsonc]\n```\n{ "name": "push" }\n```' },
+        ],
+      },
+    ]);
+    expect(msg.content).toBe('review this config');
+    expect(msg.attachments).toHaveLength(1);
+    expect(msg.attachments?.[0].type).toBe('document');
+    expect(msg.attachments?.[0].filename).toBe('wrangler.jsonc');
+    expect(msg.attachments?.[0].content).toBe('{ "name": "push" }');
+  });
+
+  it('folds unrecognized extra text parts into content rather than dropping them', () => {
+    const [msg] = checkpointMessagesToChatMessages([
+      {
+        role: 'user',
+        content: 'main text',
+        contentParts: [
+          { type: 'text', text: 'main text' },
+          { type: 'text', text: 'some future part format' },
+        ],
+      },
+    ]);
+    expect(msg.content).toBe('main text\n\nsome future part format');
+    expect(msg.attachments).toBeUndefined();
+  });
+
   it('keeps assistant reasoning blocks for the provider round-trip', () => {
     const blocks = [{ type: 'thinking', thinking: 't', signature: 's' }];
     const [msg] = checkpointMessagesToChatMessages([

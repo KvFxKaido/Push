@@ -242,6 +242,9 @@ export interface RunHostRecord {
     /** The gated tool, carried explicitly so an approval grant can be
      * matched on relaunch without parsing it back out of the approvalId. */
     tool?: string;
+    /** Fingerprint of the gated call's arguments — binds the grant to the
+     * specific action the user approved (see RunCheckpointPendingApproval). */
+    argsFingerprint?: string;
     title?: string;
     summary?: string;
   } | null;
@@ -260,6 +263,12 @@ export interface RunHostResolvedApproval {
   approvalId: string;
   /** The gated tool the decision applies to (from `pausedForApproval`). */
   tool: string;
+  /** Fingerprint of the arguments the user approved (from
+   * `pausedForApproval`). An approve grant only matches a call with the
+   * SAME fingerprint — a same-tool call with different arguments
+   * re-pauses. Absent only on records paused before fingerprinting
+   * shipped; those grants degrade to tool-level matching. */
+  argsFingerprint?: string;
   kind: string;
   decision: 'approve' | 'deny';
   decidedAt: number;

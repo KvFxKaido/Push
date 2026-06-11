@@ -828,6 +828,11 @@ export class RunHost {
     const resolution: RunHostResolvedApproval = {
       approvalId,
       tool,
+      // Binds the grant to the exact arguments the user approved — the gate
+      // re-pauses a same-tool call whose fingerprint differs.
+      ...(record.pausedForApproval.argsFingerprint
+        ? { argsFingerprint: record.pausedForApproval.argsFingerprint }
+        : {}),
       kind: record.pausedForApproval.kind,
       decision,
       decidedAt: Date.now(),

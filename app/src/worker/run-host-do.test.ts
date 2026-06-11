@@ -870,6 +870,7 @@ async function pauseAdoptedRun(
     approvalId: 'adopt-sandbox_push-r5',
     kind: 'remote_side_effect',
     tool: 'sandbox_push',
+    argsFingerprint: 'cbf29ce484222325',
   },
 ): Promise<AbortController> {
   const abort = await adoptRun(host, storage);
@@ -1017,6 +1018,8 @@ describe('run ledger: approval (Phase 3)', () => {
     expect(args.resolvedApproval.decision).toBe('approve');
     expect(args.resolvedApproval.tool).toBe('sandbox_push');
     expect(args.resolvedApproval.approvalId).toBe('adopt-sandbox_push-r5');
+    // The grant is bound to the arguments the user approved.
+    expect(args.resolvedApproval.argsFingerprint).toBe('cbf29ce484222325');
 
     const record = storage.map.get('run:record') as Record<string, unknown>;
     expect(record.state).toBe('adopted');
@@ -1048,6 +1051,8 @@ describe('run ledger: approval (Phase 3)', () => {
     };
     expect(args.resolvedApproval.decision).toBe('deny');
     expect(args.resolvedApproval.tool).toBe('sandbox_exec');
+    // Pre-fingerprint pause record → no fingerprint to bind (legacy path).
+    expect(args.resolvedApproval.argsFingerprint).toBeUndefined();
   });
 
   it('rejects a decision when nothing is paused (409 NO_PENDING_APPROVAL)', async () => {

@@ -36,7 +36,7 @@ import {
   type RunCheckpointV1,
 } from '@push/lib/run-checkpoint';
 import { createId } from '@push/lib/id-utils';
-import type { ChatMessage } from '@/types';
+import type { AttachmentData, ChatMessage } from '@/types';
 import { resolveApiUrl } from './api-url';
 
 const ATTACH_PATH = '/api/runhost/run/attach';
@@ -198,11 +198,73 @@ function displayLabelForNote(content: string): string | null {
   return null;
 }
 
+/** The capture side encodes non-image attachments as fenced text parts
+ * (`run-checkpoint-capture.ts` toRunCheckpointMessages) — this is the exact
+ * inverse, so hydrated messages re-capture identically. */
+const ATTACHED_FILE_PART = /^\[Attached file: (.+)\]\n```\n([\s\S]*)\n```$/;
+
+function dataUrlMime(url: string): string | null {
+  const match = /^data:([^;,]+)[;,]/.exec(url);
+  return match ? match[1] : null;
+}
+
+/**
+ * Rebuild a checkpoint message's multimodal payload as ChatMessage
+ * attachments — the representation the wire builder converts BACK into
+ * contentParts on the next send, so images and attached files survive
+ * hydration instead of degrading to the text fallback. Anything that doesn't
+ * round-trip cleanly is folded into `content` verbatim: lossy formatting
+ * beats lost context.
+ */
+function rebuildAttachments(msg: RunCheckpointMessage): {
+  content: string;
+  attachments?: AttachmentData[];
+} {
+  if (!msg.contentParts || msg.contentParts.length === 0) {
+    return { content: msg.content };
+  }
+  const attachments: AttachmentData[] = [];
+  const extraText: string[] = [];
+  for (const part of msg.contentParts) {
+    if (part.type === 'image_url') {
+      const url = part.image_url.url;
+      attachments.push({
+        id: createId(),
+        type: 'image',
+        filename: `attachment-${attachments.length + 1}`,
+        mimeType: dataUrlMime(url) ?? 'image/*',
+        sizeBytes: url.length,
+        content: url,
+      });
+      continue;
+    }
+    // The message's own text rides in `content` already.
+    if (part.text === msg.content) continue;
+    const fileMatch = ATTACHED_FILE_PART.exec(part.text);
+    if (fileMatch) {
+      attachments.push({
+        id: createId(),
+        type: 'document',
+        filename: fileMatch[1],
+        mimeType: 'text/plain',
+        sizeBytes: fileMatch[2].length,
+        content: fileMatch[2],
+      });
+      continue;
+    }
+    extraText.push(part.text);
+  }
+  const content =
+    extraText.length > 0 ? [msg.content, ...extraText].filter(Boolean).join('\n\n') : msg.content;
+  return { content, ...(attachments.length > 0 ? { attachments } : {}) };
+}
+
 /** Convert a slice of host checkpoint messages into displayable (and
  * replayable — the next send seeds its wire history from the conversation)
  * ChatMessages. System turns never enter the conversation (the wire builder
  * re-derives them); tool turns become the synthetic tool-result user
- * messages the transcript renderer already collapses. */
+ * messages the transcript renderer already collapses; multimodal
+ * contentParts are rebuilt as attachments so they re-capture identically. */
 export function checkpointMessagesToChatMessages(
   messages: readonly RunCheckpointMessage[],
 ): ChatMessage[] {
@@ -212,11 +274,13 @@ export function checkpointMessagesToChatMessages(
     const role = msg.role === 'assistant' ? 'assistant' : 'user';
     const displayContent =
       role === 'user' ? (displayLabelForNote(msg.content) ?? undefined) : undefined;
+    const { content, attachments } = rebuildAttachments(msg);
     out.push({
       id: createId(),
       role,
-      content: msg.content,
+      content,
       ...(displayContent ? { displayContent } : {}),
+      ...(attachments ? { attachments } : {}),
       timestamp: Date.now(),
       status: 'done',
       ...(msg.reasoningBlocks && role === 'assistant'
