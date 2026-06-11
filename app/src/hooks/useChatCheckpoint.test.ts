@@ -196,4 +196,104 @@ describe('useChatCheckpoint', () => {
     expect(sendMessage).toHaveBeenCalledWith('resume content');
     expect(hookState.setInterruptedCheckpoint).toHaveBeenCalledWith(null);
   });
+
+  it('cold-resumes a mid-run checkpoint by recreating the sandbox when it was lost', async () => {
+    const checkpoint = makeCheckpoint();
+    hookState.interruptedCheckpoint = checkpoint;
+    checkpointMocks.detectInterruptedRun.mockResolvedValue(checkpoint);
+    checkpointMocks.checkpointRequiresLiveSandboxStatus.mockReturnValue(true);
+    checkpointMocks.buildCheckpointReconciliationMessage.mockReturnValue('cold resume content');
+
+    const ensureSandbox = vi.fn().mockResolvedValue('sandbox-2');
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const sandboxIdRef = { current: null as string | null };
+    let agentEventsByChat: Record<string, AgentStatusEvent[]> = {};
+    const agentEventsByChatRef = { current: agentEventsByChat };
+
+    const hook = useChatCheckpoint({
+      runEngineStateRef: { current: { ...IDLE_RUN_STATE } },
+      sandboxIdRef,
+      branchInfoRef: { current: { currentBranch: 'feature/checkpoint', defaultBranch: 'main' } },
+      repoRef: { current: 'owner/repo' },
+      workspaceSessionIdRef: { current: 'workspace-1' },
+      ensureSandboxRef: { current: ensureSandbox },
+      abortRef: { current: false },
+      setConversations: vi.fn(),
+      dirtyConversationIdsRef: { current: new Set<string>() },
+      conversations: makeConversation(),
+      setAgentStatus: vi.fn(),
+      agentEventsByChatRef,
+      replaceAgentEvents: (next) => {
+        agentEventsByChat = next;
+        agentEventsByChatRef.current = agentEventsByChat;
+      },
+      activeChatIdRef: { current: 'chat-1' },
+      sendMessageRef: { current: sendMessage },
+      isStreaming: false,
+      activeChatId: 'chat-1',
+      getVerificationPolicyForChat: () => ({ name: 'Standard', rules: [] }),
+    });
+
+    await hook.resumeInterruptedRun();
+
+    expect(ensureSandbox).toHaveBeenCalled();
+    expect(sandboxIdRef.current).toBe('sandbox-2');
+    // A recreated sandbox is a fresh clone — its live status must not feed
+    // the reconciliation message.
+    expect(checkpointMocks.sandboxStatus).not.toHaveBeenCalled();
+    expect(checkpointMocks.buildCheckpointReconciliationMessage).toHaveBeenCalledWith(
+      checkpoint,
+      expect.anything(),
+      { sandboxLost: true },
+    );
+    expect(sendMessage).toHaveBeenCalledWith('cold resume content');
+  });
+
+  it('starts fresh when a lost sandbox cannot be recreated', async () => {
+    const checkpoint = makeCheckpoint();
+    hookState.interruptedCheckpoint = checkpoint;
+    checkpointMocks.detectInterruptedRun.mockResolvedValue(checkpoint);
+    checkpointMocks.checkpointRequiresLiveSandboxStatus.mockReturnValue(true);
+
+    const ensureSandbox = vi.fn().mockResolvedValue(null);
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    let conversations = makeConversation();
+    let agentEventsByChat: Record<string, AgentStatusEvent[]> = {};
+    const agentEventsByChatRef = { current: agentEventsByChat };
+
+    const hook = useChatCheckpoint({
+      runEngineStateRef: { current: { ...IDLE_RUN_STATE } },
+      sandboxIdRef: { current: null },
+      branchInfoRef: { current: { currentBranch: 'feature/checkpoint', defaultBranch: 'main' } },
+      repoRef: { current: 'owner/repo' },
+      workspaceSessionIdRef: { current: 'workspace-1' },
+      ensureSandboxRef: { current: ensureSandbox },
+      abortRef: { current: false },
+      setConversations: (next) => {
+        conversations = typeof next === 'function' ? next(conversations) : next;
+      },
+      dirtyConversationIdsRef: { current: new Set<string>() },
+      conversations,
+      setAgentStatus: vi.fn(),
+      agentEventsByChatRef,
+      replaceAgentEvents: (next) => {
+        agentEventsByChat = next;
+        agentEventsByChatRef.current = agentEventsByChat;
+      },
+      activeChatIdRef: { current: 'chat-1' },
+      sendMessageRef: { current: sendMessage },
+      isStreaming: false,
+      activeChatId: 'chat-1',
+      getVerificationPolicyForChat: () => ({ name: 'Standard', rules: [] }),
+    });
+
+    await hook.resumeInterruptedRun();
+
+    expect(ensureSandbox).toHaveBeenCalled();
+    expect(checkpointMocks.clearRunCheckpoint).toHaveBeenCalledWith('chat-1');
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(conversations['chat-1'].messages.at(-1)?.content).toContain(
+      'the sandbox is no longer available',
+    );
+  });
 });

@@ -480,7 +480,15 @@ describe('handleCloudflareSandbox happy paths', () => {
       // values.
       expect(command).toMatch(/^timeout -k \d+ \d+ bash -c '.*'$/);
       expect(command).toContain("'npm test'");
-      expect(options).toEqual({ cwd: '/workspace/app' });
+      // Resource caps ride along on every user exec so a test-suite fan-out
+      // can't OOM the container. Exact values are implementation details;
+      // assert the heap cap is present rather than pinning numbers.
+      expect(options).toEqual({
+        cwd: '/workspace/app',
+        env: expect.objectContaining({
+          NODE_OPTIONS: expect.stringContaining('--max-old-space-size'),
+        }),
+      });
       return { stdout: 'ok', stderr: 'warn', exitCode: 7 };
     });
 
@@ -1644,7 +1652,16 @@ describe('background execution routes', () => {
     // status/logs) is purged on exit, breaking reconnect-after-completion.
     expect(sandbox.startProcess).toHaveBeenCalledWith(
       'sleep 5',
-      expect.objectContaining({ cwd: '/workspace/app', timeout: 30_000, autoCleanup: false }),
+      expect.objectContaining({
+        cwd: '/workspace/app',
+        timeout: 30_000,
+        autoCleanup: false,
+        // Detached execs carry the same resource caps as foreground execs —
+        // long test/build runs are exactly the fan-outs that OOM the container.
+        env: expect.objectContaining({
+          NODE_OPTIONS: expect.stringContaining('--max-old-space-size'),
+        }),
+      }),
     );
   });
 

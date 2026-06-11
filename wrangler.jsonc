@@ -196,7 +196,12 @@
     {
       "class_name": "Sandbox",
       "image": "./Dockerfile.sandbox",
-      "instance_type": "basic",
+      // "standard" = 4 GiB / ½ vCPU. "basic" (1 GiB / ¼ vCPU) gets OOM-killed
+      // by repo test suites — node --test / vitest size their worker pools for
+      // the host CPU count, and the kernel killing the container takes the
+      // whole sandbox (and the session riding on it) with it. Pairs with the
+      // per-exec resource env caps in worker-cf-sandbox.ts.
+      "instance_type": "standard",
       "max_instances": 10
     }
   ],
