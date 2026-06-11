@@ -6,18 +6,23 @@
  *
  * Two modes, A/B-comparable, with the delegated arc kept intact:
  *
- *   - `delegated` (default) — the historical path. The Orchestrator runs
- *     its turn in the foreground loop and, when it decides to edit,
- *     emits `delegate_coder` → optional Planner pre-pass → synthesized
- *     brief → `runCoderAgent` → Auditor.
- *   - `inline` — the single-agent collapse. The user's raw turn is run
- *     directly by the durable job engine (`startMainChatJob`) with NO
- *     Orchestrator handoff, NO Planner, and NO synthesized brief. This
- *     reuses the exact engine the background-mode path already exercises
- *     (`chat-send-background.ts` → `startMainChatJob` → CoderJob DO); the
- *     audit's premise is that this engine is separable from the
- *     delegation wrapper, and step 1 proves it behind a flag before any
- *     deletion.
+ *   - `inline` (default since 2026-06-11) — the single-agent collapse. The
+ *     user's raw turn is run directly by the durable job engine
+ *     (`startMainChatJob`) with NO Orchestrator handoff, NO Planner, and
+ *     NO synthesized brief. This reuses the exact engine the
+ *     background-mode path already exercises (`chat-send-background.ts` →
+ *     `startMainChatJob` → CoderJob DO). Step 1 proved it behind a flag
+ *     before the flip: the A/B measured twice (v1 + v2 on fixed
+ *     instruments) with quality tied and the wrapper costing ~78%
+ *     wall-clock plus a unique dead-handoff failure mode.
+ *   - `delegated` (opt-out) — the historical wrapper arc, retained until
+ *     the Planner/brief deletion lands. The Orchestrator runs its turn in
+ *     the foreground loop and, when it decides to edit, emits
+ *     `delegate_coder` → optional Planner pre-pass → synthesized brief →
+ *     `runCoderAgent` → Auditor. Note: attachment turns still run this
+ *     foreground arc regardless of mode (`resolveTurnEngineTrigger`'s
+ *     attachments guard), so the foreground loop stays load-bearing for
+ *     attachments until the engine envelope carries them.
  *
  * ## Relationship to background-mode (deliberately decoupled framing)
  *
@@ -56,7 +61,13 @@ const STORAGE_KEY = 'push:delegation-mode-preference';
 const CHANGE_EVENT = 'push:delegation-mode-changed';
 
 export function getDelegationMode(): DelegationMode {
-  return safeStorageGet(STORAGE_KEY) === 'inline' ? 'inline' : 'delegated';
+  // Inline is the default since 2026-06-11 — the step-1 measurement gate
+  // was met twice (v1 + v2 A/B; see the Delegation-collapse A/B section in
+  // `docs/decisions/Durable Runs — Adopt-on-Silence.md`). Only an explicit
+  // 'delegated' opts back into the wrapper arc; unknown/legacy values fall
+  // to the default, mirroring the pre-flip rule where only an exact
+  // 'inline' opted in.
+  return safeStorageGet(STORAGE_KEY) === 'delegated' ? 'delegated' : 'inline';
 }
 
 export function isInlineDelegationEnabled(): boolean {
@@ -99,9 +110,22 @@ export type TurnEngineTrigger = EngineTrigger | null;
  * Attachments force the Orchestrator loop regardless of flags: the
  * background/engine envelope does not carry attachments yet (see
  * `useChat.sendMessage`'s `!hasAttachments` guard, which this subsumes).
+ *
+ * `engineEligible` is the caller's word that the engine route is actually
+ * satisfiable — an active repo AND a branch (`startBackgroundMainChatTurn`
+ * hard-requires both; the sandbox is lazily ensured). With inline as the
+ * DEFAULT, a no-repo workspace (scratch / chat / local-pc) would otherwise
+ * route every normal send into a guaranteed precondition error instead of
+ * the foreground loop that serves those workspaces fine (Codex P1, PR
+ * #887). This also subsumes the same latent failure for explicit
+ * background-mode opt-ins: ineligible turns fall back to the foreground
+ * loop rather than erroring.
  */
-export function resolveTurnEngineTrigger(opts: { hasAttachments: boolean }): TurnEngineTrigger {
-  if (opts.hasAttachments) return null;
+export function resolveTurnEngineTrigger(opts: {
+  hasAttachments: boolean;
+  engineEligible: boolean;
+}): TurnEngineTrigger {
+  if (opts.hasAttachments || !opts.engineEligible) return null;
   if (isInlineDelegationEnabled()) return 'inline-delegation';
   if (isBackgroundModeEnabled()) return 'background-mode';
   return null;

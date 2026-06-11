@@ -16,7 +16,11 @@
  */
 
 import type React from 'react';
-import type { EngineTrigger } from '@/lib/delegation-mode-settings';
+import {
+  resolveTurnEngineTrigger,
+  type EngineTrigger,
+  type TurnEngineTrigger,
+} from '@/lib/delegation-mode-settings';
 import type { AIProviderType, Conversation, DelegationEnvelope } from '@/types';
 import { getSandboxOwnerToken } from '@/lib/sandbox-client';
 import { getUserProfile } from '@/hooks/useUserProfile';
@@ -29,6 +33,32 @@ import type { UseBackgroundCoderJobResult } from './useBackgroundCoderJob';
  *  current "run", and a second send would race the server's run loop.
  *  Tab races, toggle flips, and reconnects all converge on this single
  *  source of truth (persisted in IndexedDB via `pendingJobIds`). */
+/**
+ * `useChat.sendMessage`'s engine-routing decision, with the eligibility
+ * check the route's preconditions demand: `startBackgroundMainChatTurn`
+ * hard-requires an active repo AND a branch (the sandbox is lazily
+ * ensured), so a no-repo workspace (scratch / chat / local-pc) must stay
+ * on the foreground loop instead of routing every send into a guaranteed
+ * precondition error — load-bearing now that `inline` delegation-mode is
+ * the default (Codex P1, PR #887). Lives here, not in useChat.ts, per the
+ * max-lines guard; the trigger-precedence kernel stays in
+ * `delegation-mode-settings.ts`.
+ */
+export function resolveSendEngineTrigger(opts: {
+  hasAttachments: boolean;
+  repoRef: React.MutableRefObject<string | null>;
+  branchInfoRef: React.RefObject<
+    { currentBranch?: string; defaultBranch?: string } | null | undefined
+  >;
+}): TurnEngineTrigger {
+  const branch =
+    opts.branchInfoRef.current?.currentBranch ?? opts.branchInfoRef.current?.defaultBranch;
+  return resolveTurnEngineTrigger({
+    hasAttachments: opts.hasAttachments,
+    engineEligible: Boolean(opts.repoRef.current && branch),
+  });
+}
+
 export function hasActiveBackgroundJob(conv: Conversation | undefined): boolean {
   if (!conv?.pendingJobIds) return false;
   for (const entry of Object.values(conv.pendingJobIds)) {

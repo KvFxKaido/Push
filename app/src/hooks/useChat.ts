@@ -29,8 +29,11 @@ import { useConversationPersistence } from './useConversationPersistence';
 import { useAgentDelegation } from './useAgentDelegation';
 import { useBackgroundCoderJob } from './useBackgroundCoderJob';
 import { isBackgroundModeEnabled } from '@/lib/background-mode-settings';
-import { resolveTurnEngineTrigger } from '@/lib/delegation-mode-settings';
-import { hasActiveBackgroundJob, startBackgroundMainChatTurn } from './chat-send-background';
+import {
+  hasActiveBackgroundJob,
+  resolveSendEngineTrigger,
+  startBackgroundMainChatTurn,
+} from './chat-send-background';
 import { useCIPoller } from './useCIPoller';
 import { useChatCardActions } from './chat-card-actions';
 import { useFullAutoCommitApproval } from './chat-full-auto-approvals';
@@ -582,8 +585,7 @@ export function useChat(
     abortRef,
     lastCoderStateRef,
     backgroundCoderJob,
-    // Phase 1: single global toggle. Per-chat override is a later
-    // layer — see docs/archive/runbooks/Background Coder Tasks Phase 1.md §4.
+    // Phase 1: global toggle; per-chat override is a later layer (docs/archive/runbooks/Background Coder Tasks Phase 1.md §4).
     isBackgroundModeEnabledForChat: () => isBackgroundModeEnabled(),
   });
 
@@ -596,10 +598,9 @@ export function useChat(
       const trimmedText = text.trim();
       const hasAttachments = Boolean(attachments && attachments.length > 0);
       if (!trimmedText && !hasAttachments) return;
-      // Coder Delegation Collapse step 1: route to the durable single-agent engine when `inline` delegation-mode or legacy background-mode is on.
-      const engineTrigger = resolveTurnEngineTrigger({ hasAttachments });
+      // Engine routing + eligibility: see resolveSendEngineTrigger (chat-send-background.ts).
+      const engineTrigger = resolveSendEngineTrigger({ hasAttachments, repoRef, branchInfoRef });
       const routeToEngine = engineTrigger !== null;
-
       const targetChat = options?.chatId || activeChatIdRef.current;
       if (targetChat && hasActiveBackgroundJob(conversationsRef.current[targetChat])) return;
 

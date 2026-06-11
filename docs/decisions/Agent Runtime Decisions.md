@@ -29,7 +29,11 @@ wrapper while keeping the durable job engine, replay, checkpoints, safety
 boundaries, and event compatibility.
 
 Status:
-- Roadmap-tracked: inline `delegation-mode` exists behind a flag.
+- **Inline is the default (flipped 2026-06-11).** `delegation-mode-settings.ts`
+  defaults to `inline`; an explicit `delegated` storage value opts back into
+  the wrapper arc. Attachment turns still run the foreground Orchestrator
+  loop regardless of mode (the engine envelope doesn't carry attachments
+  yet) — that guard is a deletion blocker, not an oversight.
 - **Measured (2026-06-11, two runs): quality ties, the wrapper costs ~78%
   wall-clock and owns a unique failure mode** — v2 on fixed instruments:
   completion 11/12 both arms, median wall 33.3 s direct vs 59.3 s delegated,
@@ -41,8 +45,11 @@ Status:
   `docs/measurements/delegation-collapse-ab/`, analysis in
   [`Durable Runs — Adopt-on-Silence`](<Durable Runs — Adopt-on-Silence.md>)
   §Delegation-collapse A/B.
-- Pending: flip lead-drives-engine-inline to the default and delete the
-  Planner/brief — the measurement gate is met; this is now runtime work.
+- Pending: delete the Planner/brief (the delegated arc's wrapper). Two
+  prerequisites the deletion PR must clear: attachments on the engine
+  envelope (or an explicit attachments story), and a bake period on the
+  inline default to catch UX regressions the eval can't see (JobCard-first
+  presentation, the one-active-job send lock).
 - Protected: event compatibility, runtime safety boundary, progress/liveness.
 
 Source notes:
@@ -128,7 +135,7 @@ Source note:
 
 ## Active Runtime Work
 
-1. Make inline lead-driven engine mode the default after measurement.
+1. Delete the Planner/brief now that inline is the measured default (2026-06-11); attachments-on-engine-envelope is the prerequisite.
 2. Ship auto-branch-on-commit as the universal commit-flow for scratchpad work.
 3. Decide scratchpad durable-storage substrate per platform.
 4. Finish TUI daemon-session controller extraction.
