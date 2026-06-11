@@ -41,7 +41,9 @@ describe('delegation-mode-settings', () => {
   it('defaults to inline (engine trigger) when no flags are set — the 2026-06-11 flip', () => {
     expect(getDelegationMode()).toBe('inline');
     expect(isInlineDelegationEnabled()).toBe(true);
-    expect(resolveTurnEngineTrigger({ hasAttachments: false })).toBe('inline-delegation');
+    expect(resolveTurnEngineTrigger({ hasAttachments: false, engineEligible: true })).toBe(
+      'inline-delegation',
+    );
   });
 
   it('only treats the exact "delegated" value as the opt-out (forward-compat with unknown values)', () => {
@@ -56,18 +58,22 @@ describe('delegation-mode-settings', () => {
 
   it('keeps the delegated opt-out on the foreground loop (no engine trigger)', () => {
     storage.map.set(INLINE_KEY, 'delegated');
-    expect(resolveTurnEngineTrigger({ hasAttachments: false })).toBeNull();
+    expect(resolveTurnEngineTrigger({ hasAttachments: false, engineEligible: true })).toBeNull();
   });
 
   it('routes a delegated opt-out to background-mode when the legacy flag is also on', () => {
     storage.map.set(INLINE_KEY, 'delegated');
     storage.map.set(BG_KEY, '1');
-    expect(resolveTurnEngineTrigger({ hasAttachments: false })).toBe('background-mode');
+    expect(resolveTurnEngineTrigger({ hasAttachments: false, engineEligible: true })).toBe(
+      'background-mode',
+    );
   });
 
   it('routes to inline-delegation when delegation-mode is inline', () => {
     storage.map.set(INLINE_KEY, 'inline');
-    expect(resolveTurnEngineTrigger({ hasAttachments: false })).toBe('inline-delegation');
+    expect(resolveTurnEngineTrigger({ hasAttachments: false, engineEligible: true })).toBe(
+      'inline-delegation',
+    );
   });
 
   it('labels the trigger inline-delegation when the legacy background flag is on under the inline default', () => {
@@ -75,18 +81,32 @@ describe('delegation-mode-settings', () => {
     // measurement label — background-mode can only be the winning trigger
     // for users who opted back out to 'delegated' (covered above).
     storage.map.set(BG_KEY, '1');
-    expect(resolveTurnEngineTrigger({ hasAttachments: false })).toBe('inline-delegation');
+    expect(resolveTurnEngineTrigger({ hasAttachments: false, engineEligible: true })).toBe(
+      'inline-delegation',
+    );
   });
 
   it('gives inline-delegation precedence when both triggers are on', () => {
     storage.map.set(INLINE_KEY, 'inline');
     storage.map.set(BG_KEY, '1');
-    expect(resolveTurnEngineTrigger({ hasAttachments: false })).toBe('inline-delegation');
+    expect(resolveTurnEngineTrigger({ hasAttachments: false, engineEligible: true })).toBe(
+      'inline-delegation',
+    );
+  });
+
+  it('forces the Orchestrator loop (null) when the engine route is not satisfiable — no-repo workspaces', () => {
+    // Codex P1 (PR #887): with inline as the DEFAULT, a scratch/chat/local-pc
+    // workspace (no active repo/branch) must stay on the foreground loop —
+    // the engine route hard-requires repo + branch and would reject every
+    // send. Applies to the explicit background-mode opt-in too.
+    expect(resolveTurnEngineTrigger({ hasAttachments: false, engineEligible: false })).toBeNull();
+    storage.map.set(BG_KEY, '1');
+    expect(resolveTurnEngineTrigger({ hasAttachments: false, engineEligible: false })).toBeNull();
   });
 
   it('forces the Orchestrator loop (null) when attachments are present, regardless of flags', () => {
     storage.map.set(INLINE_KEY, 'inline');
     storage.map.set(BG_KEY, '1');
-    expect(resolveTurnEngineTrigger({ hasAttachments: true })).toBeNull();
+    expect(resolveTurnEngineTrigger({ hasAttachments: true, engineEligible: true })).toBeNull();
   });
 });
