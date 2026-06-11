@@ -1,11 +1,13 @@
 # Settings Unification — GitHub-Identity-Keyed Config
 
 Date: 2026-06-07
-Status: **MVP shipped** — the non-secret preferences tier (substrate + GET/PUT
-`/api/settings` + shared client store + autonomous-reviewer fold + non-secret
-hooks) has landed. Secrets tier is deferred (waits on the auth enforce-flip);
-scratchpad/todo content is **reassigned out of scope** to chat/session
-continuity (see phasing + open questions below).
+Status: **MVP + secrets tier shipped** — the non-secret preferences tier
+(substrate + GET/PUT `/api/settings` + shared client store +
+autonomous-reviewer fold + non-secret hooks) landed 2026-06-07; the secrets
+tier (encrypted per-identity provider keys + DO dispatch injection) landed
+2026-06-11 after the session gate was verified enforced. Scratchpad/todo
+content is **reassigned out of scope** to chat/session continuity (see
+phasing + open questions below).
 Owner: Push
 
 Make the web app's info/settings the same on every device by moving them from
@@ -79,16 +81,55 @@ Recon of `app/src` persistence, 2026-06-07.
 > the Open questions + decision §11: the UI scratchpad-notes + todo ride
 > chat/session continuity; the "main as scratchpad" uncommitted code rides #5.
 
-### Migrate later — secrets tier (gated on the auth enforce-flip)
+### Secrets tier — SHIPPED 2026-06-11 (gate verified enforced)
 
 ~13 provider keys via the `use*Config` hooks: `{ollama,openrouter,zen,nvidia,kilocode,blackbox,openadapter,openai,anthropic,google}_api_key`, `tavily_api_key`, and Vertex (`vertex_api_key`, `vertex_service_account`, region/model).
 
-These are the bulk by count and the **only** tier with a hard dependency:
-syncing keys server-side puts them behind the session gate, which is still in
-**observe mode** (`PUSH_SESSION_GATE_ENFORCE` not set). Do not sync secrets until
-the gate is enforced. A defensible alternative is to *never* sync secrets and
-enter them once per device — a reasonable posture for a security-minded single
-user.
+The gating precondition is met: prod returns 401 `SESSION_AUTH_REQUIRED` on
+sessionless `/api/*` requests (verified live 2026-06-11), so server-held keys
+sit behind an enforced identity gate. What forced the timing was the inline
+delegation default (#887): engine-routed turns dispatch providers **server-side
+in DOs**, where browser-held keys never arrive — "Add it in Settings" was a lie
+for every engine turn, and `wrangler secret put` requires the dev box. The
+secrets fold makes Settings the key UX that works for both loops, from the
+phone.
+
+**Implementation (this tier's shape differs from the prefs doc on purpose):**
+
+- **Separate store, not `settings:` values.** `usersecrets:<githubUserId>` in
+  the same `SNAPSHOT_INDEX` KV (`app/src/worker/user-secrets.ts`). The prefs
+  doc round-trips wholesale to the client; keys must not — the secrets store is
+  **write-only from the client's perspective** (list returns `last4` +
+  `updatedAt` only, no read endpoint returns key material).
+- **Encrypted at rest:** AES-256-GCM, key HKDF-derived from
+  `PUSH_SESSION_SECRET` (salt/info pinned in the module). KV-read compromise
+  alone doesn't yield plaintext. Trade: rotating `PUSH_SESSION_SECRET`
+  invalidates stored keys (decrypt-fail → treated as missing, logged
+  `user_secret_decrypt_failed`, user re-enters). Fail-closed: no session
+  secret → writes 503, reads null — never plaintext storage.
+- **Routes:** `GET/PUT/DELETE /api/settings/provider-keys` in
+  `worker-settings.ts` (same origin/rate-limit/identity preamble as
+  `/api/settings`).
+- **Resolution order unchanged:** `standardAuth` = Worker env secret → request
+  Authorization header. User-stored keys enter as the *injected* Authorization
+  header on DO-synthetic provider Requests, so precedence is env secret →
+  user key → none, on every path.
+- **Identity plumbing (the out-of-band rule holds):** jobs and runs persist
+  *identity*, never credentials. `/api/jobs/start` stamps a server-resolved
+  `ownerUserId` (client value stripped — a spoof would dispatch with another
+  identity's keys); the RunHost register/checkpoint routes stamp `ownerUser`
+  the same way `hostOrigin` is stamped. The stream adapter
+  (`coder-job-stream-adapter.ts`) resolves the key from KV per dispatch.
+- **Capability probe is per-identity:** `/api/providers/engine-capabilities`
+  ORs env-secret presence with the caller's stored keys, so the client's
+  engine-routing eligibility and the DO's dispatch credentials can't disagree.
+- **Client mirror:** `useApiKeyConfig.setKey/clearKey` mirror to the server
+  store best-effort (`provider-key-sync.ts`); failure logs
+  `provider_key_sync_failed` and never blocks the local save. Tavily stays
+  client-only (its Worker proxy is deliberately client-key-only); Vertex's
+  service-account blob is NOT folded yet (different shape — follow-up).
+- **PR-review DO unchanged:** webhook path stays env-credentials-only
+  (`resolveOwnerUserId` exists if it ever needs the owner's stored keys).
 
 ### Keep device-local — do not sync
 
@@ -120,8 +161,10 @@ user.
    content is **out of scope** (reassigned to session continuity — open question #4).
 3. ✅ Reviewer config lives in the shared doc → controlling the reviewer from any
    device is unblocked.
-4. ⏳ Secrets tier — only after `PUSH_SESSION_GATE_ENFORCE=1` (or decide to never
-   sync secrets).
+4. ✅ Secrets tier (2026-06-11) — gate verified enforced in prod; encrypted
+   per-identity store + DO key injection shipped (see the secrets-tier section
+   above). Remaining inside this tier: Vertex service-account blob, and a
+   Settings-UI presence indicator fed by `GET /api/settings/provider-keys`.
 
 ## Open questions
 
@@ -131,9 +174,12 @@ _Resolved for the MVP (2026-06-07):_
    The autonomous PR reviewer and the in-app advisory reviewer live in the same
    document as separate blocks (`reviewer.autonomous.*` vs `reviewer.advisory.*`);
    the features are not merged.
-2. **Secrets posture:** **Deferred.** Non-secret tier shipped; provider keys stay
-   device-local until `PUSH_SESSION_GATE_ENFORCE` is flipped, then sync-vs-never
-   is decided. Not touched this pass.
+2. **Secrets posture:** **Resolved 2026-06-11 — sync, encrypted, write-only.**
+   The enforce-flip landed and the inline-delegation default made device-local
+   keys structurally insufficient (engine turns run server-side). Keys mirror
+   to an encrypted identity-keyed store; localStorage remains the foreground
+   loop's source. The "never sync" alternative was rejected because it forfeits
+   background jobs and durable-run adoption for every BYOK provider.
 3. **Per-device override layer:** **Deferred.** Shipped global-only; the
    "global default + device pin" layer (theme) is a follow-up. The doc is a flat
    canonical-key→value bag, so a `*.deviceOverrides` block can be added additively.

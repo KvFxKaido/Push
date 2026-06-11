@@ -99,6 +99,16 @@ export function isProviderEngineCapable(provider: AIProviderType): boolean {
   return cache[provider] ?? true;
 }
 
+/**
+ * Force a refetch on the next opportunity — called after a provider key is
+ * saved/removed (locally or to the server store), since that flips the
+ * server's per-identity capability answer immediately.
+ */
+export function invalidateEngineCapabilities(): void {
+  lastFetchStartedAt = 0;
+  refreshEngineCapabilities();
+}
+
 /** Test seam: reset module state between cases. */
 export function __resetEngineCapabilityCacheForTests(): void {
   cache = null;

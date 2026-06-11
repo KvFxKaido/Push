@@ -1,23 +1,41 @@
 /**
  * HTTP routes for the unified web settings document.
  *
- *   GET  /api/settings           — read the signed-in user's settings doc
- *   PUT  /api/settings  { values } — shallow-merge changed keys (LWW per key)
+ *   GET    /api/settings           — read the signed-in user's settings doc
+ *   PUT    /api/settings  { values } — shallow-merge changed keys (LWW per key)
+ *   GET    /api/settings/provider-keys — presence metadata (last4/updatedAt) only
+ *   PUT    /api/settings/provider-keys { provider, key } — store one key
+ *   DELETE /api/settings/provider-keys { provider } — remove one key
  *
  * Identity-keyed (`settings:<githubUserId>`) and session-gated like every other
  * `/api/*` route. Origin validation + rate limiting mirror the jobs/pr-review
  * routers so neither path bypasses CSRF / abuse protection. See
- * settings-config.ts for the document model and conflict policy.
+ * settings-config.ts for the document model and conflict policy, and
+ * user-secrets.ts for the provider-key store (encrypted at rest; values are
+ * write-only — no read endpoint returns key material).
  */
 
 import { getClientIp, validateOrigin, type Env } from './worker-middleware';
 import { readSettingsDoc, resolveSettingsUserId, writeSettingsMerge } from './settings-config';
+import {
+  MAX_PROVIDER_KEY_CHARS,
+  deleteUserProviderKey,
+  listUserProviderKeyMeta,
+  putUserProviderKey,
+} from './user-secrets';
 
 const SETTINGS_PATH = '/api/settings';
+const PROVIDER_KEYS_PATH = '/api/settings/provider-keys';
 
-export type SettingsRouteAction = 'get' | 'put';
+export type SettingsRouteAction = 'get' | 'put' | 'keys-list' | 'keys-put' | 'keys-delete';
 
 export function matchSettingsRoute(pathname: string, method: string): SettingsRouteAction | null {
+  if (pathname === PROVIDER_KEYS_PATH) {
+    if (method === 'GET') return 'keys-list';
+    if (method === 'PUT') return 'keys-put';
+    if (method === 'DELETE') return 'keys-delete';
+    return null;
+  }
   if (pathname !== SETTINGS_PATH) return null;
   if (method === 'GET') return 'get';
   if (method === 'PUT') return 'put';
@@ -65,8 +83,81 @@ export async function handleSettingsRoute(
     log('info', 'settings_get', { userId: identity.userId, source: identity.source });
     return json(doc);
   }
+  if (action === 'keys-list') {
+    const providers = await listUserProviderKeyMeta(env, identity.userId);
+    return json({ providers }, 200);
+  }
+  if (action === 'keys-put' || action === 'keys-delete') {
+    return handleProviderKeyWrite(request, env, identity.userId, action);
+  }
 
   return handlePut(request, env, identity.userId, identity.source);
+}
+
+/**
+ * PUT/DELETE one provider key. The key value appears only in the PUT body —
+ * never in responses, never in logs (user-secrets.ts logs last4 at most).
+ */
+async function handleProviderKeyWrite(
+  request: Request,
+  env: Env,
+  userId: string,
+  action: 'keys-put' | 'keys-delete',
+): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'INVALID_BODY', message: 'Body must be JSON.' }, 400);
+  }
+  const { provider, key } = (body ?? {}) as { provider?: unknown; key?: unknown };
+  if (typeof provider !== 'string' || provider.length === 0) {
+    return json({ error: 'INVALID_REQUEST', message: 'provider is required.' }, 400);
+  }
+
+  if (action === 'keys-delete') {
+    const result = await deleteUserProviderKey(env, userId, provider);
+    if (!result.ok) return providerKeyWriteError(result.reason);
+    return json({ ok: true });
+  }
+
+  if (typeof key !== 'string' || key.trim().length === 0) {
+    return json({ error: 'INVALID_REQUEST', message: 'key must be a non-empty string.' }, 400);
+  }
+  const result = await putUserProviderKey(env, userId, provider, key.trim());
+  if (!result.ok) return providerKeyWriteError(result.reason);
+  return json({ ok: true });
+}
+
+function providerKeyWriteError(
+  reason: 'no_kv' | 'not_configured' | 'invalid_provider' | 'too_large',
+): Response {
+  switch (reason) {
+    case 'invalid_provider':
+      return json({ error: 'INVALID_REQUEST', message: 'Unknown provider.' }, 400);
+    case 'too_large':
+      return json(
+        {
+          error: 'PAYLOAD_TOO_LARGE',
+          message: `Key exceeds ${MAX_PROVIDER_KEY_CHARS} characters.`,
+        },
+        413,
+      );
+    case 'not_configured':
+      return json(
+        {
+          error: 'NOT_CONFIGURED',
+          message:
+            'Server-side key storage requires PUSH_SESSION_SECRET on the Worker (encryption at rest).',
+        },
+        503,
+      );
+    case 'no_kv':
+      return json(
+        { error: 'NOT_CONFIGURED', message: 'Settings store (SNAPSHOT_INDEX KV) is not bound.' },
+        503,
+      );
+  }
 }
 
 async function handlePut(

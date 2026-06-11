@@ -39,6 +39,7 @@
  */
 
 import { type RunHostScope, isCompleteScope, runHostInstanceId } from '@push/lib/run-host-adoption';
+import { resolveSettingsUserId } from './settings-config';
 import { getClientIp, validateOrigin, type Env } from './worker-middleware';
 import { SPIKE_PAGE_HTML, SPIKE_PAGE_JS } from './run-host-spike-page';
 
@@ -174,6 +175,15 @@ async function handleRunAction(
   // internal provider/sandbox Requests after the client is gone.
   const targetUrl = new URL(`https://do${doPath}`);
   targetUrl.searchParams.set('hostOrigin', requestUrl.origin);
+  // Server-resolved run-owner identity, stamped on the paths that persist
+  // the record (register/checkpoint) — same stance as hostOrigin: a
+  // client-supplied value can never win. The DO persists it so
+  // adoption-time provisioning can inject this user's stored provider key
+  // (user-secrets.ts) after the client is gone.
+  if (action === 'run.register' || action === 'run.checkpoint') {
+    const identity = await resolveSettingsUserId(request, env);
+    targetUrl.searchParams.set('ownerUser', identity.userId);
+  }
   if (action === 'run.attach') {
     // The attach cursor rides the query; everything else about the request
     // is server-derived (scope → instance, origin stamp).

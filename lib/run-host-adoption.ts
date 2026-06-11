@@ -223,6 +223,12 @@ export interface RunHostRecord {
    * build internal Requests (stream/executor adapters) without trusting any
    * client value. */
   origin?: string;
+  /** Run-owner identity (GitHub user id), stamped server-derived by the
+   * route layer on register/checkpoint — same trust stance as `origin`. The
+   * adoption loop hands it to the stream adapter so the owner's stored
+   * provider key (user-secrets) can authenticate dispatch after the client
+   * is gone. Identity only; never a credential. */
+  ownerUserId?: string;
   /** Epoch-ms the current adoption began (state flipped to `adopted`). */
   adoptedAt?: number;
   /** Identity of the in-flight adoption. The loop checks it on every

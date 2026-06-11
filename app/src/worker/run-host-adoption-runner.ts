@@ -197,6 +197,10 @@ export async function runAdoptedLoop(args: RunAdoptedLoopArgs): Promise<void> {
     modelId: checkpoint.model,
     jobId: runId,
     zenGo: checkpoint.providerOptions?.zenGo === true,
+    // Server-stamped run owner (register/checkpoint route stamp) — lets the
+    // adopted loop dispatch with the owner's stored provider key after the
+    // client is gone. Absent on pre-stamp records: env-credentials-only.
+    ownerUserId: record.ownerUserId,
   });
   const executor = createWebExecutorAdapter({
     env,
