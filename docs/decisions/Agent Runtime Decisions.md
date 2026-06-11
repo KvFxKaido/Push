@@ -30,13 +30,17 @@ boundaries, and event compatibility.
 
 Status:
 - Roadmap-tracked: inline `delegation-mode` exists behind a flag.
-- **Measured (2026-06-11): direct ≥ delegated on every axis** — acceptance
-  12/12 vs 10/12, median wall 41.5 s vs 63 s, tool-error 25% vs 30% (full
+- **Measured (2026-06-11, two runs): quality ties, the wrapper costs ~78%
+  wall-clock and owns a unique failure mode** — v2 on fixed instruments:
+  completion 11/12 both arms, median wall 33.3 s direct vs 59.3 s delegated,
+  tool-error 17% vs 18%; delegated's failure was the handoff itself dying
+  (2 m 26 s, zero tool calls), the second dead handoff across runs. The v1
+  run's apparent direct-arm failures were instrument defects (cumulative CLI
+  loop breaker + harness without `--allow-exec`), fixed in PR #886. Full
   12-task eval suite on zen/glm-5.1; results in
   `docs/measurements/delegation-collapse-ab/`, analysis in
   [`Durable Runs — Adopt-on-Silence`](<Durable Runs — Adopt-on-Silence.md>)
-  §Delegation-collapse A/B). Delegated's failures were a dead handoff and a
-  false-positive success; direct's were post-completion loop aborts.
+  §Delegation-collapse A/B.
 - Pending: flip lead-drives-engine-inline to the default and delete the
   Planner/brief — the measurement gate is met; this is now runtime work.
 - Protected: event compatibility, runtime safety boundary, progress/liveness.

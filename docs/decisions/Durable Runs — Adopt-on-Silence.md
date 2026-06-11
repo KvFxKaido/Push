@@ -372,6 +372,8 @@ The measurement the collapse was gated on. Full 12-task suite
 sequentially on the same machine. Raw results in
 `docs/measurements/delegation-collapse-ab/`.
 
+**v1 run (defective instruments — superseded by v2 below):**
+
 | metric | direct (inline proxy) | delegated (task-graph) |
 |---|---|---|
 | harness completion | 10/12 | 10/12 |
@@ -381,8 +383,8 @@ sequentially on the same machine. Raw results in
 | tool-error rate | 25% (19/76) | 30% (26/88) |
 | malformed tool calls | 3 | 3 |
 
-**Verdict: direct ≥ delegated on every axis.** The headline completion tie
-hides a qualitative split in failure classes:
+**v1 verdict: direct ≥ delegated on every axis.** The headline completion
+tie hides a qualitative split in failure classes:
 
 - Direct's two "failures" were **loop-detector aborts after acceptance had
   already passed** — the model finished the edit, then repeated an identical
@@ -397,19 +399,54 @@ hides a qualitative split in failure classes:
 The per-task miniature: `extract-helper` — 47 s direct vs 2 m 51 s delegated
 with a 50% tool-error rate (12/24). The wrapper added churn, not quality.
 
+**Instrument defects (diagnosed same day, fixed in PR #886).** Tracing the
+direct arm's two aborts dissolved the apparent glm-5.1 stop-behavior quirk
+into two defects in the measurement stack itself — in every abort the model
+had finished the work and was trying to *verify* it:
+
+1. **The harness ran agents that couldn't execute anything.** `push run`
+   headless blocks `exec` without `--allow-exec`, so every verification
+   attempt errored (`EXEC_DISABLED`) — 15 of direct's 19 and 17 of
+   delegated's 26 "tool errors" were these blocks and their skipped
+   batch-mates (real error rate ~5–6%, not 25–30%) — and the models were
+   pushed into re-reading files as their only verification affordance.
+2. **The CLI exact-repeat breaker counted cumulatively across the whole
+   run** (`cli/engine.ts`) — never reset by intervening calls, no warn rung.
+   Three productive reads of one small file across six turns = abort. The
+   web tracker and coder kernel never had this defect; the CLI was the
+   outlier. Fixed by converging on the web's consecutive-identical
+   semantics, with drift pins against regrowth.
+
+**v2 run (fixed instruments, same stack and protocol):**
+
+| metric | direct (inline proxy) | delegated (task-graph) |
+|---|---|---|
+| completion | 11/12 | 11/12 |
+| median rounds | 5 | 5 |
+| median wall-clock | **33.3 s** | 59.3 s (+78%) |
+| tool-error rate | 17% (12/71) | 18% (15/83) |
+
+Zero loop aborts, zero `EXEC_DISABLED`, zero error events on the direct arm.
+Each arm dropped one *different* task: direct failed `write-docs-section` at
+the round cap (the fenced-JSON-containing-triple-backticks struggle — real
+protocol friction); delegated failed `guard-error-handling` as
+`delegation_failed` at rounds 0 — **2 m 26 s producing zero tool calls** —
+the second dead handoff across runs, a failure class only the wrapper has.
+
+**Verdict (v2, final): quality ties; the wrapper costs ~78% wall-clock and
+owns a unique failure mode (the handoff itself dying).** The "inline ≥
+delegated before deleting the Planner/brief" gate (Single-Agent Loop step 1)
+is met. Default flip + Planner/brief deletion are unblocked as runtime work;
+tracked on the ROADMAP, not here.
+
 **Caveats:** n=1 per task; one model; the CLI `--delegate` task-graph path is
-a proxy for the web delegated arc, not the arc itself. A `--trials 3` re-run
-on the divergent tasks is the cheap confirmation if wanted before deletion.
+a proxy for the web delegated arc, not the arc itself.
 
-**Side-finding (orthogonal to the A/B):** glm-5.1's
-repeat-identical-call-3×-after-finishing pattern appeared 3 times across both
-arms. The loop detector is currently doing termination's job; the loop likely
-wants an explicit "done — produce the final answer" affordance rather than
-treating this as a model defect to absorb.
-
-**Consequence:** the "inline ≥ delegated before deleting the Planner/brief"
-gate (Single-Agent Loop step 1) is met. Default flip + Planner/brief deletion
-are unblocked as runtime work; tracked on the ROADMAP, not here.
+**Model-facing findings the fixed eval now surfaces (follow-on candidates):**
+the fenced-JSON tool protocol fights file content containing triple backticks
+(glm worked around it with `\u0060` escapes once, burned 14 rounds
+on it the next time); and `edit_file` "Invalid ref" errors cluster (~6/arm)
+where the model passes prose or line numbers instead of hashline refs.
 
 ### Phase 3 — Attach/viewer
 
