@@ -672,7 +672,7 @@ export function handleMultipleMutationsError(
   }
   if (hasOrderingViolations) {
     hintParts.push(
-      `A turn may emit read-only calls first, then up to ${MAX_FILE_MUTATION_BATCH} pure file mutations as one batch (write/edit/patch on sandbox-backed surfaces), then at most one trailing side-effect (exec, commit, push, delegate, workflow_run). Reorder or split across turns.`,
+      `A turn may emit read-only calls first, then up to ${MAX_FILE_MUTATION_BATCH} pure file mutations as one batch (write/edit/patch on sandbox-backed surfaces), then at most one trailing side-effect (exec, commit, push, delegate, workflow_run). Use at most one mutation per file path in the batch; combine same-file edits into one call. Reorder or split across turns.`,
     );
   }
 
