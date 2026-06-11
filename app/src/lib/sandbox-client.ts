@@ -236,6 +236,12 @@ export function mapSandboxErrorCode(code: string): ToolErrorType {
     // indistinguishable from any other failure in structured tool errors.
     case 'TIMEOUT':
       return 'EXEC_TIMEOUT';
+    // NOT_FOUND → SANDBOX_UNREACHABLE mirrors MODAL_NOT_FOUND above; the
+    // ToolErrorType vocabulary has no "sandbox definitively gone" member.
+    // This mapping is NOT the gone-detector: recovery paths decide
+    // definitive-vs-transient via isDefinitivelyGoneMessage() on message
+    // text, and toSandboxError (modal-sandbox-provider.ts) refines the raw
+    // code back to SandboxError NOT_FOUND before callers branch on it.
     case 'NOT_FOUND':
     case 'CF_ERROR':
     case 'CF_NOT_CONFIGURED':
