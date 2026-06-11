@@ -128,6 +128,9 @@ const CONTAINER_EXEC_KILL_GRACE_SECONDS = 5;
 // per-process heap cap plus Node 20.3+'s cgroup-aware availableParallelism.
 const SANDBOX_EXEC_RESOURCE_ENV: Record<string, string> = {
   NODE_OPTIONS: '--max-old-space-size=1024',
+  // Vitest 4 reads only VITEST_MAX_WORKERS; the THREADS/FORKS pair is what
+  // vitest 1–3 read. Sandboxed repos can pin any of them, so set all three.
+  VITEST_MAX_WORKERS: '2',
   VITEST_MAX_THREADS: '2',
   VITEST_MIN_THREADS: '1',
   VITEST_MAX_FORKS: '2',
