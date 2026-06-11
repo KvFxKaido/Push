@@ -52,10 +52,12 @@
  *     `mergeAcceptanceCriteria` helper. The build-context helper lives
  *     in the dispatcher (hook) so the one-way extraction boundary
  *     holds.
- *   - **Policy stays in the hook:** Auditor gating
- *     (`harnessSettings.evaluateAfterCoder`), final outcome assembly
- *     (folds in Auditor verdict), and the terminal `subagent.completed`
- *     emission remain in the hook. The handler is reactive, not gated.
+ *   - **Policy stays in the hook:** final outcome assembly (folds in
+ *     Auditor verdict) and the terminal `subagent.completed` emission
+ *     remain in the hook, which also invokes the shared Auditor gate
+ *     (`runCoderAuditorGate` in `inline-coder-run.ts` — the
+ *     `evaluateAfterCoder` rule lives there so the inline lane shares
+ *     it). The handler is reactive, not gated.
  *   - **`lastCoderStateRef` stays hook-owned.** The handler's context
  *     carries an `onCoderStateUpdate` callback the hook binds to
  *     `lastCoderStateRef.current = state`. The ref itself is never
@@ -71,22 +73,16 @@
 import type React from 'react';
 import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
 import { getSandboxDiff } from '@/lib/sandbox-client';
-import { parseUntrackedFileSet } from '@/lib/auditor-delegation-handler';
-import {
-  runCoderAgent,
-  generateCheckpointAnswer,
-  summarizeCoderStateForHandoff,
-} from '@/lib/coder-agent';
+import { runCoderAgent } from '@/lib/coder-agent';
+import { capturePreCoderSnapshot, createCoderCheckpointAnswerer } from '@/lib/inline-coder-run';
 import { runPlanner, formatPlannerBrief } from '@/lib/planner-agent';
 import { resolveHarnessSettings } from '@/lib/model-capabilities';
 import type { HarnessProfileSettings } from '@/types';
 import {
   buildMemoryScope,
   retrieveMemoryKnownContextLine,
-  runContextMemoryBestEffort,
   withMemoryContext,
 } from '@/lib/memory-context-helpers';
-import { writeDecisionMemory } from '@/lib/context-memory';
 import {
   buildDelegationResultCard,
   formatCompactDelegationToolResult,
@@ -429,17 +425,7 @@ export async function handleCoderDelegation(
   // or omits git_status, `preCoderUntrackedFiles` stays undefined and
   // the Auditor falls back to a more conservative path (defer to LLM
   // rather than risk a false-negative short-circuit).
-  let preCoderHead: string | undefined;
-  let preCoderUntrackedFiles: readonly string[] | undefined;
-  try {
-    const preDiff = await getSandboxDiff(currentSandboxId);
-    preCoderHead = preDiff.head_sha;
-    preCoderUntrackedFiles = preDiff.git_status
-      ? Array.from(parseUntrackedFileSet(preDiff.git_status))
-      : undefined;
-  } catch {
-    /* snapshot is best-effort */
-  }
+  const { preCoderHead, preCoderUntrackedFiles } = await capturePreCoderSnapshot(currentSandboxId);
 
   try {
     const harnessProvider = lockedProviderForChat || getActiveProvider();
@@ -579,46 +565,18 @@ export async function handleCoderDelegation(
       // Interactive Checkpoint callback: when the Coder pauses to ask
       // the Orchestrator for guidance, this generates an answer using
       // the Orchestrator's LLM with recent chat history for context.
-      const handleCheckpoint = async (question: string, context: string): Promise<string> => {
-        const prefix = taskList.length > 1 ? `[${taskIndex + 1}/${taskList.length}] ` : '';
-        ctx.updateAgentStatus(
-          { active: true, phase: `${prefix}Coder checkpoint`, detail: question },
-          { chatId, source: 'coder' },
-        );
-
-        const stateSummary = summarizeCoderStateForHandoff(ctx.readLatestCoderState());
-        const checkpointContext = [
-          context.trim(),
-          stateSummary ? `Latest coder state:\n${stateSummary}` : null,
-        ]
-          .filter((value): value is string => Boolean(value && value.trim()))
-          .join('\n\n');
-
-        const answer = await generateCheckpointAnswer(
-          question,
-          checkpointContext,
-          apiMessages.slice(-6),
-          ctx.abortControllerRef.current?.signal,
-          lockedProviderForChat,
-          resolvedModelForChat || undefined,
-        );
-
-        if (coderMemoryScope) {
-          await runContextMemoryBestEffort('persisting checkpoint decision memory', () =>
-            writeDecisionMemory({
-              scope: coderMemoryScope,
-              question,
-              answer,
-            }),
-          );
-        }
-
-        ctx.updateAgentStatus(
-          { active: true, phase: `${prefix}Coder resuming...` },
-          { chatId, source: 'coder' },
-        );
-        return answer;
-      };
+      // Shared with the inline lane via `createCoderCheckpointAnswerer`.
+      const handleCheckpoint = createCoderCheckpointAnswerer({
+        chatId,
+        statusPrefix: taskList.length > 1 ? `[${taskIndex + 1}/${taskList.length}] ` : '',
+        apiMessages,
+        provider: lockedProviderForChat,
+        model: resolvedModelForChat || undefined,
+        memoryScope: coderMemoryScope,
+        readLatestCoderState: ctx.readLatestCoderState,
+        getSignal: () => ctx.abortControllerRef.current?.signal,
+        updateAgentStatus: ctx.updateAgentStatus,
+      });
 
       // Apply acceptance criteria to every task — validates each
       // independently. For sequential single-sandbox mode this also

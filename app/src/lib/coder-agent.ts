@@ -1,47 +1,35 @@
 /**
  * App compatibility wrapper for the shared Coder agent.
  *
- * The canonical module lives in `lib/coder-agent.ts` (Phase 5D step 2).
- * Three of the 10 DI slots — the `toolExec` closure, the Coder-filtered
- * detectors, and the `evaluateAfterModel` bridge — are also shared, now
- * living in `lib/coder-agent-bindings.ts` so the Durable-Object Phase 1
- * background-jobs runtime (`docs/archive/runbooks/Background Coder Tasks Phase 1.md`)
- * can call the same closure builders with server-side substitutes for
- * policy/tracing/HTTP execution.
+ * The canonical kernel lives in `lib/coder-agent.ts` (Phase 5D step 2);
+ * the browser bindings assembly (capability ledger, turn policy, tool
+ * exec/detectors over web services, memory tools, file/symbol ledgers)
+ * lives in `./inline-coder-run.ts`'s `runInPageCoderKernel` — extracted
+ * there for the Inline Foreground Lane so the delegated arc and the
+ * inline lane run the kernel through one assembly point (see
+ * `docs/decisions/Inline Foreground Lane — Local While Watched.md`).
  *
  * This wrapper preserves the Web-side public API so existing call sites
- * (`useAgentDelegation.ts`, `coder-agent.test.ts`,
- * `delegation-handoff.integration.test.ts`) keep working unchanged. It
- * owns the Web-only setup that is not yet lib-safe:
+ * (`coder-delegation-handler.ts`, `task-graph-delegation-handler.ts`,
+ * `coder-agent.test.ts`, `delegation-handoff.integration.test.ts`) keep
+ * working unchanged. What remains here is the delegated-arc-specific
+ * surface the inline lane deliberately skips:
  *
- *  - provider/model resolution (`getActiveProvider`, `getProviderPushStream`,
- *    `getModelForRole`)
- *  - `'demo'` provider guard
- *  - `TurnPolicyRegistry` + `TurnContext` construction (pulls `ChatMessage`)
- *  - pre-built prompt blocks: `taskPreamble` (delegation brief),
- *    `verificationPolicyBlock`, `approvalModeBlock` (reads localStorage)
- *  - ledger services the lib kernel still calls via callbacks:
- *    `fileLedger`, `symbolLedger`, `execInSandbox`, `fetchSandboxStateSummary`
- *  - `CapabilityLedger` creation and post-run snapshot
- *
- * Everything the lib kernel sees as DI-injected services goes through the
- * `CoderBindingServices` object assembled below and fed into
- * `buildCoderToolExec` / `buildCoderDetectors` / `buildCoderEvaluateAfterModel`.
+ *  - signature normalization (envelope form and legacy positional form)
+ *  - provider/model resolution (`getActiveProvider`, `getModelForRole`)
+ *    + the `'demo'` provider guard
+ *  - delegation-brief task preamble (`buildCoderDelegationBrief` +
+ *    planner brief + flagged-file preload)
  */
 
 import type {
-  ChatMessage,
-  ChatCard,
   AcceptanceCriterion,
-  CriterionResult,
   DelegationEnvelope,
   CoderCallbacks,
   CoderResult,
   HarnessProfileSettings,
 } from '@/types';
 import {
-  runCoderAgent as runCoderAgentLib,
-  generateCheckpointAnswer as generateCheckpointAnswerLib,
   shouldInjectCoderStateOnToolResult,
   summarizeCoderStateForHandoff,
   type CoderAgentOptions,
@@ -56,48 +44,20 @@ import {
   invalidateObservationDependencies,
 } from '@push/lib/working-memory';
 import { normalizeTrimmedRoleAlternation } from '@push/lib/coder-context-trim';
-import { createMemoryToolExecutor } from '@push/lib/memory-tool-exec';
-import {
-  buildCoderDetectors,
-  buildCoderEvaluateAfterModel,
-  buildCoderToolExec,
-  type CoderBindingServices,
-} from '@push/lib/coder-agent-bindings';
-import type { LlmMessage, PushStream } from '@push/lib/provider-contract';
-import { getActiveProvider, getProviderPushStream, type ActiveProvider } from './orchestrator';
-import { getUserProfile } from '@/hooks/useUserProfile';
+import { getActiveProvider, type ActiveProvider } from './orchestrator';
 import { getModelForRole } from './providers';
-import {
-  detectSandboxToolCall,
-  executeSandboxToolCall,
-  getSandboxToolProtocol,
-  readFilesForCoderPreload,
-  type SandboxToolCall,
-} from './sandbox-tools';
-import {
-  detectWebSearchToolCall,
-  executeWebSearch,
-  WEB_SEARCH_TOOL_PROTOCOL,
-  type WebSearchToolCall,
-} from './web-search-tools';
-import { MEMORY_TOOL_PROTOCOL } from './memory-tools';
-import { CapabilityLedger, ROLE_CAPABILITIES } from './capabilities';
-import { detectAllToolCalls, detectAnyToolCall, type AnyToolCall } from './tool-dispatch';
-import { fileLedger } from './file-awareness-ledger';
-import { symbolLedger } from './symbol-persistence-ledger';
-import { getSandboxDiff, execInSandbox, sandboxStatus } from './sandbox-client';
-import { parseDiffStats } from './diff-utils';
+import { readFilesForCoderPreload } from './sandbox-tools';
 import { buildCoderDelegationBrief } from './role-context';
-import { getApprovalMode, buildApprovalModeBlock } from './approval-mode';
-import { TurnPolicyRegistry, type TurnContext } from './turn-policy';
-import { createCoderPolicy } from './turn-policies/coder-policy';
-import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from './tracing';
 import { type CorrelationContext } from '@push/lib/correlation-context';
-import { formatVerificationPolicyBlock, type VerificationPolicy } from './verification-policy';
+import { type VerificationPolicy } from './verification-policy';
+import { runInPageCoderKernel } from './inline-coder-run';
 
 // ---------------------------------------------------------------------------
 // Pure-helper re-exports — the Coder agent test suite and useAgentDelegation
 // import these from `./coder-agent`. Keep the paths unchanged.
+// `generateCheckpointAnswer` moved to `./inline-coder-run` (the checkpoint-
+// answerer factory there needs it without an import cycle); re-exported so
+// the historical import surface holds.
 // ---------------------------------------------------------------------------
 
 export {
@@ -111,69 +71,15 @@ export {
   summarizeCoderStateForHandoff,
 };
 
+export { generateCheckpointAnswer } from './inline-coder-run';
+
 export type { CoderAgentOptions, CoderAfterModelResult, CoderToolExecResult };
 
 // ---------------------------------------------------------------------------
-// Checkpoint answer — Web-facing signature preserved.
-// ---------------------------------------------------------------------------
-
-export async function generateCheckpointAnswer(
-  question: string,
-  coderContext: string,
-  recentChatHistory?: ChatMessage[],
-  signal?: AbortSignal,
-  providerOverride?: ActiveProvider,
-  modelOverride?: string,
-): Promise<string> {
-  const activeProvider = providerOverride || getActiveProvider();
-  if (activeProvider === 'demo') {
-    return 'No AI provider configured. Try a different approach.';
-  }
-  const roleModel = getModelForRole(activeProvider, 'orchestrator');
-  const modelId = modelOverride || roleModel?.id;
-
-  return generateCheckpointAnswerLib(question, coderContext, {
-    stream: getProviderPushStream(activeProvider) as unknown as PushStream<LlmMessage>,
-    provider: activeProvider,
-    modelId,
-    recentChatHistory: recentChatHistory as unknown as Parameters<
-      typeof generateCheckpointAnswerLib
-    >[2]['recentChatHistory'],
-    signal,
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Fetch a compact sandbox state summary (changed files + stats).
-// Used to auto-sync sandbox state back to the Orchestrator after Coder finishes.
-// ---------------------------------------------------------------------------
-
-async function fetchSandboxStateSummary(sandboxId: string): Promise<string> {
-  try {
-    const diffResult = await getSandboxDiff(sandboxId);
-    if (diffResult.error) {
-      return `\n\n[Sandbox State] Could not retrieve diff: ${diffResult.error}`;
-    }
-    if (!diffResult.diff) {
-      return '\n\n[Sandbox State] No uncommitted changes.';
-    }
-    const { fileNames, additions, deletions } = parseDiffStats(diffResult.diff);
-    const MAX_FILES_LISTED = 10;
-    const fileList =
-      fileNames.length > MAX_FILES_LISTED
-        ? `${fileNames.slice(0, MAX_FILES_LISTED).join(', ')} (+${fileNames.length - MAX_FILES_LISTED} more)`
-        : fileNames.join(', ');
-    return `\n\n[Sandbox State] ${fileNames.length} file(s) changed, +${additions} -${deletions}. Files: ${fileList}`;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return `\n\n[Sandbox State] Failed to fetch diff: ${msg}`;
-  }
-}
-
-// ---------------------------------------------------------------------------
 // runCoderAgent — preserves the original Web-facing signature (envelope form
-// and legacy positional form). Internally builds the lib `CoderAgentOptions`
-// by wiring every DI slot to the real Web services.
+// and legacy positional form). Normalizes into the structured spec
+// `runInPageCoderKernel` consumes, building the delegation-brief preamble on
+// the way.
 // ---------------------------------------------------------------------------
 
 export async function runCoderAgent(
@@ -304,25 +210,7 @@ export async function runCoderAgent(
   const roleModel = getModelForRole(activeProvider, 'coder');
   const coderModelId = effectiveModelOverride || roleModel?.id;
 
-  // --- Capability ledger ---
-  const declaredCaps = envelopeDeclaredCapabilities ?? Array.from(ROLE_CAPABILITIES.coder);
-  const capabilityLedger = new CapabilityLedger(declaredCaps);
-
-  // --- Turn policy registry (Coder-only) ---
-  const policyRegistry = new TurnPolicyRegistry();
-  policyRegistry.register(createCoderPolicy());
-  const turnCtx: TurnContext = {
-    role: 'coder',
-    round: 0,
-    maxRounds: effectiveHarnessSettings?.maxCoderRounds ?? 30,
-    sandboxId,
-    allowedRepo: '',
-    activeProvider,
-    activeModel: coderModelId,
-    signal: effectiveSignal,
-  };
-
-  // --- Build pre-built string slots ---
+  // --- Build the delegation-brief task preamble ---
   let taskPreamble = buildCoderDelegationBrief({
     task,
     files,
@@ -350,145 +238,35 @@ export async function runCoderAgent(
     }
   }
 
-  const verificationPolicyBlock = formatVerificationPolicyBlock(
-    effectiveDelegationContext?.verificationPolicy,
+  // --- Run the kernel through the shared in-page assembly ---
+  return runInPageCoderKernel(
+    {
+      provider: activeProvider,
+      modelId: coderModelId,
+      sandboxId,
+      taskPreamble,
+      declaredCapabilities: envelopeDeclaredCapabilities,
+      branchContext: effectiveDelegationContext?.branchContext,
+      projectInstructions: effectiveAgentsMd,
+      instructionFilename: effectiveDelegationContext?.instructionFilename,
+      verificationPolicy: effectiveDelegationContext?.verificationPolicy,
+      acceptanceCriteria: effectiveAcceptanceCriteria,
+      harnessSettings: effectiveHarnessSettings,
+      memoryScope: effectiveDelegationContext?.repoFullName
+        ? {
+            repoFullName: effectiveDelegationContext.repoFullName,
+            branch: effectiveDelegationContext.branchContext?.activeBranch,
+            chatId: effectiveDelegationContext.chatId,
+          }
+        : undefined,
+      correlation: effectiveDelegationContext?.correlation,
+    },
+    {
+      onStatus: statusFn,
+      signal: effectiveSignal,
+      onCheckpointRequest: effectiveOnCheckpoint,
+      onWorkingMemoryUpdate: effectiveOnWorkingMemoryUpdate,
+      onRunEvent: effectiveDelegationContext?.onRunEvent,
+    },
   );
-  const approvalModeBlock = buildApprovalModeBlock(getApprovalMode());
-
-  // --- Bindings services: the Web-side adapter into the shared
-  // `lib/coder-agent-bindings.ts` closure builders. The adapter layer
-  // exists so the Durable-Object runtime (Phase 1 background jobs) can
-  // build its own services object with server substitutes without
-  // duplicating the policy/tracing/tool-exec plumbing.
-  const bindingsServices: CoderBindingServices<
-    AnyToolCall,
-    SandboxToolCall,
-    WebSearchToolCall,
-    ChatCard
-  > = {
-    policy: policyRegistry,
-    capabilityLedger,
-    turnCtx,
-    onStatus: statusFn,
-    correlation: effectiveDelegationContext?.correlation,
-    activeProvider,
-    activeModel: coderModelId,
-    sandboxId,
-    tracing: {
-      withActiveSpan<T>(
-        name: string,
-        options: { scope?: string; kind?: unknown; attributes?: Record<string, unknown> },
-        fn: (span: { setStatus(status: { code: unknown; message?: string }): void }) => Promise<T>,
-      ): Promise<T> {
-        return withActiveSpan(
-          name,
-          options as Parameters<typeof withActiveSpan>[1],
-          fn as unknown as Parameters<typeof withActiveSpan<T>>[2],
-        );
-      },
-      setSpanAttributes: (span, attrs) =>
-        setSpanAttributes(
-          span as Parameters<typeof setSpanAttributes>[0],
-          attrs as Parameters<typeof setSpanAttributes>[1],
-        ),
-      spanKindInternal: SpanKind.INTERNAL,
-      spanStatusOk: SpanStatusCode.OK,
-      spanStatusError: SpanStatusCode.ERROR,
-    },
-    executeSandboxToolCall: (call, id, opts) =>
-      executeSandboxToolCall(call, id, {
-        auditorProviderOverride: opts.auditorProviderOverride as ActiveProvider,
-        auditorModelOverride: opts.auditorModelOverride,
-      }),
-    executeWebSearch: (query, provider) => executeWebSearch(query, provider as ActiveProvider),
-    // Memory tools (LCM) — only wired when the orchestrator threaded a repo
-    // scope; the scope is captured from session context here, never from model
-    // args. Branch is best-effort (the delegation's active branch); when no
-    // sandbox/branch is known the chatId still bounds reads (chats are
-    // branch-scoped). Absent repo scope → undefined → kernel denies memory.
-    executeMemory: effectiveDelegationContext?.repoFullName
-      ? createMemoryToolExecutor({
-          repoFullName: effectiveDelegationContext.repoFullName,
-          branch: effectiveDelegationContext.branchContext?.activeBranch,
-          chatId: effectiveDelegationContext.chatId,
-        })
-      : undefined,
-    sandboxStatus,
-    detectSandboxToolCall,
-    detectWebSearchToolCall,
-    detectAnyToolCall,
-    detectAllToolCalls,
-    tagSandboxCall: (call): AnyToolCall => ({ source: 'sandbox', call }),
-    tagWebSearchCall: (call): AnyToolCall => ({ source: 'web-search', call }),
-  };
-
-  const { detectAllToolCalls: detectAllToolCallsFiltered, detectAnyToolCall: detectCoderToolCall } =
-    buildCoderDetectors(bindingsServices);
-  const toolExec = buildCoderToolExec(bindingsServices);
-  const evaluateAfterModel = buildCoderEvaluateAfterModel(bindingsServices);
-
-  // --- Build lib options ---
-  const libOptions: CoderAgentOptions<AnyToolCall, ChatCard> = {
-    provider: activeProvider,
-    stream: getProviderPushStream(activeProvider) as unknown as PushStream<LlmMessage>,
-    modelId: coderModelId,
-    sandboxId,
-    allowedRepo: '',
-    branchContext: effectiveDelegationContext?.branchContext,
-    projectInstructions: effectiveAgentsMd,
-    instructionFilename: effectiveDelegationContext?.instructionFilename,
-    userProfile: getUserProfile(),
-    taskPreamble,
-    symbolSummary: symbolLedger.getSummary(),
-    toolExec,
-    detectAllToolCalls: detectAllToolCallsFiltered,
-    detectAnyToolCall: detectCoderToolCall,
-    webSearchToolProtocol: WEB_SEARCH_TOOL_PROTOCOL,
-    sandboxToolProtocol: getSandboxToolProtocol(),
-    // Advertise memory tools only when scope was threaded (so executeMemory is
-    // wired) — keeps advertising aligned with executor support (LCM).
-    memoryToolProtocol: effectiveDelegationContext?.repoFullName ? MEMORY_TOOL_PROTOCOL : undefined,
-    verificationPolicyBlock,
-    approvalModeBlock,
-    evaluateAfterModel,
-    acceptanceCriteria: effectiveAcceptanceCriteria,
-    harnessMaxRounds: effectiveHarnessSettings?.maxCoderRounds,
-    harnessContextResetsEnabled: effectiveHarnessSettings?.contextResetsEnabled,
-  };
-
-  // --- Run the lib kernel ---
-  const result = await runCoderAgentLib(libOptions, {
-    onStatus: statusFn,
-    signal: effectiveSignal,
-    onCheckpointRequest: effectiveOnCheckpoint,
-    onWorkingMemoryUpdate: effectiveOnWorkingMemoryUpdate,
-    onAdvanceRound: () => fileLedger.advanceRound(),
-    getFileAwarenessSummary: () => fileLedger.getAwarenessSummary(),
-    runAcceptanceCriterion: async (criterion) => {
-      const checkResult = await execInSandbox(sandboxId, criterion.check);
-      return {
-        exitCode: checkResult.exitCode,
-        output: (checkResult.stdout + '\n' + checkResult.stderr).trim(),
-      };
-    },
-    fetchSandboxStateSummary: () => fetchSandboxStateSummary(sandboxId),
-    onRunEvent: effectiveDelegationContext?.onRunEvent,
-  });
-
-  // --- Attach capability snapshot at the shell boundary ---
-  const criteriaResults: CriterionResult[] | undefined = result.criteriaResults?.map((r) => ({
-    id: r.id,
-    passed: r.passed,
-    exitCode: r.exitCode,
-    output: r.output,
-  }));
-
-  return {
-    summary: result.summary,
-    cards: result.cards,
-    rounds: result.rounds,
-    checkpoints: result.checkpoints,
-    criteriaResults,
-    capabilitySnapshot: capabilityLedger.snapshot(),
-  };
 }

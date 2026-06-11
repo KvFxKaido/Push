@@ -12,7 +12,8 @@ import {
   type CoderHandlerContext,
   type CoderToolCall,
 } from '@/lib/coder-delegation-handler';
-import { handleCoderAuditor, type AuditorHandlerContext } from '@/lib/auditor-delegation-handler';
+import { type AuditorHandlerContext } from '@/lib/auditor-delegation-handler';
+import { runCoderAuditorGate } from '@/lib/inline-coder-run';
 import {
   handleTaskGraphDelegation,
   type TaskGraphHandlerContext,
@@ -498,26 +499,25 @@ export function useAgentDelegation({
           let coderEvalResult: EvaluationResult | null = null;
 
           // --- Auditor Evaluation ---
-          // Gating is policy and stays in the hook. The handler is
-          // reactive — it runs the Auditor span, emits events, and
-          // returns `{ evalResult, auditorSummaryLine }`. The hook
-          // folds `evalResult` into the final DelegationOutcome
-          // (status, gateVerdicts, missingRequirements) below.
-          if (auditorInput.harnessSettings.evaluateAfterCoder && summaries.length > 0) {
-            const { evalResult, auditorSummaryLine } = await handleCoderAuditor(
-              buildAuditorContext(),
-              {
-                chatId,
-                baseCorrelation,
-                lockedProviderForChat,
-                resolvedModelForChat,
-                verificationPolicy,
-                auditorInput,
-              },
-            );
-            coderEvalResult = evalResult;
-            if (auditorSummaryLine) {
-              summaries.push(auditorSummaryLine);
+          // The gate (`evaluateAfterCoder` + non-empty summaries) lives in
+          // `runCoderAuditorGate` so the delegated arc and the inline lane
+          // share one gating rule; the hook stays the policy owner by
+          // choosing to invoke the gate here. A null result means the gate
+          // didn't fire. The hook folds `evalResult` into the final
+          // DelegationOutcome (status, gateVerdicts, missingRequirements)
+          // below.
+          const auditorGate = await runCoderAuditorGate(buildAuditorContext(), {
+            chatId,
+            baseCorrelation,
+            lockedProviderForChat,
+            resolvedModelForChat,
+            verificationPolicy,
+            auditorInput,
+          });
+          if (auditorGate) {
+            coderEvalResult = auditorGate.evalResult;
+            if (auditorGate.auditorSummaryLine) {
+              summaries.push(auditorGate.auditorSummaryLine);
             }
           }
 
