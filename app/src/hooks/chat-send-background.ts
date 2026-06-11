@@ -22,6 +22,9 @@ import {
   type TurnEngineTrigger,
 } from '@/lib/delegation-mode-settings';
 import type { AIProviderType, Conversation, DelegationEnvelope } from '@/types';
+import { getActiveProvider, isProviderAvailable } from '@/lib/orchestrator';
+import { isProviderEngineCapable } from '@/lib/provider-engine-capability';
+import { resolveChatProviderSelection } from '@/lib/provider-selection';
 import { getSandboxOwnerToken } from '@/lib/sandbox-client';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import type { UseBackgroundCoderJobResult } from './useBackgroundCoderJob';
@@ -50,12 +53,34 @@ export function resolveSendEngineTrigger(opts: {
   branchInfoRef: React.RefObject<
     { currentBranch?: string; defaultBranch?: string } | null | undefined
   >;
+  /** Conversation store + target chat, used to peek the provider this turn
+   *  will lock BEFORE `prepareSendContext` resolves it for real. The peek
+   *  reuses `resolveChatProviderSelection` with the same inputs prepare
+   *  passes, so the two can only disagree if that call drifts — keep them
+   *  in lockstep. `chatId` may be null (new chat): no existing lock, same
+   *  as prepare sees. */
+  conversationsRef: React.MutableRefObject<Record<string, Conversation>>;
+  chatId: string | null;
+  requestedProvider?: AIProviderType | null;
 }): TurnEngineTrigger {
   const branch =
     opts.branchInfoRef.current?.currentBranch ?? opts.branchInfoRef.current?.defaultBranch;
+  const conv = opts.chatId ? opts.conversationsRef.current[opts.chatId] : undefined;
+  const { provider } = resolveChatProviderSelection({
+    existingProvider: conv?.provider || null,
+    existingModel: conv?.model || null,
+    requestedProvider: opts.requestedProvider ?? null,
+    requestedModel: null,
+    fallbackProvider: getActiveProvider(),
+    isProviderAvailable,
+  });
   return resolveTurnEngineTrigger({
     hasAttachments: opts.hasAttachments,
-    engineEligible: Boolean(opts.repoRef.current && branch),
+    // Engine turns run server-side, where only Worker-held provider
+    // credentials exist — a provider keyed solely via in-app Settings must
+    // stay on the foreground loop (which forwards the key per-request) or
+    // the job 401s at dispatch. See provider-engine-capability.ts.
+    engineEligible: Boolean(opts.repoRef.current && branch) && isProviderEngineCapable(provider),
   });
 }
 

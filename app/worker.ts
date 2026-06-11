@@ -84,6 +84,7 @@ import {
   handleArtifactsList,
 } from './src/worker/worker-artifacts';
 import { handleMemoryEmbed } from './src/worker/worker-memory-embed';
+import { handleProviderEngineCapabilities } from './src/worker/worker-provider-capabilities';
 import {
   handleCollectionsCreate,
   handleCollectionsDelete,
@@ -482,6 +483,15 @@ const EXACT_API_ROUTES: ExactApiRoute[] = [
   { path: '/api/library/items/create', method: 'POST', handler: handleItemsCreate },
   { path: '/api/library/items/update', method: 'POST', handler: handleItemsUpdate },
   { path: '/api/library/items/delete', method: 'POST', handler: handleItemsDelete },
+  // Per-provider "can the durable engine dispatch this server-side?" booleans.
+  // The client folds this into engine-routing eligibility so turns on
+  // Settings-key-only providers stay on the foreground loop instead of
+  // 401-ing in the CoderJob DO. See worker-provider-capabilities.ts.
+  {
+    path: '/api/providers/engine-capabilities',
+    method: 'GET',
+    handler: handleProviderEngineCapabilities,
+  },
   { path: '/api/ollama/chat', method: 'POST', handler: handleOllamaChat },
   { path: '/api/ollama/models', method: 'GET', handler: handleOllamaModels },
   { path: '/api/openrouter/chat', method: 'POST', handler: handleOpenRouterChat },
