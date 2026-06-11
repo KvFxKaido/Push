@@ -482,23 +482,50 @@ export function useChatCheckpoint({
     const resumeCheckpoint = revalidated;
     const requiresLiveSandboxStatus = checkpointRequiresLiveSandboxStatus(resumeCheckpoint);
     let resumeSandboxId = currentSandboxId;
+    // Non-expiry checkpoint with no live sandbox means the container died
+    // mid-run (OOM kill, teardown) rather than expiring on schedule. Degrade
+    // to the same cold-resume flow the expiry path uses — recreate a fresh
+    // sandbox and reconcile from the checkpoint — instead of discarding the
+    // checkpoint and telling the user to start over.
+    const sandboxLostMidRun = requiresLiveSandboxStatus && !resumeSandboxId;
 
-    if (!requiresLiveSandboxStatus && !resumeSandboxId && ensureSandboxRef.current) {
+    if (!resumeSandboxId && ensureSandboxRef.current) {
       updateAgentStatus({ active: true, phase: 'Recreating sandbox...' }, { chatId });
       try {
         const recreatedSandboxId = await ensureSandboxRef.current();
         if (recreatedSandboxId) {
           resumeSandboxId = recreatedSandboxId;
           sandboxIdRef.current = recreatedSandboxId;
+          if (sandboxLostMidRun) {
+            console.log(
+              JSON.stringify({
+                level: 'info',
+                event: 'checkpoint_resume_cold_recreate',
+                chatId,
+                reason: resumeCheckpoint.reason,
+              }),
+            );
+          }
         }
       } catch {
-        // Best effort only: expiry reconciliation can continue from the saved diff.
+        // Best effort only: expiry reconciliation can continue from the saved
+        // diff; the mid-run-loss path falls through to the message below.
       }
     }
 
     if (requiresLiveSandboxStatus && !resumeSandboxId) {
-      // Sandbox not available — can't reconcile. Clear and inform user.
+      // Sandbox gone AND recreation failed (or unavailable) — can't reconcile.
+      // Clear and inform user.
+      console.log(
+        JSON.stringify({
+          level: 'warn',
+          event: 'checkpoint_resume_sandbox_unavailable',
+          chatId,
+          reason: resumeCheckpoint.reason,
+        }),
+      );
       clearRunCheckpoint(chatId);
+      updateAgentStatus({ active: false, phase: '' });
       setConversations((prev) => {
         const conv = prev[chatId];
         if (!conv) return prev;
@@ -521,7 +548,10 @@ export function useChatCheckpoint({
     }
 
     let sbStatus: SandboxStatusResult | null = null;
-    if (requiresLiveSandboxStatus) {
+    // A sandbox recreated after mid-run loss is a fresh clone — probing it
+    // would reconcile against the wrong workspace, so skip straight to the
+    // cold-resume message built from the checkpoint.
+    if (requiresLiveSandboxStatus && !sandboxLostMidRun) {
       const liveSandboxId = resumeSandboxId;
       if (!liveSandboxId) {
         return;
@@ -581,9 +611,11 @@ export function useChatCheckpoint({
       updateAgentStatus(
         {
           active: true,
-          phase: resumeSandboxId
-            ? 'Restoring expired session...'
-            : 'Resuming from saved checkpoint...',
+          phase: sandboxLostMidRun
+            ? 'Restoring lost session...'
+            : resumeSandboxId
+              ? 'Restoring expired session...'
+              : 'Resuming from saved checkpoint...',
         },
         { chatId },
       );
@@ -593,6 +625,7 @@ export function useChatCheckpoint({
     const reconciliationContent = buildCheckpointReconciliationMessage(
       resumeCheckpoint,
       sbStatus ?? EMPTY_SANDBOX_STATUS,
+      { sandboxLost: sandboxLostMidRun },
     );
 
     const conv = conversations[chatId];

@@ -299,17 +299,27 @@ export async function detectInterruptedRun(
 export function buildCheckpointReconciliationMessage(
   checkpoint: RunCheckpoint,
   status: SandboxStatusResult,
+  options?: { sandboxLost?: boolean },
 ): string {
-  // Cold resume: prior sandbox expired. Build from saved diff instead of live status.
-  if (checkpoint.reason === 'expiry') {
-    let msg =
-      '[SESSION_RESUMED]\nPrior sandbox expired. Resuming on a new sandbox (fresh clone).\n';
+  // Cold resume: prior sandbox expired (planned) or was lost mid-run (OOM,
+  // container death). Either way the sandbox we resume on is a fresh clone,
+  // so live status would describe the wrong workspace — build from the saved
+  // diff instead.
+  if (checkpoint.reason === 'expiry' || options?.sandboxLost) {
+    const expired = checkpoint.reason === 'expiry';
+    let msg = expired
+      ? '[SESSION_RESUMED]\nPrior sandbox expired. Resuming on a new sandbox (fresh clone).\n'
+      : '[SESSION_RESUMED]\nPrior sandbox was lost mid-run. Resuming on a new sandbox (fresh clone).\n';
     if (checkpoint.savedDiff) {
-      msg += `\nUncommitted changes at expiry:\n---\n${checkpoint.savedDiff}\n---\n`;
+      msg += `\nUncommitted changes at ${expired ? 'expiry' : 'the last checkpoint'}:\n---\n${checkpoint.savedDiff}\n---\n`;
       msg += '\nRe-apply these changes to continue the task. Verify each file before editing.\n';
-    } else {
+    } else if (expired) {
       msg +=
         '\nNo uncommitted changes were pending at expiry.\nContinue from the conversation above.\n';
+    } else {
+      msg +=
+        '\nNo diff snapshot was captured before the loss — any uncommitted changes are gone.\n' +
+        'Re-create whatever the task still needs; the conversation above shows what had been done.\n';
     }
     msg += '\nDo not repeat work already committed to the branch.';
     return msg;

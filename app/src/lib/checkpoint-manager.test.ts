@@ -245,6 +245,35 @@ describe('checkpoint-manager', () => {
     expect(content).not.toContain('HEAD: ignored');
   });
 
+  it('builds sandbox-loss reconciliation guidance without live sandbox state', () => {
+    const content = buildCheckpointReconciliationMessage(
+      makeCheckpoint(),
+      {
+        head: 'ignored',
+        dirtyFiles: ['ignored.ts'],
+        diffStat: 'ignored',
+        changedFiles: ['ignored.ts'],
+      },
+      { sandboxLost: true },
+    );
+
+    expect(content).toContain('Prior sandbox was lost mid-run');
+    expect(content).toContain('any uncommitted changes are gone');
+    expect(content).not.toContain('HEAD: ignored');
+  });
+
+  it('includes the saved diff in sandbox-loss reconciliation when one was captured', () => {
+    const content = buildCheckpointReconciliationMessage(
+      makeCheckpoint({ savedDiff: 'diff --git a/app.ts b/app.ts\n+console.log("hi")' }),
+      { head: 'unknown', dirtyFiles: [], diffStat: '', changedFiles: [] },
+      { sandboxLost: true },
+    );
+
+    expect(content).toContain('Prior sandbox was lost mid-run');
+    expect(content).toContain('Uncommitted changes at the last checkpoint');
+    expect(content).toContain('diff --git a/app.ts b/app.ts');
+  });
+
   it('acquires, heartbeats, and releases a tab lock', () => {
     const tabId = acquireRunTabLock('chat-1');
 
