@@ -672,6 +672,32 @@ describe('detectAllToolCalls', () => {
     }
   });
 
+  it('treats dot-segment aliases as the same file path', () => {
+    const text = [
+      '{"tool":"sandbox_edit_file","args":{"path":"/workspace/src/../api.ts","edits":[{"op":"replace_line","ref":"1:abcdef0","content":"one"}]}}',
+      '{"tool":"sandbox_search_replace","args":{"path":"/workspace/api.ts","search":"old","replace":"new"}}',
+    ].join('\n');
+
+    const detected = detectAllToolCalls(text);
+    expect(detected.fileMutations).toHaveLength(1);
+    expect(detected.extraMutations).toHaveLength(1);
+    if (detected.extraMutations[0]?.source === 'sandbox') {
+      expect(detected.extraMutations[0].call.tool).toBe('sandbox_search_replace');
+    }
+  });
+
+  it('does not collide absolute non-workspace paths with workspace-relative ones', () => {
+    // /tmp/out.txt and workspace-relative tmp/out.txt are different targets
+    const text = [
+      '{"tool":"sandbox_write_file","args":{"path":"/tmp/out.txt","content":"one"}}',
+      '{"tool":"sandbox_write_file","args":{"path":"tmp/out.txt","content":"two"}}',
+    ].join('\n');
+
+    const detected = detectAllToolCalls(text);
+    expect(detected.fileMutations).toHaveLength(2);
+    expect(detected.extraMutations).toHaveLength(0);
+  });
+
   it('batches file mutations followed by one trailing side-effect', () => {
     // [write, edit, exec] — 2 file mutations batch + 1 trailing exec
     const text = [
