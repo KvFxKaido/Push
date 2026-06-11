@@ -84,6 +84,36 @@ describe('CLI loop-detection drift — preserved abort semantics', () => {
   });
 });
 
+// Counting-semantics pin: the exact-repeat signal must be CONSECUTIVE
+// (reset by any different batch), matching the web tracker's
+// `recordCall`/`isRepeatedCall` contract. The original relocated breaker
+// counted identical batches cumulatively across the whole run and aborted
+// agents for legitimately re-reading a file after editing it (three
+// productive reads of one small file across six turns = abort — observed
+// on 2/12 tasks in the 2026-06-11 delegation-collapse eval, both
+// false aborts AFTER acceptance had passed).
+describe('CLI loop-detection drift — consecutive exact-repeat counting', () => {
+  it('engine resets the exact-repeat streak when a different batch intervenes', () => {
+    assert.ok(
+      engineSource.includes('lastExactCallKey'),
+      'cli/engine.ts must track the previous batch key for consecutive counting',
+    );
+    assert.match(
+      engineSource,
+      /exactRepeatStreak\s*=\s*1/,
+      'cli/engine.ts must reset the streak to 1 on a non-matching batch',
+    );
+  });
+
+  it('engine must not re-grow a cumulative per-run repeat counter', () => {
+    assert.ok(
+      !engineSource.includes('repeatedCalls'),
+      'cli/engine.ts must not key repeat counts in a run-lifetime Map — ' +
+        'cumulative counting aborts productive re-reads; consecutive only',
+    );
+  });
+});
+
 // Graded enforcement drift: all three surfaces must route the warn/block/compact
 // steering through the shared `buildLoopSteeringText` builder and must NOT
 // re-inline the [LOOP_*] copy. The tags live in exactly one place (the oracle).

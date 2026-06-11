@@ -259,6 +259,14 @@ async function runTrial(task: EvalTask, trial: number): Promise<TrialResult> {
   const args = [
     'run',
     '--json',
+    // Agents must be able to run code to verify their work — that's the
+    // realistic condition being measured. Without this, headless mode blocks
+    // every exec (EXEC_DISABLED), inflating tool-error rates (the 2026-06-11
+    // A/B measured 25–30% with blocks vs ~5% real) and pushing models into
+    // read-file verification fallbacks. The fixture workspaces are throwaway
+    // temp dirs and the acceptance checks already run arbitrary shell there,
+    // so this adds no new trust surface.
+    '--allow-exec',
     '--provider',
     PROVIDER,
     '--model',

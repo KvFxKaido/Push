@@ -897,7 +897,16 @@ async function runAssistantLoopImpl(
     await appendSessionEvent(state, 'run_complete', payload, runId);
   }
   let finalAssistantText: string = '';
-  const repeatedCalls: Map<string, number> = new Map();
+  // Consecutive identical-batch streak for the exact-repeat breaker. A
+  // different batch resets the streak — mirroring the web's
+  // MutationFailureTracker.recordCall semantics — so a *productive* repeat
+  // later in the run (re-reading a file after editing it) can't accumulate
+  // toward an abort. The previous cumulative-forever Map counted identical
+  // calls across the whole run and executed agents for verifying their own
+  // edits (three reads of the same small file across six turns = abort;
+  // observed in the 2026-06-11 delegation-collapse eval).
+  let lastExactCallKey: string | null = null;
+  let exactRepeatStreak = 0;
   // Per-run near-duplicate detector — feeds the shared loop-detection oracle
   // (lib/loop-detection.ts). The exact-match branch always drives the abort
   // below; the near-duplicate ladder (warn → block → compact → abort) is
@@ -1920,12 +1929,17 @@ async function runAssistantLoopImpl(
     // Intentional asymmetry: only the *decision* (evaluateLoopState) is
     // unified. The exact-match *signal* is still collected surface-specifically
     // — batch-level here (`JSON.stringify(toolCalls)`), per-call on web via
-    // `MutationFailureTracker.isRepeatedCall`. The drift test pins the abort
-    // threshold, not the keying; converging the keying is a deliberate
-    // follow-up, not an oversight (see the decision doc).
+    // `MutationFailureTracker.isRepeatedCall`. The *counting* semantics are
+    // converged on the web tracker's: consecutive-identical, reset by any
+    // different batch. The drift test pins the abort threshold.
     const callKey: string = JSON.stringify(toolCalls);
-    const exactRepeatCount: number = (repeatedCalls.get(callKey) || 0) + 1;
-    repeatedCalls.set(callKey, exactRepeatCount);
+    if (callKey === lastExactCallKey) {
+      exactRepeatStreak += 1;
+    } else {
+      lastExactCallKey = callKey;
+      exactRepeatStreak = 1;
+    }
+    const exactRepeatCount: number = exactRepeatStreak;
 
     let worstSimilarity: { value: number; streak: number } | undefined;
     for (const call of toolCalls) {
