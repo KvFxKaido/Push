@@ -240,10 +240,18 @@ export async function putUserProviderKey(
   return { ok: true };
 }
 
+/**
+ * Deliberately NOT gated on PUSH_SESSION_SECRET (unlike put, which can't
+ * encrypt without it): removing stored data must always be possible — a
+ * deployment that lost its session secret should still be able to purge
+ * keys it can no longer decrypt, and a delete can't leak or downgrade
+ * anything. The asymmetry is intentional (push-agent review, PR #890).
+ */
 export async function deleteUserProviderKey(
   env: Env,
   userId: string,
   provider: string,
+  nowMs: number = Date.now(),
 ): Promise<UserSecretWriteResult> {
   if (!isKnownProvider(provider)) return { ok: false, reason: 'invalid_provider' };
   const kv = env.SNAPSHOT_INDEX;
@@ -259,7 +267,7 @@ export async function deleteUserProviderKey(
     return { ok: true };
   }
   delete doc.providers[provider];
-  doc.updatedAt = Math.max(Date.now(), doc.updatedAt + 1);
+  doc.updatedAt = Math.max(nowMs, doc.updatedAt + 1);
   await kv.put(userSecretsKey(userId), JSON.stringify(doc));
   log('info', 'user_secret_deleted', { userId, provider });
   return { ok: true };
@@ -279,7 +287,13 @@ export async function getUserProviderKey(
 ): Promise<string | null> {
   if (!userId) return null;
   const sessionSecret = (env.PUSH_SESSION_SECRET ?? '').trim();
-  if (!sessionSecret) return null;
+  if (!sessionSecret) {
+    // Loud on purpose: without this line a missing/rotated session secret
+    // surfaces only as provider 401s on the engine path — invisible to ops
+    // (push-agent review, PR #890). One line per dispatch is the cost.
+    log('warn', 'user_secrets_not_configured', { op: 'read', userId, provider });
+    return null;
+  }
   const doc = await readDoc(env, userId);
   const stored = doc.providers[provider];
   if (!stored) return null;

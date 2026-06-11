@@ -92,3 +92,33 @@ describe('deleteProviderKeyFromServer', () => {
     expect(invalidateEngineCapabilities).toHaveBeenCalledOnce();
   });
 });
+
+describe('sync op serialization', () => {
+  it('does not start a DELETE until the in-flight PUT resolves', async () => {
+    const order: string[] = [];
+    let releasePut!: () => void;
+    const putGate = new Promise<void>((resolve) => {
+      releasePut = resolve;
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: { method: string }) => {
+        order.push(`start:${init.method}`);
+        if (init.method === 'PUT') await putGate;
+        order.push(`end:${init.method}`);
+        return { ok: true, status: 200 };
+      }),
+    );
+
+    const put = syncProviderKeyToServer('ollama', 'k-1');
+    const del = deleteProviderKeyFromServer('ollama');
+    // Give the microtask queue a chance — DELETE must NOT have started.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(order).toEqual(['start:PUT']);
+
+    releasePut();
+    await Promise.all([put, del]);
+    expect(order).toEqual(['start:PUT', 'end:PUT', 'start:DELETE', 'end:DELETE']);
+  });
+});

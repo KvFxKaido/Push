@@ -36,49 +36,64 @@ function logSyncFailure(op: 'put' | 'delete', provider: string, detail: string):
   );
 }
 
+// Sync ops are serialized through one chain: the call sites are
+// fire-and-forget, so without ordering a rapid save→clear could land PUT
+// after DELETE and leave the server holding a key the user removed
+// (push-agent review, PR #890). Ops are rare; one global chain is enough.
+let opChain: Promise<unknown> = Promise.resolve();
+function enqueue<T>(op: () => Promise<T>): Promise<T> {
+  const next = opChain.then(op, op);
+  opChain = next.then(
+    () => {},
+    () => {},
+  );
+  return next;
+}
+
 /**
  * Mirror a saved key to the server store. Resolves true on success. The
  * promise is intentionally awaitable (callers that want UI feedback can
  * await it), but the default call sites fire-and-log.
  */
-export async function syncProviderKeyToServer(
-  provider: AIProviderType,
-  key: string,
-): Promise<boolean> {
-  try {
-    const res = await fetch('/api/settings/provider-keys', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ provider, key }),
-    });
-    if (!res.ok) {
-      logSyncFailure('put', provider, `HTTP ${res.status}`);
+export function syncProviderKeyToServer(provider: AIProviderType, key: string): Promise<boolean> {
+  return enqueue(async () => {
+    try {
+      const res = await fetch('/api/settings/provider-keys', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider, key }),
+      });
+      if (!res.ok) {
+        logSyncFailure('put', provider, `HTTP ${res.status}`);
+        return false;
+      }
+      invalidateEngineCapabilities();
+      return true;
+    } catch (err) {
+      logSyncFailure('put', provider, err instanceof Error ? err.message : String(err));
       return false;
     }
-    invalidateEngineCapabilities();
-    return true;
-  } catch (err) {
-    logSyncFailure('put', provider, err instanceof Error ? err.message : String(err));
-    return false;
-  }
+  });
 }
 
 /** Remove the server-stored key when the local one is cleared. */
-export async function deleteProviderKeyFromServer(provider: AIProviderType): Promise<boolean> {
-  try {
-    const res = await fetch('/api/settings/provider-keys', {
-      method: 'DELETE',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ provider }),
-    });
-    if (!res.ok) {
-      logSyncFailure('delete', provider, `HTTP ${res.status}`);
+export function deleteProviderKeyFromServer(provider: AIProviderType): Promise<boolean> {
+  return enqueue(async () => {
+    try {
+      const res = await fetch('/api/settings/provider-keys', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider }),
+      });
+      if (!res.ok) {
+        logSyncFailure('delete', provider, `HTTP ${res.status}`);
+        return false;
+      }
+      invalidateEngineCapabilities();
+      return true;
+    } catch (err) {
+      logSyncFailure('delete', provider, err instanceof Error ? err.message : String(err));
       return false;
     }
-    invalidateEngineCapabilities();
-    return true;
-  } catch (err) {
-    logSyncFailure('delete', provider, err instanceof Error ? err.message : String(err));
-    return false;
-  }
+  });
 }

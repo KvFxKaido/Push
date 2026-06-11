@@ -118,3 +118,44 @@ describe('handleProviderEngineCapabilities — user-stored keys', () => {
     expect(body2.providers.nvidia).toBe(false);
   });
 });
+
+describe('handleProviderEngineCapabilities — decryptability (Codex P2)', () => {
+  it('reports NOT capable when stored-key metadata exists but the session secret rotated', async () => {
+    const store = new Map<string, string>();
+    const makeEnv = (secret: string) =>
+      ({
+        PUSH_SESSION_SECRET: secret,
+        SNAPSHOT_INDEX: {
+          get: async (k: string) => store.get(k) ?? null,
+          put: async (k: string, v: string) => {
+            store.set(k, v);
+          },
+        },
+      }) as unknown as Env;
+    await putUserProviderKey(makeEnv('original-secret'), 'anon', 'openrouter', 'sk-or-1');
+
+    // Same metadata, rotated secret: dispatch would fail to decrypt, so the
+    // probe must say not-capable — otherwise the client routes into a 401.
+    const res = await handleProviderEngineCapabilities(makeRequest(), makeEnv('rotated-secret'));
+    const body = (await res.json()) as { providers: Record<string, boolean> };
+    expect(body.providers.openrouter).toBe(false);
+  });
+
+  it('reports NOT capable when metadata exists but PUSH_SESSION_SECRET is absent', async () => {
+    const store = new Map<string, string>();
+    const env = (secret?: string) =>
+      ({
+        ...(secret ? { PUSH_SESSION_SECRET: secret } : {}),
+        SNAPSHOT_INDEX: {
+          get: async (k: string) => store.get(k) ?? null,
+          put: async (k: string, v: string) => {
+            store.set(k, v);
+          },
+        },
+      }) as unknown as Env;
+    await putUserProviderKey(env('secret'), 'anon', 'ollama', 'k-1');
+    const res = await handleProviderEngineCapabilities(makeRequest(), env(undefined));
+    const body = (await res.json()) as { providers: Record<string, boolean> };
+    expect(body.providers.ollama).toBe(false);
+  });
+});

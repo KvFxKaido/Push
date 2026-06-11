@@ -115,3 +115,23 @@ describe('user-secrets store', () => {
     expect(await getUserProviderKey(env, 'u1', 'google')).toBe('AIza-test-5678');
   });
 });
+
+describe('review-response pins (PR #890)', () => {
+  it('allows delete without PUSH_SESSION_SECRET — data removal is never gated', async () => {
+    const store = new Map<string, string>();
+    await putUserProviderKey(makeEnv({}, store), 'u1', 'ollama', 'k-123');
+    const noSecret = makeEnv({ PUSH_SESSION_SECRET: undefined }, store);
+    expect(await deleteUserProviderKey(noSecret, 'u1', 'ollama')).toEqual({ ok: true });
+    expect(await listUserProviderKeyMeta(noSecret, 'u1')).toEqual({});
+  });
+
+  it('logs user_secrets_not_configured on the secretless read path', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const env = makeEnv({ PUSH_SESSION_SECRET: undefined });
+    expect(await getUserProviderKey(env, 'u1', 'ollama')).toBeNull();
+    expect(
+      logSpy.mock.calls.some((c) => String(c[0]).includes('user_secrets_not_configured')),
+    ).toBe(true);
+    logSpy.mockRestore();
+  });
+});

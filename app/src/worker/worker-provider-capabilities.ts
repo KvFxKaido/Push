@@ -34,7 +34,7 @@
 import { ALL_PROVIDERS, type AIProviderType } from '@push/lib/provider-contract';
 import { resolveProviderHandler } from './coder-job-stream-adapter';
 import { resolveSettingsUserId } from './settings-config';
-import { listUserProviderKeyMeta } from './user-secrets';
+import { getUserProviderKey, listUserProviderKeyMeta } from './user-secrets';
 import type { Env } from './worker-middleware';
 
 // Re-exported for existing importers; the canonical home moved to the shared
@@ -96,13 +96,22 @@ export async function handleProviderEngineCapabilities(
 ): Promise<Response> {
   const identity = await resolveSettingsUserId(request, env);
   const userKeys = await listUserProviderKeyMeta(env, identity.userId);
-  const providers = Object.fromEntries(
-    ALL_PROVIDERS.map((provider) => [
-      provider,
-      resolveProviderHandler(provider, false) !== null &&
-        (hasEnvCredentials(provider, env) || Boolean(userKeys[provider])),
-    ]),
-  ) as Record<AIProviderType, boolean>;
+  const entries = await Promise.all(
+    ALL_PROVIDERS.map(async (provider): Promise<[AIProviderType, boolean]> => {
+      if (resolveProviderHandler(provider, false) === null) return [provider, false];
+      if (hasEnvCredentials(provider, env)) return [provider, true];
+      // User-key arm resolves through the SAME path dispatch uses
+      // (getUserProviderKey: secret present + decryptable), not metadata
+      // presence — a rotated/missing PUSH_SESSION_SECRET must read as
+      // not-capable here, or the client routes turns into a guaranteed
+      // 401 (Codex P2, PR #890). Metadata short-circuits the decrypt for
+      // the common no-key case.
+      if (!userKeys[provider]) return [provider, false];
+      const key = await getUserProviderKey(env, identity.userId, provider);
+      return [provider, key !== null];
+    }),
+  );
+  const providers = Object.fromEntries(entries) as Record<AIProviderType, boolean>;
   const body: ProviderEngineCapabilities = { providers };
   return Response.json(body, { headers: { 'Cache-Control': 'no-store' } });
 }
