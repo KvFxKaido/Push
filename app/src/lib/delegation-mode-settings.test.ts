@@ -38,20 +38,31 @@ beforeEach(() => {
 });
 
 describe('delegation-mode-settings', () => {
-  it('defaults to the delegated arc (no engine trigger) when no flags are set', () => {
+  it('defaults to inline (engine trigger) when no flags are set — the 2026-06-11 flip', () => {
+    expect(getDelegationMode()).toBe('inline');
+    expect(isInlineDelegationEnabled()).toBe(true);
+    expect(resolveTurnEngineTrigger({ hasAttachments: false })).toBe('inline-delegation');
+  });
+
+  it('only treats the exact "delegated" value as the opt-out (forward-compat with unknown values)', () => {
+    storage.map.set(INLINE_KEY, 'inline');
+    expect(getDelegationMode()).toBe('inline');
+    storage.map.set(INLINE_KEY, 'something-else');
+    expect(getDelegationMode()).toBe('inline');
+    storage.map.set(INLINE_KEY, 'delegated');
     expect(getDelegationMode()).toBe('delegated');
     expect(isInlineDelegationEnabled()).toBe(false);
+  });
+
+  it('keeps the delegated opt-out on the foreground loop (no engine trigger)', () => {
+    storage.map.set(INLINE_KEY, 'delegated');
     expect(resolveTurnEngineTrigger({ hasAttachments: false })).toBeNull();
   });
 
-  it('only treats the exact "inline" value as inline (forward-compat with unknown values)', () => {
+  it('routes a delegated opt-out to background-mode when the legacy flag is also on', () => {
     storage.map.set(INLINE_KEY, 'delegated');
-    expect(getDelegationMode()).toBe('delegated');
-    storage.map.set(INLINE_KEY, 'something-else');
-    expect(getDelegationMode()).toBe('delegated');
-    storage.map.set(INLINE_KEY, 'inline');
-    expect(getDelegationMode()).toBe('inline');
-    expect(isInlineDelegationEnabled()).toBe(true);
+    storage.map.set(BG_KEY, '1');
+    expect(resolveTurnEngineTrigger({ hasAttachments: false })).toBe('background-mode');
   });
 
   it('routes to inline-delegation when delegation-mode is inline', () => {
@@ -59,9 +70,12 @@ describe('delegation-mode-settings', () => {
     expect(resolveTurnEngineTrigger({ hasAttachments: false })).toBe('inline-delegation');
   });
 
-  it('routes to background-mode when only the legacy background flag is on', () => {
+  it('labels the trigger inline-delegation when the legacy background flag is on under the inline default', () => {
+    // Post-flip, inline is on by default, and it takes precedence for the
+    // measurement label — background-mode can only be the winning trigger
+    // for users who opted back out to 'delegated' (covered above).
     storage.map.set(BG_KEY, '1');
-    expect(resolveTurnEngineTrigger({ hasAttachments: false })).toBe('background-mode');
+    expect(resolveTurnEngineTrigger({ hasAttachments: false })).toBe('inline-delegation');
   });
 
   it('gives inline-delegation precedence when both triggers are on', () => {
