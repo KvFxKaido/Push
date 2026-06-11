@@ -47,7 +47,8 @@ import type { VerificationPolicy } from '@push/lib/verification-policy';
 import { isRunActive, type RunEnginePhase, type RunEngineState } from '@/lib/run-engine';
 import { setConversationAgentEvents } from '@/lib/chat-runtime-state';
 import type { LoopPhase } from '@/types';
-import { sandboxStatus, type SandboxStatusResult } from '@/lib/sandbox-client';
+import { fetchSandboxDiff, sandboxStatus, type SandboxStatusResult } from '@/lib/sandbox-client';
+import { createRunDiffSnapshotTracker } from '@/lib/run-diff-snapshot';
 import { createId } from '@/hooks/chat-persistence';
 import { useRunHostAttach } from './useRunHostAttach';
 
@@ -167,6 +168,15 @@ export function useChatCheckpoint({
 
   // Tab lock heartbeat interval (side-effect ref, not state)
   const tabLockIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Mid-run diff snapshots: checkpoint flush sites kick a throttled capture
+  // and the next save folds the freshest snapshot in, so a non-expiry
+  // checkpoint can cold-resume with the uncommitted changes when the sandbox
+  // dies mid-run. The tracker keys snapshots by sandboxId, so a recreated
+  // sandbox never inherits a stale diff.
+  const diffSnapshotTrackerRef = useRef(
+    createRunDiffSnapshotTracker({ fetchDiff: fetchSandboxDiff }),
+  );
 
   // Resume state
   const [interruptedCheckpoint, setInterruptedCheckpoint] = useState<RunCheckpoint | null>(null);
@@ -309,7 +319,9 @@ export function useChatCheckpoint({
         zenGo: engineState.provider === 'zen' ? getZenGoMode() : undefined,
         workingMemory: lastCoderStateRef.current,
         sandboxSessionId: sandboxIdRef.current,
-        savedDiff: overrides?.savedDiff,
+        savedDiff:
+          overrides?.savedDiff ??
+          diffSnapshotTrackerRef.current.getSavedDiffFor(sandboxIdRef.current),
         userAborted: abortRef.current || undefined,
       });
     },
@@ -396,10 +408,18 @@ export function useChatCheckpoint({
         repoId: repoRef.current || '',
         userAborted: abortRef.current || undefined,
         workspaceSessionId: workspaceSessionIdRef.current || undefined,
+        savedDiff: diffSnapshotTrackerRef.current.getSavedDiffFor(sandboxIdRef.current),
       });
 
       saveRunCheckpoint(checkpoint);
       captureV1Checkpoint(engineState.chatId, reason);
+
+      // Refresh the stash for the NEXT save. Fire-and-forget is safe here:
+      // the tracker absorbs failures (with a structured log) and throttles
+      // itself, and the synchronous save above already used the freshest
+      // snapshot available.
+      const sandboxId = sandboxIdRef.current;
+      if (sandboxId) void diffSnapshotTrackerRef.current.capture(sandboxId);
     },
     [
       abortRef,
