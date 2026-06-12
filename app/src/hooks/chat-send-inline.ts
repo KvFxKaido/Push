@@ -56,6 +56,7 @@ import {
   recordVerificationMutation,
 } from '@/lib/verification-runtime';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
+import { parseUntrackedFileSet } from '@/lib/auditor-delegation-handler';
 import type { CoderCheckpointState } from '@push/lib/coder-agent';
 import type { LlmMessage, PushStream, PushStreamEvent } from '@push/lib/provider-contract';
 import type { VerificationPolicy } from '@/lib/verification-policy';
@@ -591,9 +592,15 @@ export async function startInlineCoderTurn(
   // (same signals the delegated arc records, so the commit gate sees an
   // inline turn's mutations the same way). ---
   let lastTaskDiff: string | null = null;
+  let postCoderHead: string | undefined;
+  let postUntrackedFiles: Set<string> | undefined;
+  let diffProbed = false;
   try {
     const diffResult = await getSandboxDiff(sandboxId);
     lastTaskDiff = diffResult.diff || null;
+    postCoderHead = diffResult.head_sha;
+    postUntrackedFiles = parseUntrackedFileSet(diffResult.git_status);
+    diffProbed = true;
   } catch {
     /* verification state can still update from the summary */
   }
@@ -616,41 +623,75 @@ export async function startInlineCoderTurn(
     ),
   );
 
-  // --- Auditor: same gate as the delegated arc. ---
-  const auditorGate = await runCoderAuditorGate(
-    {
-      repoRef: ctx.repoRef,
-      branchInfoRef: ctx.branchInfoRef,
-      readLatestCoderState: () => ctx.lastCoderStateRef.current,
-      appendRunEvent: ctx.appendRunEvent,
-      updateAgentStatus: ctx.updateAgentStatus,
-      updateVerificationStateForChat: ctx.updateVerificationState,
-    },
-    {
-      chatId,
-      baseCorrelation: { surface: 'web', chatId, runId: args.runId },
-      lockedProviderForChat: lockedProvider,
-      resolvedModelForChat: resolvedModel || undefined,
-      verificationPolicy,
-      auditorInput: {
-        taskList: [args.trimmedText],
-        allCards: result.cards,
-        summaries: [result.summary],
-        allCriteriaResults: result.criteriaResults ?? [],
-        totalRounds: result.rounds,
-        totalCheckpoints: result.checkpoints,
-        lastTaskDiff,
-        latestDiffPaths,
-        coderMemoryScope: memoryScope,
-        verificationCommandsById: new Map(),
-        harnessSettings,
-        currentSandboxId: sandboxId,
-        originBranch: branchInfo?.currentBranch,
-        preCoderHead,
-        preCoderUntrackedFiles,
-      },
-    },
+  // --- Auditor: a SAFE/UNSAFE commit gate, so it only fires when the turn
+  // actually changed the workspace. A read-only/conversational turn ("what
+  // changed recently?") produces a summary but no diff and no commit — the
+  // Auditor would otherwise "evaluate" prose and append a spurious verdict.
+  // "Changed" has three independent signals, since none alone is complete:
+  //   - a non-empty `git diff HEAD` (tracked-file edits),
+  //   - HEAD moved off the pre-run snapshot (the coder committed — a clean
+  //     working tree isn't proof of no work),
+  //   - a brand-new untracked file, which `git diff HEAD` doesn't show at
+  //     all — it surfaces only as `?? path` in git_status, so compare the
+  //     post-run untracked set against the pre-run baseline (review #897 P1).
+  // When the diff probe failed we can't tell, so audit (conservative). ---
+  const committedSinceStart = Boolean(
+    postCoderHead && preCoderHead && postCoderHead !== preCoderHead,
   );
+  const preUntracked = new Set(preCoderUntrackedFiles ?? []);
+  const addedUntrackedFile = postUntrackedFiles
+    ? [...postUntrackedFiles].some((path) => !preUntracked.has(path))
+    : false;
+  const workspaceChanged =
+    !diffProbed || Boolean(lastTaskDiff) || committedSinceStart || addedUntrackedFile;
+  if (!workspaceChanged) {
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'inline_auditor_skipped',
+        mode: 'inline',
+        chatId,
+        runId: args.runId,
+        reason: 'no_workspace_change',
+      }),
+    );
+  }
+  const auditorGate = workspaceChanged
+    ? await runCoderAuditorGate(
+        {
+          repoRef: ctx.repoRef,
+          branchInfoRef: ctx.branchInfoRef,
+          readLatestCoderState: () => ctx.lastCoderStateRef.current,
+          appendRunEvent: ctx.appendRunEvent,
+          updateAgentStatus: ctx.updateAgentStatus,
+          updateVerificationStateForChat: ctx.updateVerificationState,
+        },
+        {
+          chatId,
+          baseCorrelation: { surface: 'web', chatId, runId: args.runId },
+          lockedProviderForChat: lockedProvider,
+          resolvedModelForChat: resolvedModel || undefined,
+          verificationPolicy,
+          auditorInput: {
+            taskList: [args.trimmedText],
+            allCards: result.cards,
+            summaries: [result.summary],
+            allCriteriaResults: result.criteriaResults ?? [],
+            totalRounds: result.rounds,
+            totalCheckpoints: result.checkpoints,
+            lastTaskDiff,
+            latestDiffPaths,
+            coderMemoryScope: memoryScope,
+            verificationCommandsById: new Map(),
+            harnessSettings,
+            currentSandboxId: sandboxId,
+            originBranch: branchInfo?.currentBranch,
+            preCoderHead,
+            preCoderUntrackedFiles,
+          },
+        },
+      )
+    : null;
 
   // --- Memory hygiene: file-backed context that the turn mutated is stale. ---
   if (memoryScope && latestDiffPaths && latestDiffPaths.length > 0) {

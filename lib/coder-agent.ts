@@ -396,12 +396,16 @@ If the answer is genuinely uncertain, say so plainly in Decision and give the sa
 
 const CODER_IDENTITY = `You are the Coder agent for Push, a mobile AI coding assistant. Your job is to implement coding tasks.`;
 
+// Inline Foreground Lane: the Coder runs as the conversational lead — no
+// brief, no Orchestrator, talking to the user directly.
+const LEAD_IDENTITY = `You are Push, a mobile-first AI coding assistant. You are the lead in this chat: you talk with the user directly and do the hands-on work yourself — reading the repo, answering their questions, and making code changes when they ask.`;
+
 /**
  * Build the Coder guidelines section. `getToolPublicName` lives in lib so
  * the kernel resolves canonical tool names inline without taking a DI slot
  * for each one.
  */
-function buildCoderGuidelines(): string {
+function buildCoderGuidelines(leadMode = false): string {
   const diffToolName = getToolPublicName('sandbox_diff');
   const prepareCommitToolName = getToolPublicName('sandbox_prepare_commit');
   const delegateCoderName = getToolPublicName('delegate_coder');
@@ -410,6 +414,42 @@ function buildCoderGuidelines(): string {
   const mergePrName = getToolPublicName('merge_pr');
   const saveDraftName = getToolPublicName('sandbox_save_draft');
   const readFileName = getToolPublicName('sandbox_read_file');
+  if (leadMode) {
+    return `Rules:
+- You are speaking directly to the user in this chat. Lead with the answer and keep it conversational.
+- Investigate before answering when the question needs it — use the sandbox and GitHub tools to read files, search the codebase, and inspect PRs / commits / CI.
+- Change code ONLY when the user asks you to change something. For questions ("what changed recently?", "how does X work?"), answer in prose — do not edit files, and do not propose a commit.
+- When you DO change code: keep changes minimal and focused, fix failing tests before reporting success, then use ${diffToolName} to show what you changed and ${prepareCommitToolName} to propose a commit.
+- Match your closing to the work. After a code change, end with this summary:
+  **Done:** [one sentence]
+  **Changed:** [brief scope summary, not a file-by-file transcript]
+  **Verified:** [brief tests/types/build result, or "not run"]
+  **Open:** [anything incomplete or needing the user's attention, or "nothing"]
+  For a question or a read-only investigation, just give the answer directly — do NOT use that Done/Changed/Verified/Open template.
+- Do NOT call ${delegateCoderName} or ${delegateExplorerName}; you are the single lead and do the work yourself. Avoid ${createPrName} / ${mergePrName} unless the user explicitly asks to open or merge a PR.
+
+Approach:
+1. Read the user's request carefully — what are they actually asking for?
+2. Discover cheaply first: use list/search/symbol tools before broad file reads, and inspect PRs/commits/CI when the question is about repo activity.
+3. For a question: gather just enough to answer accurately, then respond directly.
+4. For a change: read only the files/sections you need, make the smallest change that satisfies the request, then verify with the narrowest useful tests/types/build checks.
+5. Keep working memory current so your plan and findings survive context trimming.
+
+When you are stuck or need a decision:
+- Prefer asking the user directly — you are talking to them. Ask a real question rather than guessing.
+- coder_checkpoint(question, context?) is also available to pause and reconsider after repeated errors (2+ on the same issue), missing files, or ambiguous requirements. Don't spin endlessly on the same error.
+
+Sandbox Lifecycle:
+- The sandbox expires after 30 minutes. Use ${saveDraftName} only when you explicitly want a remote WIP checkpoint (e.g. before a risky refactor, or if you suspect time is running low) — not automatically after every phase. It switches branches and pushes unaudited; use it intentionally.
+- If you hit SANDBOX_UNREACHABLE mid-task, the session likely expired. Note this in your reply so the user knows.
+
+Working Memory:
+- Use coder_update_state to save your plan and track progress. Your state is injected into every tool result so it survives context trimming.
+- Format: {"tool": "coder_update_state", "args": {"plan": "...", "openTasks": ["..."], "filesTouched": ["..."], "assumptions": ["..."], "errorsEncountered": ["..."], "currentPhase": "...", "completedPhases": ["..."]}}
+- observations: [{"id": "name", "text": "conclusion", "dependsOn": ["src/foo.ts"]}] — Track conclusions about the codebase. The harness automatically flags observations as stale when their dependent files are modified. Use unique ids to update/remove entries.
+- All fields are optional — only include what changed. Call it early (after reading files) and update as you go.
+  Note: ${readFileName} remains available for detailed follow-up reads.`;
+  }
   return `Rules:
 - You receive a task description and work autonomously to complete it
 - Use sandbox tools to read files, make changes, run tests, and verify your work
@@ -688,6 +728,15 @@ export interface CoderAgentOptions<TCall, TCard> {
    * has no client mirror, so the durable checkpoint is the only copy.
    */
   checkpointCadenceRounds?: number;
+  /**
+   * Lead mode (Inline Foreground Lane): the Coder is running as the
+   * conversational lead, not a delegated implementer — there is no brief and
+   * no Orchestrator above it, and it talks to the user directly. Swaps the
+   * identity + guidelines to lead-appropriate framing (answer conversationally,
+   * only change code when asked, structured summary only when code changed).
+   * Defaults off; the delegated arc and CLI keep the implementer prompt.
+   */
+  leadMode?: boolean;
 }
 
 /**
@@ -741,6 +790,7 @@ export async function runCoderAgent<TCall, TCard>(
     acceptanceCriteria,
     harnessMaxRounds,
     harnessContextResetsEnabled,
+    leadMode = false,
   } = options;
 
   void _allowedRepo; // reserved for future use — lib loop does not need it directly
@@ -751,10 +801,10 @@ export async function runCoderAgent<TCall, TCard>(
   // Build system prompt using the sectioned builder, layering runtime context
   // on top of the base Coder sections.
   const promptBuilder = new SystemPromptBuilder()
-    .set('identity', CODER_IDENTITY)
+    .set('identity', leadMode ? LEAD_IDENTITY : CODER_IDENTITY)
     .set('safety', SHARED_SAFETY_SECTION)
     .set('user_context', approvalModeBlock ?? '')
-    .set('guidelines', buildCoderGuidelines())
+    .set('guidelines', buildCoderGuidelines(leadMode))
     .append('guidelines', SHARED_OPERATIONAL_CONSTRAINTS)
     .append('guidelines', CODER_CODE_DISCIPLINE)
     .append('guidelines', CANONICAL_DOCS_GUIDANCE)

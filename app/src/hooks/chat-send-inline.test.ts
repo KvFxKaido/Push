@@ -64,6 +64,19 @@ vi.mock('@/lib/context-memory', () => ({
   invalidateMemoryForChangedFiles: (...args: unknown[]) => mockInvalidateMemory(...args),
 }));
 
+// Faithful stand-in for the real git_status parser (own tests live in
+// auditor-delegation-handler.test.ts) — avoids dragging that heavy module's
+// graph into this suite's partial mocks.
+vi.mock('@/lib/auditor-delegation-handler', () => ({
+  parseUntrackedFileSet: (status?: string | null) => {
+    const set = new Set<string>();
+    for (const line of String(status ?? '').split(/\r?\n/)) {
+      if (line.startsWith('?? ')) set.add(line.slice(3).trim());
+    }
+    return set;
+  },
+}));
+
 import {
   buildInlineTurnPreamble,
   createInlineTranscriptMirror,
@@ -467,6 +480,40 @@ describe('startInlineCoderTurn', () => {
     expect(gateInput.auditorInput.preCoderHead).toBe('abc');
     expect(gateInput.auditorInput.preCoderUntrackedFiles).toEqual(['junk.txt']);
     expect(gateInput.auditorInput.currentSandboxId).toBe('sb-1');
+  });
+
+  it('skips the Auditor on a read-only turn (no diff, HEAD unmoved) — no spurious verdict', async () => {
+    // Conversational turn: clean tree and HEAD still at the pre-run snapshot.
+    mockGetSandboxDiff.mockResolvedValue({ diff: '', head_sha: 'abc' });
+    mockRunCoderAuditorGate.mockResolvedValue({
+      evalResult: { verdict: 'complete', summary: 'ok', gaps: [] },
+      auditorSummaryLine: '[Evaluation: COMPLETE] ok',
+    });
+    const { ctx, store } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    expect(mockRunCoderAuditorGate).not.toHaveBeenCalled();
+    expect(lastAssistant(store).content).toBe('Did the thing.');
+  });
+
+  it('still audits when the coder committed (clean tree but HEAD advanced)', async () => {
+    mockGetSandboxDiff.mockResolvedValue({ diff: '', head_sha: 'def' }); // moved off 'abc'
+    const { ctx } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+    expect(mockRunCoderAuditorGate).toHaveBeenCalled();
+  });
+
+  it('still audits a brand-new untracked file (empty diff, HEAD unmoved) — review #897', async () => {
+    // `git diff HEAD` is empty for an unstaged new file; it surfaces only as
+    // `?? path` in git_status, not in the pre-run untracked baseline (junk.txt).
+    mockGetSandboxDiff.mockResolvedValue({
+      diff: '',
+      head_sha: 'abc',
+      git_status: '?? src/brand-new.ts\n?? junk.txt\n',
+    });
+    const { ctx } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+    expect(mockRunCoderAuditorGate).toHaveBeenCalled();
   });
 
   it('bridges the kernel checkpoint into the V1 capture: ROUND_STARTED + transcript swap + flush', async () => {
