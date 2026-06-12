@@ -977,6 +977,41 @@ async function sessionDirBytes(sessionId: string): Promise<number> {
 }
 
 /**
+ * Authoritative emptiness check for the destructive `empty` selector. The
+ * `lastUserMessage` preview from `listSessions()` tail-reads only the last
+ * ~16KB of `messages.jsonl` — a real human turn buried under a large
+ * tool-output/digest tail previews as `''`, which is fine for the resume
+ * picker but catastrophic as a delete criterion (Codex P1, PR #906).
+ * Reads the FULL transcript, falling back to the embedded `state.json`
+ * messages for legacy sessions without a log. Any read failure classifies
+ * as NON-empty — when in doubt, keep.
+ */
+async function sessionHasHumanTurn(sessionId: string): Promise<boolean> {
+  for (const root of getSessionRootsForRead()) {
+    try {
+      const log = await loadMessagesLog(root, sessionId);
+      if (log !== null) {
+        if (extractLastHumanUserMessage(log)) return true;
+        // Log exists in this root and provably has no human turn; other
+        // read roots may still hold a divergent copy — keep scanning.
+        continue;
+      }
+    } catch {
+      return true; // corrupt log — not provably empty, keep
+    }
+    try {
+      const raw = await fs.readFile(getStatePathInRoot(root, sessionId), 'utf8');
+      const state = JSON.parse(raw) as { messages?: unknown };
+      if (extractLastHumanUserMessage(state.messages)) return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue; // not in this root
+      return true; // unreadable state — not provably empty, keep
+    }
+  }
+  return false;
+}
+
+/**
  * Select sessions by the AND of every provided selector, skip any with a
  * fresh run marker, and (unless `dryRun`) delete the rest. At least one
  * selector is required — a bare prune that matches everything is a
@@ -1027,7 +1062,6 @@ export async function pruneSessions(
   };
 
   for (const session of sessions) {
-    if (selectors.empty === true && session.lastUserMessage) continue;
     if (
       typeof selectors.olderThanDays === 'number' &&
       session.updatedAt >= now - selectors.olderThanDays * 86_400_000
@@ -1036,6 +1070,13 @@ export async function pruneSessions(
     }
     if (typeof selectors.keep === 'number' && !beyondKeep.has(session.sessionId)) continue;
     if (modelRe && !modelRe.test(`${session.provider}/${session.model}`)) continue;
+    // Emptiness last: the cheap tail preview rules sessions IN as non-empty,
+    // but ruling one OUT (deletable) needs the full-transcript check — run
+    // it only for sessions that already passed every other selector.
+    if (selectors.empty === true) {
+      if (session.lastUserMessage) continue;
+      if (await sessionHasHumanTurn(session.sessionId)) continue;
+    }
 
     const marker = await readRunMarker(session.sessionId).catch(() => null);
     if (marker && now - marker.startedAt < ACTIVE_RUN_MARKER_MAX_AGE_MS) {

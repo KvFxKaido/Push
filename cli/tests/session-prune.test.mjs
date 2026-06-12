@@ -112,6 +112,43 @@ describe('pruneSessions', () => {
     );
   });
 
+  it('does not classify a session as empty when its human turn is buried past the preview tail', async () => {
+    // `listSessions().lastUserMessage` tail-reads only the last ~16KB of the
+    // log. A real human turn followed by a large tool-output tail previews
+    // as '' — fine for the picker, but the destructive empty selector must
+    // confirm against the FULL transcript (Codex P1, PR #906).
+    const messages = [
+      { role: 'system', content: 'You are a helpful assistant.' },
+      { role: 'user', content: 'summarize the giant log file' },
+    ];
+    // ~40KB of internal-envelope tail (tool results), well past the 16KB
+    // preview window so the tail-reader finds no qualifying user message.
+    for (let i = 0; i < 20; i++) {
+      messages.push({
+        role: 'user',
+        content: `[TOOL_RESULTS]\n${'x'.repeat(2048)}\n[/TOOL_RESULTS]`,
+      });
+    }
+    const state = createSessionState({
+      provider: 'zen',
+      model: 'real-model',
+      cwd: tmpDir,
+      messages,
+    });
+    await saveSessionState(state);
+
+    // Preconditions: the preview really is blind to the buried turn —
+    // otherwise this test would pass vacuously.
+    const listed = (await listSessions()).find((s) => s.sessionId === state.sessionId);
+    assert.equal(listed?.lastUserMessage, '', 'tail preview unexpectedly found the buried turn');
+
+    const report = await pruneSessions({ empty: true }, { dryRun: true, now: NOW });
+    assert.ok(
+      !report.candidates.some((c) => c.sessionId === state.sessionId),
+      'long non-empty session misclassified as empty',
+    );
+  });
+
   it('matches provider/model against the regex selector', async () => {
     const fixtureA = await seedSession({ provider: 'ollama', model: 'ollama-base' });
     const fixtureB = await seedSession({ provider: 'ollama', model: 'replay-target' });
