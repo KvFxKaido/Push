@@ -331,8 +331,17 @@ type ToolCompleteEvent = Extract<RunEventInput, { type: 'tool.execution_complete
  * !isToolCall && !isToolResult from the next turn's model context, and
  * checkpoints capture the kernel transcript (not conv.messages), so these
  * never feed back to the model or corrupt resume state.
+ *
+ * When `cards` are supplied they are attached to the last synthetic call
+ * message so they render inside the collapsible (matching the old Orchestrator
+ * behaviour). ToolCallSummary hoists pending-action cards (ask-user, in-flight
+ * commit-review) out of the group regardless, so they stay visible.
  */
-function insertSyntheticToolPairs(ctx: SendLoopContext, events: ToolCompleteEvent[]): void {
+function insertSyntheticToolPairs(
+  ctx: SendLoopContext,
+  events: ToolCompleteEvent[],
+  cards?: ChatCard[],
+): void {
   if (events.length === 0) return;
   const { chatId } = ctx;
   ctx.setConversations((prev) => {
@@ -343,7 +352,9 @@ function insertSyntheticToolPairs(ctx: SendLoopContext, events: ToolCompleteEven
     if (msgs[lastIdx]?.role !== 'assistant') return prev;
 
     const synthetic: ChatMessage[] = [];
-    for (const event of events) {
+    for (let i = 0; i < events.length; i++) {
+      const event = events[i];
+      const isLast = i === events.length - 1;
       const meta = buildToolMeta({
         toolName: event.toolName,
         source: event.toolSource,
@@ -355,6 +366,7 @@ function insertSyntheticToolPairs(ctx: SendLoopContext, events: ToolCompleteEven
       // visibleToModel: false — display-only; filterModelVisibleMessages
       // drops these so they never feed back to the model on mode switches
       // or Orchestrator-path replays (undefined would be treated as visible).
+      // Cards go on the last call message so they render inside the collapsible.
       synthetic.push({
         id: createId(),
         role: 'assistant',
@@ -364,6 +376,7 @@ function insertSyntheticToolPairs(ctx: SendLoopContext, events: ToolCompleteEven
         isToolCall: true,
         toolMeta: meta,
         visibleToModel: false,
+        ...(isLast && cards && cards.length > 0 ? { cards } : {}),
       });
       // Synthetic user message carrying the tool result preview.
       synthetic.push({
@@ -783,15 +796,19 @@ export async function startInlineCoderTurn(
   }
 
   // --- Complete the transcript: kernel summary (+ Auditor verdict line)
-  // replaces the streamed placeholder; kernel cards ride on the message.
-  // Tool disclosure: insert synthetic isToolCall/isToolResult pairs before
-  // the placeholder first, so groupChatMessages renders the collapsible
-  // "Used N tools" above the answer (v1: tool name + duration only). ---
-  insertSyntheticToolPairs(ctx, capturedToolEvents);
+  // replaces the streamed placeholder. Cards go inside the collapsible
+  // disclosure (on the last synthetic call message) when tool events were
+  // captured, so they fold away like the old Orchestrator path. When no
+  // tools ran (pure conversational turn), cards stay on the final message. ---
+  const hasToolDisclosure = capturedToolEvents.length > 0;
+  insertSyntheticToolPairs(ctx, capturedToolEvents, hasToolDisclosure ? result.cards : undefined);
   const finalContent = auditorGate?.auditorSummaryLine
     ? `${result.summary}\n\n${auditorGate.auditorSummaryLine}`
     : result.summary;
-  completeAssistantMessage(ctx, { content: finalContent, cards: result.cards });
+  completeAssistantMessage(ctx, {
+    content: finalContent,
+    cards: hasToolDisclosure ? undefined : result.cards,
+  });
   ctx.updateAgentStatus({ active: false, phase: '' });
 
   logInlineTurnCompleted({
