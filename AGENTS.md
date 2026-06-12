@@ -7,7 +7,6 @@ This is the **required entry doc** for Push. Repo instruction loaders read `PUSH
 ## Core model
 
 - Push is a mobile-first AI coding notebook with a web app, an experimental Capacitor Android shell, and a local CLI.
-- **Every surface is the same single conversational lead** — the agent you talk to. Surfaces differ only in *reach*, not interaction model: the CLI/daemon is that same lead with more capabilities because it's local (real filesystem, real shell, persistent daemon, no sandbox token/expiry). The target is "feels like the app, with more capabilities." The web `inline` lane is the collapsed lead today; the CLI/daemon still run the delegated org-chart model and converging them onto the single lead is tracked work — new `cli/` work should treat the single-lead model as the target. See [`docs/decisions/Agent Runtime Decisions.md`](<docs/decisions/Agent Runtime Decisions.md>) §10.
 - Internal runtime roles are **Orchestrator**, **Explorer**, **Coder**, **Reviewer**, and **Auditor**. User-facing surfaces de-emphasize that org chart: Explorer/Coder render as workflow phases through `lib/role-display.ts`, while Reviewer/Auditor keep names where attribution is a trust signal.
 - Repo context is locked to the selected repo.
 - Chats are branch-scoped.
