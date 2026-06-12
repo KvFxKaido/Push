@@ -125,6 +125,60 @@ describe('iteratePushStreamText', () => {
     expect(text).toBe('');
   });
 
+  it('resets the activity timer on reasoning_delta when the heavy-reasoner opt-in is set', async () => {
+    // Same gapped stream as the default-semantics test above, but with
+    // `reasoningResetsActivityTimer` the reasoning gaps count as progress
+    // and the stream survives to deliver its text. The deep reviewer opts
+    // in (glm-5.1 reasons >60s before its first token on big rounds; an
+    // actively-progressing round died on the activity timeout — PR #907).
+    const stream = makeGappedPushStream([
+      { event: { type: 'reasoning_delta', text: 'thinking 1' }, gapMs: 40 },
+      { event: { type: 'reasoning_delta', text: 'thinking 2' }, gapMs: 40 },
+      { event: { type: 'text_delta', text: 'final answer' }, gapMs: 40 },
+      { event: { type: 'done', finishReason: 'stop' }, gapMs: 0 },
+    ]);
+
+    const promise = iteratePushStreamText(
+      stream,
+      { provider: 'openrouter', model: 'm', messages: [] },
+      50,
+      'timed out',
+      undefined,
+      undefined,
+      { reasoningResetsActivityTimer: true },
+    );
+    await vi.runAllTimersAsync();
+    const { error, text } = await promise;
+
+    expect(error).toBeNull();
+    expect(text).toBe('final answer');
+  });
+
+  it('wall-clock still bounds an endless reasoner even with the opt-in', async () => {
+    // Reasoning deltas every 30ms keep the 50ms activity timer alive
+    // forever; the 100ms wall-clock backstop is what ends the round — the
+    // documented precondition for opting in.
+    const events: { event: PushStreamEvent; gapMs: number }[] = [];
+    for (let i = 0; i < 20; i++) {
+      events.push({ event: { type: 'reasoning_delta', text: `loop ${i}` }, gapMs: 30 });
+    }
+    const stream = makeGappedPushStream(events);
+
+    const promise = iteratePushStreamText(
+      stream,
+      { provider: 'openrouter', model: 'm', messages: [] },
+      50,
+      'activity timed out',
+      100,
+      'wall-clock cap hit',
+      { reasoningResetsActivityTimer: true },
+    );
+    await vi.runAllTimersAsync();
+    const { error } = await promise;
+
+    expect(error?.message).toBe('wall-clock cap hit');
+  });
+
   it('does NOT reset the activity timer on tool_call_delta — buffering tool args time out', async () => {
     const stream = makeGappedPushStream([
       { event: { type: 'tool_call_delta' }, gapMs: 60 },

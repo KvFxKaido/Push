@@ -83,14 +83,21 @@ export function streamWithTimeout(
  * the event-iteration shape used by agent roles that have migrated off the
  * legacy `ProviderStreamFn` callback.
  *
- * The activity timer resets only on `text_delta` events — matches the
- * legacy `streamWithTimeout` + `onToken` path the migrated roles came from
- * (Coder/Reviewer/Planner/Explorer/DeepReviewer all uniformly passed
+ * The activity timer resets only on `text_delta` events by default — matches
+ * the legacy `streamWithTimeout` + `onToken` path the migrated roles came
+ * from (Coder/Reviewer/Planner/Explorer/DeepReviewer all uniformly passed
  * `undefined` for `onThinkingToken`, so reasoning tokens never counted as
  * activity at the consumer-side timer). Non-content events
  * (`reasoning_delta`, `reasoning_end`, `tool_call_delta`) are ignored for
  * timer purposes too: a model that emits only reasoning indefinitely should
  * trip the per-role round timeout exactly as it did before the migration.
+ *
+ * `opts.reasoningResetsActivityTimer` opts a caller out of that default for
+ * heavy-reasoner models (glm-5.1 legitimately streams reasoning for >60s
+ * before its first text token on large-transcript rounds — observed killing
+ * an actively-progressing deep-review round, PR #907). Only opt in when a
+ * `wallClockTimeoutMs` backstop is ALSO set: with reasoning counting as
+ * activity, the wall-clock cap is what bounds a model that reasons forever.
  *
  * Optional `wallClockTimeoutMs` adds a separate non-resetting backstop. The
  * activity timer alone is the wrong shape of failsafe for verbose-but-
@@ -120,6 +127,7 @@ export async function iteratePushStreamText<M extends LlmMessage>(
   timeoutMessage: string,
   wallClockTimeoutMs?: number,
   wallClockTimeoutMessage?: string,
+  opts?: { reasoningResetsActivityTimer?: boolean },
 ): Promise<{ error: Error | null; text: string; usage?: StreamUsage }> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -159,20 +167,24 @@ export async function iteratePushStreamText<M extends LlmMessage>(
     for await (const event of iterable) {
       if (controller.signal.aborted) break;
       if (event.type === 'text_delta') {
-        // Only `text_delta` resets the activity timer. Mirrors the legacy
-        // `onToken`-only reset semantics — a stream stuck emitting reasoning
-        // or tool-call fragments without any user-visible text should still
-        // trip the per-role round timeout.
+        // Only `text_delta` resets the activity timer by default. Mirrors the
+        // legacy `onToken`-only reset semantics — a stream stuck emitting
+        // reasoning or tool-call fragments without any user-visible text
+        // should still trip the per-role round timeout.
         resetTimer();
         text += event.text;
+      } else if (event.type === 'reasoning_delta' && opts?.reasoningResetsActivityTimer) {
+        // Heavy-reasoner opt-in: thinking IS progress for this caller; the
+        // wall-clock backstop bounds a model that reasons forever.
+        resetTimer();
       } else if (event.type === 'done') {
         // Capture usage if the adapter reported it. Absent on most non-final
         // events; the terminal `done` is the only place it arrives.
         if (event.usage) usage = event.usage;
         break;
       }
-      // reasoning_delta / reasoning_end / tool_call_delta intentionally do
-      // NOT reset the timer — see the doc comment above.
+      // reasoning_end / tool_call_delta (and reasoning_delta without the
+      // opt-in) intentionally do NOT reset the timer — see the doc comment.
     }
   } catch (err) {
     if (timeoutKind === null) {

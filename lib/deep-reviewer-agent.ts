@@ -699,6 +699,11 @@ export async function runDeepReviewer<TCall, TCard>(
       `Deep review round ${roundNum} timed out after ${DEEP_REVIEW_ROUND_TIMEOUT_MS / 1000}s.`,
       DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
       `Deep review round ${roundNum} exceeded ${DEEP_REVIEW_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap — model is verbose but unproductive.`,
+      // Heavy reasoners (glm-5.1) legitimately stream reasoning for >60s
+      // before the first text token on large-transcript rounds — observed
+      // killing an actively-progressing round 7 live (PR #907). Thinking is
+      // progress here; the wall-clock cap above bounds endless reasoning.
+      { reasoningResetsActivityTimer: true },
     );
     addUsage(roundUsage);
     if (streamError) {
@@ -936,6 +941,9 @@ export async function runDeepReviewer<TCall, TCard>(
     'Deep review final output timed out.',
     DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
     `Deep review final forced output exceeded ${DEEP_REVIEW_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap.`,
+    // Same heavy-reasoner allowance as the loop rounds: the forced-output
+    // turn is where glm thinks hardest (whole-investigation synthesis).
+    { reasoningResetsActivityTimer: true },
   );
   addUsage(finalUsage);
   const finalAccumulated = rawFinalAccumulated.trim();
