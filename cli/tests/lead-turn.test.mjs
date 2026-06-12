@@ -189,6 +189,44 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
     });
   });
 
+  it('injects persisted workspace memory into the task preamble', async () => {
+    await withTempWorkspace(async (cwd) => {
+      // Same store the engine loop's `[MEMORY]` prompt section reads
+      // (loadMemory). The default lane must not drop saved project
+      // conventions — Codex P2 on PR #905.
+      await fs.mkdir(path.join(cwd, '.push'), { recursive: true });
+      await fs.writeFile(
+        path.join(cwd, '.push', 'memory.md'),
+        'Always run `npm run typecheck:tsgo` before committing.\n',
+      );
+
+      const server = await startSequencedProviderServer([{ tokens: ['Understood.'] }]);
+      try {
+        const providerConfig = makeProviderConfig(server.url);
+        const state = makeState(cwd);
+
+        const result = await runLeadKernelTurn(
+          state,
+          providerConfig,
+          'mock-key',
+          'What does notes.txt say?',
+          5,
+          { emit: () => {} },
+        );
+
+        assert.equal(result.outcome, 'success');
+        const requestText = JSON.stringify(server.requests[0]);
+        assert.ok(requestText.includes('[MEMORY]'), 'memory block missing from kernel-lane prompt');
+        assert.ok(
+          requestText.includes('Always run `npm run typecheck:tsgo` before committing.'),
+          'persisted memory content did not reach the provider',
+        );
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+
   it('round-trips a read_file tool call through executeToolCall', async () => {
     await withTempWorkspace(async (cwd) => {
       await fs.writeFile(path.join(cwd, 'notes.txt'), 'hello from notes\n');

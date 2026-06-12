@@ -49,7 +49,11 @@ import {
   READ_ONLY_TOOLS,
   TOOL_PROTOCOL,
 } from './tools.js';
-import { buildWorkspaceSnapshot, loadProjectInstructions } from './workspace-context.js';
+import {
+  buildWorkspaceSnapshot,
+  loadMemory,
+  loadProjectInstructions,
+} from './workspace-context.js';
 import {
   appendSessionEvent as appendSessionEventRaw,
   makeRunId,
@@ -171,11 +175,14 @@ const PRIOR_TURN_MAX_CHARS = 700;
 
 /**
  * Build the kernel task preamble for a lead turn: optional workspace
- * snapshot, bounded recent conversation, and the raw user turn. Mirrors the
- * web lane's `buildInlineTurnPreamble` (no delegation-brief ceremony) with
- * one CLI addition — the workspace snapshot block the engine loop injects
- * via its system prompt rides in the preamble here, since the kernel owns
- * its own system prompt.
+ * snapshot, optional persisted workspace memory, bounded recent
+ * conversation, and the raw user turn. Mirrors the web lane's
+ * `buildInlineTurnPreamble` (no delegation-brief ceremony) with the CLI
+ * additions the engine loop injects via its system prompt — the workspace
+ * snapshot and the `[MEMORY]` block (`save_memory` entries; same wrapper
+ * vocabulary as `enrichCliBuilder`) ride in the preamble here, since the
+ * kernel owns its own system prompt. Without the memory block the default
+ * lane silently dropped saved project conventions (Codex P2, PR #905).
  *
  * `messages` is the session transcript *including* the just-appended user
  * turn (callers append before running the turn); the trailing user message
@@ -185,6 +192,7 @@ export function buildLeadTurnPreamble(
   userText: string,
   messages: ReadonlyArray<Message>,
   workspaceSnapshot: string,
+  memory?: string | null,
 ): string {
   const conversational = messages.filter((m) => {
     if (m.role !== 'user' && m.role !== 'assistant') return false;
@@ -202,6 +210,10 @@ export function buildLeadTurnPreamble(
   const lines: string[] = [];
   if (workspaceSnapshot.trim()) {
     lines.push(workspaceSnapshot.trim());
+    lines.push('');
+  }
+  if (memory && memory.trim()) {
+    lines.push(`[MEMORY]\n${memory.trim()}\n[/MEMORY]`);
     lines.push('');
   }
   if (prior.length > 0) {
@@ -276,15 +288,22 @@ export async function runLeadKernelTurn(
 
   // Workspace context — best-effort, same loaders as the engine's prompt
   // enrichment. The kernel owns its system prompt, so project instructions
-  // ride the kernel's `projectInstructions` slot and the snapshot rides the
-  // task preamble.
-  const [snapshot, instructions, githubProtocol] = await Promise.all([
+  // ride the kernel's `projectInstructions` slot while the snapshot and the
+  // persisted `[MEMORY]` block (`save_memory` entries) ride the task
+  // preamble.
+  const [snapshot, instructions, memory, githubProtocol] = await Promise.all([
     buildWorkspaceSnapshot(state.cwd).catch((): string => ''),
     loadProjectInstructions(state.cwd).catch((): null => null),
+    loadMemory(state.cwd).catch((): null => null),
     getGitHubToolProtocolAsync().catch((): string => ''),
   ]);
 
-  const taskPreamble = buildLeadTurnPreamble(userText, state.messages as Message[], snapshot);
+  const taskPreamble = buildLeadTurnPreamble(
+    userText,
+    state.messages as Message[],
+    snapshot,
+    memory,
+  );
 
   // Tee the provider stream into the engine event vocabulary so the TUI /
   // REPL / daemon clients render the kernel's rounds exactly like engine
