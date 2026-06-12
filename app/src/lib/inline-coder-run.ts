@@ -601,6 +601,10 @@ export async function runInPageCoderKernel(
     harnessContextResetsEnabled: spec.harnessSettings?.contextResetsEnabled,
     resumeState: spec.resumeState,
     checkpointCadenceRounds: spec.checkpointCadenceRounds,
+    // The lead surface is the conversational lead — swap the kernel's
+    // implementer prompt for lead-mode framing (same trigger as the tool
+    // surface). The delegated arc leaves this unset.
+    leadMode: spec.leadToolSurface,
   };
 
   // --- Run the lib kernel ---

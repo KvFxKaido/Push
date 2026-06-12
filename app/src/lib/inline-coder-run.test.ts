@@ -190,6 +190,7 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
         'harnessContextResetsEnabled',
         'harnessMaxRounds',
         'instructionFilename',
+        'leadMode',
         'memoryToolProtocol',
         'modelId',
         'projectInstructions',
@@ -231,6 +232,7 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
     // The inline lane's knobs stay dormant on the delegated arc.
     expect(options.resumeState).toBeUndefined();
     expect(options.checkpointCadenceRounds).toBeUndefined();
+    expect(options.leadMode).toBeFalsy();
     expect(callbacks.onCheckpoint).toBeUndefined();
     // Lead tool surface is inline-only: the delegated Coder advertises no
     // GitHub/ask_user/artifact protocols (narrow sandbox/web/memory surface).
@@ -536,6 +538,8 @@ describe('lead tool surface (inline foreground lane)', () => {
     const joined = options.extraToolProtocols!.join('\n');
     expect(joined).not.toContain('delegate_explorer');
     expect(joined).not.toContain('EXPLORER-FIRST');
+    // Lead mode also swaps the kernel prompt (implementer → lead voice).
+    expect(options.leadMode).toBe(true);
   });
 
   it('routes GitHub read calls into the parallel-read bucket', async () => {
@@ -553,6 +557,7 @@ describe('lead tool surface (inline foreground lane)', () => {
   it('keeps the extra surface dormant when leadToolSurface is false', async () => {
     const options = await runLeadCall(false);
     expect(options.extraToolProtocols).toBeUndefined();
+    expect(options.leadMode).toBeFalsy();
     expect(options.branchContext?.repoFullName).toBeUndefined();
     const githubCall = '{"tool":"fetch_pr","args":{"repo":"KvFxKaido/Push","pr":1}}';
     const detected = options.detectAllToolCalls(githubCall);

@@ -91,11 +91,13 @@ function baseCoderOptions(overrides: {
   detectAnyToolCall?: CoderAgentOptions<Call, never>['detectAnyToolCall'];
   detectAllToolCalls?: CoderAgentOptions<Call, never>['detectAllToolCalls'];
   evaluateAfterModel?: CoderAgentOptions<Call, never>['evaluateAfterModel'];
+  leadMode?: boolean;
 }): CoderAgentOptions<Call, never> {
   return {
     provider: 'openrouter',
     stream: overrides.stream,
     modelId: 'coder-model',
+    leadMode: overrides.leadMode,
     sandboxId: 'sb-1',
     allowedRepo: 'kvfxkaido/push',
     userProfile: null,
@@ -140,6 +142,29 @@ describe('runCoderAgent (PushStream consumer)', () => {
     const req = capturedRequests[0] as { model: string; hasSandbox?: boolean };
     expect(req.model).toBe('coder-model');
     expect(req.hasSandbox).toBe(true);
+  });
+
+  it('swaps the implementer prompt for lead-mode framing when leadMode is set', async () => {
+    const promptFor = async (leadMode: boolean): Promise<string> => {
+      const { stream, capturedRequests } = makePushStream([
+        [
+          { type: 'text_delta', text: 'ok' },
+          { type: 'done', finishReason: 'stop' },
+        ],
+      ]);
+      await runCoderAgent(baseCoderOptions({ stream, leadMode }), { onStatus: () => {} });
+      return (capturedRequests[0] as { systemPromptOverride?: string }).systemPromptOverride ?? '';
+    };
+
+    const lead = await promptFor(true);
+    expect(lead).toContain('You are the lead in this chat');
+    expect(lead).toContain('do NOT use that Done/Changed/Verified/Open template');
+    expect(lead).not.toContain('Read the delegation brief');
+    expect(lead).not.toContain('the Orchestrator');
+
+    const coder = await promptFor(false);
+    expect(coder).toContain('You are the Coder agent');
+    expect(coder).toContain('Read the delegation brief');
   });
 
   it('fires onCheckpoint at the cadence (every 5th round) with a consistent state snapshot', async () => {
