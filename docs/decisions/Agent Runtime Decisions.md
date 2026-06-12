@@ -1,7 +1,7 @@
 # Agent Runtime Decisions
 
 Status: **Current**
-Reviewed: 2026-06-11
+Reviewed: 2026-06-12
 
 This is the live decision surface for Push's agent runtime. Archived source
 notes live in [`../archive/decisions/`](../archive/decisions/README.md).
@@ -133,6 +133,34 @@ Next extraction should put daemon session lifecycle in a controller module under
 Source note:
 [`TUI Decomposition`](<../archive/decisions/TUI Decomposition - Testability Seam and Daemon Session Controller.md>).
 
+### 10. Every surface is the same conversational lead; local surfaces add reach
+
+The collapse in §2 is the product model for **every** surface, not a web-only
+default. Web, TUI, and the local daemon should all present **one agent you
+talk to** — the single conversational lead (phase-first status, no
+brief/Orchestrator ceremony) — and differ only in *reach*. The CLI/daemon is
+that same lead with a bigger tool surface precisely because it runs locally:
+the real filesystem, a real shell with no sandbox token or 30-minute expiry,
+the persistent daemon for long-running and background work, and direct machine
+access. The target is "feels like the app, with more capabilities" — not a
+different interaction model per surface.
+
+Current state / gap: the web `inline` lane is the collapsed lead today
+(`app/src/hooks/chat-send-inline.ts` plus the kernel's `leadMode` option — see
+[`Inline Foreground Lane`](<Inline Foreground Lane — Local While Watched.md>)),
+but the CLI/daemon still run the Coder as a delegated, task-graph node under an
+Orchestrator (`cli/pushd.ts` → `runCoderAgent`, never `leadMode`). So the
+surfaces have quietly diverged: the app is one lead, the CLI is still an org
+chart. Converging the CLI terminal chat onto a `leadMode` run of the **shared**
+kernel — reusing, not re-implementing, the inline lane's assembly (§1) — is the
+tracked direction. Until it lands, new `cli/` work should treat the single-lead
+model as the target rather than extend the delegated wrapper.
+
+Protected during convergence: the shared runtime semantics in §1 (one kernel,
+drift tests), the durable job engine, and the safety/Auditor boundary — the
+local lead still goes through the same gates, just without the sandbox's
+constraints.
+
 ## Active Runtime Work
 
 1. Delete the Planner/brief now that inline is the measured default (2026-06-11); attachments-on-engine-envelope is the prerequisite.
@@ -142,6 +170,7 @@ Source note:
 5. Graduate loop detection enforcement only after telemetry supports thresholds.
 6. Decide whether memory Phase 3 immutable verbatim logs are worth the storage cost.
 7. Promote the diff/annotation envelope only when a roadmap item needs it.
+8. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model.
 
 ## Archived Context Worth Knowing
 

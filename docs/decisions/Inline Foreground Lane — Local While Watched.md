@@ -8,6 +8,11 @@ Coder Delegation Collapse (archived audit) and Durable Runs — Adopt-on-Silence
 (Current) tracks.
 Owner: Push
 
+> **Surface scope:** this lane is the web implementation of the single
+> conversational lead, but the lead model is cross-surface — the TUI/daemon
+> should converge on it with local reach. See
+> [`Agent Runtime Decisions`](<Agent Runtime Decisions.md>) §10.
+
 ## Problem
 
 The `inline` delegation-mode default (#887) collapsed the Orchestrator wrapper
