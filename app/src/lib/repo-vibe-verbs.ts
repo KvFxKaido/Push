@@ -4,6 +4,9 @@ export const AI_ML_VERBS = [
   'Inferring...',
   'Tokenizing thoughts...',
   'Running inference...',
+  'Warming the GPUs...',
+  'Adjusting the weights...',
+  'Sampling from the distribution...',
 ];
 
 export const GAME_VERBS = [
@@ -12,6 +15,9 @@ export const GAME_VERBS = [
   'Loading assets...',
   'Calculating physics...',
   'Rolling initiative...',
+  'Baking lightmaps...',
+  'Pathfinding...',
+  'Respawning...',
 ];
 
 export const MOBILE_VERBS = [
@@ -19,6 +25,9 @@ export const MOBILE_VERBS = [
   'Packaging thoughts...',
   'Checking permissions...',
   'Compiling for arm64...',
+  'Signing the build...',
+  'Provisioning the simulator...',
+  'Inflating layouts...',
 ];
 
 export const RUST_VERBS = [
@@ -26,6 +35,9 @@ export const RUST_VERBS = [
   'Compiling...',
   'Satisfying the compiler...',
   'Checking lifetimes...',
+  'Unwrapping options...',
+  'Appeasing the borrow checker...',
+  'Zero-cost abstracting...',
 ];
 
 export const PYTHON_VERBS = [
@@ -33,6 +45,9 @@ export const PYTHON_VERBS = [
   'Indenting thoughts...',
   'Parsing the AST...',
   'Running in the REPL...',
+  'Spinning up a venv...',
+  'Importing antigravity...',
+  'Vectorizing...',
 ];
 
 export const WEB_JS_VERBS = [
@@ -40,6 +55,9 @@ export const WEB_JS_VERBS = [
   'Hydrating...',
   'Tree-shaking ideas...',
   'Hot reloading...',
+  'Reconciling the DOM...',
+  'Resolving the dependency graph...',
+  'Transpiling...',
 ];
 
 export const PUSH_VERBS = [
@@ -47,6 +65,9 @@ export const PUSH_VERBS = [
   'Delegating to inner agent...',
   'Dispatching tool calls...',
   'Querying the sandbox...',
+  'Consulting the runtime...',
+  'Routing the turn...',
+  'Threading the context...',
 ];
 
 export const DEVOPS_VERBS = [
@@ -54,6 +75,9 @@ export const DEVOPS_VERBS = [
   'Containerizing...',
   'Scaling to zero...',
   'Applying manifests...',
+  'Draining the node...',
+  'Rolling out...',
+  'Reconciling state...',
 ];
 
 export const DEFAULT_VERBS = [
@@ -62,6 +86,9 @@ export const DEFAULT_VERBS = [
   'Processing...',
   'Analyzing...',
   'Working through this...',
+  'Connecting the dots...',
+  'Mulling it over...',
+  'Piecing it together...',
 ];
 
 export type RepoVibe =
@@ -343,4 +370,13 @@ export function classifyRepoVibe(signals: RepoVibeSignals): RepoVibe {
 /** Pick a themed thinking-phase verb for the given repo signals. */
 export function getVibeVerb(signals: RepoVibeSignals | null): string {
   return pickRandom(VERB_POOLS[signals ? classifyRepoVibe(signals) : 'default']);
+}
+
+/**
+ * The full themed verb pool for the given repo signals. Used by the status
+ * bar to *rotate* through verbs during thinking dead air (vs `getVibeVerb`,
+ * which picks one). Returns the shared pool array — callers must not mutate.
+ */
+export function getVibeVerbs(signals: RepoVibeSignals | null): string[] {
+  return VERB_POOLS[signals ? classifyRepoVibe(signals) : 'default'];
 }

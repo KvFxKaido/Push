@@ -36,7 +36,10 @@
 
 import type { MutableRefObject } from 'react';
 import { getProviderPushStream } from '@/lib/orchestrator';
-import { getSandboxDiff } from '@/lib/sandbox-client';
+import { getSandboxDiff, getSandboxEnvironment } from '@/lib/sandbox-client';
+import { getRepoMetadata } from '@/lib/repo-metadata';
+import { getVibeVerbs } from '@/lib/repo-vibe-verbs';
+import { translateCoderStatus } from '@/lib/inline-coder-status';
 import {
   capturePreCoderSnapshot,
   createCoderCheckpointAnswerer,
@@ -189,6 +192,7 @@ export function splitVisibleContent(text: string): { visible: string; toolCallAc
  */
 export function createInlineTranscriptMirror(
   ctx: SendLoopContext,
+  thinkingVerbs?: string[],
 ): (event: PushStreamEvent) => void {
   const { chatId } = ctx;
   let accumulated = '';
@@ -215,11 +219,18 @@ export function createInlineTranscriptMirror(
 
     const { visible, toolCallActive } = splitVisibleContent(accumulated);
 
-    // Phase: prose streams as "Responding..."; while a tool construct is in
-    // flight, defer to the kernel's own `onStatus` (Editing/Exploring)
-    // rather than fight it with a generic label.
+    // Phase: reasoning is "dead air" → rotate themed verbs; visible prose
+    // streams as "Responding..."; while a tool construct is in flight, defer
+    // to the kernel's own `onStatus` (Editing/Exploring) rather than fight it.
     if (event.type === 'reasoning_delta') {
-      ctx.updateAgentStatus({ active: true, phase: 'Reasoning...' }, { chatId, log: false });
+      ctx.updateAgentStatus(
+        {
+          active: true,
+          phase: 'Thinking…',
+          ...(thinkingVerbs?.length ? { verbs: thinkingVerbs } : {}),
+        },
+        { chatId, log: false },
+      );
     } else if (!toolCallActive) {
       ctx.updateAgentStatus({ active: true, phase: 'Responding...' }, { chatId, log: false });
     }
@@ -406,6 +417,17 @@ export async function startInlineCoderTurn(
   const verificationPolicy = args.getVerificationPolicyForChat(chatId);
   const harnessSettings = resolveHarnessSettings(lockedProvider, resolvedModel || undefined);
 
+  // Themed thinking verbs for the spinner, classified off real repo signals
+  // the same way the Orchestrator round loop does (topics → domain, boot-time
+  // manifests → language, name as fallback). Resolved once; the bar rotates.
+  const repoMeta = getRepoMetadata(repoFullName);
+  const thinkingVerbs = getVibeVerbs({
+    fullName: repoFullName,
+    topics: repoMeta?.topics ?? null,
+    projectMarkers: getSandboxEnvironment(sandboxId)?.project_markers ?? null,
+    language: repoMeta?.language ?? null,
+  });
+
   // Bail before the snapshot round-trip if the user already cancelled (the
   // mirror guards every event the same way) — no point paying for a sandbox
   // call and kernel launch we'd immediately abort.
@@ -424,7 +446,7 @@ export async function startInlineCoderTurn(
   const { preCoderHead, preCoderUntrackedFiles } = await capturePreCoderSnapshot(sandboxId);
 
   // --- Kernel bindings ---
-  const mirror = createInlineTranscriptMirror(ctx);
+  const mirror = createInlineTranscriptMirror(ctx, thinkingVerbs);
   const stream = teePushStream(
     getProviderPushStream(lockedProvider) as unknown as PushStream<LlmMessage>,
     mirror,
@@ -509,8 +531,22 @@ export async function startInlineCoderTurn(
         checkpointCadenceRounds: 1,
       },
       {
-        onStatus: (phase, detail) =>
-          ctx.updateAgentStatus({ active: true, phase, detail }, { chatId, source: 'coder' }),
+        // Translate the kernel's internal phases ("Coder working...", "Coder
+        // executing...") into user-facing vocabulary — phase-first for active
+        // work, rotating themed verbs for the thinking dead air — so raw
+        // coder-protocol vocabulary never reaches the spinner.
+        onStatus: (phase, detail) => {
+          const render = translateCoderStatus(phase, detail);
+          ctx.updateAgentStatus(
+            {
+              active: true,
+              phase: render.phase,
+              detail: render.detail,
+              ...(render.thinking ? { verbs: thinkingVerbs } : {}),
+            },
+            { chatId, source: 'coder' },
+          );
+        },
         signal: ctx.abortControllerRef.current?.signal,
         onCheckpointRequest: answerCheckpoint,
         onCheckpoint,

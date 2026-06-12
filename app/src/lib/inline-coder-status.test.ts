@@ -1,0 +1,55 @@
+import { describe, expect, it } from 'vitest';
+import { translateCoderStatus } from './inline-coder-status';
+
+describe('translateCoderStatus', () => {
+  it('maps tool execution to phase-first Editing, keeping the detail', () => {
+    expect(translateCoderStatus('Coder executing...', 'sandbox_exec')).toEqual({
+      phase: 'Editing',
+      detail: 'sandbox_exec',
+      thinking: false,
+    });
+  });
+
+  it('reads a read-only batch / read tool as Exploring', () => {
+    expect(translateCoderStatus('Coder executing...', '3 parallel reads').phase).toBe('Exploring');
+    expect(translateCoderStatus('Coder executing...', 'read_file').phase).toBe('Exploring');
+  });
+
+  it('treats a batch with mutations as Editing, not Exploring', () => {
+    expect(translateCoderStatus('Coder executing...', '3 parallel reads + 1 mutation').phase).toBe(
+      'Editing',
+    );
+  });
+
+  it('maps acceptance checks to Verifying', () => {
+    expect(translateCoderStatus('Running acceptance checks...').phase).toBe('Verifying');
+    expect(translateCoderStatus('Checking...', 'criterion A').phase).toBe('Verifying');
+  });
+
+  it('maps the terminal state to a neutral wrap-up, dropping internal halt reasons', () => {
+    expect(translateCoderStatus('Coder stopped', 'Cognitive drift — halted')).toEqual({
+      phase: 'Wrapping up…',
+      thinking: false,
+    });
+  });
+
+  it('routes round-start / reasoning / loop / resume dead air to thinking', () => {
+    for (const phase of [
+      'Coder working...',
+      'Coder reasoning',
+      'Coder loop',
+      'Coder resuming...',
+      'Context reset',
+      'Coder checkpoint',
+    ]) {
+      expect(translateCoderStatus(phase, 'x')).toEqual({ phase: 'Thinking…', thinking: true });
+    }
+  });
+
+  it('never leaks an unknown/future kernel phase verbatim', () => {
+    const r = translateCoderStatus('Coder doing something new...', 'raw detail');
+    expect(r.thinking).toBe(true);
+    expect(r.phase).toBe('Thinking…');
+    expect(r.phase).not.toContain('Coder');
+  });
+});
