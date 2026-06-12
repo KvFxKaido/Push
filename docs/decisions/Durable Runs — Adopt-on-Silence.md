@@ -27,6 +27,16 @@ None of them changes where the loop lives.
 today's in-page responsiveness is preserved exactly when a client is attached.
 Instead the run learns to survive abandonment:
 
+> **2026-06-11:** the default main-chat turn now honors this decision
+> end-to-end. The interim inline default (#887) detached every turn to the
+> CoderJob DO from round 0, watched or not;
+> [`Inline Foreground Lane — Local While Watched.md`](Inline%20Foreground%20Lane%20—%20Local%20While%20Watched.md)
+> (Current) moved inline turns back into the browser as foreground coder-
+> kernel runs — registered with RunHost, checkpointing per round from
+> kernel state (`onCheckpoint` → V1 capture, so adoption's
+> `runCheckpointToCoderResumeState` resumes coder-born checkpoints) — and
+> left the engine route to the explicit background-mode toggle.
+
 1. The browser loop checkpoints each turn (extending the Resumable Sessions
    primitives) into a server-side **RunHost** Durable Object.
 2. The client heartbeats while attached. When heartbeats lapse past a

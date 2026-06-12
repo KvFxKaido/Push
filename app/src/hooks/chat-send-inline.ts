@@ -1,0 +1,647 @@
+/**
+ * chat-send-inline.ts — the Inline Foreground Lane.
+ *
+ * PR 2 of `docs/decisions/Inline Foreground Lane — Local While Watched.md`:
+ * when delegation-mode is `inline` (the default), the user's raw turn runs
+ * the coder kernel **in the browser as the lead agent** — no Orchestrator
+ * handoff, no Planner, no brief — streaming into the normal chat
+ * transcript. The turn lives inside the existing run-session machinery
+ * (`acquireRunSession` → this lane → `finalizeRunSession` in
+ * `useChat.sendMessage`), so it inherits the tab lock, heartbeats, RunHost
+ * registration, and adoption-on-silence like every foreground run.
+ *
+ * Owns, per the decision doc's lane spec:
+ *   - kernel bindings — `runInPageCoderKernel` with the chat's locked
+ *     provider/model, memory tools scoped repo/branch/chat, branch context
+ *     + Protect Main, project instructions;
+ *   - streaming bridge — `teePushStream` mirrors `text_delta`/reasoning
+ *     events into the streaming assistant placeholder while the kernel
+ *     consumes the stream unchanged; the kernel's final summary completes
+ *     the message;
+ *   - per-round checkpointing — the kernel's `onCheckpoint` (cadence 1)
+ *     bridges into the legacy + V1 capture via `flushCheckpoint('turn')`,
+ *     with `checkpointRefs.apiMessages` pointed at the kernel transcript so
+ *     an adopted continuation (`runCheckpointToCoderResumeState`) resumes
+ *     from a checkpoint that was *born* as coder state — round, messages,
+ *     and working memory align by construction;
+ *   - Auditor invocation — the same `runCoderAuditorGate` the delegated
+ *     arc uses, with the pre-run HEAD/untracked snapshot;
+ *   - measurement — `inline_turn_started` / `inline_turn_completed`, A/B
+ *     comparable with `delegation_engine_job_started` and
+ *     `coder_delegation_measured`.
+ *
+ * Sibling module per the `useChat.ts` max-lines guard — the dispatch in
+ * `sendMessage` stays a two-line branch.
+ */
+
+import type { MutableRefObject } from 'react';
+import { getProviderPushStream } from '@/lib/orchestrator';
+import { getSandboxDiff } from '@/lib/sandbox-client';
+import {
+  capturePreCoderSnapshot,
+  createCoderCheckpointAnswerer,
+  runCoderAuditorGate,
+  runInPageCoderKernel,
+  teePushStream,
+} from '@/lib/inline-coder-run';
+import { resolveHarnessSettings } from '@/lib/model-capabilities';
+import { buildMemoryScope, runContextMemoryBestEffort } from '@/lib/memory-context-helpers';
+import { invalidateMemoryForChangedFiles } from '@/lib/context-memory';
+import {
+  extractChangedPathsFromDiff,
+  recordVerificationArtifact,
+  recordVerificationMutation,
+} from '@/lib/verification-runtime';
+import { summarizeToolResultPreview } from '@/lib/chat-run-events';
+import type { CoderCheckpointState } from '@push/lib/coder-agent';
+import type { LlmMessage, PushStream, PushStreamEvent } from '@push/lib/provider-contract';
+import type { VerificationPolicy } from '@/lib/verification-policy';
+import type { ChatCard, ChatMessage } from '@/types';
+import type { SendLoopContext } from './chat-send-types';
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+
+export interface InlineCoderTurnArgs {
+  /** The user's raw turn — the kernel's task, verbatim. */
+  trimmedText: string;
+  /** Seed transcript from `prepareSendContext` (ends with the user turn). */
+  apiMessages: ChatMessage[];
+  /** Engine run id (post-`acquireRunSession`), for the measurement logs. */
+  runId: string;
+  agentsMdRef: MutableRefObject<string | null>;
+  instructionFilenameRef: MutableRefObject<string | null>;
+  getVerificationPolicyForChat: (chatId: string) => VerificationPolicy;
+}
+
+export interface InlineCoderTurnResult {
+  /** True only when the kernel ran to a normal completion. */
+  completedNormally: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Prior-context seeding (decision doc, open question 1: bounded
+// recent-history block in the preamble for v1 — mirrors the shape of the
+// DO's `formatPriorTurnsPreamble`, but from the local transcript).
+// ---------------------------------------------------------------------------
+
+const PRIOR_TURNS_MAX = 6;
+const PRIOR_TURN_MAX_CHARS = 700;
+
+export function buildInlineTurnPreamble(
+  trimmedText: string,
+  apiMessages: ReadonlyArray<ChatMessage>,
+): string {
+  const prior = apiMessages
+    .slice(0, -1)
+    .filter(
+      (m) =>
+        (m.role === 'user' || m.role === 'assistant') &&
+        !m.isToolCall &&
+        !m.isToolResult &&
+        Boolean((m.displayContent ?? m.content).trim()),
+    )
+    .slice(-PRIOR_TURNS_MAX);
+
+  const lines: string[] = [];
+  if (prior.length > 0) {
+    lines.push('Prior conversation in this chat (oldest to newest, truncated):');
+    for (const msg of prior) {
+      const text = (msg.displayContent ?? msg.content).trim();
+      const clipped =
+        text.length > PRIOR_TURN_MAX_CHARS ? `${text.slice(0, PRIOR_TURN_MAX_CHARS)}…` : text;
+      lines.push(`[${msg.role}] ${clipped}`);
+    }
+    lines.push('');
+  }
+  lines.push(`Task: ${trimmedText}`);
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Streaming bridge — mirror kernel stream events into the placeholder
+// ---------------------------------------------------------------------------
+
+/**
+ * Split a kernel round's accumulated content into the user-facing prefix
+ * and a flag for whether a tool-call / state-update construct has begun.
+ *
+ * The coder kernel emits tool calls as fenced or bare JSON in the SAME
+ * `content` stream as user-facing prose, and only classifies a round
+ * (`detectAllToolCalls`) once it has fully accumulated. So a naive mirror
+ * that streams every `text_delta` into the transcript leaks raw protocol
+ * JSON — partial tool calls, `coder_update_state` working-memory blobs —
+ * into the chat bubble before the kernel knows the round is final (the
+ * leak Codex flagged on #891). This strips the construct per delta instead.
+ *
+ * Conservative by construction: the kernel still consumes the untouched
+ * stream via the tee, and the authoritative final message is the kernel
+ * summary (`completeAssistantMessage`). So over-hiding here only trims the
+ * in-flight preview, never the committed turn — which is why we can safely
+ * hide a dangling (unbalanced) fence: a final-answer code block reappears
+ * the moment its closing fence lands, and lands in full at completion.
+ */
+export function splitVisibleContent(text: string): { visible: string; toolCallActive: boolean } {
+  let cut = -1;
+  const mark = (idx: number) => {
+    if (idx >= 0 && (cut === -1 || idx < cut)) cut = idx;
+  };
+
+  // A tool-call object/array wrapped in a code fence. Cut at the fence so
+  // the ```` ```json ```` wrapper is hidden too, even once the closing fence
+  // has balanced the count. The key match tolerates every shape the text
+  // dispatcher executes — double/single/unquoted `tool` keys and a leading
+  // `[` for fenced arrays (`lib/tool-dispatch.test.ts`) — so a balanced
+  // `[{'tool':…}]` block can't reappear in the bubble (Codex #894).
+  const fencedTool = /```[^\n`]*\r?\n[ \t]*\[?\s*\{\s*['"]?tool['"]?\s*:/.exec(text);
+  if (fencedTool) mark(fencedTool.index);
+
+  // The same object/array emitted bare (no fence). Matched anywhere, not
+  // anchored to start: the kernel's `extractBareToolJsonObjects` brace-scans
+  // the whole content, so a `prose then {"tool":…}` round IS executed as a
+  // tool call — hiding it is correct, not a false positive. Over-hiding a
+  // genuine inline-JSON mention is harmless (the kernel summary is the
+  // authoritative final render; this only trims the in-flight preview).
+  const bareTool = /\[?\s*\{\s*['"]?tool['"]?\s*:/.exec(text);
+  if (bareTool) mark(bareTool.index);
+
+  // A trailing, unbalanced code fence: in a coder round a dangling ``` is a
+  // tool block forming before its key has streamed in. A completed prose
+  // fence is balanced and survives (a non-tool fence has no key to match
+  // above, so it stays visible once closed).
+  if (((text.match(/```/g) ?? []).length & 1) === 1) {
+    mark(text.lastIndexOf('```'));
+  }
+
+  if (cut === -1) return { visible: text, toolCallActive: false };
+  return { visible: text.slice(0, cut).replace(/\s+$/, ''), toolCallActive: true };
+}
+
+/**
+ * Build the tee observer that feeds the streaming assistant placeholder.
+ * Accumulates per kernel round (a `done` event resets the buffer on the
+ * next delta) so the placeholder always shows the round in flight; the
+ * kernel's final summary replaces it at completion. Tool-call /
+ * state-update JSON is stripped per delta via `splitVisibleContent` so it
+ * never reaches the transcript (or the `ACCUMULATED_UPDATED` preview a
+ * watching viewer / adopted checkpoint mirrors).
+ */
+export function createInlineTranscriptMirror(
+  ctx: SendLoopContext,
+): (event: PushStreamEvent) => void {
+  const { chatId } = ctx;
+  let accumulated = '';
+  let thinking = '';
+  let roundSettled = false;
+
+  return (event) => {
+    if (ctx.abortRef.current) return;
+    if (event.type === 'done') {
+      roundSettled = true;
+      return;
+    }
+    if (event.type !== 'text_delta' && event.type !== 'reasoning_delta') return;
+    if (roundSettled) {
+      accumulated = '';
+      thinking = '';
+      roundSettled = false;
+    }
+    if (event.type === 'text_delta') {
+      accumulated += event.text;
+    } else {
+      thinking += event.text;
+    }
+
+    const { visible, toolCallActive } = splitVisibleContent(accumulated);
+
+    // Phase: prose streams as "Responding..."; while a tool construct is in
+    // flight, defer to the kernel's own `onStatus` (Editing/Exploring)
+    // rather than fight it with a generic label.
+    if (event.type === 'reasoning_delta') {
+      ctx.updateAgentStatus({ active: true, phase: 'Reasoning...' }, { chatId, log: false });
+    } else if (!toolCallActive) {
+      ctx.updateAgentStatus({ active: true, phase: 'Responding...' }, { chatId, log: false });
+    }
+
+    ctx.emitRunEngineEvent({
+      type: 'ACCUMULATED_UPDATED',
+      timestamp: Date.now(),
+      text: visible,
+      thinking,
+    });
+    ctx.setConversations((prev) => {
+      const conv = prev[chatId];
+      if (!conv) return prev;
+      const msgs = [...conv.messages];
+      const lastIdx = msgs.length - 1;
+      if (msgs[lastIdx]?.role !== 'assistant') return prev;
+      msgs[lastIdx] = {
+        ...msgs[lastIdx],
+        content: visible,
+        thinking: thinking || undefined,
+        status: 'streaming',
+      };
+      return { ...prev, [chatId]: { ...conv, messages: msgs } };
+    });
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Measurement
+// ---------------------------------------------------------------------------
+
+type InlineTurnOutcome = 'ok' | 'aborted' | 'failed' | 'precondition-failed';
+
+function logInlineTurnCompleted(fields: {
+  chatId: string;
+  runId: string;
+  outcome: InlineTurnOutcome;
+  elapsedMs: number;
+  rounds?: number;
+  checkpoints?: number;
+  error?: string;
+}): void {
+  console.log(
+    JSON.stringify({
+      level:
+        fields.outcome === 'failed' || fields.outcome === 'precondition-failed' ? 'error' : 'info',
+      event: 'inline_turn_completed',
+      mode: 'inline',
+      chatId: fields.chatId,
+      runId: fields.runId,
+      outcome: fields.outcome,
+      elapsedMs: fields.elapsedMs,
+      rounds: fields.rounds ?? null,
+      checkpoints: fields.checkpoints ?? null,
+      ...(fields.error ? { error: fields.error } : {}),
+    }),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Message finalization
+// ---------------------------------------------------------------------------
+
+function completeAssistantMessage(
+  ctx: SendLoopContext,
+  update: { content: string; cards?: ChatCard[] },
+): void {
+  const { chatId } = ctx;
+  ctx.setConversations((prev) => {
+    const conv = prev[chatId];
+    if (!conv) return prev;
+    const msgs = [...conv.messages];
+    const lastIdx = msgs.length - 1;
+    if (msgs[lastIdx]?.role !== 'assistant') return prev;
+    msgs[lastIdx] = {
+      ...msgs[lastIdx],
+      content: update.content,
+      thinking: undefined,
+      status: 'done',
+      ...(update.cards && update.cards.length > 0 ? { cards: update.cards } : {}),
+    };
+    ctx.dirtyConversationIdsRef.current.add(chatId);
+    return { ...prev, [chatId]: { ...conv, messages: msgs, lastMessageAt: Date.now() } };
+  });
+}
+
+/**
+ * Shield upstream error text before it reaches the assistant bubble.
+ * Provider response bodies and sandbox stderr can carry raw JSON/HTML, and
+ * the transcript renders GitHub-flavored markdown — so collapse to a single
+ * bounded line and neutralize fence/tag characters so nothing renders as
+ * markup or a fenced block (REVIEW.md "error-formatting paths" defect
+ * class). The full message stays in the structured log for ops.
+ *
+ * Angle brackets become full-width look-alikes rather than HTML entities:
+ * the markdown renderer decodes `&lt;` back to `<` before display, so the
+ * entity form is a no-op (review #894) — the look-alike keeps the text
+ * readable while guaranteeing it can never open a tag.
+ */
+function sanitizeErrorForChat(raw: string): string {
+  const collapsed = raw.replace(/\s+/g, ' ').trim();
+  const MAX = 200;
+  const clipped = collapsed.length > MAX ? `${collapsed.slice(0, MAX)}…` : collapsed;
+  return clipped.replace(/[<>`]/g, (c) => (c === '<' ? '＜' : c === '>' ? '＞' : "'"));
+}
+
+/**
+ * Lightweight shape check at the `CoderLoopMessage` → `ChatMessage` seam.
+ * The checkpoint bridge casts the kernel transcript into the V1 capture; if
+ * the shapes ever diverge, an unchecked cast would persist a malformed
+ * transcript that `runCheckpointToCoderResumeState` reads back at resume.
+ * This makes the seam fail loud (skip + structured log) instead of silently
+ * corrupting durable state. An empty transcript is structurally fine.
+ */
+function looksLikeChatMessages(messages: readonly unknown[]): boolean {
+  if (messages.length === 0) return true;
+  const first = messages[0] as { role?: unknown; content?: unknown } | null;
+  return typeof first?.role === 'string' && first != null && 'content' in first;
+}
+
+// ---------------------------------------------------------------------------
+// The lane
+// ---------------------------------------------------------------------------
+
+export async function startInlineCoderTurn(
+  ctx: SendLoopContext,
+  args: InlineCoderTurnArgs,
+): Promise<InlineCoderTurnResult> {
+  const { chatId, lockedProvider, resolvedModel } = ctx;
+  const startedMs = Date.now();
+
+  console.log(
+    JSON.stringify({
+      level: 'info',
+      event: 'inline_turn_started',
+      mode: 'inline',
+      chatId,
+      runId: args.runId,
+      provider: lockedProvider,
+      model: resolvedModel ?? null,
+    }),
+  );
+
+  // --- Preconditions: the lane needs a live sandbox up front (mirrors the
+  // engine route's lazy ensure; `prepareSendContext`'s prewarm is mode-gated
+  // and may not have fired). ---
+  let sandboxId = ctx.sandboxIdRef.current;
+  if (!sandboxId && ctx.ensureSandboxRef.current) {
+    ctx.updateAgentStatus({ active: true, phase: 'Starting sandbox...' }, { chatId });
+    try {
+      sandboxId = await ctx.ensureSandboxRef.current();
+      if (sandboxId) ctx.sandboxIdRef.current = sandboxId;
+    } catch {
+      /* fall through to the precondition error below */
+    }
+  }
+  const repoFullName = ctx.repoRef.current;
+  const branchInfo = ctx.branchInfoRef.current;
+  const activeBranch = branchInfo?.currentBranch ?? branchInfo?.defaultBranch ?? '';
+  if (!sandboxId || !repoFullName || !activeBranch) {
+    // Name the specific missing precondition so the user can act on it,
+    // rather than a generic three-way error (the structured log records the
+    // short form for ops).
+    const missingReason = !sandboxId ? 'no sandbox' : !repoFullName ? 'no repo' : 'no branch';
+    const missingLabel = !sandboxId
+      ? 'an active sandbox'
+      : !repoFullName
+        ? 'a connected repo'
+        : 'an active branch';
+    completeAssistantMessage(ctx, {
+      content: `[Inline turn unavailable] This turn needs ${missingLabel}. Try again once the workspace is ready.`,
+    });
+    logInlineTurnCompleted({
+      chatId,
+      runId: args.runId,
+      outcome: 'precondition-failed',
+      elapsedMs: Date.now() - startedMs,
+      error: missingReason,
+    });
+    return { completedNormally: false };
+  }
+
+  const memoryScope = buildMemoryScope(chatId, repoFullName, activeBranch);
+  const verificationPolicy = args.getVerificationPolicyForChat(chatId);
+  const harnessSettings = resolveHarnessSettings(lockedProvider, resolvedModel || undefined);
+
+  // Bail before the snapshot round-trip if the user already cancelled (the
+  // mirror guards every event the same way) — no point paying for a sandbox
+  // call and kernel launch we'd immediately abort.
+  if (ctx.abortRef.current) {
+    completeAssistantMessage(ctx, { content: 'Cancelled by user.' });
+    logInlineTurnCompleted({
+      chatId,
+      runId: args.runId,
+      outcome: 'aborted',
+      elapsedMs: Date.now() - startedMs,
+    });
+    return { completedNormally: false };
+  }
+
+  // Pre-run HEAD + untracked baseline for the Auditor (PRs #604/#606).
+  const { preCoderHead, preCoderUntrackedFiles } = await capturePreCoderSnapshot(sandboxId);
+
+  // --- Kernel bindings ---
+  const mirror = createInlineTranscriptMirror(ctx);
+  const stream = teePushStream(
+    getProviderPushStream(lockedProvider) as unknown as PushStream<LlmMessage>,
+    mirror,
+  );
+
+  const answerCheckpoint = createCoderCheckpointAnswerer({
+    chatId,
+    apiMessages: args.apiMessages,
+    provider: lockedProvider,
+    model: resolvedModel || undefined,
+    memoryScope,
+    readLatestCoderState: () => ctx.lastCoderStateRef.current,
+    getSignal: () => ctx.abortControllerRef.current?.signal,
+    updateAgentStatus: ctx.updateAgentStatus,
+  });
+
+  // Per-round durability bridge: point the V1 capture at the kernel's own
+  // transcript so the persisted checkpoint round-trips through
+  // `runCheckpointToCoderResumeState` as coder state, not a reconstruction.
+  // ROUND_STARTED keeps the engine's round (which the capture reads)
+  // aligned with the kernel's. CoderLoopMessage is a structural subset of
+  // ChatMessage for everything the capture reads (role/content/parts/
+  // reasoning/tool flags) — the cast is the documented seam, asserted at
+  // runtime so a future shape divergence fails loud instead of persisting a
+  // malformed transcript adoption would read back.
+  const onCheckpoint = async (state: CoderCheckpointState<ChatCard>): Promise<void> => {
+    if (!looksLikeChatMessages(state.messages)) {
+      const offender = state.messages[0];
+      console.log(
+        JSON.stringify({
+          level: 'error',
+          event: 'coder_checkpoint_shape_invalid',
+          mode: 'inline',
+          chatId,
+          runId: args.runId,
+          round: state.round,
+          // Surface the offending element's key signature so the divergence
+          // is actionable from the log alone (review #894).
+          gotKeys:
+            offender && typeof offender === 'object'
+              ? Object.keys(offender).join(',')
+              : typeof offender,
+        }),
+      );
+      return;
+    }
+    ctx.emitRunEngineEvent({ type: 'ROUND_STARTED', timestamp: Date.now(), round: state.round });
+    ctx.checkpointRefs.apiMessages.current = state.messages as unknown as ChatMessage[];
+    ctx.lastCoderStateRef.current = state.workingMemory;
+    ctx.flushCheckpoint('turn');
+  };
+
+  ctx.lastCoderStateRef.current = null;
+
+  let result: Awaited<ReturnType<typeof runInPageCoderKernel>>;
+  try {
+    result = await runInPageCoderKernel(
+      {
+        provider: lockedProvider,
+        modelId: resolvedModel || undefined,
+        sandboxId,
+        taskPreamble: buildInlineTurnPreamble(args.trimmedText, args.apiMessages),
+        branchContext: {
+          activeBranch,
+          defaultBranch: branchInfo?.defaultBranch || 'main',
+          protectMain: ctx.isMainProtectedRef.current,
+        },
+        projectInstructions: args.agentsMdRef.current || undefined,
+        instructionFilename: args.instructionFilenameRef.current || undefined,
+        verificationPolicy,
+        harnessSettings,
+        memoryScope: { repoFullName, branch: activeBranch, chatId },
+        correlation: { surface: 'web', chatId, runId: args.runId },
+        stream,
+        // Per-round capture: the foreground client mirror is the durable
+        // copy adoption resumes from, so don't skip rounds.
+        checkpointCadenceRounds: 1,
+      },
+      {
+        onStatus: (phase, detail) =>
+          ctx.updateAgentStatus({ active: true, phase, detail }, { chatId, source: 'coder' }),
+        signal: ctx.abortControllerRef.current?.signal,
+        onCheckpointRequest: answerCheckpoint,
+        onCheckpoint,
+        onWorkingMemoryUpdate: (state) => {
+          ctx.lastCoderStateRef.current = state;
+        },
+        onRunEvent: (event) => ctx.appendRunEvent(chatId, event),
+      },
+    );
+  } catch (err) {
+    const isAbort =
+      (err instanceof DOMException && err.name === 'AbortError') || ctx.abortRef.current;
+    if (isAbort) {
+      completeAssistantMessage(ctx, { content: 'Cancelled by user.' });
+      logInlineTurnCompleted({
+        chatId,
+        runId: args.runId,
+        outcome: 'aborted',
+        elapsedMs: Date.now() - startedMs,
+      });
+      return { completedNormally: false };
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    // Shield raw upstream text (provider bodies / sandbox stderr) from the
+    // transcript; the full message still rides the structured log + engine
+    // reason for ops/debugging.
+    completeAssistantMessage(ctx, { content: `[Inline turn failed] ${sanitizeErrorForChat(msg)}` });
+    // Emit the terminal failure ourselves so `finalizeRunSession` sees a
+    // terminal phase and doesn't mislabel the exit as a plain abort.
+    ctx.emitRunEngineEvent({ type: 'LOOP_FAILED', timestamp: Date.now(), reason: msg });
+    logInlineTurnCompleted({
+      chatId,
+      runId: args.runId,
+      outcome: 'failed',
+      elapsedMs: Date.now() - startedMs,
+      error: msg,
+    });
+    return { completedNormally: false };
+  }
+
+  // --- Post-run evidence: diff capture + verification-state recording
+  // (same signals the delegated arc records, so the commit gate sees an
+  // inline turn's mutations the same way). ---
+  let lastTaskDiff: string | null = null;
+  try {
+    const diffResult = await getSandboxDiff(sandboxId);
+    lastTaskDiff = diffResult.diff || null;
+  } catch {
+    /* verification state can still update from the summary */
+  }
+  let latestDiffPaths: string[] | undefined;
+  if (lastTaskDiff) {
+    latestDiffPaths = extractChangedPathsFromDiff(lastTaskDiff);
+    const touchedPaths = latestDiffPaths;
+    ctx.updateVerificationState(chatId, (state) =>
+      recordVerificationMutation(state, {
+        source: 'coder',
+        touchedPaths,
+        detail: 'Inline turn mutated the workspace.',
+      }),
+    );
+  }
+  ctx.updateVerificationState(chatId, (state) =>
+    recordVerificationArtifact(
+      state,
+      `Inline turn produced evidence: ${summarizeToolResultPreview(result.summary)}`,
+    ),
+  );
+
+  // --- Auditor: same gate as the delegated arc. ---
+  const auditorGate = await runCoderAuditorGate(
+    {
+      repoRef: ctx.repoRef,
+      branchInfoRef: ctx.branchInfoRef,
+      readLatestCoderState: () => ctx.lastCoderStateRef.current,
+      appendRunEvent: ctx.appendRunEvent,
+      updateAgentStatus: ctx.updateAgentStatus,
+      updateVerificationStateForChat: ctx.updateVerificationState,
+    },
+    {
+      chatId,
+      baseCorrelation: { surface: 'web', chatId, runId: args.runId },
+      lockedProviderForChat: lockedProvider,
+      resolvedModelForChat: resolvedModel || undefined,
+      verificationPolicy,
+      auditorInput: {
+        taskList: [args.trimmedText],
+        allCards: result.cards,
+        summaries: [result.summary],
+        allCriteriaResults: result.criteriaResults ?? [],
+        totalRounds: result.rounds,
+        totalCheckpoints: result.checkpoints,
+        lastTaskDiff,
+        latestDiffPaths,
+        coderMemoryScope: memoryScope,
+        verificationCommandsById: new Map(),
+        harnessSettings,
+        currentSandboxId: sandboxId,
+        originBranch: branchInfo?.currentBranch,
+        preCoderHead,
+        preCoderUntrackedFiles,
+      },
+    },
+  );
+
+  // --- Memory hygiene: file-backed context that the turn mutated is stale. ---
+  if (memoryScope && latestDiffPaths && latestDiffPaths.length > 0) {
+    const changedPaths = latestDiffPaths;
+    await runContextMemoryBestEffort('invalidating memory after inline turn', () =>
+      invalidateMemoryForChangedFiles({
+        scope: {
+          repoFullName: memoryScope.repoFullName,
+          branch: memoryScope.branch,
+          chatId: memoryScope.chatId,
+        },
+        changedPaths,
+        reason: 'Inline turn updated file-backed context.',
+      }),
+    );
+  }
+
+  // --- Complete the transcript: kernel summary (+ Auditor verdict line)
+  // replaces the streamed placeholder; kernel cards ride on the message. ---
+  const finalContent = auditorGate?.auditorSummaryLine
+    ? `${result.summary}\n\n${auditorGate.auditorSummaryLine}`
+    : result.summary;
+  completeAssistantMessage(ctx, { content: finalContent, cards: result.cards });
+  ctx.updateAgentStatus({ active: false, phase: '' });
+
+  logInlineTurnCompleted({
+    chatId,
+    runId: args.runId,
+    outcome: 'ok',
+    elapsedMs: Date.now() - startedMs,
+    rounds: result.rounds,
+    checkpoints: result.checkpoints,
+  });
+  return { completedNormally: true };
+}

@@ -178,7 +178,13 @@ vi.mock('@/lib/orchestrator', () => orchestrator);
 vi.mock('@/lib/file-awareness-ledger', () => ({ fileLedger }));
 vi.mock('@/lib/provider-selection', () => providerSelection);
 vi.mock('@/lib/sandbox-start-mode', () => sandboxStartMode);
-vi.mock('@/lib/providers', () => providers);
+// Spread the actual module: the inline-lane import chain (chat-send-inline →
+// inline-coder-run → web-search-tools → useOllamaConfig) reads provider
+// constants (e.g. OLLAMA_DEFAULT_MODEL) at module-eval time.
+vi.mock('@/lib/providers', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/providers')>()),
+  ...providers,
+}));
 vi.mock('@/lib/conversation-store', () => conversationStore);
 vi.mock('@/lib/checkpoint-manager', () => checkpointManager);
 vi.mock('@/hooks/chat-persistence', () => chatPersistence);
