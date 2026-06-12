@@ -176,6 +176,9 @@ export const BLACKBOX_MODELS: string[] = [
   'blackboxai/openai/gpt-5.3-codex',
   'blackboxai/google/gemini-3.1-pro-preview',
   'blackboxai/x-ai/grok-4.3',
+  // Confirmed in the live /v1/models catalog 2026-06-12; the autonomous PR
+  // reviewer's settings write validates against this list.
+  'blackboxai/x-ai/grok-code-fast-1:free',
   'blackboxai/deepseek/deepseek-v4-flash',
 ];
 

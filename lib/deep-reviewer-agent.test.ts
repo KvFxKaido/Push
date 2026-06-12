@@ -225,6 +225,153 @@ describe('runDeepReviewer (PushStream consumer)', () => {
     expect(result.summary).toBe('Deep review did not produce structured output.');
   });
 
+  it('injects escalating wrap-up pressure in the last two loop rounds', async () => {
+    // Investigation-hungry models tool-call through every round and ignore a
+    // single post-exhaustion demand (PR #908 live: 12 rounds consumed, no
+    // [REVIEW_COMPLETE] ever emitted). The penultimate round must carry the
+    // finish-your-reads note and the final round the no-tools/emit-now order.
+    // Per-call DEEP snapshots: `makePushStream` captures the live messages
+    // array by reference, which mutates as the loop appends — useless for
+    // round-by-round assertions.
+    const requestSnapshots: string[] = [];
+    let invocation = 0;
+    const rounds: PushStreamEvent[][] = [];
+    for (let i = 0; i <= MAX_DEEP_REVIEW_ROUNDS; i++) {
+      rounds.push([
+        { type: 'text_delta', text: `investigating ${i}` },
+        { type: 'done', finishReason: 'stop' },
+      ]);
+    }
+    const stream: PushStream = (req) => {
+      requestSnapshots.push(JSON.stringify(req.messages));
+      const batch = rounds[invocation] ?? [];
+      invocation += 1;
+      return (async function* () {
+        for (const event of batch) yield event;
+      })();
+    };
+
+    await runDeepReviewer(
+      makeAddedFileDiff('src/app.ts', 'const x = 1;'),
+      baseOptions({ stream }),
+      {
+        onStatus: () => {},
+      },
+    );
+
+    const requestText = (i: number) => requestSnapshots[i] ?? '';
+    expect(requestText(MAX_DEEP_REVIEW_ROUNDS - 2)).toContain('Two investigation rounds remain');
+    expect(requestText(MAX_DEEP_REVIEW_ROUNDS - 1)).toContain('FINAL round. Do NOT call tools.');
+    // No wrap-up noise earlier in the run.
+    expect(requestText(0)).not.toContain('[ROUND BUDGET]');
+    expect(requestText(MAX_DEEP_REVIEW_ROUNDS - 3)).not.toContain('[ROUND BUDGET]');
+  });
+
+  it('accepts a structured review emitted on the nudged final round', async () => {
+    const reportJson = JSON.stringify({ summary: 'Wrapped up in time.', comments: [] });
+    const rounds: PushStreamEvent[][] = [];
+    for (let i = 0; i < MAX_DEEP_REVIEW_ROUNDS - 1; i++) {
+      rounds.push([
+        { type: 'text_delta', text: `investigating ${i}` },
+        { type: 'done', finishReason: 'stop' },
+      ]);
+    }
+    rounds.push([
+      { type: 'text_delta', text: `[REVIEW_COMPLETE]\n${reportJson}` },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+    const { stream } = makePushStream(rounds);
+
+    // Force totalToolCalls > 0 so the round-0 no-investigation guard isn't
+    // what we're testing here.
+    const oneRead = (): ReturnType<DeepReviewerOptions<Call, never>['detectAllToolCalls']> => ({
+      readOnly: [{ call: { tool: 'repo_grep', args: {} } }],
+      mutating: null,
+      fileMutations: [],
+      extraMutations: [],
+      droppedCandidates: [],
+    });
+    const oneReadOnce = (() => {
+      let calls = 0;
+      return (text: string) => {
+        calls += 1;
+        if (calls === 1) return oneRead();
+        return {
+          readOnly: [],
+          mutating: null,
+          fileMutations: [],
+          extraMutations: [],
+          droppedCandidates: [],
+        };
+      };
+    })();
+
+    const result = await runDeepReviewer(
+      makeAddedFileDiff('src/app.ts', 'const x = 1;'),
+      baseOptions({ stream, detectAllToolCalls: oneReadOnce }),
+      { onStatus: () => {} },
+    );
+
+    expect(result.summary).toBe('Wrapped up in time.');
+    expect(result.degraded).toBeUndefined();
+  });
+
+  it('checkpoints after the loop and resumes directly at the forced-output turn', async () => {
+    // Deaths cluster in the final stretch (PR #908: consecutive relaunches
+    // from the last loop round). The post-loop snapshot must carry
+    // nextRound = MAX + the forced-output prompt, and a resume from it must
+    // make exactly ONE model call (the forced turn) with no duplicated
+    // forced-output message.
+    const snapshots = [];
+    const exhaustRounds: PushStreamEvent[][] = [];
+    for (let i = 0; i <= MAX_DEEP_REVIEW_ROUNDS; i++) {
+      // Final forced turn (last entry) dies: empty stream → degraded.
+      exhaustRounds.push(
+        i < MAX_DEEP_REVIEW_ROUNDS
+          ? [
+              { type: 'text_delta', text: `investigating ${i}` },
+              { type: 'done', finishReason: 'stop' },
+            ]
+          : [{ type: 'done', finishReason: 'stop' }],
+      );
+    }
+    const { stream: exhaustStream } = makePushStream(exhaustRounds);
+    await runDeepReviewer(
+      makeAddedFileDiff('src/app.ts', 'const x = 1;'),
+      baseOptions({ stream: exhaustStream }),
+      { onStatus: () => {}, onRoundState: (s) => snapshots.push(JSON.parse(JSON.stringify(s))) },
+    );
+
+    const finalSnapshot = snapshots.at(-1);
+    expect(finalSnapshot.nextRound).toBe(MAX_DEEP_REVIEW_ROUNDS);
+    const forcedCount = finalSnapshot.messages.filter(
+      (m) => m.id === 'deep-review-force-output',
+    ).length;
+    expect(forcedCount).toBe(1);
+
+    // Resume from the post-loop snapshot: one stream call, structured output.
+    const reportJson = JSON.stringify({ summary: 'Synthesized on resume.', comments: [] });
+    const { stream: resumeStream, capturedRequests } = makePushStream([
+      [
+        { type: 'text_delta', text: `[REVIEW_COMPLETE]\n${reportJson}` },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+    const result = await runDeepReviewer(
+      makeAddedFileDiff('src/app.ts', 'const x = 1;'),
+      { ...baseOptions({ stream: resumeStream }), resumeState: finalSnapshot },
+      { onStatus: () => {} },
+    );
+
+    expect(result.summary).toBe('Synthesized on resume.');
+    expect(result.degraded).toBeUndefined();
+    expect(capturedRequests).toHaveLength(1);
+    const resumedForcedCount = JSON.stringify(capturedRequests[0]).split(
+      'Investigation round limit reached',
+    ).length;
+    expect(resumedForcedCount - 1).toBe(1);
+  });
+
   it('refuses to post a prior round’s narration when the forced-output turn comes back empty', async () => {
     // The PRs #905/#906 shape: every investigation round is narration + a
     // fenced tool call, the forced-output turn produces nothing, and the

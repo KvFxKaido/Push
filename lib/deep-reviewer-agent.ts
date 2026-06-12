@@ -259,9 +259,13 @@ export interface DeepReviewerOptions<TCall, TCard> extends ReviewerOptions {
    * starting fresh. The system prompt, annotated diff, and coverage stats are
    * rebuilt deterministically from the other options — only the loop state
    * carries over. Round indices stay absolute, so MAX_DEEP_REVIEW_ROUNDS
-   * bounds total work across any number of resumes. Added for the PrReviewJob
-   * relaunch-from-checkpoint path (the DO instance does not survive unwatched
-   * multi-minute reviews; see the CoderJob/RunHost dual-home precedent).
+   * bounds total work across any number of resumes. A snapshot with
+   * `nextRound === MAX_DEEP_REVIEW_ROUNDS` is the post-loop checkpoint: the
+   * loop is skipped and the run resumes directly at the forced-output turn
+   * (whose prompt is already in the snapshot's messages). Added for the
+   * PrReviewJob relaunch-from-checkpoint path (the DO instance does not
+   * survive unwatched multi-minute reviews; see the CoderJob/RunHost
+   * dual-home precedent).
    */
   resumeState?: DeepReviewerResumeState;
 }
@@ -679,6 +683,26 @@ export async function runDeepReviewer<TCall, TCard>(
       usage: { ...usageAcc },
     });
 
+    // Wrap-up pressure INSIDE the loop. With only a single post-exhaustion
+    // demand, an investigation-hungry model (glm-5.1, live on PR #908)
+    // tool-calls through every round and then ignores one "emit now"
+    // message buried in a 70KB+ transcript. Escalate while it still has
+    // room: penultimate round = finish reading; final round = no tools,
+    // emit. Id-deduped so a relaunch that re-enters at these rounds
+    // doesn't stack duplicates.
+    const wrapupId = `deep-review-wrapup-${round}`;
+    if (round >= MAX_DEEP_REVIEW_ROUNDS - 2 && !messages.some((m) => m.id === wrapupId)) {
+      const finalRound = round === MAX_DEEP_REVIEW_ROUNDS - 1;
+      messages.push({
+        id: wrapupId,
+        role: 'user',
+        content: finalRound
+          ? `[ROUND BUDGET] FINAL round. Do NOT call tools. Emit ${REVIEW_COMPLETE_MARKER} now, followed by valid JSON matching the schema, based on what you have gathered.`
+          : `[ROUND BUDGET] Two investigation rounds remain (this one and one more). Finish any essential reads in this round — the next round must be ${REVIEW_COMPLETE_MARKER} plus your JSON findings.`,
+        timestamp: Date.now(),
+      });
+    }
+
     const roundNum = round + 1;
     callbacks.onStatus('Deep review investigating...', `Round ${roundNum}`);
 
@@ -915,13 +939,31 @@ export async function runDeepReviewer<TCall, TCard>(
 
   callbacks.onStatus('Deep review wrapping up...');
 
-  messages.push({
-    id: 'deep-review-force-output',
-    role: 'user',
-    content: formatAgentParseError(
-      `Investigation round limit reached. Emit ${REVIEW_COMPLETE_MARKER} now followed by your JSON findings based on what you have gathered so far.`,
-    ),
-    timestamp: Date.now(),
+  // Id-deduped: a run resumed from the post-loop checkpoint below re-enters
+  // here with the forced-output prompt already in its transcript.
+  if (!messages.some((m) => m.id === 'deep-review-force-output')) {
+    messages.push({
+      id: 'deep-review-force-output',
+      role: 'user',
+      content: formatAgentParseError(
+        `Investigation round limit reached. Emit ${REVIEW_COMPLETE_MARKER} now followed by your JSON findings based on what you have gathered so far.`,
+      ),
+      timestamp: Date.now(),
+    });
+  }
+
+  // Post-loop checkpoint. The per-round seam alone rewinds a forced-turn
+  // death to the top of the LAST loop round — two long back-to-back model
+  // calls repeat on every attempt, so a short instance lifetime never
+  // converges (observed live on PR #908: consecutive deaths at fromRound
+  // 11). `nextRound = MAX` makes a resumed run skip the loop entirely (the
+  // for-condition is already false) and land directly on this final call,
+  // with the forced-output prompt carried in the snapshot.
+  callbacks.onRoundState?.({
+    messages,
+    nextRound: MAX_DEEP_REVIEW_ROUNDS,
+    totalToolCalls,
+    usage: { ...usageAcc },
   });
 
   const {
