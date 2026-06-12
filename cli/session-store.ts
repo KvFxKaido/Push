@@ -901,3 +901,172 @@ export async function listSessions(): Promise<SessionListEntry[]> {
 
   return [...byId.values()].sort((a, b) => b.updatedAt - a.updatedAt);
 }
+
+// ─── Pruning (session hygiene) ───────────────────────────────────
+// Retention never existed before 2026-06: session dirs accumulated
+// unboundedly (2,144 dirs / 68 MB observed, ~78% leaked test fixtures),
+// taxing every `listSessions()` walk the TUI resume picker does at
+// startup. `pruneSessions` is the explicit cleanup primitive behind
+// `push sessions prune` — selector-based, AND-combined, dry-run by
+// default at the CLI layer. No automatic GC: deleting history is a
+// user decision, not a side effect.
+
+export interface PruneSelectors {
+  /** Sessions with no human user message in the transcript. */
+  empty?: boolean;
+  /** Sessions whose `updatedAt` is older than this many days. */
+  olderThanDays?: number;
+  /** Match everything EXCEPT the N most-recently-updated sessions. */
+  keep?: number;
+  /** Regex source tested against `provider/model`. */
+  matchModel?: string;
+}
+
+export interface PruneCandidate {
+  sessionId: string;
+  provider: string;
+  model: string;
+  cwd: string;
+  updatedAt: number;
+  /** Total bytes across the session dir's files (all read roots). */
+  bytes: number;
+}
+
+export interface PruneReport {
+  scanned: number;
+  candidates: PruneCandidate[];
+  /** Candidates excluded because a fresh run marker says a run is live. */
+  skippedActive: string[];
+  /** Session ids actually removed (empty on dry-run). */
+  deleted: string[];
+  /** Per-session deletion failures — surfaced, never swallowed. */
+  failed: Array<{ sessionId: string; error: string }>;
+  bytesSelected: number;
+  dryRun: boolean;
+}
+
+/**
+ * Run markers survive crashes by design (that's their recovery job), so a
+ * marker alone can't mean "live forever" — a session that crashed mid-run
+ * months ago must still be prunable. Treat a marker as ACTIVE only within
+ * this window; older markers are stale crash leftovers.
+ */
+const ACTIVE_RUN_MARKER_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+
+async function sessionDirBytes(sessionId: string): Promise<number> {
+  let total = 0;
+  for (const root of getSessionRootsForRead()) {
+    const dir = getSessionDirInRoot(root, sessionId);
+    let entries: import('node:fs').Dirent[];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      try {
+        const stat = await fs.stat(path.join(dir, entry.name));
+        total += stat.size;
+      } catch {
+        /* best-effort sizing */
+      }
+    }
+  }
+  return total;
+}
+
+/**
+ * Select sessions by the AND of every provided selector, skip any with a
+ * fresh run marker, and (unless `dryRun`) delete the rest. At least one
+ * selector is required — a bare prune that matches everything is a
+ * misfire, not a default.
+ */
+export async function pruneSessions(
+  selectors: PruneSelectors,
+  opts: { dryRun: boolean; now?: number },
+): Promise<PruneReport> {
+  const hasSelector =
+    selectors.empty === true ||
+    typeof selectors.olderThanDays === 'number' ||
+    typeof selectors.keep === 'number' ||
+    typeof selectors.matchModel === 'string';
+  if (!hasSelector) {
+    throw new Error(
+      'pruneSessions requires at least one selector (empty / olderThanDays / keep / matchModel).',
+    );
+  }
+  if (typeof selectors.olderThanDays === 'number' && !(selectors.olderThanDays >= 0)) {
+    throw new Error('olderThanDays must be a non-negative number.');
+  }
+  if (
+    typeof selectors.keep === 'number' &&
+    !(Number.isInteger(selectors.keep) && selectors.keep >= 0)
+  ) {
+    throw new Error('keep must be a non-negative integer.');
+  }
+  const modelRe =
+    typeof selectors.matchModel === 'string' ? new RegExp(selectors.matchModel) : null;
+
+  const now = opts.now ?? Date.now();
+  const sessions = await listSessions(); // newest-first
+  const beyondKeep = new Set(
+    typeof selectors.keep === 'number'
+      ? sessions.slice(selectors.keep).map((s) => s.sessionId)
+      : [],
+  );
+
+  const report: PruneReport = {
+    scanned: sessions.length,
+    candidates: [],
+    skippedActive: [],
+    deleted: [],
+    failed: [],
+    bytesSelected: 0,
+    dryRun: opts.dryRun,
+  };
+
+  for (const session of sessions) {
+    if (selectors.empty === true && session.lastUserMessage) continue;
+    if (
+      typeof selectors.olderThanDays === 'number' &&
+      session.updatedAt >= now - selectors.olderThanDays * 86_400_000
+    ) {
+      continue;
+    }
+    if (typeof selectors.keep === 'number' && !beyondKeep.has(session.sessionId)) continue;
+    if (modelRe && !modelRe.test(`${session.provider}/${session.model}`)) continue;
+
+    const marker = await readRunMarker(session.sessionId).catch(() => null);
+    if (marker && now - marker.startedAt < ACTIVE_RUN_MARKER_MAX_AGE_MS) {
+      report.skippedActive.push(session.sessionId);
+      continue;
+    }
+
+    report.candidates.push({
+      sessionId: session.sessionId,
+      provider: session.provider,
+      model: session.model,
+      cwd: session.cwd,
+      updatedAt: session.updatedAt,
+      bytes: await sessionDirBytes(session.sessionId),
+    });
+  }
+  report.bytesSelected = report.candidates.reduce((sum, c) => sum + c.bytes, 0);
+
+  if (!opts.dryRun) {
+    for (const candidate of report.candidates) {
+      try {
+        await deleteSession(candidate.sessionId);
+        report.deleted.push(candidate.sessionId);
+      } catch (err) {
+        report.failed.push({
+          sessionId: candidate.sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
+  return report;
+}
