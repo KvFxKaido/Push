@@ -2440,8 +2440,13 @@ describe('send_user_message delegation parity', needsLoopback, () => {
     const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-daemon-delegation-'));
     const prevSessionDir = process.env.PUSH_SESSION_DIR;
     const prevMemoryDir = process.env.PUSH_MEMORY_DIR;
+    const prevDelegationMode = process.env.PUSH_DELEGATION_MODE;
     process.env.PUSH_SESSION_DIR = tmpRoot;
     process.env.PUSH_MEMORY_DIR = path.join(tmpRoot, 'memory');
+    // The single-lead default (Agent Runtime Decisions §10) skips the planner
+    // wrapper; this test pins the delegated arc's envelope parity through the
+    // daemon pipeline, so opt back in the way a daemon operator would.
+    process.env.PUSH_DELEGATION_MODE = 'delegated';
 
     const plannerPayload = JSON.stringify({
       approach: 'Split work into independent investigations',
@@ -2536,6 +2541,8 @@ describe('send_user_message delegation parity', needsLoopback, () => {
       else process.env.PUSH_SESSION_DIR = prevSessionDir;
       if (prevMemoryDir === undefined) delete process.env.PUSH_MEMORY_DIR;
       else process.env.PUSH_MEMORY_DIR = prevMemoryDir;
+      if (prevDelegationMode === undefined) delete process.env.PUSH_DELEGATION_MODE;
+      else process.env.PUSH_DELEGATION_MODE = prevDelegationMode;
       await fs.rm(tmpRoot, { recursive: true, force: true });
     }
   });

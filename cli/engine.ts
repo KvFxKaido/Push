@@ -64,6 +64,7 @@ import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
 import { deriveUserGoalAnchor } from '../lib/user-goal-anchor.ts';
 import { loadUserGoalFile, seedUserGoalFile, extractDigestBody } from './user-goal-file.ts';
 import { escapeToolResultBoundaries } from '../lib/untrusted-content.ts';
+import { resolveDelegationMode, type DelegationMode } from '../lib/delegation-mode.ts';
 import {
   buildLoopSteeringText,
   createSimilarityLoopDetector,
@@ -142,6 +143,13 @@ export interface RunOptions {
   // writer of the parent-visible `delegation.*` lifecycle + `run_complete`
   // envelopes for this turn.
   suppressEventPersist?: boolean;
+  // Turn shape for `runAssistantTurn`: `inline` (default) runs the single
+  // conversational lead in-loop with no Planner pre-pass; `delegated` opts
+  // back into the planner → task-graph wrapper. Unset falls back to
+  // `PUSH_DELEGATION_MODE` through the shared resolver
+  // (`lib/delegation-mode.ts`), keeping the opt-in rule identical to the
+  // web preference. See Agent Runtime Decisions §10.
+  delegationMode?: DelegationMode;
 }
 
 export interface RunResult {
@@ -2503,8 +2511,6 @@ export async function runAssistantTurn(
   maxRounds: number,
   options: RunOptions = {},
 ): Promise<RunResult> {
-  const { runUserTurnWithDelegation } = await import('./delegation-entry.js');
-
   // Mint a stable runId once for the whole turn. Both the planner `subagent.*`
   // envelopes and the fallback `runAssistantLoop` run share it, so consumers
   // keying on runId (event logs, daemon attach clients) see one correlated
@@ -2513,17 +2519,29 @@ export async function runAssistantTurn(
   const turnRunId = options.runId ?? makeRunId();
   const turnOptions: RunOptions = { ...options, runId: turnRunId };
 
-  const delegationResult = await runUserTurnWithDelegation(
-    state,
-    providerConfig,
-    apiKey,
-    userText,
-    maxRounds,
-    turnOptions,
-  );
+  // Single conversational lead is the default turn shape (Agent Runtime
+  // Decisions §10): the turn runs the in-loop lead directly — no Planner
+  // pre-pass, no subagent ceremony, one agent the user talks to. Only an
+  // explicit 'delegated' (RunOptions, else PUSH_DELEGATION_MODE) opts back
+  // into the org-chart wrapper, mirroring the web's delegation-mode default
+  // (inline since 2026-06-11) and the headless path's opt-in --delegate flag.
+  const delegationMode =
+    options.delegationMode ?? resolveDelegationMode(process.env.PUSH_DELEGATION_MODE);
+  if (delegationMode === 'delegated') {
+    const { runUserTurnWithDelegation } = await import('./delegation-entry.js');
 
-  if (delegationResult?.delegated && delegationResult.runResult) {
-    return delegationResult.runResult as RunResult;
+    const delegationResult = await runUserTurnWithDelegation(
+      state,
+      providerConfig,
+      apiKey,
+      userText,
+      maxRounds,
+      turnOptions,
+    );
+
+    if (delegationResult?.delegated && delegationResult.runResult) {
+      return delegationResult.runResult as RunResult;
+    }
   }
 
   return runAssistantLoop(state, providerConfig, apiKey, maxRounds, turnOptions);

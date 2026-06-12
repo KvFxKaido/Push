@@ -52,6 +52,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { resolveDelegationMode, type DelegationMode } from '@push/lib/delegation-mode';
 import { isBackgroundModeEnabled } from './background-mode-settings';
 import { safeStorageGet, safeStorageSet } from './safe-storage';
 
@@ -65,7 +66,11 @@ import { safeStorageGet, safeStorageSet } from './safe-storage';
 // inline when both are on, because detaching is the more specific intent
 // (decision doc, open question 3).
 
-export type DelegationMode = 'delegated' | 'inline';
+// The mode vocabulary and the "only an exact 'delegated' opts back in"
+// rule live in the shared module so the CLI's PUSH_DELEGATION_MODE
+// resolution can't drift from the web preference (Agent Runtime
+// Decisions §10 convergence).
+export type { DelegationMode } from '@push/lib/delegation-mode';
 
 const STORAGE_KEY = 'push:delegation-mode-preference';
 const CHANGE_EVENT = 'push:delegation-mode-changed';
@@ -73,11 +78,8 @@ const CHANGE_EVENT = 'push:delegation-mode-changed';
 export function getDelegationMode(): DelegationMode {
   // Inline is the default since 2026-06-11 — the step-1 measurement gate
   // was met twice (v1 + v2 A/B; see the Delegation-collapse A/B section in
-  // `docs/decisions/Durable Runs — Adopt-on-Silence.md`). Only an explicit
-  // 'delegated' opts back into the wrapper arc; unknown/legacy values fall
-  // to the default, mirroring the pre-flip rule where only an exact
-  // 'inline' opted in.
-  return safeStorageGet(STORAGE_KEY) === 'delegated' ? 'delegated' : 'inline';
+  // `docs/decisions/Durable Runs — Adopt-on-Silence.md`).
+  return resolveDelegationMode(safeStorageGet(STORAGE_KEY));
 }
 
 export function isInlineDelegationEnabled(): boolean {
