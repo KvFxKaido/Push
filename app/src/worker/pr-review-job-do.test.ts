@@ -1032,6 +1032,59 @@ describe('PrReviewJob relaunch-from-checkpoint', () => {
     expect(mock.reviews.get('pin1')!.pinned_model).toBe('glm-5.1');
   });
 
+  it('concurrent duplicate deliveries dedupe — the row reservation stays synchronous', async () => {
+    // Codex P1 (PR #910): the pin's settings read must not sit between the
+    // duplicate check and the insert, or two redeliveries of the same
+    // delivery id both pass dedupe and race the unique insert.
+    const mock = createMockCtx();
+    __setPrReviewExecutorOverride('race1', async () => ({
+      result: RESULT,
+      commentsPosted: 0,
+      posted: true,
+    }));
+    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
+    const [a, b] = await Promise.all([
+      do_.fetch(startRequest(startInput({ deliveryId: 'race1' }))),
+      do_.fetch(startRequest(startInput({ deliveryId: 'race1' }))),
+    ]);
+    await Promise.allSettled(mock.pending);
+
+    const statuses = [a.status, b.status].sort();
+    expect(statuses).toEqual([200, 202]); // one queued, one duplicate
+    expect(mock.reviews.size).toBe(1);
+    expect(mock.reviews.get('race1')!.status).toBe('completed');
+  });
+
+  it('a supersede landing inside the pin await stands the older start down', async () => {
+    // The pin await is the one yield between row reservation and the
+    // runReview kick. A newer head SHA superseding the row in that window
+    // must not be resurrected to 'running' by the older start's kick.
+    const mock = createMockCtx();
+    __setPrReviewExecutorOverride('old-sha', async () => ({
+      result: RESULT,
+      commentsPosted: 0,
+      posted: true,
+    }));
+    __setPrReviewExecutorOverride('new-sha', async () => ({
+      result: RESULT,
+      commentsPosted: 0,
+      posted: true,
+    }));
+    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
+    const [oldRes] = await Promise.all([
+      do_.fetch(startRequest(startInput({ deliveryId: 'old-sha', headSha: 'shaOld' }))),
+      do_.fetch(startRequest(startInput({ deliveryId: 'new-sha', headSha: 'shaNew' }))),
+    ]);
+    await Promise.allSettled(mock.pending);
+
+    expect(mock.reviews.get('old-sha')!.status).toBe('superseded');
+    expect(oldRes.status).toBe(200); // stood down, not queued
+    expect(
+      mock.events.some((e) => e.delivery_id === 'old-sha' && e.type === 'review.started'),
+    ).toBe(false);
+    expect(mock.reviews.get('new-sha')!.status).toBe('completed');
+  });
+
   it('a relaunch keeps the pinned config even when live config changed mid-flight', async () => {
     // Attempt 1 pinned zen/glm-5.1 on the row, then the instance died at a
     // checkpoint. The post-eviction wake runs under DIFFERENT live config —

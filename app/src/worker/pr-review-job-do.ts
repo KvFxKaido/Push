@@ -598,33 +598,6 @@ export class PrReviewJob {
       // double-post and leave the late in-progress run hanging "Reviewing…".
     }
 
-    // Pin provider/model for the delivery's lifetime, BEFORE the row is
-    // inserted: relaunches and auto-retries rebuild their input from the row,
-    // so every attempt reuses this resolution instead of re-reading live
-    // config. Without the pin, a mid-flight settings swap retroactively
-    // applied to a running review (a relaunch re-resolved a model the
-    // deployed catalog didn't have and killed #909's own review run).
-    // Best-effort: a settings/KV hiccup leaves the run unpinned (loudly) and
-    // the executor resolves live per attempt — exactly the pre-pin behavior.
-    // One fast KV/doc read; the webhook 202 budget (~10s) is unaffected.
-    if (!input.pinnedProvider || !input.pinnedModel) {
-      try {
-        const effective = await getPrReviewEffectiveConfig(this.env);
-        input.pinnedProvider = effective.provider;
-        input.pinnedModel = effective.model;
-        log('info', 'pr_review_config_pinned', {
-          deliveryId: input.deliveryId,
-          provider: effective.provider,
-          model: effective.model,
-        });
-      } catch (err) {
-        log('warn', 'pr_review_config_pin_failed', {
-          deliveryId: input.deliveryId,
-          message: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
     this.insertQueuedReview(input);
     this.emit(input.deliveryId, 'review.queued', { headSha: input.headSha });
 
@@ -641,6 +614,52 @@ export class PrReviewJob {
         createdAt: Date.now(),
       }),
     );
+
+    // Pin provider/model for the delivery's lifetime — AFTER the
+    // synchronous dedupe→supersede→insert block above. The row reservation
+    // must not be separated from its duplicate/coalescing checks by an
+    // external await: a settings/KV read parked there let a concurrent
+    // redelivery race the unique insert, and let two head SHAs both queue
+    // because neither saw the other (Codex P1, PR #910). Relaunches and
+    // auto-retries rebuild their input from the row, so persisting the pin
+    // here covers every later attempt. Best-effort: a failed read logs
+    // loudly and leaves the delivery unpinned (executor resolves live per
+    // attempt — the pre-pin behavior). One fast KV/doc read; the webhook
+    // 202 budget (~10s) is unaffected.
+    try {
+      const effective = await getPrReviewEffectiveConfig(this.env);
+      input.pinnedProvider = effective.provider;
+      input.pinnedModel = effective.model;
+      this.ctx.storage.sql.exec(
+        'UPDATE review SET pinned_provider = ?, pinned_model = ? WHERE delivery_id = ?',
+        effective.provider,
+        effective.model,
+        input.deliveryId,
+      );
+      log('info', 'pr_review_config_pinned', {
+        deliveryId: input.deliveryId,
+        provider: effective.provider,
+        model: effective.model,
+      });
+    } catch (err) {
+      log('warn', 'pr_review_config_pin_failed', {
+        deliveryId: input.deliveryId,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    // The pin await above is the one yield between reservation and launch: a
+    // newer head SHA can supersede this row inside it. Kicking runReview for
+    // a superseded row would resurrect it to 'running' — re-check and stand
+    // down instead (the superseding delivery owns the PR now).
+    const postPinStatus = this.reviewRow(input.deliveryId)?.status;
+    if (postPinStatus !== 'queued') {
+      log('info', 'pr_review_start_stood_down', {
+        deliveryId: input.deliveryId,
+        status: postPinStatus ?? null,
+      });
+      return json({ status: postPinStatus ?? 'unknown' }, 200);
+    }
 
     // Run in the background; keep the DO alive until it settles.
     this.ctx.waitUntil(this.runReview(input));
