@@ -133,6 +133,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     handleSelectRepoFromDrawer,
     handleResumeChatFromDrawer,
     setCurrentBranch,
+    switchBranchFromUI,
     mergeBranchInUI,
     ensureSandbox,
     approvalMode,
@@ -470,6 +471,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     repoBranchesLoading,
     loadRepoBranches,
     setCurrentBranch,
+    switchBranchFromUI,
     setShowBranchCreate: setShowBranchCreateWithMount,
     setShowBranchFork: setShowBranchForkWithMount,
     setShowMergeFlow: setShowMergeFlowWithMount,
@@ -493,6 +495,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     currentBranch: activeRepo?.current_branch || activeRepo?.default_branch,
     defaultBranch: activeRepo?.default_branch,
     setCurrentBranch,
+    switchBranchFromUI,
     displayBranches,
     repoBranchesLoading,
     repoBranchesError,
@@ -695,6 +698,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
             onOpenChange={setShowBranchCreateWithMount}
             activeRepo={activeRepo}
             setCurrentBranch={setCurrentBranch}
+            forkBranch={props.forkBranchFromUI}
           />
         </Suspense>
       )}

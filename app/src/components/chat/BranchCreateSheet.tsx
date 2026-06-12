@@ -21,12 +21,16 @@ import {
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
 } from '@/components/chat/hub-styles';
 import type { ActiveRepo } from '@/types';
+import type { ForkBranchInWorkspaceResult } from '@/lib/fork-branch-in-workspace';
 
 interface BranchCreateSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   activeRepo: ActiveRepo;
   setCurrentBranch: (branch: string) => void;
+  /** Present in live workspaces. Routes create+switch through
+   *  sandbox_create_branch so the sandbox and chat transition stay warm. */
+  forkBranch?: (name: string, from?: string) => Promise<ForkBranchInWorkspaceResult>;
 }
 
 const BRANCH_ACTION_BUTTON_CLASS = `${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 flex-1 text-sm text-push-fg-secondary`;
@@ -42,6 +46,7 @@ function BranchCreateSheet({
   onOpenChange,
   activeRepo,
   setCurrentBranch,
+  forkBranch,
 }: BranchCreateSheetProps) {
   const [branchName, setBranchName] = useState('');
   const [afterCreate, setAfterCreate] = useState<'switch' | 'stay'>('switch');
@@ -67,16 +72,28 @@ function BranchCreateSheet({
     setSuccess(null);
 
     try {
-      await executeCreateBranch(activeRepo.full_name, sanitized, fromBranch);
-
       if (afterCreate === 'switch') {
-        setCurrentBranch(sanitized);
+        // Warm path when a sandbox is live; if the fork helper reports
+        // there's none, fall back to the legacy GitHub-create + state write
+        // (the pre-warm behavior — the next sandbox start clones the new
+        // branch). Without this, a workspace with no running sandbox loses
+        // the create+switch flow entirely.
+        const warmResult = forkBranch ? await forkBranch(sanitized, fromBranch) : null;
+        if (warmResult && !warmResult.ok && !warmResult.noSandbox) {
+          setError(warmResult.errorMessage || 'Failed to create branch');
+          return;
+        }
+        if (!warmResult || warmResult.noSandbox) {
+          await executeCreateBranch(activeRepo.full_name, sanitized, fromBranch);
+          setCurrentBranch(sanitized);
+        }
         // Reset and close
         setBranchName('');
         setError(null);
         setSuccess(null);
         onOpenChange(false);
       } else {
+        await executeCreateBranch(activeRepo.full_name, sanitized, fromBranch);
         // Stay on current branch -- show brief success, then close after a beat
         setSuccess(`Branch "${sanitized}" created.`);
         setBranchName('');
@@ -103,6 +120,7 @@ function BranchCreateSheet({
     fromBranch,
     afterCreate,
     setCurrentBranch,
+    forkBranch,
     onOpenChange,
   ]);
 
@@ -139,7 +157,9 @@ function BranchCreateSheet({
             Create branch
           </SheetTitle>
           <SheetDescription className="text-xs text-push-fg-dim">
-            From {fromBranch}. The new branch will be created on GitHub from the current ref.
+            {forkBranch
+              ? `From ${fromBranch}. The running sandbox will create and switch to this branch.`
+              : `From ${fromBranch}. The new branch will be created on GitHub from the current ref.`}
           </SheetDescription>
         </SheetHeader>
 

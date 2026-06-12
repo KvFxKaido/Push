@@ -163,6 +163,7 @@ export function WorkspaceSessionScreen({
     ciStatus,
     diagnoseCIFailure,
     forkBranchFromUI,
+    switchBranchFromUI,
     mergeBranchInUI,
     replayOnFreshSandbox,
   } = useChat(
@@ -535,6 +536,7 @@ export function WorkspaceSessionScreen({
     handleSandboxDownload,
     sandboxDownloading,
     setCurrentBranch,
+    switchBranchFromUI,
     sandboxState,
     sandboxStateLoading,
     fetchSandboxState,
@@ -576,6 +578,7 @@ export function WorkspaceSessionScreen({
     ciStatus,
     diagnoseCIFailure,
     forkBranchFromUI,
+    switchBranchFromUI,
     mergeBranchInUI,
   };
 

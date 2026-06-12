@@ -59,6 +59,8 @@ import { applyBranchSwitchPayload } from '@/lib/branch-fork-migration';
 import {
   forkBranchInWorkspace,
   type ForkBranchInWorkspaceResult,
+  switchBranchInWorkspace,
+  type SwitchBranchInWorkspaceResult,
 } from '@/lib/fork-branch-in-workspace';
 import { useBranchForkGuard } from './useBranchForkGuard';
 import { useChatAutoSwitch } from './useChatAutoSwitch';
@@ -823,15 +825,11 @@ export function useChat(
   // Full Auto: auto-approve the Auditor's SAFE commit-review card (sibling hook).
   useFullAutoCommitApproval({ conversations, activeChatId, handleCardAction });
 
-  // ---------------------------------------------------------------------------
-  // UI-initiated branch fork (slice 2.1)
-  // ---------------------------------------------------------------------------
-
-  // Wraps the sandbox_create_branch tool path so the UI button and the model
-  // emit the same operation, then dispatches the resulting BranchSwitchPayload
-  // through applyBranchSwitchPayload so conversation migration fires the same
-  // way it does for model-initiated forks. Single source of truth for the
-  // migration logic — no parallel implementation in the UI handler.
+  // UI branch transitions (fork: slice 2.1; switch: warm-switch doc) wrap the
+  // typed sandbox branch tools so the UI buttons and the model emit the same
+  // operations, then dispatch the BranchSwitchPayload through
+  // applyBranchSwitchPayload — single source of truth for chat migration, no
+  // parallel implementation in the UI handlers.
   const forkBranchFromUI = useCallback(
     async (name: string, from?: string): Promise<ForkBranchInWorkspaceResult> => {
       const result = await forkBranchInWorkspace(sandboxIdRef.current, name, from);
@@ -850,22 +848,22 @@ export function useChat(
     [updateConversations, skipAutoCreateRef, dirtyConversationIdsRef],
   );
 
-  // ---------------------------------------------------------------------------
-  // UI-initiated post-merge migration
-  // ---------------------------------------------------------------------------
+  const switchBranchFromUI = useCallback(
+    async (branch: string): Promise<SwitchBranchInWorkspaceResult> => {
+      const result = await switchBranchInWorkspace(sandboxIdRef.current, branch);
+      if (!result.ok || !result.branchSwitch) return result;
+      // biome-ignore format: same ctx object as the fork path above; kept compact for the file line cap.
+      applyBranchSwitchPayload(result.branchSwitch, { activeChatIdRef, conversationsRef, branchInfoRef, skipAutoCreateRef, setConversations: updateConversations, dirtyConversationIdsRef, runtimeHandlersRef });
+      return result;
+    },
+    [updateConversations, skipAutoCreateRef, dirtyConversationIdsRef],
+  );
 
-  // Called by the merge flow (`MergeFlowSheet`) after a successful PR merge,
-  // to swap the workspace to the default branch AND migrate the active chat
-  // along with it. Without this, the chat would be filtered out (its branch
-  // is now defunct) and `useChatAutoSwitch` would either select an unrelated
-  // chat or auto-create a fresh one — bumping the user out of the
-  // conversation they just shipped from.
-  //
-  // Mirrors `forkBranchFromUI` but emits a `kind: 'merged'` payload so the
-  // shared `applyBranchSwitchPayload` migration helper labels the transcript
-  // divider correctly (`branch_merged` vs `branch_forked`). The migration
-  // helper itself drives the same R10/R12 mitigations as the fork path:
-  // cross-tab marker, in-tab guard, atomic backfill, runtime branch update.
+  // Post-merge migration (MergeFlowSheet): emits kind:'merged' so the shared
+  // migration helper labels the transcript divider correctly and the active
+  // chat follows the default branch instead of being filtered out by
+  // useChatAutoSwitch. Drives the same R10/R12 mitigations as the fork path
+  // (cross-tab marker, in-tab guard, atomic backfill, runtime branch update).
   const mergeBranchInUI = useCallback(
     (toBranch: string, opts?: { from?: string; prNumber?: number }): void => {
       applyBranchSwitchPayload(
@@ -945,6 +943,7 @@ export function useChat(
     diagnoseCIFailure,
     replayOnFreshSandbox,
     forkBranchFromUI,
+    switchBranchFromUI,
     mergeBranchInUI,
   };
 }

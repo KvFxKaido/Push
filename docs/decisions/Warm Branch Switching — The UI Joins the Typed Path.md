@@ -1,10 +1,11 @@
 # Warm Branch Switching — The UI Joins the Typed Path
 
 Date: 2026-06-12
-Status: **Draft** — scoped, nothing built. Pairs with (and deliberately
-precedes) branch-desync *detection*: shipping this removes the last
-legitimate reliance on teardown-as-guard, so detection lands into a clean
-field. Sequencing rationale at the bottom.
+Status: **Current** — UI branch switching now routes through the typed
+branch operation when a sandbox is live. This deliberately precedes
+branch-desync *detection*: shipping this removes the last legitimate reliance
+on teardown-as-guard, so detection lands into a clean field. Sequencing
+rationale at the bottom.
 Owner: Push
 
 ## Problem

@@ -80,6 +80,12 @@ export interface ChatRouteWorkspaceProps {
     name: string,
     from?: string,
   ) => Promise<import('@/lib/fork-branch-in-workspace').ForkBranchInWorkspaceResult>;
+  /** UI-initiated warm switch. Calls sandbox_switch_branch and dispatches the
+   *  resulting BranchSwitchPayload so chat routing and sandbox teardown-skip
+   *  behavior match model-initiated switches. */
+  switchBranchFromUI: (
+    branch: string,
+  ) => Promise<import('@/lib/fork-branch-in-workspace').SwitchBranchInWorkspaceResult>;
   /** UI-initiated post-merge migration. Dispatches a `kind: 'merged'`
    *  BranchSwitchPayload through `applyBranchSwitchPayload`, so the active
    *  chat migrates to the default branch instead of being filtered out by

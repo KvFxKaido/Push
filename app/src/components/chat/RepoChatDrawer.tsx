@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Check,
   ChevronDown,
@@ -45,6 +45,7 @@ import {
 } from '@/components/chat/hub-styles';
 import { CliSessionRow } from '@/components/chat/drawer-cli-row';
 import type { RepoAppearance } from '@/lib/repo-appearance';
+import type { SwitchBranchInWorkspaceResult } from '@/lib/fork-branch-in-workspace';
 import type { ActiveRepo, Conversation, DaemonCliSession, RepoWithActivity } from '@/types';
 
 interface RepoChatDrawerProps {
@@ -69,6 +70,7 @@ interface RepoChatDrawerProps {
   currentBranch?: string;
   defaultBranch?: string;
   setCurrentBranch?: (branch: string) => void;
+  switchBranchFromUI?: (branch: string) => Promise<SwitchBranchInWorkspaceResult>;
   availableBranches?: { name: string; isDefault: boolean; isProtected: boolean }[];
   branchesLoading?: boolean;
   branchesError?: string | null;
@@ -125,6 +127,7 @@ export function RepoChatDrawer({
   currentBranch,
   defaultBranch,
   setCurrentBranch,
+  switchBranchFromUI,
   availableBranches = [],
   branchesLoading = false,
   branchesError = null,
@@ -140,6 +143,8 @@ export function RepoChatDrawer({
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
   const [pendingDeleteBranch, setPendingDeleteBranch] = useState<string | null>(null);
   const [deletingBranch, setDeletingBranch] = useState<string | null>(null);
+  const [pendingSwitchBranch, setPendingSwitchBranch] = useState<string | null>(null);
+  const [switchError, setSwitchError] = useState<string | null>(null);
   const [appearanceRepo, setAppearanceRepoState] = useState<RepoWithActivity | null>(null);
 
   useEffect(() => {
@@ -307,6 +312,38 @@ export function RepoChatDrawer({
       setDeletingBranch((prev) => (prev === branchName ? null : prev));
     }
   };
+
+  const switchActiveRepoBranch = useCallback(
+    async (branchName: string) => {
+      if (branchName === currentBranch || pendingSwitchBranch) return;
+      setPendingSwitchBranch(branchName);
+      setSwitchError(null);
+      try {
+        if (switchBranchFromUI) {
+          const result = await switchBranchFromUI(branchName);
+          if (!result.ok) {
+            // No sandbox → nothing to keep warm; the plain state write is the
+            // correct path (doc writer table: "plain write otherwise"). Any
+            // other failure (checkout conflict, transport) surfaces inline —
+            // a silent console.error reads as "the tap did nothing".
+            if (result.noSandbox && setCurrentBranch) {
+              setCurrentBranch(branchName);
+              setBranchMenuOpen(false);
+              return;
+            }
+            setSwitchError(result.errorMessage || 'Failed to switch branches.');
+            return;
+          }
+        } else if (setCurrentBranch) {
+          setCurrentBranch(branchName);
+        }
+        setBranchMenuOpen(false);
+      } finally {
+        setPendingSwitchBranch((prev) => (prev === branchName ? null : prev));
+      }
+    },
+    [currentBranch, pendingSwitchBranch, setCurrentBranch, switchBranchFromUI],
+  );
 
   const renderChatRow = (chat: Conversation) => {
     const isActiveChat = chat.id === activeChatId;
@@ -570,6 +607,14 @@ export function RepoChatDrawer({
                                     </DropdownMenuItem>
                                   )}
 
+                                  {switchError && (
+                                    <DropdownMenuItem
+                                      disabled
+                                      className="mx-1 rounded-lg px-3 py-2 text-xs text-red-400"
+                                    >
+                                      {switchError}
+                                    </DropdownMenuItem>
+                                  )}
                                   {!branchesLoading && branchesError && (
                                     <>
                                       <DropdownMenuItem
@@ -623,7 +668,8 @@ export function RepoChatDrawer({
                                                 return;
                                               }
                                               setPendingDeleteBranch(null);
-                                              setCurrentBranch(branch.name);
+                                              e.preventDefault();
+                                              void switchActiveRepoBranch(branch.name);
                                             }}
                                             className={`mx-1 flex items-center gap-2 rounded-lg px-3 py-2 ${
                                               isActiveBranch
@@ -648,6 +694,9 @@ export function RepoChatDrawer({
                                             )}
                                             {isActiveBranch && (
                                               <Check className="h-3.5 w-3.5 text-push-link" />
+                                            )}
+                                            {pendingSwitchBranch === branch.name && (
+                                              <Loader2 className="h-3.5 w-3.5 animate-spin text-push-link" />
                                             )}
                                           </DropdownMenuItem>
                                           {canDeleteBranch && (
@@ -723,11 +772,12 @@ export function RepoChatDrawer({
                                     <div key={branchName}>
                                       <button
                                         onClick={() => {
-                                          if (setCurrentBranch && branchName !== currentBranch) {
-                                            if (!isActiveRepo) {
-                                              onSelectRepo(repo);
+                                          if (branchName !== currentBranch) {
+                                            if (isActiveRepo) {
+                                              void switchActiveRepoBranch(branchName);
+                                            } else {
+                                              onSelectRepo(repo, branchName);
                                             }
-                                            setCurrentBranch(branchName);
                                           }
                                         }}
                                         className="flex w-full items-center gap-1.5 px-1.5 pb-0.5 pt-2 text-left"
