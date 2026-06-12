@@ -47,6 +47,7 @@ import {
   DEFAULT_PR_REVIEW_MODEL,
   DEFAULT_PR_REVIEW_PROVIDER,
   getDefaultPrReviewModel,
+  getPrReviewEffectiveConfig,
   getPrReviewRuntimeConfig,
   isKnownPrReviewProvider,
   isValidPrReviewRuntimeConfig,
@@ -110,6 +111,17 @@ export interface PrReviewStartInput extends ReviewablePullRequest {
   deliveryId: string;
   /** Worker origin, threaded to the provider-stream adapter. */
   origin: string;
+  /**
+   * Provider/model PINNED for this delivery's lifetime. Resolved once when
+   * the first attempt starts and persisted on the review row; relaunches and
+   * auto-retries reuse it instead of re-reading live config. Without the pin,
+   * a mid-flight settings swap retroactively applied to a running review —
+   * observed killing #909's own review when its relaunch re-resolved a model
+   * the deployed catalog didn't have yet. Optional for rows that predate the
+   * columns; the executor falls back to live resolution for those.
+   */
+  pinnedProvider?: string;
+  pinnedModel?: string;
 }
 
 export interface PrReviewStatusSnapshot {
@@ -229,7 +241,9 @@ CREATE TABLE IF NOT EXISTS review (
   created_at INTEGER NOT NULL,
   started_at INTEGER,
   finished_at INTEGER,
-  check_run_id INTEGER
+  check_run_id INTEGER,
+  pinned_provider TEXT,
+  pinned_model TEXT
 );
 CREATE INDEX IF NOT EXISTS review_status_idx ON review (status);
 
@@ -269,6 +283,8 @@ interface ReviewRow {
   finished_at: number | null;
   check_run_id: number | null;
   relaunch_count: number;
+  pinned_provider: string | null;
+  pinned_model: string | null;
 }
 
 export class PrReviewJob {
@@ -309,6 +325,12 @@ export class PrReviewJob {
     }
     if (!have.has('origin')) {
       this.ctx.storage.sql.exec('ALTER TABLE review ADD COLUMN origin TEXT');
+    }
+    if (!have.has('pinned_provider')) {
+      this.ctx.storage.sql.exec('ALTER TABLE review ADD COLUMN pinned_provider TEXT');
+    }
+    if (!have.has('pinned_model')) {
+      this.ctx.storage.sql.exec('ALTER TABLE review ADD COLUMN pinned_model TEXT');
     }
     if (!have.has('relaunch_count')) {
       this.ctx.storage.sql.exec(
@@ -521,7 +543,7 @@ export class PrReviewJob {
     }
   }
 
-  private handleStart(input: PrReviewStartInput): Response {
+  private async handleStart(input: PrReviewStartInput): Promise<Response> {
     const missing = (
       ['deliveryId', 'repoFullName', 'prNumber', 'headSha', 'baseRef', 'installationId'] as const
     ).filter((k) => !input[k]);
@@ -593,6 +615,52 @@ export class PrReviewJob {
       }),
     );
 
+    // Pin provider/model for the delivery's lifetime — AFTER the
+    // synchronous dedupe→supersede→insert block above. The row reservation
+    // must not be separated from its duplicate/coalescing checks by an
+    // external await: a settings/KV read parked there let a concurrent
+    // redelivery race the unique insert, and let two head SHAs both queue
+    // because neither saw the other (Codex P1, PR #910). Relaunches and
+    // auto-retries rebuild their input from the row, so persisting the pin
+    // here covers every later attempt. Best-effort: a failed read logs
+    // loudly and leaves the delivery unpinned (executor resolves live per
+    // attempt — the pre-pin behavior). One fast KV/doc read; the webhook
+    // 202 budget (~10s) is unaffected.
+    try {
+      const effective = await getPrReviewEffectiveConfig(this.env);
+      input.pinnedProvider = effective.provider;
+      input.pinnedModel = effective.model;
+      this.ctx.storage.sql.exec(
+        'UPDATE review SET pinned_provider = ?, pinned_model = ? WHERE delivery_id = ?',
+        effective.provider,
+        effective.model,
+        input.deliveryId,
+      );
+      log('info', 'pr_review_config_pinned', {
+        deliveryId: input.deliveryId,
+        provider: effective.provider,
+        model: effective.model,
+      });
+    } catch (err) {
+      log('warn', 'pr_review_config_pin_failed', {
+        deliveryId: input.deliveryId,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    // The pin await above is the one yield between reservation and launch: a
+    // newer head SHA can supersede this row inside it. Kicking runReview for
+    // a superseded row would resurrect it to 'running' — re-check and stand
+    // down instead (the superseding delivery owns the PR now).
+    const postPinStatus = this.reviewRow(input.deliveryId)?.status;
+    if (postPinStatus !== 'queued') {
+      log('info', 'pr_review_start_stood_down', {
+        deliveryId: input.deliveryId,
+        status: postPinStatus ?? null,
+      });
+      return json({ status: postPinStatus ?? 'unknown' }, 200);
+    }
+
     // Run in the background; keep the DO alive until it settles.
     this.ctx.waitUntil(this.runReview(input));
     return json({ status: 'queued' }, 202);
@@ -600,8 +668,8 @@ export class PrReviewJob {
 
   private insertQueuedReview(input: PrReviewStartInput): void {
     this.ctx.storage.sql.exec(
-      `INSERT INTO review (delivery_id, repo, pr_number, head_sha, base_ref, head_ref, installation_id, is_cross_fork, origin, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
+      `INSERT INTO review (delivery_id, repo, pr_number, head_sha, base_ref, head_ref, installation_id, is_cross_fork, origin, status, created_at, pinned_provider, pinned_model)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
       input.deliveryId,
       input.repoFullName,
       input.prNumber,
@@ -612,6 +680,8 @@ export class PrReviewJob {
       input.isCrossFork ? 1 : 0,
       input.origin,
       Date.now(),
+      input.pinnedProvider ?? null,
+      input.pinnedModel ?? null,
     );
   }
 
@@ -659,6 +729,9 @@ export class PrReviewJob {
       installationId: row.installation_id,
       isCrossFork: row.is_cross_fork === 1,
       origin: row.origin ?? RETRY_FALLBACK_ORIGIN,
+      // The retry is the same review intent; it keeps the original pin.
+      pinnedProvider: row.pinned_provider ?? undefined,
+      pinnedModel: row.pinned_model ?? undefined,
     };
     this.insertQueuedReview(input);
     this.emit(retryId, 'review.queued', {
@@ -1234,6 +1307,8 @@ export class PrReviewJob {
                   installationId: row.installation_id,
                   isCrossFork: row.is_cross_fork === 1,
                   origin: row.origin ?? RETRY_FALLBACK_ORIGIN,
+                  pinnedProvider: row.pinned_provider ?? undefined,
+                  pinnedModel: row.pinned_model ?? undefined,
                 },
                 { state: checkpoint.state },
               ),
@@ -1353,9 +1428,19 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
         : fetchReviewGuidance(input.repoFullName, input.baseRef, auth),
   });
 
-  const runtimeConfig = await getPrReviewRuntimeConfig(env);
-  const provider = runtimeConfig.provider ?? DEFAULT_PROVIDER;
-  const modelId = runtimeConfig.model ?? getDefaultPrReviewModel(provider) ?? DEFAULT_MODEL;
+  // Prefer the per-delivery pin (resolved once at first start, threaded by
+  // the DO through every relaunch/retry); fall back to live resolution only
+  // for unpinned rows (pre-pin deploys, or a pin step that failed loudly).
+  let provider: AIProviderType;
+  let modelId: string;
+  if (input.pinnedProvider && input.pinnedModel) {
+    provider = input.pinnedProvider as AIProviderType;
+    modelId = input.pinnedModel;
+  } else {
+    const runtimeConfig = await getPrReviewRuntimeConfig(env);
+    provider = runtimeConfig.provider ?? DEFAULT_PROVIDER;
+    modelId = runtimeConfig.model ?? getDefaultPrReviewModel(provider) ?? DEFAULT_MODEL;
+  }
 
   // Hard-fail policy: no fallback when the configured model is invalid/unavailable.
   if (!isKnownPrReviewProvider(provider)) {

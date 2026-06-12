@@ -64,6 +64,8 @@ interface ReviewRow {
   finished_at: number | null;
   check_run_id: number | null;
   relaunch_count: number;
+  pinned_provider: string | null;
+  pinned_model: string | null;
 }
 
 function createMockCtx() {
@@ -85,6 +87,8 @@ function createMockCtx() {
         { name: 'check_run_id' },
         { name: 'origin' },
         { name: 'relaunch_count' },
+        { name: 'pinned_provider' },
+        { name: 'pinned_model' },
       ];
     if (/^INSERT INTO review_checkpoint/i.test(sql)) {
       checkpoints.set(p[0] as string, {
@@ -143,7 +147,22 @@ function createMockCtx() {
         is_cross_fork,
         origin,
         created_at,
-      ] = p as [string, string, number, string, string, string, string, number, string, number];
+        pinned_provider,
+        pinned_model,
+      ] = p as [
+        string,
+        string,
+        number,
+        string,
+        string,
+        string,
+        string,
+        number,
+        string,
+        number,
+        string | null,
+        string | null,
+      ];
       reviews.set(delivery_id, {
         delivery_id,
         repo,
@@ -164,6 +183,8 @@ function createMockCtx() {
         finished_at: null,
         check_run_id: null,
         relaunch_count: 0,
+        pinned_provider: pinned_provider ?? null,
+        pinned_model: pinned_model ?? null,
       });
       return [];
     }
@@ -208,6 +229,13 @@ function createMockCtx() {
     }
     if (/^UPDATE review SET status = 'cancelled'/i.test(sql)) {
       setStatus(p[1] as string, { status: 'cancelled', finished_at: p[0] as number });
+      return [];
+    }
+    if (/^UPDATE review SET pinned_provider = /i.test(sql)) {
+      setStatus(p[2] as string, {
+        pinned_provider: p[0] as string,
+        pinned_model: p[1] as string,
+      });
       return [];
     }
     if (/^UPDATE review SET check_run_id = /i.test(sql)) {
@@ -593,6 +621,8 @@ describe('PrReviewJob cancel', () => {
     mock.reviews.set('orphan', {
       delivery_id: 'orphan',
       relaunch_count: 0,
+      pinned_provider: null,
+      pinned_model: null,
       repo: 'octo/repo',
       pr_number: 7,
       head_sha: 'shaA',
@@ -739,6 +769,8 @@ describe('PrReviewJob check-run status surface', () => {
 describe('PrReviewJob orphan sweep', () => {
   function seedRow(overrides: Partial<ReviewRow> & { delivery_id: string }): ReviewRow {
     return {
+      pinned_provider: null,
+      pinned_model: null,
       repo: 'octo/repo',
       pr_number: 7,
       head_sha: 'shaX',
@@ -905,6 +937,8 @@ describe('PrReviewJob relaunch-from-checkpoint', () => {
       finished_at: null,
       check_run_id: 77,
       relaunch_count: 0,
+      pinned_provider: null,
+      pinned_model: null,
       ...overrides,
     };
   }
@@ -973,6 +1007,116 @@ describe('PrReviewJob relaunch-from-checkpoint', () => {
     // No from-scratch retry was burned on a relaunchable death.
     expect([...mock.reviews.keys()].some((k) => k.endsWith('.auto-retry'))).toBe(false);
     expect(mock.checkpoints.has('dead')).toBe(false);
+  });
+
+  it('pins the resolved provider/model at start and threads it to the executor', async () => {
+    // The #909 incident class: config is resolved ONCE per delivery. The pin
+    // rides the row + input, so the executor never re-reads live config for
+    // a pinned delivery.
+    const mock = createMockCtx();
+    const env = {
+      PR_REVIEW_PROVIDER: 'zen',
+      PR_REVIEW_MODEL: 'glm-5.1',
+    } as unknown as Env;
+    const seen: Array<{ provider?: string; model?: string }> = [];
+    __setPrReviewExecutorOverride('pin1', async (i) => {
+      seen.push({ provider: i.pinnedProvider, model: i.pinnedModel });
+      return { result: RESULT, commentsPosted: 0, posted: true };
+    });
+    const do_ = new PrReviewJob(mock.ctx as never, env);
+    await do_.fetch(startRequest(startInput({ deliveryId: 'pin1' })));
+    await Promise.allSettled(mock.pending);
+
+    expect(seen).toEqual([{ provider: 'zen', model: 'glm-5.1' }]);
+    expect(mock.reviews.get('pin1')!.pinned_provider).toBe('zen');
+    expect(mock.reviews.get('pin1')!.pinned_model).toBe('glm-5.1');
+  });
+
+  it('concurrent duplicate deliveries dedupe — the row reservation stays synchronous', async () => {
+    // Codex P1 (PR #910): the pin's settings read must not sit between the
+    // duplicate check and the insert, or two redeliveries of the same
+    // delivery id both pass dedupe and race the unique insert.
+    const mock = createMockCtx();
+    __setPrReviewExecutorOverride('race1', async () => ({
+      result: RESULT,
+      commentsPosted: 0,
+      posted: true,
+    }));
+    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
+    const [a, b] = await Promise.all([
+      do_.fetch(startRequest(startInput({ deliveryId: 'race1' }))),
+      do_.fetch(startRequest(startInput({ deliveryId: 'race1' }))),
+    ]);
+    await Promise.allSettled(mock.pending);
+
+    const statuses = [a.status, b.status].sort();
+    expect(statuses).toEqual([200, 202]); // one queued, one duplicate
+    expect(mock.reviews.size).toBe(1);
+    expect(mock.reviews.get('race1')!.status).toBe('completed');
+  });
+
+  it('a supersede landing inside the pin await stands the older start down', async () => {
+    // The pin await is the one yield between row reservation and the
+    // runReview kick. A newer head SHA superseding the row in that window
+    // must not be resurrected to 'running' by the older start's kick.
+    const mock = createMockCtx();
+    __setPrReviewExecutorOverride('old-sha', async () => ({
+      result: RESULT,
+      commentsPosted: 0,
+      posted: true,
+    }));
+    __setPrReviewExecutorOverride('new-sha', async () => ({
+      result: RESULT,
+      commentsPosted: 0,
+      posted: true,
+    }));
+    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
+    const [oldRes] = await Promise.all([
+      do_.fetch(startRequest(startInput({ deliveryId: 'old-sha', headSha: 'shaOld' }))),
+      do_.fetch(startRequest(startInput({ deliveryId: 'new-sha', headSha: 'shaNew' }))),
+    ]);
+    await Promise.allSettled(mock.pending);
+
+    expect(mock.reviews.get('old-sha')!.status).toBe('superseded');
+    expect(oldRes.status).toBe(200); // stood down, not queued
+    expect(
+      mock.events.some((e) => e.delivery_id === 'old-sha' && e.type === 'review.started'),
+    ).toBe(false);
+    expect(mock.reviews.get('new-sha')!.status).toBe('completed');
+  });
+
+  it('a relaunch keeps the pinned config even when live config changed mid-flight', async () => {
+    // Attempt 1 pinned zen/glm-5.1 on the row, then the instance died at a
+    // checkpoint. The post-eviction wake runs under DIFFERENT live config —
+    // the relaunch must use the pin, not re-resolve (re-resolution killed
+    // #909's in-flight review during a model swap).
+    const mock = createMockCtx();
+    mock.reviews.set(
+      'pinned-dead',
+      liveRow({
+        delivery_id: 'pinned-dead',
+        pinned_provider: 'zen',
+        pinned_model: 'glm-5.1',
+      }),
+    );
+    plantCheckpoint(mock, 'pinned-dead');
+
+    const seen: Array<{ provider?: string; model?: string }> = [];
+    __setPrReviewExecutorOverride('pinned-dead', async (i) => {
+      seen.push({ provider: i.pinnedProvider, model: i.pinnedModel });
+      return { result: RESULT, commentsPosted: 0, posted: true };
+    });
+
+    const swappedEnv = {
+      PR_REVIEW_PROVIDER: 'openrouter',
+      PR_REVIEW_MODEL: 'anthropic/claude-sonnet-4.6:nitro',
+    } as unknown as Env;
+    const do_ = new PrReviewJob(mock.ctx as never, swappedEnv);
+    await do_.alarm();
+    await Promise.allSettled(mock.pending);
+
+    expect(seen).toEqual([{ provider: 'zen', model: 'glm-5.1' }]);
+    expect(mock.reviews.get('pinned-dead')!.status).toBe('completed');
   });
 
   it('relaunch survives repeated deaths — the cap is persisted, not per-instance', async () => {
@@ -1136,6 +1280,8 @@ describe('PrReviewJob auto-retry', () => {
 
   function deadRow(overrides: Partial<ReviewRow> & { delivery_id: string }): ReviewRow {
     return {
+      pinned_provider: null,
+      pinned_model: null,
       repo: 'octo/repo',
       pr_number: 7,
       head_sha: 'shaX',
