@@ -1,13 +1,14 @@
 // Integration tests for the lead-kernel lane (cli/lead-turn.ts) — §10 step 2.
 //
-// Pins that the opt-in lane runs the terminal turn as a `leadMode: true` run
+// Pins that the lane runs the terminal turn as a `leadMode: true` run
 // of the shared coder kernel: the lead identity reaches the provider (not the
 // CLI engine's local identity, not the delegated Coder implementer prompt),
 // tools round-trip through the real `executeToolCall` against the workspace,
 // and the lane speaks the engine's existing event vocabulary so the TUI /
 // daemon clients render it unchanged. Routing pins live at the
-// `runAssistantTurn` seam: `PUSH_LEAD_RUNTIME=kernel` opts in, default stays
-// on the engine loop.
+// `runAssistantTurn` seam: the kernel lane is the DEFAULT (flipped
+// 2026-06-12); only an exact `PUSH_LEAD_RUNTIME=engine` opts back into the
+// CLI-local engine loop.
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -252,13 +253,13 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
 });
 
 describe('runAssistantTurn — lead-runtime routing (§10 step 2)', needsLoopback, () => {
-  it('PUSH_LEAD_RUNTIME=kernel routes the turn onto the shared kernel', async () => {
+  it('defaults to the shared kernel lane (2026-06-12 flip)', async () => {
     await withTempWorkspace(async (cwd) => {
       const server = await startSequencedProviderServer([{ tokens: ['Kernel-lane reply.'] }]);
 
       const prevLead = process.env.PUSH_LEAD_RUNTIME;
       const prevMode = process.env.PUSH_DELEGATION_MODE;
-      process.env.PUSH_LEAD_RUNTIME = 'kernel';
+      delete process.env.PUSH_LEAD_RUNTIME;
       delete process.env.PUSH_DELEGATION_MODE;
       try {
         const providerConfig = makeProviderConfig(server.url);
@@ -277,7 +278,7 @@ describe('runAssistantTurn — lead-runtime routing (§10 step 2)', needsLoopbac
         const requestText = JSON.stringify(server.requests[0]);
         assert.ok(
           requestText.includes('You are the lead in this chat'),
-          'kernel lane not engaged via PUSH_LEAD_RUNTIME',
+          'kernel lane not engaged by default',
         );
       } finally {
         if (prevLead === undefined) delete process.env.PUSH_LEAD_RUNTIME;
@@ -289,13 +290,13 @@ describe('runAssistantTurn — lead-runtime routing (§10 step 2)', needsLoopbac
     });
   });
 
-  it('defaults to the engine loop when no opt-in is present', async () => {
+  it('PUSH_LEAD_RUNTIME=engine opts back into the CLI-local engine loop', async () => {
     await withTempWorkspace(async (cwd) => {
       const server = await startSequencedProviderServer([{ tokens: ['Engine reply.'] }]);
 
       const prevLead = process.env.PUSH_LEAD_RUNTIME;
       const prevMode = process.env.PUSH_DELEGATION_MODE;
-      delete process.env.PUSH_LEAD_RUNTIME;
+      process.env.PUSH_LEAD_RUNTIME = 'engine';
       delete process.env.PUSH_DELEGATION_MODE;
       try {
         const providerConfig = makeProviderConfig(server.url);
@@ -316,11 +317,48 @@ describe('runAssistantTurn — lead-runtime routing (§10 step 2)', needsLoopbac
         const requestText = JSON.stringify(server.requests[0]);
         assert.ok(
           requestText.includes('You are a helpful assistant.'),
-          'session system prompt missing — default runtime changed unexpectedly',
+          'session system prompt missing — engine opt-out did not engage',
         );
         assert.ok(
           !requestText.includes('You are the lead in this chat'),
-          'kernel lane engaged without opt-in',
+          'kernel lane engaged despite the engine opt-out',
+        );
+      } finally {
+        if (prevLead === undefined) delete process.env.PUSH_LEAD_RUNTIME;
+        else process.env.PUSH_LEAD_RUNTIME = prevLead;
+        if (prevMode === undefined) delete process.env.PUSH_DELEGATION_MODE;
+        else process.env.PUSH_DELEGATION_MODE = prevMode;
+        await server.stop();
+      }
+    });
+  });
+
+  it('an unknown PUSH_LEAD_RUNTIME value falls to the kernel default (exact-opt-out rule)', async () => {
+    await withTempWorkspace(async (cwd) => {
+      const server = await startSequencedProviderServer([{ tokens: ['Kernel-lane reply.'] }]);
+
+      const prevLead = process.env.PUSH_LEAD_RUNTIME;
+      const prevMode = process.env.PUSH_DELEGATION_MODE;
+      process.env.PUSH_LEAD_RUNTIME = 'something-else';
+      delete process.env.PUSH_DELEGATION_MODE;
+      try {
+        const providerConfig = makeProviderConfig(server.url);
+        const state = makeState(cwd);
+
+        const result = await runAssistantTurn(
+          state,
+          providerConfig,
+          'mock-key',
+          'What does notes.txt say?',
+          5,
+          { emit: () => {} },
+        );
+
+        assert.equal(result.outcome, 'success');
+        const requestText = JSON.stringify(server.requests[0]);
+        assert.ok(
+          requestText.includes('You are the lead in this chat'),
+          'unknown lead-runtime value did not fall to the kernel default',
         );
       } finally {
         if (prevLead === undefined) delete process.env.PUSH_LEAD_RUNTIME;

@@ -8,10 +8,11 @@
  * assembled with the CLI's local reach: `executeToolCall` against the real
  * filesystem, the CLI provider streams, and the existing approval gates.
  *
- * Opt-in for now: `runAssistantTurn` routes here only when
- * `RunOptions.leadRuntime === 'kernel'` or `PUSH_LEAD_RUNTIME=kernel` —
- * mirroring how the web shipped the inline lane behind a preference before
- * defaulting it. The engine loop stays the default until the lane is measured.
+ * The default since 2026-06-12: `runAssistantTurn` routes every lead turn
+ * here unless an exact `engine` opts out (`RunOptions.leadRuntime` or
+ * `PUSH_LEAD_RUNTIME=engine`) — mirroring how the web's inline lane shipped
+ * behind a preference and then became the default. The engine loop remains
+ * the opt-out while the lane bakes, and is the retirement target after.
  *
  * Event protocol: the lane speaks the engine's existing event vocabulary
  * (`assistant_token`, `assistant_thinking_token`, `assistant_done`, `status`,
@@ -395,6 +396,13 @@ export async function runLeadKernelTurn(
 
   const callbacks: CoderAgentCallbacks<unknown> = {
     onStatus: (phase, detail) => {
+      // The kernel's "Reasoning Sync" status mirrors the first ~150 chars of
+      // each round's text — built for the web's transient status bar. The
+      // TUI renders every status event as a transcript entry, and the lane
+      // already streams the same text live (`assistant_token`), so here the
+      // snippet is a truncated duplicate of the answer. Drop it; all other
+      // statuses (rounds, checkpoints, halts) pass through.
+      if (phase === 'Coder reasoning') return;
       dispatchEvent('status', { source: 'lead', phase, detail });
     },
     signal,
