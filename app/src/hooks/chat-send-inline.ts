@@ -56,6 +56,7 @@ import {
   recordVerificationMutation,
 } from '@/lib/verification-runtime';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
+import { parseUntrackedFileSet } from '@/lib/auditor-delegation-handler';
 import type { CoderCheckpointState } from '@push/lib/coder-agent';
 import type { LlmMessage, PushStream, PushStreamEvent } from '@push/lib/provider-contract';
 import type { VerificationPolicy } from '@/lib/verification-policy';
@@ -592,11 +593,13 @@ export async function startInlineCoderTurn(
   // inline turn's mutations the same way). ---
   let lastTaskDiff: string | null = null;
   let postCoderHead: string | undefined;
+  let postUntrackedFiles: Set<string> | undefined;
   let diffProbed = false;
   try {
     const diffResult = await getSandboxDiff(sandboxId);
     lastTaskDiff = diffResult.diff || null;
     postCoderHead = diffResult.head_sha;
+    postUntrackedFiles = parseUntrackedFileSet(diffResult.git_status);
     diffProbed = true;
   } catch {
     /* verification state can still update from the summary */
@@ -624,14 +627,23 @@ export async function startInlineCoderTurn(
   // actually changed the workspace. A read-only/conversational turn ("what
   // changed recently?") produces a summary but no diff and no commit — the
   // Auditor would otherwise "evaluate" prose and append a spurious verdict.
-  // A clean working tree isn't proof of no work, though: the coder may have
-  // committed, which moves HEAD off the pre-run snapshot — so gate on diff
-  // OR a HEAD advance. When the diff probe failed we can't tell, so audit
-  // (conservative — better an extra audit than a missed real change). ---
+  // "Changed" has three independent signals, since none alone is complete:
+  //   - a non-empty `git diff HEAD` (tracked-file edits),
+  //   - HEAD moved off the pre-run snapshot (the coder committed — a clean
+  //     working tree isn't proof of no work),
+  //   - a brand-new untracked file, which `git diff HEAD` doesn't show at
+  //     all — it surfaces only as `?? path` in git_status, so compare the
+  //     post-run untracked set against the pre-run baseline (review #897 P1).
+  // When the diff probe failed we can't tell, so audit (conservative). ---
   const committedSinceStart = Boolean(
     postCoderHead && preCoderHead && postCoderHead !== preCoderHead,
   );
-  const workspaceChanged = !diffProbed || Boolean(lastTaskDiff) || committedSinceStart;
+  const preUntracked = new Set(preCoderUntrackedFiles ?? []);
+  const addedUntrackedFile = postUntrackedFiles
+    ? [...postUntrackedFiles].some((path) => !preUntracked.has(path))
+    : false;
+  const workspaceChanged =
+    !diffProbed || Boolean(lastTaskDiff) || committedSinceStart || addedUntrackedFile;
   if (!workspaceChanged) {
     console.log(
       JSON.stringify({
