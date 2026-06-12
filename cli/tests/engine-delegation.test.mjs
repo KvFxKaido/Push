@@ -3,6 +3,11 @@
 // emits the canonical `subagent.*` / `task_graph.*` event envelopes
 // consumed by `cli/tui-delegation-events.ts`.
 //
+// Since the §10 single-lead default (Agent Runtime Decisions), the wrapper
+// only runs on an explicit `delegationMode: 'delegated'` opt-in — the
+// delegated-arc tests below pass it, and the inline-default suite pins that
+// an unopted turn never issues a planner request or subagent ceremony.
+//
 // The fallback case (null / 1-feature plan → single-agent loop) is
 // characterized by `engine-flow.test.mjs`; here we only pin the delegation
 // event sequence so the TUI's observer contract stays honored.
@@ -183,6 +188,7 @@ describe('runAssistantTurn — multi-feature delegation event sequence', needsLo
           5,
           {
             emit: (event) => emitted.push(event),
+            delegationMode: 'delegated',
           },
         );
 
@@ -308,6 +314,7 @@ describe(
             5,
             {
               emit: (event) => emitted.push(event),
+              delegationMode: 'delegated',
             },
           );
 
@@ -386,7 +393,7 @@ describe(
             'mock-key',
             'Now also document the change in the README',
             5,
-            { emit: () => {} },
+            { emit: () => {}, delegationMode: 'delegated' },
           );
 
           // First server request is the planner. Inspect the user
@@ -461,6 +468,7 @@ describe('runAssistantTurn — goal-alignment fallback (CLI parity)', needsLoopb
           5,
           {
             emit: (event) => emitted.push(event),
+            delegationMode: 'delegated',
           },
         );
 
@@ -497,3 +505,108 @@ describe('runAssistantTurn — goal-alignment fallback (CLI parity)', needsLoopb
     });
   });
 });
+
+describe(
+  'runAssistantTurn — single-lead default (Agent Runtime Decisions §10)',
+  needsLoopback,
+  () => {
+    it('runs the in-loop lead directly with no planner request and no subagent ceremony', async () => {
+      await withTempSessionDir(async (sessionDir) => {
+        // One response is all the turn should need: the first provider request
+        // must be the lead loop itself, not a planner pre-pass.
+        const server = await startSequencedProviderServer([
+          { tokens: ['Direct single-lead reply.'] },
+        ]);
+
+        const prevMode = process.env.PUSH_DELEGATION_MODE;
+        delete process.env.PUSH_DELEGATION_MODE;
+        try {
+          const providerConfig = makeProviderConfig(server.url);
+          const state = makeState(sessionDir);
+          const emitted = [];
+
+          const result = await runAssistantTurn(
+            state,
+            providerConfig,
+            'mock-key',
+            'Inspect cli/provider.ts and worker-providers.ts',
+            5,
+            {
+              emit: (event) => emitted.push(event),
+            },
+          );
+
+          assert.equal(result.outcome, 'success');
+          assert.equal(result.finalAssistantText, 'Direct single-lead reply.');
+
+          // Exactly one provider request — the lead turn. A second request
+          // would mean a planner pre-pass leaked back into the default path.
+          assert.equal(
+            server.requests.length,
+            1,
+            `expected 1 provider request, got ${server.requests.length}`,
+          );
+
+          // No org-chart ceremony on the default path.
+          const eventTypes = emitted.map((e) => e.type);
+          assert.ok(
+            !eventTypes.some((t) => t.startsWith('subagent.') || t.startsWith('task_graph.')),
+            `org-chart envelopes emitted on the single-lead default (got ${eventTypes.join(', ')})`,
+          );
+          assert.ok(eventTypes.includes('run_complete'));
+        } finally {
+          if (prevMode === undefined) delete process.env.PUSH_DELEGATION_MODE;
+          else process.env.PUSH_DELEGATION_MODE = prevMode;
+          await server.stop();
+        }
+      });
+    });
+
+    it('PUSH_DELEGATION_MODE=delegated opts the turn back into the planner wrapper', async () => {
+      await withTempSessionDir(async (sessionDir) => {
+        // Planner returns a 1-feature plan → wrapper falls back to the
+        // single-agent loop; the point pinned here is only that the planner
+        // request and its subagent.* ceremony happen on the env opt-in.
+        const plannerPayload = JSON.stringify({
+          approach: 'One-liner task',
+          features: [{ id: 'single', description: 'Do the thing.', addresses: 'Initial ask' }],
+        });
+
+        const server = await startSequencedProviderServer([
+          { tokens: [plannerPayload] },
+          { tokens: ['Reply after planner fallback.'] },
+        ]);
+
+        const prevMode = process.env.PUSH_DELEGATION_MODE;
+        process.env.PUSH_DELEGATION_MODE = 'delegated';
+        try {
+          const providerConfig = makeProviderConfig(server.url);
+          const state = makeState(sessionDir);
+          const emitted = [];
+
+          const result = await runAssistantTurn(
+            state,
+            providerConfig,
+            'mock-key',
+            'Inspect cli/provider.ts and worker-providers.ts',
+            5,
+            {
+              emit: (event) => emitted.push(event),
+            },
+          );
+
+          assert.equal(result.outcome, 'success');
+          assert.equal(server.requests.length, 2, 'expected planner + lead-loop requests');
+
+          const eventTypes = emitted.map((e) => e.type);
+          assert.ok(eventTypes.includes('subagent.started'));
+          assert.ok(eventTypes.includes('subagent.completed'));
+        } finally {
+          if (prevMode === undefined) delete process.env.PUSH_DELEGATION_MODE;
+          else process.env.PUSH_DELEGATION_MODE = prevMode;
+          await server.stop();
+        }
+      });
+    });
+  },
+);

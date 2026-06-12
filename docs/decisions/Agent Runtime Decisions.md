@@ -147,14 +147,20 @@ different interaction model per surface.
 
 Current state / gap: the web `inline` lane is the collapsed lead today
 (`app/src/hooks/chat-send-inline.ts` plus the kernel's `leadMode` option — see
-[`Inline Foreground Lane`](<Inline Foreground Lane — Local While Watched.md>)),
-but the CLI/daemon still run the Coder as a delegated, task-graph node under an
-Orchestrator (`cli/pushd.ts` → `runCoderAgent`, never `leadMode`). So the
-surfaces have quietly diverged: the app is one lead, the CLI is still an org
-chart. Converging the CLI terminal chat onto a `leadMode` run of the **shared**
-kernel — reusing, not re-implementing, the inline lane's assembly (§1) — is the
-tracked direction. Until it lands, new `cli/` work should treat the single-lead
-model as the target rather than extend the delegated wrapper.
+[`Inline Foreground Lane`](<Inline Foreground Lane — Local While Watched.md>)).
+On the CLI, the first convergence step landed 2026-06-12: interactive turns
+(TUI + daemon `send_user_message`) default to the single lead in-loop —
+`runAssistantTurn` no longer runs the Planner pre-pass or the subagent
+ceremony unless `delegationMode: 'delegated'` / `PUSH_DELEGATION_MODE=delegated`
+opts back in (the interactive analog of headless `--delegate`, sharing the
+web preference's opt-in rule via `lib/delegation-mode.ts`). The remaining gap
+is the loop itself: the CLI lead still runs the CLI-local engine loop
+(`cli/engine.ts:runAssistantLoop`), and the daemon's delegated paths still run
+the Coder as a task-graph node (`cli/pushd.ts` → `runCoderAgent`, never
+`leadMode`). Converging the CLI terminal chat onto a `leadMode` run of the
+**shared** kernel — reusing, not re-implementing, the inline lane's assembly
+(§1) — is the tracked direction. Until it lands, new `cli/` work should treat
+the single-lead model as the target rather than extend the delegated wrapper.
 
 Protected during convergence: the shared runtime semantics in §1 (one kernel,
 drift tests), the durable job engine, and the safety/Auditor boundary — the
@@ -170,7 +176,7 @@ constraints.
 5. Graduate loop detection enforcement only after telemetry supports thresholds.
 6. Decide whether memory Phase 3 immutable verbatim logs are worth the storage cost.
 7. Promote the diff/annotation envelope only when a roadmap item needs it.
-8. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model.
+8. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model. Step 1 landed 2026-06-12: interactive turns default to the in-loop lead with the Planner wrapper behind `PUSH_DELEGATION_MODE=delegated`; the kernel swap (`runAssistantLoop` → shared `leadMode` run) is the remaining work.
 
 ## Archived Context Worth Knowing
 

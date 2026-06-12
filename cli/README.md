@@ -222,6 +222,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_TAVILY_API_KEY` | Optional Tavily key for premium web search (`web_search`) |
 | `PUSH_WEB_SEARCH_BACKEND` | Web search backend: `auto` (default), `tavily`, `ollama`, `duckduckgo` |
 | `PUSH_AUDITOR_GATE` | `0`/`false` to disable the Auditor commit gate, `1`/`true` to force it on (default: on). Overrides the `auditorGate` config setting. |
+| `PUSH_DELEGATION_MODE` | `delegated` opts interactive turns (TUI/daemon) back into the planner → task-graph wrapper. Default: `inline` — the single conversational lead runs the turn in-loop with no planner pre-pass (Agent Runtime Decisions §10). Headless `push run` keeps its explicit `--delegate` flag. |
 | `PUSH_GITHUB_TOKEN` | GitHub token enabling the GitHub tools (PRs, checks, repo browse, create/merge PR, workflows). Falls back to `GITHUB_TOKEN`, then `GH_TOKEN`, then `gh auth token`. |
 | `PUSH_LOCAL_SANDBOX` | `true` to run exec commands in a Docker container |
 | `PUSH_SHELL` | Override the shell used for `exec` / acceptance checks. Useful on Windows if you want to force Git Bash, WSL bash, PowerShell, etc. |
