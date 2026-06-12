@@ -333,6 +333,16 @@ describe('splitVisibleContent', () => {
     expect(visible).toBe('prefix');
     expect(toolCallActive).toBe(true);
   });
+
+  it('hides a balanced fenced array with single-quoted/unquoted tool keys', () => {
+    // The dispatcher executes these shapes; the filter must hide them even
+    // once the closing fence balances, or the leak reappears (Codex #894).
+    const arrayForm = splitVisibleContent("intro\n```json\n[{'tool':'read_file','args':{}}]\n```");
+    expect(arrayForm).toEqual({ visible: 'intro', toolCallActive: true });
+
+    const unquoted = splitVisibleContent('intro\n```\n{tool: "read_file"}\n```');
+    expect(unquoted).toEqual({ visible: 'intro', toolCallActive: true });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -492,11 +502,14 @@ describe('startInlineCoderTurn', () => {
     await startInlineCoderTurn(ctx, laneArgs());
 
     const shown = lastAssistant(store).content;
-    // No raw markup/fence chars reach the rendered (markdown) bubble.
+    // No raw markup/fence chars reach the rendered (markdown) bubble — angle
+    // brackets become inert full-width look-alikes (HTML entities would be
+    // decoded back by the markdown renderer).
     expect(shown).not.toContain('<html>');
     expect(shown).not.toContain('`');
     expect(shown).not.toContain('\n');
-    expect(shown).toContain('&lt;html&gt;');
+    expect(shown).not.toContain('&lt;');
+    expect(shown).toContain('＜html＞');
     // The structured failure reason keeps the full, unaltered message.
     expect(emitRunEngineEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'LOOP_FAILED', reason: raw }),

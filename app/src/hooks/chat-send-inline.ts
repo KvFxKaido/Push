@@ -148,20 +148,28 @@ export function splitVisibleContent(text: string): { visible: string; toolCallAc
     if (idx >= 0 && (cut === -1 || idx < cut)) cut = idx;
   };
 
-  // A `{"tool": ...}` object wrapped in a code fence — the normalized
-  // tool-call shape openai-sse-pump flushes native `tool_calls` into. Cut
-  // at the fence so the ```` ```json ```` wrapper is hidden too, even once
-  // the closing fence has balanced the count.
-  const fencedTool = /```[^\n`]*\r?\n[ \t]*\{\s*"tool"/.exec(text);
+  // A tool-call object/array wrapped in a code fence. Cut at the fence so
+  // the ```` ```json ```` wrapper is hidden too, even once the closing fence
+  // has balanced the count. The key match tolerates every shape the text
+  // dispatcher executes — double/single/unquoted `tool` keys and a leading
+  // `[` for fenced arrays (`lib/tool-dispatch.test.ts`) — so a balanced
+  // `[{'tool':…}]` block can't reappear in the bubble (Codex #894).
+  const fencedTool = /```[^\n`]*\r?\n[ \t]*\[?\s*\{\s*['"]?tool['"]?\s*:/.exec(text);
   if (fencedTool) mark(fencedTool.index);
 
-  // The same object emitted bare (no fence) — text models do this directly.
-  const bareTool = /\{\s*"tool"/.exec(text);
+  // The same object/array emitted bare (no fence). Matched anywhere, not
+  // anchored to start: the kernel's `extractBareToolJsonObjects` brace-scans
+  // the whole content, so a `prose then {"tool":…}` round IS executed as a
+  // tool call — hiding it is correct, not a false positive. Over-hiding a
+  // genuine inline-JSON mention is harmless (the kernel summary is the
+  // authoritative final render; this only trims the in-flight preview).
+  const bareTool = /\[?\s*\{\s*['"]?tool['"]?\s*:/.exec(text);
   if (bareTool) mark(bareTool.index);
 
   // A trailing, unbalanced code fence: in a coder round a dangling ``` is a
-  // tool block forming before its `{"tool"` key has streamed in. A
-  // completed prose fence is balanced and survives.
+  // tool block forming before its key has streamed in. A completed prose
+  // fence is balanced and survives (a non-tool fence has no key to match
+  // above, so it stays visible once closed).
   if (((text.match(/```/g) ?? []).length & 1) === 1) {
     mark(text.lastIndexOf('```'));
   }
@@ -305,12 +313,17 @@ function completeAssistantMessage(
  * bounded line and neutralize fence/tag characters so nothing renders as
  * markup or a fenced block (REVIEW.md "error-formatting paths" defect
  * class). The full message stays in the structured log for ops.
+ *
+ * Angle brackets become full-width look-alikes rather than HTML entities:
+ * the markdown renderer decodes `&lt;` back to `<` before display, so the
+ * entity form is a no-op (review #894) — the look-alike keeps the text
+ * readable while guaranteeing it can never open a tag.
  */
 function sanitizeErrorForChat(raw: string): string {
   const collapsed = raw.replace(/\s+/g, ' ').trim();
   const MAX = 200;
   const clipped = collapsed.length > MAX ? `${collapsed.slice(0, MAX)}…` : collapsed;
-  return clipped.replace(/[<>`]/g, (c) => (c === '<' ? '&lt;' : c === '>' ? '&gt;' : "'"));
+  return clipped.replace(/[<>`]/g, (c) => (c === '<' ? '＜' : c === '>' ? '＞' : "'"));
 }
 
 /**
@@ -439,6 +452,7 @@ export async function startInlineCoderTurn(
   // malformed transcript adoption would read back.
   const onCheckpoint = async (state: CoderCheckpointState<ChatCard>): Promise<void> => {
     if (!looksLikeChatMessages(state.messages)) {
+      const offender = state.messages[0];
       console.log(
         JSON.stringify({
           level: 'error',
@@ -447,6 +461,12 @@ export async function startInlineCoderTurn(
           chatId,
           runId: args.runId,
           round: state.round,
+          // Surface the offending element's key signature so the divergence
+          // is actionable from the log alone (review #894).
+          gotKeys:
+            offender && typeof offender === 'object'
+              ? Object.keys(offender).join(',')
+              : typeof offender,
         }),
       );
       return;
