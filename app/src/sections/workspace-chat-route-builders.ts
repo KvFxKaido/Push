@@ -431,6 +431,7 @@ export function buildWorkspaceHubBranchProps(args: {
   repoBranchesLoading: boolean;
   loadRepoBranches: (repoFullName: string) => Promise<void> | void;
   setCurrentBranch: ChatRouteProps['setCurrentBranch'];
+  switchBranchFromUI: ChatRouteProps['switchBranchFromUI'];
   setShowBranchCreate: (open: boolean) => void;
   setShowBranchFork: (open: boolean) => void;
   setShowMergeFlow: (open: boolean) => void;
@@ -444,6 +445,7 @@ export function buildWorkspaceHubBranchProps(args: {
     availableBranches: args.displayBranches ?? [],
     branchesLoading: args.repoBranchesLoading,
     onSwitchBranch: args.setCurrentBranch,
+    onWarmSwitchBranch: args.switchBranchFromUI,
     onRefreshBranches: activeRepoFullName
       ? () => {
           void args.loadRepoBranches(activeRepoFullName);
@@ -474,6 +476,7 @@ export function buildRepoChatDrawerProps(args: {
   currentBranch: string | undefined;
   defaultBranch: string | undefined;
   setCurrentBranch: ChatRouteProps['setCurrentBranch'];
+  switchBranchFromUI: ChatRouteProps['switchBranchFromUI'];
   displayBranches: RepoChatDrawerProps['availableBranches'];
   repoBranchesLoading: boolean;
   repoBranchesError: string | null;
@@ -514,6 +517,7 @@ export function buildRepoChatDrawerProps(args: {
     currentBranch: args.currentBranch,
     defaultBranch: args.defaultBranch,
     setCurrentBranch: args.setCurrentBranch,
+    switchBranchFromUI: args.switchBranchFromUI,
     availableBranches: args.displayBranches,
     branchesLoading: args.repoBranchesLoading,
     branchesError: args.repoBranchesError,

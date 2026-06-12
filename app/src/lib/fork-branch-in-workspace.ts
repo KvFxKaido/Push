@@ -26,8 +26,28 @@ export interface ForkBranchInWorkspaceResult {
   branchSwitch?: BranchSwitchPayload;
   /** User-facing error text on failure. Stripped of `[Tool Error]` prefixes. */
   errorMessage?: string;
+  /** True when the failure is specifically "no sandbox running". Callers
+   *  with a legacy plain-write path (drawer switch, create sheet) fall back
+   *  to it on this flag — per the design doc's writer table, the typed path
+   *  applies "when a sandbox is live; plain write otherwise". */
+  noSandbox?: true;
   /** Raw tool result for advanced callers (currently unused; kept for
    *  future debugging affordances). */
+  raw?: ToolExecutionResult;
+}
+
+export interface SwitchBranchInWorkspaceResult {
+  ok: boolean;
+  /** Present when the tool result reported a successful branch switch —
+   *  caller should forward this to `applyBranchSwitchPayload` to route the
+   *  conversation through the same path as model-initiated switches. */
+  branchSwitch?: BranchSwitchPayload;
+  /** User-facing error text on failure. Stripped of `[Tool Error]` prefixes. */
+  errorMessage?: string;
+  /** True when the failure is specifically "no sandbox running" — see
+   *  ForkBranchInWorkspaceResult.noSandbox. */
+  noSandbox?: true;
+  /** Raw tool result for advanced callers. */
   raw?: ToolExecutionResult;
 }
 
@@ -36,7 +56,7 @@ export interface ForkBranchInWorkspaceResult {
  *  AND the trailing `error_type:` / `retryable:` diagnostic lines that
  *  `formatStructuredError` appends — neither belongs in a UI error pill.
  *  Prefer `structuredError.message` when available. */
-function cleanToolText(text: string): string {
+export function cleanToolText(text: string): string {
   return text
     .replace(/^\[Tool Error[^\]]*\]\s*/i, '')
     .replace(/^\[Tool Result[^\]]*\]\s*/i, '')
@@ -56,6 +76,7 @@ export async function forkBranchInWorkspace(
   if (!sandboxId) {
     return {
       ok: false,
+      noSandbox: true,
       errorMessage: 'No active sandbox — start one before creating a branch.',
     };
   }
@@ -72,6 +93,49 @@ export async function forkBranchInWorkspace(
     // Prefer the structured error's human message — it's authored for users
     // and skips the `error_type:` / `retryable:` diagnostic lines that
     // `formatStructuredError` appends to the text envelope.
+    const struct = result.structuredError;
+    const errorMessage = struct?.message
+      ? struct.detail
+        ? `${struct.message} — ${struct.detail}`
+        : struct.message
+      : cleanToolText(result.text);
+    return {
+      ok: false,
+      errorMessage,
+      raw: result,
+    };
+  }
+
+  return {
+    ok: true,
+    branchSwitch: result.branchSwitch,
+    raw: result,
+  };
+}
+
+/** Switch the existing sandbox branch and return the BranchSwitchPayload so
+ *  the caller can drive chat routing through the slice 2 dispatcher. */
+export async function switchBranchInWorkspace(
+  sandboxId: string | null,
+  branch: string,
+): Promise<SwitchBranchInWorkspaceResult> {
+  if (!sandboxId) {
+    return {
+      ok: false,
+      noSandbox: true,
+      errorMessage: 'No active sandbox — start one before switching branches.',
+    };
+  }
+
+  const result = await executeSandboxToolCall(
+    {
+      tool: 'sandbox_switch_branch',
+      args: { branch },
+    },
+    sandboxId,
+  );
+
+  if (result.structuredError || !result.branchSwitch) {
     const struct = result.structuredError;
     const errorMessage = struct?.message
       ? struct.detail

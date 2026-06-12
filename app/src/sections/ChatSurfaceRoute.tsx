@@ -255,6 +255,7 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
     currentBranch: undefined,
     defaultBranch: undefined,
     setCurrentBranch,
+    switchBranchFromUI: props.switchBranchFromUI,
     displayBranches: [],
     repoBranchesLoading: false,
     repoBranchesError: null,
