@@ -354,4 +354,10 @@ export interface ReviewResult {
    * bridge). Absent when the upstream emitted no usage, so consumers should
    * treat a missing value as "unknown" (render `—`), not zero. */
   usage?: StreamUsage;
+  /** True when the run ended WITHOUT structured output (no parseable
+   * `[REVIEW_COMPLETE]` payload — round exhaustion, a dead forced-output
+   * turn, or unparseable JSON) and the result is a fallback. A degraded
+   * result carries zero findings by construction; consumers must present it
+   * as an incomplete review, never as a clean pass. */
+  degraded?: boolean;
 }

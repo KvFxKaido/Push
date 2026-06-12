@@ -790,6 +790,7 @@ export class PrReviewJob {
         pr: input.prNumber,
         commentsPosted: outcome.commentsPosted,
         posted: outcome.posted,
+        degraded: outcome.result.degraded ?? false,
         findings: outcome.result.comments.length,
         // Surface token usage in ops logs when the provider reported it; null
         // keeps the field present (and greppable) when it didn't.
@@ -797,31 +798,43 @@ export class PrReviewJob {
       });
       if (checkToken) {
         const findings = outcome.result.comments.length;
-        // !posted = head advanced before posting (skipped). gated = blocking
-        // finding on a gating repo → failure. Otherwise success, with the
-        // finding count in the title so it's legible without opening the PR.
-        const status = !outcome.posted
+        // degraded = the run never produced structured output (fallback
+        // result, nothing posted) → neutral, NOT success: a review that
+        // didn't happen must not read as "no blocking findings" (PRs
+        // #905/#906). !posted = head advanced before posting (skipped).
+        // gated = blocking finding on a gating repo → failure. Otherwise
+        // success, with the finding count in the title so it's legible
+        // without opening the PR.
+        const status = outcome.result.degraded
           ? {
               conclusion: 'neutral' as ReviewCheckConclusion,
-              title: 'Skipped — newer commit',
-              summary: 'A newer commit arrived before this review could post.',
+              title: 'Review incomplete',
+              summary:
+                'The reviewer did not produce structured findings (round limit or dead ' +
+                'forced-output turn). Nothing was posted. Close and reopen the PR to re-run.',
             }
-          : outcome.gated
+          : !outcome.posted
             ? {
-                conclusion: 'failure' as ReviewCheckConclusion,
-                title: 'Critical findings',
-                summary: outcome.result.summary || 'Critical issues found.',
+                conclusion: 'neutral' as ReviewCheckConclusion,
+                title: 'Skipped — newer commit',
+                summary: 'A newer commit arrived before this review could post.',
               }
-            : {
-                conclusion: 'success' as ReviewCheckConclusion,
-                title:
-                  findings === 0
-                    ? 'No blocking findings'
-                    : `${findings} finding${findings === 1 ? '' : 's'}`,
-                summary:
-                  outcome.result.summary ||
-                  (findings === 0 ? 'No blocking issues.' : `${findings} finding(s) posted.`),
-              };
+            : outcome.gated
+              ? {
+                  conclusion: 'failure' as ReviewCheckConclusion,
+                  title: 'Critical findings',
+                  summary: outcome.result.summary || 'Critical issues found.',
+                }
+              : {
+                  conclusion: 'success' as ReviewCheckConclusion,
+                  title:
+                    findings === 0
+                      ? 'No blocking findings'
+                      : `${findings} finding${findings === 1 ? '' : 's'}`,
+                  summary:
+                    outcome.result.summary ||
+                    (findings === 0 ? 'No blocking issues.' : `${findings} finding(s) posted.`),
+                };
         await this.finalizeCheckRun(
           input.repoFullName,
           input.headSha,
@@ -1423,6 +1436,22 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
       deliveryId: input.deliveryId,
       reviewedSha: input.headSha,
       currentSha: currentHead,
+    });
+    return { result, commentsPosted: 0, posted: false };
+  }
+
+  // A degraded result (fallback path — no structured [REVIEW_COMPLETE]
+  // output; zero findings by construction) is not a review. Posting it put
+  // mid-investigation narration on PRs #905/#906 as the review body; even
+  // the neutral fallback line is noise on the PR. Don't post — the check-run
+  // lifecycle reports it as `neutral`/"Review incomplete" instead of a
+  // clean pass, which is where the signal belongs.
+  if (result.degraded) {
+    log('warn', 'pr_review_degraded_not_posted', {
+      deliveryId: input.deliveryId,
+      repo: input.repoFullName,
+      pr: input.prNumber,
+      summaryPreview: result.summary.slice(0, 140),
     });
     return { result, commentsPosted: 0, posted: false };
   }

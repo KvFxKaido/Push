@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   containsToolCallShape,
+  MAX_DEEP_REVIEW_ROUNDS,
   runDeepReviewer,
   stripToolScaffolding,
   type DeepReviewerOptions,
@@ -150,11 +151,12 @@ describe('containsToolCallShape', () => {
 describe('runDeepReviewer (PushStream consumer)', () => {
   it('does not post the final forced-output turn when it is still tool calls', async () => {
     // Loop to the round cap: every round emits two read-only calls so the
-    // parallel-execution branch runs and the loop continues. The 8th stream
-    // invocation is the forced-output turn, where the model ignores the
-    // [REVIEW_COMPLETE] prompt and emits the leaked narration + tool JSON.
+    // parallel-execution branch runs and the loop continues. The stream
+    // invocation after the cap is the forced-output turn, where the model
+    // ignores the [REVIEW_COMPLETE] prompt and emits the leaked narration +
+    // tool JSON.
     const rounds: PushStreamEvent[][] = [];
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < MAX_DEEP_REVIEW_ROUNDS; i++) {
       rounds.push([
         { type: 'text_delta', text: `investigating ${i}` },
         { type: 'done', finishReason: 'stop' },
@@ -199,7 +201,7 @@ describe('runDeepReviewer (PushStream consumer)', () => {
     // summary instead of mangled/leaked JSON.
     const nestedToolJson = '{"tool": "plan_tasks", "args": {"tasks": [{"id": "a", "task": "x"}]}}';
     const rounds: PushStreamEvent[][] = [];
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < MAX_DEEP_REVIEW_ROUNDS; i++) {
       rounds.push([
         { type: 'text_delta', text: `thinking ${i}` },
         { type: 'done', finishReason: 'stop' },
@@ -221,6 +223,63 @@ describe('runDeepReviewer (PushStream consumer)', () => {
     expect(result.summary).not.toMatch(/"tool"\s*:/);
     expect(result.summary).not.toContain('plan_tasks');
     expect(result.summary).toBe('Deep review did not produce structured output.');
+  });
+
+  it('refuses to post a prior round’s narration when the forced-output turn comes back empty', async () => {
+    // The PRs #905/#906 shape: every investigation round is narration + a
+    // fenced tool call, the forced-output turn produces nothing, and the
+    // fallback reaches for the LAST ROUND’s text. Stripping the fenced call
+    // from that text leaves pure mid-investigation narration ("Let me check
+    // one more thing…") — which is not a review and must not post.
+    const rounds: PushStreamEvent[][] = [];
+    for (let i = 0; i < MAX_DEEP_REVIEW_ROUNDS; i++) {
+      rounds.push([
+        { type: 'text_delta', text: LEAKED_TURN },
+        { type: 'done', finishReason: 'stop' },
+      ]);
+    }
+    // Forced-output turn: empty (dead turn — reasoning-only round, stall).
+    rounds.push([{ type: 'done', finishReason: 'stop' }]);
+    const { stream } = makePushStream(rounds);
+
+    const result = await runDeepReviewer(
+      makeAddedFileDiff('src/app.ts', 'const x = 1;'),
+      baseOptions({ stream }),
+      { onStatus: () => {} },
+    );
+
+    expect(result.summary).not.toContain('Let me check one more thing');
+    expect(result.summary).toBe('Deep review did not produce structured output.');
+    expect(result.degraded).toBe(true);
+    expect(result.comments).toEqual([]);
+  });
+
+  it('still salvages a genuine prose review on the fallback path — marked degraded', async () => {
+    // A model that ignores the structured format but writes an actual prose
+    // review on the forced turn keeps its text (the salvage the fallback
+    // slice exists for); the result is still flagged degraded because no
+    // structured payload ever arrived.
+    const rounds: PushStreamEvent[][] = [];
+    for (let i = 0; i < MAX_DEEP_REVIEW_ROUNDS; i++) {
+      rounds.push([
+        { type: 'text_delta', text: `investigating ${i}` },
+        { type: 'done', finishReason: 'stop' },
+      ]);
+    }
+    rounds.push([
+      { type: 'text_delta', text: 'The change looks correct overall; no blocking concerns.' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+    const { stream } = makePushStream(rounds);
+
+    const result = await runDeepReviewer(
+      makeAddedFileDiff('src/app.ts', 'const x = 1;'),
+      baseOptions({ stream }),
+      { onStatus: () => {} },
+    );
+
+    expect(result.summary).toBe('The change looks correct overall; no blocking concerns.');
+    expect(result.degraded).toBe(true);
   });
 
   it('parses the structured review JSON when the model emits the completion marker', async () => {
@@ -259,6 +318,8 @@ describe('runDeepReviewer (PushStream consumer)', () => {
 
     expect(result.summary).toBe('Looks reasonable.');
     expect(result.comments).toHaveLength(1);
+    // Structured output is a complete review — never flagged degraded.
+    expect(result.degraded).toBeUndefined();
 
     const req0 = capturedRequests[0] as { model: string; systemPromptOverride?: string };
     expect(req0.model).toBe('deep-review-model');

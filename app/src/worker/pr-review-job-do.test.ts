@@ -678,6 +678,32 @@ describe('PrReviewJob check-run status surface', () => {
     expect(lastFinalize?.[3].title).toMatch(/skipped/i);
   });
 
+  it('finalizes a degraded (fallback) review as neutral "Review incomplete" — never a clean pass', async () => {
+    // The #905/#906 regression: a fallback result with zero findings used to
+    // post + finalize as success "No blocking findings", green-lighting a
+    // review that never happened. Degraded results don't post (the executor
+    // returns posted:false) and the check-run must say so.
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
+    __setPrReviewExecutorOverride('d1', async () => ({
+      result: {
+        ...RESULT,
+        summary: 'Deep review did not produce structured output.',
+        comments: [],
+        degraded: true,
+      },
+      commentsPosted: 0,
+      posted: false,
+    }));
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd1' })));
+    await Promise.allSettled(mock.pending);
+
+    const lastFinalize = vi.mocked(finalizeReviewCheckRun).mock.calls.at(-1);
+    expect(lastFinalize?.[2]).toBe('neutral');
+    expect(lastFinalize?.[3].title).toBe('Review incomplete');
+    expect(lastFinalize?.[3].summary).toMatch(/close and reopen/i);
+  });
+
   it('closes a superseded delivery’s check-run as neutral instead of leaving it hanging', async () => {
     const mock = createMockCtx();
     const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
