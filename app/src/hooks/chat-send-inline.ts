@@ -57,7 +57,10 @@ import {
 } from '@/lib/verification-runtime';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import { parseUntrackedFileSet } from '@/lib/auditor-delegation-handler';
+import { buildToolMeta, buildToolResultMessage } from '@/lib/chat-tool-messages';
+import { createId } from '@push/lib/id-utils';
 import type { CoderCheckpointState } from '@push/lib/coder-agent';
+import type { RunEventInput } from '@push/lib/runtime-contract';
 import type { LlmMessage, PushStream, PushStreamEvent } from '@push/lib/provider-contract';
 import type { VerificationPolicy } from '@/lib/verification-policy';
 import type { ChatCard, ChatMessage } from '@/types';
@@ -318,6 +321,62 @@ function completeAssistantMessage(
   });
 }
 
+type ToolCompleteEvent = Extract<RunEventInput, { type: 'tool.execution_complete' }>;
+
+/**
+ * Inserts synthetic isToolCall/isToolResult pairs immediately before the last
+ * assistant message (the streaming placeholder), so groupChatMessages renders
+ * a collapsible "Used N tools" disclosure above the final answer. These
+ * messages are display-only: buildInlineTurnPreamble already filters
+ * !isToolCall && !isToolResult from the next turn's model context, and
+ * checkpoints capture the kernel transcript (not conv.messages), so these
+ * never feed back to the model or corrupt resume state.
+ */
+function insertSyntheticToolPairs(ctx: SendLoopContext, events: ToolCompleteEvent[]): void {
+  if (events.length === 0) return;
+  const { chatId } = ctx;
+  ctx.setConversations((prev) => {
+    const conv = prev[chatId];
+    if (!conv) return prev;
+    const msgs = [...conv.messages];
+    const lastIdx = msgs.length - 1;
+    if (msgs[lastIdx]?.role !== 'assistant') return prev;
+
+    const synthetic: ChatMessage[] = [];
+    for (const event of events) {
+      const meta = buildToolMeta({
+        toolName: event.toolName,
+        source: event.toolSource,
+        durationMs: event.durationMs,
+        isError: event.isError,
+      });
+      const ts = Date.now();
+      // Synthetic assistant message marking the tool call
+      synthetic.push({
+        id: createId(),
+        role: 'assistant',
+        content: event.toolName,
+        timestamp: ts,
+        status: 'done',
+        isToolCall: true,
+        toolMeta: meta,
+      });
+      // Synthetic user message carrying the tool result preview
+      synthetic.push(
+        buildToolResultMessage({
+          id: createId(),
+          timestamp: ts,
+          text: event.preview,
+          toolMeta: meta,
+        }),
+      );
+    }
+
+    msgs.splice(lastIdx, 0, ...synthetic);
+    return { ...prev, [chatId]: { ...conv, messages: msgs } };
+  });
+}
+
 /**
  * Shield upstream error text before it reaches the assistant bubble.
  * Provider response bodies and sandbox stderr can carry raw JSON/HTML, and
@@ -502,6 +561,10 @@ export async function startInlineCoderTurn(
 
   ctx.lastCoderStateRef.current = null;
 
+  // Collect tool completion events so we can synthesize the per-turn
+  // collapsible disclosure after the kernel finishes.
+  const capturedToolEvents: ToolCompleteEvent[] = [];
+
   let result: Awaited<ReturnType<typeof runInPageCoderKernel>>;
   try {
     result = await runInPageCoderKernel(
@@ -554,7 +617,12 @@ export async function startInlineCoderTurn(
         onWorkingMemoryUpdate: (state) => {
           ctx.lastCoderStateRef.current = state;
         },
-        onRunEvent: (event) => ctx.appendRunEvent(chatId, event),
+        onRunEvent: (event) => {
+          ctx.appendRunEvent(chatId, event);
+          if (event.type === 'tool.execution_complete') {
+            capturedToolEvents.push(event as ToolCompleteEvent);
+          }
+        },
       },
     );
   } catch (err) {
@@ -710,7 +778,11 @@ export async function startInlineCoderTurn(
   }
 
   // --- Complete the transcript: kernel summary (+ Auditor verdict line)
-  // replaces the streamed placeholder; kernel cards ride on the message. ---
+  // replaces the streamed placeholder; kernel cards ride on the message.
+  // Tool disclosure: insert synthetic isToolCall/isToolResult pairs before
+  // the placeholder first, so groupChatMessages renders the collapsible
+  // "Used N tools" above the answer (v1: tool name + duration only). ---
+  insertSyntheticToolPairs(ctx, capturedToolEvents);
   const finalContent = auditorGate?.auditorSummaryLine
     ? `${result.summary}\n\n${auditorGate.auditorSummaryLine}`
     : result.summary;

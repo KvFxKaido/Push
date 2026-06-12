@@ -47,6 +47,8 @@
 
 import type { AIProviderType, LlmMessage, PushStream } from './provider-contract.js';
 import type { AcceptanceCriterion, RunEventInput } from './runtime-contract.js';
+import { createId } from './id-utils.js';
+import { summarizeToolResultPreview } from './run-events.js';
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
 import { iteratePushStreamText, asRecord } from './stream-utils.js';
 import { detectToolFromText } from './tool-call-parsing.js';
@@ -1275,7 +1277,23 @@ export async function runCoderAgent<TCall, TCard>(
 
       // Execute read-only calls in parallel
       const parallelResults = await Promise.all(
-        parallelCalls.map((call) => toolExec(call, { round, phase: workingMemory.currentPhase })),
+        parallelCalls.map(async (call) => {
+          const pExecId = createId();
+          const pStartMs = Date.now();
+          const pToolName = (call as unknown as { call: { tool: string } }).call.tool;
+          const entry = await toolExec(call, { round, phase: workingMemory.currentPhase });
+          callbacks.onRunEvent?.({
+            type: 'tool.execution_complete',
+            round,
+            executionId: pExecId,
+            toolName: pToolName,
+            toolSource: 'coder',
+            durationMs: Date.now() - pStartMs,
+            isError: entry.kind === 'executed' ? Boolean(entry.errorType) : false,
+            preview: entry.kind === 'executed' ? summarizeToolResultPreview(entry.resultText) : '',
+          });
+          return entry;
+        }),
       );
 
       // Inject read results
@@ -1320,9 +1338,23 @@ export async function runCoderAgent<TCall, TCard>(
         const mutationCall = mutationQueue[mqIdx];
         const isLastInQueue = mqIdx === mutationQueue.length - 1;
 
+        const mqExecId = createId();
+        const mqStartMs = Date.now();
+        const mqToolName = (mutationCall as unknown as { call: { tool: string } }).call.tool;
         const mutResult = await toolExec(mutationCall, {
           round,
           phase: workingMemory.currentPhase,
+        });
+        callbacks.onRunEvent?.({
+          type: 'tool.execution_complete',
+          round,
+          executionId: mqExecId,
+          toolName: mqToolName,
+          toolSource: 'coder',
+          durationMs: Date.now() - mqStartMs,
+          isError: mutResult.kind === 'executed' ? Boolean(mutResult.errorType) : false,
+          preview:
+            mutResult.kind === 'executed' ? summarizeToolResultPreview(mutResult.resultText) : '',
         });
         if (mutResult.kind === 'denied') {
           messages.push({
@@ -1678,7 +1710,19 @@ export async function runCoderAgent<TCall, TCard>(
       call: { tool: string; args: Record<string, unknown> };
     };
     callbacks.onStatus('Coder executing...', singleCall.call.tool);
+    const singleExecId = createId();
+    const singleStartMs = Date.now();
     const result = await toolExec(toolCall, { round, phase: workingMemory.currentPhase });
+    callbacks.onRunEvent?.({
+      type: 'tool.execution_complete',
+      round,
+      executionId: singleExecId,
+      toolName: singleCall.call.tool,
+      toolSource: 'coder',
+      durationMs: Date.now() - singleStartMs,
+      isError: result.kind === 'executed' ? Boolean(result.errorType) : false,
+      preview: result.kind === 'executed' ? summarizeToolResultPreview(result.resultText) : '',
+    });
 
     if (result.kind === 'denied') {
       messages.push({
