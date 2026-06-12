@@ -228,9 +228,20 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
           'tool result missing from follow-up request',
         );
 
+        // The synthesized start precedes the kernel's complete (Codex P2,
+        // PR #904): the TUI creates the transcript tool entry + its
+        // file-awareness args queue on start and only updates it on
+        // complete, name-keyed.
+        const startIdx = emitted.findIndex((e) => e.type === 'tool.execution_start');
+        const completeIdx = emitted.findIndex((e) => e.type === 'tool.execution_complete');
+        assert.ok(startIdx >= 0, 'missing tool.execution_start event');
+        assert.ok(completeIdx > startIdx, 'tool.execution_start must precede complete');
+        const startEvent = emitted[startIdx];
+        assert.equal(startEvent.payload.toolName, 'read_file');
+        assert.deepEqual(startEvent.payload.args, { path: 'notes.txt' });
+
         // The kernel's tool event reaches the engine event stream.
-        const toolEvent = emitted.find((e) => e.type === 'tool.execution_complete');
-        assert.ok(toolEvent, 'missing tool.execution_complete event');
+        const toolEvent = emitted[completeIdx];
         assert.equal(toolEvent.payload.toolName, 'read_file');
         assert.equal(toolEvent.payload.isError, false);
       } finally {

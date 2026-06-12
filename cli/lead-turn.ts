@@ -327,9 +327,34 @@ export async function runLeadKernelTurn(
 
   // Same executor + policy surface as the engine loop, with the actual role.
   const defaultCliHookRegistry = getDefaultCliHookRegistry();
-  const toolExec = async (toolCall: CliKernelCall): Promise<CoderToolExecResult<unknown>> => {
-    const rawCall =
-      toolCall && typeof toolCall === 'object' && toolCall.call ? toolCall.call : toolCall;
+  let toolExecutionCounter = 0;
+  const toolExec = async (
+    toolCall: CliKernelCall,
+    execCtx: { round: number; phase?: string },
+  ): Promise<CoderToolExecResult<unknown>> => {
+    // Fall through for a bare flat call (tests that drive the executor
+    // directly) — production calls always arrive kernel-wrapped.
+    const rawCall: CliToolCall =
+      toolCall && typeof toolCall === 'object' && toolCall.call
+        ? toolCall.call
+        : (toolCall as unknown as CliToolCall);
+    // Synthesize the start event the engine loop emits before each tool run
+    // (Codex P2, PR #904): the TUI creates the transcript tool entry and its
+    // file-awareness args queue on `tool.execution_start` — the kernel's own
+    // `tool.execution_complete` only *updates* an existing entry, matched by
+    // toolName, so without this the lane's tool calls never appear. The
+    // kernel mints a separate executionId for its complete event; that's
+    // fine — TUI correlation is name-keyed, not id-keyed.
+    toolExecutionCounter += 1;
+    const startPayload = {
+      round: execCtx?.round ?? 0,
+      executionId: `${runId}_lead_${toolExecutionCounter.toString(36)}`,
+      toolName: rawCall.tool,
+      toolSource: 'coder',
+      args: rawCall.args,
+    };
+    void persistEvent('tool.execution_start', startPayload);
+    dispatchEvent('tool.execution_start', startPayload);
     try {
       const result = await executeToolCall(rawCall, state.cwd, {
         role: 'coder',
