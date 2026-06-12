@@ -351,7 +351,10 @@ function insertSyntheticToolPairs(ctx: SendLoopContext, events: ToolCompleteEven
         isError: event.isError,
       });
       const ts = Date.now();
-      // Synthetic assistant message marking the tool call
+      // Synthetic assistant message marking the tool call.
+      // visibleToModel: false — display-only; filterModelVisibleMessages
+      // drops these so they never feed back to the model on mode switches
+      // or Orchestrator-path replays (undefined would be treated as visible).
       synthetic.push({
         id: createId(),
         role: 'assistant',
@@ -360,16 +363,18 @@ function insertSyntheticToolPairs(ctx: SendLoopContext, events: ToolCompleteEven
         status: 'done',
         isToolCall: true,
         toolMeta: meta,
+        visibleToModel: false,
       });
-      // Synthetic user message carrying the tool result preview
-      synthetic.push(
-        buildToolResultMessage({
+      // Synthetic user message carrying the tool result preview.
+      synthetic.push({
+        ...buildToolResultMessage({
           id: createId(),
           timestamp: ts,
           text: event.preview,
           toolMeta: meta,
         }),
-      );
+        visibleToModel: false,
+      });
     }
 
     msgs.splice(lastIdx, 0, ...synthetic);
