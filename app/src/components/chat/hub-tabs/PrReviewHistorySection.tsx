@@ -59,8 +59,15 @@ function formatTokens(n: number): string {
  * `commentsPosted` counts only inline-anchored comments, so a body-only or
  * "looks clean" review reports 0 even though it posted — we lead with the
  * `posted` flag and the real finding count (`result.comments.length`) instead.
+ *
+ * Degraded must be checked BEFORE `posted`: a fallback review also reports
+ * `posted: false` (the DO deliberately doesn't post it), and reading that as
+ * "Skipped — newer commit" would hide the round-exhaustion failure mode this
+ * row exists to surface (Codex P2, PR #907). Matches the check-run's
+ * "Review incomplete" vocabulary.
  */
 function completedOutcome(review: PrReviewListItem): string {
+  if (review.result?.degraded) return 'Incomplete — no structured output';
   if (review.posted === false) return 'Skipped — newer commit';
   const findings = review.result?.comments.length ?? 0;
   if (findings === 0) return 'Posted · looks clean';

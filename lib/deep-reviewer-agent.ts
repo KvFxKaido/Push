@@ -47,7 +47,13 @@ import { formatAgentToolResult, formatAgentParseError } from './agent-loop-utils
 // Constants
 // ---------------------------------------------------------------------------
 
-const MAX_DEEP_REVIEW_ROUNDS = 7;
+// Investigation budget. 7 proved too tight in production: glm-5.1 reads one
+// file per round, so a multi-file PR exhausted the loop mid-investigation and
+// the run ended on the fallback path two PRs in a row (#905/#906 — narration
+// posted as the review body, zero findings). The forced-output round after the
+// loop still bounds the worst case. Exported so the loop-exhaustion tests
+// script exactly this many rounds instead of pinning a stale literal.
+export const MAX_DEEP_REVIEW_ROUNDS = 12;
 const DEEP_REVIEW_ROUND_TIMEOUT_MS = 60_000;
 // Wall-clock backstop for verbose-but-progressing models. The activity timer
 // above resets on every `text_delta`, so a model that streams content
@@ -485,11 +491,19 @@ function buildFallbackResult(
   coverage: Pick<ReviewResult, 'filesReviewed' | 'totalFiles' | 'truncated'>,
   usage?: StreamUsage,
 ): ReviewResult {
-  const cleaned = stripToolScaffolding(accumulated);
+  // A turn that issued a tool call is NOT a review — it's mid-investigation
+  // narration ("Let me read the rest of session-store.ts…") followed by the
+  // call itself. Stripping the call and slicing what's left posted exactly
+  // that narration as the review body on PRs #905/#906 (both fallback-path
+  // exits: the previous round's text via `finalError` / an empty forced
+  // round). Refuse the text outright: if a tool-call shape appears ANYWHERE
+  // in the input, only the neutral summary is safe to post. The salvage
+  // slice below exists solely for genuine prose reviews from models that
+  // ignored the structured format.
+  const cleaned = containsToolCallShape(accumulated) ? '' : stripToolScaffolding(accumulated);
   // Detect-and-refuse safety net: if tool-call-shaped JSON survived best-effort
-  // stripping (nested/pretty-printed args, an odd fence the block pass missed),
-  // don't post a mangled or partially-leaked summary — fall back to the neutral
-  // message. Robust by construction, unlike trying to excise arbitrary JSON.
+  // stripping (an odd fence the shape regex missed pre-strip), don't post a
+  // mangled or partially-leaked summary — fall back to the neutral message.
   const safe = containsToolCallShape(cleaned) ? '' : cleaned;
   return {
     summary: safe.slice(0, 500) || 'Deep review did not produce structured output.',
@@ -500,6 +514,9 @@ function buildFallbackResult(
     provider,
     model: modelId || provider,
     reviewedAt: Date.now(),
+    // The structured path never lands here — every fallback result is an
+    // incomplete review and consumers must not present it as a clean pass.
+    degraded: true,
     ...(usage && { usage }),
   };
 }
@@ -682,6 +699,11 @@ export async function runDeepReviewer<TCall, TCard>(
       `Deep review round ${roundNum} timed out after ${DEEP_REVIEW_ROUND_TIMEOUT_MS / 1000}s.`,
       DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
       `Deep review round ${roundNum} exceeded ${DEEP_REVIEW_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap — model is verbose but unproductive.`,
+      // Heavy reasoners (glm-5.1) legitimately stream reasoning for >60s
+      // before the first text token on large-transcript rounds — observed
+      // killing an actively-progressing round 7 live (PR #907). Thinking is
+      // progress here; the wall-clock cap above bounds endless reasoning.
+      { reasoningResetsActivityTimer: true },
     );
     addUsage(roundUsage);
     if (streamError) {
@@ -919,6 +941,9 @@ export async function runDeepReviewer<TCall, TCard>(
     'Deep review final output timed out.',
     DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
     `Deep review final forced output exceeded ${DEEP_REVIEW_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap.`,
+    // Same heavy-reasoner allowance as the loop rounds: the forced-output
+    // turn is where glm thinks hardest (whole-investigation synthesis).
+    { reasoningResetsActivityTimer: true },
   );
   addUsage(finalUsage);
   const finalAccumulated = rawFinalAccumulated.trim();
