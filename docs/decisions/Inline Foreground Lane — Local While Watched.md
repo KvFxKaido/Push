@@ -87,6 +87,34 @@ reusable wiring into a shared builder both callers use:
   checkout/switch blocks, Protect Main: all come along unchanged.
 - **Memory tools: wired** (`createMemoryToolExecutor` scoped
   repo/branch/chatId) — restoring what the engine route dropped.
+- **Lead tool surface: wired** (`leadToolSurface`, 2026-06-12). The collapsed
+  single lead is the Orchestrator, so it carries the Orchestrator's tool
+  surface — GitHub PR/commit/CI + workflow tools, `ask_user`, and
+  `create_artifact` — on top of the Coder's sandbox/web/memory tools. Without
+  it the lane was sandbox-only: a conversational turn like "what changed
+  recently?" could only read the sandbox's shallow git clone, where the old
+  Orchestrator called `list_commits` / `list_prs` against GitHub. Wiring:
+  `inline-coder-run.ts` threads `extraToolSources`
+  (`{ github, ask-user, artifacts }`) + an `executeExtraToolCall` over
+  `WebToolExecutionRuntime` into the bindings, advertises the matching
+  protocols via `CoderAgentOptions.extraToolProtocols` (GitHub block is
+  delegation-free — single agent), and folds the repo name into the workspace
+  block so the GitHub executor's repo arg resolves. The Coder role grant
+  already covers `pr:*` / `workflow:*` / `user:ask` / `artifacts:write`, so the
+  kernel + runtime role gates pass. **Delegation stays out** — the inline lane
+  is single-agent with no delegation arc wired; `delegate_*` is neither
+  advertised nor accepted. The delegated Coder arc leaves `leadToolSurface`
+  unset and keeps its narrow three-source surface (parity-pinned in
+  `inline-coder-run.test.ts`).
+  - *Caveat — `ask_user`:* it executes through the runtime (full-auto
+    auto-resolves; supervised emits the question card), but the coder kernel
+    has no human-pause primitive — its only interactive pause is
+    `coder_checkpoint` (asks the Orchestrator, answered by
+    `onCheckpointRequest`). So the lead's `ask_user` renders the card and
+    returns a "question sent" result without blocking the loop for the human
+    answer. Acceptable for v1 (the prompt steers toward reasonable
+    assumptions over asking); a kernel-level human-pause is a follow-up on the
+    mid-run-steering track.
 - `taskPreamble`: the raw user turn + project instructions + branch context +
   approval-mode block + verification-policy block. **No Planner, no
   `buildCoderDelegationBrief`** — that ceremony stays on the delegated arc

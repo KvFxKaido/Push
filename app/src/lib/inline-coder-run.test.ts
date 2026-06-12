@@ -82,6 +82,9 @@ import {
 } from './inline-coder-run';
 import type { CoderAgentOptions, CoderAgentCallbacks } from '@push/lib/coder-agent';
 import type { AnyToolCall } from './tool-dispatch';
+import { buildGitHubToolProtocol } from './github-tools';
+import { ASK_USER_TOOL_PROTOCOL } from './ask-user-tools';
+import { ARTIFACT_TOOL_PROTOCOL } from './artifact-tools';
 import type { ChatCard, ChatMessage, HarnessProfileSettings } from '@/types';
 import type {
   LlmMessage,
@@ -180,6 +183,10 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
         'detectAllToolCalls',
         'detectAnyToolCall',
         'evaluateAfterModel',
+        // Parity decision: the delegated arc threads `extraToolProtocols:
+        // undefined` (the inline lane sets it; the delegated Coder keeps its
+        // narrow sandbox/web/memory surface — no extra tools advertised).
+        'extraToolProtocols',
         'harnessContextResetsEnabled',
         'harnessMaxRounds',
         'instructionFilename',
@@ -225,6 +232,9 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
     expect(options.resumeState).toBeUndefined();
     expect(options.checkpointCadenceRounds).toBeUndefined();
     expect(callbacks.onCheckpoint).toBeUndefined();
+    // Lead tool surface is inline-only: the delegated Coder advertises no
+    // GitHub/ask_user/artifact protocols (narrow sandbox/web/memory surface).
+    expect(options.extraToolProtocols).toBeUndefined();
   });
 
   it('builds the brief + planner preamble and threads the delegated option values', async () => {
@@ -490,5 +500,62 @@ describe('createCoderCheckpointAnswerer', () => {
     });
     await answerer('Q', '');
     expect(mockWriteDecisionMemory).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Lead tool surface (Inline Foreground Lane → Orchestrator parity)
+// ---------------------------------------------------------------------------
+
+describe('lead tool surface (inline foreground lane)', () => {
+  async function runLeadCall(leadToolSurface: boolean): Promise<LibOptions> {
+    await runInPageCoderKernel(
+      {
+        provider: 'openrouter',
+        modelId: 'coder-model-x',
+        sandboxId: 'sb-1',
+        taskPreamble: 'Task: what changed recently?',
+        branchContext: { activeBranch: 'main', defaultBranch: 'main', protectMain: false },
+        memoryScope: { repoFullName: 'KvFxKaido/Push', branch: 'main', chatId: 'chat-1' },
+        leadToolSurface,
+      },
+      { onStatus: () => {} },
+    );
+    return lastKernelCall().options;
+  }
+
+  it('advertises the GitHub (delegation-free), ask_user, and artifact protocols', async () => {
+    const options = await runLeadCall(true);
+    expect(options.extraToolProtocols).toEqual([
+      buildGitHubToolProtocol({ includeDelegation: false }),
+      ASK_USER_TOOL_PROTOCOL,
+      ARTIFACT_TOOL_PROTOCOL,
+    ]);
+    // Delegation stays out — the single lead has no delegation arc wired, so
+    // delegate_* must not be advertised (the GitHub block is delegation-free).
+    const joined = options.extraToolProtocols!.join('\n');
+    expect(joined).not.toContain('delegate_explorer');
+    expect(joined).not.toContain('EXPLORER-FIRST');
+  });
+
+  it('routes GitHub read calls into the parallel-read bucket', async () => {
+    const options = await runLeadCall(true);
+    const githubCall = '{"tool":"fetch_pr","args":{"repo":"KvFxKaido/Push","pr":1}}';
+    const detected = options.detectAllToolCalls(githubCall);
+    expect(detected.readOnly.map((c) => c.call.tool)).toContain('fetch_pr');
+  });
+
+  it('threads the repo name into the workspace block so GitHub tools have a repo arg', async () => {
+    const options = await runLeadCall(true);
+    expect(options.branchContext?.repoFullName).toBe('KvFxKaido/Push');
+  });
+
+  it('keeps the extra surface dormant when leadToolSurface is false', async () => {
+    const options = await runLeadCall(false);
+    expect(options.extraToolProtocols).toBeUndefined();
+    expect(options.branchContext?.repoFullName).toBeUndefined();
+    const githubCall = '{"tool":"fetch_pr","args":{"repo":"KvFxKaido/Push","pr":1}}';
+    const detected = options.detectAllToolCalls(githubCall);
+    expect(detected.readOnly).toHaveLength(0);
   });
 });

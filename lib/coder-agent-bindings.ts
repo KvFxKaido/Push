@@ -236,6 +236,28 @@ export interface CoderBindingServices<
   ) => Promise<SandboxToolExecResult<TCard>>;
   sandboxStatus: (sandboxId: string) => Promise<SandboxStatusResult>;
 
+  /**
+   * Tool sources this run may execute beyond the Coder's historical
+   * sandbox/web-search/memory surface. Empty/absent for the delegated Coder.
+   * The Inline Foreground Lane threads `{ 'github', 'ask-user', 'artifacts' }`
+   * so the collapsed single lead matches the Orchestrator's tool surface. The
+   * Coder role grant already carries the matching capabilities (`pr:*`,
+   * `workflow:*`, `user:ask`, `artifacts:write`), so the kernel role check
+   * passes; this set is what opens the source gate and the detector filters.
+   */
+  extraToolSources?: ReadonlySet<string>;
+  /**
+   * Execute an extra-source tool call (one of the sources named in
+   * `extraToolSources`). Required when `extraToolSources` is non-empty. The
+   * CALLER injects the surface executor (Web: `WebToolExecutionRuntime`) so
+   * this binding stays surface-agnostic; the result uses the same
+   * `SandboxToolExecResult` shape as the sandbox/web-search executors.
+   */
+  executeExtraToolCall?: (
+    call: TCoderCall,
+    ctx: { round: number; phase?: string },
+  ) => Promise<SandboxToolExecResult<TCard>>;
+
   // --- detectors ---
   /** Raw sandbox-call detector. Web shim tags the result as
    * `{ source: 'sandbox', call }` via `tagSandboxCall`. */
@@ -267,15 +289,27 @@ export function buildCoderDetectors<
   detectAllToolCalls: (text: string) => DetectedToolCalls<TCoderCall>;
   detectAnyToolCall: (text: string) => TCoderCall | null;
 } {
+  // Lead-surface sources (Inline Foreground Lane: github / ask-user /
+  // artifacts) ride the same buckets the shared web detector already
+  // classified them into — github reads land in `readOnly`, github mutations
+  // / ask_user / create_artifact land in `mutating`. Empty set → identical to
+  // the historical sandbox/web/memory-only Coder surface.
+  const allowsExtra = (source: string): boolean => services.extraToolSources?.has(source) ?? false;
+
   const detectAllToolCalls = (text: string): DetectedToolCalls<TCoderCall> => {
     const raw = services.detectAllToolCalls(text);
     // Memory reads (`memory_grep`/`memory_expand`) are read-only and ride the
     // parallel-reads path alongside sandbox reads (LCM web-Coder support).
     const sandboxReads = raw.readOnly.filter(
-      (c) => c.source === 'sandbox' || c.source === 'memory',
+      (c) => c.source === 'sandbox' || c.source === 'memory' || allowsExtra(c.source),
     );
-    const sandboxFileMutations = raw.fileMutations.filter((c) => c.source === 'sandbox');
-    const sandboxMutating = raw.mutating?.source === 'sandbox' ? raw.mutating : null;
+    const sandboxFileMutations = raw.fileMutations.filter(
+      (c) => c.source === 'sandbox' || allowsExtra(c.source),
+    );
+    const sandboxMutating =
+      raw.mutating && (raw.mutating.source === 'sandbox' || allowsExtra(raw.mutating.source))
+        ? raw.mutating
+        : null;
     return {
       readOnly: sandboxReads,
       fileMutations: sandboxFileMutations,
@@ -309,7 +343,8 @@ export function buildCoderDetectors<
     if (
       recovered?.source === 'sandbox' ||
       recovered?.source === 'web-search' ||
-      recovered?.source === 'memory'
+      recovered?.source === 'memory' ||
+      (recovered != null && allowsExtra(recovered.source))
     ) {
       return recovered;
     }
@@ -376,6 +411,8 @@ export function buildCoderToolExec<
     executeSandboxToolCall,
     executeWebSearch,
     executeMemory,
+    executeExtraToolCall,
+    extraToolSources,
     sandboxStatus,
   } = services;
 
@@ -386,7 +423,13 @@ export function buildCoderToolExec<
     turnCtx.round = execCtx.round;
     turnCtx.phase = execCtx.phase;
 
-    if (call.source !== 'sandbox' && call.source !== 'web-search' && call.source !== 'memory') {
+    const isExtraSource = extraToolSources?.has(call.source) ?? false;
+    if (
+      call.source !== 'sandbox' &&
+      call.source !== 'web-search' &&
+      call.source !== 'memory' &&
+      !isExtraSource
+    ) {
       return {
         kind: 'denied',
         reason: `Coder can only execute sandbox, web_search, and memory tools. "${call.call.tool}" is not available to Coder.`,
@@ -439,6 +482,90 @@ export function buildCoderToolExec<
     );
     if (beforeResult?.action === 'deny') {
       return { kind: 'denied', reason: beforeResult.reason };
+    }
+
+    // --- Extra lead-surface path (github / ask-user / artifacts) ---
+    // The Inline Foreground Lane routes these through the injected
+    // `executeExtraToolCall` (Web: `WebToolExecutionRuntime`), wrapped in the
+    // same tracing + capability-ledger + after-tool-policy pipeline as the
+    // sandbox/web-search paths. The role-capability gate above already
+    // confirmed the Coder grant covers the tool; the ledger check here guards
+    // the per-run declared budget.
+    if (isExtraSource) {
+      const extraTool = call.call.tool;
+      const extraArgs = (call.call.args ?? {}) as Record<string, unknown>;
+      if (!executeExtraToolCall) {
+        return {
+          kind: 'denied',
+          reason: `Tool "${extraTool}" requires an extra-source executor that was not wired for this run.`,
+        };
+      }
+      const exResult = await tracing.withActiveSpan(
+        'tool.execute',
+        {
+          scope: 'push.coder',
+          kind: tracing.spanKindInternal,
+          attributes: {
+            ...correlationToSpanAttributes(correlation ?? EMPTY_CORRELATION_CONTEXT),
+            'push.agent.role': 'coder',
+            'push.round': execCtx.round,
+            'push.tool.name': extraTool,
+            'push.tool.source': call.source,
+            'push.provider': activeProvider,
+            'push.model': activeModel,
+          },
+        },
+        async (span) => {
+          if (!capabilityLedger.isToolAllowed(extraTool)) {
+            const missing = capabilityLedger.getMissingCapabilities(extraTool);
+            return {
+              text: `[Tool Blocked — ${extraTool}] This tool requires capabilities not declared for this run: ${missing.join(', ')}. The delegation must include these capabilities to use this tool.`,
+              structuredError: {
+                type: 'APPROVAL_GATE_BLOCKED',
+                retryable: false,
+                message: `Capability violation: ${missing.join(', ')} not declared`,
+              },
+            } satisfies SandboxToolExecResult<TCard>;
+          }
+          const inner = await executeExtraToolCall(call, execCtx);
+          capabilityLedger.recordToolUse(extraTool);
+          tracing.setSpanAttributes(span, {
+            'push.tool.error_type': inner.structuredError?.type,
+            'push.tool.retryable': inner.structuredError?.retryable,
+          });
+          if (inner.structuredError) {
+            span.setStatus({
+              code: tracing.spanStatusError,
+              message: inner.structuredError.message,
+            });
+          } else {
+            span.setStatus({ code: tracing.spanStatusOk });
+          }
+          return inner;
+        },
+      );
+
+      const afterToolResult = await policy.evaluateAfterTool(
+        extraTool,
+        extraArgs,
+        exResult.text,
+        Boolean(exResult.structuredError),
+        turnCtx,
+      );
+      const policyPost =
+        afterToolResult?.action === 'inject'
+          ? { kind: 'inject' as const, content: afterToolResult.message.content }
+          : afterToolResult?.action === 'halt'
+            ? { kind: 'halt' as const, summary: afterToolResult.summary }
+            : undefined;
+
+      return {
+        kind: 'executed',
+        resultText: exResult.text,
+        card: exResult.card,
+        errorType: exResult.structuredError?.type,
+        policyPost,
+      };
     }
 
     // --- Web search path ---

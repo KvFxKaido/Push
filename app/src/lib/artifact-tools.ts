@@ -38,6 +38,21 @@ export interface ArtifactToolCall {
 const CREATE_ARTIFACT_URL = resolveApiUrl('/api/artifacts/create');
 
 /**
+ * Tool-protocol prompt block for `create_artifact`. Advertised to the Inline
+ * Foreground Lane lead (Orchestrator parity) so a single agent can render
+ * artifacts into the chat panel. Mirrors the CLI advertisement in
+ * `cli/tools.ts` — keep the two in sync.
+ */
+export const ARTIFACT_TOOL_PROTOCOL = `ARTIFACT TOOL — render a visual artifact into the chat panel by outputting a fenced JSON block:
+
+\`\`\`json
+{"tool": "create_artifact", "args": {"kind": "mermaid", "title": "Auth flow", "source": "graph TD; A-->B"}}
+\`\`\`
+
+- create_artifact(kind, title, files?, source?, entry?, dependencies?) — kind is one of: static-html | static-react | mermaid | file-tree. Use mermaid for diagrams; static-html for self-contained pages; static-react for component demos; file-tree for grouped file snapshots. (Live previews of running dev servers are not yet supported.)
+- Use it when a diagram, rendered page, or grouped file view communicates better than prose. It is a side-effecting call — place it LAST in the turn.`;
+
+/**
  * Bounds the worker round-trip so a hung connection doesn't strand the
  * tool round forever. Generous enough for a cold KV write on a slow
  * link; the model gets a retryable error if we hit it.

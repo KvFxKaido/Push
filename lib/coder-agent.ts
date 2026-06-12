@@ -600,6 +600,14 @@ export interface CoderAgentOptions<TCall, TCard> {
     activeBranch: string;
     defaultBranch: string;
     protectMain: boolean;
+    /**
+     * `owner/repo` for the active repo. Rendered into the workspace block so
+     * a lead wielding GitHub tools (Inline Foreground Lane) knows the `repo`
+     * arg to pass — the GitHub executor rejects calls whose repo doesn't
+     * match the allowed repo. Optional: the delegated Coder doesn't carry
+     * the GitHub surface, so it leaves this unset.
+     */
+    repoFullName?: string;
   };
   projectInstructions?: string;
   instructionFilename?: string;
@@ -638,6 +646,18 @@ export interface CoderAgentOptions<TCall, TCard> {
    * matches executor support (no advertised-but-denied tools — LCM).
    */
   memoryToolProtocol?: string;
+
+  /**
+   * Additional tool-protocol prompt blocks to advertise beyond the
+   * sandbox/web-search/memory surface. The Inline Foreground Lane threads the
+   * GitHub, ask_user, and create_artifact protocols here so the collapsed
+   * single lead matches the Orchestrator's tool surface; the delegated Coder
+   * leaves it undefined and keeps its narrow surface. Each entry is appended
+   * to `tool_instructions`. Advertise a block only when the matching executor
+   * source is wired (`extraToolSources` + `executeExtraToolCall` in the
+   * bindings) so advertising stays aligned with executor support.
+   */
+  extraToolProtocols?: string[];
 
   /** Pre-built verification-policy block, or null when no policy applies. */
   verificationPolicyBlock: string | null;
@@ -714,6 +734,7 @@ export async function runCoderAgent<TCall, TCard>(
     webSearchToolProtocol,
     sandboxToolProtocol,
     memoryToolProtocol,
+    extraToolProtocols,
     verificationPolicyBlock,
     approvalModeBlock,
     evaluateAfterModel,
@@ -768,11 +789,15 @@ export async function runCoderAgent<TCall, TCard>(
     promptBuilder.set('project_context', projectContent);
   }
 
-  // Workspace context (branch metadata)
+  // Workspace context (branch metadata; repo name when a GitHub-tool lead
+  // needs the `repo` arg — see branchContext.repoFullName).
   if (branchContext) {
+    const repoLine = branchContext.repoFullName
+      ? `Repository: ${branchContext.repoFullName}\n`
+      : '';
     promptBuilder.set(
       'environment',
-      `[WORKSPACE CONTEXT]\nActive branch: ${branchContext.activeBranch}\nDefault branch: ${branchContext.defaultBranch}\nProtect main: ${branchContext.protectMain ? 'on' : 'off'}`,
+      `[WORKSPACE CONTEXT]\n${repoLine}Active branch: ${branchContext.activeBranch}\nDefault branch: ${branchContext.defaultBranch}\nProtect main: ${branchContext.protectMain ? 'on' : 'off'}`,
     );
   }
 
@@ -784,6 +809,18 @@ export async function runCoderAgent<TCall, TCard>(
   // executor support (LCM).
   if (memoryToolProtocol) {
     promptBuilder.append('tool_instructions', memoryToolProtocol);
+  }
+
+  // Extra lead-surface protocols (Inline Foreground Lane: github, ask_user,
+  // create_artifact). Advertised only when the caller wired the matching
+  // executor sources into the bindings, so there are no advertised-but-denied
+  // tools.
+  if (extraToolProtocols) {
+    for (const block of extraToolProtocols) {
+      if (block && block.trim()) {
+        promptBuilder.append('tool_instructions', block);
+      }
+    }
   }
 
   // Symbol cache — volatile memory derived from workspace
