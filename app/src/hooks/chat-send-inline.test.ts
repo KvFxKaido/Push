@@ -469,6 +469,27 @@ describe('startInlineCoderTurn', () => {
     expect(gateInput.auditorInput.currentSandboxId).toBe('sb-1');
   });
 
+  it('skips the Auditor on a read-only turn (no diff, HEAD unmoved) — no spurious verdict', async () => {
+    // Conversational turn: clean tree and HEAD still at the pre-run snapshot.
+    mockGetSandboxDiff.mockResolvedValue({ diff: '', head_sha: 'abc' });
+    mockRunCoderAuditorGate.mockResolvedValue({
+      evalResult: { verdict: 'complete', summary: 'ok', gaps: [] },
+      auditorSummaryLine: '[Evaluation: COMPLETE] ok',
+    });
+    const { ctx, store } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    expect(mockRunCoderAuditorGate).not.toHaveBeenCalled();
+    expect(lastAssistant(store).content).toBe('Did the thing.');
+  });
+
+  it('still audits when the coder committed (clean tree but HEAD advanced)', async () => {
+    mockGetSandboxDiff.mockResolvedValue({ diff: '', head_sha: 'def' }); // moved off 'abc'
+    const { ctx } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+    expect(mockRunCoderAuditorGate).toHaveBeenCalled();
+  });
+
   it('bridges the kernel checkpoint into the V1 capture: ROUND_STARTED + transcript swap + flush', async () => {
     const { ctx, flushCheckpoint, emitRunEngineEvent } = makeHarness();
     await startInlineCoderTurn(ctx, laneArgs());
