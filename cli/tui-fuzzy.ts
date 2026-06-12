@@ -173,6 +173,18 @@ export function highlightMatches(text: string, matches: MatchRange[], theme: The
 }
 
 /**
+ * Workspace scoping for the resume picker. Keeps only sessions whose `cwd`
+ * exactly matches the active workspace path (sessions persist absolute
+ * cwds, so exact comparison is the right grain — no prefix matching, which
+ * would conflate nested checkouts). The picker defaults to this scope so a
+ * workspace's own sessions aren't buried under every other project's
+ * history; callers fall back to the unscoped list when it comes back empty.
+ */
+export function scopeSessionsToWorkspace<T extends Session>(sessions: T[], cwd: string): T[] {
+  return sessions.filter((s) => (s.cwd || '') === cwd);
+}
+
+/**
  * Simple filter for session picker - matches against session name, id, provider, model, or cwd.
  */
 export function filterSessions(sessions: Session[], query: string): FuzzyFilterResult<Session>[] {
