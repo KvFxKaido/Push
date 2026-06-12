@@ -6,7 +6,26 @@ const sandboxTools = vi.hoisted(() => ({
 
 vi.mock('./sandbox-tools', () => sandboxTools);
 
-const { switchBranchInWorkspace } = await import('./fork-branch-in-workspace');
+const { forkBranchInWorkspace, switchBranchInWorkspace } = await import(
+  './fork-branch-in-workspace'
+);
+
+describe('forkBranchInWorkspace', () => {
+  beforeEach(() => {
+    sandboxTools.executeSandboxToolCall.mockReset();
+  });
+
+  it('flags the no-sandbox case so callers can fall back to a plain write', async () => {
+    const result = await forkBranchInWorkspace(null, 'feature/warm');
+
+    expect(result).toEqual({
+      ok: false,
+      noSandbox: true,
+      errorMessage: 'No active sandbox — start one before creating a branch.',
+    });
+    expect(sandboxTools.executeSandboxToolCall).not.toHaveBeenCalled();
+  });
+});
 
 describe('switchBranchInWorkspace', () => {
   beforeEach(() => {
