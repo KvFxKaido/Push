@@ -63,7 +63,8 @@ Sibling of `forkBranchInWorkspace` (`app/src/lib/fork-branch-in-workspace.ts`
 — same module or a sibling file): calls
 `executeSandboxToolCall({ tool: 'sandbox_switch_branch', args: { branch } })`,
 returns `{ ok, branchSwitch?, errorMessage? }` with the same
-structured-error-first message cleaning. **Why route through the tool:** the
+structured-error-first message cleaning (export `cleanToolText` from
+`fork-branch-in-workspace.ts` rather than copying it). **Why route through the tool:** the
 slice-2 rationale verbatim — the migration dispatcher, cross-tab markers, and
 chat auto-create all fire exactly as they do for a model-initiated switch. No
 second implementation.
@@ -81,8 +82,12 @@ depth, not the primary mechanism.
 ### The dialog becomes a real decision surface
 
 The hub's existing switch-confirm dialog (`switchConfirmBranch` state)
-upgrades from "are you sure?" to a state-aware choice. Pre-check the tree
-(`sandbox_diff` or a status probe; "unknown" treated as dirty):
+upgrades from "are you sure?" to a state-aware choice. **Probe:**
+`getSandboxDiff(sandboxId)` — already the house dirty-state read (pre-Coder
+snapshot, verification recording) — whose `git_status` porcelain gives both
+the dirty bit and the changed-file count the dialog displays; a failed or
+absent probe is treated as dirty (never present a destructive choice on
+unknown state):
 
 - **Clean tree:** primary action **Switch** (warm, sandbox preserved);
   secondary **Clean switch** (today's teardown → cold start on target).
@@ -104,7 +109,8 @@ upgrades from "are you sure?" to a state-aware choice. Pre-check the tree
 |---|---|
 | `WorkspaceHubSheet` branch dropdown | → `switchBranchFromUI` (this doc's core) |
 | `RepoChatDrawer` (2 sites: branch row, chat-row jump) | → same helper when a sandbox is live for the active repo; plain write otherwise |
-| `BranchCreateSheet` | already superseded in spirit by `forkBranchFromUI`; audit whether it still has a live path, route or retire |
+| `BranchCreateSheet` — `WorkspaceChatRoute` mount | **live, and it's the create-flow twin of this doc's fossil**: raw `setCurrentBranch` with no git op, relying on teardown+restart to materialize the branch. Route through `forkBranchFromUI` (the warm create path that already exists) |
+| `BranchCreateSheet` — `RepoLauncherPanel` mount | pre-session (no sandbox), plain state write is correct — unchanged |
 | Launcher / pre-session picks (no sandbox) | plain state write, unchanged |
 
 ### What this deliberately does NOT change
@@ -141,8 +147,10 @@ upgrades from "are you sure?" to a state-aware choice. Pre-check the tree
    the fork pair; unit tests mock `executeSandboxToolCall`).
 2. Hub dialog semantics + dirty probe + failure fallbacks.
 3. Writer audit per the table (incl. the `BranchCreateSheet` liveness check).
-4. Pins: a confirmed warm switch never calls `stopSandbox` (controller skip
-   path — extend the existing controller tests); `branchSwitch` round-trip
+4. Pins: a confirmed warm switch never calls `stopSandbox` — note the
+   `skipBranchTeardownRef` path has **no test coverage today** (grep
+   confirms zero test references), so the implementation PR ADDS controller
+   tests for both the skip and teardown branches; `branchSwitch` round-trip
    routes to the target branch's chat; dirty-tree conflict surfaces the
    structured error and the dialog's fallback; no-sandbox path unchanged.
 
