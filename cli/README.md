@@ -341,6 +341,20 @@ Each picker entry shows relative freshness (`2h ago`, `yesterday`, `3d ago`) alo
 
 When exactly one session is resumable, the picker is skipped — `./push resume` prints a one-line banner naming the session (`Resuming only session: sess_… (name) …`) and attaches directly. Use `./push resume --no-attach` if you want to see the list without the auto-attach.
 
+### Pruning
+
+Sessions are never garbage-collected automatically — `push sessions prune` is the explicit retention tool:
+
+```bash
+./push sessions prune --older-than 30            # dry-run: list sessions idle > 30 days
+./push sessions prune --older-than 30 --force    # actually delete them
+./push sessions prune --empty --force            # delete sessions with no human turn on record
+./push sessions prune --keep 100 --force         # keep the 100 most recent, delete the rest
+./push sessions prune --match-model 'ollama-base|replay-target' --force   # regex over provider/model
+```
+
+Selectors combine with **AND** (a multi-flag prune deletes the intersection), at least one selector is required, and every invocation is a dry-run unless `--force` is passed — the kill list prints either way. Sessions with a run marker fresher than 6 hours are skipped as live; older markers are treated as stale crash leftovers and don't shield a session from age-based pruning. `--json` emits the full report for scripts.
+
 ## Working memory
 
 The agent maintains structured working memory across rounds — plan, open tasks, files touched, assumptions, and errors encountered. Working memory is reinjected through the `[meta]` envelope only when it first appears, when it changes, under elevated context pressure, or on a long-task cadence, and never more than once per round.

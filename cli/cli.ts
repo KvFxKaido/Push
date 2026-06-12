@@ -18,7 +18,9 @@ import {
   appendSessionEvent,
   loadSessionState,
   listSessions,
+  pruneSessions,
   rewriteMessagesLog,
+  type PruneSelectors,
 } from './session-store.js';
 import { runCheckpointCommand } from './checkpoint-command.js';
 import {
@@ -116,6 +118,12 @@ const KNOWN_OPTIONS = new Set([
   'type',
   'token',
   'remote',
+  'older-than',
+  'olderThan',
+  'keep',
+  'match-model',
+  'matchModel',
+  'empty',
 ]);
 
 const KNOWN_SUBCOMMANDS = new Set([
@@ -202,6 +210,7 @@ Usage:
   push resume                   Pick a session and attach (TTY); list only when piped
   push resume --no-attach       List resumable sessions without prompting (script-friendly)
   push sessions                 List resumable sessions (never prompts; alias for scripts)
+  push sessions prune           Prune stored sessions: --empty / --older-than <days> / --keep <n> / --match-model <regex> (AND-combined; dry-run unless --force)
   push skills                   List available skills
   push stats                    Show provider compliance stats
   push daemon start             Start background daemon
@@ -1791,6 +1800,106 @@ async function runMemorySubcommand(positionals: string[]): Promise<number> {
   return 0;
 }
 
+const PRUNE_USAGE =
+  'Usage: push sessions prune [--empty] [--older-than <days>] [--keep <n>] ' +
+  '[--match-model <regex>] [--force] [--json]\n' +
+  'Selectors AND together; at least one is required. Dry-run by default — ' +
+  '--force deletes.';
+
+function formatPruneBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${bytes} B`;
+}
+
+/**
+ * `push sessions prune` — explicit retention for the session store
+ * (sessions previously accumulated unboundedly; see `pruneSessions` in
+ * session-store.ts). Dry-run by default: without `--force` it only prints
+ * the kill list. Selectors combine with AND so a multi-flag invocation
+ * deletes the intersection, never the union.
+ */
+async function runSessionsPrune(values: Record<string, unknown>): Promise<number> {
+  const olderThanRaw = (values['older-than'] ?? values.olderThan) as string | undefined;
+  const keepRaw = values.keep as string | undefined;
+  const matchModel = (values['match-model'] ?? values.matchModel) as string | undefined;
+  const empty = parseBoolFlag(values.empty, 'empty') ?? false;
+  const force = parseBoolFlag(values.force, 'force') ?? false;
+  const dryRunFlag = parseBoolFlag(values['dry-run'] ?? values.dryRun, 'dry-run') ?? false;
+  if (force && dryRunFlag) {
+    throw new Error('--force and --dry-run are mutually exclusive.');
+  }
+
+  const selectors: PruneSelectors = {};
+  if (empty) selectors.empty = true;
+  if (olderThanRaw !== undefined) {
+    const days = Number(olderThanRaw);
+    if (!Number.isFinite(days) || days < 0) {
+      throw new Error(`--older-than expects a non-negative number of days, got ${olderThanRaw}`);
+    }
+    selectors.olderThanDays = days;
+  }
+  if (keepRaw !== undefined) {
+    const keep = Number(keepRaw);
+    if (!Number.isInteger(keep) || keep < 0) {
+      throw new Error(`--keep expects a non-negative integer, got ${keepRaw}`);
+    }
+    selectors.keep = keep;
+  }
+  if (matchModel !== undefined) {
+    try {
+      new RegExp(matchModel);
+    } catch (err) {
+      throw new Error(
+        `--match-model is not a valid regex: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    selectors.matchModel = matchModel;
+  }
+  if (Object.keys(selectors).length === 0) {
+    throw new Error(PRUNE_USAGE);
+  }
+
+  const report = await pruneSessions(selectors, { dryRun: !force });
+
+  if (values.json) {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    return report.failed.length > 0 ? 1 : 0;
+  }
+
+  for (const c of report.candidates) {
+    const age = c.updatedAt ? formatRelativeTime(c.updatedAt) : 'unknown age';
+    process.stdout.write(
+      `  ${c.sessionId}  ${c.provider}/${c.model}  ${age}  ${formatPruneBytes(c.bytes)}\n`,
+    );
+  }
+  if (report.skippedActive.length > 0) {
+    process.stdout.write(
+      `Skipped ${report.skippedActive.length} session(s) with a live run marker: ` +
+        `${report.skippedActive.join(', ')}\n`,
+    );
+  }
+  if (report.candidates.length === 0) {
+    process.stdout.write(`No sessions matched (${report.scanned} scanned).\n`);
+    return 0;
+  }
+  if (report.dryRun) {
+    process.stdout.write(
+      `Dry run: ${report.candidates.length} of ${report.scanned} session(s) matched ` +
+        `(${formatPruneBytes(report.bytesSelected)}). Nothing deleted — re-run with --force.\n`,
+    );
+    return 0;
+  }
+  for (const failure of report.failed) {
+    process.stderr.write(`${fmt.warn('Failed:')} ${failure.sessionId}: ${failure.error}\n`);
+  }
+  process.stdout.write(
+    `Deleted ${report.deleted.length} of ${report.candidates.length} matched session(s) ` +
+      `(${formatPruneBytes(report.bytesSelected)} selected).\n`,
+  );
+  return report.failed.length > 0 ? 1 : 0;
+}
+
 async function runSpinnerSubcommand(positionals) {
   const { SPINNER_NAMES, SPINNERS, isSpinnerName, isReducedMotion } = await import(
     './tui-spinner.js'
@@ -3151,6 +3260,17 @@ export async function main() {
       tail: { type: 'string' },
       since: { type: 'string' },
       type: { type: 'string' },
+      // `push sessions prune` selectors. Value-taking flags MUST be declared
+      // as strings — under `strict: false`, an undeclared `--keep 100` parses
+      // as boolean true and shifts `100` into positionals (same class as the
+      // Codex P2 on #520 above).
+      'older-than': { type: 'string' },
+      olderThan: { type: 'string' },
+      keep: { type: 'string' },
+      'match-model': { type: 'string' },
+      matchModel: { type: 'string' },
+      empty: { type: 'boolean' },
+      force: { type: 'boolean' },
       // Phase 2.e: `push daemon relay enable --url <…> --token <…>`.
       // `--url` is already declared above for the cloud-side run path.
       token: { type: 'string' },
@@ -3247,6 +3367,9 @@ export async function main() {
 
   if (subcommand === 'resume' || subcommand === 'sessions') {
     const sessionsCmd = positionals[1] || '';
+    if (sessionsCmd === 'prune') {
+      return runSessionsPrune(values);
+    }
     if (sessionsCmd === 'rename') {
       const sessionId = positionals[2];
       const nameArg = positionals.slice(3).join(' ').trim();
@@ -3283,7 +3406,7 @@ export async function main() {
       return 0;
     }
     if (sessionsCmd) {
-      throw new Error(`Unknown resume subcommand: ${sessionsCmd}. Supported: rename`);
+      throw new Error(`Unknown resume subcommand: ${sessionsCmd}. Supported: rename, prune`);
     }
 
     const sessions = await listSessions();
