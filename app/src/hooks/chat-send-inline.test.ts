@@ -652,6 +652,74 @@ describe('startInlineCoderTurn', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Card routing — disclosure vs. final message
+// ---------------------------------------------------------------------------
+
+describe('card routing: disclosure vs. final message', () => {
+  /** Simulate the kernel firing onRunEvent with one tool.execution_complete event. */
+  function kernelWithToolEvent(cards: object[]) {
+    mockRunInPageCoderKernel.mockImplementation(
+      async (_spec: unknown, callbacks: { onRunEvent?: (e: unknown) => void }) => {
+        callbacks.onRunEvent?.({
+          type: 'tool.execution_complete',
+          round: 1,
+          executionId: 'exec-1',
+          toolName: 'list_commits',
+          toolSource: 'coder',
+          durationMs: 120,
+          isError: false,
+          preview: 'preview text',
+        });
+        return { summary: 'Done.', cards, rounds: 1, checkpoints: 0 };
+      },
+    );
+  }
+
+  it('attaches cards to the last synthetic call message when tool events were captured', async () => {
+    const commitCard = { type: 'commit-list', data: { repo: 'owner/repo', commits: [] } };
+    kernelWithToolEvent([commitCard]);
+    const { ctx, store } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    const messages = store.current['chat-1'].messages;
+    const callMsg = messages.find((m) => m.isToolCall);
+    expect(callMsg).toBeDefined();
+    expect(callMsg?.cards).toEqual([commitCard]);
+  });
+
+  it('leaves no cards key on the final message when the disclosure absorbed them', async () => {
+    kernelWithToolEvent([{ type: 'commit-list', data: {} }]);
+    const { ctx, store } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    const final = lastAssistant(store);
+    expect(final.isToolCall).toBeFalsy();
+    expect(final.cards).toBeUndefined();
+  });
+
+  it('keeps cards on the final message when no tool events were captured', async () => {
+    // Default mock fires no onRunEvent — pure conversational turn.
+    const { ctx, store } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    const final = lastAssistant(store);
+    expect(final.cards).toEqual([{ type: 'diff' }]);
+    expect(store.current['chat-1'].messages.some((m) => m.isToolCall)).toBe(false);
+  });
+
+  it('produces no cards on either path when result.cards is empty', async () => {
+    kernelWithToolEvent([]); // tool event fired but no cards
+    const { ctx, store } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    const messages = store.current['chat-1'].messages;
+    const callMsg = messages.find((m) => m.isToolCall);
+    expect(callMsg?.cards).toBeUndefined();
+    expect(lastAssistant(store).cards).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Checkpoint-shape drift pin: kernel-born V1 → adoption resume seed
 // ---------------------------------------------------------------------------
 

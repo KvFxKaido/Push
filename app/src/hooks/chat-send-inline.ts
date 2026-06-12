@@ -807,7 +807,7 @@ export async function startInlineCoderTurn(
     : result.summary;
   completeAssistantMessage(ctx, {
     content: finalContent,
-    cards: hasToolDisclosure ? undefined : result.cards,
+    ...(hasToolDisclosure ? {} : { cards: result.cards }),
   });
   ctx.updateAgentStatus({ active: false, phase: '' });
 
