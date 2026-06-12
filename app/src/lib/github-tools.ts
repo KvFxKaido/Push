@@ -31,7 +31,7 @@ import {
 
 // --- Re-exports for backward compatibility ---
 export type { ToolCall } from './github-tool-protocol';
-export { detectToolCall, TOOL_PROTOCOL } from './github-tool-protocol';
+export { detectToolCall, TOOL_PROTOCOL, buildGitHubToolProtocol } from './github-tool-protocol';
 export {
   githubFetch,
   fetchRepoBranches,

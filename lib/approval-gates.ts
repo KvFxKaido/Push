@@ -191,7 +191,15 @@ export function createDefaultApprovalGates(options: ApprovalGateOptions): Approv
     id: 'remote-side-effect',
     label: 'Remote side effect',
     category: 'remote_side_effect',
-    matcher: 'sandbox_push|pr_create|pr_merge|branch_delete|workflow_run',
+    // Match BOTH the canonical tool names the runtime dispatches
+    // (`create_pr` / `merge_pr` / `delete_branch` / `trigger_workflow`) and
+    // their model-facing public aliases (`pr_create` / …). The runtime feeds
+    // the gate the canonical name (`getHookToolName` → resolved `call.tool`),
+    // so the alias-only matcher previously missed every GitHub mutator — a
+    // latent no-op surfaced when the inline lead started routing these tools
+    // through the approval pipeline.
+    matcher:
+      'sandbox_push|create_pr|pr_create|merge_pr|pr_merge|delete_branch|branch_delete|trigger_workflow|workflow_run',
     evaluate: (
       toolName: string,
       args: Record<string, unknown>,

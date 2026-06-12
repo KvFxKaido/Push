@@ -499,6 +499,11 @@ export async function startInlineCoderTurn(
         memoryScope: { repoFullName, branch: activeBranch, chatId },
         correlation: { surface: 'web', chatId, runId: args.runId },
         stream,
+        // Orchestrator parity: the collapsed single lead gets the GitHub
+        // PR/commit/CI/workflow tools, ask_user, and create_artifact on top of
+        // its sandbox/web/memory surface — the tools a conversational turn
+        // ("what changed recently?") needs and the old Orchestrator had.
+        leadToolSurface: true,
         // Per-round capture: the foreground client mirror is the durable
         // copy adoption resumes from, so don't skip rounds.
         checkpointCadenceRounds: 1,
