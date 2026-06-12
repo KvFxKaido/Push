@@ -58,7 +58,7 @@ import {
   shouldWarnAboutUnknownEvent,
 } from './tui-daemon-handshake.js';
 import { getContextBudget, estimateContextTokens } from './context-manager.js';
-import { filterSessions } from './tui-fuzzy.js';
+import { filterSessions, scopeSessionsToWorkspace } from './tui-fuzzy.js';
 import { findLastAssistantText, findLastCodeBlock, formatByteSize } from './tui-copy.js';
 import {
   applySingleLineEditKey,
@@ -918,7 +918,17 @@ function renderResumeModal(buf, theme, rows, cols, modalState, currentSessionId)
 
   // Helper to draw the list side
   function renderList() {
-    const lines = [theme.bold(theme.style('fg.primary', '  Resume Session'))];
+    // Scope tag keeps the hidden sessions visible-as-a-number: a filtered
+    // view that doesn't say it's filtered reads as "that's everything".
+    const scopeTag =
+      modalState?.scope === 'workspace'
+        ? modalState.scopedOutCount > 0
+          ? ` · this workspace (${modalState.scopedOutCount} elsewhere)`
+          : ' · this workspace'
+        : ' · all workspaces';
+    const lines = [
+      theme.bold(theme.style('fg.primary', '  Resume Session')) + theme.style('fg.dim', scopeTag),
+    ];
 
     // Filter bar
     if (isFilterMode) {
@@ -1073,6 +1083,8 @@ function renderResumeModal(buf, theme, rows, cols, modalState, currentSessionId)
       theme.style('accent.link', '↑↓') + theme.style('fg.dim', ' nav '),
       theme.style('accent.link', 'Enter') + theme.style('fg.dim', ' resume '),
       theme.style('accent.link', '/') + theme.style('fg.dim', ' filter '),
+      theme.style('accent.link', 'A') +
+        theme.style('fg.dim', modalState?.scope === 'workspace' ? ' all ' : ' workspace '),
       theme.style('accent.link', 'R') + theme.style('fg.dim', ' rename '),
       theme.style('accent.link', 'D') + theme.style('fg.dim', ' delete '),
       theme.style('accent.link', 'Esc') + theme.style('fg.dim', ' close'),
@@ -4217,6 +4229,8 @@ export async function runTUI(options = {}) {
       error: null,
       confirmDeleteId: null,
       mode: 'list', // 'list', 'rename', 'filter'
+      scope: 'workspace', // 'workspace' (cwd-matched) | 'all'
+      scopedOutCount: 0,
       renameTargetId: null,
       renameBuf: '',
       renameCursor: 0,
@@ -4229,15 +4243,25 @@ export async function runTUI(options = {}) {
 
     try {
       const rows = await listSessions();
-      const currentIndex = rows.findIndex((row) => row.sessionId === state.sessionId);
+      // Default to the active workspace's sessions — the REPL picker has
+      // always cwd-scoped, but this modal listed every workspace and the
+      // current project's sessions drowned in unrelated history. Fall back
+      // to 'all' when the workspace has none, so the picker is never
+      // mysteriously empty. `a` toggles.
+      const workspaceRows = scopeSessionsToWorkspace(rows, state.cwd);
+      const scope = workspaceRows.length > 0 ? 'workspace' : 'all';
+      const scopedRows = scope === 'workspace' ? workspaceRows : rows;
+      const currentIndex = scopedRows.findIndex((row) => row.sessionId === state.sessionId);
       const ms = {
         loading: false,
         rows,
-        filteredRows: rows.map((r) => ({ item: r, score: 1 })),
+        filteredRows: scopedRows.map((r) => ({ item: r, score: 1 })),
         cursor: currentIndex >= 0 ? currentIndex : 0,
         error: null,
         confirmDeleteId: null,
         mode: 'list',
+        scope,
+        scopedOutCount: rows.length - scopedRows.length,
         renameTargetId: null,
         renameBuf: '',
         renameCursor: 0,
@@ -4257,6 +4281,8 @@ export async function runTUI(options = {}) {
         error: `Failed to list sessions: ${formatError(err)}`,
         confirmDeleteId: null,
         mode: 'list',
+        scope: 'workspace',
+        scopedOutCount: 0,
         renameTargetId: null,
         renameBuf: '',
         renameCursor: 0,
@@ -4297,10 +4323,15 @@ export async function runTUI(options = {}) {
   }
 
   function updateFilteredRows(ms) {
+    // Workspace scope applies before the fuzzy filter, so `/` searches
+    // within the selected scope. `scopedOutCount` is precomputed here (not
+    // in the renderer) so the draw path stays pure over modal state.
+    const base = ms.scope === 'workspace' ? scopeSessionsToWorkspace(ms.rows, state.cwd) : ms.rows;
+    ms.scopedOutCount = ms.rows.length - base.length;
     if (!ms.filterBuf) {
-      ms.filteredRows = ms.rows.map((r) => ({ item: r, score: 1 }));
+      ms.filteredRows = base.map((r) => ({ item: r, score: 1 }));
     } else {
-      ms.filteredRows = filterSessions(ms.rows, ms.filterBuf);
+      ms.filteredRows = filterSessions(base, ms.filterBuf);
     }
     // Keep cursor in bounds
     ms.cursor = Math.min(ms.cursor, Math.max(0, ms.filteredRows.length - 1));
@@ -4322,6 +4353,12 @@ export async function runTUI(options = {}) {
       (key.name === 'delete' ||
         (key.ch && !key.ctrl && !key.meta && ['d', 'x'].includes(String(key.ch).toLowerCase())));
     const filterRequested = ms.mode === 'list' && key.ch === '/' && !key.ctrl && !key.meta;
+    const scopeToggleRequested =
+      ms.mode === 'list' &&
+      key.ch &&
+      !key.ctrl &&
+      !key.meta &&
+      String(key.ch).toLowerCase() === 'a';
 
     const markDirty = (flush = false) => {
       tuiState.dirty.add('all');
@@ -4452,6 +4489,21 @@ export async function runTUI(options = {}) {
       ms.filterBuf = edit.text;
       ms.filterCursor = edit.cursor;
       if (edit.changed) updateFilteredRows(ms);
+      markDirty();
+      return;
+    }
+
+    // Scope toggle is handled BEFORE the empty-list early-return: a
+    // workspace scope that just lost its last session (delete, prune) must
+    // still be able to widen to 'all' instead of stranding the user on an
+    // empty pane.
+    if (scopeToggleRequested) {
+      ms.scope = ms.scope === 'workspace' ? 'all' : 'workspace';
+      ms.confirmDeleteId = null;
+      ms.error = null;
+      updateFilteredRows(ms);
+      ms.cursor = 0;
+      await loadSessionPreview(ms);
       markDirty();
       return;
     }
