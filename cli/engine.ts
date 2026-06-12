@@ -150,10 +150,11 @@ export interface RunOptions {
   // (`lib/delegation-mode.ts`), keeping the opt-in rule identical to the
   // web preference. See Agent Runtime Decisions §10.
   delegationMode?: DelegationMode;
-  // Which runtime carries the lead turn: `engine` (default) is the CLI-local
-  // `runAssistantLoop`; `kernel` runs the shared coder kernel in `leadMode`
-  // (cli/lead-turn.ts — §10 step 2, opt-in). Unset falls back to
-  // `PUSH_LEAD_RUNTIME=kernel`.
+  // Which runtime carries the lead turn: `kernel` (default since 2026-06-12)
+  // runs the shared coder kernel in `leadMode` (cli/lead-turn.ts — §10
+  // step 2); `engine` opts back into the CLI-local `runAssistantLoop` while
+  // the lane bakes. Unset falls back to the env: only an exact
+  // `PUSH_LEAD_RUNTIME=engine` opts out (mirrors the delegation-mode rule).
   leadRuntime?: 'engine' | 'kernel';
 }
 
@@ -2549,13 +2550,14 @@ export async function runAssistantTurn(
     }
   }
 
-  // §10 step 2 (opt-in): run the lead turn on the shared coder kernel
-  // (`leadMode: true`) instead of the CLI-local loop — same kernel + lead
-  // framing as the web's inline lane, with the CLI's local tool reach. The
-  // engine loop stays the default until the lane is measured; opt in via
-  // RunOptions or PUSH_LEAD_RUNTIME=kernel. See cli/lead-turn.ts.
+  // §10 step 2 (default since 2026-06-12): run the lead turn on the shared
+  // coder kernel (`leadMode: true`) — same kernel + lead framing as the
+  // web's inline lane, with the CLI's local tool reach. Only an exact
+  // `engine` (RunOptions or PUSH_LEAD_RUNTIME=engine) opts back into the
+  // CLI-local loop, which stays available while the lane bakes and is the
+  // retirement target once it has. See cli/lead-turn.ts.
   const leadRuntime =
-    options.leadRuntime ?? (process.env.PUSH_LEAD_RUNTIME === 'kernel' ? 'kernel' : 'engine');
+    options.leadRuntime ?? (process.env.PUSH_LEAD_RUNTIME === 'engine' ? 'engine' : 'kernel');
   if (leadRuntime === 'kernel') {
     const { runLeadKernelTurn } = await import('./lead-turn.js');
     return runLeadKernelTurn(state, providerConfig, apiKey, userText, maxRounds, turnOptions);
