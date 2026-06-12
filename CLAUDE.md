@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Push is a mobile-first AI coding agent with three surfaces — a web app, an experimental Capacitor Android shell, and a local CLI — all sharing runtime contracts in root `lib/`. Roles remain an internal execution/capability model; user-facing surfaces render workflow phases through `lib/role-display.ts`.
+Push is a mobile-first AI coding agent with three surfaces — a web app, an experimental Capacitor Android shell, and a local CLI — all sharing runtime contracts in root `lib/`. Roles remain an internal execution/capability model; user-facing surfaces render workflow phases through `lib/role-display.ts`. **Every surface targets the same single conversational lead** (the agent you talk to); the CLI/daemon is that same lead with *more reach* because it's local — real filesystem, real shell, persistent daemon, no sandbox limits — not a different interaction model. The web `inline` lane is the collapsed lead today; converging the TUI/daemon off the delegated org-chart model onto it is tracked work. See [`docs/decisions/Agent Runtime Decisions.md`](docs/decisions/Agent%20Runtime%20Decisions.md) §10.
 
 > Loader order is `PUSH.md` → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md` (first found wins). `PUSH.md` is the Push-specific override when present; otherwise `AGENTS.md` carries the startup contract and overrides this file when they conflict. `ARCHITECTURE.md` is the canonical source of truth for architecture details.
 
