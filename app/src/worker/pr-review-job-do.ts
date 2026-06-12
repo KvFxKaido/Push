@@ -149,9 +149,12 @@ export interface PrReviewOutcome {
   result: ReviewResult;
   commentsPosted: number;
   /**
-   * Whether an advisory review was actually POSTed. `false` only on the
+   * Whether an advisory review was actually POSTed. `false` on the
    * head-advanced skip path (the review ran but a newer push superseded the
-   * SHA before posting). Defaults to `true` for a normal completion.
+   * SHA before posting) and on the degraded path (`result.degraded` — the
+   * fallback result is deliberately not posted). Consumers distinguishing
+   * the two must check `result.degraded` first. `true` for a normal
+   * completion.
    */
   posted: boolean;
   /** True when a failing gating check was posted (critical finding on a gated repo). */
