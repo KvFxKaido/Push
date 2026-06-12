@@ -21,6 +21,24 @@ describe('translateCoderStatus', () => {
     );
   });
 
+  it('reads the GitHub PR/CI inspection tools (#895 parity) as Exploring', () => {
+    for (const tool of [
+      'list_prs',
+      'fetch_pr',
+      'get_workflow_runs',
+      'check_pr_mergeable',
+      'find_existing_pr',
+    ]) {
+      expect(translateCoderStatus('Coder executing...', tool).phase).toBe('Exploring');
+    }
+  });
+
+  it('keeps mutating/exec tools as Editing', () => {
+    for (const tool of ['sandbox_exec', 'write_file', 'create_artifact', 'commit_and_push']) {
+      expect(translateCoderStatus('Coder executing...', tool).phase).toBe('Editing');
+    }
+  });
+
   it('maps acceptance checks to Verifying', () => {
     expect(translateCoderStatus('Running acceptance checks...').phase).toBe('Verifying');
     expect(translateCoderStatus('Checking...', 'criterion A').phase).toBe('Verifying');

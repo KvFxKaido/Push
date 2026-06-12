@@ -45,9 +45,16 @@ export interface InlineStatusRender {
  */
 function executingPhase(detail?: string): string {
   if (!detail) return EDITING;
-  const d = detail.toLowerCase();
+  const d = detail.toLowerCase().trim();
+  // Batch label ("N parallel reads + M mutations") — mutations win.
   if (d.includes('mutation')) return EDITING;
-  if (/\bread/.test(d)) return EXPLORING;
+  if (d.includes('read')) return EXPLORING;
+  // Single tool name: read-only inspection verbs read as exploration. Covers
+  // the GitHub PR/CI tools the lead gained in #895 (fetch_pr / list_prs /
+  // get_workflow_runs / check_pr_mergeable / find_existing_pr) — none of
+  // which contain "read" — alongside grep/ls/glob/cat.
+  if (/^(fetch|list|get|check|find|search|view|show|grep|glob|ls|cat|inspect)([_\s-]|$)/.test(d))
+    return EXPLORING;
   return EDITING;
 }
 
