@@ -86,6 +86,7 @@ import {
 } from './web-search-tools';
 import { MEMORY_TOOL_PROTOCOL } from './memory-tools';
 import { WebToolExecutionRuntime } from './web-tool-execution-runtime';
+import { createDefaultApprovalGates } from './approval-gates';
 import { buildGitHubToolProtocol } from './github-tools';
 import { ASK_USER_TOOL_PROTOCOL } from './ask-user-tools';
 import { ARTIFACT_TOOL_PROTOCOL } from './artifact-tools';
@@ -437,6 +438,11 @@ export async function runInPageCoderKernel(
   // passes). The matching protocols are threaded into `extraToolProtocols`
   // below, so nothing is advertised without a wired executor.
   const leadRuntime = spec.leadToolSurface ? new WebToolExecutionRuntime() : null;
+  // Supervised-mode approval gates, threaded exactly like the normal chat
+  // executor (`chat-tool-execution.ts`) so the lead's remote side effects
+  // (create_pr / merge_pr / delete_branch / trigger_workflow) require approval
+  // instead of executing silently. Built once per run, not per tool call.
+  const leadApprovalGates = leadRuntime ? createDefaultApprovalGates() : null;
 
   // --- Turn policy registry (Coder-only) ---
   const policyRegistry = new TurnPolicyRegistry();
@@ -531,6 +537,7 @@ export async function runInPageCoderKernel(
             activeProvider: spec.provider,
             activeModel: spec.modelId,
             capabilityLedger,
+            approvalGates: leadApprovalGates ?? undefined,
             chatId: spec.memoryScope?.chatId,
             executionMode: 'cloud',
           });

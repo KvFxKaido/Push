@@ -309,7 +309,19 @@ describe('git-direct-override gate', () => {
 // ---------------------------------------------------------------------------
 
 describe('remote-side-effect gate', () => {
-  const remoteTools = ['sandbox_push', 'pr_create', 'pr_merge', 'branch_delete', 'workflow_run'];
+  // Canonical names (what the runtime dispatches) AND their public aliases —
+  // the gate must fire for both forms.
+  const remoteTools = [
+    'sandbox_push',
+    'create_pr',
+    'pr_create',
+    'merge_pr',
+    'pr_merge',
+    'delete_branch',
+    'branch_delete',
+    'trigger_workflow',
+    'workflow_run',
+  ];
 
   it.each(remoteTools)('asks for approval in supervised mode for %s', async (tool) => {
     const result = await evalGate('supervised', tool, {});
