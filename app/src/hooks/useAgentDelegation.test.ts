@@ -112,7 +112,13 @@ vi.mock('@/lib/coder-agent', () => coderAgent);
 vi.mock('@/lib/explorer-agent', () => explorerAgent);
 vi.mock('@/lib/planner-agent', () => plannerAgent);
 vi.mock('@/lib/auditor-agent', () => auditorAgent);
-vi.mock('@/lib/model-capabilities', () => modelCapabilities);
+// Spread the actual module: `inline-coder-run.ts` (imported real by the
+// handlers since the Inline Foreground Lane extraction) pulls in
+// `providers.ts`, which reads `getModelCapabilities` at module-eval time.
+vi.mock('@/lib/model-capabilities', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/model-capabilities')>()),
+  ...modelCapabilities,
+}));
 vi.mock('@/lib/task-graph', () => taskGraph);
 vi.mock('@/lib/chat-tool-messages', () => chatToolMessages);
 vi.mock('@/lib/chat-run-events', () => chatRunEvents);
