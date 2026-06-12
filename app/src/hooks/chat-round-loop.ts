@@ -28,7 +28,7 @@
  */
 
 import type { MutableRefObject } from 'react';
-import { getVibeVerb } from '@/lib/repo-vibe-verbs';
+import { getVibeVerbs } from '@/lib/repo-vibe-verbs';
 import { getRepoMetadata } from '@/lib/repo-metadata';
 import { getSandboxEnvironment } from '@/lib/sandbox-client';
 import { fileLedger } from '@/lib/file-awareness-ledger';
@@ -371,23 +371,27 @@ export async function runRoundLoop(
     if (round > 0) appendStreamingAssistantDraft(loopCtx);
 
     let phase = 'Responding...';
+    let verbs: string[] | undefined;
     if (round === 0) {
-      // Drive the thinking verb off real repo signals: GitHub topics state the
+      // Drive the thinking verbs off real repo signals: GitHub topics state the
       // domain, the sandbox's boot-time manifest probe tells us the language,
       // and the name is the fallback for both. Both reads are synchronous cache
       // lookups (null when the repo list or sandbox hasn't populated yet, in
-      // which case the classifier degrades to the name alone).
+      // which case the classifier degrades to the name alone). Hand the bar the
+      // whole pool so it *rotates* — same thinking presentation as the inline
+      // lane (`chat-send-inline.ts`); `phase` is the static event-log fallback.
       const sandboxEnv = getSandboxEnvironment(loopCtx.sandboxIdRef.current ?? undefined);
       const repoMeta = getRepoMetadata(loopCtx.repoRef.current);
-      phase = getVibeVerb({
+      verbs = getVibeVerbs({
         fullName: loopCtx.repoRef.current,
         topics: repoMeta?.topics ?? null,
         projectMarkers: sandboxEnv?.project_markers ?? null,
         language: repoMeta?.language ?? null,
       });
+      phase = 'Thinking…';
     }
 
-    loopCtx.updateAgentStatus({ active: true, phase }, { chatId });
+    loopCtx.updateAgentStatus({ active: true, phase, ...(verbs ? { verbs } : {}) }, { chatId });
 
     const { accumulated, thinkingAccumulated, reasoningBlocks, error } = await streamAssistantRound(
       round,
