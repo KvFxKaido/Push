@@ -62,6 +62,7 @@ vi.mock('@/lib/context-memory', () => ({
 import {
   buildInlineTurnPreamble,
   createInlineTranscriptMirror,
+  splitVisibleContent,
   startInlineCoderTurn,
 } from './chat-send-inline';
 import { buildRunCheckpointV1 } from '@/lib/run-checkpoint-capture';
@@ -250,12 +251,97 @@ describe('createInlineTranscriptMirror', () => {
     expect(lastAssistant(store).thinking).toBeUndefined();
   });
 
+  it('never leaks a fenced tool call into the transcript, keeping any prose preamble', () => {
+    const { ctx, store, emitRunEngineEvent } = makeHarness();
+    const mirror = createInlineTranscriptMirror(ctx);
+
+    // A round that opens with prose then a fenced tool call, streamed in the
+    // fragments a provider would actually emit.
+    mirror({ type: 'text_delta', text: 'Let me check the file.' } as PushStreamEvent);
+    mirror({ type: 'text_delta', text: '\n```json\n{"tool":' } as PushStreamEvent);
+    mirror({
+      type: 'text_delta',
+      text: '"sandbox_exec","args":{"cmd":"ls"}}\n```',
+    } as PushStreamEvent);
+
+    // The prose survives; the fence + tool JSON never reaches the bubble.
+    expect(lastAssistant(store).content).toBe('Let me check the file.');
+    expect(lastAssistant(store).content).not.toContain('sandbox_exec');
+    expect(lastAssistant(store).content).not.toContain('```');
+    // The ACCUMULATED_UPDATED preview (mirrored to viewers / adoption) is
+    // filtered too — not just the local placeholder.
+    const lastAccumulated = emitRunEngineEvent.mock.calls
+      .map(([event]) => event)
+      .filter((e: { type: string }) => e.type === 'ACCUMULATED_UPDATED')
+      .at(-1);
+    expect(lastAccumulated.text).toBe('Let me check the file.');
+  });
+
+  it('strips a bare (unfenced) tool call and a coder_update_state blob', () => {
+    const { ctx, store } = makeHarness();
+    const mirror = createInlineTranscriptMirror(ctx);
+
+    mirror({ type: 'text_delta', text: '{"tool":"sandbox_exec","args":{}}' } as PushStreamEvent);
+    expect(lastAssistant(store).content).toBe('');
+
+    mirror({ type: 'done', finishReason: 'tool_calls' } as PushStreamEvent);
+    mirror({
+      type: 'text_delta',
+      text: '{"tool":"coder_update_state","args":{"summary":"x"}}',
+    } as PushStreamEvent);
+    expect(lastAssistant(store).content).toBe('');
+  });
+
   it('goes quiet after the user aborts', () => {
     const { ctx, store } = makeHarness();
     const mirror = createInlineTranscriptMirror(ctx);
     ctx.abortRef.current = true;
     mirror({ type: 'text_delta', text: 'late token' } as PushStreamEvent);
     expect(lastAssistant(store).content).toBe('');
+  });
+});
+
+describe('splitVisibleContent', () => {
+  it('passes plain prose through untouched', () => {
+    expect(splitVisibleContent('hello, world')).toEqual({
+      visible: 'hello, world',
+      toolCallActive: false,
+    });
+  });
+
+  it('keeps a completed (balanced) prose code fence visible', () => {
+    const text = 'Here is an example:\n```ts\nconst x = 1;\n```\nDone.';
+    expect(splitVisibleContent(text)).toEqual({ visible: text, toolCallActive: false });
+  });
+
+  it('cuts a fenced tool call at the fence, trimming trailing whitespace', () => {
+    const { visible, toolCallActive } = splitVisibleContent(
+      'Working on it.\n```json\n{"tool":"sandbox_exec"',
+    );
+    expect(visible).toBe('Working on it.');
+    expect(toolCallActive).toBe(true);
+  });
+
+  it('cuts a bare tool call at the opening brace', () => {
+    const { visible, toolCallActive } = splitVisibleContent('done {"tool":"x"}');
+    expect(visible).toBe('done');
+    expect(toolCallActive).toBe(true);
+  });
+
+  it('provisionally hides a dangling unbalanced fence before the key arrives', () => {
+    const { visible, toolCallActive } = splitVisibleContent('prefix\n```json\n');
+    expect(visible).toBe('prefix');
+    expect(toolCallActive).toBe(true);
+  });
+
+  it('hides a balanced fenced array with single-quoted/unquoted tool keys', () => {
+    // The dispatcher executes these shapes; the filter must hide them even
+    // once the closing fence balances, or the leak reappears (Codex #894).
+    const arrayForm = splitVisibleContent("intro\n```json\n[{'tool':'read_file','args':{}}]\n```");
+    expect(arrayForm).toEqual({ visible: 'intro', toolCallActive: true });
+
+    const unquoted = splitVisibleContent('intro\n```\n{tool: "read_file"}\n```');
+    expect(unquoted).toEqual({ visible: 'intro', toolCallActive: true });
   });
 });
 
@@ -407,6 +493,75 @@ describe('startInlineCoderTurn', () => {
     expect(emitRunEngineEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'LOOP_FAILED', reason: 'provider exploded' }),
     );
+  });
+
+  it('shields raw upstream error text from the transcript but keeps it for ops', async () => {
+    const { ctx, store, emitRunEngineEvent } = makeHarness();
+    const raw = '<html>\n  {"error":"boom"}  `code`\n</html>';
+    mockRunInPageCoderKernel.mockRejectedValue(new Error(raw));
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    const shown = lastAssistant(store).content;
+    // No raw markup/fence chars reach the rendered (markdown) bubble — angle
+    // brackets become inert full-width look-alikes (HTML entities would be
+    // decoded back by the markdown renderer).
+    expect(shown).not.toContain('<html>');
+    expect(shown).not.toContain('`');
+    expect(shown).not.toContain('\n');
+    expect(shown).not.toContain('&lt;');
+    expect(shown).toContain('＜html＞');
+    // The structured failure reason keeps the full, unaltered message.
+    expect(emitRunEngineEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'LOOP_FAILED', reason: raw }),
+    );
+  });
+
+  it('early-exits on abort before paying for the pre-coder snapshot or kernel', async () => {
+    const { ctx, store } = makeHarness();
+    ctx.abortRef.current = true;
+    const result = await startInlineCoderTurn(ctx, laneArgs());
+    expect(result.completedNormally).toBe(false);
+    expect(lastAssistant(store).content).toBe('Cancelled by user.');
+    expect(mockCapturePreCoderSnapshot).not.toHaveBeenCalled();
+    expect(mockRunInPageCoderKernel).not.toHaveBeenCalled();
+  });
+
+  it('names the specific missing precondition in the user-facing message', async () => {
+    const { ctx, store } = makeHarness({ repo: null });
+    await startInlineCoderTurn(ctx, laneArgs());
+    expect(lastAssistant(store).content).toContain('a connected repo');
+  });
+
+  it('skips the checkpoint flush and logs when the kernel transcript is malformed', async () => {
+    const { ctx, flushCheckpoint } = makeHarness();
+    const logSpy = vi.spyOn(console, 'log');
+    await startInlineCoderTurn(ctx, laneArgs());
+    const [, callbacks] = mockRunInPageCoderKernel.mock.calls[0] as [
+      unknown,
+      { onCheckpoint: (state: unknown) => Promise<void> },
+    ];
+
+    flushCheckpoint.mockClear();
+    await callbacks.onCheckpoint({
+      round: 2,
+      messages: [{ notARole: true }],
+      workingMemory: { plan: 'p' },
+      cards: [],
+    });
+
+    expect(flushCheckpoint).not.toHaveBeenCalled();
+    expect(ctx.checkpointRefs.apiMessages.current).toEqual([]);
+    const logged = logSpy.mock.calls
+      .map((c) => {
+        try {
+          return JSON.parse(String(c[0])) as { event?: string };
+        } catch {
+          return {};
+        }
+      })
+      .some((e) => e.event === 'coder_checkpoint_shape_invalid');
+    expect(logged).toBe(true);
+    logSpy.mockRestore();
   });
 });
 

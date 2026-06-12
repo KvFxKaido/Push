@@ -633,7 +633,7 @@ export function useChat(
       const lockedProviderForChat = prepared.lockedProvider;
       const resolvedModelForChat = prepared.resolvedModel;
       const apiMessages = prepared.apiMessages;
-      const toolCallRecoveryState = prepared.recoveryState;
+      const toolCallRecoveryState = prepared.recoveryState; // Orchestrator loop only; the inline lane ignores it.
 
       if (routeToEngine) {
         // biome-ignore format: keep refs inline so this branch stays under the file line cap.

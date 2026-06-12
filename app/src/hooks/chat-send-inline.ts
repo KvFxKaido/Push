@@ -124,10 +124,68 @@ export function buildInlineTurnPreamble(
 // ---------------------------------------------------------------------------
 
 /**
+ * Split a kernel round's accumulated content into the user-facing prefix
+ * and a flag for whether a tool-call / state-update construct has begun.
+ *
+ * The coder kernel emits tool calls as fenced or bare JSON in the SAME
+ * `content` stream as user-facing prose, and only classifies a round
+ * (`detectAllToolCalls`) once it has fully accumulated. So a naive mirror
+ * that streams every `text_delta` into the transcript leaks raw protocol
+ * JSON — partial tool calls, `coder_update_state` working-memory blobs —
+ * into the chat bubble before the kernel knows the round is final (the
+ * leak Codex flagged on #891). This strips the construct per delta instead.
+ *
+ * Conservative by construction: the kernel still consumes the untouched
+ * stream via the tee, and the authoritative final message is the kernel
+ * summary (`completeAssistantMessage`). So over-hiding here only trims the
+ * in-flight preview, never the committed turn — which is why we can safely
+ * hide a dangling (unbalanced) fence: a final-answer code block reappears
+ * the moment its closing fence lands, and lands in full at completion.
+ */
+export function splitVisibleContent(text: string): { visible: string; toolCallActive: boolean } {
+  let cut = -1;
+  const mark = (idx: number) => {
+    if (idx >= 0 && (cut === -1 || idx < cut)) cut = idx;
+  };
+
+  // A tool-call object/array wrapped in a code fence. Cut at the fence so
+  // the ```` ```json ```` wrapper is hidden too, even once the closing fence
+  // has balanced the count. The key match tolerates every shape the text
+  // dispatcher executes — double/single/unquoted `tool` keys and a leading
+  // `[` for fenced arrays (`lib/tool-dispatch.test.ts`) — so a balanced
+  // `[{'tool':…}]` block can't reappear in the bubble (Codex #894).
+  const fencedTool = /```[^\n`]*\r?\n[ \t]*\[?\s*\{\s*['"]?tool['"]?\s*:/.exec(text);
+  if (fencedTool) mark(fencedTool.index);
+
+  // The same object/array emitted bare (no fence). Matched anywhere, not
+  // anchored to start: the kernel's `extractBareToolJsonObjects` brace-scans
+  // the whole content, so a `prose then {"tool":…}` round IS executed as a
+  // tool call — hiding it is correct, not a false positive. Over-hiding a
+  // genuine inline-JSON mention is harmless (the kernel summary is the
+  // authoritative final render; this only trims the in-flight preview).
+  const bareTool = /\[?\s*\{\s*['"]?tool['"]?\s*:/.exec(text);
+  if (bareTool) mark(bareTool.index);
+
+  // A trailing, unbalanced code fence: in a coder round a dangling ``` is a
+  // tool block forming before its key has streamed in. A completed prose
+  // fence is balanced and survives (a non-tool fence has no key to match
+  // above, so it stays visible once closed).
+  if (((text.match(/```/g) ?? []).length & 1) === 1) {
+    mark(text.lastIndexOf('```'));
+  }
+
+  if (cut === -1) return { visible: text, toolCallActive: false };
+  return { visible: text.slice(0, cut).replace(/\s+$/, ''), toolCallActive: true };
+}
+
+/**
  * Build the tee observer that feeds the streaming assistant placeholder.
  * Accumulates per kernel round (a `done` event resets the buffer on the
  * next delta) so the placeholder always shows the round in flight; the
- * kernel's final summary replaces it at completion.
+ * kernel's final summary replaces it at completion. Tool-call /
+ * state-update JSON is stripped per delta via `splitVisibleContent` so it
+ * never reaches the transcript (or the `ACCUMULATED_UPDATED` preview a
+ * watching viewer / adopted checkpoint mirrors).
  */
 export function createInlineTranscriptMirror(
   ctx: SendLoopContext,
@@ -151,15 +209,25 @@ export function createInlineTranscriptMirror(
     }
     if (event.type === 'text_delta') {
       accumulated += event.text;
-      ctx.updateAgentStatus({ active: true, phase: 'Responding...' }, { chatId, log: false });
     } else {
       thinking += event.text;
-      ctx.updateAgentStatus({ active: true, phase: 'Reasoning...' }, { chatId, log: false });
     }
+
+    const { visible, toolCallActive } = splitVisibleContent(accumulated);
+
+    // Phase: prose streams as "Responding..."; while a tool construct is in
+    // flight, defer to the kernel's own `onStatus` (Editing/Exploring)
+    // rather than fight it with a generic label.
+    if (event.type === 'reasoning_delta') {
+      ctx.updateAgentStatus({ active: true, phase: 'Reasoning...' }, { chatId, log: false });
+    } else if (!toolCallActive) {
+      ctx.updateAgentStatus({ active: true, phase: 'Responding...' }, { chatId, log: false });
+    }
+
     ctx.emitRunEngineEvent({
       type: 'ACCUMULATED_UPDATED',
       timestamp: Date.now(),
-      text: accumulated,
+      text: visible,
       thinking,
     });
     ctx.setConversations((prev) => {
@@ -170,7 +238,7 @@ export function createInlineTranscriptMirror(
       if (msgs[lastIdx]?.role !== 'assistant') return prev;
       msgs[lastIdx] = {
         ...msgs[lastIdx],
-        content: accumulated,
+        content: visible,
         thinking: thinking || undefined,
         status: 'streaming',
       };
@@ -238,6 +306,40 @@ function completeAssistantMessage(
   });
 }
 
+/**
+ * Shield upstream error text before it reaches the assistant bubble.
+ * Provider response bodies and sandbox stderr can carry raw JSON/HTML, and
+ * the transcript renders GitHub-flavored markdown — so collapse to a single
+ * bounded line and neutralize fence/tag characters so nothing renders as
+ * markup or a fenced block (REVIEW.md "error-formatting paths" defect
+ * class). The full message stays in the structured log for ops.
+ *
+ * Angle brackets become full-width look-alikes rather than HTML entities:
+ * the markdown renderer decodes `&lt;` back to `<` before display, so the
+ * entity form is a no-op (review #894) — the look-alike keeps the text
+ * readable while guaranteeing it can never open a tag.
+ */
+function sanitizeErrorForChat(raw: string): string {
+  const collapsed = raw.replace(/\s+/g, ' ').trim();
+  const MAX = 200;
+  const clipped = collapsed.length > MAX ? `${collapsed.slice(0, MAX)}…` : collapsed;
+  return clipped.replace(/[<>`]/g, (c) => (c === '<' ? '＜' : c === '>' ? '＞' : "'"));
+}
+
+/**
+ * Lightweight shape check at the `CoderLoopMessage` → `ChatMessage` seam.
+ * The checkpoint bridge casts the kernel transcript into the V1 capture; if
+ * the shapes ever diverge, an unchecked cast would persist a malformed
+ * transcript that `runCheckpointToCoderResumeState` reads back at resume.
+ * This makes the seam fail loud (skip + structured log) instead of silently
+ * corrupting durable state. An empty transcript is structurally fine.
+ */
+function looksLikeChatMessages(messages: readonly unknown[]): boolean {
+  if (messages.length === 0) return true;
+  const first = messages[0] as { role?: unknown; content?: unknown } | null;
+  return typeof first?.role === 'string' && first != null && 'content' in first;
+}
+
 // ---------------------------------------------------------------------------
 // The lane
 // ---------------------------------------------------------------------------
@@ -278,16 +380,24 @@ export async function startInlineCoderTurn(
   const branchInfo = ctx.branchInfoRef.current;
   const activeBranch = branchInfo?.currentBranch ?? branchInfo?.defaultBranch ?? '';
   if (!sandboxId || !repoFullName || !activeBranch) {
+    // Name the specific missing precondition so the user can act on it,
+    // rather than a generic three-way error (the structured log records the
+    // short form for ops).
+    const missingReason = !sandboxId ? 'no sandbox' : !repoFullName ? 'no repo' : 'no branch';
+    const missingLabel = !sandboxId
+      ? 'an active sandbox'
+      : !repoFullName
+        ? 'a connected repo'
+        : 'an active branch';
     completeAssistantMessage(ctx, {
-      content:
-        '[Inline turn unavailable] This turn needs an active sandbox, repo, and branch. Try again once the workspace is ready.',
+      content: `[Inline turn unavailable] This turn needs ${missingLabel}. Try again once the workspace is ready.`,
     });
     logInlineTurnCompleted({
       chatId,
       runId: args.runId,
       outcome: 'precondition-failed',
       elapsedMs: Date.now() - startedMs,
-      error: !sandboxId ? 'no sandbox' : !repoFullName ? 'no repo' : 'no branch',
+      error: missingReason,
     });
     return { completedNormally: false };
   }
@@ -295,6 +405,20 @@ export async function startInlineCoderTurn(
   const memoryScope = buildMemoryScope(chatId, repoFullName, activeBranch);
   const verificationPolicy = args.getVerificationPolicyForChat(chatId);
   const harnessSettings = resolveHarnessSettings(lockedProvider, resolvedModel || undefined);
+
+  // Bail before the snapshot round-trip if the user already cancelled (the
+  // mirror guards every event the same way) — no point paying for a sandbox
+  // call and kernel launch we'd immediately abort.
+  if (ctx.abortRef.current) {
+    completeAssistantMessage(ctx, { content: 'Cancelled by user.' });
+    logInlineTurnCompleted({
+      chatId,
+      runId: args.runId,
+      outcome: 'aborted',
+      elapsedMs: Date.now() - startedMs,
+    });
+    return { completedNormally: false };
+  }
 
   // Pre-run HEAD + untracked baseline for the Auditor (PRs #604/#606).
   const { preCoderHead, preCoderUntrackedFiles } = await capturePreCoderSnapshot(sandboxId);
@@ -323,8 +447,30 @@ export async function startInlineCoderTurn(
   // ROUND_STARTED keeps the engine's round (which the capture reads)
   // aligned with the kernel's. CoderLoopMessage is a structural subset of
   // ChatMessage for everything the capture reads (role/content/parts/
-  // reasoning/tool flags) — the cast is the documented seam.
+  // reasoning/tool flags) — the cast is the documented seam, asserted at
+  // runtime so a future shape divergence fails loud instead of persisting a
+  // malformed transcript adoption would read back.
   const onCheckpoint = async (state: CoderCheckpointState<ChatCard>): Promise<void> => {
+    if (!looksLikeChatMessages(state.messages)) {
+      const offender = state.messages[0];
+      console.log(
+        JSON.stringify({
+          level: 'error',
+          event: 'coder_checkpoint_shape_invalid',
+          mode: 'inline',
+          chatId,
+          runId: args.runId,
+          round: state.round,
+          // Surface the offending element's key signature so the divergence
+          // is actionable from the log alone (review #894).
+          gotKeys:
+            offender && typeof offender === 'object'
+              ? Object.keys(offender).join(',')
+              : typeof offender,
+        }),
+      );
+      return;
+    }
     ctx.emitRunEngineEvent({ type: 'ROUND_STARTED', timestamp: Date.now(), round: state.round });
     ctx.checkpointRefs.apiMessages.current = state.messages as unknown as ChatMessage[];
     ctx.lastCoderStateRef.current = state.workingMemory;
@@ -383,7 +529,10 @@ export async function startInlineCoderTurn(
       return { completedNormally: false };
     }
     const msg = err instanceof Error ? err.message : String(err);
-    completeAssistantMessage(ctx, { content: `[Inline turn failed] ${msg}` });
+    // Shield raw upstream text (provider bodies / sandbox stderr) from the
+    // transcript; the full message still rides the structured log + engine
+    // reason for ops/debugging.
+    completeAssistantMessage(ctx, { content: `[Inline turn failed] ${sanitizeErrorForChat(msg)}` });
     // Emit the terminal failure ourselves so `finalizeRunSession` sees a
     // terminal phase and doesn't mislabel the exit as a plain abort.
     ctx.emitRunEngineEvent({ type: 'LOOP_FAILED', timestamp: Date.now(), reason: msg });
