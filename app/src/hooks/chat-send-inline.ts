@@ -298,6 +298,35 @@ function completeAssistantMessage(
   });
 }
 
+/**
+ * Shield upstream error text before it reaches the assistant bubble.
+ * Provider response bodies and sandbox stderr can carry raw JSON/HTML, and
+ * the transcript renders GitHub-flavored markdown — so collapse to a single
+ * bounded line and neutralize fence/tag characters so nothing renders as
+ * markup or a fenced block (REVIEW.md "error-formatting paths" defect
+ * class). The full message stays in the structured log for ops.
+ */
+function sanitizeErrorForChat(raw: string): string {
+  const collapsed = raw.replace(/\s+/g, ' ').trim();
+  const MAX = 200;
+  const clipped = collapsed.length > MAX ? `${collapsed.slice(0, MAX)}…` : collapsed;
+  return clipped.replace(/[<>`]/g, (c) => (c === '<' ? '&lt;' : c === '>' ? '&gt;' : "'"));
+}
+
+/**
+ * Lightweight shape check at the `CoderLoopMessage` → `ChatMessage` seam.
+ * The checkpoint bridge casts the kernel transcript into the V1 capture; if
+ * the shapes ever diverge, an unchecked cast would persist a malformed
+ * transcript that `runCheckpointToCoderResumeState` reads back at resume.
+ * This makes the seam fail loud (skip + structured log) instead of silently
+ * corrupting durable state. An empty transcript is structurally fine.
+ */
+function looksLikeChatMessages(messages: readonly unknown[]): boolean {
+  if (messages.length === 0) return true;
+  const first = messages[0] as { role?: unknown; content?: unknown } | null;
+  return typeof first?.role === 'string' && first != null && 'content' in first;
+}
+
 // ---------------------------------------------------------------------------
 // The lane
 // ---------------------------------------------------------------------------
@@ -338,16 +367,24 @@ export async function startInlineCoderTurn(
   const branchInfo = ctx.branchInfoRef.current;
   const activeBranch = branchInfo?.currentBranch ?? branchInfo?.defaultBranch ?? '';
   if (!sandboxId || !repoFullName || !activeBranch) {
+    // Name the specific missing precondition so the user can act on it,
+    // rather than a generic three-way error (the structured log records the
+    // short form for ops).
+    const missingReason = !sandboxId ? 'no sandbox' : !repoFullName ? 'no repo' : 'no branch';
+    const missingLabel = !sandboxId
+      ? 'an active sandbox'
+      : !repoFullName
+        ? 'a connected repo'
+        : 'an active branch';
     completeAssistantMessage(ctx, {
-      content:
-        '[Inline turn unavailable] This turn needs an active sandbox, repo, and branch. Try again once the workspace is ready.',
+      content: `[Inline turn unavailable] This turn needs ${missingLabel}. Try again once the workspace is ready.`,
     });
     logInlineTurnCompleted({
       chatId,
       runId: args.runId,
       outcome: 'precondition-failed',
       elapsedMs: Date.now() - startedMs,
-      error: !sandboxId ? 'no sandbox' : !repoFullName ? 'no repo' : 'no branch',
+      error: missingReason,
     });
     return { completedNormally: false };
   }
@@ -355,6 +392,20 @@ export async function startInlineCoderTurn(
   const memoryScope = buildMemoryScope(chatId, repoFullName, activeBranch);
   const verificationPolicy = args.getVerificationPolicyForChat(chatId);
   const harnessSettings = resolveHarnessSettings(lockedProvider, resolvedModel || undefined);
+
+  // Bail before the snapshot round-trip if the user already cancelled (the
+  // mirror guards every event the same way) — no point paying for a sandbox
+  // call and kernel launch we'd immediately abort.
+  if (ctx.abortRef.current) {
+    completeAssistantMessage(ctx, { content: 'Cancelled by user.' });
+    logInlineTurnCompleted({
+      chatId,
+      runId: args.runId,
+      outcome: 'aborted',
+      elapsedMs: Date.now() - startedMs,
+    });
+    return { completedNormally: false };
+  }
 
   // Pre-run HEAD + untracked baseline for the Auditor (PRs #604/#606).
   const { preCoderHead, preCoderUntrackedFiles } = await capturePreCoderSnapshot(sandboxId);
@@ -383,8 +434,23 @@ export async function startInlineCoderTurn(
   // ROUND_STARTED keeps the engine's round (which the capture reads)
   // aligned with the kernel's. CoderLoopMessage is a structural subset of
   // ChatMessage for everything the capture reads (role/content/parts/
-  // reasoning/tool flags) — the cast is the documented seam.
+  // reasoning/tool flags) — the cast is the documented seam, asserted at
+  // runtime so a future shape divergence fails loud instead of persisting a
+  // malformed transcript adoption would read back.
   const onCheckpoint = async (state: CoderCheckpointState<ChatCard>): Promise<void> => {
+    if (!looksLikeChatMessages(state.messages)) {
+      console.log(
+        JSON.stringify({
+          level: 'error',
+          event: 'coder_checkpoint_shape_invalid',
+          mode: 'inline',
+          chatId,
+          runId: args.runId,
+          round: state.round,
+        }),
+      );
+      return;
+    }
     ctx.emitRunEngineEvent({ type: 'ROUND_STARTED', timestamp: Date.now(), round: state.round });
     ctx.checkpointRefs.apiMessages.current = state.messages as unknown as ChatMessage[];
     ctx.lastCoderStateRef.current = state.workingMemory;
@@ -443,7 +509,10 @@ export async function startInlineCoderTurn(
       return { completedNormally: false };
     }
     const msg = err instanceof Error ? err.message : String(err);
-    completeAssistantMessage(ctx, { content: `[Inline turn failed] ${msg}` });
+    // Shield raw upstream text (provider bodies / sandbox stderr) from the
+    // transcript; the full message still rides the structured log + engine
+    // reason for ops/debugging.
+    completeAssistantMessage(ctx, { content: `[Inline turn failed] ${sanitizeErrorForChat(msg)}` });
     // Emit the terminal failure ourselves so `finalizeRunSession` sees a
     // terminal phase and doesn't mislabel the exit as a plain abort.
     ctx.emitRunEngineEvent({ type: 'LOOP_FAILED', timestamp: Date.now(), reason: msg });

@@ -484,6 +484,72 @@ describe('startInlineCoderTurn', () => {
       expect.objectContaining({ type: 'LOOP_FAILED', reason: 'provider exploded' }),
     );
   });
+
+  it('shields raw upstream error text from the transcript but keeps it for ops', async () => {
+    const { ctx, store, emitRunEngineEvent } = makeHarness();
+    const raw = '<html>\n  {"error":"boom"}  `code`\n</html>';
+    mockRunInPageCoderKernel.mockRejectedValue(new Error(raw));
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    const shown = lastAssistant(store).content;
+    // No raw markup/fence chars reach the rendered (markdown) bubble.
+    expect(shown).not.toContain('<html>');
+    expect(shown).not.toContain('`');
+    expect(shown).not.toContain('\n');
+    expect(shown).toContain('&lt;html&gt;');
+    // The structured failure reason keeps the full, unaltered message.
+    expect(emitRunEngineEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'LOOP_FAILED', reason: raw }),
+    );
+  });
+
+  it('early-exits on abort before paying for the pre-coder snapshot or kernel', async () => {
+    const { ctx, store } = makeHarness();
+    ctx.abortRef.current = true;
+    const result = await startInlineCoderTurn(ctx, laneArgs());
+    expect(result.completedNormally).toBe(false);
+    expect(lastAssistant(store).content).toBe('Cancelled by user.');
+    expect(mockCapturePreCoderSnapshot).not.toHaveBeenCalled();
+    expect(mockRunInPageCoderKernel).not.toHaveBeenCalled();
+  });
+
+  it('names the specific missing precondition in the user-facing message', async () => {
+    const { ctx, store } = makeHarness({ repo: null });
+    await startInlineCoderTurn(ctx, laneArgs());
+    expect(lastAssistant(store).content).toContain('a connected repo');
+  });
+
+  it('skips the checkpoint flush and logs when the kernel transcript is malformed', async () => {
+    const { ctx, flushCheckpoint } = makeHarness();
+    const logSpy = vi.spyOn(console, 'log');
+    await startInlineCoderTurn(ctx, laneArgs());
+    const [, callbacks] = mockRunInPageCoderKernel.mock.calls[0] as [
+      unknown,
+      { onCheckpoint: (state: unknown) => Promise<void> },
+    ];
+
+    flushCheckpoint.mockClear();
+    await callbacks.onCheckpoint({
+      round: 2,
+      messages: [{ notARole: true }],
+      workingMemory: { plan: 'p' },
+      cards: [],
+    });
+
+    expect(flushCheckpoint).not.toHaveBeenCalled();
+    expect(ctx.checkpointRefs.apiMessages.current).toEqual([]);
+    const logged = logSpy.mock.calls
+      .map((c) => {
+        try {
+          return JSON.parse(String(c[0])) as { event?: string };
+        } catch {
+          return {};
+        }
+      })
+      .some((e) => e.event === 'coder_checkpoint_shape_invalid');
+    expect(logged).toBe(true);
+    logSpy.mockRestore();
+  });
 });
 
 // ---------------------------------------------------------------------------
