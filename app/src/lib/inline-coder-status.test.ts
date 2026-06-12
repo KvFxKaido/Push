@@ -64,7 +64,30 @@ describe('translateCoderStatus', () => {
     }
   });
 
-  it('never leaks an unknown/future kernel phase verbatim', () => {
+  it('hides internal mechanics (Context reset / Checkpoint skipped) as thinking', () => {
+    expect(translateCoderStatus('Context reset', 'Phase: editing')).toEqual({
+      phase: 'Thinking…',
+      thinking: true,
+    });
+    expect(translateCoderStatus('Checkpoint skipped', 'oops')).toEqual({
+      phase: 'Thinking…',
+      thinking: true,
+    });
+  });
+
+  it('preserves deliberate user-facing signals (label + detail), not thinking (review #896)', () => {
+    expect(translateCoderStatus('Health check', 'Sandbox unreachable — validating...')).toEqual({
+      phase: 'Health check',
+      detail: 'Sandbox unreachable — validating...',
+      thinking: false,
+    });
+    for (const signal of ['Drift detected', 'Needs more detail', 'Policy intervention']) {
+      const r = translateCoderStatus(signal, 'why');
+      expect(r).toEqual({ phase: signal, detail: 'why', thinking: false });
+    }
+  });
+
+  it('hides any future internal "Coder …" phase but never leaks it verbatim', () => {
     const r = translateCoderStatus('Coder doing something new...', 'raw detail');
     expect(r.thinking).toBe(true);
     expect(r.phase).toBe('Thinking…');

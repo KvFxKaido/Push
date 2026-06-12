@@ -60,8 +60,17 @@ function executingPhase(detail?: string): string {
 
 /**
  * Translate a raw coder-kernel `onStatus(phase, detail)` signal into
- * user-facing spinner vocabulary. Unknown/internal phases fall through to
- * "thinking" so a future kernel string can never leak verbatim.
+ * user-facing spinner vocabulary.
+ *
+ * Only the kernel's *internal* vocabulary is hidden — the `Coder …`-prefixed
+ * phases (working / reasoning / loop / resuming / checkpoint / parse error)
+ * plus the two non-prefixed mechanics (`Context reset`, `Checkpoint
+ * skipped`) read as thinking dead air, and any future `Coder …` string is
+ * caught by the prefix so it can never leak verbatim. Deliberate
+ * user-facing signals that aren't internal noise — `Health check` (sandbox
+ * probes), `Drift detected` / `Needs more detail` / `Policy intervention` —
+ * pass through with their label + detail, since they're the only immediate
+ * indication of what the kernel is doing (review #896).
  */
 export function translateCoderStatus(rawPhase: string, detail?: string): InlineStatusRender {
   switch (rawPhase) {
@@ -74,9 +83,14 @@ export function translateCoderStatus(rawPhase: string, detail?: string): InlineS
       // Terminal — the lane completes the message immediately after. Keep it
       // neutral rather than surfacing the internal halt reason.
       return { phase: 'Wrapping up…', thinking: false };
-    default:
-      // Coder working / reasoning / loop / resuming / checkpoint / context
-      // reset / parse error / checkpoint skipped — all dead air.
+    case 'Context reset':
+    case 'Checkpoint skipped':
+      // Internal mechanics (not `Coder …`-prefixed) — dead air, not a signal.
       return { phase: 'Thinking…', thinking: true };
+    default:
+      // Internal `Coder …` vocabulary (incl. any future one) → thinking.
+      if (/^Coder\b/.test(rawPhase)) return { phase: 'Thinking…', thinking: true };
+      // A deliberate user-facing signal — preserve it (label + detail).
+      return { phase: rawPhase, detail, thinking: false };
   }
 }
