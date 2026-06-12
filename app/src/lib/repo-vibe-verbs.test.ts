@@ -6,6 +6,7 @@ import {
   VERB_POOLS,
   classifyRepoVibe,
   getVibeVerb,
+  getVibeVerbs,
 } from './repo-vibe-verbs';
 
 describe('classifyRepoVibe', () => {
@@ -195,6 +196,21 @@ describe('classifyRepoVibe', () => {
     expect(classifyRepoVibe({ fullName: null, projectMarkers: null, language: null })).toBe(
       'default',
     );
+  });
+});
+
+describe('getVibeVerbs', () => {
+  it('returns the full pool for the classified vibe (for rotation)', () => {
+    expect(getVibeVerbs({ fullName: 'acme/widget', projectMarkers: ['Cargo.toml'] })).toBe(
+      VERB_POOLS.rust,
+    );
+    expect(getVibeVerbs(null)).toBe(DEFAULT_VERBS);
+  });
+
+  it('every pool has enough entries to rotate visibly', () => {
+    for (const pool of Object.values(VERB_POOLS)) {
+      expect(pool.length).toBeGreaterThanOrEqual(4);
+    }
   });
 });
 

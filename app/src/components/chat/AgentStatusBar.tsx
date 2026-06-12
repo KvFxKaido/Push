@@ -6,9 +6,14 @@ interface AgentStatusBarProps {
   status: AgentStatus;
 }
 
+// Rotation cadence for themed thinking verbs. Derived from wall-clock `now`
+// (which ticks every second) so rotation needs no extra state and never
+// resets when the lane re-sets the same status mid-stream.
+const VERB_ROTATE_MS = 2200;
+
 export function AgentStatusBar({ status }: AgentStatusBarProps) {
   // Re-render once a second when there's a startedAt to render against
-  // so the elapsed-time suffix ticks visibly. Without this the timer
+  // (elapsed ticker) OR verbs to rotate through. Without this the timer
   // shows whatever value `Date.now() - startedAt` was on the last
   // parent re-render — which for slow phases is "the whole thing"
   // since the parent rarely re-renders mid-execution. The interval
@@ -16,12 +21,13 @@ export function AgentStatusBar({ status }: AgentStatusBarProps) {
   // reset it inside the effect (eslint react-hooks/set-state-in-effect)
   // — the at-most-1s lag before the first interval fires is invisible
   // for a freshly-started tool call (elapsed shows "0s" briefly).
+  const hasVerbs = (status.verbs?.length ?? 0) > 0;
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (!status.active || !status.startedAt) return;
+    if (!status.active || (!status.startedAt && !hasVerbs)) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [status.active, status.startedAt]);
+  }, [status.active, status.startedAt, hasVerbs]);
 
   if (!status.active) return null;
 
@@ -29,12 +35,21 @@ export function AgentStatusBar({ status }: AgentStatusBarProps) {
     ? formatElapsedTime(Math.max(0, now - status.startedAt))
     : null;
 
+  // During thinking dead air the bar rotates a themed verb instead of a
+  // static label; the kernel's internal detail is dropped (it's noise the
+  // verb replaces). Phase-first states show their label + detail as before.
+  const verbs = status.verbs;
+  const label =
+    hasVerbs && verbs ? verbs[Math.floor(now / VERB_ROTATE_MS) % verbs.length] : status.phase;
+
   return (
     <div className="flex items-center gap-2.5 px-5 py-2.5 animate-fade-in">
       <span className="agent-pulse inline-block h-1.5 w-1.5 rounded-full bg-push-accent shadow-[0_0_8px_rgba(0,112,243,0.4)]" />
       <span className="text-xs text-push-fg-secondary tracking-wide">
-        {status.phase}
-        {status.detail && <span className="text-push-fg-dimmest ml-1.5">{status.detail}</span>}
+        {label}
+        {!hasVerbs && status.detail && (
+          <span className="text-push-fg-dimmest ml-1.5">{status.detail}</span>
+        )}
         {elapsedLabel && <span className="text-push-fg-dimmest ml-1.5">({elapsedLabel})</span>}
       </span>
     </div>

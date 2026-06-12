@@ -49,6 +49,11 @@ vi.mock('@/lib/orchestrator', () => ({
 
 vi.mock('@/lib/sandbox-client', () => ({
   getSandboxDiff: (...args: unknown[]) => mockGetSandboxDiff(...args),
+  getSandboxEnvironment: () => null,
+}));
+
+vi.mock('@/lib/repo-metadata', () => ({
+  getRepoMetadata: () => null,
 }));
 
 vi.mock('@/lib/model-capabilities', () => ({
@@ -381,6 +386,40 @@ describe('startInlineCoderTurn', () => {
     expect(spec.taskPreamble).toContain('[assistant] earlier answer');
     expect(callbacks.onCheckpoint).toBeInstanceOf(Function);
     expect(callbacks.onCheckpointRequest).toBeInstanceOf(Function);
+  });
+
+  it('translates the kernel onStatus into phase-first vocab + rotating verbs (no raw "Coder" leak)', async () => {
+    const { ctx } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+    const [, callbacks] = mockRunInPageCoderKernel.mock.calls[0] as [
+      unknown,
+      { onStatus: (phase: string, detail?: string) => void },
+    ];
+    const status = ctx.updateAgentStatus as unknown as ReturnType<typeof vi.fn>;
+
+    // Thinking dead air → static 'Thinking…' phase + a rotating verb pool.
+    status.mockClear();
+    callbacks.onStatus('Coder working...', 'Round 2');
+    expect(status).toHaveBeenLastCalledWith(
+      expect.objectContaining({ phase: 'Thinking…', verbs: expect.any(Array) }),
+      expect.objectContaining({ source: 'coder' }),
+    );
+    expect((status.mock.calls.at(-1)?.[0] as { verbs: string[] }).verbs.length).toBeGreaterThan(0);
+
+    // Tool execution → phase-first label, kernel detail kept, no verbs.
+    status.mockClear();
+    callbacks.onStatus('Coder executing...', 'sandbox_exec');
+    const arg = status.mock.calls.at(-1)?.[0] as {
+      phase: string;
+      detail?: string;
+      verbs?: unknown;
+    };
+    expect(arg.phase).toBe('Editing');
+    expect(arg.detail).toBe('sandbox_exec');
+    expect(arg.verbs).toBeUndefined();
+
+    // Never forwards the raw internal vocabulary.
+    expect(JSON.stringify(status.mock.calls)).not.toContain('Coder executing');
   });
 
   it('completes the placeholder with the kernel summary + cards and logs the measurement pair', async () => {
