@@ -634,15 +634,7 @@ function stopRelayClient(opts: { clearAllowlist?: boolean } = {}): void {
 import { PROVIDER_CONFIGS, resolveApiKey } from './provider.js';
 import { loadConfig, reapplyProviderConfigToEnv } from './config-store.js';
 import { createDaemonProviderStream } from './daemon-provider-stream.js';
-import {
-  executeToolCall,
-  detectAllToolCalls as cliDetectAllToolCalls,
-  detectToolCall as cliDetectToolCall,
-  READ_ONLY_TOOLS,
-  FILE_MUTATION_TOOLS,
-  TOOL_PROTOCOL,
-  READ_ONLY_TOOL_PROTOCOL,
-} from './tools.js';
+import { executeToolCall, TOOL_PROTOCOL, READ_ONLY_TOOL_PROTOCOL } from './tools.js';
 import {
   makeRunId,
   makeAttachToken,
@@ -2739,98 +2731,15 @@ function resolveRoleRouting(entry, role) {
  * runtime TypeError and the delegation fails on the first tool turn
  * (codex P1 feedback on PR #282). The `source: 'cli'` tag is a hint
  * to future log inspectors but the kernel itself ignores it.
+ *
+ * The wrapper + the `DetectedToolCalls` classifier moved to
+ * `cli/lead-turn.ts` so the daemon's delegated nodes and the lead-kernel
+ * lane (§10 step 2) share one implementation. Re-exported here so
+ * existing test imports (`cli/tests/daemon-integration.test.mjs`) keep
+ * resolving against pushd.
  */
-function wrapCall(call) {
-  return { source: 'cli', call };
-}
-
-/**
- * Wrap `cli/tools.ts`'s flat `{ calls, malformed }` detector output into
- * the `DetectedToolCalls` shape the lib Coder kernel expects
- * (`{ readOnly, fileMutations, mutating, extraMutations }` from
- * `lib/deep-reviewer-agent.ts`).
- *
- * Classification:
- * - `READ_ONLY_TOOLS` → `readOnly`
- * - `FILE_MUTATION_TOOLS` (pure file writes/edits) → `fileMutations`,
- *   batched into one mutation transaction per turn
- * - Anything else (`exec`, `git_commit`, etc.) → the trailing `mutating`
- *   side-effect slot (at most one)
- * - Overflow after the trailing slot, or a second side-effect → `extraMutations`
- *
- * Reads that appear after a mutation has started are treated as a
- * boundary: the sequence stops there so we don't silently reorder the
- * model's intent.
- *
- * Each slot holds a kernel-shaped `{ call: { tool, args } }` wrapper
- * (see `wrapCall`) — NOT the raw CLI call shape — so the kernel's
- * structural cast `toolCall.call.tool` resolves correctly.
- *
- * Exported so unit tests can assert the classification directly without
- * having to drive a full kernel loop through a mock provider.
- */
-export function wrapCliDetectAllToolCalls(text) {
-  const { calls } = cliDetectAllToolCalls(text);
-  const readOnly = [];
-  const fileMutations = [];
-  const extraMutations = [];
-  let mutating = null;
-  let phase = 'reads'; // 'reads' → 'mutations' → 'done'
-  for (const call of calls) {
-    const wrapped = wrapCall(call);
-    const isRead = READ_ONLY_TOOLS.has(call.tool);
-    const isFileMut = !isRead && FILE_MUTATION_TOOLS.has(call.tool);
-
-    if (phase === 'done') {
-      extraMutations.push(wrapped);
-      continue;
-    }
-
-    if (isRead) {
-      if (phase === 'reads') {
-        readOnly.push(wrapped);
-        continue;
-      }
-      // Read after a mutation started — ordering violation. Push it
-      // into `extraMutations` (and flip `phase` so any remaining calls
-      // land there too) so the caller can surface a structured error
-      // instead of silently dropping the call.
-      extraMutations.push(wrapped);
-      phase = 'done';
-      continue;
-    }
-
-    if (isFileMut) {
-      phase = 'mutations';
-      fileMutations.push(wrapped);
-      continue;
-    }
-
-    // Side-effecting call (exec, git_commit, save_memory, etc.)
-    mutating = wrapped;
-    phase = 'done';
-  }
-  // CLI's `cliDetectAllToolCalls` reports parse/shape failures via the
-  // `malformed` channel on its own `ToolDispatchResult`, separate from
-  // the kernel's `DetectedToolCalls.droppedCandidates` slot the Web-side
-  // detector populates. Pushd surfaces malformed reports through its
-  // event stream rather than through the Coder kernel, so we hand the
-  // kernel an empty array here. The shape is still required so the
-  // kernel's `detected.droppedCandidates.length > 0` guard doesn't trip
-  // on `undefined.length`.
-  return { readOnly, fileMutations, mutating, extraMutations, droppedCandidates: [] };
-}
-
-/**
- * Wraps the CLI single-call detector into the kernel's nested shape.
- * Returns `null` when no tool call is present, matching the kernel's
- * `detectAnyToolCall` slot contract.
- */
-function wrapCliDetectAnyToolCall(text) {
-  const call = cliDetectToolCall(text);
-  if (!call) return null;
-  return wrapCall(call);
-}
+import { wrapCliDetectAllToolCalls, wrapCliDetectAnyToolCall } from './lead-turn.js';
+export { wrapCliDetectAllToolCalls, wrapCliDetectAnyToolCall };
 
 /**
  * Build a `CoderToolExecResult`-shaped tool executor bound to a running

@@ -150,6 +150,11 @@ export interface RunOptions {
   // (`lib/delegation-mode.ts`), keeping the opt-in rule identical to the
   // web preference. See Agent Runtime Decisions §10.
   delegationMode?: DelegationMode;
+  // Which runtime carries the lead turn: `engine` (default) is the CLI-local
+  // `runAssistantLoop`; `kernel` runs the shared coder kernel in `leadMode`
+  // (cli/lead-turn.ts — §10 step 2, opt-in). Unset falls back to
+  // `PUSH_LEAD_RUNTIME=kernel`.
+  leadRuntime?: 'engine' | 'kernel';
 }
 
 export interface RunResult {
@@ -2542,6 +2547,18 @@ export async function runAssistantTurn(
     if (delegationResult?.delegated && delegationResult.runResult) {
       return delegationResult.runResult as RunResult;
     }
+  }
+
+  // §10 step 2 (opt-in): run the lead turn on the shared coder kernel
+  // (`leadMode: true`) instead of the CLI-local loop — same kernel + lead
+  // framing as the web's inline lane, with the CLI's local tool reach. The
+  // engine loop stays the default until the lane is measured; opt in via
+  // RunOptions or PUSH_LEAD_RUNTIME=kernel. See cli/lead-turn.ts.
+  const leadRuntime =
+    options.leadRuntime ?? (process.env.PUSH_LEAD_RUNTIME === 'kernel' ? 'kernel' : 'engine');
+  if (leadRuntime === 'kernel') {
+    const { runLeadKernelTurn } = await import('./lead-turn.js');
+    return runLeadKernelTurn(state, providerConfig, apiKey, userText, maxRounds, turnOptions);
   }
 
   return runAssistantLoop(state, providerConfig, apiKey, maxRounds, turnOptions);

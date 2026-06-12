@@ -153,14 +153,19 @@ On the CLI, the first convergence step landed 2026-06-12: interactive turns
 `runAssistantTurn` no longer runs the Planner pre-pass or the subagent
 ceremony unless `delegationMode: 'delegated'` / `PUSH_DELEGATION_MODE=delegated`
 opts back in (the interactive analog of headless `--delegate`, sharing the
-web preference's opt-in rule via `lib/delegation-mode.ts`). The remaining gap
-is the loop itself: the CLI lead still runs the CLI-local engine loop
-(`cli/engine.ts:runAssistantLoop`), and the daemon's delegated paths still run
-the Coder as a task-graph node (`cli/pushd.ts` → `runCoderAgent`, never
-`leadMode`). Converging the CLI terminal chat onto a `leadMode` run of the
-**shared** kernel — reusing, not re-implementing, the inline lane's assembly
-(§1) — is the tracked direction. Until it lands, new `cli/` work should treat
-the single-lead model as the target rather than extend the delegated wrapper.
+web preference's opt-in rule via `lib/delegation-mode.ts`). The second step
+landed the same day as an opt-in lane: `cli/lead-turn.ts` runs the terminal
+turn as a `leadMode: true` run of the **shared** coder kernel — same kernel +
+lead framing as the inline lane, assembled with the CLI's local reach
+(`executeToolCall` against the real filesystem, the CLI provider streams, the
+existing approval/Auditor gates) and speaking the engine's existing event
+vocabulary so the TUI/REPL/daemon clients render it unchanged. Routing lives
+at the `runAssistantTurn` seam (`leadRuntime: 'kernel'` /
+`PUSH_LEAD_RUNTIME=kernel`), mirroring how the web shipped the inline lane
+behind a preference before defaulting it. Remaining: measure the lane against
+the engine loop, default it, and then retire the engine loop's duplicated
+round machinery; the daemon's delegated task-graph nodes keep the implementer
+prompt by design (they are delegations, not the lead).
 
 Protected during convergence: the shared runtime semantics in §1 (one kernel,
 drift tests), the durable job engine, and the safety/Auditor boundary — the
@@ -176,7 +181,7 @@ constraints.
 5. Graduate loop detection enforcement only after telemetry supports thresholds.
 6. Decide whether memory Phase 3 immutable verbatim logs are worth the storage cost.
 7. Promote the diff/annotation envelope only when a roadmap item needs it.
-8. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model. Step 1 landed 2026-06-12: interactive turns default to the in-loop lead with the Planner wrapper behind `PUSH_DELEGATION_MODE=delegated`; the kernel swap (`runAssistantLoop` → shared `leadMode` run) is the remaining work.
+8. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model. Step 1 landed 2026-06-12: interactive turns default to the in-loop lead with the Planner wrapper behind `PUSH_DELEGATION_MODE=delegated`. Step 2 landed 2026-06-12: the lead-kernel lane (`cli/lead-turn.ts`) runs the turn on the shared kernel in `leadMode`, opt-in via `PUSH_LEAD_RUNTIME=kernel`. Remaining: measure the lane vs. the engine loop, flip the default, then retire the engine loop's duplicated round machinery.
 
 ## Archived Context Worth Knowing
 
