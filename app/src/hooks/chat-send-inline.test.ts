@@ -62,6 +62,7 @@ vi.mock('@/lib/context-memory', () => ({
 import {
   buildInlineTurnPreamble,
   createInlineTranscriptMirror,
+  splitVisibleContent,
   startInlineCoderTurn,
 } from './chat-send-inline';
 import { buildRunCheckpointV1 } from '@/lib/run-checkpoint-capture';
@@ -250,12 +251,87 @@ describe('createInlineTranscriptMirror', () => {
     expect(lastAssistant(store).thinking).toBeUndefined();
   });
 
+  it('never leaks a fenced tool call into the transcript, keeping any prose preamble', () => {
+    const { ctx, store, emitRunEngineEvent } = makeHarness();
+    const mirror = createInlineTranscriptMirror(ctx);
+
+    // A round that opens with prose then a fenced tool call, streamed in the
+    // fragments a provider would actually emit.
+    mirror({ type: 'text_delta', text: 'Let me check the file.' } as PushStreamEvent);
+    mirror({ type: 'text_delta', text: '\n```json\n{"tool":' } as PushStreamEvent);
+    mirror({
+      type: 'text_delta',
+      text: '"sandbox_exec","args":{"cmd":"ls"}}\n```',
+    } as PushStreamEvent);
+
+    // The prose survives; the fence + tool JSON never reaches the bubble.
+    expect(lastAssistant(store).content).toBe('Let me check the file.');
+    expect(lastAssistant(store).content).not.toContain('sandbox_exec');
+    expect(lastAssistant(store).content).not.toContain('```');
+    // The ACCUMULATED_UPDATED preview (mirrored to viewers / adoption) is
+    // filtered too — not just the local placeholder.
+    const lastAccumulated = emitRunEngineEvent.mock.calls
+      .map(([event]) => event)
+      .filter((e: { type: string }) => e.type === 'ACCUMULATED_UPDATED')
+      .at(-1);
+    expect(lastAccumulated.text).toBe('Let me check the file.');
+  });
+
+  it('strips a bare (unfenced) tool call and a coder_update_state blob', () => {
+    const { ctx, store } = makeHarness();
+    const mirror = createInlineTranscriptMirror(ctx);
+
+    mirror({ type: 'text_delta', text: '{"tool":"sandbox_exec","args":{}}' } as PushStreamEvent);
+    expect(lastAssistant(store).content).toBe('');
+
+    mirror({ type: 'done', finishReason: 'tool_calls' } as PushStreamEvent);
+    mirror({
+      type: 'text_delta',
+      text: '{"tool":"coder_update_state","args":{"summary":"x"}}',
+    } as PushStreamEvent);
+    expect(lastAssistant(store).content).toBe('');
+  });
+
   it('goes quiet after the user aborts', () => {
     const { ctx, store } = makeHarness();
     const mirror = createInlineTranscriptMirror(ctx);
     ctx.abortRef.current = true;
     mirror({ type: 'text_delta', text: 'late token' } as PushStreamEvent);
     expect(lastAssistant(store).content).toBe('');
+  });
+});
+
+describe('splitVisibleContent', () => {
+  it('passes plain prose through untouched', () => {
+    expect(splitVisibleContent('hello, world')).toEqual({
+      visible: 'hello, world',
+      toolCallActive: false,
+    });
+  });
+
+  it('keeps a completed (balanced) prose code fence visible', () => {
+    const text = 'Here is an example:\n```ts\nconst x = 1;\n```\nDone.';
+    expect(splitVisibleContent(text)).toEqual({ visible: text, toolCallActive: false });
+  });
+
+  it('cuts a fenced tool call at the fence, trimming trailing whitespace', () => {
+    const { visible, toolCallActive } = splitVisibleContent(
+      'Working on it.\n```json\n{"tool":"sandbox_exec"',
+    );
+    expect(visible).toBe('Working on it.');
+    expect(toolCallActive).toBe(true);
+  });
+
+  it('cuts a bare tool call at the opening brace', () => {
+    const { visible, toolCallActive } = splitVisibleContent('done {"tool":"x"}');
+    expect(visible).toBe('done');
+    expect(toolCallActive).toBe(true);
+  });
+
+  it('provisionally hides a dangling unbalanced fence before the key arrives', () => {
+    const { visible, toolCallActive } = splitVisibleContent('prefix\n```json\n');
+    expect(visible).toBe('prefix');
+    expect(toolCallActive).toBe(true);
   });
 });
 

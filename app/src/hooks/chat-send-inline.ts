@@ -124,10 +124,60 @@ export function buildInlineTurnPreamble(
 // ---------------------------------------------------------------------------
 
 /**
+ * Split a kernel round's accumulated content into the user-facing prefix
+ * and a flag for whether a tool-call / state-update construct has begun.
+ *
+ * The coder kernel emits tool calls as fenced or bare JSON in the SAME
+ * `content` stream as user-facing prose, and only classifies a round
+ * (`detectAllToolCalls`) once it has fully accumulated. So a naive mirror
+ * that streams every `text_delta` into the transcript leaks raw protocol
+ * JSON — partial tool calls, `coder_update_state` working-memory blobs —
+ * into the chat bubble before the kernel knows the round is final (the
+ * leak Codex flagged on #891). This strips the construct per delta instead.
+ *
+ * Conservative by construction: the kernel still consumes the untouched
+ * stream via the tee, and the authoritative final message is the kernel
+ * summary (`completeAssistantMessage`). So over-hiding here only trims the
+ * in-flight preview, never the committed turn — which is why we can safely
+ * hide a dangling (unbalanced) fence: a final-answer code block reappears
+ * the moment its closing fence lands, and lands in full at completion.
+ */
+export function splitVisibleContent(text: string): { visible: string; toolCallActive: boolean } {
+  let cut = -1;
+  const mark = (idx: number) => {
+    if (idx >= 0 && (cut === -1 || idx < cut)) cut = idx;
+  };
+
+  // A `{"tool": ...}` object wrapped in a code fence — the normalized
+  // tool-call shape openai-sse-pump flushes native `tool_calls` into. Cut
+  // at the fence so the ```` ```json ```` wrapper is hidden too, even once
+  // the closing fence has balanced the count.
+  const fencedTool = /```[^\n`]*\r?\n[ \t]*\{\s*"tool"/.exec(text);
+  if (fencedTool) mark(fencedTool.index);
+
+  // The same object emitted bare (no fence) — text models do this directly.
+  const bareTool = /\{\s*"tool"/.exec(text);
+  if (bareTool) mark(bareTool.index);
+
+  // A trailing, unbalanced code fence: in a coder round a dangling ``` is a
+  // tool block forming before its `{"tool"` key has streamed in. A
+  // completed prose fence is balanced and survives.
+  if (((text.match(/```/g) ?? []).length & 1) === 1) {
+    mark(text.lastIndexOf('```'));
+  }
+
+  if (cut === -1) return { visible: text, toolCallActive: false };
+  return { visible: text.slice(0, cut).replace(/\s+$/, ''), toolCallActive: true };
+}
+
+/**
  * Build the tee observer that feeds the streaming assistant placeholder.
  * Accumulates per kernel round (a `done` event resets the buffer on the
  * next delta) so the placeholder always shows the round in flight; the
- * kernel's final summary replaces it at completion.
+ * kernel's final summary replaces it at completion. Tool-call /
+ * state-update JSON is stripped per delta via `splitVisibleContent` so it
+ * never reaches the transcript (or the `ACCUMULATED_UPDATED` preview a
+ * watching viewer / adopted checkpoint mirrors).
  */
 export function createInlineTranscriptMirror(
   ctx: SendLoopContext,
@@ -151,15 +201,25 @@ export function createInlineTranscriptMirror(
     }
     if (event.type === 'text_delta') {
       accumulated += event.text;
-      ctx.updateAgentStatus({ active: true, phase: 'Responding...' }, { chatId, log: false });
     } else {
       thinking += event.text;
-      ctx.updateAgentStatus({ active: true, phase: 'Reasoning...' }, { chatId, log: false });
     }
+
+    const { visible, toolCallActive } = splitVisibleContent(accumulated);
+
+    // Phase: prose streams as "Responding..."; while a tool construct is in
+    // flight, defer to the kernel's own `onStatus` (Editing/Exploring)
+    // rather than fight it with a generic label.
+    if (event.type === 'reasoning_delta') {
+      ctx.updateAgentStatus({ active: true, phase: 'Reasoning...' }, { chatId, log: false });
+    } else if (!toolCallActive) {
+      ctx.updateAgentStatus({ active: true, phase: 'Responding...' }, { chatId, log: false });
+    }
+
     ctx.emitRunEngineEvent({
       type: 'ACCUMULATED_UPDATED',
       timestamp: Date.now(),
-      text: accumulated,
+      text: visible,
       thinking,
     });
     ctx.setConversations((prev) => {
@@ -170,7 +230,7 @@ export function createInlineTranscriptMirror(
       if (msgs[lastIdx]?.role !== 'assistant') return prev;
       msgs[lastIdx] = {
         ...msgs[lastIdx],
-        content: accumulated,
+        content: visible,
         thinking: thinking || undefined,
         status: 'streaming',
       };
