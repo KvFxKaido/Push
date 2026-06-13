@@ -455,6 +455,7 @@ export async function executeSandboxToolCall(
           truncated: boolean;
           timedOut?: boolean;
           error?: string;
+          branch?: string;
           /** Detached-path provenance; absent on local-pc and buffered-fallback results. */
           terminalReason?: import('@push/lib/detached-exec-runner').DetachedTerminalReason;
         };
@@ -573,6 +574,7 @@ export async function executeSandboxToolCall(
             return {
               text: `[Tool Result — sandbox_exec]\nCommand: ${call.args.command}\nExit code: 124\nCancelled by user.`,
               card: { type: 'sandbox', data: cardData },
+              ...(result.branch ? { branch: result.branch } : {}),
             };
           }
         }
@@ -616,6 +618,7 @@ export async function executeSandboxToolCall(
             text: formatStructuredError(err, `[Tool Error — sandbox_exec]\n${detail}`),
             card: { type: 'sandbox', data: cardData },
             structuredError: err,
+            ...(result.branch ? { branch: result.branch } : {}),
           };
         }
 
@@ -691,7 +694,11 @@ export async function executeSandboxToolCall(
           durationMs,
         };
 
-        return { text: lines.join('\n'), card: { type: 'sandbox', data: cardData } };
+        return {
+          text: lines.join('\n'),
+          card: { type: 'sandbox', data: cardData },
+          ...(result.branch ? { branch: result.branch } : {}),
+        };
       }
 
       case 'sandbox_read_file': {

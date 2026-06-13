@@ -962,6 +962,22 @@ describe('validateRunEventPayload — RunEventInput passthrough events', () => {
     assert.ok(issues.some((i) => i.path === 'payload.error'));
   });
 
+  it('accepts branch_desync and rejects a missing actual branch', () => {
+    assert.deepEqual(
+      validateRunEventPayload('branch_desync', {
+        expected: 'main',
+        actual: 'feature/desynced',
+        command: 'git rebase origin/main',
+      }),
+      [],
+    );
+    const issues = validateRunEventPayload('branch_desync', {
+      expected: 'main',
+      command: 'git rebase origin/main',
+    });
+    assert.ok(issues.some((i) => i.path === 'payload.actual'));
+  });
+
   it('accepts user.follow_up_queued', () => {
     const issues = validateRunEventPayload('user.follow_up_queued', {
       round: 2,

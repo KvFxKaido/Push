@@ -56,6 +56,7 @@ import {
   recordVerificationMutation,
 } from '@/lib/verification-runtime';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
+import { applyStampedSandboxExecBranchDesync } from '@/lib/branch-desync';
 import { parseUntrackedFileSet } from '@/lib/auditor-delegation-handler';
 import { buildToolMeta, buildToolResultMessage } from '@/lib/chat-tool-messages';
 import { createId } from '@push/lib/id-utils';
@@ -640,6 +641,26 @@ export async function startInlineCoderTurn(
           if (event.type === 'tool.execution_complete') {
             capturedToolEvents.push(event as ToolCompleteEvent);
           }
+        },
+        // Desync detection for the inline lane. The orchestrator dispatch
+        // seam (applyPostExecutionSideEffects) never runs for kernel-led
+        // turns, so the stamp is teed straight out of the kernel's sandbox
+        // executor instead.
+        onSandboxExecBranch: ({ command, branch }) => {
+          applyStampedSandboxExecBranchDesync(
+            { command, branch },
+            {
+              chatId,
+              appendRunEvent: ctx.appendRunEvent,
+              activeChatIdRef: ctx.activeChatIdRef,
+              conversationsRef: ctx.conversationsRef,
+              branchInfoRef: ctx.branchInfoRef,
+              skipAutoCreateRef: ctx.skipAutoCreateRef,
+              setConversations: ctx.setConversations,
+              dirtyConversationIdsRef: ctx.dirtyConversationIdsRef,
+              runtimeHandlersRef: ctx.runtimeHandlersRef,
+            },
+          );
         },
       },
     );

@@ -892,6 +892,23 @@ function validateToolResult(payload: unknown, basePath: string): ValidationIssue
   if (p) issues.push(p);
   const d = expectOptionalFiniteNumber(payload, 'durationMs', basePath);
   if (d) issues.push(d);
+  const b = expectOptionalString(payload, 'branch', basePath);
+  if (b) issues.push(b);
+  return issues;
+}
+
+/** Branch-desync detection after a stamped sandbox_exec result. */
+function validateBranchDesync(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const expected = expectNonEmptyString(payload, 'expected', basePath);
+  if (expected) issues.push(expected);
+  const actual = expectNonEmptyString(payload, 'actual', basePath);
+  if (actual) issues.push(actual);
+  const command = expectNonEmptyString(payload, 'command', basePath);
+  if (command) issues.push(command);
   return issues;
 }
 
@@ -1395,6 +1412,7 @@ const PAYLOAD_VALIDATORS: Record<string, PayloadValidator> = {
   'tool.execution_start': validateToolCall,
   tool_result: validateToolResult,
   'tool.execution_complete': validateToolResult,
+  branch_desync: validateBranchDesync,
   'tool.call_malformed': validateToolCallMalformed,
   error: validateErrorPayload,
   warning: validateWarningPayload,

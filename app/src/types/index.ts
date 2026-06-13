@@ -390,7 +390,8 @@ export type BranchSwitchSource =
   | 'github_create_branch'
   | 'release_draft'
   | 'ui'
-  | 'ui-merge';
+  | 'ui-merge'
+  | 'branch_desync';
 
 /** Normalized payload for a branch transition reported by a tool result.
  *  `kind: 'forked'` means the tool just created a new branch and the active
@@ -690,6 +691,9 @@ export interface ToolExecutionResult {
    *  *switch* (branch changed but conversation stays put). See
    *  `BranchSwitchPayload` for the field contract. */
   branchSwitch?: BranchSwitchPayload;
+  /** Workspace git branch stamped after sandbox_exec. `HEAD` means detached;
+   *  omitted means the provider did not supply a stamp. */
+  branch?: string;
   /** Structured delegation outcome — present when this result came from a delegated agent. */
   delegationOutcome?: DelegationOutcome;
   /** Foreground branch active when the delegated run was dispatched. Set by

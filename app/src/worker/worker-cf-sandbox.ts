@@ -717,6 +717,10 @@ async function routeExec(env: Env, body: Json): Promise<Response> {
   const stdout = (result as { stdout?: string }).stdout ?? '';
   const stderr = (result as { stderr?: string }).stderr ?? '';
   const exitCode = (result as { exitCode?: number }).exitCode ?? 0;
+  const branch = await readCurrentBranchStamp(sandbox as SandboxExecLike, {
+    sandboxId,
+    route: 'exec',
+  });
 
   return Response.json({
     stdout: truncate(stdout, 500_000),
@@ -724,6 +728,7 @@ async function routeExec(env: Env, body: Json): Promise<Response> {
     exit_code: exitCode,
     truncated: stdout.length > 500_000 || stderr.length > 100_000,
     workspace_revision: 0,
+    ...(branch ? { branch } : {}),
   });
 }
 
@@ -756,6 +761,49 @@ interface ProcessLike {
 
 function isRunningStatus(status: string): boolean {
   return status === 'starting' || status === 'running';
+}
+
+interface SandboxExecLike {
+  exec(command: string, options?: Record<string, unknown>): Promise<unknown>;
+}
+
+async function readCurrentBranchStamp(
+  sandbox: SandboxExecLike,
+  context: { sandboxId: string; route: string; processId?: string },
+): Promise<string | undefined> {
+  try {
+    const result = (await withExecDeadline(
+      sandbox.exec('git -C /workspace rev-parse --abbrev-ref HEAD', {
+        env: SANDBOX_EXEC_RESOURCE_ENV,
+        timeout: 5_000,
+      }),
+      7_000,
+    )) as { stdout?: string; stderr?: string; exitCode?: number };
+    if ((result.exitCode ?? 0) !== 0) {
+      wlog('warn', 'sandbox_exec_branch_stamp_failed', {
+        ...context,
+        exitCode: result.exitCode ?? null,
+        message: (result.stderr || result.stdout || 'branch stamp command failed').trim(),
+      });
+      return undefined;
+    }
+    const branch = (result.stdout ?? '').trim();
+    if (!branch) {
+      wlog('warn', 'sandbox_exec_branch_stamp_failed', {
+        ...context,
+        exitCode: result.exitCode ?? null,
+        message: 'branch stamp command returned empty stdout',
+      });
+      return undefined;
+    }
+    return branch;
+  } catch (err) {
+    wlog('warn', 'sandbox_exec_branch_stamp_failed', {
+      ...context,
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return undefined;
+  }
 }
 
 async function routeExecStart(env: Env, body: Json): Promise<Response> {
@@ -802,13 +850,23 @@ async function routeExecStatus(env: Env, body: Json): Promise<Response> {
     return Response.json({ error: 'Process not found', code: 'NOT_FOUND' }, { status: 404 });
   }
 
+  const running = isRunningStatus(proc.status);
+  const branch = running
+    ? undefined
+    : await readCurrentBranchStamp(sandbox as SandboxExecLike, {
+        sandboxId,
+        route: 'exec-status',
+        processId,
+      });
+
   return Response.json({
     process_id: proc.id,
     status: proc.status,
-    running: isRunningStatus(proc.status),
+    running,
     exit_code: proc.exitCode ?? null,
     started_at: proc.startTime ? proc.startTime.toISOString() : null,
     ended_at: proc.endTime ? proc.endTime.toISOString() : null,
+    ...(branch ? { branch } : {}),
   });
 }
 

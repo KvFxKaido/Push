@@ -50,6 +50,13 @@ export interface ChatRuntimeHandlers {
   bindSandboxSessionToRepo?: (repoFullName: string, branch?: string) => void;
   /** Called when a sandbox tool switches branches internally. */
   onBranchSwitch?: (branch: string) => void;
+  /** Called when sandbox_exec reports sandbox HEAD diverged from tracked branch. */
+  onBranchDesync?: (event: {
+    expected: string;
+    actual: string;
+    command: string;
+    reconciled: boolean;
+  }) => void;
   /** Called when a tool result indicates the sandbox is unreachable. */
   onSandboxUnreachable?: (reason: string) => void;
 }

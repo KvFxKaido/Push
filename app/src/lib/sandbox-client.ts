@@ -78,6 +78,8 @@ export interface ExecResult {
   /** Error message from the sandbox backend (e.g. "Sandbox not found or expired"). Present when exit_code is -1 (command never dispatched). */
   error?: string;
   workspaceRevision?: number;
+  /** Workspace git branch after the command completed. Omitted when unavailable. */
+  branch?: string;
 }
 
 export interface FileReadResult {
@@ -1241,6 +1243,7 @@ export async function execInSandbox(
     truncated: boolean;
     error?: string;
     workspace_revision?: number;
+    branch?: string;
   }>(
     'exec',
     withOwnerToken(
@@ -1264,6 +1267,7 @@ export async function execInSandbox(
     truncated: raw.truncated,
     error: raw.error,
     workspaceRevision: raw.workspace_revision,
+    branch: raw.branch,
   };
 }
 
@@ -1301,12 +1305,12 @@ async function execStartInSandbox(
 async function execStatusInSandbox(
   sandboxId: string,
   processId: string,
-): Promise<{ running: boolean; exitCode: number | null }> {
-  const raw = await sandboxFetch<{ running: boolean; exit_code: number | null }>(
+): Promise<{ running: boolean; exitCode: number | null; branch?: string }> {
+  const raw = await sandboxFetch<{ running: boolean; exit_code: number | null; branch?: string }>(
     'exec-status',
     withOwnerToken({ sandbox_id: sandboxId, process_id: processId }, sandboxId),
   );
-  return { running: raw.running, exitCode: raw.exit_code };
+  return { running: raw.running, exitCode: raw.exit_code, branch: raw.branch };
 }
 
 async function execLogsInSandbox(

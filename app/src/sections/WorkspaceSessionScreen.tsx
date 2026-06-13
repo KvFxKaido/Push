@@ -183,6 +183,15 @@ export function WorkspaceSessionScreen({
         toast.success(`Promoted to GitHub: ${repo.full_name}`);
       },
       onBranchSwitch: handleSandboxBranchSwitch,
+      onBranchDesync: ({ expected, actual, reconciled }) => {
+        if (reconciled) {
+          toast.info(`Sandbox moved to ${actual} (was ${expected}) — Push followed.`);
+        } else {
+          toast.info(
+            `Sandbox moved to detached HEAD (was ${expected}) — Push did not change branches.`,
+          );
+        }
+      },
       onSandboxUnreachable: (reason) => {
         sandbox.markUnreachable(reason);
       },

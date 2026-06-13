@@ -37,6 +37,7 @@ import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { executeTodoToolCall } from '@/lib/todo-tools';
 import { getToolName } from '@/lib/chat-tool-messages';
 import { applyBranchSwitchPayload } from '@/lib/branch-fork-migration';
+import { applySandboxExecBranchDesync } from '@/lib/branch-desync';
 import {
   recordVerificationArtifact,
   recordVerificationCommandResult,
@@ -530,8 +531,9 @@ export function createTurnRunContext(
 //      `sandbox_push` (artifact-only commands without a typed result)
 //   5. Repo promotion (`promotion.repo` → bind sandbox, update conversation,
 //      fire onSandboxPromoted)
-//   6. Branch switch payload (forked / switched conversation migration)
-//   7. Sandbox unreachable structured-error propagation
+//   6. Branch-desync detection from sandbox_exec branch stamps
+//   7. Branch switch payload (forked / switched conversation migration)
+//   8. Sandbox unreachable structured-error propagation
 //
 // Helpers are idempotent at the runtime-handler layer — repeated calls during
 // a batched turn (e.g., parallel reads where multiple results carry
@@ -555,6 +557,7 @@ export function applyPostExecutionSideEffects(
     branchInfoRef,
     skipAutoCreateRef,
     updateVerificationState,
+    appendRunEvent,
   } = ctx;
 
   // 1+2. Workspace mutation tracking.
@@ -633,7 +636,22 @@ export function applyPostExecutionSideEffects(
     runtimeHandlersRef.current?.onSandboxPromoted?.(promotedRepo);
   }
 
-  // 6. Branch switch payload (Slice 2 conversation-fork migration).
+  // 6. Branch-desync detection. Raw sandbox_exec can still move HEAD through
+  // commands like rebase/bisect/scripts; reconcile toward the sandbox branch
+  // through the same governed switch callback path typed tools use.
+  applySandboxExecBranchDesync(call, result, {
+    chatId,
+    appendRunEvent,
+    activeChatIdRef,
+    conversationsRef,
+    branchInfoRef,
+    skipAutoCreateRef,
+    setConversations,
+    dirtyConversationIdsRef,
+    runtimeHandlersRef,
+  });
+
+  // 7. Branch switch payload (Slice 2 conversation-fork migration).
   // Migration logic lives in branch-fork-migration.ts so this helper stays
   // small and the migration is testable in isolation. Dispatches on
   // payload.kind: 'forked' migrates the active conversation; 'switched' or
@@ -650,7 +668,7 @@ export function applyPostExecutionSideEffects(
     });
   }
 
-  // 7. Sandbox unreachable.
+  // 8. Sandbox unreachable.
   if (result.structuredError?.type === 'SANDBOX_UNREACHABLE') {
     runtimeHandlersRef.current?.onSandboxUnreachable?.(result.structuredError.message);
   }

@@ -289,6 +289,7 @@ export async function executeSingleToolCall(
       durationMs: singleRawResult.durationMs,
       isError,
       preview: summarizeToolResultPreview(outcome.raw.text),
+      ...(outcome.raw.branch ? { branch: outcome.raw.branch } : {}),
     });
   } else {
     const isError = toolExecResult.text.includes('[Tool Error]');
@@ -325,6 +326,7 @@ export async function executeSingleToolCall(
       durationMs: toolExecDurationMs,
       isError,
       preview: summarizeToolResultPreview(toolExecResult.text),
+      ...(toolExecResult.branch ? { branch: toolExecResult.branch } : {}),
     });
   }
 

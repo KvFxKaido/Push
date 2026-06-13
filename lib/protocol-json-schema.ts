@@ -224,6 +224,13 @@ const PAYLOAD_DEFS: Record<string, JsonSchemaNode> = {
     text: str(),
     preview: str(),
     durationMs: num(),
+    branch: str(),
+  }),
+
+  BranchDesync: objectNode(['expected', 'actual', 'command'], {
+    expected: nestr(),
+    actual: nestr(),
+    command: nestr(),
   }),
 
   ToolCallMalformed: objectNode(['reason'], {
@@ -430,6 +437,7 @@ export const TYPE_TO_DEF: Record<string, string> = {
   'tool.execution_start': 'ToolCall',
   tool_result: 'ToolResult',
   'tool.execution_complete': 'ToolResult',
+  branch_desync: 'BranchDesync',
   'tool.call_malformed': 'ToolCallMalformed',
   error: 'ErrorEvent',
   warning: 'WarningEvent',

@@ -227,6 +227,7 @@ export async function executeBatchedToolCalls(
       durationMs: result.durationMs,
       isError,
       preview: summarizeToolResultPreview(result.raw.text),
+      ...(result.raw.branch ? { branch: result.raw.branch } : {}),
     });
   });
 
@@ -341,6 +342,7 @@ export async function executeBatchedToolCalls(
         durationMs: batchRawResult.durationMs,
         isError: isBatchError,
         preview: summarizeToolResultPreview(batchOutcome.raw.text),
+        ...(batchOutcome.raw.branch ? { branch: batchOutcome.raw.branch } : {}),
       });
 
       // Per-tool side effects for this file mutation. File mutations
@@ -540,6 +542,7 @@ export async function executeBatchedToolCalls(
       durationMs: mutRawResult.durationMs,
       isError: isMutError,
       preview: summarizeToolResultPreview(mutOutcome.raw.text),
+      ...(mutOutcome.raw.branch ? { branch: mutOutcome.raw.branch } : {}),
     });
 
     // Per-tool side effects for the trailing mutation. This is the slot

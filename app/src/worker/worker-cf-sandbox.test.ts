@@ -39,6 +39,12 @@ function isOwnerTokenReadCommand(command: unknown): command is string {
   return typeof command === 'string' && command.includes(OWNER_TOKEN_PATH);
 }
 
+function isBranchStampCommand(command: unknown): command is string {
+  return (
+    typeof command === 'string' && command.includes('git -C /workspace rev-parse --abbrev-ref HEAD')
+  );
+}
+
 function withOwnerTokenAuthExec(
   sandbox: FakeSandbox,
   handler: (command: string, options?: unknown) => ExecResult | Promise<ExecResult>,
@@ -47,6 +53,9 @@ function withOwnerTokenAuthExec(
   sandbox.exec.mockImplementation(async (command: string, options?: unknown) => {
     if (isOwnerTokenReadCommand(command)) {
       return { stdout: ownerToken, stderr: '', exitCode: 0 };
+    }
+    if (isBranchStampCommand(command)) {
+      return { stdout: 'main\n', stderr: '', exitCode: 0 };
     }
     return await handler(command, options);
   });
@@ -75,7 +84,9 @@ function createFakeSandbox(): FakeSandbox {
     exec: vi.fn(async (command: string) =>
       isOwnerTokenReadCommand(command)
         ? { stdout: DEFAULT_OWNER_TOKEN, stderr: '', exitCode: 0 }
-        : { stdout: '', stderr: '', exitCode: 0 },
+        : isBranchStampCommand(command)
+          ? { stdout: 'main\n', stderr: '', exitCode: 0 }
+          : { stdout: '', stderr: '', exitCode: 0 },
     ),
     writeFile: vi.fn(async () => ({ success: true })),
     readFile: vi.fn(async (path: string) => ({
@@ -506,7 +517,44 @@ describe('handleCloudflareSandbox happy paths', () => {
       exit_code: 7,
       truncated: false,
       workspace_revision: 0,
+      branch: 'main',
     });
+  });
+
+  it('omits the branch stamp and logs when the post-exec branch read fails', async () => {
+    const sandbox = mockSandbox();
+    sandbox.exec.mockImplementation(async (command: string) => {
+      if (isOwnerTokenReadCommand(command)) {
+        return { stdout: DEFAULT_OWNER_TOKEN, stderr: '', exitCode: 0 };
+      }
+      if (isBranchStampCommand(command)) {
+        return { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 };
+      }
+      return { stdout: 'ok', stderr: '', exitCode: 0 };
+    });
+
+    const response = await callRoute('exec', { sandbox_id: 'sb-1', command: 'pwd' });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      stdout: 'ok',
+      stderr: '',
+      exit_code: 0,
+      truncated: false,
+      workspace_revision: 0,
+    });
+    const events = vi
+      .mocked(console.log)
+      .mock.calls.map((call) => JSON.parse(String(call[0])) as Record<string, unknown>);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        level: 'warn',
+        event: 'sandbox_exec_branch_stamp_failed',
+        sandboxId: 'sb-1',
+        route: 'exec',
+        exitCode: 128,
+      }),
+    );
   });
 
   it('passes compound commands through the timeout wrapper without corruption', async () => {
@@ -1748,6 +1796,7 @@ describe('background execution routes', () => {
       exit_code: 0,
       started_at: '2026-06-04T01:00:00.000Z',
       ended_at: '2026-06-04T01:00:09.000Z',
+      branch: 'main',
     });
   });
 

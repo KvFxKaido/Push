@@ -237,6 +237,7 @@ export class CloudflareSandboxProvider implements SandboxProvider {
       truncated: boolean;
       error?: string;
       workspace_revision?: number;
+      branch?: string;
     }>('exec', {
       sandbox_id: sandboxId,
       owner_token: this.tokenFor(sandboxId),
@@ -251,6 +252,7 @@ export class CloudflareSandboxProvider implements SandboxProvider {
       truncated: res.truncated,
       error: res.error,
       workspaceRevision: res.workspace_revision,
+      branch: res.branch,
     };
   }
 
@@ -289,6 +291,7 @@ export class CloudflareSandboxProvider implements SandboxProvider {
       exit_code: number | null;
       started_at?: string | null;
       ended_at?: string | null;
+      branch?: string;
     }>('exec-status', {
       sandbox_id: sandboxId,
       owner_token: this.tokenFor(sandboxId),
@@ -301,6 +304,7 @@ export class CloudflareSandboxProvider implements SandboxProvider {
       exitCode: res.exit_code,
       startedAt: res.started_at ?? null,
       endedAt: res.ended_at ?? null,
+      branch: res.branch,
     };
   }
 

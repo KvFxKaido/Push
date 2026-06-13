@@ -120,6 +120,8 @@ export interface ExecResult {
   truncated: boolean;
   error?: string;
   workspaceRevision?: number;
+  /** Workspace git branch after the command completed. Omitted when unavailable. */
+  branch?: string;
 }
 
 // -- Background execution -----------------------------------------------------
@@ -150,6 +152,8 @@ export interface ExecBackgroundStatus {
   exitCode: number | null;
   startedAt?: string | null;
   endedAt?: string | null;
+  /** Workspace git branch after the process finished. Omitted when unavailable/running. */
+  branch?: string;
 }
 
 /**
