@@ -231,7 +231,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
     expect(result.summary).toContain('[Sandbox State] 1 file changed');
     expect(result.summary).not.toContain('Coder');
     expect(result.summary).not.toContain('sandbox_diff');
-    expect(result.summary).not.toMatch(/\d+\s*rounds/);
+    expect(result.summary).not.toMatch(/\d+\s*round/i);
   });
 
   it('delegated Coder hitting the round cap keeps its Orchestrator-facing marker', async () => {
