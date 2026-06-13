@@ -120,6 +120,31 @@ describe('ensureCommitTargetBranch', () => {
     expect(fork).toHaveBeenCalledTimes(1);
   });
 
+  it('falls back to the deterministic name when the model name is git-rejected', async () => {
+    // The model proposes a name our regex validator accepts but git rejects
+    // (e.g. a `.lock` suffix). The first fork fails non-collision; the seam
+    // must fall through to the deterministic `push/…` name, not block.
+    sandboxClient.execInSandbox.mockResolvedValue(NOT_FOUND);
+    const fork = vi.fn(async (branch: string) => {
+      if (!branch.startsWith('push/')) {
+        return { ok: false, errorMessage: "fatal: 'foo.lock' is not a valid branch name" };
+      }
+      return forkOk(branch);
+    });
+    const result = await ensureCommitTargetBranch({
+      ...base,
+      currentBranch: 'main',
+      defaultBranch: 'main',
+      proposeName: async () => 'foo.lock',
+      fork,
+    });
+    expect(result.switched).toBe(true);
+    if (result.switched) expect(result.branch.startsWith('push/')).toBe(true);
+    // model name attempted first, then the deterministic fallback
+    expect(fork.mock.calls[0]?.[0]).toBe('foo.lock');
+    expect(fork.mock.calls.at(-1)?.[0]?.startsWith('push/')).toBe(true);
+  });
+
   it('suffixes the branch name on collision', async () => {
     // branchExists returns true (exit 10) for the first candidate, false after.
     sandboxClient.execInSandbox

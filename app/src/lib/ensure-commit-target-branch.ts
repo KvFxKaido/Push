@@ -265,25 +265,42 @@ export async function ensureCommitTargetBranch({
     proposed = null;
   }
 
-  const fallback = deterministicCommitTargetBranchName(commitMessage);
-  const base = (
-    proposed ??
-    usableBranchName(fallback, current, fallbackDefault) ??
-    'push/update-workspace'
+  const deterministic = (
+    usableBranchName(
+      deterministicCommitTargetBranchName(commitMessage),
+      current,
+      fallbackDefault,
+    ) ?? 'push/update-workspace'
   ).slice(0, MAX_BRANCH_BASE_LENGTH);
 
-  for (let i = 0; i < MAX_BRANCH_ATTEMPTS; i++) {
-    const branch = i === 0 ? base : withNumericSuffix(base, i + 1);
-    if (!branch || isInvalidGitRef(branch)) continue;
-    if (await branchExists(sandboxId, branch)) continue;
+  // Try the model-proposed name first, then the always-git-valid deterministic
+  // name. A base git rejects but our regex validator accepts — `isInvalidGitRef`
+  // can't fully replicate `git check-ref-format` (e.g. `foo.lock`,
+  // `feature/.env`) — falls through to the next candidate instead of failing
+  // the whole commit. Naming never blocks. (Review: Codex P2.)
+  const bases =
+    proposed && proposed !== deterministic
+      ? [proposed.slice(0, MAX_BRANCH_BASE_LENGTH), deterministic]
+      : [deterministic];
 
-    const forked = await forkBranch(branch);
-    if (forked.ok && forked.branchSwitch) {
-      return { switched: true, branch, branchSwitch: forked.branchSwitch };
+  let lastError: string | undefined;
+  for (const base of bases) {
+    for (let i = 0; i < MAX_BRANCH_ATTEMPTS; i++) {
+      const branch = i === 0 ? base : withNumericSuffix(base, i + 1);
+      if (!branch || isInvalidGitRef(branch)) break; // bad base — next candidate
+      if (await branchExists(sandboxId, branch)) continue;
+
+      const forked = await forkBranch(branch);
+      if (forked.ok && forked.branchSwitch) {
+        return { switched: true, branch, branchSwitch: forked.branchSwitch };
+      }
+      if (isBranchExistsMessage(forked.errorMessage)) continue;
+      // Non-collision failure (git rejected the ref, transport, etc.): abandon
+      // this base and try the next candidate rather than blocking the commit.
+      lastError = forked.errorMessage;
+      break;
     }
-    if (isBranchExistsMessage(forked.errorMessage)) continue;
-    throw new Error(forked.errorMessage || 'Failed to create auto-branch.');
   }
 
-  throw new Error(`Failed to create a unique branch from "${base}".`);
+  throw new Error(lastError || `Failed to create a unique branch from "${bases[0]}".`);
 }
