@@ -717,6 +717,10 @@ async function routeExec(env: Env, body: Json): Promise<Response> {
   const stdout = (result as { stdout?: string }).stdout ?? '';
   const stderr = (result as { stderr?: string }).stderr ?? '';
   const exitCode = (result as { exitCode?: number }).exitCode ?? 0;
+  const branch = await readCurrentBranchStamp(sandbox as SandboxExecLike, {
+    sandboxId,
+    route: 'exec',
+  });
 
   return Response.json({
     stdout: truncate(stdout, 500_000),
@@ -724,6 +728,7 @@ async function routeExec(env: Env, body: Json): Promise<Response> {
     exit_code: exitCode,
     truncated: stdout.length > 500_000 || stderr.length > 100_000,
     workspace_revision: 0,
+    ...(branch ? { branch } : {}),
   });
 }
 
@@ -756,6 +761,59 @@ interface ProcessLike {
 
 function isRunningStatus(status: string): boolean {
   return status === 'starting' || status === 'running';
+}
+
+interface SandboxExecLike {
+  exec(command: string, options?: Record<string, unknown>): Promise<unknown>;
+}
+
+async function readCurrentBranchStamp(
+  sandbox: SandboxExecLike,
+  context: { sandboxId: string; route: string; processId?: string },
+): Promise<string | undefined> {
+  try {
+    // `symbolic-ref` rather than `rev-parse --abbrev-ref`: unborn/orphan
+    // branches (e.g. `git switch --orphan gh-pages` before the first commit)
+    // have no commit for rev-parse to resolve, but their HEAD symref already
+    // names the branch. With `-q`, exit 1 + empty stdout specifically means
+    // detached HEAD; other failures (corrupt repo, missing workspace) exit
+    // 128 with stderr and omit the stamp.
+    const result = (await withExecDeadline(
+      sandbox.exec('git -C /workspace symbolic-ref --short -q HEAD', {
+        env: SANDBOX_EXEC_RESOURCE_ENV,
+        timeout: 5_000,
+      }),
+      7_000,
+    )) as { stdout?: string; stderr?: string; exitCode?: number };
+    const exitCode = result.exitCode ?? 0;
+    const branch = (result.stdout ?? '').trim();
+    if (exitCode === 0) {
+      if (!branch) {
+        wlog('warn', 'sandbox_exec_branch_stamp_failed', {
+          ...context,
+          exitCode,
+          message: 'branch stamp command returned empty stdout',
+        });
+        return undefined;
+      }
+      return branch;
+    }
+    if (exitCode === 1 && !branch) {
+      return 'HEAD';
+    }
+    wlog('warn', 'sandbox_exec_branch_stamp_failed', {
+      ...context,
+      exitCode,
+      message: (result.stderr || result.stdout || 'branch stamp command failed').trim(),
+    });
+    return undefined;
+  } catch (err) {
+    wlog('warn', 'sandbox_exec_branch_stamp_failed', {
+      ...context,
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return undefined;
+  }
 }
 
 async function routeExecStart(env: Env, body: Json): Promise<Response> {
@@ -802,13 +860,23 @@ async function routeExecStatus(env: Env, body: Json): Promise<Response> {
     return Response.json({ error: 'Process not found', code: 'NOT_FOUND' }, { status: 404 });
   }
 
+  const running = isRunningStatus(proc.status);
+  const branch = running
+    ? undefined
+    : await readCurrentBranchStamp(sandbox as SandboxExecLike, {
+        sandboxId,
+        route: 'exec-status',
+        processId,
+      });
+
   return Response.json({
     process_id: proc.id,
     status: proc.status,
-    running: isRunningStatus(proc.status),
+    running,
     exit_code: proc.exitCode ?? null,
     started_at: proc.startTime ? proc.startTime.toISOString() : null,
     ended_at: proc.endTime ? proc.endTime.toISOString() : null,
+    ...(branch ? { branch } : {}),
   });
 }
 

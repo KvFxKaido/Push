@@ -365,6 +365,14 @@ export type RunEventInput =
       durationMs: number;
       isError: boolean;
       preview: string;
+      /** Workspace git branch stamped after sandbox_exec; omitted when unavailable. */
+      branch?: string;
+    }
+  | {
+      type: 'branch_desync';
+      expected: string;
+      actual: string;
+      command: string;
     }
   | {
       type: 'tool.call_malformed';

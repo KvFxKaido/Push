@@ -509,6 +509,31 @@
         },
         "durationMs": {
           "type": "number"
+        },
+        "branch": {
+          "type": "string"
+        }
+      }
+    },
+    "BranchDesync": {
+      "type": "object",
+      "required": [
+        "expected",
+        "actual",
+        "command"
+      ],
+      "properties": {
+        "expected": {
+          "type": "string",
+          "minLength": 1
+        },
+        "actual": {
+          "type": "string",
+          "minLength": 1
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },
@@ -1430,6 +1455,25 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/ToolResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "branch_desync"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/BranchDesync"
           }
         }
       }

@@ -384,6 +384,11 @@ export interface InPageCoderKernelCallbacks {
   onCheckpoint?: (state: CoderCheckpointState<ChatCard>) => Promise<void>;
   onWorkingMemoryUpdate?: (state: CoderWorkingMemory) => void;
   onRunEvent?: (event: RunEventInput) => void;
+  /** Branch stamp tee for desync detection (see branch-desync.ts). Fires
+   *  after each stamped `sandbox_exec` completes. Inline lane only — the
+   *  delegated arc leaves it undefined (reconciling the foreground UI from
+   *  inside a delegated run is an open design question, not an oversight). */
+  onSandboxExecBranch?: (info: { command: string; branch: string }) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -498,11 +503,16 @@ export async function runInPageCoderKernel(
       spanStatusOk: SpanStatusCode.OK,
       spanStatusError: SpanStatusCode.ERROR,
     },
-    executeSandboxToolCall: (call, id, opts) =>
-      executeSandboxToolCall(call, id, {
+    executeSandboxToolCall: async (call, id, opts) => {
+      const result = await executeSandboxToolCall(call, id, {
         auditorProviderOverride: opts.auditorProviderOverride as ActiveProvider,
         auditorModelOverride: opts.auditorModelOverride,
-      }),
+      });
+      if (call.tool === 'sandbox_exec' && result.branch) {
+        callbacks.onSandboxExecBranch?.({ command: call.args.command, branch: result.branch });
+      }
+      return result;
+    },
     executeWebSearch: (query, provider) => executeWebSearch(query, provider as ActiveProvider),
     // Memory tools (LCM) — only wired when the caller threaded a scope;
     // captured from session context, never from model args. Absent scope →

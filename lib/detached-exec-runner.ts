@@ -57,6 +57,8 @@ export interface DetachedStartResult {
 export interface DetachedStatusResult {
   running: boolean;
   exitCode: number | null;
+  /** Workspace git branch after the process finished. Omitted when unavailable/running. */
+  branch?: string;
 }
 
 export interface DetachedLogsResult {
@@ -262,6 +264,7 @@ export async function runDetachedToCompletion(
           truncated: truncatedHead,
           error: 'background process ended without an exit code (killed or errored)',
           terminalReason: 'completed',
+          ...(st.branch ? { branch: st.branch } : {}),
         }
       : {
           stdout,
@@ -269,6 +272,7 @@ export async function runDetachedToCompletion(
           exitCode: st.exitCode,
           truncated: truncatedHead,
           terminalReason: 'completed',
+          ...(st.branch ? { branch: st.branch } : {}),
         };
 
   for (let iteration = 0; ; iteration++) {

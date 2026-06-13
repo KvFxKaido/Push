@@ -149,4 +149,16 @@ describe('useWorkspaceSandboxController branch teardown guard', () => {
     expect(stopSandbox).not.toHaveBeenCalled();
     expect(skipRef.current).toBe(false);
   });
+
+  it('preserves the sandbox when branch-desync reconciliation uses the governed switch path', () => {
+    const stopSandbox = vi.fn(async () => {});
+    const skipRef = { current: false };
+
+    renderController('main', stopSandbox, skipRef);
+    skipRef.current = true;
+    renderController('feature/desynced', stopSandbox, skipRef);
+
+    expect(stopSandbox).not.toHaveBeenCalled();
+    expect(skipRef.current).toBe(false);
+  });
 });

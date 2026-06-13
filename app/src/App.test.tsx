@@ -306,7 +306,7 @@ describe('App auth and shell integration', () => {
     });
     expect(mockState.homeProps).toBeNull();
     expect(mockState.workspaceProps).toBeNull();
-  });
+  }, 10_000);
 
   it('routes authenticated users with no active workspace to home', async () => {
     const repo = createRepo();

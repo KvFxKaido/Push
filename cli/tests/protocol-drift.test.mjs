@@ -1,5 +1,6 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { broadcastEvent } from '../pushd.ts';
 import {
@@ -84,6 +85,7 @@ describe('protocol drift characterization — schema surface', () => {
       'assistant_citations',
       'assistant_thinking_token',
       'assistant_token',
+      'branch_desync',
       'context.compaction',
       'context_compacted',
       'delegation_interrupted',
@@ -128,6 +130,19 @@ describe('protocol drift characterization — schema surface', () => {
     assert.deepEqual(validateRunEventPayload('assistant_done', { messageId: 'asst_123' }), []);
     assert.deepEqual(validateRunEventPayload('assistant_thinking_done', {}), []);
     assert.deepEqual(validateRunEventPayload('something.not.registered', { foo: 'bar' }), []);
+  });
+
+  it('pins ExecResult.branch on shared and web exec result envelopes', () => {
+    const sharedProvider = readFileSync(
+      new URL('../../lib/sandbox-provider.ts', import.meta.url),
+      'utf8',
+    );
+    const webClient = readFileSync(
+      new URL('../../app/src/lib/sandbox-client.ts', import.meta.url),
+      'utf8',
+    );
+    assert.match(sharedProvider, /interface ExecResult[\s\S]*branch\?: string;/);
+    assert.match(webClient, /interface ExecResult[\s\S]*branch\?: string;/);
   });
 });
 
@@ -427,6 +442,29 @@ describe('protocol drift characterization — tool events', () => {
     );
   });
 
+  it('accepts tool.execution_complete with an optional branch stamp', () => {
+    assertStrictBroadcastPass(
+      makeEnvelope('tool.execution_complete', {
+        toolName: 'sandbox_exec',
+        isError: false,
+        preview: 'stdout snippet',
+        durationMs: 100,
+        branch: 'feature/desynced',
+      }),
+    );
+  });
+
+  it('rejects tool.execution_complete with a non-string branch stamp', () => {
+    assertStrictBroadcastFail(
+      makeEnvelope('tool.execution_complete', {
+        toolName: 'sandbox_exec',
+        isError: false,
+        preview: 'stdout snippet',
+        branch: 123,
+      }),
+    );
+  });
+
   it('rejects tool_result with a non-boolean isError', () => {
     assertStrictBroadcastFail(
       makeEnvelope('tool_result', { toolName: 'read_file', isError: 'no' }),
@@ -449,6 +487,29 @@ describe('protocol drift characterization — tool events', () => {
 
   it('rejects tool.call_malformed without a reason', () => {
     assertStrictBroadcastFail(makeEnvelope('tool.call_malformed', {}));
+  });
+});
+
+describe('protocol drift characterization — branch desync', () => {
+  installStrictModeHooks();
+
+  it('accepts a branch_desync event with expected, actual, and command', () => {
+    assertStrictBroadcastPass(
+      makeEnvelope('branch_desync', {
+        expected: 'main',
+        actual: 'feature/desynced',
+        command: 'git rebase origin/main',
+      }),
+    );
+  });
+
+  it('rejects branch_desync without an actual branch', () => {
+    assertStrictBroadcastFail(
+      makeEnvelope('branch_desync', {
+        expected: 'main',
+        command: 'git rebase origin/main',
+      }),
+    );
   });
 });
 
