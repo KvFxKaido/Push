@@ -237,6 +237,65 @@ export async function findOpenPRForBranch(
   }
 }
 
+export interface MergedPRForBranch {
+  number: number;
+  title: string;
+  url: string;
+  mergedAt: string;
+}
+
+const mergedPRForBranchCache = new Map<string, MergedPRForBranch>();
+
+function mergedPRCacheKey(repo: string, headBranch: string): string {
+  return `${repo}\0${headBranch}`;
+}
+
+/**
+ * Find the merged PR for a branch and return structured data for UI use.
+ * Returns null when no token is configured, no merged PR exists, or the API call fails.
+ */
+export async function findMergedPRForBranch(
+  repo: string,
+  headBranch: string,
+): Promise<MergedPRForBranch | null> {
+  const headers = getGitHubHeaders();
+  const owner = repo.split('/')[0];
+  if (!owner || !headers.Authorization) return null;
+
+  const cacheKey = mergedPRCacheKey(repo, headBranch);
+  const cached = mergedPRForBranchCache.get(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const res = await githubFetch(
+      `https://api.github.com/repos/${repo}/pulls?state=closed&head=${encodeURIComponent(`${owner}:${headBranch}`)}`,
+      { headers },
+    );
+    if (!res.ok) return null;
+
+    const prs = await res.json();
+    if (!Array.isArray(prs) || prs.length === 0) return null;
+
+    const merged = prs
+      .filter((pr) => typeof pr?.merged_at === 'string' && pr.merged_at)
+      .sort((a, b) => String(b.merged_at).localeCompare(String(a.merged_at)))[0];
+    if (!merged) return null;
+
+    const result = {
+      number: merged.number as number,
+      title: typeof merged.title === 'string' ? merged.title : '',
+      url: typeof merged.html_url === 'string' ? merged.html_url : '',
+      mergedAt: merged.merged_at as string,
+    };
+    // Positive-only cache: a merged PR stays merged, but caching misses would
+    // suppress the return-after-merge banner until reload in the flow this serves.
+    mergedPRForBranchCache.set(cacheKey, result);
+    return result;
+  } catch {
+    return null;
+  }
+}
+
 // --- PR list and detail types ---
 
 export interface RepoPullRequestListItem {

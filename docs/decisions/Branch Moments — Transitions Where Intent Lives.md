@@ -1,7 +1,7 @@
 # Branch Moments — Transitions Where Intent Lives
 
 Date: 2026-06-13
-Status: **Current** — §3 (carry verb, PR A) shipped; §1 (commit-card chips) and §2 (out-of-band merge banner) still to build.
+Status: **Current** — §2 (out-of-band merge banner, PR B) and §3 (carry verb, PR A) shipped; §1 (commit-card chips) still to build.
 Owner: Push
 
 ## Problem
@@ -149,7 +149,7 @@ caught.
 | `sandbox_switch_branch` (model + #912 UI) | `switched` | existing |
 | `sandbox_switch_branch` + `carry_chat` | `carried` | **new (§3)** |
 | In-app merge flow (`mergeBranchInUI`) | `merged` | existing |
-| Out-of-band merge banner | `merged` (`source: 'merge_detected'`) | **new (§2)** |
+| Out-of-band merge banner | `merged` (`source: 'merge_detected'`) | shipped (§2) |
 | Desync reconciler (#913) | `switched` (`source: 'branch_desync'`) | existing |
 | Commit-card chips | via `switchBranchFromUI` / fork flow | **new (§1)** |
 
@@ -188,7 +188,7 @@ verification gate:
    `ChatMessage.kind`); they do not cross the CLI wire-event surface, so the
    only protocol pin is the `carry_chat` tool arg in
    `cli/tests/daemon-integration.test.mjs`.
-2. **PR B (merge banner):** `findMergedPRForBranch` helper +
+2. **PR B (merge banner): shipped.** `findMergedPRForBranch` helper +
    `'merge_detected'` source + banner component + per-chat dismissal +
    tests (detection hit, miss, API-failure silence, banner action calls
    `mergeBranchInUI` with the PR number).

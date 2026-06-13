@@ -4,6 +4,7 @@ import type { ApprovalMode } from '@/lib/approval-mode';
 import { Toaster } from '@/components/ui/sonner';
 import { formatSnapshotAge, isSnapshotStale } from '@/hooks/useSnapshotManager';
 import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
+import { useMergeDetectedBanner } from '@/hooks/useMergeDetectedBanner';
 import { useWorkspaceChatComposerController } from '@/hooks/useWorkspaceChatComposerController';
 import { useWorkspaceChatPanelsController } from '@/hooks/useWorkspaceChatPanelsController';
 import { getRepoAppearanceColorHex, hexToRgba } from '@/lib/repo-appearance';
@@ -201,6 +202,14 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     loadRepoBranches,
     handleDeleteBranch,
   } = branches;
+  const activeConversationBranch =
+    (activeChatId ? conversations[activeChatId]?.branch : null) || currentBranch;
+  const { mergeDetected, dismissMergeDetected, refreshMergeDetection } = useMergeDetectedBanner({
+    repoFullName: activeRepo?.full_name,
+    activeChatId,
+    chatBranch: activeConversationBranch,
+    defaultBranch: activeRepo?.default_branch,
+  });
   const [workspaceHubMounted, setWorkspaceHubMounted] = useState(false);
   const [launcherSheetMounted, setLauncherSheetMounted] = useState(false);
   const [branchCreateMounted, setBranchCreateMounted] = useState(false);
@@ -332,6 +341,14 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     setLauncherSheetMounted(true);
     openLauncher();
   }, [openLauncher]);
+
+  const loadRepoBranchesWithMergeDetection = useCallback(
+    async (repoFullName: string) => {
+      await loadRepoBranches(repoFullName);
+      await refreshMergeDetection();
+    },
+    [loadRepoBranches, refreshMergeDetection],
+  );
 
   const setLauncherOpenWithMount = useCallback(
     (open: boolean) => {
@@ -469,7 +486,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     activeRepo,
     displayBranches,
     repoBranchesLoading,
-    loadRepoBranches,
+    loadRepoBranches: loadRepoBranchesWithMergeDetection,
     setCurrentBranch,
     switchBranchFromUI,
     setShowBranchCreate: setShowBranchCreateWithMount,
@@ -499,7 +516,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     displayBranches,
     repoBranchesLoading,
     repoBranchesError,
-    loadRepoBranches,
+    loadRepoBranches: loadRepoBranchesWithMergeDetection,
     handleDeleteBranch,
   });
   const repoLauncherProps = buildRepoLauncherSheetProps({
@@ -564,6 +581,9 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
       runHostAttach,
       ciStatus,
       onDiagnoseCI: diagnoseCIFailure,
+      mergeDetected,
+      mergeBranchInUI,
+      onDismissMergeDetected: dismissMergeDetected,
       onEditUserMessage: !isStreaming ? handleEditUserMessage : undefined,
       onRegenerateLastResponse: !isStreaming ? handleRegenerateLastResponse : undefined,
     },

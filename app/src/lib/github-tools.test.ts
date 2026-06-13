@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const { githubFetchMock } = vi.hoisted(() => ({ githubFetchMock: vi.fn() }));
 vi.mock('./github-tool-executor', async (importActual) => {
@@ -11,9 +11,33 @@ import {
   decodeGitHubBase64Utf8,
   detectToolCall,
   executePostPRReview,
+  findMergedPRForBranch,
   fetchReviewGuidance,
 } from './github-tools';
 import type { ReviewResult } from '@/types';
+
+function createStorageMock(entries: Record<string, string> = {}) {
+  const data = new Map(Object.entries(entries));
+  return {
+    getItem: vi.fn((key: string) => data.get(key) ?? null),
+    setItem: vi.fn((key: string, value: string) => {
+      data.set(key, value);
+    }),
+    removeItem: vi.fn((key: string) => {
+      data.delete(key);
+    }),
+  };
+}
+
+function stubGitHubToken(token = 'ghs-test-token') {
+  vi.stubGlobal('window', {
+    localStorage: createStorageMock({ github_app_token: token }),
+  });
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('detectToolCall delegation validation', () => {
   it('trims delegation strings and drops blank entries', () => {
@@ -58,6 +82,113 @@ describe('injected GitHub auth', () => {
     const headers = init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('token install-token-xyz');
     expect(headers['User-Agent']).toBeTruthy();
+  });
+});
+
+describe('findMergedPRForBranch', () => {
+  it('returns the most recent merged PR for a closed branch PR lookup', async () => {
+    githubFetchMock.mockReset();
+    stubGitHubToken();
+    githubFetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          {
+            number: 1,
+            title: 'Closed only',
+            html_url: 'https://github.test/pr/1',
+            merged_at: null,
+          },
+          {
+            number: 2,
+            title: 'Older merge',
+            html_url: 'https://github.test/pr/2',
+            merged_at: '2026-06-10T00:00:00Z',
+          },
+          {
+            number: 3,
+            title: 'Newer merge',
+            html_url: 'https://github.test/pr/3',
+            merged_at: '2026-06-11T00:00:00Z',
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    const result = await findMergedPRForBranch('octo/repo', 'feature/merged');
+
+    expect(result).toEqual({
+      number: 3,
+      title: 'Newer merge',
+      url: 'https://github.test/pr/3',
+      mergedAt: '2026-06-11T00:00:00Z',
+    });
+    const [url, init] = githubFetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(
+      'https://api.github.com/repos/octo/repo/pulls?state=closed&head=octo%3Afeature%2Fmerged',
+    );
+    expect((init.headers as Record<string, string>).Authorization).toBe('token ghs-test-token');
+  });
+
+  it('returns null when no closed PR for the branch was merged', async () => {
+    githubFetchMock.mockReset();
+    stubGitHubToken();
+    githubFetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify([{ number: 4, merged_at: null }]), { status: 200 }),
+    );
+
+    await expect(findMergedPRForBranch('octo/repo', 'feature/unmerged')).resolves.toBeNull();
+    expect(githubFetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns null silently when the API request fails', async () => {
+    githubFetchMock.mockReset();
+    stubGitHubToken();
+    githubFetchMock.mockResolvedValueOnce(new Response('rate limited', { status: 403 }));
+
+    await expect(findMergedPRForBranch('octo/repo', 'feature/api-fail')).resolves.toBeNull();
+  });
+
+  it('caches positive hits only so misses re-check on the next open', async () => {
+    githubFetchMock.mockReset();
+    stubGitHubToken();
+    githubFetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              number: 8,
+              title: 'Merged later',
+              html_url: 'https://github.test/pr/8',
+              merged_at: '2026-06-12T00:00:00Z',
+            },
+          ]),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              number: 9,
+              title: 'Should not replace cache',
+              html_url: 'https://github.test/pr/9',
+              merged_at: '2026-06-13T00:00:00Z',
+            },
+          ]),
+          { status: 200 },
+        ),
+      );
+
+    await expect(findMergedPRForBranch('octo/repo', 'feature/cache-miss')).resolves.toBeNull();
+    await expect(findMergedPRForBranch('octo/repo', 'feature/cache-miss')).resolves.toMatchObject({
+      number: 8,
+    });
+    await expect(findMergedPRForBranch('octo/repo', 'feature/cache-miss')).resolves.toMatchObject({
+      number: 8,
+    });
+    expect(githubFetchMock).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -394,7 +394,8 @@ export type BranchSwitchSource =
   | 'release_draft'
   | 'ui'
   | 'ui-merge'
-  | 'branch_desync';
+  | 'branch_desync'
+  | 'merge_detected';
 
 /** Normalized payload for a branch transition reported by a tool result.
  *  `kind: 'forked'` means the tool just created a new branch and the active
