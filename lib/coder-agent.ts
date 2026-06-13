@@ -792,6 +792,18 @@ export interface CoderAgentOptions<TCall, TCard> {
    * Defaults off; the delegated arc and CLI keep the implementer prompt.
    */
   leadMode?: boolean;
+  /**
+   * Append the lead's tool-routing + structured-error guidance
+   * (`buildLeadToolGuidance`). That block names the **canonical web sandbox /
+   * GitHub tools** (`read`/`search`/`exec`/`prepare_commit`/`push`) and the
+   * web shipping flow, so it's only correct on the web surface. The CLI lead
+   * (`cli/lead-turn.ts`) runs `leadMode` with its own `TOOL_PROTOCOL`
+   * (`read_file`/`git_commit`/…) and leaves this off, so it isn't steered
+   * toward names it can't dispatch (Codex P2 on #927). Only meaningful with
+   * `leadMode`. The name-free Tool-Call-Placement boundary is always included
+   * in lead mode regardless of this flag.
+   */
+  leadToolGuidance?: boolean;
 }
 
 /**
@@ -846,6 +858,7 @@ export async function runCoderAgent<TCall, TCard>(
     harnessMaxRounds,
     harnessContextResetsEnabled,
     leadMode = false,
+    leadToolGuidance = false,
   } = options;
 
   void _allowedRepo; // reserved for future use — lib loop does not need it directly
@@ -931,13 +944,17 @@ export async function runCoderAgent<TCall, TCard>(
     }
   }
 
-  // Lead-only operational guidance ported from the Orchestrator prompt: the
-  // reasoning-channel placement boundary plus tool-routing + structured-error
-  // handling the single lead needs now that it wields both surfaces. The
-  // delegated Coder keeps its narrower instructions untouched.
+  // Lead-only operational guidance ported from the Orchestrator prompt.
   if (leadMode) {
+    // The reasoning-channel placement boundary is name-free, so it's correct
+    // on every lead surface (web + CLI both dispatch from the content channel).
     promptBuilder.append('tool_instructions', TOOL_CALL_PLACEMENT_SECTION);
-    promptBuilder.append('tool_instructions', buildLeadToolGuidance());
+    // Tool-routing + structured-error guidance names the canonical web sandbox /
+    // GitHub tools, so it ships only when the caller is on that surface (the web
+    // inline lane). The CLI lead opts out — see `leadToolGuidance`.
+    if (leadToolGuidance) {
+      promptBuilder.append('tool_instructions', buildLeadToolGuidance());
+    }
   }
 
   // Symbol cache — volatile memory derived from workspace
