@@ -45,21 +45,30 @@ re-argue the model.
 
 ## Decisions taken for this spec (owner calls, 2026-06-13)
 
-1. **Branch naming: model-proposed with deterministic fallback.** The lead
-   proposes a name from the commit message + diff (a small structured call);
-   the result is sanitized to a valid git ref. If the call fails, returns an
-   unusable name, or there is no interactive lead (headless / Full-Auto), fall
-   back to a deterministic `push/<slug-of-commit-message>-<yyMMdd-HHmm>`.
-   Collisions get a short numeric suffix. The fallback must be total — naming
-   never blocks a commit.
+1. **Branch naming: model-proposed with deterministic fallback.** The commit
+   message **already exists** before naming runs — the user typed it (web
+   surfaces) or the model supplied it to `sandbox_prepare_commit` (tool path),
+   so there is no circular dependency. Mechanism: a single structured,
+   non-streaming completion against the active provider (mirror how
+   `runAuditor` is invoked with `providerOverride`/`modelOverride`), prompt =
+   "propose a short kebab-case git branch name for this change" + the commit
+   message + a bounded diff summary; the result is sanitized to a valid git
+   ref (`[a-z0-9._/-]`, length-capped). **The fallback is total** — if the
+   call errors, returns an unusable/empty name, or there is no provider
+   configured (headless / Full-Auto / `demo`), use the deterministic
+   `push/<slug-of-commit-message>-<yyMMdd-HHmm>`. Collisions (branch already
+   exists) get a short numeric suffix. Naming never blocks a commit; it only
+   chooses between a nice name and a deterministic one.
 2. **v1 surfaces: web / cloud only.** All web commit surfaces and the model
    tool path (below). The CLI/daemon local-git path is a deferred follow-up
    (different mechanics — real filesystem, no sandbox lifecycle).
-3. **Rollout: behind a flag, default-on.** A single resolver in `lib/`
-   (`PUSH_AUTO_BRANCH_ON_COMMIT`, default on) with a settings-level
-   kill-switch, so a misbehaving surface can be disabled in prod without a
-   revert. The flag governs *only* whether the auto-branch step fires; when
-   off, every surface behaves exactly as today.
+3. **Rollout: behind a flag, default-on.** A single resolver in `lib/` that
+   **mirrors the existing `resolveSecretScanEnabled` (`lib/secret-scan.ts`)
+   and `resolveAuditorGateEnabled` (`lib/auditor-policy.ts`) pattern** —
+   `PUSH_AUTO_BRANCH_ON_COMMIT` env (default on) plus the same
+   settings-override resolution those use, so the kill-switch behaves
+   consistently with the other two gates. The flag governs *only* whether the
+   auto-branch step fires; when off, every surface behaves exactly as today.
 
 ## Design
 
@@ -68,7 +77,11 @@ re-argue the model.
 Auto-branch fires when a commit is requested **while HEAD is on the repo's
 protected/default branch** — i.e. `currentBranch === defaultBranch` (the
 same branch `Protect Main` guards). On any other branch it is a no-op: the
-work already has a non-`main` home.
+work already has a non-`main` home. This no-op *is* the merge-flow guard —
+if `MergeFlowSheet` is already on a non-default branch,
+`ensureCommitTargetBranch` returns `{ switched: false }` and never
+re-branches; no surface-specific check is needed beyond passing it the real
+current branch.
 
 ### One shared seam, four callers
 
@@ -105,13 +118,25 @@ conversation moves onto the new branch), not `'switched'` — the work and its
 conversation belong together. This is exactly the path `forkBranchInWorkspace`
 already drives; no new migration logic.
 
-### Auto-push
+### Auto-push — every covered surface must push through the gated path
 
-After the commit lands on the new branch, push as the surfaces already do via
-`createSandboxPushGit(..., { secretScan: true }).push()`. No change to the
-push transport or the gate — auto-branch simply guarantees the push targets a
-non-`main` branch. A secret-scan block surfaces verbatim and is **not** a
-recovery trigger (existing behavior in `useCommitPush`).
+Auto-branch's durability depends on the auto-push, and the auto-push's safety
+depends on the secret scan. So **every surface auto-branch covers must push
+through `createSandboxPushGit(..., { secretScan: true }).push()`** — the
+gated `PushGit` path that runs the scan over the uncapped about-to-be-pushed
+commits. A secret-scan block surfaces verbatim and is **not** a recovery
+trigger (existing behavior in `useCommitPush`).
+
+**This is not uniformly true today, and the gap is load-bearing** (Codex P1
+on the spec PR): `useCommitPush.ts` and the model path (`handleSandboxPush`)
+already use the gated path, but **`WorkspaceHubSheet.tsx` pushes via raw
+`git push` through `execInSandbox` (~L786–788, and commits raw at ~L762)** —
+bypassing the scan entirely. That is a pre-existing hole that auto-branch
+would *amplify* (it would auto-push the hub surface with no scan). The
+implementation must **migrate the hub's commit+push to the gated `PushGit`
+path** as part of this work, not just add the auto-branch step on top of a
+raw push. Audit every covered surface's push for the same raw-`execInSandbox`
+pattern; route each through the gate or explicitly exclude it with a reason.
 
 ### Protect Main interaction
 
