@@ -126,6 +126,34 @@ describe('shouldCaptureWorkspacePatch', () => {
       }),
     ).toBe(false);
   });
+
+  it('returns true on the precise workspaceMutated signal even without a coder event', () => {
+    // The kernel-led inline lane emits no subagent.completed event — it passes
+    // workspaceMutated directly once its diff probe confirms uncommitted edits.
+    expect(
+      shouldCaptureWorkspacePatch({
+        chatId: 'chat-1',
+        round: 2,
+        outcome: 'completed',
+        roundEvents: [],
+        assistantToolCallMessageId: 'asst-1',
+        workspaceMutated: true,
+      }),
+    ).toBe(true);
+  });
+
+  it('ignores a falsy workspaceMutated signal (falls back to the event heuristic)', () => {
+    expect(
+      shouldCaptureWorkspacePatch({
+        chatId: 'chat-1',
+        round: 2,
+        outcome: 'completed',
+        roundEvents: [],
+        assistantToolCallMessageId: 'asst-1',
+        workspaceMutated: false,
+      }),
+    ).toBe(false);
+  });
 });
 
 describe('useWorkspacePatchCapture', () => {

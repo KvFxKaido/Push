@@ -44,6 +44,7 @@ import {
   capturePreCoderSnapshot,
   createCoderCheckpointAnswerer,
   runCoderAuditorGate,
+  runInlineVerificationCriteria,
   runInPageCoderKernel,
   teePushStream,
 } from '@/lib/inline-coder-run';
@@ -382,58 +383,71 @@ function insertSyntheticToolPairs(
   events: ToolCompleteEvent[],
   cards?: ChatCard[],
   placeholderId?: string,
-): void {
-  if (events.length === 0) return;
+): string | undefined {
+  if (events.length === 0) return undefined;
   const { chatId } = ctx;
+
+  // Build the synthetic messages (with their ids) OUTSIDE the state updater so
+  // the returned last-call id matches the committed state even under React's
+  // double-invoked updater in strict mode — the workspace-patch capture below
+  // anchors its card to this id, so it must be stable.
+  const synthetic: ChatMessage[] = [];
+  let lastToolCallId: string | undefined;
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i];
+    const isLast = i === events.length - 1;
+    const meta = buildToolMeta({
+      toolName: event.toolName,
+      source: event.toolSource,
+      durationMs: event.durationMs,
+      isError: event.isError,
+    });
+    const ts = Date.now();
+    const callId = createId();
+    if (isLast) lastToolCallId = callId;
+    // Synthetic assistant message marking the tool call.
+    // visibleToModel: false — display-only; filterModelVisibleMessages
+    // drops these so they never feed back to the model on mode switches
+    // or Orchestrator-path replays (undefined would be treated as visible).
+    // Cards go on the last call message so they render inside the collapsible.
+    synthetic.push({
+      id: callId,
+      role: 'assistant',
+      content: event.toolName,
+      timestamp: ts,
+      status: 'done',
+      isToolCall: true,
+      toolMeta: meta,
+      visibleToModel: false,
+      ...(isLast && cards && cards.length > 0 ? { cards } : {}),
+    });
+    // Synthetic user message carrying the tool result preview.
+    synthetic.push({
+      ...buildToolResultMessage({
+        id: createId(),
+        timestamp: ts,
+        text: event.preview,
+        toolMeta: meta,
+      }),
+      visibleToModel: false,
+    });
+  }
+
   ctx.setConversations((prev) => {
     const conv = prev[chatId];
     if (!conv) return prev;
     const msgs = [...conv.messages];
     const targetIdx = resolveAssistantTargetIndex(msgs, placeholderId);
     if (targetIdx === -1) return prev;
-
-    const synthetic: ChatMessage[] = [];
-    for (let i = 0; i < events.length; i++) {
-      const event = events[i];
-      const isLast = i === events.length - 1;
-      const meta = buildToolMeta({
-        toolName: event.toolName,
-        source: event.toolSource,
-        durationMs: event.durationMs,
-        isError: event.isError,
-      });
-      const ts = Date.now();
-      // Synthetic assistant message marking the tool call.
-      // visibleToModel: false — display-only; filterModelVisibleMessages
-      // drops these so they never feed back to the model on mode switches
-      // or Orchestrator-path replays (undefined would be treated as visible).
-      // Cards go on the last call message so they render inside the collapsible.
-      synthetic.push({
-        id: createId(),
-        role: 'assistant',
-        content: event.toolName,
-        timestamp: ts,
-        status: 'done',
-        isToolCall: true,
-        toolMeta: meta,
-        visibleToModel: false,
-        ...(isLast && cards && cards.length > 0 ? { cards } : {}),
-      });
-      // Synthetic user message carrying the tool result preview.
-      synthetic.push({
-        ...buildToolResultMessage({
-          id: createId(),
-          timestamp: ts,
-          text: event.preview,
-          toolMeta: meta,
-        }),
-        visibleToModel: false,
-      });
-    }
-
     msgs.splice(targetIdx, 0, ...synthetic);
     return { ...prev, [chatId]: { ...conv, messages: msgs } };
   });
+
+  // The last synthetic tool-call message id — the anchor the workspace-patch
+  // capture attaches its card to. If the splice no-op'd (no assistant target,
+  // a rare conv-deleted race), the capture's own findIndex skips silently, so
+  // a stale id can't corrupt state.
+  return lastToolCallId;
 }
 
 /**
@@ -725,6 +739,14 @@ export async function startInlineCoderTurn(
             runtimeHandlersRef: ctx.runtimeHandlersRef,
           });
         },
+        // Sandbox-loss recovery parity. A kernel tool that hits a dead
+        // sandbox surfaces `SANDBOX_UNREACHABLE`; the Orchestrator dispatch
+        // seam (applyPostExecutionSideEffects #8) fires the recovery handler
+        // off it, but that seam never runs for kernel-led turns — so route
+        // it from the kernel's executor tee instead.
+        onSandboxUnreachable: (message) => {
+          ctx.runtimeHandlersRef.current?.onSandboxUnreachable?.(message);
+        },
       },
     );
   } catch (err) {
@@ -830,6 +852,40 @@ export async function startInlineCoderTurn(
       }),
     );
   }
+
+  // --- Verification gate (delegated-arc parity). The delegated Coder ran the
+  // verification policy's command rules as acceptance criteria, feeding the
+  // Auditor (`criteriaResults`) and verification memory (`verificationCommandsById`).
+  // The inline lane dropped both (an empty map, no criteria). Run them here,
+  // gated on a *confirmed* edit — not the conservative `workspaceChanged`, which
+  // also fires when the diff probe failed (no reliable place to run checks).
+  // Conversational turns skip this entirely, so "what changed recently?" never
+  // pays for a typecheck/test run. ---
+  const turnEdited = Boolean(lastTaskDiff) || committedSinceStart || addedUntrackedFile;
+  const verification = turnEdited
+    ? await runInlineVerificationCriteria(
+        sandboxId,
+        verificationPolicy,
+        ctx.abortControllerRef.current?.signal,
+      )
+    : {
+        criteriaResults: [],
+        verificationCommandsById: new Map<string, string>(),
+        summaryLine: '',
+      };
+  if (verification.criteriaResults.length > 0) {
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'inline_verification_ran',
+        mode: 'inline',
+        chatId,
+        runId: args.runId,
+        criteria: verification.criteriaResults.length,
+        passed: verification.criteriaResults.filter((r) => r.passed).length,
+      }),
+    );
+  }
   const auditorGate = workspaceChanged
     ? await runCoderAuditorGate(
         {
@@ -850,13 +906,16 @@ export async function startInlineCoderTurn(
             taskList: [args.trimmedText],
             allCards: result.cards,
             summaries: [result.summary],
-            allCriteriaResults: result.criteriaResults ?? [],
+            allCriteriaResults: [
+              ...(result.criteriaResults ?? []),
+              ...verification.criteriaResults,
+            ],
             totalRounds: result.rounds,
             totalCheckpoints: result.checkpoints,
             lastTaskDiff,
             latestDiffPaths,
             coderMemoryScope: memoryScope,
-            verificationCommandsById: new Map(),
+            verificationCommandsById: verification.verificationCommandsById,
             harnessSettings,
             currentSandboxId: sandboxId,
             originBranch: branchInfo?.currentBranch,
@@ -889,15 +948,19 @@ export async function startInlineCoderTurn(
   // captured, so they fold away like the old Orchestrator path. When no
   // tools ran (pure conversational turn), cards stay on the final message. ---
   const hasToolDisclosure = capturedToolEvents.length > 0;
-  insertSyntheticToolPairs(
+  const lastToolCallId = insertSyntheticToolPairs(
     ctx,
     capturedToolEvents,
     hasToolDisclosure ? result.cards : undefined,
     placeholderId,
   );
+  // Verification block joins the kernel summary the same way the delegated
+  // arc appended its in-kernel acceptance-criteria block; the Auditor verdict
+  // line (when present) sits after both.
+  const summaryWithVerification = `${result.summary}${verification.summaryLine}`;
   const finalContent = auditorGate?.auditorSummaryLine
-    ? `${result.summary}\n\n${auditorGate.auditorSummaryLine}`
-    : result.summary;
+    ? `${summaryWithVerification}\n\n${auditorGate.auditorSummaryLine}`
+    : summaryWithVerification;
   completeAssistantMessage(
     ctx,
     {
@@ -907,6 +970,25 @@ export async function startInlineCoderTurn(
     placeholderId,
   );
   ctx.updateAgentStatus({ active: false, phase: '' });
+
+  // --- Workspace-patch capture (durability parity). The Orchestrator loop
+  // captured the uncommitted diff as a replayable `workspace-patch` card off a
+  // `subagent.completed{coder}` round event, so edits survived a sandbox
+  // restart. A kernel-led inline turn emits no such event, so the capture
+  // never fired. Drive it directly when the turn left *uncommitted* changes
+  // (committed work lives in git and needs no replay card), anchoring the card
+  // to the last synthetic tool-call message. Best-effort, fire-and-forget at
+  // the round-end seam like the loop. ---
+  if (lastTaskDiff && lastToolCallId && ctx.captureWorkspacePatchAtRoundEnd) {
+    await ctx.captureWorkspacePatchAtRoundEnd({
+      chatId,
+      round: result.rounds,
+      outcome: 'completed',
+      roundEvents: [],
+      workspaceMutated: true,
+      assistantToolCallMessageId: lastToolCallId,
+    });
+  }
 
   logInlineTurnCompleted({
     chatId,

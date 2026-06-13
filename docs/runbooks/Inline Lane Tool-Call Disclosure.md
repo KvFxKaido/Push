@@ -1,7 +1,11 @@
 # Inline Lane — Per-Turn Tool-Call Disclosure
 
 Date: 2026-06-12
-Status: **Planned** (design done, not built)
+Status: **Shipped** — Part 1 (kernel emits `tool.execution_complete`,
+`lib/coder-agent.ts`) and Part 2 (the inline lane synthesizes the
+`isToolCall`/`isToolResult` pairs via `insertSyntheticToolPairs`,
+`app/src/hooks/chat-send-inline.ts`) both landed. The "Plan" section below is
+retained as the as-built record.
 Owner: Push
 
 ## Problem

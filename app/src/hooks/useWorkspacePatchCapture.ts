@@ -57,6 +57,16 @@ export interface WorkspacePatchRoundContext {
    *  Null when no tool-call message exists in the conversation — the
    *  hook skips capture in that case. */
   assistantToolCallMessageId: string | null;
+  /**
+   * Precise "this turn mutated the workspace" signal. The default heuristic
+   * keys off a `subagent.completed{agent:'coder'}` round event, which a
+   * kernel-led inline turn never emits — the kernel *is* the lead, not a
+   * delegate. The inline lane (`chat-send-inline.ts`) sets this true once its
+   * post-run diff probe confirms uncommitted changes, so the capture fires
+   * without the delegate event. This is the documented swap-in for the
+   * precise mutation flag the `shouldCaptureWorkspacePatch` comment promised.
+   */
+  workspaceMutated?: boolean;
 }
 
 /**
@@ -67,6 +77,9 @@ export interface WorkspacePatchRoundContext {
  * stays put.
  */
 export function shouldCaptureWorkspacePatch(ctx: WorkspacePatchRoundContext): boolean {
+  // Precise signal first: a kernel-led inline turn has no `subagent.completed`
+  // event to key off, so it passes `workspaceMutated` directly.
+  if (ctx.workspaceMutated === true) return true;
   return ctx.roundEvents.some(
     (event) => event.type === 'subagent.completed' && event.agent === 'coder',
   );
