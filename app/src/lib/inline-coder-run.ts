@@ -102,6 +102,7 @@ import { TurnPolicyRegistry, type TurnContext } from './turn-policy';
 import { createCoderPolicy } from './turn-policies/coder-policy';
 import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from './tracing';
 import { formatVerificationPolicyBlock, type VerificationPolicy } from './verification-policy';
+import { buildVerificationAcceptanceCriteria } from './verification-runtime';
 import { runContextMemoryBestEffort } from './memory-context-helpers';
 import { writeDecisionMemory } from './context-memory';
 import {
@@ -327,6 +328,91 @@ export async function runCoderAuditorGate(
 }
 
 // ---------------------------------------------------------------------------
+// Inline verification criteria (post-kernel gate)
+// ---------------------------------------------------------------------------
+
+export interface InlineVerificationResult {
+  criteriaResults: CriterionResult[];
+  /** id → check command, for the Auditor's verification-memory command tags. */
+  verificationCommandsById: Map<string, string>;
+  /** Pass/fail block folded into the turn summary ('' when nothing ran). */
+  summaryLine: string;
+}
+
+/**
+ * Run the verification policy's command rules as post-kernel acceptance
+ * checks for an inline turn — restoring the gate the delegated arc enforced
+ * in-kernel (`buildVerificationAcceptanceCriteria` → `runCoderAgent`'s
+ * acceptance criteria).
+ *
+ * Why post-kernel and not passed as kernel `acceptanceCriteria`: the kernel
+ * runs criteria unconditionally once the Coder is done
+ * (`lib/coder-agent.ts` ~1657), so handing them to the kernel would fire
+ * typecheck/test on read-only conversational turns ("what changed
+ * recently?"). The inline lane instead runs them itself, and the caller
+ * gates this on "the turn actually edited" — so enforcement lives in code
+ * (CLAUDE.md "behavior lives in code, not prompts"), the Auditor regains its
+ * `criteriaResults` evidence, and verification memory regains its command
+ * tags (the empty `verificationCommandsById` map the lane used to pass).
+ *
+ * Best-effort: a policy with no command rules runs nothing; a check that
+ * throws is recorded as a failure (exit -1), never aborting the turn.
+ */
+export async function runInlineVerificationCriteria(
+  sandboxId: string,
+  policy: VerificationPolicy | undefined,
+  signal?: AbortSignal,
+): Promise<InlineVerificationResult> {
+  const criteria =
+    policy && Array.isArray(policy.rules) && policy.rules.length > 0
+      ? buildVerificationAcceptanceCriteria(policy, 'always')
+      : [];
+  const verificationCommandsById = new Map<string, string>();
+  const criteriaResults: CriterionResult[] = [];
+  // Serial by design — not a perf oversight. The checks share one sandbox, so
+  // running them concurrently (Promise.all) would contend for the same
+  // workspace/CPU and interleave their output; the kernel's own
+  // acceptance-criteria loop (`lib/coder-agent.ts`) is serial for the same
+  // reason, and the per-iteration abort check below depends on the ordering.
+  // Policies carry a handful of command rules (typecheck/test), so the
+  // wall-clock cost is bounded.
+  for (const criterion of criteria) {
+    if (signal?.aborted) break;
+    verificationCommandsById.set(criterion.id, criterion.check);
+    try {
+      const checkResult = await execInSandbox(sandboxId, criterion.check);
+      const expectedExit = criterion.exitCode ?? 0;
+      criteriaResults.push({
+        id: criterion.id,
+        passed: checkResult.exitCode === expectedExit,
+        exitCode: checkResult.exitCode,
+        output: `${checkResult.stdout}\n${checkResult.stderr}`.trim(),
+      });
+    } catch (err) {
+      criteriaResults.push({
+        id: criterion.id,
+        passed: false,
+        exitCode: -1,
+        output: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  let summaryLine = '';
+  if (criteriaResults.length > 0) {
+    const passed = criteriaResults.filter((r) => r.passed).length;
+    summaryLine = `\n\n[Acceptance Criteria] ${passed}/${criteriaResults.length} passed`;
+    for (const r of criteriaResults) {
+      summaryLine += `\n  ${r.passed ? '✓' : '✗'} ${r.id} (exit=${r.exitCode})${
+        r.passed ? '' : `: ${r.output.slice(0, 200)}`
+      }`;
+    }
+  }
+
+  return { criteriaResults, verificationCommandsById, summaryLine };
+}
+
+// ---------------------------------------------------------------------------
 // In-page kernel-run builder
 // ---------------------------------------------------------------------------
 
@@ -394,6 +480,16 @@ export interface InPageCoderKernelCallbacks {
    *  lane only — the delegated arc leaves it undefined deliberately, matching
    *  the desync stamp convention above. */
   onBranchSwitchPayload?: (payload: BranchSwitchPayload) => void;
+  /**
+   * Sandbox-loss tee. The Orchestrator loop fires `onSandboxUnreachable` off
+   * any tool result carrying `structuredError.type === 'SANDBOX_UNREACHABLE'`
+   * (`chat-send-helpers.ts` applyPostExecutionSideEffects #8) so the workspace
+   * kicks off sandbox recovery. Kernel-led turns bypass that dispatch seam, so
+   * the inline lane teas the signal straight out of the kernel's tool
+   * executors instead. Inline lane only — the delegated arc reconciles through
+   * its own dispatch path.
+   */
+  onSandboxUnreachable?: (message: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -521,6 +617,9 @@ export async function runInPageCoderKernel(
       if (result.branchSwitch) {
         callbacks.onBranchSwitchPayload?.(result.branchSwitch);
       }
+      if (result.structuredError?.type === 'SANDBOX_UNREACHABLE') {
+        callbacks.onSandboxUnreachable?.(result.structuredError.message);
+      }
       return result;
     },
     executeWebSearch: (query, provider) => executeWebSearch(query, provider as ActiveProvider),
@@ -561,6 +660,9 @@ export async function runInPageCoderKernel(
             chatId: spec.memoryScope?.chatId,
             executionMode: 'cloud',
           });
+          if (result.structuredError?.type === 'SANDBOX_UNREACHABLE') {
+            callbacks.onSandboxUnreachable?.(result.structuredError.message);
+          }
           return {
             text: result.text,
             card: result.card,

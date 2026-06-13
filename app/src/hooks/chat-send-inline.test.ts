@@ -24,6 +24,7 @@ const {
   mockResolveHarnessSettings,
   mockInvalidateMemory,
   mockApplyBranchSwitchPayload,
+  mockRunInlineVerificationCriteria,
 } = vi.hoisted(() => ({
   mockRunInPageCoderKernel: vi.fn(),
   mockRunCoderAuditorGate: vi.fn(),
@@ -35,6 +36,7 @@ const {
   mockResolveHarnessSettings: vi.fn(),
   mockInvalidateMemory: vi.fn(),
   mockApplyBranchSwitchPayload: vi.fn(),
+  mockRunInlineVerificationCriteria: vi.fn(),
 }));
 
 vi.mock('@/lib/inline-coder-run', () => ({
@@ -43,6 +45,7 @@ vi.mock('@/lib/inline-coder-run', () => ({
   capturePreCoderSnapshot: (...args: unknown[]) => mockCapturePreCoderSnapshot(...args),
   createCoderCheckpointAnswerer: (...args: unknown[]) => mockCreateCoderCheckpointAnswerer(...args),
   teePushStream: (...args: unknown[]) => mockTeePushStream(...args),
+  runInlineVerificationCriteria: (...args: unknown[]) => mockRunInlineVerificationCriteria(...args),
 }));
 
 vi.mock('@/lib/orchestrator', () => ({
@@ -96,7 +99,7 @@ import {
   ADOPTION_RESUME_NOTE_MARKER,
 } from '@push/lib/run-adoption-loop';
 import type { PushStreamEvent } from '@push/lib/provider-contract';
-import type { ChatMessage, Conversation } from '@/types';
+import type { ChatMessage, Conversation, VerificationRuntimeState } from '@/types';
 import type { SendLoopContext } from './chat-send-types';
 
 // ---------------------------------------------------------------------------
@@ -216,6 +219,13 @@ beforeEach(() => {
   mockGetSandboxDiff.mockReset().mockResolvedValue({ diff: 'diff --git a/src/a.ts b/src/a.ts' });
   mockResolveHarnessSettings.mockReset().mockReturnValue({ evaluateAfterCoder: true });
   mockInvalidateMemory.mockReset().mockResolvedValue(undefined);
+  // Default: no verification criteria (empty policy in these fixtures). Tests
+  // that exercise the gate set their own resolved value.
+  mockRunInlineVerificationCriteria.mockReset().mockResolvedValue({
+    criteriaResults: [],
+    verificationCommandsById: new Map<string, string>(),
+    summaryLine: '',
+  });
   // Default: a recording no-op (the real append is exercised only by the
   // mid-run-divider regression test, which sets its own implementation).
   mockApplyBranchSwitchPayload.mockReset();
@@ -829,6 +839,155 @@ describe('card routing: disclosure vs. final message', () => {
     const callMsg = messages.find((m) => m.isToolCall);
     expect(callMsg?.cards).toBeUndefined();
     expect(lastAssistant(store).cards).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Verification gate + workspace-patch capture (orchestrator-loop parity)
+// ---------------------------------------------------------------------------
+
+describe('verification gate + workspace-patch capture', () => {
+  /** Kernel that emits one editing tool event so a synthetic tool-call
+   *  message (the patch anchor) exists. */
+  function editingKernel() {
+    mockRunInPageCoderKernel.mockImplementation(
+      async (_spec: unknown, callbacks: { onRunEvent?: (e: unknown) => void }) => {
+        callbacks.onRunEvent?.({
+          type: 'tool.execution_complete',
+          round: 1,
+          executionId: 'e1',
+          toolName: 'sandbox_write_file',
+          toolSource: 'coder',
+          durationMs: 7,
+          isError: false,
+          preview: 'wrote src/a.ts',
+        });
+        return { summary: 'Edited.', cards: [], rounds: 2, checkpoints: 1 };
+      },
+    );
+  }
+
+  it('runs verification, feeds the Auditor, folds the block, and captures the patch when the turn edited', async () => {
+    editingKernel();
+    // Non-empty diff + HEAD moved off the pre-run snapshot ⇒ a real edit.
+    mockGetSandboxDiff.mockResolvedValue({
+      diff: 'diff --git a/src/a.ts b/src/a.ts',
+      head_sha: 'head-after',
+      git_status: '',
+    });
+    mockRunInlineVerificationCriteria.mockResolvedValue({
+      criteriaResults: [{ id: 'verification:typecheck', passed: true, exitCode: 0, output: '' }],
+      verificationCommandsById: new Map([['verification:typecheck', 'npm run typecheck']]),
+      summaryLine: '\n\n[Acceptance Criteria] 1/1 passed',
+    });
+    const capture = vi.fn().mockResolvedValue(undefined);
+    const { ctx, store, updateVerificationState } = makeHarness();
+    ctx.captureWorkspacePatchAtRoundEnd = capture as never;
+
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    // Verification ran against the live sandbox.
+    expect(mockRunInlineVerificationCriteria).toHaveBeenCalledTimes(1);
+    expect(mockRunInlineVerificationCriteria).toHaveBeenCalledWith(
+      'sb-1',
+      expect.anything(),
+      expect.anything(),
+    );
+    // Auditor received the populated command map (not the old empty Map()).
+    const auditorInput = mockRunCoderAuditorGate.mock.calls[0]?.[1] as {
+      auditorInput: {
+        verificationCommandsById: Map<string, string>;
+        allCriteriaResults: unknown[];
+      };
+    };
+    expect(auditorInput.auditorInput.verificationCommandsById.get('verification:typecheck')).toBe(
+      'npm run typecheck',
+    );
+    expect(auditorInput.auditorInput.allCriteriaResults).toHaveLength(1);
+    // The verification block joins the final summary.
+    expect(lastAssistant(store).content).toContain('[Acceptance Criteria] 1/1 passed');
+    // The patch was captured against the synthetic tool-call anchor.
+    expect(capture).toHaveBeenCalledTimes(1);
+    const captureArg = capture.mock.calls[0][0] as {
+      workspaceMutated: boolean;
+      assistantToolCallMessageId: string | null;
+    };
+    expect(captureArg.workspaceMutated).toBe(true);
+    expect(captureArg.assistantToolCallMessageId).toBeTruthy();
+
+    // Each command result is reflected into VerificationRuntimeState, so a
+    // later runtime gate doesn't treat the passed check as still pending. We
+    // assert by running the recorded updater against a seeded state with a
+    // matching command rule and confirming it flips pending → passed.
+    const seeded: VerificationRuntimeState = {
+      policyName: 'p',
+      backendTouched: true,
+      mutationOccurred: true,
+      lastUpdatedAt: 0,
+      requirements: [
+        {
+          id: 'typecheck',
+          label: 'tc',
+          scope: 'always',
+          kind: 'command',
+          command: 'npm run typecheck',
+          status: 'pending',
+          updatedAt: 0,
+        },
+      ],
+    };
+    const recordCall = updateVerificationState.mock.calls.find(
+      ([, updater]) =>
+        (updater as (s: VerificationRuntimeState) => VerificationRuntimeState)(seeded)
+          .requirements[0].status === 'passed',
+    );
+    expect(recordCall).toBeTruthy();
+  });
+
+  it('captures the patch for an untracked-only turn (new files, empty git diff HEAD)', async () => {
+    editingKernel();
+    // `git diff HEAD` is empty for `??` paths, but a new untracked file appears
+    // and HEAD is unchanged — a real uncommitted change the capture must keep.
+    mockGetSandboxDiff.mockResolvedValue({
+      diff: '',
+      head_sha: 'abc',
+      git_status: '?? newfile.ts',
+    });
+    mockCapturePreCoderSnapshot.mockResolvedValue({
+      preCoderHead: 'abc',
+      preCoderUntrackedFiles: [],
+    });
+    mockRunInlineVerificationCriteria.mockResolvedValue({
+      criteriaResults: [],
+      verificationCommandsById: new Map<string, string>(),
+      summaryLine: '',
+    });
+    const capture = vi.fn().mockResolvedValue(undefined);
+    const { ctx } = makeHarness();
+    ctx.captureWorkspacePatchAtRoundEnd = capture as never;
+
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect((capture.mock.calls[0][0] as { workspaceMutated: boolean }).workspaceMutated).toBe(true);
+  });
+
+  it('skips verification and capture on a conversational turn (no edit)', async () => {
+    // Default kernel fires no tool event; empty diff + unchanged HEAD + no new
+    // untracked file ⇒ nothing was edited.
+    mockGetSandboxDiff.mockResolvedValue({ diff: '', head_sha: 'same', git_status: '' });
+    mockCapturePreCoderSnapshot.mockResolvedValue({
+      preCoderHead: 'same',
+      preCoderUntrackedFiles: [],
+    });
+    const capture = vi.fn();
+    const { ctx } = makeHarness();
+    ctx.captureWorkspacePatchAtRoundEnd = capture as never;
+
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    expect(mockRunInlineVerificationCriteria).not.toHaveBeenCalled();
+    expect(capture).not.toHaveBeenCalled();
   });
 });
 

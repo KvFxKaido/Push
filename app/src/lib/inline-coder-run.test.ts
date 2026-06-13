@@ -20,6 +20,7 @@ const {
   mockGetSandboxDiff,
   mockHandleCoderAuditor,
   mockWriteDecisionMemory,
+  mockExecInSandbox,
 } = vi.hoisted(() => ({
   mockRunCoderAgentLib: vi.fn(),
   mockGenerateCheckpointAnswerLib: vi.fn(),
@@ -30,6 +31,7 @@ const {
   mockGetSandboxDiff: vi.fn(),
   mockHandleCoderAuditor: vi.fn(),
   mockWriteDecisionMemory: vi.fn(),
+  mockExecInSandbox: vi.fn(),
 }));
 
 vi.mock('@push/lib/coder-agent', async (importOriginal) => ({
@@ -63,6 +65,7 @@ vi.mock('./sandbox-tools', async (importOriginal) => ({
 vi.mock('./sandbox-client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./sandbox-client')>()),
   getSandboxDiff: (...args: unknown[]) => mockGetSandboxDiff(...args),
+  execInSandbox: (...args: unknown[]) => mockExecInSandbox(...args),
 }));
 
 vi.mock('./auditor-delegation-handler', async (importOriginal) => ({
@@ -80,9 +83,11 @@ import {
   capturePreCoderSnapshot,
   createCoderCheckpointAnswerer,
   runCoderAuditorGate,
+  runInlineVerificationCriteria,
   runInPageCoderKernel,
   teePushStream,
 } from './inline-coder-run';
+import type { VerificationPolicy } from './verification-policy';
 import type { CoderAgentOptions, CoderAgentCallbacks } from '@push/lib/coder-agent';
 import type { AnyToolCall } from './tool-dispatch';
 import { buildGitHubToolProtocol } from './github-tools';
@@ -128,6 +133,7 @@ beforeEach(() => {
   mockGetSandboxDiff.mockReset();
   mockHandleCoderAuditor.mockReset();
   mockWriteDecisionMemory.mockReset().mockResolvedValue(undefined);
+  mockExecInSandbox.mockReset();
 });
 
 // ---------------------------------------------------------------------------
@@ -641,5 +647,82 @@ describe('lead tool surface (inline foreground lane)', () => {
     const githubCall = '{"tool":"fetch_pr","args":{"repo":"KvFxKaido/Push","pr":1}}';
     const detected = options.detectAllToolCalls(githubCall);
     expect(detected.readOnly).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Inline verification criteria (post-kernel gate, delegated-arc parity)
+// ---------------------------------------------------------------------------
+
+describe('runInlineVerificationCriteria', () => {
+  const policy: VerificationPolicy = {
+    name: 'Standard',
+    rules: [
+      {
+        id: 'typecheck',
+        label: 'Type check',
+        scope: 'always',
+        kind: 'command',
+        command: 'npm run typecheck',
+      },
+      { id: 'test', label: 'Tests', scope: 'always', kind: 'command', command: 'npm test' },
+      { id: 'diff', label: 'Diff evidence', scope: 'always', kind: 'evidence' },
+    ],
+  };
+
+  it('runs the command rules, building results + the command map + a pass/fail block', async () => {
+    mockExecInSandbox
+      .mockResolvedValueOnce({ stdout: 'ok', stderr: '', exitCode: 0 })
+      .mockResolvedValueOnce({ stdout: '', stderr: 'boom', exitCode: 1 });
+
+    const result = await runInlineVerificationCriteria('sbx', policy);
+
+    // The evidence rule is not a command — only the two command rules ran.
+    expect(mockExecInSandbox).toHaveBeenCalledTimes(2);
+    expect(mockExecInSandbox).toHaveBeenCalledWith('sbx', 'npm run typecheck');
+    expect(mockExecInSandbox).toHaveBeenCalledWith('sbx', 'npm test');
+
+    expect(result.criteriaResults).toEqual([
+      { id: 'verification:typecheck', passed: true, exitCode: 0, output: 'ok' },
+      { id: 'verification:test', passed: false, exitCode: 1, output: 'boom' },
+    ]);
+    expect(result.verificationCommandsById.get('verification:typecheck')).toBe('npm run typecheck');
+    expect(result.verificationCommandsById.get('verification:test')).toBe('npm test');
+    expect(result.summaryLine).toContain('[Acceptance Criteria] 1/2 passed');
+    expect(result.summaryLine).toContain('✓ verification:typecheck');
+    expect(result.summaryLine).toContain('✗ verification:test');
+  });
+
+  it('records a thrown check as a failure (exit -1) without aborting the turn', async () => {
+    mockExecInSandbox.mockRejectedValue(new Error('sandbox gone'));
+    const result = await runInlineVerificationCriteria('sbx', {
+      name: 'one',
+      rules: [{ id: 'typecheck', label: 'tc', scope: 'always', kind: 'command', command: 'tsc' }],
+    });
+    expect(result.criteriaResults).toEqual([
+      { id: 'verification:typecheck', passed: false, exitCode: -1, output: 'sandbox gone' },
+    ]);
+  });
+
+  it('runs nothing for an evidence-only policy or no policy', async () => {
+    const noCommands = await runInlineVerificationCriteria('sbx', {
+      name: 'evidence-only',
+      rules: [{ id: 'diff', label: 'diff', scope: 'always', kind: 'evidence' }],
+    });
+    expect(mockExecInSandbox).not.toHaveBeenCalled();
+    expect(noCommands.criteriaResults).toEqual([]);
+    expect(noCommands.summaryLine).toBe('');
+
+    const noPolicy = await runInlineVerificationCriteria('sbx', undefined);
+    expect(noPolicy.criteriaResults).toEqual([]);
+    expect(mockExecInSandbox).not.toHaveBeenCalled();
+  });
+
+  it('stops before running anything when the abort signal is already set', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const result = await runInlineVerificationCriteria('sbx', policy, controller.signal);
+    expect(mockExecInSandbox).not.toHaveBeenCalled();
+    expect(result.criteriaResults).toEqual([]);
   });
 });
