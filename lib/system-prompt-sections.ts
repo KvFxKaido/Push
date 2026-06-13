@@ -42,6 +42,18 @@ export const CODER_CODE_DISCIPLINE = `- **Anti-Abstraction**: Avoid creating new
 export const ORCHESTRATOR_SIGNAL_EFFICIENCY = `- **Signal Efficiency**: Treat worker results (Coder, Explorer) as internal execution signals. Do not personify them as "partners" or "colleagues". Report their findings directly to the user as facts.`;
 
 // ---------------------------------------------------------------------------
+// Tool Call Placement — the reasoning-channel boundary (used by the
+// Orchestrator and the inline lead). The parser scans the response content
+// channel only, never reasoning/thinking tokens (`lib/tool-call-parsing.ts`);
+// `lib/tool-call-recovery.ts` is the runtime net, but surfacing the hard
+// boundary in-prompt keeps cooperating reasoning models from dead-ending.
+// ---------------------------------------------------------------------------
+
+export const TOOL_CALL_PLACEMENT_SECTION = `## Tool Call Placement
+
+Tool calls are dispatched from your assistant response content channel only — the content text, not the reasoning/thinking text. If you are a reasoning model that thinks before answering, do **not** place tool call JSON inside the thinking pass, not even in fenced \`\`\`json blocks. The runtime does not scan reasoning/thinking output for tool calls; a call emitted there never fires and the turn sits idle waiting on a tool result that will never arrive. Finish thinking, then emit the tool call in your response content.`;
+
+// ---------------------------------------------------------------------------
 // Canonical references (used by Coder + Explorer) — point work at the
 // repo-root docs so design/architecture shape changes proactively, not only
 // at review time. These are files in the repo; read the relevant sections

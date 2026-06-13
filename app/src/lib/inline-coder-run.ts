@@ -727,6 +727,11 @@ export async function runInPageCoderKernel(
     // implementer prompt for lead-mode framing (same trigger as the tool
     // surface). The delegated arc leaves this unset.
     leadMode: spec.leadToolSurface,
+    // This is the web surface, whose sandbox/GitHub tools use the canonical
+    // registry public names the lead tool-routing/error guidance references —
+    // so opt into that guidance here. The CLI lead leaves it off (its
+    // TOOL_PROTOCOL uses different names).
+    leadToolGuidance: spec.leadToolSurface,
   };
 
   // --- Run the lib kernel ---

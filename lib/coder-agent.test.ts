@@ -92,12 +92,14 @@ function baseCoderOptions(overrides: {
   detectAllToolCalls?: CoderAgentOptions<Call, never>['detectAllToolCalls'];
   evaluateAfterModel?: CoderAgentOptions<Call, never>['evaluateAfterModel'];
   leadMode?: boolean;
+  leadToolGuidance?: boolean;
 }): CoderAgentOptions<Call, never> {
   return {
     provider: 'openrouter',
     stream: overrides.stream,
     modelId: 'coder-model',
     leadMode: overrides.leadMode,
+    leadToolGuidance: overrides.leadToolGuidance,
     sandboxId: 'sb-1',
     allowedRepo: 'kvfxkaido/push',
     userProfile: null,
@@ -145,26 +147,52 @@ describe('runCoderAgent (PushStream consumer)', () => {
   });
 
   it('swaps the implementer prompt for lead-mode framing when leadMode is set', async () => {
-    const promptFor = async (leadMode: boolean): Promise<string> => {
+    const promptFor = async (leadMode: boolean, leadToolGuidance = false): Promise<string> => {
       const { stream, capturedRequests } = makePushStream([
         [
           { type: 'text_delta', text: 'ok' },
           { type: 'done', finishReason: 'stop' },
         ],
       ]);
-      await runCoderAgent(baseCoderOptions({ stream, leadMode }), { onStatus: () => {} });
+      await runCoderAgent(baseCoderOptions({ stream, leadMode, leadToolGuidance }), {
+        onStatus: () => {},
+      });
       return (capturedRequests[0] as { systemPromptOverride?: string }).systemPromptOverride ?? '';
     };
 
-    const lead = await promptFor(true);
+    // Web lead: leadMode + the web tool-guidance opt-in.
+    const lead = await promptFor(true, true);
     expect(lead).toContain('You are the lead in this chat');
     expect(lead).toContain('do NOT use that Done/Changed/Verified/Open template');
     expect(lead).not.toContain('Read the delegation brief');
     expect(lead).not.toContain('the Orchestrator');
+    // Ported-from-Orchestrator sections the inline lead regained.
+    expect(lead).toContain('Voice:');
+    expect(lead).toContain('Never start with "I"');
+    expect(lead).toContain('Never mention other repos');
+    expect(lead).toContain('## Tool Call Placement');
+    expect(lead).toContain('## Tool Routing');
+    expect(lead).toContain('## Error Handling');
+    expect(lead).toContain('GIT_GUARD_BLOCKED');
+
+    // CLI-style lead: leadMode without the web tool-guidance opt-in. The
+    // name-free placement boundary + voice still apply, but the web-named
+    // routing/error block is withheld so it can't steer toward unknown tools.
+    const cliLead = await promptFor(true, false);
+    expect(cliLead).toContain('Voice:');
+    expect(cliLead).toContain('## Tool Call Placement');
+    expect(cliLead).not.toContain('## Tool Routing');
+    expect(cliLead).not.toContain('## Error Handling');
 
     const coder = await promptFor(false);
     expect(coder).toContain('You are the Coder agent');
     expect(coder).toContain('Read the delegation brief');
+    // The delegated Coder keeps its narrower prompt — none of the lead-only
+    // sections leak into it (full scoping, not just the voice/routing headers).
+    expect(coder).not.toContain('Voice:');
+    expect(coder).not.toContain('## Tool Routing');
+    expect(coder).not.toContain('## Tool Call Placement');
+    expect(coder).not.toContain('## Error Handling');
   });
 
   it('fires onCheckpoint at the cadence (every 5th round) with a consistent state snapshot', async () => {

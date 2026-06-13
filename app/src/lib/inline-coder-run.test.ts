@@ -201,6 +201,11 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
         'harnessMaxRounds',
         'instructionFilename',
         'leadMode',
+        // Parity decision: the delegated arc threads `leadToolGuidance:
+        // undefined` (only the web inline lead opts into the web-named
+        // tool-routing/error block; the CLI lead and delegated Coder leave it
+        // off so they aren't steered toward tool names they don't advertise).
+        'leadToolGuidance',
         'memoryToolProtocol',
         'modelId',
         'projectInstructions',
@@ -625,6 +630,8 @@ describe('lead tool surface (inline foreground lane)', () => {
     expect(joined).not.toContain('EXPLORER-FIRST');
     // Lead mode also swaps the kernel prompt (implementer → lead voice).
     expect(options.leadMode).toBe(true);
+    // The web lead opts into the web-named tool-routing/error guidance.
+    expect(options.leadToolGuidance).toBe(true);
   });
 
   it('routes GitHub read calls into the parallel-read bucket', async () => {
@@ -643,6 +650,7 @@ describe('lead tool surface (inline foreground lane)', () => {
     const options = await runLeadCall(false);
     expect(options.extraToolProtocols).toBeUndefined();
     expect(options.leadMode).toBeFalsy();
+    expect(options.leadToolGuidance).toBeFalsy();
     expect(options.branchContext?.repoFullName).toBeUndefined();
     const githubCall = '{"tool":"fetch_pr","args":{"repo":"KvFxKaido/Push","pr":1}}';
     const detected = options.detectAllToolCalls(githubCall);
