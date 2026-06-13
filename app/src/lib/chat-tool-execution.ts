@@ -89,7 +89,12 @@ export interface ToolExecRunContext {
    */
   executionMode?: ExecutionMode;
   isMainProtected: boolean;
-  defaultBranch: string | undefined;
+  /** Push's active branch for this workspace, for auto-branch-on-commit /
+   *  branch-aware tool routing. Optional — callers without branch context
+   *  (and pre-existing fixtures) omit it; the consumer treats absent as "no
+   *  branch info" and no-ops the auto-branch step. */
+  currentBranch?: string;
+  defaultBranch?: string;
   provider: ActiveProvider;
   model: string | undefined;
   approvalGates?: ApprovalGateRegistry;
@@ -182,6 +187,7 @@ export async function executeTool(
           ctx.abortSignal,
           ctx.executionMode,
           ctx.onExecProgress,
+          ctx.currentBranch,
         );
       }
 

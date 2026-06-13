@@ -4,6 +4,7 @@ import type {
   AgentStatusEvent,
   AIProviderType,
   AttachmentData,
+  BranchSwitchPayload,
   BranchSwitchSource,
   ChatMessage,
   ChatSendOptions,
@@ -831,11 +832,9 @@ export function useChat(
   // operations, then dispatch the BranchSwitchPayload through
   // applyBranchSwitchPayload — single source of truth for chat migration, no
   // parallel implementation in the UI handlers.
-  const forkBranchFromUI = useCallback(
-    async (name: string, from?: string): Promise<ForkBranchInWorkspaceResult> => {
-      const result = await forkBranchInWorkspace(sandboxIdRef.current, name, from);
-      if (!result.ok || !result.branchSwitch) return result;
-      applyBranchSwitchPayload(result.branchSwitch, {
+  const applyBranchSwitchFromUI = useCallback(
+    (payload: BranchSwitchPayload): void => {
+      applyBranchSwitchPayload(payload, {
         activeChatIdRef,
         conversationsRef,
         branchInfoRef,
@@ -844,20 +843,28 @@ export function useChat(
         dirtyConversationIdsRef,
         runtimeHandlersRef,
       });
-      return result;
     },
     [updateConversations, skipAutoCreateRef, dirtyConversationIdsRef],
+  );
+
+  const forkBranchFromUI = useCallback(
+    async (name: string, from?: string): Promise<ForkBranchInWorkspaceResult> => {
+      const result = await forkBranchInWorkspace(sandboxIdRef.current, name, from);
+      if (!result.ok || !result.branchSwitch) return result;
+      applyBranchSwitchFromUI(result.branchSwitch);
+      return result;
+    },
+    [applyBranchSwitchFromUI],
   );
 
   const switchBranchFromUI = useCallback(
     async (branch: string): Promise<SwitchBranchInWorkspaceResult> => {
       const result = await switchBranchInWorkspace(sandboxIdRef.current, branch);
       if (!result.ok || !result.branchSwitch) return result;
-      // biome-ignore format: same ctx object as the fork path above; kept compact for the file line cap.
-      applyBranchSwitchPayload(result.branchSwitch, { activeChatIdRef, conversationsRef, branchInfoRef, skipAutoCreateRef, setConversations: updateConversations, dirtyConversationIdsRef, runtimeHandlersRef });
+      applyBranchSwitchFromUI(result.branchSwitch);
       return result;
     },
-    [updateConversations, skipAutoCreateRef, dirtyConversationIdsRef],
+    [applyBranchSwitchFromUI],
   );
 
   // Post-merge migration: emit kind:'merged' through the shared branch-switch dispatcher.
@@ -866,26 +873,15 @@ export function useChat(
       toBranch: string,
       opts?: { from?: string; prNumber?: number; source?: BranchSwitchSource },
     ): void => {
-      applyBranchSwitchPayload(
-        {
-          name: toBranch,
-          kind: 'merged',
-          from: opts?.from,
-          prNumber: opts?.prNumber,
-          source: opts?.source ?? 'ui-merge',
-        },
-        {
-          activeChatIdRef,
-          conversationsRef,
-          branchInfoRef,
-          skipAutoCreateRef,
-          setConversations: updateConversations,
-          dirtyConversationIdsRef,
-          runtimeHandlersRef,
-        },
-      );
+      applyBranchSwitchFromUI({
+        name: toBranch,
+        kind: 'merged',
+        from: opts?.from,
+        prNumber: opts?.prNumber,
+        source: opts?.source ?? 'ui-merge',
+      });
     },
-    [updateConversations, skipAutoCreateRef, dirtyConversationIdsRef],
+    [applyBranchSwitchFromUI],
   );
 
   return {
@@ -942,6 +938,7 @@ export function useChat(
     ciStatus,
     diagnoseCIFailure,
     replayOnFreshSandbox,
+    applyBranchSwitchFromUI,
     forkBranchFromUI,
     switchBranchFromUI,
     mergeBranchInUI,

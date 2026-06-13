@@ -512,6 +512,8 @@ export async function runInPageCoderKernel(
       const result = await executeSandboxToolCall(call, id, {
         auditorProviderOverride: opts.auditorProviderOverride as ActiveProvider,
         auditorModelOverride: opts.auditorModelOverride,
+        currentBranch: spec.branchContext?.activeBranch,
+        defaultBranch: spec.branchContext?.defaultBranch,
       });
       if (call.tool === 'sandbox_exec' && result.branch) {
         callbacks.onSandboxExecBranch?.({ command: call.args.command, branch: result.branch });

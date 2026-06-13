@@ -162,6 +162,7 @@ export function WorkspaceSessionScreen({
     saveExpiryCheckpoint,
     ciStatus,
     diagnoseCIFailure,
+    applyBranchSwitchFromUI,
     forkBranchFromUI,
     switchBranchFromUI,
     mergeBranchInUI,
@@ -515,6 +516,9 @@ export function WorkspaceSessionScreen({
             lockedModel={lockedModel}
             repoFullName={workspaceRepo?.full_name ?? null}
             onSandboxExpired={handleCommitSandboxExpired}
+            currentBranch={workspaceRepo?.current_branch || workspaceRepo?.default_branch}
+            defaultBranch={workspaceRepo?.default_branch}
+            onBranchSwitchPayload={applyBranchSwitchFromUI}
             accentHex={fileBrowserAccentHex}
             glowEnabled={fileBrowserAppearance?.glowEnabled ?? false}
           />
@@ -586,6 +590,7 @@ export function WorkspaceSessionScreen({
     saveExpiryCheckpoint,
     ciStatus,
     diagnoseCIFailure,
+    applyBranchSwitchFromUI,
     forkBranchFromUI,
     switchBranchFromUI,
     mergeBranchInUI,

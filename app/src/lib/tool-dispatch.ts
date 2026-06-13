@@ -837,6 +837,7 @@ function wrapRecoveredCallToAny(
  *
  * @param isMainProtected — when true, commit/push tools on the default branch are blocked.
  * @param defaultBranch — the repo's default branch name (e.g. 'main', 'master').
+ * @param currentBranch — the repo branch Push currently has selected.
  */
 export async function executeAnyToolCall(
   toolCall: AnyToolCall,
@@ -856,6 +857,7 @@ export async function executeAnyToolCall(
   abortSignal?: AbortSignal,
   executionMode?: import('@push/lib/capabilities').ExecutionMode,
   onExecProgress?: (chunk: { stdout: string; stderr: string }) => void,
+  currentBranch?: string,
 ): Promise<ToolExecutionResult> {
   const runtime = new WebToolExecutionRuntime();
   return runtime.execute(toolCall, {
@@ -863,6 +865,7 @@ export async function executeAnyToolCall(
     sandboxId,
     role,
     isMainProtected: isMainProtected ?? false,
+    currentBranch,
     defaultBranch,
     activeProvider: activeProvider,
     activeModel,

@@ -375,6 +375,8 @@ export class WebToolExecutionRuntime
           result = await executeSandboxToolCall(toolCall.call, context.sandboxId ?? '', {
             auditorProviderOverride: activeProvider,
             auditorModelOverride: context.activeModel,
+            currentBranch: context.currentBranch,
+            defaultBranch: context.defaultBranch,
             localDaemonBinding,
             abortSignal: context.abortSignal,
             onExecProgress: context.onExecProgress,

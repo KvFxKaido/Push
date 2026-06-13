@@ -22,6 +22,8 @@ import { normalizeSandboxPath, normalizeSandboxWorkdir } from './sandbox-tool-ut
 export interface SandboxExecutionOptions {
   auditorProviderOverride?: import('./orchestrator').ActiveProvider;
   auditorModelOverride?: string | null;
+  currentBranch?: string;
+  defaultBranch?: string;
   /**
    * When present, the active workspace is a `kind: 'local-pc'` OR
    * `kind: 'relay'` session and the dispatcher routes whichever tool

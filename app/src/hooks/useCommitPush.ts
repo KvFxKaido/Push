@@ -26,8 +26,12 @@ import { createSandboxPushGit } from '@/lib/git-backend';
 import { fetchAuditorFileContexts, type AuditorFileContext } from '@/lib/auditor-file-context';
 import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
 import { parseDiffStats } from '@/lib/diff-utils';
+import {
+  createModelCommitBranchNameProposer,
+  ensureCommitTargetBranch,
+} from '@/lib/ensure-commit-target-branch';
 import { isDefinitivelyGoneMessage } from '@/lib/sandbox-error-utils';
-import type { DiffPreviewCardData, AuditVerdictCardData } from '@/types';
+import type { BranchSwitchPayload, DiffPreviewCardData, AuditVerdictCardData } from '@/types';
 
 export type CommitPushPhase =
   | 'idle'
@@ -95,6 +99,15 @@ export function useCommitPush(
   // Active repo, so the Auditor gate honors a per-repo Always/Never override
   // (not just the global default). Optional — scratch workspaces have none.
   repoFullName?: string | null,
+  // Auto-branch-on-commit context. When the workspace is on its default
+  // branch, the commit forks to a new branch first (so nothing lands on the
+  // default branch) and migrates the chat via `onBranchSwitchPayload`. Omitted
+  // (or off the default branch / flag off) → commits as today.
+  autoBranch?: {
+    currentBranch?: string;
+    defaultBranch?: string;
+    onBranchSwitchPayload?: (payload: BranchSwitchPayload) => void;
+  },
 ) {
   const [state, setState] = useState<CommitPushState>({
     phase: 'idle',
@@ -238,6 +251,38 @@ export function useCommitPush(
         }
       }
 
+      // Auto-branch-on-commit: if the workspace is on its default branch, fork
+      // to a new branch (working tree preserved) before committing so nothing
+      // lands on the default branch, and migrate the chat onto it. The seam
+      // no-ops when off the default branch or the flag is off. Done once on the
+      // live sandbox before the commit attempt; failure blocks (falling through
+      // would commit to the default branch, defeating the invariant). The fork
+      // is local-then-pushed, so a cold-resume after this point replays onto
+      // the recovered sandbox's branch — a known edge of the existing recovery
+      // path, not a regression.
+      if (autoBranch) {
+        try {
+          const auto = await ensureCommitTargetBranch({
+            sandboxId: sandboxIdRef.current,
+            currentBranch: autoBranch.currentBranch,
+            defaultBranch: autoBranch.defaultBranch,
+            diff: diffText,
+            commitMessage: message,
+            proposeName: createModelCommitBranchNameProposer({
+              providerOverride: effectiveAuditorProvider,
+              modelOverride: effectiveAuditorModel,
+            }),
+          });
+          if (auto.switched) {
+            autoBranch.onBranchSwitchPayload?.(auto.branchSwitch);
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          setState((s) => ({ ...s, phase: 'error', error: `Auto-branch failed: ${msg}` }));
+          return;
+        }
+      }
+
       const attemptCommitAndPush = async (
         targetSandbox: string,
         applyPatchFirst: boolean,
@@ -368,6 +413,7 @@ export function useCommitPush(
     modelOverride,
     onSandboxExpired,
     repoFullName,
+    autoBranch,
   ]);
 
   return {

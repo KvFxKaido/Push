@@ -109,6 +109,7 @@ export interface ToolExecutionContext<THooks = unknown, TGates = unknown> {
   allowedRepo: string;
   sandboxId: string | null;
   isMainProtected: boolean;
+  currentBranch?: string;
   defaultBranch?: string;
   /**
    * Provider identifier. Typically a narrow string literal union in the

@@ -160,9 +160,14 @@ function buildVerificationContext(sandboxId: string): VerificationHandlerContext
  * the extraction boundary stays one-way: the handler module never imports
  * from `sandbox-tools.ts`, and this wiring lives inside the dispatcher.
  */
-function buildGitReleaseContext(sandboxId: string): GitReleaseHandlerContext {
+function buildGitReleaseContext(
+  sandboxId: string,
+  branchInfo?: { currentBranch?: string; defaultBranch?: string },
+): GitReleaseHandlerContext {
   return {
     sandboxId,
+    currentBranch: branchInfo?.currentBranch,
+    defaultBranch: branchInfo?.defaultBranch,
     execInSandbox,
     getSandboxDiff,
     readFromSandbox,
@@ -1037,10 +1042,17 @@ export async function executeSandboxToolCall(
       }
 
       case 'sandbox_prepare_commit': {
-        return handlePrepareCommit(buildGitReleaseContext(sandboxId), call.args, {
-          providerOverride: options?.auditorProviderOverride,
-          modelOverride: options?.auditorModelOverride ?? undefined,
-        });
+        return handlePrepareCommit(
+          buildGitReleaseContext(sandboxId, {
+            currentBranch: options?.currentBranch,
+            defaultBranch: options?.defaultBranch,
+          }),
+          call.args,
+          {
+            providerOverride: options?.auditorProviderOverride,
+            modelOverride: options?.auditorModelOverride ?? undefined,
+          },
+        );
       }
 
       case 'sandbox_push': {

@@ -34,6 +34,7 @@ import { writeToSandbox } from '@/lib/sandbox-client';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 import type {
   AIProviderType,
+  BranchSwitchPayload,
   FileEntry,
   WorkspaceCapabilities,
   WorkspaceScratchActions,
@@ -52,6 +53,13 @@ interface FileBrowserProps {
   repoFullName?: string | null;
   /** Recovery callback for the commit/push pipeline when the sandbox dies. */
   onSandboxExpired?: () => Promise<string | null>;
+  /** Push's active branch + repo default, for auto-branch-on-commit in the
+   *  file-browser commit flow. Omitted → the seam no-ops (commits as today). */
+  currentBranch?: string;
+  defaultBranch?: string;
+  /** Applies a `branchSwitch` payload (chat migration) after the commit flow
+   *  auto-branches off the default branch. Wired to `applyBranchSwitchFromUI`. */
+  onBranchSwitchPayload?: (payload: BranchSwitchPayload) => void;
   /**
    * Repo accent color hex. When paired with `glowEnabled`, renders the
    * same `<ChatBackgroundGlow>` ambient wash chat uses, so navigating
@@ -73,6 +81,9 @@ export function FileBrowser({
   lockedModel,
   repoFullName,
   onSandboxExpired,
+  currentBranch,
+  defaultBranch,
+  onBranchSwitchPayload,
   accentHex,
   glowEnabled = false,
 }: FileBrowserProps) {
@@ -433,6 +444,9 @@ export function FileBrowser({
           lockedModel={lockedModel}
           repoFullName={repoFullName}
           onSandboxExpired={onSandboxExpired}
+          currentBranch={currentBranch}
+          defaultBranch={defaultBranch}
+          onBranchSwitchPayload={onBranchSwitchPayload}
           onSuccess={() => {
             toast.success('Committed and pushed!');
             loadDirectory(currentPath);

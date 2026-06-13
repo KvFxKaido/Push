@@ -16,7 +16,20 @@
  */
 
 import type { BranchSwitchPayload, ToolExecutionResult } from '@/types';
-import { executeSandboxToolCall } from './sandbox-tools';
+import type { SandboxToolCall } from './sandbox-tool-detection';
+
+type SandboxToolExecutor = (
+  call: SandboxToolCall,
+  sandboxId: string,
+) => Promise<ToolExecutionResult>;
+
+async function executeSandboxTool(
+  call: SandboxToolCall,
+  sandboxId: string,
+): Promise<ToolExecutionResult> {
+  const { executeSandboxToolCall } = await import('./sandbox-tools');
+  return executeSandboxToolCall(call, sandboxId);
+}
 
 export interface ForkBranchInWorkspaceResult {
   ok: boolean;
@@ -72,6 +85,7 @@ export async function forkBranchInWorkspace(
   sandboxId: string | null,
   name: string,
   from?: string,
+  executeTool: SandboxToolExecutor = executeSandboxTool,
 ): Promise<ForkBranchInWorkspaceResult> {
   if (!sandboxId) {
     return {
@@ -81,7 +95,7 @@ export async function forkBranchInWorkspace(
     };
   }
 
-  const result = await executeSandboxToolCall(
+  const result = await executeTool(
     {
       tool: 'sandbox_create_branch',
       args: { name, ...(from ? { from } : {}) },
@@ -118,6 +132,7 @@ export async function forkBranchInWorkspace(
 export async function switchBranchInWorkspace(
   sandboxId: string | null,
   branch: string,
+  executeTool: SandboxToolExecutor = executeSandboxTool,
 ): Promise<SwitchBranchInWorkspaceResult> {
   if (!sandboxId) {
     return {
@@ -127,7 +142,7 @@ export async function switchBranchInWorkspace(
     };
   }
 
-  const result = await executeSandboxToolCall(
+  const result = await executeTool(
     {
       tool: 'sandbox_switch_branch',
       args: { branch },
