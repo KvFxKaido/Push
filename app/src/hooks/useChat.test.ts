@@ -172,6 +172,9 @@ const verificationPolicy = vi.hoisted(() => ({
 const verificationRuntime = vi.hoisted(() => ({
   hydrateVerificationRuntimeState: vi.fn(() => null),
 }));
+const branchForkMigration = vi.hoisted(() => ({
+  applyBranchSwitchPayload: vi.fn(),
+}));
 
 vi.mock('@/lib/chat-runtime-state', () => chatRuntimeState);
 vi.mock('@/lib/orchestrator', () => orchestrator);
@@ -202,6 +205,7 @@ vi.mock('@/lib/run-engine', () => runEngine);
 vi.mock('@/lib/run-journal', () => runJournal);
 vi.mock('@/lib/verification-policy', () => verificationPolicy);
 vi.mock('@/lib/verification-runtime', () => verificationRuntime);
+vi.mock('@/lib/branch-fork-migration', () => branchForkMigration);
 
 type Cell = { value: unknown };
 const reactState = vi.hoisted(() => ({
@@ -326,6 +330,46 @@ describe('useChat — public API surface', () => {
         max: expect.any(Number),
         percent: expect.any(Number),
       }),
+    );
+  });
+
+  it('keeps mergeBranchInUI default source as ui-merge for existing callers', () => {
+    branchForkMigration.applyBranchSwitchPayload.mockClear();
+
+    const hook = useChat('owner/repo');
+    hook.mergeBranchInUI('main', { from: 'feature/merged', prNumber: 42 });
+
+    expect(branchForkMigration.applyBranchSwitchPayload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'main',
+        kind: 'merged',
+        from: 'feature/merged',
+        prNumber: 42,
+        source: 'ui-merge',
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it('threads merge_detected source through mergeBranchInUI when provided', () => {
+    branchForkMigration.applyBranchSwitchPayload.mockClear();
+
+    const hook = useChat('owner/repo');
+    hook.mergeBranchInUI('main', {
+      from: 'feature/merged',
+      prNumber: 42,
+      source: 'merge_detected',
+    });
+
+    expect(branchForkMigration.applyBranchSwitchPayload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'main',
+        kind: 'merged',
+        from: 'feature/merged',
+        prNumber: 42,
+        source: 'merge_detected',
+      }),
+      expect.any(Object),
     );
   });
 });

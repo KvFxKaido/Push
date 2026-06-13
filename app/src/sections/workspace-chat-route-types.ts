@@ -19,6 +19,7 @@ import type {
   AgentStatusEvent,
   AIProviderType,
   AttachmentData,
+  BranchSwitchSource,
   CardAction,
   ChatMessage,
   ChatSendOptions,
@@ -93,7 +94,10 @@ export interface ChatRouteWorkspaceProps {
    *  PR merge — the chat follows on branch switches but explicitly
    *  follows on merge too, just without auto-bumping the user to a fresh
    *  conversation. */
-  mergeBranchInUI: (toBranch: string, opts?: { from?: string; prNumber?: number }) => void;
+  mergeBranchInUI: (
+    toBranch: string,
+    opts?: { from?: string; prNumber?: number; source?: BranchSwitchSource },
+  ) => void;
   sandboxState: SandboxStateCardData | null;
   sandboxStateLoading: boolean;
   fetchSandboxState: (id: string) => void;

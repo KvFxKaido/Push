@@ -1,7 +1,7 @@
 # Branch Moments — Transitions Where Intent Lives
 
 Date: 2026-06-13
-Status: **Current** — §3 (carry verb, PR A) shipped; §1 (commit-card chips) and §2 (out-of-band merge banner) still to build.
+Status: **Current** — §2 (out-of-band merge banner, PR B) and §3 (carry verb, PR A) shipped; §1 (commit-card chips) still to build.
 Owner: Push
 
 ## Problem
@@ -76,7 +76,17 @@ A new **producer** for the existing `kind: 'merged'` payload:
   would permanently suppress the banner in the exact flow this exists for
   (open chat → merge from another surface → return without reloading).
   Misses re-check on the next chat open / refresh — one cheap request, not
-  a poll. (Review feedback: Codex P2.)
+  a poll. (Review feedback: Codex P2.) **Identity guard (shipped, Codex P2):**
+  a merged-PR hit is verified before it surfaces — the banner makes a
+  provenance claim, so branch-name matching alone is insufficient. Capture the
+  merged head SHA and compare it to the live branch tip
+  (`GET /repos/{repo}/branches/{branch}`): show only when the branch is gone
+  (404 — the normal post-merge cleanup) or still points at the merged commit;
+  if the tip diverged (a reused/advanced name with new unmerged work) suppress
+  and evict the positive cache so a later genuine merge re-checks fresh. A
+  secondary guard suppresses when an open PR is now in flight. The verification
+  calls only fire when a candidate merged PR exists, so the no-merge common
+  case stays a single request.
 - **Surface:** a dismissible in-chat banner (sibling of `CIStatusBanner`):
   *"`feat/x` was merged into `main` (PR #57) — continue this chat on
   `main`?"* with a single **Continue on main** action.
@@ -149,7 +159,7 @@ caught.
 | `sandbox_switch_branch` (model + #912 UI) | `switched` | existing |
 | `sandbox_switch_branch` + `carry_chat` | `carried` | **new (§3)** |
 | In-app merge flow (`mergeBranchInUI`) | `merged` | existing |
-| Out-of-band merge banner | `merged` (`source: 'merge_detected'`) | **new (§2)** |
+| Out-of-band merge banner | `merged` (`source: 'merge_detected'`) | shipped (§2) |
 | Desync reconciler (#913) | `switched` (`source: 'branch_desync'`) | existing |
 | Commit-card chips | via `switchBranchFromUI` / fork flow | **new (§1)** |
 
@@ -188,7 +198,7 @@ verification gate:
    `ChatMessage.kind`); they do not cross the CLI wire-event surface, so the
    only protocol pin is the `carry_chat` tool arg in
    `cli/tests/daemon-integration.test.mjs`.
-2. **PR B (merge banner):** `findMergedPRForBranch` helper +
+2. **PR B (merge banner): shipped.** `findMergedPRForBranch` helper +
    `'merge_detected'` source + banner component + per-chat dismissal +
    tests (detection hit, miss, API-failure silence, banner action calls
    `mergeBranchInUI` with the PR number).

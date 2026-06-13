@@ -10,12 +10,15 @@ import type {
   LoopPhase,
   CIStatus,
   QuickPrompt,
+  BranchSwitchSource,
 } from '@/types';
 import { groupChatMessages } from './tool-call-utils';
 import { CIStatusBanner } from './CIStatusBanner';
+import { MergeDetectedBanner } from './MergeDetectedBanner';
 import { TranscriptList } from './transcript/TranscriptList';
 import type { TranscriptHandlers } from './transcript/segment-model';
 import { getEmptyStateQuickPrompts } from '@/lib/quick-prompts';
+import type { MergeDetectedBannerState } from '@/lib/merge-detected-banner-state';
 import { PushMarkIcon } from '@/components/icons/push-custom-icons';
 import { getRoleDisplay } from '@push/lib/role-display';
 import {
@@ -199,6 +202,12 @@ interface ChatContainerProps {
   runHostAttach?: RunHostAttachHandle | null;
   ciStatus?: CIStatus | null;
   onDiagnoseCI?: () => void;
+  mergeDetected?: MergeDetectedBannerState | null;
+  mergeBranchInUI?: (
+    toBranch: string,
+    opts?: { from?: string; prNumber?: number; source?: BranchSwitchSource },
+  ) => void;
+  onDismissMergeDetected?: () => void;
   onEditUserMessage?: (messageId: string) => void;
   onRegenerateLastResponse?: () => void;
 }
@@ -297,6 +306,9 @@ export function ChatContainer({
   runHostAttach,
   ciStatus,
   onDiagnoseCI,
+  mergeDetected,
+  mergeBranchInUI,
+  onDismissMergeDetected,
   onEditUserMessage,
   onRegenerateLastResponse,
 }: ChatContainerProps) {
@@ -359,6 +371,13 @@ export function ChatContainer({
           />
         )}
         {ciStatus && onDiagnoseCI && <CIStatusBanner status={ciStatus} onDiagnose={onDiagnoseCI} />}
+        {mergeDetected && mergeBranchInUI && onDismissMergeDetected && (
+          <MergeDetectedBanner
+            {...mergeDetected}
+            mergeBranchInUI={mergeBranchInUI}
+            onDismiss={onDismissMergeDetected}
+          />
+        )}
 
         <EmptyState
           activeRepo={activeRepo}
@@ -381,6 +400,13 @@ export function ChatContainer({
         />
       )}
       {ciStatus && onDiagnoseCI && <CIStatusBanner status={ciStatus} onDiagnose={onDiagnoseCI} />}
+      {mergeDetected && mergeBranchInUI && onDismissMergeDetected && (
+        <MergeDetectedBanner
+          {...mergeDetected}
+          mergeBranchInUI={mergeBranchInUI}
+          onDismiss={onDismissMergeDetected}
+        />
+      )}
 
       <TranscriptList
         segments={segments}

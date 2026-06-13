@@ -4,6 +4,7 @@ import type {
   AgentStatusEvent,
   AIProviderType,
   AttachmentData,
+  BranchSwitchSource,
   ChatMessage,
   ChatSendOptions,
   Conversation,
@@ -859,20 +860,19 @@ export function useChat(
     [updateConversations, skipAutoCreateRef, dirtyConversationIdsRef],
   );
 
-  // Post-merge migration (MergeFlowSheet): emits kind:'merged' so the shared
-  // migration helper labels the transcript divider correctly and the active
-  // chat follows the default branch instead of being filtered out by
-  // useChatAutoSwitch. Drives the same R10/R12 mitigations as the fork path
-  // (cross-tab marker, in-tab guard, atomic backfill, runtime branch update).
+  // Post-merge migration: emit kind:'merged' through the shared branch-switch dispatcher.
   const mergeBranchInUI = useCallback(
-    (toBranch: string, opts?: { from?: string; prNumber?: number }): void => {
+    (
+      toBranch: string,
+      opts?: { from?: string; prNumber?: number; source?: BranchSwitchSource },
+    ): void => {
       applyBranchSwitchPayload(
         {
           name: toBranch,
           kind: 'merged',
           from: opts?.from,
           prNumber: opts?.prNumber,
-          source: 'ui-merge',
+          source: opts?.source ?? 'ui-merge',
         },
         {
           activeChatIdRef,

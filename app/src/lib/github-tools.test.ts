@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const { githubFetchMock } = vi.hoisted(() => ({ githubFetchMock: vi.fn() }));
 vi.mock('./github-tool-executor', async (importActual) => {
@@ -9,11 +9,36 @@ vi.mock('./github-tool-executor', async (importActual) => {
 import {
   createReviewCheckRun,
   decodeGitHubBase64Utf8,
+  detectStrandedMergedPR,
   detectToolCall,
   executePostPRReview,
+  findMergedPRForBranch,
   fetchReviewGuidance,
 } from './github-tools';
 import type { ReviewResult } from '@/types';
+
+function createStorageMock(entries: Record<string, string> = {}) {
+  const data = new Map(Object.entries(entries));
+  return {
+    getItem: vi.fn((key: string) => data.get(key) ?? null),
+    setItem: vi.fn((key: string, value: string) => {
+      data.set(key, value);
+    }),
+    removeItem: vi.fn((key: string) => {
+      data.delete(key);
+    }),
+  };
+}
+
+function stubGitHubToken(token = 'ghs-test-token') {
+  vi.stubGlobal('window', {
+    localStorage: createStorageMock({ github_app_token: token }),
+  });
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('detectToolCall delegation validation', () => {
   it('trims delegation strings and drops blank entries', () => {
@@ -58,6 +83,243 @@ describe('injected GitHub auth', () => {
     const headers = init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('token install-token-xyz');
     expect(headers['User-Agent']).toBeTruthy();
+  });
+});
+
+describe('findMergedPRForBranch', () => {
+  it('returns the most recent merged PR for a closed branch PR lookup', async () => {
+    githubFetchMock.mockReset();
+    stubGitHubToken();
+    githubFetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          {
+            number: 1,
+            title: 'Closed only',
+            html_url: 'https://github.test/pr/1',
+            merged_at: null,
+          },
+          {
+            number: 2,
+            title: 'Older merge',
+            html_url: 'https://github.test/pr/2',
+            merged_at: '2026-06-10T00:00:00Z',
+            base: { ref: 'main' },
+          },
+          {
+            number: 3,
+            title: 'Newer merge',
+            html_url: 'https://github.test/pr/3',
+            merged_at: '2026-06-11T00:00:00Z',
+            base: { ref: 'main' },
+            head: { sha: 'sha-newer' },
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    const result = await findMergedPRForBranch('octo/repo', 'feature/merged');
+
+    expect(result).toEqual({
+      number: 3,
+      title: 'Newer merge',
+      url: 'https://github.test/pr/3',
+      mergedAt: '2026-06-11T00:00:00Z',
+      baseBranch: 'main',
+      headSha: 'sha-newer',
+    });
+    const [url, init] = githubFetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(
+      'https://api.github.com/repos/octo/repo/pulls?state=closed&head=octo%3Afeature%2Fmerged',
+    );
+    expect((init.headers as Record<string, string>).Authorization).toBe('token ghs-test-token');
+  });
+
+  it('captures the real base branch so a non-default-base merge can be filtered', async () => {
+    githubFetchMock.mockReset();
+    stubGitHubToken();
+    githubFetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          {
+            number: 7,
+            title: 'Stacked onto develop',
+            html_url: 'https://github.test/pr/7',
+            merged_at: '2026-06-12T00:00:00Z',
+            base: { ref: 'develop' },
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    await expect(findMergedPRForBranch('octo/repo', 'feature/stacked')).resolves.toMatchObject({
+      number: 7,
+      baseBranch: 'develop',
+    });
+  });
+
+  it('returns null when no closed PR for the branch was merged', async () => {
+    githubFetchMock.mockReset();
+    stubGitHubToken();
+    githubFetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify([{ number: 4, merged_at: null }]), { status: 200 }),
+    );
+
+    await expect(findMergedPRForBranch('octo/repo', 'feature/unmerged')).resolves.toBeNull();
+    expect(githubFetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns null silently when the API request fails', async () => {
+    githubFetchMock.mockReset();
+    stubGitHubToken();
+    githubFetchMock.mockResolvedValueOnce(new Response('rate limited', { status: 403 }));
+
+    await expect(findMergedPRForBranch('octo/repo', 'feature/api-fail')).resolves.toBeNull();
+  });
+
+  it('caches positive hits only so misses re-check on the next open', async () => {
+    githubFetchMock.mockReset();
+    stubGitHubToken();
+    githubFetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              number: 8,
+              title: 'Merged later',
+              html_url: 'https://github.test/pr/8',
+              merged_at: '2026-06-12T00:00:00Z',
+            },
+          ]),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              number: 9,
+              title: 'Should not replace cache',
+              html_url: 'https://github.test/pr/9',
+              merged_at: '2026-06-13T00:00:00Z',
+            },
+          ]),
+          { status: 200 },
+        ),
+      );
+
+    await expect(findMergedPRForBranch('octo/repo', 'feature/cache-miss')).resolves.toBeNull();
+    await expect(findMergedPRForBranch('octo/repo', 'feature/cache-miss')).resolves.toMatchObject({
+      number: 8,
+    });
+    await expect(findMergedPRForBranch('octo/repo', 'feature/cache-miss')).resolves.toMatchObject({
+      number: 8,
+    });
+    expect(githubFetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('detectStrandedMergedPR — branch-freshness identity check', () => {
+  function mergedListResponse(branch: string, headSha: string) {
+    return new Response(
+      JSON.stringify([
+        {
+          number: 21,
+          title: `merged ${branch}`,
+          html_url: 'https://github.test/pr/21',
+          merged_at: '2026-06-12T00:00:00Z',
+          base: { ref: 'main' },
+          head: { sha: headSha },
+        },
+      ]),
+      { status: 200 },
+    );
+  }
+
+  it('returns the merged PR when the branch is gone (normal post-merge cleanup)', async () => {
+    githubFetchMock.mockReset();
+    stubGitHubToken();
+    githubFetchMock
+      .mockResolvedValueOnce(mergedListResponse('feature/gone', 'sha-merged'))
+      .mockResolvedValueOnce(new Response('', { status: 404 }));
+
+    await expect(detectStrandedMergedPR('octo/repo', 'feature/gone')).resolves.toMatchObject({
+      number: 21,
+    });
+    // closed-PR lookup + branch-tip probe; no open-PR call when the branch is absent.
+    expect(githubFetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns the merged PR when the live tip still points at the merged commit', async () => {
+    githubFetchMock.mockReset();
+    stubGitHubToken();
+    githubFetchMock
+      .mockResolvedValueOnce(mergedListResponse('feature/at-merge', 'sha-x'))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ commit: { sha: 'sha-x' } }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }));
+
+    await expect(detectStrandedMergedPR('octo/repo', 'feature/at-merge')).resolves.toMatchObject({
+      number: 21,
+    });
+  });
+
+  it('suppresses and evicts the cache when the branch tip diverged (reused name)', async () => {
+    githubFetchMock.mockReset();
+    stubGitHubToken();
+    githubFetchMock
+      .mockResolvedValueOnce(mergedListResponse('feature/reused', 'sha-old'))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ commit: { sha: 'sha-new' } }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(mergedListResponse('feature/reused', 'sha-old'))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ commit: { sha: 'sha-new' } }), { status: 200 }),
+      );
+
+    await expect(detectStrandedMergedPR('octo/repo', 'feature/reused')).resolves.toBeNull();
+    // Eviction means the next detection re-fetches the closed-PR list instead of
+    // being served the shadowed stale positive from cache.
+    await expect(detectStrandedMergedPR('octo/repo', 'feature/reused')).resolves.toBeNull();
+    expect(githubFetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('suppresses when the branch matches but a fresh open PR is in flight', async () => {
+    githubFetchMock.mockReset();
+    stubGitHubToken();
+    githubFetchMock
+      .mockResolvedValueOnce(mergedListResponse('feature/reopened', 'sha-x'))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ commit: { sha: 'sha-x' } }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            { number: 99, title: 'new work', html_url: 'u', head: { sha: 'sha-x' } },
+          ]),
+          { status: 200 },
+        ),
+      );
+
+    await expect(detectStrandedMergedPR('octo/repo', 'feature/reopened')).resolves.toBeNull();
+  });
+
+  it('suppresses without evicting when the tip cannot be verified', async () => {
+    githubFetchMock.mockReset();
+    stubGitHubToken();
+    githubFetchMock
+      .mockResolvedValueOnce(mergedListResponse('feature/unverifiable', 'sha-x'))
+      .mockResolvedValueOnce(new Response('boom', { status: 500 }))
+      .mockResolvedValueOnce(new Response('boom', { status: 500 }));
+
+    await expect(detectStrandedMergedPR('octo/repo', 'feature/unverifiable')).resolves.toBeNull();
+    // Second call: merged PR served from cache (not evicted), only the tip probe re-runs.
+    await expect(detectStrandedMergedPR('octo/repo', 'feature/unverifiable')).resolves.toBeNull();
+    expect(githubFetchMock).toHaveBeenCalledTimes(3);
   });
 });
 
