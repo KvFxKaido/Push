@@ -161,10 +161,21 @@ describe('runCoderAgent (PushStream consumer)', () => {
     expect(lead).toContain('do NOT use that Done/Changed/Verified/Open template');
     expect(lead).not.toContain('Read the delegation brief');
     expect(lead).not.toContain('the Orchestrator');
+    // Ported-from-Orchestrator sections the inline lead regained.
+    expect(lead).toContain('Voice:');
+    expect(lead).toContain('Never start with "I"');
+    expect(lead).toContain('Never mention other repos');
+    expect(lead).toContain('## Tool Call Placement');
+    expect(lead).toContain('## Tool Routing');
+    expect(lead).toContain('## Error Handling');
+    expect(lead).toContain('GIT_GUARD_BLOCKED');
 
     const coder = await promptFor(false);
     expect(coder).toContain('You are the Coder agent');
     expect(coder).toContain('Read the delegation brief');
+    // The delegated Coder keeps its narrower prompt — no lead voice/routing.
+    expect(coder).not.toContain('Voice:');
+    expect(coder).not.toContain('## Tool Routing');
   });
 
   it('fires onCheckpoint at the cadence (every 5th round) with a consistent state snapshot', async () => {

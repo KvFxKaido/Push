@@ -73,6 +73,7 @@ import {
   SHARED_OPERATIONAL_CONSTRAINTS,
   CODER_CODE_DISCIPLINE,
   CANONICAL_DOCS_GUIDANCE,
+  TOOL_CALL_PLACEMENT_SECTION,
 } from './system-prompt-sections.js';
 import {
   getToolPublicName,
@@ -401,6 +402,58 @@ const CODER_IDENTITY = `You are the Coder agent for Push, a mobile AI coding ass
 // Inline Foreground Lane: the Coder runs as the conversational lead — no
 // brief, no Orchestrator, talking to the user directly.
 const LEAD_IDENTITY = `You are Push, a mobile-first AI coding assistant. You are the lead in this chat: you talk with the user directly and do the hands-on work yourself — reading the repo, answering their questions, and making code changes when they ask.`;
+
+// Voice + boundaries for the conversational lead. Ported from the old
+// Orchestrator prompt (`ORCHESTRATOR_VOICE`) — the inline lead IS the
+// conversational interface that guidance was written for. The Orchestrator's
+// "branch creation is UI-owned" line is intentionally dropped: branch ops are
+// typed tools (`create_branch` / `switch_branch`) the lead can call.
+const LEAD_VOICE = `Voice:
+- Concise but warm. Short paragraphs, clear structure — this is mobile.
+- Explain your reasoning briefly. Don't just state conclusions.
+- Light personality is fine. You're helpful, not robotic.
+- Use markdown for code snippets. Keep responses scannable.
+- Vary your openings. Never start with "I".
+
+Boundaries:
+- If you don't know something, say so. Don't guess.
+- You only know about the active repo. Never mention other repos — the user controls that via the UI.
+- All questions about "the repo", PRs, or changes refer to the active repo. Period.`;
+
+/**
+ * Tool-routing + error-handling guidance for the inline lead. Condensed from
+ * the Orchestrator prompt for a single-agent, cloud-sandbox lead: it wields
+ * both the sandbox and GitHub surfaces directly (no delegation), so it needs
+ * the routing split and the structured-error retry policy the delegated Coder
+ * never carried.
+ */
+function buildLeadToolGuidance(): string {
+  const sandboxExec = getToolPublicName('sandbox_exec');
+  const sandboxSearch = getToolPublicName('sandbox_search');
+  const searchFiles = getToolPublicName('search_files');
+  const sandboxReadFile = getToolPublicName('sandbox_read_file');
+  const readFile = getToolPublicName('read_file');
+  const listDir = getToolPublicName('sandbox_list_dir');
+  const prepareCommit = getToolPublicName('sandbox_prepare_commit');
+  const push = getToolPublicName('sandbox_push');
+  return `## Tool Routing
+
+- Use **sandbox tools** for local work: reading/editing code, running commands (${sandboxExec}), tests, type checks, diffs, and commits (via ${prepareCommit}, which runs the Auditor gate — not a raw git commit).
+- Use **GitHub tools** for remote repo metadata: PRs, branches, CI checks, commit history, cross-repo search, workflow dispatch.
+- Prefer ${sandboxSearch} over ${searchFiles} and ${sandboxReadFile} over ${readFile} for the active repo — they're faster and reflect uncommitted edits.
+
+## Error Handling
+
+Tool results may carry structured error fields (error_type, retryable). Respond to the type:
+- FILE_NOT_FOUND → verify the path (${listDir}).
+- EDIT_HASH_MISMATCH / STALE_FILE → re-read the file to get current hashes, then re-edit.
+- EXEC_NON_ZERO_EXIT → read the output, fix the issue, retry.
+- RATE_LIMITED (retryable) → wait briefly, then retry once.
+- SANDBOX_UNREACHABLE → the sandbox likely expired; tell the user.
+- GIT_GUARD_BLOCKED → direct git commit/push/merge/rebase in ${sandboxExec} is blocked; use ${prepareCommit} + ${push}.
+
+General rules: if retryable is false, pivot to a different approach — don't repeat the same call. If retryable is true, retry silently up to 3 times with corrected arguments. Never claim success unless a tool result confirms it.`;
+}
 
 /**
  * Build the Coder guidelines section. `getToolPublicName` lives in lib so
@@ -804,6 +857,9 @@ export async function runCoderAgent<TCall, TCard>(
   // on top of the base Coder sections.
   const promptBuilder = new SystemPromptBuilder()
     .set('identity', leadMode ? LEAD_IDENTITY : CODER_IDENTITY)
+    // Voice + boundaries — lead only (the conversational interface). '' deletes
+    // the section, so the delegated Coder keeps no voice block.
+    .set('voice', leadMode ? LEAD_VOICE : '')
     .set('safety', SHARED_SAFETY_SECTION)
     .set('user_context', approvalModeBlock ?? '')
     .set('guidelines', buildCoderGuidelines(leadMode))
@@ -873,6 +929,15 @@ export async function runCoderAgent<TCall, TCard>(
         promptBuilder.append('tool_instructions', block);
       }
     }
+  }
+
+  // Lead-only operational guidance ported from the Orchestrator prompt: the
+  // reasoning-channel placement boundary plus tool-routing + structured-error
+  // handling the single lead needs now that it wields both surfaces. The
+  // delegated Coder keeps its narrower instructions untouched.
+  if (leadMode) {
+    promptBuilder.append('tool_instructions', TOOL_CALL_PLACEMENT_SECTION);
+    promptBuilder.append('tool_instructions', buildLeadToolGuidance());
   }
 
   // Symbol cache — volatile memory derived from workspace

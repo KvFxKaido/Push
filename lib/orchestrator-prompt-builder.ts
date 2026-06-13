@@ -15,6 +15,7 @@ import {
   SHARED_SAFETY_SECTION,
   SHARED_OPERATIONAL_CONSTRAINTS,
   ORCHESTRATOR_SIGNAL_EFFICIENCY,
+  TOOL_CALL_PLACEMENT_SECTION,
 } from './system-prompt-sections.js';
 import { getToolPublicName, getToolPublicNames } from './tool-registry.js';
 
@@ -114,9 +115,7 @@ You can emit multiple tool calls in one response. The runtime splits them into p
 ${mutatingShapesLine}
 - Maximum 6 parallel read-only calls per turn. If you need more, split across turns.
 
-## Tool Call Placement
-
-Tool calls are dispatched from your assistant response content channel only — the content text, not the reasoning/thinking text. If you are a reasoning model that thinks before answering, do **not** place tool call JSON inside the thinking pass, not even in fenced \`\`\`json blocks. The runtime does not scan reasoning/thinking output for tool calls; a call emitted there never fires and the turn sits idle waiting on a tool result that will never arrive. Finish thinking, then emit the tool call in your response content.
+${TOOL_CALL_PLACEMENT_SECTION}
 
 ${toolRoutingBlock}
 
