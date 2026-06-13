@@ -881,7 +881,7 @@ describe('verification gate + workspace-patch capture', () => {
       summaryLine: '\n\n[Acceptance Criteria] 1/1 passed',
     });
     const capture = vi.fn().mockResolvedValue(undefined);
-    const { ctx, store } = makeHarness();
+    const { ctx, store, updateVerificationState } = makeHarness();
     ctx.captureWorkspacePatchAtRoundEnd = capture as never;
 
     await startInlineCoderTurn(ctx, laneArgs());
@@ -914,6 +914,62 @@ describe('verification gate + workspace-patch capture', () => {
     };
     expect(captureArg.workspaceMutated).toBe(true);
     expect(captureArg.assistantToolCallMessageId).toBeTruthy();
+
+    // Each command result is reflected into VerificationRuntimeState, so a
+    // later runtime gate doesn't treat the passed check as still pending. We
+    // assert by running the recorded updater against a seeded state with a
+    // matching command rule and confirming it flips pending → passed.
+    const seeded = {
+      policyName: 'p',
+      backendTouched: true,
+      mutationOccurred: true,
+      lastUpdatedAt: 0,
+      requirements: [
+        {
+          id: 'typecheck',
+          label: 'tc',
+          scope: 'always' as const,
+          kind: 'command' as const,
+          command: 'npm run typecheck',
+          status: 'pending' as const,
+          updatedAt: 0,
+        },
+      ],
+    };
+    const recordCall = updateVerificationState.mock.calls.find(
+      ([, updater]) =>
+        (updater as (s: typeof seeded) => typeof seeded)(seeded).requirements[0].status ===
+        'passed',
+    );
+    expect(recordCall).toBeTruthy();
+  });
+
+  it('captures the patch for an untracked-only turn (new files, empty git diff HEAD)', async () => {
+    editingKernel();
+    // `git diff HEAD` is empty for `??` paths, but a new untracked file appears
+    // and HEAD is unchanged — a real uncommitted change the capture must keep.
+    mockGetSandboxDiff.mockResolvedValue({
+      diff: '',
+      head_sha: 'abc',
+      git_status: '?? newfile.ts',
+    });
+    mockCapturePreCoderSnapshot.mockResolvedValue({
+      preCoderHead: 'abc',
+      preCoderUntrackedFiles: [],
+    });
+    mockRunInlineVerificationCriteria.mockResolvedValue({
+      criteriaResults: [],
+      verificationCommandsById: new Map<string, string>(),
+      summaryLine: '',
+    });
+    const capture = vi.fn().mockResolvedValue(undefined);
+    const { ctx } = makeHarness();
+    ctx.captureWorkspacePatchAtRoundEnd = capture as never;
+
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect((capture.mock.calls[0][0] as { workspaceMutated: boolean }).workspaceMutated).toBe(true);
   });
 
   it('skips verification and capture on a conversational turn (no edit)', async () => {

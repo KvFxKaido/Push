@@ -54,6 +54,7 @@ import { invalidateMemoryForChangedFiles } from '@/lib/context-memory';
 import {
   extractChangedPathsFromDiff,
   recordVerificationArtifact,
+  recordVerificationCommandResult,
   recordVerificationMutation,
 } from '@/lib/verification-runtime';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
@@ -886,6 +887,21 @@ export async function startInlineCoderTurn(
       }),
     );
   }
+  // Reflect each command result into the chat's VerificationRuntimeState the
+  // same way the delegated Coder does (coder-delegation-handler.ts) — otherwise
+  // a command rule stays `pending` even though we just ran it, and a later
+  // runtime verification gate would block as if the check never happened
+  // (Codex P2 on #925).
+  for (const r of verification.criteriaResults) {
+    const command = verification.verificationCommandsById.get(r.id);
+    if (!command) continue;
+    ctx.updateVerificationState(chatId, (state) =>
+      recordVerificationCommandResult(state, command, {
+        exitCode: r.exitCode,
+        detail: `${r.id} exited with code ${r.exitCode}.`,
+      }),
+    );
+  }
   const auditorGate = workspaceChanged
     ? await runCoderAuditorGate(
         {
@@ -975,11 +991,21 @@ export async function startInlineCoderTurn(
   // captured the uncommitted diff as a replayable `workspace-patch` card off a
   // `subagent.completed{coder}` round event, so edits survived a sandbox
   // restart. A kernel-led inline turn emits no such event, so the capture
-  // never fired. Drive it directly when the turn left *uncommitted* changes
+  // never fired. Drive it directly when the turn left uncommitted changes
   // (committed work lives in git and needs no replay card), anchoring the card
   // to the last synthetic tool-call message. Best-effort, fire-and-forget at
-  // the round-end seam like the loop. ---
-  if (lastTaskDiff && lastToolCallId && ctx.captureWorkspacePatchAtRoundEnd) {
+  // the round-end seam like the loop.
+  //
+  // Gate on `lastTaskDiff || addedUntrackedFile`, not `lastTaskDiff` alone:
+  // `lastTaskDiff` is `git diff HEAD` (tracked only), but the capture's own
+  // `fetchSandboxDiffWithMeta` also emits a `--no-index` diff for untracked
+  // files — so an untracked-only turn (new files, empty `git diff HEAD`) has a
+  // real patch to persist and must not be skipped (Codex P2 on #925). ---
+  if (
+    (lastTaskDiff || addedUntrackedFile) &&
+    lastToolCallId &&
+    ctx.captureWorkspacePatchAtRoundEnd
+  ) {
     await ctx.captureWorkspacePatchAtRoundEnd({
       chatId,
       round: result.rounds,
