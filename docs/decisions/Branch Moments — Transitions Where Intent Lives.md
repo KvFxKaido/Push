@@ -71,16 +71,24 @@ A new **producer** for the existing `kind: 'merged'` payload:
   chat's branch is not the default branch, look up a merged PR whose head is
   that branch — one new helper beside `findOpenPRForBranch` in
   `github-tools.ts` (`GET /repos/{repo}/pulls?state=closed&head=owner:branch`,
-  filter `merged_at`). Cache the answer per `(repo, branch)` for the session;
-  this is one extra request per stale-branch chat open, not a poll.
+  filter `merged_at`). Cache **positive hits only**, per `(repo, branch)`:
+  a merged PR stays merged, so the hit never goes stale, but a cached miss
+  would permanently suppress the banner in the exact flow this exists for
+  (open chat → merge from another surface → return without reloading).
+  Misses re-check on the next chat open / refresh — one cheap request, not
+  a poll. (Review feedback: Codex P2.)
 - **Surface:** a dismissible in-chat banner (sibling of `CIStatusBanner`):
   *"`feat/x` was merged into `main` (PR #57) — continue this chat on
   `main`?"* with a single **Continue on main** action.
 - **Act:** the action calls `mergeBranchInUI(defaultBranch, { from: branch,
-  prNumber })` — literally the same call the in-app merge flow makes, so the
-  migration, divider (`branch_merged`), and skip-teardown routing are
-  identical. New `BranchSwitchSource` member `'merge_detected'` so the
-  divider's provenance is honest (pattern: `'branch_desync'` from #913).
+  prNumber, source: 'merge_detected' })` — the same migration, divider
+  (`branch_merged`), and skip-teardown routing as the in-app merge flow.
+  This requires extending `mergeBranchInUI`'s opts with
+  `source?: BranchSwitchSource` (default `'ui-merge'`, preserving existing
+  callers) — today it hard-codes `'ui-merge'`, which would make the banner
+  masquerade as an in-app merge and defeat the provenance requirement.
+  (Review feedback: Codex P2.) New `BranchSwitchSource` member
+  `'merge_detected'` (pattern: `'branch_desync'` from #913).
 - Dismissal is per-chat and persistent (don't re-nag every open). If the
   user dismisses and later wants the migration, the model carry verb (§3)
   covers it.
@@ -100,8 +108,14 @@ indistinguishable from "no merged PR" by design.
   `applyBranchSwitchPayload` (migrate the active conversation, backfill
   message branch attribution), with its own transcript divider so provenance
   stays honest: a third divider kind alongside `branch_forked` /
-  `branch_merged` (`MessageBubble.tsx:617/637` is the render pattern),
-  labeled "conversation continued from `<from>`".
+  `branch_merged` (`MessageBubble.tsx` renders both as centered dividers —
+  follow that pattern), labeled "conversation continued from `<from>`".
+  Concrete touch points: the payload is constructed in `sandbox-tools.ts`
+  `case 'sandbox_switch_branch'` (emit `carried` conditionally on the arg),
+  and the dispatcher's forked/merged migration arm extends to include
+  `carried` — today anything that isn't `forked`/`merged` falls through to
+  the plain-sync path, which is exactly the leave-the-chat-behind behavior
+  this verb exists to avoid.
 - Why a new kind instead of reusing `merged`: the divider must not claim a
   merge that didn't happen, and `forked` claims a branch was created. Three
   honest kinds beat two overloaded ones.
