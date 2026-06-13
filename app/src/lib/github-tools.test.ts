@@ -103,12 +103,14 @@ describe('findMergedPRForBranch', () => {
             title: 'Older merge',
             html_url: 'https://github.test/pr/2',
             merged_at: '2026-06-10T00:00:00Z',
+            base: { ref: 'main' },
           },
           {
             number: 3,
             title: 'Newer merge',
             html_url: 'https://github.test/pr/3',
             merged_at: '2026-06-11T00:00:00Z',
+            base: { ref: 'main' },
           },
         ]),
         { status: 200 },
@@ -122,12 +124,37 @@ describe('findMergedPRForBranch', () => {
       title: 'Newer merge',
       url: 'https://github.test/pr/3',
       mergedAt: '2026-06-11T00:00:00Z',
+      baseBranch: 'main',
     });
     const [url, init] = githubFetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(
       'https://api.github.com/repos/octo/repo/pulls?state=closed&head=octo%3Afeature%2Fmerged',
     );
     expect((init.headers as Record<string, string>).Authorization).toBe('token ghs-test-token');
+  });
+
+  it('captures the real base branch so a non-default-base merge can be filtered', async () => {
+    githubFetchMock.mockReset();
+    stubGitHubToken();
+    githubFetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          {
+            number: 7,
+            title: 'Stacked onto develop',
+            html_url: 'https://github.test/pr/7',
+            merged_at: '2026-06-12T00:00:00Z',
+            base: { ref: 'develop' },
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    await expect(findMergedPRForBranch('octo/repo', 'feature/stacked')).resolves.toMatchObject({
+      number: 7,
+      baseBranch: 'develop',
+    });
   });
 
   it('returns null when no closed PR for the branch was merged', async () => {

@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   dismissMergeDetectedBanner,
+  mergeDetectedCandidate,
   visibleMergeDetectedBannerForChat,
   type MergeDetectedBannerState,
 } from './merge-detected-banner-state';
+import type { MergedPRForBranch } from './github-tools';
 
 function createStorageMock() {
   const data = new Map<string, string>();
@@ -18,15 +20,18 @@ function createStorageMock() {
   };
 }
 
+const mergedPR: MergedPRForBranch = {
+  number: 42,
+  title: 'Ship it',
+  url: 'https://github.test/pr/42',
+  mergedAt: '2026-06-12T00:00:00Z',
+  baseBranch: 'main',
+};
+
 const candidate: MergeDetectedBannerState = {
   branch: 'feature/merged',
   defaultBranch: 'main',
-  pr: {
-    number: 42,
-    title: 'Ship it',
-    url: 'https://github.test/pr/42',
-    mergedAt: '2026-06-12T00:00:00Z',
-  },
+  pr: mergedPR,
 };
 
 beforeEach(() => {
@@ -41,5 +46,20 @@ describe('merge detected banner dismissal state', () => {
 
     expect(visibleMergeDetectedBannerForChat('chat-1', candidate)).toBeNull();
     expect(visibleMergeDetectedBannerForChat('chat-2', candidate)).toBe(candidate);
+  });
+});
+
+describe('mergeDetectedCandidate', () => {
+  it('builds a candidate when the PR merged into the default branch', () => {
+    expect(mergeDetectedCandidate('feature/merged', 'main', mergedPR)).toEqual(candidate);
+  });
+
+  it('returns null when the PR merged into a non-default base', () => {
+    const stacked: MergedPRForBranch = { ...mergedPR, baseBranch: 'develop' };
+    expect(mergeDetectedCandidate('feature/merged', 'main', stacked)).toBeNull();
+  });
+
+  it('returns null when there is no merged PR', () => {
+    expect(mergeDetectedCandidate('feature/merged', 'main', null)).toBeNull();
   });
 });

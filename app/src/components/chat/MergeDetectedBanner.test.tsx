@@ -38,6 +38,7 @@ describe('MergeDetectedBanner', () => {
         title: 'Ship it',
         url: 'https://github.test/pr/42',
         mergedAt: '2026-06-12T00:00:00Z',
+        baseBranch: 'main',
       },
       mergeBranchInUI,
       onDismiss: vi.fn(),

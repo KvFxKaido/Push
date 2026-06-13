@@ -3,6 +3,7 @@ import { findMergedPRForBranch } from '@/lib/github-tools';
 import {
   dismissMergeDetectedBanner,
   isMergeDetectedBannerDismissed,
+  mergeDetectedCandidate,
   visibleMergeDetectedBannerForChat,
   type MergeDetectedBannerState,
 } from '@/lib/merge-detected-banner-state';
@@ -46,7 +47,7 @@ export function useMergeDetectedBanner({
     const pr = await findMergedPRForBranch(repo, branch);
     if (seq !== requestSeqRef.current) return;
 
-    const candidate = pr ? { branch, defaultBranch: targetDefault, pr } : null;
+    const candidate = mergeDetectedCandidate(branch, targetDefault, pr);
     setMergeDetected(visibleMergeDetectedBannerForChat(chatId, candidate));
   }, [activeChatId, chatBranch, defaultBranch, repoFullName]);
 

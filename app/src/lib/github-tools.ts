@@ -242,6 +242,11 @@ export interface MergedPRForBranch {
   title: string;
   url: string;
   mergedAt: string;
+  /** The branch this PR merged INTO. Captured so the merge-detected banner can
+   *  prove the PR targeted the default branch before claiming "merged into
+   *  <default>" and migrating the chat there — a branch whose PR merged into a
+   *  non-default base (stacked PR, release branch) must not be mislabeled. */
+  baseBranch: string;
 }
 
 const mergedPRForBranchCache = new Map<string, MergedPRForBranch>();
@@ -286,6 +291,7 @@ export async function findMergedPRForBranch(
       title: typeof merged.title === 'string' ? merged.title : '',
       url: typeof merged.html_url === 'string' ? merged.html_url : '',
       mergedAt: merged.merged_at as string,
+      baseBranch: typeof merged.base?.ref === 'string' ? merged.base.ref : '',
     };
     // Positive-only cache: a merged PR stays merged, but caching misses would
     // suppress the return-after-merge banner until reload in the flow this serves.

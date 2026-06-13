@@ -46,3 +46,17 @@ export function visibleMergeDetectedBannerForChat(
   if (!candidate || isMergeDetectedBannerDismissed(chatId)) return null;
   return candidate;
 }
+
+/** Build a banner candidate only when the merged PR actually targeted the
+ *  default branch. The banner claims "<branch> was merged into <default>" and
+ *  migrates the chat to <default>; a PR that merged into a non-default base
+ *  (stacked PR, release branch, develop) would make that claim false and
+ *  strand the conversation on the wrong branch, so it must not surface. */
+export function mergeDetectedCandidate(
+  branch: string,
+  defaultBranch: string,
+  pr: MergedPRForBranch | null,
+): MergeDetectedBannerState | null {
+  if (!pr || pr.baseBranch !== defaultBranch) return null;
+  return { branch, defaultBranch, pr };
+}
