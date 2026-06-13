@@ -25,7 +25,8 @@
  * imports, matching the verification and git/release extraction pattern.
  */
 
-import type { FileListCardData, ToolExecutionResult } from '@/types';
+import type { FileListCardData, StructuredToolError, ToolExecutionResult } from '@/types';
+import { isDefinitivelyGoneMessage } from './sandbox-error-utils';
 import type {
   ExecResult,
   FileEntry,
@@ -424,7 +425,14 @@ export async function handleListDir(
     // of the tool executor and killed the whole inline turn. classifyError
     // maps "no such file"/"not found" → FILE_NOT_FOUND (retryable: false).
     const message = error instanceof Error ? error.message : 'Failed to list directory';
-    const err = classifyError(message, dirPath);
+    // Distinguish a genuinely-gone sandbox from a missing path FIRST: a real
+    // expiration surfaces as "Sandbox not found or expired … (NOT_FOUND)",
+    // whose text would hit classifyError's broad `not found` → FILE_NOT_FOUND
+    // branch and rob extractSideEffects of the SANDBOX_UNREACHABLE signal that
+    // fires the health-check/recovery + restart guidance. (Codex P2 on #924.)
+    const err: StructuredToolError = isDefinitivelyGoneMessage(message)
+      ? { type: 'SANDBOX_UNREACHABLE', retryable: false, message, detail: `Path: ${dirPath}` }
+      : classifyError(message, dirPath);
     return {
       text: formatStructuredError(err, `[Tool Error — sandbox_list_dir]\n${message}`),
       structuredError: err,

@@ -221,6 +221,21 @@ describe('handleListDir', () => {
     expect(result.structuredError?.retryable).toBe(false);
     expect(result.text).toContain('[Tool Error — sandbox_list_dir]');
   });
+
+  it('keeps a genuinely-gone sandbox as SANDBOX_UNREACHABLE, not FILE_NOT_FOUND', async () => {
+    // Codex P2 on #924: a real expiration ("Sandbox not found or expired") must
+    // not be downgraded to the benign FILE_NOT_FOUND by classifyError's broad
+    // "not found" branch — extractSideEffects only fires recovery/restart on
+    // SANDBOX_UNREACHABLE.
+    const ctx = makeContext();
+    ctx.listDirectory.mockRejectedValue(
+      new Error('Sandbox not found or expired. Start a new sandbox to continue. (NOT_FOUND)'),
+    );
+
+    const result = await handleListDir(ctx, { path: '/workspace' });
+
+    expect(result.structuredError?.type).toBe('SANDBOX_UNREACHABLE');
+  });
 });
 
 describe('handleReadSymbols', () => {
