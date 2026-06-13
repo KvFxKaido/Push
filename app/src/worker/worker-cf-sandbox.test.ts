@@ -41,7 +41,8 @@ function isOwnerTokenReadCommand(command: unknown): command is string {
 
 function isBranchStampCommand(command: unknown): command is string {
   return (
-    typeof command === 'string' && command.includes('git -C /workspace rev-parse --abbrev-ref HEAD')
+    typeof command === 'string' &&
+    command.includes('git -C /workspace symbolic-ref --short -q HEAD')
   );
 }
 
@@ -519,6 +520,51 @@ describe('handleCloudflareSandbox happy paths', () => {
       workspace_revision: 0,
       branch: 'main',
     });
+  });
+
+  it('stamps unborn/orphan branches by their symref name', async () => {
+    // `git switch --orphan gh-pages` leaves HEAD on a branch with no commits.
+    // rev-parse would fail there; symbolic-ref still names the branch (Codex
+    // P2 on PR #913).
+    const sandbox = mockSandbox();
+    sandbox.exec.mockImplementation(async (command: string) => {
+      if (isOwnerTokenReadCommand(command)) {
+        return { stdout: DEFAULT_OWNER_TOKEN, stderr: '', exitCode: 0 };
+      }
+      if (isBranchStampCommand(command)) {
+        return { stdout: 'gh-pages\n', stderr: '', exitCode: 0 };
+      }
+      return { stdout: 'ok', stderr: '', exitCode: 0 };
+    });
+
+    const response = await callRoute('exec', { sandbox_id: 'sb-1', command: 'pwd' });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ branch: 'gh-pages' });
+  });
+
+  it('stamps detached HEAD as the literal HEAD marker (symbolic-ref exit 1)', async () => {
+    const sandbox = mockSandbox();
+    sandbox.exec.mockImplementation(async (command: string) => {
+      if (isOwnerTokenReadCommand(command)) {
+        return { stdout: DEFAULT_OWNER_TOKEN, stderr: '', exitCode: 0 };
+      }
+      if (isBranchStampCommand(command)) {
+        return { stdout: '', stderr: '', exitCode: 1 };
+      }
+      return { stdout: 'ok', stderr: '', exitCode: 0 };
+    });
+
+    const response = await callRoute('exec', { sandbox_id: 'sb-1', command: 'pwd' });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ branch: 'HEAD' });
+    const events = vi
+      .mocked(console.log)
+      .mock.calls.map((call) => JSON.parse(String(call[0])) as Record<string, unknown>);
+    expect(events).not.toContainEqual(
+      expect.objectContaining({ event: 'sandbox_exec_branch_stamp_failed' }),
+    );
   });
 
   it('omits the branch stamp and logs when the post-exec branch read fails', async () => {

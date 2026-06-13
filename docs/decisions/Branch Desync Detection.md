@@ -36,7 +36,10 @@ is no branch name to track.
 
 - `ExecResult` includes optional `branch?: string`.
 - Cloudflare sandbox exec stamping reads the branch after command completion.
-  Detached HEAD stamps the literal string `HEAD`.
+  Detached HEAD stamps the literal string `HEAD`. The read uses the HEAD
+  symref (`git symbolic-ref`), not `rev-parse`, so unborn/orphan branches
+  (no commits yet) still stamp their branch name instead of dropping the
+  desync.
 - The Cloudflare background-exec completion path carries the stamp through
   `exec-status`, because web `sandbox_exec` consumes detached exec results.
 - Buffered Cloudflare `exec()` is stamped too while that path still exists.

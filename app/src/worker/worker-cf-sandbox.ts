@@ -772,31 +772,41 @@ async function readCurrentBranchStamp(
   context: { sandboxId: string; route: string; processId?: string },
 ): Promise<string | undefined> {
   try {
+    // `symbolic-ref` rather than `rev-parse --abbrev-ref`: unborn/orphan
+    // branches (e.g. `git switch --orphan gh-pages` before the first commit)
+    // have no commit for rev-parse to resolve, but their HEAD symref already
+    // names the branch. With `-q`, exit 1 + empty stdout specifically means
+    // detached HEAD; other failures (corrupt repo, missing workspace) exit
+    // 128 with stderr and omit the stamp.
     const result = (await withExecDeadline(
-      sandbox.exec('git -C /workspace rev-parse --abbrev-ref HEAD', {
+      sandbox.exec('git -C /workspace symbolic-ref --short -q HEAD', {
         env: SANDBOX_EXEC_RESOURCE_ENV,
         timeout: 5_000,
       }),
       7_000,
     )) as { stdout?: string; stderr?: string; exitCode?: number };
-    if ((result.exitCode ?? 0) !== 0) {
-      wlog('warn', 'sandbox_exec_branch_stamp_failed', {
-        ...context,
-        exitCode: result.exitCode ?? null,
-        message: (result.stderr || result.stdout || 'branch stamp command failed').trim(),
-      });
-      return undefined;
-    }
+    const exitCode = result.exitCode ?? 0;
     const branch = (result.stdout ?? '').trim();
-    if (!branch) {
-      wlog('warn', 'sandbox_exec_branch_stamp_failed', {
-        ...context,
-        exitCode: result.exitCode ?? null,
-        message: 'branch stamp command returned empty stdout',
-      });
-      return undefined;
+    if (exitCode === 0) {
+      if (!branch) {
+        wlog('warn', 'sandbox_exec_branch_stamp_failed', {
+          ...context,
+          exitCode,
+          message: 'branch stamp command returned empty stdout',
+        });
+        return undefined;
+      }
+      return branch;
     }
-    return branch;
+    if (exitCode === 1 && !branch) {
+      return 'HEAD';
+    }
+    wlog('warn', 'sandbox_exec_branch_stamp_failed', {
+      ...context,
+      exitCode,
+      message: (result.stderr || result.stdout || 'branch stamp command failed').trim(),
+    });
+    return undefined;
   } catch (err) {
     wlog('warn', 'sandbox_exec_branch_stamp_failed', {
       ...context,
