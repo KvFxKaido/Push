@@ -30,6 +30,7 @@ import {
   execLongRunningInSandbox,
   getSandboxLifecycleEvents,
   hasInFlightSandboxCalls,
+  mapSandboxErrorCode,
   msSinceLastSandboxCall,
   parseEnvironmentProbe,
   SANDBOX_TS_ARROW_FUNCTION_REGEX,
@@ -1095,5 +1096,19 @@ describe('execLongRunningInSandbox — start failures', () => {
     expect(result.exitCode).toBe(124);
     expect(result.terminalReason).toBe('cancelled');
     expect(mockFetch).not.toHaveBeenCalled(); // pre-aborted: nothing starts
+  });
+});
+
+describe('mapSandboxErrorCode — file-not-found vs sandbox-gone', () => {
+  it('maps FILE_NOT_FOUND to a benign tool error, not SANDBOX_UNREACHABLE', () => {
+    // Regression: a missing path inside a live sandbox must not be classified
+    // as a sandbox loss (which routes to the fatal gone-detector and kills the
+    // turn). It stays a recoverable FILE_NOT_FOUND the model can route around.
+    expect(mapSandboxErrorCode('FILE_NOT_FOUND')).toBe('FILE_NOT_FOUND');
+    expect(mapSandboxErrorCode('FILE_NOT_FOUND')).not.toBe('SANDBOX_UNREACHABLE');
+  });
+
+  it('still maps a genuinely-gone sandbox (NOT_FOUND) to SANDBOX_UNREACHABLE', () => {
+    expect(mapSandboxErrorCode('NOT_FOUND')).toBe('SANDBOX_UNREACHABLE');
   });
 });

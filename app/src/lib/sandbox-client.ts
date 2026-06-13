@@ -186,6 +186,11 @@ const ERROR_MESSAGES: Record<string, string> = {
   TIMEOUT:
     'The sandbox stopped responding before the operation finished. It may still be running — verify its effects before re-running.',
   NOT_FOUND: 'Sandbox not found or expired. Start a new sandbox to continue.',
+  // A path inside a LIVE sandbox doesn't exist (e.g. listed a directory that
+  // isn't there). Deliberately worded WITHOUT "sandbox not found" so the
+  // friendly text can't trip `isDefinitivelyGoneMessage` and launder a benign
+  // missing-path into a fatal sandbox-loss.
+  FILE_NOT_FOUND: 'No such file or directory in the workspace.',
   DISK_FULL:
     'The sandbox workspace is out of disk space. Delete build artifacts or caches to free space — restarting the sandbox loses uncommitted work.',
 };
@@ -248,6 +253,11 @@ export function mapSandboxErrorCode(code: string): ToolErrorType {
     case 'CF_ERROR':
     case 'CF_NOT_CONFIGURED':
       return 'SANDBOX_UNREACHABLE';
+    // A missing path inside a live sandbox — benign and recoverable (the model
+    // tries another path), NOT a sandbox loss. Kept distinct from NOT_FOUND so
+    // it never routes to SANDBOX_UNREACHABLE / the fatal gone-detector.
+    case 'FILE_NOT_FOUND':
+      return 'FILE_NOT_FOUND';
     case 'AUTH_FAILURE':
       return 'AUTH_FAILURE';
     case 'DISK_FULL':

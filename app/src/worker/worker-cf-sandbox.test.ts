@@ -1910,4 +1910,23 @@ describe('background execution routes', () => {
     expect(response.status).toBe(200);
     expect(await jsonBody(response)).toEqual({ ok: true });
   });
+
+  it('classifies a missing directory as FILE_NOT_FOUND (404), not a gone sandbox', async () => {
+    // Regression: listing a path that doesn't exist inside a LIVE sandbox threw
+    // FileNotFoundError, which the broad `not found` classifier folded into the
+    // sandbox-gone NOT_FOUND bucket → the client surfaced "Sandbox not found or
+    // expired" and the kernel killed the whole turn. A missing path must be a
+    // benign, non-retryable FILE_NOT_FOUND (4xx), distinct from a gone sandbox.
+    const sandbox = mockSandbox();
+    sandbox.listFiles.mockRejectedValue(
+      new Error('FileNotFoundError: Directory not found: /workspace/src'),
+    );
+
+    const response = await callRoute('list', { sandbox_id: 'sb1', path: '/workspace/src' });
+
+    expect(response.status).toBe(404);
+    const body = await jsonBody(response);
+    expect(body.code).toBe('FILE_NOT_FOUND');
+    expect(body.code).not.toBe('NOT_FOUND');
+  });
 });

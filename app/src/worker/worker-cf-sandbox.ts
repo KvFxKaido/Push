@@ -388,16 +388,18 @@ export async function handleCloudflareSandbox(
       deadline: isDeadline,
       message: err instanceof Error ? err.message : String(err),
     });
+    const code = isDeadline ? 'TIMEOUT' : classifyCfError(err);
     return Response.json(
       {
         error: err instanceof Error ? err.message : String(err),
-        code: isDeadline ? 'TIMEOUT' : classifyCfError(err),
+        code,
       },
       // 504 for deadline so callers can distinguish "we stopped waiting"
       // from "backend crashed". callSandboxHandler already treats any
       // status >= 500 as retryable, so the kernel surfaces retry-friendly
-      // structured errors for both cases.
-      { status: isDeadline ? 504 : 500 },
+      // structured errors for both cases. FILE_NOT_FOUND is a 4xx so the
+      // client does NOT burn 5 retries on a path that will never exist.
+      { status: isDeadline ? 504 : code === 'FILE_NOT_FOUND' ? 404 : 500 },
     );
   }
 }
@@ -2184,6 +2186,22 @@ function classifyCfError(err: unknown): string {
   // into CONTAINER_ERROR sends users to exactly the wrong remediation.
   if (/no space left|enospc|disk quota exceeded/i.test(msg)) return 'DISK_FULL';
   if (/timeout/i.test(msg)) return 'TIMEOUT';
+  // A file/directory missing *inside a live sandbox* (listFiles/readFile on a
+  // bad path) is a benign, recoverable tool result — NOT a gone sandbox. Match
+  // the file-op signatures explicitly and BEFORE the broad not-found arm below,
+  // so a genuinely-gone container ("container not found", session lookups)
+  // still falls through to NOT_FOUND/CONTAINER_ERROR. Without this split, the
+  // broad `not found` regex folded "Directory not found: /workspace/src" into
+  // the sandbox-gone bucket; the client then rewrote it to "Sandbox not found
+  // or expired", which `isDefinitivelyGoneMessage` matched and treated as a
+  // fatal sandbox loss — killing the whole turn over a missing directory.
+  if (
+    /FileNotFoundError|file not found|directory not found|no such file or directory|not a directory|ENOENT/i.test(
+      msg,
+    )
+  ) {
+    return 'FILE_NOT_FOUND';
+  }
   if (/not found|no such/i.test(msg)) return 'NOT_FOUND';
   if (/container|crashed|unhealthy/i.test(msg)) return 'CONTAINER_ERROR';
   return 'CF_ERROR';
