@@ -12,7 +12,10 @@ import type { BranchSwitchProbe } from '@/lib/branch-switch-probe';
 import { getRepoAppearanceColorHex, hexToRgba } from '@/lib/repo-appearance';
 import { getSandboxDiff } from '@/lib/sandbox-client';
 import { executeSandboxToolCall } from '@/lib/sandbox-tools';
-import { runCommitSwitchDefaultAction } from '@/lib/commit-card-branch-actions';
+import {
+  runCommitSwitchConfirmAction,
+  runCommitSwitchDefaultAction,
+} from '@/lib/commit-card-branch-actions';
 import { cleanWorkspacePublishMessage } from '@/lib/workspace-publish';
 import type { CardAction } from '@/types';
 import { ChatScreen } from './ChatScreen';
@@ -420,18 +423,26 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     setCommitSwitchingBranch(commitSwitchConfirmBranch);
     setCommitSwitchError(null);
     try {
-      const result = await switchBranchFromUI(commitSwitchConfirmBranch);
-      if (!result.ok) {
-        setCommitSwitchError(result.errorMessage || 'Failed to switch branches.');
-        return;
-      }
-      closeCommitSwitchConfirm();
+      await runCommitSwitchConfirmAction({
+        branch: commitSwitchConfirmBranch,
+        sandboxId: sandbox.sandboxId,
+        setCurrentBranch,
+        switchBranchFromUI,
+        onError: setCommitSwitchError,
+        onDone: closeCommitSwitchConfirm,
+      });
     } finally {
       setCommitSwitchingBranch((current) =>
         current === commitSwitchConfirmBranch ? null : current,
       );
     }
-  }, [closeCommitSwitchConfirm, commitSwitchConfirmBranch, switchBranchFromUI]);
+  }, [
+    closeCommitSwitchConfirm,
+    commitSwitchConfirmBranch,
+    sandbox.sandboxId,
+    setCurrentBranch,
+    switchBranchFromUI,
+  ]);
 
   const handleWorkspaceCardAction = useCallback(
     (action: CardAction) => {
@@ -820,6 +831,11 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
             fromBranch={
               commitForkFromBranch || activeRepo.current_branch || activeRepo.default_branch
             }
+            // Commit-card forks anchor to the branch the commit landed on
+            // (stamped in commitForkFromBranch), not the ambient HEAD — so the
+            // fork is honest even if the user switched away before opening this
+            // sheet. The ambient fork flow leaves this undefined (HEAD default).
+            forkFrom={commitForkFromBranch ?? undefined}
             forkBranch={props.forkBranchFromUI}
           />
         </Suspense>

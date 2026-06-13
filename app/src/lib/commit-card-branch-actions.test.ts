@@ -1,5 +1,69 @@
 import { describe, expect, it, vi } from 'vitest';
-import { runCommitSwitchDefaultAction } from './commit-card-branch-actions';
+import {
+  runCommitSwitchConfirmAction,
+  runCommitSwitchDefaultAction,
+} from './commit-card-branch-actions';
+
+describe('runCommitSwitchConfirmAction', () => {
+  it('cold-switches via setCurrentBranch when there is no sandbox', async () => {
+    const setCurrentBranch = vi.fn();
+    const switchBranchFromUI = vi.fn(async () => ({ ok: true as const }));
+    const onDone = vi.fn();
+    const onError = vi.fn();
+
+    await runCommitSwitchConfirmAction({
+      branch: 'main',
+      sandboxId: null,
+      setCurrentBranch,
+      switchBranchFromUI,
+      onError,
+      onDone,
+    });
+
+    // No dead-end: the tracked branch updates so the next start opens it,
+    // instead of switchBranchInWorkspace(null, ...) erroring.
+    expect(setCurrentBranch).toHaveBeenCalledWith('main');
+    expect(switchBranchFromUI).not.toHaveBeenCalled();
+    expect(onDone).toHaveBeenCalledTimes(1);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('warm-switches through switchBranchFromUI when a sandbox is running', async () => {
+    const setCurrentBranch = vi.fn();
+    const switchBranchFromUI = vi.fn(async () => ({ ok: true as const }));
+    const onDone = vi.fn();
+
+    await runCommitSwitchConfirmAction({
+      branch: 'main',
+      sandboxId: 'sb-1',
+      setCurrentBranch,
+      switchBranchFromUI,
+      onError: vi.fn(),
+      onDone,
+    });
+
+    expect(switchBranchFromUI).toHaveBeenCalledWith('main');
+    expect(setCurrentBranch).not.toHaveBeenCalled();
+    expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces the error and stays open when the warm switch fails', async () => {
+    const onError = vi.fn();
+    const onDone = vi.fn();
+
+    await runCommitSwitchConfirmAction({
+      branch: 'main',
+      sandboxId: 'sb-1',
+      setCurrentBranch: vi.fn(),
+      switchBranchFromUI: vi.fn(async () => ({ ok: false as const, errorMessage: 'boom' })),
+      onError,
+      onDone,
+    });
+
+    expect(onError).toHaveBeenCalledWith('boom');
+    expect(onDone).not.toHaveBeenCalled();
+  });
+});
 
 describe('runCommitSwitchDefaultAction', () => {
   it('switches directly when the post-commit probe is clean', async () => {

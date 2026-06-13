@@ -3,6 +3,48 @@ import type { SwitchBranchInWorkspaceResult } from '@/lib/fork-branch-in-workspa
 
 type SandboxDiffProbe = (sandboxId: string) => Promise<{ git_status?: string }>;
 
+interface CommitSwitchConfirmActionArgs {
+  branch: string;
+  sandboxId: string | null;
+  /** Cold-switch primitive (the hub's `onSwitchBranch`): updates the tracked
+   *  branch without a running sandbox so the next start opens it. */
+  setCurrentBranch: (branch: string) => void;
+  switchBranchFromUI: (branch: string) => Promise<SwitchBranchInWorkspaceResult>;
+  onError: (message: string) => void;
+  onDone: () => void;
+}
+
+/**
+ * Confirm handler for the commit-card "Switch to default" dialog.
+ *
+ * No sandbox → cold switch: update the tracked branch (mirrors the hub's
+ * `confirmBranchSwitch` fallback to `cleanSwitchBranch`) so the next sandbox
+ * start opens it — exactly what the no-sandbox confirm copy promises. Without
+ * this the path dead-ends on `switchBranchInWorkspace(null, ...)`'s "No active
+ * sandbox" error. With a sandbox → warm switch through the governed helper.
+ */
+export async function runCommitSwitchConfirmAction({
+  branch,
+  sandboxId,
+  setCurrentBranch,
+  switchBranchFromUI,
+  onError,
+  onDone,
+}: CommitSwitchConfirmActionArgs): Promise<void> {
+  if (!sandboxId) {
+    setCurrentBranch(branch);
+    onDone();
+    return;
+  }
+
+  const result = await switchBranchFromUI(branch);
+  if (!result.ok) {
+    onError(result.errorMessage || 'Failed to switch branches.');
+    return;
+  }
+  onDone();
+}
+
 interface CommitSwitchDefaultActionArgs {
   targetBranch: string;
   sandboxId: string | null;
