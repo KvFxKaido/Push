@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, X, Loader2, AlertCircle } from 'lucide-react';
+import { AlertCircle, Check, GitBranch, Loader2, Plus, X } from 'lucide-react';
 import type { CommitReviewCardData, CardAction } from '@/types';
 import { DiffPreviewCard } from './DiffPreviewCard';
 import { AuditVerdictCard } from './AuditVerdictCard';
@@ -119,6 +119,13 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
   const isRejected = data.status === 'rejected';
   const isError = data.status === 'error';
   const isBusy = isRefreshing || isApproved || isPushing;
+  const defaultBranch = data.defaultBranch?.trim();
+  const committedBranch = data.committedBranch?.trim();
+  const showSwitchToDefault =
+    isCommitted &&
+    Boolean(defaultBranch) &&
+    Boolean(committedBranch) &&
+    committedBranch !== defaultBranch;
 
   return (
     <div className={CARD_SHELL_CLASS}>
@@ -181,6 +188,41 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
       <div className="px-3 pb-2">
         <AuditVerdictCard data={data.auditVerdict} />
       </div>
+
+      {isCommitted && (
+        <div className="flex flex-wrap items-center gap-2 px-3 pb-3">
+          {showSwitchToDefault && defaultBranch && (
+            <button
+              onClick={() =>
+                onAction?.({
+                  type: 'commit-switch-default',
+                  messageId,
+                  cardIndex,
+                  targetBranch: defaultBranch,
+                })
+              }
+              className={`${CARD_BUTTON_CLASS} h-9 px-3 text-push-sky`}
+            >
+              <GitBranch className="h-3.5 w-3.5" />
+              Switch to {defaultBranch}
+            </button>
+          )}
+          <button
+            onClick={() =>
+              onAction?.({
+                type: 'commit-fork-from-here',
+                messageId,
+                cardIndex,
+                fromBranch: committedBranch,
+              })
+            }
+            className={`${CARD_BUTTON_CLASS} h-9 px-3 text-push-link`}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            New branch from here
+          </button>
+        </div>
+      )}
 
       {/* Commit message */}
       <div className="px-3 pb-3">

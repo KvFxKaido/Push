@@ -419,9 +419,17 @@ export function useChatCardActions({
             // Step 4: Success
             updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
               if (card.type !== 'commit-review') return card;
+              const committedBranch =
+                branchInfoRef.current?.currentBranch || expectedBranch || undefined;
+              const defaultBranch = branchInfoRef.current?.defaultBranch || undefined;
               return {
                 ...card,
-                data: { ...card.data, status: 'committed' } as CommitReviewCardData,
+                data: {
+                  ...card.data,
+                  status: 'committed',
+                  committedBranch,
+                  defaultBranch,
+                } as CommitReviewCardData,
               };
             });
 

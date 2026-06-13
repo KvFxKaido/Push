@@ -1,7 +1,7 @@
 # Branch Moments — Transitions Where Intent Lives
 
 Date: 2026-06-13
-Status: **Current** — §2 (out-of-band merge banner, PR B) and §3 (carry verb, PR A) shipped; §1 (commit-card chips) still to build.
+Status: **Current** — delivered; §1 (commit-card chips), §2 (out-of-band merge banner, PR B), and §3 (carry verb, PR A) shipped.
 Owner: Push
 
 ## Problem
@@ -161,7 +161,7 @@ caught.
 | In-app merge flow (`mergeBranchInUI`) | `merged` | existing |
 | Out-of-band merge banner | `merged` (`source: 'merge_detected'`) | shipped (§2) |
 | Desync reconciler (#913) | `switched` (`source: 'branch_desync'`) | existing |
-| Commit-card chips | via `switchBranchFromUI` / fork flow | **new (§1)** |
+| Commit-card chips | via `switchBranchFromUI` / fork flow | shipped (§1) |
 
 ## Non-goals
 
@@ -202,7 +202,7 @@ verification gate:
    `'merge_detected'` source + banner component + per-chat dismissal +
    tests (detection hit, miss, API-failure silence, banner action calls
    `mergeBranchInUI` with the PR number).
-3. **PR C (commit-card chips):** chips + probe reuse + tests (clean switch,
+3. **PR C (commit-card chips): shipped.** Chips + probe reuse + tests (clean switch,
    dirty → confirm, default-branch commit hides the switch chip).
 
 Pins for all three: migration never tears down the sandbox

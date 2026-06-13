@@ -7,6 +7,7 @@ import type { ChatRouteProps } from './workspace-chat-route-types';
 // inputs through to ChatScreen and handles the scratch/repo branching.
 const chatScreenSpy = vi.hoisted(() => vi.fn<(props?: unknown) => null>(() => null));
 const toasterSpy = vi.hoisted(() => vi.fn(() => null));
+const mockGetSandboxDiff = vi.hoisted(() => vi.fn());
 
 vi.mock('./ChatScreen', () => ({
   ChatScreen: (props: unknown) => chatScreenSpy(props),
@@ -14,6 +15,10 @@ vi.mock('./ChatScreen', () => ({
 
 vi.mock('@/components/ui/sonner', () => ({
   Toaster: () => toasterSpy(),
+}));
+
+vi.mock('@/lib/sandbox-client', () => ({
+  getSandboxDiff: (...args: unknown[]) => mockGetSandboxDiff(...args),
 }));
 
 vi.mock('sonner', () => ({
@@ -165,6 +170,8 @@ function baseProps(overrides: Partial<ChatRouteProps> = {}): ChatRouteProps {
       repoBranchesError: null,
       showBranchCreate: false,
       setShowBranchCreate: vi.fn(),
+      showBranchFork: false,
+      setShowBranchFork: vi.fn(),
       showMergeFlow: false,
       setShowMergeFlow: vi.fn(),
       loadRepoBranches: vi.fn(),
@@ -295,6 +302,7 @@ function baseProps(overrides: Partial<ChatRouteProps> = {}): ChatRouteProps {
 beforeEach(() => {
   chatScreenSpy.mockClear();
   toasterSpy.mockClear();
+  mockGetSandboxDiff.mockReset();
 });
 
 describe('WorkspaceChatRoute', () => {
@@ -373,5 +381,77 @@ describe('WorkspaceChatRoute', () => {
     args.onCycleApprovalMode?.();
 
     expect(updateApprovalMode).toHaveBeenCalledWith('supervised');
+  });
+
+  it('routes a clean commit switch chip through switchBranchFromUI', async () => {
+    const switchBranchFromUI = vi.fn(async () => ({ ok: true as const }));
+    mockGetSandboxDiff.mockResolvedValue({ git_status: '' });
+    const props = baseProps({
+      activeRepo: {
+        id: 'repo-1',
+        name: 'my-app',
+        full_name: 'owner/my-app',
+        default_branch: 'main',
+        current_branch: 'feature/work',
+      } as never,
+      sandbox: {
+        ...baseProps().sandbox,
+        sandboxId: 'sb-1',
+        status: 'ready',
+      },
+      switchBranchFromUI,
+    });
+    props.branches = {
+      ...props.branches,
+      currentBranch: 'feature/work',
+    };
+
+    renderToStaticMarkup(<WorkspaceChatRoute {...props} />);
+
+    const [args] = chatScreenSpy.mock.calls[0] as [
+      { chat: { containerProps: { onCardAction?: (action: never) => Promise<void> | void } } },
+    ];
+    await args.chat.containerProps.onCardAction?.({
+      type: 'commit-switch-default',
+      messageId: 'm1',
+      cardIndex: 0,
+      targetBranch: 'main',
+    } as never);
+
+    expect(mockGetSandboxDiff).toHaveBeenCalledWith('sb-1');
+    expect(switchBranchFromUI).toHaveBeenCalledWith('main');
+  });
+
+  it('routes the commit fork chip to the existing branch fork sheet state', () => {
+    const setShowBranchFork = vi.fn();
+    const props = baseProps({
+      activeRepo: {
+        id: 'repo-1',
+        name: 'my-app',
+        full_name: 'owner/my-app',
+        default_branch: 'main',
+        current_branch: 'feature/work',
+      } as never,
+    });
+    props.branches = {
+      ...props.branches,
+      currentBranch: 'feature/work',
+      showBranchFork: false,
+      setShowBranchFork,
+    } as never;
+
+    renderToStaticMarkup(<WorkspaceChatRoute {...props} />);
+
+    const [args] = chatScreenSpy.mock.calls[0] as [
+      { chat: { containerProps: { onCardAction?: (action: never) => void } } },
+    ];
+    args.chat.containerProps.onCardAction?.({
+      type: 'commit-fork-from-here',
+      messageId: 'm1',
+      cardIndex: 0,
+      fromBranch: 'feature/work',
+    } as never);
+
+    expect(setShowBranchFork).toHaveBeenCalledWith(true);
   });
 });
