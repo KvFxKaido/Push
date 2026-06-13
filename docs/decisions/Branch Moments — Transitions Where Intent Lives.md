@@ -76,7 +76,17 @@ A new **producer** for the existing `kind: 'merged'` payload:
   would permanently suppress the banner in the exact flow this exists for
   (open chat → merge from another surface → return without reloading).
   Misses re-check on the next chat open / refresh — one cheap request, not
-  a poll. (Review feedback: Codex P2.)
+  a poll. (Review feedback: Codex P2.) **Identity guard (shipped, Codex P2):**
+  a merged-PR hit is verified before it surfaces — the banner makes a
+  provenance claim, so branch-name matching alone is insufficient. Capture the
+  merged head SHA and compare it to the live branch tip
+  (`GET /repos/{repo}/branches/{branch}`): show only when the branch is gone
+  (404 — the normal post-merge cleanup) or still points at the merged commit;
+  if the tip diverged (a reused/advanced name with new unmerged work) suppress
+  and evict the positive cache so a later genuine merge re-checks fresh. A
+  secondary guard suppresses when an open PR is now in flight. The verification
+  calls only fire when a candidate merged PR exists, so the no-merge common
+  case stays a single request.
 - **Surface:** a dismissible in-chat banner (sibling of `CIStatusBanner`):
   *"`feat/x` was merged into `main` (PR #57) — continue this chat on
   `main`?"* with a single **Continue on main** action.

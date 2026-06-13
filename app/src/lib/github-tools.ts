@@ -247,12 +247,21 @@ export interface MergedPRForBranch {
    *  <default>" and migrating the chat there — a branch whose PR merged into a
    *  non-default base (stacked PR, release branch) must not be mislabeled. */
   baseBranch: string;
+  /** The head commit SHA that was merged. Captured so a reused branch name can
+   *  be told apart from the genuinely-merged branch: if the live branch tip no
+   *  longer matches this SHA, the active branch has advanced past the merge and
+   *  the banner's "was merged" claim is stale. */
+  headSha: string;
 }
 
 const mergedPRForBranchCache = new Map<string, MergedPRForBranch>();
 
 function mergedPRCacheKey(repo: string, headBranch: string): string {
   return `${repo}\0${headBranch}`;
+}
+
+function evictMergedPRForBranchCache(repo: string, headBranch: string): void {
+  mergedPRForBranchCache.delete(mergedPRCacheKey(repo, headBranch));
 }
 
 /**
@@ -292,6 +301,7 @@ export async function findMergedPRForBranch(
       url: typeof merged.html_url === 'string' ? merged.html_url : '',
       mergedAt: merged.merged_at as string,
       baseBranch: typeof merged.base?.ref === 'string' ? merged.base.ref : '',
+      headSha: typeof merged.head?.sha === 'string' ? merged.head.sha : '',
     };
     // Positive-only cache: a merged PR stays merged, but caching misses would
     // suppress the return-after-merge banner until reload in the flow this serves.
@@ -300,6 +310,75 @@ export async function findMergedPRForBranch(
   } catch {
     return null;
   }
+}
+
+/** Live state of a branch's remote tip relative to a known merged head SHA.
+ *  - `absent`: the branch no longer exists remotely — the normal post-merge
+ *    state (PR merged and branch deleted); the merge claim is genuine.
+ *  - `matches`: the branch still exists and points at the merged SHA; genuine.
+ *  - `diverged`: the branch exists but its tip moved past the merged SHA — a
+ *    reused/advanced name with new unmerged work; the merge claim is stale.
+ *  - `unknown`: could not verify (no token, rate limit, transport error). */
+type BranchTipState = 'absent' | 'matches' | 'diverged' | 'unknown';
+
+async function branchTipState(
+  repo: string,
+  branch: string,
+  mergedHeadSha: string,
+): Promise<BranchTipState> {
+  const headers = getGitHubHeaders();
+  if (!headers.Authorization) return 'unknown';
+  try {
+    const res = await githubFetch(
+      `https://api.github.com/repos/${repo}/branches/${encodeURIComponent(branch)}`,
+      { headers },
+    );
+    if (res.status === 404) return 'absent';
+    if (!res.ok) return 'unknown';
+    const data = (await res.json()) as { commit?: { sha?: string } };
+    const tip = typeof data.commit?.sha === 'string' ? data.commit.sha : '';
+    if (!tip || !mergedHeadSha) return 'unknown';
+    return tip === mergedHeadSha ? 'matches' : 'diverged';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
+ * Out-of-band merge detection with an identity check: returns the merged PR
+ * ONLY when it is safe to offer migrating the chat onto the default branch.
+ *
+ * The banner makes a provenance claim ("<branch> was merged"), so branch-name
+ * matching is not enough — a name reused after an earlier PR merged + the
+ * branch was deleted would otherwise resurface that stale merge. We verify the
+ * live branch tip against the merged head SHA (`branchTipState`): show only
+ * when the branch is gone (normal post-merge) or still points at the merged
+ * commit. On a confirmed divergence we also evict the positive cache so a
+ * later genuine merge re-checks fresh instead of being shadowed by the stale
+ * entry. A secondary guard suppresses when an open PR is now in flight.
+ */
+export async function detectStrandedMergedPR(
+  repo: string,
+  branch: string,
+): Promise<MergedPRForBranch | null> {
+  const merged = await findMergedPRForBranch(repo, branch);
+  if (!merged) return null;
+
+  const tip = await branchTipState(repo, branch, merged.headSha);
+  if (tip === 'diverged') {
+    // The active branch advanced past the merge: the merge claim is stale and
+    // the cached positive must not keep shadowing future fresh detection.
+    evictMergedPRForBranchCache(repo, branch);
+    return null;
+  }
+  if (tip === 'unknown') return null; // Cannot verify → make no unverified claim.
+
+  // tip is 'absent' (branch gone) or 'matches' (still at the merged commit).
+  // When the branch still exists, a fresh open PR means active in-flight work,
+  // not a stranded post-merge chat — suppress. (Branch gone ⇒ no open PR.)
+  if (tip === 'matches' && (await findOpenPRForBranch(repo, branch))) return null;
+
+  return merged;
 }
 
 // --- PR list and detail types ---

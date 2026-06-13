@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { findMergedPRForBranch } from '@/lib/github-tools';
+import { detectStrandedMergedPR } from '@/lib/github-tools';
 import {
   dismissMergeDetectedBanner,
   isMergeDetectedBannerDismissed,
@@ -44,7 +44,7 @@ export function useMergeDetectedBanner({
       return;
     }
 
-    const pr = await findMergedPRForBranch(repo, branch);
+    const pr = await detectStrandedMergedPR(repo, branch);
     if (seq !== requestSeqRef.current) return;
 
     const candidate = mergeDetectedCandidate(branch, targetDefault, pr);

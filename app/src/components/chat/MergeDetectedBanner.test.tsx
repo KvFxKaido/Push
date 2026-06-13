@@ -39,6 +39,7 @@ describe('MergeDetectedBanner', () => {
         url: 'https://github.test/pr/42',
         mergedAt: '2026-06-12T00:00:00Z',
         baseBranch: 'main',
+        headSha: 'sha-merged',
       },
       mergeBranchInUI,
       onDismiss: vi.fn(),
