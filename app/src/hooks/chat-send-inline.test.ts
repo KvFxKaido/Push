@@ -992,6 +992,42 @@ describe('verification gate + workspace-patch capture', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Checkpoint answerer — delegation-arc carryover adjustments (inverse sweep)
+// ---------------------------------------------------------------------------
+
+describe('inline checkpoint answerer', () => {
+  it('skips decision-memory and translates raw "Coder" status off the spinner', async () => {
+    const { ctx } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    const opts = mockCreateCoderCheckpointAnswerer.mock.calls[0]?.[0] as {
+      memoryScope: unknown;
+      updateAgentStatus: (
+        s: { active: boolean; phase?: string; detail?: string },
+        m?: unknown,
+      ) => void;
+    };
+
+    // Inline self-consultation is not a delegated ruling — no decision memory.
+    expect(opts.memoryScope).toBeNull();
+
+    // The answerer's delegated vocabulary is translated to phase-first thinking
+    // rather than leaking "Coder checkpoint" / "Coder resuming..." to the lead.
+    const status = ctx.updateAgentStatus as unknown as {
+      mock: { calls: Array<[{ phase?: string; detail?: string }]> };
+    };
+    opts.updateAgentStatus(
+      { active: true, phase: 'Coder checkpoint', detail: 'should I X?' },
+      { chatId: 'chat-1', source: 'coder' },
+    );
+    const last = status.mock.calls.at(-1)?.[0];
+    expect(last?.phase).toBe('Thinking…');
+    expect(last?.detail).toBeUndefined();
+    expect(JSON.stringify(last)).not.toContain('Coder');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Checkpoint-shape drift pin: kernel-born V1 → adoption resume seed
 // ---------------------------------------------------------------------------
 
