@@ -450,6 +450,89 @@ describe('chat-send', () => {
     expect(result.loopCompletedNormally).toBe(true);
   });
 
+  it('nudges and continues when a tool call is buried in the reasoning channel', async () => {
+    const conversationsRef = {
+      current: makeConversation([makeMessage({ content: 'streaming...' })]),
+    };
+    const dirtyRef = { current: new Set<string>() };
+    const ctx = makeLoopContext(conversationsRef, dirtyRef);
+    const apiMessages: ChatMessage[] = [
+      makeMessage({
+        id: 'user-1',
+        role: 'user',
+        content: 'What changed recently?',
+        status: 'done',
+      }),
+    ];
+
+    const result = await processAssistantTurn(
+      0,
+      // Content has no tool call — just a narrated (ungrounded) summary.
+      'Here is a summary of recent activity.',
+      // The actual tool call is buried in the reasoning channel, which the
+      // dispatcher never scans (the Kimi K2.x failure mode).
+      'Let me check the project state. {"tool":"sandbox_read_file","args":{"path":"TODO.md"}}',
+      [],
+      apiMessages,
+      ctx,
+      { diagnosisRetries: 0, recoveryAttempted: false },
+    );
+
+    expect(result.loopAction).toBe('continue');
+    expect(result.loopCompletedNormally).toBe(false);
+    const lastMsg = result.nextApiMessages.at(-1);
+    expect(lastMsg?.role).toBe('user');
+    expect(lastMsg?.content).toContain('TOOL_CALL_IN_REASONING');
+    // Counter advances so a model that keeps burying calls can't spin forever.
+    expect(result.nextRecoveryState.reasoningToolCallNudges).toBe(1);
+    // Assistant message is finalized, not left streaming.
+    expect(conversationsRef.current['chat-1'].messages.at(-1)?.status).toBe('done');
+  });
+
+  it('stops nudging reasoning-channel tool calls once the per-run cap is reached', async () => {
+    const conversationsRef = {
+      current: makeConversation([makeMessage({ content: 'streaming...' })]),
+    };
+    const dirtyRef = { current: new Set<string>() };
+    const ctx = makeLoopContext(conversationsRef, dirtyRef);
+
+    const result = await processAssistantTurn(
+      0,
+      'Here is a summary of recent activity.',
+      'Let me check. {"tool":"sandbox_read_file","args":{"path":"TODO.md"}}',
+      [],
+      [makeMessage({ id: 'user-1', role: 'user', content: 'What changed?', status: 'done' })],
+      ctx,
+      { diagnosisRetries: 0, recoveryAttempted: false, reasoningToolCallNudges: 2 },
+    );
+
+    // Cap reached — let the turn break instead of looping forever.
+    expect(result.loopAction).toBe('break');
+    expect(result.loopCompletedNormally).toBe(true);
+  });
+
+  it('does NOT nudge when the reasoning channel has no tool call', async () => {
+    const conversationsRef = {
+      current: makeConversation([makeMessage({ content: 'streaming...' })]),
+    };
+    const dirtyRef = { current: new Set<string>() };
+    const ctx = makeLoopContext(conversationsRef, dirtyRef);
+
+    const result = await processAssistantTurn(
+      0,
+      'Here is the final answer.',
+      // Plain reasoning prose — no tool-call shape, so the guard must not fire.
+      'I considered reading TODO.md but I already have enough context.',
+      [],
+      [makeMessage({ id: 'user-1', role: 'user', content: 'What changed?', status: 'done' })],
+      ctx,
+      { diagnosisRetries: 0, recoveryAttempted: false },
+    );
+
+    expect(result.loopAction).toBe('break');
+    expect(result.loopCompletedNormally).toBe(true);
+  });
+
   it('blocks completion with a runtime verification message when requirements are unmet', async () => {
     const conversationsRef = {
       current: makeConversation([makeMessage({ content: 'streaming...' })]),

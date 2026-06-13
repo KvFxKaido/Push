@@ -23,10 +23,12 @@
  */
 
 import {
+  MAX_REASONING_TOOL_CALL_NUDGES,
   MAX_TRAILING_INTENT_NUDGES,
   resolveToolCallRecovery,
   type ToolCallRecoveryState,
 } from '@/lib/tool-call-recovery';
+import { detectAnyToolCall } from '@/lib/tool-dispatch';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import { markLastAssistantToolCall } from '@/lib/chat-tool-messages';
 import { handleRecoveryResult } from '@/lib/chat-tool-execution';
@@ -146,6 +148,86 @@ export async function processNoToolPath(
         return updated;
       });
     }
+  }
+
+  // --- Tool call buried in the reasoning channel ---
+  // Some models — most reliably the Kimi K2.x family — emit their
+  // `{"tool": ...}` / namespaced `functions.x:0 {...}` tool calls inside the
+  // reasoning/thinking channel instead of response content. The dispatcher
+  // only scans content (the orchestrator forwards `content` tokens to the
+  // parser, never reasoning), so the call is silently dropped, no tool runs,
+  // and the turn dead-ends as a "natural completion" — the model then narrates
+  // an answer it never actually gathered (the stale/hallucinated "recent
+  // activity" symptom). The prompt's "Tool Call Placement" section asks
+  // cooperating models not to do this; this is the runtime backstop for models
+  // that ignore it. We never execute the reasoning-channel call (that channel
+  // is untrusted for dispatch) — we surface the drop and nudge the model to
+  // re-emit in content, capped so a model that keeps burying calls still breaks.
+  const reasoningNudges = nextRecoveryState.reasoningToolCallNudges ?? 0;
+  const buriedCall =
+    action.loopAction === 'break' &&
+    recoveryResult.kind === 'none' &&
+    reasoningNudges < MAX_REASONING_TOOL_CALL_NUDGES &&
+    thinkingAccumulated.trim().length > 0 &&
+    !detectAnyToolCall(accumulated)
+      ? detectAnyToolCall(thinkingAccumulated)
+      : null;
+  if (buriedCall) {
+    const buriedToolName = buriedCall.call.tool;
+    // Structured log: the symptom is otherwise invisible to ops — no tool ran,
+    // no malformed event fired, the turn just ended. Pair with the run event
+    // below so both the operator and the transcript see the dropped call.
+    console.log(
+      JSON.stringify({
+        level: 'warn',
+        event: 'orchestrator_tool_call_in_reasoning',
+        chatId,
+        round,
+        toolName: buriedToolName,
+      }),
+    );
+    appendRunEvent(chatId, {
+      type: 'tool.call_malformed',
+      round,
+      reason: 'tool_call_in_reasoning',
+      toolName: buriedToolName,
+      preview: summarizeToolResultPreview(
+        'A tool call was emitted in the reasoning channel, which the runtime never executes. The model was nudged to re-emit it in response content.',
+      ),
+    });
+    // Finalize the assistant message so it doesn't linger with a streaming
+    // spinner while the loop continues.
+    setConversations((prev) => {
+      const conv = prev[chatId];
+      if (!conv) return prev;
+      const msgs = [...conv.messages];
+      const lastIdx = msgs.length - 1;
+      if (msgs[lastIdx]?.role === 'assistant') {
+        msgs[lastIdx] = { ...msgs[lastIdx], content: accumulated, status: 'done' };
+      }
+      dirtyConversationIdsRef.current.add(chatId);
+      return { ...prev, [chatId]: { ...conv, messages: msgs, lastMessageAt: Date.now() } };
+    });
+
+    return {
+      nextApiMessages: [
+        ...action.apiMessages,
+        {
+          id: createId(),
+          role: 'user',
+          content: [
+            '[POLICY: TOOL_CALL_IN_REASONING]',
+            'You emitted a tool call inside your reasoning/thinking channel. The runtime only executes tool calls placed in your response content, so nothing ran and no results came back — any answer you give now is ungrounded.',
+            'Re-emit the tool call as a JSON block in your response content now. If you did not actually intend to call a tool, answer directly from information you already have.',
+            '[/POLICY]',
+          ].join('\n'),
+          timestamp: Date.now(),
+        },
+      ],
+      nextRecoveryState: { ...nextRecoveryState, reasoningToolCallNudges: reasoningNudges + 1 },
+      loopAction: 'continue',
+      loopCompletedNormally: false,
+    };
   }
 
   // --- Turn policy: ungrounded-completion guard ---
