@@ -16,6 +16,7 @@ const {
   mockGetProviderPushStream,
   mockGetModelForRole,
   mockReadFilesForCoderPreload,
+  mockExecuteSandboxToolCall,
   mockGetSandboxDiff,
   mockHandleCoderAuditor,
   mockWriteDecisionMemory,
@@ -25,6 +26,7 @@ const {
   mockGetProviderPushStream: vi.fn(),
   mockGetModelForRole: vi.fn(),
   mockReadFilesForCoderPreload: vi.fn(),
+  mockExecuteSandboxToolCall: vi.fn(),
   mockGetSandboxDiff: vi.fn(),
   mockHandleCoderAuditor: vi.fn(),
   mockWriteDecisionMemory: vi.fn(),
@@ -55,6 +57,7 @@ vi.mock('./providers', async (importOriginal) => ({
 vi.mock('./sandbox-tools', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./sandbox-tools')>()),
   readFilesForCoderPreload: (...args: unknown[]) => mockReadFilesForCoderPreload(...args),
+  executeSandboxToolCall: (...args: unknown[]) => mockExecuteSandboxToolCall(...args),
 }));
 
 vi.mock('./sandbox-client', async (importOriginal) => ({
@@ -121,6 +124,7 @@ beforeEach(() => {
     .mockReset()
     .mockImplementation((_p: string, role: string) => ({ id: `${role}-default-model` }));
   mockReadFilesForCoderPreload.mockReset().mockResolvedValue(null);
+  mockExecuteSandboxToolCall.mockReset().mockResolvedValue({ text: 'ok' });
   mockGetSandboxDiff.mockReset();
   mockHandleCoderAuditor.mockReset();
   mockWriteDecisionMemory.mockReset().mockResolvedValue(undefined);
@@ -320,6 +324,81 @@ describe('runInPageCoderKernel inline knobs', () => {
         { onStatus: () => {} },
       ),
     ).rejects.toThrow(/No AI provider configured/);
+  });
+
+  it('tees branchSwitch payloads before the kernel result narrows them away', async () => {
+    const payload = {
+      name: 'main',
+      kind: 'carried' as const,
+      from: 'feat/x',
+      previous: 'feat/x',
+      source: 'sandbox_switch_branch' as const,
+    };
+    mockExecuteSandboxToolCall.mockResolvedValueOnce({
+      text: '[Tool Result — sandbox_switch_branch]',
+      branchSwitch: payload,
+    });
+    const onBranchSwitchPayload = vi.fn();
+
+    await runInPageCoderKernel(
+      {
+        provider: 'openrouter',
+        modelId: 'm',
+        sandboxId: 'sb-2',
+        taskPreamble: 'RAW-USER-TURN-PREAMBLE',
+      },
+      { onStatus: () => {}, onBranchSwitchPayload },
+    );
+
+    const { options } = lastKernelCall();
+    const result = await options.toolExec(
+      {
+        source: 'sandbox',
+        call: { tool: 'sandbox_switch_branch', args: { branch: 'main', carry_chat: true } },
+      } as AnyToolCall,
+      { round: 1 },
+    );
+
+    expect(onBranchSwitchPayload).toHaveBeenCalledWith(payload);
+    expect(result).toMatchObject({
+      kind: 'executed',
+      resultText: '[Tool Result — sandbox_switch_branch]',
+    });
+  });
+
+  it('leaves branchSwitch payloads as a no-op when the delegated arc omits the callback', async () => {
+    mockExecuteSandboxToolCall.mockResolvedValueOnce({
+      text: '[Tool Result — sandbox_switch_branch]',
+      branchSwitch: {
+        name: 'main',
+        kind: 'switched',
+        source: 'sandbox_switch_branch',
+      },
+    });
+
+    await runInPageCoderKernel(
+      {
+        provider: 'openrouter',
+        modelId: 'm',
+        sandboxId: 'sb-2',
+        taskPreamble: 'RAW-USER-TURN-PREAMBLE',
+      },
+      { onStatus: () => {} },
+    );
+
+    const { options } = lastKernelCall();
+    const result = await options.toolExec(
+      {
+        source: 'sandbox',
+        call: { tool: 'sandbox_switch_branch', args: { branch: 'main' } },
+      } as AnyToolCall,
+      { round: 1 },
+    );
+
+    expect(result).toMatchObject({
+      kind: 'executed',
+      resultText: '[Tool Result — sandbox_switch_branch]',
+    });
   });
 });
 

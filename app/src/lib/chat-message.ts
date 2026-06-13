@@ -15,7 +15,13 @@
  * design doc for the invariant.
  */
 
-import type { BranchForkedMeta, BranchMergedMeta, BranchSwitchSource, ChatMessage } from '@/types';
+import type {
+  BranchCarriedMeta,
+  BranchForkedMeta,
+  BranchMergedMeta,
+  BranchSwitchSource,
+  ChatMessage,
+} from '@/types';
 
 /** Generate a stable conversation-relative message id. Mirrors the existing
  *  inline `crypto.randomUUID()` calls scattered across message-creation
@@ -136,6 +142,38 @@ export function createBranchMergedMessage(input: CreateBranchMergedMessageInput)
     branch: input.to,
     kind: 'branch_merged',
     branchMergedMeta: meta,
+    visibleToModel: false,
+  };
+}
+
+interface CreateBranchCarriedMessageInput {
+  /** Source branch the conversation continued from. */
+  from: string;
+  /** Target branch the conversation continued on. */
+  to: string;
+  /** Producer that triggered the carry transition. */
+  source?: BranchSwitchSource;
+  id?: string;
+  timestamp?: number;
+}
+
+/** Create a typed `branch_carried` system event for insertion after an
+ *  intentional carry-chat branch switch. Mirrors fork/merge events but keeps
+ *  provenance honest: no branch was created and no PR was merged. */
+export function createBranchCarriedMessage(input: CreateBranchCarriedMessageInput): ChatMessage {
+  const meta: BranchCarriedMeta = {
+    from: input.from,
+    to: input.to,
+    ...(input.source ? { source: input.source } : {}),
+  };
+  return {
+    id: input.id ?? createMessageId(),
+    role: 'assistant',
+    content: '',
+    timestamp: input.timestamp ?? Date.now(),
+    branch: input.to,
+    kind: 'branch_carried',
+    branchCarriedMeta: meta,
     visibleToModel: false,
   };
 }

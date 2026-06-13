@@ -57,6 +57,7 @@ import {
 } from '@/lib/verification-runtime';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import { applyStampedSandboxExecBranchDesync } from '@/lib/branch-desync';
+import { applyBranchSwitchPayload } from '@/lib/branch-fork-migration';
 import { parseUntrackedFileSet } from '@/lib/auditor-delegation-handler';
 import { buildToolMeta, buildToolResultMessage } from '@/lib/chat-tool-messages';
 import { createId } from '@push/lib/id-utils';
@@ -661,6 +662,19 @@ export async function startInlineCoderTurn(
               runtimeHandlersRef: ctx.runtimeHandlersRef,
             },
           );
+        },
+        onBranchSwitchPayload: (payload) => {
+          applyBranchSwitchPayload(payload, {
+            chatId,
+            appendRunEvent: ctx.appendRunEvent,
+            activeChatIdRef: ctx.activeChatIdRef,
+            conversationsRef: ctx.conversationsRef,
+            branchInfoRef: ctx.branchInfoRef,
+            skipAutoCreateRef: ctx.skipAutoCreateRef,
+            setConversations: ctx.setConversations,
+            dirtyConversationIdsRef: ctx.dirtyConversationIdsRef,
+            runtimeHandlersRef: ctx.runtimeHandlersRef,
+          });
         },
       },
     );

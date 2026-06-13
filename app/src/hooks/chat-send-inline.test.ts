@@ -23,6 +23,7 @@ const {
   mockGetSandboxDiff,
   mockResolveHarnessSettings,
   mockInvalidateMemory,
+  mockApplyBranchSwitchPayload,
 } = vi.hoisted(() => ({
   mockRunInPageCoderKernel: vi.fn(),
   mockRunCoderAuditorGate: vi.fn(),
@@ -33,6 +34,7 @@ const {
   mockGetSandboxDiff: vi.fn(),
   mockResolveHarnessSettings: vi.fn(),
   mockInvalidateMemory: vi.fn(),
+  mockApplyBranchSwitchPayload: vi.fn(),
 }));
 
 vi.mock('@/lib/inline-coder-run', () => ({
@@ -62,6 +64,10 @@ vi.mock('@/lib/model-capabilities', () => ({
 
 vi.mock('@/lib/context-memory', () => ({
   invalidateMemoryForChangedFiles: (...args: unknown[]) => mockInvalidateMemory(...args),
+}));
+
+vi.mock('@/lib/branch-fork-migration', () => ({
+  applyBranchSwitchPayload: (...args: unknown[]) => mockApplyBranchSwitchPayload(...args),
 }));
 
 // Faithful stand-in for the real git_status parser (own tests live in
@@ -144,6 +150,10 @@ function makeHarness(opts?: { sandboxId?: string | null; repo?: string | null })
     repoRef: { current: opts?.repo === undefined ? 'owner/repo' : opts.repo },
     isMainProtectedRef: { current: true },
     branchInfoRef: { current: { currentBranch: 'feat/x', defaultBranch: 'main' } },
+    activeChatIdRef: { current: 'chat-1' },
+    conversationsRef: store,
+    skipAutoCreateRef: { current: null },
+    runtimeHandlersRef: { current: { onBranchSwitch: vi.fn() } },
     checkpointRefs: { apiMessages: { current: [] as ChatMessage[] } },
     lastCoderStateRef: { current: null },
     setConversations: (
@@ -399,6 +409,39 @@ describe('startInlineCoderTurn', () => {
     expect(spec.taskPreamble).toContain('[assistant] earlier answer');
     expect(callbacks.onCheckpoint).toBeInstanceOf(Function);
     expect(callbacks.onCheckpointRequest).toBeInstanceOf(Function);
+    expect(callbacks.onBranchSwitchPayload).toBeInstanceOf(Function);
+  });
+
+  it('routes kernel branchSwitch payloads through applyBranchSwitchPayload', async () => {
+    const { ctx } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+    const [, callbacks] = mockRunInPageCoderKernel.mock.calls[0] as [
+      unknown,
+      { onBranchSwitchPayload: (payload: unknown) => void },
+    ];
+    const payload = {
+      name: 'main',
+      kind: 'carried',
+      from: 'feat/x',
+      source: 'sandbox_switch_branch',
+    };
+
+    callbacks.onBranchSwitchPayload(payload);
+
+    expect(mockApplyBranchSwitchPayload).toHaveBeenCalledWith(
+      payload,
+      expect.objectContaining({
+        chatId: 'chat-1',
+        appendRunEvent: ctx.appendRunEvent,
+        activeChatIdRef: ctx.activeChatIdRef,
+        conversationsRef: ctx.conversationsRef,
+        branchInfoRef: ctx.branchInfoRef,
+        skipAutoCreateRef: ctx.skipAutoCreateRef,
+        setConversations: ctx.setConversations,
+        dirtyConversationIdsRef: ctx.dirtyConversationIdsRef,
+        runtimeHandlersRef: ctx.runtimeHandlersRef,
+      }),
+    );
   });
 
   it('translates the kernel onStatus into phase-first vocab + rotating verbs (no raw "Coder" leak)', async () => {

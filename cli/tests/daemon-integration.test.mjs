@@ -4843,6 +4843,29 @@ describe('create_artifact tool registry + capability drift', () => {
   });
 });
 
+describe('branch switch carry_chat registry + capability drift', () => {
+  it('documents carry_chat on the shared switch_branch tool spec', () => {
+    const spec = getToolSpec('switch_branch');
+    assert.ok(spec, 'switch_branch must be registered in TOOL_SPECS');
+    assert.equal(spec.canonicalName, 'sandbox_switch_branch');
+    assert.equal(spec.publicName, 'switch_branch');
+    assert.equal(spec.source, 'sandbox');
+    assert.equal(spec.readOnly, false);
+    assert.match(spec.protocolSignature, /carry_chat\?/);
+    assert.match(spec.protocolDescription, /carry_chat/);
+    assert.match(spec.exampleJson, /carry_chat/);
+  });
+
+  it('keeps typed branch tools grantable to the coder role used by the inline lead', () => {
+    for (const tool of ['sandbox_create_branch', 'sandbox_switch_branch']) {
+      assert.equal(roleCanUseTool('coder', tool), true);
+      assert.equal(roleCanUseTool('explorer', tool), false);
+      assert.equal(roleCanUseTool('reviewer', tool), false);
+      assert.equal(roleCanUseTool('auditor', tool), false);
+    }
+  });
+});
+
 describe('delegate_reviewer', needsLoopback, () => {
   it('rejects missing sessionId', async () => {
     const response = await handleRequest(

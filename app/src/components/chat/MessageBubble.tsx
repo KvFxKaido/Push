@@ -653,6 +653,23 @@ export const MessageBubble = memo(function MessageBubble({
     );
   }
 
+  // Carry-chat migration: the conversation intentionally continued on an
+  // existing branch. Keep the divider factual: this is not a fork or merge.
+  if (message.kind === 'branch_carried' && message.branchCarriedMeta) {
+    const { from } = message.branchCarriedMeta;
+    return (
+      <div className="my-3 flex items-center justify-center px-4">
+        <div className="flex items-center gap-2 rounded-full border border-push-border bg-push-surface px-3 py-1 text-push-2xs text-push-fg-dim">
+          <BranchWaveIcon className="h-3 w-3" />
+          <span>
+            conversation continued from{' '}
+            <span className="font-mono text-push-fg-secondary">{from}</span>
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   // Hide tool call / malformed messages only when they have no cards.
   // If the model included user-facing text before the JSON call, keep it visible.
   if ((message.isToolCall || message.isMalformed) && !hasContent && visibleCards.length === 0) {

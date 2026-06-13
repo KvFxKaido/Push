@@ -25,9 +25,10 @@
  */
 
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
-import type { BranchSwitchPayload, ChatMessage, Conversation } from '@/types';
+import type { BranchSwitchPayload, ChatMessage, Conversation, RunEventInput } from '@/types';
 import type { ChatRuntimeHandlers } from '@/hooks/chat-send';
 import {
+  createBranchCarriedMessage,
   createBranchForkedMessage,
   createBranchMergedMessage,
   type MigrationGuard,
@@ -35,6 +36,12 @@ import {
 import { setMigrationMarker } from './branch-migration-marker';
 
 export interface BranchForkMigrationContext {
+  /** Optional origin chat id/event logger fields shared with the broader
+   *  branch-transition context object. The migration path does not currently
+   *  emit run events, but accepting the shared shape keeps inline/tool-side
+   *  callers from forking context assembly. */
+  chatId?: string;
+  appendRunEvent?: (chatId: string, event: RunEventInput) => void;
   /** Active chat id at resolution time, read from a ref to avoid stale
    *  capture. If null/missing or the conversation no longer exists, the
    *  migration is skipped and only the workspace branch is synced. */
@@ -66,20 +73,19 @@ export interface BranchForkMigrationContext {
 /**
  * Apply a branch-switch tool-result payload to the active conversation.
  *
- * For `kind: 'forked'` or `kind: 'merged'`: migrates the active conversation
- * (or syncs branch silently if no active chat exists). The two kinds share
- * the same R10/R12 mitigation mechanism; only the transcript event differs
- * (`branch_forked` vs `branch_merged`) so the renderer can label the
- * divider correctly. For `kind: 'switched'`: just triggers the existing
- * `onBranchSwitch` handler — useChat's auto-switch effect handles the rest
- * via its filter + auto-select / auto-create path (existing pre-slice-2
- * behavior).
+ * For `kind: 'forked'`, `kind: 'merged'`, or `kind: 'carried'`: migrates the
+ * active conversation (or syncs branch silently if no active chat exists).
+ * The three kinds share the same R10/R12 mitigation mechanism; only the
+ * transcript event differs so the renderer can label the divider correctly.
+ * For `kind: 'switched'`: just triggers the existing `onBranchSwitch` handler
+ * — useChat's auto-switch effect handles the rest via its filter +
+ * auto-select / auto-create path (existing pre-slice-2 behavior).
  */
 export function applyBranchSwitchPayload(
   payload: BranchSwitchPayload,
   ctx: BranchForkMigrationContext,
 ): void {
-  if (payload.kind !== 'forked' && payload.kind !== 'merged') {
+  if (payload.kind !== 'forked' && payload.kind !== 'merged' && payload.kind !== 'carried') {
     // Existing behavior for 'switched' (or any future kind): just sync the
     // workspace branch. useChat's auto-switch effect picks it up.
     ctx.runtimeHandlersRef.current?.onBranchSwitch?.(payload.name);
@@ -122,7 +128,7 @@ export function applyBranchSwitchPayload(
   // R12: atomic backfill + branch update + event insertion in one
   // setConversations. Existing un-stamped messages get the OLD branch
   // (preserving provenance); new conv.branch becomes the target; a typed
-  // event (branch_forked or branch_merged) is appended to demarcate the
+  // event (branch_forked, branch_merged, or branch_carried) is appended to demarcate the
   // transition for the renderer.
   ctx.setConversations((prev) => {
     const conv = prev[targetChatId];
@@ -137,20 +143,28 @@ export function applyBranchSwitchPayload(
     const backfilledMessages = conv.messages.map((m) =>
       m.branch === undefined ? { ...m, branch: oldBranch } : m,
     );
-    const transitionEvent: ChatMessage =
-      payload.kind === 'merged'
-        ? createBranchMergedMessage({
-            from: fromBranch,
-            to: payload.name,
-            prNumber: payload.prNumber,
-            source: payload.source,
-          })
-        : createBranchForkedMessage({
-            from: fromBranch,
-            to: payload.name,
-            sha: payload.sha,
-            source: payload.source,
-          });
+    let transitionEvent: ChatMessage;
+    if (payload.kind === 'merged') {
+      transitionEvent = createBranchMergedMessage({
+        from: fromBranch,
+        to: payload.name,
+        prNumber: payload.prNumber,
+        source: payload.source,
+      });
+    } else if (payload.kind === 'carried') {
+      transitionEvent = createBranchCarriedMessage({
+        from: fromBranch,
+        to: payload.name,
+        source: payload.source,
+      });
+    } else {
+      transitionEvent = createBranchForkedMessage({
+        from: fromBranch,
+        to: payload.name,
+        sha: payload.sha,
+        source: payload.source,
+      });
+    }
     return {
       ...prev,
       [targetChatId]: {
