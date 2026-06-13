@@ -216,6 +216,9 @@ beforeEach(() => {
   mockGetSandboxDiff.mockReset().mockResolvedValue({ diff: 'diff --git a/src/a.ts b/src/a.ts' });
   mockResolveHarnessSettings.mockReset().mockReturnValue({ evaluateAfterCoder: true });
   mockInvalidateMemory.mockReset().mockResolvedValue(undefined);
+  // Default: a recording no-op (the real append is exercised only by the
+  // mid-run-divider regression test, which sets its own implementation).
+  mockApplyBranchSwitchPayload.mockReset();
 });
 
 // ---------------------------------------------------------------------------
@@ -442,6 +445,73 @@ describe('startInlineCoderTurn', () => {
         runtimeHandlersRef: ctx.runtimeHandlersRef,
       }),
     );
+  });
+
+  it('finalizes the placeholder, not a branch divider appended mid-run (Codex P1)', async () => {
+    const { ctx, store } = makeHarness();
+
+    // Faithful stand-in for applyBranchSwitchPayload: append a role:'assistant'
+    // branch divider AFTER the streaming placeholder (what the real migration
+    // does for kind:'carried'/'forked'), via the helper's setConversations.
+    mockApplyBranchSwitchPayload.mockImplementation(
+      (
+        _payload: unknown,
+        helperCtx: {
+          setConversations: (
+            u: (p: Record<string, Conversation>) => Record<string, Conversation>,
+          ) => void;
+        },
+      ) => {
+        helperCtx.setConversations((prev) => {
+          const conv = prev['chat-1'];
+          const divider = {
+            id: 'branch-divider',
+            role: 'assistant',
+            content: '',
+            timestamp: 2,
+            status: 'done',
+            kind: 'branch_carried',
+            visibleToModel: false,
+          } as unknown as ChatMessage;
+          return { ...prev, 'chat-1': { ...conv, messages: [...conv.messages, divider] } };
+        });
+      },
+    );
+
+    // The kernel switches branches with carry_chat mid-run, then summarizes.
+    mockRunInPageCoderKernel.mockImplementationOnce(
+      async (_spec: unknown, callbacks: { onBranchSwitchPayload: (p: unknown) => void }) => {
+        callbacks.onBranchSwitchPayload({
+          name: 'main',
+          kind: 'carried',
+          from: 'feat/x',
+          source: 'sandbox_switch_branch',
+        });
+        return {
+          summary: 'Did the thing.',
+          cards: [{ type: 'diff' }],
+          rounds: 3,
+          checkpoints: 1,
+          criteriaResults: undefined,
+        };
+      },
+    );
+
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    const msgs = store.current['chat-1'].messages;
+    const placeholder = msgs.find((m) => m.id === 'm-assistant-');
+    const divider = msgs.find((m) => m.id === 'branch-divider');
+
+    // The kernel summary lands on the placeholder, which is finalized (not
+    // left streaming) — even though it's no longer the last message.
+    expect(placeholder?.content).toBe('Did the thing.');
+    expect(placeholder?.status).toBe('done');
+    expect(placeholder?.cards).toEqual([{ type: 'diff' }]);
+    // The divider is untouched — its empty content/kind must survive so it
+    // renders as a transition divider, not as the (hidden) final answer.
+    expect(divider?.content).toBe('');
+    expect((divider as { kind?: string } | undefined)?.kind).toBe('branch_carried');
   });
 
   it('translates the kernel onStatus into phase-first vocab + rotating verbs (no raw "Coder" leak)', async () => {

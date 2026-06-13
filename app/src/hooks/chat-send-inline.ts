@@ -199,6 +199,7 @@ export function splitVisibleContent(text: string): { visible: string; toolCallAc
 export function createInlineTranscriptMirror(
   ctx: SendLoopContext,
   thinkingVerbs?: string[],
+  placeholderId?: string,
 ): (event: PushStreamEvent) => void {
   const { chatId } = ctx;
   let accumulated = '';
@@ -251,10 +252,10 @@ export function createInlineTranscriptMirror(
       const conv = prev[chatId];
       if (!conv) return prev;
       const msgs = [...conv.messages];
-      const lastIdx = msgs.length - 1;
-      if (msgs[lastIdx]?.role !== 'assistant') return prev;
-      msgs[lastIdx] = {
-        ...msgs[lastIdx],
+      const targetIdx = resolveAssistantTargetIndex(msgs, placeholderId);
+      if (targetIdx === -1) return prev;
+      msgs[targetIdx] = {
+        ...msgs[targetIdx],
         content: visible,
         thinking: thinking || undefined,
         status: 'streaming',
@@ -300,19 +301,55 @@ function logInlineTurnCompleted(fields: {
 // Message finalization
 // ---------------------------------------------------------------------------
 
+/**
+ * Id of the last assistant message — the streaming placeholder this lane
+ * finalizes. Captured once at turn start so later finalization targets it
+ * explicitly rather than by position. A typed branch tool fired mid-run
+ * (`carry_chat` switch/fork) appends a `branch_carried`/`branch_forked`
+ * assistant event AFTER the placeholder, so `msgs.length - 1` would then
+ * point at the divider, not the placeholder (Codex P1 on PR #918).
+ */
+function lastAssistantMessageId(messages: readonly ChatMessage[] | undefined): string | undefined {
+  if (!messages) return undefined;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'assistant') return messages[i].id;
+  }
+  return undefined;
+}
+
+/**
+ * Resolve the index of the placeholder to finalize. Prefer the captured
+ * `placeholderId` (immune to a branch divider appended mid-run); fall back to
+ * the trailing assistant message when no id was captured (early-exit paths
+ * before the kernel run, where no divider can exist yet). Returns -1 when no
+ * assistant target exists — callers no-op rather than corrupting a non-target.
+ */
+function resolveAssistantTargetIndex(
+  msgs: readonly ChatMessage[],
+  placeholderId: string | undefined,
+): number {
+  if (placeholderId) {
+    const idx = msgs.findIndex((m) => m.id === placeholderId);
+    return idx !== -1 && msgs[idx]?.role === 'assistant' ? idx : -1;
+  }
+  const lastIdx = msgs.length - 1;
+  return msgs[lastIdx]?.role === 'assistant' ? lastIdx : -1;
+}
+
 function completeAssistantMessage(
   ctx: SendLoopContext,
   update: { content: string; cards?: ChatCard[] },
+  placeholderId?: string,
 ): void {
   const { chatId } = ctx;
   ctx.setConversations((prev) => {
     const conv = prev[chatId];
     if (!conv) return prev;
     const msgs = [...conv.messages];
-    const lastIdx = msgs.length - 1;
-    if (msgs[lastIdx]?.role !== 'assistant') return prev;
-    msgs[lastIdx] = {
-      ...msgs[lastIdx],
+    const targetIdx = resolveAssistantTargetIndex(msgs, placeholderId);
+    if (targetIdx === -1) return prev;
+    msgs[targetIdx] = {
+      ...msgs[targetIdx],
       content: update.content,
       thinking: undefined,
       status: 'done',
@@ -326,8 +363,9 @@ function completeAssistantMessage(
 type ToolCompleteEvent = Extract<RunEventInput, { type: 'tool.execution_complete' }>;
 
 /**
- * Inserts synthetic isToolCall/isToolResult pairs immediately before the last
- * assistant message (the streaming placeholder), so groupChatMessages renders
+ * Inserts synthetic isToolCall/isToolResult pairs immediately before the inline
+ * placeholder (resolved by id, so a `branch_*` divider appended mid-run doesn't
+ * divert the disclosure onto the wrong message), so groupChatMessages renders
  * a collapsible "Used N tools" disclosure above the final answer. These
  * messages are display-only: buildInlineTurnPreamble already filters
  * !isToolCall && !isToolResult from the next turn's model context, and
@@ -343,6 +381,7 @@ function insertSyntheticToolPairs(
   ctx: SendLoopContext,
   events: ToolCompleteEvent[],
   cards?: ChatCard[],
+  placeholderId?: string,
 ): void {
   if (events.length === 0) return;
   const { chatId } = ctx;
@@ -350,8 +389,8 @@ function insertSyntheticToolPairs(
     const conv = prev[chatId];
     if (!conv) return prev;
     const msgs = [...conv.messages];
-    const lastIdx = msgs.length - 1;
-    if (msgs[lastIdx]?.role !== 'assistant') return prev;
+    const targetIdx = resolveAssistantTargetIndex(msgs, placeholderId);
+    if (targetIdx === -1) return prev;
 
     const synthetic: ChatMessage[] = [];
     for (let i = 0; i < events.length; i++) {
@@ -392,7 +431,7 @@ function insertSyntheticToolPairs(
       });
     }
 
-    msgs.splice(lastIdx, 0, ...synthetic);
+    msgs.splice(targetIdx, 0, ...synthetic);
     return { ...prev, [chatId]: { ...conv, messages: msgs } };
   });
 }
@@ -442,6 +481,12 @@ export async function startInlineCoderTurn(
   const { chatId, lockedProvider, resolvedModel } = ctx;
   const startedMs = Date.now();
 
+  // Capture the streaming placeholder's id up front. Finalization targets it by
+  // id so a typed branch tool fired mid-run (carry_chat switch/fork) — which
+  // appends a `branch_*` divider after the placeholder — can't divert the final
+  // summary / tool disclosure onto the divider (Codex P1 on PR #918).
+  const placeholderId = lastAssistantMessageId(ctx.conversationsRef.current[chatId]?.messages);
+
   console.log(
     JSON.stringify({
       level: 'info',
@@ -480,9 +525,13 @@ export async function startInlineCoderTurn(
       : !repoFullName
         ? 'a connected repo'
         : 'an active branch';
-    completeAssistantMessage(ctx, {
-      content: `[Inline turn unavailable] This turn needs ${missingLabel}. Try again once the workspace is ready.`,
-    });
+    completeAssistantMessage(
+      ctx,
+      {
+        content: `[Inline turn unavailable] This turn needs ${missingLabel}. Try again once the workspace is ready.`,
+      },
+      placeholderId,
+    );
     logInlineTurnCompleted({
       chatId,
       runId: args.runId,
@@ -512,7 +561,7 @@ export async function startInlineCoderTurn(
   // mirror guards every event the same way) — no point paying for a sandbox
   // call and kernel launch we'd immediately abort.
   if (ctx.abortRef.current) {
-    completeAssistantMessage(ctx, { content: 'Cancelled by user.' });
+    completeAssistantMessage(ctx, { content: 'Cancelled by user.' }, placeholderId);
     logInlineTurnCompleted({
       chatId,
       runId: args.runId,
@@ -526,7 +575,7 @@ export async function startInlineCoderTurn(
   const { preCoderHead, preCoderUntrackedFiles } = await capturePreCoderSnapshot(sandboxId);
 
   // --- Kernel bindings ---
-  const mirror = createInlineTranscriptMirror(ctx, thinkingVerbs);
+  const mirror = createInlineTranscriptMirror(ctx, thinkingVerbs, placeholderId);
   const stream = teePushStream(
     getProviderPushStream(lockedProvider) as unknown as PushStream<LlmMessage>,
     mirror,
@@ -682,7 +731,7 @@ export async function startInlineCoderTurn(
     const isAbort =
       (err instanceof DOMException && err.name === 'AbortError') || ctx.abortRef.current;
     if (isAbort) {
-      completeAssistantMessage(ctx, { content: 'Cancelled by user.' });
+      completeAssistantMessage(ctx, { content: 'Cancelled by user.' }, placeholderId);
       logInlineTurnCompleted({
         chatId,
         runId: args.runId,
@@ -695,7 +744,11 @@ export async function startInlineCoderTurn(
     // Shield raw upstream text (provider bodies / sandbox stderr) from the
     // transcript; the full message still rides the structured log + engine
     // reason for ops/debugging.
-    completeAssistantMessage(ctx, { content: `[Inline turn failed] ${sanitizeErrorForChat(msg)}` });
+    completeAssistantMessage(
+      ctx,
+      { content: `[Inline turn failed] ${sanitizeErrorForChat(msg)}` },
+      placeholderId,
+    );
     // Emit the terminal failure ourselves so `finalizeRunSession` sees a
     // terminal phase and doesn't mislabel the exit as a plain abort.
     ctx.emitRunEngineEvent({ type: 'LOOP_FAILED', timestamp: Date.now(), reason: msg });
@@ -836,14 +889,23 @@ export async function startInlineCoderTurn(
   // captured, so they fold away like the old Orchestrator path. When no
   // tools ran (pure conversational turn), cards stay on the final message. ---
   const hasToolDisclosure = capturedToolEvents.length > 0;
-  insertSyntheticToolPairs(ctx, capturedToolEvents, hasToolDisclosure ? result.cards : undefined);
+  insertSyntheticToolPairs(
+    ctx,
+    capturedToolEvents,
+    hasToolDisclosure ? result.cards : undefined,
+    placeholderId,
+  );
   const finalContent = auditorGate?.auditorSummaryLine
     ? `${result.summary}\n\n${auditorGate.auditorSummaryLine}`
     : result.summary;
-  completeAssistantMessage(ctx, {
-    content: finalContent,
-    ...(hasToolDisclosure ? {} : { cards: result.cards }),
-  });
+  completeAssistantMessage(
+    ctx,
+    {
+      content: finalContent,
+      ...(hasToolDisclosure ? {} : { cards: result.cards }),
+    },
+    placeholderId,
+  );
   ctx.updateAgentStatus({ active: false, phase: '' });
 
   logInlineTurnCompleted({

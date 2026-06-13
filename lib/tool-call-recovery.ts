@@ -34,7 +34,29 @@ export interface ToolCallRecoveryState {
    * guard (CLI loop, tests) — read it as `?? 0`.
    */
   trailingIntentNudges?: number;
+  /**
+   * Count of "tool call buried in the reasoning/thinking channel" nudges
+   * issued during this run. The parser only scans response content (the
+   * orchestrator forwards `content` tokens to the dispatcher, never reasoning),
+   * so a model that emits its `{"tool": ...}` / namespaced `functions.x:0 {...}`
+   * call inside its reasoning channel — a documented Kimi K2.x habit — drops it
+   * silently and dead-ends as a natural completion. The Web no-tool path
+   * increments this when it re-prompts such a model to re-emit the call in
+   * content. Capped so a model that keeps burying calls can't spin the loop
+   * forever. Optional for back-compat with callers that predate the guard —
+   * read it as `?? 0`.
+   */
+  reasoningToolCallNudges?: number;
 }
+
+/**
+ * Cap on "tool call buried in the reasoning channel" nudges per run. One nudge
+ * resolves the common case (the model re-emits the call it placed in reasoning).
+ * The cap is the same safety valve as `MAX_TRAILING_INTENT_NUDGES`: the Web
+ * round loop is otherwise unbounded, so a model that keeps burying calls in
+ * reasoning must eventually be allowed to break rather than spin forever.
+ */
+export const MAX_REASONING_TOOL_CALL_NUDGES = 2;
 
 /**
  * Cap on "announced an action but emitted no tool call" nudges per run.
