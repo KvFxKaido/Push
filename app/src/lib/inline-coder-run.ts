@@ -52,6 +52,7 @@ import type {
   HarnessProfileSettings,
   MemoryScope,
   RunEventInput,
+  BranchSwitchPayload,
 } from '@/types';
 import {
   generateCheckpointAnswer as generateCheckpointAnswerLib,
@@ -389,6 +390,10 @@ export interface InPageCoderKernelCallbacks {
    *  delegated arc leaves it undefined (reconciling the foreground UI from
    *  inside a delegated run is an open design question, not an oversight). */
   onSandboxExecBranch?: (info: { command: string; branch: string }) => void;
+  /** Branch-switch payload tee for kernel-executed typed branch tools. Inline
+   *  lane only — the delegated arc leaves it undefined deliberately, matching
+   *  the desync stamp convention above. */
+  onBranchSwitchPayload?: (payload: BranchSwitchPayload) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -510,6 +515,9 @@ export async function runInPageCoderKernel(
       });
       if (call.tool === 'sandbox_exec' && result.branch) {
         callbacks.onSandboxExecBranch?.({ command: call.args.command, branch: result.branch });
+      }
+      if (result.branchSwitch) {
+        callbacks.onBranchSwitchPayload?.(result.branchSwitch);
       }
       return result;
     },

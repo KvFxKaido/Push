@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  createBranchCarriedMessage,
   createBranchForkedMessage,
   createMessage,
   effectiveMessageBranch,
@@ -86,6 +87,30 @@ describe('createBranchForkedMessage', () => {
   });
 });
 
+describe('createBranchCarriedMessage', () => {
+  it('produces a non-model-visible event stamped with the target branch', () => {
+    const msg = createBranchCarriedMessage({
+      from: 'feature/foo',
+      to: 'main',
+      source: 'sandbox_switch_branch',
+    });
+    expect(msg.kind).toBe('branch_carried');
+    expect(msg.visibleToModel).toBe(false);
+    expect(msg.branch).toBe('main');
+    expect(msg.branchCarriedMeta).toEqual({
+      from: 'feature/foo',
+      to: 'main',
+      source: 'sandbox_switch_branch',
+    });
+  });
+
+  it('uses assistant role and empty content (transcript metadata)', () => {
+    const msg = createBranchCarriedMessage({ from: 'feature/foo', to: 'main' });
+    expect(msg.role).toBe('assistant');
+    expect(msg.content).toBe('');
+  });
+});
+
 describe('effectiveMessageBranch', () => {
   it('returns msg.branch when stamped', () => {
     expect(effectiveMessageBranch({ branch: 'feature/foo' }, 'main')).toBe('feature/foo');
@@ -142,6 +167,18 @@ describe('filterModelVisibleMessages', () => {
       createMessage({ role: 'user', content: 'hi', currentBranch: 'main' }),
       event,
       createMessage({ role: 'assistant', content: 'reply', currentBranch: 'feature/foo' }),
+    ];
+    const out = filterModelVisibleMessages(messages);
+    expect(out).toHaveLength(2);
+    expect(out.find((m) => m.id === event.id)).toBeUndefined();
+  });
+
+  it('strips a branch_carried transcript event', () => {
+    const event = createBranchCarriedMessage({ from: 'feature/foo', to: 'main' });
+    const messages = [
+      createMessage({ role: 'user', content: 'hi', currentBranch: 'feature/foo' }),
+      event,
+      createMessage({ role: 'assistant', content: 'reply', currentBranch: 'main' }),
     ];
     const out = filterModelVisibleMessages(messages);
     expect(out).toHaveLength(2);

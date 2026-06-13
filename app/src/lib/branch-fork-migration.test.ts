@@ -414,6 +414,65 @@ describe('applyBranchSwitchPayload — forked, with active chat', () => {
     expect(getMigrationMarker()).toBeNull();
   });
 
+  it('carried: migrates the active chat like forked but emits a branch_carried event', () => {
+    const oldMessages = [
+      makeMessage({ id: 'm1', content: 'continue this' }),
+      makeMessage({ id: 'm2', content: 'on main' }),
+    ];
+    const conv = makeConversation({ branch: 'feature/foo', messages: oldMessages });
+    const ctx = makeContext(conv);
+    ctx.branchInfoRef.current = { currentBranch: 'feature/foo', defaultBranch: 'main' };
+
+    applyBranchSwitchPayload(
+      {
+        name: 'main',
+        kind: 'carried',
+        from: 'feature/foo',
+        previous: 'feature/foo',
+        source: 'sandbox_switch_branch',
+      },
+      ctx,
+    );
+
+    const updated = ctx.conversations['chat-1'];
+    expect(updated.branch).toBe('main');
+    expect(updated.messages).toHaveLength(3);
+    expect(updated.messages[0].branch).toBe('feature/foo');
+    expect(updated.messages[1].branch).toBe('feature/foo');
+    const event = updated.messages[2];
+    expect(event.kind).toBe('branch_carried');
+    expect(event.branch).toBe('main');
+    expect(event.visibleToModel).toBe(false);
+    expect(event.branchCarriedMeta).toEqual({
+      from: 'feature/foo',
+      to: 'main',
+      source: 'sandbox_switch_branch',
+    });
+    expect(ctx.skipAutoCreateRef.current).toEqual({ chatId: 'chat-1', toBranch: 'main' });
+    expect(getMigrationMarker()).toMatchObject({
+      chatId: 'chat-1',
+      fromBranch: 'feature/foo',
+      toBranch: 'main',
+    });
+    expect(ctx.onBranchSwitchSpy).toHaveBeenCalledWith('main');
+    expect(ctx.dirtyConversationIdsRef.current.has('chat-1')).toBe(true);
+  });
+
+  it('carried with no active chat: syncs branch silently without setting guards', () => {
+    const ctx = makeContext();
+    ctx.activeChatIdRef.current = null;
+
+    applyBranchSwitchPayload(
+      { name: 'main', kind: 'carried', from: 'feature/foo', source: 'sandbox_switch_branch' },
+      ctx,
+    );
+
+    expect(ctx.onBranchSwitchSpy).toHaveBeenCalledWith('main');
+    expect(ctx.setConversations).not.toHaveBeenCalled();
+    expect(ctx.skipAutoCreateRef.current).toBeNull();
+    expect(getMigrationMarker()).toBeNull();
+  });
+
   it('R12 backfill: legacy conv with undefined branch falls back to fromBranch', () => {
     // PR #412 review (Codex P2): Conversation.branch is optional; legacy
     // chats from before per-conversation branches landed have it undefined.

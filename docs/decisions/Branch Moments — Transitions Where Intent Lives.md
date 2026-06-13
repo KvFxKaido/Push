@@ -1,7 +1,7 @@
 # Branch Moments — Transitions Where Intent Lives
 
 Date: 2026-06-13
-Status: **Draft** — flip to Current in the implementation PR(s).
+Status: **Current** — §3 (carry verb, PR A) shipped; §1 (commit-card chips) and §2 (out-of-band merge banner) still to build.
 Owner: Push
 
 ## Problem
@@ -181,9 +181,13 @@ producers compose into the same dispatcher that track will also use.
 Suggested split — each lands independently, any order after the
 verification gate:
 
-1. **PR A (verification + carry verb):** inline-lane `branchSwitch` routing
-   check (fix via tee if broken), then `carry_chat` + `kind: 'carried'` +
-   divider + protocol pins + tests.
+1. **PR A (verification + carry verb) — shipped:** inline-lane `branchSwitch`
+   routing fixed via the `onBranchSwitchPayload` tee, then `carry_chat` +
+   `kind: 'carried'` + divider + protocol pins + tests. The `carried` kind and
+   `branch_carried` divider stay app-internal (`BranchSwitchPayload` /
+   `ChatMessage.kind`); they do not cross the CLI wire-event surface, so the
+   only protocol pin is the `carry_chat` tool arg in
+   `cli/tests/daemon-integration.test.mjs`.
 2. **PR B (merge banner):** `findMergedPRForBranch` helper +
    `'merge_detected'` source + banner component + per-chat dismissal +
    tests (detection hit, miss, API-failure silence, banner action calls

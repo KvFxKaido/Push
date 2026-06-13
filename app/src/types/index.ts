@@ -368,13 +368,16 @@ export interface ChatMessage {
   branch?: string;
   /** Discriminator for synthetic message kinds. Plain user/assistant messages
    *  leave this undefined. */
-  kind?: 'branch_forked' | 'branch_merged';
+  kind?: 'branch_forked' | 'branch_merged' | 'branch_carried';
   /** Payload for `kind: 'branch_forked'` events. Records the branch
    *  transition that happened at this point in the conversation. */
   branchForkedMeta?: BranchForkedMeta;
   /** Payload for `kind: 'branch_merged'` events. Records the merge that
    *  caused the conversation to migrate to the default branch. */
   branchMergedMeta?: BranchMergedMeta;
+  /** Payload for `kind: 'branch_carried'` events. Records that the
+   *  existing conversation intentionally continued on another branch. */
+  branchCarriedMeta?: BranchCarriedMeta;
   /** When explicitly `false`, this message is transcript metadata only —
    *  filtered out of every prompt-pack path. Default behavior (undefined)
    *  is model-visible. Used for system events like `branch_forked` that
@@ -402,10 +405,12 @@ export type BranchSwitchSource =
  *  was just merged and the workspace is switching back to the default
  *  branch: the active conversation migrates to the default branch (mirrors
  *  forked) so the user stays in the chat where the work shipped, instead of
- *  being bumped to a different chat or a fresh auto-created one. */
+ *  being bumped to a different chat or a fresh auto-created one. `kind:
+ *  'carried'` means the model intentionally asked to continue this
+ *  conversation on an existing branch. */
 export interface BranchSwitchPayload {
   name: string;
-  kind: 'forked' | 'switched' | 'merged';
+  kind: 'forked' | 'switched' | 'merged' | 'carried';
   /** Source branch (for forked: the base; for switched: optional context). */
   from?: string;
   /** Branch the sandbox was on immediately before this switch. Captured by
@@ -442,6 +447,14 @@ export interface BranchMergedMeta {
   from: string;
   to: string;
   prNumber?: number;
+  source?: BranchSwitchSource;
+}
+
+/** Payload for a `kind: 'branch_carried'` system event. Records that the
+ *  conversation moved to an existing branch without claiming a fork or merge. */
+export interface BranchCarriedMeta {
+  from: string;
+  to: string;
   source?: BranchSwitchSource;
 }
 

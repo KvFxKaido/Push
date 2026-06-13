@@ -161,4 +161,16 @@ describe('useWorkspaceSandboxController branch teardown guard', () => {
     expect(stopSandbox).not.toHaveBeenCalled();
     expect(skipRef.current).toBe(false);
   });
+
+  it('preserves the sandbox when carry-chat migration uses the governed switch path', () => {
+    const stopSandbox = vi.fn(async () => {});
+    const skipRef = { current: false };
+
+    renderController('feature/work', stopSandbox, skipRef);
+    skipRef.current = true;
+    renderController('main', stopSandbox, skipRef);
+
+    expect(stopSandbox).not.toHaveBeenCalled();
+    expect(skipRef.current).toBe(false);
+  });
 });

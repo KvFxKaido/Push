@@ -958,6 +958,7 @@ export async function executeSandboxToolCall(
 
       case 'sandbox_switch_branch': {
         const branch = call.args.branch;
+        const carryChat = call.args.carry_chat === true;
         if (isInvalidGitRef(branch)) {
           const err: StructuredToolError = {
             type: 'INVALID_ARG',
@@ -1027,7 +1028,8 @@ export async function executeSandboxToolCall(
           // Conversation does NOT migrate.
           branchSwitch: {
             name: branch,
-            kind: 'switched',
+            kind: carryChat ? 'carried' : 'switched',
+            ...(carryChat && previous ? { from: previous } : {}),
             ...(previous ? { previous } : {}),
             source: 'sandbox_switch_branch',
           },
