@@ -412,7 +412,24 @@ export async function handleListDir(
     return { text: formatSensitivePathToolError(dirPath) };
   }
 
-  const entries = await ctx.listDirectory(ctx.sandboxId, dirPath);
+  let entries: FileEntry[];
+  try {
+    entries = await ctx.listDirectory(ctx.sandboxId, dirPath);
+  } catch (error) {
+    // A missing path (or one that isn't a directory) is a recoverable tool
+    // result — the model lists the parent or picks another path — NOT a
+    // turn-fatal throw. `read_file`/`read_symbols`/`find_references` already
+    // catch here; `list_dir` was the lone unguarded inspection handler, so a
+    // list on a nonexistent dir (404 FILE_NOT_FOUND post-#923) propagated out
+    // of the tool executor and killed the whole inline turn. classifyError
+    // maps "no such file"/"not found" → FILE_NOT_FOUND (retryable: false).
+    const message = error instanceof Error ? error.message : 'Failed to list directory';
+    const err = classifyError(message, dirPath);
+    return {
+      text: formatStructuredError(err, `[Tool Error — sandbox_list_dir]\n${message}`),
+      structuredError: err,
+    };
+  }
   const filtered = filterSensitiveDirectoryEntries(dirPath, entries);
 
   const dirs = filtered.entries.filter((entry) => entry.type === 'directory');

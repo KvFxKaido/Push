@@ -204,6 +204,23 @@ describe('handleListDir', () => {
       ]);
     }
   });
+
+  it('returns a recoverable FILE_NOT_FOUND tool result when the dir is missing (not a throw)', async () => {
+    // Regression: listing a nonexistent directory must NOT propagate the
+    // thrown FILE_NOT_FOUND out of the tool executor (which killed the whole
+    // inline turn) — it's a recoverable result the model routes around, like
+    // read_file. The thrown message is the client's formatSandboxError text.
+    const ctx = makeContext();
+    ctx.listDirectory.mockRejectedValue(
+      new Error('No such file or directory in the workspace. (FILE_NOT_FOUND)'),
+    );
+
+    const result = await handleListDir(ctx, { path: '/workspace/src' });
+
+    expect(result.structuredError?.type).toBe('FILE_NOT_FOUND');
+    expect(result.structuredError?.retryable).toBe(false);
+    expect(result.text).toContain('[Tool Error — sandbox_list_dir]');
+  });
 });
 
 describe('handleReadSymbols', () => {
