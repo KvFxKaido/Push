@@ -99,7 +99,7 @@ import {
   ADOPTION_RESUME_NOTE_MARKER,
 } from '@push/lib/run-adoption-loop';
 import type { PushStreamEvent } from '@push/lib/provider-contract';
-import type { ChatMessage, Conversation } from '@/types';
+import type { ChatMessage, Conversation, VerificationRuntimeState } from '@/types';
 import type { SendLoopContext } from './chat-send-types';
 
 // ---------------------------------------------------------------------------
@@ -919,7 +919,7 @@ describe('verification gate + workspace-patch capture', () => {
     // later runtime gate doesn't treat the passed check as still pending. We
     // assert by running the recorded updater against a seeded state with a
     // matching command rule and confirming it flips pending → passed.
-    const seeded = {
+    const seeded: VerificationRuntimeState = {
       policyName: 'p',
       backendTouched: true,
       mutationOccurred: true,
@@ -928,18 +928,18 @@ describe('verification gate + workspace-patch capture', () => {
         {
           id: 'typecheck',
           label: 'tc',
-          scope: 'always' as const,
-          kind: 'command' as const,
+          scope: 'always',
+          kind: 'command',
           command: 'npm run typecheck',
-          status: 'pending' as const,
+          status: 'pending',
           updatedAt: 0,
         },
       ],
     };
     const recordCall = updateVerificationState.mock.calls.find(
       ([, updater]) =>
-        (updater as (s: typeof seeded) => typeof seeded)(seeded).requirements[0].status ===
-        'passed',
+        (updater as (s: VerificationRuntimeState) => VerificationRuntimeState)(seeded)
+          .requirements[0].status === 'passed',
     );
     expect(recordCall).toBeTruthy();
   });
