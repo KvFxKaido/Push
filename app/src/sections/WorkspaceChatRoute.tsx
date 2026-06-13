@@ -2,14 +2,23 @@ import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import type { ApprovalMode } from '@/lib/approval-mode';
 import { Toaster } from '@/components/ui/sonner';
+import { BranchSwitchConfirm } from '@/components/chat/BranchSwitchConfirm';
 import { formatSnapshotAge, isSnapshotStale } from '@/hooks/useSnapshotManager';
 import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
 import { useMergeDetectedBanner } from '@/hooks/useMergeDetectedBanner';
 import { useWorkspaceChatComposerController } from '@/hooks/useWorkspaceChatComposerController';
 import { useWorkspaceChatPanelsController } from '@/hooks/useWorkspaceChatPanelsController';
+import type { BranchSwitchProbe } from '@/lib/branch-switch-probe';
 import { getRepoAppearanceColorHex, hexToRgba } from '@/lib/repo-appearance';
+import { getSandboxDiff } from '@/lib/sandbox-client';
 import { executeSandboxToolCall } from '@/lib/sandbox-tools';
+import {
+  resolveCommitForkFromBranch,
+  runCommitSwitchConfirmAction,
+  runCommitSwitchDefaultAction,
+} from '@/lib/commit-card-branch-actions';
 import { cleanWorkspacePublishMessage } from '@/lib/workspace-publish';
+import type { CardAction } from '@/types';
 import { ChatScreen } from './ChatScreen';
 import {
   buildRepoChatDrawerProps,
@@ -215,6 +224,11 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
   const [branchCreateMounted, setBranchCreateMounted] = useState(false);
   const [branchForkMounted, setBranchForkMounted] = useState(false);
   const [mergeFlowMounted, setMergeFlowMounted] = useState(false);
+  const [commitForkFromBranch, setCommitForkFromBranch] = useState<string | null>(null);
+  const [commitSwitchConfirmBranch, setCommitSwitchConfirmBranch] = useState<string | null>(null);
+  const [commitSwitchProbe, setCommitSwitchProbe] = useState<BranchSwitchProbe | null>(null);
+  const [commitSwitchError, setCommitSwitchError] = useState<string | null>(null);
+  const [commitSwitchingBranch, setCommitSwitchingBranch] = useState<string | null>(null);
 
   const { markSnapshotActivity } = snapshots;
 
@@ -374,6 +388,8 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     (open: boolean) => {
       if (open) {
         setBranchForkMounted(true);
+      } else {
+        setCommitForkFromBranch(null);
       }
       setShowBranchFork(open);
     },
@@ -388,6 +404,85 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
       setShowMergeFlow(open);
     },
     [setShowMergeFlow],
+  );
+
+  const openCommitSwitchConfirm = useCallback((branch: string, probe: BranchSwitchProbe) => {
+    setCommitSwitchConfirmBranch(branch);
+    setCommitSwitchProbe(probe);
+    setCommitSwitchError(null);
+  }, []);
+
+  const closeCommitSwitchConfirm = useCallback(() => {
+    setCommitSwitchConfirmBranch(null);
+    setCommitSwitchProbe(null);
+    setCommitSwitchError(null);
+    setCommitSwitchingBranch(null);
+  }, []);
+
+  const confirmCommitBranchSwitch = useCallback(async () => {
+    if (!commitSwitchConfirmBranch) return;
+    setCommitSwitchingBranch(commitSwitchConfirmBranch);
+    setCommitSwitchError(null);
+    try {
+      await runCommitSwitchConfirmAction({
+        branch: commitSwitchConfirmBranch,
+        sandboxId: sandbox.sandboxId,
+        setCurrentBranch,
+        switchBranchFromUI,
+        onError: setCommitSwitchError,
+        onDone: closeCommitSwitchConfirm,
+      });
+    } finally {
+      setCommitSwitchingBranch((current) =>
+        current === commitSwitchConfirmBranch ? null : current,
+      );
+    }
+  }, [
+    closeCommitSwitchConfirm,
+    commitSwitchConfirmBranch,
+    sandbox.sandboxId,
+    setCurrentBranch,
+    switchBranchFromUI,
+  ]);
+
+  const handleWorkspaceCardAction = useCallback(
+    (action: CardAction) => {
+      if (action.type === 'commit-switch-default') {
+        markSnapshotActivity();
+        return runCommitSwitchDefaultAction({
+          targetBranch: action.targetBranch,
+          sandboxId: sandbox.sandboxId,
+          getSandboxDiff,
+          switchBranchFromUI,
+          openConfirm: openCommitSwitchConfirm,
+          onSwitchError: (message) => toast.error(message),
+        });
+      }
+
+      if (action.type === 'commit-fork-from-here') {
+        markSnapshotActivity();
+        // BranchForkSheet forks from sandbox HEAD, so only surface the stamped
+        // committed branch as the fork source when HEAD is still on it. If the
+        // user switched away, drop it (null) and the sheet labels the actual
+        // current branch — the UI never claims to fork from a branch it won't.
+        setCommitForkFromBranch(
+          resolveCommitForkFromBranch(action.fromBranch, activeRepo?.current_branch),
+        );
+        setShowBranchForkWithMount(true);
+        return;
+      }
+
+      return handleCardActionWithSnapshotHeartbeat(action);
+    },
+    [
+      activeRepo?.current_branch,
+      handleCardActionWithSnapshotHeartbeat,
+      markSnapshotActivity,
+      openCommitSwitchConfirm,
+      sandbox.sandboxId,
+      setShowBranchForkWithMount,
+      switchBranchFromUI,
+    ],
   );
 
   const handlePublishToGitHub = useCallback(
@@ -573,7 +668,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
       hasSandbox: Boolean(isScratch || activeRepo),
       isChat: false,
       onSuggestion: handleQuickPrompt,
-      onCardAction: handleCardActionWithSnapshotHeartbeat,
+      onCardAction: handleWorkspaceCardAction,
       onPin: pinnedArtifacts.pin,
       interruptedCheckpoint,
       onResumeRun: resumeInterruptedRun,
@@ -711,6 +806,19 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
 
       <Toaster position="bottom-center" />
 
+      {commitSwitchConfirmBranch && (
+        <div className="fixed inset-x-3 bottom-24 z-50 mx-auto max-w-md">
+          <BranchSwitchConfirm
+            branch={commitSwitchConfirmBranch}
+            probe={commitSwitchProbe}
+            error={commitSwitchError}
+            switchingMode={commitSwitchingBranch ? 'warm' : null}
+            onConfirm={() => void confirmCommitBranchSwitch()}
+            onCancel={closeCommitSwitchConfirm}
+          />
+        </div>
+      )}
+
       {activeRepo && branchCreateMounted && (
         <Suspense fallback={null}>
           <BranchCreateSheet
@@ -728,7 +836,9 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
           <BranchForkSheet
             open={showBranchFork}
             onOpenChange={setShowBranchForkWithMount}
-            fromBranch={activeRepo.current_branch || activeRepo.default_branch}
+            fromBranch={
+              commitForkFromBranch || activeRepo.current_branch || activeRepo.default_branch
+            }
             forkBranch={props.forkBranchFromUI}
           />
         </Suspense>

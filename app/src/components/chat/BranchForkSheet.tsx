@@ -25,7 +25,9 @@ interface BranchForkSheetProps {
   /** Branch the fork will spawn from. Displayed in the header so the user
    *  knows what state they're forking. Not passed to `forkBranch` — the
    *  sandbox tool defaults to its current HEAD, which is the actual "here"
-   *  state and may differ from this UI-tracked label if HEAD has drifted. */
+   *  state and may differ from this UI-tracked label if HEAD has drifted.
+   *  Callers are responsible for keeping this label honest (see the commit-card
+   *  guard in WorkspaceChatRoute). */
   fromBranch: string;
   /** Bound to `useChat.forkBranchFromUI`. Calls the sandbox_create_branch
    *  tool path; the chat hook handles conversation migration internally. */

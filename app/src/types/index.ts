@@ -859,6 +859,10 @@ export interface CommitReviewCardData {
   commitMessage: string;
   status: 'pending' | 'refreshing' | 'approved' | 'rejected' | 'committed' | 'pushing' | 'error';
   error?: string;
+  /** Branch where the approved commit landed. Stamped on success so
+   * contextual post-commit actions do not infer from mutable route state. */
+  committedBranch?: string;
+  defaultBranch?: string;
 }
 
 export interface CICheck {
@@ -894,6 +898,13 @@ export type CardAction =
   | { type: 'commit-approve'; messageId: string; cardIndex: number; commitMessage: string }
   | { type: 'commit-refresh'; messageId: string; cardIndex: number; commitMessage: string }
   | { type: 'commit-reject'; messageId: string; cardIndex: number }
+  | { type: 'commit-switch-default'; messageId: string; cardIndex: number; targetBranch: string }
+  | {
+      type: 'commit-fork-from-here';
+      messageId: string;
+      cardIndex: number;
+      fromBranch?: string;
+    }
   | { type: 'ci-refresh'; messageId: string; cardIndex: number }
   | { type: 'sandbox-state-refresh'; messageId: string; cardIndex: number; sandboxId: string }
   | {

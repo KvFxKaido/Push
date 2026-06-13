@@ -68,6 +68,8 @@ import {
   HUB_PANEL_SURFACE_CLASS,
   HUB_TAG_CLASS,
 } from '@/components/chat/hub-styles';
+import { BranchSwitchConfirm } from '@/components/chat/BranchSwitchConfirm';
+import { countGitStatusEntries, type BranchSwitchProbe } from '@/lib/branch-switch-probe';
 import {
   BranchWaveIcon,
   CommitPulseIcon,
@@ -144,16 +146,6 @@ interface ReviewDiffSelection {
 interface CommitPushTarget {
   mode: CommitTargetMode;
   branchName?: string;
-}
-
-interface BranchSwitchProbe {
-  branch: string;
-  loading: boolean;
-  dirty: boolean;
-  changedFiles: number;
-  unknown: boolean;
-  noSandbox: boolean;
-  errorMessage?: string;
 }
 
 export interface HubBranchProps {
@@ -272,14 +264,6 @@ const CHAT_MODE_TABS = new Set<HubTab>(['notes', 'settings']);
 // screen plumbed the prop bundles (today none of them do — the gate stays
 // the same as the chat-mode check, just keyed off the bundles' presence).
 const DAEMON_MODE_TABS = new Set<HubTab>(['notes', 'settings']);
-
-function countGitStatusEntries(gitStatus: string | undefined): number {
-  if (typeof gitStatus !== 'string') return 0;
-  return gitStatus
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean).length;
-}
 
 const PHASE_LABELS: Record<CommitPhase, string> = {
   idle: '',
@@ -1561,65 +1545,15 @@ export function WorkspaceHubSheet({
           {/* Branch switch confirmation overlay */}
           {switchConfirmBranch && (
             <div className={`border-b ${HUB_GLASS_HAIRLINE} px-3 py-2.5`}>
-              <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3 py-3`}>
-                <p className="text-xs text-push-fg-secondary">
-                  Switch to <span className="font-medium text-push-fg">{switchConfirmBranch}</span>?
-                </p>
-                <p className="mt-1.5 text-push-xs text-push-fg-dim">
-                  {switchProbe?.noSandbox
-                    ? 'No sandbox is running, so the next start will open this branch.'
-                    : switchProbe?.loading
-                      ? 'Checking sandbox changes...'
-                      : switchProbe?.dirty
-                        ? switchProbe.unknown
-                          ? 'Sandbox changes could not be verified. Treating the tree as dirty.'
-                          : `${switchProbe.changedFiles} changed file${switchProbe.changedFiles === 1 ? '' : 's'} will carry into the switch.`
-                        : 'Sandbox is clean. The warm switch preserves the running workspace.'}
-                </p>
-                {switchProbe?.errorMessage && (
-                  <p className="mt-1 text-push-xs text-red-300">{switchProbe.errorMessage}</p>
-                )}
-                {switchError && <p className="mt-1 text-push-xs text-red-300">{switchError}</p>}
-                <div className="mt-3 flex items-center gap-2">
-                  <button
-                    onClick={() => void confirmBranchSwitch()}
-                    disabled={Boolean(switchingBranch) || switchProbe?.loading}
-                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 disabled:opacity-50`}
-                  >
-                    {switchingBranch?.mode === 'warm' ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : null}
-                    <span>
-                      {switchProbe?.dirty && !switchProbe.noSandbox
-                        ? 'Switch and carry changes'
-                        : 'Switch'}
-                    </span>
-                  </button>
-                  {!switchProbe?.noSandbox && (
-                    <button
-                      onClick={cleanSwitchBranch}
-                      disabled={Boolean(switchingBranch) || switchProbe?.loading}
-                      className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 disabled:opacity-50`}
-                    >
-                      {switchingBranch?.mode === 'clean' ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : null}
-                      <span>
-                        {switchProbe?.dirty && !switchProbe.unknown && switchProbe.changedFiles > 0
-                          ? `Clean switch (${switchProbe.changedFiles})`
-                          : 'Clean switch'}
-                      </span>
-                    </button>
-                  )}
-                  <button
-                    onClick={closeBranchSwitchDialog}
-                    disabled={Boolean(switchingBranch)}
-                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 disabled:opacity-50`}
-                  >
-                    <span>Cancel</span>
-                  </button>
-                </div>
-              </div>
+              <BranchSwitchConfirm
+                branch={switchConfirmBranch}
+                probe={switchProbe}
+                error={switchError}
+                switchingMode={switchingBranch?.mode ?? null}
+                onConfirm={() => void confirmBranchSwitch()}
+                onCancel={closeBranchSwitchDialog}
+                onCleanSwitch={cleanSwitchBranch}
+              />
             </div>
           )}
 
