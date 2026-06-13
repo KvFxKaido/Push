@@ -601,10 +601,33 @@ export async function startInlineCoderTurn(
     apiMessages: args.apiMessages,
     provider: lockedProvider,
     model: resolvedModel || undefined,
-    memoryScope,
+    // null = skip decision-memory persistence (the option's documented
+    // off-switch). A `coder_checkpoint` in the delegated arc is the Orchestrator
+    // ruling on a delegated Coder's question — a real decision worth keeping.
+    // Inline is the lead answering *itself* from recent chat history, so writing
+    // that self-consultation into durable decision memory would pollute it with
+    // internal reasoning future turns retrieve as if it were a delegated ruling.
+    memoryScope: null,
     readLatestCoderState: () => ctx.lastCoderStateRef.current,
     getSignal: () => ctx.abortControllerRef.current?.signal,
-    updateAgentStatus: ctx.updateAgentStatus,
+    // Route the answerer's status through the same phase-first translation the
+    // kernel's `onStatus` uses. The answerer emits delegated-arc vocabulary
+    // ("Coder checkpoint" / "Coder resuming...") that `translateCoderStatus`
+    // exists to keep off the single lead's spinner — wrapping here maps it to
+    // "Thinking…" (rotating verbs) instead of leaking raw "Coder X" text. The
+    // delegated arc passes its own raw `updateAgentStatus` and is unaffected.
+    updateAgentStatus: (status, meta) => {
+      const render = translateCoderStatus(status.phase ?? '', status.detail);
+      ctx.updateAgentStatus(
+        {
+          ...status,
+          phase: render.phase,
+          detail: render.thinking ? undefined : render.detail,
+          ...(render.thinking && thinkingVerbs?.length ? { verbs: thinkingVerbs } : {}),
+        },
+        meta,
+      );
+    },
   });
 
   // Per-round durability bridge: point the V1 capture at the kernel's own
@@ -919,6 +942,12 @@ export async function startInlineCoderTurn(
           resolvedModelForChat: resolvedModel || undefined,
           verificationPolicy,
           auditorInput: {
+            // `CoderAuditorInput` is multi-task shaped for the delegated arc's
+            // per-task loop; an inline turn is always a single task (the user's
+            // raw turn), so these arrays are single-element by construction —
+            // the shape is satisfied, not the multi-task iteration. The Auditor
+            // status it drives is attributed to the shared 'coder' source lane
+            // (set inside the handler), same as the delegated path.
             taskList: [args.trimmedText],
             allCards: result.cards,
             summaries: [result.summary],
