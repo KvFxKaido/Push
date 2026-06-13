@@ -7,7 +7,7 @@
  * lives in `./inline-coder-run.ts`'s `runInPageCoderKernel` — extracted
  * there for the Inline Foreground Lane so the delegated arc and the
  * inline lane run the kernel through one assembly point (see
- * `docs/decisions/Inline Foreground Lane — Local While Watched.md`).
+ * `docs/archive/decisions/Inline Foreground Lane — Local While Watched.md`).
  *
  * This wrapper preserves the Web-side public API so existing call sites
  * (`coder-delegation-handler.ts`, `task-graph-delegation-handler.ts`,

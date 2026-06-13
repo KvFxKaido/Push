@@ -1,7 +1,7 @@
 # Branch Desync Detection
 
 Date: 2026-06-12
-Status: **Current**
+Status: **Archived (shipped)** — delivered 2026-06-13 (PR #913); provenance only.
 Owner: Push
 
 ## Problem

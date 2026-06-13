@@ -1,7 +1,7 @@
 # Inline Foreground Lane — Local While Watched
 
 Date: 2026-06-11
-Status: **Current** — shipped 2026-06-11 in two PRs: the kernel-run builder
+Status: **Archived (shipped)** — shipped 2026-06-11 in two PRs: the kernel-run builder
 extraction (`app/src/lib/inline-coder-run.ts`, PR 1) and the lane + routing
 flip (`app/src/hooks/chat-send-inline.ts`, PR 2). Convergence point of the
 Coder Delegation Collapse (archived audit) and Durable Runs — Adopt-on-Silence

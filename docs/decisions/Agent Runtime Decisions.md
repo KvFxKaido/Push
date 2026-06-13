@@ -147,7 +147,7 @@ different interaction model per surface.
 
 Current state / gap: the web `inline` lane is the collapsed lead today
 (`app/src/hooks/chat-send-inline.ts` plus the kernel's `leadMode` option — see
-[`Inline Foreground Lane`](<Inline Foreground Lane — Local While Watched.md>)).
+[`Inline Foreground Lane`](<../archive/decisions/Inline Foreground Lane — Local While Watched.md>)).
 On the CLI, the first convergence step landed 2026-06-12: interactive turns
 (TUI + daemon `send_user_message`) default to the single lead in-loop —
 `runAssistantTurn` no longer runs the Planner pre-pass or the subagent

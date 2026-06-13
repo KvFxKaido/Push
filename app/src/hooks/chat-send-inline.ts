@@ -1,7 +1,7 @@
 /**
  * chat-send-inline.ts — the Inline Foreground Lane.
  *
- * PR 2 of `docs/decisions/Inline Foreground Lane — Local While Watched.md`:
+ * PR 2 of `docs/archive/decisions/Inline Foreground Lane — Local While Watched.md`:
  * when delegation-mode is `inline` (the default), the user's raw turn runs
  * the coder kernel **in the browser as the lead agent** — no Orchestrator
  * handoff, no Planner, no brief — streaming into the normal chat
