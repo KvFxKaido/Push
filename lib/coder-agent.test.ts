@@ -93,6 +93,7 @@ function baseCoderOptions(overrides: {
   evaluateAfterModel?: CoderAgentOptions<Call, never>['evaluateAfterModel'];
   leadMode?: boolean;
   leadToolGuidance?: boolean;
+  harnessMaxRounds?: number;
 }): CoderAgentOptions<Call, never> {
   return {
     provider: 'openrouter',
@@ -100,6 +101,7 @@ function baseCoderOptions(overrides: {
     modelId: 'coder-model',
     leadMode: overrides.leadMode,
     leadToolGuidance: overrides.leadToolGuidance,
+    harnessMaxRounds: overrides.harnessMaxRounds,
     sandboxId: 'sb-1',
     allowedRepo: 'kvfxkaido/push',
     userProfile: null,
@@ -193,6 +195,73 @@ describe('runCoderAgent (PushStream consumer)', () => {
     expect(coder).not.toContain('## Tool Routing');
     expect(coder).not.toContain('## Tool Call Placement');
     expect(coder).not.toContain('## Error Handling');
+  });
+
+  it('lead hitting the round cap closes gracefully — no Coder / round count / tool name', async () => {
+    const rounds: PushStreamEvent[][] = Array.from({ length: 4 }, () => [
+      { type: 'text_delta', text: 'working' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+    const { stream } = makePushStream(rounds);
+    // Keep emitting read-only calls and never halt, so the loop runs to the cap.
+    const detectAllToolCalls = () => ({
+      readOnly: [
+        { call: { tool: 'sandbox_read_file', args: { path: 'a' } } },
+        { call: { tool: 'sandbox_read_file', args: { path: 'b' } } },
+      ],
+      mutating: null,
+      fileMutations: [],
+      extraMutations: [],
+      droppedCandidates: [],
+    });
+    const result = await runCoderAgent(
+      baseCoderOptions({
+        stream,
+        leadMode: true,
+        harnessMaxRounds: 2,
+        detectAllToolCalls,
+        evaluateAfterModel: async () => null,
+      }),
+      {
+        onStatus: () => {},
+        fetchSandboxStateSummary: async () => '\n\n[Sandbox State] 1 file changed',
+      },
+    );
+    expect(result.summary).toContain("I'm stopping here");
+    expect(result.summary).toContain('[Sandbox State] 1 file changed');
+    expect(result.summary).not.toContain('Coder');
+    expect(result.summary).not.toContain('sandbox_diff');
+    expect(result.summary).not.toMatch(/\d+\s*rounds/);
+  });
+
+  it('delegated Coder hitting the round cap keeps its Orchestrator-facing marker', async () => {
+    const rounds: PushStreamEvent[][] = Array.from({ length: 4 }, () => [
+      { type: 'text_delta', text: 'working' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+    const { stream } = makePushStream(rounds);
+    const detectAllToolCalls = () => ({
+      readOnly: [
+        { call: { tool: 'sandbox_read_file', args: { path: 'a' } } },
+        { call: { tool: 'sandbox_read_file', args: { path: 'b' } } },
+      ],
+      mutating: null,
+      fileMutations: [],
+      extraMutations: [],
+      droppedCandidates: [],
+    });
+    const result = await runCoderAgent(
+      baseCoderOptions({
+        stream,
+        leadMode: false,
+        harnessMaxRounds: 2,
+        detectAllToolCalls,
+        evaluateAfterModel: async () => null,
+      }),
+      { onStatus: () => {} },
+    );
+    expect(result.summary).toContain('[Coder stopped after 2 rounds');
+    expect(result.summary).toContain('sandbox_diff');
   });
 
   it('fires onCheckpoint at the cadence (every 5th round) with a consistent state snapshot', async () => {
