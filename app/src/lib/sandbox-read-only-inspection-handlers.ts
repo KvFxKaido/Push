@@ -25,7 +25,8 @@
  * imports, matching the verification and git/release extraction pattern.
  */
 
-import type { FileListCardData, ToolExecutionResult } from '@/types';
+import type { FileListCardData, StructuredToolError, ToolExecutionResult } from '@/types';
+import { isDefinitivelyGoneMessage } from './sandbox-error-utils';
 import type {
   ExecResult,
   FileEntry,
@@ -412,7 +413,31 @@ export async function handleListDir(
     return { text: formatSensitivePathToolError(dirPath) };
   }
 
-  const entries = await ctx.listDirectory(ctx.sandboxId, dirPath);
+  let entries: FileEntry[];
+  try {
+    entries = await ctx.listDirectory(ctx.sandboxId, dirPath);
+  } catch (error) {
+    // A missing path (or one that isn't a directory) is a recoverable tool
+    // result — the model lists the parent or picks another path — NOT a
+    // turn-fatal throw. `read_file`/`read_symbols`/`find_references` already
+    // catch here; `list_dir` was the lone unguarded inspection handler, so a
+    // list on a nonexistent dir (404 FILE_NOT_FOUND post-#923) propagated out
+    // of the tool executor and killed the whole inline turn. classifyError
+    // maps "no such file"/"not found" → FILE_NOT_FOUND (retryable: false).
+    const message = error instanceof Error ? error.message : 'Failed to list directory';
+    // Distinguish a genuinely-gone sandbox from a missing path FIRST: a real
+    // expiration surfaces as "Sandbox not found or expired … (NOT_FOUND)",
+    // whose text would hit classifyError's broad `not found` → FILE_NOT_FOUND
+    // branch and rob extractSideEffects of the SANDBOX_UNREACHABLE signal that
+    // fires the health-check/recovery + restart guidance. (Codex P2 on #924.)
+    const err: StructuredToolError = isDefinitivelyGoneMessage(message)
+      ? { type: 'SANDBOX_UNREACHABLE', retryable: false, message, detail: `Path: ${dirPath}` }
+      : classifyError(message, dirPath);
+    return {
+      text: formatStructuredError(err, `[Tool Error — sandbox_list_dir]\n${message}`),
+      structuredError: err,
+    };
+  }
   const filtered = filterSensitiveDirectoryEntries(dirPath, entries);
 
   const dirs = filtered.entries.filter((entry) => entry.type === 'directory');
