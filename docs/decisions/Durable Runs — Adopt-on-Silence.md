@@ -30,7 +30,7 @@ Instead the run learns to survive abandonment:
 > **2026-06-11:** the default main-chat turn now honors this decision
 > end-to-end. The interim inline default (#887) detached every turn to the
 > CoderJob DO from round 0, watched or not;
-> [`Inline Foreground Lane — Local While Watched.md`](Inline%20Foreground%20Lane%20—%20Local%20While%20Watched.md)
+> [`Inline Foreground Lane — Local While Watched.md`](../archive/decisions/Inline%20Foreground%20Lane%20—%20Local%20While%20Watched.md)
 > (Current) moved inline turns back into the browser as foreground coder-
 > kernel runs — registered with RunHost, checkpointing per round from
 > kernel state (`onCheckpoint` → V1 capture, so adoption's

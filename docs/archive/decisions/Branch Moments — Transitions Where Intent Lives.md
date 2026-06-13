@@ -1,7 +1,7 @@
 # Branch Moments — Transitions Where Intent Lives
 
 Date: 2026-06-13
-Status: **Current** — delivered; §1 (commit-card chips), §2 (out-of-band merge banner, PR B), and §3 (carry verb, PR A) shipped.
+Status: **Archived (shipped)** — delivered; §1 (commit-card chips), §2 (out-of-band merge banner, PR B), and §3 (carry verb, PR A) shipped.
 Owner: Push
 
 ## Problem

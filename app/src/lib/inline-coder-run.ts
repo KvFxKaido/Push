@@ -1,6 +1,6 @@
 /**
  * In-page Coder kernel-run builder — PR 1 of the Inline Foreground Lane
- * (see `docs/decisions/Inline Foreground Lane — Local While Watched.md`,
+ * (see `docs/archive/decisions/Inline Foreground Lane — Local While Watched.md`,
  * §"Implementation plan").
  *
  * The delegated arc has always run the shared Coder kernel in the browser

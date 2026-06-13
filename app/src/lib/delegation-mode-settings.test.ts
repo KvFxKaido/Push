@@ -1,5 +1,5 @@
 // Pins the turn dispatch table for the Inline Foreground Lane (see
-// `docs/decisions/Inline Foreground Lane — Local While Watched.md`).
+// `docs/archive/decisions/Inline Foreground Lane — Local While Watched.md`).
 // `resolveTurnEngineTrigger` is the single source of truth for which
 // runtime a turn takes: 'background-mode' → CoderJob DO engine,
 // 'inline-delegation' → foreground inline lane, null → foreground
