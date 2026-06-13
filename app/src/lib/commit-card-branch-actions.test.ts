@@ -1,8 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  resolveCommitForkFromBranch,
   runCommitSwitchConfirmAction,
   runCommitSwitchDefaultAction,
 } from './commit-card-branch-actions';
+
+describe('resolveCommitForkFromBranch', () => {
+  it('keeps the stamped branch when HEAD is still on it (label is honest)', () => {
+    expect(resolveCommitForkFromBranch('feature/work', 'feature/work')).toBe('feature/work');
+  });
+
+  it('drops the stamped branch when the user switched away (avoids a false claim)', () => {
+    // BranchForkSheet forks from HEAD (now 'main'); returning null lets the
+    // sheet label the actual current branch instead of the stale committed one.
+    expect(resolveCommitForkFromBranch('feature/work', 'main')).toBeNull();
+  });
+
+  it('returns null when either branch is missing', () => {
+    expect(resolveCommitForkFromBranch(undefined, 'main')).toBeNull();
+    expect(resolveCommitForkFromBranch('feature/work', undefined)).toBeNull();
+  });
+});
 
 describe('runCommitSwitchConfirmAction', () => {
   it('cold-switches via setCurrentBranch when there is no sandbox', async () => {

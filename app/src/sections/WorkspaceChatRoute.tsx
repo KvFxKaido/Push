@@ -13,6 +13,7 @@ import { getRepoAppearanceColorHex, hexToRgba } from '@/lib/repo-appearance';
 import { getSandboxDiff } from '@/lib/sandbox-client';
 import { executeSandboxToolCall } from '@/lib/sandbox-tools';
 import {
+  resolveCommitForkFromBranch,
   runCommitSwitchConfirmAction,
   runCommitSwitchDefaultAction,
 } from '@/lib/commit-card-branch-actions';
@@ -460,7 +461,13 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
 
       if (action.type === 'commit-fork-from-here') {
         markSnapshotActivity();
-        setCommitForkFromBranch(action.fromBranch ?? null);
+        // BranchForkSheet forks from sandbox HEAD, so only surface the stamped
+        // committed branch as the fork source when HEAD is still on it. If the
+        // user switched away, drop it (null) and the sheet labels the actual
+        // current branch — the UI never claims to fork from a branch it won't.
+        setCommitForkFromBranch(
+          resolveCommitForkFromBranch(action.fromBranch, activeRepo?.current_branch),
+        );
         setShowBranchForkWithMount(true);
         return;
       }
@@ -468,6 +475,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
       return handleCardActionWithSnapshotHeartbeat(action);
     },
     [
+      activeRepo?.current_branch,
       handleCardActionWithSnapshotHeartbeat,
       markSnapshotActivity,
       openCommitSwitchConfirm,
@@ -831,11 +839,6 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
             fromBranch={
               commitForkFromBranch || activeRepo.current_branch || activeRepo.default_branch
             }
-            // Commit-card forks anchor to the branch the commit landed on
-            // (stamped in commitForkFromBranch), not the ambient HEAD — so the
-            // fork is honest even if the user switched away before opening this
-            // sheet. The ambient fork flow leaves this undefined (HEAD default).
-            forkFrom={commitForkFromBranch ?? undefined}
             forkBranch={props.forkBranchFromUI}
           />
         </Suspense>

@@ -3,6 +3,23 @@ import type { SwitchBranchInWorkspaceResult } from '@/lib/fork-branch-in-workspa
 
 type SandboxDiffProbe = (sandboxId: string) => Promise<{ git_status?: string }>;
 
+/**
+ * Keep the commit-card "New branch from here" label honest.
+ *
+ * `BranchForkSheet` forks from the sandbox's current HEAD (a deliberate
+ * invariant). The chip stamps the branch the commit landed on, but if the user
+ * switched away before opening the sheet, HEAD no longer matches — so surfacing
+ * the stamped branch as the fork source would claim a branch the fork won't use.
+ * Only return the stamped branch when HEAD is still on it; otherwise return null
+ * so the sheet falls back to labeling the actual current branch.
+ */
+export function resolveCommitForkFromBranch(
+  stampedBranch: string | undefined,
+  currentHead: string | undefined,
+): string | null {
+  return stampedBranch && currentHead && stampedBranch === currentHead ? stampedBranch : null;
+}
+
 interface CommitSwitchConfirmActionArgs {
   branch: string;
   sandboxId: string | null;

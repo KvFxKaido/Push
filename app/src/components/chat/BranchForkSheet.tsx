@@ -23,16 +23,12 @@ interface BranchForkSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Branch the fork will spawn from. Displayed in the header so the user
-   *  knows what state they're forking. By default NOT passed to `forkBranch` —
-   *  the sandbox tool defaults to its current HEAD, which is the actual "here"
-   *  state and may differ from this UI-tracked label if HEAD has drifted. */
+   *  knows what state they're forking. Not passed to `forkBranch` — the
+   *  sandbox tool defaults to its current HEAD, which is the actual "here"
+   *  state and may differ from this UI-tracked label if HEAD has drifted.
+   *  Callers are responsible for keeping this label honest (see the commit-card
+   *  guard in WorkspaceChatRoute). */
   fromBranch: string;
-  /** Explicit ref to fork from, overriding the HEAD default. Set by callers
-   *  whose intent is anchored to a specific branch regardless of current HEAD
-   *  (e.g. the commit-card "New branch from here" chip, which must fork from the
-   *  branch the commit landed on even if the user has since switched away).
-   *  Omitted by the ambient fork flow, preserving its HEAD-defaulting. */
-  forkFrom?: string;
   /** Bound to `useChat.forkBranchFromUI`. Calls the sandbox_create_branch
    *  tool path; the chat hook handles conversation migration internally. */
   forkBranch: (name: string, from?: string) => Promise<ForkBranchInWorkspaceResult>;
@@ -42,13 +38,7 @@ const BRANCH_ACTION_BUTTON_CLASS = `${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 flex-
 
 const BRANCH_DANGER_PANEL_CLASS = `rounded-[18px] border border-red-500/20 ${CARD_HEADER_BG_ERROR} px-3.5 py-3`;
 
-function BranchForkSheet({
-  open,
-  onOpenChange,
-  fromBranch,
-  forkFrom,
-  forkBranch,
-}: BranchForkSheetProps) {
+function BranchForkSheet({ open, onOpenChange, fromBranch, forkBranch }: BranchForkSheetProps) {
   const [branchName, setBranchName] = useState('');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -75,12 +65,11 @@ function BranchForkSheet({
     setCreating(true);
     setError(null);
     try {
-      // `forkFrom` (when set) anchors the fork to an explicit branch — the
-      // commit-card path needs the branch the commit landed on, not whatever
-      // HEAD happens to be if the user switched away. Otherwise pass nothing
-      // and let the sandbox tool default to its current HEAD, which keeps the
-      // ambient "fork from here" honest if HEAD drifted via `sandbox_exec`.
-      const result = await forkBranch(sanitized, forkFrom);
+      // Don't pass `fromBranch`; let the sandbox tool default to its current
+      // HEAD. If sandbox HEAD has drifted from the UI-tracked branch label
+      // (e.g. via plain `git checkout` through `sandbox_exec`), this keeps
+      // "fork from here" anchored to the actual current state.
+      const result = await forkBranch(sanitized);
       if (!result.ok) {
         setError(result.errorMessage ?? 'Failed to create branch');
         return;
@@ -92,7 +81,7 @@ function BranchForkSheet({
     } finally {
       setCreating(false);
     }
-  }, [isValid, creating, sanitized, forkFrom, forkBranch, onOpenChange]);
+  }, [isValid, creating, sanitized, forkBranch, onOpenChange]);
 
   const handleCancel = useCallback(() => {
     setBranchName('');
