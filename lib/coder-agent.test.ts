@@ -234,6 +234,39 @@ describe('runCoderAgent (PushStream consumer)', () => {
     expect(result.summary).not.toMatch(/\d+\s*round/i);
   });
 
+  it('lead cap close has no dangling tail when no sandbox-state callback is wired', async () => {
+    const rounds: PushStreamEvent[][] = Array.from({ length: 4 }, () => [
+      { type: 'text_delta', text: 'working' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+    const { stream } = makePushStream(rounds);
+    const detectAllToolCalls = () => ({
+      readOnly: [
+        { call: { tool: 'sandbox_read_file', args: { path: 'a' } } },
+        { call: { tool: 'sandbox_read_file', args: { path: 'b' } } },
+      ],
+      mutating: null,
+      fileMutations: [],
+      extraMutations: [],
+      droppedCandidates: [],
+    });
+    // No fetchSandboxStateSummary (the CLI lead path) → sandboxState is ''.
+    const result = await runCoderAgent(
+      baseCoderOptions({
+        stream,
+        leadMode: true,
+        harnessMaxRounds: 2,
+        detectAllToolCalls,
+        evaluateAfterModel: async () => null,
+      }),
+      { onStatus: () => {} },
+    );
+    expect(result.summary).toContain('looping further.');
+    // The "here's where things stand:" tail is dropped, so no dangling colon.
+    expect(result.summary).not.toContain('stand:');
+    expect(result.summary.trimEnd().endsWith(':')).toBe(false);
+  });
+
   it('delegated Coder hitting the round cap keeps its Orchestrator-facing marker', async () => {
     const rounds: PushStreamEvent[][] = Array.from({ length: 4 }, () => [
       { type: 'text_delta', text: 'working' },

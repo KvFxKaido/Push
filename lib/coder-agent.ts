@@ -1107,13 +1107,20 @@ export async function runCoderAgent<TCall, TCard>(
       callbacks.onStatus('Coder stopped', `Hit ${maxRounds} round limit`);
       // Append a compact summary of what changed (for the reader / next turn).
       const sandboxState = (await callbacks.fetchSandboxStateSummary?.()) ?? '';
+      // The lead is user-facing: close gracefully in its own voice, with no
+      // round count, no "Coder", and no raw tool name (the delegated wall
+      // leaked all three). Only tack on "here's where things stand" when there
+      // actually IS a state summary — a lead caller without a
+      // `fetchSandboxStateSummary` (e.g. the CLI lead) would otherwise end on a
+      // dangling "stands:" (Codex P2 on #928). The delegated Coder keeps its
+      // Orchestrator-facing marker.
+      const leadClose =
+        "I've spent a while on this without landing it cleanly, so I'm stopping here rather than looping further.";
       return {
-        // The lead is user-facing: close gracefully in its own voice, with no
-        // round count, no "Coder", and no raw tool name (the delegated wall
-        // leaked all three). The delegated Coder keeps its Orchestrator-facing
-        // marker.
         summary: leadMode
-          ? `I've spent a while on this without landing it cleanly, so I'm stopping here rather than looping further. Here's where things stand:${sandboxState}`
+          ? sandboxState
+            ? `${leadClose} Here's where things stand:${sandboxState}`
+            : leadClose
           : `[Coder stopped after ${maxRounds} rounds — task may be incomplete. Review sandbox state with sandbox_diff.]${sandboxState}`,
         cards: allCards,
         rounds: round,
