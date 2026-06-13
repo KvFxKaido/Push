@@ -337,6 +337,10 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
       tool: 'sandbox_switch_branch',
       args: {
         branch,
+        // Only an explicit `true` opts into carry-chat migration; `false` and
+        // an omitted arg both mean the default leave-the-chat-behind switch.
+        // Strict equality keeps a stray truthy value (e.g. a string "false")
+        // from silently flipping a plain switch into a conversation migration.
         ...(args.carry_chat === true ? { carry_chat: true } : {}),
       },
     };
