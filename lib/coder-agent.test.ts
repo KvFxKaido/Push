@@ -173,9 +173,12 @@ describe('runCoderAgent (PushStream consumer)', () => {
     const coder = await promptFor(false);
     expect(coder).toContain('You are the Coder agent');
     expect(coder).toContain('Read the delegation brief');
-    // The delegated Coder keeps its narrower prompt — no lead voice/routing.
+    // The delegated Coder keeps its narrower prompt — none of the lead-only
+    // sections leak into it (full scoping, not just the voice/routing headers).
     expect(coder).not.toContain('Voice:');
     expect(coder).not.toContain('## Tool Routing');
+    expect(coder).not.toContain('## Tool Call Placement');
+    expect(coder).not.toContain('## Error Handling');
   });
 
   it('fires onCheckpoint at the cadence (every 5th round) with a consistent state snapshot', async () => {
