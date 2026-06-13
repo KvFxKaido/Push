@@ -369,6 +369,13 @@ export async function runInlineVerificationCriteria(
       : [];
   const verificationCommandsById = new Map<string, string>();
   const criteriaResults: CriterionResult[] = [];
+  // Serial by design — not a perf oversight. The checks share one sandbox, so
+  // running them concurrently (Promise.all) would contend for the same
+  // workspace/CPU and interleave their output; the kernel's own
+  // acceptance-criteria loop (`lib/coder-agent.ts`) is serial for the same
+  // reason, and the per-iteration abort check below depends on the ordering.
+  // Policies carry a handful of command rules (typecheck/test), so the
+  // wall-clock cost is bounded.
   for (const criterion of criteria) {
     if (signal?.aborted) break;
     verificationCommandsById.set(criterion.id, criterion.check);
