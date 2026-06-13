@@ -2090,14 +2090,14 @@ async function verifySandboxOwnerToken(
     | { stdout?: string; stderr?: string; exitCode?: number }
     | { __error: unknown };
   if ('__error' in tokenRead) {
-    if (classifyCfError(tokenRead.__error) === 'NOT_FOUND') {
+    if (isMissingSessionCode(classifyCfError(tokenRead.__error))) {
       return { ok: false, status: 404, code: 'NOT_FOUND' };
     }
     throw tokenRead.__error;
   }
   if ((tokenRead.exitCode ?? 0) !== 0) {
     const stderr = typeof tokenRead.stderr === 'string' ? tokenRead.stderr : '';
-    if (classifyCfError(stderr) === 'NOT_FOUND') {
+    if (isMissingSessionCode(classifyCfError(stderr))) {
       return { ok: false, status: 404, code: 'NOT_FOUND' };
     }
     throw new Error(stderr || 'Failed to read sandbox owner token');
@@ -2205,6 +2205,16 @@ function classifyCfError(err: unknown): string {
   if (/not found|no such/i.test(msg)) return 'NOT_FOUND';
   if (/container|crashed|unhealthy/i.test(msg)) return 'CONTAINER_ERROR';
   return 'CF_ERROR';
+}
+
+/** A missing owner-token file means the sandbox has no valid session — the
+ *  client should recreate (404 NOT_FOUND), NOT see a config error. Accept the
+ *  file-op `FILE_NOT_FOUND` too: the `ENOENT`/"no such file" on
+ *  `/tmp/push-owner-token` now classifies as FILE_NOT_FOUND (after the
+ *  file-not-found split), but for the auth probe it's still a gone session.
+ *  (Review: Codex P2 on PR #923.) */
+function isMissingSessionCode(code: string): boolean {
+  return code === 'NOT_FOUND' || code === 'FILE_NOT_FOUND';
 }
 
 function authErrorMessage(code: 'NOT_FOUND' | 'AUTH_FAILURE' | 'NOT_CONFIGURED'): string {

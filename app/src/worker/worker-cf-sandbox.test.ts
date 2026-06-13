@@ -1929,4 +1929,28 @@ describe('background execution routes', () => {
     expect(body.code).toBe('FILE_NOT_FOUND');
     expect(body.code).not.toBe('NOT_FOUND');
   });
+
+  it('treats a missing owner-token file as a gone session (404), not a 503 config error', async () => {
+    // Regression (Codex P2 on #923): the file-not-found split must not
+    // reclassify the missing /tmp/push-owner-token read as a benign
+    // FILE_NOT_FOUND that falls through to NOT_CONFIGURED. A missing token
+    // file means the sandbox has no session — the client must recreate (404),
+    // not see a 503 config error.
+    const sandbox = mockSandbox();
+    sandbox.exec.mockImplementation(async (command: string) => {
+      if (isOwnerTokenReadCommand(command)) {
+        return {
+          stdout: '',
+          stderr: 'head: /tmp/push-owner-token: No such file or directory',
+          exitCode: 1,
+        };
+      }
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+
+    const response = await callRoute('diff', { sandbox_id: 'sb1' });
+
+    expect(response.status).toBe(404);
+    expect((await jsonBody(response)).code).toBe('NOT_FOUND');
+  });
 });
