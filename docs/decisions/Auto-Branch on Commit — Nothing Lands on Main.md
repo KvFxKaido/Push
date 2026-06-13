@@ -1,8 +1,11 @@
 # Auto-Branch on Commit — Nothing Lands on Main
 
 Date: 2026-06-13
-Status: **Draft** — implementation spec for first-priority step (2). Flip to
-Current in the implementation PR.
+Status: **Current** — shipped for the web/cloud surfaces. The model tool path
+(`handlePrepareCommit`), the workspace hub, and the file-browser commit flow
+all route an on-default-branch commit through the auto-branch seam; the hub's
+previously-raw commit/push is now gated by the secret scan. CLI deferred (see
+Non-goals).
 Owner: Push
 
 ## Problem
@@ -102,14 +105,21 @@ ensureCommitTargetBranch({
   `forkBranchInWorkspace` path, and return the `branchSwitch` payload for the
   caller to apply.
 
-Callers:
+The seam takes an injectable `fork` primitive so one implementation serves
+both apply styles: the default bare `forkBranchInWorkspace` returns the
+`branchSwitch` payload for the caller to apply (model path + file browser);
+UI surfaces that already have `forkBranchFromUI` inject it to fork+migrate in
+one step (hub). The collision-suffix loop, naming, flag, and trigger are
+identical regardless.
+
+Callers (as built):
 
 | Surface | File | Wiring |
 |---|---|---|
-| File-browser commit | `app/src/hooks/useCommitPush.ts` | call before `pushGit.commit` (the `// Same gate auto-branch-on-commit will run` comment at ~L280 marks the spot); apply the returned `branchSwitch` via the chat dispatcher |
-| Workspace hub commit | `app/src/components/chat/WorkspaceHubSheet.tsx` | same helper, same apply |
-| Merge-flow commit | `app/src/components/chat/MergeFlowSheet.tsx` | same helper (audit its branch context first — merge flow may already be off-`main`) |
-| Model tool path | `app/src/lib/sandbox-git-release-handlers.ts` `handlePrepareCommit` | the handler gains branch awareness (read HEAD + default), runs the helper, and the resulting `branchSwitch` rides the tool result so the inline-lane tee (`onBranchSwitchPayload`, #915) routes the chat — the model never sees a prompt, it just learns post-hoc that it's on a new branch |
+| File-browser commit | `app/src/hooks/useCommitPush.ts` | calls the seam after the Auditor passes, before the gated commit; applies the returned `branchSwitch` via an `onBranchSwitchPayload` callback threaded `WorkspaceSessionScreen → FileBrowser → CommitPushSheet`. Push was already gated. |
+| Workspace hub commit | `app/src/components/chat/WorkspaceHubSheet.tsx` | seam with `fork: forkBranchFromUI` (fork+migrate) for the on-default case; **its raw `git commit`/`git push` migrated to the gated `createSandboxPushGit` path** (gate 2). |
+| Model tool path | `app/src/lib/sandbox-git-release-handlers.ts` `handlePrepareCommit` | the handler gained branch awareness (`currentBranch`/`defaultBranch` threaded through `executeSandboxToolCall` options → `buildGitReleaseContext`), runs the seam, and the `branchSwitch` rides the tool result so the inline-lane tee (`onBranchSwitchPayload`, #915) routes the chat — no prompt, the model learns post-hoc it's on a new branch. |
+| ~~Merge-flow commit~~ | `MergeFlowSheet.tsx` | **Not a commit surface** (finding): it operates on already-pushed branches via the GitHub API + `mergeBranchInUI`, with no working-tree `git commit`/`git push`. Nothing to wire — auto-branch has no hook here. |
 
 ### Chat follows the branch
 

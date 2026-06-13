@@ -58,6 +58,10 @@ import type { DiffResult, ExecResult, FileReadResult } from './sandbox-client';
 import type { CreatedRepoResponse } from './sandbox-tool-utils';
 
 import { parseDiffStats } from './diff-utils';
+import {
+  createModelCommitBranchNameProposer,
+  ensureCommitTargetBranch,
+} from './ensure-commit-target-branch';
 import { createSandboxPushGit } from './git-backend';
 import { GIT_REF_VALIDATION_DETAIL, isInvalidGitRef } from './git-ref-validation';
 import { isDefinitivelyGoneMessage } from './sandbox-error-utils';
@@ -119,6 +123,10 @@ export type GitReleaseClearPrefetchedEditFileCache = (sandboxId: string) => void
 export interface GitReleaseHandlerContext {
   /** The sandbox to execute against. */
   sandboxId: string;
+  /** Push's active branch for this workspace, threaded from the UI/tool runtime. */
+  currentBranch?: string;
+  /** The repo default branch for this workspace, threaded from the UI/tool runtime. */
+  defaultBranch?: string;
   /** Execute a shell command in the sandbox. */
   execInSandbox: GitReleaseExecInSandbox;
   /** Produce a unified diff of the sandbox working tree. */
@@ -362,7 +370,21 @@ export async function handlePrepareCommit(
     };
   }
 
-  // Step 5: SAFE — return a review card for user approval (do NOT commit)
+  // Step 5: SAFE — if committing from the default branch, fork before the
+  // review card is approved so the eventual commit cannot land on main.
+  const branchTarget = await ensureCommitTargetBranch({
+    sandboxId: ctx.sandboxId,
+    currentBranch: ctx.currentBranch,
+    defaultBranch: ctx.defaultBranch,
+    diff: postHookDiffResult.diff,
+    commitMessage: args.message,
+    proposeName: createModelCommitBranchNameProposer({
+      providerOverride: overrides?.providerOverride,
+      modelOverride: overrides?.modelOverride,
+    }),
+  });
+
+  // Step 6: SAFE — return a review card for user approval (do NOT commit)
   const stats = parseDiffStats(postHookDiffResult.diff);
   const reviewData: CommitReviewCardData = {
     diff: {
@@ -380,6 +402,7 @@ export async function handlePrepareCommit(
   return {
     text: `[Tool Result — sandbox_prepare_commit]\nReady for review: "${args.message}" (${stats.filesChanged} file${stats.filesChanged !== 1 ? 's' : ''}, +${stats.additions} -${stats.deletions}). Waiting for user approval.`,
     card: { type: 'commit-review', data: reviewData },
+    ...(branchTarget.switched ? { branchSwitch: branchTarget.branchSwitch } : {}),
   };
 }
 

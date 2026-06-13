@@ -21,7 +21,7 @@ import {
 import { DiffPreviewCard } from '@/components/cards/DiffPreviewCard';
 import { AuditVerdictCard } from '@/components/cards/AuditVerdictCard';
 import { useCommitPush } from '@/hooks/useCommitPush';
-import type { AIProviderType, DiffPreviewCardData } from '@/types';
+import type { AIProviderType, BranchSwitchPayload, DiffPreviewCardData } from '@/types';
 import { getRoleLabel } from '@push/lib/role-display';
 
 interface CommitPushSheetProps {
@@ -39,6 +39,11 @@ interface CommitPushSheetProps {
    * possible. Without this, sandbox death surfaces as a hard error.
    */
   onSandboxExpired?: () => Promise<string | null>;
+  /** Push's active branch + repo default — drive auto-branch-on-commit. */
+  currentBranch?: string;
+  defaultBranch?: string;
+  /** Applies the chat migration after an auto-branch off the default branch. */
+  onBranchSwitchPayload?: (payload: BranchSwitchPayload) => void;
 }
 
 const PHASE_LABELS: Record<string, string> = {
@@ -182,6 +187,9 @@ export function CommitPushSheet({
   lockedModel,
   repoFullName,
   onSandboxExpired,
+  currentBranch,
+  defaultBranch,
+  onBranchSwitchPayload,
 }: CommitPushSheetProps) {
   const {
     phase,
@@ -193,7 +201,11 @@ export function CommitPushSheet({
     fetchDiff,
     commitAndPush,
     reset,
-  } = useCommitPush(sandboxId, lockedProvider, lockedModel, onSandboxExpired, repoFullName);
+  } = useCommitPush(sandboxId, lockedProvider, lockedModel, onSandboxExpired, repoFullName, {
+    currentBranch,
+    defaultBranch,
+    onBranchSwitchPayload,
+  });
 
   const keyboardHeight = useKeyboardHeight();
 

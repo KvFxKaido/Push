@@ -227,6 +227,7 @@ export async function executeSingleToolCall(
       localDaemonBinding: localDaemonBindingRef.current ?? undefined,
       executionMode,
       isMainProtected: isMainProtectedRef.current,
+      currentBranch: branchInfoRef.current?.currentBranch,
       defaultBranch: branchInfoRef.current?.defaultBranch,
       provider: lockedProvider,
       model: resolvedModel,

@@ -34,6 +34,11 @@ import {
 import { runAuditor } from '@/lib/auditor-agent';
 import { getIsAuditorGateEnabled } from '@/hooks/useAuditorGate';
 import { fetchAuditorFileContexts, type AuditorFileContext } from '@/lib/auditor-file-context';
+import {
+  createModelCommitBranchNameProposer,
+  ensureCommitTargetBranch,
+} from '@/lib/ensure-commit-target-branch';
+import { createSandboxPushGit } from '@/lib/git-backend';
 import type {
   ForkBranchInWorkspaceResult,
   SwitchBranchInWorkspaceResult,
@@ -302,10 +307,6 @@ Rules:
 - one slash-separated prefix followed by a descriptive topic
 - no spaces, quotes, markdown, bullets, or explanations
 - keep it concise but specific`;
-
-function escapeSingleQuotes(value: string): string {
-  return value.replace(/'/g, `'"'"'`);
-}
 
 function truncateCommitSubject(subject: string, type: string): string {
   const maxTotalLength = 72;
@@ -660,11 +661,22 @@ export function WorkspaceHubSheet({
         return;
       }
 
-      const safeMessage = escapeSingleQuotes(message);
-      const targetBranchName = target.mode === 'new' ? target.branchName : currentBranchName;
-
       setCommitError(null);
       try {
+        // Fetch the working-tree diff up front: it's invariant across the fork
+        // (forkBranchFromUI carries the working tree), and the auto-branch
+        // namer needs it. Empty diff → nothing to commit.
+        setCommitPhase('fetching-diff');
+        const diffResult = await getSandboxDiff(sandboxId);
+        if (!diffResult.diff) {
+          setCommitPhase('error');
+          setCommitError('Nothing to commit — no changes detected.');
+          return;
+        }
+
+        let effectiveBranchName = target.mode === 'new' ? target.branchName : currentBranchName;
+        let isNewBranch = target.mode === 'new';
+
         if (target.mode === 'new' && target.branchName) {
           setCommitPhase('branching');
           if (!forkBranchFromUI) {
@@ -703,15 +715,32 @@ export function WorkspaceHubSheet({
             setCommitError(forkResult.errorMessage ?? 'Branch switch failed.');
             return;
           }
-        }
-
-        // Phase: Fetching diff
-        setCommitPhase('fetching-diff');
-        const diffResult = await getSandboxDiff(sandboxId);
-        if (!diffResult.diff) {
-          setCommitPhase('error');
-          setCommitError('Nothing to commit — no changes detected.');
-          return;
+        } else if (target.mode === 'current' && isOnMain && forkBranchFromUI) {
+          // auto-branch-on-commit: a commit must never land on the default
+          // branch. Fork to a model-named (deterministic-fallback) branch via
+          // the same typed path, migrating the chat onto it. The seam no-ops
+          // when the flag is off or HEAD is already off the default branch, so
+          // flag-off behaves exactly as before. (Protect-Main-on already
+          // blocks the mode==='current' path above; this covers the
+          // Protect-Main-off case where committing to main would otherwise be
+          // allowed.)
+          setCommitPhase('branching');
+          const auto = await ensureCommitTargetBranch({
+            sandboxId,
+            currentBranch: branchProps.currentBranch,
+            defaultBranch: branchProps.defaultBranch,
+            diff: diffResult.diff,
+            commitMessage: message,
+            proposeName: createModelCommitBranchNameProposer({
+              providerOverride: lockedProvider || undefined,
+              modelOverride: lockedModel || undefined,
+            }),
+            fork: (branch) => forkBranchFromUI(branch),
+          });
+          if (auto.switched) {
+            effectiveBranchName = auto.branch;
+            isNewBranch = true;
+          }
         }
 
         // Phase: Auditing — opt-out, default on (see useAuditorGate). When the
@@ -734,13 +763,12 @@ export function WorkspaceHubSheet({
             () => {},
             {
               repoFullName,
-              activeBranch: targetBranchName,
+              activeBranch: effectiveBranchName,
               defaultBranch: branchProps.defaultBranch,
               source: 'working-tree-commit',
-              sourceLabel:
-                target.mode === 'new'
-                  ? `Working tree commit after branching to ${targetBranchName}`
-                  : `Working tree commit on ${targetBranchName}`,
+              sourceLabel: isNewBranch
+                ? `Working tree commit after branching to ${effectiveBranchName}`
+                : `Working tree commit on ${effectiveBranchName}`,
               projectInstructions,
             },
             undefined,
@@ -757,48 +785,42 @@ export function WorkspaceHubSheet({
           }
         }
 
-        // Phase: Committing
+        // Phase: Committing + Pushing through the gated PushGit so the
+        // deterministic pre-push secret scan covers this surface — previously
+        // the hub committed and pushed via raw `git push`, bypassing the scan
+        // every other commit surface runs (auto-branch → auto-push →
+        // secret-scan only holds if every push is gated). The commit is local
+        // (doctrinally fine); the push is the boundary the scan defends.
         setCommitPhase('committing');
-        const commitResult = await execInSandbox(
-          sandboxId,
-          `cd /workspace && git add -A && if git diff --cached --quiet; then echo "__PUSH_NO_CHANGES__"; else git commit -m '${safeMessage}'; fi`,
-          undefined,
-          { markWorkspaceMutated: true },
-        );
-
-        if (commitResult.exitCode !== 0) {
-          const detail = commitResult.stderr || commitResult.stdout || 'Unknown git error';
+        const pushGit = createSandboxPushGit(sandboxId, { secretScan: true });
+        const commit = await pushGit.commit({ message });
+        if (!commit.ok) {
+          const detail =
+            commit.result?.stderr || commit.result?.stdout || commit.reason || 'Unknown git error';
           setCommitPhase('error');
           setCommitError(`Commit failed: ${detail}`);
           return;
         }
 
-        if ((commitResult.stdout || '').includes('__PUSH_NO_CHANGES__')) {
-          setCommitPhase('error');
-          setCommitError('Nothing to commit — no staged changes.');
-          return;
-        }
-
-        // Phase: Pushing
         setCommitPhase('pushing');
-        const pushCommand =
-          target.mode === 'new' && target.branchName
-            ? `cd /workspace && git push -u origin HEAD:refs/heads/${target.branchName}`
-            : 'cd /workspace && git push origin HEAD';
-        const pushResult = await execInSandbox(sandboxId, pushCommand, undefined, {
-          markWorkspaceMutated: true,
-        });
-        if (pushResult.exitCode !== 0) {
+        const pushResult = await pushGit.push(
+          isNewBranch
+            ? { setUpstream: true, ref: `HEAD:refs/heads/${effectiveBranchName}` }
+            : undefined,
+        );
+        if (!pushResult.ok) {
+          // A secret-scan block is a policy refusal, not a transport failure —
+          // surface the reason verbatim.
           const detail = pushResult.stderr || pushResult.stdout || 'Unknown git error';
           setCommitPhase('error');
-          setCommitError(`Push failed: ${detail}`);
+          setCommitError(pushResult.blocked ? detail : `Push failed: ${detail}`);
           return;
         }
 
         // Success
         setCommitPhase('success');
-        toast.success(`Committed & pushed to ${targetBranchName}.`);
-        if (target.mode === 'new') {
+        toast.success(`Committed & pushed to ${effectiveBranchName}.`);
+        if (isNewBranch) {
           branchProps.onRefreshBranches();
         }
 
@@ -831,6 +853,7 @@ export function WorkspaceHubSheet({
       blockedByProtectMain,
       branchProps,
       currentBranchName,
+      isOnMain,
       lockedModel,
       lockedProvider,
       forkBranchFromUI,
