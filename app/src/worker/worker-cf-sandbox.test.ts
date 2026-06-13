@@ -1910,4 +1910,47 @@ describe('background execution routes', () => {
     expect(response.status).toBe(200);
     expect(await jsonBody(response)).toEqual({ ok: true });
   });
+
+  it('classifies a missing directory as FILE_NOT_FOUND (404), not a gone sandbox', async () => {
+    // Regression: listing a path that doesn't exist inside a LIVE sandbox threw
+    // FileNotFoundError, which the broad `not found` classifier folded into the
+    // sandbox-gone NOT_FOUND bucket → the client surfaced "Sandbox not found or
+    // expired" and the kernel killed the whole turn. A missing path must be a
+    // benign, non-retryable FILE_NOT_FOUND (4xx), distinct from a gone sandbox.
+    const sandbox = mockSandbox();
+    sandbox.listFiles.mockRejectedValue(
+      new Error('FileNotFoundError: Directory not found: /workspace/src'),
+    );
+
+    const response = await callRoute('list', { sandbox_id: 'sb1', path: '/workspace/src' });
+
+    expect(response.status).toBe(404);
+    const body = await jsonBody(response);
+    expect(body.code).toBe('FILE_NOT_FOUND');
+    expect(body.code).not.toBe('NOT_FOUND');
+  });
+
+  it('treats a missing owner-token file as a gone session (404), not a 503 config error', async () => {
+    // Regression (Codex P2 on #923): the file-not-found split must not
+    // reclassify the missing /tmp/push-owner-token read as a benign
+    // FILE_NOT_FOUND that falls through to NOT_CONFIGURED. A missing token
+    // file means the sandbox has no session — the client must recreate (404),
+    // not see a 503 config error.
+    const sandbox = mockSandbox();
+    sandbox.exec.mockImplementation(async (command: string) => {
+      if (isOwnerTokenReadCommand(command)) {
+        return {
+          stdout: '',
+          stderr: 'head: /tmp/push-owner-token: No such file or directory',
+          exitCode: 1,
+        };
+      }
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+
+    const response = await callRoute('diff', { sandbox_id: 'sb1' });
+
+    expect(response.status).toBe(404);
+    expect((await jsonBody(response)).code).toBe('NOT_FOUND');
+  });
 });
