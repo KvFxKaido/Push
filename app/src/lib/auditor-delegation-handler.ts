@@ -344,6 +344,7 @@ export async function handleCoderAuditor(
               ctx.repoRef.current,
               ctx.branchInfoRef.current?.currentBranch,
             ),
+            leadMode: auditorInput.leadMode,
           },
         );
         if (result) {

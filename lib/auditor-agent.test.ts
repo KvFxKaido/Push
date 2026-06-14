@@ -407,6 +407,63 @@ describe('runAuditorEvaluation (PushStream consumer)', () => {
     expect(result.summary).toContain('eval upstream failed');
   });
 
+  it('frames the verdict subject as the assistant in lead mode, never "Coder"', async () => {
+    const { stream, capturedRequest } = makePushStream([
+      {
+        type: 'text_delta',
+        text: '{"verdict":"incomplete","summary":"ran out of steam","gaps":[],"confidence":"low"}',
+      },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+
+    await runAuditorEvaluation(
+      'finish the auth fix',
+      'Stopped partway.',
+      null,
+      null,
+      { provider: 'openrouter', modelId: 'test-model', stream, leadMode: true },
+      () => {},
+    );
+
+    const req = capturedRequest.current as {
+      systemPromptOverride?: string;
+      messages?: { content?: string }[];
+    };
+    // No delegated "Coder" vocabulary anywhere in the lead evaluation prompt.
+    expect(req.systemPromptOverride).toContain('the assistant');
+    expect(req.systemPromptOverride).not.toContain('Coder');
+    const userContent = req.messages?.[0]?.content ?? '';
+    expect(userContent).toContain("the assistant's work");
+    expect(userContent).toContain('[SUMMARY]');
+    expect(userContent).not.toContain('[CODER SUMMARY]');
+  });
+
+  it('keeps the delegated subject as "the Coder" when leadMode is off', async () => {
+    const { stream, capturedRequest } = makePushStream([
+      {
+        type: 'text_delta',
+        text: '{"verdict":"complete","summary":"done","gaps":[],"confidence":"high"}',
+      },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+
+    await runAuditorEvaluation(
+      'finish the auth fix',
+      'Updated the auth guard.',
+      null,
+      null,
+      { provider: 'openrouter', modelId: 'test-model', stream },
+      () => {},
+    );
+
+    const req = capturedRequest.current as {
+      systemPromptOverride?: string;
+      messages?: { content?: string }[];
+    };
+    expect(req.systemPromptOverride).toContain("the Coder's work");
+    expect(req.messages?.[0]?.content ?? '').toContain('[CODER SUMMARY]');
+  });
+
   it('drops the self-referential auditor-gate rule from the verification policy block', async () => {
     const { stream, capturedRequest } = makePushStream([
       {
