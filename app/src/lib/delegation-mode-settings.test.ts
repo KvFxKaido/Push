@@ -37,7 +37,7 @@ const INLINE_KEY = 'push:delegation-mode-preference';
 const BG_KEY = 'push:background-mode-preference';
 
 /** Both routes satisfiable — the common repo-workspace shape. */
-const ELIGIBLE = { hasAttachments: false, engineEligible: true, inlineEligible: true };
+const ELIGIBLE = { engineEligible: true, inlineEligible: true };
 
 beforeEach(() => {
   storage.map.clear();
@@ -97,7 +97,6 @@ describe('delegation-mode-settings', () => {
     storage.map.set(BG_KEY, '1');
     expect(
       resolveTurnEngineTrigger({
-        hasAttachments: false,
         engineEligible: false,
         inlineEligible: true,
       }),
@@ -108,21 +107,9 @@ describe('delegation-mode-settings', () => {
     // Codex P1 (PR #887): with inline as the DEFAULT, a scratch/chat/local-pc
     // workspace (no active repo/branch) must stay on the foreground
     // Orchestrator loop — both bypass routes hard-require repo + branch.
-    const ineligible = { hasAttachments: false, engineEligible: false, inlineEligible: false };
+    const ineligible = { engineEligible: false, inlineEligible: false };
     expect(resolveTurnEngineTrigger(ineligible)).toBeNull();
     storage.map.set(BG_KEY, '1');
     expect(resolveTurnEngineTrigger(ineligible)).toBeNull();
-  });
-
-  it('forces the Orchestrator loop (null) when attachments are present, regardless of flags', () => {
-    storage.map.set(INLINE_KEY, 'inline');
-    storage.map.set(BG_KEY, '1');
-    expect(
-      resolveTurnEngineTrigger({
-        hasAttachments: true,
-        engineEligible: true,
-        inlineEligible: true,
-      }),
-    ).toBeNull();
   });
 });

@@ -22,10 +22,9 @@
  *     the Planner/brief deletion lands. The Orchestrator runs its turn in
  *     the foreground loop and, when it decides to edit, emits
  *     `delegate_coder` → optional Planner pre-pass → synthesized brief →
- *     `runCoderAgent` → Auditor. Note: attachment turns still run this
- *     foreground arc regardless of mode (`resolveTurnEngineTrigger`'s
- *     attachments guard), so the foreground loop stays load-bearing for
- *     attachments until the engine envelope carries them.
+ *     `runCoderAgent` → Auditor. Attachment turns can now ride either bypass
+ *     route because the inline lane and background engine envelope both carry
+ *     the current turn's multipart content into the shared Coder kernel.
  *
  * ## Relationship to background-mode (deliberately decoupled framing)
  *
@@ -122,11 +121,11 @@ export type TurnEngineTrigger = EngineTrigger | null;
  *   |----------------------------------------------|-----------------------------|
  *   | `background-mode` on, engine-eligible        | CoderJob DO engine + JobCard|
  *   | `inline` mode (default), repo+branch         | Foreground inline lane      |
- *   | Attachments, no-repo workspaces              | Foreground Orchestrator loop|
+ *   | No-repo workspaces                           | Foreground Orchestrator loop|
  *   | `delegated` opt-out                          | Foreground Orchestrator loop|
  *
- * Attachments force the Orchestrator loop regardless of flags: neither the
- * engine envelope nor the inline lane's kernel preamble carries them yet.
+ * Attachments do not affect this route decision; both bypass routes carry
+ * current-turn attachments as multipart content into the Coder kernel.
  *
  * The two eligibility flags are the caller's word that each route's
  * preconditions are satisfiable, and they differ deliberately:
@@ -143,11 +142,9 @@ export type TurnEngineTrigger = EngineTrigger | null;
  *     them fine (Codex P1, PR #887).
  */
 export function resolveTurnEngineTrigger(opts: {
-  hasAttachments: boolean;
   engineEligible: boolean;
   inlineEligible: boolean;
 }): TurnEngineTrigger {
-  if (opts.hasAttachments) return null;
   if (isBackgroundModeEnabled() && opts.engineEligible) return 'background-mode';
   if (isInlineDelegationEnabled() && opts.inlineEligible) return 'inline-delegation';
   return null;

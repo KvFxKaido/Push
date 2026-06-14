@@ -45,7 +45,12 @@
  * string slot needed for them.
  */
 
-import type { AIProviderType, LlmMessage, PushStream } from './provider-contract.js';
+import type {
+  AIProviderType,
+  LlmContentPart,
+  LlmMessage,
+  PushStream,
+} from './provider-contract.js';
 import type { AcceptanceCriterion, RunEventInput } from './runtime-contract.js';
 import { createId } from './id-utils.js';
 import { summarizeToolResultPreview } from './run-events.js';
@@ -780,6 +785,13 @@ export interface CoderAgentOptions<TCall, TCard> {
   /** Pre-built delegation brief for the Coder task. Includes any planner brief. */
   taskPreamble: string;
 
+  /**
+   * Rich multipart representation of the initial user turn. Shells build this
+   * from their local attachment types; the shared kernel only carries provider
+   * content parts. Ignored when resuming from a checkpoint.
+   */
+  initialUserContentParts?: LlmContentPart[];
+
   /** Pre-read symbol-cache summary string, or null when the cache is empty. */
   symbolSummary: string | null;
 
@@ -919,6 +931,7 @@ export async function runCoderAgent<TCall, TCard>(
     instructionFilename,
     userProfile,
     taskPreamble,
+    initialUserContentParts,
     symbolSummary,
     toolExec: rawToolExec,
     detectAllToolCalls,
@@ -1157,6 +1170,9 @@ export async function runCoderAgent<TCall, TCard>(
           id: 'coder-task',
           role: 'user',
           content: taskPreamble,
+          ...(initialUserContentParts && initialUserContentParts.length > 0
+            ? { contentParts: initialUserContentParts }
+            : {}),
           timestamp: Date.now(),
         },
       ];

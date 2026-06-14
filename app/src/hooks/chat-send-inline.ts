@@ -62,12 +62,13 @@ import { applyStampedSandboxExecBranchDesync } from '@/lib/branch-desync';
 import { applyBranchSwitchPayload } from '@/lib/branch-fork-migration';
 import { parseUntrackedFileSet } from '@/lib/auditor-delegation-handler';
 import { buildToolMeta, buildToolResultMessage } from '@/lib/chat-tool-messages';
+import { buildAttachmentContentParts } from '@/lib/attachment-content-parts';
 import { createId } from '@push/lib/id-utils';
 import type { CoderCheckpointState } from '@push/lib/coder-agent';
 import type { RunEventInput } from '@push/lib/runtime-contract';
 import type { LlmMessage, PushStream, PushStreamEvent } from '@push/lib/provider-contract';
 import type { VerificationPolicy } from '@/lib/verification-policy';
-import type { ChatCard, ChatMessage } from '@/types';
+import type { AttachmentData, ChatCard, ChatMessage } from '@/types';
 import type { SendLoopContext } from './chat-send-types';
 
 // ---------------------------------------------------------------------------
@@ -77,6 +78,8 @@ import type { SendLoopContext } from './chat-send-types';
 export interface InlineCoderTurnArgs {
   /** The user's raw turn — the kernel's task, verbatim. */
   trimmedText: string;
+  /** Current-turn attachments, converted into multipart content for the kernel. */
+  attachments?: AttachmentData[];
   /** Seed transcript from `prepareSendContext` (ends with the user turn). */
   apiMessages: ChatMessage[];
   /** Engine run id (post-`acquireRunSession`), for the measurement logs. */
@@ -671,6 +674,7 @@ export async function startInlineCoderTurn(
   // Collect tool completion events so we can synthesize the per-turn
   // collapsible disclosure after the kernel finishes.
   const capturedToolEvents: ToolCompleteEvent[] = [];
+  const taskPreamble = buildInlineTurnPreamble(args.trimmedText, args.apiMessages);
 
   let result: Awaited<ReturnType<typeof runInPageCoderKernel>>;
   try {
@@ -679,7 +683,8 @@ export async function startInlineCoderTurn(
         provider: lockedProvider,
         modelId: resolvedModel || undefined,
         sandboxId,
-        taskPreamble: buildInlineTurnPreamble(args.trimmedText, args.apiMessages),
+        taskPreamble,
+        initialUserContentParts: buildAttachmentContentParts(taskPreamble, args.attachments),
         branchContext: {
           activeBranch,
           defaultBranch: branchInfo?.defaultBranch || 'main',

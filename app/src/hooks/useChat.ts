@@ -605,7 +605,7 @@ export function useChat(
       if (!trimmedText && !hasAttachments) return;
       const targetChat = options?.chatId || activeChatIdRef.current;
       // biome-ignore format: engine routing + eligibility live in resolveSendEngineTrigger (chat-send-background.ts); opts stay inline for the file line cap.
-      const engineTrigger = resolveSendEngineTrigger({ hasAttachments, repoRef, branchInfoRef, conversationsRef, chatId: targetChat, requestedProvider: options?.provider ?? null });
+      const engineTrigger = resolveSendEngineTrigger({ repoRef, branchInfoRef, conversationsRef, chatId: targetChat, requestedProvider: options?.provider ?? null });
       // Dispatch (Inline Foreground Lane): 'background-mode' → CoderJob DO engine;
       // 'inline-delegation' → foreground inline lane; null → Orchestrator loop.
       const routeToEngine = engineTrigger === 'background-mode';
@@ -645,6 +645,7 @@ export function useChat(
         const r = await startBackgroundMainChatTurn({
           chatId,
           trimmedText,
+          attachments,
           lockedProvider: lockedProviderForChat,
           resolvedModel: resolvedModelForChat ?? undefined,
           refs,
@@ -713,7 +714,7 @@ export function useChat(
       try {
         if (engineTrigger === 'inline-delegation') {
           // biome-ignore format: one-call lane dispatch; the lane module (chat-send-inline.ts) owns the logic.
-          const lane = await startInlineCoderTurn(loopCtx, { trimmedText, apiMessages, runId: runEngineStateRef.current.runId, agentsMdRef, instructionFilenameRef, getVerificationPolicyForChat });
+          const lane = await startInlineCoderTurn(loopCtx, { trimmedText, attachments, apiMessages, runId: runEngineStateRef.current.runId, agentsMdRef, instructionFilenameRef, getVerificationPolicyForChat });
           loopCompletedNormally = lane.completedNormally;
         } else {
           const result = await runRoundLoop(

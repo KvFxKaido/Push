@@ -199,6 +199,7 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
         'extraToolProtocols',
         'harnessContextResetsEnabled',
         'harnessMaxRounds',
+        'initialUserContentParts',
         'instructionFilename',
         'leadMode',
         // Parity decision: the delegated arc threads `leadToolGuidance:
@@ -310,6 +311,10 @@ describe('runInPageCoderKernel inline knobs', () => {
     const teed: PushStream<LlmMessage> = providerStream;
     const onCheckpoint = vi.fn(async () => {});
     const resumeState = { round: 3, messages: [], workingMemory: {}, cards: [] };
+    const initialUserContentParts = [
+      { type: 'text' as const, text: 'RAW-USER-TURN-PREAMBLE' },
+      { type: 'image_url' as const, image_url: { url: 'data:image/png;base64,abc123' } },
+    ];
 
     await runInPageCoderKernel(
       {
@@ -317,6 +322,7 @@ describe('runInPageCoderKernel inline knobs', () => {
         modelId: 'm',
         sandboxId: 'sb-2',
         taskPreamble: 'RAW-USER-TURN-PREAMBLE',
+        initialUserContentParts,
         stream: teed,
         resumeState: resumeState as never,
         checkpointCadenceRounds: 1,
@@ -328,6 +334,7 @@ describe('runInPageCoderKernel inline knobs', () => {
     expect(options.stream).toBe(teed);
     expect(mockGetProviderPushStream).not.toHaveBeenCalled();
     expect(options.taskPreamble).toBe('RAW-USER-TURN-PREAMBLE');
+    expect(options.initialUserContentParts).toBe(initialUserContentParts);
     expect(options.resumeState).toBe(resumeState);
     expect(options.checkpointCadenceRounds).toBe(1);
     expect(callbacks.onCheckpoint).toBe(onCheckpoint);

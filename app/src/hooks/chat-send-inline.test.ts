@@ -99,7 +99,12 @@ import {
   ADOPTION_RESUME_NOTE_MARKER,
 } from '@push/lib/run-adoption-loop';
 import type { PushStreamEvent } from '@push/lib/provider-contract';
-import type { ChatMessage, Conversation, VerificationRuntimeState } from '@/types';
+import type {
+  AttachmentData,
+  ChatMessage,
+  Conversation,
+  VerificationRuntimeState,
+} from '@/types';
 import type { SendLoopContext } from './chat-send-types';
 
 // ---------------------------------------------------------------------------
@@ -181,7 +186,9 @@ function makeHarness(opts?: { sandboxId?: string | null; repo?: string | null })
   };
 }
 
-function laneArgs() {
+type LaneArgs = Parameters<typeof startInlineCoderTurn>[1];
+
+function laneArgs(overrides: Partial<LaneArgs> = {}): LaneArgs {
   return {
     trimmedText: 'do the thing',
     apiMessages: [
@@ -193,7 +200,8 @@ function laneArgs() {
     agentsMdRef: { current: 'AGENTS-MD' },
     instructionFilenameRef: { current: 'AGENTS.md' },
     getVerificationPolicyForChat: vi.fn(() => ({}) as never),
-  };
+    ...overrides,
+  } as LaneArgs;
 }
 
 function lastAssistant(store: Harness['store']): ChatMessage {
@@ -423,6 +431,26 @@ describe('startInlineCoderTurn', () => {
     expect(callbacks.onCheckpoint).toBeInstanceOf(Function);
     expect(callbacks.onCheckpointRequest).toBeInstanceOf(Function);
     expect(callbacks.onBranchSwitchPayload).toBeInstanceOf(Function);
+  });
+
+  it('passes current-turn attachments as multipart content to the kernel spec', async () => {
+    const { ctx } = makeHarness();
+    const attachment: AttachmentData = {
+      id: 'img-1',
+      type: 'image',
+      filename: 'screen.png',
+      mimeType: 'image/png',
+      sizeBytes: 3,
+      content: 'data:image/png;base64,abc123',
+    };
+
+    await startInlineCoderTurn(ctx, laneArgs({ attachments: [attachment] }));
+
+    const [spec] = mockRunInPageCoderKernel.mock.calls[0] as [Record<string, unknown>];
+    expect(spec.initialUserContentParts).toEqual([
+      { type: 'text', text: spec.taskPreamble },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,abc123' } },
+    ]);
   });
 
   it('routes kernel branchSwitch payloads through applyBranchSwitchPayload', async () => {

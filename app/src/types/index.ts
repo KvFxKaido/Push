@@ -1356,6 +1356,8 @@ export interface ExplorerDelegationArgs extends DelegationBriefFields {
 
 export interface DelegationEnvelope extends DelegationBriefFields {
   task: string;
+  /** Current-turn attachments for main-chat engine turns. */
+  attachments?: AttachmentData[];
   files: string[];
   acceptanceCriteria?: AcceptanceCriterion[];
   branchContext?: {

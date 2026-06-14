@@ -20,8 +20,8 @@ vi.mock('@cloudflare/sandbox', () => ({
   getSandbox: vi.fn(),
 }));
 import type { DurableObjectState } from '@cloudflare/workers-types';
-import type { PushStream } from '@push/lib/provider-contract';
-import type { ChatMessage } from '@/types';
+import type { LlmContentPart, PushStream } from '@push/lib/provider-contract';
+import type { AttachmentData, ChatMessage } from '@/types';
 import {
   CoderJob,
   MAX_DO_RESTART_RESUMES,
@@ -487,6 +487,72 @@ describe('CoderJob DO — end-to-end', () => {
     const jobRow = storage.jobs.get(input.jobId)!;
     expect(jobRow.status).toBe('completed');
     expect(jobRow.finished_at).toBeTypeOf('number');
+  });
+
+  it('converts envelope attachments into the initial coder-task content parts', async () => {
+    const { ctx, waitUntilPromises } = makeCtx();
+    const attachments: AttachmentData[] = [
+      {
+        id: 'img-1',
+        type: 'image',
+        filename: 'screen.png',
+        mimeType: 'image/png',
+        sizeBytes: 3,
+        content: 'data:image/png;base64,abc123',
+      },
+      {
+        id: 'doc-1',
+        type: 'document',
+        filename: 'brief.md',
+        mimeType: 'text/markdown',
+        sizeBytes: 7,
+        content: '# Brief',
+      },
+    ];
+    const input = makeStartInput({
+      jobId: 'job-attachments',
+      envelope: {
+        task: 'inspect attached files',
+        attachments,
+        files: [],
+        provider: 'openrouter',
+      } as CoderJobStartInput['envelope'],
+    });
+    let capturedInitial:
+      | { id: string; content: string; contentParts?: LlmContentPart[] }
+      | undefined;
+    const capturingStream: PushStream<ChatMessage> = (req) => {
+      capturedInitial = req.messages.find((message) => message.id === 'coder-task') as
+        | { id: string; content: string; contentParts?: LlmContentPart[] }
+        | undefined;
+      return (async function* () {
+        yield { type: 'text_delta', text: 'Task complete.' };
+        yield { type: 'done', finishReason: 'stop' };
+      })();
+    };
+
+    __setCoderJobServiceOverrides(input.jobId, {
+      detectors: stubDetectors,
+      executor: stubExecutor,
+      stream: capturingStream,
+    });
+
+    const job = new CoderJob(ctx, makeEnv());
+    await job.fetch(
+      new Request('https://do/start', {
+        method: 'POST',
+        body: JSON.stringify(input),
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    await Promise.all(waitUntilPromises);
+
+    expect(capturedInitial?.content).toContain('inspect attached files');
+    expect(capturedInitial?.contentParts).toEqual([
+      { type: 'text', text: capturedInitial?.content },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,abc123' } },
+      { type: 'text', text: '[Attached file: brief.md]\n```\n# Brief\n```' },
+    ]);
   });
 
   it('persists job.failed when the stream errors', async () => {

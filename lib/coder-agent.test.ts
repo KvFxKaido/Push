@@ -6,7 +6,7 @@ import {
   SandboxUnreachableError,
   type CoderAgentOptions,
 } from './coder-agent.js';
-import type { PushStream, PushStreamEvent } from './provider-contract.js';
+import type { LlmContentPart, PushStream, PushStreamEvent } from './provider-contract.js';
 
 type Call = { call: { tool: string; args: Record<string, unknown> } };
 
@@ -96,6 +96,8 @@ function baseCoderOptions(overrides: {
   leadToolGuidance?: boolean;
   leadToolScope?: CoderAgentOptions<Call, never>['leadToolScope'];
   harnessMaxRounds?: number;
+  initialUserContentParts?: LlmContentPart[];
+  resumeState?: CoderAgentOptions<Call, never>['resumeState'];
 }): CoderAgentOptions<Call, never> {
   return {
     provider: 'openrouter',
@@ -109,7 +111,9 @@ function baseCoderOptions(overrides: {
     allowedRepo: 'kvfxkaido/push',
     userProfile: null,
     taskPreamble: 'Implement the auth fix.',
+    initialUserContentParts: overrides.initialUserContentParts,
     symbolSummary: null,
+    resumeState: overrides.resumeState,
     toolExec: async () => ({ kind: 'executed', resultText: 'tool ok' }),
     detectAllToolCalls:
       overrides.detectAllToolCalls ??
@@ -201,6 +205,61 @@ describe('runCoderAgent (PushStream consumer)', () => {
     const req = capturedRequests[0] as { model: string; hasSandbox?: boolean };
     expect(req.model).toBe('coder-model');
     expect(req.hasSandbox).toBe(true);
+  });
+
+  it('sets multipart content on the initial user turn only for fresh runs', async () => {
+    const initialUserContentParts: LlmContentPart[] = [
+      { type: 'text', text: 'Implement the auth fix.' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,abc123' } },
+    ];
+    const { stream, capturedRequests } = makePushStream([
+      [
+        { type: 'text_delta', text: 'I am done.' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+
+    await runCoderAgent(baseCoderOptions({ stream, initialUserContentParts }), {
+      onStatus: () => {},
+    });
+
+    const freshReq = capturedRequests[0] as {
+      messages: Array<{ id: string; content: string; contentParts?: LlmContentPart[] }>;
+    };
+    expect(freshReq.messages[0]).toMatchObject({
+      id: 'coder-task',
+      content: 'Implement the auth fix.',
+      contentParts: initialUserContentParts,
+    });
+
+    const resumed = makePushStream([
+      [
+        { type: 'text_delta', text: 'Resumed.' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+    await runCoderAgent(
+      baseCoderOptions({
+        stream: resumed.stream,
+        initialUserContentParts,
+        resumeState: {
+          round: 0,
+          messages: [{ id: 'resume-user', role: 'user', content: 'Resume text', timestamp: 1 }],
+          workingMemory: {},
+          cards: [],
+        },
+      }),
+      { onStatus: () => {} },
+    );
+
+    const resumeReq = resumed.capturedRequests[0] as {
+      messages: Array<{ id: string; content: string; contentParts?: LlmContentPart[] }>;
+    };
+    expect(resumeReq.messages[0]).toMatchObject({
+      id: 'resume-user',
+      content: 'Resume text',
+    });
+    expect(resumeReq.messages[0]?.contentParts).toBeUndefined();
   });
 
   it('swaps the implementer prompt for lead-mode framing when leadMode is set', async () => {

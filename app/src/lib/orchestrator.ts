@@ -33,6 +33,7 @@ import {
 import { isSyntheticDigestMessage, parseSessionDigest } from '@push/lib/session-digest';
 import { getZenGoTransport } from './zen-go';
 import { getVertexModelTransport } from './vertex-provider';
+import { buildAttachmentContentParts } from './attachment-content-parts';
 
 /** Whether a `(provider, model)` route lands on the Anthropic Messages API
  *  via the Worker bridge (`buildAnthropicMessagesRequest` →
@@ -722,32 +723,8 @@ export function toLLMMessages(
         ? msg.reasoningBlocks
         : undefined;
 
-    // Check for attachments (multimodal message)
-    if (msg.attachments && msg.attachments.length > 0) {
-      const contentParts: LLMMessageContent[] = [];
-
-      // Add text first (if any)
-      if (msg.content) {
-        contentParts.push({ type: 'text', text: msg.content });
-      }
-
-      // Add attachments
-      for (const att of msg.attachments) {
-        if (att.type === 'image') {
-          // Image: use image_url format with base64 data URL
-          contentParts.push({
-            type: 'image_url',
-            image_url: { url: att.content },
-          });
-        } else {
-          // Code/document: embed as text block
-          contentParts.push({
-            type: 'text',
-            text: `[Attached file: ${att.filename}]\n\`\`\`\n${att.content}\n\`\`\``,
-          });
-        }
-      }
-
+    const contentParts = buildAttachmentContentParts(msg.content, msg.attachments);
+    if (contentParts) {
       llmMessages.push({
         role: msg.role === 'user' ? 'user' : 'assistant',
         content: contentParts,

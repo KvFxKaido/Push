@@ -34,10 +34,16 @@ vi.mock('@/lib/orchestrator', () => ({
 vi.mock('@/lib/provider-engine-capability', () => ({
   isProviderEngineCapable: vi.fn(() => true),
 }));
+vi.mock('@/lib/sandbox-client', () => ({
+  getSandboxOwnerToken: vi.fn(() => 'owner-token'),
+}));
+vi.mock('@/hooks/useUserProfile', () => ({
+  getUserProfile: vi.fn(() => null),
+}));
 
 import { getActiveProvider } from '@/lib/orchestrator';
 import { isProviderEngineCapable } from '@/lib/provider-engine-capability';
-import { resolveSendEngineTrigger } from './chat-send-background';
+import { resolveSendEngineTrigger, startBackgroundMainChatTurn } from './chat-send-background';
 
 const BG_KEY = 'push:background-mode-preference';
 const MODE_KEY = 'push:delegation-mode-preference';
@@ -75,7 +81,6 @@ beforeEach(() => {
 describe('resolveSendEngineTrigger', () => {
   it('routes to the inline lane by default when repo and branch hold', () => {
     const trigger = resolveSendEngineTrigger({
-      hasAttachments: false,
       ...makeRefs(),
       conversationsRef: makeConversations('ollama'),
       chatId: 'chat1',
@@ -89,7 +94,6 @@ describe('resolveSendEngineTrigger', () => {
     // capability fold must not bounce the turn (#889/#890 scope change).
     vi.mocked(isProviderEngineCapable).mockReturnValue(false);
     const trigger = resolveSendEngineTrigger({
-      hasAttachments: false,
       ...makeRefs(),
       conversationsRef: makeConversations('openrouter'),
       chatId: 'chat1',
@@ -100,7 +104,6 @@ describe('resolveSendEngineTrigger', () => {
   it('routes to the engine when background-mode is on and the provider is engine-capable', () => {
     storage.map.set(BG_KEY, '1');
     const trigger = resolveSendEngineTrigger({
-      hasAttachments: false,
       ...makeRefs(),
       conversationsRef: makeConversations('ollama'),
       chatId: 'chat1',
@@ -113,7 +116,6 @@ describe('resolveSendEngineTrigger', () => {
     storage.map.set(BG_KEY, '1');
     vi.mocked(isProviderEngineCapable).mockReturnValue(false);
     const trigger = resolveSendEngineTrigger({
-      hasAttachments: false,
       ...makeRefs(),
       conversationsRef: makeConversations('openrouter'),
       chatId: 'chat1',
@@ -126,7 +128,6 @@ describe('resolveSendEngineTrigger', () => {
     storage.map.set(MODE_KEY, 'delegated');
     vi.mocked(isProviderEngineCapable).mockReturnValue(false);
     const trigger = resolveSendEngineTrigger({
-      hasAttachments: false,
       ...makeRefs(),
       conversationsRef: makeConversations('openrouter'),
       chatId: 'chat1',
@@ -136,7 +137,6 @@ describe('resolveSendEngineTrigger', () => {
 
   it('checks capability for the chat-locked provider, not the global default', () => {
     resolveSendEngineTrigger({
-      hasAttachments: false,
       ...makeRefs(),
       conversationsRef: makeConversations('openrouter'),
       chatId: 'chat1',
@@ -147,7 +147,6 @@ describe('resolveSendEngineTrigger', () => {
   it('checks capability for the global default provider on a fresh chat', () => {
     vi.mocked(getActiveProvider).mockReturnValue('zen' as never);
     resolveSendEngineTrigger({
-      hasAttachments: false,
       ...makeRefs(),
       conversationsRef: { current: {} },
       chatId: null,
@@ -157,7 +156,6 @@ describe('resolveSendEngineTrigger', () => {
 
   it('honors an explicit per-send provider request over the chat lock', () => {
     resolveSendEngineTrigger({
-      hasAttachments: false,
       ...makeRefs(),
       conversationsRef: makeConversations('ollama'),
       chatId: 'chat1',
@@ -166,23 +164,60 @@ describe('resolveSendEngineTrigger', () => {
     expect(isProviderEngineCapable).toHaveBeenCalledWith('openrouter');
   });
 
-  it('keeps the existing repo/branch/attachments guards (both bypass routes)', () => {
+  it('keeps the existing repo/branch guard for both bypass routes', () => {
     storage.map.set(BG_KEY, '1');
     expect(
       resolveSendEngineTrigger({
-        hasAttachments: true,
-        ...makeRefs(),
-        conversationsRef: makeConversations('ollama'),
-        chatId: 'chat1',
-      }),
-    ).toBeNull();
-    expect(
-      resolveSendEngineTrigger({
-        hasAttachments: false,
         ...makeRefs({ repo: null }),
         conversationsRef: makeConversations('ollama'),
         chatId: 'chat1',
       }),
     ).toBeNull();
+  });
+});
+
+describe('startBackgroundMainChatTurn', () => {
+  it('carries current-turn attachments in the delegation envelope', async () => {
+    const attachment = {
+      id: 'img-1',
+      type: 'image' as const,
+      filename: 'screen.png',
+      mimeType: 'image/png',
+      sizeBytes: 3,
+      content: 'data:image/png;base64,abc123',
+    };
+    const startMainChatJob = vi.fn(async () => ({ ok: true as const, jobId: 'job-1' }));
+
+    const result = await startBackgroundMainChatTurn({
+      chatId: 'chat1',
+      trimmedText: 'inspect this screenshot',
+      attachments: [attachment],
+      lockedProvider: 'ollama',
+      resolvedModel: 'model-x',
+      refs: {
+        sandboxIdRef: { current: 'sb-1' },
+        repoRef: { current: 'owner/repo' },
+        branchInfoRef: { current: { currentBranch: 'main', defaultBranch: 'main' } },
+        isMainProtectedRef: { current: true },
+        agentsMdRef: { current: 'AGENTS' },
+        instructionFilenameRef: { current: 'AGENTS.md' },
+      },
+      backgroundCoderJob: {
+        startMainChatJob,
+        startJob: vi.fn(),
+        cancelJob: vi.fn(),
+        formatPlaceholderText: vi.fn(),
+      } as never,
+    });
+
+    expect(result).toEqual({ ok: true, jobId: 'job-1' });
+    expect(startMainChatJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        envelope: expect.objectContaining({
+          task: 'inspect this screenshot',
+          attachments: [attachment],
+        }),
+      }),
+    );
   });
 });
