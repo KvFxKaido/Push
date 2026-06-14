@@ -26,6 +26,29 @@ describe('deterministicEmptyDiffVerdict', () => {
     expect(result?.summary).toContain('No workspace changes detected');
   });
 
+  it('names the inline lead "the assistant", not "the Coder", in leadMode', () => {
+    const result = deterministicEmptyDiffVerdict({
+      diffFetchSucceeded: true,
+      evalDiff: null,
+      criteriaResults: [],
+      leadMode: true,
+    });
+    expect(result).not.toBeNull();
+    expect(result?.summary).toContain('The assistant produced no diff');
+    expect(result?.summary).not.toContain('Coder');
+    expect(result?.gaps.join(' ')).not.toContain('Coder');
+  });
+
+  it('keeps "the Coder" for the delegated path (leadMode off)', () => {
+    const result = deterministicEmptyDiffVerdict({
+      diffFetchSucceeded: true,
+      evalDiff: null,
+      criteriaResults: [],
+    });
+    expect(result?.summary).toContain('The Coder produced no diff');
+    expect(result?.gaps.join(' ')).toContain('Coder run');
+  });
+
   it('short-circuits when the diff is whitespace-only (treats it the same as null)', () => {
     const result = deterministicEmptyDiffVerdict({
       diffFetchSucceeded: true,
