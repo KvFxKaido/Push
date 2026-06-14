@@ -719,7 +719,11 @@ export async function runInPageCoderKernel(
     approvalModeBlock,
     evaluateAfterModel,
     acceptanceCriteria: spec.acceptanceCriteria,
-    harnessMaxRounds: spec.harnessSettings?.maxCoderRounds,
+    // The lead is a watched foreground run, so it doesn't inherit the profile's
+    // delegated-Coder round wall — leave the cap unset so the kernel applies its
+    // high invisible backstop (LEAD_MAX_ROUNDS). The delegated arc keeps the
+    // profile cap.
+    harnessMaxRounds: spec.leadToolSurface ? undefined : spec.harnessSettings?.maxCoderRounds,
     harnessContextResetsEnabled: spec.harnessSettings?.contextResetsEnabled,
     resumeState: spec.resumeState,
     checkpointCadenceRounds: spec.checkpointCadenceRounds,

@@ -106,6 +106,13 @@ const CODER_ROUND_TIMEOUT_MS = 60_000; // 60s of inactivity (activity-based — 
 // EXPLORER_ROUND_WALL_CLOCK_MS / DEEP_REVIEW_ROUND_WALL_CLOCK_MS.
 const CODER_ROUND_WALL_CLOCK_MS = 180_000;
 const MAX_CODER_ROUNDS = 30; // Circuit breaker — prevent runaway delegation
+// The inline lead is a *watched* foreground run — the user sees every round and
+// can Stop it — so it doesn't get the 30-round wall a delegated Coder does.
+// This is a high, effectively-invisible backstop: it exists only to bound a
+// runaway loop once the run goes silent and is adopted/detached (no human left
+// to stop it; the kernel has no other runaway guard). A productive watched turn
+// never reaches it. Used when leadMode is set and no explicit cap was passed.
+const LEAD_MAX_ROUNDS = 150;
 const MAX_CHECKPOINTS = 3; // Max interactive checkpoint pauses per task
 const CHECKPOINT_ANSWER_TIMEOUT_MS = 30_000; // 30s for Orchestrator checkpoint response
 // Cadence (in rounds) for durable resume checkpoints — the host snapshots the
@@ -1007,8 +1014,10 @@ export async function runCoderAgent<TCall, TCard>(
   let rounds = 0;
   let checkpointCount = 0;
 
-  // Harness profile — controls scaffolding level
-  const maxRounds = harnessMaxRounds ?? MAX_CODER_ROUNDS;
+  // Harness profile — controls scaffolding level. An explicit cap wins; absent
+  // one, the lead gets the high invisible backstop and the delegated Coder the
+  // 30-round wall.
+  const maxRounds = harnessMaxRounds ?? (leadMode ? LEAD_MAX_ROUNDS : MAX_CODER_ROUNDS);
   const contextResetsEnabled = harnessContextResetsEnabled ?? false;
   const checkpointCadenceRounds =
     options.checkpointCadenceRounds ?? CODER_CHECKPOINT_CADENCE_ROUNDS;
@@ -1096,10 +1105,23 @@ export async function runCoderAgent<TCall, TCard>(
     // Circuit breaker: prevent runaway delegation loops
     if (round >= maxRounds) {
       callbacks.onStatus('Coder stopped', `Hit ${maxRounds} round limit`);
-      // Auto-fetch sandbox state for Orchestrator context
+      // Append a compact summary of what changed (for the reader / next turn).
       const sandboxState = (await callbacks.fetchSandboxStateSummary?.()) ?? '';
+      // The lead is user-facing: close gracefully in its own voice, with no
+      // round count, no "Coder", and no raw tool name (the delegated wall
+      // leaked all three). Only tack on "here's where things stand" when there
+      // actually IS a state summary — a lead caller without a
+      // `fetchSandboxStateSummary` (e.g. the CLI lead) would otherwise end on a
+      // dangling "stands:" (Codex P2 on #928). The delegated Coder keeps its
+      // Orchestrator-facing marker.
+      const leadClose =
+        "I've spent a while on this without landing it cleanly, so I'm stopping here rather than looping further.";
       return {
-        summary: `[Coder stopped after ${maxRounds} rounds — task may be incomplete. Review sandbox state with sandbox_diff.]${sandboxState}`,
+        summary: leadMode
+          ? sandboxState
+            ? `${leadClose} Here's where things stand:${sandboxState}`
+            : leadClose
+          : `[Coder stopped after ${maxRounds} rounds — task may be incomplete. Review sandbox state with sandbox_diff.]${sandboxState}`,
         cards: allCards,
         rounds: round,
         checkpoints: checkpointCount,
