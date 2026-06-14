@@ -29,6 +29,23 @@ It gives you a chat-first workflow anchored to a real repo, real branch state, r
 - Anyone already paying for model providers who wants execution control
 - Anyone who wants AI coding help without platform lock-in
 
+## Privacy & control
+
+Push runs on **your** infrastructure against **your** provider keys — your own Cloudflare (or Modal) account, your own model accounts. Nothing phones home to us; there is no managed Push cloud in the loop. The only usage analytics is an optional provider-stats endpoint that stays inside your own Cloudflare Analytics Engine, gated behind an admin token you set.
+
+## How it fits together
+
+```
+  Web app  ─┐                          ┌─▶  Sandbox  (Cloudflare Sandbox · Modal)
+  Android  ─┴─▶  Cloudflare Worker  ───┤
+ (Capacitor)      API · auth · relay   └─▶  GitHub  (branch-scoped chats · PRs · commits)
+
+  CLI · pushd  ─▶  your machine: real shell + filesystem
+                   (optionally pairs via the Worker relay for Remote sessions)
+```
+
+The web and Android surfaces broker through the Cloudflare Worker to a sandbox and to GitHub; the CLI is the same lead running locally with more reach — real shell and filesystem — and pairs through the Worker relay only for Remote sessions.
+
 ## Quick orientation
 
 - **Web app** — mobile-first repo chat, reviews, sandbox runs, and branch workflows
