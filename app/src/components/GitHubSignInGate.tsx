@@ -40,6 +40,11 @@ export function GitHubSignInGate({ children }: { children: ReactNode }) {
   const isCallback = useMemo(() => hasOAuthCallbackParams(), []);
   const [probe, setProbe] = useState<ProbeState>('pending');
   const [instId, setInstId] = useState('');
+  // The manual installation-id entry is a fallback for the rare case where
+  // OAuth can't resolve an installation (denied scope, org SSO). "Connect"
+  // already discovers the installation server-side via `/user/installations`,
+  // so the paste path stays demoted behind a disclosure — present, not primary.
+  const [showManualEntry, setShowManualEntry] = useState(false);
 
   // Initial probe — skipped during an OAuth/install callback, where the hook is
   // busy minting the session; the auth.token effect below re-probes once it's done.
@@ -113,30 +118,45 @@ export function GitHubSignInGate({ children }: { children: ReactNode }) {
           <Button onClick={auth.install} variant="outline" className="w-full">
             Install the GitHub App (first time)
           </Button>
+          <p className="pt-1 text-center text-xs text-muted-foreground">
+            Already installed? Connect finds your installation automatically.
+          </p>
         </div>
 
-        <form onSubmit={onSubmitInstallationId} className="space-y-2 border-t border-border pt-4">
-          <Label htmlFor="gh-installation-id" className="text-xs text-muted-foreground">
-            Already installed? Enter your installation ID
-          </Label>
-          <div className="flex gap-2">
-            <Input
-              id="gh-installation-id"
-              inputMode="numeric"
-              autoComplete="off"
-              spellCheck={false}
-              value={instId}
-              onChange={(e) => setInstId(e.target.value)}
-              placeholder="12345678"
-              className="font-mono"
-            />
-            <Button type="submit" variant="secondary" disabled={auth.loading || !instId.trim()}>
-              Use
-            </Button>
-          </div>
-        </form>
-
         {auth.error && <p className="text-sm text-destructive">{auth.error}</p>}
+
+        <div className="border-t border-border pt-4">
+          {showManualEntry ? (
+            <form onSubmit={onSubmitInstallationId} className="space-y-2">
+              <Label htmlFor="gh-installation-id" className="text-xs text-muted-foreground">
+                Enter your installation ID manually
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  id="gh-installation-id"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={instId}
+                  onChange={(e) => setInstId(e.target.value)}
+                  placeholder="12345678"
+                  className="font-mono"
+                />
+                <Button type="submit" variant="secondary" disabled={auth.loading || !instId.trim()}>
+                  Use
+                </Button>
+              </div>
+            </form>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowManualEntry(true)}
+              className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+            >
+              Having trouble connecting?
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
