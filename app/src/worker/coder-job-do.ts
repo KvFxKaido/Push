@@ -31,6 +31,7 @@ import {
   SandboxUnreachableError,
   type CoderAgentOptions,
   type CoderCheckpointState,
+  type LeadToolScope,
 } from '@push/lib/coder-agent';
 import {
   createWorkspaceSnapshot,
@@ -161,11 +162,16 @@ export type AgentJobStartInput = CoderJobStartInput;
  */
 export function resolveJobLeadModeOptions(
   envelope: Pick<DelegationEnvelope, 'leadMode' | 'harnessSettings'>,
-): { leadMode: boolean; harnessMaxRounds: number | undefined } {
+): { leadMode: boolean; harnessMaxRounds: number | undefined; leadToolScope?: LeadToolScope } {
   const leadMode = envelope.leadMode === true;
   return {
     leadMode,
     harnessMaxRounds: leadMode ? undefined : envelope.harnessSettings?.maxCoderRounds,
+    // The CoderJob DO is sandbox + web-search only — no PR / merge / promote /
+    // artifact / ask-user tools. Tell lead guidance so it doesn't steer the
+    // model toward tools this surface can't execute. Only meaningful in
+    // leadMode (the delegated Coder uses the non-lead guidelines).
+    leadToolScope: leadMode ? 'sandbox' : undefined,
   };
 }
 

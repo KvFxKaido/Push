@@ -410,6 +410,9 @@ describe('resolveJobLeadModeOptions', () => {
     expect(opts.leadMode).toBe(true);
     // undefined → the kernel applies LEAD_MAX_ROUNDS (150) + graceful close.
     expect(opts.harnessMaxRounds).toBeUndefined();
+    // The DO is sandbox + web-search only — scope lead guidance accordingly so
+    // it doesn't steer toward PR/CI/merge/promote/artifact/ask-user tools.
+    expect(opts.leadToolScope).toBe('sandbox');
   });
 
   it('keeps the delegated sub-Coder cap when leadMode is unset', () => {
@@ -418,12 +421,15 @@ describe('resolveJobLeadModeOptions', () => {
     });
     expect(opts.leadMode).toBe(false);
     expect(opts.harnessMaxRounds).toBe(30);
+    // Irrelevant for a delegated Coder (non-lead guidelines) — left unset.
+    expect(opts.leadToolScope).toBeUndefined();
   });
 
   it('passes through undefined cap for a delegated job with no harness override', () => {
     const opts = resolveJobLeadModeOptions({});
     expect(opts.leadMode).toBe(false);
     expect(opts.harnessMaxRounds).toBeUndefined();
+    expect(opts.leadToolScope).toBeUndefined();
   });
 });
 

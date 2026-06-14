@@ -467,7 +467,19 @@ General rules: if retryable is false, pivot to a different approach — don't re
  * the kernel resolves canonical tool names inline without taking a DI slot
  * for each one.
  */
-function buildCoderGuidelines(leadMode = false): string {
+/**
+ * Which lead tool families the current surface actually wires, so lead
+ * guidance never instructs the model to use tools that aren't executable
+ * here. `'full'` is the web inline lead (sandbox + GitHub PR/CI + ask-user +
+ * artifacts); `'sandbox'` is a sandbox + web-search surface only (the
+ * background CoderJob DO main-chat lead), where PR / merge / promote, artifact
+ * creation, and ask-user tools are NOT wired. Keep this a named scope, not a
+ * pile of per-tool booleans — surfaces declare their profile, the guidance
+ * derives from it.
+ */
+export type LeadToolScope = 'full' | 'sandbox';
+
+function buildCoderGuidelines(leadMode = false, leadToolScope: LeadToolScope = 'full'): string {
   const diffToolName = getToolPublicName('sandbox_diff');
   const prepareCommitToolName = getToolPublicName('sandbox_prepare_commit');
   const delegateCoderName = getToolPublicName('delegate_coder');
@@ -477,9 +489,24 @@ function buildCoderGuidelines(leadMode = false): string {
   const saveDraftName = getToolPublicName('sandbox_save_draft');
   const readFileName = getToolPublicName('sandbox_read_file');
   if (leadMode) {
+    // Surface-aware tool references: the 'sandbox' scope keeps the planning /
+    // inspection behavior but drops the GitHub PR/CI, PR-open/merge/promote,
+    // artifact, and ask-user instructions for tools it can't execute (the
+    // background DO is sandbox + web-search only). Repo-activity questions are
+    // answered from the sandbox (git log / status via sandbox_exec) instead.
+    const sandboxOnly = leadToolScope === 'sandbox';
+    const investigateLine = sandboxOnly
+      ? '- Investigate before answering when the question needs it — use the sandbox tools to read files, search the codebase, and run commands. Answer repo-activity questions ("what changed recently?") from the sandbox via git (e.g. `git log` / `git status` through sandbox_exec); GitHub PR/CI tools are not available on this surface.'
+      : '- Investigate before answering when the question needs it — use the sandbox and GitHub tools to read files, search the codebase, and inspect PRs / commits / CI.';
+    const noDelegateLine = sandboxOnly
+      ? `- Do NOT call ${delegateCoderName} or ${delegateExplorerName}; you are the single lead and do the work yourself. This surface cannot open or merge PRs, promote to GitHub, create artifacts, or prompt the user with a tool — do the work in the sandbox and put any question to the user directly in your reply.`
+      : `- Do NOT call ${delegateCoderName} or ${delegateExplorerName}; you are the single lead and do the work yourself. Avoid ${createPrName} / ${mergePrName} unless the user explicitly asks to open or merge a PR.`;
+    const discoverStep = sandboxOnly
+      ? '2. Discover cheaply first: use list/search/symbol tools before broad file reads; answer repo-activity questions from the sandbox (git log / status), since GitHub PR/CI tools are not wired here.'
+      : '2. Discover cheaply first: use list/search/symbol tools before broad file reads, and inspect PRs/commits/CI when the question is about repo activity.';
     return `Rules:
 - You are speaking directly to the user in this chat. Lead with the answer and keep it conversational.
-- Investigate before answering when the question needs it — use the sandbox and GitHub tools to read files, search the codebase, and inspect PRs / commits / CI.
+${investigateLine}
 - Change code ONLY when the user asks you to change something. For questions ("what changed recently?", "how does X work?"), answer in prose — do not edit files, and do not propose a commit.
 - When you DO change code: keep changes minimal and focused, fix failing tests before reporting success, then use ${diffToolName} to show what you changed and ${prepareCommitToolName} to propose a commit.
 - Match your closing to the work. After a code change, end with this summary:
@@ -488,17 +515,17 @@ function buildCoderGuidelines(leadMode = false): string {
   **Verified:** [brief tests/types/build result, or "not run"]
   **Open:** [anything incomplete or needing the user's attention, or "nothing"]
   For a question or a read-only investigation, just give the answer directly — do NOT use that Done/Changed/Verified/Open template.
-- Do NOT call ${delegateCoderName} or ${delegateExplorerName}; you are the single lead and do the work yourself. Avoid ${createPrName} / ${mergePrName} unless the user explicitly asks to open or merge a PR.
+${noDelegateLine}
 
 Approach:
 1. Read the user's request carefully — what are they actually asking for?
-2. Discover cheaply first: use list/search/symbol tools before broad file reads, and inspect PRs/commits/CI when the question is about repo activity.
+${discoverStep}
 3. For a question: gather just enough to answer accurately, then respond directly.
 4. For a change: read only the files/sections you need, make the smallest change that satisfies the request, then verify with the narrowest useful tests/types/build checks.
 5. Keep working memory current so your plan and findings survive context trimming.
 
 When you are stuck or need a decision:
-- Prefer asking the user directly — you are talking to them. Ask a real question rather than guessing.
+- Prefer putting the question to the user directly in your reply — you are talking to them. Ask a real question rather than guessing.
 - coder_checkpoint(question, context?) is also available to pause and reconsider after repeated errors (2+ on the same issue), missing files, or ambiguous requirements. Don't spin endlessly on the same error.
 
 Sandbox Lifecycle:
@@ -811,6 +838,15 @@ export interface CoderAgentOptions<TCall, TCard> {
    * in lead mode regardless of this flag.
    */
   leadToolGuidance?: boolean;
+  /**
+   * Which lead tool families the caller's surface actually wires. Drives lead
+   * guidance so it never instructs the model to use tools that aren't
+   * executable here. Defaults to `'full'` (the web inline lead + CLI lead,
+   * which keep their existing guidance). The background CoderJob DO main-chat
+   * lead passes `'sandbox'` — sandbox + web-search only, no PR / merge /
+   * promote / artifact / ask-user tools. Only meaningful with `leadMode`.
+   */
+  leadToolScope?: LeadToolScope;
 }
 
 /**
@@ -866,6 +902,7 @@ export async function runCoderAgent<TCall, TCard>(
     harnessContextResetsEnabled,
     leadMode = false,
     leadToolGuidance = false,
+    leadToolScope = 'full',
   } = options;
 
   void _allowedRepo; // reserved for future use — lib loop does not need it directly
@@ -882,7 +919,7 @@ export async function runCoderAgent<TCall, TCard>(
     .set('voice', leadMode ? LEAD_VOICE : '')
     .set('safety', SHARED_SAFETY_SECTION)
     .set('user_context', approvalModeBlock ?? '')
-    .set('guidelines', buildCoderGuidelines(leadMode))
+    .set('guidelines', buildCoderGuidelines(leadMode, leadToolScope))
     .append('guidelines', SHARED_OPERATIONAL_CONSTRAINTS)
     .append('guidelines', CODER_CODE_DISCIPLINE)
     .append('guidelines', CANONICAL_DOCS_GUIDANCE)
