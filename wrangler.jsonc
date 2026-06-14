@@ -274,5 +274,25 @@
   "triggers": {
     "crons": ["0 3 * * *"]
   },
-  "analytics_engine_datasets": [{ "binding": "PROVIDER_STATS", "dataset": "push_provider_stats" }]
+  "analytics_engine_datasets": [{ "binding": "PROVIDER_STATS", "dataset": "push_provider_stats" }],
+  // Workers Observability — both surfaces are CF-native and render in the
+  // dashboard (Workers & Pages → push → Observability), no external service.
+  //   - logs:   structured console.log({...JSON}) becomes searchable history,
+  //             not just live `wrangler tail` (what we lacked when the sandbox
+  //             NOT_FOUND debug forced tail-and-reproduce).
+  //   - traces: native Workers Traces (GA 2026-03) — per-request execution
+  //             spans (timing/CPU/outcome) in Workers Analytics → Traces.
+  //             NOT OpenTelemetry: CF has no OTLP *ingest*; its OTel story is
+  //             *export* (a tail worker shipping trace events out). Workers
+  //             Traces is the keep-it-in-Cloudflare answer — config-only.
+  // 100% head sampling: single-user volume is far under the 10M-span free tier,
+  // and the point is to see everything, not sample it away.
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    }
+  }
 }
