@@ -90,6 +90,7 @@ export async function runAuditorEvaluation(
       MemoryScope,
       'repoFullName' | 'branch' | 'chatId' | 'taskGraphId' | 'taskId'
     > | null;
+    leadMode?: boolean;
   },
 ): Promise<import('@push/lib/auditor-agent').EvaluationResult> {
   const provider = resolveAuditorProvider(options);
@@ -110,6 +111,7 @@ export async function runAuditorEvaluation(
       criteriaResults: options?.criteriaResults,
       verificationPolicy: options?.verificationPolicy,
       memoryScope: options?.memoryScope,
+      leadMode: options?.leadMode,
       resolveEvaluationMemoryBlock: buildAuditorEvaluationMemoryBlock,
     },
     onStatus,

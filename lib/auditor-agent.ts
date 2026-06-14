@@ -136,6 +136,13 @@ export interface AuditorEvaluationOptions {
     'repoFullName' | 'branch' | 'chatId' | 'taskGraphId' | 'taskId'
   > | null;
   resolveEvaluationMemoryBlock?: ResolveAuditorEvaluationMemoryBlockFn;
+  /**
+   * Evaluating the inline lead's own turn rather than a delegated Coder's
+   * output. Swaps the Evaluator's subject vocabulary ("the Coder" → "the
+   * assistant") so the user-facing verdict doesn't call the conversational
+   * lead "the Coder". Defaults off (delegated framing).
+   */
+  leadMode?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -499,12 +506,18 @@ export interface EvaluationResult {
   confidence: 'high' | 'medium' | 'low';
 }
 
-const EVALUATION_SYSTEM_PROMPT = `You are the Evaluator for Push, a mobile AI coding assistant. Your job is to assess whether a Coder agent's work is complete.
+// The Evaluator's subject — a delegated Coder's output, or the inline lead's
+// own turn. Keeping it a parameter (rather than two prompt copies) means the
+// verdict the model writes back never calls the conversational lead "the
+// Coder" (the leak surfaced in the round-cap screenshot).
+function buildEvaluationSystemPrompt(subject: string): string {
+  const Subject = subject.charAt(0).toUpperCase() + subject.slice(1);
+  return `You are the Evaluator for Push, a mobile AI coding assistant. Your job is to assess whether ${subject}'s work is complete.
 
 You receive:
 1. The original task description
-2. The Coder's final summary of what it did
-3. The Coder's working memory (plan, completed phases, errors, files touched)
+2. ${Subject}'s final summary of what it did
+3. ${Subject}'s working memory (plan, completed phases, errors, files touched)
 4. A diff of sandbox changes (if available)
 
 You MUST respond with ONLY a valid JSON object. No other text.
@@ -518,19 +531,20 @@ Schema:
 }
 
 Evaluation criteria:
-- Did the Coder address the core intent of the task?
+- Did ${subject} address the core intent of the task?
 - Are there open tasks remaining in the working memory?
-- Did the Coder encounter errors that were never resolved?
+- Did ${subject} encounter errors that were never resolved?
 - Does the diff show the expected changes (files created/modified)?
 - If acceptance criteria were provided, did they pass?
-- Did the Coder hit a round cap or drift, suggesting premature termination?
+- Did ${subject} hit a round cap or drift, suggesting premature termination?
 
 Important:
 - Be honest. Do NOT rubber-stamp incomplete work.
 - "complete" means the task's core deliverable is done, not that it's perfect.
 - Minor polish or optimization gaps do not make a task "incomplete".
-- If the Coder was stopped by a circuit breaker (round cap, drift), default to "incomplete" unless the summary clearly shows the work was finished before the stop.
+- If ${subject} was stopped by a circuit breaker (round cap, drift), default to "incomplete" unless the summary clearly shows the work was finished before the stop.
 - If you lack enough context to judge, set confidence to "low" rather than guessing.`;
+}
 
 export async function runAuditorEvaluation(
   task: string,
@@ -564,12 +578,16 @@ export async function runAuditorEvaluation(
     };
   }
 
-  onStatus('Evaluating Coder output...');
+  // Subject vocabulary: the delegated Coder vs. the inline conversational lead.
+  const subject = options.leadMode ? 'the assistant' : 'the Coder';
+  const summaryLabel = options.leadMode ? 'SUMMARY' : 'CODER SUMMARY';
+
+  onStatus(options.leadMode ? 'Evaluating output...' : 'Evaluating Coder output...');
 
   // Build the evaluation request
   const sections: string[] = [
     `[ORIGINAL TASK]\n${task}\n[/ORIGINAL TASK]`,
-    `[CODER SUMMARY]\n${coderSummary}\n[/CODER SUMMARY]`,
+    `[${summaryLabel}]\n${coderSummary}\n[/${summaryLabel}]`,
   ];
 
   const retrievedMemoryBlock =
@@ -631,7 +649,7 @@ export async function runAuditorEvaluation(
     {
       id: 'eval-request',
       role: 'user',
-      content: `Evaluate whether the Coder's work is complete:\n\n${sections.join('\n\n')}`,
+      content: `Evaluate whether ${subject}'s work is complete:\n\n${sections.join('\n\n')}`,
       timestamp: Date.now(),
     },
   ];
@@ -642,7 +660,7 @@ export async function runAuditorEvaluation(
       provider: options.provider,
       model: modelId,
       messages,
-      systemPromptOverride: EVALUATION_SYSTEM_PROMPT,
+      systemPromptOverride: buildEvaluationSystemPrompt(subject),
       hasSandbox: false,
     },
     EVALUATION_TIMEOUT_MS,

@@ -951,6 +951,9 @@ export async function startInlineCoderTurn(
             taskList: [args.trimmedText],
             allCards: result.cards,
             summaries: [result.summary],
+            // This is the inline conversational lead, not a delegated Coder —
+            // so the Evaluator's user-facing verdict says "the assistant".
+            leadMode: true,
             allCriteriaResults: [
               ...(result.criteriaResults ?? []),
               ...verification.criteriaResults,

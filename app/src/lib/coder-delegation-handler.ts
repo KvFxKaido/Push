@@ -201,6 +201,12 @@ export interface CoderAuditorInput {
   taskList: string[];
   allCards: ChatCard[];
   summaries: string[];
+  /**
+   * Evaluating the inline lead's own turn (not a delegated Coder). Threads to
+   * the Evaluator so its user-facing verdict says "the assistant", not "the
+   * Coder". The delegated arc leaves it unset.
+   */
+  leadMode?: boolean;
   allCriteriaResults: CriterionResult[];
   totalRounds: number;
   totalCheckpoints: number;

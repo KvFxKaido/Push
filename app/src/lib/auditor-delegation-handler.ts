@@ -277,6 +277,7 @@ export async function handleCoderAuditor(
       criteriaResults: auditorInput.allCriteriaResults,
       commitsMade,
       untrackedFilesPresent,
+      leadMode: auditorInput.leadMode,
     });
     if (deterministicResult) {
       ctx.updateVerificationStateForChat(chatId, (state) =>
@@ -344,6 +345,7 @@ export async function handleCoderAuditor(
               ctx.repoRef.current,
               ctx.branchInfoRef.current?.currentBranch,
             ),
+            leadMode: auditorInput.leadMode,
           },
         );
         if (result) {
@@ -464,6 +466,9 @@ export function deterministicEmptyDiffVerdict(input: {
   criteriaResults: readonly { passed: boolean }[];
   commitsMade?: boolean;
   untrackedFilesPresent?: boolean;
+  /** Inline lead turn rather than a delegated Coder — swaps the user-facing
+   *  subject so this deterministic verdict doesn't leak "the Coder" either. */
+  leadMode?: boolean;
 }): EvaluationResult | null {
   if (!input.diffFetchSucceeded) return null;
   const diffIsEmpty = !input.evalDiff || input.evalDiff.trim().length === 0;
@@ -471,12 +476,14 @@ export function deterministicEmptyDiffVerdict(input: {
   if (input.criteriaResults.some((r) => r.passed)) return null;
   if (input.commitsMade) return null;
   if (input.untrackedFilesPresent) return null;
+  const subject = input.leadMode ? 'the assistant' : 'the Coder';
+  const Subject = input.leadMode ? 'The assistant' : 'The Coder';
+  const runPhrase = input.leadMode ? 'turn' : 'Coder run';
   return {
     verdict: 'incomplete',
-    summary:
-      'No workspace changes detected. The Coder produced no diff and no acceptance criteria passed.',
+    summary: `No workspace changes detected. ${Subject} produced no diff and no acceptance criteria passed.`,
     gaps: [
-      'Sandbox diff is empty after the Coder run — verify the Coder actually attempted edits. An empty diff typically means a malformed tool call was dropped or the Coder ended without invoking a write tool.',
+      `Sandbox diff is empty after the ${runPhrase} — verify ${subject} actually attempted edits. An empty diff typically means a malformed tool call was dropped or ${subject} ended without invoking a write tool.`,
     ],
     confidence: 'high',
   };
