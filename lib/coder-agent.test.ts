@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   generateCheckpointAnswer,
+  resolveLeadRoundOptions,
   runCoderAgent,
   SandboxUnreachableError,
   type CoderAgentOptions,
@@ -128,6 +129,58 @@ function baseCoderOptions(overrides: {
       overrides.evaluateAfterModel ?? (async () => ({ action: 'halt', summary: 'done' })),
   };
 }
+
+describe('resolveLeadRoundOptions', () => {
+  it('gives a lead turn no explicit cap, with the surface tool scope', () => {
+    expect(resolveLeadRoundOptions({ isLead: true, maxCoderRounds: 30, surface: 'full' })).toEqual({
+      leadMode: true,
+      harnessMaxRounds: undefined,
+      leadToolScope: 'full',
+    });
+    expect(
+      resolveLeadRoundOptions({ isLead: true, maxCoderRounds: 30, surface: 'sandbox' }),
+    ).toEqual({
+      leadMode: true,
+      harnessMaxRounds: undefined,
+      leadToolScope: 'sandbox',
+    });
+  });
+
+  it('defaults a lead surface to the full tool scope', () => {
+    expect(resolveLeadRoundOptions({ isLead: true }).leadToolScope).toBe('full');
+  });
+
+  it('keeps the configured cap for a delegated sub-Coder, no tool scope', () => {
+    expect(resolveLeadRoundOptions({ isLead: false, maxCoderRounds: 30 })).toEqual({
+      leadMode: false,
+      harnessMaxRounds: 30,
+      leadToolScope: undefined,
+    });
+    expect(resolveLeadRoundOptions({ isLead: false })).toEqual({
+      leadMode: false,
+      harnessMaxRounds: undefined,
+      leadToolScope: undefined,
+    });
+  });
+
+  it('keeps the foreground and background lead lanes in lockstep on cap + leadMode', () => {
+    // Same intent, different surfaces (inline 'full' vs background DO 'sandbox')
+    // → identical leadMode + cap; only the tool scope differs.
+    const foreground = resolveLeadRoundOptions({
+      isLead: true,
+      maxCoderRounds: 30,
+      surface: 'full',
+    });
+    const background = resolveLeadRoundOptions({
+      isLead: true,
+      maxCoderRounds: 30,
+      surface: 'sandbox',
+    });
+    expect(foreground.leadMode).toBe(background.leadMode);
+    expect(foreground.harnessMaxRounds).toBe(background.harnessMaxRounds);
+    expect(foreground.leadToolScope).not.toBe(background.leadToolScope);
+  });
+});
 
 describe('runCoderAgent (PushStream consumer)', () => {
   it('passes the assembled request through to the PushStream and halts when policy halts', async () => {

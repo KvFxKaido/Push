@@ -56,6 +56,7 @@ import type {
 } from '@/types';
 import {
   generateCheckpointAnswer as generateCheckpointAnswerLib,
+  resolveLeadRoundOptions,
   runCoderAgent as runCoderAgentLib,
   summarizeCoderStateForHandoff,
   type CoderAgentOptions,
@@ -678,6 +679,14 @@ export async function runInPageCoderKernel(
   const evaluateAfterModel = buildCoderEvaluateAfterModel(bindingsServices);
 
   // --- Build lib options ---
+  // The web inline lead wires the full GitHub/ask/artifact tool surface, so its
+  // lead guidance stays 'full'. The shared resolver keeps this lane's lead
+  // round/scope decision in lockstep with the background CoderJob DO.
+  const leadRound = resolveLeadRoundOptions({
+    isLead: Boolean(spec.leadToolSurface),
+    maxCoderRounds: spec.harnessSettings?.maxCoderRounds,
+    surface: 'full',
+  });
   const libOptions: CoderAgentOptions<AnyToolCall, ChatCard> = {
     provider: spec.provider,
     stream:
@@ -720,17 +729,18 @@ export async function runInPageCoderKernel(
     evaluateAfterModel,
     acceptanceCriteria: spec.acceptanceCriteria,
     // The lead is a watched foreground run, so it doesn't inherit the profile's
-    // delegated-Coder round wall — leave the cap unset so the kernel applies its
-    // high invisible backstop (LEAD_MAX_ROUNDS). The delegated arc keeps the
-    // profile cap.
-    harnessMaxRounds: spec.leadToolSurface ? undefined : spec.harnessSettings?.maxCoderRounds,
+    // delegated-Coder round wall — the resolver leaves the cap unset so the
+    // kernel applies its high invisible backstop (LEAD_MAX_ROUNDS); the
+    // delegated arc keeps the profile cap.
+    harnessMaxRounds: leadRound.harnessMaxRounds,
     harnessContextResetsEnabled: spec.harnessSettings?.contextResetsEnabled,
     resumeState: spec.resumeState,
     checkpointCadenceRounds: spec.checkpointCadenceRounds,
     // The lead surface is the conversational lead — swap the kernel's
-    // implementer prompt for lead-mode framing (same trigger as the tool
-    // surface). The delegated arc leaves this unset.
-    leadMode: spec.leadToolSurface,
+    // implementer prompt for lead-mode framing. The delegated arc leaves this
+    // unset.
+    leadMode: leadRound.leadMode,
+    leadToolScope: leadRound.leadToolScope,
     // This is the web surface, whose sandbox/GitHub tools use the canonical
     // registry public names the lead tool-routing/error guidance references —
     // so opt into that guidance here. The CLI lead leaves it off (its
