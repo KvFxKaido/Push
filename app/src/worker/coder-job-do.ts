@@ -31,6 +31,7 @@ import {
   SandboxUnreachableError,
   type CoderAgentOptions,
   type CoderCheckpointState,
+  type LeadToolScope,
 } from '@push/lib/coder-agent';
 import {
   createWorkspaceSnapshot,
@@ -146,6 +147,33 @@ export interface CoderJobStartInput {
  *  off the in-browser loop. The DO rejects unknown roles at /start with
  *  `UNSUPPORTED_ROLE`. */
 export type AgentJobStartInput = CoderJobStartInput;
+
+/**
+ * Round-cap kernel options for a background job. When the job IS the
+ * conversational lead's own turn (`envelope.leadMode` — set by the main-chat
+ * server route in `chat-send-background.ts`), the kernel runs in `leadMode`
+ * with NO explicit cap, so it inherits the high invisible backstop
+ * (`LEAD_MAX_ROUNDS`) and the lead's graceful, name-free close. A genuinely
+ * delegated sub-Coder leaves `leadMode` unset and keeps its configured
+ * `maxCoderRounds` and the "[Coder stopped after N rounds…]" marker.
+ *
+ * Exported for unit testing; the DO's `executeCoderJob` is the only
+ * production caller.
+ */
+export function resolveJobLeadModeOptions(
+  envelope: Pick<DelegationEnvelope, 'leadMode' | 'harnessSettings'>,
+): { leadMode: boolean; harnessMaxRounds: number | undefined; leadToolScope?: LeadToolScope } {
+  const leadMode = envelope.leadMode === true;
+  return {
+    leadMode,
+    harnessMaxRounds: leadMode ? undefined : envelope.harnessSettings?.maxCoderRounds,
+    // The CoderJob DO is sandbox + web-search only — no PR / merge / promote /
+    // artifact / ask-user tools. Tell lead guidance so it doesn't steer the
+    // model toward tools this surface can't execute. Only meaningful in
+    // leadMode (the delegated Coder uses the non-lead guidelines).
+    leadToolScope: leadMode ? 'sandbox' : undefined,
+  };
+}
 
 // Role registry lives in its own module so the worker route layer can
 // import it without pulling the DO's transitive deps. Re-exported here
@@ -820,7 +848,12 @@ export class CoderJob {
         approvalModeBlock: buildApprovalModeBlock('full-auto'),
         evaluateAfterModel: buildCoderEvaluateAfterModel(services),
         acceptanceCriteria: input.acceptanceCriteria ?? input.envelope.acceptanceCriteria,
-        harnessMaxRounds: input.envelope.harnessSettings?.maxCoderRounds,
+        // When the job IS the conversational lead's own turn (main-chat routed
+        // to the server), run the kernel in leadMode (high invisible backstop +
+        // graceful, name-free close); a delegated sub-Coder keeps its configured
+        // cap and the "[Coder stopped after N rounds…]" marker. See
+        // `resolveJobLeadModeOptions`.
+        ...resolveJobLeadModeOptions(input.envelope),
         harnessContextResetsEnabled: input.envelope.harnessSettings?.contextResetsEnabled,
         resumeState,
       };

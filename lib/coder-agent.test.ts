@@ -93,6 +93,7 @@ function baseCoderOptions(overrides: {
   evaluateAfterModel?: CoderAgentOptions<Call, never>['evaluateAfterModel'];
   leadMode?: boolean;
   leadToolGuidance?: boolean;
+  leadToolScope?: CoderAgentOptions<Call, never>['leadToolScope'];
   harnessMaxRounds?: number;
 }): CoderAgentOptions<Call, never> {
   return {
@@ -101,6 +102,7 @@ function baseCoderOptions(overrides: {
     modelId: 'coder-model',
     leadMode: overrides.leadMode,
     leadToolGuidance: overrides.leadToolGuidance,
+    leadToolScope: overrides.leadToolScope,
     harnessMaxRounds: overrides.harnessMaxRounds,
     sandboxId: 'sb-1',
     allowedRepo: 'kvfxkaido/push',
@@ -195,6 +197,36 @@ describe('runCoderAgent (PushStream consumer)', () => {
     expect(coder).not.toContain('## Tool Routing');
     expect(coder).not.toContain('## Tool Call Placement');
     expect(coder).not.toContain('## Error Handling');
+  });
+
+  it('scopes lead guidance to the sandbox surface — no PR/CI/merge tool steering', async () => {
+    const promptFor = async (leadToolScope: 'full' | 'sandbox'): Promise<string> => {
+      const { stream, capturedRequests } = makePushStream([
+        [
+          { type: 'text_delta', text: 'ok' },
+          { type: 'done', finishReason: 'stop' },
+        ],
+      ]);
+      await runCoderAgent(baseCoderOptions({ stream, leadMode: true, leadToolScope }), {
+        onStatus: () => {},
+      });
+      return (capturedRequests[0] as { systemPromptOverride?: string }).systemPromptOverride ?? '';
+    };
+
+    const full = await promptFor('full');
+    // The web inline lead keeps the GitHub PR/CI references.
+    expect(full).toContain('inspect PRs / commits / CI');
+    expect(full).toMatch(/Avoid .*unless the user explicitly asks to open or merge a PR/);
+
+    const sandbox = await promptFor('sandbox');
+    // Still the lead — conversational framing + the closing template stay.
+    expect(sandbox).toContain('You are the lead in this chat');
+    expect(sandbox).toContain('do NOT use that Done/Changed/Verified/Open template');
+    // …but the surface can't run GitHub PR/CI/merge/promote tools, so the
+    // guidance must not steer the model toward them.
+    expect(sandbox).not.toContain('inspect PRs / commits / CI');
+    expect(sandbox).not.toMatch(/open or merge a PR/);
+    expect(sandbox).toContain('cannot open or merge PRs, promote to GitHub, create artifacts');
   });
 
   it('lead hitting the round cap closes gracefully — no Coder / round count / tool name', async () => {
