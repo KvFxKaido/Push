@@ -479,6 +479,39 @@ General rules: if retryable is false, pivot to a different approach — don't re
  */
 export type LeadToolScope = 'full' | 'sandbox';
 
+/**
+ * Resolve the kernel's lead-vs-delegated round + scope options from a surface's
+ * intent. The same decision was being made independently by the foreground
+ * inline lane (`inline-coder-run.ts`) and the background CoderJob DO
+ * (`coder-job-do.ts`); centralizing it here keeps the two lanes in lockstep
+ * (CLAUDE.md: promote a per-surface helper into `lib/` once a second surface
+ * needs it).
+ *
+ * - **Lead** (the conversational lead's own turn): no explicit cap, so the
+ *   kernel applies the high invisible backstop (`LEAD_MAX_ROUNDS`), and the
+ *   surface's tool scope drives lead guidance (`'full'` web inline, `'sandbox'`
+ *   background DO).
+ * - **Delegated** (a sub-Coder): keep the configured `maxCoderRounds`; tool
+ *   scope is irrelevant (the delegated guidelines don't reference it).
+ */
+export function resolveLeadRoundOptions(input: {
+  isLead: boolean;
+  /** The harness profile's Coder round cap, if configured. */
+  maxCoderRounds?: number;
+  /** The lead's tool scope for this surface. Only applied when `isLead`;
+   *  defaults to `'full'`. */
+  surface?: LeadToolScope;
+}): { leadMode: boolean; harnessMaxRounds: number | undefined; leadToolScope?: LeadToolScope } {
+  if (input.isLead) {
+    return {
+      leadMode: true,
+      harnessMaxRounds: undefined,
+      leadToolScope: input.surface ?? 'full',
+    };
+  }
+  return { leadMode: false, harnessMaxRounds: input.maxCoderRounds, leadToolScope: undefined };
+}
+
 function buildCoderGuidelines(leadMode = false, leadToolScope: LeadToolScope = 'full'): string {
   const diffToolName = getToolPublicName('sandbox_diff');
   const prepareCommitToolName = getToolPublicName('sandbox_prepare_commit');

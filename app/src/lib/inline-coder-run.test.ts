@@ -206,6 +206,11 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
         // tool-routing/error block; the CLI lead and delegated Coder leave it
         // off so they aren't steered toward tool names they don't advertise).
         'leadToolGuidance',
+        // Parity decision: the delegated arc threads `leadToolScope: undefined`
+        // (the shared resolver only sets a scope for a lead turn; the delegated
+        // Coder uses the non-lead guidelines, which ignore it). The inline lead
+        // sets 'full'; the background DO lead sets 'sandbox'.
+        'leadToolScope',
         'memoryToolProtocol',
         'modelId',
         'projectInstructions',

@@ -27,6 +27,7 @@
 
 import type { DurableObjectState } from '@cloudflare/workers-types';
 import {
+  resolveLeadRoundOptions,
   runCoderAgent as runCoderAgentLib,
   SandboxUnreachableError,
   type CoderAgentOptions,
@@ -157,22 +158,20 @@ export type AgentJobStartInput = CoderJobStartInput;
  * delegated sub-Coder leaves `leadMode` unset and keeps its configured
  * `maxCoderRounds` and the "[Coder stopped after N rounds…]" marker.
  *
- * Exported for unit testing; the DO's `executeCoderJob` is the only
- * production caller.
+ * The lead round/scope decision itself lives in `resolveLeadRoundOptions`
+ * (`lib/coder-agent.ts`), shared with the foreground inline lane; this wrapper
+ * just pins the DO's surface as `'sandbox'` (sandbox + web-search only — no
+ * PR / merge / promote / artifact / ask-user tools). Exported for unit
+ * testing; the DO's `executeCoderJob` is the only production caller.
  */
 export function resolveJobLeadModeOptions(
   envelope: Pick<DelegationEnvelope, 'leadMode' | 'harnessSettings'>,
 ): { leadMode: boolean; harnessMaxRounds: number | undefined; leadToolScope?: LeadToolScope } {
-  const leadMode = envelope.leadMode === true;
-  return {
-    leadMode,
-    harnessMaxRounds: leadMode ? undefined : envelope.harnessSettings?.maxCoderRounds,
-    // The CoderJob DO is sandbox + web-search only — no PR / merge / promote /
-    // artifact / ask-user tools. Tell lead guidance so it doesn't steer the
-    // model toward tools this surface can't execute. Only meaningful in
-    // leadMode (the delegated Coder uses the non-lead guidelines).
-    leadToolScope: leadMode ? 'sandbox' : undefined,
-  };
+  return resolveLeadRoundOptions({
+    isLead: envelope.leadMode === true,
+    maxCoderRounds: envelope.harnessSettings?.maxCoderRounds,
+    surface: 'sandbox',
+  });
 }
 
 // Role registry lives in its own module so the worker route layer can
