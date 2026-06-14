@@ -191,6 +191,10 @@ export async function startBackgroundMainChatTurn(
   const envelope: DelegationEnvelope = {
     task: trimmedText,
     files: [],
+    // This is the conversational lead's own turn running server-side, not a
+    // delegated sub-Coder — so the CoderJob DO runs the kernel in leadMode
+    // (high invisible round backstop + graceful, name-free close).
+    leadMode: true,
     provider: lockedProvider,
     model: resolvedModel,
     branchContext: {

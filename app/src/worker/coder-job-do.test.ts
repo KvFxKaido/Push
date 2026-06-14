@@ -27,6 +27,7 @@ import {
   MAX_DO_RESTART_RESUMES,
   MAX_JOB_WALL_CLOCK_MS,
   __setCoderJobServiceOverrides,
+  resolveJobLeadModeOptions,
   type CoderJobStartInput,
 } from './coder-job-do';
 import type { CoderJobDetectorAdapter } from './coder-job-detector-adapter';
@@ -399,6 +400,32 @@ function makeStartInput(overrides: Partial<CoderJobStartInput> = {}): CoderJobSt
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+describe('resolveJobLeadModeOptions', () => {
+  it('runs a lead turn in leadMode with no explicit cap (high invisible backstop)', () => {
+    const opts = resolveJobLeadModeOptions({
+      leadMode: true,
+      harnessSettings: { maxCoderRounds: 30 } as never,
+    });
+    expect(opts.leadMode).toBe(true);
+    // undefined → the kernel applies LEAD_MAX_ROUNDS (150) + graceful close.
+    expect(opts.harnessMaxRounds).toBeUndefined();
+  });
+
+  it('keeps the delegated sub-Coder cap when leadMode is unset', () => {
+    const opts = resolveJobLeadModeOptions({
+      harnessSettings: { maxCoderRounds: 30 } as never,
+    });
+    expect(opts.leadMode).toBe(false);
+    expect(opts.harnessMaxRounds).toBe(30);
+  });
+
+  it('passes through undefined cap for a delegated job with no harness override', () => {
+    const opts = resolveJobLeadModeOptions({});
+    expect(opts.leadMode).toBe(false);
+    expect(opts.harnessMaxRounds).toBeUndefined();
+  });
+});
 
 describe('CoderJob DO — end-to-end', () => {
   afterEach(() => {

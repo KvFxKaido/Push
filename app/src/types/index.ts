@@ -1380,6 +1380,15 @@ export interface DelegationEnvelope extends DelegationBriefFields {
   instructionFilename?: string;
   /** Harness profile settings — controls scaffolding level for this delegation. */
   harnessSettings?: HarnessProfileSettings;
+  /**
+   * This background job IS the conversational lead's own turn (the main-chat
+   * turn routed to the server via `chat-send-background.ts`), not a delegated
+   * sub-Coder. When set, `coder-job-do.ts` runs the kernel in `leadMode` — the
+   * high invisible round backstop and the lead's graceful, name-free close
+   * instead of the delegated "[Coder stopped after N rounds…]" wall and the
+   * Coder identity/voice. Genuinely delegated sub-Coders leave it unset.
+   */
+  leadMode?: boolean;
   /** Pre-computed planner brief to inject into the Coder's task preamble. */
   plannerBrief?: string;
   /** Session-level verification policy passed through from the conversation. */
