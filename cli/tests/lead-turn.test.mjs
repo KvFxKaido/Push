@@ -432,4 +432,27 @@ describe('buildLeadTurnPreamble', () => {
     // The trailing user turn is the task — it must not be duplicated as history.
     assert.ok(!preamble.includes('[user] current question'));
   });
+
+  it('carries a trailing [REFERENCED_FILES] block into the task section un-clipped', () => {
+    // `appendUserMessageWithFileReferences` pushes the raw line then a separate
+    // [REFERENCED_FILES] block. The block must ride the task verbatim, not get
+    // clipped to PRIOR_TURN_MAX_CHARS (700) as prior conversation (Codex P2, #936).
+    const bigFileBody = 'X'.repeat(2000);
+    const refsBlock = `[REFERENCED_FILES]\n{"version":1}\n[FILE_REFERENCE]\n{"reference":"@util.ts"}\n${bigFileBody}\n[/FILE_REFERENCE]\n[/REFERENCED_FILES]`;
+    const messages = [
+      { role: 'user', content: 'explain @util.ts' },
+      { role: 'user', content: refsBlock },
+    ];
+    const preamble = buildLeadTurnPreamble('explain @util.ts', messages, '');
+
+    // Full file content rides the preamble verbatim — not clipped/dropped.
+    assert.ok(preamble.includes(bigFileBody), 'referenced file content was clipped or dropped');
+    assert.ok(preamble.includes('[REFERENCED_FILES]'));
+    // The current turn (line + refs block) is not duplicated as prior history.
+    assert.ok(!preamble.includes('[user] explain @util.ts'));
+    assert.ok(!preamble.includes('[user] [REFERENCED_FILES]'));
+    // The task line precedes the carried reference block.
+    assert.ok(preamble.includes('Task: explain @util.ts'));
+    assert.ok(preamble.indexOf('Task: explain @util.ts') < preamble.indexOf(bigFileBody));
+  });
 });

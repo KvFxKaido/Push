@@ -27,6 +27,7 @@ import {
   buildSystemPromptBase,
   ensureSystemPromptReady,
   runAssistantLoop,
+  runAssistantTurn,
   DEFAULT_MAX_ROUNDS,
   MAX_ALLOWED_ROUNDS,
 } from './engine.js';
@@ -1194,10 +1195,16 @@ async function runInteractive(
           runInFlight = true;
 
           try {
-            const result = await runAssistantLoop(
+            // The user message (`prompt`) is already appended above, matching
+            // the TUI's `runAssistantTurn` contract (cli/tui.ts): the dispatcher
+            // runs the single conversational lead on the shared coder kernel
+            // (`leadMode`) by default, with `delegated` / `engine` as opt-outs,
+            // so the transcript REPL behaves identically to the TUI.
+            const result = await runAssistantTurn(
               state,
               ctx.providerConfig,
               ctx.apiKey,
+              prompt,
               maxRounds,
               {
                 approvalFn,
@@ -1251,17 +1258,27 @@ async function runInteractive(
       runInFlight = true;
 
       try {
-        const result = await runAssistantLoop(state, ctx.providerConfig, ctx.apiKey, maxRounds, {
-          approvalFn,
-          askUserFn,
-          signal: ac.signal,
-          emit: onEvent,
-          safeExecPatterns,
-          execMode,
-          disabledTools,
-          alwaysAllow,
-          auditorGate,
-        });
+        // `line` is already appended above — same contract the TUI uses for
+        // `runAssistantTurn`: kernel `leadMode` lead turn by default, with
+        // `delegated` / `engine` opt-outs, so the REPL matches the TUI.
+        const result = await runAssistantTurn(
+          state,
+          ctx.providerConfig,
+          ctx.apiKey,
+          line,
+          maxRounds,
+          {
+            approvalFn,
+            askUserFn,
+            signal: ac.signal,
+            emit: onEvent,
+            safeExecPatterns,
+            execMode,
+            disabledTools,
+            alwaysAllow,
+            auditorGate,
+          },
+        );
         await saveSessionState(state);
         if (result.outcome === 'aborted') {
           // handled by event

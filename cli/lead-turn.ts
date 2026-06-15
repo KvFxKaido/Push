@@ -201,8 +201,25 @@ export function buildLeadTurnPreamble(
     if (isParseErrorMessage(m)) return false;
     return true;
   });
-  const last = conversational[conversational.length - 1];
-  if (last && last.role === 'user' && last.content.trim() === userText.trim()) {
+  // The current turn can be one or two trailing user messages:
+  // `appendUserMessageWithFileReferences` pushes the raw line and then, when
+  // the line carries `@file` tokens, a synthetic `[REFERENCED_FILES]` block.
+  // Detach the whole current turn from the prior-conversation render so the
+  // reference block rides the Task section verbatim instead of being clipped
+  // to PRIOR_TURN_MAX_CHARS as "prior conversation" — which silently dropped
+  // most referenced file content on the default kernel lane (Codex P2, #936).
+  let referencedFiles: string | null = null;
+  const tail = conversational[conversational.length - 1];
+  const beforeTail = conversational[conversational.length - 2];
+  if (
+    tail?.role === 'user' &&
+    tail.content.trimStart().startsWith('[REFERENCED_FILES]') &&
+    beforeTail?.role === 'user' &&
+    beforeTail.content.trim() === userText.trim()
+  ) {
+    referencedFiles = tail.content.trim();
+    conversational.splice(conversational.length - 2, 2);
+  } else if (tail?.role === 'user' && tail.content.trim() === userText.trim()) {
     conversational.pop();
   }
   const prior = conversational.slice(-PRIOR_TURNS_MAX);
@@ -227,6 +244,10 @@ export function buildLeadTurnPreamble(
     lines.push('');
   }
   lines.push(`Task: ${userText}`);
+  if (referencedFiles) {
+    lines.push('');
+    lines.push(referencedFiles);
+  }
   return lines.join('\n');
 }
 
