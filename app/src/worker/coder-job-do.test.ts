@@ -555,6 +555,89 @@ describe('CoderJob DO — end-to-end', () => {
     ]);
   });
 
+  it('assembles prior-turn attachments from the chain walk, ordered preamble → prior → current (#938)', async () => {
+    const { ctx, waitUntilPromises } = makeCtx();
+    const priorImg: AttachmentData = {
+      id: 'prior-img',
+      type: 'image',
+      filename: 'prior.png',
+      mimeType: 'image/png',
+      sizeBytes: 4,
+      content: 'data:image/png;base64,prior',
+    };
+    const currentImg: AttachmentData = {
+      id: 'cur-img',
+      type: 'image',
+      filename: 'cur.png',
+      mimeType: 'image/png',
+      sizeBytes: 4,
+      content: 'data:image/png;base64,cur',
+    };
+    const input = makeStartInput({
+      jobId: 'job-prior-atts',
+      chatRef: {
+        chatId: 'chat-1',
+        repoFullName: 'acme/app',
+        branch: 'main',
+        checkpointId: 'job-prior',
+      },
+      envelope: {
+        task: 'compare with the previous screenshot',
+        files: [],
+        provider: 'openrouter',
+        attachments: [currentImg],
+      } as CoderJobStartInput['envelope'],
+    });
+
+    let capturedInitial: { content: string; contentParts?: LlmContentPart[] } | undefined;
+    const capturingStream: PushStream<ChatMessage> = (req) => {
+      capturedInitial = req.messages.find((m) => m.id === 'coder-task') as typeof capturedInitial;
+      return (async function* () {
+        yield { type: 'text_delta', text: 'done' };
+        yield { type: 'done', finishReason: 'stop' };
+      })();
+    };
+
+    __setCoderJobServiceOverrides(input.jobId, {
+      detectors: stubDetectors,
+      executor: stubExecutor,
+      stream: capturingStream,
+      // Stub the chain walk: one completed prior turn that carried an image.
+      contextLoader: {
+        async loadPriorTurns() {
+          return [
+            {
+              jobId: 'job-prior',
+              task: 'first screenshot',
+              summary: 'looked at it',
+              finishedAt: 1,
+              attachments: [priorImg],
+            },
+          ];
+        },
+      },
+    });
+
+    const job = new CoderJob(ctx, makeEnv());
+    await job.fetch(
+      new Request('https://do/start', {
+        method: 'POST',
+        body: JSON.stringify(input),
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    await Promise.all(waitUntilPromises);
+
+    // Prior image (labeled) precedes the current image; both follow the
+    // preamble text. The prior pixels come from the walk, not a client list.
+    expect(capturedInitial?.contentParts).toEqual([
+      { type: 'text', text: capturedInitial?.content },
+      { type: 'text', text: '[Image from prior turn: prior.png]' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,prior' } },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,cur' } },
+    ]);
+  });
+
   it('persists job.failed when the stream errors', async () => {
     const { ctx, storage, waitUntilPromises } = makeCtx();
     const input = makeStartInput({ jobId: 'job-fail-1' });
@@ -1096,6 +1179,14 @@ describe('CoderJob DO — end-to-end', () => {
 
   it('/turn-summary returns task + summary + priorCheckpointId for a completed job', async () => {
     const { ctx, storage, waitUntilPromises } = makeCtx();
+    const tsImage: AttachmentData = {
+      id: 'ts-img',
+      type: 'image',
+      filename: 'prior.png',
+      mimeType: 'image/png',
+      sizeBytes: 4,
+      content: 'data:image/png;base64,prior',
+    };
     const input = makeStartInput({
       jobId: 'job-ts-1',
       // Pin the chatRef so the loader can walk back from this job.
@@ -1105,6 +1196,12 @@ describe('CoderJob DO — end-to-end', () => {
         branch: 'main',
         checkpointId: 'job-prior',
       },
+      envelope: {
+        task: 'write hello world',
+        files: [],
+        provider: 'openrouter',
+        attachments: [tsImage],
+      } as CoderJobStartInput['envelope'],
     });
     __setCoderJobServiceOverrides(input.jobId, {
       detectors: stubDetectors,
@@ -1135,6 +1232,7 @@ describe('CoderJob DO — end-to-end', () => {
       summary: string | null;
       finishedAt: number | null;
       priorCheckpointId: string | null;
+      attachments?: AttachmentData[];
     };
     expect(body.jobId).toBe(input.jobId);
     // chatId is included so the loader can enforce same-chat continuity
@@ -1145,6 +1243,9 @@ describe('CoderJob DO — end-to-end', () => {
     expect(body.summary).toContain('outcome text');
     expect(typeof body.finishedAt).toBe('number');
     expect(body.priorCheckpointId).toBe('job-prior');
+    // #938: the persisted envelope's attachments ride the same endpoint the
+    // ContextLoader walks, so prior-turn images reach a later background turn.
+    expect(body.attachments).toEqual([tsImage]);
   });
 
   it('/turn-summary returns null summary for a non-completed job (loader stops here)', async () => {

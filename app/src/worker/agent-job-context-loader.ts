@@ -16,6 +16,7 @@
  * locked in during the PR 3 design discussion.
  */
 
+import type { AttachmentData } from '@/types';
 import type { ChatRef } from './coder-job-do';
 
 /** Hard cap on chain depth. Prevents unbounded growth of context
@@ -25,12 +26,18 @@ export const MAX_PRIOR_TURNS = 3;
 /** A single prior-turn entry surfaced into the new turn's preamble.
  *  task + summary cover intent and outcome; finishedAt orders the
  *  list (oldest -> newest). priorCheckpointId is internal to the
- *  loader's chain walk and intentionally omitted from this type. */
+ *  loader's chain walk and intentionally omitted from this type.
+ *
+ *  `attachments` are that turn's user-sent images/files, read from the
+ *  prior job's persisted envelope on the same chain walk that produces
+ *  the summary — so the multimodal context and the text context always
+ *  describe the same turns (no drift between two sources). #938. */
 export interface PriorTurnSummary {
   jobId: string;
   task: string;
   summary: string;
   finishedAt: number;
+  attachments?: AttachmentData[];
 }
 
 export interface LoadPriorTurnsArgs {
@@ -70,6 +77,10 @@ export interface TurnSummaryResponse {
   summary: string | null;
   finishedAt: number | null;
   priorCheckpointId: string | null;
+  /** That turn's user-sent attachments, read from the persisted envelope.
+   *  Carried so the loader can build prior-turn multimodal context from the
+   *  same chain walk as the summaries. Absent/empty when the turn had none. */
+  attachments?: AttachmentData[];
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +161,9 @@ export function createWebContextLoader(args: CreateWebContextLoaderArgs): Contex
           task: snapshot.task,
           summary: snapshot.summary,
           finishedAt: snapshot.finishedAt ?? 0,
+          ...(snapshot.attachments && snapshot.attachments.length > 0
+            ? { attachments: snapshot.attachments }
+            : {}),
         });
 
         nextId = snapshot.priorCheckpointId;

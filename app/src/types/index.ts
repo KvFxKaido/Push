@@ -1366,11 +1366,6 @@ export interface DelegationEnvelope extends DelegationBriefFields {
   task: string;
   /** Current-turn attachments for main-chat engine turns. */
   attachments?: AttachmentData[];
-  /** Prior-turn attachments (images/files from earlier messages in this chat's
-   *  context window). Carried through the envelope so the DO can inject them
-   *  as content parts alongside the text preamble — matching what the inline
-   *  lane reconstructs from the local `apiMessages` array. */
-  priorAttachments?: AttachmentData[];
   files: string[];
   acceptanceCriteria?: AcceptanceCriterion[];
   branchContext?: {

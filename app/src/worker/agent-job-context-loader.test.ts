@@ -111,6 +111,30 @@ describe('createWebContextLoader — walking the chain', () => {
     });
   });
 
+  it('carries each turn’s attachments through the walk, oldest-first (#938)', async () => {
+    // Attachments ride the same chain as summaries so multimodal + text
+    // context describe the same turns. Only j-2 had an image.
+    const img = {
+      id: 'a-1',
+      type: 'image' as const,
+      filename: 'screen.png',
+      mimeType: 'image/png',
+      sizeBytes: 10,
+      content: 'data:image/png;base64,zz',
+    };
+    const env = makeEnv({
+      'j-2': { ...completedSnapshot('j-2', 'j-1', 200), attachments: [img] },
+      'j-1': completedSnapshot('j-1', null, 100),
+    });
+    const loader = createWebContextLoader({ env });
+    const out = await loader.loadPriorTurns({
+      chatRef: { chatId: 'c', repoFullName: 'r', branch: 'b', checkpointId: 'j-2' },
+    });
+    expect(out.map((t) => t.jobId)).toEqual(['j-1', 'j-2']);
+    expect(out[0].attachments).toBeUndefined(); // j-1 had none
+    expect(out[1].attachments).toEqual([img]); // j-2's image preserved
+  });
+
   it('walks the chain up to MAX_PRIOR_TURNS (3) and returns oldest-first', async () => {
     // Chain: j-3 -> j-2 -> j-1 (j-3 is most recent, j-1 is oldest).
     // The new turn carries checkpointId=j-3 so the walk hits j-3, j-2,

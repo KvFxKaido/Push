@@ -66,7 +66,7 @@ import type { VerificationPolicy } from '@push/lib/verification-policy';
 import { formatVerificationPolicyBlock } from '@push/lib/verification-policy';
 import type { CorrelationContext } from '@push/lib/correlation-context';
 import type { Capability } from '@push/lib/capabilities';
-import type { ChatCard, ChatMessage, DelegationEnvelope } from '@/types';
+import type { AttachmentData, ChatCard, ChatMessage, DelegationEnvelope } from '@/types';
 import { buildApprovalModeBlock } from '@/lib/approval-mode';
 import {
   buildPriorTurnAttachmentParts,
@@ -741,15 +741,14 @@ export class CoderJob {
     if (priorTurnsBlock) {
       taskPreamble = priorTurnsBlock + '\n' + taskPreamble;
     }
-    // Prior-turn attachments arrive as a flat client-carried list on the
-    // envelope (the inline lane reads them from local apiMessages; the DO has
-    // no transcript). KNOWN LIMITATION: that list and the summary-chain prior
-    // turns (priorTurnsBlock) are sourced independently, so a replayed/stale
-    // job or multi-tab divergence can make them describe slightly different
-    // turns. Benign — an extra or missing prior image, never corruption — and
-    // bounded by the same 3-turn horizon. Full fidelity would require the
-    // ContextLoader to carry attachment payloads keyed by turn (#938 follow-up).
-    const priorAttParts = buildPriorTurnAttachmentParts(input.envelope.priorAttachments ?? []);
+    // Prior-turn attachments come from the SAME chain walk as the summaries
+    // (each prior job's persisted envelope.attachments, read via /turn-summary),
+    // so the multimodal context and the text context describe the same turns —
+    // no drift between two independently-sourced channels (#938). priorTurns is
+    // already oldest→newest, so the flattened parts read in conversation order.
+    const priorAttParts = buildPriorTurnAttachmentParts(
+      priorTurns.flatMap((t) => t.attachments ?? []),
+    );
     const initialUserContentParts: LlmContentPart[] | undefined = mergeInitialUserContentParts(
       taskPreamble,
       priorAttParts,
@@ -1426,10 +1425,14 @@ export class CoderJob {
 
     let task = '';
     let priorCheckpointId: string | null = null;
+    let attachments: AttachmentData[] | undefined;
     try {
       const input = JSON.parse(row.input_json) as CoderJobStartInput;
       task = input.envelope?.task ?? '';
       priorCheckpointId = input.chatRef?.checkpointId ?? null;
+      if (input.envelope?.attachments && input.envelope.attachments.length > 0) {
+        attachments = input.envelope.attachments;
+      }
     } catch {
       // Malformed input_json — leave defaults, the loader will skip.
     }
@@ -1461,6 +1464,7 @@ export class CoderJob {
       summary,
       finishedAt: row.finished_at,
       priorCheckpointId,
+      ...(attachments ? { attachments } : {}),
     };
     return json(response);
   }
