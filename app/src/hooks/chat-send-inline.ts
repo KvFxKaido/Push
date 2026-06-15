@@ -36,8 +36,9 @@
 
 import type { MutableRefObject } from 'react';
 import { getProviderPushStream } from '@/lib/orchestrator';
-import { getSandboxDiff } from '@/lib/sandbox-client';
-import { THINKING_VERBS } from '@/lib/thinking-verbs';
+import { getSandboxDiff, getSandboxEnvironment } from '@/lib/sandbox-client';
+import { getRepoMetadata } from '@/lib/repo-metadata';
+import { getVibeVerbs } from '@/lib/repo-vibe-verbs';
 import { translateCoderStatus } from '@/lib/inline-coder-status';
 import {
   capturePreCoderSnapshot,
@@ -572,10 +573,16 @@ export async function startInlineCoderTurn(
   const verificationPolicy = args.getVerificationPolicyForChat(chatId);
   const harnessSettings = resolveHarnessSettings(lockedProvider, resolvedModel || undefined);
 
-  // Thinking-verb pool the bar rotates through during pre-response dead air
-  // (Thinking… / Reasoning…) — same presentation as the Orchestrator round
-  // loop (`chat-round-loop.ts`).
-  const thinkingVerbs = THINKING_VERBS;
+  // Themed thinking verbs for the spinner, classified off real repo signals
+  // the same way the Orchestrator round loop does (topics → domain, boot-time
+  // manifests → language, name as fallback). Resolved once; the bar rotates.
+  const repoMeta = getRepoMetadata(repoFullName);
+  const thinkingVerbs = getVibeVerbs({
+    fullName: repoFullName,
+    topics: repoMeta?.topics ?? null,
+    projectMarkers: getSandboxEnvironment(sandboxId)?.project_markers ?? null,
+    language: repoMeta?.language ?? null,
+  });
 
   // Bail before the snapshot round-trip if the user already cancelled (the
   // mirror guards every event the same way) — no point paying for a sandbox

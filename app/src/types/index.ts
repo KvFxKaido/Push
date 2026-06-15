@@ -944,7 +944,7 @@ export interface AgentStatus {
    *  "Executing in sandbox" + spinner. Omit for fast phases like
    *  "Thinking..." where the timer would be noise. */
   startedAt?: number;
-  /** Thinking verbs (from `thinking-verbs`) for the AgentStatusBar to
+  /** Themed thinking verbs (from `repo-vibe-verbs`) for the AgentStatusBar to
    *  rotate through during "dead air" between visible work. When present and
    *  non-empty the bar shows a rotating verb instead of `phase` (`phase`
    *  stays the static fallback for the event log). Ephemeral UI-only — never
