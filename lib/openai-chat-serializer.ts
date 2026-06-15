@@ -25,9 +25,37 @@
  *     ignore them, so the caller opts in.
  */
 
-import type { OpenAIChatRequest, OpenAIContentPart, OpenAIMessage } from './openai-chat-types.ts';
-import type { LlmContentPart, LlmMessage, PushStreamRequest } from './provider-contract.ts';
+import type {
+  OpenAIChatRequest,
+  OpenAIContentPart,
+  OpenAIJsonSchemaResponseFormat,
+  OpenAIMessage,
+} from './openai-chat-types.ts';
+import type {
+  LlmContentPart,
+  LlmMessage,
+  PushStreamRequest,
+  ResponseFormatSpec,
+} from './provider-contract.ts';
 import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
+
+/**
+ * Build the OpenAI `response_format` payload from the neutral `ResponseFormatSpec`.
+ * Single source of truth for the wire shape — both `toOpenAIChat` (CLI +
+ * OpenAI-compat) and the web `openrouter-stream.ts` inline body call this, so
+ * the two paths can't drift. `strict` defaults to true (the schema produced by
+ * `zodToStrictJsonSchema` is built for strict mode).
+ */
+export function toOpenAIResponseFormat(spec: ResponseFormatSpec): OpenAIJsonSchemaResponseFormat {
+  return {
+    type: 'json_schema',
+    json_schema: {
+      name: spec.name,
+      strict: spec.strict ?? true,
+      schema: spec.schema,
+    },
+  };
+}
 
 /**
  * Strict multimodal converter for `LlmMessage.contentParts`. Maps text/image
@@ -178,5 +206,6 @@ export function toOpenAIChat(
     ...(typeof temperature === 'number' ? { temperature } : {}),
     ...(typeof req.topP === 'number' ? { top_p: req.topP } : {}),
     ...(typeof req.maxTokens === 'number' ? { max_tokens: req.maxTokens } : {}),
+    ...(req.responseFormat ? { response_format: toOpenAIResponseFormat(req.responseFormat) } : {}),
   };
 }

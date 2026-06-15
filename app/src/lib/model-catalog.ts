@@ -202,6 +202,9 @@ export interface ResolvedModelCapabilities {
   toolCall: boolean;
   vision: boolean;
   imageGen: boolean;
+  /** Honors OpenAI-style `response_format: json_schema` (native structured
+   *  outputs). Resolved from the model's `structured_outputs` support. */
+  structuredOutput: boolean;
   contextLimit: number;
 }
 
@@ -210,6 +213,7 @@ const EMPTY_CAPABILITIES: ResolvedModelCapabilities = {
   toolCall: false,
   vision: false,
   imageGen: false,
+  structuredOutput: false,
   contextLimit: 0,
 };
 
@@ -221,6 +225,7 @@ function resolveFromOpenRouterMetadata(
     toolCall: meta.toolCall,
     vision: meta.inputModalities.includes('image'),
     imageGen: meta.outputModalities.includes('image'),
+    structuredOutput: meta.structuredOutput,
     contextLimit: meta.contextLimit,
   };
 }
@@ -231,6 +236,7 @@ function resolveFromProviderMetadata(meta: ModelsDevProviderMetadata): ResolvedM
     toolCall: meta.toolCall,
     vision: meta.inputModalities.includes('image') || meta.attachment,
     imageGen: meta.outputModalities.includes('image'),
+    structuredOutput: meta.structuredOutput,
     contextLimit: meta.contextLimit,
   };
 }
@@ -275,6 +281,12 @@ export function getModelCapabilities(provider: string, modelId: string): Resolve
 /** Shorthand for checking OpenRouter reasoning support (used by orchestrator). */
 export function openRouterModelSupportsReasoning(modelId: string): boolean {
   return getModelCapabilities('openrouter', modelId).reasoning;
+}
+
+/** Shorthand for checking OpenRouter native structured-output support — gates
+ *  whether the auditor attaches a `response_format` JSON-Schema constraint. */
+export function openRouterModelSupportsStructuredOutput(modelId: string): boolean {
+  return getModelCapabilities('openrouter', modelId).structuredOutput;
 }
 
 /** Build a compact icon string for display in model pickers. */

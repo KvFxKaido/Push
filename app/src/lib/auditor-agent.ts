@@ -14,6 +14,7 @@ import type { AuditVerdictCardData, CoderWorkingMemory, MemoryScope } from '@/ty
 import type { LlmMessage, PushStream } from '@push/lib/provider-contract';
 import { getActiveProvider, getProviderPushStream, type ActiveProvider } from './orchestrator';
 import { getModelForRole } from './providers';
+import { openRouterModelSupportsStructuredOutput } from './model-catalog';
 import type { AuditorPromptContext } from './role-context';
 import {
   buildAuditorEvaluationMemoryBlock,
@@ -48,6 +49,20 @@ function resolveAuditorModel(
   return getModelForRole(provider, 'auditor')?.id;
 }
 
+/**
+ * Whether to constrain the Auditor's verdict JSON with a native `response_format`
+ * schema. Gated to OpenRouter — the only web adapter that honors `response_format`
+ * in Phase 1 (see `docs/runbooks/OpenRouter Capability Expansion.md`) — AND to
+ * models whose catalog metadata reports `structured_outputs` support.
+ */
+function resolveSupportsStructuredOutput(
+  provider: ActiveProvider,
+  modelId: string | undefined,
+): boolean {
+  if (provider !== 'openrouter' || !modelId) return false;
+  return openRouterModelSupportsStructuredOutput(modelId);
+}
+
 export async function runAuditor(
   diff: string,
   onStatus: (phase: string) => void,
@@ -57,6 +72,7 @@ export async function runAuditor(
   fileContexts?: AuditorFileContext[],
 ): Promise<{ verdict: 'safe' | 'unsafe'; card: AuditVerdictCardData }> {
   const provider = resolveAuditorProvider(options);
+  const modelId = resolveAuditorModel(provider, options);
   return runAuditorLib(
     diff,
     {
@@ -65,10 +81,11 @@ export async function runAuditor(
         provider === 'demo'
           ? undefined
           : (getProviderPushStream(provider) as unknown as PushStream<LlmMessage>),
-      modelId: resolveAuditorModel(provider, options),
+      modelId,
       context,
       hookResult,
       fileContexts,
+      supportsStructuredOutput: resolveSupportsStructuredOutput(provider, modelId),
       resolveRuntimeContext: buildAuditorRuntimeContext,
     },
     onStatus,

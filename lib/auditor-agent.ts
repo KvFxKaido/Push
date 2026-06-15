@@ -28,7 +28,8 @@ import type { AuditorFileContext } from './auditor-file-context.js';
 import { SystemPromptBuilder } from './system-prompt-builder.js';
 import { formatVerificationPolicyBlock, type VerificationPolicy } from './verification-policy.js';
 import { z } from 'zod';
-import { parseStructured } from './structured-output.js';
+import { parseStructured, zodToStrictJsonSchema } from './structured-output.js';
+import type { ResponseFormatSpec } from './provider-contract.js';
 
 const AUDITOR_TIMEOUT_MS = 90_000; // 90s — allows for richer file-context processing
 
@@ -57,6 +58,19 @@ const AuditorVerdictSchema = z.object({
   summary: z.string().catch('No summary provided'),
   risks: z.array(AuditRiskSchema).catch([]),
 });
+
+/**
+ * Native structured-output constraint for the commit-mode verdict, derived from
+ * the same zod schema `parseStructured` validates against — one source of truth.
+ * Attached to the request only when the caller signals the model supports
+ * structured outputs (`supportsStructuredOutput`); `parseStructured` still runs
+ * as the validation backstop regardless.
+ */
+const AUDITOR_VERDICT_RESPONSE_FORMAT: ResponseFormatSpec = {
+  name: 'auditor_verdict',
+  schema: zodToStrictJsonSchema(AuditorVerdictSchema),
+  strict: true,
+};
 
 /** Evaluation-mode COMPLETE/INCOMPLETE completeness payload. */
 const AuditorEvaluationSchema = z.object({
@@ -100,6 +114,15 @@ export interface AuditorRunOptions {
   context?: AuditorPromptContext;
   hookResult?: HookResult | null;
   fileContexts?: AuditorFileContext[];
+  /**
+   * The target model honors native structured outputs (OpenAI `response_format`
+   * json_schema). When true, the kernel attaches the verdict's JSON-Schema
+   * constraint so the upstream constrains generation server-side. Computed by
+   * the surface (which owns the model catalog); the kernel stays catalog-
+   * agnostic. Defaults off → unchanged behavior. See `docs/runbooks/OpenRouter
+   * Capability Expansion.md`.
+   */
+  supportsStructuredOutput?: boolean;
   resolveRuntimeContext: ResolveAuditorRuntimeContextFn;
   /**
    * Optional run-event sink. When set, the kernel emits an
@@ -414,6 +437,29 @@ async function runAuditorCore(
     },
   ];
 
+  // Native structured outputs: constrain the verdict JSON server-side when the
+  // model supports it. parseStructured still validates the result below — this
+  // raises the floor on conformance, it doesn't replace the backstop. Symmetric
+  // logs so ops can see which path each audit took.
+  const useStructuredOutput = options.supportsStructuredOutput === true;
+  console.log(
+    JSON.stringify(
+      useStructuredOutput
+        ? {
+            level: 'info',
+            event: 'auditor_structured_output_attached',
+            provider: options.provider,
+            model: modelId,
+          }
+        : {
+            level: 'info',
+            event: 'auditor_structured_output_skipped',
+            provider: options.provider,
+            model: modelId,
+          },
+    ),
+  );
+
   const { error: streamError, text: accumulated } = await iteratePushStreamText(
     stream,
     {
@@ -422,6 +468,7 @@ async function runAuditorCore(
       messages,
       systemPromptOverride: systemPrompt,
       hasSandbox: false,
+      ...(useStructuredOutput ? { responseFormat: AUDITOR_VERDICT_RESPONSE_FORMAT } : {}),
     },
     AUDITOR_TIMEOUT_MS,
     `Auditor timed out after ${AUDITOR_TIMEOUT_MS / 1000}s — model may be unresponsive.`,

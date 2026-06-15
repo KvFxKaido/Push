@@ -65,6 +65,17 @@ export interface OpenAIChatRequestNativeWebSearch {
   anthropic_web_search?: boolean;
 }
 
+/** OpenAI `response_format` JSON-Schema constraint. OpenRouter and the
+ *  OpenAI-compat routes pass it through to constrain generation server-side. */
+export interface OpenAIJsonSchemaResponseFormat {
+  type: 'json_schema';
+  json_schema: {
+    name: string;
+    strict?: boolean;
+    schema: Record<string, unknown>;
+  };
+}
+
 export interface OpenAIChatRequest extends OpenAIChatRequestNativeWebSearch {
   model?: string;
   messages?: OpenAIMessage[];
@@ -74,4 +85,5 @@ export interface OpenAIChatRequest extends OpenAIChatRequestNativeWebSearch {
   max_completion_tokens?: number;
   stream?: boolean;
   n?: number;
+  response_format?: OpenAIJsonSchemaResponseFormat;
 }

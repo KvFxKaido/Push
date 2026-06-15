@@ -117,3 +117,52 @@ export function parseStructured<S extends z.ZodType>(
 
   return { ok: true, data: result.data as z.infer<S> };
 }
+
+// ---------------------------------------------------------------------------
+// zod schema → strict JSON Schema (for native structured outputs)
+// ---------------------------------------------------------------------------
+
+/**
+ * Recursively normalize a JSON Schema object for OpenAI / OpenRouter **strict**
+ * structured outputs. Strict mode requires every object node to carry
+ * `additionalProperties: false` and list *every* property in `required`, and it
+ * rejects a handful of annotation keywords (`$schema`, `default`) that zod's
+ * emitter includes. This mutates a structural clone — the caller's schema is
+ * untouched.
+ */
+function normalizeForStrictMode(node: unknown): unknown {
+  if (Array.isArray(node)) {
+    return node.map(normalizeForStrictMode);
+  }
+  if (!node || typeof node !== 'object') {
+    return node;
+  }
+  const input = node as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    // Strict mode treats these as unsupported keywords, not hints to ignore.
+    if (key === '$schema' || key === 'default') continue;
+    out[key] = normalizeForStrictMode(value);
+  }
+  if (out.type === 'object' && out.properties && typeof out.properties === 'object') {
+    out.additionalProperties = false;
+    out.required = Object.keys(out.properties as Record<string, unknown>);
+  }
+  return out;
+}
+
+/**
+ * Convert a zod schema to a JSON Schema suitable for native structured outputs.
+ * Runs zod 4's `z.toJSONSchema` (input shape — the schema the model must
+ * *produce*) then strict-normalizes the result. Keeps the zod schema as the
+ * single source of truth: the same schema `parseStructured` validates against
+ * also generates the wire constraint.
+ *
+ * `.catch(...)` defaults on the zod side mean those fields are always present
+ * in a valid response, so listing them all as `required` is correct — the
+ * default is a parse-time fallback, not an "optional field" signal.
+ */
+export function zodToStrictJsonSchema(schema: z.ZodType): Record<string, unknown> {
+  const raw = z.toJSONSchema(schema, { io: 'input', unrepresentable: 'any' });
+  return normalizeForStrictMode(raw) as Record<string, unknown>;
+}
