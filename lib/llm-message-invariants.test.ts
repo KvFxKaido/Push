@@ -29,7 +29,7 @@ describe('assertReadyForAssistantTurn', () => {
   });
 
   it('throws when the history is empty', () => {
-    expect(() => assertReadyForAssistantTurn([], 'cli/runAssistantLoop')).toThrow(
+    expect(() => assertReadyForAssistantTurn([], 'cli/lead-turn')).toThrow(
       /message history is empty/,
     );
   });
@@ -53,14 +53,14 @@ describe('assertReadyForAssistantTurn', () => {
           { role: 'user', content: 'hi' },
           { role: 'system', content: 'hidden directive' },
         ],
-        'cli/runAssistantLoop',
+        'cli/lead-turn',
       ),
     ).toThrow(/last message has role 'system'/);
   });
 
   it('includes the caller context in the thrown message', () => {
     expect(() =>
-      assertReadyForAssistantTurn([{ role: 'assistant', content: 'x' }], 'cli/runAssistantLoop'),
-    ).toThrow(/^cli\/runAssistantLoop:/);
+      assertReadyForAssistantTurn([{ role: 'assistant', content: 'x' }], 'cli/lead-turn'),
+    ).toThrow(/^cli\/lead-turn:/);
   });
 });

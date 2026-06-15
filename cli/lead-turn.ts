@@ -2,9 +2,10 @@
  * CLI lead-kernel lane — Agent Runtime Decisions §10, Active Runtime Work #8.
  *
  * Runs a terminal-chat turn as a `leadMode: true` run of the **shared** coder
- * kernel (`lib/coder-agent.ts`) instead of the CLI-local engine loop
- * (`cli/engine.ts:runAssistantLoop`). This is the same kernel + lead framing
- * the web's Inline Foreground Lane uses (`app/src/lib/inline-coder-run.ts`),
+ * kernel (`lib/coder-agent.ts`). This replaced the CLI-local engine round
+ * loop (the former `cli/engine.ts:runAssistantLoop`, now removed) and is the
+ * same kernel + lead framing the web's Inline Foreground Lane uses
+ * (`app/src/lib/inline-coder-run.ts`),
  * assembled with the CLI's local reach: `executeToolCall` against the real
  * filesystem, the CLI provider streams, and the existing approval gates.
  *
@@ -255,7 +256,7 @@ export function buildLeadTurnPreamble(
 /**
  * Run one terminal-chat turn as a `leadMode` run of the shared coder kernel.
  *
- * Contract matches `runAssistantLoop`: the caller has already appended the
+ * Contract: the caller has already appended the
  * user message to `state.messages`; this returns a `RunResult` and leaves
  * the assistant's final summary appended + persisted.
  */

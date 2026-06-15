@@ -119,7 +119,7 @@ export interface TransformContextOptions<M extends TransformableMessage> {
    *  of band of the transcript. The digest stage merges into this when set,
    *  even if no `[SESSION_DIGEST]` message survives in the rewritten message
    *  array — necessary because callers (web `toLLMMessages`, CLI
-   *  `runAssistantLoop`) compose `transformed.messages` for the wire but
+   *  the CLI lead turn) compose `transformed.messages` for the wire but
    *  don't write the synthetic digest message back into the canonical
    *  transcript. Without this option, every compaction would emit a fresh
    *  digest rather than accumulating.
