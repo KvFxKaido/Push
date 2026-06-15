@@ -726,9 +726,6 @@ export class CoderJob {
       provider: input.provider,
       model: input.model,
     });
-    if (input.envelope.plannerBrief) {
-      taskPreamble += '\n\n' + input.envelope.plannerBrief;
-    }
     // PR 3: prepend prior-turn summaries so the Coder kernel sees
     // multi-turn context without inlining full chat history. The block
     // is empty when no chain was found — fresh-chat behavior is

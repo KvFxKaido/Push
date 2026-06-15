@@ -146,7 +146,7 @@ export function collectAdaptationSignals(provider: string, modelId?: string): Ad
  * resolution) and adjusts settings based on observed behavior signals.
  *
  * Current adaptations:
- * 1. High malformed calls -> enable planner, reduce max rounds
+ * 1. High malformed calls -> reduce max rounds
  * 2. High truncation rate -> reduce max rounds (model hitting output limits)
  * 3. High context pressure -> enable context resets
  * 4. High edit error/stale rate -> reduce max rounds (unreliable edits)
@@ -162,10 +162,6 @@ export function computeAdaptiveProfile(
 
   // --- Adaptation 1: High malformed call rate ---
   if (signals.malformedCallCount >= THRESHOLDS.MALFORMED_CALL_ESCALATION) {
-    if (!adaptedProfile.plannerRequired) {
-      adaptedProfile.plannerRequired = true;
-      adaptationReasons.push(`Enable planner: ${signals.malformedCallCount} malformed tool calls`);
-    }
     if (adaptedProfile.maxCoderRounds > 20) {
       adaptedProfile.maxCoderRounds = 20;
       adaptationReasons.push(`Reduce max rounds to 20: high malformed call rate`);

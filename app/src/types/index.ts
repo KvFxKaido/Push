@@ -250,8 +250,6 @@ export interface HarnessProfileSettings {
   profile: HarnessProfile;
   /** Max rounds for a single Coder delegation. */
   maxCoderRounds: number;
-  /** Whether the planner pre-pass is required before Coder delegation. */
-  plannerRequired: boolean;
   /** Whether context resets are enabled between Coder phases. */
   contextResetsEnabled: boolean;
   /** Whether the Auditor evaluation runs after every Coder delegation. */
@@ -1402,8 +1400,6 @@ export interface DelegationEnvelope extends DelegationBriefFields {
    * Coder identity/voice. Genuinely delegated sub-Coders leave it unset.
    */
   leadMode?: boolean;
-  /** Pre-computed planner brief to inject into the Coder's task preamble. */
-  plannerBrief?: string;
   /** Session-level verification policy passed through from the conversation. */
   verificationPolicy?: VerificationPolicy;
   /**

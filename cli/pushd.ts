@@ -3478,8 +3478,7 @@ async function handleSubmitTaskGraph(req) {
     // become path.basename(cwd) / null fallbacks internally), so no
     // outer catch needed.
     const workspaceIdentity = await resolveWorkspaceIdentity(entry.state.cwd);
-    // chatId deliberately omitted from the scope — see the same
-    // comment in delegation-entry.ts. Pushd's sessionId is also
+    // chatId deliberately omitted from the scope: pushd's sessionId is
     // per-invocation for headless flows, and even attached sessions
     // wouldn't benefit from chatId-narrowing memory across the
     // workspace. Codex P1 review on PR #333.

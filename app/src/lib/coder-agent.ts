@@ -113,7 +113,6 @@ export async function runCoderAgent(
     chatId?: string;
     instructionFilename?: string;
     harnessSettings?: HarnessProfileSettings;
-    plannerBrief?: string;
     verificationPolicy?: VerificationPolicy;
     declaredCapabilities?: import('./capabilities').Capability[];
     /**
@@ -155,7 +154,6 @@ export async function runCoderAgent(
   let effectiveModelOverride: string | undefined;
   let effectiveDelegationContext: typeof delegationContext;
   let effectiveHarnessSettings: HarnessProfileSettings | undefined;
-  let effectivePlannerBrief: string | undefined;
   let envelopeDeclaredCapabilities: import('./capabilities').Capability[] | undefined;
 
   if (typeof taskOrEnvelope === 'object') {
@@ -173,7 +171,6 @@ export async function runCoderAgent(
       envelope.provider === 'demo' ? undefined : (envelope.provider as ActiveProvider);
     effectiveModelOverride = envelope.model;
     effectiveHarnessSettings = envelope.harnessSettings;
-    effectivePlannerBrief = envelope.plannerBrief;
     envelopeDeclaredCapabilities = envelope.declaredCapabilities;
     effectiveDelegationContext = {
       intent: envelope.intent,
@@ -197,7 +194,6 @@ export async function runCoderAgent(
     effectiveProviderOverride = providerOverride;
     effectiveModelOverride = modelOverride;
     effectiveHarnessSettings = delegationContext?.harnessSettings;
-    effectivePlannerBrief = delegationContext?.plannerBrief;
     effectiveDelegationContext = delegationContext;
     envelopeDeclaredCapabilities = delegationContext?.declaredCapabilities;
   }
@@ -224,9 +220,6 @@ export async function runCoderAgent(
     provider: activeProvider,
     model: coderModelId,
   } as DelegationEnvelope);
-  if (effectivePlannerBrief) {
-    taskPreamble += '\n\n' + effectivePlannerBrief;
-  }
 
   // Preload the contents of the files the Orchestrator flagged so the Coder
   // starts with them (and current line hashes) instead of burning its first

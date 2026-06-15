@@ -115,7 +115,6 @@ describe('resolveHarnessSettings', () => {
     const settings = resolveHarnessSettings('openrouter', 'openai/gpt-4o');
 
     expect(settings.profile).toBe('standard');
-    expect(settings.plannerRequired).toBe(true);
     expect(settings.maxCoderRounds).toBe(20);
   });
 });

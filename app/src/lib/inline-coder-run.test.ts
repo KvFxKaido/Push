@@ -146,7 +146,6 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
     maxCoderRounds: 24,
     contextResetsEnabled: true,
     evaluateAfterCoder: true,
-    plannerRequired: false,
   } as unknown as HarnessProfileSettings;
 
   async function runDelegatedStyleCall(opts?: { repoFullName?: string }) {
@@ -170,7 +169,6 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
         branchContext: { activeBranch: 'feat/x', defaultBranch: 'main', protectMain: true },
         instructionFilename: 'AGENTS.md',
         harnessSettings,
-        plannerBrief: 'PLANNER-BRIEF',
         repoFullName: opts?.repoFullName,
         chatId: 'chat-1',
       },
@@ -260,17 +258,13 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
     expect(options.extraToolProtocols).toBeUndefined();
   });
 
-  it('builds the brief + planner preamble and threads the delegated option values', async () => {
+  it('builds the brief preamble and threads the delegated option values', async () => {
     mockReadFilesForCoderPreload.mockResolvedValue('[PRELOADED-FILES]');
     await runDelegatedStyleCall({ repoFullName: 'KvFxKaido/Push' });
     const { options } = lastKernelCall();
 
     expect(options.taskPreamble).toContain('Task: Implement the fix');
-    expect(options.taskPreamble).toContain('PLANNER-BRIEF');
     expect(options.taskPreamble).toContain('[PRELOADED-FILES]');
-    expect(options.taskPreamble.indexOf('PLANNER-BRIEF')).toBeLessThan(
-      options.taskPreamble.indexOf('[PRELOADED-FILES]'),
-    );
 
     expect(options.provider).toBe('openrouter');
     expect(options.modelId).toBe('coder-model-x');

@@ -74,7 +74,6 @@ import {
 const STANDARD_BASE: HarnessProfileSettings = {
   profile: 'standard',
   maxCoderRounds: 30,
-  plannerRequired: false,
   contextResetsEnabled: false,
   evaluateAfterCoder: true,
 };
@@ -82,7 +81,6 @@ const STANDARD_BASE: HarnessProfileSettings = {
 const HEAVY_BASE: HarnessProfileSettings = {
   profile: 'heavy',
   maxCoderRounds: 30,
-  plannerRequired: true,
   contextResetsEnabled: true,
   evaluateAfterCoder: true,
 };
@@ -222,7 +220,7 @@ describe('computeAdaptiveProfile', () => {
     expect(result.adaptedProfile).toEqual(STANDARD_BASE);
   });
 
-  it('enables planner when malformed call count exceeds threshold', () => {
+  it('clamps maxCoderRounds when malformed call count exceeds threshold', () => {
     mockToolCallMetrics = {
       count: THRESHOLDS.MALFORMED_CALL_ESCALATION,
       reasons: {
@@ -259,15 +257,13 @@ describe('computeAdaptiveProfile', () => {
     const result = computeAdaptiveProfile({ ...STANDARD_BASE }, 'openrouter', 'some-model');
 
     expect(result.wasAdapted).toBe(true);
-    expect(result.adaptedProfile.plannerRequired).toBe(true);
     expect(result.adaptedProfile.maxCoderRounds).toBe(20);
-    expect(result.adaptationReasons).toContainEqual(expect.stringContaining('Enable planner'));
     expect(result.adaptationReasons).toContainEqual(
       expect.stringContaining('Reduce max rounds to 20'),
     );
   });
 
-  it('does not re-enable planner on heavy profile (already enabled)', () => {
+  it('clamps maxCoderRounds on a heavy profile too', () => {
     mockToolCallMetrics = {
       count: 5,
       reasons: {
@@ -303,10 +299,7 @@ describe('computeAdaptiveProfile', () => {
 
     const result = computeAdaptiveProfile({ ...HEAVY_BASE }, 'openrouter', 'some-model');
 
-    // Heavy already has planner=true, so the malformed-call adaptation must not
-    // add a duplicate "Enable planner" reason. It still clamps rounds to 20.
-    expect(result.adaptedProfile.plannerRequired).toBe(true);
-    expect(result.adaptationReasons).not.toContainEqual(expect.stringContaining('Enable planner'));
+    // The malformed-call adaptation clamps rounds to 20 regardless of profile.
     expect(result.adaptedProfile.maxCoderRounds).toBe(20);
   });
 
@@ -367,7 +360,6 @@ describe('computeAdaptiveProfile', () => {
     const base: HarnessProfileSettings = {
       profile: 'heavy',
       maxCoderRounds: 18,
-      plannerRequired: true,
       contextResetsEnabled: true,
       evaluateAfterCoder: true,
     };
@@ -487,7 +479,6 @@ describe('computeAdaptiveProfile', () => {
     const result = computeAdaptiveProfile({ ...STANDARD_BASE }, 'openrouter');
 
     expect(result.wasAdapted).toBe(true);
-    expect(result.adaptedProfile.plannerRequired).toBe(true);
     expect(result.adaptedProfile.contextResetsEnabled).toBe(true);
     // maxCoderRounds should be reduced: first to 20 (malformed), then to 15 (truncation: 20-5=15)
     // edit error rate 0.25 would try 15-5=10 clamped to 15, but already 15 so no further reduction
@@ -500,7 +491,6 @@ describe('computeAdaptiveProfile', () => {
     const base: HarnessProfileSettings = {
       profile: 'standard',
       maxCoderRounds: 30,
-      plannerRequired: false,
       contextResetsEnabled: false,
       evaluateAfterCoder: false,
     };
@@ -547,9 +537,9 @@ describe('logAdaptiveProfile', () => {
 
     const adapted: Parameters<typeof logAdaptiveProfile>[0] = {
       baseProfile: { ...STANDARD_BASE },
-      adaptedProfile: { ...STANDARD_BASE, plannerRequired: true },
+      adaptedProfile: { ...STANDARD_BASE, maxCoderRounds: 20 },
       wasAdapted: true,
-      adaptationReasons: ['Enable planner: 4 malformed tool calls'],
+      adaptationReasons: ['Reduce max rounds to 20: high malformed call rate'],
       signals: {
         malformedCallCount: 4,
         malformedReasons: {
