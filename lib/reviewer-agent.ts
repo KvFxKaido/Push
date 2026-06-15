@@ -24,8 +24,23 @@ import {
   classifyFilePath,
 } from './diff-utils.js';
 import { SIZE_BUDGETS } from './size-budgets.js';
-import { parseStructured } from './structured-output.js';
+import {
+  parseStructured,
+  zodToStrictJsonSchema,
+  applyStructuredOutput,
+} from './structured-output.js';
 import { ReviewerResponseSchema } from './review-schema.js';
+import type { ResponseFormatSpec } from './provider-contract.js';
+
+/** Native structured-output constraint for the reviewer's `{ summary, comments[] }`
+ *  payload, derived from the same `ReviewerResponseSchema` parseStructured
+ *  validates against. `comments[].line` is genuinely optional → modeled as
+ *  nullable by `zodToStrictJsonSchema`. */
+const REVIEWER_RESPONSE_FORMAT: ResponseFormatSpec = {
+  name: 'reviewer_response',
+  schema: zodToStrictJsonSchema(ReviewerResponseSchema),
+  strict: true,
+};
 
 const REVIEWER_TIMEOUT_MS = 90_000; // 90s — reviews can be thorough
 const REVIEWER_FILE_STRUCTURE_LIMIT = 2_000;
@@ -314,6 +329,14 @@ export interface ReviewerOptions {
   /** Optional symbol reader. When absent (or sandboxId absent) file-structure fetch is skipped. */
   readSymbols?: ReadSymbolsFn;
   /**
+   * The target model honors native structured outputs (OpenAI `response_format`
+   * json_schema). When true, the kernel constrains the `{ summary, comments[] }`
+   * payload server-side. Computed by the surface (which owns the model catalog);
+   * defaults off → unchanged behavior. See `docs/runbooks/OpenRouter Capability
+   * Expansion.md`.
+   */
+  supportsStructuredOutput?: boolean;
+  /**
    * Optional run-event sink. When set, the kernel emits an
    * `assistant.prompt_snapshot` event once after the reviewer's
    * system prompt is built so a debug surface can answer "what went
@@ -418,6 +441,12 @@ async function runReviewerCore(
     },
   ];
 
+  const structuredOutput = applyStructuredOutput(
+    options.supportsStructuredOutput === true,
+    REVIEWER_RESPONSE_FORMAT,
+    { eventBase: 'reviewer_structured_output', provider, model: modelId },
+  );
+
   const { error: streamError, text: accumulated } = await iteratePushStreamText(
     stream,
     {
@@ -426,6 +455,7 @@ async function runReviewerCore(
       messages,
       systemPromptOverride: systemPrompt,
       hasSandbox: false,
+      ...structuredOutput,
     },
     REVIEWER_TIMEOUT_MS,
     `Reviewer timed out after ${REVIEWER_TIMEOUT_MS / 1000}s.`,

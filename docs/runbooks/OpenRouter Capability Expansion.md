@@ -105,11 +105,20 @@ tool-shaped and is out of scope here.
   `app/src/lib/model-catalog.ts`, resolved from the
   `structured_outputs` entry in the model's `supported_parameters`
   (already parsed into `ModelsDevOpenRouterMetadata.structuredOutput`).
-- **Auditor wiring.** The kernel (`lib/auditor-agent.ts`) owns the verdict
-  schema and its derived `response_format`; it attaches it to the request only
-  when the caller passes `supportsStructuredOutput: true`. The web wrapper
-  (`app/src/lib/auditor-agent.ts`) computes that from the catalog. A structured
-  log fires on both the attach and the skip branch (symmetric-logs convention).
+- **Role-kernel wiring.** Each kernel owns its zod schema and the derived
+  `response_format`, attaching it only when the caller passes
+  `supportsStructuredOutput: true`. Wired so far: the auditor **verdict** and
+  **evaluation** gates (`lib/auditor-agent.ts`) and the advisory **reviewer**
+  (`lib/reviewer-agent.ts`). The web wrappers
+  (`app/src/lib/auditor-agent.ts`, `app/src/lib/reviewer-agent.ts`) compute
+  support from the catalog, gated to OpenRouter. A shared
+  `applyStructuredOutput` helper (`lib/structured-output.ts`) returns the
+  request fragment and emits the symmetric attach ↔ skip structured log.
+- **Optional fields.** `zodToStrictJsonSchema` classifies each property from
+  zod's `io: 'input'` output — `required`-listed or `default`-carrying
+  (`.catch()`/`.default()`) fields stay required and non-nullable; a genuinely
+  `.optional()` field (the reviewer's `comments[].line`) is modeled as
+  `nullable`, the OpenAI/OpenRouter strict-mode idiom for "may be omitted".
 
 ### Why the kernel doesn't compute the capability itself
 
@@ -121,15 +130,17 @@ for runtime-context and memory resolvers.
 
 ### Deliberately deferred within Phase 1
 
-- **Auditor *evaluation* + reviewer schemas.** The evaluation schema uses a zod
-  `.preprocess` on `gaps`; confirm `zodToStrictJsonSchema` handles it before
-  wiring. Verdict (the SAFE/UNSAFE commit gate) ships first as the
-  highest-value, simplest schema.
-- **CLI auditor wiring.** `toOpenAIChat` already emits `response_format` when
-  `responseFormat` is set, so the CLI path is *plumbed*; the CLI auditor caller
-  (`cli/auditor-gate-memory.ts`) just doesn't pass `supportsStructuredOutput`
-  yet (defaults off → no behavior change). Wiring it is a one-line follow-up
-  once the CLI catalog exposes the capability.
+- **Deep reviewer** (`lib/deep-reviewer-agent.ts`, the autonomous PR reviewer).
+  It shares `ReviewerResponseSchema`, so the schema + wire builder are ready,
+  but it runs server-side in the PR-review DO where credentials are env-keyed
+  and there is no client `Authorization` — the capability gate there is the
+  server-side engine-capability path, not the localStorage catalog. Left as a
+  follow-up so the server gate isn't half-wired.
+- **CLI auditor/reviewer wiring.** `toOpenAIChat` already emits `response_format`
+  when `responseFormat` is set, so the CLI path is *plumbed*; the CLI callers
+  (`cli/auditor-gate-memory.ts`) just don't pass `supportsStructuredOutput` yet
+  (defaults off → no behavior change). One-line follow-up once the CLI catalog
+  exposes the capability.
 
 ## References
 

@@ -111,6 +111,7 @@ export async function runAuditorEvaluation(
   },
 ): Promise<import('@push/lib/auditor-agent').EvaluationResult> {
   const provider = resolveAuditorProvider(options);
+  const modelId = resolveAuditorModel(provider, options);
   return runAuditorEvaluationLib(
     task,
     coderSummary,
@@ -122,7 +123,8 @@ export async function runAuditorEvaluation(
         provider === 'demo'
           ? undefined
           : (getProviderPushStream(provider) as unknown as PushStream<LlmMessage>),
-      modelId: resolveAuditorModel(provider, options),
+      modelId,
+      supportsStructuredOutput: resolveSupportsStructuredOutput(provider, modelId),
       coderRounds: options?.coderRounds,
       coderMaxRounds: options?.coderMaxRounds,
       criteriaResults: options?.criteriaResults,

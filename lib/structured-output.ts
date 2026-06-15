@@ -40,6 +40,7 @@
 
 import { z } from 'zod';
 import { applyJsonTextRepairs } from './tool-call-parsing.js';
+import type { ResponseFormatSpec } from './provider-contract.js';
 
 /** Why a `parseStructured` call could not produce a validated object. */
 export type StructuredFailureReason =
@@ -123,12 +124,45 @@ export function parseStructured<S extends z.ZodType>(
 // ---------------------------------------------------------------------------
 
 /**
+ * Make a property schema accept `null`, the OpenAI/OpenRouter strict-mode idiom
+ * for "optional" — strict mode requires every property in `required`, so a
+ * field the model may legitimately omit is modeled as nullable-and-required and
+ * the model emits `null` when absent. Handles the common typed/enum/union
+ * shapes our schemas produce; a node with no `type` is wrapped in `anyOf`.
+ */
+function makeNullable(node: unknown): unknown {
+  if (!node || typeof node !== 'object') return node;
+  const schema = node as Record<string, unknown>;
+  if (Array.isArray(schema.type)) {
+    if (!schema.type.includes('null')) schema.type = [...schema.type, 'null'];
+  } else if (typeof schema.type === 'string') {
+    schema.type = [schema.type, 'null'];
+  } else if (Array.isArray(schema.anyOf)) {
+    schema.anyOf = [...schema.anyOf, { type: 'null' }];
+  } else {
+    return { anyOf: [schema, { type: 'null' }] };
+  }
+  // A nullable enum must list `null` among its accepted values.
+  if (Array.isArray(schema.enum) && !schema.enum.includes(null)) {
+    schema.enum = [...schema.enum, null];
+  }
+  return schema;
+}
+
+/**
  * Recursively normalize a JSON Schema object for OpenAI / OpenRouter **strict**
  * structured outputs. Strict mode requires every object node to carry
  * `additionalProperties: false` and list *every* property in `required`, and it
  * rejects a handful of annotation keywords (`$schema`, `default`) that zod's
- * emitter includes. This mutates a structural clone — the caller's schema is
+ * emitter includes. Genuinely-optional fields are modeled as nullable (see
+ * `makeNullable`). Operates on a structural clone — the caller's schema is
  * untouched.
+ *
+ * Optionality classification (zod 4 `io: 'input'` emits all three signals):
+ *   - listed in `required` → a plain required field (kept required, not nullable),
+ *   - carries a `default` → a `.catch()` / `.default()` field that is always
+ *     present after a successful parse (kept required, not nullable),
+ *   - neither → a genuinely `.optional()` field (made nullable + required).
  */
 function normalizeForStrictMode(node: unknown): unknown {
   if (Array.isArray(node)) {
@@ -141,28 +175,62 @@ function normalizeForStrictMode(node: unknown): unknown {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(input)) {
     // Strict mode treats these as unsupported keywords, not hints to ignore.
-    if (key === '$schema' || key === 'default') continue;
+    // `required` is recomputed below; `default` is read (pre-strip) for the
+    // optionality classification before being dropped.
+    if (key === '$schema' || key === 'default' || key === 'required') continue;
     out[key] = normalizeForStrictMode(value);
   }
   if (out.type === 'object' && out.properties && typeof out.properties === 'object') {
+    const normalizedProps = out.properties as Record<string, unknown>;
+    const rawProps = (input.properties ?? {}) as Record<string, unknown>;
+    const zodRequired = new Set(Array.isArray(input.required) ? input.required : []);
+    for (const key of Object.keys(normalizedProps)) {
+      const rawChild = rawProps[key];
+      const hasDefault =
+        !!rawChild && typeof rawChild === 'object' && 'default' in (rawChild as object);
+      const isOptional = !zodRequired.has(key) && !hasDefault;
+      if (isOptional) normalizedProps[key] = makeNullable(normalizedProps[key]);
+    }
     out.additionalProperties = false;
-    out.required = Object.keys(out.properties as Record<string, unknown>);
+    out.required = Object.keys(normalizedProps);
   }
   return out;
 }
 
 /**
  * Convert a zod schema to a JSON Schema suitable for native structured outputs.
- * Runs zod 4's `z.toJSONSchema` (input shape — the schema the model must
- * *produce*) then strict-normalizes the result. Keeps the zod schema as the
- * single source of truth: the same schema `parseStructured` validates against
- * also generates the wire constraint.
- *
- * `.catch(...)` defaults on the zod side mean those fields are always present
- * in a valid response, so listing them all as `required` is correct — the
- * default is a parse-time fallback, not an "optional field" signal.
+ * Runs zod 4's `z.toJSONSchema` (input shape — what the model must *produce*,
+ * the only mode that can represent `.transform()` schemas like the reviewer's)
+ * then strict-normalizes the result. Keeps the zod schema as the single source
+ * of truth: the same schema `parseStructured` validates against also generates
+ * the wire constraint.
  */
 export function zodToStrictJsonSchema(schema: z.ZodType): Record<string, unknown> {
   const raw = z.toJSONSchema(schema, { io: 'input', unrepresentable: 'any' });
   return normalizeForStrictMode(raw) as Record<string, unknown>;
+}
+
+/**
+ * Decide whether a role kernel attaches a native `response_format` constraint,
+ * emitting a symmetric structured log on both branches (attach ↔ skip) so ops
+ * can see which path each run took. Returns the request fragment to spread into
+ * a `PushStreamRequest` — `{ responseFormat }` when enabled, `{}` otherwise.
+ *
+ * Centralizes the attach+log shape shared by the auditor verdict, auditor
+ * evaluation, and reviewer kernels (the structured-output adoption sites).
+ */
+export function applyStructuredOutput(
+  enabled: boolean,
+  responseFormat: ResponseFormatSpec,
+  ctx: { eventBase: string; provider: string; model?: string },
+): { responseFormat?: ResponseFormatSpec } {
+  console.log(
+    JSON.stringify({
+      level: 'info',
+      event: enabled ? `${ctx.eventBase}_attached` : `${ctx.eventBase}_skipped`,
+      provider: ctx.provider,
+      model: ctx.model,
+    }),
+  );
+  return enabled ? { responseFormat } : {};
 }

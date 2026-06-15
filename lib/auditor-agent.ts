@@ -28,7 +28,11 @@ import type { AuditorFileContext } from './auditor-file-context.js';
 import { SystemPromptBuilder } from './system-prompt-builder.js';
 import { formatVerificationPolicyBlock, type VerificationPolicy } from './verification-policy.js';
 import { z } from 'zod';
-import { parseStructured, zodToStrictJsonSchema } from './structured-output.js';
+import {
+  parseStructured,
+  zodToStrictJsonSchema,
+  applyStructuredOutput,
+} from './structured-output.js';
 import type { ResponseFormatSpec } from './provider-contract.js';
 
 const AUDITOR_TIMEOUT_MS = 90_000; // 90s — allows for richer file-context processing
@@ -84,6 +88,14 @@ const AuditorEvaluationSchema = z.object({
   ),
   confidence: z.enum(['high', 'medium', 'low']).catch('low'),
 });
+
+/** Native structured-output constraint for the evaluation verdict. See
+ *  `AUDITOR_VERDICT_RESPONSE_FORMAT` — same derive-from-zod, one-source rule. */
+const AUDITOR_EVALUATION_RESPONSE_FORMAT: ResponseFormatSpec = {
+  name: 'auditor_evaluation',
+  schema: zodToStrictJsonSchema(AuditorEvaluationSchema),
+  strict: true,
+};
 
 export interface HookResult {
   exitCode: number;
@@ -166,6 +178,8 @@ export interface AuditorEvaluationOptions {
    * lead "the Coder". Defaults off (delegated framing).
    */
   leadMode?: boolean;
+  /** See `AuditorRunOptions.supportsStructuredOutput`. */
+  supportsStructuredOutput?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -439,25 +453,11 @@ async function runAuditorCore(
 
   // Native structured outputs: constrain the verdict JSON server-side when the
   // model supports it. parseStructured still validates the result below — this
-  // raises the floor on conformance, it doesn't replace the backstop. Symmetric
-  // logs so ops can see which path each audit took.
-  const useStructuredOutput = options.supportsStructuredOutput === true;
-  console.log(
-    JSON.stringify(
-      useStructuredOutput
-        ? {
-            level: 'info',
-            event: 'auditor_structured_output_attached',
-            provider: options.provider,
-            model: modelId,
-          }
-        : {
-            level: 'info',
-            event: 'auditor_structured_output_skipped',
-            provider: options.provider,
-            model: modelId,
-          },
-    ),
+  // raises the floor on conformance, it doesn't replace the backstop.
+  const structuredOutput = applyStructuredOutput(
+    options.supportsStructuredOutput === true,
+    AUDITOR_VERDICT_RESPONSE_FORMAT,
+    { eventBase: 'auditor_structured_output', provider: options.provider, model: modelId },
   );
 
   const { error: streamError, text: accumulated } = await iteratePushStreamText(
@@ -468,7 +468,7 @@ async function runAuditorCore(
       messages,
       systemPromptOverride: systemPrompt,
       hasSandbox: false,
-      ...(useStructuredOutput ? { responseFormat: AUDITOR_VERDICT_RESPONSE_FORMAT } : {}),
+      ...structuredOutput,
     },
     AUDITOR_TIMEOUT_MS,
     `Auditor timed out after ${AUDITOR_TIMEOUT_MS / 1000}s — model may be unresponsive.`,
@@ -701,6 +701,16 @@ export async function runAuditorEvaluation(
     },
   ];
 
+  const structuredOutput = applyStructuredOutput(
+    options.supportsStructuredOutput === true,
+    AUDITOR_EVALUATION_RESPONSE_FORMAT,
+    {
+      eventBase: 'auditor_evaluation_structured_output',
+      provider: options.provider,
+      model: modelId,
+    },
+  );
+
   const { error: streamError, text: accumulated } = await iteratePushStreamText(
     stream,
     {
@@ -709,6 +719,7 @@ export async function runAuditorEvaluation(
       messages,
       systemPromptOverride: buildEvaluationSystemPrompt(subject),
       hasSandbox: false,
+      ...structuredOutput,
     },
     EVALUATION_TIMEOUT_MS,
     `Evaluation timed out after ${EVALUATION_TIMEOUT_MS / 1000}s.`,

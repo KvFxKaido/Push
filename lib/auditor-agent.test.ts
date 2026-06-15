@@ -433,6 +433,41 @@ describe('runAuditorEvaluation (PushStream consumer)', () => {
     expect(req.systemPromptOverride).toContain('Evaluator');
   });
 
+  it('attaches the evaluation response_format when supportsStructuredOutput is set', async () => {
+    const { stream, capturedRequest } = makePushStream([
+      {
+        type: 'text_delta',
+        text: '{"verdict":"complete","summary":"ok","gaps":[],"confidence":"high"}',
+      },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+
+    await runAuditorEvaluation(
+      'task',
+      'summary',
+      null,
+      null,
+      {
+        provider: 'openrouter',
+        modelId: 'test-model',
+        stream,
+        supportsStructuredOutput: true,
+      },
+      () => {},
+    );
+
+    const req = capturedRequest.current as {
+      responseFormat?: { name: string; schema: Record<string, unknown> };
+    };
+    expect(req.responseFormat?.name).toBe('auditor_evaluation');
+    expect(req.responseFormat?.schema.required).toEqual([
+      'verdict',
+      'summary',
+      'gaps',
+      'confidence',
+    ]);
+  });
+
   it('returns INCOMPLETE on stream errors', async () => {
     const stream: PushStream = () =>
       (async function* () {
