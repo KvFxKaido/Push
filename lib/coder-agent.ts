@@ -904,6 +904,12 @@ export interface CoderAgentResult<TCard> {
   cards: TCard[];
   rounds: number;
   checkpoints: number;
+  /** Why the run stopped *abnormally* (vs. completing the task): the round
+   *  cap (`max_rounds`) or a repeated-tool-call loop (`loop`). Unset on a
+   *  normal completion. Lets a caller surface a non-success outcome instead
+   *  of treating the graceful stop summary as success — headless `push run`
+   *  relies on this for its exit code / `--json` outcome. */
+  stopReason?: 'max_rounds' | 'loop';
   criteriaResults?: Array<{
     id: string;
     passed: boolean;
@@ -1211,6 +1217,7 @@ export async function runCoderAgent<TCall, TCard>(
         cards: allCards,
         rounds: round,
         checkpoints: checkpointCount,
+        stopReason: 'max_rounds',
       };
     }
 
@@ -1416,6 +1423,7 @@ export async function runCoderAgent<TCall, TCard>(
           cards: allCards,
           rounds,
           checkpoints: checkpointCount,
+          stopReason: 'loop',
         };
       }
 

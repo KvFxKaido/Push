@@ -498,15 +498,33 @@ export async function runLeadKernelTurn(
     state.rounds = (state.rounds ?? 0) + result.rounds;
     await saveSessionState(state);
 
+    // An abnormal stop is not success (Codex P2 #942). The RunResult outcome
+    // and the `run_complete` event use different vocabularies: the event's
+    // RUN_COMPLETE_OUTCOMES allows `max_rounds`/`failed` but NOT `error`, so a
+    // repeated-tool-call loop maps to an `error` return + a `failed` event
+    // (mirroring the catch path below). The round cap is `max_rounds` on both.
+    const runOutcome: RunResult['outcome'] =
+      result.stopReason === 'max_rounds'
+        ? 'max_rounds'
+        : result.stopReason === 'loop'
+          ? 'error'
+          : 'success';
+    const eventOutcome =
+      result.stopReason === 'max_rounds'
+        ? 'max_rounds'
+        : result.stopReason === 'loop'
+          ? 'failed'
+          : 'success';
+
     if (!suppressRunComplete) {
       await persistEvent('run_complete', {
         runId,
-        outcome: 'success',
+        outcome: eventOutcome,
         summary: finalAssistantText.slice(0, 500),
       });
     }
-    dispatchEvent('run_complete', { outcome: 'success', summary: finalAssistantText });
-    return { outcome: 'success', finalAssistantText, rounds: result.rounds, runId };
+    dispatchEvent('run_complete', { outcome: eventOutcome, summary: finalAssistantText });
+    return { outcome: runOutcome, finalAssistantText, rounds: result.rounds, runId };
   } catch (err) {
     const isAbort: boolean =
       (err instanceof Error && err.name === 'AbortError') || (signal?.aborted ?? false);

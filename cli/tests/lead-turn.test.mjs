@@ -188,6 +188,41 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
     });
   });
 
+  it('surfaces a max_rounds outcome when the round cap is hit (headless parity, #942)', async () => {
+    await withTempWorkspace(async (cwd) => {
+      // Round 0 emits a non-terminal state-update tool call so the kernel does
+      // not complete; with maxRounds=1, round 1 hits the cap and stops. The
+      // lane must report `max_rounds`, not flatten the graceful stop to success.
+      const server = await startSequencedProviderServer([
+        {
+          tokens: [
+            '{"tool":"coder_update_state","args":{"plan":"keep going","currentPhase":"investigation"}}',
+          ],
+        },
+      ]);
+      try {
+        const providerConfig = makeProviderConfig(server.url);
+        const state = makeState(cwd);
+        const emitted = [];
+
+        const result = await runLeadKernelTurn(
+          state,
+          providerConfig,
+          'mock-key',
+          'Do the thing',
+          1,
+          { emit: (event) => emitted.push(event) },
+        );
+
+        assert.equal(result.outcome, 'max_rounds');
+        const runComplete = emitted.find((e) => e.type === 'run_complete');
+        assert.equal(runComplete.payload.outcome, 'max_rounds');
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+
   it('injects persisted workspace memory into the task preamble', async () => {
     await withTempWorkspace(async (cwd) => {
       // Same store the engine loop's `[MEMORY]` prompt section reads
