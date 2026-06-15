@@ -120,6 +120,9 @@ export interface StartBackgroundMainChatTurnInput {
   chatId: string;
   trimmedText: string;
   attachments?: AttachmentData[];
+  /** Attachments from prior turns in this chat's context window, so the DO
+   *  can inject them as content parts alongside its text preamble. */
+  priorAttachments?: AttachmentData[];
   lockedProvider: AIProviderType;
   resolvedModel: string | undefined;
   refs: BackgroundMainChatRefs;
@@ -190,6 +193,10 @@ export async function startBackgroundMainChatTurn(
   const envelope: DelegationEnvelope = {
     task: trimmedText,
     attachments: input.attachments && input.attachments.length > 0 ? input.attachments : undefined,
+    priorAttachments:
+      input.priorAttachments && input.priorAttachments.length > 0
+        ? input.priorAttachments
+        : undefined,
     files: [],
     // This is the conversational lead's own turn running server-side, not a
     // delegated sub-Coder — so the CoderJob DO runs the kernel in leadMode

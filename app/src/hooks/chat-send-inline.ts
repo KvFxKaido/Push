@@ -62,11 +62,19 @@ import { applyStampedSandboxExecBranchDesync } from '@/lib/branch-desync';
 import { applyBranchSwitchPayload } from '@/lib/branch-fork-migration';
 import { parseUntrackedFileSet } from '@/lib/auditor-delegation-handler';
 import { buildToolMeta, buildToolResultMessage } from '@/lib/chat-tool-messages';
-import { buildAttachmentContentParts } from '@/lib/attachment-content-parts';
+import {
+  buildAttachmentContentParts,
+  buildPriorTurnAttachmentParts,
+} from '@/lib/attachment-content-parts';
 import { createId } from '@push/lib/id-utils';
 import type { CoderCheckpointState } from '@push/lib/coder-agent';
 import type { RunEventInput } from '@push/lib/runtime-contract';
-import type { LlmMessage, PushStream, PushStreamEvent } from '@push/lib/provider-contract';
+import type {
+  LlmContentPart,
+  LlmMessage,
+  PushStream,
+  PushStreamEvent,
+} from '@push/lib/provider-contract';
 import type { VerificationPolicy } from '@/lib/verification-policy';
 import type { AttachmentData, ChatCard, ChatMessage } from '@/types';
 import type { SendLoopContext } from './chat-send-types';
@@ -676,6 +684,44 @@ export async function startInlineCoderTurn(
   const capturedToolEvents: ToolCompleteEvent[] = [];
   const taskPreamble = buildInlineTurnPreamble(args.trimmedText, args.apiMessages);
 
+  // Derive the exact window buildInlineTurnPreamble uses (same filter + cap)
+  // so attachment extraction never drifts outside the text preamble's horizon.
+  const priorWindow = args.apiMessages
+    .slice(0, -1)
+    .filter(
+      (m) =>
+        (m.role === 'user' || m.role === 'assistant') &&
+        !m.isToolCall &&
+        !m.isToolResult &&
+        Boolean((m.displayContent ?? m.content).trim()),
+    )
+    .slice(-PRIOR_TURNS_MAX);
+
+  // Collect attachment parts from that window. Prefer pre-converted
+  // contentParts (kernel turns store images there, not in attachments);
+  // fall back to AttachmentData for web-UI user messages.
+  const priorAttParts: LlmContentPart[] = priorWindow.flatMap((m) => {
+    if (m.contentParts && m.contentParts.length > 0) {
+      return m.contentParts.filter((p) => p.type === 'image_url');
+    }
+    if (m.role === 'user' && m.attachments && m.attachments.length > 0) {
+      return buildPriorTurnAttachmentParts(m.attachments);
+    }
+    return [];
+  });
+  const currentAttParts = buildAttachmentContentParts(taskPreamble, args.attachments);
+
+  // Merge: preamble text → prior-turn images → current-turn images.
+  // When there are no prior images, fall back to the existing single-call shape.
+  let initialUserContentParts: LlmContentPart[] | undefined;
+  if (priorAttParts.length > 0) {
+    initialUserContentParts = currentAttParts
+      ? [currentAttParts[0], ...priorAttParts, ...currentAttParts.slice(1)]
+      : [{ type: 'text', text: taskPreamble }, ...priorAttParts];
+  } else {
+    initialUserContentParts = currentAttParts;
+  }
+
   let result: Awaited<ReturnType<typeof runInPageCoderKernel>>;
   try {
     result = await runInPageCoderKernel(
@@ -684,7 +730,7 @@ export async function startInlineCoderTurn(
         modelId: resolvedModel || undefined,
         sandboxId,
         taskPreamble,
-        initialUserContentParts: buildAttachmentContentParts(taskPreamble, args.attachments),
+        initialUserContentParts,
         branchContext: {
           activeBranch,
           defaultBranch: branchInfo?.defaultBranch || 'main',

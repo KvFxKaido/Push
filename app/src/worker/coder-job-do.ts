@@ -56,14 +56,22 @@ import type {
   RunEvent,
 } from '@push/lib/runtime-contract';
 import type { UserProfile } from '@push/lib/user-identity';
-import type { AIProviderType, LlmMessage, PushStream } from '@push/lib/provider-contract';
+import type {
+  AIProviderType,
+  LlmContentPart,
+  LlmMessage,
+  PushStream,
+} from '@push/lib/provider-contract';
 import type { VerificationPolicy } from '@push/lib/verification-policy';
 import { formatVerificationPolicyBlock } from '@push/lib/verification-policy';
 import type { CorrelationContext } from '@push/lib/correlation-context';
 import type { Capability } from '@push/lib/capabilities';
 import type { ChatCard, ChatMessage, DelegationEnvelope } from '@/types';
 import { buildApprovalModeBlock } from '@/lib/approval-mode';
-import { buildAttachmentContentParts } from '@/lib/attachment-content-parts';
+import {
+  buildAttachmentContentParts,
+  buildPriorTurnAttachmentParts,
+} from '@/lib/attachment-content-parts';
 // Web-side imports held behind the adapter pattern — see
 // `coder-job-detector-adapter.ts` module docstring and the PR #4 plan in
 // `docs/archive/runbooks/Background Coder Tasks Phase 1.md`.
@@ -733,10 +741,19 @@ export class CoderJob {
     if (priorTurnsBlock) {
       taskPreamble = priorTurnsBlock + '\n' + taskPreamble;
     }
-    const initialUserContentParts = buildAttachmentContentParts(
-      taskPreamble,
-      input.envelope.attachments,
-    );
+    const priorAttParts = buildPriorTurnAttachmentParts(input.envelope.priorAttachments ?? []);
+    const currentAttParts = buildAttachmentContentParts(taskPreamble, input.envelope.attachments);
+    // Mirror the inline lane's merge: preamble text → prior-turn images →
+    // current-turn images. Falls back to the single-call shape when no prior
+    // attachments were carried through the envelope.
+    let initialUserContentParts: LlmContentPart[] | undefined;
+    if (priorAttParts.length > 0) {
+      initialUserContentParts = currentAttParts
+        ? [currentAttParts[0], ...priorAttParts, ...currentAttParts.slice(1)]
+        : [{ type: 'text', text: taskPreamble }, ...priorAttParts];
+    } else {
+      initialUserContentParts = currentAttParts;
+    }
 
     // Seamless resume loop: on a confirmed sandbox death the kernel throws
     // SandboxUnreachableError; we restore the latest checkpoint into a fresh
