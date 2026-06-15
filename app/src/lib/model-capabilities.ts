@@ -2,7 +2,6 @@ import type {
   AIProviderType,
   ModelCapabilities,
   ModelCapabilitySupport,
-  HarnessProfile,
   HarnessProfileSettings,
 } from '@/types';
 import { computeAdaptiveProfile, logAdaptiveProfile } from './harness-profiles';
@@ -259,69 +258,36 @@ export function buildModelCapabilityAwarenessBlock(
 }
 
 // ---------------------------------------------------------------------------
-// Harness profile resolution — tier-based scaffolding for agent runs
+// Harness profile resolution — one base profile + behavior-driven adaptation
 // ---------------------------------------------------------------------------
 
-const STANDARD_PROFILE_SETTINGS: HarnessProfileSettings = {
+/**
+ * The single static base every run starts from. The model-name "frontier
+ * detector" that once chose `standard` vs `heavy` was removed: it was a
+ * drifted regex allowlist (it mislabeled Sonnet 4.x / unknown / the
+ * default model as weak), and the only setting it differentiated —
+ * `contextResetsEnabled` — is now driven by `computeAdaptiveProfile` from
+ * *observed* context-pressure signals instead of a model-name guess.
+ */
+const BASE_HARNESS_PROFILE: HarnessProfileSettings = {
   profile: 'standard',
   maxCoderRounds: 30,
   contextResetsEnabled: false,
   evaluateAfterCoder: true,
 };
 
-const HEAVY_PROFILE_SETTINGS: HarnessProfileSettings = {
-  profile: 'heavy',
-  maxCoderRounds: 30,
-  contextResetsEnabled: true,
-  evaluateAfterCoder: true,
-};
-
-/**
- * Resolve the harness profile for a given provider + model combination.
- * Opus-class and large frontier models get 'standard' (less scaffolding).
- * Everything else gets 'heavy' (more guardrails).
- */
-export function getHarnessProfile(
-  _provider: AIProviderType,
-  modelId: string | null | undefined,
-): HarnessProfile {
-  const id = modelId?.trim()?.toLowerCase() || '';
-
-  // Opus-class models — capable enough for minimal scaffolding
-  if (/opus/i.test(id)) return 'standard';
-
-  // Claude 3.5 Sonnet — proven capable for long-running tasks
-  if (/claude-3-5-sonnet|claude-3\.5-sonnet/i.test(id)) return 'standard';
-
-  // GPT-4o and GPT-5.4+ tier
-  if (/gpt-4o|gpt-5\.[4-9]|gpt-5\.1\d/i.test(id)) return 'standard';
-
-  // Gemini large Pro / 3.1-pro models
-  if (/gemini-3\.1-pro|gemini-3-pro/i.test(id)) return 'standard';
-
-  // Grok large models
-  if (/grok-4/i.test(id)) return 'standard';
-
-  // GLM-5 (non-turbo) — large model
-  if (/glm-5(?!-turbo)/i.test(id)) return 'standard';
-
-  // Everything else: Sonnet 4.x, Haiku, smaller models, unknown models
-  return 'heavy';
-}
-
-/** Get the concrete settings for a harness profile tier. */
-export function getHarnessProfileSettings(profile: HarnessProfile): HarnessProfileSettings {
-  return profile === 'standard' ? { ...STANDARD_PROFILE_SETTINGS } : { ...HEAVY_PROFILE_SETTINGS };
-}
-
-/** Convenience: resolve settings directly from provider + model. */
+/** Resolve harness settings: the base profile, then behavior-driven
+ *  adaptation (`computeAdaptiveProfile` — clamps rounds / enables context
+ *  resets when the model's observed signals warrant it). */
 export function resolveHarnessSettings(
   provider: AIProviderType,
   modelId: string | null | undefined,
 ): HarnessProfileSettings {
-  const profile = getHarnessProfile(provider, modelId);
-  const settings = getHarnessProfileSettings(profile);
-  const adaptiveResult = computeAdaptiveProfile(settings, provider, modelId ?? undefined);
+  const adaptiveResult = computeAdaptiveProfile(
+    { ...BASE_HARNESS_PROFILE },
+    provider,
+    modelId ?? undefined,
+  );
   logAdaptiveProfile(adaptiveResult, provider, modelId ?? undefined);
   return adaptiveResult.adaptedProfile;
 }

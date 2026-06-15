@@ -78,8 +78,8 @@ const STANDARD_BASE: HarnessProfileSettings = {
   evaluateAfterCoder: true,
 };
 
-const HEAVY_BASE: HarnessProfileSettings = {
-  profile: 'heavy',
+const RESETS_BASE: HarnessProfileSettings = {
+  profile: 'standard',
   maxCoderRounds: 30,
   contextResetsEnabled: true,
   evaluateAfterCoder: true,
@@ -297,7 +297,7 @@ describe('computeAdaptiveProfile', () => {
       },
     };
 
-    const result = computeAdaptiveProfile({ ...HEAVY_BASE }, 'openrouter', 'some-model');
+    const result = computeAdaptiveProfile({ ...RESETS_BASE }, 'openrouter', 'some-model');
 
     // The malformed-call adaptation clamps rounds to 20 regardless of profile.
     expect(result.adaptedProfile.maxCoderRounds).toBe(20);
@@ -358,7 +358,7 @@ describe('computeAdaptiveProfile', () => {
 
     // Start from a profile with maxCoderRounds at 18
     const base: HarnessProfileSettings = {
-      profile: 'heavy',
+      profile: 'standard',
       maxCoderRounds: 18,
       contextResetsEnabled: true,
       evaluateAfterCoder: true,
@@ -389,7 +389,7 @@ describe('computeAdaptiveProfile', () => {
       totalEvents: 10,
     };
 
-    const result = computeAdaptiveProfile({ ...HEAVY_BASE }, 'openrouter');
+    const result = computeAdaptiveProfile({ ...RESETS_BASE }, 'openrouter');
 
     // contextResetsEnabled is already true on heavy, so no adaptation for this signal
     const contextResetReasons = result.adaptationReasons.filter((r) =>

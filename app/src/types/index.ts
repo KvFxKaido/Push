@@ -231,19 +231,18 @@ export interface ModelCapabilities {
 }
 
 // ---------------------------------------------------------------------------
-// Harness profile — model-dependent scaffolding tiers
+// Harness profile — base scaffolding + behavior-driven adaptation
 // ---------------------------------------------------------------------------
 
 /**
- * Harness profile tier: controls how much scaffolding the harness applies
- * around agent runs (context resets, planner, evaluation, round caps).
- *
- * - 'standard': Opus-class / large models — compaction only, planner optional,
- *   full round budget, evaluation at end only.
- * - 'heavy': Sonnet-class / smaller models — context resets between phases,
- *   planner enforced, tighter round caps, evaluation after every phase.
+ * Harness profile label. There is a single static base tier now: the
+ * model-name "frontier detector" that once split `standard` vs `heavy`
+ * was removed — it was a drifted regex allowlist, and the only thing it
+ * gated (context resets) is driven instead by `computeAdaptiveProfile`
+ * from *observed* signals (context-pressure events) at runtime. So every
+ * run starts from `standard` and `harness-profiles.ts` adapts it.
  */
-export type HarnessProfile = 'standard' | 'heavy';
+export type HarnessProfile = 'standard';
 
 /** Concrete settings derived from a HarnessProfile tier. */
 export interface HarnessProfileSettings {
