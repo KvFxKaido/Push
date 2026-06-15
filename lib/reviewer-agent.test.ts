@@ -58,6 +58,60 @@ describe('runReviewer (PushStream consumer)', () => {
     expect(req.systemPromptOverride).toContain('Reviewer agent');
   });
 
+  it('attaches the reviewer response_format when supportsStructuredOutput is set', async () => {
+    const { stream, capturedRequest } = makePushStream([
+      { type: 'text_delta', text: '{"summary":"ok","comments":[]}' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+
+    await runReviewer(
+      makeAddedFileDiff('src/app.ts', 'const x = 1;'),
+      {
+        provider: 'openrouter',
+        modelId: 'reviewer-model',
+        stream,
+        supportsStructuredOutput: true,
+        resolveRuntimeContext: noopRuntime,
+      },
+      () => {},
+    );
+
+    const req = capturedRequest.current as {
+      responseFormat?: { name: string; schema: Record<string, unknown> };
+    };
+    expect(req.responseFormat?.name).toBe('reviewer_response');
+    // The genuinely-optional comments[].line is modeled as nullable + required.
+    const comments = (
+      req.responseFormat?.schema.properties as Record<
+        string,
+        { items: { properties: Record<string, { type: unknown }>; required: string[] } }
+      >
+    ).comments;
+    expect(comments.items.required).toContain('line');
+    expect(comments.items.properties.line.type).toEqual(['integer', 'null']);
+  });
+
+  it('omits response_format by default (supportsStructuredOutput unset)', async () => {
+    const { stream, capturedRequest } = makePushStream([
+      { type: 'text_delta', text: '{"summary":"ok","comments":[]}' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+
+    await runReviewer(
+      makeAddedFileDiff('src/app.ts', 'const x = 1;'),
+      {
+        provider: 'openrouter',
+        modelId: 'reviewer-model',
+        stream,
+        resolveRuntimeContext: noopRuntime,
+      },
+      () => {},
+    );
+
+    const req = capturedRequest.current as { responseFormat?: unknown };
+    expect(req.responseFormat).toBeUndefined();
+  });
+
   it('includes the shared comment-discipline guards in the system prompt', async () => {
     const { stream, capturedRequest } = makePushStream([
       { type: 'text_delta', text: '{"summary":"x","comments":[]}' },

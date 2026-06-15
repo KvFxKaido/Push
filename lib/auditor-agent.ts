@@ -28,7 +28,12 @@ import type { AuditorFileContext } from './auditor-file-context.js';
 import { SystemPromptBuilder } from './system-prompt-builder.js';
 import { formatVerificationPolicyBlock, type VerificationPolicy } from './verification-policy.js';
 import { z } from 'zod';
-import { parseStructured } from './structured-output.js';
+import {
+  parseStructured,
+  zodToStrictJsonSchema,
+  applyStructuredOutput,
+} from './structured-output.js';
+import type { ResponseFormatSpec } from './provider-contract.js';
 
 const AUDITOR_TIMEOUT_MS = 90_000; // 90s — allows for richer file-context processing
 
@@ -58,6 +63,19 @@ const AuditorVerdictSchema = z.object({
   risks: z.array(AuditRiskSchema).catch([]),
 });
 
+/**
+ * Native structured-output constraint for the commit-mode verdict, derived from
+ * the same zod schema `parseStructured` validates against — one source of truth.
+ * Attached to the request only when the caller signals the model supports
+ * structured outputs (`supportsStructuredOutput`); `parseStructured` still runs
+ * as the validation backstop regardless.
+ */
+const AUDITOR_VERDICT_RESPONSE_FORMAT: ResponseFormatSpec = {
+  name: 'auditor_verdict',
+  schema: zodToStrictJsonSchema(AuditorVerdictSchema),
+  strict: true,
+};
+
 /** Evaluation-mode COMPLETE/INCOMPLETE completeness payload. */
 const AuditorEvaluationSchema = z.object({
   verdict: z.enum(['complete', 'incomplete']).catch('incomplete'),
@@ -70,6 +88,14 @@ const AuditorEvaluationSchema = z.object({
   ),
   confidence: z.enum(['high', 'medium', 'low']).catch('low'),
 });
+
+/** Native structured-output constraint for the evaluation verdict. See
+ *  `AUDITOR_VERDICT_RESPONSE_FORMAT` — same derive-from-zod, one-source rule. */
+const AUDITOR_EVALUATION_RESPONSE_FORMAT: ResponseFormatSpec = {
+  name: 'auditor_evaluation',
+  schema: zodToStrictJsonSchema(AuditorEvaluationSchema),
+  strict: true,
+};
 
 export interface HookResult {
   exitCode: number;
@@ -100,6 +126,15 @@ export interface AuditorRunOptions {
   context?: AuditorPromptContext;
   hookResult?: HookResult | null;
   fileContexts?: AuditorFileContext[];
+  /**
+   * The target model honors native structured outputs (OpenAI `response_format`
+   * json_schema). When true, the kernel attaches the verdict's JSON-Schema
+   * constraint so the upstream constrains generation server-side. Computed by
+   * the surface (which owns the model catalog); the kernel stays catalog-
+   * agnostic. Defaults off → unchanged behavior. See `docs/runbooks/OpenRouter
+   * Capability Expansion.md`.
+   */
+  supportsStructuredOutput?: boolean;
   resolveRuntimeContext: ResolveAuditorRuntimeContextFn;
   /**
    * Optional run-event sink. When set, the kernel emits an
@@ -143,6 +178,8 @@ export interface AuditorEvaluationOptions {
    * lead "the Coder". Defaults off (delegated framing).
    */
   leadMode?: boolean;
+  /** See `AuditorRunOptions.supportsStructuredOutput`. */
+  supportsStructuredOutput?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -414,6 +451,15 @@ async function runAuditorCore(
     },
   ];
 
+  // Native structured outputs: constrain the verdict JSON server-side when the
+  // model supports it. parseStructured still validates the result below — this
+  // raises the floor on conformance, it doesn't replace the backstop.
+  const structuredOutput = applyStructuredOutput(
+    options.supportsStructuredOutput === true,
+    AUDITOR_VERDICT_RESPONSE_FORMAT,
+    { eventBase: 'auditor_structured_output', provider: options.provider, model: modelId },
+  );
+
   const { error: streamError, text: accumulated } = await iteratePushStreamText(
     stream,
     {
@@ -422,6 +468,7 @@ async function runAuditorCore(
       messages,
       systemPromptOverride: systemPrompt,
       hasSandbox: false,
+      ...structuredOutput,
     },
     AUDITOR_TIMEOUT_MS,
     `Auditor timed out after ${AUDITOR_TIMEOUT_MS / 1000}s — model may be unresponsive.`,
@@ -654,6 +701,16 @@ export async function runAuditorEvaluation(
     },
   ];
 
+  const structuredOutput = applyStructuredOutput(
+    options.supportsStructuredOutput === true,
+    AUDITOR_EVALUATION_RESPONSE_FORMAT,
+    {
+      eventBase: 'auditor_evaluation_structured_output',
+      provider: options.provider,
+      model: modelId,
+    },
+  );
+
   const { error: streamError, text: accumulated } = await iteratePushStreamText(
     stream,
     {
@@ -662,6 +719,7 @@ export async function runAuditorEvaluation(
       messages,
       systemPromptOverride: buildEvaluationSystemPrompt(subject),
       hasSandbox: false,
+      ...structuredOutput,
     },
     EVALUATION_TIMEOUT_MS,
     `Evaluation timed out after ${EVALUATION_TIMEOUT_MS / 1000}s.`,

@@ -230,6 +230,26 @@ export type PushStreamEvent =
       usage?: StreamUsage;
     };
 
+/**
+ * Provider-agnostic request for a JSON-Schema-constrained response, mapping to
+ * the OpenAI `response_format: { type: 'json_schema', json_schema }` field that
+ * OpenRouter and the OpenAI-compat routes honor. When set, the adapter asks the
+ * upstream to constrain generation to `schema` server-side, so the model emits
+ * conforming JSON in the first place rather than relying solely on the post-hoc
+ * `parseStructured` repair/validate pass. Adapters that can't honor it (the
+ * Anthropic / Gemini native serializers) ignore the field.
+ */
+export interface ResponseFormatSpec {
+  /** Schema name reported to the provider (e.g. `'auditor_verdict'`). */
+  name: string;
+  /** JSON Schema the response must satisfy. Strict mode requires every object
+   *  to carry `additionalProperties: false` and a full `required` array — see
+   *  `zodToStrictJsonSchema` in `lib/structured-output.ts`. */
+  schema: Record<string, unknown>;
+  /** Enforce strict adherence. Defaults to `true` at the wire builder. */
+  strict?: boolean;
+}
+
 export interface PushStreamRequest<M extends LlmMessage = LlmMessage> {
   provider: AIProviderType;
   model: string;
@@ -306,6 +326,12 @@ export interface PushStreamRequest<M extends LlmMessage = LlmMessage> {
    *  native provider search when available, else Exa) and feeds grounded,
    *  cited results back to the model. */
   openrouterWebSearch?: boolean;
+  /**
+   * Constrain the response to a JSON Schema (OpenAI `response_format`). Honored
+   * by the OpenRouter adapter and the OpenAI-compat serializer (`toOpenAIChat`);
+   * ignored by the Anthropic / Gemini native serializers. See `ResponseFormatSpec`.
+   */
+  responseFormat?: ResponseFormatSpec;
   /**
    * Pause-turn continuation blocks for the neutral wire. Anthropic's server-side
    * sampling loop can return `stop_reason: pause_turn` (web search hitting its

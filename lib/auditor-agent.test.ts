@@ -63,6 +63,55 @@ describe('runAuditor (PushStream consumer)', () => {
     expect(req.systemPromptOverride).toContain('Auditor agent');
   });
 
+  it('attaches the verdict response_format when supportsStructuredOutput is set', async () => {
+    const { stream, capturedRequest } = makePushStream([
+      { type: 'text_delta', text: '{"verdict":"safe","summary":"x","risks":[]}' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+
+    await runAuditor(
+      makeAddedFileDiff('src/app.ts', 'const x = 1;'),
+      {
+        provider: 'openrouter',
+        modelId: 'test-model',
+        stream,
+        supportsStructuredOutput: true,
+        resolveRuntimeContext: noopRuntime,
+      },
+      () => {},
+    );
+
+    const req = capturedRequest.current as {
+      responseFormat?: { name: string; strict?: boolean; schema: Record<string, unknown> };
+    };
+    expect(req.responseFormat?.name).toBe('auditor_verdict');
+    expect(req.responseFormat?.strict).toBe(true);
+    // Strict-mode schema: full required arrays + additionalProperties:false.
+    expect(req.responseFormat?.schema.additionalProperties).toBe(false);
+    expect(req.responseFormat?.schema.required).toEqual(['verdict', 'summary', 'risks']);
+  });
+
+  it('omits response_format by default (supportsStructuredOutput unset)', async () => {
+    const { stream, capturedRequest } = makePushStream([
+      { type: 'text_delta', text: '{"verdict":"safe","summary":"x","risks":[]}' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+
+    await runAuditor(
+      makeAddedFileDiff('src/app.ts', 'const x = 1;'),
+      {
+        provider: 'openrouter',
+        modelId: 'test-model',
+        stream,
+        resolveRuntimeContext: noopRuntime,
+      },
+      () => {},
+    );
+
+    const req = capturedRequest.current as { responseFormat?: unknown };
+    expect(req.responseFormat).toBeUndefined();
+  });
+
   it('passes a signal through the request so streams can abort', async () => {
     const { stream, capturedRequest } = makePushStream([
       { type: 'text_delta', text: '{"verdict":"safe","summary":"x","risks":[]}' },
@@ -382,6 +431,41 @@ describe('runAuditorEvaluation (PushStream consumer)', () => {
     expect(result.confidence).toBe('high');
     const req = capturedRequest.current as { systemPromptOverride?: string };
     expect(req.systemPromptOverride).toContain('Evaluator');
+  });
+
+  it('attaches the evaluation response_format when supportsStructuredOutput is set', async () => {
+    const { stream, capturedRequest } = makePushStream([
+      {
+        type: 'text_delta',
+        text: '{"verdict":"complete","summary":"ok","gaps":[],"confidence":"high"}',
+      },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+
+    await runAuditorEvaluation(
+      'task',
+      'summary',
+      null,
+      null,
+      {
+        provider: 'openrouter',
+        modelId: 'test-model',
+        stream,
+        supportsStructuredOutput: true,
+      },
+      () => {},
+    );
+
+    const req = capturedRequest.current as {
+      responseFormat?: { name: string; schema: Record<string, unknown> };
+    };
+    expect(req.responseFormat?.name).toBe('auditor_evaluation');
+    expect(req.responseFormat?.schema.required).toEqual([
+      'verdict',
+      'summary',
+      'gaps',
+      'confidence',
+    ]);
   });
 
   it('returns INCOMPLETE on stream errors', async () => {

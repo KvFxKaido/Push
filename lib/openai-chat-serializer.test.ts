@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { LlmMessage, PushStreamRequest } from './provider-contract.ts';
-import { toOpenAIChat } from './openai-chat-serializer.ts';
+import { toOpenAIChat, toOpenAIResponseFormat } from './openai-chat-serializer.ts';
 
 function llm(
   id: string,
@@ -173,5 +173,40 @@ describe('toOpenAIChat', () => {
         ]),
       ),
     ).toThrow(/unsupported or malformed content part/);
+  });
+
+  it('omits response_format when no responseFormat is set', () => {
+    const body = toOpenAIChat(reqWith([llm('1', 'user', 'hi')]));
+    expect(body.response_format).toBeUndefined();
+  });
+
+  it('emits response_format from a responseFormat spec', () => {
+    const body = toOpenAIChat(
+      reqWith([llm('1', 'user', 'hi')], {
+        responseFormat: { name: 'verdict', schema: { type: 'object' } },
+      }),
+    );
+    expect(body.response_format).toEqual({
+      type: 'json_schema',
+      json_schema: { name: 'verdict', strict: true, schema: { type: 'object' } },
+    });
+  });
+});
+
+describe('toOpenAIResponseFormat', () => {
+  it('wraps the spec and defaults strict to true', () => {
+    expect(toOpenAIResponseFormat({ name: 'v', schema: { type: 'object' } })).toEqual({
+      type: 'json_schema',
+      json_schema: { name: 'v', strict: true, schema: { type: 'object' } },
+    });
+  });
+
+  it('honors an explicit strict: false', () => {
+    expect(
+      toOpenAIResponseFormat({ name: 'v', schema: { type: 'object' }, strict: false }),
+    ).toEqual({
+      type: 'json_schema',
+      json_schema: { name: 'v', strict: false, schema: { type: 'object' } },
+    });
   });
 });

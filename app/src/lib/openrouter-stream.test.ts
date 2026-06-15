@@ -339,6 +339,45 @@ describe('openrouterStream', () => {
     expect(body.top_p).toBe(0.9);
   });
 
+  it('forwards responseFormat as an OpenAI response_format json_schema', async () => {
+    installStreamFetch(fetchMock);
+    const { openrouterStream } = await import('./openrouter-stream');
+    const iter = openrouterStream({
+      ...baseRequest,
+      responseFormat: { name: 'verdict', schema: { type: 'object' } },
+    });
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(fetchMock).toHaveBeenCalled();
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.response_format).toEqual({
+      type: 'json_schema',
+      json_schema: { name: 'verdict', strict: true, schema: { type: 'object' } },
+    });
+    // require_parameters keeps OpenRouter from routing to an endpoint that
+    // would silently ignore response_format.
+    expect(body.provider).toEqual({ require_parameters: true });
+  });
+
+  it('omits response_format and provider routing when no responseFormat is set', async () => {
+    installStreamFetch(fetchMock);
+    const { openrouterStream } = await import('./openrouter-stream');
+    const iter = openrouterStream(baseRequest);
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.response_format).toBeUndefined();
+    expect(body.provider).toBeUndefined();
+  });
+
   it('injects the openrouter:web_search server tool by default (auto mode)', async () => {
     installStreamFetch(fetchMock);
     const { openrouterStream } = await import('./openrouter-stream');
