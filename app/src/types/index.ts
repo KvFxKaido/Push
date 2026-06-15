@@ -40,7 +40,12 @@ export type {
   TaskGraphProgressEvent,
   TaskGraphResult,
 } from '@push/lib/runtime-contract';
-import type { AIProviderType, ReasoningBlock, UrlCitation } from '@push/lib/provider-contract';
+import type {
+  AIProviderType,
+  LlmContentPart,
+  ReasoningBlock,
+  UrlCitation,
+} from '@push/lib/provider-contract';
 export type { ReasoningBlock, UrlCitation } from '@push/lib/provider-contract';
 export type {
   AIProviderType,
@@ -349,6 +354,12 @@ export interface ChatMessage {
   citations?: UrlCitation[];
   cards?: ChatCard[];
   attachments?: AttachmentData[]; // User-attached files
+  /** Pre-converted multimodal content for the wire. Set by the Coder kernel's
+   *  initial turn (surface-agnostic `lib/` only knows provider content parts,
+   *  not `AttachmentData`). When present, the request serializers
+   *  (`toLLMMessages`, the coder-job stream adapter) send it verbatim instead
+   *  of rebuilding from `attachments` — so kernel-lane turns carry images. */
+  contentParts?: LlmContentPart[];
   isToolCall?: boolean; // Assistant message that requested a tool
   isToolResult?: boolean; // Synthetic user message carrying tool data
   isMalformed?: boolean; // Assistant message that attempted a tool call but produced invalid JSON

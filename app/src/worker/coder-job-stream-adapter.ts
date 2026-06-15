@@ -25,6 +25,7 @@
 
 import type {
   AIProviderType,
+  LlmContentPart,
   PushStream,
   PushStreamEvent,
   StreamUsage,
@@ -118,6 +119,24 @@ export function resolveProviderHandler(
   return null;
 }
 
+/**
+ * Serialize kernel messages into the OpenAI-compatible `messages` payload the
+ * Worker chat proxy accepts. A turn carrying multimodal `contentParts` (the
+ * kernel's initial image turn) is forwarded as multipart content — the same
+ * `content: string | parts[]` shape the web chat endpoint already takes.
+ * Sending only `content` here would silently drop background attachments
+ * (Codex P1, #937).
+ */
+export function toCoderJobPayloadMessages(
+  messages: ReadonlyArray<{ role: string; content?: string; contentParts?: LlmContentPart[] }>,
+): Array<{ role: string; content: string | LlmContentPart[] }> {
+  return messages.map((m) =>
+    m.contentParts && m.contentParts.length > 0
+      ? { role: m.role, content: m.contentParts }
+      : { role: m.role, content: m.content ?? '' },
+  );
+}
+
 export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStream<ChatMessage> {
   // Strip trailing slash so URL construction can't produce double
   // slashes (`https://host//api/...`).
@@ -142,10 +161,7 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
       // Build an OpenAI-compatible chat payload. The Worker's
       // createStreamProxyHandler validates and normalizes this body
       // before forwarding upstream, so we only need the portable shape.
-      const payloadMessages: Array<{ role: string; content: string }> = req.messages.map((m) => ({
-        role: m.role,
-        content: m.content ?? '',
-      }));
+      const payloadMessages = toCoderJobPayloadMessages(req.messages);
       const systemPromptOverride = req.systemPromptOverride;
       if (systemPromptOverride && !payloadMessages.some((m) => m.role === 'system')) {
         payloadMessages.unshift({ role: 'system', content: systemPromptOverride });

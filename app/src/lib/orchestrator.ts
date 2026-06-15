@@ -723,7 +723,15 @@ export function toLLMMessages(
         ? msg.reasoningBlocks
         : undefined;
 
-    const contentParts = buildAttachmentContentParts(msg.content, msg.attachments);
+    // Prefer pre-converted `contentParts` (the Coder kernel's surface-agnostic
+    // multimodal turn — it has no `AttachmentData`); fall back to rebuilding
+    // from `attachments` for Orchestrator-loop messages. Without honoring
+    // `contentParts` here, kernel-lane image turns serialize text-only and the
+    // attachment is silently dropped (Codex P1, #937).
+    const contentParts =
+      msg.contentParts && msg.contentParts.length > 0
+        ? msg.contentParts
+        : buildAttachmentContentParts(msg.content, msg.attachments);
     if (contentParts) {
       llmMessages.push({
         role: msg.role === 'user' ? 'user' : 'assistant',
