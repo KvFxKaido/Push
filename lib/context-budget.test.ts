@@ -1,5 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { getContextBudget, guessWindowFromName } from './context-budget.js';
+import { estimateMessageTokens, getContextBudget, guessWindowFromName } from './context-budget.js';
+
+describe('estimateMessageTokens — contentParts (#937)', () => {
+  it('adds the vision estimate for image contentParts without double-counting text', () => {
+    const text = 'Task: describe this';
+    const textOnly = estimateMessageTokens({ content: text });
+    const withImage = estimateMessageTokens({
+      content: text,
+      contentParts: [
+        { type: 'text', text },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } },
+      ],
+    });
+    // Exactly one image's vision estimate (1000) on top of the text turn —
+    // the contentParts text mirrors `content` and is not recounted.
+    expect(withImage - textOnly).toBe(1000);
+  });
+});
 
 describe('guessWindowFromName', () => {
   // Catches cases where Ollama Cloud's `/v1/models` (and similar provider

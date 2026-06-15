@@ -21,7 +21,7 @@ import {
   type EngineTrigger,
   type TurnEngineTrigger,
 } from '@/lib/delegation-mode-settings';
-import type { AIProviderType, Conversation, DelegationEnvelope } from '@/types';
+import type { AIProviderType, AttachmentData, Conversation, DelegationEnvelope } from '@/types';
 import { getActiveProvider, isProviderAvailable } from '@/lib/orchestrator';
 import { isProviderEngineCapable } from '@/lib/provider-engine-capability';
 import { resolveChatProviderSelection } from '@/lib/provider-selection';
@@ -51,7 +51,6 @@ import type { UseBackgroundCoderJobResult } from './useBackgroundCoderJob';
  * in `delegation-mode-settings.ts`.
  */
 export function resolveSendEngineTrigger(opts: {
-  hasAttachments: boolean;
   repoRef: React.MutableRefObject<string | null>;
   branchInfoRef: React.RefObject<
     { currentBranch?: string; defaultBranch?: string } | null | undefined
@@ -81,7 +80,6 @@ export function resolveSendEngineTrigger(opts: {
   });
   const repoBranchReady = Boolean(opts.repoRef.current && branch);
   return resolveTurnEngineTrigger({
-    hasAttachments: opts.hasAttachments,
     // Engine turns run server-side, where only server-held provider
     // credentials exist — a provider keyed solely via in-app Settings must
     // stay off the engine or the job 401s at dispatch. See
@@ -121,6 +119,7 @@ export interface BackgroundMainChatRefs {
 export interface StartBackgroundMainChatTurnInput {
   chatId: string;
   trimmedText: string;
+  attachments?: AttachmentData[];
   lockedProvider: AIProviderType;
   resolvedModel: string | undefined;
   refs: BackgroundMainChatRefs;
@@ -190,6 +189,7 @@ export async function startBackgroundMainChatTurn(
 
   const envelope: DelegationEnvelope = {
     task: trimmedText,
+    attachments: input.attachments && input.attachments.length > 0 ? input.attachments : undefined,
     files: [],
     // This is the conversational lead's own turn running server-side, not a
     // delegated sub-Coder — so the CoderJob DO runs the kernel in leadMode

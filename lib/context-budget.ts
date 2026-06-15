@@ -178,6 +178,7 @@ export interface TokenEstimationMessage {
   content: string;
   thinking?: string;
   attachments?: Array<{ type: string; content: string }>;
+  contentParts?: Array<{ type: string; text?: string; image_url?: { url: string } }>;
 }
 
 /**
@@ -187,7 +188,14 @@ export interface TokenEstimationMessage {
 export function estimateMessageTokens(msg: TokenEstimationMessage): number {
   let tokens = estimateTokens(msg.content) + 4; // 4 tokens overhead per message
   if (msg.thinking) tokens += estimateTokens(msg.thinking);
-  if (msg.attachments) {
+  if (msg.contentParts && msg.contentParts.length > 0) {
+    // Kernel image turns carry pixels in `contentParts`, not `attachments`.
+    // The text part mirrors `content` (already counted), so only add the
+    // per-image vision estimate here to avoid double-counting the text.
+    for (const part of msg.contentParts) {
+      if (part.type === 'image_url') tokens += 1000;
+    }
+  } else if (msg.attachments) {
     for (const att of msg.attachments) {
       if (att.type === 'image')
         tokens += 1000; // rough estimate for vision

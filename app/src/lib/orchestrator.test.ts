@@ -333,6 +333,51 @@ describe('toLLMMessages — aborted assistant message leakage', () => {
   });
 });
 
+describe('toLLMMessages — kernel contentParts pass-through (#937)', () => {
+  function makeMessage(partial: Partial<ChatMessage>): ChatMessage {
+    return {
+      id: partial.id ?? 'm',
+      role: partial.role ?? 'user',
+      content: partial.content ?? '',
+      timestamp: partial.timestamp ?? 0,
+      ...partial,
+    };
+  }
+
+  it('forwards pre-converted contentParts as multipart content (kernel image turn)', () => {
+    // The Coder kernel sets `contentParts` (with no `attachments`); the
+    // serializer must send it verbatim, not fall back to the text preamble.
+    const messages: ChatMessage[] = [
+      makeMessage({
+        id: 'u1',
+        role: 'user',
+        content: 'Task: describe this screenshot',
+        contentParts: [
+          { type: 'text', text: 'Task: describe this screenshot' },
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,abc123' } },
+        ],
+      }),
+    ];
+    const llm = toLLMMessages(messages, { providerType: 'zen', providerModel: 'minimax-m2.7' });
+    const user = llm.find((m) => m.role === 'user');
+    expect(Array.isArray(user?.content)).toBe(true);
+    expect(user?.content).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'image_url',
+          image_url: { url: 'data:image/png;base64,abc123' },
+        }),
+      ]),
+    );
+  });
+
+  it('leaves a plain text turn as a string (no regression)', () => {
+    const messages: ChatMessage[] = [makeMessage({ id: 'u1', role: 'user', content: 'hello' })];
+    const llm = toLLMMessages(messages, { providerType: 'zen', providerModel: 'minimax-m2.7' });
+    expect(llm.find((m) => m.role === 'user')?.content).toBe('hello');
+  });
+});
+
 describe('chat-mode web-search gating', () => {
   function buildChatMessages(): ChatMessage[] {
     return [{ id: 'u1', role: 'user', content: 'hi', timestamp: 0 } as unknown as ChatMessage];

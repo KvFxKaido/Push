@@ -69,7 +69,12 @@ import {
   buildCoderToolExec,
   type CoderBindingServices,
 } from '@push/lib/coder-agent-bindings';
-import type { LlmMessage, PushStream, PushStreamEvent } from '@push/lib/provider-contract';
+import type {
+  LlmContentPart,
+  LlmMessage,
+  PushStream,
+  PushStreamEvent,
+} from '@push/lib/provider-contract';
 import type { CorrelationContext } from '@push/lib/correlation-context';
 import { getActiveProvider, getProviderPushStream, type ActiveProvider } from './orchestrator';
 import { getModelForRole } from './providers';
@@ -429,6 +434,8 @@ export interface InPageCoderKernelSpec {
   sandboxId: string;
   /** Fully-built task preamble — the kernel consumes it verbatim. */
   taskPreamble: string;
+  /** Multipart initial user turn; text fallback remains `taskPreamble`. */
+  initialUserContentParts?: LlmContentPart[];
   declaredCapabilities?: Capability[];
   branchContext?: { activeBranch: string; defaultBranch: string; protectMain: boolean };
   projectInstructions?: string;
@@ -705,6 +712,7 @@ export async function runInPageCoderKernel(
     instructionFilename: spec.instructionFilename,
     userProfile: getUserProfile(),
     taskPreamble: spec.taskPreamble,
+    initialUserContentParts: spec.initialUserContentParts,
     symbolSummary: symbolLedger.getSummary(),
     toolExec,
     detectAllToolCalls: detectAllToolCallsFiltered,

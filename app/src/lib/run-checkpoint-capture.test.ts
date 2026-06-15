@@ -124,6 +124,18 @@ describe('toRunCheckpointMessages', () => {
       { type: 'text', text: '[Attached file: a.ts]\n```\nconst x = 1;\n```' },
     ]);
   });
+
+  it('preserves a kernel turn’s existing contentParts (no attachments to rebuild from)', () => {
+    // The Coder kernel’s image turn carries pixels in `contentParts` only, not
+    // `attachments`; the checkpoint must pass them through so an adopted/resumed
+    // run keeps the image (Codex P2, #937).
+    const contentParts = [
+      { type: 'text' as const, text: 'Task: describe this' },
+      { type: 'image_url' as const, image_url: { url: 'data:image/png;base64,ZZZ' } },
+    ];
+    const out = toRunCheckpointMessages([msg({ content: 'Task: describe this', contentParts })]);
+    expect(out[0].contentParts).toEqual(contentParts);
+  });
 });
 
 describe('deriveUserGoal', () => {

@@ -22,10 +22,10 @@ import {
   type RunCheckpointReason,
   type RunCheckpointV1,
 } from '@push/lib/run-checkpoint';
-import type { LlmContentPart } from '@push/lib/provider-contract';
 import type { ApprovalMode } from '@push/lib/approval-gates';
 import type { VerificationPolicy } from '@push/lib/verification-policy';
 import type { ChatMessage, CoderWorkingMemory, LoopPhase } from '@/types';
+import { buildAttachmentContentParts } from './attachment-content-parts';
 import { saveCheckpointV1 } from './checkpoint-store';
 import { publishRunCheckpointToHost } from './run-host-transport';
 
@@ -79,22 +79,17 @@ export function toRunCheckpointMessages(
       content: msg.content,
     };
 
-    if (msg.attachments && msg.attachments.length > 0) {
-      const parts: LlmContentPart[] = [];
-      if (msg.content) {
-        parts.push({ type: 'text', text: msg.content });
-      }
-      for (const att of msg.attachments) {
-        if (att.type === 'image') {
-          parts.push({ type: 'image_url', image_url: { url: att.content } });
-        } else {
-          parts.push({
-            type: 'text',
-            text: `[Attached file: ${att.filename}]\n\`\`\`\n${att.content}\n\`\`\``,
-          });
-        }
-      }
-      entry.contentParts = parts;
+    // Prefer the kernel's pre-converted `contentParts` (its image turns carry
+    // pixels only there, not in `attachments`); fall back to rebuilding from
+    // `attachments` for Orchestrator-loop messages. Capturing only the
+    // attachment-rebuilt form would make an adopted/resumed inline image turn
+    // text-only (Codex P2, #937).
+    const contentParts =
+      msg.contentParts && msg.contentParts.length > 0
+        ? msg.contentParts
+        : buildAttachmentContentParts(msg.content, msg.attachments);
+    if (contentParts) {
+      entry.contentParts = contentParts;
     }
 
     if (msg.role === 'assistant' && msg.reasoningBlocks && msg.reasoningBlocks.length > 0) {

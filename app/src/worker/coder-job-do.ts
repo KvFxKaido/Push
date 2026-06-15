@@ -63,6 +63,7 @@ import type { CorrelationContext } from '@push/lib/correlation-context';
 import type { Capability } from '@push/lib/capabilities';
 import type { ChatCard, ChatMessage, DelegationEnvelope } from '@/types';
 import { buildApprovalModeBlock } from '@/lib/approval-mode';
+import { buildAttachmentContentParts } from '@/lib/attachment-content-parts';
 // Web-side imports held behind the adapter pattern — see
 // `coder-job-detector-adapter.ts` module docstring and the PR #4 plan in
 // `docs/archive/runbooks/Background Coder Tasks Phase 1.md`.
@@ -735,6 +736,10 @@ export class CoderJob {
     if (priorTurnsBlock) {
       taskPreamble = priorTurnsBlock + '\n' + taskPreamble;
     }
+    const initialUserContentParts = buildAttachmentContentParts(
+      taskPreamble,
+      input.envelope.attachments,
+    );
 
     // Seamless resume loop: on a confirmed sandbox death the kernel throws
     // SandboxUnreachableError; we restore the latest checkpoint into a fresh
@@ -836,6 +841,7 @@ export class CoderJob {
         instructionFilename: input.instructionFilename ?? input.envelope.instructionFilename,
         userProfile: input.userProfile,
         taskPreamble,
+        initialUserContentParts,
         symbolSummary: null,
         toolExec: buildCoderToolExec(services),
         ...buildCoderDetectors(services),
