@@ -40,11 +40,10 @@ import { isExpired } from '../lib/memory-persistence-policy.ts';
 
 /**
  * Canonical base dir for typed-memory JSONL files on the CLI. Both
- * the daemon (`cli/pushd.ts:main`) and the headless delegation path
- * (`cli/delegation-entry.ts:runDelegatedHeadless`) call this so the
- * two surfaces share a single on-disk store — a `./push run
- * --delegate` invocation writes memory that a later pushd session
- * (or another `--delegate` run) can retrieve.
+ * the daemon (`cli/pushd.ts:main`) and the headless `push run` path
+ * (`cli/cli.ts:runHeadless`) call this so the
+ * two surfaces share a single on-disk store — a `./push run`
+ * invocation writes memory that a later pushd session can retrieve.
  *
  * `PUSH_MEMORY_DIR` overrides the default `~/.push/memory`, matching
  * the `PUSH_CONFIG_PATH` / `PUSH_SESSION_DIR` env-var pattern used

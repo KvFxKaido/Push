@@ -26,11 +26,10 @@ export interface HeadlessTaskBriefOptions {
    */
   userGoal?: UserGoalAnchor;
   /**
-   * Per-task rationale from the planner's `feature.addresses` (which
-   * `cli/delegation-entry.ts:planToTaskGraph` propagates onto
-   * `TaskGraphNode.addresses`). Rendered as `Addresses: <text>` next to
-   * `Task:` in the brief. Soft-fails when absent — legacy non-graph CLI
-   * delegations and pre-`addresses` planner output keep working.
+   * Optional per-task rationale (`TaskGraphNode.addresses`). Rendered as
+   * `Addresses: <text>` next to `Task:` in the brief. Soft-fails when
+   * absent — headless `push run` and daemon `delegate_coder` briefs that
+   * carry no rationale keep working.
    */
   addresses?: string;
 }

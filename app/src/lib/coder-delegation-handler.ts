@@ -1,12 +1,10 @@
 /**
- * Sequential Coder + Planner delegation handler — Phase 3 of the
+ * Sequential Coder delegation handler — Phase 3 of the
  * useAgentDelegation extraction track (see
  * `docs/decisions/useAgentDelegation Coupling Recon.md`, §"Recommended
- * Extraction Order — Phase 3: Sequential Coder Handler (+ Planner
- * Sub-Seam)"). Bundles the Planner sub-seam with the Coder arc because
- * the two are behaviorally inseparable — Planner's output threads into
- * `runCoderAgent`'s options bag and the recon's Phase 3 target is
- * "Sequential Coder + Planner" together.
+ * Extraction Order — Phase 3: Sequential Coder Handler"). The Planner
+ * pre-pass this handler once ran was removed once usage telemetry showed
+ * it was never exercised; the lead now drives the Coder arc directly.
  *
  * ## Design — Option B (mid-flight handoff)
  *
@@ -26,7 +24,7 @@
  *   - `aborted`      → user cancelled. Handler has emitted
  *                      `subagent.completed` with an abort outcome.
  *                      Hook assigns `toolExecResult` directly.
- *   - `failed`       → runCoderAgent or runPlanner threw. Handler has
+ *   - `failed`       → runCoderAgent threw. Handler has
  *                      emitted `subagent.failed`. Hook assigns
  *                      `toolExecResult` directly.
  *   - `ok`           → Coder arc succeeded through the loop. Handler
@@ -63,11 +61,8 @@
  *     `lastCoderStateRef.current = state`. The ref itself is never
  *     passed in — the handler has no awareness of the persistence
  *     mechanism its updates feed into.
- *   - **Behavior preservation:** byte-for-byte equivalent to the
- *     inline seam (lines 237–562 pre-extraction, plus the outer
- *     catch block at 838–881). The existing + newly-landed Planner
- *     characterization tests in `hooks/useAgentDelegation.test.ts`
- *     gate the regression.
+ *   - **Behavior preservation:** the delegated Coder arc is gated by the
+ *     characterization tests in `hooks/useAgentDelegation.test.ts`.
  */
 
 import type React from 'react';
@@ -75,7 +70,6 @@ import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
 import { getSandboxDiff } from '@/lib/sandbox-client';
 import { runCoderAgent } from '@/lib/coder-agent';
 import { capturePreCoderSnapshot, createCoderCheckpointAnswerer } from '@/lib/inline-coder-run';
-import { runPlanner, formatPlannerBrief } from '@/lib/planner-agent';
 import { resolveHarnessSettings } from '@/lib/model-capabilities';
 import type { HarnessProfileSettings } from '@/types';
 import {
@@ -303,8 +297,8 @@ function getTaskStatusLabel(criteriaResults?: CriterionResult[]): string {
  * Audit.md`). One structured line per terminal branch (ok / aborted /
  * failed / tool-error), paired by the shared `event` name and
  * distinguished by `outcome`, so the delegated path's latency + a quality
- * signal (rounds, checkpoints, acceptance-criteria pass rate, whether the
- * Planner pre-pass ran) is comparable to the engine arc's `coder_job_*` /
+ * signal (rounds, checkpoints, acceptance-criteria pass rate) is comparable
+ * to the engine arc's `coder_job_*` /
  * `delegation_engine_job_started` logs. Kept as an observability log, not
  * a protocol event — no `subagent.*` shape changes, so the category-3
  * drift pins are untouched.
@@ -320,7 +314,6 @@ function logDelegatedCoderMeasure(fields: {
   executionId: string;
   outcome: 'ok' | 'aborted' | 'failed' | 'tool-error';
   elapsedMs: number;
-  plannerRan: boolean;
   totalRounds?: number;
   totalCheckpoints?: number;
   criteriaResults?: CriterionResult[];
@@ -337,7 +330,6 @@ function logDelegatedCoderMeasure(fields: {
       executionId: fields.executionId,
       outcome: fields.outcome,
       elapsedMs: fields.elapsedMs,
-      plannerRan: fields.plannerRan,
       totalRounds: fields.totalRounds ?? null,
       totalCheckpoints: fields.totalCheckpoints ?? null,
       criteriaCount: criteria.length,
@@ -366,11 +358,6 @@ export async function handleCoderDelegation(
 
   const executionId = createId();
   const coderStartMs = Date.now();
-  // Tracks whether the Planner pre-pass actually ran this arc — part of
-  // the delegated-arc measurement so the A/B can separate "Planner fired"
-  // (heavy/small-model profiles) from "Planner skipped" (frontier lead,
-  // plannerRequired=false) turns. See `logDelegatedCoderMeasure`.
-  let plannerRan = false;
   // Capture the foreground branch at dispatch. Bound to this delegation
   // for its lifetime — the result envelope carries it so the result
   // message stamps the launch branch, not whatever the foreground
@@ -401,7 +388,6 @@ export async function handleCoderDelegation(
       executionId,
       outcome: 'tool-error',
       elapsedMs: Date.now() - coderStartMs,
-      plannerRan,
     });
     return {
       status: 'tool-error',
@@ -452,7 +438,6 @@ export async function handleCoderDelegation(
         executionId,
         outcome: 'tool-error',
         elapsedMs: Date.now() - coderStartMs,
-        plannerRan,
       });
       return {
         status: 'tool-error',
@@ -491,78 +476,6 @@ export async function handleCoderDelegation(
     const verificationCommandsById = new Map<string, string>();
     let lastTaskDiff: string | null = null;
     let latestDiffPaths: string[] | undefined;
-
-    // --- Planner Pre-Pass ---
-    // When the harness profile requires it (or the task is large enough),
-    // run the planner to decompose into a feature checklist.
-    let plannerBrief: string | undefined;
-    if (harnessSettings.plannerRequired && taskList.length === 1) {
-      plannerRan = true;
-      const plannerExecutionId = createId();
-      ctx.appendRunEvent(chatId, {
-        type: 'subagent.started',
-        executionId: plannerExecutionId,
-        agent: 'planner',
-        detail: taskList[0],
-      });
-      ctx.updateAgentStatus(
-        {
-          active: true,
-          phase: 'Planning task...',
-          detail: `Profile: ${harnessSettings.profile}`,
-        },
-        { chatId, source: 'coder' },
-      );
-      const plannerCorrelation = extendCorrelation(baseCorrelation, {
-        executionId: plannerExecutionId,
-      });
-      const plan = await withActiveSpan(
-        'subagent.planner',
-        {
-          scope: 'push.delegation',
-          kind: SpanKind.INTERNAL,
-          attributes: {
-            ...correlationToSpanAttributes(plannerCorrelation),
-            'push.agent.role': 'planner',
-            'push.provider': lockedProviderForChat,
-            'push.model': resolvedModelForChat,
-          },
-        },
-        async (span) => {
-          const result = await runPlanner(
-            taskList[0],
-            delegateArgs.files || [],
-            (phase) => ctx.updateAgentStatus({ active: true, phase }, { chatId, source: 'coder' }),
-            {
-              providerOverride: lockedProviderForChat,
-              modelOverride: resolvedModelForChat || undefined,
-            },
-          );
-          setSpanAttributes(span, {
-            'push.plan.generated': Boolean(result),
-          });
-          span.setStatus({ code: SpanStatusCode.OK });
-          return result;
-        },
-      );
-      if (plan) {
-        plannerBrief = formatPlannerBrief(plan);
-        ctx.appendRunEvent(chatId, {
-          type: 'subagent.completed',
-          executionId: plannerExecutionId,
-          agent: 'planner',
-          summary: summarizeToolResultPreview(plannerBrief),
-        });
-      } else {
-        ctx.appendRunEvent(chatId, {
-          type: 'subagent.failed',
-          executionId: plannerExecutionId,
-          agent: 'planner',
-          error: 'Planner did not return a plan.',
-        });
-      }
-      // Fail-open: if planner returns null, Coder proceeds without a plan
-    }
 
     // --- Multi-task loop ---
     for (let taskIndex = 0; taskIndex < taskList.length; taskIndex++) {
@@ -651,7 +564,6 @@ export async function handleCoderDelegation(
                 : undefined,
               instructionFilename: ctx.instructionFilenameRef.current || undefined,
               harnessSettings,
-              plannerBrief,
               verificationPolicy,
               declaredCapabilities: delegateArgs.declaredCapabilities,
               // Memory read-scope for the delegated Coder (LCM) — from session
@@ -730,7 +642,6 @@ export async function handleCoderDelegation(
       executionId,
       outcome: 'ok',
       elapsedMs: Date.now() - coderStartMs,
-      plannerRan,
       totalRounds,
       totalCheckpoints,
       criteriaResults: allCriteriaResults,
@@ -790,7 +701,6 @@ export async function handleCoderDelegation(
         executionId,
         outcome: 'aborted',
         elapsedMs: Date.now() - coderStartMs,
-        plannerRan,
       });
       return {
         status: 'aborted',
@@ -818,7 +728,6 @@ export async function handleCoderDelegation(
       executionId,
       outcome: 'failed',
       elapsedMs: Date.now() - coderStartMs,
-      plannerRan,
     });
     return {
       status: 'failed',

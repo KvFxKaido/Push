@@ -64,7 +64,6 @@ import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
 import { deriveUserGoalAnchor } from '../lib/user-goal-anchor.ts';
 import { loadUserGoalFile, seedUserGoalFile, extractDigestBody } from './user-goal-file.ts';
 import { escapeToolResultBoundaries } from '../lib/untrusted-content.ts';
-import { resolveDelegationMode, type DelegationMode } from '../lib/delegation-mode.ts';
 import {
   buildLoopSteeringText,
   createSimilarityLoopDetector,
@@ -143,13 +142,6 @@ export interface RunOptions {
   // writer of the parent-visible `delegation.*` lifecycle + `run_complete`
   // envelopes for this turn.
   suppressEventPersist?: boolean;
-  // Turn shape for `runAssistantTurn`: `inline` (default) runs the single
-  // conversational lead in-loop with no Planner pre-pass; `delegated` opts
-  // back into the planner → task-graph wrapper. Unset falls back to
-  // `PUSH_DELEGATION_MODE` through the shared resolver
-  // (`lib/delegation-mode.ts`), keeping the opt-in rule identical to the
-  // web preference. See Agent Runtime Decisions §10.
-  delegationMode?: DelegationMode;
   // Which runtime carries the lead turn: `kernel` (default since 2026-06-12)
   // runs the shared coder kernel in `leadMode` (cli/lead-turn.ts — §10
   // step 2); `engine` opts back into the CLI-local `runAssistantLoop` while
@@ -2495,19 +2487,13 @@ async function runAssistantLoopImpl(
 /**
  * Top-level entry for a user turn.
  *
- * Runs the planner unconditionally (planner-decides policy), then routes:
- *   - If the planner returns null or a ≤1-feature plan → fall back to
- *     `runAssistantLoop` on the existing state.messages. Single-agent UX
- *     is preserved exactly — the caller's pre-appended user message is
- *     what drives the loop.
- *   - Otherwise, invokes the task-graph delegation subsystem in
- *     `cli/delegation-entry.ts`, which emits canonical `subagent.*` /
- *     `task_graph.*` events via `options.emit` and appends its own
- *     synthesized final assistant message.
+ * Runs the single conversational lead directly (Agent Runtime Decisions
+ * §10) — no Planner pre-pass, no task-graph wrapper. The lead turn runs on
+ * the shared coder kernel (`leadMode`) by default, with `engine`
+ * (`runAssistantLoop`) as the bake opt-out. See the routing below.
  *
- * Callers must still append the user message to `state.messages` before
- * calling — the fallback path depends on that, and the delegation path
- * leaves it in place as the turn's input of record.
+ * Callers must append the user message to `state.messages` before calling
+ * — the run reads it as the turn's input of record.
  */
 export async function runAssistantTurn(
   state: SessionState,
@@ -2525,30 +2511,11 @@ export async function runAssistantTurn(
   const turnRunId = options.runId ?? makeRunId();
   const turnOptions: RunOptions = { ...options, runId: turnRunId };
 
-  // Single conversational lead is the default turn shape (Agent Runtime
+  // Single conversational lead is the only turn shape (Agent Runtime
   // Decisions §10): the turn runs the in-loop lead directly — no Planner
-  // pre-pass, no subagent ceremony, one agent the user talks to. Only an
-  // explicit 'delegated' (RunOptions, else PUSH_DELEGATION_MODE) opts back
-  // into the org-chart wrapper, mirroring the web's delegation-mode default
-  // (inline since 2026-06-11) and the headless path's opt-in --delegate flag.
-  const delegationMode =
-    options.delegationMode ?? resolveDelegationMode(process.env.PUSH_DELEGATION_MODE);
-  if (delegationMode === 'delegated') {
-    const { runUserTurnWithDelegation } = await import('./delegation-entry.js');
-
-    const delegationResult = await runUserTurnWithDelegation(
-      state,
-      providerConfig,
-      apiKey,
-      userText,
-      maxRounds,
-      turnOptions,
-    );
-
-    if (delegationResult?.delegated && delegationResult.runResult) {
-      return delegationResult.runResult as RunResult;
-    }
-  }
+  // pre-pass, no subagent ceremony, one agent the user talks to. The
+  // Planner-driven delegation spike (`--delegate` / PUSH_DELEGATION_MODE)
+  // was removed once usage telemetry showed it was never exercised.
 
   // §10 step 2 (default since 2026-06-12): run the lead turn on the shared
   // coder kernel (`leadMode: true`) — same kernel + lead framing as the

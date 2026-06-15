@@ -111,7 +111,6 @@ const KNOWN_OPTIONS = new Set([
   'noAttach',
   'no-resume-prompt',
   'noResumePrompt',
-  'delegate',
   'deep',
   'origin',
   'tail',
@@ -263,7 +262,6 @@ Options:
   --json                        JSON output in headless mode / resume
   --no-attach                   Resume: list sessions without prompting (script-friendly)
   --no-resume-prompt            Bare push: skip the "resume or new" prompt and start a new session
-  --delegate                    Headless: plan the task and run it as a task graph (spike)
   --sandbox                     Enable local Docker sandbox
   --no-sandbox                  Disable local Docker sandbox
   -v, --version                 Show version
@@ -3264,7 +3262,6 @@ export async function main() {
       'no-resume': { type: 'boolean' },
       'no-attach': { type: 'boolean' },
       'no-resume-prompt': { type: 'boolean' },
-      delegate: { type: 'boolean', default: false },
       version: { type: 'boolean', short: 'v' },
       deep: { type: 'boolean' },
       origin: { type: 'string' },
@@ -3310,7 +3307,7 @@ export async function main() {
   }
 
   // Install the file-backed ContextMemoryStore for the interactive CLI, mirroring
-  // the daemon (`cli/pushd.ts`) and headless (`cli/delegation-entry.ts`) entries.
+  // the daemon (`cli/pushd.ts`) and headless `push run` (`runHeadless`) entries.
   // Without this the inline REPL/TUI uses a fresh in-memory store, so persisted
   // records under ~/.push/memory are invisible to both the session-digest prefetch
   // (cli/engine.ts) and the memory_grep/memory_expand tools. Idempotent — the
@@ -3855,19 +3852,6 @@ export async function main() {
       alwaysAllow: headlessAlwaysAllow,
       auditorGate: headlessAuditorGate,
     };
-    if (values.delegate) {
-      const { runDelegatedHeadless } = await import('./delegation-entry.js');
-      return runDelegatedHeadless(
-        state,
-        providerConfig,
-        apiKey,
-        task,
-        maxRounds,
-        values.json,
-        acceptanceChecks,
-        headlessRunOpts,
-      );
-    }
     return runHeadless(
       state,
       providerConfig,

@@ -265,7 +265,6 @@ export function buildModelCapabilityAwarenessBlock(
 const STANDARD_PROFILE_SETTINGS: HarnessProfileSettings = {
   profile: 'standard',
   maxCoderRounds: 30,
-  plannerRequired: false,
   contextResetsEnabled: false,
   evaluateAfterCoder: true,
 };
@@ -273,7 +272,6 @@ const STANDARD_PROFILE_SETTINGS: HarnessProfileSettings = {
 const HEAVY_PROFILE_SETTINGS: HarnessProfileSettings = {
   profile: 'heavy',
   maxCoderRounds: 30,
-  plannerRequired: true,
   contextResetsEnabled: true,
   evaluateAfterCoder: true,
 };
