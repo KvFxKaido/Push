@@ -1385,7 +1385,7 @@ async function initSession(sessionId, provider, model, cwd, mode = 'interactive'
     },
   };
   // Start enriching the system prompt in the background — will be
-  // awaited before the first LLM call in runAssistantLoop.
+  // awaited before the first LLM call in the lead turn.
   ensureSystemPromptReady(state);
   // Seed repo validation commands (test/lint/typecheck/...) into working
   // memory in the background. Best-effort: failures don't block the session.

@@ -2739,8 +2739,8 @@ export { wrapCliDetectAllToolCalls, wrapCliDetectAnyToolCall };
 /**
  * Build a `CoderToolExecResult`-shaped tool executor bound to a running
  * delegation. The closure runs `executeToolCall` from `cli/tools.ts`
- * (the same production tool executor the non-delegated CLI engine
- * loop uses at `cli/engine.ts:runAssistantLoop`) against the session's
+ * (the same production tool executor the CLI lead turn uses via
+ * `cli/lead-turn.ts`) against the session's
  * `state.cwd`, with approval gating routed through `buildApprovalFn`
  * so any high-risk exec emits an `approval_required` event on the
  * child `runId` and blocks on a `submit_approval` RPC.

@@ -10,7 +10,6 @@ import {
   SIMILARITY_WARN_HITS,
 } from '../../lib/loop-detection.ts';
 
-const engineSource = readFileSync(new URL('../engine.ts', import.meta.url), 'utf8');
 // The web round loop spans two modules: chat-send.ts (calls handleLoopVerdict)
 // and chat-send-helpers.ts (which owns checkLoopBreaker + handleLoopVerdict and
 // consumes buildLoopSteeringText). Treat both as the "web surface" so the
@@ -23,42 +22,29 @@ const webSendSource =
 const coderSource = readFileSync(new URL('../../lib/coder-agent.ts', import.meta.url), 'utf8');
 const oracleSource = readFileSync(new URL('../../lib/loop-detection.ts', import.meta.url), 'utf8');
 
-// Drift detector: the CLI must NOT re-grow a bespoke repeated-call breaker.
-// The loop *decision* lives in lib/loop-detection.ts and the CLI must route
-// through it. These assertions fail loudly if a future edit re-inlines a
-// hard-coded threshold breaker in the engine instead of delegating.
+// Drift detector: the CLI's loop home — the shared coder kernel
+// (`lib/coder-agent.ts`), now that the CLI engine loop is retired — must NOT
+// re-grow a bespoke repeated-call breaker. The loop *decision* lives in
+// lib/loop-detection.ts and the kernel must route through it. These assertions
+// fail loudly if a future edit re-inlines a hard-coded threshold breaker
+// instead of delegating to the oracle.
 describe('CLI loop-detection drift — no ad-hoc breaker', () => {
-  it('engine delegates the loop decision to the shared lib/loop-detection oracle', () => {
+  it('the coder kernel delegates the loop decision to the shared oracle', () => {
     assert.match(
-      engineSource,
-      /from '\.\.\/lib\/loop-detection\.ts'/,
-      'cli/engine.ts must import the shared loop-detection oracle',
+      coderSource,
+      /from '\.\/loop-detection\.js'/,
+      'lib/coder-agent.ts must import the shared loop-detection oracle',
     );
     assert.ok(
-      engineSource.includes('evaluateLoopState('),
-      'cli/engine.ts must call evaluateLoopState() to decide loop outcomes',
-    );
-  });
-
-  it('engine no longer hard-codes the abort threshold inline', () => {
-    // The old breaker was `const seen = ...; if (seen >= 3) { abort }`. The
-    // threshold now comes from EXACT_REPEAT_LIMIT via the oracle. Guard
-    // against any re-introduced inline numeric repeat-count comparison.
-    assert.doesNotMatch(
-      engineSource,
-      /if\s*\(\s*seen\s*>=\s*\d+\s*\)/,
-      'cli/engine.ts must not inline a `seen >= N` repeated-call abort',
-    );
-    assert.ok(
-      engineSource.includes('EXACT_REPEAT_LIMIT'),
-      'cli/engine.ts must source the abort threshold from EXACT_REPEAT_LIMIT',
+      coderSource.includes('evaluateLoopState('),
+      'lib/coder-agent.ts must call evaluateLoopState() to decide loop outcomes',
     );
   });
 
   it('the abort drives off the oracle verdict, not a local count', () => {
     assert.ok(
-      engineSource.includes("loopVerdict.action === 'abort'"),
-      'cli/engine.ts must abort on the oracle verdict action',
+      coderSource.includes("loopVerdict.action === 'abort'"),
+      'lib/coder-agent.ts must abort on the oracle verdict action',
     );
   });
 });
@@ -84,42 +70,11 @@ describe('CLI loop-detection drift — preserved abort semantics', () => {
   });
 });
 
-// Counting-semantics pin: the exact-repeat signal must be CONSECUTIVE
-// (reset by any different batch), matching the web tracker's
-// `recordCall`/`isRepeatedCall` contract. The original relocated breaker
-// counted identical batches cumulatively across the whole run and aborted
-// agents for legitimately re-reading a file after editing it (three
-// productive reads of one small file across six turns = abort — observed
-// on 2/12 tasks in the 2026-06-11 delegation-collapse eval, both
-// false aborts AFTER acceptance had passed).
-describe('CLI loop-detection drift — consecutive exact-repeat counting', () => {
-  it('engine resets the exact-repeat streak when a different batch intervenes', () => {
-    assert.ok(
-      engineSource.includes('lastExactCallKey'),
-      'cli/engine.ts must track the previous batch key for consecutive counting',
-    );
-    assert.match(
-      engineSource,
-      /exactRepeatStreak\s*=\s*1/,
-      'cli/engine.ts must reset the streak to 1 on a non-matching batch',
-    );
-  });
-
-  it('engine must not re-grow a cumulative per-run repeat counter', () => {
-    assert.ok(
-      !engineSource.includes('repeatedCalls'),
-      'cli/engine.ts must not key repeat counts in a run-lifetime Map — ' +
-        'cumulative counting aborts productive re-reads; consecutive only',
-    );
-  });
-});
-
 // Graded enforcement drift: all three surfaces must route the warn/block/compact
 // steering through the shared `buildLoopSteeringText` builder and must NOT
 // re-inline the [LOOP_*] copy. The tags live in exactly one place (the oracle).
 describe('graded loop enforcement — shared steering vocabulary', () => {
   for (const [name, source] of [
-    ['cli/engine.ts', engineSource],
     ['app/src/hooks/chat-send{,-helpers}.ts', webSendSource],
     ['lib/coder-agent.ts', coderSource],
   ]) {
