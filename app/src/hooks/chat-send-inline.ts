@@ -63,8 +63,8 @@ import { applyBranchSwitchPayload } from '@/lib/branch-fork-migration';
 import { parseUntrackedFileSet } from '@/lib/auditor-delegation-handler';
 import { buildToolMeta, buildToolResultMessage } from '@/lib/chat-tool-messages';
 import {
-  buildAttachmentContentParts,
   buildPriorTurnAttachmentParts,
+  mergeInitialUserContentParts,
 } from '@/lib/attachment-content-parts';
 import { createId } from '@push/lib/id-utils';
 import type { CoderCheckpointState } from '@push/lib/coder-agent';
@@ -122,6 +122,7 @@ export function buildInlineTurnPreamble(
         (m.role === 'user' || m.role === 'assistant') &&
         !m.isToolCall &&
         !m.isToolResult &&
+        m.visibleToModel !== false &&
         Boolean((m.displayContent ?? m.content).trim()),
     )
     .slice(-PRIOR_TURNS_MAX);
@@ -686,6 +687,8 @@ export async function startInlineCoderTurn(
 
   // Derive the exact window buildInlineTurnPreamble uses (same filter + cap)
   // so attachment extraction never drifts outside the text preamble's horizon.
+  // `visibleToModel !== false` mirrors the Orchestrator's filterVisibleStage —
+  // display-only messages (fork dividers, aborted partials) never reach the wire.
   const priorWindow = args.apiMessages
     .slice(0, -1)
     .filter(
@@ -693,6 +696,7 @@ export async function startInlineCoderTurn(
         (m.role === 'user' || m.role === 'assistant') &&
         !m.isToolCall &&
         !m.isToolResult &&
+        m.visibleToModel !== false &&
         Boolean((m.displayContent ?? m.content).trim()),
     )
     .slice(-PRIOR_TURNS_MAX);
@@ -709,18 +713,14 @@ export async function startInlineCoderTurn(
     }
     return [];
   });
-  const currentAttParts = buildAttachmentContentParts(taskPreamble, args.attachments);
 
-  // Merge: preamble text → prior-turn images → current-turn images.
-  // When there are no prior images, fall back to the existing single-call shape.
-  let initialUserContentParts: LlmContentPart[] | undefined;
-  if (priorAttParts.length > 0) {
-    initialUserContentParts = currentAttParts
-      ? [currentAttParts[0], ...priorAttParts, ...currentAttParts.slice(1)]
-      : [{ type: 'text', text: taskPreamble }, ...priorAttParts];
-  } else {
-    initialUserContentParts = currentAttParts;
-  }
+  // preamble text → prior-turn images → current-turn images; undefined when
+  // there's no multimodal content (kernel uses the plain taskPreamble string).
+  const initialUserContentParts = mergeInitialUserContentParts(
+    taskPreamble,
+    priorAttParts,
+    args.attachments,
+  );
 
   let result: Awaited<ReturnType<typeof runInPageCoderKernel>>;
   try {

@@ -643,7 +643,7 @@ export function useChat(
         // biome-ignore format: keep refs inline so this branch stays under the file line cap.
         const refs = { sandboxIdRef, repoRef, branchInfoRef, isMainProtectedRef, agentsMdRef, instructionFilenameRef };
         // biome-ignore format: prior-turn attachments for DO envelope; keep inline to stay under line cap.
-        const priorAttachments = apiMessages.slice(0, -1).filter((m) => m.role === 'user' && !m.isToolCall && !m.isToolResult && Boolean((m.displayContent ?? m.content).trim())).slice(-3).flatMap((m) => m.attachments ?? []);
+        const priorAttachments = apiMessages.slice(0, -1).filter((m) => m.role === 'user' && !m.isToolCall && !m.isToolResult && m.visibleToModel !== false && Boolean((m.displayContent ?? m.content).trim())).slice(-3).flatMap((m) => m.attachments ?? []);
         const r = await startBackgroundMainChatTurn({
           chatId,
           trimmedText,

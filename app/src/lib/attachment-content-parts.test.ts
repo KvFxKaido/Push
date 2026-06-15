@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { AttachmentData } from '@/types';
-import { buildAttachmentContentParts } from './attachment-content-parts';
+import {
+  buildAttachmentContentParts,
+  buildPriorTurnAttachmentParts,
+  mergeInitialUserContentParts,
+} from './attachment-content-parts';
 
 function attachment(overrides: Partial<AttachmentData>): AttachmentData {
   return {
@@ -64,6 +68,94 @@ describe('buildAttachmentContentParts', () => {
         type: 'text',
         text: '[Attached file: brief.md]\n```\n# Brief\n```',
       },
+    ]);
+  });
+});
+
+describe('buildPriorTurnAttachmentParts', () => {
+  it('returns an empty array for no attachments', () => {
+    expect(buildPriorTurnAttachmentParts([])).toEqual([]);
+  });
+
+  it('labels each prior image with an attribution part before the image_url', () => {
+    const parts = buildPriorTurnAttachmentParts([
+      attachment({
+        type: 'image',
+        filename: 'before.png',
+        content: 'data:image/png;base64,one',
+      }),
+      attachment({
+        type: 'image',
+        filename: 'after.png',
+        content: 'data:image/png;base64,two',
+      }),
+    ]);
+
+    // The label parts disambiguate "compare the first screenshot vs the second".
+    expect(parts).toEqual([
+      { type: 'text', text: '[Image from prior turn: before.png]' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,one' } },
+      { type: 'text', text: '[Image from prior turn: after.png]' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,two' } },
+    ]);
+  });
+
+  it('embeds prior files as labeled text blocks', () => {
+    const parts = buildPriorTurnAttachmentParts([
+      attachment({ type: 'code', filename: 'a.ts', content: 'const a = 1;' }),
+    ]);
+    expect(parts).toEqual([
+      { type: 'text', text: '[Attached file from prior turn: a.ts]\n```\nconst a = 1;\n```' },
+    ]);
+  });
+});
+
+describe('mergeInitialUserContentParts', () => {
+  const img = (url: string): AttachmentData =>
+    attachment({ type: 'image', filename: 'x.png', mimeType: 'image/png', content: url });
+
+  it('returns undefined when there is no multimodal content at all', () => {
+    expect(mergeInitialUserContentParts('Task: hi', [], undefined)).toBeUndefined();
+    expect(mergeInitialUserContentParts('Task: hi', [], [])).toBeUndefined();
+  });
+
+  it('emits preamble text first, then current attachments, when there are no prior parts', () => {
+    const parts = mergeInitialUserContentParts(
+      'Task: look',
+      [],
+      [img('data:image/png;base64,cur')],
+    );
+    expect(parts).toEqual([
+      { type: 'text', text: 'Task: look' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,cur' } },
+    ]);
+  });
+
+  it('orders parts as preamble → prior → current', () => {
+    const priorParts = buildPriorTurnAttachmentParts([
+      attachment({ type: 'image', filename: 'prior.png', content: 'data:image/png;base64,prior' }),
+    ]);
+    const parts = mergeInitialUserContentParts('Task: compare', priorParts, [
+      img('data:image/png;base64,cur'),
+    ]);
+
+    expect(parts).toEqual([
+      { type: 'text', text: 'Task: compare' },
+      { type: 'text', text: '[Image from prior turn: prior.png]' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,prior' } },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,cur' } },
+    ]);
+  });
+
+  it('handles prior parts with no current attachments', () => {
+    const priorParts = buildPriorTurnAttachmentParts([
+      attachment({ type: 'image', filename: 'prior.png', content: 'data:image/png;base64,prior' }),
+    ]);
+    const parts = mergeInitialUserContentParts('Task: recall', priorParts, undefined);
+    expect(parts).toEqual([
+      { type: 'text', text: 'Task: recall' },
+      { type: 'text', text: '[Image from prior turn: prior.png]' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,prior' } },
     ]);
   });
 });

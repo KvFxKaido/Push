@@ -69,8 +69,8 @@ import type { Capability } from '@push/lib/capabilities';
 import type { ChatCard, ChatMessage, DelegationEnvelope } from '@/types';
 import { buildApprovalModeBlock } from '@/lib/approval-mode';
 import {
-  buildAttachmentContentParts,
   buildPriorTurnAttachmentParts,
+  mergeInitialUserContentParts,
 } from '@/lib/attachment-content-parts';
 // Web-side imports held behind the adapter pattern — see
 // `coder-job-detector-adapter.ts` module docstring and the PR #4 plan in
@@ -741,19 +741,20 @@ export class CoderJob {
     if (priorTurnsBlock) {
       taskPreamble = priorTurnsBlock + '\n' + taskPreamble;
     }
+    // Prior-turn attachments arrive as a flat client-carried list on the
+    // envelope (the inline lane reads them from local apiMessages; the DO has
+    // no transcript). KNOWN LIMITATION: that list and the summary-chain prior
+    // turns (priorTurnsBlock) are sourced independently, so a replayed/stale
+    // job or multi-tab divergence can make them describe slightly different
+    // turns. Benign — an extra or missing prior image, never corruption — and
+    // bounded by the same 3-turn horizon. Full fidelity would require the
+    // ContextLoader to carry attachment payloads keyed by turn (#938 follow-up).
     const priorAttParts = buildPriorTurnAttachmentParts(input.envelope.priorAttachments ?? []);
-    const currentAttParts = buildAttachmentContentParts(taskPreamble, input.envelope.attachments);
-    // Mirror the inline lane's merge: preamble text → prior-turn images →
-    // current-turn images. Falls back to the single-call shape when no prior
-    // attachments were carried through the envelope.
-    let initialUserContentParts: LlmContentPart[] | undefined;
-    if (priorAttParts.length > 0) {
-      initialUserContentParts = currentAttParts
-        ? [currentAttParts[0], ...priorAttParts, ...currentAttParts.slice(1)]
-        : [{ type: 'text', text: taskPreamble }, ...priorAttParts];
-    } else {
-      initialUserContentParts = currentAttParts;
-    }
+    const initialUserContentParts: LlmContentPart[] | undefined = mergeInitialUserContentParts(
+      taskPreamble,
+      priorAttParts,
+      input.envelope.attachments,
+    );
 
     // Seamless resume loop: on a confirmed sandbox death the kernel throws
     // SandboxUnreachableError; we restore the latest checkpoint into a fresh
