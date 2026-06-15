@@ -26,7 +26,6 @@ import { runCheckpointCommand } from './checkpoint-command.js';
 import {
   buildSystemPromptBase,
   ensureSystemPromptReady,
-  runAssistantLoop,
   runAssistantTurn,
   DEFAULT_MAX_ROUNDS,
   MAX_ALLOWED_ROUNDS,
@@ -54,7 +53,6 @@ import { createCompleter } from './completer.js';
 import { fmt, formatRelativeTime, Spinner } from './format.js';
 import { appendUserMessageWithFileReferences } from './file-references.js';
 import { compactContext } from './context-manager.js';
-import { buildHeadlessTaskBrief } from './task-brief.js';
 import { createDelegationTranscriptRenderer, isDelegationEvent } from './tui-delegation-events.js';
 import { runCommandInResolvedShell } from './shell.js';
 import { scrubEnv } from './env-scrub.js';
@@ -471,7 +469,17 @@ async function runHeadless(
     auditorGate,
   } = {},
 ) {
-  const taskPrompt = buildHeadlessTaskBrief(task, acceptanceChecks);
+  // Headless runs the single conversational lead on the shared coder kernel
+  // (`runAssistantTurn`), same runtime as interactive turns. Acceptance checks
+  // ride as plain prompt context here and are verified post-run by
+  // `runAcceptanceChecks` below — that post-loop check is the real gate.
+  const acceptanceBlock =
+    Array.isArray(acceptanceChecks) && acceptanceChecks.length > 0
+      ? `\n\nAcceptance criteria (verified after the run):\n${acceptanceChecks
+          .map((c) => `- ${c}`)
+          .join('\n')}`
+      : '';
+  const taskPrompt = `${task}${acceptanceBlock}`;
   await appendUserMessageWithFileReferences(state, taskPrompt, state.cwd, {
     referenceSourceText: task,
   });
@@ -486,7 +494,7 @@ async function runHeadless(
 
   try {
     // Headless run is silent during execution unless we want to wire up a log listener later
-    const result = await runAssistantLoop(state, providerConfig, apiKey, maxRounds, {
+    const result = await runAssistantTurn(state, providerConfig, apiKey, taskPrompt, maxRounds, {
       signal: ac.signal,
       emit: null,
       allowExec,

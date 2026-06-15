@@ -6,9 +6,8 @@
 // tools round-trip through the real `executeToolCall` against the workspace,
 // and the lane speaks the engine's existing event vocabulary so the TUI /
 // daemon clients render it unchanged. Routing pins live at the
-// `runAssistantTurn` seam: the kernel lane is the DEFAULT (flipped
-// 2026-06-12); only an exact `PUSH_LEAD_RUNTIME=engine` opts back into the
-// CLI-local engine loop.
+// `runAssistantTurn` seam: the kernel lane is the only lane (the CLI-local
+// engine-loop opt-out was retired once the lane baked).
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -189,6 +188,41 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
     });
   });
 
+  it('surfaces a max_rounds outcome when the round cap is hit (headless parity, #942)', async () => {
+    await withTempWorkspace(async (cwd) => {
+      // Round 0 emits a non-terminal state-update tool call so the kernel does
+      // not complete; with maxRounds=1, round 1 hits the cap and stops. The
+      // lane must report `max_rounds`, not flatten the graceful stop to success.
+      const server = await startSequencedProviderServer([
+        {
+          tokens: [
+            '{"tool":"coder_update_state","args":{"plan":"keep going","currentPhase":"investigation"}}',
+          ],
+        },
+      ]);
+      try {
+        const providerConfig = makeProviderConfig(server.url);
+        const state = makeState(cwd);
+        const emitted = [];
+
+        const result = await runLeadKernelTurn(
+          state,
+          providerConfig,
+          'mock-key',
+          'Do the thing',
+          1,
+          { emit: (event) => emitted.push(event) },
+        );
+
+        assert.equal(result.outcome, 'max_rounds');
+        const runComplete = emitted.find((e) => e.type === 'run_complete');
+        assert.equal(runComplete.payload.outcome, 'max_rounds');
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+
   it('injects persisted workspace memory into the task preamble', async () => {
     await withTempWorkspace(async (cwd) => {
       // Same store the engine loop's `[MEMORY]` prompt section reads
@@ -290,124 +324,39 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
   });
 });
 
-describe('runAssistantTurn — lead-runtime routing (§10 step 2)', needsLoopback, () => {
-  it('defaults to the shared kernel lane (2026-06-12 flip)', async () => {
-    await withTempWorkspace(async (cwd) => {
-      const server = await startSequencedProviderServer([{ tokens: ['Kernel-lane reply.'] }]);
+describe(
+  'runAssistantTurn — runs the lead turn on the shared kernel (§10 step 2)',
+  needsLoopback,
+  () => {
+    it('routes every turn to the kernel lane (engine-loop opt-out retired)', async () => {
+      await withTempWorkspace(async (cwd) => {
+        const server = await startSequencedProviderServer([{ tokens: ['Kernel-lane reply.'] }]);
+        try {
+          const providerConfig = makeProviderConfig(server.url);
+          const state = makeState(cwd);
 
-      const prevLead = process.env.PUSH_LEAD_RUNTIME;
-      const prevMode = process.env.PUSH_DELEGATION_MODE;
-      delete process.env.PUSH_LEAD_RUNTIME;
-      delete process.env.PUSH_DELEGATION_MODE;
-      try {
-        const providerConfig = makeProviderConfig(server.url);
-        const state = makeState(cwd);
+          const result = await runAssistantTurn(
+            state,
+            providerConfig,
+            'mock-key',
+            'What does notes.txt say?',
+            5,
+            { emit: () => {} },
+          );
 
-        const result = await runAssistantTurn(
-          state,
-          providerConfig,
-          'mock-key',
-          'What does notes.txt say?',
-          5,
-          { emit: () => {} },
-        );
-
-        assert.equal(result.outcome, 'success');
-        const requestText = JSON.stringify(server.requests[0]);
-        assert.ok(
-          requestText.includes('You are the lead in this chat'),
-          'kernel lane not engaged by default',
-        );
-      } finally {
-        if (prevLead === undefined) delete process.env.PUSH_LEAD_RUNTIME;
-        else process.env.PUSH_LEAD_RUNTIME = prevLead;
-        if (prevMode === undefined) delete process.env.PUSH_DELEGATION_MODE;
-        else process.env.PUSH_DELEGATION_MODE = prevMode;
-        await server.stop();
-      }
+          assert.equal(result.outcome, 'success');
+          const requestText = JSON.stringify(server.requests[0]);
+          assert.ok(
+            requestText.includes('You are the lead in this chat'),
+            'kernel lane not engaged',
+          );
+        } finally {
+          await server.stop();
+        }
+      });
     });
-  });
-
-  it('PUSH_LEAD_RUNTIME=engine opts back into the CLI-local engine loop', async () => {
-    await withTempWorkspace(async (cwd) => {
-      const server = await startSequencedProviderServer([{ tokens: ['Engine reply.'] }]);
-
-      const prevLead = process.env.PUSH_LEAD_RUNTIME;
-      const prevMode = process.env.PUSH_DELEGATION_MODE;
-      process.env.PUSH_LEAD_RUNTIME = 'engine';
-      delete process.env.PUSH_DELEGATION_MODE;
-      try {
-        const providerConfig = makeProviderConfig(server.url);
-        const state = makeState(cwd);
-
-        const result = await runAssistantTurn(
-          state,
-          providerConfig,
-          'mock-key',
-          'What does notes.txt say?',
-          5,
-          { emit: () => {} },
-        );
-
-        assert.equal(result.outcome, 'success');
-        // The engine loop sends the session's own system message verbatim;
-        // the kernel lane would have replaced it with the lead identity.
-        const requestText = JSON.stringify(server.requests[0]);
-        assert.ok(
-          requestText.includes('You are a helpful assistant.'),
-          'session system prompt missing — engine opt-out did not engage',
-        );
-        assert.ok(
-          !requestText.includes('You are the lead in this chat'),
-          'kernel lane engaged despite the engine opt-out',
-        );
-      } finally {
-        if (prevLead === undefined) delete process.env.PUSH_LEAD_RUNTIME;
-        else process.env.PUSH_LEAD_RUNTIME = prevLead;
-        if (prevMode === undefined) delete process.env.PUSH_DELEGATION_MODE;
-        else process.env.PUSH_DELEGATION_MODE = prevMode;
-        await server.stop();
-      }
-    });
-  });
-
-  it('an unknown PUSH_LEAD_RUNTIME value falls to the kernel default (exact-opt-out rule)', async () => {
-    await withTempWorkspace(async (cwd) => {
-      const server = await startSequencedProviderServer([{ tokens: ['Kernel-lane reply.'] }]);
-
-      const prevLead = process.env.PUSH_LEAD_RUNTIME;
-      const prevMode = process.env.PUSH_DELEGATION_MODE;
-      process.env.PUSH_LEAD_RUNTIME = 'something-else';
-      delete process.env.PUSH_DELEGATION_MODE;
-      try {
-        const providerConfig = makeProviderConfig(server.url);
-        const state = makeState(cwd);
-
-        const result = await runAssistantTurn(
-          state,
-          providerConfig,
-          'mock-key',
-          'What does notes.txt say?',
-          5,
-          { emit: () => {} },
-        );
-
-        assert.equal(result.outcome, 'success');
-        const requestText = JSON.stringify(server.requests[0]);
-        assert.ok(
-          requestText.includes('You are the lead in this chat'),
-          'unknown lead-runtime value did not fall to the kernel default',
-        );
-      } finally {
-        if (prevLead === undefined) delete process.env.PUSH_LEAD_RUNTIME;
-        else process.env.PUSH_LEAD_RUNTIME = prevLead;
-        if (prevMode === undefined) delete process.env.PUSH_DELEGATION_MODE;
-        else process.env.PUSH_DELEGATION_MODE = prevMode;
-        await server.stop();
-      }
-    });
-  });
-});
+  },
+);
 
 describe('buildLeadTurnPreamble', () => {
   it('bounds prior turns, drops the trailing user turn, and carries the snapshot', () => {
