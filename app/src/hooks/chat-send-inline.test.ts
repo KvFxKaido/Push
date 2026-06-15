@@ -99,12 +99,7 @@ import {
   ADOPTION_RESUME_NOTE_MARKER,
 } from '@push/lib/run-adoption-loop';
 import type { PushStreamEvent } from '@push/lib/provider-contract';
-import type {
-  AttachmentData,
-  ChatMessage,
-  Conversation,
-  VerificationRuntimeState,
-} from '@/types';
+import type { AttachmentData, ChatMessage, Conversation, VerificationRuntimeState } from '@/types';
 import type { SendLoopContext } from './chat-send-types';
 
 // ---------------------------------------------------------------------------
