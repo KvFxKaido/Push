@@ -142,12 +142,6 @@ export interface RunOptions {
   // writer of the parent-visible `delegation.*` lifecycle + `run_complete`
   // envelopes for this turn.
   suppressEventPersist?: boolean;
-  // Which runtime carries the lead turn: `kernel` (default since 2026-06-12)
-  // runs the shared coder kernel in `leadMode` (cli/lead-turn.ts — §10
-  // step 2); `engine` opts back into the CLI-local `runAssistantLoop` while
-  // the lane bakes. Unset falls back to the env: only an exact
-  // `PUSH_LEAD_RUNTIME=engine` opts out (mirrors the delegation-mode rule).
-  leadRuntime?: 'engine' | 'kernel';
 }
 
 export interface RunResult {
@@ -2503,32 +2497,17 @@ export async function runAssistantTurn(
   maxRounds: number,
   options: RunOptions = {},
 ): Promise<RunResult> {
-  // Mint a stable runId once for the whole turn. Both the planner `subagent.*`
-  // envelopes and the fallback `runAssistantLoop` run share it, so consumers
-  // keying on runId (event logs, daemon attach clients) see one correlated
-  // stream per user turn instead of two disjoint ones split at the planner
-  // → fallback boundary.
+  // Mint a stable runId once for the whole turn so consumers keying on runId
+  // (event logs, daemon attach clients) see one correlated stream per turn.
   const turnRunId = options.runId ?? makeRunId();
   const turnOptions: RunOptions = { ...options, runId: turnRunId };
 
-  // Single conversational lead is the only turn shape (Agent Runtime
-  // Decisions §10): the turn runs the in-loop lead directly — no Planner
-  // pre-pass, no subagent ceremony, one agent the user talks to. The
-  // Planner-driven delegation spike (`--delegate` / PUSH_DELEGATION_MODE)
-  // was removed once usage telemetry showed it was never exercised.
-
-  // §10 step 2 (default since 2026-06-12): run the lead turn on the shared
-  // coder kernel (`leadMode: true`) — same kernel + lead framing as the
-  // web's inline lane, with the CLI's local tool reach. Only an exact
-  // `engine` (RunOptions or PUSH_LEAD_RUNTIME=engine) opts back into the
-  // CLI-local loop, which stays available while the lane bakes and is the
-  // retirement target once it has. See cli/lead-turn.ts.
-  const leadRuntime =
-    options.leadRuntime ?? (process.env.PUSH_LEAD_RUNTIME === 'engine' ? 'engine' : 'kernel');
-  if (leadRuntime === 'kernel') {
-    const { runLeadKernelTurn } = await import('./lead-turn.js');
-    return runLeadKernelTurn(state, providerConfig, apiKey, userText, maxRounds, turnOptions);
-  }
-
-  return runAssistantLoop(state, providerConfig, apiKey, maxRounds, turnOptions);
+  // Single conversational lead is the only turn shape (Agent Runtime Decisions
+  // §10): the turn runs on the shared coder kernel (`leadMode`) — same kernel +
+  // lead framing as the web's inline lane, with the CLI's local tool reach. No
+  // Planner pre-pass, no subagent ceremony, one agent the user talks to. (The
+  // Planner-driven `--delegate` spike and the CLI-local engine loop's
+  // `PUSH_LEAD_RUNTIME=engine` opt-out were both retired once the lane baked.)
+  const { runLeadKernelTurn } = await import('./lead-turn.js');
+  return runLeadKernelTurn(state, providerConfig, apiKey, userText, maxRounds, turnOptions);
 }

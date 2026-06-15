@@ -651,12 +651,7 @@ import {
   PROTOCOL_VERSION,
 } from './session-store.js';
 import { compactContext, isFirstUserMessage } from './context-manager.js';
-import {
-  buildSystemPrompt,
-  runAssistantLoop,
-  runAssistantTurn,
-  DEFAULT_MAX_ROUNDS,
-} from './engine.js';
+import { buildSystemPrompt, runAssistantTurn, DEFAULT_MAX_ROUNDS } from './engine.js';
 import { appendUserMessageWithFileReferences } from './file-references.js';
 import { runExplorerAgent } from '../lib/explorer-agent.ts';
 import { runCoderAgent } from '../lib/coder-agent.ts';
@@ -7400,17 +7395,11 @@ async function recoverInterruptedRuns() {
     const entry = { state, attachToken, activeRunId: recoveryRunId, abortController };
     activeSessions.set(sessionId, entry);
 
-    // Inject reconciliation message so the model knows it was interrupted
-    state.messages.push({
-      role: 'user',
-      content: `[SESSION_RECOVERED]\nThe previous run (${marker.runId}) was interrupted by a daemon crash.\nYou are resuming in a new run (${recoveryRunId}). Review your working memory and continue where you left off.\nDo NOT restart from scratch — pick up from the last completed step.\n[/SESSION_RECOVERED]`,
-    });
-
     // Crash recovery is narrow: we recover the parent only. Any sub-agents or
     // task graphs that were in-flight when the daemon died are lost. Detect
-    // them from the event log and append a DELEGATION_INTERRUPTED note so the
-    // recovered parent Orchestrator re-delegates rather than waiting on ghost
-    // completions that will never arrive.
+    // them from the event log and fold a DELEGATION_INTERRUPTED note into the
+    // recovery turn so the recovered lead re-delegates rather than waiting on
+    // ghost completions that will never arrive.
     let orphans = { subagents: [], graphs: [] };
     try {
       const events = await loadSessionEvents(sessionId);
@@ -7419,8 +7408,19 @@ async function recoverInterruptedRuns() {
       // Event-log scan is best-effort — if we can't read it, skip the note.
     }
     const interruptedNote = formatDelegationInterruptedNote(orphans);
+
+    // Inject reconciliation as a SINGLE recovery turn — the kernel lane runs it
+    // as the lead's `userText`, so the recovery note + the interrupted note must
+    // be one message (a second would render as clipped "prior conversation"
+    // rather than the task).
+    const recoveryUserText = [
+      `[SESSION_RECOVERED]\nThe previous run (${marker.runId}) was interrupted by a daemon crash.\nYou are resuming in a new run (${recoveryRunId}). Review your working memory and continue where you left off.\nDo NOT restart from scratch — pick up from the last completed step.\n[/SESSION_RECOVERED]`,
+      interruptedNote,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+    state.messages.push({ role: 'user', content: recoveryUserText });
     if (interruptedNote) {
-      state.messages.push({ role: 'user', content: interruptedNote });
       await appendSessionEvent(state, 'delegation_interrupted', {
         originalRunId: marker.runId,
         recoveryRunId,
@@ -7455,27 +7455,34 @@ async function recoverInterruptedRuns() {
       let sawError = false;
       let sawRunComplete = false;
       try {
-        await runAssistantLoop(state, providerConfig, apiKey, DEFAULT_MAX_ROUNDS, {
-          runId: recoveryRunId,
-          approvalFn,
-          signal: abortController.signal,
-          emit: (event) => {
-            const seq = state.eventSeq;
-            if (event.type === 'error') sawError = true;
-            if (event.type === 'run_complete') sawRunComplete = true;
+        await runAssistantTurn(
+          state,
+          providerConfig,
+          apiKey,
+          recoveryUserText,
+          DEFAULT_MAX_ROUNDS,
+          {
+            runId: recoveryRunId,
+            approvalFn,
+            signal: abortController.signal,
+            emit: (event) => {
+              const seq = state.eventSeq;
+              if (event.type === 'error') sawError = true;
+              if (event.type === 'run_complete') sawRunComplete = true;
 
-            broadcastEvent(sessionId, {
-              v: PROTOCOL_VERSION,
-              kind: 'event',
-              sessionId: event.sessionId,
-              runId: event.runId,
-              seq,
-              ts: Date.now(),
-              type: event.type,
-              payload: event.payload,
-            });
+              broadcastEvent(sessionId, {
+                v: PROTOCOL_VERSION,
+                kind: 'event',
+                sessionId: event.sessionId,
+                runId: event.runId,
+                seq,
+                ts: Date.now(),
+                type: event.type,
+                payload: event.payload,
+              });
+            },
           },
-        });
+        );
         await saveSessionState(state);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

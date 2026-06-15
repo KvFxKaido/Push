@@ -8,11 +8,10 @@
  * assembled with the CLI's local reach: `executeToolCall` against the real
  * filesystem, the CLI provider streams, and the existing approval gates.
  *
- * The default since 2026-06-12: `runAssistantTurn` routes every lead turn
- * here unless an exact `engine` opts out (`RunOptions.leadRuntime` or
- * `PUSH_LEAD_RUNTIME=engine`) — mirroring how the web's inline lane shipped
- * behind a preference and then became the default. The engine loop remains
- * the opt-out while the lane bakes, and is the retirement target after.
+ * `runAssistantTurn` routes every lead turn here — the CLI-local engine
+ * loop's `PUSH_LEAD_RUNTIME=engine` opt-out was retired once the lane baked
+ * (it was the default since 2026-06-12, mirroring how the web's inline lane
+ * shipped behind a preference and then became the only path).
  *
  * Event protocol: the lane speaks the engine's existing event vocabulary
  * (`assistant_token`, `assistant_thinking_token`, `assistant_done`, `status`,
