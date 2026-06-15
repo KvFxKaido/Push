@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  estimateMessageTokens,
-  getContextBudget,
-  guessWindowFromName,
-} from './context-budget.js';
+import { estimateMessageTokens, getContextBudget, guessWindowFromName } from './context-budget.js';
 
 describe('estimateMessageTokens — contentParts (#937)', () => {
   it('adds the vision estimate for image contentParts without double-counting text', () => {
