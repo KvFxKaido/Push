@@ -62,7 +62,7 @@ import { applyStampedSandboxExecBranchDesync } from '@/lib/branch-desync';
 import { applyBranchSwitchPayload } from '@/lib/branch-fork-migration';
 import { parseUntrackedFileSet } from '@/lib/auditor-delegation-handler';
 import { buildToolMeta, buildToolResultMessage } from '@/lib/chat-tool-messages';
-import { buildAttachmentContentParts } from '@/lib/attachment-content-parts';
+import { buildLeadTurnContentParts } from '@/lib/attachment-content-parts';
 import { createId } from '@push/lib/id-utils';
 import type { CoderCheckpointState } from '@push/lib/coder-agent';
 import type { RunEventInput } from '@push/lib/runtime-contract';
@@ -684,7 +684,24 @@ export async function startInlineCoderTurn(
         modelId: resolvedModel || undefined,
         sandboxId,
         taskPreamble,
-        initialUserContentParts: buildAttachmentContentParts(taskPreamble, args.attachments),
+        // Carry recent prior-turn attachments alongside the current turn's, so
+        // a multi-image-history turn keeps the earlier pixels (#938). The last
+        // apiMessage is the current turn (its attachments ride `args.attachments`),
+        // so prior turns are everything before it.
+        initialUserContentParts: buildLeadTurnContentParts(
+          taskPreamble,
+          args.apiMessages.slice(0, -1),
+          args.attachments,
+          (omittedTurns) =>
+            console.warn(
+              JSON.stringify({
+                level: 'warn',
+                event: 'inline_prior_attachments_truncated',
+                omittedTurns,
+                runId: args.runId,
+              }),
+            ),
+        ),
         branchContext: {
           activeBranch,
           defaultBranch: branchInfo?.defaultBranch || 'main',
