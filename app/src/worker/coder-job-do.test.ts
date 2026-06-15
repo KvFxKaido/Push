@@ -1257,7 +1257,10 @@ describe('CoderJob DO — end-to-end', () => {
     // correctly fails it; the test fixture below shortcuts that path by
     // seeding a row directly, so we have to mimic a warm DO here.
     await job.fetch(new Request('https://do/status?jobId=warmup-noop', { method: 'GET' }));
-    // Seed a job row that's still running — no terminal event yet.
+    // Seed a job row that's still running — no terminal event yet. It carries
+    // an attachment in its envelope to prove the "no summary, no attachments"
+    // contract: a non-completed turn must not ship base64 bytes the loader
+    // would discard anyway.
     storage.jobs.set('job-running', {
       id: 'job-running',
       chat_id: 'c',
@@ -1267,7 +1270,26 @@ describe('CoderJob DO — end-to-end', () => {
       owner_token: 't',
       origin: 'https://push.example.test',
       status: 'running',
-      input_json: JSON.stringify(makeStartInput({ jobId: 'job-running' })),
+      input_json: JSON.stringify(
+        makeStartInput({
+          jobId: 'job-running',
+          envelope: {
+            task: 'in progress',
+            files: [],
+            provider: 'openrouter',
+            attachments: [
+              {
+                id: 'running-img',
+                type: 'image',
+                filename: 'wip.png',
+                mimeType: 'image/png',
+                sizeBytes: 4,
+                content: 'data:image/png;base64,wip',
+              },
+            ],
+          } as CoderJobStartInput['envelope'],
+        }),
+      ),
       result_json: null,
       error_text: null,
       created_at: Date.now(),
@@ -1280,9 +1302,15 @@ describe('CoderJob DO — end-to-end', () => {
       new Request('https://do/turn-summary?jobId=job-running', { method: 'GET' }),
     );
     expect(resp.status).toBe(200);
-    const body = (await resp.json()) as { status: string; summary: string | null };
+    const body = (await resp.json()) as {
+      status: string;
+      summary: string | null;
+      attachments?: AttachmentData[];
+    };
     expect(body.status).toBe('running');
     expect(body.summary).toBeNull();
+    // Gated out: no summary → no attachments on the wire.
+    expect(body.attachments).toBeUndefined();
   });
 
   it('/turn-summary returns 404 for unknown jobId', async () => {

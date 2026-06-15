@@ -1464,7 +1464,10 @@ export class CoderJob {
       summary,
       finishedAt: row.finished_at,
       priorCheckpointId,
-      ...(attachments ? { attachments } : {}),
+      // Contract: no summary, no attachments. The loader only consumes a turn
+      // when it's completed + summary-bearing, so shipping base64 bytes for a
+      // running/failed job would just be discarded — gate them out here.
+      ...(summary != null && attachments ? { attachments } : {}),
     };
     return json(response);
   }
