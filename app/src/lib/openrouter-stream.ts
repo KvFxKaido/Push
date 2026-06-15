@@ -93,8 +93,18 @@ export async function* openrouterStream(
     // Native structured outputs: when the caller attached a JSON-Schema
     // constraint (and gated it on model support), forward it so OpenRouter
     // constrains generation server-side. Same wire builder the CLI/OpenAI-compat
-    // path uses, so the two can't drift.
-    ...(req.responseFormat ? { response_format: toOpenAIResponseFormat(req.responseFormat) } : {}),
+    // path uses, so the two can't drift. `provider.require_parameters` is
+    // load-bearing here: by default OpenRouter may route to an endpoint that
+    // doesn't support `response_format` and silently ignores it, dropping the
+    // schema constraint back to prompt-only JSON despite the model advertising
+    // support. require_parameters restricts routing to providers that honor
+    // every param we send, so the constraint can't be lost mid-route.
+    ...(req.responseFormat
+      ? {
+          response_format: toOpenAIResponseFormat(req.responseFormat),
+          provider: { require_parameters: true },
+        }
+      : {}),
     trace,
   };
 

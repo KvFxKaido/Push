@@ -93,6 +93,13 @@ tool-shaped and is out of scope here.
   `lib/openai-chat-serializer.ts` produces the `response_format` payload. Both
   `toOpenAIChat` (CLI + OpenAI-compat) and the web `openrouter-stream.ts` inline
   body call it, so the wire shape has one definition.
+- **Routing guard.** The web OpenRouter body also sets
+  `provider: { require_parameters: true }` whenever `response_format` is
+  present. Without it OpenRouter may route to an endpoint that doesn't support
+  structured outputs and silently ignores the field, dropping the constraint
+  back to prompt-only JSON despite the model advertising support — a targeted
+  slice of the Phase 2 provider-routing work, pulled forward because it's the
+  load-bearing companion to structured outputs.
 - **zod → strict JSON Schema.** `zodToStrictJsonSchema(schema)` in
   `lib/structured-output.ts` runs `z.toJSONSchema` (zod 4) then normalizes for
   strict mode: recursively adds `additionalProperties: false` + a full

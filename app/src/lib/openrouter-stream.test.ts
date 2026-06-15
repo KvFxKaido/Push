@@ -358,9 +358,12 @@ describe('openrouterStream', () => {
       type: 'json_schema',
       json_schema: { name: 'verdict', strict: true, schema: { type: 'object' } },
     });
+    // require_parameters keeps OpenRouter from routing to an endpoint that
+    // would silently ignore response_format.
+    expect(body.provider).toEqual({ require_parameters: true });
   });
 
-  it('omits response_format when no responseFormat is set', async () => {
+  it('omits response_format and provider routing when no responseFormat is set', async () => {
     installStreamFetch(fetchMock);
     const { openrouterStream } = await import('./openrouter-stream');
     const iter = openrouterStream(baseRequest);
@@ -372,6 +375,7 @@ describe('openrouterStream', () => {
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     const body = JSON.parse(init.body as string);
     expect(body.response_format).toBeUndefined();
+    expect(body.provider).toBeUndefined();
   });
 
   it('injects the openrouter:web_search server tool by default (auto mode)', async () => {
