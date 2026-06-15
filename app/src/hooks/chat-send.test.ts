@@ -139,6 +139,7 @@ describe('chat-send', () => {
       0,
       [makeMessage({ id: 'user-1', role: 'user', content: 'Hi', status: 'done' })],
       ctx,
+      ['Thinking…', 'Reasoning…'],
     );
 
     expect(result).toEqual({
@@ -192,6 +193,7 @@ describe('chat-send', () => {
       3,
       [makeMessage({ id: 'user-1', role: 'user', content: 'Hi', status: 'done' })],
       ctx,
+      ['Thinking…', 'Reasoning…'],
     );
 
     const appendRunEvent = ctx.appendRunEvent as ReturnType<typeof vi.fn>;
@@ -240,6 +242,7 @@ describe('chat-send', () => {
       0,
       [makeMessage({ id: 'user-1', role: 'user', content: 'Hi', status: 'done' })],
       ctx,
+      ['Thinking…', 'Reasoning…'],
     );
     warnSpy.mockRestore();
 
@@ -287,6 +290,7 @@ describe('chat-send', () => {
         0,
         [makeMessage({ id: 'user-1', role: 'user', content: 'Hi', status: 'done' })],
         ctx,
+        ['Thinking…', 'Reasoning…'],
       );
 
       // Partial reasoning stays in thinkingAccumulated and is NOT surfaced as

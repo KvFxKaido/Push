@@ -360,6 +360,20 @@ export async function runRoundLoop(
     });
   };
 
+  // Vibe-verb pool for the spinner — repo-derived and stable for the turn, so
+  // resolve once and rotate it through BOTH openings: the thinking dead air
+  // (round 0) and the responding stream (later rounds + streamAssistantRound's
+  // per-token updates). Synchronous cache lookups (null when the repo list /
+  // sandbox haven't populated; the classifier degrades to the name alone).
+  const sandboxEnv = getSandboxEnvironment(loopCtx.sandboxIdRef.current ?? undefined);
+  const repoMeta = getRepoMetadata(loopCtx.repoRef.current);
+  const vibeVerbs = getVibeVerbs({
+    fullName: loopCtx.repoRef.current,
+    topics: repoMeta?.topics ?? null,
+    projectMarkers: sandboxEnv?.project_markers ?? null,
+    language: repoMeta?.language ?? null,
+  });
+
   for (let round = 0; ; round++) {
     roundEvents = [];
     if (abortRef.current) break;
@@ -370,33 +384,17 @@ export async function runRoundLoop(
 
     if (round > 0) appendStreamingAssistantDraft(loopCtx);
 
-    let phase = 'Responding...';
-    let verbs: string[] | undefined;
-    if (round === 0) {
-      // Drive the thinking verbs off real repo signals: GitHub topics state the
-      // domain, the sandbox's boot-time manifest probe tells us the language,
-      // and the name is the fallback for both. Both reads are synchronous cache
-      // lookups (null when the repo list or sandbox hasn't populated yet, in
-      // which case the classifier degrades to the name alone). Hand the bar the
-      // whole pool so it *rotates* — same thinking presentation as the inline
-      // lane (`chat-send-inline.ts`); `phase` is the static event-log fallback.
-      const sandboxEnv = getSandboxEnvironment(loopCtx.sandboxIdRef.current ?? undefined);
-      const repoMeta = getRepoMetadata(loopCtx.repoRef.current);
-      verbs = getVibeVerbs({
-        fullName: loopCtx.repoRef.current,
-        topics: repoMeta?.topics ?? null,
-        projectMarkers: sandboxEnv?.project_markers ?? null,
-        language: repoMeta?.language ?? null,
-      });
-      phase = 'Thinking…';
-    }
-
-    loopCtx.updateAgentStatus({ active: true, phase, ...(verbs ? { verbs } : {}) }, { chatId });
+    // Round 0 is pre-response dead air ("Thinking…"); later rounds stream the
+    // answer ("Responding..."). The vibe verbs rotate through both openings —
+    // `phase` is the static event-log fallback the bar shows when not rotating.
+    const phase = round === 0 ? 'Thinking…' : 'Responding...';
+    loopCtx.updateAgentStatus({ active: true, phase, verbs: vibeVerbs }, { chatId });
 
     const { accumulated, thinkingAccumulated, reasoningBlocks, error } = await streamAssistantRound(
       round,
       apiMessages,
       loopCtx,
+      vibeVerbs,
     );
 
     if (abortRef.current) {

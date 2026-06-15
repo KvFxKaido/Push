@@ -240,9 +240,10 @@ export function createInlineTranscriptMirror(
 
     const { visible, toolCallActive } = splitVisibleContent(accumulated);
 
-    // Phase: reasoning is "dead air" → rotate themed verbs; visible prose
-    // streams as "Responding..."; while a tool construct is in flight, defer
-    // to the kernel's own `onStatus` (Editing/Exploring) rather than fight it.
+    // Phase: reasoning is "dead air" and visible prose streams as
+    // "Responding..." — both rotate the themed vibe verbs; while a tool
+    // construct is in flight, defer to the kernel's own `onStatus`
+    // (Editing/Exploring) rather than fight it.
     if (event.type === 'reasoning_delta') {
       ctx.updateAgentStatus(
         {
@@ -253,7 +254,14 @@ export function createInlineTranscriptMirror(
         { chatId, log: false },
       );
     } else if (!toolCallActive) {
-      ctx.updateAgentStatus({ active: true, phase: 'Responding...' }, { chatId, log: false });
+      ctx.updateAgentStatus(
+        {
+          active: true,
+          phase: 'Responding...',
+          ...(thinkingVerbs?.length ? { verbs: thinkingVerbs } : {}),
+        },
+        { chatId, log: false },
+      );
     }
 
     ctx.emitRunEngineEvent({

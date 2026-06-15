@@ -295,6 +295,23 @@ describe('createInlineTranscriptMirror', () => {
     expect(lastAssistant(store).thinking).toBeUndefined();
   });
 
+  it('rotates the vibe verbs during the responding (visible-prose) stream', () => {
+    const { ctx } = makeHarness();
+    const verbs = ['Backpropagating...', 'Inferring...'];
+    const mirror = createInlineTranscriptMirror(ctx, verbs);
+    const status = ctx.updateAgentStatus as unknown as ReturnType<typeof vi.fn>;
+
+    status.mockClear();
+    mirror({ type: 'text_delta', text: 'Here is the answer.' } as PushStreamEvent);
+
+    // Visible prose with no tool construct → the "Responding…" opening now
+    // carries the rotating vibe-verb pool (previously a static label, #verbs).
+    expect(status).toHaveBeenLastCalledWith(
+      expect.objectContaining({ phase: 'Responding...', verbs }),
+      expect.objectContaining({ log: false }),
+    );
+  });
+
   it('never leaks a fenced tool call into the transcript, keeping any prose preamble', () => {
     const { ctx, store, emitRunEngineEvent } = makeHarness();
     const mirror = createInlineTranscriptMirror(ctx);

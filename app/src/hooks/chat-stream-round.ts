@@ -64,6 +64,10 @@ export async function streamAssistantRound(
   round: number,
   apiMessages: ChatMessage[],
   ctx: SendLoopContext,
+  /** Vibe-verb pool the bar rotates while streaming the response ("Responding…"
+   *  opening). Resolved once per turn by the round loop and threaded in so the
+   *  per-token status updates don't re-classify. */
+  vibeVerbs: string[],
 ): Promise<StreamRoundResult> {
   const {
     chatId,
@@ -195,7 +199,10 @@ export async function streamAssistantRound(
             text: accumulated,
             thinking: thinkingAccumulated,
           });
-          updateAgentStatus({ active: true, phase: 'Responding...' }, { chatId, log: false });
+          updateAgentStatus(
+            { active: true, phase: 'Responding...', verbs: vibeVerbs },
+            { chatId, log: false },
+          );
           setConversations((prev) => {
             const conv = prev[chatId];
             if (!conv) return prev;
@@ -217,7 +224,10 @@ export async function streamAssistantRound(
         (thinkingToken) => {
           if (abortRef.current) return;
           if (thinkingToken === null) {
-            updateAgentStatus({ active: true, phase: 'Responding...' }, { chatId, log: false });
+            updateAgentStatus(
+              { active: true, phase: 'Responding...', verbs: vibeVerbs },
+              { chatId, log: false },
+            );
             return;
           }
           const thinkingKey = `think:${round}:${thinkingAccumulated.length}:${thinkingToken}`;
