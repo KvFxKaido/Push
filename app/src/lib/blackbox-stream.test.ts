@@ -233,6 +233,41 @@ describe('blackboxStream', () => {
     expect(textEvents[0].text).toContain('sandbox_write_file');
   });
 
+  it('forwards responseFormat as an OpenAI response_format json_schema', async () => {
+    installStreamFetch(fetchMock);
+    const { blackboxStream } = await import('./blackbox-stream');
+    const iter = blackboxStream({
+      ...baseRequest,
+      responseFormat: { name: 'verdict', schema: { type: 'object' } },
+    });
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.response_format).toEqual({
+      type: 'json_schema',
+      json_schema: { name: 'verdict', strict: true, schema: { type: 'object' } },
+    });
+    // The `provider.require_parameters` routing guard is OpenRouter-specific —
+    // plain OpenAI-compatible adapters must not emit it.
+    expect(body).not.toHaveProperty('provider');
+  });
+
+  it('omits response_format when no responseFormat is set', async () => {
+    installStreamFetch(fetchMock);
+    const { blackboxStream } = await import('./blackbox-stream');
+    const iter = blackboxStream(baseRequest);
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body).not.toHaveProperty('response_format');
+  });
+
   it('does not send Zen / OpenRouter-only body fields', async () => {
     installStreamFetch(fetchMock);
     const { blackboxStream } = await import('./blackbox-stream');

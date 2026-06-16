@@ -15,6 +15,7 @@ import {
   filterModelByContext,
   MIN_CONTEXT_TOKENS,
   parseOpenRouterCatalog,
+  providerModelSupportsStructuredOutput,
 } from './model-catalog';
 
 function createStorageMock() {
@@ -1205,5 +1206,69 @@ describe('filterModelByContext', () => {
 
     const lowContext = filterModelByContext('priority-model-2', 1000, prioritySet);
     expect(lowContext.allowed).toBe(true);
+  });
+});
+
+describe('providerModelSupportsStructuredOutput', () => {
+  it('returns false for providers whose adapter does not serialize response_format', () => {
+    stubWindow();
+    // Anthropic / Gemini / Vertex native serializers ignore `response_format` by
+    // contract; cloudflare / bedrock are unconfirmed; demo has no wire. None of
+    // these may ever attach a constraint, regardless of any catalog metadata.
+    for (const provider of ['anthropic', 'google', 'vertex', 'cloudflare', 'bedrock', 'demo']) {
+      expect(providerModelSupportsStructuredOutput(provider, 'any-model')).toBe(false);
+    }
+  });
+
+  it('returns false when no modelId is given', () => {
+    stubWindow();
+    expect(providerModelSupportsStructuredOutput('openrouter', undefined)).toBe(false);
+  });
+
+  it('returns false for an allowlisted provider when the catalog reports no support', () => {
+    stubWindow();
+    // `openai` is OpenAI-shaped (allowlisted) but has no models.dev structured-
+    // output metadata cached here, so the catalog gate keeps it prompt-only.
+    expect(providerModelSupportsStructuredOutput('openai', 'gpt-x')).toBe(false);
+  });
+
+  it('returns true for an allowlisted provider once the catalog advertises support', async () => {
+    // Reset modules so the per-provider metadata mem-cache starts clean — earlier
+    // nvidia fetcher tests in this file seed the same cache key, and the fetch
+    // short-circuits on a warm cache, masking the newly-seeded metadata.
+    vi.resetModules();
+    stubWindow();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL) => {
+        const url = String(input);
+        if (url.includes('models.dev/api.json')) {
+          return jsonResponse({
+            nvidia: {
+              models: {
+                'meta/llama-3.3-70b-instruct': {
+                  id: 'meta/llama-3.3-70b-instruct',
+                  reasoning: false,
+                  tool_call: true,
+                  structured_output: true,
+                  modalities: { input: ['text'], output: ['text'] },
+                  limit: { context: 131_072 },
+                },
+              },
+            },
+          });
+        }
+        if (url.includes('/nvidia/') || url.includes('/api/nvidia/models')) {
+          return jsonResponse({ data: [{ id: 'meta/llama-3.3-70b-instruct' }] });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+
+    const mc = await import('./model-catalog');
+    await mc.fetchNvidiaModels();
+    expect(mc.providerModelSupportsStructuredOutput('nvidia', 'meta/llama-3.3-70b-instruct')).toBe(
+      true,
+    );
   });
 });

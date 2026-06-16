@@ -25,7 +25,7 @@ import { readSymbolsFromSandbox } from './sandbox-client';
 import type { ReviewResult } from '@/types';
 import type { LlmMessage, PushStream } from '@push/lib/provider-contract';
 import { getProviderPushStream, type ActiveProvider } from './orchestrator';
-import { openRouterModelSupportsStructuredOutput } from './model-catalog';
+import { providerModelSupportsStructuredOutput } from './model-catalog';
 import type { ReviewerPromptContext } from './role-context';
 
 export { annotateDiffWithLineNumbers, REVIEWER_CRITERIA_BLOCK } from '@push/lib/reviewer-agent';
@@ -49,10 +49,13 @@ export async function runReviewer(
     modelId: options.modelId,
     context: options.context,
     sandboxId: options.sandboxId,
-    // Gated to OpenRouter (the only web adapter honoring `response_format` in
-    // Phase 1) AND models advertising structured-output support.
-    supportsStructuredOutput:
-      options.provider === 'openrouter' && openRouterModelSupportsStructuredOutput(options.modelId),
+    // Attached for any OpenAI-compatible provider whose adapter serializes
+    // `response_format` AND whose catalog metadata advertises structured-output
+    // support (see `providerModelSupportsStructuredOutput`).
+    supportsStructuredOutput: providerModelSupportsStructuredOutput(
+      options.provider,
+      options.modelId,
+    ),
     resolveRuntimeContext: buildReviewerRuntimeContext,
     readSymbols: readSymbolsFromSandbox,
   };

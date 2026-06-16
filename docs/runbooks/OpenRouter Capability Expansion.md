@@ -108,19 +108,35 @@ tool-shaped and is out of scope here.
   the single source of truth — the same `AuditorVerdictSchema` that
   `parseStructured` validates against also generates the wire schema.
 - **Capability gate.** `ResolvedModelCapabilities.structuredOutput` +
-  `openRouterModelSupportsStructuredOutput(modelId)` in
+  `providerModelSupportsStructuredOutput(provider, modelId)` in
   `app/src/lib/model-catalog.ts`, resolved from the
   `structured_outputs` entry in the model's `supported_parameters`
-  (already parsed into `ModelsDevOpenRouterMetadata.structuredOutput`).
+  (already parsed into `ModelsDevOpenRouterMetadata.structuredOutput`). The gate
+  is two conditions: the provider must be in `STRUCTURED_OUTPUT_PROVIDERS` (the
+  OpenAI-shaped adapters that serialize `response_format`) **and** the model's
+  catalog metadata must advertise support — so a provider never attaches a
+  constraint its routed endpoint would silently drop.
 - **Role-kernel wiring.** Each kernel owns its zod schema and the derived
   `response_format`, attaching it only when the caller passes
   `supportsStructuredOutput: true`. Wired so far: the auditor **verdict** and
   **evaluation** gates (`lib/auditor-agent.ts`) and the advisory **reviewer**
   (`lib/reviewer-agent.ts`). The web wrappers
   (`app/src/lib/auditor-agent.ts`, `app/src/lib/reviewer-agent.ts`) compute
-  support from the catalog, gated to OpenRouter. A shared
-  `applyStructuredOutput` helper (`lib/structured-output.ts`) returns the
-  request fragment and emits the symmetric attach ↔ skip structured log.
+  support from the catalog. A shared `applyStructuredOutput` helper
+  (`lib/structured-output.ts`) returns the request fragment and emits the
+  symmetric attach ↔ skip structured log.
+- **Provider coverage (web).** No longer OpenRouter-only. Every OpenAI-shaped
+  web adapter now serializes `response_format` via the shared
+  `toOpenAIResponseFormat` builder: `openrouter`, `openai`, `azure`, `nvidia`,
+  `blackbox`, `kilocode`, `openadapter`, `zen`, `ollama`. The
+  `provider.require_parameters` routing guard stays **OpenRouter-only** — it's an
+  OpenRouter-specific field. `cloudflare`/`bedrock` are left out (their
+  `response_format` support is unconfirmed), and the Anthropic/Gemini/Vertex
+  native serializers ignore the field by contract. Activation is still
+  catalog-gated per the bullet above, so providers without models.dev
+  structured-output metadata (e.g. direct OpenAI/Azure today) stay prompt-only
+  until that metadata lands — the wire plumbing is in place to light them up
+  automatically when it does.
 - **Optional fields.** `zodToStrictJsonSchema` classifies each property from
   zod's `io: 'input'` output — `required`-listed or `default`-carrying
   (`.catch()`/`.default()`) fields stay required and non-nullable; a genuinely

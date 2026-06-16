@@ -283,10 +283,46 @@ export function openRouterModelSupportsReasoning(modelId: string): boolean {
   return getModelCapabilities('openrouter', modelId).reasoning;
 }
 
-/** Shorthand for checking OpenRouter native structured-output support — gates
- *  whether the auditor attaches a `response_format` JSON-Schema constraint. */
-export function openRouterModelSupportsStructuredOutput(modelId: string): boolean {
-  return getModelCapabilities('openrouter', modelId).structuredOutput;
+/**
+ * Providers whose web adapter serializes the OpenAI `response_format` json_schema
+ * field onto the wire — the OpenAI-shaped endpoints routed through
+ * `openAISSEPump`. The Anthropic / Gemini / Vertex native serializers are
+ * excluded because they ignore the field by contract (see `ResponseFormatSpec`
+ * in `lib/provider-contract.ts`); `cloudflare` and `bedrock` are omitted because
+ * their `response_format` support isn't confirmed. Membership here only governs
+ * *whether the wire can honor the constraint* — actual attachment is still gated
+ * on per-model catalog capability below, so a provider never attaches a
+ * constraint its routed endpoint would silently drop.
+ */
+const STRUCTURED_OUTPUT_PROVIDERS: ReadonlySet<string> = new Set([
+  'openrouter',
+  'openai',
+  'azure',
+  'nvidia',
+  'blackbox',
+  'kilocode',
+  'openadapter',
+  'zen',
+  'ollama',
+]);
+
+/**
+ * Whether to attach a native `response_format` JSON-Schema constraint for the
+ * given provider/model — gates the auditor verdict/evaluation and reviewer
+ * kernels. Two conditions, both required: the provider's adapter must serialize
+ * `response_format` (`STRUCTURED_OUTPUT_PROVIDERS`), AND the model's catalog
+ * metadata must advertise structured-output support
+ * (`getModelCapabilities().structuredOutput`). Generalizes the Phase 1
+ * OpenRouter-only gate to every OpenAI-compatible provider; providers without
+ * models.dev structured-output metadata (e.g. direct OpenAI / Azure today)
+ * resolve `false` and stay prompt-only until that metadata lands.
+ */
+export function providerModelSupportsStructuredOutput(
+  provider: string,
+  modelId: string | undefined,
+): boolean {
+  if (!modelId || !STRUCTURED_OUTPUT_PROVIDERS.has(provider)) return false;
+  return getModelCapabilities(provider, modelId).structuredOutput;
 }
 
 /** Build a compact icon string for display in model pickers. */
