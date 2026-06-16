@@ -40,6 +40,7 @@ import { getSandboxDiff, getSandboxEnvironment } from '@/lib/sandbox-client';
 import { getRepoMetadata } from '@/lib/repo-metadata';
 import { getVibeVerbs } from '@/lib/repo-vibe-verbs';
 import { translateCoderStatus } from '@/lib/inline-coder-status';
+import { classifyTurnIntent } from '@/lib/turn-intent';
 import {
   capturePreCoderSnapshot,
   createCoderCheckpointAnswerer,
@@ -756,6 +757,11 @@ export async function startInlineCoderTurn(
         // its sandbox/web/memory surface — the tools a conversational turn
         // ("what changed recently?") needs and the old Orchestrator had.
         leadToolSurface: true,
+        // Task-aware backstop for the no-fake-completion guard: derive intent
+        // from the same classifier the router uses, so even if a conversational
+        // turn ever reaches this lane the guard stays quiet. `task` by default;
+        // attachment-only turns (no text) read as a task and stay guarded.
+        taskInFlight: classifyTurnIntent(args.trimmedText) === 'task',
         // Per-round capture: the foreground client mirror is the durable
         // copy adoption resumes from, so don't skip rounds.
         checkpointCadenceRounds: 1,

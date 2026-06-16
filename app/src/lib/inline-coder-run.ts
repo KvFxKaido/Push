@@ -469,6 +469,14 @@ export interface InPageCoderKernelSpec {
    * Orchestrator above it owns those tools.
    */
   leadToolSurface?: boolean;
+  /**
+   * Whether this turn is a coding task (vs. a conversational lead turn). The
+   * inline lane derives it from `classifyTurnIntent` and the kernel stamps it
+   * onto the turn context so the Coder no-fake-completion guard refuses to fire
+   * on a conversational reply. Omitted → treated as a task (the delegated arc
+   * and worker engine always run real tasks). See `turn-intent.ts`.
+   */
+  taskInFlight?: boolean;
 }
 
 export interface InPageCoderKernelCallbacks {
@@ -569,6 +577,9 @@ export async function runInPageCoderKernel(
     allowedRepo: '',
     activeProvider: spec.provider,
     activeModel: spec.modelId,
+    // Undefined (delegated arc / engine) → task; the inline lane passes false
+    // for conversational turns so the no-fake-completion guard stays quiet.
+    taskInFlight: spec.taskInFlight,
     signal: callbacks.signal,
   };
 

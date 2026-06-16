@@ -25,6 +25,7 @@ import type { AIProviderType, AttachmentData, Conversation, DelegationEnvelope }
 import { getActiveProvider, isProviderAvailable } from '@/lib/orchestrator';
 import { isProviderEngineCapable } from '@/lib/provider-engine-capability';
 import { resolveChatProviderSelection } from '@/lib/provider-selection';
+import { classifyTurnIntent } from '@/lib/turn-intent';
 import { getSandboxOwnerToken } from '@/lib/sandbox-client';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import type { UseBackgroundCoderJobResult } from './useBackgroundCoderJob';
@@ -66,6 +67,14 @@ export function resolveSendEngineTrigger(opts: {
   conversationsRef: React.MutableRefObject<Record<string, Conversation>>;
   chatId: string | null;
   requestedProvider?: AIProviderType | null;
+  /** This turn's user text — classified to keep clearly-conversational lead
+   *  turns off the inline Coder lane (and its coder turn-policy). Omitted /
+   *  empty is treated as a task so attachment-only turns stay inline. */
+  messageText?: string;
+  /** Whether the turn carries attachments. Attachment-bearing turns stay on
+   *  the inline lane regardless of text (an image is usually "look at this and
+   *  do X"), matching the dispatch table's "attachments don't reroute" rule. */
+  hasAttachments?: boolean;
 }): TurnEngineTrigger {
   const branch =
     opts.branchInfoRef.current?.currentBranch ?? opts.branchInfoRef.current?.defaultBranch;
@@ -79,6 +88,26 @@ export function resolveSendEngineTrigger(opts: {
     isProviderAvailable,
   });
   const repoBranchReady = Boolean(opts.repoRef.current && branch);
+  // Conversational lead turns drop to the Orchestrator loop instead of the
+  // inline Coder lane, so the coder no-fake-completion guard can't misfire on
+  // a chat reply. Only a non-empty, attachment-free, clearly-conversational
+  // message downgrades; everything else (including ambiguous text and
+  // attachment turns) stays on the inline lane. A misroute is safe — the
+  // Orchestrator loop can still call tools and delegate.
+  const conversationalTurn =
+    !opts.hasAttachments &&
+    Boolean(opts.messageText?.trim()) &&
+    classifyTurnIntent(opts.messageText ?? '') === 'conversational';
+  if (conversationalTurn) {
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'turn_route_conversational_downgrade',
+        chatId: opts.chatId,
+        repoBranchReady,
+      }),
+    );
+  }
   return resolveTurnEngineTrigger({
     // Engine turns run server-side, where only server-held provider
     // credentials exist — a provider keyed solely via in-app Settings must
@@ -89,8 +118,9 @@ export function resolveSendEngineTrigger(opts: {
     // optimistically true (same as any unknown).
     engineEligible: repoBranchReady && isProviderEngineCapable(provider),
     // The inline lane is a foreground run — browser-held Settings keys
-    // work directly, so no capability fold here.
-    inlineEligible: repoBranchReady,
+    // work directly, so no capability fold here. The conversational-intent
+    // gate keeps lead chatter on the Orchestrator loop.
+    inlineEligible: repoBranchReady && !conversationalTurn,
   });
 }
 
