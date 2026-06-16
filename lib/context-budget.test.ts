@@ -52,6 +52,16 @@ describe('guessWindowFromName', () => {
     expect(guessWindowFromName('minimax-m2.7')).toBe(200_000);
   });
 
+  it('budgets MiniMax-M3 at its 512K standard window, not the M2 fallback', () => {
+    // M3 is a ~1M-context model (512K guaranteed standard tier); the broad
+    // `minimax` rule would otherwise cap it at 200K and compact far too
+    // early. Matched before the generic fallback for both the bare and the
+    // OpenRouter-routed / free-tier ids.
+    expect(guessWindowFromName('minimax-m3')).toBe(512_000);
+    expect(guessWindowFromName('minimax/minimax-m3')).toBe(512_000);
+    expect(guessWindowFromName('minimax-m3-free')).toBe(512_000);
+  });
+
   it('separates the 256K qwen3-coder generation from the 128K older line', () => {
     // qwen3-coder (incl. -next and the size variants) is 256K native; the
     // YaRN-extended 1M is deliberately not matched. Older qwen2.5-coder

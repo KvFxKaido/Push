@@ -108,8 +108,13 @@ export function guessWindowFromName(model: string): number {
   // can't silently over-budget past a smaller real window.
   if (m.includes('qwen3-coder')) return 256_000;
   if (m.includes('qwen') && m.includes('coder')) return 128_000;
-  // MiniMax-M2 family spans 192K–200K across point releases; 200K stays
-  // safe because the 0.92 MAX_RATIO caps the budget below the 192K floor.
+  // MiniMax: M3 jumps to a 1M long-context tier but only guarantees 512K on
+  // the standard tier (above 512K bills at 2x), and the catalog currently
+  // reports 512K — so budget M3 to the 512K standard window, matched before
+  // the generic fallback so the broad `minimax` rule can't cap it at 200K.
+  // The M2 family spans 192K–200K across point releases; 200K stays safe
+  // because the 0.92 MAX_RATIO caps the budget below the 192K floor.
+  if (m.includes('minimax-m3')) return 512_000;
   if (m.includes('minimax')) return 200_000;
   // DeepSeek v4 family ships with 1M context. v3 and earlier topped at
   // 128K. Listed below the v4 check so `deepseek-v4-pro` doesn't get
