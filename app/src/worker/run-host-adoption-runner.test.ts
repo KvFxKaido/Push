@@ -245,7 +245,9 @@ describe('runAdoptedLoop', () => {
     await runAdoptedLoop(loopArgs(state));
 
     expect(mocks.runCoderAgent).toHaveBeenCalledWith(
-      expect.objectContaining({ persona: 'lead' }),
+      // 'sandbox' scope: the adoption surface has no GitHub/ask/artifact tools,
+      // so lead guidance must not steer toward them.
+      expect.objectContaining({ persona: 'lead', leadToolScope: 'sandbox' }),
       expect.anything(),
     );
   });

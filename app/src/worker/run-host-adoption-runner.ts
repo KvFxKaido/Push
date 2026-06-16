@@ -348,6 +348,11 @@ export async function runAdoptedLoop(args: RunAdoptedLoopArgs): Promise<void> {
     // this call site omitted `leadMode` and resumed in implementer voice — a
     // latent bug the persona seam made visible; fixed here (PR 1b).
     persona: 'lead',
+    // ...but this server-side adoption surface only wires sandbox + web-search
+    // (no GitHub / ask_user / artifact executors), so scope the lead guidance to
+    // match — same as the background CoderJob DO lead — or it steers the model
+    // toward tools it can't dispatch and wastes rounds (Codex P2 on #952).
+    leadToolScope: 'sandbox',
     evaluateAfterModel: buildCoderEvaluateAfterModel(services),
     harnessMaxRounds: checkpoint.round + ADOPTION_EXTRA_ROUNDS,
     resumeState: runCheckpointToCoderResumeState<ChatCard>(checkpoint, { resolvedApproval }),
