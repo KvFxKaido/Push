@@ -277,6 +277,43 @@ describe('validateAndNormalizeChatRequest', () => {
       expect('cache_control' in bodyParsed.messages[0].content[0]).toBe(false);
     });
   });
+
+  describe('stream_options.include_usage', () => {
+    const base = { model: 'minimax-m2.7', messages: [{ role: 'user', content: 'hi' }] };
+
+    it('defaults include_usage on so upstreams emit the trailing usage chunk', () => {
+      const result = validateAndNormalizeChatRequest(JSON.stringify(base), {
+        routeLabel: 'Zen',
+        maxOutputTokens: 8192,
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(JSON.parse(result.value.bodyText).stream_options).toEqual({ include_usage: true });
+    });
+
+    it('respects an explicit client include_usage:false', () => {
+      const result = validateAndNormalizeChatRequest(
+        JSON.stringify({ ...base, stream_options: { include_usage: false } }),
+        { routeLabel: 'Zen', maxOutputTokens: 8192 },
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(JSON.parse(result.value.bodyText).stream_options.include_usage).toBe(false);
+    });
+
+    it('preserves other client stream_options fields while defaulting include_usage', () => {
+      const result = validateAndNormalizeChatRequest(
+        JSON.stringify({ ...base, stream_options: { continuous_usage_stats: true } }),
+        { routeLabel: 'Zen', maxOutputTokens: 8192 },
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(JSON.parse(result.value.bodyText).stream_options).toEqual({
+        include_usage: true,
+        continuous_usage_stats: true,
+      });
+    });
+  });
 });
 
 describe('validateAndNormalizeWireRequest', () => {
