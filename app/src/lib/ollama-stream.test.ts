@@ -30,6 +30,21 @@ vi.mock('./tool-dispatch', () => ({
   KNOWN_TOOL_NAMES: new Set(['sandbox_write_file', 'sandbox_read_file']),
 }));
 
+// Default model-catalog stub: non-reasoning model, so the body tests below
+// don't pick up an unexpected `reasoning_effort` field. The reasoning-effort
+// tests override this per-case with `vi.doMock` before re-importing.
+vi.mock('./model-catalog', () => ({
+  getModelCapabilities: () => ({
+    reasoning: false,
+    toolCall: false,
+    vision: false,
+    imageGen: false,
+    structuredOutput: false,
+    contextLimit: 0,
+  }),
+  getReasoningEffort: () => 'medium',
+}));
+
 // ---------------------------------------------------------------------------
 // Test harness — fetch-mock + controllable ReadableStream
 // ---------------------------------------------------------------------------
@@ -304,6 +319,84 @@ describe('ollamaStream', () => {
     expect(body.max_tokens).toBe(1234);
     expect(body.temperature).toBe(0.7);
     expect(body.top_p).toBe(0.9);
+  });
+
+  it('attaches reasoning_effort for a reasoning-capable model using the saved effort', async () => {
+    vi.doMock('./model-catalog', () => ({
+      getModelCapabilities: () => ({
+        reasoning: true,
+        toolCall: false,
+        vision: false,
+        imageGen: false,
+        structuredOutput: false,
+        contextLimit: 0,
+      }),
+      getReasoningEffort: () => 'high',
+    }));
+    installStreamFetch(fetchMock);
+    const { ollamaStream } = await import('./ollama-stream');
+    const iter = ollamaStream(baseRequest);
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.reasoning_effort).toBe('high');
+  });
+
+  it('maps the "off" effort onto Ollama\'s "none" so thinking can be disabled', async () => {
+    vi.doMock('./model-catalog', () => ({
+      getModelCapabilities: () => ({
+        reasoning: true,
+        toolCall: false,
+        vision: false,
+        imageGen: false,
+        structuredOutput: false,
+        contextLimit: 0,
+      }),
+      getReasoningEffort: () => 'off',
+    }));
+    installStreamFetch(fetchMock);
+    const { ollamaStream } = await import('./ollama-stream');
+    const iter = ollamaStream(baseRequest);
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.reasoning_effort).toBe('none');
+  });
+
+  it('omits reasoning_effort for a non-reasoning model', async () => {
+    // Explicit doMock (not the hoisted default) so this case is independent of
+    // any reasoning doMock a prior test registered — vi.doMock persists across
+    // cases until the next import re-resolves it.
+    vi.doMock('./model-catalog', () => ({
+      getModelCapabilities: () => ({
+        reasoning: false,
+        toolCall: false,
+        vision: false,
+        imageGen: false,
+        structuredOutput: false,
+        contextLimit: 0,
+      }),
+      getReasoningEffort: () => 'medium',
+    }));
+    installStreamFetch(fetchMock);
+    const { ollamaStream } = await import('./ollama-stream');
+    const iter = ollamaStream(baseRequest);
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.reasoning_effort).toBeUndefined();
   });
 
   it('closes cleanly when the stream ends without a [DONE] or finish_reason', async () => {
