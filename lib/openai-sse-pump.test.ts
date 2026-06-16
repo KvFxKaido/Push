@@ -123,6 +123,44 @@ describe('mapOpenAIUsage', () => {
   it('zero-fills missing fields', () => {
     expect(mapOpenAIUsage({})).toEqual({ inputTokens: 0, outputTokens: 0, totalTokens: 0 });
   });
+
+  it('captures OpenAI-shaped cache-read tokens (prompt_tokens_details.cached_tokens)', () => {
+    expect(
+      mapOpenAIUsage({
+        prompt_tokens: 5952,
+        completion_tokens: 1,
+        total_tokens: 5953,
+        prompt_tokens_details: { cached_tokens: 5951 },
+      }),
+    ).toEqual({ inputTokens: 5952, outputTokens: 1, totalTokens: 5953, cachedInputTokens: 5951 });
+  });
+
+  it('captures DeepSeek-shaped cache-read tokens (prompt_cache_hit_tokens)', () => {
+    expect(
+      mapOpenAIUsage({
+        prompt_tokens: 100,
+        completion_tokens: 10,
+        total_tokens: 110,
+        prompt_cache_hit_tokens: 64,
+      }),
+    ).toEqual({ inputTokens: 100, outputTokens: 10, totalTokens: 110, cachedInputTokens: 64 });
+  });
+
+  it('preserves a reported cold cache (0) so it stays distinct from no-cache-support', () => {
+    expect(
+      mapOpenAIUsage({
+        prompt_tokens: 5,
+        completion_tokens: 1,
+        total_tokens: 6,
+        prompt_tokens_details: { cached_tokens: 0 },
+      }),
+    ).toEqual({ inputTokens: 5, outputTokens: 1, totalTokens: 6, cachedInputTokens: 0 });
+  });
+
+  it('omits cachedInputTokens entirely when the provider reports no cache field', () => {
+    const usage = mapOpenAIUsage({ prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 });
+    expect('cachedInputTokens' in usage).toBe(false);
+  });
 });
 
 describe('stripTemplateTokens', () => {

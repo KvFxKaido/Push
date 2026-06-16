@@ -120,6 +120,16 @@ export interface StreamUsage {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  /**
+   * Cache-read input tokens reported by the provider (a subset of
+   * `inputTokens` that was served from a prompt cache). OpenAI-compatible
+   * upstreams report this as `usage.prompt_tokens_details.cached_tokens`;
+   * DeepSeek-shaped ones use `usage.prompt_cache_hit_tokens`. Left
+   * `undefined` when the provider reports no cache field at all, so callers
+   * can tell "provider doesn't surface caching" (undefined) apart from
+   * "cache supported but cold this turn" (0).
+   */
+  cachedInputTokens?: number;
 }
 
 export interface ChunkMetadata {
