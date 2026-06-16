@@ -41,6 +41,22 @@ describe('classifyTurnIntent', () => {
     }
   });
 
+  it('treats polite read-only summary/recap requests as conversational (no trailing ?)', () => {
+    // Codex P2: these have no coding imperative and no '?', so without the
+    // explanatory verbs they would fall through to `task` and re-trigger the
+    // very guard this routing avoids.
+    for (const text of [
+      'can you summarize the diff',
+      'could you summarize the latest changes',
+      'please summarize the diff',
+      'recap what you did',
+      'describe the change for me',
+      'go over the reviewer wiring',
+    ]) {
+      expect(classifyTurnIntent(text)).toBe('conversational');
+    }
+  });
+
   it('treats advice-seeking framing as conversational despite a coding keyword', () => {
     expect(classifyTurnIntent('should I refactor this?')).toBe('conversational');
     expect(classifyTurnIntent('do you think we should add a cache here?')).toBe('conversational');

@@ -59,9 +59,13 @@ const CODING_IMPERATIVE = new RegExp(
 /** Code-ish nouns that imply work even without an imperative verb. */
 const CODING_OBJECT = /\b(the bug|failing tests?|this error|type error|stack ?trace|regression)\b/;
 
-/** Explanatory requests anywhere in the message ("could you eli5 …", "walk me
- *  through the diff") — conversational even when not the opening word. */
-const EXPLANATORY = /\b(eli5|explain|clarify|walk me through|tldr|tl;dr)\b/;
+/** Read-only / explanatory requests anywhere in the message ("could you eli5 …",
+ *  "can you summarize the diff", "walk me through it") — conversational even
+ *  when not the opening word. These verbs produce no file changes, so a turn
+ *  built around one must not land on the inline Coder lane (where the
+ *  no-fake-completion guard would fire on the summary). */
+const EXPLANATORY =
+  /\b(eli5|explain|clarify|summari[sz]e|recap|describe|walk me through|go over|tldr|tl;dr)\b/;
 
 /**
  * Conversational signals: interrogatives, explanatory asks, meta / control
