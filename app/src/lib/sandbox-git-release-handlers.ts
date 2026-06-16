@@ -241,6 +241,88 @@ export async function handleSandboxDiff(
   return { text: lines.join('\n'), card: { type: 'diff-preview', data: cardData } };
 }
 
+/** Cap on `git show` output forwarded to the model (chars). Large commits
+ *  truncate rather than blow the turn's context budget. */
+const SHOW_COMMIT_MAX_OUTPUT = 60_000;
+
+/** Single-quote a shell argument (validated upstream by `isSafeGitRef` /
+ *  `sanitizeGitPathspecs`); the quoting is the second safety layer. */
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Read-only inspection of a committed diff via `git show <ref>`. The command is
+ * assembled by Push from validated args (never a model-supplied shell string),
+ * which is what lets this be a `readOnly` tool — several can batch in one turn,
+ * unlike `sandbox_exec git show` which is opaque and capped to one per turn.
+ */
+export async function handleShowCommit(
+  ctx: GitReleaseHandlerContext,
+  args: { ref: string; paths?: string[]; stat?: boolean },
+): Promise<ToolExecutionResult> {
+  const parts = ['git', '--no-pager', 'show', '--no-color'];
+  if (args.stat) parts.push('--stat');
+  parts.push(shellQuote(args.ref));
+  if (args.paths && args.paths.length > 0) {
+    parts.push('--', ...args.paths.map(shellQuote));
+  }
+  const command = parts.join(' ');
+
+  const result = await ctx.execInSandbox(ctx.sandboxId, command, '/workspace');
+  const stdout = result.stdout ?? '';
+  const stderr = result.stderr ?? '';
+
+  if ((result.exitCode ?? 0) !== 0) {
+    const reason = stderr.trim() || stdout.trim() || `git show exited ${result.exitCode}`;
+    const err = classifyError(reason, 'sandbox_show_commit');
+    err.detail = `ref: ${args.ref}`;
+    return {
+      text: formatStructuredError(err, `[Tool Error — sandbox_show_commit]\n${reason}`),
+      structuredError: err,
+    };
+  }
+
+  if (!stdout.trim()) {
+    return {
+      text: `[Tool Result — sandbox_show_commit]\nRef: ${args.ref}\n\n(no output — the ref resolved but the diff was empty for the given paths)`,
+    };
+  }
+
+  const truncated = stdout.length > SHOW_COMMIT_MAX_OUTPUT;
+  const body = truncated ? stdout.slice(0, SHOW_COMMIT_MAX_OUTPUT) : stdout;
+
+  // `--stat` output is a summary, not a unified diff — skip diff stats / card.
+  if (args.stat) {
+    const header = [
+      `[Tool Result — sandbox_show_commit]`,
+      `Ref: ${args.ref} (--stat)`,
+      truncated ? `(truncated to ${SHOW_COMMIT_MAX_OUTPUT} chars)` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+    return { text: `${header}\n\n${body}` };
+  }
+
+  const stats = parseDiffStats(body);
+  const header = [
+    `[Tool Result — sandbox_show_commit]`,
+    `Ref: ${args.ref}`,
+    `${stats.filesChanged} file${stats.filesChanged !== 1 ? 's' : ''} changed, +${stats.additions} -${stats.deletions}`,
+    truncated ? `(truncated to ${SHOW_COMMIT_MAX_OUTPUT} chars)` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  const cardData: DiffPreviewCardData = {
+    diff: body,
+    filesChanged: stats.filesChanged,
+    additions: stats.additions,
+    deletions: stats.deletions,
+    truncated,
+  };
+  return { text: `${header}\n\n${body}`, card: { type: 'diff-preview', data: cardData } };
+}
+
 export async function handlePrepareCommit(
   ctx: GitReleaseHandlerContext,
   args: PrepareCommitArgs,

@@ -87,6 +87,7 @@ import {
 } from './sandbox-verification-handlers';
 import {
   handleSandboxDiff,
+  handleShowCommit,
   handlePrepareCommit,
   handleSandboxPush,
   handlePromoteToGithub,
@@ -883,6 +884,10 @@ export async function executeSandboxToolCall(
           });
         }
         return handleSandboxDiff(buildGitReleaseContext(sandboxId));
+      }
+
+      case 'sandbox_show_commit': {
+        return handleShowCommit(buildGitReleaseContext(sandboxId), call.args);
       }
 
       case 'sandbox_create_branch': {
