@@ -133,6 +133,7 @@ function mapCallToRoute(call: SandboxToolCall): RouteMapping {
     // the set as the UI path exercises them.
     case 'sandbox_search':
     case 'sandbox_find_references':
+    case 'sandbox_show_commit':
     case 'sandbox_edit_range':
     case 'sandbox_search_replace':
     case 'sandbox_edit_file':

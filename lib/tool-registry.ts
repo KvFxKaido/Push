@@ -286,6 +286,18 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     exampleJson: '{"tool": "refs", "args": {"symbol": "buildPrompt"}}',
   },
   {
+    canonicalName: 'sandbox_show_commit',
+    publicName: 'show_commit',
+    source: 'sandbox',
+    readOnly: true,
+    statusLabel: 'Reading commit...',
+    protocolSignature: 'show_commit(ref, paths?, stat?)',
+    protocolDescription:
+      'Show a committed diff for a ref (read-only `git show`). Prefer this over `exec git show` for inspecting commits — it is read-only so several can run in one turn. Pass `paths` to scope to files, or `stat: true` for a summary.',
+    exampleJson:
+      '{"tool": "show_commit", "args": {"ref": "HEAD", "paths": ["app/src/lib/app.ts"]}}',
+  },
+  {
     canonicalName: 'sandbox_edit_range',
     publicName: 'edit_range',
     source: 'sandbox',

@@ -15,6 +15,7 @@ import {
   handlePrepareCommit,
   handlePromoteToGithub,
   handleSandboxDiff,
+  handleShowCommit,
   handleSandboxPush,
   handleSaveDraft,
   type GitReleaseHandlerContext,
@@ -190,6 +191,72 @@ describe('handleSandboxDiff', () => {
         truncated: false,
       });
     }
+  });
+});
+
+describe('handleShowCommit', () => {
+  const DIFF = [
+    'commit 0ee94b7',
+    'diff --git a/app/src/lib/app.ts b/app/src/lib/app.ts',
+    '--- a/app/src/lib/app.ts',
+    '+++ b/app/src/lib/app.ts',
+    '@@ -1 +1 @@',
+    '-const x = 1;',
+    '+const x = 2;',
+  ].join('\n');
+
+  it('runs a read-only `git show` for the ref and returns a diff-preview card', async () => {
+    const ctx = makeContext({ execResults: [ok(DIFF)] });
+    const result = await handleShowCommit(ctx, { ref: 'HEAD' });
+
+    // The ref is single-quoted; read-only safety flags disable repo-configured
+    // external diff / textconv drivers; no working-tree mutation flag.
+    const cmd = String(ctx.execCalls[0][1]);
+    expect(cmd).toContain('git --no-pager show --no-color');
+    expect(cmd).toContain('--no-ext-diff');
+    expect(cmd).toContain('--no-textconv');
+    expect(cmd).toContain("'HEAD'");
+    expect(result.text).toContain('[Tool Result — sandbox_show_commit]');
+    expect(result.text).toContain('1 file changed, +1 -1');
+    expect(result.card?.type).toBe('diff-preview');
+  });
+
+  it('scopes to paths after `--` and quotes each', async () => {
+    const ctx = makeContext({ execResults: [ok(DIFF)] });
+    await handleShowCommit(ctx, { ref: 'main~2', paths: ['app/src/lib/app.ts', 'lib/x.ts'] });
+    const cmd = String(ctx.execCalls[0][1]);
+    expect(cmd).toContain("'main~2' -- 'app/src/lib/app.ts' 'lib/x.ts'");
+  });
+
+  it('passes --stat and omits the diff card in stat mode', async () => {
+    const ctx = makeContext({ execResults: [ok(' app.ts | 2 +-\n 1 file changed')] });
+    const result = await handleShowCommit(ctx, { ref: 'HEAD', stat: true });
+    expect(String(ctx.execCalls[0][1])).toContain('--no-textconv --stat');
+    expect(result.card).toBeUndefined();
+  });
+
+  it('surfaces a structured error when the ref does not resolve', async () => {
+    const ctx = makeContext({
+      execResults: [fail('', "fatal: bad revision 'nope'", 128)],
+    });
+    const result = await handleShowCommit(ctx, { ref: 'nope' });
+    expect(result.structuredError).toBeDefined();
+    expect(result.text).toContain('[Tool Error — sandbox_show_commit]');
+    expect(result.text).toContain('bad revision');
+  });
+
+  it('reports an empty diff distinctly from an error', async () => {
+    const ctx = makeContext({ execResults: [ok('   ')] });
+    const result = await handleShowCommit(ctx, { ref: 'HEAD', paths: ['untouched.ts'] });
+    expect(result.structuredError).toBeUndefined();
+    expect(result.text).toContain('(no output');
+  });
+
+  it('truncates very large output', async () => {
+    const big = `${DIFF}\n${'+x'.repeat(40_000)}`;
+    const ctx = makeContext({ execResults: [ok(big)] });
+    const result = await handleShowCommit(ctx, { ref: 'HEAD' });
+    expect(result.text).toContain('(truncated to');
   });
 });
 

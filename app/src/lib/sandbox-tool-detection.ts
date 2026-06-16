@@ -96,6 +96,7 @@ export type SandboxToolCall =
     }
   | { tool: 'sandbox_list_dir'; args: { path?: string } }
   | { tool: 'sandbox_diff'; args: Record<string, never> }
+  | { tool: 'sandbox_show_commit'; args: { ref: string; paths?: string[]; stat?: boolean } }
   | { tool: 'sandbox_prepare_commit'; args: { message: string } }
   | { tool: 'sandbox_push'; args: Record<string, never> }
   | { tool: 'sandbox_run_tests'; args: { framework?: string } }
@@ -125,6 +126,42 @@ export type SandboxToolCall =
 
 function getToolName(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+/**
+ * A git commit-ish reference safe to interpolate into a `git show` command:
+ * SHAs, branch/tag names, `HEAD`, ancestry (`HEAD~1`, `main^`), namespaced refs
+ * (`refs/heads/x`), and reflog/upstream selectors (`branch@{upstream}`). No
+ * whitespace or shell metacharacters, and no leading dash (which would let a
+ * ref masquerade as a `git` option). Length-capped. The handler single-quotes
+ * the value as well — this is the first of the two safety layers.
+ */
+const SAFE_GIT_REF = /^(?!-)[A-Za-z0-9._/@{}^~-]{1,200}$/;
+
+export function isSafeGitRef(ref: string): boolean {
+  return SAFE_GIT_REF.test(ref);
+}
+
+/**
+ * Validate an optional `paths` pathspec list for `git show -- <paths>`. Returns
+ * the cleaned list, or `null` if any entry is non-string, empty, dash-led, or
+ * contains a shell metacharacter / NUL. Paths ride after `--` and are
+ * single-quoted by the handler, but we still reject metacharacters up front so a
+ * malformed pathspec never reaches the shell builder.
+ */
+export function sanitizeGitPathspecs(value: unknown): string[] | null {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) return null;
+  const out: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== 'string') return null;
+    const p = entry.trim();
+    if (!p || p.startsWith('-') || /[;&|$`(){}<>*?!\\\n\r\t"']/.test(p) || p.includes('\0')) {
+      return null;
+    }
+    out.push(p);
+  }
+  return out;
 }
 
 function parsePositiveIntegerArg(value: unknown): number | undefined | null {
@@ -289,6 +326,23 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
   }
   if (tool === 'sandbox_diff') {
     return { tool: 'sandbox_diff', args: {} };
+  }
+  if (tool === 'sandbox_show_commit' && typeof args.ref === 'string') {
+    const ref = args.ref.trim();
+    // Commit-ish shape only — SHAs, branch/tag names, HEAD, HEAD~1, main^,
+    // refs/heads/x, branch@{upstream}. Reject anything with shell metacharacters
+    // or a leading dash (option injection) before it reaches the shell builder.
+    if (!isSafeGitRef(ref)) return null;
+    const paths = sanitizeGitPathspecs(args.paths);
+    if (paths === null) return null;
+    return {
+      tool: 'sandbox_show_commit',
+      args: {
+        ref,
+        ...(paths.length > 0 ? { paths } : {}),
+        ...(args.stat === true ? { stat: true } : {}),
+      },
+    };
   }
   if (tool === 'sandbox_prepare_commit' && typeof args.message === 'string') {
     return { tool: 'sandbox_prepare_commit', args: { message: args.message } };

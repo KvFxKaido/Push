@@ -417,3 +417,57 @@ describe('LOCAL_PC_TOOL_PROTOCOL', () => {
     }
   });
 });
+
+describe('validateSandboxToolCall — sandbox_show_commit', () => {
+  it('accepts a ref and normalizes optional paths/stat', () => {
+    expect(validateSandboxToolCall({ tool: 'sandbox_show_commit', args: { ref: 'HEAD' } })).toEqual(
+      { tool: 'sandbox_show_commit', args: { ref: 'HEAD' } },
+    );
+
+    expect(
+      validateSandboxToolCall({
+        tool: 'sandbox_show_commit',
+        args: { ref: 'main~2', paths: ['app/src/lib/app.ts'], stat: true },
+      }),
+    ).toEqual({
+      tool: 'sandbox_show_commit',
+      args: { ref: 'main~2', paths: ['app/src/lib/app.ts'], stat: true },
+    });
+  });
+
+  it('accepts common ref shapes (sha, ancestry, refs/, upstream)', () => {
+    for (const ref of ['0ee94b7', 'HEAD~1', 'main^', 'refs/heads/feat', 'branch@{upstream}']) {
+      expect(
+        validateSandboxToolCall({ tool: 'sandbox_show_commit', args: { ref } }),
+      ).not.toBeNull();
+    }
+  });
+
+  it('rejects refs with shell metacharacters or a leading dash (injection guard)', () => {
+    for (const ref of ['HEAD; rm -rf /', 'a$(whoami)', 'foo|bar', '--upload-pack=x', '`id`', '']) {
+      expect(validateSandboxToolCall({ tool: 'sandbox_show_commit', args: { ref } })).toBeNull();
+    }
+  });
+
+  it('rejects pathspecs with metacharacters, dashes, or non-string entries', () => {
+    for (const paths of [['ok.ts', 'bad;rm'], ['-x'], ['foo$(id)'], [42] as unknown as string[]]) {
+      expect(
+        validateSandboxToolCall({ tool: 'sandbox_show_commit', args: { ref: 'HEAD', paths } }),
+      ).toBeNull();
+    }
+  });
+
+  it('allows a space in a pathspec (single-quoted safely)', () => {
+    expect(
+      validateSandboxToolCall({
+        tool: 'sandbox_show_commit',
+        args: { ref: 'HEAD', paths: ['my file.ts'] },
+      }),
+    ).toEqual({ tool: 'sandbox_show_commit', args: { ref: 'HEAD', paths: ['my file.ts'] } });
+  });
+
+  it('rejects a missing/non-string ref', () => {
+    expect(validateSandboxToolCall({ tool: 'sandbox_show_commit', args: {} })).toBeNull();
+    expect(validateSandboxToolCall({ tool: 'sandbox_show_commit', args: { ref: 123 } })).toBeNull();
+  });
+});

@@ -109,6 +109,7 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
   sandbox_find_references: ['repo:read'],
   sandbox_list_dir: ['repo:read'],
   sandbox_diff: ['repo:read'],
+  sandbox_show_commit: ['repo:read'],
   sandbox_read_symbols: ['repo:read'],
 
   // Sandbox mutating tools
