@@ -307,6 +307,18 @@ export type RunEventSubagent =
 
 export type RunEventInput =
   | {
+      // Pre-loop routing decision emitted when the send path deliberately keeps
+      // a turn on the Orchestrator loop instead of a bypass lane. This makes
+      // route changes visible in the same structured event stream as tool and
+      // lifecycle events, without relying on ad hoc browser console logs.
+      type: 'turn.route';
+      route: 'orchestrator' | 'inline-delegation' | 'background-mode';
+      reason: 'conversational_downgrade';
+      suppressedRoute?: 'inline-delegation' | 'background-mode';
+      intent: 'conversational' | 'task';
+      repoBranchReady: boolean;
+    }
+  | {
       type: 'assistant.turn_start';
       round: number;
     }

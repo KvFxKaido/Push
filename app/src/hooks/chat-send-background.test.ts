@@ -176,6 +176,7 @@ describe('resolveSendEngineTrigger', () => {
   });
 
   it('drops a clearly-conversational turn to the Orchestrator loop', () => {
+    const routeEvents: unknown[] = [];
     // Repo + branch are ready (would normally route inline), but the message
     // is a plain question — the coder lane (and its no-fake-completion guard)
     // must not run on it.
@@ -185,8 +186,19 @@ describe('resolveSendEngineTrigger', () => {
         conversationsRef: makeConversations('ollama'),
         chatId: 'chat1',
         messageText: 'what changed recently in Push?',
+        onRouteEvent: (event) => routeEvents.push(event),
       }),
     ).toBeNull();
+    expect(routeEvents).toEqual([
+      {
+        type: 'turn.route',
+        route: 'orchestrator',
+        reason: 'conversational_downgrade',
+        suppressedRoute: 'inline-delegation',
+        intent: 'conversational',
+        repoBranchReady: true,
+      },
+    ]);
   });
 
   it('keeps a coding-intent turn on the inline lane', () => {
@@ -213,6 +225,7 @@ describe('resolveSendEngineTrigger', () => {
   });
 
   it('still detaches a conversational turn to the engine when background-mode is on', () => {
+    const routeEvents: unknown[] = [];
     // The conversational gate only relaxes the inline route; an explicit
     // background-mode detach still wins (it's the more specific intent).
     storage.map.set(BG_KEY, '1');
@@ -222,8 +235,10 @@ describe('resolveSendEngineTrigger', () => {
         conversationsRef: makeConversations('ollama'),
         chatId: 'chat1',
         messageText: 'what changed recently?',
+        onRouteEvent: (event) => routeEvents.push(event),
       }),
     ).toBe('background-mode');
+    expect(routeEvents).toEqual([]);
   });
 });
 

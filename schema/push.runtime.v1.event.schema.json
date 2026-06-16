@@ -938,6 +938,48 @@
         }
       }
     },
+    "TurnRoute": {
+      "type": "object",
+      "required": [
+        "route",
+        "reason",
+        "intent",
+        "repoBranchReady"
+      ],
+      "properties": {
+        "route": {
+          "type": "string",
+          "enum": [
+            "orchestrator",
+            "inline-delegation",
+            "background-mode"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "conversational_downgrade"
+          ]
+        },
+        "suppressedRoute": {
+          "type": "string",
+          "enum": [
+            "inline-delegation",
+            "background-mode"
+          ]
+        },
+        "intent": {
+          "type": "string",
+          "enum": [
+            "conversational",
+            "task"
+          ]
+        },
+        "repoBranchReady": {
+          "type": "boolean"
+        }
+      }
+    },
     "AssistantTurnStart": {
       "type": "object",
       "required": [
@@ -1759,6 +1801,25 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/DelegationInterrupted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "turn.route"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/TurnRoute"
           }
         }
       }

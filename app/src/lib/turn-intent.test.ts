@@ -57,6 +57,23 @@ describe('classifyTurnIntent', () => {
     }
   });
 
+  it('treats read-only review phrasing as conversational instead of Coder-task work', () => {
+    for (const text of [
+      'take a look at the diff',
+      'look over this PR',
+      'review PR 945',
+      'please inspect the pull request changes',
+      'check out the latest change',
+    ]) {
+      expect(classifyTurnIntent(text)).toBe('conversational');
+    }
+  });
+
+  it('keeps review phrasing task-shaped when it chains into a mutation', () => {
+    expect(classifyTurnIntent('review the PR and fix the failing test')).toBe('task');
+    expect(classifyTurnIntent('look over the diff then address the comments')).toBe('task');
+  });
+
   it('treats advice-seeking framing as conversational despite a coding keyword', () => {
     expect(classifyTurnIntent('should I refactor this?')).toBe('conversational');
     expect(classifyTurnIntent('do you think we should add a cache here?')).toBe('conversational');
