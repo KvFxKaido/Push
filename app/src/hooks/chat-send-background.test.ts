@@ -174,6 +174,57 @@ describe('resolveSendEngineTrigger', () => {
       }),
     ).toBeNull();
   });
+
+  it('drops a clearly-conversational turn to the Orchestrator loop', () => {
+    // Repo + branch are ready (would normally route inline), but the message
+    // is a plain question — the coder lane (and its no-fake-completion guard)
+    // must not run on it.
+    expect(
+      resolveSendEngineTrigger({
+        ...makeRefs(),
+        conversationsRef: makeConversations('ollama'),
+        chatId: 'chat1',
+        messageText: 'what changed recently in Push?',
+      }),
+    ).toBeNull();
+  });
+
+  it('keeps a coding-intent turn on the inline lane', () => {
+    expect(
+      resolveSendEngineTrigger({
+        ...makeRefs(),
+        conversationsRef: makeConversations('ollama'),
+        chatId: 'chat1',
+        messageText: 'fix the failing reviewer test',
+      }),
+    ).toBe('inline-delegation');
+  });
+
+  it('keeps an attachment-bearing turn on the inline lane even with conversational text', () => {
+    expect(
+      resolveSendEngineTrigger({
+        ...makeRefs(),
+        conversationsRef: makeConversations('ollama'),
+        chatId: 'chat1',
+        messageText: 'what is this?',
+        hasAttachments: true,
+      }),
+    ).toBe('inline-delegation');
+  });
+
+  it('still detaches a conversational turn to the engine when background-mode is on', () => {
+    // The conversational gate only relaxes the inline route; an explicit
+    // background-mode detach still wins (it's the more specific intent).
+    storage.map.set(BG_KEY, '1');
+    expect(
+      resolveSendEngineTrigger({
+        ...makeRefs(),
+        conversationsRef: makeConversations('ollama'),
+        chatId: 'chat1',
+        messageText: 'what changed recently?',
+      }),
+    ).toBe('background-mode');
+  });
 });
 
 describe('startBackgroundMainChatTurn', () => {

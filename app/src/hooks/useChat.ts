@@ -605,7 +605,7 @@ export function useChat(
       if (!trimmedText && !hasAttachments) return;
       const targetChat = options?.chatId || activeChatIdRef.current;
       // biome-ignore format: engine routing + eligibility live in resolveSendEngineTrigger (chat-send-background.ts); opts stay inline for the file line cap.
-      const engineTrigger = resolveSendEngineTrigger({ repoRef, branchInfoRef, conversationsRef, chatId: targetChat, requestedProvider: options?.provider ?? null });
+      const engineTrigger = resolveSendEngineTrigger({ repoRef, branchInfoRef, conversationsRef, chatId: targetChat, requestedProvider: options?.provider ?? null, messageText: trimmedText, hasAttachments });
       // Dispatch (Inline Foreground Lane): 'background-mode' → CoderJob DO engine;
       // 'inline-delegation' → foreground inline lane; null → Orchestrator loop.
       const routeToEngine = engineTrigger === 'background-mode';
