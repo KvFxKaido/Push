@@ -91,6 +91,31 @@ export function guessWindowFromName(model: string): number {
   if (m.includes('grok')) return 2_000_000;
   if (m.includes('kimi') || m.includes('moonshot')) return 256_000;
   if (m.includes('gpt-5')) return 1_000_000;
+  // Open-weight families served by catalog-less providers (notably Ollama
+  // Cloud, which doesn't expose `context_length`). Without these, the
+  // flagship cloud models fall through to the 100K default below and get
+  // under-budgeted well short of their real windows. This table is a
+  // cold-cache / CLI fallback only — the web path resolves the live
+  // models.dev window first (see orchestrator-context.ts), so a model
+  // present in the catalog auto-corrects without touching this list.
+  // Native windows only — YaRN-extended ceilings (e.g. qwen3-coder's 1M)
+  // are excluded so the budget can't outrun what the model ships with.
+  if (m.includes('gpt-oss')) return 128_000;
+  // Qwen coder line has *downward* version variance: the qwen3 generation
+  // (480b / 30b / -next) is 256K native, but qwen2.5-coder shipped 128K.
+  // Match the 256K generation explicitly, then floor the rest of the coder
+  // family at 128K so an unrecognized bump (e.g. a future qwen4-coder)
+  // can't silently over-budget past a smaller real window.
+  if (m.includes('qwen3-coder')) return 256_000;
+  if (m.includes('qwen') && m.includes('coder')) return 128_000;
+  // MiniMax: M3 jumps to a 1M long-context tier but only guarantees 512K on
+  // the standard tier (above 512K bills at 2x), and the catalog currently
+  // reports 512K — so budget M3 to the 512K standard window, matched before
+  // the generic fallback so the broad `minimax` rule can't cap it at 200K.
+  // The M2 family spans 192K–200K across point releases; 200K stays safe
+  // because the 0.92 MAX_RATIO caps the budget below the 192K floor.
+  if (m.includes('minimax-m3')) return 512_000;
+  if (m.includes('minimax')) return 200_000;
   // DeepSeek v4 family ships with 1M context. v3 and earlier topped at
   // 128K. Listed below the v4 check so `deepseek-v4-pro` doesn't get
   // bucketed with the older window.

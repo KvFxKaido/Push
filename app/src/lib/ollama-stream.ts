@@ -17,6 +17,7 @@ import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
 import { parseProviderError } from './orchestrator-streaming';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
+import { getModelCapabilities, getReasoningEffort } from './model-catalog';
 import { PROVIDER_URLS } from './providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
@@ -45,8 +46,22 @@ export async function* ollamaStream(
     linkedLibraryContent: req.linkedLibraryContent,
   });
 
-  // 2. Plain OpenAI-compatible request body — Ollama Cloud has no
-  //    provider-specific extensions on `/v1/chat/completions`.
+  // 2. Reasoning effort. Ollama Cloud's OpenAI-compatible endpoint honors a
+  //    `reasoning_effort` field (`high|medium|low|none`) on thinking-capable
+  //    models, translating it to the native `think` option. Gate it on cached
+  //    model metadata: non-reasoning models reject the field, and Ollama
+  //    auto-enables thinking when it's absent — so we send it explicitly,
+  //    mapping Push's `off` onto Ollama's `none` so the Reasoning control can
+  //    actually disable thinking instead of silently leaving it on. The UI
+  //    button is already gated on the same `reasoning` capability, so the
+  //    field is only ever attached for models the user can toggle.
+  const supportsReasoning = getModelCapabilities('ollama', req.model).reasoning;
+  const effort = getReasoningEffort('ollama');
+  const reasoningEffort = effort === 'off' ? 'none' : effort;
+
+  // 3. OpenAI-compatible request body. Aside from `reasoning_effort` above,
+  //    Ollama Cloud has no provider-specific extensions on
+  //    `/v1/chat/completions`.
   const body: Record<string, unknown> = {
     model: req.model,
     messages: llmMessages,
@@ -54,9 +69,10 @@ export async function* ollamaStream(
     ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
+    ...(supportsReasoning ? { reasoning_effort: reasoningEffort } : {}),
   };
 
-  // 3. Headers. Ollama Cloud uses a straight Bearer token; the Worker proxy
+  // 4. Headers. Ollama Cloud uses a straight Bearer token; the Worker proxy
   //    overrides Authorization server-side when OLLAMA_API_KEY is configured.
   //    When neither the client nor the Worker has a key configured we omit
   //    Authorization entirely — sending `Bearer ` (empty token) reads as a
@@ -72,7 +88,7 @@ export async function* ollamaStream(
   };
   injectTraceHeaders(headers);
 
-  // 4. POST + stream response.
+  // 5. POST + stream response.
   const response = await fetch(PROVIDER_URLS.ollama.chat, {
     method: 'POST',
     headers,
