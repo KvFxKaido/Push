@@ -284,7 +284,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
     expect(lead).not.toContain('the Orchestrator');
     // Ported-from-Orchestrator sections the inline lead regained.
     expect(lead).toContain('Voice:');
-    expect(lead).toContain('Never start with "I"');
+    expect(lead).toContain('Vary your openings');
     expect(lead).toContain('Never mention other repos');
     expect(lead).toContain('## Tool Call Placement');
     expect(lead).toContain('## Tool Routing');

@@ -233,6 +233,23 @@ describe('runAdoptedLoop', () => {
     expect(state.alarmAt).toBeNull();
   });
 
+  it('resumes the adopted run as the lead persona (its own checkpointed turn)', async () => {
+    const state = makeHostState(makeRecord());
+    mocks.runCoderAgent.mockResolvedValue({
+      summary: 'done',
+      cards: [],
+      rounds: 1,
+      checkpoints: 0,
+    });
+
+    await runAdoptedLoop(loopArgs(state));
+
+    expect(mocks.runCoderAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ persona: 'lead' }),
+      expect.anything(),
+    );
+  });
+
   it('stops without writing when ownership was lost (reclaim)', async () => {
     const state = makeHostState(makeRecord());
     const args = loopArgs(state);
