@@ -128,11 +128,12 @@ tool-shaped and is out of scope here.
 - **Provider coverage (web).** No longer OpenRouter-only. Every OpenAI-shaped
   web adapter now serializes `response_format` via the shared
   `toOpenAIResponseFormat` builder: `openrouter`, `openai`, `azure`, `nvidia`,
-  `blackbox`, `kilocode`, `openadapter`, `zen`, `ollama`. The
+  `blackbox`, `kilocode`, `openadapter`, `zen`. The
   `provider.require_parameters` routing guard stays **OpenRouter-only** — it's an
-  OpenRouter-specific field. `cloudflare`/`bedrock` are left out (their
-  `response_format` support is unconfirmed), and the Anthropic/Gemini/Vertex
-  native serializers ignore the field by contract. Activation is still
+  OpenRouter-specific field. `cloudflare`/`bedrock`/`ollama` are left out (their
+  `response_format` support is unconfirmed — Ollama Cloud does not honor
+  structured outputs per its docs), and the Anthropic/Gemini/Vertex native
+  serializers ignore the field by contract. Activation is still
   catalog-gated per the bullet above, so providers without models.dev
   structured-output metadata (e.g. direct OpenAI/Azure today) stay prompt-only
   until that metadata lands — the wire plumbing is in place to light them up

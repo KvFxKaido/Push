@@ -1213,9 +1213,18 @@ describe('providerModelSupportsStructuredOutput', () => {
   it('returns false for providers whose adapter does not serialize response_format', () => {
     stubWindow();
     // Anthropic / Gemini / Vertex native serializers ignore `response_format` by
-    // contract; cloudflare / bedrock are unconfirmed; demo has no wire. None of
-    // these may ever attach a constraint, regardless of any catalog metadata.
-    for (const provider of ['anthropic', 'google', 'vertex', 'cloudflare', 'bedrock', 'demo']) {
+    // contract; cloudflare / bedrock / ollama are unconfirmed (Ollama Cloud does
+    // not support structured outputs); demo has no wire. None of these may ever
+    // attach a constraint, regardless of any catalog metadata.
+    for (const provider of [
+      'anthropic',
+      'google',
+      'vertex',
+      'cloudflare',
+      'bedrock',
+      'ollama',
+      'demo',
+    ]) {
       expect(providerModelSupportsStructuredOutput(provider, 'any-model')).toBe(false);
     }
   });

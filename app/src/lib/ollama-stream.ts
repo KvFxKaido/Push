@@ -12,7 +12,6 @@
 import type { ChatMessage } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
-import { toOpenAIResponseFormat } from '@push/lib/openai-chat-serializer';
 import type { WorkspaceContext } from '@/types';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
@@ -55,11 +54,6 @@ export async function* ollamaStream(
     ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
-    // Native structured outputs: forward the caller's JSON-Schema constraint so
-    // the OpenAI-compatible endpoint constrains generation server-side. Shared
-    // wire builder with the CLI/OpenRouter paths. No `provider.require_parameters`
-    // guard — that field is OpenRouter-specific.
-    ...(req.responseFormat ? { response_format: toOpenAIResponseFormat(req.responseFormat) } : {}),
   };
 
   // 3. Headers. Ollama Cloud uses a straight Bearer token; the Worker proxy

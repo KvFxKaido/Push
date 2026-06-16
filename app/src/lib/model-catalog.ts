@@ -288,11 +288,13 @@ export function openRouterModelSupportsReasoning(modelId: string): boolean {
  * field onto the wire — the OpenAI-shaped endpoints routed through
  * `openAISSEPump`. The Anthropic / Gemini / Vertex native serializers are
  * excluded because they ignore the field by contract (see `ResponseFormatSpec`
- * in `lib/provider-contract.ts`); `cloudflare` and `bedrock` are omitted because
- * their `response_format` support isn't confirmed. Membership here only governs
- * *whether the wire can honor the constraint* — actual attachment is still gated
- * on per-model catalog capability below, so a provider never attaches a
- * constraint its routed endpoint would silently drop.
+ * in `lib/provider-contract.ts`); `cloudflare`, `bedrock`, and `ollama` are
+ * omitted because their `response_format` support isn't confirmed (Ollama Cloud
+ * does not honor structured outputs per its docs, so attaching one would route
+ * around the prompt-only `parseStructured` fallback). Membership here only
+ * governs *whether the wire can honor the constraint* — actual attachment is
+ * still gated on per-model catalog capability below, so a provider never
+ * attaches a constraint its routed endpoint would silently drop.
  */
 const STRUCTURED_OUTPUT_PROVIDERS: ReadonlySet<string> = new Set([
   'openrouter',
@@ -303,7 +305,6 @@ const STRUCTURED_OUTPUT_PROVIDERS: ReadonlySet<string> = new Set([
   'kilocode',
   'openadapter',
   'zen',
-  'ollama',
 ]);
 
 /**
