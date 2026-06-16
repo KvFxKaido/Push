@@ -48,11 +48,21 @@ export function mapOpenAIUsage(usage: {
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
+  /** OpenAI-style cache-read field (also used by Fireworks-served models). */
+  prompt_tokens_details?: { cached_tokens?: number };
+  /** DeepSeek-style cache-read field. */
+  prompt_cache_hit_tokens?: number;
 }): StreamUsage {
+  // Prefer the OpenAI shape, fall back to the DeepSeek shape. `?? ` (not `||`)
+  // so a reported 0 — cache supported but cold this turn — survives instead of
+  // collapsing to the DeepSeek field or undefined.
+  const cachedInputTokens =
+    usage.prompt_tokens_details?.cached_tokens ?? usage.prompt_cache_hit_tokens;
   return {
     inputTokens: usage.prompt_tokens ?? 0,
     outputTokens: usage.completion_tokens ?? 0,
     totalTokens: usage.total_tokens ?? 0,
+    ...(typeof cachedInputTokens === 'number' && { cachedInputTokens }),
   };
 }
 
@@ -216,7 +226,13 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
     if (!trimmed.startsWith('data:')) return;
     const jsonStr = trimmed[5] === ' ' ? trimmed.slice(6) : trimmed.slice(5);
     let parsed: {
-      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+        prompt_tokens_details?: { cached_tokens?: number };
+        prompt_cache_hit_tokens?: number;
+      };
       choices?: Array<{
         delta?: {
           content?: unknown;

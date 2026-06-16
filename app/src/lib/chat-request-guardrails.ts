@@ -286,6 +286,20 @@ export function validateAndNormalizeChatRequest(
     model,
     messages: normalizedMessages,
     stream: true,
+    // Always request the trailing usage chunk. OpenAI-compatible upstreams
+    // omit `usage` (and `usage.prompt_tokens_details.cached_tokens`) on
+    // streamed responses unless `stream_options.include_usage` is set, so
+    // without this every Worker-proxied web turn loses token + prompt-cache
+    // accounting (the `push.usage.*` span attributes, the CoderJob usage
+    // log). Providers that don't support the field ignore it; the
+    // Anthropic-transport bridge rebuilds the body and never forwards it.
+    // Default it on, but let an explicit client `stream_options` win.
+    stream_options: {
+      include_usage: true,
+      ...(parsed.stream_options && typeof parsed.stream_options === 'object'
+        ? (parsed.stream_options as Record<string, unknown>)
+        : {}),
+    },
   };
   const adjustments: string[] = [];
 

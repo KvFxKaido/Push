@@ -388,6 +388,10 @@ export async function iterateChatStream<M extends LlmMessage>(
             'push.usage.input_tokens': doneUsage?.inputTokens,
             'push.usage.output_tokens': doneUsage?.outputTokens,
             'push.usage.total_tokens': doneUsage?.totalTokens,
+            // Cache-read input tokens (subset of input_tokens) when the
+            // provider reports them; `setSpanAttributes` drops undefined, so
+            // providers that don't surface caching simply omit the attribute.
+            'push.usage.cached_input_tokens': doneUsage?.cachedInputTokens,
           });
           if (terminalError) {
             recordSpanError(span, terminalError);

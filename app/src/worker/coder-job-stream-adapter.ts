@@ -216,7 +216,40 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
         );
       }
 
-      yield* pumpSseBody(response.body as unknown as ReadableStream<Uint8Array>, signal);
+      // Pass events straight through, but tap the terminal `done` so the
+      // prompt-cache hit rate is observable in `wrangler tail`. OpenAI-shaped
+      // upstreams (incl. Fireworks-served DeepSeek behind Zen) report
+      // cache-read tokens on the trailing usage chunk; `cachedInputTokens` is
+      // null when the provider surfaces no cache field at all. Server-side
+      // only — this is the live lane for background/inline turns, so the log
+      // lands in Worker logs, never CLI stdout.
+      let usageLogged = false;
+      for await (const event of pumpSseBody(
+        response.body as unknown as ReadableStream<Uint8Array>,
+        signal,
+      )) {
+        if (event.type === 'done' && !usageLogged) {
+          usageLogged = true;
+          const u = event.usage;
+          const cached = typeof u?.cachedInputTokens === 'number' ? u.cachedInputTokens : null;
+          console.log(
+            JSON.stringify({
+              level: 'info',
+              event: 'provider_stream_usage',
+              provider: args.provider,
+              model: req.model || args.modelId || null,
+              inputTokens: u?.inputTokens ?? null,
+              outputTokens: u?.outputTokens ?? null,
+              cachedInputTokens: cached,
+              cacheHitRatio:
+                cached !== null && u && u.inputTokens > 0
+                  ? Number((cached / u.inputTokens).toFixed(3))
+                  : null,
+            }),
+          );
+        }
+        yield event;
+      }
     })();
 }
 
@@ -323,6 +356,8 @@ function parseSseEvent(rawEvent: string): {
         prompt_tokens?: number;
         completion_tokens?: number;
         total_tokens?: number;
+        prompt_tokens_details?: { cached_tokens?: number };
+        prompt_cache_hit_tokens?: number;
       };
     };
     const events: PushStreamEvent[] = [];
@@ -345,7 +380,15 @@ function parseSseEvent(rawEvent: string): {
  * pump only records a value for the real usage chunk.
  */
 function parseUsage(
-  usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined,
+  usage:
+    | {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+        prompt_tokens_details?: { cached_tokens?: number };
+        prompt_cache_hit_tokens?: number;
+      }
+    | undefined,
 ): StreamUsage | null {
   if (!usage) return null;
   const inputTokens = typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : 0;
@@ -353,5 +396,14 @@ function parseUsage(
   const totalTokens =
     typeof usage.total_tokens === 'number' ? usage.total_tokens : inputTokens + outputTokens;
   if (inputTokens === 0 && outputTokens === 0 && totalTokens === 0) return null;
-  return { inputTokens, outputTokens, totalTokens };
+  // See `StreamUsage.cachedInputTokens` — only set when upstream reports it, so
+  // a cold-but-cache-capable turn (0) stays distinct from no-cache-support.
+  const cachedInputTokens =
+    usage.prompt_tokens_details?.cached_tokens ?? usage.prompt_cache_hit_tokens;
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    ...(typeof cachedInputTokens === 'number' && { cachedInputTokens }),
+  };
 }
