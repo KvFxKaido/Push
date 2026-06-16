@@ -233,6 +233,25 @@ describe('runAdoptedLoop', () => {
     expect(state.alarmAt).toBeNull();
   });
 
+  it('resumes the adopted run as the lead persona (its own checkpointed turn)', async () => {
+    const state = makeHostState(makeRecord());
+    mocks.runCoderAgent.mockResolvedValue({
+      summary: 'done',
+      cards: [],
+      rounds: 1,
+      checkpoints: 0,
+    });
+
+    await runAdoptedLoop(loopArgs(state));
+
+    expect(mocks.runCoderAgent).toHaveBeenCalledWith(
+      // 'sandbox' scope: the adoption surface has no GitHub/ask/artifact tools,
+      // so lead guidance must not steer toward them.
+      expect.objectContaining({ persona: 'lead', leadToolScope: 'sandbox' }),
+      expect.anything(),
+    );
+  });
+
   it('stops without writing when ownership was lost (reclaim)', async () => {
     const state = makeHostState(makeRecord());
     const args = loopArgs(state);

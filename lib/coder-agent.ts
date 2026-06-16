@@ -413,7 +413,7 @@ const CODER_IDENTITY = `You are the Coder agent for Push, a mobile AI coding ass
 
 // Inline Foreground Lane: the Coder runs as the conversational lead — no
 // brief, no Orchestrator, talking to the user directly.
-const LEAD_IDENTITY = `You are Push, a mobile-first AI coding assistant. You are the lead in this chat: you talk with the user directly and do the hands-on work yourself — reading the repo, answering their questions, and making code changes when they ask.`;
+const LEAD_IDENTITY = `You are Push, a mobile-first AI coding assistant. You are the lead in this chat: you talk with the user directly and do the hands-on work yourself — reading the repo, thinking things through out loud, answering their questions, and making code changes when they ask. You're someone they build alongside, not a service that hands back results — so talk like it.`;
 
 // Voice + boundaries for the conversational lead. Ported from the old
 // Orchestrator prompt (`ORCHESTRATOR_VOICE`) — the inline lead IS the
@@ -421,14 +421,14 @@ const LEAD_IDENTITY = `You are Push, a mobile-first AI coding assistant. You are
 // "branch creation is UI-owned" line is intentionally dropped: branch ops are
 // typed tools (`create_branch` / `switch_branch`) the lead can call.
 const LEAD_VOICE = `Voice:
-- Concise but warm. Short paragraphs, clear structure — this is mobile.
-- Explain your reasoning briefly. Don't just state conclusions.
-- Light personality is fine. You're helpful, not robotic.
-- Use markdown for code snippets. Keep responses scannable.
-- Vary your openings. Never start with "I".
+- Talk like a sharp colleague, not a ticket-closer. Warmth and a little dry wit are welcome — you have a point of view, and you share it.
+- Be genuinely conversational: react to what they actually said, think out loud, and give the "why" — don't just hand back a conclusion.
+- Concise is not the same as clipped. Keep it scannable for mobile, but a real sentence beats a terse fragment; short paragraphs, not bullet-point telegrams.
+- Have opinions about taste, and push back when something seems off — disagreement is a form of care, not a detour.
+- Use markdown for code snippets. Vary your openings so replies never feel templated.
 
 Boundaries:
-- If you don't know something, say so. Don't guess.
+- If you don't know something, say so plainly. Don't guess, and don't perform certainty you don't have.
 - You only know about the active repo. Never mention other repos — the user controls that via the UI.
 - All questions about "the repo", PRs, or changes refer to the active repo. Period.`;
 
@@ -506,15 +506,19 @@ export function resolveLeadRoundOptions(input: {
   /** The lead's tool scope for this surface. Only applied when `isLead`;
    *  defaults to `'full'`. */
   surface?: LeadToolScope;
-}): { leadMode: boolean; harnessMaxRounds: number | undefined; leadToolScope?: LeadToolScope } {
+}): {
+  persona: 'lead' | 'coder';
+  harnessMaxRounds: number | undefined;
+  leadToolScope?: LeadToolScope;
+} {
   if (input.isLead) {
     return {
-      leadMode: true,
+      persona: 'lead',
       harnessMaxRounds: undefined,
       leadToolScope: input.surface ?? 'full',
     };
   }
-  return { leadMode: false, harnessMaxRounds: input.maxCoderRounds, leadToolScope: undefined };
+  return { persona: 'coder', harnessMaxRounds: input.maxCoderRounds, leadToolScope: undefined };
 }
 
 function buildCoderGuidelines(leadMode = false, leadToolScope: LeadToolScope = 'full'): string {
@@ -863,14 +867,16 @@ export interface CoderAgentOptions<TCall, TCard> {
    */
   checkpointCadenceRounds?: number;
   /**
-   * Lead mode (Inline Foreground Lane): the Coder is running as the
-   * conversational lead, not a delegated implementer — there is no brief and
-   * no Orchestrator above it, and it talks to the user directly. Swaps the
-   * identity + guidelines to lead-appropriate framing (answer conversationally,
-   * only change code when asked, structured summary only when code changed).
-   * Defaults off; the delegated arc and CLI keep the implementer prompt.
+   * Persona: which agent identity this kernel run wears. `'lead'` is the
+   * conversational lead (Inline Foreground Lane / CLI lead) — no brief, no
+   * Orchestrator above it, talks to the user directly; lead identity + voice +
+   * guidelines + high round backstop. `'coder'` is the delegated implementer —
+   * narrow surface, implementer prompt, configured round cap. Required and
+   * explicit (no default): every caller declares its persona, so neither
+   * identity is a privileged fall-through. The persona-flip PR restructures the
+   * prompt branches to treat `'lead'` as the base and `'coder'` as a restriction.
    */
-  leadMode?: boolean;
+  persona: 'lead' | 'coder';
   /**
    * Append the lead's tool-routing + structured-error guidance
    * (`buildLeadToolGuidance`). That block names the **canonical web sandbox /
@@ -952,10 +958,25 @@ export async function runCoderAgent<TCall, TCard>(
     acceptanceCriteria,
     harnessMaxRounds,
     harnessContextResetsEnabled,
-    leadMode = false,
+    persona,
     leadToolGuidance = false,
     leadToolScope = 'full',
   } = options;
+
+  // Derive the legacy boolean once for the body's prompt-section + round-cap
+  // branches. `persona` is the contract; `leadMode` stays a local readability
+  // alias until the persona-flip PR restructures these branches around the
+  // 'lead'-as-base / 'coder'-as-restriction model.
+  const leadMode = persona === 'lead';
+  if (persona !== 'lead' && persona !== 'coder') {
+    // `persona` is a required contract, but `@ts-nocheck` daemon callers (and
+    // any untyped path) bypass the compiler. Fail loud rather than silently
+    // falling through to coder behavior — a silent fallback is exactly the
+    // privileged default this seam exists to remove.
+    throw new Error(
+      `runCoderAgent: invalid persona ${JSON.stringify(persona)} (expected 'lead' | 'coder')`,
+    );
+  }
 
   void _allowedRepo; // reserved for future use — lib loop does not need it directly
   void _sandboxId; // reserved for future use — sandbox ops flow through `toolExec`

@@ -489,7 +489,7 @@ export async function runLeadKernelTurn(
         approvalModeBlock: null,
         evaluateAfterModel: async () => null,
         harnessMaxRounds: maxRounds,
-        leadMode: true,
+        persona: 'lead',
       },
       callbacks,
     );
