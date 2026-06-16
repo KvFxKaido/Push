@@ -207,6 +207,16 @@ export function createCoderPolicy(): TurnPolicy {
 
       // No-fake-completion guard
       (response: string, _messages: readonly ChatMessage[], ctx: TurnContext) => {
+        // Task-aware backstop: this guard demands changed files / a blocked
+        // report / acceptance-criteria evidence, which only makes sense for a
+        // coding task. A conversational lead turn ("just making sure you
+        // weren't looping") has nothing to "complete", so firing here injects a
+        // policy nudge the model then answers in the user channel (the
+        // third-person self-narration bug). Routing keeps conversational turns
+        // off this lane today; this makes the invariant hold at the guard too,
+        // so it can't reappear if a conversational turn ever shares the lane.
+        if (ctx.taskInFlight === false) return null;
+
         const trimmed = response.trim();
 
         // Has a tool call → not a completion attempt

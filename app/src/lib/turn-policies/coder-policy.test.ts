@@ -147,6 +147,27 @@ describe('Coder Policy — no-fake-completion', () => {
     expect(result).not.toBeNull();
     expect(result!.action).toBe('inject');
   });
+
+  it('stays quiet on a conversational turn (taskInFlight === false)', async () => {
+    const policy = createCoderPolicy();
+    const completionHook = policy.afterModelCall![1];
+    // Same vague short reply that nudges under a task — but this turn carries
+    // no coding task, so the guard must not fire (the inline-lane misfire fix).
+    const ctx: TurnContext = { ...makeCtx(), taskInFlight: false };
+
+    const conversational = "I wasn't looping — want me to continue the explanation?";
+    expect(await completionHook(conversational, [], ctx)).toBeNull();
+  });
+
+  it('still nudges when taskInFlight is true (explicit task)', async () => {
+    const policy = createCoderPolicy();
+    const completionHook = policy.afterModelCall![1];
+    const ctx: TurnContext = { ...makeCtx(), taskInFlight: true };
+
+    const result = await completionHook('Task is done. Everything looks good.', [], ctx);
+    expect(result).not.toBeNull();
+    expect(result!.action).toBe('inject');
+  });
 });
 
 // ---------------------------------------------------------------------------

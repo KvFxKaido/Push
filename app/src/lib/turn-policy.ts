@@ -75,6 +75,16 @@ export interface TurnContext {
   activeProvider?: string;
   /** Active model ID. */
   activeModel?: string;
+  /**
+   * Whether this turn is executing a coding task. Defaults to "yes" when
+   * undefined (back-compat — delegated Coder runs and the worker engine never
+   * set it). The inline lead lane sets it `false` for conversational turns so
+   * task-shaped guards (e.g. the Coder no-fake-completion guard) can refuse to
+   * fire on a chat reply, independent of which lane routed the turn. See
+   * `turn-intent.ts` and `docs`/PR for the inline-lane intent routing this
+   * backstops.
+   */
+  taskInFlight?: boolean;
   /** AbortSignal for cancellation. */
   signal?: AbortSignal;
 }
