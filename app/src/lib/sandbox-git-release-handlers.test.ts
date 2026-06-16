@@ -209,9 +209,13 @@ describe('handleShowCommit', () => {
     const ctx = makeContext({ execResults: [ok(DIFF)] });
     const result = await handleShowCommit(ctx, { ref: 'HEAD' });
 
-    // The ref is single-quoted; no working-tree mutation flag.
+    // The ref is single-quoted; read-only safety flags disable repo-configured
+    // external diff / textconv drivers; no working-tree mutation flag.
     const cmd = String(ctx.execCalls[0][1]);
-    expect(cmd).toContain("git --no-pager show --no-color 'HEAD'");
+    expect(cmd).toContain('git --no-pager show --no-color');
+    expect(cmd).toContain('--no-ext-diff');
+    expect(cmd).toContain('--no-textconv');
+    expect(cmd).toContain("'HEAD'");
     expect(result.text).toContain('[Tool Result — sandbox_show_commit]');
     expect(result.text).toContain('1 file changed, +1 -1');
     expect(result.card?.type).toBe('diff-preview');
@@ -227,7 +231,7 @@ describe('handleShowCommit', () => {
   it('passes --stat and omits the diff card in stat mode', async () => {
     const ctx = makeContext({ execResults: [ok(' app.ts | 2 +-\n 1 file changed')] });
     const result = await handleShowCommit(ctx, { ref: 'HEAD', stat: true });
-    expect(String(ctx.execCalls[0][1])).toContain('show --no-color --stat');
+    expect(String(ctx.execCalls[0][1])).toContain('--no-textconv --stat');
     expect(result.card).toBeUndefined();
   });
 

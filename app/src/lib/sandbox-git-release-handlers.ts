@@ -261,7 +261,12 @@ export async function handleShowCommit(
   ctx: GitReleaseHandlerContext,
   args: { ref: string; paths?: string[]; stat?: boolean },
 ): Promise<ToolExecutionResult> {
-  const parts = ['git', '--no-pager', 'show', '--no-color'];
+  // `--no-ext-diff` / `--no-textconv` disable repo-configured external diff and
+  // textconv drivers (`.gitattributes` + git config). Without them, `git show`
+  // on an attacker-controlled repo could execute arbitrary repo-defined
+  // commands during what is registered as a read-only inspection — and this
+  // tool runs in the parallel read phase with no side-effecting guard (Codex P1).
+  const parts = ['git', '--no-pager', 'show', '--no-color', '--no-ext-diff', '--no-textconv'];
   if (args.stat) parts.push('--stat');
   parts.push(shellQuote(args.ref));
   if (args.paths && args.paths.length > 0) {
