@@ -14,7 +14,7 @@ import type { AuditVerdictCardData, CoderWorkingMemory, MemoryScope } from '@/ty
 import type { LlmMessage, PushStream } from '@push/lib/provider-contract';
 import { getActiveProvider, getProviderPushStream, type ActiveProvider } from './orchestrator';
 import { getModelForRole } from './providers';
-import { openRouterModelSupportsStructuredOutput } from './model-catalog';
+import { providerModelSupportsStructuredOutput } from './model-catalog';
 import type { AuditorPromptContext } from './role-context';
 import {
   buildAuditorEvaluationMemoryBlock,
@@ -51,16 +51,16 @@ function resolveAuditorModel(
 
 /**
  * Whether to constrain the Auditor's verdict JSON with a native `response_format`
- * schema. Gated to OpenRouter — the only web adapter that honors `response_format`
- * in Phase 1 (see `docs/runbooks/OpenRouter Capability Expansion.md`) — AND to
- * models whose catalog metadata reports `structured_outputs` support.
+ * schema. Attached for any OpenAI-compatible provider whose adapter serializes
+ * `response_format` AND whose catalog metadata reports `structured_outputs`
+ * support — see `providerModelSupportsStructuredOutput` and
+ * `docs/runbooks/OpenRouter Capability Expansion.md`.
  */
 function resolveSupportsStructuredOutput(
   provider: ActiveProvider,
   modelId: string | undefined,
 ): boolean {
-  if (provider !== 'openrouter' || !modelId) return false;
-  return openRouterModelSupportsStructuredOutput(modelId);
+  return providerModelSupportsStructuredOutput(provider, modelId);
 }
 
 export async function runAuditor(
