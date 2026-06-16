@@ -758,7 +758,7 @@ export async function runInPageCoderKernel(
     // The lead surface is the conversational lead — swap the kernel's
     // implementer prompt for lead-mode framing. The delegated arc leaves this
     // unset.
-    leadMode: leadRound.leadMode,
+    persona: leadRound.persona,
     leadToolScope: leadRound.leadToolScope,
     // This is the web surface, whose sandbox/GitHub tools use the canonical
     // registry public names the lead tool-routing/error guidance references —

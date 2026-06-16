@@ -103,7 +103,7 @@ function baseCoderOptions(overrides: {
     provider: 'openrouter',
     stream: overrides.stream,
     modelId: 'coder-model',
-    leadMode: overrides.leadMode,
+    persona: overrides.leadMode ? 'lead' : 'coder',
     leadToolGuidance: overrides.leadToolGuidance,
     leadToolScope: overrides.leadToolScope,
     harnessMaxRounds: overrides.harnessMaxRounds,
@@ -137,14 +137,14 @@ function baseCoderOptions(overrides: {
 describe('resolveLeadRoundOptions', () => {
   it('gives a lead turn no explicit cap, with the surface tool scope', () => {
     expect(resolveLeadRoundOptions({ isLead: true, maxCoderRounds: 30, surface: 'full' })).toEqual({
-      leadMode: true,
+      persona: 'lead',
       harnessMaxRounds: undefined,
       leadToolScope: 'full',
     });
     expect(
       resolveLeadRoundOptions({ isLead: true, maxCoderRounds: 30, surface: 'sandbox' }),
     ).toEqual({
-      leadMode: true,
+      persona: 'lead',
       harnessMaxRounds: undefined,
       leadToolScope: 'sandbox',
     });
@@ -156,20 +156,20 @@ describe('resolveLeadRoundOptions', () => {
 
   it('keeps the configured cap for a delegated sub-Coder, no tool scope', () => {
     expect(resolveLeadRoundOptions({ isLead: false, maxCoderRounds: 30 })).toEqual({
-      leadMode: false,
+      persona: 'coder',
       harnessMaxRounds: 30,
       leadToolScope: undefined,
     });
     expect(resolveLeadRoundOptions({ isLead: false })).toEqual({
-      leadMode: false,
+      persona: 'coder',
       harnessMaxRounds: undefined,
       leadToolScope: undefined,
     });
   });
 
-  it('keeps the foreground and background lead lanes in lockstep on cap + leadMode', () => {
+  it('keeps the foreground and background lead lanes in lockstep on cap + persona', () => {
     // Same intent, different surfaces (inline 'full' vs background DO 'sandbox')
-    // → identical leadMode + cap; only the tool scope differs.
+    // → identical persona + cap; only the tool scope differs.
     const foreground = resolveLeadRoundOptions({
       isLead: true,
       maxCoderRounds: 30,
@@ -180,7 +180,7 @@ describe('resolveLeadRoundOptions', () => {
       maxCoderRounds: 30,
       surface: 'sandbox',
     });
-    expect(foreground.leadMode).toBe(background.leadMode);
+    expect(foreground.persona).toBe(background.persona);
     expect(foreground.harnessMaxRounds).toBe(background.harnessMaxRounds);
     expect(foreground.leadToolScope).not.toBe(background.leadToolScope);
   });

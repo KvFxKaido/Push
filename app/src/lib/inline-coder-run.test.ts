@@ -199,7 +199,7 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
         'harnessMaxRounds',
         'initialUserContentParts',
         'instructionFilename',
-        'leadMode',
+        'persona',
         // Parity decision: the delegated arc threads `leadToolGuidance:
         // undefined` (only the web inline lead opts into the web-named
         // tool-routing/error block; the CLI lead and delegated Coder leave it
@@ -251,7 +251,7 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
     // The inline lane's knobs stay dormant on the delegated arc.
     expect(options.resumeState).toBeUndefined();
     expect(options.checkpointCadenceRounds).toBeUndefined();
-    expect(options.leadMode).toBeFalsy();
+    expect(options.persona).toBe('coder');
     expect(callbacks.onCheckpoint).toBeUndefined();
     // Lead tool surface is inline-only: the delegated Coder advertises no
     // GitHub/ask_user/artifact protocols (narrow sandbox/web/memory surface).
@@ -635,7 +635,7 @@ describe('lead tool surface (inline foreground lane)', () => {
     expect(joined).not.toContain('delegate_explorer');
     expect(joined).not.toContain('EXPLORER-FIRST');
     // Lead mode also swaps the kernel prompt (implementer → lead voice).
-    expect(options.leadMode).toBe(true);
+    expect(options.persona).toBe('lead');
     // The web lead opts into the web-named tool-routing/error guidance.
     expect(options.leadToolGuidance).toBe(true);
   });
@@ -655,7 +655,7 @@ describe('lead tool surface (inline foreground lane)', () => {
   it('keeps the extra surface dormant when leadToolSurface is false', async () => {
     const options = await runLeadCall(false);
     expect(options.extraToolProtocols).toBeUndefined();
-    expect(options.leadMode).toBeFalsy();
+    expect(options.persona).toBe('coder');
     expect(options.leadToolGuidance).toBeFalsy();
     expect(options.branchContext?.repoFullName).toBeUndefined();
     const githubCall = '{"tool":"fetch_pr","args":{"repo":"KvFxKaido/Push","pr":1}}';

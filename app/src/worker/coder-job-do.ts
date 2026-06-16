@@ -175,7 +175,11 @@ export type AgentJobStartInput = CoderJobStartInput;
  */
 export function resolveJobLeadModeOptions(
   envelope: Pick<DelegationEnvelope, 'leadMode' | 'harnessSettings'>,
-): { leadMode: boolean; harnessMaxRounds: number | undefined; leadToolScope?: LeadToolScope } {
+): {
+  persona: 'lead' | 'coder';
+  harnessMaxRounds: number | undefined;
+  leadToolScope?: LeadToolScope;
+} {
   return resolveLeadRoundOptions({
     isLead: envelope.leadMode === true,
     maxCoderRounds: envelope.harnessSettings?.maxCoderRounds,

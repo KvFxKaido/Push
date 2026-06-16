@@ -506,15 +506,19 @@ export function resolveLeadRoundOptions(input: {
   /** The lead's tool scope for this surface. Only applied when `isLead`;
    *  defaults to `'full'`. */
   surface?: LeadToolScope;
-}): { leadMode: boolean; harnessMaxRounds: number | undefined; leadToolScope?: LeadToolScope } {
+}): {
+  persona: 'lead' | 'coder';
+  harnessMaxRounds: number | undefined;
+  leadToolScope?: LeadToolScope;
+} {
   if (input.isLead) {
     return {
-      leadMode: true,
+      persona: 'lead',
       harnessMaxRounds: undefined,
       leadToolScope: input.surface ?? 'full',
     };
   }
-  return { leadMode: false, harnessMaxRounds: input.maxCoderRounds, leadToolScope: undefined };
+  return { persona: 'coder', harnessMaxRounds: input.maxCoderRounds, leadToolScope: undefined };
 }
 
 function buildCoderGuidelines(leadMode = false, leadToolScope: LeadToolScope = 'full'): string {
@@ -863,14 +867,16 @@ export interface CoderAgentOptions<TCall, TCard> {
    */
   checkpointCadenceRounds?: number;
   /**
-   * Lead mode (Inline Foreground Lane): the Coder is running as the
-   * conversational lead, not a delegated implementer — there is no brief and
-   * no Orchestrator above it, and it talks to the user directly. Swaps the
-   * identity + guidelines to lead-appropriate framing (answer conversationally,
-   * only change code when asked, structured summary only when code changed).
-   * Defaults off; the delegated arc and CLI keep the implementer prompt.
+   * Persona: which agent identity this kernel run wears. `'lead'` is the
+   * conversational lead (Inline Foreground Lane / CLI lead) — no brief, no
+   * Orchestrator above it, talks to the user directly; lead identity + voice +
+   * guidelines + high round backstop. `'coder'` is the delegated implementer —
+   * narrow surface, implementer prompt, configured round cap. Required and
+   * explicit (no default): every caller declares its persona, so neither
+   * identity is a privileged fall-through. The persona-flip PR restructures the
+   * prompt branches to treat `'lead'` as the base and `'coder'` as a restriction.
    */
-  leadMode?: boolean;
+  persona: 'lead' | 'coder';
   /**
    * Append the lead's tool-routing + structured-error guidance
    * (`buildLeadToolGuidance`). That block names the **canonical web sandbox /
@@ -952,10 +958,25 @@ export async function runCoderAgent<TCall, TCard>(
     acceptanceCriteria,
     harnessMaxRounds,
     harnessContextResetsEnabled,
-    leadMode = false,
+    persona,
     leadToolGuidance = false,
     leadToolScope = 'full',
   } = options;
+
+  // Derive the legacy boolean once for the body's prompt-section + round-cap
+  // branches. `persona` is the contract; `leadMode` stays a local readability
+  // alias until the persona-flip PR restructures these branches around the
+  // 'lead'-as-base / 'coder'-as-restriction model.
+  const leadMode = persona === 'lead';
+  if (persona !== 'lead' && persona !== 'coder') {
+    // `persona` is a required contract, but `@ts-nocheck` daemon callers (and
+    // any untyped path) bypass the compiler. Fail loud rather than silently
+    // falling through to coder behavior — a silent fallback is exactly the
+    // privileged default this seam exists to remove.
+    throw new Error(
+      `runCoderAgent: invalid persona ${JSON.stringify(persona)} (expected 'lead' | 'coder')`,
+    );
+  }
 
   void _allowedRepo; // reserved for future use — lib loop does not need it directly
   void _sandboxId; // reserved for future use — sandbox ops flow through `toolExec`

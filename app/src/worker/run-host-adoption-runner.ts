@@ -343,6 +343,11 @@ export async function runAdoptedLoop(args: RunAdoptedLoopArgs): Promise<void> {
     sandboxToolProtocol: getSandboxToolProtocol(),
     verificationPolicyBlock: formatVerificationPolicyBlock(checkpoint.verificationPolicy),
     approvalModeBlock: buildApprovalModeBlock(record.mode),
+    // PR 1a is a behavior-identical rename: this call site previously omitted
+    // `leadMode`, so it ran as 'coder'. Preserve that here. Adoption resumes the
+    // conversational lead's own turn, so this likely SHOULD be 'lead' — that's a
+    // deliberate behavior change deferred to the persona-flip PR (1b).
+    persona: 'coder',
     evaluateAfterModel: buildCoderEvaluateAfterModel(services),
     harnessMaxRounds: checkpoint.round + ADOPTION_EXTRA_ROUNDS,
     resumeState: runCheckpointToCoderResumeState<ChatCard>(checkpoint, { resolvedApproval }),

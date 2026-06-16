@@ -3220,6 +3220,8 @@ async function runCoderForTaskGraph(
       provider,
       stream: daemonStream,
       modelId: model,
+      // Daemon task-graph node: a delegated implementer, not the lead.
+      persona: 'coder',
       sandboxId: '',
       allowedRepo: '',
       userProfile: null,
@@ -4912,6 +4914,8 @@ async function handleDelegateCoder(req) {
           provider: resolvedProvider,
           stream: daemonStream,
           modelId: resolvedModel,
+          // Daemon delegated child Coder run, not the lead.
+          persona: 'coder',
           sandboxId: '',
           allowedRepo,
           userProfile: null,
