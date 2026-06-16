@@ -10,6 +10,7 @@ import type {
   ChatSendOptions,
   Conversation,
   RunEvent,
+  RunEventInput,
   VerificationRuntimeState,
 } from '@/types';
 import type { ToolDispatchBinding } from '@/lib/local-daemon-sandbox-client';
@@ -604,10 +605,10 @@ export function useChat(
       const hasAttachments = Boolean(attachments && attachments.length > 0);
       if (!trimmedText && !hasAttachments) return;
       const targetChat = options?.chatId || activeChatIdRef.current;
+      const routeEvents: RunEventInput[] = [];
       // biome-ignore format: engine routing + eligibility live in resolveSendEngineTrigger (chat-send-background.ts); opts stay inline for the file line cap.
-      const engineTrigger = resolveSendEngineTrigger({ repoRef, branchInfoRef, conversationsRef, chatId: targetChat, requestedProvider: options?.provider ?? null, messageText: trimmedText, hasAttachments });
-      // Dispatch (Inline Foreground Lane): 'background-mode' → CoderJob DO engine;
-      // 'inline-delegation' → foreground inline lane; null → Orchestrator loop.
+      const engineTrigger = resolveSendEngineTrigger({ repoRef, branchInfoRef, conversationsRef, chatId: targetChat, requestedProvider: options?.provider ?? null, messageText: trimmedText, hasAttachments, onRouteEvent: (event) => routeEvents.push(event) });
+      // Dispatch: 'background-mode' → CoderJob DO; 'inline-delegation' → foreground inline lane; null → Orchestrator loop.
       const routeToEngine = engineTrigger === 'background-mode';
       if (targetChat && hasActiveBackgroundJob(conversationsRef.current[targetChat])) return;
 
@@ -620,8 +621,7 @@ export function useChat(
       if (!chatId || !conversationsSnapshot[chatId]) {
         chatId = chatMgmt.createNewChat();
       }
-
-      // --- Prepare context ---
+      for (const event of routeEvents) appendRunEvent(chatId, event);
       const prepared = await prepareSendContext(
         { trimmedText, attachments, options, chatId, skipStreamingPlaceholder: routeToEngine },
         {

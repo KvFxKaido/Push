@@ -438,6 +438,40 @@ export const SUBAGENT_AGENTS = [
  */
 export const TASK_GRAPH_AGENTS = ['explorer', 'coder'] as const;
 
+export const TURN_ROUTES = ['orchestrator', 'inline-delegation', 'background-mode'] as const;
+export const TURN_SUPPRESSED_ROUTES = ['inline-delegation', 'background-mode'] as const;
+export const TURN_ROUTE_REASONS = ['conversational_downgrade'] as const;
+export const TURN_INTENTS = ['conversational', 'task'] as const;
+
+function validateTurnRoute(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const route = expectAgentValue(payload, 'route', basePath, TURN_ROUTES);
+  if (route) issues.push(route);
+  const reason = expectAgentValue(payload, 'reason', basePath, TURN_ROUTE_REASONS);
+  if (reason) issues.push(reason);
+  if (payload.suppressedRoute !== undefined) {
+    const suppressed = expectAgentValue(
+      payload,
+      'suppressedRoute',
+      basePath,
+      TURN_SUPPRESSED_ROUTES,
+    );
+    if (suppressed) issues.push(suppressed);
+  }
+  const intent = expectAgentValue(payload, 'intent', basePath, TURN_INTENTS);
+  if (intent) issues.push(intent);
+  if (typeof payload.repoBranchReady !== 'boolean') {
+    issues.push({
+      path: `${basePath}.repoBranchReady`,
+      message: `expected boolean, got ${JSON.stringify(payload.repoBranchReady)}`,
+    });
+  }
+  return issues;
+}
+
 function validateSubagentStarted(payload: unknown, basePath: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   if (!isPlainObject(payload)) {
@@ -1435,6 +1469,7 @@ const PAYLOAD_VALIDATORS: Record<string, PayloadValidator> = {
 
   // RunEventInput passthrough events (forwarded by the run loop). Shapes are
   // the canonical union members in lib/runtime-contract.ts.
+  'turn.route': validateTurnRoute,
   'assistant.turn_start': validateAssistantTurnStart,
   'assistant.turn_end': validateAssistantTurnEnd,
   'job.started': validateJobStarted,

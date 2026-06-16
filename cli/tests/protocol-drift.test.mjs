@@ -115,11 +115,32 @@ describe('protocol drift characterization — schema surface', () => {
       'tool.execution_start',
       'tool_call',
       'tool_result',
+      'turn.route',
       'user.follow_up_queued',
       'user.follow_up_steered',
       'user_message',
       'warning',
     ]);
+  });
+
+  it('accepts turn.route and rejects an unknown route', () => {
+    assert.deepEqual(
+      validateRunEventPayload('turn.route', {
+        route: 'orchestrator',
+        reason: 'conversational_downgrade',
+        suppressedRoute: 'inline-delegation',
+        intent: 'conversational',
+        repoBranchReady: true,
+      }),
+      [],
+    );
+    const issues = validateRunEventPayload('turn.route', {
+      route: 'side-quest',
+      reason: 'conversational_downgrade',
+      intent: 'conversational',
+      repoBranchReady: true,
+    });
+    assert.ok(issues.some((issue) => issue.path === 'payload.route'));
   });
 
   it('treats assistant_done and other untyped events as envelope-only today', () => {

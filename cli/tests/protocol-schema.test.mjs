@@ -896,6 +896,26 @@ describe('validateRunEventPayload — recovery/interruption events', () => {
 });
 
 describe('validateRunEventPayload — RunEventInput passthrough events', () => {
+  it('accepts turn.route and rejects an unknown route', () => {
+    assert.deepEqual(
+      validateRunEventPayload('turn.route', {
+        route: 'orchestrator',
+        reason: 'conversational_downgrade',
+        suppressedRoute: 'inline-delegation',
+        intent: 'conversational',
+        repoBranchReady: true,
+      }),
+      [],
+    );
+    const issues = validateRunEventPayload('turn.route', {
+      route: 'side-quest',
+      reason: 'conversational_downgrade',
+      intent: 'conversational',
+      repoBranchReady: true,
+    });
+    assert.ok(issues.some((i) => i.path === 'payload.route'));
+  });
+
   it('accepts assistant.turn_start', () => {
     assert.deepEqual(validateRunEventPayload('assistant.turn_start', { round: 0 }), []);
   });

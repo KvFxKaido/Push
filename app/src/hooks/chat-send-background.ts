@@ -17,11 +17,18 @@
 
 import type React from 'react';
 import {
+  isInlineDelegationEnabled,
   resolveTurnEngineTrigger,
   type EngineTrigger,
   type TurnEngineTrigger,
 } from '@/lib/delegation-mode-settings';
-import type { AIProviderType, AttachmentData, Conversation, DelegationEnvelope } from '@/types';
+import type {
+  AIProviderType,
+  AttachmentData,
+  Conversation,
+  DelegationEnvelope,
+  RunEventInput,
+} from '@/types';
 import { getActiveProvider, isProviderAvailable } from '@/lib/orchestrator';
 import { isProviderEngineCapable } from '@/lib/provider-engine-capability';
 import { resolveChatProviderSelection } from '@/lib/provider-selection';
@@ -75,6 +82,10 @@ export function resolveSendEngineTrigger(opts: {
    *  the inline lane regardless of text (an image is usually "look at this and
    *  do X"), matching the dispatch table's "attachments don't reroute" rule. */
   hasAttachments?: boolean;
+  /** Optional telemetry sink for route decisions that should enter the chat's
+   *  structured run-event stream. Kept optional so the resolver stays easy to
+   *  unit test and non-UI callers don't need a chat event sink. */
+  onRouteEvent?: (event: RunEventInput) => void;
 }): TurnEngineTrigger {
   const branch =
     opts.branchInfoRef.current?.currentBranch ?? opts.branchInfoRef.current?.defaultBranch;
@@ -98,17 +109,9 @@ export function resolveSendEngineTrigger(opts: {
     !opts.hasAttachments &&
     Boolean(opts.messageText?.trim()) &&
     classifyTurnIntent(opts.messageText ?? '') === 'conversational';
-  if (conversationalTurn) {
-    console.log(
-      JSON.stringify({
-        level: 'info',
-        event: 'turn_route_conversational_downgrade',
-        chatId: opts.chatId,
-        repoBranchReady,
-      }),
-    );
-  }
-  return resolveTurnEngineTrigger({
+  const engineEligible = repoBranchReady && isProviderEngineCapable(provider);
+  const inlineWouldHaveRun = conversationalTurn && repoBranchReady && isInlineDelegationEnabled();
+  const trigger = resolveTurnEngineTrigger({
     // Engine turns run server-side, where only server-held provider
     // credentials exist — a provider keyed solely via in-app Settings must
     // stay off the engine or the job 401s at dispatch. See
@@ -116,12 +119,23 @@ export function resolveSendEngineTrigger(opts: {
     // subset of AIProviderType — the implicit widening here is safe today;
     // if ActiveProvider ever diverges, an unknown value resolves
     // optimistically true (same as any unknown).
-    engineEligible: repoBranchReady && isProviderEngineCapable(provider),
+    engineEligible,
     // The inline lane is a foreground run — browser-held Settings keys
     // work directly, so no capability fold here. The conversational-intent
     // gate keeps lead chatter on the Orchestrator loop.
     inlineEligible: repoBranchReady && !conversationalTurn,
   });
+  if (inlineWouldHaveRun && trigger === null) {
+    opts.onRouteEvent?.({
+      type: 'turn.route',
+      route: 'orchestrator',
+      reason: 'conversational_downgrade',
+      suppressedRoute: 'inline-delegation',
+      intent: 'conversational',
+      repoBranchReady,
+    });
+  }
+  return trigger;
 }
 
 export function hasActiveBackgroundJob(conv: Conversation | undefined): boolean {

@@ -44,7 +44,11 @@ import {
   RUN_COMPLETE_OUTCOMES,
   SUBAGENT_AGENTS,
   TASK_GRAPH_AGENTS,
+  TURN_INTENTS,
   TURN_END_OUTCOMES,
+  TURN_ROUTE_REASONS,
+  TURN_ROUTES,
+  TURN_SUPPRESSED_ROUTES,
 } from './protocol-schema.ts';
 
 /** A JSON Schema node. Loose by design — this is data, not a place to
@@ -368,6 +372,14 @@ const PAYLOAD_DEFS: Record<string, JsonSchemaNode> = {
 
   // RunEventInput passthrough events (shapes from lib/runtime-contract.ts,
   // minus the discriminant `type`). `role` is AgentRole == PROMPT_SNAPSHOT_ROLES.
+  TurnRoute: objectNode(['route', 'reason', 'intent', 'repoBranchReady'], {
+    route: enumOf(TURN_ROUTES),
+    reason: enumOf(TURN_ROUTE_REASONS),
+    suppressedRoute: enumOf(TURN_SUPPRESSED_ROUTES),
+    intent: enumOf(TURN_INTENTS),
+    repoBranchReady: bool(),
+  }),
+
   AssistantTurnStart: objectNode(['round'], { round: uint() }),
 
   AssistantTurnEnd: objectNode(['round', 'outcome'], {
@@ -453,6 +465,7 @@ export const TYPE_TO_DEF: Record<string, string> = {
   run_recovered: 'RunRecovered',
   recovery_skipped: 'RecoverySkipped',
   delegation_interrupted: 'DelegationInterrupted',
+  'turn.route': 'TurnRoute',
   'assistant.turn_start': 'AssistantTurnStart',
   'assistant.turn_end': 'AssistantTurnEnd',
   'job.started': 'JobStarted',

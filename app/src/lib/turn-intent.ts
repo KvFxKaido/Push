@@ -67,6 +67,15 @@ const CODING_OBJECT = /\b(the bug|failing tests?|this error|type error|stack ?tr
 const EXPLANATORY =
   /\b(eli5|explain|clarify|summari[sz]e|recap|describe|walk me through|go over|tldr|tl;dr)\b/;
 
+/** Read-only review asks ("look over this PR", "review the diff") should avoid
+ *  the inline Coder lane: they may call reviewer/orchestrator tools, but they
+ *  are not editing tasks. If the same sentence chains into a mutating follow-up
+ *  ("and fix/address/update …"), keep the task default. */
+const READ_ONLY_REVIEW =
+  /^(?:can you|could you|would you|please|pls|plz)?\s*(?:take a look at|look over|review|inspect|check out)\b.*\b(diff|pr|pull request|change|changes)\b/;
+const MUTATING_FOLLOWUP =
+  /\b(?:and|then)\s+(?:fix|address|update|change|edit|modify|implement|add|remove|delete|commit|push)\b/;
+
 /**
  * Conversational signals: interrogatives, explanatory asks, meta / control
  * phrases, acknowledgements, and greetings. Only consulted after the imperative
@@ -92,6 +101,7 @@ export function classifyTurnIntent(text: string): TurnIntent {
   // before the looser noun-based task signal so "what's the bug you fixed?"
   // stays conversational while "there's a regression in X" routes to a task.
   if (EXPLANATORY.test(t) || CONVERSATIONAL_SIGNAL.test(t)) return 'conversational';
+  if (READ_ONLY_REVIEW.test(t) && !MUTATING_FOLLOWUP.test(t)) return 'conversational';
   if (CODING_OBJECT.test(t)) return 'task';
   if (t.endsWith('?')) return 'conversational';
   return 'task';
