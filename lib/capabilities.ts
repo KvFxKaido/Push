@@ -459,6 +459,16 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
     'user:ask',
     'artifacts:write',
     'memory:read',
+    // `delegate:explorer` is part of the lead-capable superset, NOT something
+    // a delegated sub-Coder ever reaches: the inline lead threads `'delegate'`
+    // into its `extraToolSources` so `delegate_explorer` clears the source
+    // gate and this capability check; a delegated Coder leaves that set empty,
+    // so the same call is refused at the source gate before capabilities are
+    // consulted. `delegate:coder` is deliberately absent — the lead does its
+    // own coding and must not spawn a sub-Coder. Mirrors how this grant
+    // already carries `pr:write` / `workflow:trigger` / `user:ask` /
+    // `artifacts:write` for the lead while delegated Coders never use them.
+    'delegate:explorer',
   ]),
 
   // Reviewer grants include `web:search` because the deep-reviewer

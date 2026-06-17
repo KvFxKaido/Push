@@ -49,6 +49,9 @@ import type {
   CoderResult,
   CoderWorkingMemory,
   CriterionResult,
+  DelegationOutcome,
+  ExplorerDelegationArgs,
+  ExplorerDelegationEnvelope,
   HarnessProfileSettings,
   MemoryScope,
   RunEventInput,
@@ -112,8 +115,17 @@ import { createCoderPolicy } from './turn-policies/coder-policy';
 import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from './tracing';
 import { formatVerificationPolicyBlock, type VerificationPolicy } from './verification-policy';
 import { buildVerificationAcceptanceCriteria } from './verification-runtime';
-import { runContextMemoryBestEffort } from './memory-context-helpers';
-import { writeDecisionMemory } from './context-memory';
+import {
+  buildMemoryScope,
+  retrieveMemoryKnownContextLine,
+  runContextMemoryBestEffort,
+  withMemoryContext,
+} from './memory-context-helpers';
+import { writeDecisionMemory, writeExplorerMemory } from './context-memory';
+import { runExplorerAgent } from './explorer-agent';
+import { buildDelegationResultCard, formatCompactDelegationToolResult } from './delegation-result';
+import { summarizeToolResultPreview, utf8ByteLength } from './chat-run-events';
+import { getToolPublicName } from '@push/lib/tool-registry';
 import {
   handleCoderAuditor,
   parseUntrackedFileSet,
@@ -125,30 +137,203 @@ import {
 /**
  * Tool sources the inline foreground lead may execute beyond the Coder's
  * sandbox/web/memory surface — Orchestrator parity (GitHub PR/commit/CI +
- * workflow tools, `ask_user`, `create_artifact`). Delegation is intentionally
- * absent: the inline lane is a single agent with no delegation arc wired, so
- * `delegate_*` would be advertised-but-denied.
+ * workflow tools, `ask_user`, `create_artifact`) plus a narrow `delegate`
+ * arc. The lead does its own coding, so only `delegate_explorer` (read-only
+ * investigation) is executable on the `delegate` source — `delegate_coder` and
+ * `plan_tasks` are refused in the executor below and excluded from the native
+ * schema set. A delegated Coder leaves this set undefined, so the same
+ * `delegate_*` calls are refused at the source gate.
  */
 const LEAD_EXTRA_TOOL_SOURCES: ReadonlySet<string> = new Set<string>([
   'github',
   'ask-user',
   'artifacts',
+  'delegate',
 ]);
+
+/**
+ * Canonical delegation tools the lead may NOT execute even though it wires the
+ * `delegate` source. Excluded from the native function-schema set so a
+ * native-calling model can't fire an advertised-but-denied `delegate_coder` /
+ * `plan_tasks` (which would silently no-op). `delegate_explorer` stays in.
+ */
+const LEAD_EXCLUDED_DELEGATION_TOOLS: ReadonlySet<string> = new Set<string>([
+  'delegate_coder',
+  'plan_tasks',
+]);
+
+/** Max Explorer sub-agents the inline lead may fan out in a single turn. */
+const INLINE_MAX_PARALLEL_EXPLORERS = 2;
 
 /**
  * The registry tool sources wired for the inline lead — the surface a native
  * `tools` array may advertise. Base sandbox + web-search (always wired), memory
- * only when a scope is threaded, plus the lead's extra GitHub/ask/artifact
- * sources. Mirrors exactly what the kernel advertises in the prompt; anything
- * outside this (delegate, scratchpad, todo) isn't executable here and must not
- * appear as a native function. Keep in lockstep with the protocols passed to
- * the kernel below.
+ * only when a scope is threaded, plus the lead's extra GitHub/ask/artifact and
+ * (explorer-only) delegate sources. Mirrors exactly what the kernel advertises
+ * in the prompt; anything outside this (scratchpad, todo) isn't executable here
+ * and must not appear as a native function. Keep in lockstep with the protocols
+ * passed to the kernel below. The `delegate` source is scoped to
+ * `delegate_explorer` via `LEAD_EXCLUDED_DELEGATION_TOOLS` at the schema call.
  */
 function leadNativeToolSources(hasMemoryScope: boolean): ReadonlySet<ToolRegistrySource> {
   const sources = new Set<ToolRegistrySource>(['sandbox', 'web-search']);
   if (hasMemoryScope) sources.add('memory');
   for (const source of LEAD_EXTRA_TOOL_SOURCES) sources.add(source as ToolRegistrySource);
   return sources;
+}
+
+const delegateExplorerPublicName = getToolPublicName('delegate_explorer');
+
+/**
+ * Tool protocol advertised to the inline lead for read-only Explorer
+ * delegation. The lead stays the implementer — this only offloads
+ * investigation. Guidance only (the executor and capability gate are the real
+ * controls); kept here next to the wiring so the advertised shape and the
+ * executor can't drift.
+ */
+export const LEAD_EXPLORER_DELEGATION_PROTOCOL = `[DELEGATE_EXPLORER]
+Offload read-only investigation to a fresh Explorer sub-agent. The Explorer can read files, search the codebase, and inspect PRs/CI — it cannot edit, run commands, or commit. Reach for it to trace a flow or map architecture across many files without spending your own context; you remain the lead and do all editing yourself once it reports back.
+
+Format:
+{"tool": "${delegateExplorerPublicName}", "args": {"task": "<precise objective>", "files": ["src/foo.ts"], "knownContext": ["already-validated fact"], "deliverable": "<expected report>"}}
+
+- "task" is required and should be a concrete objective, not a vague prompt.
+- "files" / "knownContext" / "deliverable" are optional and sharpen the brief.
+- You may emit up to ${INLINE_MAX_PARALLEL_EXPLORERS} ${delegateExplorerPublicName} calls in one turn (write them together) to investigate independent threads in parallel; they run concurrently and report back before your next turn. A third in the same turn is rejected — split it across turns.
+[/DELEGATE_EXPLORER]`;
+
+// ---------------------------------------------------------------------------
+// Inline Explorer delegation
+// ---------------------------------------------------------------------------
+
+/** Run-context the inline Explorer delegation closure reads from the kernel spec. */
+interface InlineExplorerRunContext {
+  sandboxId: string;
+  repoFullName: string;
+  branchContext?: { activeBranch: string; defaultBranch: string; protectMain: boolean };
+  provider: ActiveProvider;
+  modelId: string | undefined;
+  projectInstructions?: string;
+  instructionFilename?: string;
+  memoryScope?: { repoFullName: string; branch?: string; chatId?: string };
+  signal?: AbortSignal;
+  onStatus: (phase: string, detail?: string) => void;
+  onRunEvent?: (event: RunEventInput) => void;
+}
+
+/**
+ * Execute a single `delegate_explorer` call from the inline lead. Mirrors the
+ * Orchestrator's `explorer-delegation-handler.ts` outcome assembly (memory
+ * enrichment → run → DelegationOutcome → compact tool result + result card →
+ * memory write), minus the React-ref plumbing. Returns the
+ * `SandboxToolExecResult` subset the kernel's `executeExtraToolCall` consumes.
+ * Best-effort and self-contained: any failure (including abort) becomes a
+ * `[Tool Error]` / cancellation result the lead sees, never a thrown loop
+ * break — so a fanned-out Explorer that fails doesn't take down its sibling.
+ */
+async function runInlineExplorerDelegation(
+  args: ExplorerDelegationArgs,
+  ctx: InlineExplorerRunContext,
+): Promise<{ text: string; card?: ChatCard }> {
+  const task = args.task?.trim();
+  if (!task) {
+    return { text: '[Tool Error] delegate_explorer requires a non-empty "task" string.' };
+  }
+  const executionId = crypto.randomUUID();
+  const startMs = Date.now();
+  ctx.onRunEvent?.({ type: 'subagent.started', executionId, agent: 'explorer', detail: task });
+
+  const memoryScope = buildMemoryScope(
+    ctx.memoryScope?.chatId ?? '',
+    ctx.memoryScope?.repoFullName ?? ctx.repoFullName,
+    ctx.memoryScope?.branch ?? ctx.branchContext?.activeBranch,
+  );
+  const memoryLine = await retrieveMemoryKnownContextLine(
+    memoryScope,
+    'explorer',
+    task,
+    args.files,
+  );
+
+  try {
+    const envelope: ExplorerDelegationEnvelope = {
+      task,
+      files: args.files || [],
+      intent: args.intent,
+      deliverable: args.deliverable,
+      knownContext: withMemoryContext(args.knownContext, memoryLine),
+      constraints: args.constraints,
+      branchContext: ctx.branchContext,
+      provider: ctx.provider,
+      model: ctx.modelId || undefined,
+      projectInstructions: ctx.projectInstructions,
+      instructionFilename: ctx.instructionFilename,
+    };
+    const result = await runExplorerAgent(envelope, ctx.sandboxId, ctx.repoFullName, {
+      onStatus: (phase, detail) => ctx.onStatus(phase, detail),
+      signal: ctx.signal,
+      onRunEvent: ctx.onRunEvent,
+    });
+
+    const outcome: DelegationOutcome = {
+      agent: 'explorer',
+      status: result.hitRoundCap
+        ? 'incomplete'
+        : result.rounds > 0 && result.summary.trim()
+          ? 'complete'
+          : 'inconclusive',
+      summary: result.summary,
+      evidence: result.summary.trim()
+        ? [{ kind: 'observation', label: 'Investigation findings' }]
+        : [],
+      checks: [],
+      gateVerdicts: [],
+      missingRequirements: [],
+      nextRequiredAction: result.hitRoundCap
+        ? 'Investigation hit round cap — re-explore with a narrower scope or proceed with partial findings'
+        : null,
+      rounds: result.rounds,
+      checkpoints: 0,
+      elapsedMs: Date.now() - startMs,
+    };
+
+    const text = formatCompactDelegationToolResult({ agent: 'explorer', outcome });
+    const card = buildDelegationResultCard({ agent: 'explorer', outcome });
+
+    if (memoryScope && outcome.status === 'complete') {
+      await runContextMemoryBestEffort('persisting inline explorer memory', () =>
+        writeExplorerMemory({
+          scope: memoryScope,
+          summary: result.summary,
+          relatedFiles: args.files,
+          rounds: result.rounds,
+        }),
+      );
+    }
+
+    ctx.onRunEvent?.({
+      type: 'subagent.completed',
+      executionId,
+      agent: 'explorer',
+      summary: summarizeToolResultPreview(result.summary),
+      delegationOutcome: outcome,
+      orchestratorBytes: utf8ByteLength(text),
+    });
+    return { text, card };
+  } catch (err) {
+    const isAbort = err instanceof DOMException && err.name === 'AbortError';
+    const msg = err instanceof Error ? err.message : String(err);
+    ctx.onRunEvent?.({
+      type: 'subagent.failed',
+      executionId,
+      agent: 'explorer',
+      error: summarizeToolResultPreview(msg),
+    });
+    if (isAbort || ctx.signal?.aborted) {
+      return { text: '[Explorer cancelled by user.]' };
+    }
+    return { text: `[Tool Error] Explorer failed: ${msg}` };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -675,7 +860,14 @@ export async function runInPageCoderKernel(
     detectSandboxToolCall,
     detectWebSearchToolCall,
     detectAnyToolCall,
-    detectAllToolCalls,
+    // Lead surface: enable the parallel-delegation bucket so the lead can fan
+    // out up to INLINE_MAX_PARALLEL_EXPLORERS Explorers in one turn (they run
+    // in the kernel's read-phase Promise.all). The delegated Coder keeps the
+    // default (no parallel delegations — explorer falls through to `mutating`).
+    detectAllToolCalls: leadRuntime
+      ? (text: string) =>
+          detectAllToolCalls(text, { maxParallelDelegations: INLINE_MAX_PARALLEL_EXPLORERS })
+      : detectAllToolCalls,
     tagSandboxCall: (call): AnyToolCall => ({ source: 'sandbox', call }),
     tagWebSearchCall: (call): AnyToolCall => ({ source: 'web-search', call }),
     // Lead tool surface: github / ask-user / artifacts, executed via the web
@@ -685,6 +877,31 @@ export async function runInPageCoderKernel(
     executeExtraToolCall: leadRuntime
       ? async (call, execCtx) => {
           void execCtx;
+          // Explorer-only delegation arc: the lead offloads read-only
+          // investigation but does its own coding. `delegate_coder` /
+          // `plan_tasks` are refused (the source clears the gate, the tool
+          // doesn't) so the model gets a clear correction instead of a hang.
+          if (call.source === 'delegate') {
+            const delegateCall = call.call;
+            if (delegateCall.tool === 'delegate_explorer') {
+              return runInlineExplorerDelegation(delegateCall.args, {
+                sandboxId: spec.sandboxId,
+                repoFullName: spec.memoryScope?.repoFullName ?? '',
+                branchContext: spec.branchContext,
+                provider: spec.provider,
+                modelId: spec.modelId,
+                projectInstructions: spec.projectInstructions,
+                instructionFilename: spec.instructionFilename,
+                memoryScope: spec.memoryScope,
+                signal: callbacks.signal,
+                onStatus: callbacks.onStatus,
+                onRunEvent: callbacks.onRunEvent,
+              });
+            }
+            return {
+              text: `[Tool Error] The lead does its own coding — "${delegateCall.tool}" is not available here. Use ${delegateExplorerPublicName} for read-only investigation, or make the change yourself.`,
+            };
+          }
           const result = await leadRuntime.execute(call, {
             allowedRepo: spec.memoryScope?.repoFullName ?? '',
             sandboxId: spec.sandboxId,
@@ -760,6 +977,7 @@ export async function runInPageCoderKernel(
           buildGitHubToolProtocol({ includeDelegation: false }),
           ASK_USER_TOOL_PROTOCOL,
           ARTIFACT_TOOL_PROTOCOL,
+          LEAD_EXPLORER_DELEGATION_PROTOCOL,
         ]
       : undefined,
     verificationPolicyBlock,
@@ -800,6 +1018,10 @@ export async function runInPageCoderKernel(
             // emits it correctly instead of a placeholder that trips the
             // executor's repo-mismatch rejection (validation_failed churn).
             activeRepo: spec.memoryScope?.repoFullName,
+            // The `delegate` source is wired for `delegate_explorer` only —
+            // keep `delegate_coder` / `plan_tasks` out of the native schema so
+            // a native call can't fire an advertised-but-denied delegation.
+            excludeTools: LEAD_EXCLUDED_DELEGATION_TOOLS,
           })
         : undefined,
   };

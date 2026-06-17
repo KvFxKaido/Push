@@ -82,6 +82,7 @@ import { runCoderAgent } from './coder-agent';
 import {
   capturePreCoderSnapshot,
   createCoderCheckpointAnswerer,
+  LEAD_EXPLORER_DELEGATION_PROTOCOL,
   runCoderAuditorGate,
   runInlineVerificationCriteria,
   runInPageCoderKernel,
@@ -628,22 +629,58 @@ describe('lead tool surface (inline foreground lane)', () => {
     return lastKernelCall().options;
   }
 
-  it('advertises the GitHub (delegation-free), ask_user, and artifact protocols', async () => {
+  it('advertises GitHub (delegation-free), ask_user, artifact, and explorer-delegation protocols', async () => {
     const options = await runLeadCall(true);
     expect(options.extraToolProtocols).toEqual([
       buildGitHubToolProtocol({ includeDelegation: false }),
       ASK_USER_TOOL_PROTOCOL,
       ARTIFACT_TOOL_PROTOCOL,
+      LEAD_EXPLORER_DELEGATION_PROTOCOL,
     ]);
-    // Delegation stays out — the single lead has no delegation arc wired, so
-    // delegate_* must not be advertised (the GitHub block is delegation-free).
+    // Read-only Explorer delegation IS advertised — the lead offloads
+    // investigation but still does its own coding. delegate_coder / plan_tasks
+    // stay out (the GitHub block is delegation-free and the explorer protocol
+    // is explorer-only).
     const joined = options.extraToolProtocols!.join('\n');
-    expect(joined).not.toContain('delegate_explorer');
-    expect(joined).not.toContain('EXPLORER-FIRST');
+    expect(joined).toContain('DELEGATE_EXPLORER');
+    expect(joined).not.toContain('delegate_coder');
+    expect(joined).not.toContain('plan_tasks');
     // Lead mode also swaps the kernel prompt (implementer → lead voice).
     expect(options.persona).toBe('lead');
     // The web lead opts into the web-named tool-routing/error guidance.
     expect(options.leadToolGuidance).toBe(true);
+  });
+
+  it('fans out up to two Explorer delegations into the parallel bucket, rejecting a third', async () => {
+    const options = await runLeadCall(true);
+    const explorer = (task: string) =>
+      `{"tool":"explorer","args":{"task":"${task} — trace this flow across modules"}}`;
+    // Two independent threads → both run concurrently in the read-phase batch.
+    const two = options.detectAllToolCalls(`${explorer('auth')}\n${explorer('billing')}`);
+    expect(two.parallelDelegations?.map((c) => c.call.tool)).toEqual([
+      'delegate_explorer',
+      'delegate_explorer',
+    ]);
+    expect(two.mutating).toBeNull();
+    // A third in the same turn overflows to extraMutations (re-issue next turn),
+    // not silently dropped.
+    const three = options.detectAllToolCalls(
+      `${explorer('auth')}\n${explorer('billing')}\n${explorer('search')}`,
+    );
+    expect(three.parallelDelegations).toHaveLength(2);
+    expect(three.extraMutations).toHaveLength(1);
+  });
+
+  it('keeps Explorer delegation in the single trailing slot when the lead surface is off', async () => {
+    const options = await runLeadCall(false);
+    // No leadRuntime → no `delegate` source wired and no parallel-delegation
+    // opt-in; a delegated Coder never reaches the explorer arc. The detector
+    // filters it out of every executable bucket.
+    const detected = options.detectAllToolCalls(
+      '{"tool":"explorer","args":{"task":"trace the flow across modules"}}',
+    );
+    expect(detected.parallelDelegations ?? []).toHaveLength(0);
+    expect(detected.readOnly).toHaveLength(0);
   });
 
   it('routes GitHub read calls into the parallel-read bucket', async () => {

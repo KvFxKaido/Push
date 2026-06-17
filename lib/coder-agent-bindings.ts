@@ -310,8 +310,15 @@ export function buildCoderDetectors<
       raw.mutating && (raw.mutating.source === 'sandbox' || allowsExtra(raw.mutating.source))
         ? raw.mutating
         : null;
+    // Parallel-safe delegations (Inline Foreground Lane: concurrent Explorers)
+    // ride the `delegate` extra source. Empty on surfaces that don't opt into
+    // the bucket, so this is a no-op for the delegated Coder.
+    const parallelDelegations = (raw.parallelDelegations ?? []).filter((c) =>
+      allowsExtra(c.source),
+    );
     return {
       readOnly: sandboxReads,
+      parallelDelegations,
       fileMutations: sandboxFileMutations,
       mutating: sandboxMutating,
       extraMutations: raw.extraMutations,

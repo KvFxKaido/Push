@@ -141,6 +141,14 @@ export interface ToolSchemaContext {
    * Kimi/GLM native calls). No effect on non-GitHub tools.
    */
   activeRepo?: string;
+  /**
+   * Canonical tool names to omit from the schema set even though their source
+   * is included. The Inline Foreground Lane wires the `delegate` source for
+   * `delegate_explorer` only, so it excludes `delegate_coder` / `plan_tasks` —
+   * advertising a tool the run can't execute would let a native call silently
+   * no-op (see the source-scoping note on `getToolFunctionSchemasForSources`).
+   */
+  excludeTools?: ReadonlySet<string>;
 }
 
 /** Build the function-calling schema for a single tool spec. */
@@ -203,6 +211,6 @@ export function getToolFunctionSchemasForSources(
   ctx?: ToolSchemaContext,
 ): ToolFunctionSchema[] {
   return getAllToolSpecs()
-    .filter((spec) => sources.has(spec.source))
+    .filter((spec) => sources.has(spec.source) && !ctx?.excludeTools?.has(spec.canonicalName))
     .map((spec) => toolSpecToFunctionSchema(spec, ctx));
 }

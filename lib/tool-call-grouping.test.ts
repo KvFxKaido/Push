@@ -26,7 +26,7 @@ import {
 
 interface StubCall {
   id: string;
-  kind: 'read' | 'file' | 'side';
+  kind: 'read' | 'file' | 'side' | 'deleg';
 }
 
 const predicates: GroupingPredicates<StubCall> = {
@@ -34,15 +34,25 @@ const predicates: GroupingPredicates<StubCall> = {
   isFileMutation: (c) => c.kind === 'file',
 };
 
+// A predicate set that opts into the parallel-delegation bucket (mirrors the
+// Inline Foreground Lane wiring). `deleg` calls are otherwise side-effecting.
+const delegPredicates: GroupingPredicates<StubCall> = {
+  isReadOnly: (c) => c.kind === 'read',
+  isFileMutation: (c) => c.kind === 'file',
+  isParallelDelegation: (c) => c.kind === 'deleg',
+};
+
 const r = (id: string): StubCall => ({ id, kind: 'read' });
 const f = (id: string): StubCall => ({ id, kind: 'file' });
 const s = (id: string): StubCall => ({ id, kind: 'side' });
+const d = (id: string): StubCall => ({ id, kind: 'deleg' });
 
 describe('groupCallsByPhase — empty + single-call paths', () => {
   it('empty input returns the empty shape', () => {
     const result = groupCallsByPhase<StubCall>([], predicates, UNCAPPED_GROUPING);
     expect(result).toEqual({
       readOnly: [],
+      parallelDelegations: [],
       fileMutations: [],
       mutating: null,
       batchOverflow: [],
@@ -70,6 +80,53 @@ describe('groupCallsByPhase — empty + single-call paths', () => {
     expect(result.mutating).toEqual(s('a'));
     expect(result.readOnly).toHaveLength(0);
     expect(result.fileMutations).toHaveLength(0);
+  });
+});
+
+describe('groupCallsByPhase — parallel delegations (opt-in bucket)', () => {
+  it('disabled by default: a delegation falls through to the trailing slot', () => {
+    // No `isParallelDelegation` predicate AND no cap → byte-identical to the
+    // historical shape: a `deleg` call is just a side-effect.
+    const single = groupCallsByPhase([d('a')], predicates, UNCAPPED_GROUPING);
+    expect(single.mutating?.id).toBe('a');
+    expect(single.parallelDelegations).toHaveLength(0);
+
+    // Predicate present but cap absent → still disabled.
+    const capless = groupCallsByPhase([d('a'), d('b')], delegPredicates, UNCAPPED_GROUPING);
+    expect(capless.mutating?.id).toBe('a');
+    expect(capless.extraMutations.map((c) => c.id)).toEqual(['b']);
+    expect(capless.parallelDelegations).toHaveLength(0);
+  });
+
+  it('enabled (cap 2): single delegation lands in the parallel bucket, not mutating', () => {
+    const caps = { ...UNCAPPED_GROUPING, maxParallelDelegations: 2 };
+    const result = groupCallsByPhase([d('a')], delegPredicates, caps);
+    expect(result.parallelDelegations.map((c) => c.id)).toEqual(['a']);
+    expect(result.mutating).toBeNull();
+  });
+
+  it('enabled (cap 2): fans out two delegations, third overflows to extraMutations', () => {
+    const caps = { ...UNCAPPED_GROUPING, maxParallelDelegations: 2 };
+    const result = groupCallsByPhase([d('a'), d('b'), d('c')], delegPredicates, caps);
+    expect(result.parallelDelegations.map((c) => c.id)).toEqual(['a', 'b']);
+    expect(result.extraMutations.map((c) => c.id)).toEqual(['c']);
+    expect(result.mutating).toBeNull();
+  });
+
+  it('delegations ride the read phase alongside reads, still leaving a trailing slot', () => {
+    const caps = { ...UNCAPPED_GROUPING, maxParallelDelegations: 2 };
+    const result = groupCallsByPhase([r('1'), d('2'), s('3')], delegPredicates, caps);
+    expect(result.readOnly.map((c) => c.id)).toEqual(['1']);
+    expect(result.parallelDelegations.map((c) => c.id)).toEqual(['2']);
+    expect(result.mutating?.id).toBe('3');
+  });
+
+  it('a delegation after a mutation began is an ordering violation', () => {
+    const caps = { ...UNCAPPED_GROUPING, maxParallelDelegations: 2 };
+    const result = groupCallsByPhase([f('1'), d('2')], delegPredicates, caps);
+    expect(result.fileMutations.map((c) => c.id)).toEqual(['1']);
+    expect(result.parallelDelegations).toHaveLength(0);
+    expect(result.extraMutations.map((c) => c.id)).toEqual(['2']);
   });
 });
 

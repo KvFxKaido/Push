@@ -168,6 +168,20 @@ retire the engine loop's duplicated round machinery once the lane has baked;
 the daemon's delegated task-graph nodes keep the implementer prompt by
 design (they are delegations, not the lead).
 
+The inline lead is not delegation-free: it wires a narrow, **Explorer-only**
+delegation arc (`delegate_explorer` via the kernel's `extraToolSources` /
+`executeExtraToolCall` seam, executed by `runInlineExplorerDelegation` in
+`app/src/lib/inline-coder-run.ts`). The lead stays the implementer — it does
+its own coding and `delegate_coder` / `plan_tasks` are refused — but it can
+offload read-only investigation when a question spans many files, and fan out
+up to two Explorers concurrently in one turn. This rides an opt-in
+parallel-delegation bucket in the shared grouper
+(`lib/tool-call-grouping.ts:maxParallelDelegations`, default-disabled so the
+Orchestrator and CLI surfaces are unchanged) which the Coder kernel executes
+in its read-phase `Promise.all`. `delegate:explorer` is part of the
+lead-capable `coder` grant; the empty `extraToolSources` on a delegated
+sub-Coder keeps the same call refused at the source gate.
+
 Protected during convergence: the shared runtime semantics in §1 (one kernel,
 drift tests), the durable job engine, and the safety/Auditor boundary — the
 local lead still goes through the same gates, just without the sandbox's

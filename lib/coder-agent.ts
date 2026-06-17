@@ -543,7 +543,7 @@ function buildCoderGuidelines(leadMode = false, leadToolScope: LeadToolScope = '
       : '- Investigate before answering when the question needs it — use the sandbox and GitHub tools to read files, search the codebase, and inspect PRs / commits / CI.';
     const noDelegateLine = sandboxOnly
       ? `- Do NOT call ${delegateCoderName} or ${delegateExplorerName}; you are the single lead and do the work yourself. This surface cannot open or merge PRs, promote to GitHub, create artifacts, or prompt the user with a tool — do the work in the sandbox and put any question to the user directly in your reply.`
-      : `- Do NOT call ${delegateCoderName} or ${delegateExplorerName}; you are the single lead and do the work yourself. Avoid ${createPrName} / ${mergePrName} unless the user explicitly asks to open or merge a PR.`;
+      : `- Do NOT call ${delegateCoderName}; you are the single lead and do your own coding. You MAY call ${delegateExplorerName} to offload read-only investigation when a question spans many files or you want to trace a flow without spending your own context — keep the brief precise (task, files, knownContext, deliverable). You can fan out up to two ${delegateExplorerName} calls in one turn (emit them together) when two independent threads are worth exploring in parallel; do the editing yourself once they report back. Avoid ${createPrName} / ${mergePrName} unless the user explicitly asks to open or merge a PR.`;
     const discoverStep = sandboxOnly
       ? '2. Discover cheaply first: use list/search/symbol tools before broad file reads; answer repo-activity questions from the sandbox (git log / status), since GitHub PR/CI tools are not wired here.'
       : '2. Discover cheaply first: use list/search/symbol tools before broad file reads, and inspect PRs/commits/CI when the question is about repo activity.';
@@ -1491,7 +1491,11 @@ export async function runCoderAgent<TCall, TCard>(
       }
     }
 
-    const parallelCalls = detected.readOnly;
+    // Parallel-safe delegations (concurrent Explorers, Inline Foreground Lane
+    // only) ride the same `Promise.all` batch as read-only calls — they don't
+    // mutate the workspace. Empty on every surface that doesn't opt into the
+    // parallel-delegation bucket, so this is a no-op there.
+    const parallelCalls = [...detected.readOnly, ...(detected.parallelDelegations ?? [])];
     const fileMutationBatch = detected.fileMutations;
     const trailingMutation = detected.mutating;
     // Mutation work to run sequentially after parallel reads: the
