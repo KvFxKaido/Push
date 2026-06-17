@@ -50,8 +50,10 @@ import type {
   PushStreamRequest,
   PushStreamEvent,
   ResponseFormatSpec,
+  ToolFunctionSchema,
 } from '@push/lib/provider-contract';
 import { normalizeReasoning } from '@push/lib/reasoning-tokens';
+import { KNOWN_TOOL_NAMES } from '@push/lib/tool-call-diagnosis';
 // --- Cloudflare Workers AI ---
 
 const CLOUDFLARE_WORKERS_AI_NOT_CONFIGURED_ERROR =
@@ -100,6 +102,25 @@ function parseResponseFormatSpec(raw: unknown): ResponseFormatSpec | undefined {
   };
 }
 
+/**
+ * Validate the OpenAI-shaped `tools` array the client serializes into the body.
+ * The client builds these from the registry (`tool-function-schemas.ts`), so
+ * this is a shape guard, not a re-derivation: keep only well-formed
+ * `{ type: 'function', function: { name } }` entries and drop the field
+ * entirely if none survive (so a malformed payload doesn't reach env.AI.run).
+ */
+function parseToolSchemas(raw: unknown): ToolFunctionSchema[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const valid = raw.filter((entry): entry is ToolFunctionSchema => {
+    if (!entry || typeof entry !== 'object') return false;
+    const e = entry as Record<string, unknown>;
+    if (e.type !== 'function') return false;
+    const fn = e.function as Record<string, unknown> | undefined;
+    return Boolean(fn && typeof fn === 'object' && typeof fn.name === 'string' && fn.name);
+  });
+  return valid.length > 0 ? valid : undefined;
+}
+
 async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterable<PushStreamEvent> {
   const input: Record<string, unknown> = {
     messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
@@ -114,6 +135,13 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
   // shape; gated upstream by `providerModelSupportsStructuredOutput` so it's
   // only set for supporting models.
   if (req.responseFormat) input.response_format = toOpenAIResponseFormat(req.responseFormat);
+  // Native function calling — same binding accepts the OpenAI `tools` shape.
+  // Gated upstream (only models that support it get a `tools` array), so its
+  // presence here is the signal to forward it.
+  if (req.tools && req.tools.length > 0) {
+    input.tools = req.tools;
+    input.tool_choice = 'auto';
+  }
 
   // Workers AI binding routes through AI Gateway natively when given a
   // `gateway.id`. The binding handles auth via account context — no
@@ -152,6 +180,32 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
   };
   req.signal?.addEventListener('abort', onAbort, { once: true });
 
+  // Native function calling: Kimi/GLM answer with OpenAI `delta.tool_calls`
+  // (name + args split across frames). Accumulate by index and flush as the
+  // same fenced JSON `{"tool","args"}` the dispatcher consumes — mirrors
+  // `openai-sse-pump`'s flushNativeToolCalls. Without this the native call is
+  // dropped here and the client pump never sees it, so the turn reaches the
+  // Coder as an empty completion. Filtered by KNOWN_TOOL_NAMES so a
+  // hallucinated function name doesn't reach the dispatcher.
+  const pendingToolCalls = new Map<number, { name: string; args: string }>();
+  function* flushToolCalls(): Generator<PushStreamEvent> {
+    if (pendingToolCalls.size === 0) return;
+    for (const [, tc] of pendingToolCalls) {
+      if (!tc.name || !KNOWN_TOOL_NAMES.has(tc.name)) continue;
+      let parsedArgs: unknown = {};
+      try {
+        parsedArgs = tc.args ? JSON.parse(tc.args) : {};
+      } catch {
+        parsedArgs = {};
+      }
+      yield {
+        type: 'text_delta',
+        text: `\n\`\`\`json\n${JSON.stringify({ tool: tc.name, args: parsedArgs })}\n\`\`\`\n`,
+      };
+    }
+    pendingToolCalls.clear();
+  }
+
   function* flushLine(line: string): Generator<PushStreamEvent> {
     if (!line.startsWith('data: ')) return;
     const data = line.slice(6).trim();
@@ -189,6 +243,27 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
       if (delta?.content) {
         yield { type: 'text_delta', text: delta.content };
       }
+      // Accumulate native tool-call fragments (name/args split across frames).
+      const toolCalls = delta?.tool_calls;
+      if (Array.isArray(toolCalls)) {
+        for (const tc of toolCalls as Array<{
+          index?: unknown;
+          function?: { name?: unknown; arguments?: unknown };
+        }>) {
+          const idx = typeof tc?.index === 'number' ? tc.index : 0;
+          const fnCall = tc?.function;
+          if (!fnCall) continue;
+          const entry = pendingToolCalls.get(idx) ?? { name: '', args: '' };
+          if (typeof fnCall.name === 'string') entry.name = fnCall.name;
+          if (typeof fnCall.arguments === 'string') entry.args += fnCall.arguments;
+          pendingToolCalls.set(idx, entry);
+        }
+      }
+      // Flush as fenced JSON when the model signals completion of the call(s).
+      const finishReason = parsed.choices?.[0]?.finish_reason;
+      if (typeof finishReason === 'string' && finishReason) {
+        yield* flushToolCalls();
+      }
     } catch {
       /* skip malformed JSON */
     }
@@ -207,6 +282,8 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
       for (const line of lines) {
         const trimmed = line.trim();
         if (trimmed.startsWith('data: ') && trimmed.slice(6).trim() === '[DONE]') {
+          // Flush any tool calls not already flushed on a finish_reason frame.
+          yield* flushToolCalls();
           yield { type: 'done', finishReason: 'stop' };
           return;
         }
@@ -220,6 +297,7 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
         yield* flushLine(line);
       }
     }
+    yield* flushToolCalls();
     yield { type: 'done', finishReason: 'stop' };
   } finally {
     req.signal?.removeEventListener('abort', onAbort);
@@ -327,6 +405,7 @@ export async function handleCloudflareChat(request: Request, env: Env): Promise<
         typeof parsedRequest.temperature === 'number' ? parsedRequest.temperature : undefined,
       topP: typeof parsedRequest.top_p === 'number' ? parsedRequest.top_p : undefined,
       responseFormat,
+      tools: parseToolSchemas(parsedRequest.tools),
     };
 
     const encoder = new TextEncoder();

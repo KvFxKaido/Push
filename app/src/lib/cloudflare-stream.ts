@@ -73,6 +73,12 @@ export async function* cloudflareStream(
     // `providerModelSupportsStructuredOutput` so it's only attached for those
     // models; `parseStructured` still runs on the result as the fallback.
     ...(req.responseFormat ? { response_format: toOpenAIResponseFormat(req.responseFormat) } : {}),
+    // Native function calling. The Worker forwards `tools` to `env.AI.run` for
+    // models that support it (Kimi/GLM); the binding emits native `tool_calls`
+    // which `openai-sse-pump` normalizes back into fenced JSON. Additive to the
+    // prompt-described tool path. `tool_choice: 'auto'` keeps prose answers
+    // available when no tool is needed.
+    ...(req.tools && req.tools.length > 0 ? { tools: req.tools, tool_choice: 'auto' } : {}),
   };
 
   // 3. Headers. No Authorization — the Worker uses its `env.AI` binding for

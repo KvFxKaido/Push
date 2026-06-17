@@ -299,6 +299,51 @@ describe('cloudflareStream', () => {
     expect(body.response_format).toBeUndefined();
   });
 
+  it('serializes tools + tool_choice into the body when present', async () => {
+    installStreamFetch(fetchMock);
+    const { cloudflareStream } = await import('./cloudflare-stream');
+    const tools = [
+      {
+        type: 'function' as const,
+        function: {
+          name: 'exec',
+          description: 'Run a shell command',
+          parameters: {
+            type: 'object' as const,
+            properties: { command: { type: 'string' as const } },
+            required: ['command'],
+            additionalProperties: false as const,
+          },
+        },
+      },
+    ];
+    const iter = cloudflareStream({ ...baseRequest, tools });
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.tools).toEqual(tools);
+    expect(body.tool_choice).toBe('auto');
+  });
+
+  it('omits tools / tool_choice when none are set', async () => {
+    installStreamFetch(fetchMock);
+    const { cloudflareStream } = await import('./cloudflare-stream');
+    const iter = cloudflareStream(baseRequest);
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.tools).toBeUndefined();
+    expect(body.tool_choice).toBeUndefined();
+  });
+
   it('hits PROVIDER_URLS.cloudflare.chat', async () => {
     installStreamFetch(fetchMock);
     const { cloudflareStream } = await import('./cloudflare-stream');

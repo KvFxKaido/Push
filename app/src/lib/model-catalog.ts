@@ -329,6 +329,16 @@ const STRUCTURED_OUTPUT_PROVIDERS: ReadonlySet<string> = new Set([
  * conservative attempt at a constraint `parseStructured` already backstops.
  */
 function cloudflareModelSupportsStructuredOutput(modelId: string): boolean {
+  return isCloudflareKimiOrGlm(modelId);
+}
+
+/**
+ * The Workers AI families whose model cards advertise native JSON capabilities
+ * (both `response_format` structured outputs and function calling): Kimi K2.x
+ * and GLM. Substring match for the `@cf/<org>/` prefix — see the note on
+ * `cloudflareModelSupportsStructuredOutput`.
+ */
+function isCloudflareKimiOrGlm(modelId: string): boolean {
   const m = modelId.toLowerCase();
   return m.includes('kimi') || m.includes('moonshot') || m.includes('glm');
 }
@@ -353,6 +363,24 @@ export function providerModelSupportsStructuredOutput(
   // catalog probe (which would always report `structuredOutput: false`).
   if (provider === 'cloudflare') return cloudflareModelSupportsStructuredOutput(modelId);
   return getModelCapabilities(provider, modelId).structuredOutput;
+}
+
+/**
+ * Whether to attach native function-calling `tools` for the given
+ * provider/model. Scoped to Cloudflare Workers AI today (Kimi/GLM) — the
+ * catalog-less provider where the name gate lives and the surface this was
+ * introduced for. Other providers stay on the text-dispatch tool protocol
+ * until native tool calling is wired and validated for them. Additive
+ * regardless: `openai-sse-pump` normalizes any native `tool_calls` back into
+ * the fenced JSON the dispatcher consumes.
+ */
+export function providerModelSupportsNativeToolCalling(
+  provider: string,
+  modelId: string | undefined,
+): boolean {
+  if (!modelId) return false;
+  if (provider === 'cloudflare') return isCloudflareKimiOrGlm(modelId);
+  return false;
 }
 
 /** Build a compact icon string for display in model pickers. */

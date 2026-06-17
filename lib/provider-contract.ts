@@ -249,6 +249,34 @@ export type PushStreamEvent =
  * `parseStructured` repair/validate pass. Adapters that can't honor it (the
  * Anthropic / Gemini native serializers) ignore the field.
  */
+/** JSON-schema scalar/compound types used in tool-parameter schemas. */
+export type JsonSchemaType = 'string' | 'integer' | 'number' | 'boolean' | 'array' | 'object';
+
+/** One tool parameter's JSON-schema shape (arrays carry an `items` type). */
+export interface ToolFunctionParameterSchema {
+  type: JsonSchemaType;
+  items?: { type: JsonSchemaType };
+}
+
+/**
+ * OpenAI-style function-calling tool schema. The neutral wire shape for native
+ * tool calling; adapters that support it serialize it into the `tools` array.
+ * Built from the tool registry by `lib/tool-function-schemas.ts`.
+ */
+export interface ToolFunctionSchema {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: {
+      type: 'object';
+      properties: Record<string, ToolFunctionParameterSchema>;
+      required: string[];
+      additionalProperties: false;
+    };
+  };
+}
+
 export interface ResponseFormatSpec {
   /** Schema name reported to the provider (e.g. `'auditor_verdict'`). */
   name: string;
@@ -342,6 +370,16 @@ export interface PushStreamRequest<M extends LlmMessage = LlmMessage> {
    * ignored by the Anthropic / Gemini native serializers. See `ResponseFormatSpec`.
    */
   responseFormat?: ResponseFormatSpec;
+  /**
+   * Native function-calling tool schemas (OpenAI `tools` array). Attached only
+   * for models that support native function calling; adapters serialize it
+   * alongside `tool_choice: 'auto'`. Purely additive to the text-dispatch tool
+   * protocol — `openai-sse-pump` normalizes any native `tool_calls` back into
+   * the fenced JSON the dispatcher consumes, so the two paths converge.
+   * Adapters that don't support it ignore the field. See `ToolFunctionSchema`
+   * and `lib/tool-function-schemas.ts`.
+   */
+  tools?: ToolFunctionSchema[];
   /**
    * Pause-turn continuation blocks for the neutral wire. Anthropic's server-side
    * sampling loop can return `stop_reason: pause_turn` (web search hitting its
