@@ -89,7 +89,17 @@ export function guessWindowFromName(model: string): number {
   if (m.includes('claude')) return 1_000_000;
   if (m.includes('gemini')) return 1_000_000;
   if (m.includes('grok')) return 2_000_000;
-  if (m.includes('kimi') || m.includes('moonshot')) return 256_000;
+  // Kimi/Moonshot K2.x: 262,144 (256K) — the window Cloudflare Workers AI
+  // serves (`@cf/moonshotai/kimi-k2.x`) and Moonshot's own native window.
+  if (m.includes('kimi') || m.includes('moonshot')) return 262_144;
+  // GLM (Z.ai). GLM-5.2 is natively 1,048,576 (1M) but Workers AI launched
+  // `@cf/zai-org/glm-5.2` capped at 262,144 (256K) — budgeting to the native
+  // 1M would overflow the served window and truncate/erroring mid-run. Match
+  // the served cap; the catalog probe (orchestrator-context) still overrides
+  // this with a provider's real window when one is exposed (e.g. a gateway
+  // serving the full 1M). Conservative-by-name is the safe direction: the
+  // name fallback only runs when no catalog window is known.
+  if (m.includes('glm')) return 262_144;
   if (m.includes('gpt-5')) return 1_000_000;
   // Open-weight families served by catalog-less providers (notably Ollama
   // Cloud, which doesn't expose `context_length`). Without these, the
