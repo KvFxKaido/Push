@@ -204,16 +204,12 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
       // what Kimi/GLM actually emit — empty/unparseable args (phantom calls) and
       // unknown names — so we can root-cause validation_failed churn from real
       // data rather than inference. One line per flushed native call.
-      console.log(
-        JSON.stringify({
-          level: known && parsedOk ? 'info' : 'warn',
-          event: 'cloudflare_native_tool_call_flushed',
-          tool: tc.name || null,
-          known,
-          parsedOk,
-          argBytes: tc.args.length,
-        }),
-      );
+      wlog(known && parsedOk ? 'info' : 'warn', 'cloudflare_native_tool_call_flushed', {
+        tool: tc.name || null,
+        known,
+        parsedOk,
+        argBytes: tc.args.length,
+      });
       if (!known) continue;
       yield {
         type: 'text_delta',
