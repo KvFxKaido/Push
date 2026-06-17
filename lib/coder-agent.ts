@@ -1390,6 +1390,23 @@ export async function runCoderAgent<TCall, TCard>(
         ? detectAnyToolCall(reasoningText)
         : null;
     if (buriedReasoningCall) {
+      // A reasoning-only response (`accumulated === ''`, the tool call lived in
+      // the reasoning channel) just pushed an EMPTY assistant turn above. The
+      // web materializer drops empty assistant turns, but the CLI/daemon path
+      // forwards `content` verbatim and empty assistant content is rejected by
+      // some providers (e.g. Anthropic) — which would break the very recovery
+      // round this nudge sets up. Replace the empty turn with a factual marker
+      // so it stays non-empty and role alternation holds across surfaces
+      // (popping it instead would leave two consecutive user turns).
+      if (
+        accumulated.trim() === '' &&
+        messages[messages.length - 1]?.id === `coder-response-${round}`
+      ) {
+        messages[messages.length - 1] = {
+          ...messages[messages.length - 1],
+          content: '[No response content — the tool call was emitted in the reasoning channel.]',
+        };
+      }
       const buriedToolName = (buriedReasoningCall as unknown as { call?: { tool?: string } }).call
         ?.tool;
       callbacks.onRunEvent?.({

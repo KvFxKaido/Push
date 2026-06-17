@@ -897,6 +897,9 @@ describe('runCoderAgent (PushStream consumer)', () => {
     expect(
       secondReq.messages.some((message) => message.content.includes('TOOL_CALL_IN_REASONING')),
     ).toBe(true);
+    // The reasoning-only round leaves an empty assistant turn; the recovery
+    // request must not forward empty content (CLI/daemon providers reject it).
+    expect(secondReq.messages.every((message) => message.content.trim().length > 0)).toBe(true);
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'tool.call_malformed',
