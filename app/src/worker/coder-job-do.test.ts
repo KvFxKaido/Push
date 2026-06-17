@@ -460,13 +460,17 @@ describe('CoderJob DO — end-to-end', () => {
     await Promise.all(waitUntilPromises);
 
     const eventTypes = storage.events.map((e) => e.type);
-    // The DO now forwards the Coder kernel's per-delegation
-    // `assistant.prompt_snapshot` onto its SSE journal between
-    // `job.started` and `job.completed`. This is the audit-trail
-    // parity the OpenCode follow-up bundle introduced — the prompt
-    // snapshot makes "what went to this background Coder?"
-    // answerable from the journal.
-    expect(eventTypes).toEqual(['job.started', 'assistant.prompt_snapshot', 'job.completed']);
+    // The DO forwards the Coder kernel's prompt snapshot and per-round
+    // assistant turn events onto its SSE journal between `job.started`
+    // and `job.completed`. This keeps background Coder jobs observable
+    // with the same vocabulary as foreground lead turns.
+    expect(eventTypes).toEqual([
+      'job.started',
+      'assistant.prompt_snapshot',
+      'assistant.turn_start',
+      'assistant.turn_end',
+      'job.completed',
+    ]);
 
     const started = JSON.parse(storage.events[0]!.payload_json) as {
       type: string;
@@ -475,7 +479,8 @@ describe('CoderJob DO — end-to-end', () => {
     expect(started.type).toBe('job.started');
     expect(started.role).toBe('coder');
 
-    const completed = JSON.parse(storage.events[2]!.payload_json) as {
+    const completedEvent = storage.events.find((event) => event.type === 'job.completed')!;
+    const completed = JSON.parse(completedEvent.payload_json) as {
       type: string;
       role: string;
       summary: string;
@@ -675,12 +680,18 @@ describe('CoderJob DO — end-to-end', () => {
     await Promise.all(waitUntilPromises);
 
     const eventTypes = storage.events.map((e) => e.type);
-    // Prompt snapshot fires before the stream errors because the
-    // emit is inside the kernel's prompt-build phase, which runs
-    // synchronously before any stream consumption. See the parity
-    // bundle that introduced the DO-side `onRunEvent` wiring.
-    expect(eventTypes).toEqual(['job.started', 'assistant.prompt_snapshot', 'job.failed']);
-    const failed = JSON.parse(storage.events[2]!.payload_json) as {
+    // Prompt snapshot fires before the stream errors because the emit is inside
+    // the kernel's prompt-build phase; turn_start/end then bracket the failed
+    // model round before the job terminal event.
+    expect(eventTypes).toEqual([
+      'job.started',
+      'assistant.prompt_snapshot',
+      'assistant.turn_start',
+      'assistant.turn_end',
+      'job.failed',
+    ]);
+    const failedEvent = storage.events.find((event) => event.type === 'job.failed')!;
+    const failed = JSON.parse(failedEvent.payload_json) as {
       type: string;
       role: string;
       error: string;
@@ -952,8 +963,9 @@ describe('CoderJob DO — end-to-end', () => {
       lastEventAt: number | null;
     };
     expect(snapshot.status).toBe('completed');
-    // `job.started`, `assistant.prompt_snapshot`, `job.completed`.
-    expect(snapshot.eventCount).toBe(3);
+    // `job.started`, `assistant.prompt_snapshot`, turn_start/end,
+    // `job.completed`.
+    expect(snapshot.eventCount).toBe(5);
     expect(typeof snapshot.lastEventAt).toBe('number');
   });
 

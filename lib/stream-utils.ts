@@ -115,10 +115,10 @@ export function streamWithTimeout(
  * `timeoutMessage` (or `wallClockTimeoutMessage` if set and applicable) is
  * returned in the result's `error` field.
  *
- * `reasoning_delta` events are ignored at the accumulation level too — the
- * helper's text result feeds JSON parsers that don't want reasoning prose
- * mixed in. Callers that need to surface reasoning to the UI should add a
- * dedicated handler when a real consumer requires it.
+ * `reasoning_delta` events are accumulated separately as `reasoningText` —
+ * the helper's `text` result still feeds JSON parsers that don't want
+ * reasoning prose mixed in, while callers with policy backstops can inspect
+ * the side channel.
  */
 export async function iteratePushStreamText<M extends LlmMessage>(
   stream: PushStream<M>,
@@ -128,7 +128,7 @@ export async function iteratePushStreamText<M extends LlmMessage>(
   wallClockTimeoutMs?: number,
   wallClockTimeoutMessage?: string,
   opts?: { reasoningResetsActivityTimer?: boolean },
-): Promise<{ error: Error | null; text: string; usage?: StreamUsage }> {
+): Promise<{ error: Error | null; text: string; reasoningText: string; usage?: StreamUsage }> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let wallClockTimer: ReturnType<typeof setTimeout> | undefined;
@@ -137,6 +137,7 @@ export async function iteratePushStreamText<M extends LlmMessage>(
   // they were already in the macrotask queue) see a non-null value and bail.
   let timeoutKind: 'activity' | 'wallClock' | null = null;
   let text = '';
+  let reasoningText = '';
   let error: Error | null = null;
   let usage: StreamUsage | undefined;
 
@@ -173,10 +174,13 @@ export async function iteratePushStreamText<M extends LlmMessage>(
         // should still trip the per-role round timeout.
         resetTimer();
         text += event.text;
-      } else if (event.type === 'reasoning_delta' && opts?.reasoningResetsActivityTimer) {
-        // Heavy-reasoner opt-in: thinking IS progress for this caller; the
-        // wall-clock backstop bounds a model that reasons forever.
-        resetTimer();
+      } else if (event.type === 'reasoning_delta') {
+        reasoningText += event.text;
+        if (opts?.reasoningResetsActivityTimer) {
+          // Heavy-reasoner opt-in: thinking IS progress for this caller; the
+          // wall-clock backstop bounds a model that reasons forever.
+          resetTimer();
+        }
       } else if (event.type === 'done') {
         // Capture usage if the adapter reported it. Absent on most non-final
         // events; the terminal `done` is the only place it arrives.
@@ -201,7 +205,7 @@ export async function iteratePushStreamText<M extends LlmMessage>(
     error = new Error(timeoutMessage);
   }
 
-  return { error, text, usage };
+  return { error, text, reasoningText, usage };
 }
 
 // Re-export event type for callers that want to narrow.
