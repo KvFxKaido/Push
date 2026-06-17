@@ -1735,6 +1735,38 @@ export async function runCoderAgent<TCall, TCard>(
         if (batchHardFailed) break;
       }
 
+      // Per-turn overflow feedback: calls the grouper rejected (a parallel
+      // Explorer delegation past the cap, a second side-effect, or a read after
+      // a mutation began) land in `extraMutations`, which the executable batch
+      // above never runs. Surface them so the model knows part of its plan
+      // didn't execute and can re-issue next turn — otherwise a lead that
+      // fanned out three Explorers would get two results with no signal the
+      // third was dropped (silent path; CLAUDE.md "silent return paths"). Purely
+      // additive: the accepted batch already ran, this only appends the notice.
+      if (detected.extraMutations.length > 0) {
+        const droppedTools = detected.extraMutations
+          .map((c) => (c as unknown as { call: { tool: string } }).call.tool)
+          .join(', ');
+        console.log(
+          JSON.stringify({
+            level: 'warn',
+            event: 'coder_turn_overflow_dropped',
+            round,
+            count: detected.extraMutations.length,
+            tools: droppedTools,
+          }),
+        );
+        messages.push({
+          id: `coder-overflow-${round}`,
+          role: 'user',
+          content: formatToolResultEnvelope(
+            `[TOOL_CALLS_NOT_RUN] ${detected.extraMutations.length} tool call(s) exceeded this turn's limits and were NOT executed: ${droppedTools}. A turn runs parallel reads, up to two parallel Explorer delegations, one file-mutation batch, and at most one trailing side-effect; the calls above were over those limits. Re-issue the ones you still need next turn.[/TOOL_CALLS_NOT_RUN]`,
+          ),
+          timestamp: Date.now(),
+          isToolResult: true,
+        });
+      }
+
       continue;
     }
 
