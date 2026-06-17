@@ -795,7 +795,12 @@ export async function runInPageCoderKernel(
     //      can't execute (e.g. `delegate_*`) would let a native call no-op.
     nativeToolSchemas:
       leadRuntime && providerModelSupportsNativeToolCalling(spec.provider, spec.modelId)
-        ? getToolFunctionSchemasForSources(leadNativeToolSources(Boolean(spec.memoryScope)))
+        ? getToolFunctionSchemasForSources(leadNativeToolSources(Boolean(spec.memoryScope)), {
+            // Pin the GitHub tools' `repo` arg to the active repo so the model
+            // emits it correctly instead of a placeholder that trips the
+            // executor's repo-mismatch rejection (validation_failed churn).
+            activeRepo: spec.memoryScope?.repoFullName,
+          })
         : undefined,
   };
 

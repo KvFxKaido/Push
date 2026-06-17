@@ -191,13 +191,26 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
   function* flushToolCalls(): Generator<PushStreamEvent> {
     if (pendingToolCalls.size === 0) return;
     for (const [, tc] of pendingToolCalls) {
-      if (!tc.name || !KNOWN_TOOL_NAMES.has(tc.name)) continue;
+      const known = Boolean(tc.name && KNOWN_TOOL_NAMES.has(tc.name));
       let parsedArgs: unknown = {};
+      let parsedOk = true;
       try {
         parsedArgs = tc.args ? JSON.parse(tc.args) : {};
       } catch {
         parsedArgs = {};
+        parsedOk = false;
       }
+      // Observability for the native-function-calling path (#955). Lets us see
+      // what Kimi/GLM actually emit — empty/unparseable args (phantom calls) and
+      // unknown names — so we can root-cause validation_failed churn from real
+      // data rather than inference. One line per flushed native call.
+      wlog(known && parsedOk ? 'info' : 'warn', 'cloudflare_native_tool_call_flushed', {
+        tool: tc.name || null,
+        known,
+        parsedOk,
+        argBytes: tc.args.length,
+      });
+      if (!known) continue;
       yield {
         type: 'text_delta',
         text: `\n\`\`\`json\n${JSON.stringify({ tool: tc.name, args: parsedArgs })}\n\`\`\`\n`,

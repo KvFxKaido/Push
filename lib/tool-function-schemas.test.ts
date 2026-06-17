@@ -99,4 +99,24 @@ describe('getToolFunctionSchemasForSources', () => {
     expect(names).not.toContain('explorer'); // delegate
     expect(names).not.toContain('plan_tasks'); // delegate
   });
+
+  it('pins GitHub `repo` to the active repo when provided (anti-placeholder)', () => {
+    const sources = new Set<ToolRegistrySource>(['github', 'sandbox']);
+    const schemas = getToolFunctionSchemasForSources(sources, { activeRepo: 'KvFxKaido/Push' });
+    const byName = Object.fromEntries(schemas.map((s) => [s.function.name, s]));
+    // GitHub tool: repo pinned via enum + description.
+    const repoProp = byName.commits.function.parameters.properties.repo;
+    expect(repoProp.enum).toEqual(['KvFxKaido/Push']);
+    expect(repoProp.description).toContain('KvFxKaido/Push');
+    // Non-GitHub tool: a `path`-style arg is untouched (no enum leakage).
+    expect(byName.exec.function.parameters.properties.command.enum).toBeUndefined();
+  });
+
+  it('leaves `repo` unconstrained when no active repo is provided', () => {
+    const schemas = getToolFunctionSchemasForSources(new Set<ToolRegistrySource>(['github']));
+    const repoProp = schemas.find((s) => s.function.name === 'commits')!.function.parameters
+      .properties.repo;
+    expect(repoProp.enum).toBeUndefined();
+    expect(repoProp).toEqual({ type: 'string' });
+  });
 });

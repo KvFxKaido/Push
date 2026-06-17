@@ -131,14 +131,37 @@ function buildParameterSchema(
   return { type };
 }
 
+/** Options that bind otherwise-free-form args to the run's context. */
+export interface ToolSchemaContext {
+  /**
+   * The single repository the run may touch. When set, GitHub tools' `repo`
+   * param is pinned to it (enum + description) so the model emits the active
+   * repo instead of a placeholder like `owner/repo` — the latter trips the
+   * executor's repo-mismatch rejection (seen as `validation_failed` retries on
+   * Kimi/GLM native calls). No effect on non-GitHub tools.
+   */
+  activeRepo?: string;
+}
+
 /** Build the function-calling schema for a single tool spec. */
-export function toolSpecToFunctionSchema(spec: ToolSpec): ToolFunctionSchema {
+export function toolSpecToFunctionSchema(
+  spec: ToolSpec,
+  ctx?: ToolSchemaContext,
+): ToolFunctionSchema {
   const params = parseSignatureParams(spec.protocolSignature);
   const exampleArgs = parseExampleArgs(spec.exampleJson);
   const properties: Record<string, ToolFunctionParameterSchema> = {};
   const required: string[] = [];
   for (const param of params) {
-    properties[param.name] = buildParameterSchema(param.name, exampleArgs);
+    let prop = buildParameterSchema(param.name, exampleArgs);
+    if (param.name === 'repo' && spec.source === 'github' && ctx?.activeRepo) {
+      prop = {
+        ...prop,
+        enum: [ctx.activeRepo],
+        description: `The active repository. Must be exactly "${ctx.activeRepo}".`,
+      };
+    }
+    properties[param.name] = prop;
     if (param.required) required.push(param.name);
   }
   return {
@@ -164,7 +187,7 @@ let cached: ToolFunctionSchema[] | null = null;
  * that support native function calling.
  */
 export function getToolFunctionSchemas(): ToolFunctionSchema[] {
-  if (!cached) cached = getAllToolSpecs().map(toolSpecToFunctionSchema);
+  if (!cached) cached = getAllToolSpecs().map((spec) => toolSpecToFunctionSchema(spec));
   return cached;
 }
 
@@ -177,8 +200,9 @@ export function getToolFunctionSchemas(): ToolFunctionSchema[] {
  */
 export function getToolFunctionSchemasForSources(
   sources: ReadonlySet<ToolRegistrySource>,
+  ctx?: ToolSchemaContext,
 ): ToolFunctionSchema[] {
   return getAllToolSpecs()
     .filter((spec) => sources.has(spec.source))
-    .map(toolSpecToFunctionSchema);
+    .map((spec) => toolSpecToFunctionSchema(spec, ctx));
 }
