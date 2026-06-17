@@ -114,6 +114,14 @@ const CODER_ROUND_TIMEOUT_MS = 60_000; // 60s of inactivity (activity-based — 
 // jobs run unattended, so bound each round by wall-clock too. Mirrors
 // EXPLORER_ROUND_WALL_CLOCK_MS / DEEP_REVIEW_ROUND_WALL_CLOCK_MS.
 const CODER_ROUND_WALL_CLOCK_MS = 180_000;
+// First-token grace for the activity timer. Workers AI models (kimi/glm)
+// routinely have a 20–30s time-to-first-token; the 60s activity window above is
+// tight enough that a slow-to-START round (cold/queued upstream) trips it and
+// surfaces as "model may be unresponsive" before the model has emitted anything.
+// Give the first token a wider window, then fall back to CODER_ROUND_TIMEOUT_MS
+// for inter-token gaps. The wall-clock cap still bounds the round overall.
+// Tunable — sized at ~1.5x the activity window, well under the wall-clock cap.
+const CODER_FIRST_TOKEN_GRACE_MS = 90_000;
 const MAX_CODER_ROUNDS = 30; // Circuit breaker — prevent runaway delegation
 // The inline lead is a *watched* foreground run — the user sees every round and
 // can Stop it — so it doesn't get the 30-round wall a delegated Coder does.
@@ -1348,7 +1356,7 @@ export async function runCoderAgent<TCall, TCard>(
       // though it's making progress. Thinking IS progress here; the wall-clock
       // cap above bounds a model that reasons forever. Mirrors deep-reviewer
       // (PR #907).
-      { reasoningResetsActivityTimer: true },
+      { reasoningResetsActivityTimer: true, firstTokenGraceMs: CODER_FIRST_TOKEN_GRACE_MS },
     );
 
     if (streamError) {

@@ -154,6 +154,84 @@ describe('iteratePushStreamText', () => {
     expect(text).toBe('final answer');
   });
 
+  it('allows a slow first token within firstTokenGraceMs, then tightens', async () => {
+    // First token lands at 120ms — past the 50ms activity timeout but within
+    // the 200ms first-token grace, so it survives (mirrors a Workers AI model
+    // with a slow time-to-first-token). Subsequent gaps use the tight 50ms.
+    const stream = makeGappedPushStream([
+      { event: { type: 'text_delta', text: 'late ' }, gapMs: 120 },
+      { event: { type: 'text_delta', text: 'start' }, gapMs: 30 },
+      { event: { type: 'done', finishReason: 'stop' }, gapMs: 10 },
+    ]);
+
+    const promise = iteratePushStreamText(
+      stream,
+      { provider: 'openrouter', model: 'm', messages: [] },
+      50,
+      'timed out',
+      undefined,
+      undefined,
+      { firstTokenGraceMs: 200 },
+    );
+    await vi.runAllTimersAsync();
+    const { error, text } = await promise;
+
+    expect(error).toBeNull();
+    expect(text).toBe('late start');
+  });
+
+  it('tightens to timeoutMs after the first token — a mid-stream stall still trips', async () => {
+    // First token survives via the grace; the second is 120ms later, past the
+    // tight 50ms inter-token window now in effect, so the activity timer fires.
+    const stream = makeGappedPushStream([
+      { event: { type: 'text_delta', text: 'ok ' }, gapMs: 120 },
+      { event: { type: 'text_delta', text: 'then stall' }, gapMs: 120 },
+      { event: { type: 'done', finishReason: 'stop' }, gapMs: 10 },
+    ]);
+
+    const promise = iteratePushStreamText(
+      stream,
+      { provider: 'openrouter', model: 'm', messages: [] },
+      50,
+      'timed out',
+      undefined,
+      undefined,
+      { firstTokenGraceMs: 200 },
+    );
+    await vi.runAllTimersAsync();
+    const { error, text } = await promise;
+
+    expect(error).not.toBeNull();
+    expect(error?.message).toBe('timed out');
+    expect(text).toBe('ok ');
+  });
+
+  it('applies the first-token grace to a slow first reasoning token (heavy-reasoner opt-in)', async () => {
+    // The kimi/glm inline case: the first activity is a reasoning token at
+    // 120ms. With the opt-in it counts as activity, and the grace covers its
+    // slow arrival, so the round is not killed as "unresponsive".
+    const stream = makeGappedPushStream([
+      { event: { type: 'reasoning_delta', text: 'thinking' }, gapMs: 120 },
+      { event: { type: 'text_delta', text: 'answer' }, gapMs: 30 },
+      { event: { type: 'done', finishReason: 'stop' }, gapMs: 10 },
+    ]);
+
+    const promise = iteratePushStreamText(
+      stream,
+      { provider: 'openrouter', model: 'm', messages: [] },
+      50,
+      'timed out',
+      undefined,
+      undefined,
+      { reasoningResetsActivityTimer: true, firstTokenGraceMs: 200 },
+    );
+    await vi.runAllTimersAsync();
+    const { error, text } = await promise;
+
+    expect(error).toBeNull();
+    expect(text).toBe('answer');
+  });
+
   it('wall-clock still bounds an endless reasoner even with the opt-in', async () => {
     // Reasoning deltas every 30ms keep the 50ms activity timer alive
     // forever; the 100ms wall-clock backstop is what ends the round — the
