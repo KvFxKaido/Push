@@ -1248,7 +1248,7 @@ describe('providerModelSupportsStructuredOutput', () => {
     expect(providerModelSupportsStructuredOutput('openrouter', undefined)).toBe(false);
   });
 
-  it('gates native tool calling to Cloudflare Kimi/GLM only', () => {
+  it('gates native tool calling for Cloudflare Kimi/GLM by name', () => {
     stubWindow();
     expect(
       providerModelSupportsNativeToolCalling('cloudflare', '@cf/moonshotai/kimi-k2.7-code'),
@@ -1257,9 +1257,26 @@ describe('providerModelSupportsStructuredOutput', () => {
     expect(
       providerModelSupportsNativeToolCalling('cloudflare', '@cf/qwen/qwen2.5-coder-32b-instruct'),
     ).toBe(false);
-    // Other providers stay text-dispatch only for now, even capable ones.
-    expect(providerModelSupportsNativeToolCalling('openrouter', 'moonshotai/kimi-k2')).toBe(false);
     expect(providerModelSupportsNativeToolCalling('cloudflare', undefined)).toBe(false);
+  });
+
+  it('gates native tool calling for OpenRouter to the curated coding allowlist', () => {
+    stubWindow();
+    // Curated coding models pass, regardless of routing suffix.
+    expect(
+      providerModelSupportsNativeToolCalling('openrouter', 'anthropic/claude-sonnet-4.6:nitro'),
+    ).toBe(true);
+    expect(providerModelSupportsNativeToolCalling('openrouter', 'openai/gpt-5.3-codex')).toBe(true);
+    expect(providerModelSupportsNativeToolCalling('openrouter', 'moonshotai/kimi-k2.5:nitro')).toBe(
+      true,
+    );
+    expect(providerModelSupportsNativeToolCalling('openrouter', 'z-ai/glm-5.1:nitro')).toBe(true);
+    // Suffix-stripping is case-insensitive on the base id.
+    expect(providerModelSupportsNativeToolCalling('openrouter', 'Z-AI/GLM-5.1:nitro')).toBe(true);
+    // Off-allowlist OpenRouter models (even capable ones) stay text-dispatch.
+    expect(providerModelSupportsNativeToolCalling('openrouter', 'cohere/command-a')).toBe(false);
+    expect(providerModelSupportsNativeToolCalling('openrouter', 'moonshotai/kimi-k2')).toBe(false);
+    expect(providerModelSupportsNativeToolCalling('openrouter', undefined)).toBe(false);
   });
 
   it('returns false for an allowlisted provider when the catalog reports no support', () => {

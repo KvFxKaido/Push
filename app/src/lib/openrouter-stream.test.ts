@@ -422,6 +422,84 @@ describe('openrouterStream', () => {
     expect(body.tools).toEqual([{ type: 'openrouter:web_search' }]);
   });
 
+  // -------------------------------------------------------------------------
+  // Native function calling — additive to text-dispatch
+  // -------------------------------------------------------------------------
+
+  const sampleTool = {
+    type: 'function' as const,
+    function: {
+      name: 'sandbox_write_file',
+      description: 'Write a file to the sandbox',
+      parameters: {
+        type: 'object' as const,
+        properties: { path: { type: 'string' as const } },
+        required: ['path'],
+        additionalProperties: false as const,
+      },
+    },
+  };
+
+  it('forwards native function tools with tool_choice and require_parameters routing', async () => {
+    installStreamFetch(fetchMock);
+    const { openrouterStream } = await import('./openrouter-stream');
+    // Web search off so the tools array isolates the native schema.
+    const iter = openrouterStream({
+      ...baseRequest,
+      openrouterWebSearch: false,
+      tools: [sampleTool],
+    });
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.tools).toEqual([sampleTool]);
+    expect(body.tool_choice).toBe('auto');
+    // Same routing guard as response_format: don't let OpenRouter route to an
+    // endpoint that silently drops the tools array.
+    expect(body.provider).toEqual({ require_parameters: true });
+  });
+
+  it('merges native function tools with the web_search server tool (web search last)', async () => {
+    installStreamFetch(fetchMock);
+    const { openrouterStream } = await import('./openrouter-stream');
+    const iter = openrouterStream({
+      ...baseRequest,
+      openrouterWebSearch: true,
+      tools: [sampleTool],
+    });
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.tools).toEqual([sampleTool, { type: 'openrouter:web_search' }]);
+    expect(body.tool_choice).toBe('auto');
+    expect(body.provider).toEqual({ require_parameters: true });
+  });
+
+  it('omits tool_choice and require_parameters when no native tools are attached', async () => {
+    installStreamFetch(fetchMock);
+    const { openrouterStream } = await import('./openrouter-stream');
+    // Web-search-only path (the default) must stay unchanged: no tool_choice,
+    // no provider routing guard.
+    const iter = openrouterStream(baseRequest);
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.tool_choice).toBeUndefined();
+    expect(body.provider).toBeUndefined();
+  });
+
   it('closes cleanly when the stream ends without a [DONE] or finish_reason', async () => {
     const { push, close } = installStreamFetch(fetchMock);
     const { openrouterStream } = await import('./openrouter-stream');

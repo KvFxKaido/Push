@@ -1,7 +1,8 @@
 # Native Function Calling — Additive to Text-Dispatch
 
-**Status:** Current — shipped for the Cloudflare Workers AI lead (Kimi/GLM). Other
-providers and roles are deferred follow-ups, not yet promoted to `ROADMAP.md`.
+**Status:** Current — shipped for the Cloudflare Workers AI lead (Kimi/GLM) and the
+OpenRouter lead (curated coding allowlist). Other providers and roles are deferred
+follow-ups, not yet promoted to `ROADMAP.md`.
 
 **Date:** 2026-06-17
 
@@ -51,18 +52,30 @@ native tool call — both converge at one dispatch path. Consequences:
   serializes `tools` + `tool_choice: 'auto'` into the body; the Worker
   (`app/src/worker/worker-providers.ts`) validates and forwards them to
   `env.AI.run`.
+- **OpenRouter adapter.** `app/src/lib/openrouter-stream.ts` serializes `tools` +
+  `tool_choice: 'auto'` into the body, merging native function schemas with the
+  `openrouter:web_search` server tool when both are active. It also sets
+  `provider: { require_parameters: true }` (the same routing guard `response_format`
+  uses) so OpenRouter can't route to an endpoint that silently drops the tools.
 - **Capability gate.** `providerModelSupportsNativeToolCalling(provider, model)`
-  in `app/src/lib/model-catalog.ts` — name-based (Kimi/GLM) for Cloudflare,
-  which has no models.dev metadata. Other providers return `false`.
+  in `app/src/lib/model-catalog.ts` — name-based (Kimi/GLM) for Cloudflare, which
+  has no models.dev metadata; a curated, routing-suffix-insensitive coding
+  allowlist (`OPENROUTER_NATIVE_TOOL_CALLING_MODELS`, modeled on `ZEN_MODELS` plus
+  the Claude coding tiers) for OpenRouter. Other providers return `false`.
 - **Lead wiring.** `inline-coder-run.ts` attaches `getToolFunctionSchemas()`
   when the gate passes; the coder kernel (`lib/coder-agent.ts`) threads the new
-  `nativeToolSchemas` option into each round's request.
+  `nativeToolSchemas` option into each round's request. Provider-agnostic — once
+  the gate returns `true` for a provider/model, the lead attaches schemas and the
+  provider's adapter serializes them.
 
 ## Scope / deferred
 
-- **Other providers.** OpenAI/OpenRouter/Zen/etc. are function-calling-capable
-  but stay text-dispatch only until native calling is validated per provider.
-  The gate is the single switch.
+- **Other providers.** OpenAI/Zen/etc. are function-calling-capable but stay
+  text-dispatch only until native calling is validated per provider. The gate is
+  the single switch. OpenRouter is now enabled for a curated coding allowlist
+  (web lead); widen it by appending model ids as they're validated. The CLI
+  OpenRouter adapter (`cli/openai-stream.ts`) is a separate follow-up — its lead
+  doesn't attach `nativeToolSchemas` yet, so it stays text-dispatch.
 - **Other roles.** Delegated Coder, Explorer, auditor/reviewer are unchanged
   (auditor/reviewer use `response_format` structured outputs, a separate
   mechanism — see `docs/runbooks/OpenRouter Capability Expansion.md`).

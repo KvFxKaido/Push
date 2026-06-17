@@ -80,6 +80,27 @@ export async function* openrouterStream(
   // Gemini native-search adapters.
   const webSearch = req.openrouterWebSearch ?? isNativeWebSearchEnabled('openrouter', req.model);
 
+  // Native function calling: when the caller attached function schemas (gated on
+  // model support via `providerModelSupportsNativeToolCalling`), forward them so
+  // OpenRouter routes through the model's constrained tool-calling path. Additive
+  // to text-dispatch — `openai-sse-pump` normalizes any native `tool_calls` back
+  // into the fenced JSON the dispatcher consumes, so the prompt-described path is
+  // untouched and the two converge. `tool_choice: 'auto'` keeps prose answers
+  // available when no tool is needed. OpenRouter accepts a mixed `tools` array,
+  // so native function schemas and the `openrouter:web_search` server tool merge
+  // (web search appended last) when both are active.
+  const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : [];
+  const toolsArray = [...nativeTools, ...(webSearch ? [OPENROUTER_WEB_SEARCH_TOOL] : [])];
+  // `provider.require_parameters` is load-bearing whenever we send native tools
+  // or a `response_format` constraint: by default OpenRouter may route to an
+  // endpoint that doesn't honor those params and silently drops them — dropping
+  // native tool calling back to prompt-only (or the schema constraint back to
+  // prompt-only JSON) despite the model advertising support. require_parameters
+  // restricts routing to providers that honor every param we send, so the
+  // constraint can't be lost mid-route. Web search alone doesn't need it (the
+  // server tool gates its own routing), so it stays off the web-search-only path.
+  const requireParameters = nativeTools.length > 0 || Boolean(req.responseFormat);
+
   const body: Record<string, unknown> = {
     model: req.model,
     messages: llmMessages,
@@ -89,22 +110,14 @@ export async function* openrouterStream(
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
     ...(useReasoning ? { reasoning: { effort } } : {}),
     ...(sessionId ? { session_id: sessionId } : {}),
-    ...(webSearch ? { tools: [OPENROUTER_WEB_SEARCH_TOOL] } : {}),
+    ...(toolsArray.length > 0 ? { tools: toolsArray } : {}),
+    ...(nativeTools.length > 0 ? { tool_choice: 'auto' } : {}),
     // Native structured outputs: when the caller attached a JSON-Schema
     // constraint (and gated it on model support), forward it so OpenRouter
     // constrains generation server-side. Same wire builder the CLI/OpenAI-compat
-    // path uses, so the two can't drift. `provider.require_parameters` is
-    // load-bearing here: by default OpenRouter may route to an endpoint that
-    // doesn't support `response_format` and silently ignores it, dropping the
-    // schema constraint back to prompt-only JSON despite the model advertising
-    // support. require_parameters restricts routing to providers that honor
-    // every param we send, so the constraint can't be lost mid-route.
-    ...(req.responseFormat
-      ? {
-          response_format: toOpenAIResponseFormat(req.responseFormat),
-          provider: { require_parameters: true },
-        }
-      : {}),
+    // path uses, so the two can't drift.
+    ...(req.responseFormat ? { response_format: toOpenAIResponseFormat(req.responseFormat) } : {}),
+    ...(requireParameters ? { provider: { require_parameters: true } } : {}),
     trace,
   };
 

@@ -368,13 +368,67 @@ export function providerModelSupportsStructuredOutput(
 }
 
 /**
+ * Curated OpenRouter models cleared for native function calling. Modeled on the
+ * OpenCode Zen standard-tier coding lineup (`ZEN_MODELS` in
+ * `lib/provider-models.ts`) — a small, current set of strong coding models whose
+ * native tool-calling we trust — plus the Anthropic Claude coding tiers that are
+ * OpenRouter's default model and the most reliable native tool-callers. This is
+ * a deliberate conservative rollout, not a capability sweep: every other
+ * OpenRouter model stays on the text-dispatch tool protocol until it's added
+ * here. Widen by appending ids as more models are validated.
+ *
+ * Ids are stored routing-suffix-stripped and lowercased
+ * (`anthropic/claude-sonnet-4.6`, not `anthropic/claude-sonnet-4.6:nitro`).
+ * OpenRouter appends `:nitro` / `:free` / `:online` variants to the same base
+ * model; native function-calling support is a property of the base model, so we
+ * match the base and let any routing variant through. See
+ * `normalizeOpenRouterModelId`.
+ */
+const OPENROUTER_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set([
+  // Anthropic Claude — OpenRouter's default and the most reliable native FC.
+  'anthropic/claude-sonnet-4.6',
+  'anthropic/claude-opus-4.6',
+  // OpenAI GPT-5.x coding tiers (mirrors Zen's gpt-5.4 / gpt-5.3-codex / gpt-5.2-codex).
+  'openai/gpt-5.4',
+  'openai/gpt-5.3-codex',
+  'openai/gpt-5.2-codex',
+  // Google Gemini 3 (mirrors Zen's gemini-3-flash).
+  'google/gemini-3-flash-preview',
+  'google/gemini-3.5-flash',
+  // Zhipu GLM (mirrors Zen's glm-5.1).
+  'z-ai/glm-5.1',
+  'z-ai/glm-5',
+  // Moonshot Kimi (mirrors Zen's kimi-k2.5).
+  'moonshotai/kimi-k2.5',
+  // MiniMax (mirrors Zen's minimax-m2.7 / minimax-m3-free).
+  'minimax/minimax-m2.7',
+  'minimax/minimax-m3',
+]);
+
+/**
+ * Strip OpenRouter's routing suffix (`:nitro`, `:free`, `:online`, …) and
+ * lowercase so allowlist membership is checked against the base model id.
+ */
+function normalizeOpenRouterModelId(modelId: string): string {
+  const colon = modelId.indexOf(':');
+  return (colon === -1 ? modelId : modelId.slice(0, colon)).toLowerCase();
+}
+
+function isOpenRouterNativeToolModel(modelId: string): boolean {
+  return OPENROUTER_NATIVE_TOOL_CALLING_MODELS.has(normalizeOpenRouterModelId(modelId));
+}
+
+/**
  * Whether to attach native function-calling `tools` for the given
- * provider/model. Scoped to Cloudflare Workers AI today (Kimi/GLM) — the
- * catalog-less provider where the name gate lives and the surface this was
- * introduced for. Other providers stay on the text-dispatch tool protocol
- * until native tool calling is wired and validated for them. Additive
- * regardless: `openai-sse-pump` normalizes any native `tool_calls` back into
- * the fenced JSON the dispatcher consumes.
+ * provider/model. Two provider gates today:
+ *   - **Cloudflare Workers AI** (Kimi/GLM) — name-based, the catalog-less
+ *     provider this was introduced for.
+ *   - **OpenRouter** — a curated allowlist of coding models
+ *     (`OPENROUTER_NATIVE_TOOL_CALLING_MODELS`), routing-suffix-insensitive.
+ * Other providers stay on the text-dispatch tool protocol until native tool
+ * calling is wired and validated for them. Additive regardless: `openai-sse-pump`
+ * normalizes any native `tool_calls` back into the fenced JSON the dispatcher
+ * consumes, so a non-gated model simply never receives a `tools` array.
  */
 export function providerModelSupportsNativeToolCalling(
   provider: string,
@@ -382,6 +436,7 @@ export function providerModelSupportsNativeToolCalling(
 ): boolean {
   if (!modelId) return false;
   if (provider === 'cloudflare') return isCloudflareKimiOrGlm(modelId);
+  if (provider === 'openrouter') return isOpenRouterNativeToolModel(modelId);
   return false;
 }
 
