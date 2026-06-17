@@ -264,6 +264,41 @@ describe('cloudflareStream', () => {
     expect(body.top_p).toBe(0.95);
   });
 
+  it('serializes responseFormat into the request body as OpenAI response_format', async () => {
+    installStreamFetch(fetchMock);
+    const { cloudflareStream } = await import('./cloudflare-stream');
+    const iter = cloudflareStream({
+      ...baseRequest,
+      responseFormat: { name: 'verdict', schema: { type: 'object' } },
+    });
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(fetchMock).toHaveBeenCalled();
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.response_format).toEqual({
+      type: 'json_schema',
+      json_schema: { name: 'verdict', strict: true, schema: { type: 'object' } },
+    });
+  });
+
+  it('omits response_format from the body when responseFormat is unset', async () => {
+    installStreamFetch(fetchMock);
+    const { cloudflareStream } = await import('./cloudflare-stream');
+    const iter = cloudflareStream(baseRequest);
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.response_format).toBeUndefined();
+  });
+
   it('hits PROVIDER_URLS.cloudflare.chat', async () => {
     installStreamFetch(fetchMock);
     const { cloudflareStream } = await import('./cloudflare-stream');

@@ -25,6 +25,7 @@
 import type { ChatMessage } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
+import { toOpenAIResponseFormat } from '@push/lib/openai-chat-serializer';
 import type { WorkspaceContext } from '@/types';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
@@ -66,6 +67,12 @@ export async function* cloudflareStream(
     ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
+    // Native JSON-schema structured outputs. The Worker parses this back into
+    // `pushReq.responseFormat` and forwards it to `env.AI.run` for models that
+    // support it (Kimi K2.x, GLM). Gated upstream by
+    // `providerModelSupportsStructuredOutput` so it's only attached for those
+    // models; `parseStructured` still runs on the result as the fallback.
+    ...(req.responseFormat ? { response_format: toOpenAIResponseFormat(req.responseFormat) } : {}),
   };
 
   // 3. Headers. No Authorization — the Worker uses its `env.AI` binding for

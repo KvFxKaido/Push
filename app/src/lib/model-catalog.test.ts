@@ -1213,20 +1213,33 @@ describe('providerModelSupportsStructuredOutput', () => {
   it('returns false for providers whose adapter does not serialize response_format', () => {
     stubWindow();
     // Anthropic / Gemini / Vertex native serializers ignore `response_format` by
-    // contract; cloudflare / bedrock / ollama are unconfirmed (Ollama Cloud does
-    // not support structured outputs); demo has no wire. None of these may ever
-    // attach a constraint, regardless of any catalog metadata.
-    for (const provider of [
-      'anthropic',
-      'google',
-      'vertex',
-      'cloudflare',
-      'bedrock',
-      'ollama',
-      'demo',
-    ]) {
+    // contract; bedrock / ollama are unconfirmed (Ollama Cloud does not support
+    // structured outputs); demo has no wire. None of these may ever attach a
+    // constraint, regardless of any catalog metadata.
+    for (const provider of ['anthropic', 'google', 'vertex', 'bedrock', 'ollama', 'demo']) {
       expect(providerModelSupportsStructuredOutput(provider, 'any-model')).toBe(false);
     }
+  });
+
+  it('gates Cloudflare Workers AI by model name (Kimi / GLM only)', () => {
+    stubWindow();
+    // Workers AI has no models.dev metadata, so the gate is name-based. Kimi
+    // K2.x and GLM advertise structured outputs on their model cards; every
+    // other Workers AI model stays prompt-only. Covers the `@cf/...` ids the
+    // catalog returns.
+    expect(
+      providerModelSupportsStructuredOutput('cloudflare', '@cf/moonshotai/kimi-k2.7-code'),
+    ).toBe(true);
+    expect(providerModelSupportsStructuredOutput('cloudflare', '@cf/zai-org/glm-5.2')).toBe(true);
+    expect(
+      providerModelSupportsStructuredOutput('cloudflare', '@cf/qwen/qwen2.5-coder-32b-instruct'),
+    ).toBe(false);
+    expect(
+      providerModelSupportsStructuredOutput(
+        'cloudflare',
+        '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+      ),
+    ).toBe(false);
   });
 
   it('returns false when no modelId is given', () => {

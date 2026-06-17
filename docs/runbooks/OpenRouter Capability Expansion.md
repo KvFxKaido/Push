@@ -128,9 +128,9 @@ tool-shaped and is out of scope here.
 - **Provider coverage (web).** No longer OpenRouter-only. Every OpenAI-shaped
   web adapter now serializes `response_format` via the shared
   `toOpenAIResponseFormat` builder: `openrouter`, `openai`, `azure`, `nvidia`,
-  `blackbox`, `kilocode`, `openadapter`, `zen`. The
+  `blackbox`, `kilocode`, `openadapter`, `zen`, and `cloudflare`. The
   `provider.require_parameters` routing guard stays **OpenRouter-only** — it's an
-  OpenRouter-specific field. `cloudflare`/`bedrock`/`ollama` are left out (their
+  OpenRouter-specific field. `bedrock`/`ollama` are left out (their
   `response_format` support is unconfirmed — Ollama Cloud does not honor
   structured outputs per its docs), and the Anthropic/Gemini/Vertex native
   serializers ignore the field by contract. Activation is still
@@ -138,6 +138,17 @@ tool-shaped and is out of scope here.
   structured-output metadata (e.g. direct OpenAI/Azure today) stay prompt-only
   until that metadata lands — the wire plumbing is in place to light them up
   automatically when it does.
+- **Cloudflare Workers AI (name-gated).** Workers AI returns bare `@cf/...` ids
+  with no models.dev metadata, so the catalog probe can't see capability. The
+  round-trip is client (`app/src/lib/cloudflare-stream.ts` serializes
+  `response_format` into the body) → Worker (`handleCloudflareChat` parses it
+  back into `pushReq.responseFormat`, dropping + logging a malformed field) →
+  `env.AI.run` input. The per-model gate is name-based
+  (`cloudflareModelSupportsStructuredOutput`): only the families whose Workers
+  AI model cards advertise JSON-schema structured outputs (Kimi K2.x, GLM) opt
+  in; every other Workers AI model stays prompt-only. `parseStructured` still
+  runs on the result, so a model that ignores the constraint degrades
+  gracefully.
 - **Optional fields.** `zodToStrictJsonSchema` classifies each property from
   zod's `io: 'input'` output — `required`-listed or `default`-carrying
   (`.catch()`/`.default()`) fields stay required and non-nullable; a genuinely
