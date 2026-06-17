@@ -334,6 +334,14 @@ export function toLLMMessages(
     // Build the full orchestrator prompt using the sectioned builder.
     // Start from the shared base and layer in runtime-dependent blocks.
     //
+    // LOAD-BEARING (not test-only): this runs on every turn that stays on the
+    // foreground Orchestrator role/loop — conversational lead turns with a
+    // repo, no-repo workspaces (chat / scratch / local-pc), and the `delegated`
+    // opt-out. See the routing in delegation-mode-settings.ts
+    // (`resolveTurnEngineTrigger` → `null`). The inline Coder/Explorer lanes
+    // pass their own `systemPromptOverride` and skip this path; don't mistake
+    // that for the Orchestrator builder being dead.
+    //
     // `isLocalDaemon` switches the base tool-instructions + per-turn
     // budget between two grant shapes: cloud orchestrator (no
     // sandbox:exec, no repo:write → delegate everything) vs local-daemon

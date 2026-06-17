@@ -31,9 +31,22 @@ boundaries, and event compatibility.
 Status:
 - **Inline is the default (flipped 2026-06-11).** `delegation-mode-settings.ts`
   defaults to `inline`; an explicit `delegated` storage value opts back into
-  the wrapper arc. Attachment turns still run the foreground Orchestrator
-  loop regardless of mode (the engine envelope doesn't carry attachments
-  yet) — that guard is a deletion blocker, not an oversight.
+  the wrapper arc.
+- **The Orchestrator role/loop is still load-bearing — do not prune it.**
+  `resolveTurnEngineTrigger` (`delegation-mode-settings.ts`) returns `null`
+  (→ foreground Orchestrator loop, prompt built at runtime by
+  `buildOrchestratorBaseBuilder` in `app/src/lib/orchestrator.ts`) on three
+  live triggers: (1) **conversational lead turns with a repo** — the
+  `conversationalTurn` downgrade in `chat-send-background.ts` deliberately keeps
+  chat replies ("what changed recently?") off the Coder kernel's
+  no-fake-completion guard; (2) **no-repo workspaces** (chat / scratch /
+  local-pc), which are never inline-eligible; (3) the **`delegated` opt-out**.
+  Only the Orchestrator→Coder *wrapper/Planner* arc is slated for deletion
+  below — the lead loop itself stays until those three triggers are re-homed.
+  (Correction: an earlier note here claimed attachment turns force the
+  Orchestrator loop. They don't — attachments set `conversationalTurn=false`,
+  so they route to the inline lane and are carried into the kernel as multipart
+  content; see the dispatch table in `delegation-mode-settings.ts`.)
 - **Measured (2026-06-11, two runs): quality ties, the wrapper costs ~78%
   wall-clock and owns a unique failure mode** — v2 on fixed instruments:
   completion 11/12 both arms, median wall 33.3 s direct vs 59.3 s delegated,
