@@ -12,6 +12,7 @@ import { cloudflareStream } from './cloudflare-stream';
 import { openrouterStream } from './openrouter-stream';
 import { zenStream } from './zen-stream';
 import { kilocodeStream } from './kilocode-stream';
+import { fireworksStream } from './fireworks-stream';
 import { nvidiaStream } from './nvidia-stream';
 import { blackboxStream } from './blackbox-stream';
 import { openadapterStream } from './openadapter-stream';
@@ -28,6 +29,7 @@ import { getZenKey } from '@/hooks/useZenConfig';
 import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
 import { getBlackboxKey } from '@/hooks/useBlackboxConfig';
 import { getKilocodeKey } from '@/hooks/useKilocodeConfig';
+import { getFireworksKey } from '@/hooks/useFireworksConfig';
 import { getOpenAdapterKey } from '@/hooks/useOpenAdapterConfig';
 import { getAnthropicKey } from '@/hooks/useAnthropicConfig';
 import { getOpenAIKey } from '@/hooks/useOpenAIConfig';
@@ -58,6 +60,7 @@ import {
   getNvidiaModelName,
   getBlackboxModelName,
   getKiloCodeModelName,
+  getFireworksModelName,
   getOpenAdapterModelName,
   getAnthropicModelName,
   getOpenAIModelName,
@@ -92,6 +95,7 @@ export type ActiveProvider =
   | 'blackbox'
   | 'azure'
   | 'kilocode'
+  | 'fireworks'
   | 'openadapter'
   | 'bedrock'
   | 'vertex'
@@ -108,6 +112,7 @@ const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
   nvidia: () => Boolean(getNvidiaKey()),
   blackbox: () => Boolean(getBlackboxKey()),
   kilocode: () => Boolean(getKilocodeKey()),
+  fireworks: () => Boolean(getFireworksKey()),
   openadapter: () => Boolean(getOpenAdapterKey()),
   azure: () =>
     Boolean(
@@ -151,6 +156,7 @@ const PROVIDER_FALLBACK_ORDER: PreferredProvider[] = [
   'nvidia',
   'blackbox',
   'kilocode',
+  'fireworks',
   'openadapter',
   'anthropic',
   'openai',
@@ -198,7 +204,7 @@ export function getActiveProvider(): ActiveProvider {
  * Explorer / DeepReviewer / Coder) consumes via `iteratePushStreamText`.
  *
  * Every provider (ollama / cloudflare / openrouter / zen / kilocode /
- * openadapter / nvidia / blackbox / azure / bedrock / vertex) returns the
+ * fireworks / openadapter / nvidia / blackbox / azure / bedrock / vertex) returns the
  * native `<provider>Stream` composed with `normalizeReasoning` so inline
  * `<think>…</think>` tags split into the reasoning channel — same
  * composition the legacy `streamXChat` callback exports applied internally.
@@ -237,6 +243,9 @@ export function getProviderPushStream(provider: ActiveProvider): PushStream<Chat
       break;
     case 'kilocode':
       stream = (req) => normalizeReasoning(kilocodeStream(req));
+      break;
+    case 'fireworks':
+      stream = (req) => normalizeReasoning(fireworksStream(req));
       break;
     case 'openadapter':
       stream = (req) => normalizeReasoning(openadapterStream(req));
@@ -326,6 +335,7 @@ const PROVIDER_DISPLAY_NAMES: Record<ActiveProvider, string> = {
   nvidia: 'Nvidia NIM',
   blackbox: 'Blackbox AI',
   kilocode: 'Kilo Code',
+  fireworks: 'Fireworks AI',
   openadapter: 'OpenAdapter',
   azure: 'Azure',
   bedrock: 'Bedrock',
@@ -349,6 +359,7 @@ const ADAPTER_ROUTED_PROVIDERS: ReadonlySet<ActiveProvider> = new Set<ActiveProv
   'openrouter',
   'zen',
   'kilocode',
+  'fireworks',
   'openadapter',
   'nvidia',
   'blackbox',
@@ -394,6 +405,8 @@ function resolveChatDefaultModel(provider: ActiveProvider): string {
       return getBlackboxModelName();
     case 'kilocode':
       return getKiloCodeModelName();
+    case 'fireworks':
+      return getFireworksModelName();
     case 'openadapter':
       return getOpenAdapterModelName();
     case 'azure':

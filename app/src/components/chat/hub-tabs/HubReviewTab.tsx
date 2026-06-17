@@ -38,6 +38,7 @@ import {
   BEDROCK_DEFAULT_MODEL,
   VERTEX_DEFAULT_MODEL,
   KILOCODE_DEFAULT_MODEL,
+  FIREWORKS_DEFAULT_MODEL,
   OPENADAPTER_DEFAULT_MODEL,
   getModelForRole,
   type PreferredProvider,
@@ -157,6 +158,7 @@ const REVIEW_MODEL_KEYS: Record<PreferredProvider, string> = {
   openai: 'push:review:model:openai',
   google: 'push:review:model:google',
   kilocode: 'push:review:model:kilocode',
+  fireworks: 'push:review:model:fireworks',
   openadapter: 'push:review:model:openadapter',
 };
 
@@ -174,6 +176,7 @@ const REVIEW_DEFAULT_MODELS: Record<PreferredProvider, string> = {
   openai: OPENAI_DEFAULT_MODEL,
   google: GOOGLE_DEFAULT_MODEL,
   kilocode: KILOCODE_DEFAULT_MODEL,
+  fireworks: FIREWORKS_DEFAULT_MODEL,
   openadapter: OPENADAPTER_DEFAULT_MODEL,
 };
 
@@ -201,6 +204,7 @@ function isPreferredProvider(value: string): value is PreferredProvider {
     value === 'openai' ||
     value === 'google' ||
     value === 'kilocode' ||
+    value === 'fireworks' ||
     value === 'openadapter'
   );
 }
@@ -225,6 +229,7 @@ function readReviewModels(): Record<PreferredProvider, string> {
     nvidia: pick('nvidia'),
     blackbox: pick('blackbox'),
     kilocode: pick('kilocode'),
+    fireworks: pick('fireworks'),
     openadapter: pick('openadapter'),
     azure: pick('azure'),
     bedrock: pick('bedrock'),

@@ -134,6 +134,7 @@ function extractReadmeProviderRows(source) {
         '`zen`',
         '`nvidia`',
         '`kilocode`',
+        '`fireworks`',
         '`blackbox`',
         '`openadapter`',
         '`openai`',

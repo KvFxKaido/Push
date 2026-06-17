@@ -473,6 +473,7 @@ export function DaemonChatBody({
     handleSelectNvidiaModelFromChat: composerState.handleSelectNvidiaModelFromChat,
     handleSelectBlackboxModelFromChat: composerState.handleSelectBlackboxModelFromChat,
     handleSelectKilocodeModelFromChat: composerState.handleSelectKilocodeModelFromChat,
+    handleSelectFireworksModelFromChat: composerState.handleSelectFireworksModelFromChat,
     handleSelectOpenAdapterModelFromChat: composerState.handleSelectOpenAdapterModelFromChat,
     handleSelectAzureModelFromChat: composerState.handleSelectAzureModelFromChat,
     handleSelectBedrockModelFromChat: composerState.handleSelectBedrockModelFromChat,

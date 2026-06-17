@@ -127,6 +127,14 @@ interface ChatInputProps {
     isKilocodeModelLocked: boolean;
     refreshKilocodeModels: () => void;
     onSelectKilocodeModel: (model: string) => void;
+    fireworksModel: string;
+    fireworksModelOptions: string[];
+    fireworksModelsLoading: boolean;
+    fireworksModelsError: string | null;
+    fireworksModelsUpdatedAt: number | null;
+    isFireworksModelLocked: boolean;
+    refreshFireworksModels: () => void;
+    onSelectFireworksModel: (model: string) => void;
     openadapterModel: string;
     openadapterModelOptions: string[];
     openadapterModelsLoading: boolean;
@@ -183,6 +191,7 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   azure: 'Azure OpenAI',
   bedrock: 'AWS Bedrock',
   kilocode: 'Kilo Code',
+  fireworks: 'Fireworks AI',
   openadapter: 'OpenAdapter',
   vertex: 'Google Vertex',
   anthropic: 'Anthropic',
@@ -475,6 +484,7 @@ export function ChatInput({
     if (selectedProvider === 'nvidia') return providerControls.nvidiaModel;
     if (selectedProvider === 'blackbox') return providerControls.blackboxModel;
     if (selectedProvider === 'kilocode') return providerControls.kilocodeModel;
+    if (selectedProvider === 'fireworks') return providerControls.fireworksModel;
     if (selectedProvider === 'openadapter') return providerControls.openadapterModel;
     if (selectedProvider === 'azure') return providerControls.azureModel;
     if (selectedProvider === 'bedrock') return providerControls.bedrockModel;
@@ -500,6 +510,7 @@ export function ChatInput({
     if (selectedProvider === 'nvidia') return providerControls.nvidiaModelsLoading;
     if (selectedProvider === 'blackbox') return providerControls.blackboxModelsLoading;
     if (selectedProvider === 'kilocode') return providerControls.kilocodeModelsLoading;
+    if (selectedProvider === 'fireworks') return providerControls.fireworksModelsLoading;
     if (selectedProvider === 'openadapter') return providerControls.openadapterModelsLoading;
     return false;
   })();
@@ -515,6 +526,8 @@ export function ChatInput({
       return formatTimeAgo(providerControls.blackboxModelsUpdatedAt);
     if (selectedProvider === 'kilocode')
       return formatTimeAgo(providerControls.kilocodeModelsUpdatedAt);
+    if (selectedProvider === 'fireworks')
+      return formatTimeAgo(providerControls.fireworksModelsUpdatedAt);
     if (selectedProvider === 'openadapter')
       return formatTimeAgo(providerControls.openadapterModelsUpdatedAt);
     return null;
@@ -527,6 +540,7 @@ export function ChatInput({
     selectedProvider === 'nvidia' ||
     selectedProvider === 'blackbox' ||
     selectedProvider === 'kilocode' ||
+    selectedProvider === 'fireworks' ||
     selectedProvider === 'openadapter';
   const refreshSelectedModelList = () => {
     if (!providerControls) return;
@@ -536,6 +550,7 @@ export function ChatInput({
     if (selectedProvider === 'nvidia') providerControls.refreshNvidiaModels();
     if (selectedProvider === 'blackbox') providerControls.refreshBlackboxModels();
     if (selectedProvider === 'kilocode') providerControls.refreshKilocodeModels();
+    if (selectedProvider === 'fireworks') providerControls.refreshFireworksModels();
     if (selectedProvider === 'openadapter') providerControls.refreshOpenAdapterModels();
   };
   // Reasoning effort (per-provider, only for models that support it)
@@ -1154,6 +1169,46 @@ export function ChatInput({
                             </p>
                           )}
                           {providerControls.isKilocodeModelLocked && (
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              Current chat locked; choosing a model starts a new chat.
+                            </p>
+                          )}
+                        </>
+                      )}
+
+                      {selectedProvider === 'fireworks' && (
+                        <>
+                          <ModelPicker
+                            provider="fireworks"
+                            value={providerControls.fireworksModel}
+                            options={providerControls.fireworksModelOptions}
+                            onChange={providerControls.onSelectFireworksModel}
+                            disabled={!canChangeModel || providerControls.fireworksModelsLoading}
+                            ariaLabel="Select Fireworks AI model"
+                          />
+                          {providerControls.fireworksModelsLoading && (
+                            <p className="px-1 text-push-2xs text-push-fg-faint">
+                              Loading Fireworks AI models...
+                            </p>
+                          )}
+                          {!providerControls.fireworksModelsLoading &&
+                            providerControls.fireworksModelOptions.length === 0 &&
+                            !providerControls.fireworksModelsError && (
+                              <p className="px-1 text-push-2xs text-push-fg-faint">
+                                No models returned. Try refresh.
+                              </p>
+                            )}
+                          {providerControls.fireworksModelsError && (
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              {providerControls.fireworksModelsError}
+                            </p>
+                          )}
+                          {selectedModelUpdatedAgo && (
+                            <p className="px-1 text-push-2xs text-push-fg-faint">
+                              Updated {selectedModelUpdatedAgo}
+                            </p>
+                          )}
+                          {providerControls.isFireworksModelLocked && (
                             <p className="px-1 text-push-2xs text-amber-400">
                               Current chat locked; choosing a model starts a new chat.
                             </p>

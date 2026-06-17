@@ -2,6 +2,7 @@ import process from 'node:process';
 import {
   ANTHROPIC_DEFAULT_MODEL,
   BLACKBOX_DEFAULT_MODEL,
+  FIREWORKS_DEFAULT_MODEL,
   GOOGLE_DEFAULT_MODEL,
   KILOCODE_DEFAULT_MODEL,
   NVIDIA_DEFAULT_MODEL,
@@ -186,6 +187,19 @@ export const PROVIDER_CONFIGS: Record<string, ProviderConfig> = {
       return process.env.PUSH_KILOCODE_MODEL || KILOCODE_DEFAULT_MODEL;
     },
     apiKeyEnv: ['PUSH_KILOCODE_API_KEY', 'KILOCODE_API_KEY', 'VITE_KILOCODE_API_KEY'],
+    requiresKey: true,
+  },
+  fireworks: {
+    id: 'fireworks',
+    get url() {
+      return (
+        process.env.PUSH_FIREWORKS_URL || 'https://api.fireworks.ai/inference/v1/chat/completions'
+      );
+    },
+    get defaultModel() {
+      return process.env.PUSH_FIREWORKS_MODEL || FIREWORKS_DEFAULT_MODEL;
+    },
+    apiKeyEnv: ['PUSH_FIREWORKS_API_KEY', 'FIREWORKS_API_KEY', 'VITE_FIREWORKS_API_KEY'],
     requiresKey: true,
   },
   blackbox: {

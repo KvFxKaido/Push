@@ -68,6 +68,7 @@ export type AIProviderType =
   | 'blackbox'
   | 'azure'
   | 'kilocode'
+  | 'fireworks'
   | 'openadapter'
   | 'bedrock'
   | 'vertex'
@@ -90,6 +91,7 @@ export const ALL_PROVIDERS = [
   'blackbox',
   'azure',
   'kilocode',
+  'fireworks',
   'openadapter',
   'bedrock',
   'vertex',

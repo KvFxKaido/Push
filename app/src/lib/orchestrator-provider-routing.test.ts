@@ -6,6 +6,7 @@ function mockProviderState(options?: {
   cloudflareConfigured?: boolean;
   cloudflareModel?: string;
   kilocodeKey?: string;
+  fireworksKey?: string;
   preferredProvider?: MockPreferredProvider | null;
   lastUsedProvider?: MockPreferredProvider | null;
 }): void {
@@ -13,6 +14,7 @@ function mockProviderState(options?: {
     cloudflareConfigured = false,
     cloudflareModel = '@cf/qwen/qwen3-30b-a3b-fp8',
     kilocodeKey = '',
+    fireworksKey = '',
     preferredProvider = null,
     lastUsedProvider = null,
   } = options ?? {};
@@ -23,6 +25,7 @@ function mockProviderState(options?: {
   vi.doMock('@/hooks/useNvidiaConfig', () => ({ getNvidiaKey: () => '' }));
   vi.doMock('@/hooks/useBlackboxConfig', () => ({ getBlackboxKey: () => '' }));
   vi.doMock('@/hooks/useKilocodeConfig', () => ({ getKilocodeKey: () => kilocodeKey }));
+  vi.doMock('@/hooks/useFireworksConfig', () => ({ getFireworksKey: () => fireworksKey }));
   vi.doMock('@/hooks/useExperimentalProviderConfig', () => ({
     getAzureBaseUrl: () => '',
     getAzureKey: () => '',
@@ -77,6 +80,27 @@ describe('Kilo Code provider routing', () => {
     // identity (preserves lib-side coalescing dedupe).
     const a = getProviderPushStream('kilocode');
     const b = getProviderPushStream('kilocode');
+    expect(typeof a).toBe('function');
+    expect(a).toBe(b);
+  });
+});
+
+describe('Fireworks AI provider routing', () => {
+  it('falls back to fireworks when it is the only configured provider', async () => {
+    mockProviderState({ fireworksKey: 'fireworks-key' });
+
+    const { getActiveProvider } = await import('./orchestrator');
+
+    expect(getActiveProvider()).toBe('fireworks');
+  }, 15_000);
+
+  it('returns a PushStream for the fireworks provider', async () => {
+    mockProviderState();
+
+    const { getProviderPushStream } = await import('./orchestrator');
+
+    const a = getProviderPushStream('fireworks');
+    const b = getProviderPushStream('fireworks');
     expect(typeof a).toBe('function');
     expect(a).toBe(b);
   });

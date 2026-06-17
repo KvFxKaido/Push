@@ -327,6 +327,7 @@ interface HealthStatus {
     nvidia: { status: 'ok' | 'unconfigured'; configured: boolean };
     blackbox: { status: 'ok' | 'unconfigured'; configured: boolean };
     kilocode: { status: 'ok' | 'unconfigured'; configured: boolean };
+    fireworks: { status: 'ok' | 'unconfigured'; configured: boolean };
     openadapter: { status: 'ok' | 'unconfigured'; configured: boolean };
     anthropic: { status: 'ok' | 'unconfigured'; configured: boolean };
     openai: { status: 'ok' | 'unconfigured'; configured: boolean };
@@ -351,6 +352,7 @@ export async function handleHealthCheck(env: Env, request?: Request): Promise<Re
   const nvidiaConfigured = Boolean(env.NVIDIA_API_KEY);
   const blackboxConfigured = Boolean(env.BLACKBOX_API_KEY);
   const kiloCodeConfigured = Boolean(env.KILOCODE_API_KEY);
+  const fireworksConfigured = Boolean(env.FIREWORKS_API_KEY);
   const openAdapterConfigured = Boolean(env.OPENADAPTER_API_KEY);
   const anthropicConfigured = Boolean(env.ANTHROPIC_API_KEY);
   const openaiConfigured = Boolean(env.OPENAI_API_KEY);
@@ -378,6 +380,7 @@ export async function handleHealthCheck(env: Env, request?: Request): Promise<Re
     nvidiaConfigured ||
     blackboxConfigured ||
     kiloCodeConfigured ||
+    fireworksConfigured ||
     openAdapterConfigured ||
     anthropicConfigured ||
     openaiConfigured ||
@@ -412,6 +415,10 @@ export async function handleHealthCheck(env: Env, request?: Request): Promise<Re
       kilocode: {
         status: kiloCodeConfigured ? 'ok' : 'unconfigured',
         configured: kiloCodeConfigured,
+      },
+      fireworks: {
+        status: fireworksConfigured ? 'ok' : 'unconfigured',
+        configured: fireworksConfigured,
       },
       openadapter: {
         status: openAdapterConfigured ? 'ok' : 'unconfigured',

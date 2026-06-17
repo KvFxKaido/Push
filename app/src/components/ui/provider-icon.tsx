@@ -19,6 +19,7 @@ const MODELS_DEV_LOGOS: Record<AIProviderType, string> = {
   openai: 'https://models.dev/logos/openai.svg',
   google: 'https://models.dev/logos/google.svg',
   kilocode: 'https://kilo.ai/favicon.ico',
+  fireworks: 'https://fireworks.ai/favicon.ico',
   openadapter: 'https://openadapter.dev/favicon.ico',
   demo: demoIcon,
 };
@@ -37,6 +38,7 @@ const PROVIDER_ALT: Record<AIProviderType, string> = {
   openai: 'OpenAI logo',
   google: 'Google Gemini logo',
   kilocode: 'Kilo Code logo',
+  fireworks: 'Fireworks AI logo',
   openadapter: 'OpenAdapter logo',
   demo: 'Push logo',
 };
@@ -59,6 +61,7 @@ const PROVIDER_FALLBACK_TEXT: Record<AIProviderType, string> = {
   // gave Vertex a single-letter; 'Gm' is unambiguous and reads as "Gemini".
   google: 'Gm',
   kilocode: 'K',
+  fireworks: 'FW',
   openadapter: 'OA',
   demo: 'P',
 };

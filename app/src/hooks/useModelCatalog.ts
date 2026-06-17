@@ -15,8 +15,11 @@ import {
   BLACKBOX_MODELS,
   KILOCODE_DEFAULT_MODEL,
   KILOCODE_MODELS,
+  FIREWORKS_DEFAULT_MODEL,
+  FIREWORKS_MODELS,
   OPENADAPTER_MODELS,
   normalizeKilocodeModelName,
+  normalizeFireworksModelName,
   type PreferredProvider,
 } from '@/lib/providers';
 import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
@@ -29,6 +32,7 @@ import {
   fetchNvidiaModels,
   fetchBlackboxModels,
   fetchKilocodeModels,
+  fetchFireworksModels,
   fetchOpenAdapterModels,
   fetchGoogleModels,
   fetchOpenAIModels,
@@ -43,6 +47,7 @@ import { useZenConfig } from '@/hooks/useZenConfig';
 import { useNvidiaConfig } from '@/hooks/useNvidiaConfig';
 import { useBlackboxConfig } from '@/hooks/useBlackboxConfig';
 import { useKilocodeConfig } from '@/hooks/useKilocodeConfig';
+import { useFireworksConfig } from '@/hooks/useFireworksConfig';
 import { useOpenAdapterConfig } from '@/hooks/useOpenAdapterConfig';
 import { useAzureConfig, useBedrockConfig } from '@/hooks/useExperimentalProviderConfig';
 import { useTavilyConfig } from '@/hooks/useTavilyConfig';
@@ -154,6 +159,7 @@ export interface ModelCatalog {
   nvidia: ProviderKeyConfig;
   blackbox: ProviderKeyConfig;
   kilocode: ProviderKeyConfig;
+  fireworks: ProviderKeyConfig;
   openadapter: ProviderKeyConfig;
   azure: ExperimentalProviderConfig;
   bedrock: ExperimentalProviderConfig;
@@ -179,6 +185,7 @@ export interface ModelCatalog {
   nvidiaModels: ProviderModelState;
   blackboxModels: ProviderModelState;
   kilocodeModels: ProviderModelState;
+  fireworksModels: ProviderModelState;
   openAdapterModels: ProviderModelState;
   googleModels: ProviderModelState;
   openaiModels: ProviderModelState;
@@ -191,6 +198,7 @@ export interface ModelCatalog {
   nvidiaModelOptions: string[];
   blackboxModelOptions: string[];
   kilocodeModelOptions: string[];
+  fireworksModelOptions: string[];
   openAdapterModelOptions: string[];
   anthropicModelOptions: string[];
   openaiModelOptions: string[];
@@ -208,6 +216,7 @@ export interface ModelCatalog {
   refreshNvidiaModels: () => Promise<void>;
   refreshBlackboxModels: () => Promise<void>;
   refreshKilocodeModels: () => Promise<void>;
+  refreshFireworksModels: () => Promise<void>;
   refreshOpenAdapterModels: () => Promise<void>;
   refreshGoogleModels: () => Promise<void>;
   refreshOpenAIModels: () => Promise<void>;
@@ -372,6 +381,20 @@ export function buildModelControl(
         error: catalog.kilocodeModels.error,
         onRefresh: catalog.refreshKilocodeModels,
       };
+    case 'fireworks':
+      return {
+        provider,
+        providerLabel: resolveProviderLabel(catalog, provider, 'Fireworks AI'),
+        value: lockedModel ?? catalog.fireworks.model,
+        options: includeSelectedModel(
+          catalog.fireworksModelOptions,
+          lockedModel ?? catalog.fireworks.model,
+        ),
+        onChange: catalog.fireworks.setModel,
+        loading: catalog.fireworksModels.loading,
+        error: catalog.fireworksModels.error,
+        onRefresh: catalog.refreshFireworksModels,
+      };
     case 'openadapter':
       return {
         provider,
@@ -481,6 +504,7 @@ export function useModelCatalog(): ModelCatalog {
   const nvidiaCfg = useNvidiaConfig();
   const blackboxCfg = useBlackboxConfig();
   const kilocodeCfg = useKilocodeConfig();
+  const fireworksCfg = useFireworksConfig();
   const openAdapterCfg = useOpenAdapterConfig();
   const anthropicCfg = useAnthropicConfig();
   const openaiCfg = useOpenAIConfig();
@@ -497,6 +521,7 @@ export function useModelCatalog(): ModelCatalog {
   const [nvidiaKeyInput, setNvidiaKeyInput] = useState('');
   const [blackboxKeyInput, setBlackboxKeyInput] = useState('');
   const [kilocodeKeyInput, setKilocodeKeyInput] = useState('');
+  const [fireworksKeyInput, setFireworksKeyInput] = useState('');
   const [openAdapterKeyInput, setOpenAdapterKeyInput] = useState('');
   const [anthropicKeyInput, setAnthropicKeyInput] = useState('');
   const [openaiKeyInput, setOpenaiKeyInput] = useState('');
@@ -580,6 +605,7 @@ export function useModelCatalog(): ModelCatalog {
       ['nvidia', 'Nvidia NIM', nvidiaCfg.hasKey],
       ['blackbox', 'Blackbox AI', blackboxCfg.hasKey],
       ['kilocode', 'Kilo Code', kilocodeCfg.hasKey],
+      ['fireworks', 'Fireworks AI', fireworksCfg.hasKey],
       ['openadapter', 'OpenAdapter', openAdapterCfg.hasKey],
       ['azure', 'Azure OpenAI', azureCfg.isConfigured],
       ['bedrock', 'AWS Bedrock', bedrockCfg.isConfigured],
@@ -599,6 +625,7 @@ export function useModelCatalog(): ModelCatalog {
   const [nvidiaModelList, setNvidiaModelList] = useState<string[]>([]);
   const [blackboxModelList, setBlackboxModelList] = useState<string[]>([]);
   const [kilocodeModelList, setKilocodeModelList] = useState<string[]>([]);
+  const [fireworksModelList, setFireworksModelList] = useState<string[]>([]);
   const [openAdapterModelList, setOpenAdapterModelList] = useState<string[]>([]);
   const [googleModelList, setGoogleModelList] = useState<string[]>([]);
   const [openaiModelList, setOpenaiModelList] = useState<string[]>([]);
@@ -610,6 +637,7 @@ export function useModelCatalog(): ModelCatalog {
   const [nvidiaLoading, setNvidiaLoading] = useState(false);
   const [blackboxLoading, setBlackboxLoading] = useState(false);
   const [kilocodeLoading, setKilocodeLoading] = useState(false);
+  const [fireworksLoading, setFireworksLoading] = useState(false);
   const [openAdapterLoading, setOpenAdapterLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [openaiLoading, setOpenaiLoading] = useState(false);
@@ -621,6 +649,7 @@ export function useModelCatalog(): ModelCatalog {
   const [nvidiaError, setNvidiaError] = useState<string | null>(null);
   const [blackboxError, setBlackboxError] = useState<string | null>(null);
   const [kilocodeError, setKilocodeError] = useState<string | null>(null);
+  const [fireworksError, setFireworksError] = useState<string | null>(null);
   const [openAdapterError, setOpenAdapterError] = useState<string | null>(null);
   const [googleError, setGoogleError] = useState<string | null>(null);
   const [openaiError, setOpenaiError] = useState<string | null>(null);
@@ -632,6 +661,7 @@ export function useModelCatalog(): ModelCatalog {
   const [nvidiaUpdatedAt, setNvidiaUpdatedAt] = useState<number | null>(null);
   const [blackboxUpdatedAt, setBlackboxUpdatedAt] = useState<number | null>(null);
   const [kilocodeUpdatedAt, setKilocodeUpdatedAt] = useState<number | null>(null);
+  const [fireworksUpdatedAt, setFireworksUpdatedAt] = useState<number | null>(null);
   const [openAdapterUpdatedAt, setOpenAdapterUpdatedAt] = useState<number | null>(null);
   const [googleUpdatedAt, setGoogleUpdatedAt] = useState<number | null>(null);
   const [openaiUpdatedAt, setOpenaiUpdatedAt] = useState<number | null>(null);
@@ -858,6 +888,20 @@ export function useModelCatalog(): ModelCatalog {
     });
   }, [kilocodeCfg.hasKey, kilocodeLoading, refreshModels]);
 
+  const refreshFireworksModels = useCallback(async () => {
+    await refreshModels({
+      hasKey: fireworksCfg.hasKey,
+      isLoading: fireworksLoading,
+      setLoading: setFireworksLoading,
+      setError: setFireworksError,
+      setModels: setFireworksModelList,
+      setUpdatedAt: setFireworksUpdatedAt,
+      fetchModels: fetchFireworksModels,
+      emptyMessage: 'No models returned by Fireworks AI.',
+      failureMessage: 'Failed to load Fireworks AI models.',
+    });
+  }, [fireworksCfg.hasKey, fireworksLoading, refreshModels]);
+
   const refreshOpenAdapterModels = useCallback(async () => {
     await refreshModels({
       hasKey: openAdapterCfg.hasKey,
@@ -1077,6 +1121,29 @@ export function useModelCatalog(): ModelCatalog {
     () =>
       scheduleAutoFetch(
         shouldAutoFetchProviderModels({
+          hasKey: fireworksCfg.hasKey,
+          modelCount: fireworksModelList.length,
+          loading: fireworksLoading,
+          error: fireworksError,
+        }),
+        activeProviderLabel === 'fireworks',
+        () => {
+          void refreshFireworksModels();
+        },
+      ),
+    [
+      activeProviderLabel,
+      fireworksCfg.hasKey,
+      fireworksError,
+      fireworksLoading,
+      fireworksModelList.length,
+      refreshFireworksModels,
+    ],
+  );
+  useEffect(
+    () =>
+      scheduleAutoFetch(
+        shouldAutoFetchProviderModels({
           hasKey: openAdapterCfg.hasKey,
           modelCount: openAdapterModelList.length,
           loading: openAdapterLoading,
@@ -1196,6 +1263,13 @@ export function useModelCatalog(): ModelCatalog {
     }
   }, [kilocodeCfg.hasKey]);
   useEffect(() => {
+    if (!fireworksCfg.hasKey) {
+      setFireworksModelList([]);
+      setFireworksError(null);
+      setFireworksUpdatedAt(null);
+    }
+  }, [fireworksCfg.hasKey]);
+  useEffect(() => {
     if (!openAdapterCfg.hasKey) {
       setOpenAdapterModelList([]);
       setOpenAdapterError(null);
@@ -1219,6 +1293,8 @@ export function useModelCatalog(): ModelCatalog {
 
   const kilocodeSelectedModel = kilocodeCfg.model;
   const setKilocodeModel = kilocodeCfg.setModel;
+  const fireworksSelectedModel = fireworksCfg.model;
+  const setFireworksModel = fireworksCfg.setModel;
 
   useEffect(() => {
     const normalizedSelectedModel = normalizeKilocodeModelName(kilocodeSelectedModel);
@@ -1238,6 +1314,25 @@ export function useModelCatalog(): ModelCatalog {
       setKilocodeModel(fallbackModel);
     }
   }, [kilocodeModelList, kilocodeSelectedModel, setKilocodeModel]);
+
+  useEffect(() => {
+    const normalizedSelectedModel = normalizeFireworksModelName(fireworksSelectedModel);
+    if (normalizedSelectedModel !== fireworksSelectedModel) {
+      setFireworksModel(normalizedSelectedModel);
+      return;
+    }
+
+    if (fireworksModelList.length === 0 || fireworksModelList.includes(normalizedSelectedModel)) {
+      return;
+    }
+
+    const fallbackModel = fireworksModelList.includes(FIREWORKS_DEFAULT_MODEL)
+      ? FIREWORKS_DEFAULT_MODEL
+      : fireworksModelList[0];
+    if (fallbackModel && fallbackModel !== fireworksSelectedModel) {
+      setFireworksModel(fallbackModel);
+    }
+  }, [fireworksModelList, fireworksSelectedModel, setFireworksModel]);
 
   const activeZenModelList = useMemo(
     () => (zenCfg.goMode ? [] : zenModelList),
@@ -1301,6 +1396,14 @@ export function useModelCatalog(): ModelCatalog {
     }
     return includeSelectedModel(KILOCODE_MODELS, selectedModel);
   }, [kilocodeModelList, kilocodeSelectedModel]);
+  const fireworksModelOptions = useMemo(() => {
+    const selectedModel = normalizeFireworksModelName(fireworksSelectedModel);
+    // Fireworks /v1/models is account-scoped (a narrow subset), so union the curated catalog with
+    // the live list (curated first, deduped) rather than replacing — unlike providers whose live
+    // /models already returns the full catalog. Every curated slug is callable by slug.
+    const union = [...new Set([...FIREWORKS_MODELS, ...fireworksModelList])];
+    return includeSelectedModel(union, selectedModel);
+  }, [fireworksModelList, fireworksSelectedModel]);
   const openAdapterModelOptions = useMemo(
     () =>
       includeSelectedModel(
@@ -1404,6 +1507,15 @@ export function useModelCatalog(): ModelCatalog {
       setModel: kilocodeCfg.setModel,
       keyInput: kilocodeKeyInput,
       setKeyInput: setKilocodeKeyInput,
+    },
+    fireworks: {
+      setKey: fireworksCfg.setKey,
+      clearKey: fireworksCfg.clearKey,
+      hasKey: fireworksCfg.hasKey,
+      model: fireworksCfg.model,
+      setModel: fireworksCfg.setModel,
+      keyInput: fireworksKeyInput,
+      setKeyInput: setFireworksKeyInput,
     },
     openadapter: {
       setKey: openAdapterCfg.setKey,
@@ -1575,6 +1687,12 @@ export function useModelCatalog(): ModelCatalog {
       error: kilocodeError,
       updatedAt: kilocodeUpdatedAt,
     },
+    fireworksModels: {
+      models: fireworksModelList,
+      loading: fireworksLoading,
+      error: fireworksError,
+      updatedAt: fireworksUpdatedAt,
+    },
     openAdapterModels: {
       models: openAdapterModelList,
       loading: openAdapterLoading,
@@ -1601,6 +1719,7 @@ export function useModelCatalog(): ModelCatalog {
     nvidiaModelOptions: nvidiaModelList.length > 0 ? nvidiaModelOptions : NVIDIA_MODELS,
     blackboxModelOptions,
     kilocodeModelOptions,
+    fireworksModelOptions,
     openAdapterModelOptions,
     anthropicModelOptions,
     openaiModelOptions,
@@ -1616,6 +1735,7 @@ export function useModelCatalog(): ModelCatalog {
     refreshNvidiaModels,
     refreshBlackboxModels,
     refreshKilocodeModels,
+    refreshFireworksModels,
     refreshOpenAdapterModels,
     refreshGoogleModels,
     refreshOpenAIModels,

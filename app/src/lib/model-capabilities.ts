@@ -95,7 +95,7 @@ const CAPABILITY_RULES: CapabilityRule[] = [
     },
   },
   {
-    providers: ['kilocode'],
+    providers: ['kilocode', 'fireworks'],
     match: /.*/,
     capabilities: {
       visionInput: 'supported',
@@ -201,6 +201,8 @@ function formatProviderLabel(provider: AIProviderType): string {
       return 'Blackbox AI';
     case 'kilocode':
       return 'Kilo Code';
+    case 'fireworks':
+      return 'Fireworks AI';
     case 'azure':
       return 'Azure OpenAI';
     case 'bedrock':

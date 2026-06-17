@@ -4,6 +4,7 @@ import {
   formatModelDisplayName,
   getModelDisplayGroupKey,
   getModelDisplayLeafName,
+  normalizeFireworksModelName,
   normalizeKilocodeModelName,
 } from './providers';
 
@@ -46,6 +47,18 @@ describe('normalizeKilocodeModelName', () => {
       'google/gemini-3-flash-preview',
     );
     expect(normalizeKilocodeModelName('kilo-auto/balanced')).toBe('kilo-auto/balanced');
+  });
+});
+
+describe('normalizeFireworksModelName', () => {
+  it('rejects label-shaped selections while keeping namespaced model ids', () => {
+    expect(normalizeFireworksModelName('')).toBe('accounts/fireworks/models/deepseek-v4-pro');
+    expect(normalizeFireworksModelName('Fireworks Qwen Coder')).toBe(
+      'accounts/fireworks/models/deepseek-v4-pro',
+    );
+    expect(normalizeFireworksModelName('accounts/fireworks/models/deepseek-v4-pro')).toBe(
+      'accounts/fireworks/models/deepseek-v4-pro',
+    );
   });
 });
 

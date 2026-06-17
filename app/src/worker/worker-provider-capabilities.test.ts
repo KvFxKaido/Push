@@ -57,6 +57,7 @@ describe('isProviderEngineCapable', () => {
       NVIDIA_API_KEY: 'k',
       BLACKBOX_API_KEY: 'k',
       KILOCODE_API_KEY: 'k',
+      FIREWORKS_API_KEY: 'k',
       OPENADAPTER_API_KEY: 'k',
       ANTHROPIC_API_KEY: 'k',
       OPENAI_API_KEY: 'k',

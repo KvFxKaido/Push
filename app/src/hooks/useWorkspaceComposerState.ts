@@ -1,7 +1,11 @@
 import { useCallback, useMemo, useState } from 'react';
 import type { ModelCatalog } from '@/hooks/useModelCatalog';
 import { useSetting } from '@/hooks/useSetting';
-import { normalizeKilocodeModelName, type PreferredProvider } from '@/lib/providers';
+import {
+  normalizeFireworksModelName,
+  normalizeKilocodeModelName,
+  type PreferredProvider,
+} from '@/lib/providers';
 import { safeStorageGet } from '@/lib/safe-storage';
 import { getSetting, SETTINGS_KEYS } from '@/lib/settings-store';
 import type { AttachmentData, ChatSendOptions, Conversation } from '@/types';
@@ -23,6 +27,7 @@ const EMPTY_CHAT_MODEL_MEMORY: Record<PreferredProvider, string> = {
   openai: '',
   google: '',
   kilocode: '',
+  fireworks: '',
   openadapter: '',
 };
 
@@ -44,6 +49,8 @@ function coerceChatModelMemory(raw: unknown): Record<PreferredProvider, string> 
     google: typeof parsed.google === 'string' ? parsed.google.trim() : '',
     kilocode:
       typeof parsed.kilocode === 'string' ? normalizeKilocodeModelName(parsed.kilocode) : '',
+    fireworks:
+      typeof parsed.fireworks === 'string' ? normalizeFireworksModelName(parsed.fireworks) : '',
     openadapter: typeof parsed.openadapter === 'string' ? parsed.openadapter.trim() : '',
   };
 }
@@ -113,6 +120,7 @@ export function useWorkspaceComposerState({
       nvidia: catalog.nvidia.model,
       blackbox: catalog.blackbox.model,
       kilocode: catalog.kilocode.model,
+      fireworks: catalog.fireworks.model,
       openadapter: catalog.openadapter.model,
       azure: catalog.azure.model,
       bedrock: catalog.bedrock.model,
@@ -129,6 +137,7 @@ export function useWorkspaceComposerState({
       catalog.bedrock.model,
       catalog.blackbox.model,
       catalog.cloudflare.model,
+      catalog.fireworks.model,
       catalog.kilocode.model,
       catalog.nvidia.model,
       catalog.ollama.model,
@@ -175,7 +184,9 @@ export function useWorkspaceComposerState({
         typeof model === 'string'
           ? provider === 'kilocode'
             ? normalizeKilocodeModelName(model)
-            : model.trim()
+            : provider === 'fireworks'
+              ? normalizeFireworksModelName(model)
+              : model.trim()
           : '';
       if (!trimmed) return;
       // Read fresh from the store rather than a possibly-stale closure value.
@@ -227,6 +238,11 @@ export function useWorkspaceComposerState({
             rememberedChatModels.kilocode ||
             defaultChatModels.kilocode,
         ),
+        fireworks: normalizeFireworksModelName(
+          draft?.models?.fireworks?.trim() ||
+            rememberedChatModels.fireworks ||
+            defaultChatModels.fireworks,
+        ),
         openadapter:
           draft?.models?.openadapter?.trim() ||
           rememberedChatModels.openadapter ||
@@ -265,7 +281,9 @@ export function useWorkspaceComposerState({
     const lockedConversationModel =
       activeConversation?.provider === 'kilocode' && activeConversation.model
         ? normalizeKilocodeModelName(activeConversation.model)
-        : activeConversation?.model;
+        : activeConversation?.provider === 'fireworks' && activeConversation.model
+          ? normalizeFireworksModelName(activeConversation.model)
+          : activeConversation?.model;
 
     if (activeConversation?.provider && activeConversation.provider !== 'demo') {
       return normalizeChatDraft({
@@ -413,6 +431,16 @@ export function useWorkspaceComposerState({
     [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
   );
 
+  const handleSelectFireworksModelFromChat = useCallback(
+    (model: string) => {
+      const normalizedModel = normalizeFireworksModelName(model);
+      rememberChatModel('fireworks', normalizedModel);
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { models: { fireworks: normalizedModel } });
+    },
+    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
+  );
+
   const handleSelectOpenAdapterModelFromChat = useCallback(
     (model: string) => {
       rememberChatModel('openadapter', model);
@@ -496,6 +524,7 @@ export function useWorkspaceComposerState({
     handleSelectNvidiaModelFromChat,
     handleSelectBlackboxModelFromChat,
     handleSelectKilocodeModelFromChat,
+    handleSelectFireworksModelFromChat,
     handleSelectOpenAdapterModelFromChat,
     handleSelectAzureModelFromChat,
     handleSelectBedrockModelFromChat,

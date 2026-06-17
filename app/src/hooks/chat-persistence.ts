@@ -1,5 +1,5 @@
 import type { AIProviderType, AttachmentData, ChatMessage, Conversation } from '@/types';
-import { normalizeKilocodeModelName } from '@/lib/providers';
+import { normalizeFireworksModelName, normalizeKilocodeModelName } from '@/lib/providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { createId } from '@push/lib/id-utils';
 
@@ -40,7 +40,9 @@ export function normalizeConversationModel(
   if (typeof model !== 'string') return null;
   const trimmed = model.trim();
   if (!trimmed) return null;
-  return provider === 'kilocode' ? normalizeKilocodeModelName(trimmed) : trimmed;
+  if (provider === 'kilocode') return normalizeKilocodeModelName(trimmed);
+  if (provider === 'fireworks') return normalizeFireworksModelName(trimmed);
+  return trimmed;
 }
 
 // Legacy sync save — kept only for old-format migration writes.

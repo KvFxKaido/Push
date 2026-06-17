@@ -18,6 +18,7 @@ export type SharedProviderModelId =
   | 'zen'
   | 'nvidia'
   | 'kilocode'
+  | 'fireworks'
   | 'blackbox'
   | 'openadapter'
   | 'openai'
@@ -32,6 +33,10 @@ export const OPENROUTER_MAX_SESSION_ID_LENGTH = 256;
 export const ZEN_DEFAULT_MODEL = 'big-pickle';
 export const NVIDIA_DEFAULT_MODEL = 'nvidia/llama-3.1-nemotron-70b-instruct';
 export const KILOCODE_DEFAULT_MODEL = 'google/gemini-3-flash-preview';
+// Verified serverless slug (fireworks.ai/models/deepseek-ai/deepseek-v4-pro, 2026-06-17) —
+// DeepSeek's flagship MoE: frontier reasoning, strong coding, up to 1M context. Re-check
+// against /api/fireworks/models if it 404s.
+export const FIREWORKS_DEFAULT_MODEL = 'accounts/fireworks/models/deepseek-v4-pro';
 // NOTE: the old default `blackboxai/anthropic/claude-haiku-4.5` is REJECTED by
 // the chat endpoint ("Invalid model name … for your key", probed 2026-06-09) —
 // it isn't in the live catalog and isn't an accepted alias, so the Blackbox
@@ -156,6 +161,28 @@ export const KILOCODE_MODELS: string[] = [
   'kilo-auto/balanced',
 ];
 
+// Curated Fireworks serverless models — surfaced in the picker alongside the account's live
+// /v1/models (which returns only a narrow subset). Serverless models are callable by slug
+// regardless of /v1/models; every slug below was probed callable (HTTP 200) on 2026-06-17.
+// The model field also accepts any free-text slug for anything not listed here.
+export const FIREWORKS_MODELS: string[] = [
+  FIREWORKS_DEFAULT_MODEL,
+  'accounts/fireworks/models/deepseek-v4-flash',
+  'accounts/fireworks/models/glm-5p2',
+  'accounts/fireworks/models/glm-5p1',
+  'accounts/fireworks/models/kimi-k2p7-code',
+  'accounts/fireworks/models/kimi-k2p6',
+  'accounts/fireworks/models/kimi-k2p5',
+  'accounts/fireworks/models/qwen3p7-plus',
+  'accounts/fireworks/models/qwen3p6-plus',
+  'accounts/fireworks/models/minimax-m3',
+  'accounts/fireworks/models/minimax-m2p7',
+  'accounts/fireworks/models/minimax-m2p5',
+  'accounts/fireworks/models/gpt-oss-120b',
+  'accounts/fireworks/models/gpt-oss-20b',
+  'accounts/fireworks/models/nemotron-3-ultra-nvfp4',
+];
+
 // Fallback list shown when the live `/models` fetch is unavailable — which
 // happens fairly often because the Blackbox gateway returns transient
 // `InternalServerError`/`Connection error` responses (that flakiness is what
@@ -232,6 +259,7 @@ export const SHARED_PROVIDER_MODEL_CATALOG: Record<SharedProviderModelId, string
   zen: ZEN_MODELS,
   nvidia: NVIDIA_MODELS,
   kilocode: KILOCODE_MODELS,
+  fireworks: FIREWORKS_MODELS,
   blackbox: BLACKBOX_MODELS,
   openadapter: OPENADAPTER_MODELS,
   openai: OPENAI_MODELS,
@@ -245,6 +273,7 @@ export const SHARED_PROVIDER_DEFAULT_MODELS: Record<SharedProviderModelId, strin
   zen: ZEN_DEFAULT_MODEL,
   nvidia: NVIDIA_DEFAULT_MODEL,
   kilocode: KILOCODE_DEFAULT_MODEL,
+  fireworks: FIREWORKS_DEFAULT_MODEL,
   blackbox: BLACKBOX_DEFAULT_MODEL,
   openadapter: OPENADAPTER_DEFAULT_MODEL,
   openai: OPENAI_DEFAULT_MODEL,

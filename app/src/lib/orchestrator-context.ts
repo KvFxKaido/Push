@@ -20,7 +20,7 @@ export type ContextMode = 'graceful' | 'none';
 
 // Catalog metadata (models.dev) only loads for providers that fetch it:
 // openrouter, blackbox, nvidia, ollama, zen. Other providers (cloudflare,
-// vertex, bedrock, azure, kilocode, openadapter) hand us a model name with
+// vertex, bedrock, azure, kilocode, fireworks, openadapter) hand us a model name with
 // no metadata, so we probe sibling catalogs by name and finally fall through
 // to the shared name-pattern table that captures the major model families'
 // real context windows.

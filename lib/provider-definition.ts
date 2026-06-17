@@ -7,7 +7,7 @@
  * Settings UI entries, and capability rules from these records rather than
  * re-declaring the same data in three places.
  *
- * The existing 11 providers (`ollama`, `openrouter`, `cloudflare`, ...) stay
+ * The existing 12 providers (`ollama`, `openrouter`, `cloudflare`, ...) stay
  * on the legacy per-surface registration pattern for now. They can migrate
  * incrementally in a follow-up cleanup PR — that is intentional scoping, not
  * an oversight.

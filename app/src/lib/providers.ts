@@ -13,6 +13,8 @@ export {
   BLACKBOX_MODELS,
   CLOUDFLARE_DEFAULT_MODEL,
   CLOUDFLARE_MODELS,
+  FIREWORKS_DEFAULT_MODEL,
+  FIREWORKS_MODELS,
   GOOGLE_DEFAULT_MODEL,
   GOOGLE_MODELS,
   KILOCODE_DEFAULT_MODEL,
@@ -33,6 +35,7 @@ import {
   ANTHROPIC_DEFAULT_MODEL,
   BLACKBOX_DEFAULT_MODEL,
   CLOUDFLARE_DEFAULT_MODEL,
+  FIREWORKS_DEFAULT_MODEL,
   GOOGLE_DEFAULT_MODEL,
   KILOCODE_DEFAULT_MODEL,
   NVIDIA_DEFAULT_MODEL,
@@ -95,6 +98,10 @@ export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: strin
   kilocode: {
     chat: providerUrl('/api/kilocode/chat', '/api/kilocode/chat'),
     models: providerUrl('/api/kilocode/models', '/api/kilocode/models'),
+  },
+  fireworks: {
+    chat: providerUrl('/api/fireworks/chat', '/api/fireworks/chat'),
+    models: providerUrl('/api/fireworks/models', '/api/fireworks/models'),
   },
   openadapter: {
     chat: providerUrl('/api/openadapter/chat', '/api/openadapter/chat'),
@@ -168,6 +175,17 @@ export function normalizeKilocodeModelName(model: string): string {
 
   if (!trimmed.includes('/') || /\s/.test(trimmed)) {
     return KILOCODE_DEFAULT_MODEL;
+  }
+
+  return trimmed;
+}
+
+export function normalizeFireworksModelName(model: string): string {
+  const trimmed = model.trim();
+  if (!trimmed) return FIREWORKS_DEFAULT_MODEL;
+
+  if (!trimmed.includes('/') || /\s/.test(trimmed)) {
+    return FIREWORKS_DEFAULT_MODEL;
   }
 
   return trimmed;
@@ -325,6 +343,14 @@ export const PROVIDERS: AIProviderConfig[] = [
     envKey: 'VITE_KILOCODE_API_KEY',
     envUrl: 'https://api.kilo.ai/api/gateway',
     models: makeRoleModels(KILOCODE_DEFAULT_MODEL, 'Kilo Code', 'kilocode', 128_000),
+  },
+  {
+    type: 'fireworks',
+    name: 'Fireworks AI',
+    description: 'Fireworks AI — OpenAI-compatible serverless inference API',
+    envKey: 'VITE_FIREWORKS_API_KEY',
+    envUrl: 'https://api.fireworks.ai/inference/v1',
+    models: makeRoleModels(FIREWORKS_DEFAULT_MODEL, 'Fireworks AI', 'fireworks', 128_000),
   },
   {
     type: 'openadapter',
@@ -494,6 +520,15 @@ const kiloCodeModel = createModelNameStorage(
 export const getKiloCodeModelName = kiloCodeModel.get;
 export const setKiloCodeModelName = kiloCodeModel.set;
 
+const fireworksModel = createModelNameStorage(
+  'fireworks_model',
+  FIREWORKS_DEFAULT_MODEL,
+  undefined,
+  normalizeFireworksModelName,
+);
+export const getFireworksModelName = fireworksModel.get;
+export const setFireworksModelName = fireworksModel.set;
+
 const anthropicModel = createModelNameStorage('anthropic_model', ANTHROPIC_DEFAULT_MODEL);
 export const getAnthropicModelName = anthropicModel.get;
 export const setAnthropicModelName = anthropicModel.set;
@@ -518,6 +553,7 @@ const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   bedrock: getBedrockModelName,
   vertex: getVertexModelName,
   kilocode: getKiloCodeModelName,
+  fireworks: getFireworksModelName,
   openadapter: getOpenAdapterModelName,
   anthropic: getAnthropicModelName,
   openai: getOpenAIModelName,
@@ -562,6 +598,7 @@ export type PreferredProvider =
   | 'bedrock'
   | 'vertex'
   | 'kilocode'
+  | 'fireworks'
   | 'openadapter'
   | 'anthropic'
   | 'openai'
@@ -580,6 +617,7 @@ export function getPreferredProvider(): PreferredProvider | null {
     stored === 'bedrock' ||
     stored === 'vertex' ||
     stored === 'kilocode' ||
+    stored === 'fireworks' ||
     stored === 'openadapter' ||
     stored === 'anthropic' ||
     stored === 'openai' ||
@@ -617,6 +655,7 @@ export function getLastUsedProvider(): PreferredProvider | null {
     stored === 'bedrock' ||
     stored === 'vertex' ||
     stored === 'kilocode' ||
+    stored === 'fireworks' ||
     stored === 'openadapter' ||
     stored === 'anthropic' ||
     stored === 'openai' ||

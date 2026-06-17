@@ -4,6 +4,7 @@ import { getZenKey } from '@/hooks/useZenConfig';
 import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
 import { getBlackboxKey } from '@/hooks/useBlackboxConfig';
 import { getKilocodeKey } from '@/hooks/useKilocodeConfig';
+import { getFireworksKey } from '@/hooks/useFireworksConfig';
 import { getOpenAdapterKey } from '@/hooks/useOpenAdapterConfig';
 import { getGoogleKey } from '@/hooks/useGoogleConfig';
 import { getOpenAIKey } from '@/hooks/useOpenAIConfig';
@@ -307,6 +308,7 @@ const STRUCTURED_OUTPUT_PROVIDERS: ReadonlySet<string> = new Set([
   'nvidia',
   'blackbox',
   'kilocode',
+  'fireworks',
   'openadapter',
   'zen',
   'cloudflare',
@@ -1402,6 +1404,42 @@ export async function fetchKilocodeModels(): Promise<string[]> {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(
         `Kilo Code model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+      );
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+export async function fetchFireworksModels(): Promise<string[]> {
+  const key = getFireworksKey();
+  const headers: HeadersInit = {};
+  if (key) headers.Authorization = `Bearer ${key}`;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(PROVIDER_URLS.fireworks.models, {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw new Error(`Fireworks AI model list failed (${res.status}): ${detail.slice(0, 200)}`);
+    }
+
+    const payload = (await res.json()) as unknown;
+    return normalizeModelList(payload).sort((left, right) =>
+      compareProviderModelIds('fireworks', left, right),
+    );
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(
+        `Fireworks AI model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
       );
     }
     throw err;

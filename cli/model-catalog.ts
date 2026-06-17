@@ -4,6 +4,7 @@
  */
 import {
   BLACKBOX_MODELS,
+  FIREWORKS_MODELS,
   KILOCODE_MODELS,
   NVIDIA_MODELS,
   OLLAMA_MODELS,
@@ -17,6 +18,7 @@ import {
 
 export {
   BLACKBOX_MODELS,
+  FIREWORKS_MODELS,
   KILOCODE_MODELS,
   NVIDIA_MODELS,
   OLLAMA_MODELS,
@@ -128,8 +130,12 @@ export async function fetchModels(
     // Sort: put curated models first (in their original order), then remaining
     const curatedSet = new Set(curated);
     const extra = ids.filter((id: string) => !curatedSet.has(id)).sort();
-    // Keep curated order for known models, append discovered ones
-    const orderedCurated = curated.filter((id: string) => ids.includes(id));
+    // Keep curated order for known models, append discovered ones. Fireworks /v1/models returns
+    // only the account's narrow subset, so surface the full curated list (every slug verified
+    // callable) — union, not intersect. Other providers' /models already return their full catalog,
+    // so keep the intersect (curated entries they no longer serve stay hidden).
+    const orderedCurated =
+      providerId === 'fireworks' ? curated : curated.filter((id: string) => ids.includes(id));
     const merged = [
       ...orderedCurated,
       ...extra.filter((id: string) => !orderedCurated.includes(id)),
