@@ -211,8 +211,14 @@ Phase 0 landed: the cognitive-drift guard is now gated on `taskInFlight === fals
 (the last coder-policy guard that could misfire on a chat reply, mirroring the
 no-fake-completion guard). Phase 1 landed: conversational inline turns now seed
 the kernel from managed transcript messages and linked-library context instead
-of collapsing history into the bounded task preamble. The routing flip stays
-gated until the policy/telemetry gaps in that runbook are closed.
+of collapsing history into the bounded task preamble. Phase 2 landed: the Coder
+kernel now carries the remaining policy/observability/tool parity needed before
+the flip — trailing-action-intent nudges in `coder-policy.ts`,
+reasoning-channel buried-tool recovery in `lib/coder-agent.ts`, scratchpad/todo
+tool wiring for the inline lead, per-round `assistant.turn_start/end`, and
+`tool.call_malformed` events for dropped candidates. The routing flip remains
+Phase 3 work and must still be gated/compared; `delegation-mode-settings.ts` /
+`chat-send-background.ts` are intentionally unchanged here.
 
 Protected during convergence: the shared runtime semantics in §1 (one kernel,
 drift tests), the durable job engine, and the safety/Auditor boundary — the
