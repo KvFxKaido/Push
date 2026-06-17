@@ -77,6 +77,18 @@ describe('guessWindowFromName', () => {
     expect(guessWindowFromName('qwen3:235b')).toBe(0);
   });
 
+  it('budgets GLM + Kimi at the 262,144 Workers AI window', () => {
+    // GLM-5.2 is natively 1M but Workers AI serves it (and the Kimi K2.x
+    // family) at 262,144 (256K). The name fallback must match the served cap,
+    // not GLM's native 1M — over-budgeting overflows the real window. Covers
+    // both the bare ids and the `@cf/...` ids Workers AI returns.
+    expect(guessWindowFromName('@cf/zai-org/glm-5.2')).toBe(262_144);
+    expect(guessWindowFromName('glm-5.1')).toBe(262_144);
+    expect(guessWindowFromName('@cf/moonshotai/kimi-k2.7-code')).toBe(262_144);
+    expect(guessWindowFromName('kimi-k2.6')).toBe(262_144);
+    expect(guessWindowFromName('moonshotai/kimi-k2.5')).toBe(262_144);
+  });
+
   it('returns 0 for names that match no pattern', () => {
     expect(guessWindowFromName('mistralai/mistral-large-2512')).toBe(0);
     expect(guessWindowFromName('totally-unknown-model')).toBe(0);

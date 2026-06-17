@@ -506,6 +506,13 @@ export async function runExplorerAgent<TCall, TCard>(
       `Explorer round ${rounds} timed out after ${EXPLORER_ROUND_TIMEOUT_MS / 1000}s.`,
       EXPLORER_ROUND_WALL_CLOCK_MS,
       `Explorer round ${rounds} exceeded ${EXPLORER_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap — model is verbose but unproductive.`,
+      // Heavy reasoners (glm-5.x) legitimately stream reasoning for >60s before
+      // the first text token on large-transcript rounds — without this opt-in
+      // the activity timer (which only resets on `text_delta`) kills an
+      // actively-thinking round. Thinking IS progress here; the wall-clock cap
+      // above bounds a model that reasons forever. Mirrors deep-reviewer
+      // (PR #907).
+      { reasoningResetsActivityTimer: true },
     );
 
     if (streamError) {

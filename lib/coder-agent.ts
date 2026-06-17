@@ -1273,6 +1273,14 @@ export async function runCoderAgent<TCall, TCard>(
       `Coder round ${rounds} timed out after ${CODER_ROUND_TIMEOUT_MS / 1000}s — model may be unresponsive.`,
       CODER_ROUND_WALL_CLOCK_MS,
       `Coder round ${rounds} exceeded ${CODER_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap — model is verbose but unproductive.`,
+      // Heavy reasoners (glm-5.x) legitimately stream reasoning for >60s before
+      // the first text token on large-transcript rounds — without this opt-in
+      // the activity timer (which only resets on `text_delta`) kills an
+      // actively-thinking round, surfaced as "model may be unresponsive" even
+      // though it's making progress. Thinking IS progress here; the wall-clock
+      // cap above bounds a model that reasons forever. Mirrors deep-reviewer
+      // (PR #907).
+      { reasoningResetsActivityTimer: true },
     );
 
     if (streamError) {

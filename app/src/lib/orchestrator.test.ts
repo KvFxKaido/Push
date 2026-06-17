@@ -97,9 +97,11 @@ describe('getContextBudget', () => {
   });
 
   it('derives a 256K budget for Kimi/Moonshot models', () => {
+    // 262,144 = 256 KiB — the exact window Workers AI serves for the Kimi
+    // K2.x family (was previously the 256,000 decimal approximation).
     expect(getContextBudget('cloudflare', '@cf/moonshotai/kimi-k2-instruct')).toEqual({
-      maxTokens: Math.floor(256_000 * 0.92),
-      targetTokens: Math.floor(256_000 * 0.85),
+      maxTokens: Math.floor(262_144 * 0.92),
+      targetTokens: Math.floor(262_144 * 0.85),
       summarizeTokens: 88_000,
     });
   });

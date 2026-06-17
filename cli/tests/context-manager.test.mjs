@@ -169,9 +169,11 @@ describe('getContextBudget', () => {
   });
 
   it('derives a 256K budget for Kimi/Moonshot models', () => {
+    // 262,144 = 256 KiB — the window Workers AI serves and Moonshot's native
+    // size (was previously the 256,000 decimal approximation).
     const budget = getContextBudget('openrouter', 'moonshotai/kimi-k2');
-    assert.equal(budget.targetTokens, Math.floor(256_000 * 0.85));
-    assert.equal(budget.maxTokens, Math.floor(256_000 * 0.92));
+    assert.equal(budget.targetTokens, Math.floor(262_144 * 0.85));
+    assert.equal(budget.maxTokens, Math.floor(262_144 * 0.92));
   });
 
   it('derives a 2M-class budget for Grok models', () => {
