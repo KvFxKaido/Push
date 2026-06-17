@@ -166,6 +166,62 @@ describe('chat-send', () => {
     expect(usageHandler.trackUsage).toHaveBeenCalledWith('k2p5', 11, 7);
   });
 
+  it('promotes a reasoning-only answer to content (stranded-answer salvage)', async () => {
+    // Kimi-k2.7 (Workers AI) failure mode: the entire final answer lands on the
+    // reasoning channel with empty response content. Without promotion the turn
+    // finalizes blank and the answer is dropped. The stream layer promotes it.
+    const conversationsRef = { current: makeConversation([makeMessage()]) };
+    const dirtyRef = { current: new Set<string>() };
+    const ctx = makeLoopContext(conversationsRef, dirtyRef);
+
+    const answer = 'Short answer: yes, but Ollama is a different beast.';
+    mockStreamChat.mockImplementation((_messages, _onToken, onDone, _onError, onThinkingToken) => {
+      onThinkingToken?.(answer);
+      onDone({ inputTokens: 5, outputTokens: 9 });
+    });
+
+    const result = await streamAssistantRound(
+      0,
+      [makeMessage({ id: 'user-1', role: 'user', content: 'does ollama work?', status: 'done' })],
+      ctx,
+      ['Thinking…'],
+    );
+
+    expect(result.accumulated).toBe(answer);
+    expect(result.thinkingAccumulated).toBe('');
+    expect(conversationsRef.current['chat-1'].messages.at(-1)).toMatchObject({ content: answer });
+  });
+
+  it('does NOT promote a tool call emitted in the reasoning channel', async () => {
+    // A `{"tool": ...}` call placed in reasoning must NOT be promoted into
+    // content — promoting it would feed it to the dispatcher and execute an
+    // untrusted reasoning-channel call. It stays in `thinkingAccumulated` so
+    // `detectAnyToolCall(accumulated)` is null downstream and processNoToolPath's
+    // buried-call recovery nudges TOOL_CALL_IN_REASONING instead of running it.
+    // Uses sandbox_exec — a web-recognized, side-effecting tool — so this is the
+    // meaningful case the guard exists to prevent (an unrecognized tool name
+    // would be inert prose either way).
+    const conversationsRef = { current: makeConversation([makeMessage()]) };
+    const dirtyRef = { current: new Set<string>() };
+    const ctx = makeLoopContext(conversationsRef, dirtyRef);
+
+    const reasoningCall = '```json\n{"tool":"sandbox_exec","args":{"command":"npm test"}}\n```';
+    mockStreamChat.mockImplementation((_messages, _onToken, onDone, _onError, onThinkingToken) => {
+      onThinkingToken?.(reasoningCall);
+      onDone({ inputTokens: 5, outputTokens: 9 });
+    });
+
+    const result = await streamAssistantRound(
+      0,
+      [makeMessage({ id: 'user-1', role: 'user', content: 'read the readme', status: 'done' })],
+      ctx,
+      ['Thinking…'],
+    );
+
+    expect(result.accumulated).toBe('');
+    expect(result.thinkingAccumulated).toBe(reasoningCall);
+  });
+
   it('drains context-compaction metrics into appendRunEvent after the stream resolves', async () => {
     // End-to-end coverage for the drain → run-event mapping in
     // chat-stream-round. If the loop stops emitting `context.compaction`
