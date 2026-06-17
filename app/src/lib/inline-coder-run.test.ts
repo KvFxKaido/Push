@@ -198,6 +198,10 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
         'extraToolProtocols',
         'harnessContextResetsEnabled',
         'harnessMaxRounds',
+        // Parity decision: delegated Coders do not seed from chat history.
+        // The inline conversational lead sets this; task-shaped runs keep the
+        // single task preamble.
+        'initialMessages',
         'initialUserContentParts',
         'instructionFilename',
         'persona',
@@ -219,6 +223,9 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
         // scoped to the Cloudflare Kimi/GLM lead today. Additive regardless:
         // native tool_calls normalize back into fenced JSON.
         'nativeToolSchemas',
+        // Parity decision: only the web inline lane resolves linked libraries.
+        // Delegated Coders receive all context through their brief/preload.
+        'linkedLibraryContent',
         'projectInstructions',
         'provider',
         'resumeState',
@@ -312,6 +319,10 @@ describe('runInPageCoderKernel inline knobs', () => {
     const teed: PushStream<LlmMessage> = providerStream;
     const onCheckpoint = vi.fn(async () => {});
     const resumeState = { round: 3, messages: [], workingMemory: {}, cards: [] };
+    const initialMessages = [
+      { id: 'u1', role: 'user' as const, content: 'prior question', timestamp: 1 },
+      { id: 'a1', role: 'assistant' as const, content: 'prior answer', timestamp: 2 },
+    ];
     const initialUserContentParts = [
       { type: 'text' as const, text: 'RAW-USER-TURN-PREAMBLE' },
       { type: 'image_url' as const, image_url: { url: 'data:image/png;base64,abc123' } },
@@ -323,7 +334,9 @@ describe('runInPageCoderKernel inline knobs', () => {
         modelId: 'm',
         sandboxId: 'sb-2',
         taskPreamble: 'RAW-USER-TURN-PREAMBLE',
+        initialMessages,
         initialUserContentParts,
+        linkedLibraryContent: '# Linked libraries\n\n## Library: Design notes',
         stream: teed,
         resumeState: resumeState as never,
         checkpointCadenceRounds: 1,
@@ -335,7 +348,9 @@ describe('runInPageCoderKernel inline knobs', () => {
     expect(options.stream).toBe(teed);
     expect(mockGetProviderPushStream).not.toHaveBeenCalled();
     expect(options.taskPreamble).toBe('RAW-USER-TURN-PREAMBLE');
+    expect(options.initialMessages).toBe(initialMessages);
     expect(options.initialUserContentParts).toBe(initialUserContentParts);
+    expect(options.linkedLibraryContent).toContain('Design notes');
     expect(options.resumeState).toBe(resumeState);
     expect(options.checkpointCadenceRounds).toBe(1);
     expect(callbacks.onCheckpoint).toBe(onCheckpoint);

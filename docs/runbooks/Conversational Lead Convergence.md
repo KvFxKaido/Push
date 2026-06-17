@@ -1,6 +1,6 @@
 # Conversational Lead Convergence — retiring the conversational→Orchestrator downgrade
 
-Status: Draft (Phase 0 landed)
+Status: Draft (Phases 0-1 landed)
 Owner decision: [`../decisions/Agent Runtime Decisions.md`](<../decisions/Agent Runtime Decisions.md>) §10
 
 ## Why this exists
@@ -39,8 +39,8 @@ Source: behavior audit of the Orchestrator null-trigger path
 
 | Capability | Orchestrator (today) | Inline lead (today) | Gap |
 |---|---|---|---|
-| **Conversation history** | Full transcript, visibility-filtered, budget-aware compaction → `[SESSION DIGEST]` + `[USER_GOAL]` anchor, memory-record injection on compaction (`orchestrator.ts:607-695`) | Last 6 turns × 700 chars, flat text preamble (`buildInlineTurnPreamble`, `chat-send-inline.ts:115-144`) | **CRITICAL** |
-| **Linked-library content** | Per-turn fresh inject (system text + images spliced into latest user msg) | Not threaded (zero refs in `chat-send-inline.ts`) | **Real** |
+| **Conversation history** | Full transcript, visibility-filtered, budget-aware compaction → `[SESSION DIGEST]` + `[USER_GOAL]` anchor, memory-record injection on compaction (`orchestrator.ts:607-695`) | Phase 1: conversational turns seed the kernel from managed transcript messages (`inline-conversation-context.ts` → `initialMessages`) instead of the 6×700 preamble | Closed in Phase 1 |
+| **Linked-library content** | Per-turn fresh inject (system text + images spliced into latest user msg) | Phase 1: inline lane resolves linked libraries fresh per turn, renders `library_context`, and merges linked images into current-turn parts | Closed in Phase 1 |
 | **scratchpad / todo tools** | Wired | Not wired | Medium (low conversational use) |
 | **delegate_coder / plan_tasks** | Wired | Refused (lead does its own coding) | Low (conversational turns don't delegate code) |
 | **delegate_explorer** | Wired | Wired (PR #957) | OK |
@@ -75,15 +75,17 @@ Source: behavior audit of the Orchestrator null-trigger path
   Zero regression: `taskInFlight` is unset for delegated Coders / engine runs,
   so their drift protection is unchanged. (+ test.)
 
-**Phase 1 — conversation context parity (the crux, NOT YET STARTED).**
-- Give the conversational lead real history instead of the 6×700 preamble. Two
-  options: (a) reuse the Orchestrator's `toLLMMessages` / context-transform
-  pipeline (compaction + session digest + memory injection) from the inline
-  lane when `taskInFlight === false`; (b) give the kernel a "conversational
-  context mode" that threads the managed transcript. This is the load-bearing
-  piece — the inline lane was *built* around bounded task context, so this is
-  real integration work, not a tweak.
-- Thread linked-library content into the inline lane.
+**Phase 1 — conversation context parity (LANDED).**
+- Conversational inline turns (`taskInFlight === false`) now build
+  `initialMessages` from the same context-transform stages the Orchestrator
+  depends on: visibility filtering, budget-aware compaction, `[USER_GOAL]`,
+  `[SESSION DIGEST]`, memory records, and the gateway safety net
+  (`app/src/lib/inline-conversation-context.ts`). Task turns stay on the
+  bounded preamble path.
+- Linked libraries are resolved in the inline lane every turn. Text lands in
+  the kernel system prompt's `library_context`; linked images are spliced into
+  the latest user turn / current-turn multipart parts without persisting them
+  into chat history.
 
 **Phase 2 — policy + tool + telemetry parity.**
 - Audit orchestrator-policy's trailing-action-intent + reasoning-channel nudges

@@ -791,6 +791,14 @@ export interface CoderAgentOptions<TCall, TCard> {
   taskPreamble: string;
 
   /**
+   * Full initial loop transcript. Lead conversational turns use this to seed
+   * the kernel with managed chat history instead of collapsing history into a
+   * synthetic task preamble. Omitted keeps the task-shaped single-user-message
+   * startup used by delegated Coders and inline coding turns.
+   */
+  initialMessages?: CoderLoopMessage[];
+
+  /**
    * Rich multipart representation of the initial user turn. Shells build this
    * from their local attachment types; the shared kernel only carries provider
    * content parts. Ignored when resuming from a checkpoint.
@@ -843,6 +851,9 @@ export interface CoderAgentOptions<TCall, TCard> {
 
   /** Pre-built approval-mode block (Web shim calls `buildApprovalModeBlock(getApprovalMode())`). */
   approvalModeBlock: string | null;
+
+  /** User-linked library text, already rendered by the web shell. */
+  linkedLibraryContent?: string;
 
   /** After-model policy callback (identical shape to Explorer). */
   evaluateAfterModel: (response: string, round: number) => Promise<CoderAfterModelResult>;
@@ -953,6 +964,7 @@ export async function runCoderAgent<TCall, TCard>(
     instructionFilename,
     userProfile,
     taskPreamble,
+    initialMessages,
     initialUserContentParts,
     symbolSummary,
     toolExec: rawToolExec,
@@ -964,6 +976,7 @@ export async function runCoderAgent<TCall, TCard>(
     extraToolProtocols,
     verificationPolicyBlock,
     approvalModeBlock,
+    linkedLibraryContent,
     evaluateAfterModel,
     acceptanceCriteria,
     harnessMaxRounds,
@@ -1036,6 +1049,10 @@ export async function runCoderAgent<TCall, TCard>(
       projectContent += `\n\nFull file available at /workspace/${filename} — use ${getToolPublicName('sandbox_read_file')} if you need details not shown above.`;
     }
     promptBuilder.set('project_context', projectContent);
+  }
+
+  if (linkedLibraryContent) {
+    promptBuilder.set('library_context', linkedLibraryContent);
   }
 
   // Workspace context (branch metadata; repo name when a GitHub-tool lead
@@ -1203,17 +1220,19 @@ export async function runCoderAgent<TCall, TCard>(
   // Build initial messages (or restore them from the resume seed).
   const messages: CoderLoopMessage[] = resumeState
     ? resumeState.messages.map((m) => ({ ...m }))
-    : [
-        {
-          id: 'coder-task',
-          role: 'user',
-          content: taskPreamble,
-          ...(initialUserContentParts && initialUserContentParts.length > 0
-            ? { contentParts: initialUserContentParts }
-            : {}),
-          timestamp: Date.now(),
-        },
-      ];
+    : initialMessages
+      ? initialMessages.map((m) => ({ ...m }))
+      : [
+          {
+            id: 'coder-task',
+            role: 'user',
+            content: taskPreamble,
+            ...(initialUserContentParts && initialUserContentParts.length > 0
+              ? { contentParts: initialUserContentParts }
+              : {}),
+            timestamp: Date.now(),
+          },
+        ];
 
   const getAwarenessBlock = (prefixNewline = true): string => {
     const awarenessSummary = callbacks.getFileAwarenessSummary?.();

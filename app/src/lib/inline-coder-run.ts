@@ -646,8 +646,12 @@ export interface InPageCoderKernelSpec {
   sandboxId: string;
   /** Fully-built task preamble — the kernel consumes it verbatim. */
   taskPreamble: string;
+  /** Full managed transcript seed for conversational lead turns. */
+  initialMessages?: LlmMessage[];
   /** Multipart initial user turn; text fallback remains `taskPreamble`. */
   initialUserContentParts?: LlmContentPart[];
+  /** User-linked library text rendered into the lead system prompt. */
+  linkedLibraryContent?: string;
   declaredCapabilities?: Capability[];
   branchContext?: { activeBranch: string; defaultBranch: string; protectMain: boolean };
   projectInstructions?: string;
@@ -967,7 +971,9 @@ export async function runInPageCoderKernel(
     instructionFilename: spec.instructionFilename,
     userProfile: getUserProfile(),
     taskPreamble: spec.taskPreamble,
+    initialMessages: spec.initialMessages,
     initialUserContentParts: spec.initialUserContentParts,
+    linkedLibraryContent: spec.linkedLibraryContent,
     symbolSummary: symbolLedger.getSummary(),
     toolExec,
     detectAllToolCalls: detectAllToolCallsFiltered,

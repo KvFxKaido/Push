@@ -25,6 +25,8 @@ const {
   mockInvalidateMemory,
   mockApplyBranchSwitchPayload,
   mockRunInlineVerificationCriteria,
+  mockBuildLinkedLibraryContext,
+  mockSpliceLinkedImagesIntoLastUser,
 } = vi.hoisted(() => ({
   mockRunInPageCoderKernel: vi.fn(),
   mockRunCoderAuditorGate: vi.fn(),
@@ -37,6 +39,8 @@ const {
   mockInvalidateMemory: vi.fn(),
   mockApplyBranchSwitchPayload: vi.fn(),
   mockRunInlineVerificationCriteria: vi.fn(),
+  mockBuildLinkedLibraryContext: vi.fn(),
+  mockSpliceLinkedImagesIntoLastUser: vi.fn(),
 }));
 
 vi.mock('@/lib/inline-coder-run', () => ({
@@ -63,6 +67,7 @@ vi.mock('@/lib/repo-metadata', () => ({
 
 vi.mock('@/lib/model-capabilities', () => ({
   resolveHarnessSettings: (...args: unknown[]) => mockResolveHarnessSettings(...args),
+  getModelCapabilities: () => ({ contextLimit: 0 }),
 }));
 
 vi.mock('@/lib/context-memory', () => ({
@@ -71,6 +76,12 @@ vi.mock('@/lib/context-memory', () => ({
 
 vi.mock('@/lib/branch-fork-migration', () => ({
   applyBranchSwitchPayload: (...args: unknown[]) => mockApplyBranchSwitchPayload(...args),
+}));
+
+vi.mock('@/lib/linked-library-context', () => ({
+  buildLinkedLibraryContext: (...args: unknown[]) => mockBuildLinkedLibraryContext(...args),
+  spliceLinkedImagesIntoLastUser: (...args: unknown[]) =>
+    mockSpliceLinkedImagesIntoLastUser(...args),
 }));
 
 // Faithful stand-in for the real git_status parser (own tests live in
@@ -130,11 +141,16 @@ interface Harness {
   appendRunEvent: ReturnType<typeof vi.fn>;
 }
 
-function makeHarness(opts?: { sandboxId?: string | null; repo?: string | null }): Harness {
+function makeHarness(opts?: {
+  sandboxId?: string | null;
+  repo?: string | null;
+  linkedLibraryIds?: string[];
+}): Harness {
   const store = {
     current: {
       'chat-1': {
         messages: [msg('user', 'do the thing'), { ...msg('assistant', ''), status: 'streaming' }],
+        linkedLibraryIds: opts?.linkedLibraryIds ?? [],
       } as unknown as Conversation,
     } as Record<string, Conversation>,
   };
@@ -229,6 +245,11 @@ beforeEach(() => {
     verificationCommandsById: new Map<string, string>(),
     summaryLine: '',
   });
+  mockBuildLinkedLibraryContext.mockReset().mockResolvedValue({
+    systemText: undefined,
+    imageAttachments: [],
+  });
+  mockSpliceLinkedImagesIntoLastUser.mockReset().mockImplementation((messages) => messages);
   // Default: a recording no-op (the real append is exercised only by the
   // mid-run-divider regression test, which sets its own implementation).
   mockApplyBranchSwitchPayload.mockReset();
@@ -462,6 +483,69 @@ describe('startInlineCoderTurn', () => {
     expect(spec.initialUserContentParts).toEqual([
       { type: 'text', text: spec.taskPreamble },
       { type: 'image_url', image_url: { url: 'data:image/png;base64,abc123' } },
+    ]);
+  });
+
+  it('seeds conversational turns with managed transcript context and linked libraries', async () => {
+    const linkedImage: AttachmentData = {
+      id: 'linked-img',
+      type: 'image',
+      filename: 'diagram.png',
+      mimeType: 'image/png',
+      sizeBytes: 3,
+      content: 'data:image/png;base64,linked123',
+    };
+    mockBuildLinkedLibraryContext.mockResolvedValueOnce({
+      systemText: '# Linked libraries\n\n## Library: Design notes',
+      imageAttachments: [linkedImage],
+    });
+    mockSpliceLinkedImagesIntoLastUser.mockImplementationOnce(
+      (messages: ChatMessage[], images: AttachmentData[]) => {
+        const next = messages.map((message) => ({ ...message }));
+        const idx = next.findLastIndex((message) => message.role === 'user');
+        if (idx !== -1) {
+          next[idx] = {
+            ...next[idx],
+            attachments: [...(next[idx].attachments ?? []), ...images],
+          };
+        }
+        return next;
+      },
+    );
+
+    const { ctx } = makeHarness({ linkedLibraryIds: ['lib-1'] });
+    await startInlineCoderTurn(
+      ctx,
+      laneArgs({
+        trimmedText: 'what changed recently?',
+        apiMessages: [
+          msg('user', 'earlier question'),
+          msg('assistant', 'earlier answer'),
+          msg('user', 'what changed recently?'),
+        ],
+      }),
+    );
+
+    expect(mockBuildLinkedLibraryContext).toHaveBeenCalledWith(['lib-1']);
+    const [spec] = mockRunInPageCoderKernel.mock.calls[0] as [Record<string, unknown>];
+    expect(spec.taskInFlight).toBe(false);
+    expect(spec.linkedLibraryContent).toContain('Design notes');
+    expect(spec.initialMessages).toEqual([
+      expect.objectContaining({ role: 'user', content: 'earlier question' }),
+      expect.objectContaining({ role: 'assistant', content: 'earlier answer' }),
+      expect.objectContaining({
+        role: 'user',
+        content: 'what changed recently?',
+        contentParts: [
+          { type: 'text', text: 'what changed recently?' },
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,linked123' } },
+        ],
+      }),
+    ]);
+    expect(JSON.stringify(spec.initialMessages)).not.toContain('Task:');
+    expect(spec.initialUserContentParts).toEqual([
+      { type: 'text', text: spec.taskPreamble },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,linked123' } },
     ]);
   });
 

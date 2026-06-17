@@ -36,6 +36,7 @@
 
 import type { MutableRefObject } from 'react';
 import { getProviderPushStream } from '@/lib/orchestrator';
+import { buildInlineConversationMessages } from '@/lib/inline-conversation-context';
 import { getSandboxDiff, getSandboxEnvironment } from '@/lib/sandbox-client';
 import { getRepoMetadata } from '@/lib/repo-metadata';
 import { getVibeVerbs } from '@/lib/repo-vibe-verbs';
@@ -67,7 +68,13 @@ import {
   buildPriorTurnAttachmentParts,
   mergeInitialUserContentParts,
 } from '@/lib/attachment-content-parts';
+import {
+  buildLinkedLibraryContext,
+  spliceLinkedImagesIntoLastUser,
+} from '@/lib/linked-library-context';
 import { createId } from '@push/lib/id-utils';
+import { getDefaultMemoryStore } from '@push/lib/context-memory-store';
+import { type SessionDigest } from '@push/lib/session-digest';
 import type { CoderCheckpointState } from '@push/lib/coder-agent';
 import type { RunEventInput } from '@push/lib/runtime-contract';
 import type {
@@ -293,6 +300,19 @@ export function createInlineTranscriptMirror(
 // ---------------------------------------------------------------------------
 
 type InlineTurnOutcome = 'ok' | 'aborted' | 'failed' | 'precondition-failed';
+
+const MAX_CACHED_INLINE_DIGESTS = 64;
+const _lastInlineSessionDigests = new Map<string, SessionDigest>();
+
+function recordInlineSessionDigest(chatId: string, digest: SessionDigest): void {
+  if (_lastInlineSessionDigests.has(chatId)) {
+    _lastInlineSessionDigests.delete(chatId);
+  } else if (_lastInlineSessionDigests.size >= MAX_CACHED_INLINE_DIGESTS) {
+    const oldest = _lastInlineSessionDigests.keys().next().value;
+    if (oldest !== undefined) _lastInlineSessionDigests.delete(oldest);
+  }
+  _lastInlineSessionDigests.set(chatId, digest);
+}
 
 function logInlineTurnCompleted(fields: {
   chatId: string;
@@ -692,13 +712,49 @@ export async function startInlineCoderTurn(
   // Collect tool completion events so we can synthesize the per-turn
   // collapsible disclosure after the kernel finishes.
   const capturedToolEvents: ToolCompleteEvent[] = [];
-  const taskPreamble = buildInlineTurnPreamble(args.trimmedText, args.apiMessages);
+  const taskInFlight = classifyTurnIntent(args.trimmedText) === 'task';
+
+  const linkedLibraryIds = ctx.conversationsRef.current[chatId]?.linkedLibraryIds ?? [];
+  const linkedLibraryPayload =
+    linkedLibraryIds.length > 0
+      ? await buildLinkedLibraryContext(linkedLibraryIds)
+      : { systemText: undefined, imageAttachments: [] };
+  const apiMessagesForContext = spliceLinkedImagesIntoLastUser(
+    args.apiMessages,
+    linkedLibraryPayload.imageAttachments,
+  );
+
+  let sessionDigestRecords: Awaited<ReturnType<ReturnType<typeof getDefaultMemoryStore>['list']>> =
+    [];
+  if (!taskInFlight) {
+    try {
+      const listed = getDefaultMemoryStore().list((record) => record.scope.chatId === chatId);
+      sessionDigestRecords = await Promise.resolve(listed);
+    } catch {
+      sessionDigestRecords = [];
+    }
+  }
+
+  const taskPreamble = buildInlineTurnPreamble(args.trimmedText, apiMessagesForContext);
+  const initialMessages = !taskInFlight
+    ? buildInlineConversationMessages(apiMessagesForContext, {
+        provider: lockedProvider === 'demo' ? undefined : lockedProvider,
+        model: resolvedModel || undefined,
+        systemPromptOverhead: [
+          args.agentsMdRef.current ?? '',
+          linkedLibraryPayload.systemText ?? '',
+        ].join('\n\n'),
+        sessionDigestRecords,
+        priorSessionDigest: _lastInlineSessionDigests.get(chatId),
+        onEmitSessionDigest: (digest) => recordInlineSessionDigest(chatId, digest),
+      })
+    : undefined;
 
   // Derive the exact window buildInlineTurnPreamble uses (same filter + cap)
   // so attachment extraction never drifts outside the text preamble's horizon.
   // `visibleToModel !== false` mirrors the Orchestrator's filterVisibleStage —
   // display-only messages (fork dividers, aborted partials) never reach the wire.
-  const priorWindow = args.apiMessages
+  const priorWindow = apiMessagesForContext
     .slice(0, -1)
     .filter(
       (m) =>
@@ -725,11 +781,10 @@ export async function startInlineCoderTurn(
 
   // preamble text → prior-turn images → current-turn images; undefined when
   // there's no multimodal content (kernel uses the plain taskPreamble string).
-  const initialUserContentParts = mergeInitialUserContentParts(
-    taskPreamble,
-    priorAttParts,
-    args.attachments,
-  );
+  const initialUserContentParts = mergeInitialUserContentParts(taskPreamble, priorAttParts, [
+    ...(args.attachments ?? []),
+    ...linkedLibraryPayload.imageAttachments,
+  ]);
 
   let result: Awaited<ReturnType<typeof runInPageCoderKernel>>;
   try {
@@ -739,7 +794,9 @@ export async function startInlineCoderTurn(
         modelId: resolvedModel || undefined,
         sandboxId,
         taskPreamble,
+        initialMessages,
         initialUserContentParts,
+        linkedLibraryContent: linkedLibraryPayload.systemText,
         branchContext: {
           activeBranch,
           defaultBranch: branchInfo?.defaultBranch || 'main',
@@ -761,7 +818,7 @@ export async function startInlineCoderTurn(
         // from the same classifier the router uses, so even if a conversational
         // turn ever reaches this lane the guard stays quiet. `task` by default;
         // attachment-only turns (no text) read as a task and stay guarded.
-        taskInFlight: classifyTurnIntent(args.trimmedText) === 'task',
+        taskInFlight,
         // Per-round capture: the foreground client mirror is the durable
         // copy adoption resumes from, so don't skip rounds.
         checkpointCadenceRounds: 1,
