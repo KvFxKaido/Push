@@ -195,6 +195,23 @@ in its read-phase `Promise.all`. `delegate:explorer` is part of the
 lead-capable `coder` grant; the empty `extraToolSources` on a delegated
 sub-Coder keeps the same call refused at the source gate.
 
+**Conversational-lead convergence (next step toward deleting the routing fork).**
+Repo-backed *conversational* turns are still downgraded to the Orchestrator loop
+(`chat-send-background.ts`: `inlineEligible = repoBranchReady &&
+!conversationalTurn`) because the inline lead is the Coder kernel in a lead
+costume — conversation is suppressed (via `taskInFlight`, post-kernel criteria
+gating, prompt overrides), not natively supported. The plan to make the lead
+conversation-first and retire the downgrade — with a full parity matrix of what
+a conversational turn must not lose (chiefly **full conversation history**: the
+inline lane today passes only the last 6 turns × 700 chars, vs the Orchestrator's
+managed transcript + session digest + memory injection; plus linked-library
+content) — lives in
+[`../runbooks/Conversational Lead Convergence.md`](<../runbooks/Conversational Lead Convergence.md>).
+Phase 0 landed: the cognitive-drift guard is now gated on `taskInFlight === false`
+(the last coder-policy guard that could misfire on a chat reply, mirroring the
+no-fake-completion guard). The routing flip stays gated until the history +
+linked-library + policy/telemetry gaps in that runbook are closed.
+
 Protected during convergence: the shared runtime semantics in §1 (one kernel,
 drift tests), the durable job engine, and the safety/Auditor boundary — the
 local lead still goes through the same gates, just without the sandbox's

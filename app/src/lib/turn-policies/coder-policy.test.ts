@@ -87,6 +87,21 @@ describe('Coder Policy — drift guard', () => {
     expect(r2?.action).toBe('halt');
   });
 
+  it('skips drift correction on conversational lead turns (taskInFlight === false)', async () => {
+    const policy = createCoderPolicy();
+    const driftHook = policy.afterModelCall![0];
+    const drifted =
+      '太平'.repeat(25) +
+      '\n'.repeat(25) +
+      'This is unrelated content about history and philosophy.'.repeat(5);
+    // A conversational turn has no task to drift from, and the correction is
+    // task-shaped — it must stay quiet even on content that would fire on a task.
+    const conversational: TurnContext = { ...makeCtx(5), taskInFlight: false };
+    expect(await driftHook(drifted, [], conversational)).toBeNull();
+    // Sanity: the same content still fires on a task turn (taskInFlight unset).
+    expect((await driftHook(drifted, [], makeCtx(5)))?.action).toBe('inject');
+  });
+
   it('resets drift counter on valid tool call', async () => {
     const policy = createCoderPolicy();
     const driftHook = policy.afterModelCall![0];
