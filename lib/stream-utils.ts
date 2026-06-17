@@ -106,6 +106,12 @@ export function streamWithTimeout(
  * unproductive loop never trips it. Wall-clock fires once `wallClockTimeoutMs`
  * elapses from the start of the call regardless of activity.
  *
+ * Optional `opts.firstTokenGraceMs` gives the activity timer a more generous
+ * window until the first activity event, then tightens to `timeoutMs` for
+ * inter-token gaps. Workers AI models routinely have a 20–30s time-to-first-
+ * token, so a single tight window kills a stream that is merely slow to START
+ * as "unresponsive". Omitting it preserves the legacy single-window behaviour.
+ *
  * Whichever timer fires first wins, definitively: the firing callback claims
  * the single `timeoutKind` slot and clears the other timer in the same tick,
  * so a near-simultaneous wall-clock callback can't overwrite an
@@ -127,7 +133,7 @@ export async function iteratePushStreamText<M extends LlmMessage>(
   timeoutMessage: string,
   wallClockTimeoutMs?: number,
   wallClockTimeoutMessage?: string,
-  opts?: { reasoningResetsActivityTimer?: boolean },
+  opts?: { reasoningResetsActivityTimer?: boolean; firstTokenGraceMs?: number },
 ): Promise<{ error: Error | null; text: string; reasoningText: string; usage?: StreamUsage }> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -141,14 +147,23 @@ export async function iteratePushStreamText<M extends LlmMessage>(
   let error: Error | null = null;
   let usage: StreamUsage | undefined;
 
+  // Until the first activity event the timer uses `firstTokenGraceMs` (when
+  // provided); after it, the tighter `timeoutMs`. Workers AI models routinely
+  // have a 20–30s time-to-first-token, so a single tight activity window kills a
+  // stream that is merely slow to START as "unresponsive" even though it is
+  // about to respond. A mid-stream stall still trips quickly once tokens flow.
+  // `firstTokenGraceMs ?? timeoutMs` preserves the legacy single-window
+  // behaviour when no grace is configured.
+  let sawActivity = false;
   const resetTimer = () => {
     clearTimeout(timer);
+    const ms = sawActivity ? timeoutMs : (opts?.firstTokenGraceMs ?? timeoutMs);
     timer = setTimeout(() => {
       if (timeoutKind !== null) return;
       timeoutKind = 'activity';
       clearTimeout(wallClockTimer);
       controller.abort();
-    }, timeoutMs);
+    }, ms);
   };
 
   try {
@@ -172,6 +187,7 @@ export async function iteratePushStreamText<M extends LlmMessage>(
         // legacy `onToken`-only reset semantics — a stream stuck emitting
         // reasoning or tool-call fragments without any user-visible text
         // should still trip the per-role round timeout.
+        sawActivity = true;
         resetTimer();
         text += event.text;
       } else if (event.type === 'reasoning_delta') {
@@ -179,6 +195,7 @@ export async function iteratePushStreamText<M extends LlmMessage>(
         if (opts?.reasoningResetsActivityTimer) {
           // Heavy-reasoner opt-in: thinking IS progress for this caller; the
           // wall-clock backstop bounds a model that reasons forever.
+          sawActivity = true;
           resetTimer();
         }
       } else if (event.type === 'done') {
