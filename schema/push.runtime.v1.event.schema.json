@@ -959,7 +959,8 @@
           "type": "string",
           "enum": [
             "conversational_inline",
-            "conversational_escape_hatch"
+            "conversational_escape_hatch",
+            "conversational_downgrade"
           ]
         },
         "suppressedRoute": {
