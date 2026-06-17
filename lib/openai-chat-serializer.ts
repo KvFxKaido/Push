@@ -199,6 +199,8 @@ export function toOpenAIChat(
   const temperature =
     typeof req.temperature === 'number' ? req.temperature : options?.temperatureDefault;
 
+  const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : [];
+
   return {
     model,
     messages,
@@ -206,6 +208,13 @@ export function toOpenAIChat(
     ...(typeof temperature === 'number' ? { temperature } : {}),
     ...(typeof req.topP === 'number' ? { top_p: req.topP } : {}),
     ...(typeof req.maxTokens === 'number' ? { max_tokens: req.maxTokens } : {}),
+    // Native function-calling tool schemas, when the caller attached them (gated
+    // on model support upstream). Additive — `openai-sse-pump` normalizes any
+    // native `tool_calls` back into the dispatcher's fenced JSON. `tool_choice:
+    // 'auto'` keeps prose answers available. This serializer feeds the worker's
+    // neutral-contract Zen-Go path (`handleZenGoChat`) and the CLI OpenAI-compat
+    // adapters; both ignore the field when no caller sets `tools`.
+    ...(nativeTools.length > 0 ? { tools: nativeTools, tool_choice: 'auto' } : {}),
     ...(req.responseFormat ? { response_format: toOpenAIResponseFormat(req.responseFormat) } : {}),
   };
 }

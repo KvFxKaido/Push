@@ -23,6 +23,8 @@
  * trust this shape; they don't re-validate.
  */
 
+import type { ToolFunctionSchema } from './provider-contract.js';
+
 export type OpenAIContentPart =
   | { type: 'text'; text?: string; cache_control?: { type: 'ephemeral' } }
   | { type: 'image_url'; image_url?: { url?: string }; cache_control?: { type: 'ephemeral' } };
@@ -86,4 +88,9 @@ export interface OpenAIChatRequest extends OpenAIChatRequestNativeWebSearch {
   stream?: boolean;
   n?: number;
   response_format?: OpenAIJsonSchemaResponseFormat;
+  /** Native function-calling tool schemas + selection mode. Serialized by
+   *  `toOpenAIChat` for callers that attach them (gated on model support); the
+   *  legacy guardrail validator preserves them on the forwarded body. */
+  tools?: ToolFunctionSchema[];
+  tool_choice?: 'auto' | 'none' | 'required';
 }
