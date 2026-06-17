@@ -1,18 +1,18 @@
 # Conversational Lead Convergence — retiring the conversational→Orchestrator downgrade
 
-Status: Draft (Phases 0-2 landed)
+Status: Current (Phase 3 landed; bake / A-B measurement follow-up remains)
 Owner decision: [`../decisions/Agent Runtime Decisions.md`](<../decisions/Agent Runtime Decisions.md>) §10
 
 ## Why this exists
 
-Repo-backed chat turns fork by intent: a **task** turn ("add a flag to X") routes
-to the inline Coder kernel lead; a **conversational** turn ("what changed
-recently?", "how does X work?") is *downgraded* to the foreground Orchestrator
-loop (`chat-send-background.ts` sets `inlineEligible = repoBranchReady &&
-!conversationalTurn`). That fork is the single biggest source of "which loop am
-I in?" confusion, and it forces every bug fix to land in two loops (the
-silent-`extraMutations` gap that shipped to the kernel but not the Orchestrator
-is the proof — PR #957).
+Repo-backed chat turns used to fork by intent: a **task** turn ("add a flag to
+X") routed to the inline Coder kernel lead, while a **conversational** turn
+("what changed recently?", "how does X work?") was *downgraded* to the
+foreground Orchestrator loop (`chat-send-background.ts` set `inlineEligible =
+repoBranchReady && !conversationalTurn`). That fork was the single biggest
+source of "which loop am I in?" confusion, and it forced every bug fix to land
+in two loops (the silent-`extraMutations` gap that shipped to the kernel but not
+the Orchestrator is the proof — PR #957).
 
 The honest reason the downgrade exists: **the inline lead is the Coder kernel in
 a lead prompt costume.** Its skeleton — turn policy, completion guards,
@@ -22,10 +22,11 @@ gating, post-kernel criteria gating, prompt overrides) rather than by a real
 conversational mode. The Orchestrator is conversation-shaped by construction,
 so conversation was parked there.
 
-Target: **one lead, conversational by default, that escalates into coder-shaped
-behavior only when the turn needs edits** — at which point the
-conversational→Orchestrator downgrade is deleted and the Orchestrator loop's
-live triggers drop from three to two (no-repo workspaces, `delegated` opt-out).
+Target achieved in Phase 3: **one lead, conversational by default, that escalates
+into coder-shaped behavior only when the turn needs edits**. Repo-backed
+conversational turns now route to the inline lead by default, while the
+Orchestrator loop remains live for no-repo workspaces, the `delegated` opt-out,
+and the temporary conversational escape hatch during bake.
 
 The reframe: promote `taskInFlight` from "mute one guard" to **the kernel's
 mode selector.**
@@ -118,21 +119,25 @@ Source: behavior audit of the Orchestrator null-trigger path
   inline lane keeps its existing token mirror (`ACCUMULATED_UPDATED`) and
   kernel completion/finalization events rather than inventing a duplicate.
 
-**Phase 3 — flip routing, behind a flag.**
-- `inlineEligible = repoBranchReady` (drop `&& !conversationalTurn`), delete the
-  `conversational_downgrade` route event. Gate behind a setting, A/B against the
-  Orchestrator path on conversational turns, then default.
-- After bake: the Orchestrator loop's live triggers drop to no-repo workspaces +
-  `delegated` opt-out (see the LOAD-BEARING markers in
-  `delegation-mode-settings.ts` / `orchestrator.ts`).
+**Phase 3 — flip routing, behind a flag (LANDED).**
+- `inlineEligible = repoBranchReady` by default, so repo-backed conversational
+  turns route to the foreground inline lead. The old `conversational_downgrade`
+  event is replaced by `turn.route` telemetry on the new path:
+  `route: "inline-delegation", reason: "conversational_inline"`.
+- Bake-period rollback is a storage escape hatch, default off:
+  `localStorage["push:conversational-inline-escape-hatch"] = "1"` forces
+  repo-backed conversational turns back to the foreground Orchestrator loop and
+  emits `reason: "conversational_escape_hatch"` with
+  `suppressedRoute: "inline-delegation"`.
+- The Orchestrator loop's live triggers are now no-repo workspaces, the
+  `delegated` opt-out, and the temporary conversational escape hatch (see the
+  LOAD-BEARING markers in `delegation-mode-settings.ts` / `orchestrator.ts`).
 
-**Do NOT flip routing in this PR.** Phase 3 may start from the Phase 1 + 2
-closed matrix above, still behind a flag.
-
-## Open questions
+## Follow-up
 - No-repo workspaces (chat/scratch/local-pc) still need the Orchestrator loop —
   is a sandboxless kernel run the eventual home, or do they keep a lightweight
   conversational path? (Out of scope here; tracked as the remaining Orchestrator
   trigger.)
-- Phase 3 flag shape / bake criteria: what debug surface should compare
-  conversational inline-vs-Orchestrator turns before the default changes?
+- Bake / A-B criteria: use the `turn.route` events above to compare
+  conversational inline-vs-Orchestrator escape-hatch turns before retiring the
+  flag.

@@ -72,6 +72,8 @@ import { safeStorageGet, safeStorageSet } from './safe-storage';
 export type { DelegationMode } from '@push/lib/delegation-mode';
 
 const STORAGE_KEY = 'push:delegation-mode-preference';
+export const CONVERSATIONAL_INLINE_ESCAPE_HATCH_STORAGE_KEY =
+  'push:conversational-inline-escape-hatch';
 const CHANGE_EVENT = 'push:delegation-mode-changed';
 
 export function getDelegationMode(): DelegationMode {
@@ -83,6 +85,24 @@ export function getDelegationMode(): DelegationMode {
 
 export function isInlineDelegationEnabled(): boolean {
   return getDelegationMode() === 'inline';
+}
+
+/**
+ * Bake-period rollback lever for Conversational Lead Convergence Phase 3.
+ * Default is the new behavior: repo-backed conversational turns route to the
+ * foreground inline lead. Setting localStorage
+ * `push:conversational-inline-escape-hatch` to `1` forces those turns back to
+ * the foreground Orchestrator loop without changing code.
+ */
+export function isConversationalInlineEscapeHatchEnabled(): boolean {
+  return safeStorageGet(CONVERSATIONAL_INLINE_ESCAPE_HATCH_STORAGE_KEY) === '1';
+}
+
+export function setConversationalInlineEscapeHatch(enabled: boolean): void {
+  safeStorageSet(CONVERSATIONAL_INLINE_ESCAPE_HATCH_STORAGE_KEY, enabled ? '1' : '0');
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(CHANGE_EVENT));
+  }
 }
 
 export function setDelegationMode(mode: DelegationMode): void {
@@ -148,15 +168,14 @@ export function resolveTurnEngineTrigger(opts: {
   if (isBackgroundModeEnabled() && opts.engineEligible) return 'background-mode';
   if (isInlineDelegationEnabled() && opts.inlineEligible) return 'inline-delegation';
   // LOAD-BEARING: `null` routes to the foreground Orchestrator role/loop, which
-  // is still the live path for (1) conversational lead turns with a repo (the
-  // `conversationalTurn` downgrade in chat-send-background.ts keeps chat replies
-  // off the Coder kernel's no-fake-completion guard), (2) no-repo workspaces
-  // (chat / scratch / local-pc — never inline-eligible), and (3) the explicit
-  // `delegated` opt-out. The Orchestrator prompt is assembled at runtime via
+  // is still the live path for (1) no-repo workspaces (chat / scratch /
+  // local-pc — never inline-eligible), (2) the explicit `delegated` opt-out,
+  // and (3) the conversational-inline escape hatch while Phase 3 bakes. The
+  // Orchestrator prompt is assembled at runtime via
   // `buildOrchestratorBaseBuilder` in orchestrator.ts. Do NOT prune the
   // Orchestrator role, its prompt builder, or this branch as "legacy" while any
-  // of those three triggers exists — only the Orchestrator→Coder *wrapper* arc
-  // is slated for deletion (decision doc §10), not the lead loop itself.
+  // of those triggers exists — only the Orchestrator→Coder *wrapper* arc is
+  // slated for deletion (decision doc §10), not the lead loop itself.
   return null;
 }
 

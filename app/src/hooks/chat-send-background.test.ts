@@ -47,6 +47,7 @@ import { resolveSendEngineTrigger, startBackgroundMainChatTurn } from './chat-se
 
 const BG_KEY = 'push:background-mode-preference';
 const MODE_KEY = 'push:delegation-mode-preference';
+const CONVERSATIONAL_INLINE_ESCAPE_HATCH_KEY = 'push:conversational-inline-escape-hatch';
 
 function makeRefs(opts?: { repo?: string | null; branch?: string | null }) {
   return {
@@ -175,11 +176,69 @@ describe('resolveSendEngineTrigger', () => {
     ).toBeNull();
   });
 
-  it('drops a clearly-conversational turn to the Orchestrator loop', () => {
+  it('routes a clearly-conversational repo turn to the inline lane by default', () => {
     const routeEvents: unknown[] = [];
-    // Repo + branch are ready (would normally route inline), but the message
-    // is a plain question — the coder lane (and its no-fake-completion guard)
-    // must not run on it.
+    expect(
+      resolveSendEngineTrigger({
+        ...makeRefs(),
+        conversationsRef: makeConversations('ollama'),
+        chatId: 'chat1',
+        messageText: 'what changed recently in Push?',
+        onRouteEvent: (event) => routeEvents.push(event),
+      }),
+    ).toBe('inline-delegation');
+    expect(routeEvents).toEqual([
+      {
+        type: 'turn.route',
+        route: 'inline-delegation',
+        reason: 'conversational_inline',
+        intent: 'conversational',
+        repoBranchReady: true,
+      },
+    ]);
+  });
+
+  it('keeps the conversational escape hatch on the Orchestrator loop', () => {
+    const routeEvents: unknown[] = [];
+    storage.map.set(CONVERSATIONAL_INLINE_ESCAPE_HATCH_KEY, '1');
+    expect(
+      resolveSendEngineTrigger({
+        ...makeRefs(),
+        conversationsRef: makeConversations('ollama'),
+        chatId: 'chat1',
+        messageText: 'how does the branch switcher work?',
+        onRouteEvent: (event) => routeEvents.push(event),
+      }),
+    ).toBeNull();
+    expect(routeEvents).toEqual([
+      {
+        type: 'turn.route',
+        route: 'orchestrator',
+        reason: 'conversational_escape_hatch',
+        suppressedRoute: 'inline-delegation',
+        intent: 'conversational',
+        repoBranchReady: true,
+      },
+    ]);
+  });
+
+  it('keeps a clearly-conversational no-repo turn on the Orchestrator loop', () => {
+    const routeEvents: unknown[] = [];
+    expect(
+      resolveSendEngineTrigger({
+        ...makeRefs({ repo: null }),
+        conversationsRef: makeConversations('ollama'),
+        chatId: 'chat1',
+        messageText: 'what changed recently in Push?',
+        onRouteEvent: (event) => routeEvents.push(event),
+      }),
+    ).toBeNull();
+    expect(routeEvents).toEqual([]);
+  });
+
+  it('keeps the delegated opt-out on the Orchestrator loop for conversational repo turns', () => {
+    const routeEvents: unknown[] = [];
+    storage.map.set(MODE_KEY, 'delegated');
     expect(
       resolveSendEngineTrigger({
         ...makeRefs(),
@@ -189,16 +248,7 @@ describe('resolveSendEngineTrigger', () => {
         onRouteEvent: (event) => routeEvents.push(event),
       }),
     ).toBeNull();
-    expect(routeEvents).toEqual([
-      {
-        type: 'turn.route',
-        route: 'orchestrator',
-        reason: 'conversational_downgrade',
-        suppressedRoute: 'inline-delegation',
-        intent: 'conversational',
-        repoBranchReady: true,
-      },
-    ]);
+    expect(routeEvents).toEqual([]);
   });
 
   it('keeps a coding-intent turn on the inline lane', () => {

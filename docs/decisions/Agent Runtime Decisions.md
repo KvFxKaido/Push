@@ -35,14 +35,14 @@ Status:
 - **The Orchestrator role/loop is still load-bearing — do not prune it.**
   `resolveTurnEngineTrigger` (`delegation-mode-settings.ts`) returns `null`
   (→ foreground Orchestrator loop, prompt built at runtime by
-  `buildOrchestratorBaseBuilder` in `app/src/lib/orchestrator.ts`) on three
-  live triggers: (1) **conversational lead turns with a repo** — the
-  `conversationalTurn` downgrade in `chat-send-background.ts` deliberately keeps
-  chat replies ("what changed recently?") off the Coder kernel's
-  no-fake-completion guard; (2) **no-repo workspaces** (chat / scratch /
-  local-pc), which are never inline-eligible; (3) the **`delegated` opt-out**.
-  Only the Orchestrator→Coder *wrapper/Planner* arc is slated for deletion
-  below — the lead loop itself stays until those three triggers are re-homed.
+  `buildOrchestratorBaseBuilder` in `app/src/lib/orchestrator.ts`) on two
+  primary live triggers: (1) **no-repo workspaces** (chat / scratch / local-pc),
+  which are never inline-eligible; (2) the **`delegated` opt-out**. During the
+  Conversational Lead Convergence Phase 3 bake, the storage escape hatch
+  `push:conversational-inline-escape-hatch=1` also forces repo-backed
+  conversational turns back through this loop. Only the Orchestrator→Coder
+  *wrapper/Planner* arc is slated for deletion below — the lead loop itself
+  stays until those triggers are re-homed.
   (Correction: an earlier note here claimed attachment turns force the
   Orchestrator loop. They don't — attachments set `conversationalTurn=false`,
   so they route to the inline lane and are carried into the kernel as multipart
@@ -195,30 +195,23 @@ in its read-phase `Promise.all`. `delegate:explorer` is part of the
 lead-capable `coder` grant; the empty `extraToolSources` on a delegated
 sub-Coder keeps the same call refused at the source gate.
 
-**Conversational-lead convergence (next step toward deleting the routing fork).**
-Repo-backed *conversational* turns are still downgraded to the Orchestrator loop
-(`chat-send-background.ts`: `inlineEligible = repoBranchReady &&
-!conversationalTurn`) because the inline lead is the Coder kernel in a lead
-costume — conversation is suppressed (via `taskInFlight`, post-kernel criteria
-gating, prompt overrides), not natively supported. The plan to make the lead
-conversation-first and retire the downgrade — with a full parity matrix of what
-a conversational turn must not lose (chiefly **full conversation history**: the
-inline lane today passes only the last 6 turns × 700 chars, vs the Orchestrator's
-managed transcript + session digest + memory injection; plus linked-library
-content) — lives in
+**Conversational-lead convergence (routing fork removed by default).**
+Repo-backed *conversational* turns now route to the inline lead by default
+(`chat-send-background.ts`: `inlineEligible = repoBranchReady`, unless the
+Phase 3 escape hatch is set). The full parity matrix for what a conversational
+turn must not lose lives in
 [`../runbooks/Conversational Lead Convergence.md`](<../runbooks/Conversational Lead Convergence.md>).
 Phase 0 landed: the cognitive-drift guard is now gated on `taskInFlight === false`
-(the last coder-policy guard that could misfire on a chat reply, mirroring the
-no-fake-completion guard). Phase 1 landed: conversational inline turns now seed
-the kernel from managed transcript messages and linked-library context instead
-of collapsing history into the bounded task preamble. Phase 2 landed: the Coder
-kernel now carries the remaining policy/observability/tool parity needed before
-the flip — trailing-action-intent nudges in `coder-policy.ts`,
+(mirroring the no-fake-completion guard). Phase 1 landed: conversational inline
+turns seed the kernel from managed transcript messages and linked-library
+context instead of collapsing history into the bounded task preamble. Phase 2
+landed: the Coder kernel carries the remaining policy/observability/tool parity
+needed before the flip — trailing-action-intent nudges in `coder-policy.ts`,
 reasoning-channel buried-tool recovery in `lib/coder-agent.ts`, scratchpad/todo
 tool wiring for the inline lead, per-round `assistant.turn_start/end`, and
-`tool.call_malformed` events for dropped candidates. The routing flip remains
-Phase 3 work and must still be gated/compared; `delegation-mode-settings.ts` /
-`chat-send-background.ts` are intentionally unchanged here.
+`tool.call_malformed` events for dropped candidates. Phase 3 landed the routing
+flip behind `push:conversational-inline-escape-hatch=1`, default off; bake and
+A/B measurement continue as follow-up, not as a blocker for the default route.
 
 Protected during convergence: the shared runtime semantics in §1 (one kernel,
 drift tests), the durable job engine, and the safety/Auditor boundary — the

@@ -440,7 +440,17 @@ export const TASK_GRAPH_AGENTS = ['explorer', 'coder'] as const;
 
 export const TURN_ROUTES = ['orchestrator', 'inline-delegation', 'background-mode'] as const;
 export const TURN_SUPPRESSED_ROUTES = ['inline-delegation', 'background-mode'] as const;
-export const TURN_ROUTE_REASONS = ['conversational_downgrade'] as const;
+// `conversational_downgrade` is LEGACY — emitted by pre-Phase-3 clients and
+// persisted in `Conversation.runState.runEvents` (route events pass
+// `shouldPersistRunEvent`). Current code emits only `conversational_inline` /
+// `conversational_escape_hatch`, but the validator must keep ACCEPTING the old
+// value or stored/replayed envelopes from older clients fail strict validation
+// after upgrade. Do not remove it; this is a versioned wire schema.
+export const TURN_ROUTE_REASONS = [
+  'conversational_inline',
+  'conversational_escape_hatch',
+  'conversational_downgrade',
+] as const;
 export const TURN_INTENTS = ['conversational', 'task'] as const;
 
 function validateTurnRoute(payload: unknown, basePath: string): ValidationIssue[] {

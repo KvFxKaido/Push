@@ -899,6 +899,28 @@ describe('validateRunEventPayload — RunEventInput passthrough events', () => {
   it('accepts turn.route and rejects an unknown route', () => {
     assert.deepEqual(
       validateRunEventPayload('turn.route', {
+        route: 'inline-delegation',
+        reason: 'conversational_inline',
+        intent: 'conversational',
+        repoBranchReady: true,
+      }),
+      [],
+    );
+    const issues = validateRunEventPayload('turn.route', {
+      route: 'side-quest',
+      reason: 'conversational_inline',
+      intent: 'conversational',
+      repoBranchReady: true,
+    });
+    assert.ok(issues.some((i) => i.path === 'payload.route'));
+  });
+
+  it('still accepts the legacy conversational_downgrade reason (back-compat)', () => {
+    // Pre-Phase-3 clients persisted turn.route events with this reason; the
+    // validator must keep accepting them so stored/replayed envelopes don't
+    // fail strict validation after upgrade.
+    assert.deepEqual(
+      validateRunEventPayload('turn.route', {
         route: 'orchestrator',
         reason: 'conversational_downgrade',
         suppressedRoute: 'inline-delegation',
@@ -907,13 +929,6 @@ describe('validateRunEventPayload — RunEventInput passthrough events', () => {
       }),
       [],
     );
-    const issues = validateRunEventPayload('turn.route', {
-      route: 'side-quest',
-      reason: 'conversational_downgrade',
-      intent: 'conversational',
-      repoBranchReady: true,
-    });
-    assert.ok(issues.some((i) => i.path === 'payload.route'));
   });
 
   it('accepts assistant.turn_start', () => {

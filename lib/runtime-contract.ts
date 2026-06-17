@@ -307,13 +307,17 @@ export type RunEventSubagent =
 
 export type RunEventInput =
   | {
-      // Pre-loop routing decision emitted when the send path deliberately keeps
-      // a turn on the Orchestrator loop instead of a bypass lane. This makes
-      // route changes visible in the same structured event stream as tool and
-      // lifecycle events, without relying on ad hoc browser console logs.
+      // Pre-loop routing decision emitted for route decisions we need to bake
+      // and compare. This makes route changes visible in the same structured
+      // event stream as tool and lifecycle events, without relying on ad hoc
+      // browser console logs.
       type: 'turn.route';
       route: 'orchestrator' | 'inline-delegation' | 'background-mode';
-      reason: 'conversational_downgrade';
+      // `conversational_downgrade` is legacy (pre-Phase-3): never emitted by
+      // current code, but kept in the union so persisted/replayed events from
+      // older clients read back and validate. Current emitters use only the two
+      // `conversational_*` reasons.
+      reason: 'conversational_inline' | 'conversational_escape_hatch' | 'conversational_downgrade';
       suppressedRoute?: 'inline-delegation' | 'background-mode';
       intent: 'conversational' | 'task';
       repoBranchReady: boolean;

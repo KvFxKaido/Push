@@ -17,6 +17,7 @@
 
 import type React from 'react';
 import {
+  isConversationalInlineEscapeHatchEnabled,
   isInlineDelegationEnabled,
   resolveTurnEngineTrigger,
   type EngineTrigger,
@@ -74,9 +75,9 @@ export function resolveSendEngineTrigger(opts: {
   conversationsRef: React.MutableRefObject<Record<string, Conversation>>;
   chatId: string | null;
   requestedProvider?: AIProviderType | null;
-  /** This turn's user text — classified to keep clearly-conversational lead
-   *  turns off the inline Coder lane (and its coder turn-policy). Omitted /
-   *  empty is treated as a task so attachment-only turns stay inline. */
+  /** This turn's user text — classified so repo-backed conversational lead
+   *  turns can emit explicit route telemetry. Omitted / empty is treated as a
+   *  task so attachment-only turns stay inline. */
   messageText?: string;
   /** Whether the turn carries attachments. Attachment-bearing turns stay on
    *  the inline lane regardless of text (an image is usually "look at this and
@@ -99,18 +100,19 @@ export function resolveSendEngineTrigger(opts: {
     isProviderAvailable,
   });
   const repoBranchReady = Boolean(opts.repoRef.current && branch);
-  // Conversational lead turns drop to the Orchestrator loop instead of the
-  // inline Coder lane, so the coder no-fake-completion guard can't misfire on
-  // a chat reply. Only a non-empty, attachment-free, clearly-conversational
-  // message downgrades; everything else (including ambiguous text and
-  // attachment turns) stays on the inline lane. A misroute is safe — the
-  // Orchestrator loop can still call tools and delegate.
+  // Conversational lead turns now route to the inline lane by default. Only a
+  // non-empty, attachment-free, clearly-conversational message is measured as
+  // conversational; everything else (including ambiguous text and attachment
+  // turns) follows the regular repo+branch dispatch table.
   const conversationalTurn =
     !opts.hasAttachments &&
     Boolean(opts.messageText?.trim()) &&
     classifyTurnIntent(opts.messageText ?? '') === 'conversational';
   const engineEligible = repoBranchReady && isProviderEngineCapable(provider);
-  const inlineWouldHaveRun = conversationalTurn && repoBranchReady && isInlineDelegationEnabled();
+  const conversationalEscapeHatch =
+    conversationalTurn && isConversationalInlineEscapeHatchEnabled();
+  const conversationalInlineCandidate =
+    conversationalTurn && repoBranchReady && isInlineDelegationEnabled();
   const trigger = resolveTurnEngineTrigger({
     // Engine turns run server-side, where only server-held provider
     // credentials exist — a provider keyed solely via in-app Settings must
@@ -121,15 +123,24 @@ export function resolveSendEngineTrigger(opts: {
     // optimistically true (same as any unknown).
     engineEligible,
     // The inline lane is a foreground run — browser-held Settings keys
-    // work directly, so no capability fold here. The conversational-intent
-    // gate keeps lead chatter on the Orchestrator loop.
-    inlineEligible: repoBranchReady && !conversationalTurn,
+    // work directly, so no capability fold here. Repo-backed conversational
+    // lead chatter rides the same inline path by default; the bake-period
+    // escape hatch can still force those turns back to the Orchestrator loop.
+    inlineEligible: repoBranchReady && !conversationalEscapeHatch,
   });
-  if (inlineWouldHaveRun && trigger === null) {
+  if (conversationalInlineCandidate && trigger === 'inline-delegation') {
+    opts.onRouteEvent?.({
+      type: 'turn.route',
+      route: 'inline-delegation',
+      reason: 'conversational_inline',
+      intent: 'conversational',
+      repoBranchReady,
+    });
+  } else if (conversationalInlineCandidate && conversationalEscapeHatch && trigger === null) {
     opts.onRouteEvent?.({
       type: 'turn.route',
       route: 'orchestrator',
-      reason: 'conversational_downgrade',
+      reason: 'conversational_escape_hatch',
       suppressedRoute: 'inline-delegation',
       intent: 'conversational',
       repoBranchReady,
