@@ -1322,7 +1322,14 @@ export function useModelCatalog(): ModelCatalog {
       return;
     }
 
-    if (fireworksModelList.length === 0 || fireworksModelList.includes(normalizedSelectedModel)) {
+    // Treat curated serverless models as valid even when absent from the account-scoped live
+    // /v1/models — they're callable by slug and `fireworksModelOptions` unions them in. Only a
+    // model in neither the live list nor the curated catalog is reset to a known-good default.
+    if (
+      fireworksModelList.length === 0 ||
+      fireworksModelList.includes(normalizedSelectedModel) ||
+      FIREWORKS_MODELS.includes(normalizedSelectedModel)
+    ) {
       return;
     }
 
