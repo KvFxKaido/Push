@@ -1322,6 +1322,21 @@ describe('providerModelSupportsStructuredOutput', () => {
     expect(mc.providerModelSupportsNativeToolCalling('openrouter', undefined)).toBe(false);
   });
 
+  it('gates Zen native tool calling against the curated catalog allowlist', () => {
+    stubWindow();
+    // Standard-tier ids (including the proprietary big-pickle default that has
+    // no models.dev metadata) pass via the name-based allowlist.
+    expect(providerModelSupportsNativeToolCalling('zen', 'big-pickle')).toBe(true);
+    expect(providerModelSupportsNativeToolCalling('zen', 'claude-sonnet-4.6')).toBe(true);
+    expect(providerModelSupportsNativeToolCalling('zen', 'gpt-5.4')).toBe(true);
+    // Go-tier-only ids are included too (they share the catalog union).
+    expect(providerModelSupportsNativeToolCalling('zen', 'glm-5.2')).toBe(true);
+    expect(providerModelSupportsNativeToolCalling('zen', 'kimi-k2.7-code')).toBe(true);
+    // Off-catalog / unknown ids stay text-dispatch.
+    expect(providerModelSupportsNativeToolCalling('zen', 'made-up-model')).toBe(false);
+    expect(providerModelSupportsNativeToolCalling('zen', undefined)).toBe(false);
+  });
+
   it('returns false for an allowlisted provider when the catalog reports no support', () => {
     stubWindow();
     // `openai` is OpenAI-shaped (allowlisted) but has no models.dev structured-

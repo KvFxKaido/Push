@@ -1,8 +1,10 @@
 # Native Function Calling — Additive to Text-Dispatch
 
-**Status:** Current — shipped for the Cloudflare Workers AI lead (Kimi/GLM) and the
-OpenRouter lead (curated coding allowlist). Other providers and roles are deferred
-follow-ups, not yet promoted to `ROADMAP.md`.
+**Status:** Current — shipped on the web lead for Cloudflare Workers AI (Kimi/GLM,
+name-based), OpenRouter (capability-based), and OpenCode Zen (name-based catalog
+allowlist; standard tier + Go OpenAI transport). Other providers, the CLI lead, and
+the Zen Go Anthropic transport are deferred follow-ups, not yet promoted to
+`ROADMAP.md`.
 
 **Date:** 2026-06-17
 
@@ -57,6 +59,15 @@ native tool call — both converge at one dispatch path. Consequences:
   `openrouter:web_search` server tool when both are active. It also sets
   `provider: { require_parameters: true }` (the same routing guard `response_format`
   uses) so OpenRouter can't route to an endpoint that silently drops the tools.
+- **Zen adapter.** `app/src/lib/zen-stream.ts` serializes `tools` +
+  `tool_choice: 'auto'` into the body (no routing guard — Zen has none). This
+  covers the standard tier directly and the Go tier's OpenAI transport via the
+  worker's legacy passthrough (`handleZenGoChat` forwards the validated body
+  verbatim, and the guardrail validator preserves unknown fields). The shared
+  `toOpenAIChat` serializer also gained `tools`/`tool_choice` for the Go neutral
+  contract (currently dormant) and the CLI OpenAI-compat adapters. Anthropic-transport
+  Go models (minimax/qwen) rebuild an Anthropic Messages body that doesn't forward
+  the OpenAI `tools` array, so they fall back to text-dispatch.
 - **Capability gate.** `providerModelSupportsNativeToolCalling(provider, model)`
   in `app/src/lib/model-catalog.ts` — name-based (Kimi/GLM) for Cloudflare, which
   has no models.dev metadata; capability-based for OpenRouter (the model's
@@ -67,7 +78,12 @@ native tool call — both converge at one dispatch path. Consequences:
   `:nitro` / `:free` routing suffixes to the base id (an `openRouterBaseId`
   fallback added alongside this — without it every routed variant resolved to
   empty capabilities, silently losing reasoning / structured-output / native-tool
-  gating). Other providers return `false`.
+  gating). **Zen is name-based** against the curated catalog union
+  (`ZEN_NATIVE_TOOL_CALLING_MODELS` = `ZEN_MODELS` ∪ `ZEN_GO_MODELS`): its default
+  `big-pickle` is a proprietary id absent from models.dev and the `opencode`
+  block's `tool_call` coverage is unverifiable, so capability-gating would
+  silently leave native FC off; the curated catalog is the allowlist. Other
+  providers return `false`.
 - **Lead wiring.** `inline-coder-run.ts` attaches `getToolFunctionSchemas()`
   when the gate passes; the coder kernel (`lib/coder-agent.ts`) threads the new
   `nativeToolSchemas` option into each round's request. Provider-agnostic — once
@@ -76,12 +92,15 @@ native tool call — both converge at one dispatch path. Consequences:
 
 ## Scope / deferred
 
-- **Other providers.** OpenAI/Zen/etc. are function-calling-capable but stay
+- **Other providers.** OpenAI/etc. are function-calling-capable but stay
   text-dispatch only until native calling is validated per provider. The gate is
-  the single switch. OpenRouter is now enabled (web lead) for any model whose
-  models.dev metadata advertises tool support. The CLI OpenRouter adapter
-  (`cli/openai-stream.ts`) is a separate follow-up — its lead doesn't attach
-  `nativeToolSchemas` yet, so it stays text-dispatch.
+  the single switch. OpenRouter (capability-based) and OpenCode Zen (name-based,
+  standard tier + Go OpenAI transport) are now enabled on the web lead. The CLI
+  OpenAI-compat adapter (`cli/openai-stream.ts`) is a separate follow-up — its
+  lead doesn't attach `nativeToolSchemas` yet, so it stays text-dispatch (the
+  shared `toOpenAIChat` already serializes `tools` once a CLI gate lands). The
+  Zen Go **Anthropic** transport (minimax/qwen) stays text-dispatch until the
+  bridge can translate OpenAI tool schemas to Anthropic `tools`.
 - **Other roles.** Delegated Coder, Explorer, auditor/reviewer are unchanged
   (auditor/reviewer use `response_format` structured outputs, a separate
   mechanism — see `docs/runbooks/OpenRouter Capability Expansion.md`).

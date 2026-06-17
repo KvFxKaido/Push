@@ -15,6 +15,8 @@ import {
   NVIDIA_MODELS,
   OPENROUTER_MODELS,
   PROVIDER_URLS,
+  ZEN_GO_MODELS,
+  ZEN_MODELS,
 } from './providers';
 import { asRecord } from './utils';
 
@@ -373,20 +375,44 @@ export function providerModelSupportsStructuredOutput(
 }
 
 /**
+ * OpenCode Zen models cleared for native function calling. Name-based (like
+ * Cloudflare, unlike OpenRouter's capability gate) because Zen can't be
+ * capability-gated reliably: its default `big-pickle` is a Zen-proprietary id
+ * that isn't in models.dev at all, and we can't verify the `opencode` block
+ * populates `tool_call` for the bare ids — a capability gate would silently
+ * leave native FC off for the default and any uncovered model. The curated
+ * catalog (`ZEN_MODELS` standard tier + `ZEN_GO_MODELS`) *is* the allowlist:
+ * every entry is a current frontier coding model that supports function calling,
+ * and deriving the set keeps it in lockstep with catalog refreshes.
+ *
+ * The Anthropic-transport Go models (`minimax-m3`, `qwen3.7-max`, `qwen3.7-plus`,
+ * and the Go routing of `minimax-m2.7` / `qwen3.6-plus`) are harmlessly included:
+ * their Go requests rebuild an Anthropic Messages body (`handleZenGoChat` →
+ * `buildAnthropicMessagesRequest`) that doesn't forward the OpenAI `tools` array,
+ * so a native call there simply falls back to text-dispatch. The same ids on the
+ * standard tier route over the OpenAI transport, where native FC does apply.
+ */
+const ZEN_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set([
+  ...ZEN_MODELS,
+  ...ZEN_GO_MODELS,
+]);
+
+/**
  * Whether to attach native function-calling `tools` for the given
- * provider/model. Two provider paths today:
+ * provider/model. Three provider paths today:
  *   - **Cloudflare Workers AI** (Kimi/GLM) — name-based, the catalog-less
  *     provider this was introduced for.
  *   - **OpenRouter** — capability-based: the model's models.dev metadata must
  *     advertise tool support (`toolCall`). Mirrors the structured-output gate
  *     (`providerModelSupportsStructuredOutput`) so the two can't drift, and
- *     auto-tracks the catalog rather than a hardcoded allowlist — the curated
- *     gateways (OpenCode Zen, OpenRouter) surface nearly the entire current
- *     coding frontier, so an allowlist would just be a brittle mirror of it.
+ *     auto-tracks the catalog rather than a hardcoded allowlist.
  *     `getModelCapabilities` is routing-suffix-insensitive (see its
  *     `openRouterBaseId` fallback), so `:nitro` / `:free` variants resolve to
  *     their base model's capability; a cold metadata cache resolves to
  *     `toolCall: false` and safely falls back to text-dispatch.
+ *   - **OpenCode Zen** — name-based against the curated catalog
+ *     (`ZEN_NATIVE_TOOL_CALLING_MODELS`); see the note there for why capability
+ *     gating isn't viable for Zen.
  * Other providers stay on the text-dispatch tool protocol until native tool
  * calling is wired and validated for them. Additive regardless: `openai-sse-pump`
  * normalizes any native `tool_calls` back into the fenced JSON the dispatcher
@@ -399,6 +425,7 @@ export function providerModelSupportsNativeToolCalling(
   if (!modelId) return false;
   if (provider === 'cloudflare') return isCloudflareKimiOrGlm(modelId);
   if (provider === 'openrouter') return getModelCapabilities('openrouter', modelId).toolCall;
+  if (provider === 'zen') return ZEN_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   return false;
 }
 

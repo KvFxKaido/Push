@@ -332,6 +332,49 @@ describe('zenStream', () => {
     expect(body.top_p).toBe(0.9);
   });
 
+  it('forwards native function tools + tool_choice into the request body', async () => {
+    installStreamFetch(fetchMock);
+    const sampleTool = {
+      type: 'function' as const,
+      function: {
+        name: 'sandbox_write_file',
+        description: 'Write a file to the sandbox',
+        parameters: {
+          type: 'object' as const,
+          properties: { path: { type: 'string' as const } },
+          required: ['path'],
+          additionalProperties: false as const,
+        },
+      },
+    };
+    const { zenStream } = await import('./zen-stream');
+    const iter = zenStream({ ...baseRequest, tools: [sampleTool] });
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.tools).toEqual([sampleTool]);
+    expect(body.tool_choice).toBe('auto');
+  });
+
+  it('omits tools / tool_choice when no native tools are attached', async () => {
+    installStreamFetch(fetchMock);
+    const { zenStream } = await import('./zen-stream');
+    const iter = zenStream(baseRequest);
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.tools).toBeUndefined();
+    expect(body.tool_choice).toBeUndefined();
+  });
+
   it('closes cleanly when the stream ends without a [DONE] or finish_reason', async () => {
     const { push, close } = installStreamFetch(fetchMock);
     const { zenStream } = await import('./zen-stream');

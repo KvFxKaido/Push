@@ -47,6 +47,7 @@ export async function* zenStream(
 
   // 2. Plain OpenAI-compatible request body — Zen has no provider-specific
   //    extensions.
+  const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : [];
   const body: Record<string, unknown> = {
     model: req.model,
     messages: llmMessages,
@@ -54,6 +55,17 @@ export async function* zenStream(
     ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
+    // Native function calling: forward the caller's tool schemas (gated on model
+    // support via `providerModelSupportsNativeToolCalling`) so the OpenAI-compatible
+    // endpoint can answer through its constrained tool-calling path. Additive to
+    // text-dispatch — `openAISSEPump` normalizes any native `tool_calls` back into
+    // the fenced JSON the dispatcher consumes. `tool_choice: 'auto'` keeps prose
+    // answers available when no tool is needed. In Go mode the body is forwarded
+    // verbatim to the OpenAI-transport endpoint (the legacy validator preserves
+    // unknown fields); the Anthropic-transport Go models rebuild their own body
+    // and drop `tools`, so they fall back to text-dispatch (see model-catalog's
+    // ZEN_NATIVE_TOOL_CALLING_MODELS note).
+    ...(nativeTools.length > 0 ? { tools: nativeTools, tool_choice: 'auto' } : {}),
     // Native structured outputs: forward the caller's JSON-Schema constraint so
     // the OpenAI-compatible endpoint constrains generation server-side. Shared
     // wire builder with the CLI/OpenRouter paths. No `provider.require_parameters`
