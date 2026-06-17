@@ -33,6 +33,30 @@ function hasConsecutiveUsers(messages: ChatMessage[]): boolean {
   return false;
 }
 
+describe('reasoning-channel salvage guard — internal-call exclusion', () => {
+  // The kernel promotes a stranded reasoning *answer* into the response, but the
+  // promotion guard must also block reasoning-channel *tool calls*. `detectAnyToolCall`
+  // omits the Coder-internal calls (`coder_update_state` / `coder_checkpoint`), which
+  // the kernel detects separately and EXECUTES downstream — so the guard folds in
+  // `detectUpdateStateCall` / `detectCheckpointCall`. Without it, a reasoning-only
+  // internal call would be promoted into content and then run from the untrusted
+  // reasoning channel. (Codex P2 on #962.) These lock the guard term: an internal
+  // call in reasoning is recognized, and prose that merely names the tool is not
+  // (so a real answer discussing the tool still promotes — precise detector over a
+  // generic `{tool}` substring check).
+  it('detects a coder_update_state call placed in the reasoning channel', () => {
+    const reasoning =
+      'I should record progress.\n```json\n{"tool":"coder_update_state","args":{"plan":"step 2"}}\n```';
+    expect(detectUpdateStateCall(reasoning)).not.toBeNull();
+  });
+
+  it('does not flag a plain answer that merely mentions coder_update_state', () => {
+    const answer =
+      'The coder_update_state tool records the plan — here is what I found in the repo...';
+    expect(detectUpdateStateCall(answer)).toBeNull();
+  });
+});
+
 describe('normalizeTrimmedRoleAlternation', () => {
   it('drops boundary tool-result user messages', () => {
     const messages: ChatMessage[] = [

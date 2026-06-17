@@ -1373,10 +1373,28 @@ export async function runCoderAgent<TCall, TCard>(
     // delivered. `null` (the common case: content present, or a tool call in
     // reasoning) is a no-op.
     let accumulated = rawModelText;
+    // `detectAnyToolCall` deliberately excludes the Coder-internal calls
+    // (`update_state` / `checkpoint`) — the kernel detects those separately
+    // downstream (`detectUpdateStateCall` / `detectCheckpointCall`) and EXECUTES
+    // them, mutating working memory or pausing the run. If the guard ignored
+    // them, a reasoning-only internal call would be promoted into `accumulated`
+    // and then run from the untrusted reasoning channel — exactly what this
+    // salvage must not do. Fold the internal detectors into the guard so an
+    // internal call in reasoning blocks promotion. Such a call is then
+    // suppressed (not promoted, hence never executed) rather than nudged — the
+    // buried-call recovery below also keys on `detectAnyToolCall`, so it omits
+    // these internal tools; suppression (the call simply doesn't run) is the
+    // property we need. An ordinary reasoning-channel tool call still routes to
+    // that recovery's re-emit nudge as before. (Codex P2 on #962.)
+    const reasoningHasToolCall = Boolean(
+      detectAnyToolCall(reasoningText) ||
+        detectUpdateStateCall(reasoningText) ||
+        detectCheckpointCall(reasoningText),
+    );
     const promotedReasoningAnswer = promoteReasoningAnswer(
       rawModelText,
       reasoningText,
-      Boolean(detectAnyToolCall(reasoningText)),
+      reasoningHasToolCall,
     );
     if (promotedReasoningAnswer !== null) {
       accumulated = promotedReasoningAnswer;
