@@ -835,6 +835,8 @@ export async function startInlineCoderTurn(
         verificationPolicy,
         harnessSettings,
         memoryScope: { repoFullName, branch: activeBranch, chatId },
+        scratchpad: ctx.scratchpadRef.current,
+        todo: ctx.todoRef.current,
         correlation: { surface: 'web', chatId, runId: args.runId },
         stream,
         // Orchestrator parity: the collapsed single lead gets the GitHub

@@ -186,6 +186,64 @@ describe('Coder Policy — no-fake-completion', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Coder policy — announced action without a tool call
+// ---------------------------------------------------------------------------
+
+describe('Coder Policy — announced-action guard', () => {
+  it('nudges task turns that end by announcing a tool action', async () => {
+    const policy = createCoderPolicy();
+    const trailingHook = policy.afterModelCall![2];
+
+    const result = await trailingHook("I'll read docs/runbooks/foo.md next.", [], {
+      ...makeCtx(),
+      taskInFlight: true,
+    });
+
+    expect(result?.action).toBe('inject');
+    if (result?.action === 'inject') {
+      expect(result.message.content).toContain('ANNOUNCED_NO_ACTION');
+    }
+  });
+
+  it('also nudges conversational lead turns', async () => {
+    const policy = createCoderPolicy();
+    const trailingHook = policy.afterModelCall![2];
+
+    const result = await trailingHook("Let's search the runbook for Phase 2.", [], {
+      ...makeCtx(),
+      taskInFlight: false,
+    });
+
+    expect(result?.action).toBe('inject');
+  });
+
+  it('does not nudge when a tool call is present or the text is a question', async () => {
+    const policy = createCoderPolicy();
+    const trailingHook = policy.afterModelCall![2];
+
+    expect(
+      await trailingHook(
+        '{"tool": "sandbox_read_file", "args": {"path": "README.md"}}',
+        [],
+        makeCtx(),
+      ),
+    ).toBeNull();
+    expect(await trailingHook('Should I read README.md next?', [], makeCtx())).toBeNull();
+  });
+
+  it('stops nudging after the per-run cap', async () => {
+    const policy = createCoderPolicy();
+    const trailingHook = policy.afterModelCall![2];
+
+    for (let i = 0; i < 3; i++) {
+      expect(await trailingHook("I'll read README.md next.", [], makeCtx(i))).not.toBeNull();
+    }
+
+    expect(await trailingHook("I'll read README.md next.", [], makeCtx(4))).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Coder policy — mutation failure tracking
 // ---------------------------------------------------------------------------
 

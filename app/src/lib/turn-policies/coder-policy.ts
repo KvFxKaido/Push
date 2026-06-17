@@ -15,6 +15,8 @@
 import type { ChatMessage } from '@/types';
 import type { TurnPolicy, TurnContext } from '../turn-policy';
 import { isVerificationPhase } from '../turn-policy';
+import { MAX_TRAILING_INTENT_NUDGES } from '../tool-call-recovery';
+import { detectTrailingActionIntent } from './orchestrator-policy';
 
 // ---------------------------------------------------------------------------
 // Drift detection (extracted from coder-agent.ts)
@@ -140,6 +142,7 @@ const SANDBOX_MUTATION_TOOLS = new Set([
 export function createCoderPolicy(): TurnPolicy {
   // --- Per-instance mutable state ---
   let consecutiveDriftRounds = 0;
+  let trailingIntentNudges = 0;
   const mutationFailures = new Map<string, MutationFailureEntry>();
   let mutationsSinceVerification = 0;
 
@@ -279,6 +282,35 @@ export function createCoderPolicy(): TurnPolicy {
         }
 
         return null;
+      },
+
+      // Announced-action-without-tool-call guard
+      (response: string, _messages: readonly ChatMessage[], ctx: TurnContext) => {
+        // Unlike drift / no-fake-completion, this is not task-shaped: both task
+        // and conversational lead turns can dead-end after saying "I'll read X"
+        // without emitting a call. Keep it at the policy layer so the routing
+        // flip cannot regress into prompt-only cooperation.
+        const trimmed = response.trim();
+        if (!trimmed) return null;
+        if (trailingIntentNudges >= MAX_TRAILING_INTENT_NUDGES) return null;
+        if (/\{\s*"tool"\s*:/.test(trimmed)) return null;
+        if (!detectTrailingActionIntent(trimmed)) return null;
+
+        trailingIntentNudges++;
+        return {
+          action: 'inject' as const,
+          message: {
+            id: `policy-announced-no-action-${ctx.round}`,
+            role: 'user' as const,
+            content: [
+              '[POLICY: ANNOUNCED_NO_ACTION]',
+              'You described an action you were about to take (e.g. reading or searching a file) but did not emit a tool call, so nothing actually happened.',
+              'If you intended to act, emit the tool-call JSON now. If you are actually finished, state your conclusion directly without describing further steps.',
+              '[/POLICY]',
+            ].join('\n'),
+            timestamp: Date.now(),
+          },
+        };
       },
     ],
 

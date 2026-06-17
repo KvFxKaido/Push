@@ -173,6 +173,27 @@ function makeHarness(opts?: {
     abortControllerRef: { current: new AbortController() },
     sandboxIdRef: { current: opts?.sandboxId === undefined ? 'sb-1' : opts.sandboxId },
     ensureSandboxRef: { current: null },
+    scratchpadRef: {
+      current: {
+        content: 'Scratch note',
+        replace: vi.fn(),
+        append: vi.fn(),
+      },
+    },
+    todoRef: {
+      current: {
+        todos: [
+          {
+            id: 'inspect-runbook',
+            content: 'Inspect runbook',
+            activeForm: 'Inspecting runbook',
+            status: 'pending',
+          },
+        ],
+        replace: vi.fn(),
+        clear: vi.fn(),
+      },
+    },
     repoRef: { current: opts?.repo === undefined ? 'owner/repo' : opts.repo },
     isMainProtectedRef: { current: true },
     branchInfoRef: { current: { currentBranch: 'feat/x', defaultBranch: 'main' } },
@@ -460,6 +481,8 @@ describe('startInlineCoderTurn', () => {
       branch: 'feat/x',
       chatId: 'chat-1',
     });
+    expect(spec.scratchpad).toEqual(ctx.scratchpadRef.current);
+    expect(spec.todo).toEqual(ctx.todoRef.current);
     expect(spec.branchContext).toEqual({
       activeBranch: 'feat/x',
       defaultBranch: 'main',

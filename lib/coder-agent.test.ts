@@ -781,6 +781,134 @@ describe('runCoderAgent (PushStream consumer)', () => {
     expect(Object.keys(snap.sections).length).toBeGreaterThan(0);
   });
 
+  it('emits assistant turn start/end events around each model round', async () => {
+    const { stream } = makePushStream([
+      [
+        { type: 'text_delta', text: 'First round' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', text: 'Final round' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+    const events: Array<{ type: string; round?: number; outcome?: string }> = [];
+    let policyCalls = 0;
+
+    await runCoderAgent(
+      baseCoderOptions({
+        stream,
+        evaluateAfterModel: async () => {
+          policyCalls += 1;
+          return policyCalls === 1
+            ? { action: 'inject', content: '[POLICY: TEST]\ncontinue\n[/POLICY]' }
+            : { action: 'halt', summary: 'done' };
+        },
+      }),
+      { onStatus: () => {}, onRunEvent: (event) => events.push(event) },
+    );
+
+    expect(events.filter((e) => e.type === 'assistant.turn_start')).toEqual([
+      { type: 'assistant.turn_start', round: 0 },
+      { type: 'assistant.turn_start', round: 1 },
+    ]);
+    expect(events.filter((e) => e.type === 'assistant.turn_end')).toEqual([
+      { type: 'assistant.turn_end', round: 0, outcome: 'continued' },
+      { type: 'assistant.turn_end', round: 1, outcome: 'completed' },
+    ]);
+  });
+
+  it('emits a balanced turn_end for a single-tool-call round (natural fall-through)', async () => {
+    // Round 0 runs ONE tool call through the single-call path (empty batch
+    // buckets + a non-null detectAnyToolCall), so it loops back via the natural
+    // fall-through rather than an early continue/return. That path must still
+    // finish the round — the regression was a turn_start with no turn_end.
+    const { stream } = makePushStream([
+      [
+        { type: 'text_delta', text: '{"tool":"sandbox_read_file","args":{"path":"README.md"}}' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', text: 'Done reading.' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+    const events: Array<{ type: string; round?: number; outcome?: string }> = [];
+
+    await runCoderAgent(
+      baseCoderOptions({
+        stream,
+        // No policy halt/inject, so round 0 reaches the single-tool path.
+        evaluateAfterModel: async () => null,
+        // Text-based so it's robust to how many times the loop probes per round.
+        detectAnyToolCall: (text: string) =>
+          text.includes('sandbox_read_file')
+            ? ({
+                source: 'sandbox',
+                call: { tool: 'sandbox_read_file', args: { path: 'README.md' } },
+              } as never)
+            : null,
+      }),
+      { onStatus: () => {}, onRunEvent: (event) => events.push(event) },
+    );
+
+    expect(events.filter((e) => e.type === 'assistant.turn_start').map((e) => e.round)).toEqual([
+      0, 1,
+    ]);
+    expect(events.filter((e) => e.type === 'assistant.turn_end')).toEqual([
+      { type: 'assistant.turn_end', round: 0, outcome: 'continued' },
+      { type: 'assistant.turn_end', round: 1, outcome: 'completed' },
+    ]);
+  });
+
+  it('nudges and continues when a tool call is buried in reasoning tokens', async () => {
+    const { stream, capturedRequests } = makePushStream([
+      [
+        {
+          type: 'reasoning_delta',
+          text: '{"tool": "sandbox_read_file", "args": {"path": "README.md"}}',
+        },
+        { type: 'reasoning_end' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', text: 'I can answer directly now.' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+    const events: Array<{ type: string; reason?: string; toolName?: string }> = [];
+
+    const result = await runCoderAgent(
+      baseCoderOptions({
+        stream,
+        detectAnyToolCall: (text) =>
+          text.includes('"tool"')
+            ? { call: { tool: 'sandbox_read_file', args: { path: 'README.md' } } }
+            : null,
+        evaluateAfterModel: async (_response, round) =>
+          round >= 1 ? { action: 'halt', summary: 'done' } : null,
+      }),
+      { onStatus: () => {}, onRunEvent: (event) => events.push(event) },
+    );
+
+    expect(result.rounds).toBe(2);
+    expect(capturedRequests).toHaveLength(2);
+    const secondReq = capturedRequests[1] as { messages: Array<{ content: string }> };
+    expect(
+      secondReq.messages.some((message) => message.content.includes('TOOL_CALL_IN_REASONING')),
+    ).toBe(true);
+    // The reasoning-only round leaves an empty assistant turn; the recovery
+    // request must not forward empty content (CLI/daemon providers reject it).
+    expect(secondReq.messages.every((message) => message.content.trim().length > 0)).toBe(true);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'tool.call_malformed',
+        reason: 'tool_call_in_reasoning',
+        toolName: 'sandbox_read_file',
+      }),
+    );
+  });
+
   it('refuses to execute when detectAllToolCalls reports dropped candidates and surfaces the malformed name', async () => {
     // Reproduces the "Coder loops on sandbox_diff" bug: model emits a
     // malformed edit_range alongside a valid diff. Without this guard
@@ -798,6 +926,8 @@ describe('runCoderAgent (PushStream consumer)', () => {
     ]);
 
     const statuses: Array<{ phase: string; detail?: string }> = [];
+    const events: Array<{ type: string; reason?: string; toolName?: string; preview?: string }> =
+      [];
     let detectCallCount = 0;
     let policyCallCount = 0;
     const result = await runCoderAgent(
@@ -839,6 +969,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
       }),
       {
         onStatus: (phase, detail) => statuses.push({ phase, detail }),
+        onRunEvent: (event) => events.push(event),
       },
     );
 
@@ -850,6 +981,13 @@ describe('runCoderAgent (PushStream consumer)', () => {
     const parseStatus = statuses.find((s) => s.phase === 'Coder parse error');
     expect(parseStatus).toBeDefined();
     expect(parseStatus?.detail).toContain('edit_range');
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'tool.call_malformed',
+        reason: 'validation_failed',
+        toolName: 'edit_range',
+      }),
+    );
     expect(result.rounds).toBe(2);
   });
 });

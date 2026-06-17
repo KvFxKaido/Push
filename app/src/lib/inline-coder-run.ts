@@ -101,6 +101,17 @@ import {
   type WebSearchToolCall,
 } from './web-search-tools';
 import { MEMORY_TOOL_PROTOCOL } from './memory-tools';
+import {
+  SCRATCHPAD_TOOL_PROTOCOL,
+  buildScratchpadContext,
+  executeScratchpadToolCall,
+} from './scratchpad-tools';
+import {
+  TODO_TOOL_PROTOCOL,
+  buildTodoContext,
+  executeTodoToolCall,
+  type TodoItem,
+} from './todo-tools';
 import { WebToolExecutionRuntime } from './web-tool-execution-runtime';
 import { createDefaultApprovalGates } from './approval-gates';
 import { buildGitHubToolProtocol } from './github-tools';
@@ -173,14 +184,20 @@ const INLINE_MAX_PARALLEL_EXPLORERS = 2;
  * `tools` array may advertise. Base sandbox + web-search (always wired), memory
  * only when a scope is threaded, plus the lead's extra GitHub/ask/artifact and
  * (explorer-only) delegate sources. Mirrors exactly what the kernel advertises
- * in the prompt; anything outside this (scratchpad, todo) isn't executable here
- * and must not appear as a native function. Keep in lockstep with the protocols
- * passed to the kernel below. The `delegate` source is scoped to
- * `delegate_explorer` via `LEAD_EXCLUDED_DELEGATION_TOOLS` at the schema call.
+ * in the prompt; optional chat-hook sources (scratchpad/todo) join only when
+ * handlers are present and must stay in lockstep with the protocols passed to
+ * the kernel below. The `delegate` source is scoped to `delegate_explorer` via
+ * `LEAD_EXCLUDED_DELEGATION_TOOLS` at the schema call.
  */
-function leadNativeToolSources(hasMemoryScope: boolean): ReadonlySet<ToolRegistrySource> {
+function leadNativeToolSources(options: {
+  hasMemoryScope: boolean;
+  hasScratchpad: boolean;
+  hasTodo: boolean;
+}): ReadonlySet<ToolRegistrySource> {
   const sources = new Set<ToolRegistrySource>(['sandbox', 'web-search']);
-  if (hasMemoryScope) sources.add('memory');
+  if (options.hasMemoryScope) sources.add('memory');
+  if (options.hasScratchpad) sources.add('scratchpad');
+  if (options.hasTodo) sources.add('todo');
   for (const source of LEAD_EXTRA_TOOL_SOURCES) sources.add(source as ToolRegistrySource);
   return sources;
 }
@@ -560,6 +577,18 @@ export interface InlineVerificationResult {
   summaryLine: string;
 }
 
+export interface InlineScratchpadHandlers {
+  content: string;
+  replace: (content: string) => void;
+  append: (content: string) => void;
+}
+
+export interface InlineTodoHandlers {
+  todos: readonly TodoItem[];
+  replace: (todos: TodoItem[]) => void;
+  clear: () => void;
+}
+
 /**
  * Run the verification policy's command rules as post-kernel acceptance
  * checks for an inline turn — restoring the gate the delegated arc enforced
@@ -682,6 +711,8 @@ export interface InPageCoderKernelSpec {
    * Absent → memory tools are neither wired nor advertised.
    */
   memoryScope?: { repoFullName: string; branch?: string; chatId?: string };
+  scratchpad?: InlineScratchpadHandlers;
+  todo?: InlineTodoHandlers;
   correlation?: CorrelationContext;
   /**
    * Override the provider stream — the inline lane passes a
@@ -799,6 +830,15 @@ export async function runInPageCoderKernel(
   // (create_pr / merge_pr / delete_branch / trigger_workflow) require approval
   // instead of executing silently. Built once per run, not per tool call.
   const leadApprovalGates = leadRuntime ? createDefaultApprovalGates() : null;
+  const leadExtraToolSources = leadRuntime
+    ? new Set<string>([
+        ...LEAD_EXTRA_TOOL_SOURCES,
+        ...(spec.scratchpad ? ['scratchpad'] : []),
+        ...(spec.todo ? ['todo'] : []),
+      ])
+    : undefined;
+  let scratchpadContent = spec.scratchpad?.content ?? '';
+  let todos = [...(spec.todo?.todos ?? [])];
 
   // --- Turn policy registry (Coder-only) ---
   const policyRegistry = new TurnPolicyRegistry();
@@ -903,7 +943,7 @@ export async function runInPageCoderKernel(
     // Lead tool surface: github / ask-user / artifacts, executed via the web
     // runtime. Absent (undefined) for the delegated Coder, which keeps its
     // narrow three-source surface.
-    extraToolSources: leadRuntime ? LEAD_EXTRA_TOOL_SOURCES : undefined,
+    extraToolSources: leadExtraToolSources,
     executeExtraToolCall: leadRuntime
       ? async (call, execCtx) => {
           void execCtx;
@@ -931,6 +971,43 @@ export async function runInPageCoderKernel(
             return {
               text: `[Tool Error] The lead does its own coding — "${delegateCall.tool}" is not available here. Use ${delegateExplorerPublicName} for read-only investigation, or make the change yourself.`,
             };
+          }
+          if (call.source === 'scratchpad') {
+            if (!spec.scratchpad) {
+              return {
+                text: '[Tool Error] Scratchpad not available. The scratchpad may not be initialized — try again after the UI loads.',
+              };
+            }
+            const result = executeScratchpadToolCall(
+              call.call,
+              scratchpadContent,
+              spec.scratchpad.replace,
+              spec.scratchpad.append,
+            );
+            if (result.ok) {
+              if (call.call.tool === 'set_scratchpad') {
+                scratchpadContent = call.call.content;
+              } else if (call.call.tool === 'append_scratchpad') {
+                const prev = scratchpadContent.trim();
+                scratchpadContent = prev ? `${prev}\n\n${call.call.content}` : call.call.content;
+              }
+            }
+            return { text: result.text };
+          }
+          if (call.source === 'todo') {
+            if (!spec.todo) {
+              return {
+                text: '[Tool Error] Todo list not available. It may not be initialized — try again after the UI loads.',
+              };
+            }
+            const result = executeTodoToolCall(call.call, todos, {
+              replace: spec.todo.replace,
+              clear: spec.todo.clear,
+            });
+            if (result.ok && result.nextTodos) {
+              todos = result.nextTodos;
+            }
+            return { text: result.text };
           }
           const result = await leadRuntime.execute(call, {
             allowedRepo: spec.memoryScope?.repoFullName ?? '',
@@ -961,6 +1038,11 @@ export async function runInPageCoderKernel(
     buildCoderDetectors(bindingsServices);
   const toolExec = buildCoderToolExec(bindingsServices);
   const evaluateAfterModel = buildCoderEvaluateAfterModel(bindingsServices);
+  const leadContextBlocks = [
+    spec.scratchpad ? buildScratchpadContext(scratchpadContent) : null,
+    spec.todo ? buildTodoContext(todos) : null,
+    spec.linkedLibraryContent,
+  ].filter((block): block is string => Boolean(block && block.trim()));
 
   // --- Build lib options ---
   // The web inline lead wires the full GitHub/ask/artifact tool surface, so its
@@ -991,7 +1073,7 @@ export async function runInPageCoderKernel(
     taskPreamble: spec.taskPreamble,
     initialMessages: spec.initialMessages,
     initialUserContentParts: spec.initialUserContentParts,
-    linkedLibraryContent: spec.linkedLibraryContent,
+    linkedLibraryContent: leadContextBlocks.length > 0 ? leadContextBlocks.join('\n\n') : undefined,
     sessionDigestRecords: spec.sessionDigestRecords,
     priorSessionDigest: spec.priorSessionDigest,
     onSessionDigestEmitted: spec.onSessionDigestEmitted,
@@ -1010,6 +1092,8 @@ export async function runInPageCoderKernel(
     extraToolProtocols: leadRuntime
       ? [
           buildGitHubToolProtocol({ includeDelegation: false }),
+          ...(spec.scratchpad ? [SCRATCHPAD_TOOL_PROTOCOL] : []),
+          ...(spec.todo ? [TODO_TOOL_PROTOCOL] : []),
           ASK_USER_TOOL_PROTOCOL,
           ARTIFACT_TOOL_PROTOCOL,
           LEAD_EXPLORER_DELEGATION_PROTOCOL,
@@ -1048,16 +1132,23 @@ export async function runInPageCoderKernel(
     //      can't execute (e.g. `delegate_*`) would let a native call no-op.
     nativeToolSchemas:
       leadRuntime && providerModelSupportsNativeToolCalling(spec.provider, spec.modelId)
-        ? getToolFunctionSchemasForSources(leadNativeToolSources(Boolean(spec.memoryScope)), {
-            // Pin the GitHub tools' `repo` arg to the active repo so the model
-            // emits it correctly instead of a placeholder that trips the
-            // executor's repo-mismatch rejection (validation_failed churn).
-            activeRepo: spec.memoryScope?.repoFullName,
-            // The `delegate` source is wired for `delegate_explorer` only —
-            // keep `delegate_coder` / `plan_tasks` out of the native schema so
-            // a native call can't fire an advertised-but-denied delegation.
-            excludeTools: LEAD_EXCLUDED_DELEGATION_TOOLS,
-          })
+        ? getToolFunctionSchemasForSources(
+            leadNativeToolSources({
+              hasMemoryScope: Boolean(spec.memoryScope),
+              hasScratchpad: Boolean(spec.scratchpad),
+              hasTodo: Boolean(spec.todo),
+            }),
+            {
+              // Pin the GitHub tools' `repo` arg to the active repo so the model
+              // emits it correctly instead of a placeholder that trips the
+              // executor's repo-mismatch rejection (validation_failed churn).
+              activeRepo: spec.memoryScope?.repoFullName,
+              // The `delegate` source is wired for `delegate_explorer` only —
+              // keep `delegate_coder` / `plan_tasks` out of the native schema so
+              // a native call can't fire an advertised-but-denied delegation.
+              excludeTools: LEAD_EXCLUDED_DELEGATION_TOOLS,
+            },
+          )
         : undefined,
   };
 

@@ -55,7 +55,7 @@ import type {
 import type { AcceptanceCriterion, MemoryRecord, RunEventInput } from './runtime-contract.js';
 import type { SessionDigest } from './session-digest.js';
 import { createId } from './id-utils.js';
-import { summarizeToolResultPreview } from './run-events.js';
+import { buildMalformedToolCallEvents, summarizeToolResultPreview } from './run-events.js';
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
 import { iteratePushStreamText, asRecord } from './stream-utils.js';
 import { detectToolFromText } from './tool-call-parsing.js';
@@ -65,6 +65,7 @@ import {
   buildToolCallParseErrorBlock,
   buildValidationFailedHint,
   formatToolResultEnvelope,
+  MAX_REASONING_TOOL_CALL_NUDGES,
 } from './tool-call-recovery.js';
 import {
   buildLoopSteeringText,
@@ -1186,6 +1187,7 @@ export async function runCoderAgent<TCall, TCard>(
 
   // --- Mutation failure guardrail state ---
   const mutationFailures = new Map<string, MutationFailureEntry>();
+  let reasoningToolCallNudges = 0;
 
   // --- Loop-detection state (shared lib/loop-detection oracle) ---
   // The autonomous Coder loop is the highest-value site for near-duplicate
@@ -1291,6 +1293,14 @@ export async function runCoderAgent<TCall, TCard>(
     rounds = round + 1;
     callbacks.onAdvanceRound?.();
     callbacks.onStatus('Coder working...', `Round ${rounds}`);
+    let roundEnded = false;
+    const finishRound = (outcome: 'completed' | 'continued' | 'error' | 'aborted' | 'steered') => {
+      if (roundEnded) return;
+      roundEnded = true;
+      callbacks.onRunEvent?.({ type: 'assistant.turn_end', round, outcome });
+    };
+
+    callbacks.onRunEvent?.({ type: 'assistant.turn_start', round });
 
     // Durable resume checkpoint. Top-of-round is quiescent: prior rounds' tool
     // calls are applied to the workspace and none are in flight, so the
@@ -1306,7 +1316,11 @@ export async function runCoderAgent<TCall, TCard>(
     }
 
     // Stream Coder response via the active provider, with a per-round timeout
-    const { error: streamError, text: accumulated } = await iteratePushStreamText(
+    const {
+      error: streamError,
+      text: accumulated,
+      reasoningText,
+    } = await iteratePushStreamText(
       cancellableStream,
       {
         provider,
@@ -1338,8 +1352,10 @@ export async function runCoderAgent<TCall, TCard>(
 
     if (streamError) {
       if (callbacks.signal?.aborted) {
+        finishRound('aborted');
         throw new DOMException('Coder cancelled by user.', 'AbortError');
       }
+      finishRound('error');
       throw streamError;
     }
 
@@ -1367,12 +1383,64 @@ export async function runCoderAgent<TCall, TCard>(
       callbacks.onStatus('Coder reasoning', reasoningSnippet);
     }
 
+    const buriedReasoningCall =
+      reasoningToolCallNudges < MAX_REASONING_TOOL_CALL_NUDGES &&
+      reasoningText.trim().length > 0 &&
+      !detectAnyToolCall(accumulated)
+        ? detectAnyToolCall(reasoningText)
+        : null;
+    if (buriedReasoningCall) {
+      // A reasoning-only response (`accumulated === ''`, the tool call lived in
+      // the reasoning channel) just pushed an EMPTY assistant turn above. The
+      // web materializer drops empty assistant turns, but the CLI/daemon path
+      // forwards `content` verbatim and empty assistant content is rejected by
+      // some providers (e.g. Anthropic) — which would break the very recovery
+      // round this nudge sets up. Replace the empty turn with a factual marker
+      // so it stays non-empty and role alternation holds across surfaces
+      // (popping it instead would leave two consecutive user turns).
+      if (
+        accumulated.trim() === '' &&
+        messages[messages.length - 1]?.id === `coder-response-${round}`
+      ) {
+        messages[messages.length - 1] = {
+          ...messages[messages.length - 1],
+          content: '[No response content — the tool call was emitted in the reasoning channel.]',
+        };
+      }
+      const buriedToolName = (buriedReasoningCall as unknown as { call?: { tool?: string } }).call
+        ?.tool;
+      callbacks.onRunEvent?.({
+        type: 'tool.call_malformed',
+        round,
+        reason: 'tool_call_in_reasoning',
+        ...(buriedToolName ? { toolName: buriedToolName } : {}),
+        preview: summarizeToolResultPreview(
+          'A tool call was emitted in the reasoning channel, which the runtime never executes. The model was nudged to re-emit it in response content.',
+        ),
+      });
+      messages.push({
+        id: `coder-reasoning-tool-nudge-${round}`,
+        role: 'user',
+        content: [
+          '[POLICY: TOOL_CALL_IN_REASONING]',
+          'You emitted a tool call inside your reasoning/thinking channel. The runtime only executes tool calls placed in your response content, so nothing ran and no results came back — any answer you give now is ungrounded.',
+          'Re-emit the tool call as a JSON block in your response content now. If you did not actually intend to call a tool, answer directly from information you already have.',
+          '[/POLICY]',
+        ].join('\n'),
+        timestamp: Date.now(),
+      });
+      reasoningToolCallNudges += 1;
+      finishRound('continued');
+      continue;
+    }
+
     // --- Turn policy: evaluate on every response ---
     const policyResult = await evaluateAfterModel(accumulated, round);
     if (policyResult) {
       if (policyResult.action === 'halt') {
         callbacks.onStatus('Coder stopped', 'Cognitive drift — halted');
         const sandboxState = (await callbacks.fetchSandboxStateSummary?.()) ?? '';
+        finishRound('completed');
         return {
           summary: policyResult.summary + sandboxState,
           cards: allCards,
@@ -1394,6 +1462,7 @@ export async function runCoderAgent<TCall, TCard>(
           content,
           timestamp: Date.now(),
         });
+        finishRound('continued');
         continue;
       }
     }
@@ -1419,6 +1488,16 @@ export async function runCoderAgent<TCall, TCard>(
         )
         .join(', ');
       callbacks.onStatus('Coder parse error', summary);
+      for (const event of buildMalformedToolCallEvents(
+        dropped.map((candidate) => ({
+          reason: 'validation_failed',
+          sample: candidate.sample,
+          rawToolName: candidate.rawToolName,
+        })),
+        round,
+      )) {
+        callbacks.onRunEvent?.(event);
+      }
       const parseErrorBlock = buildToolCallParseErrorBlock({
         errorType: 'validation_failed',
         detectedTool: primary?.resolvedToolName || primary?.rawToolName || null,
@@ -1432,6 +1511,7 @@ export async function runCoderAgent<TCall, TCard>(
         timestamp: Date.now(),
         isToolResult: true,
       });
+      finishRound('continued');
       continue;
     }
 
@@ -1500,6 +1580,7 @@ export async function runCoderAgent<TCall, TCard>(
           isToolResult: true,
         });
         const sandboxState = (await callbacks.fetchSandboxStateSummary?.()) ?? '';
+        finishRound('completed');
         return {
           summary: loopText + sandboxState,
           cards: allCards,
@@ -1527,6 +1608,7 @@ export async function runCoderAgent<TCall, TCard>(
             loopCompactsIssued += 1;
             loopDetector.clear();
           }
+          finishRound('continued');
           continue;
         }
       }
@@ -1549,8 +1631,10 @@ export async function runCoderAgent<TCall, TCard>(
     const batchTotal = parallelCalls.length + mutationQueue.length;
 
     if (batchTotal >= 2) {
-      if (callbacks.signal?.aborted)
+      if (callbacks.signal?.aborted) {
+        finishRound('aborted');
         throw new DOMException('Coder cancelled by user.', 'AbortError');
+      }
 
       const mutationLabel =
         mutationQueue.length > 0
@@ -1617,6 +1701,7 @@ export async function runCoderAgent<TCall, TCard>(
       let batchHardFailed = false;
       for (let mqIdx = 0; mqIdx < mutationQueue.length; mqIdx++) {
         if (callbacks.signal?.aborted) {
+          finishRound('aborted');
           throw new DOMException('Coder cancelled by user.', 'AbortError');
         }
         const mutationCall = mutationQueue[mqIdx];
@@ -1808,6 +1893,7 @@ export async function runCoderAgent<TCall, TCard>(
         });
       }
 
+      finishRound('continued');
       continue;
     }
 
@@ -1900,6 +1986,7 @@ export async function runCoderAgent<TCall, TCard>(
             timestamp: Date.now(),
             isToolResult: true,
           });
+          finishRound('continued');
           continue;
         }
       }
@@ -1913,6 +2000,7 @@ export async function runCoderAgent<TCall, TCard>(
       const checkpoint = detectCheckpointCall(accumulated);
       if (checkpoint) {
         if (callbacks.signal?.aborted) {
+          finishRound('aborted');
           throw new DOMException('Coder cancelled by user.', 'AbortError');
         }
 
@@ -1936,11 +2024,13 @@ export async function runCoderAgent<TCall, TCard>(
             });
 
             callbacks.onStatus('Coder resuming...', `After checkpoint ${checkpointCount}`);
+            finishRound('continued');
             continue;
           } catch (cpErr) {
             // Propagate AbortError to allow proper task cancellation
             const isAbort = cpErr instanceof DOMException && cpErr.name === 'AbortError';
             if (isAbort || callbacks.signal?.aborted) {
+              finishRound('aborted');
               throw new DOMException('Coder cancelled by user.', 'AbortError');
             }
             // For non-abort errors, inject a generic fallback so the Coder can continue
@@ -1951,6 +2041,7 @@ export async function runCoderAgent<TCall, TCard>(
               content: `[CHECKPOINT RESPONSE]\nCould not get guidance from the Orchestrator (${errMsg}). Try a different approach or simplify your current step.\n[/CHECKPOINT RESPONSE]`,
               timestamp: Date.now(),
             });
+            finishRound('continued');
             continue;
           }
         } else if (checkpointCount >= MAX_CHECKPOINTS) {
@@ -1960,6 +2051,7 @@ export async function runCoderAgent<TCall, TCard>(
             content: `[CHECKPOINT RESPONSE]\nCheckpoint limit reached (${MAX_CHECKPOINTS} max). Complete the task with what you have, or summarize what's blocking you.\n[/CHECKPOINT RESPONSE]`,
             timestamp: Date.now(),
           });
+          finishRound('continued');
           continue;
         }
         // If no onCheckpointRequest callback, fall through to treat as "done" (backward compatible)
@@ -2008,6 +2100,7 @@ export async function runCoderAgent<TCall, TCard>(
         }
       }
 
+      finishRound('completed');
       return {
         summary: accumulated + criteriaBlock,
         cards: allCards,
@@ -2019,6 +2112,7 @@ export async function runCoderAgent<TCall, TCard>(
 
     // Execute single tool call
     if (callbacks.signal?.aborted) {
+      finishRound('aborted');
       throw new DOMException('Coder cancelled by user.', 'AbortError');
     }
 
@@ -2048,6 +2142,7 @@ export async function runCoderAgent<TCall, TCard>(
         timestamp: Date.now(),
         isToolResult: true,
       });
+      finishRound('continued');
       continue;
     }
 
@@ -2128,6 +2223,7 @@ export async function runCoderAgent<TCall, TCard>(
           timestamp: Date.now(),
         });
         // Give the model one final round to produce a summary
+        finishRound('continued');
         continue;
       }
     } else if (toolFilePath) {
@@ -2152,6 +2248,7 @@ export async function runCoderAgent<TCall, TCard>(
           content: result.policyPost.summary,
           timestamp: Date.now(),
         });
+        finishRound('continued');
         continue; // one final round for the model to summarize
       }
     }
@@ -2202,5 +2299,12 @@ export async function runCoderAgent<TCall, TCard>(
         lastInjectedStateRound = null;
       }
     }
+
+    // Normal fall-through: a round that executed a single tool call (or trimmed
+    // context) without taking an early continue/return loops back here. Emit the
+    // matching turn_end so every `assistant.turn_start` above is balanced.
+    // Idempotent via the `roundEnded` guard — paths that already finished the
+    // round are unaffected.
+    finishRound('continued');
   }
 }
