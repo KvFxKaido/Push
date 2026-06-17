@@ -19,6 +19,7 @@ export const PROVIDER_LABELS: Record<AIProviderType, string> = {
   google: 'Google Gemini',
   demo: 'Demo',
   kilocode: 'Kilo Code',
+  fireworks: 'Fireworks AI',
   openadapter: 'OpenAdapter',
 };
 
@@ -30,6 +31,7 @@ export type BuiltInSettingsProviderId = Extract<
   | 'nvidia'
   | 'blackbox'
   | 'kilocode'
+  | 'fireworks'
   | 'openadapter'
   | 'anthropic'
   | 'openai'
@@ -56,6 +58,7 @@ export const BUILT_IN_SETTINGS_PROVIDER_ORDER: BuiltInSettingsProviderId[] = [
   'zen',
   'blackbox',
   'kilocode',
+  'fireworks',
   'openadapter',
 ];
 
@@ -103,6 +106,12 @@ export const BUILT_IN_SETTINGS_PROVIDER_META: Record<
     saveLabel: 'Save Kilo Code key',
     hint: 'Kilo Code API key from kilo.ai. One key for hundreds of models.',
     labelTransform: (model) => formatModelDisplayName('kilocode', model),
+  },
+  fireworks: {
+    placeholder: 'Fireworks AI API key',
+    saveLabel: 'Save Fireworks AI key',
+    hint: 'Fireworks AI API key from fireworks.ai.',
+    labelTransform: (model) => formatModelDisplayName('fireworks', model),
   },
   openadapter: {
     placeholder: 'OpenAdapter API key',

@@ -90,6 +90,8 @@ function modelOptionsForProvider(catalog: ModelCatalog, provider: PreferredProvi
       return catalog.blackboxModelOptions;
     case 'kilocode':
       return catalog.kilocodeModelOptions;
+    case 'fireworks':
+      return catalog.fireworksModelOptions;
     case 'openadapter':
       return catalog.openAdapterModelOptions;
     case 'anthropic':
@@ -129,6 +131,8 @@ function defaultModelForProvider(
       return catalog.blackbox.model || null;
     case 'kilocode':
       return catalog.kilocode.model || null;
+    case 'fireworks':
+      return catalog.fireworks.model || null;
     case 'openadapter':
       return catalog.openadapter.model || null;
     case 'azure':
@@ -308,6 +312,8 @@ export function ComposerDraftScreen({
         void catalog.refreshBlackboxModels();
       if (provider === 'kilocode' && catalog.kilocodeModelOptions.length === 0)
         void catalog.refreshKilocodeModels();
+      if (provider === 'fireworks' && catalog.fireworksModelOptions.length === 0)
+        void catalog.refreshFireworksModels();
       if (provider === 'openadapter' && catalog.openAdapterModelOptions.length === 0)
         void catalog.refreshOpenAdapterModels();
     }

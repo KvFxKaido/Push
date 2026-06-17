@@ -71,4 +71,16 @@ describe('buildModelCapabilityAwarenessBlock', () => {
 
     expect(block).toContain('Provider: Kilo Code');
   });
+
+  it('formats Fireworks AI with a human-readable provider label', () => {
+    const block = buildModelCapabilityAwarenessBlock(
+      'fireworks',
+      'accounts/fireworks/models/deepseek-v4-pro',
+      {
+        hasImageAttachments: true,
+      },
+    );
+
+    expect(block).toContain('Provider: Fireworks AI');
+  });
 });

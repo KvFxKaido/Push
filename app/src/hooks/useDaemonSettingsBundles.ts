@@ -136,6 +136,7 @@ export function useDaemonSettingsBundles({
     const isNvidiaModelLocked = isModelLocked && lockedProvider === 'nvidia';
     const isBlackboxModelLocked = isModelLocked && lockedProvider === 'blackbox';
     const isKilocodeModelLocked = isModelLocked && lockedProvider === 'kilocode';
+    const isFireworksModelLocked = isModelLocked && lockedProvider === 'fireworks';
     const isOpenAdapterModelLocked = isModelLocked && lockedProvider === 'openadapter';
 
     const settingsAI: SettingsAIProps = {
@@ -240,6 +241,21 @@ export function useDaemonSettingsBundles({
           setKeyInput: catalog.kilocode.setKeyInput,
           setKey: catalog.kilocode.setKey,
           clearKey: catalog.kilocode.clearKey,
+        },
+        fireworks: {
+          hasKey: catalog.fireworks.hasKey,
+          model: catalog.fireworks.model,
+          setModel: catalog.fireworks.setModel,
+          modelOptions: catalog.fireworksModelOptions,
+          modelsLoading: catalog.fireworksModels.loading,
+          modelsError: catalog.fireworksModels.error,
+          modelsUpdatedAt: catalog.fireworksModels.updatedAt,
+          isModelLocked: isFireworksModelLocked,
+          refreshModels: catalog.refreshFireworksModels,
+          keyInput: catalog.fireworks.keyInput,
+          setKeyInput: catalog.fireworks.setKeyInput,
+          setKey: catalog.fireworks.setKey,
+          clearKey: catalog.fireworks.clearKey,
         },
         openadapter: {
           hasKey: catalog.openadapter.hasKey,

@@ -55,6 +55,7 @@ const PROVIDER_ENV_KEY: Partial<Record<AIProviderType, keyof Env>> = {
   nvidia: 'NVIDIA_API_KEY',
   blackbox: 'BLACKBOX_API_KEY',
   kilocode: 'KILOCODE_API_KEY',
+  fireworks: 'FIREWORKS_API_KEY',
   openadapter: 'OPENADAPTER_API_KEY',
   anthropic: 'ANTHROPIC_API_KEY',
   openai: 'OPENAI_API_KEY',

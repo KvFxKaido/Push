@@ -60,6 +60,7 @@ export interface PushConfig {
   zen?: ProviderConfig;
   nvidia?: ProviderConfig;
   kilocode?: ProviderConfig;
+  fireworks?: ProviderConfig;
   blackbox?: ProviderConfig;
   openadapter?: ProviderConfig;
   openai?: ProviderConfig;
@@ -172,6 +173,7 @@ const PROVIDER_CONFIG_KEYS = [
   'zen',
   'nvidia',
   'kilocode',
+  'fireworks',
   'blackbox',
   'openadapter',
   'openai',

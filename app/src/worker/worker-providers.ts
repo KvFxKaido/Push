@@ -682,6 +682,32 @@ export const handleKiloCodeModels = createJsonProxyHandler({
   timeoutError: 'Kilo Code model list timed out after 30 seconds',
 });
 
+// --- Fireworks AI (OpenAI-compatible gateway) ---
+
+export const handleFireworksChat = createStreamProxyHandler({
+  name: 'Fireworks AI API',
+  logTag: 'api/fireworks/chat',
+  upstreamUrl: 'https://api.fireworks.ai/inference/v1/chat/completions',
+  timeoutMs: 120_000,
+  maxOutputTokens: 8_192,
+  buildAuth: standardAuth('FIREWORKS_API_KEY'),
+  keyMissingError:
+    'Fireworks AI API key not configured. Add it in Settings or set FIREWORKS_API_KEY on the Worker.',
+  timeoutError: 'Fireworks AI request timed out after 120 seconds',
+});
+
+export const handleFireworksModels = createJsonProxyHandler({
+  name: 'Fireworks AI API',
+  logTag: 'api/fireworks/models',
+  upstreamUrl: 'https://api.fireworks.ai/inference/v1/models',
+  method: 'GET',
+  timeoutMs: 30_000,
+  buildAuth: standardAuth('FIREWORKS_API_KEY'),
+  keyMissingError:
+    'Fireworks AI API key not configured. Add it in Settings or set FIREWORKS_API_KEY on the Worker.',
+  timeoutError: 'Fireworks AI model list timed out after 30 seconds',
+});
+
 export const handleOpenAdapterChat = createStreamProxyHandler({
   name: 'OpenAdapter API',
   logTag: 'api/openadapter/chat',

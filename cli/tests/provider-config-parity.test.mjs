@@ -78,6 +78,7 @@ describe('provider config parity', () => {
     zen: 'ZEN_DEFAULT_MODEL',
     nvidia: 'NVIDIA_DEFAULT_MODEL',
     kilocode: 'KILOCODE_DEFAULT_MODEL',
+    fireworks: 'FIREWORKS_DEFAULT_MODEL',
     blackbox: 'BLACKBOX_DEFAULT_MODEL',
     openadapter: 'OPENADAPTER_DEFAULT_MODEL',
     openai: 'OPENAI_DEFAULT_MODEL',
