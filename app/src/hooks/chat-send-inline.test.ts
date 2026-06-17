@@ -555,6 +555,28 @@ describe('startInlineCoderTurn', () => {
       { type: 'text', text: spec.taskPreamble },
       { type: 'image_url', image_url: { url: 'data:image/png;base64,linked123' } },
     ]);
+    // Digest inputs are threaded to the kernel (→ stream's single transform),
+    // not pre-applied here — so history management happens exactly once.
+    expect('sessionDigestRecords' in spec).toBe(true);
+    expect('priorSessionDigest' in spec).toBe(true);
+    expect(typeof spec.onSessionDigestEmitted).toBe('function');
+  });
+
+  it('drops display-only (visibleToModel:false) messages from the conversational seed', async () => {
+    const { ctx } = makeHarness();
+    await startInlineCoderTurn(
+      ctx,
+      laneArgs({
+        trimmedText: 'how does auth work?',
+        apiMessages: [
+          msg('user', 'how does auth work?'),
+          { ...msg('assistant', 'aborted partial'), visibleToModel: false },
+        ],
+      }),
+    );
+    const [spec] = mockRunInPageCoderKernel.mock.calls[0] as [Record<string, unknown>];
+    const seed = spec.initialMessages as Array<{ content: string }>;
+    expect(seed.map((m) => m.content)).toEqual(['how does auth work?']);
   });
 
   it('gates the session-digest memory prefetch on a short conversational turn', async () => {

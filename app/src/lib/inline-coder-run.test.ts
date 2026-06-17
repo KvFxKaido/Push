@@ -226,6 +226,12 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
         // Parity decision: only the web inline lane resolves linked libraries.
         // Delegated Coders receive all context through their brief/preload.
         'linkedLibraryContent',
+        // Parity decision: the inline conversational lead threads digest inputs
+        // for the stream's single context transform; the delegated arc leaves
+        // them undefined (the key is present, the value isn't set).
+        'sessionDigestRecords',
+        'priorSessionDigest',
+        'onSessionDigestEmitted',
         'projectInstructions',
         'provider',
         'resumeState',

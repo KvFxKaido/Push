@@ -52,7 +52,8 @@ import type {
   PushStream,
   ToolFunctionSchema,
 } from './provider-contract.js';
-import type { AcceptanceCriterion, RunEventInput } from './runtime-contract.js';
+import type { AcceptanceCriterion, MemoryRecord, RunEventInput } from './runtime-contract.js';
+import type { SessionDigest } from './session-digest.js';
 import { createId } from './id-utils.js';
 import { summarizeToolResultPreview } from './run-events.js';
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
@@ -855,6 +856,18 @@ export interface CoderAgentOptions<TCall, TCard> {
   /** User-linked library text, already rendered by the web shell. */
   linkedLibraryContent?: string;
 
+  /**
+   * Session-digest inputs forwarded to the provider stream's `toLLMMessages`
+   * context transform (the inline conversational lead threads these so history
+   * management — compaction / USER_GOAL / session digest — happens once,
+   * stream-side, over the raw seed). Undefined for delegated Coders and coding
+   * turns, which carry a single task message that needs no digest. The kernel
+   * does not interpret these; it forwards them verbatim on each round's request.
+   */
+  sessionDigestRecords?: ReadonlyArray<MemoryRecord>;
+  priorSessionDigest?: SessionDigest;
+  onSessionDigestEmitted?: (digest: SessionDigest | null) => void;
+
   /** After-model policy callback (identical shape to Explorer). */
   evaluateAfterModel: (response: string, round: number) => Promise<CoderAfterModelResult>;
 
@@ -977,6 +990,9 @@ export async function runCoderAgent<TCall, TCard>(
     verificationPolicyBlock,
     approvalModeBlock,
     linkedLibraryContent,
+    sessionDigestRecords,
+    priorSessionDigest,
+    onSessionDigestEmitted,
     evaluateAfterModel,
     acceptanceCriteria,
     harnessMaxRounds,
@@ -1298,6 +1314,12 @@ export async function runCoderAgent<TCall, TCard>(
         messages,
         systemPromptOverride: systemPrompt,
         hasSandbox: true,
+        // Conversational lead turns thread digest inputs so the stream's
+        // `toLLMMessages` runs the single context transform over the raw seed.
+        // Undefined elsewhere (a single task message needs no digest).
+        ...(sessionDigestRecords ? { sessionDigestRecords } : {}),
+        ...(priorSessionDigest ? { priorSessionDigest } : {}),
+        ...(onSessionDigestEmitted ? { onSessionDigestEmitted } : {}),
         ...(nativeToolSchemas && nativeToolSchemas.length > 0 ? { tools: nativeToolSchemas } : {}),
       },
       CODER_ROUND_TIMEOUT_MS,

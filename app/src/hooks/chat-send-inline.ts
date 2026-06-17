@@ -36,7 +36,7 @@
 
 import type { MutableRefObject } from 'react';
 import { getProviderPushStream } from '@/lib/orchestrator';
-import { buildInlineConversationMessages } from '@/lib/inline-conversation-context';
+import { buildInlineConversationSeed } from '@/lib/inline-conversation-context';
 import { getSandboxDiff, getSandboxEnvironment } from '@/lib/sandbox-client';
 import { getRepoMetadata } from '@/lib/repo-metadata';
 import { getVibeVerbs } from '@/lib/repo-vibe-verbs';
@@ -760,18 +760,13 @@ export async function startInlineCoderTurn(
   }
 
   const taskPreamble = buildInlineTurnPreamble(args.trimmedText, apiMessagesForContext);
+  // Conversational turns seed the kernel with the raw visible transcript and let
+  // the provider stream's `toLLMMessages` run the single context transform
+  // (compaction / USER_GOAL / session digest / safety net) with the digest
+  // inputs threaded below — no pre-transform here, so history management happens
+  // exactly once (see inline-conversation-context.ts).
   const initialMessages = !taskInFlight
-    ? buildInlineConversationMessages(apiMessagesForContext, {
-        provider: lockedProvider === 'demo' ? undefined : lockedProvider,
-        model: resolvedModel || undefined,
-        systemPromptOverhead: [
-          args.agentsMdRef.current ?? '',
-          linkedLibraryPayload.systemText ?? '',
-        ].join('\n\n'),
-        sessionDigestRecords,
-        priorSessionDigest: _lastInlineSessionDigests.get(chatId),
-        onEmitSessionDigest: (digest) => recordInlineSessionDigest(chatId, digest),
-      })
+    ? buildInlineConversationSeed(apiMessagesForContext)
     : undefined;
 
   // Derive the exact window buildInlineTurnPreamble uses (same filter + cap)
@@ -821,6 +816,15 @@ export async function startInlineCoderTurn(
         initialMessages,
         initialUserContentParts,
         linkedLibraryContent: linkedLibraryPayload.systemText,
+        // Digest inputs for the stream's single context transform (only the
+        // conversational seed needs them; task turns leave them undefined).
+        sessionDigestRecords: !taskInFlight ? sessionDigestRecords : undefined,
+        priorSessionDigest: !taskInFlight ? _lastInlineSessionDigests.get(chatId) : undefined,
+        onSessionDigestEmitted: !taskInFlight
+          ? (digest) => {
+              if (digest) recordInlineSessionDigest(chatId, digest);
+            }
+          : undefined,
         branchContext: {
           activeBranch,
           defaultBranch: branchInfo?.defaultBranch || 'main',

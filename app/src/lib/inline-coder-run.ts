@@ -64,7 +64,10 @@ import {
   summarizeCoderStateForHandoff,
   type CoderAgentOptions,
   type CoderCheckpointState,
+  type CoderLoopMessage,
 } from '@push/lib/coder-agent';
+import type { MemoryRecord } from '@push/lib/runtime-contract';
+import type { SessionDigest } from '@push/lib/session-digest';
 import { createMemoryToolExecutor } from '@push/lib/memory-tool-exec';
 import {
   buildCoderDetectors,
@@ -646,12 +649,27 @@ export interface InPageCoderKernelSpec {
   sandboxId: string;
   /** Fully-built task preamble — the kernel consumes it verbatim. */
   taskPreamble: string;
-  /** Full managed transcript seed for conversational lead turns. */
-  initialMessages?: LlmMessage[];
+  /**
+   * Raw visible-transcript seed for conversational lead turns. The provider
+   * stream's `toLLMMessages` runs the single context transform over it each
+   * round (no pre-transform — see inline-conversation-context.ts); the digest
+   * inputs below feed that transform.
+   */
+  initialMessages?: CoderLoopMessage[];
   /** Multipart initial user turn; text fallback remains `taskPreamble`. */
   initialUserContentParts?: LlmContentPart[];
   /** User-linked library text rendered into the lead system prompt. */
   linkedLibraryContent?: string;
+  /**
+   * Session-digest inputs threaded to the stream's context transform for
+   * conversational lead turns. `records` is the scope-filtered memory store
+   * prefetch; `priorSessionDigest` is the last digest this chat emitted (for
+   * cross-turn merge); `onSessionDigestEmitted` caches the merged digest. All
+   * undefined on task turns and the delegated arc.
+   */
+  sessionDigestRecords?: ReadonlyArray<MemoryRecord>;
+  priorSessionDigest?: SessionDigest;
+  onSessionDigestEmitted?: (digest: SessionDigest | null) => void;
   declaredCapabilities?: Capability[];
   branchContext?: { activeBranch: string; defaultBranch: string; protectMain: boolean };
   projectInstructions?: string;
@@ -974,6 +992,9 @@ export async function runInPageCoderKernel(
     initialMessages: spec.initialMessages,
     initialUserContentParts: spec.initialUserContentParts,
     linkedLibraryContent: spec.linkedLibraryContent,
+    sessionDigestRecords: spec.sessionDigestRecords,
+    priorSessionDigest: spec.priorSessionDigest,
+    onSessionDigestEmitted: spec.onSessionDigestEmitted,
     symbolSummary: symbolLedger.getSummary(),
     toolExec,
     detectAllToolCalls: detectAllToolCallsFiltered,

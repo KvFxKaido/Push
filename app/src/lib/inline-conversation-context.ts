@@ -1,100 +1,38 @@
 import type { ChatMessage } from '@/types';
-import { manageContext } from './message-context-manager';
-import { getContextBudget } from './orchestrator-context';
-import { estimateContextTokens } from './orchestrator-context';
 import { buildAttachmentContentParts } from './attachment-content-parts';
-import { estimateTokens as estimateRawTokens } from '@push/lib/context-budget';
-import { transformContextBeforeLLM } from '@push/lib/context-transformer';
-import { deriveUserGoalAnchor } from '@push/lib/user-goal-anchor';
-import {
-  isSyntheticDigestMessage,
-  parseSessionDigest,
-  type SessionDigest,
-} from '@push/lib/session-digest';
-import type { LlmMessage } from '@push/lib/provider-contract';
-import type { MemoryRecord } from '@push/lib/runtime-contract';
-import { createId } from '@push/lib/id-utils';
-
-export interface InlineConversationContextOptions {
-  provider?: Parameters<typeof getContextBudget>[0];
-  model?: string;
-  systemPromptOverhead?: string;
-  sessionDigestRecords?: MemoryRecord[];
-  priorSessionDigest?: SessionDigest;
-  onEmitSessionDigest?: (digest: SessionDigest) => void;
-}
+import type { CoderLoopMessage } from '@push/lib/coder-agent';
 
 /**
- * Materialize the inline lead's conversational seed with the same context
- * transform stages the Orchestrator uses: visibility filtering, budget-aware
- * compaction, USER_GOAL anchoring, session digest injection, and the gateway
- * safety net. The caller still supplies the lead's own system prompt; this
- * returns transcript messages only.
+ * Build the inline lead's conversational seed: the visible transcript mapped to
+ * the kernel's loop-message shape.
+ *
+ * Deliberately does NOT run the context transform (compaction / `[USER_GOAL]` /
+ * `[SESSION DIGEST]` / safety net). The provider stream's `toLLMMessages`
+ * already runs exactly those stages on `req.messages` every round, so
+ * transforming here would double-process the transcript — and the second pass,
+ * operating on messages whose `synthetic` / `isToolResult` flags were stripped
+ * by the `LlmMessage` projection, is not idempotent (it can re-compact or
+ * re-emit a session digest). Instead the caller threads the digest inputs
+ * (records / prior digest / onEmit) through to the stream request, so the
+ * single stream-side transform owns history management — exactly how the
+ * Orchestrator loop works.
+ *
+ * Two things the seed preserves so that one transform has what it needs:
+ *   - visibility is pre-filtered here (display-only messages never reach the
+ *     wire), since `LlmMessage` can't carry `visibleToModel` for the stream's
+ *     own filter stage;
+ *   - `isToolResult` rides through (`CoderLoopMessage` carries it) so the
+ *     stream's compaction treats prior tool output correctly.
+ * Attachments (including linked-library images already spliced into the latest
+ * user turn) render into `contentParts`.
  */
-export function buildInlineConversationMessages(
+export function buildInlineConversationSeed(
   apiMessages: readonly ChatMessage[],
-  options: InlineConversationContextOptions,
-): LlmMessage[] {
-  const contextBudget = getContextBudget(options.provider, options.model);
-  const userTurnContents = apiMessages
-    .filter((m) => m.role === 'user' && !m.isToolResult)
-    .map((m) => m.content);
-  const userGoalAnchor =
-    deriveUserGoalAnchor({
-      firstUserTurn: userTurnContents[0],
-      recentUserTurns: userTurnContents,
-    }) ?? undefined;
-
-  const transformed = transformContextBeforeLLM<ChatMessage>([...apiMessages], {
-    surface: 'web',
-    manageContext: (msgs) => {
-      const result = manageContext(msgs, contextBudget, options.provider);
-      const compactionApplied =
-        result.length !== msgs.length || result.some((m, i) => m !== msgs[i]);
-      return { messages: result, compactionApplied };
-    },
-    userGoalAnchor,
-    createGoalMessage: (content): ChatMessage => ({
-      id: `inline-user-goal-${createId()}`,
-      role: 'user',
-      content,
-      timestamp: 0,
-      status: 'done',
-      isToolResult: true,
-    }),
-    sessionDigestInputs: {
-      records: options.sessionDigestRecords ?? [],
-      goal: userGoalAnchor?.currentWorkingGoal ?? userGoalAnchor?.initialAsk,
-    },
-    priorSessionDigest: options.priorSessionDigest,
-    createSessionDigestMessage: (content): ChatMessage => ({
-      id: `inline-session-digest-${createId()}`,
-      role: 'user',
-      content,
-      timestamp: 0,
-      status: 'done',
-      isToolResult: true,
-    }),
-    safetyNet: {
-      estimateTokens: (msgs) => estimateContextTokens(msgs as ChatMessage[]),
-      budget: contextBudget.maxTokens,
-      threshold: 0.85,
-      preserveTail: 4,
-      fixedOverheadTokens: estimateRawTokens(options.systemPromptOverhead ?? ''),
-    },
-  });
-
-  const digestMsg = transformed.messages.find((m) => isSyntheticDigestMessage(m));
-  const digestContent = typeof digestMsg?.content === 'string' ? digestMsg.content : null;
-  const parsed = digestContent ? parseSessionDigest(digestContent) : null;
-  if (parsed) {
-    options.onEmitSessionDigest?.(parsed);
-  }
-
-  return transformed.messages.map(toLlmMessage);
+): CoderLoopMessage[] {
+  return apiMessages.filter((m) => m.visibleToModel !== false).map(toSeedMessage);
 }
 
-function toLlmMessage(message: ChatMessage): LlmMessage {
+function toSeedMessage(message: ChatMessage): CoderLoopMessage {
   const contentParts =
     message.contentParts && message.contentParts.length > 0
       ? message.contentParts
@@ -111,5 +49,6 @@ function toLlmMessage(message: ChatMessage): LlmMessage {
     ...(message.reasoningBlocks && message.reasoningBlocks.length > 0
       ? { reasoningBlocks: message.reasoningBlocks }
       : {}),
+    ...(message.isToolResult ? { isToolResult: true } : {}),
   };
 }

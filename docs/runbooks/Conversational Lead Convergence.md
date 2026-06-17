@@ -39,7 +39,7 @@ Source: behavior audit of the Orchestrator null-trigger path
 
 | Capability | Orchestrator (today) | Inline lead (today) | Gap |
 |---|---|---|---|
-| **Conversation history** | Full transcript, visibility-filtered, budget-aware compaction → `[SESSION DIGEST]` + `[USER_GOAL]` anchor, memory-record injection on compaction (`orchestrator.ts:607-695`) | Phase 1: conversational turns seed the kernel from managed transcript messages (`inline-conversation-context.ts` → `initialMessages`) instead of the 6×700 preamble | Closed in Phase 1 |
+| **Conversation history** | Full transcript, visibility-filtered, budget-aware compaction → `[SESSION DIGEST]` + `[USER_GOAL]` anchor, memory-record injection on compaction (`orchestrator.ts:607-695`) | Phase 1: conversational turns seed the kernel with the raw visible transcript (`buildInlineConversationSeed`) + threaded digest inputs; the stream's `toLLMMessages` runs the single transform per round | Closed in Phase 1 |
 | **Linked-library content** | Per-turn fresh inject (system text + images spliced into latest user msg) | Phase 1: inline lane resolves linked libraries fresh per turn, renders `library_context`, and merges linked images into current-turn parts | Closed in Phase 1 |
 | **scratchpad / todo tools** | Wired | Not wired | Medium (low conversational use) |
 | **delegate_coder / plan_tasks** | Wired | Refused (lead does its own coding) | Low (conversational turns don't delegate code) |
@@ -76,12 +76,19 @@ Source: behavior audit of the Orchestrator null-trigger path
   so their drift protection is unchanged. (+ test.)
 
 **Phase 1 — conversation context parity (LANDED).**
-- Conversational inline turns (`taskInFlight === false`) now build
-  `initialMessages` from the same context-transform stages the Orchestrator
-  depends on: visibility filtering, budget-aware compaction, `[USER_GOAL]`,
-  `[SESSION DIGEST]`, memory records, and the gateway safety net
-  (`app/src/lib/inline-conversation-context.ts`). Task turns stay on the
-  bounded preamble path.
+- Conversational inline turns (`taskInFlight === false`) seed the kernel with
+  the **raw visible transcript** (`buildInlineConversationSeed` in
+  `app/src/lib/inline-conversation-context.ts` → `initialMessages`) and thread
+  the session-digest inputs (scope-filtered memory records, prior digest, emit
+  callback) through to the provider stream. The stream's `toLLMMessages` then
+  runs the **single** context transform — visibility, budget-aware compaction,
+  `[USER_GOAL]`, `[SESSION DIGEST]`, safety net — over that seed each round,
+  exactly as it already does for the Orchestrator loop. The inline lane does
+  NOT pre-transform: doing so (the initial implementation) double-processed the
+  transcript, because the stream re-transforms `req.messages` every round and
+  the pre-transform's synthetic/`isToolResult` flags were stripped by the
+  `LlmMessage` projection — a non-idempotent second pass (Codex review on PR
+  #959). Task turns stay on the bounded preamble path.
 - Linked libraries are resolved in the inline lane every turn. Text lands in
   the kernel system prompt's `library_context`; linked images are spliced into
   the latest user turn / current-turn multipart parts without persisting them
