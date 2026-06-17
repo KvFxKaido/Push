@@ -167,6 +167,19 @@ export function createCoderPolicy(): TurnPolicy {
     afterModelCall: [
       // Drift detection
       (response: string, _messages: readonly ChatMessage[], ctx: TurnContext) => {
+        // Conversational lead turns have no task to drift from, and the drift
+        // correction ("re-read your task and working memory, then use a tool")
+        // is task-shaped — firing it on a long prose answer steers a chat reply
+        // into implementer behavior. Gate on intent exactly like the
+        // no-fake-completion guard below, so the invariant holds at the guard
+        // (not just at the routing layer) as conversational turns converge onto
+        // this lane. taskInFlight is undefined for delegated Coders / engine
+        // runs (treated as a task), so their drift protection is unchanged.
+        if (ctx.taskInFlight === false) {
+          consecutiveDriftRounds = 0;
+          return null;
+        }
+
         // Only check responses that don't contain tool calls
         if (/\{\s*"tool"\s*:/.test(response)) {
           consecutiveDriftRounds = 0;
