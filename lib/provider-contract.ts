@@ -256,6 +256,13 @@ export type JsonSchemaType = 'string' | 'integer' | 'number' | 'boolean' | 'arra
 export interface ToolFunctionParameterSchema {
   type: JsonSchemaType;
   items?: { type: JsonSchemaType };
+  /** Human/model-facing hint. Used to steer context-bound args (e.g. the
+   *  active repo) that the bare type can't convey. */
+  description?: string;
+  /** Closed value set. Used to pin a context-bound arg to its only valid
+   *  value (e.g. the lead's single active repository) so constrained decoding
+   *  emits it correctly instead of a placeholder. */
+  enum?: string[];
 }
 
 /**
