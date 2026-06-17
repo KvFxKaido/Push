@@ -117,10 +117,10 @@ export const CLOUDFLARE_MODELS: string[] = [
   '@cf/google/gemma-3-12b-it',
 ];
 
-// Curated coding-relevant subset of the live OpenCode Zen (standard tier)
-// catalog. Free-text entry still covers anything not seeded here. Refreshed
-// 2026-06 against the Zen dashboard model list; retired entries that left the
-// catalog: qwen3-coder, gemini-3-pro, kimi-k2.5-free, minimax-m2.5-free.
+// Full live OpenCode Zen (standard tier) catalog. Free-text entry still covers
+// anything not seeded here. Refreshed 2026-06-17 against the Zen dashboard model
+// list. Excludes the `Go`-tier models (defined in app/src/lib/zen-go.ts, not in
+// this shared module) and Claude Fable 5 (intentionally not seeded).
 //
 // Ids are BARE (`gpt-5.4`, not `openai/gpt-5.4`): the Zen chat API and its
 // `/v1/models` listing use a flat `owned_by: opencode` namespace. The
@@ -129,19 +129,65 @@ export const CLOUDFLARE_MODELS: string[] = [
 // would make the model non-routable. Free variants keep the `-free` suffix.
 //
 // MiniMax M3 is only offered free-tier (`minimax-m3-free`, rate-limited) on the
-// standard endpoint — the paid `minimax-m3` lives on the Go tier, which is
-// app/web-only (defined in app/src/lib/zen-go.ts, not in this shared module).
+// standard endpoint — the paid `minimax-m3` lives on the Go tier.
 export const ZEN_MODELS: string[] = [
-  'gpt-5.4',
-  'gpt-5.3-codex',
+  ZEN_DEFAULT_MODEL, // big-pickle
+  // Anthropic Claude
+  'claude-haiku-4.5',
+  'claude-opus-4.1',
+  'claude-opus-4.5',
+  'claude-opus-4.6',
+  'claude-opus-4.7',
+  'claude-opus-4.8',
+  'claude-sonnet-4',
+  'claude-sonnet-4.5',
+  'claude-sonnet-4.6',
+  // OpenAI GPT-5.x
+  'gpt-5',
+  'gpt-5-codex',
+  'gpt-5-nano',
+  'gpt-5.1',
+  'gpt-5.1-codex',
+  'gpt-5.1-codex-max',
+  'gpt-5.1-codex-mini',
+  'gpt-5.2',
   'gpt-5.2-codex',
+  'gpt-5.3-codex',
+  'gpt-5.3-codex-spark',
+  'gpt-5.4',
+  'gpt-5.4-mini',
+  'gpt-5.4-nano',
+  'gpt-5.4-pro',
+  'gpt-5.5',
+  'gpt-5.5-pro',
+  // Google Gemini
   'gemini-3-flash',
+  'gemini-3.1-pro',
+  'gemini-3.5-flash',
+  // DeepSeek
+  'deepseek-v4-flash',
+  'deepseek-v4-flash-free',
+  'deepseek-v4-pro',
+  // Zhipu GLM
+  'glm-5',
   'glm-5.1',
-  'kimi-k2.6',
+  // Moonshot Kimi
   'kimi-k2.5',
+  'kimi-k2.6',
+  // Qwen
+  'qwen3.5-plus',
+  'qwen3.6-plus',
+  'qwen3.6-plus-free',
+  // xAI Grok
+  'grok-build-0.1',
+  // MiniMax
+  'minimax-m2.5',
   'minimax-m2.7',
   'minimax-m3-free',
-  ZEN_DEFAULT_MODEL,
+  // Other
+  'mimo-v2.5-free',
+  'nemotron-3-ultra-free',
+  'north-mini-code-free',
 ];
 
 export const NVIDIA_MODELS: string[] = [

@@ -59,9 +59,15 @@ native tool call — both converge at one dispatch path. Consequences:
   uses) so OpenRouter can't route to an endpoint that silently drops the tools.
 - **Capability gate.** `providerModelSupportsNativeToolCalling(provider, model)`
   in `app/src/lib/model-catalog.ts` — name-based (Kimi/GLM) for Cloudflare, which
-  has no models.dev metadata; a curated, routing-suffix-insensitive coding
-  allowlist (`OPENROUTER_NATIVE_TOOL_CALLING_MODELS`, modeled on `ZEN_MODELS` plus
-  the Claude coding tiers) for OpenRouter. Other providers return `false`.
+  has no models.dev metadata; capability-based for OpenRouter (the model's
+  models.dev `toolCall` flag, via `getModelCapabilities`), mirroring the
+  structured-output gate. The curated gateways surface nearly the entire current
+  coding frontier, so a hardcoded allowlist would just be a brittle mirror;
+  capability-gating auto-tracks the catalog. `getModelCapabilities` resolves
+  `:nitro` / `:free` routing suffixes to the base id (an `openRouterBaseId`
+  fallback added alongside this — without it every routed variant resolved to
+  empty capabilities, silently losing reasoning / structured-output / native-tool
+  gating). Other providers return `false`.
 - **Lead wiring.** `inline-coder-run.ts` attaches `getToolFunctionSchemas()`
   when the gate passes; the coder kernel (`lib/coder-agent.ts`) threads the new
   `nativeToolSchemas` option into each round's request. Provider-agnostic — once
@@ -72,10 +78,10 @@ native tool call — both converge at one dispatch path. Consequences:
 
 - **Other providers.** OpenAI/Zen/etc. are function-calling-capable but stay
   text-dispatch only until native calling is validated per provider. The gate is
-  the single switch. OpenRouter is now enabled for a curated coding allowlist
-  (web lead); widen it by appending model ids as they're validated. The CLI
-  OpenRouter adapter (`cli/openai-stream.ts`) is a separate follow-up — its lead
-  doesn't attach `nativeToolSchemas` yet, so it stays text-dispatch.
+  the single switch. OpenRouter is now enabled (web lead) for any model whose
+  models.dev metadata advertises tool support. The CLI OpenRouter adapter
+  (`cli/openai-stream.ts`) is a separate follow-up — its lead doesn't attach
+  `nativeToolSchemas` yet, so it stays text-dispatch.
 - **Other roles.** Delegated Coder, Explorer, auditor/reviewer are unchanged
   (auditor/reviewer use `response_format` structured outputs, a separate
   mechanism — see `docs/runbooks/OpenRouter Capability Expansion.md`).

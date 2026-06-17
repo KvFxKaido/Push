@@ -1260,23 +1260,66 @@ describe('providerModelSupportsStructuredOutput', () => {
     expect(providerModelSupportsNativeToolCalling('cloudflare', undefined)).toBe(false);
   });
 
-  it('gates native tool calling for OpenRouter to the curated coding allowlist', () => {
+  it('gates OpenRouter native tool calling on models.dev tool_call capability', async () => {
+    // Reset modules so the per-provider metadata mem-cache starts clean (other
+    // fetcher tests in this file seed cache keys; a warm cache short-circuits the
+    // fetch and masks the newly-seeded metadata). Mirrors the structured-output
+    // capability test below.
+    vi.resetModules();
     stubWindow();
-    // Curated coding models pass, regardless of routing suffix.
-    expect(
-      providerModelSupportsNativeToolCalling('openrouter', 'anthropic/claude-sonnet-4.6:nitro'),
-    ).toBe(true);
-    expect(providerModelSupportsNativeToolCalling('openrouter', 'openai/gpt-5.3-codex')).toBe(true);
-    expect(providerModelSupportsNativeToolCalling('openrouter', 'moonshotai/kimi-k2.5:nitro')).toBe(
-      true,
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL) => {
+        const url = String(input);
+        if (url.includes('models.dev/api.json')) {
+          return jsonResponse({
+            openrouter: {
+              models: {
+                // Base ids only — models.dev keys by base, OpenRouter routes
+                // `:nitro` / `:free` variants onto the same base model.
+                'anthropic/claude-sonnet-4.6': {
+                  id: 'anthropic/claude-sonnet-4.6',
+                  reasoning: true,
+                  tool_call: true,
+                  structured_output: true,
+                  modalities: { input: ['text'], output: ['text'] },
+                  limit: { context: 400_000 },
+                },
+                'cohere/command-a': {
+                  id: 'cohere/command-a',
+                  reasoning: false,
+                  tool_call: false,
+                  structured_output: false,
+                  modalities: { input: ['text'], output: ['text'] },
+                  limit: { context: 256_000 },
+                },
+              },
+            },
+          });
+        }
+        // OpenRouter catalog endpoint — metadata is what we exercise here, so
+        // the live catalog can be empty.
+        return jsonResponse({ data: [] });
+      }),
     );
-    expect(providerModelSupportsNativeToolCalling('openrouter', 'z-ai/glm-5.1:nitro')).toBe(true);
-    // Suffix-stripping is case-insensitive on the base id.
-    expect(providerModelSupportsNativeToolCalling('openrouter', 'Z-AI/GLM-5.1:nitro')).toBe(true);
-    // Off-allowlist OpenRouter models (even capable ones) stay text-dispatch.
-    expect(providerModelSupportsNativeToolCalling('openrouter', 'cohere/command-a')).toBe(false);
-    expect(providerModelSupportsNativeToolCalling('openrouter', 'moonshotai/kimi-k2')).toBe(false);
-    expect(providerModelSupportsNativeToolCalling('openrouter', undefined)).toBe(false);
+
+    const mc = await import('./model-catalog');
+    await mc.fetchOpenRouterModels();
+
+    // Capable model passes — and the routing suffix resolves to the base id.
+    expect(
+      mc.providerModelSupportsNativeToolCalling('openrouter', 'anthropic/claude-sonnet-4.6'),
+    ).toBe(true);
+    expect(
+      mc.providerModelSupportsNativeToolCalling('openrouter', 'anthropic/claude-sonnet-4.6:nitro'),
+    ).toBe(true);
+    // Model whose metadata reports no tool support stays text-dispatch.
+    expect(mc.providerModelSupportsNativeToolCalling('openrouter', 'cohere/command-a')).toBe(false);
+    // Unknown model (no cached metadata) resolves to false, not a crash.
+    expect(mc.providerModelSupportsNativeToolCalling('openrouter', 'unknown/model:free')).toBe(
+      false,
+    );
+    expect(mc.providerModelSupportsNativeToolCalling('openrouter', undefined)).toBe(false);
   });
 
   it('returns false for an allowlisted provider when the catalog reports no support', () => {
