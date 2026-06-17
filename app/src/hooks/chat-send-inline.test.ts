@@ -27,6 +27,7 @@ const {
   mockRunInlineVerificationCriteria,
   mockBuildLinkedLibraryContext,
   mockSpliceLinkedImagesIntoLastUser,
+  mockMemoryStoreList,
 } = vi.hoisted(() => ({
   mockRunInPageCoderKernel: vi.fn(),
   mockRunCoderAuditorGate: vi.fn(),
@@ -41,6 +42,7 @@ const {
   mockRunInlineVerificationCriteria: vi.fn(),
   mockBuildLinkedLibraryContext: vi.fn(),
   mockSpliceLinkedImagesIntoLastUser: vi.fn(),
+  mockMemoryStoreList: vi.fn(),
 }));
 
 vi.mock('@/lib/inline-coder-run', () => ({
@@ -50,6 +52,11 @@ vi.mock('@/lib/inline-coder-run', () => ({
   createCoderCheckpointAnswerer: (...args: unknown[]) => mockCreateCoderCheckpointAnswerer(...args),
   teePushStream: (...args: unknown[]) => mockTeePushStream(...args),
   runInlineVerificationCriteria: (...args: unknown[]) => mockRunInlineVerificationCriteria(...args),
+}));
+
+vi.mock('@push/lib/context-memory-store', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@push/lib/context-memory-store')>()),
+  getDefaultMemoryStore: () => ({ list: (...args: unknown[]) => mockMemoryStoreList(...args) }),
 }));
 
 vi.mock('@/lib/orchestrator', () => ({
@@ -250,6 +257,7 @@ beforeEach(() => {
     imageAttachments: [],
   });
   mockSpliceLinkedImagesIntoLastUser.mockReset().mockImplementation((messages) => messages);
+  mockMemoryStoreList.mockReset().mockReturnValue([]);
   // Default: a recording no-op (the real append is exercised only by the
   // mid-run-divider regression test, which sets its own implementation).
   mockApplyBranchSwitchPayload.mockReset();
@@ -547,6 +555,37 @@ describe('startInlineCoderTurn', () => {
       { type: 'text', text: spec.taskPreamble },
       { type: 'image_url', image_url: { url: 'data:image/png;base64,linked123' } },
     ]);
+  });
+
+  it('gates the session-digest memory prefetch on a short conversational turn', async () => {
+    // Parity with the Orchestrator (chat-stream-round.ts): the digest stage
+    // no-ops until compaction, so a short conversational turn must not pay the
+    // store's full list() scan.
+    const { ctx } = makeHarness();
+    await startInlineCoderTurn(
+      ctx,
+      laneArgs({
+        trimmedText: 'what changed recently?',
+        apiMessages: [msg('user', 'what changed recently?')],
+      }),
+    );
+    expect(mockMemoryStoreList).not.toHaveBeenCalled();
+  });
+
+  it('prefetches memory records when a compaction marker is already in the transcript', async () => {
+    const { ctx } = makeHarness();
+    await startInlineCoderTurn(
+      ctx,
+      laneArgs({
+        trimmedText: 'what changed recently?',
+        apiMessages: [
+          msg('user', '[USER_GOAL]\nShip the auth refactor\n[/USER_GOAL]'),
+          msg('assistant', 'noted'),
+          msg('user', 'what changed recently?'),
+        ],
+      }),
+    );
+    expect(mockMemoryStoreList).toHaveBeenCalled();
   });
 
   it('routes kernel branchSwitch payloads through applyBranchSwitchPayload', async () => {

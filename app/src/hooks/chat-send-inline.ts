@@ -74,7 +74,7 @@ import {
 } from '@/lib/linked-library-context';
 import { createId } from '@push/lib/id-utils';
 import { getDefaultMemoryStore } from '@push/lib/context-memory-store';
-import { type SessionDigest } from '@push/lib/session-digest';
+import { SESSION_DIGEST_HEADER, type SessionDigest } from '@push/lib/session-digest';
 import type { CoderCheckpointState } from '@push/lib/coder-agent';
 import type { RunEventInput } from '@push/lib/runtime-contract';
 import type {
@@ -300,6 +300,14 @@ export function createInlineTranscriptMirror(
 // ---------------------------------------------------------------------------
 
 type InlineTurnOutcome = 'ok' | 'aborted' | 'failed' | 'precondition-failed';
+
+/**
+ * Message-count threshold above which a conversational turn prefetches memory
+ * records for the session-digest stage even without a compaction marker.
+ * Mirrors `MIN_MESSAGES_BEFORE_PREFETCH` in `chat-stream-round.ts` (rough gate;
+ * the real compaction decision happens in `manageContext`).
+ */
+const MIN_MESSAGES_BEFORE_INLINE_PREFETCH = 20;
 
 const MAX_CACHED_INLINE_DIGESTS = 64;
 const _lastInlineSessionDigests = new Map<string, SessionDigest>();
@@ -727,11 +735,27 @@ export async function startInlineCoderTurn(
   let sessionDigestRecords: Awaited<ReturnType<ReturnType<typeof getDefaultMemoryStore>['list']>> =
     [];
   if (!taskInFlight) {
-    try {
-      const listed = getDefaultMemoryStore().list((record) => record.scope.chatId === chatId);
-      sessionDigestRecords = await Promise.resolve(listed);
-    } catch {
-      sessionDigestRecords = [];
+    // Mirror the Orchestrator's prefetch gate (chat-stream-round.ts): the memory
+    // store's `list(predicate)` loads every record before filtering, so only pay
+    // it when the session-digest stage can actually fire — a prior compaction
+    // marker already in the transcript, or enough messages that compaction is
+    // plausible this turn. Otherwise the digest no-ops and the read is wasted
+    // work on every conversational turn (PR #574 review).
+    const compactionLikely =
+      apiMessagesForContext.some(
+        (m) =>
+          typeof m.content === 'string' &&
+          (m.content.includes('[CONTEXT DIGEST]') ||
+            m.content.includes(SESSION_DIGEST_HEADER) ||
+            m.content.includes('[USER_GOAL]')),
+      ) || apiMessagesForContext.length > MIN_MESSAGES_BEFORE_INLINE_PREFETCH;
+    if (compactionLikely) {
+      try {
+        const listed = getDefaultMemoryStore().list((record) => record.scope.chatId === chatId);
+        sessionDigestRecords = await Promise.resolve(listed);
+      } catch {
+        sessionDigestRecords = [];
+      }
     }
   }
 
