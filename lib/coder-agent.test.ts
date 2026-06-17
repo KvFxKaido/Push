@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   generateCheckpointAnswer,
   resolveLeadRoundOptions,
@@ -439,6 +439,55 @@ describe('runCoderAgent (PushStream consumer)', () => {
     );
     expect(result.summary).toContain('[Coder stopped after 2 rounds');
     expect(result.summary).toContain('sandbox_diff');
+  });
+
+  it('surfaces overflowed calls (extraMutations) to the model instead of dropping them silently', async () => {
+    const rounds: PushStreamEvent[][] = Array.from({ length: 3 }, () => [
+      { type: 'text_delta', text: 'working' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+    const { stream } = makePushStream(rounds);
+    // Two parallel reads (so the batch path runs) plus one call the grouper
+    // rejected into extraMutations — e.g. a third parallel Explorer past the
+    // cap-of-2. The executable batch never runs it, so the kernel must surface
+    // it rather than silently drop it.
+    const detectAllToolCalls = () => ({
+      readOnly: [
+        { call: { tool: 'sandbox_read_file', args: { path: 'a' } } },
+        { call: { tool: 'sandbox_read_file', args: { path: 'b' } } },
+      ],
+      parallelDelegations: [],
+      mutating: null,
+      fileMutations: [],
+      extraMutations: [{ call: { tool: 'delegate_explorer', args: { task: 'third thread' } } }],
+      droppedCandidates: [],
+    });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await runCoderAgent(
+        baseCoderOptions({
+          stream,
+          leadMode: true,
+          harnessMaxRounds: 5,
+          detectAllToolCalls,
+          // Halt on the second round, after round 0 ran the batch + the notice.
+          evaluateAfterModel: async (_response: string, round: number) =>
+            round >= 1 ? ({ action: 'halt', summary: 'done' } as const) : null,
+        }),
+        { onStatus: () => {} },
+      );
+      const overflowLog = logSpy.mock.calls
+        .map((c) => String(c[0]))
+        .find((line) => line.includes('coder_turn_overflow_dropped'));
+      expect(overflowLog).toBeTruthy();
+      expect(JSON.parse(overflowLog as string)).toMatchObject({
+        event: 'coder_turn_overflow_dropped',
+        count: 1,
+        tools: 'delegate_explorer',
+      });
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 
   it('fires onCheckpoint at the cadence (every 5th round) with a consistent state snapshot', async () => {

@@ -31,9 +31,22 @@ boundaries, and event compatibility.
 Status:
 - **Inline is the default (flipped 2026-06-11).** `delegation-mode-settings.ts`
   defaults to `inline`; an explicit `delegated` storage value opts back into
-  the wrapper arc. Attachment turns still run the foreground Orchestrator
-  loop regardless of mode (the engine envelope doesn't carry attachments
-  yet) — that guard is a deletion blocker, not an oversight.
+  the wrapper arc.
+- **The Orchestrator role/loop is still load-bearing — do not prune it.**
+  `resolveTurnEngineTrigger` (`delegation-mode-settings.ts`) returns `null`
+  (→ foreground Orchestrator loop, prompt built at runtime by
+  `buildOrchestratorBaseBuilder` in `app/src/lib/orchestrator.ts`) on three
+  live triggers: (1) **conversational lead turns with a repo** — the
+  `conversationalTurn` downgrade in `chat-send-background.ts` deliberately keeps
+  chat replies ("what changed recently?") off the Coder kernel's
+  no-fake-completion guard; (2) **no-repo workspaces** (chat / scratch /
+  local-pc), which are never inline-eligible; (3) the **`delegated` opt-out**.
+  Only the Orchestrator→Coder *wrapper/Planner* arc is slated for deletion
+  below — the lead loop itself stays until those three triggers are re-homed.
+  (Correction: an earlier note here claimed attachment turns force the
+  Orchestrator loop. They don't — attachments set `conversationalTurn=false`,
+  so they route to the inline lane and are carried into the kernel as multipart
+  content; see the dispatch table in `delegation-mode-settings.ts`.)
 - **Measured (2026-06-11, two runs): quality ties, the wrapper costs ~78%
   wall-clock and owns a unique failure mode** — v2 on fixed instruments:
   completion 11/12 both arms, median wall 33.3 s direct vs 59.3 s delegated,
@@ -167,6 +180,20 @@ lane bakes (mirroring the web's preference-then-default arc). Remaining:
 retire the engine loop's duplicated round machinery once the lane has baked;
 the daemon's delegated task-graph nodes keep the implementer prompt by
 design (they are delegations, not the lead).
+
+The inline lead is not delegation-free: it wires a narrow, **Explorer-only**
+delegation arc (`delegate_explorer` via the kernel's `extraToolSources` /
+`executeExtraToolCall` seam, executed by `runInlineExplorerDelegation` in
+`app/src/lib/inline-coder-run.ts`). The lead stays the implementer — it does
+its own coding and `delegate_coder` / `plan_tasks` are refused — but it can
+offload read-only investigation when a question spans many files, and fan out
+up to two Explorers concurrently in one turn. This rides an opt-in
+parallel-delegation bucket in the shared grouper
+(`lib/tool-call-grouping.ts:maxParallelDelegations`, default-disabled so the
+Orchestrator and CLI surfaces are unchanged) which the Coder kernel executes
+in its read-phase `Promise.all`. `delegate:explorer` is part of the
+lead-capable `coder` grant; the empty `extraToolSources` on a delegated
+sub-Coder keeps the same call refused at the source gate.
 
 Protected during convergence: the shared runtime semantics in §1 (one kernel,
 drift tests), the durable job engine, and the safety/Auditor boundary — the

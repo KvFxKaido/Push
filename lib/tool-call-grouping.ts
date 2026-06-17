@@ -44,6 +44,17 @@ export interface GroupingPredicates<T> {
    * by convention: this predicate is only consulted for non-read calls.
    */
   readonly isFileMutation: (call: T) => boolean;
+  /**
+   * True when the call is a parallel-safe delegation — a read-only
+   * investigation sub-agent (e.g. `delegate_explorer`) that may fan out
+   * concurrently rather than occupy the single trailing side-effect slot.
+   * Only consulted when `caps.maxParallelDelegations` is a positive number;
+   * absent/disabled → such calls fall through to the `mutating` slot exactly
+   * as before. The Inline Foreground Lane opts in (cap 2) so the single lead
+   * can spawn a couple of Explorers in one turn; the Orchestrator and CLI
+   * leave it disabled.
+   */
+  readonly isParallelDelegation?: (call: T) => boolean;
 }
 
 export interface GroupingCaps {
@@ -61,6 +72,16 @@ export interface GroupingCaps {
    * `UNCAPPED_GROUPING`).
    */
   readonly maxFileMutationBatch: number | null;
+  /**
+   * Maximum parallel-safe delegations per turn (concurrent Explorers).
+   * Overflow lands in `extraMutations` (ordering-violation hint — the model
+   * re-issues the tail next turn). `null`/`undefined`/absent disables the
+   * parallel-delegation bucket entirely: delegations fall through to the
+   * single trailing `mutating` slot exactly as before. This is the default
+   * for the Orchestrator and CLI surfaces; the Inline Foreground Lane sets
+   * it to 2. Requires `predicates.isParallelDelegation` to take effect.
+   */
+  readonly maxParallelDelegations?: number | null;
 }
 
 /**
@@ -93,6 +114,14 @@ export const DEFAULT_GROUPING_CAPS: GroupingCaps = {
 export interface GroupedCalls<T> {
   /** Contiguous prefix of read-only calls (parallel-safe). */
   readOnly: T[];
+  /**
+   * Parallel-safe delegations collected during the read phase (concurrent
+   * Explorers), capped at `maxParallelDelegations`. Empty when the bucket is
+   * disabled — such calls then fall through to `mutating` as before. Callers
+   * that opt in execute these alongside `readOnly` (they don't mutate the
+   * workspace).
+   */
+  parallelDelegations: T[];
   /**
    * Contiguous batch of pure file-mutation calls. Sequential,
    * fail-fast — NOT atomic.
@@ -137,6 +166,7 @@ export function groupCallsByPhase<T>(
 ): GroupedCalls<T> {
   const empty: GroupedCalls<T> = {
     readOnly: [],
+    parallelDelegations: [],
     fileMutations: [],
     mutating: null,
     batchOverflow: [],
@@ -145,28 +175,54 @@ export function groupCallsByPhase<T>(
 
   if (calls.length === 0) return empty;
 
+  // Parallel-delegation bucket is opt-in: a positive cap AND a predicate.
+  // Disabled → identical to the historical reads/mutations/trailing shape
+  // (delegations fall through to `mutating`), so the Orchestrator and CLI
+  // surfaces are byte-for-byte unchanged.
+  const delegationCap = caps.maxParallelDelegations ?? null;
+  const delegationsEnabled =
+    delegationCap !== null && delegationCap > 0 && predicates.isParallelDelegation != null;
+  const isParallelDelegation = (call: T): boolean =>
+    delegationsEnabled ? predicates.isParallelDelegation!(call) : false;
+
   // Single-call fast path — classify directly. Keeps the simple case
   // out of the state-machine branch and matches the legacy web shape.
   if (calls.length === 1) {
     const only = calls[0];
+    if (isParallelDelegation(only)) return { ...empty, parallelDelegations: [only] };
     if (predicates.isReadOnly(only)) return { ...empty, readOnly: [only] };
     if (predicates.isFileMutation(only)) return { ...empty, fileMutations: [only] };
     return { ...empty, mutating: only };
   }
 
   const readOnly: T[] = [];
+  const parallelDelegations: T[] = [];
   const fileMutations: T[] = [];
   let mutating: T | null = null;
   const extraMutations: T[] = [];
   let phase: 'reads' | 'mutations' | 'done' = 'reads';
 
   for (const call of calls) {
-    const isRead = predicates.isReadOnly(call);
-    const isFileMut = !isRead && predicates.isFileMutation(call);
+    const isDelegation = isParallelDelegation(call);
+    const isRead = !isDelegation && predicates.isReadOnly(call);
+    const isFileMut = !isDelegation && !isRead && predicates.isFileMutation(call);
 
     if (phase === 'done') {
       // A side-effect already landed — anything else is overflow.
       extraMutations.push(call);
+      continue;
+    }
+
+    if (isDelegation) {
+      if (phase === 'reads') {
+        // Parallel-safe delegations ride the read phase: they don't touch
+        // the workspace, so they fan out alongside reads.
+        parallelDelegations.push(call);
+        continue;
+      }
+      // Delegation after a mutation began — ordering violation.
+      extraMutations.push(call);
+      phase = 'done';
       continue;
     }
 
@@ -203,6 +259,15 @@ export function groupCallsByPhase<T>(
     readOnly.length = caps.maxParallelReads;
   }
 
+  // Cap parallel delegations — overflow is an ordering-violation-class
+  // reject (model re-issues the tail next turn), NOT a silent truncation:
+  // dropping an Explorer the model explicitly asked for would strand a
+  // pending investigation with no feedback. Disabled cap → bucket is empty.
+  if (delegationCap !== null && parallelDelegations.length > delegationCap) {
+    const overflow = parallelDelegations.splice(delegationCap);
+    extraMutations.push(...overflow);
+  }
+
   // Cap file-mutation batch — surface overflow in `batchOverflow` (not
   // mixed into `extraMutations`) so the caller can give the model a
   // "split the batch across turns" hint distinct from the ordering-
@@ -215,7 +280,7 @@ export function groupCallsByPhase<T>(
     batchOverflow = fileMutations.splice(caps.maxFileMutationBatch);
   }
 
-  return { readOnly, fileMutations, mutating, batchOverflow, extraMutations };
+  return { readOnly, parallelDelegations, fileMutations, mutating, batchOverflow, extraMutations };
 }
 
 /**

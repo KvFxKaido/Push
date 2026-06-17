@@ -128,6 +128,16 @@ export interface DetectedToolCalls {
   /** Read-only calls that can safely execute in parallel. */
   readOnly: AnyToolCall[];
   /**
+   * Parallel-safe delegations (concurrent Explorers) collected during the
+   * read phase. Populated only when the caller opts into the bucket via
+   * `detectAllToolCalls(text, { maxParallelDelegations })` — the Inline
+   * Foreground Lane (cap 2). Empty/absent for the Orchestrator path, which
+   * keeps routing a single `delegate_explorer` through `mutating` as before.
+   * Optional so existing callers that build a `DetectedToolCalls` literal
+   * don't have to populate it; consumers default to `[]`.
+   */
+  parallelDelegations?: AnyToolCall[];
+  /**
    * Contiguous batch of safe file-mutation calls (such as
    * write/edit/patch on sandbox-backed surfaces). Runs sequentially
    * after the parallel reads and before the trailing side-effect.
@@ -430,9 +440,21 @@ function mapMalformedToDropped(report: ToolMalformedReport): DroppedToolCallCand
   };
 }
 
-export function detectAllToolCalls(text: string): DetectedToolCalls {
+/** Per-call opts for {@link detectAllToolCalls}. */
+export interface DetectToolCallsOptions {
+  /**
+   * Enable the parallel-delegation bucket (concurrent Explorers) with this
+   * cap. Omitted/0 → `delegate_explorer` keeps falling through to the single
+   * trailing `mutating` slot (the Orchestrator default). The Inline Foreground
+   * Lane passes 2.
+   */
+  maxParallelDelegations?: number;
+}
+
+export function detectAllToolCalls(text: string, opts?: DetectToolCallsOptions): DetectedToolCalls {
   const empty: DetectedToolCalls = {
     readOnly: [],
+    parallelDelegations: [],
     fileMutations: [],
     mutating: null,
     batchOverflow: [],
@@ -543,7 +565,7 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
   }
 
   if (allCalls.length === 0) return { ...empty, droppedCandidates };
-  return { ...classifyDetectedCalls(allCalls), droppedCandidates };
+  return { ...classifyDetectedCalls(allCalls, opts), droppedCandidates };
 }
 
 /**
@@ -627,11 +649,31 @@ function splitOverlappingFileMutations(fileMutations: AnyToolCall[]): {
   return { accepted, rejected };
 }
 
-function classifyDetectedCalls(allCalls: AnyToolCall[]): DetectedToolCalls {
+/**
+ * A parallel-safe delegation: read-only investigation the lead may fan out
+ * concurrently. Only `delegate_explorer` qualifies — `delegate_coder` and
+ * `plan_tasks` carry real side effects and stay in the single trailing slot.
+ */
+export function isParallelDelegationToolCall(toolCall: AnyToolCall): boolean {
+  return toolCall.source === 'delegate' && toolCall.call.tool === 'delegate_explorer';
+}
+
+function classifyDetectedCalls(
+  allCalls: AnyToolCall[],
+  opts?: DetectToolCallsOptions,
+): DetectedToolCalls {
   const grouped = groupCallsByPhase<AnyToolCall>(
     allCalls,
-    { isReadOnly: isReadOnlyToolCall, isFileMutation: isFileMutationToolCall },
-    { maxParallelReads: MAX_PARALLEL_TOOL_CALLS, maxFileMutationBatch: MAX_FILE_MUTATION_BATCH },
+    {
+      isReadOnly: isReadOnlyToolCall,
+      isFileMutation: isFileMutationToolCall,
+      isParallelDelegation: isParallelDelegationToolCall,
+    },
+    {
+      maxParallelReads: MAX_PARALLEL_TOOL_CALLS,
+      maxFileMutationBatch: MAX_FILE_MUTATION_BATCH,
+      maxParallelDelegations: opts?.maxParallelDelegations,
+    },
   );
   const splitFileMutations = splitOverlappingFileMutations(grouped.fileMutations);
   return {
