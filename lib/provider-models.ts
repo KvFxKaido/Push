@@ -130,9 +130,15 @@ export const CLOUDFLARE_MODELS: string[] = [
 //
 // MiniMax M3 is only offered free-tier (`minimax-m3-free`, rate-limited) on the
 // standard endpoint — the paid `minimax-m3` lives on the Go tier.
+//
+// Grouped by family in order: Zen default, Anthropic Claude, OpenAI GPT-5.x,
+// Google Gemini, DeepSeek, Zhipu GLM, Moonshot Kimi, Qwen, xAI Grok, MiniMax,
+// then misc. No inline comments inside the array body — the CLI catalog-parity
+// test (`cli/tests/model-catalog.test.mjs`) parses this list with a regex that
+// would read uppercase tokens in comments (`GPT`, `GLM`, the `AI` in `OpenAI`)
+// as unresolvable constant references.
 export const ZEN_MODELS: string[] = [
-  ZEN_DEFAULT_MODEL, // big-pickle
-  // Anthropic Claude
+  ZEN_DEFAULT_MODEL,
   'claude-haiku-4.5',
   'claude-opus-4.1',
   'claude-opus-4.5',
@@ -142,7 +148,6 @@ export const ZEN_MODELS: string[] = [
   'claude-sonnet-4',
   'claude-sonnet-4.5',
   'claude-sonnet-4.6',
-  // OpenAI GPT-5.x
   'gpt-5',
   'gpt-5-codex',
   'gpt-5-nano',
@@ -160,31 +165,23 @@ export const ZEN_MODELS: string[] = [
   'gpt-5.4-pro',
   'gpt-5.5',
   'gpt-5.5-pro',
-  // Google Gemini
   'gemini-3-flash',
   'gemini-3.1-pro',
   'gemini-3.5-flash',
-  // DeepSeek
   'deepseek-v4-flash',
   'deepseek-v4-flash-free',
   'deepseek-v4-pro',
-  // Zhipu GLM
   'glm-5',
   'glm-5.1',
-  // Moonshot Kimi
   'kimi-k2.5',
   'kimi-k2.6',
-  // Qwen
   'qwen3.5-plus',
   'qwen3.6-plus',
   'qwen3.6-plus-free',
-  // xAI Grok
   'grok-build-0.1',
-  // MiniMax
   'minimax-m2.5',
   'minimax-m2.7',
   'minimax-m3-free',
-  // Other
   'mimo-v2.5-free',
   'nemotron-3-ultra-free',
   'north-mini-code-free',
