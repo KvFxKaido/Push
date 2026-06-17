@@ -241,6 +241,14 @@ async function runInlineExplorerDelegation(
   }
   const executionId = crypto.randomUUID();
   const startMs = Date.now();
+  // Already-aborted short-circuit: if the turn was cancelled before this
+  // delegation ran (e.g. a sibling in the same parallel fan-out already saw the
+  // abort), don't spin up an Explorer or the memory round-trip just to await a
+  // rejection. Checked before emitting `subagent.started` so no started event
+  // goes unpaired.
+  if (ctx.signal?.aborted) {
+    return { text: '[Explorer cancelled by user.]' };
+  }
   ctx.onRunEvent?.({ type: 'subagent.started', executionId, agent: 'explorer', detail: task });
 
   const memoryScope = buildMemoryScope(
