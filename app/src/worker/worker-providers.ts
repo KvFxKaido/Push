@@ -23,7 +23,7 @@ import {
   createAnthropicTranslatedStream,
   toAnthropicMessages,
 } from '@push/lib/openai-anthropic-bridge';
-import { toOpenAIChat } from '@push/lib/openai-chat-serializer';
+import { toOpenAIChat, toOpenAIResponseFormat } from '@push/lib/openai-chat-serializer';
 import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
 import { ANTHROPIC_MODELS, GOOGLE_MODELS, OPENAI_MODELS } from '@push/lib/provider-models';
 import {
@@ -45,7 +45,12 @@ import {
 import type { ExperimentalProviderType } from '../lib/experimental-providers';
 
 // Gateway Abstraction imports
-import type { LlmMessage, PushStreamRequest, PushStreamEvent } from '@push/lib/provider-contract';
+import type {
+  LlmMessage,
+  PushStreamRequest,
+  PushStreamEvent,
+  ResponseFormatSpec,
+} from '@push/lib/provider-contract';
 import { normalizeReasoning } from '@push/lib/reasoning-tokens';
 // --- Cloudflare Workers AI ---
 
@@ -63,6 +68,33 @@ function isCloudflareTextGenerationModel(model: AiModelsSearchObject): boolean {
 // env.AI.run emits (single-line `data: {json}` frames terminated by `\n`). If
 // more providers need SSE parsing, extract a shared pump rather than copying
 // this one.
+/**
+ * Reconstruct a neutral `ResponseFormatSpec` from the OpenAI-shaped
+ * `response_format` field the client serializes into the request body
+ * (`toOpenAIResponseFormat`). Returns `undefined` for any shape that isn't a
+ * complete `json_schema` block so a malformed field is dropped rather than
+ * forwarded to `env.AI.run` and rejected upstream.
+ */
+function parseResponseFormatSpec(raw: unknown): ResponseFormatSpec | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const rf = raw as Record<string, unknown>;
+  if (rf.type !== 'json_schema') return undefined;
+  const js = rf.json_schema;
+  if (!js || typeof js !== 'object') return undefined;
+  const block = js as Record<string, unknown>;
+  const name = typeof block.name === 'string' ? block.name : undefined;
+  const schema =
+    block.schema && typeof block.schema === 'object'
+      ? (block.schema as Record<string, unknown>)
+      : undefined;
+  if (!name || !schema) return undefined;
+  return {
+    name,
+    schema,
+    ...(typeof block.strict === 'boolean' ? { strict: block.strict } : {}),
+  };
+}
+
 async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterable<PushStreamEvent> {
   const input: Record<string, unknown> = {
     messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
@@ -72,6 +104,11 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
   if (req.maxTokens !== undefined) input.max_tokens = req.maxTokens;
   if (req.temperature !== undefined) input.temperature = req.temperature;
   if (req.topP !== undefined) input.top_p = req.topP;
+  // Native JSON-schema structured outputs for models that support it (Kimi
+  // K2.x, GLM). Workers AI's binding accepts the OpenAI `response_format`
+  // shape; gated upstream by `providerModelSupportsStructuredOutput` so it's
+  // only set for supporting models.
+  if (req.responseFormat) input.response_format = toOpenAIResponseFormat(req.responseFormat);
 
   // Workers AI binding routes through AI Gateway natively when given a
   // `gateway.id`. The binding handles auth via account context — no
@@ -257,6 +294,20 @@ export async function handleCloudflareChat(request: Request, env: Env): Promise<
       timestamp: Date.now(),
     }));
 
+    // A present-but-malformed response_format is dropped (not forwarded to
+    // env.AI.run, which would reject it). Log the drop so a client/serializer
+    // drift doesn't silently fall back to prompt-only generation — the client
+    // serializes via `toOpenAIResponseFormat`, so this branch should never fire
+    // in practice.
+    const responseFormat = parseResponseFormatSpec(parsedRequest.response_format);
+    if (parsedRequest.response_format != null && responseFormat === undefined) {
+      wlog('warn', 'cloudflare_response_format_dropped', {
+        requestId,
+        route: 'api/cloudflare/chat',
+        model,
+      });
+    }
+
     // Forward request tuning params into the PushStreamRequest. The adapter
     // layer doesn't propagate these today, so this handler iterates the
     // PushStream directly — adapter round-tripping only buys us the legacy
@@ -270,6 +321,7 @@ export async function handleCloudflareChat(request: Request, env: Env): Promise<
       temperature:
         typeof parsedRequest.temperature === 'number' ? parsedRequest.temperature : undefined,
       topP: typeof parsedRequest.top_p === 'number' ? parsedRequest.top_p : undefined,
+      responseFormat,
     };
 
     const encoder = new TextEncoder();

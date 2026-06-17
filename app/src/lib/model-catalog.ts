@@ -288,13 +288,17 @@ export function openRouterModelSupportsReasoning(modelId: string): boolean {
  * field onto the wire — the OpenAI-shaped endpoints routed through
  * `openAISSEPump`. The Anthropic / Gemini / Vertex native serializers are
  * excluded because they ignore the field by contract (see `ResponseFormatSpec`
- * in `lib/provider-contract.ts`); `cloudflare`, `bedrock`, and `ollama` are
- * omitted because their `response_format` support isn't confirmed (Ollama Cloud
- * does not honor structured outputs per its docs, so attaching one would route
- * around the prompt-only `parseStructured` fallback). Membership here only
- * governs *whether the wire can honor the constraint* — actual attachment is
- * still gated on per-model catalog capability below, so a provider never
- * attaches a constraint its routed endpoint would silently drop.
+ * in `lib/provider-contract.ts`); `bedrock` and `ollama` are omitted because
+ * their `response_format` support isn't confirmed (Ollama Cloud does not honor
+ * structured outputs per its docs, so attaching one would route around the
+ * prompt-only `parseStructured` fallback). `cloudflare` IS included: the
+ * Workers AI binding accepts the OpenAI `response_format` shape for the models
+ * whose model cards advertise structured outputs (Kimi K2.x, GLM) — but it has
+ * no models.dev metadata, so its per-model gate is name-based (see
+ * `cloudflareModelSupportsStructuredOutput`). Membership here only governs
+ * *whether the wire can honor the constraint* — actual attachment is still
+ * gated on per-model capability below, so a provider never attaches a
+ * constraint its routed endpoint would silently drop.
  */
 const STRUCTURED_OUTPUT_PROVIDERS: ReadonlySet<string> = new Set([
   'openrouter',
@@ -305,7 +309,22 @@ const STRUCTURED_OUTPUT_PROVIDERS: ReadonlySet<string> = new Set([
   'kilocode',
   'openadapter',
   'zen',
+  'cloudflare',
 ]);
+
+/**
+ * Name-based structured-output gate for Cloudflare Workers AI. The provider
+ * returns bare `@cf/...` ids with no models.dev metadata, so the generic
+ * catalog probe can't see capability — mirrors the name-pattern fallback used
+ * for context windows (`guessWindowFromName`). Cloudflare's model cards
+ * advertise JSON-schema structured outputs for the Kimi K2.x and GLM families
+ * specifically; gate on those by name and leave every other Workers AI model
+ * prompt-only (it falls back to `parseStructured`).
+ */
+function cloudflareModelSupportsStructuredOutput(modelId: string): boolean {
+  const m = modelId.toLowerCase();
+  return m.includes('kimi') || m.includes('moonshot') || m.includes('glm');
+}
 
 /**
  * Whether to attach a native `response_format` JSON-Schema constraint for the
@@ -323,6 +342,9 @@ export function providerModelSupportsStructuredOutput(
   modelId: string | undefined,
 ): boolean {
   if (!modelId || !STRUCTURED_OUTPUT_PROVIDERS.has(provider)) return false;
+  // Workers AI has no models.dev metadata, so resolve by name instead of the
+  // catalog probe (which would always report `structuredOutput: false`).
+  if (provider === 'cloudflare') return cloudflareModelSupportsStructuredOutput(modelId);
   return getModelCapabilities(provider, modelId).structuredOutput;
 }
 

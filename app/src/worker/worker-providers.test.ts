@@ -559,6 +559,35 @@ describe('handleCloudflareChat — Cloudflare AI Gateway', () => {
     // path on Workers without the env vars set.
     expect(run.mock.calls[0]).toHaveLength(2);
   });
+
+  it('forwards an OpenAI-shaped response_format from the body into env.AI.run input', async () => {
+    const run = vi.fn(async () => new ReadableStream());
+    const request = new Request('https://push.example.test/api/chat', {
+      method: 'POST',
+      headers: { Origin: 'https://push.example.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'test-model',
+        messages: [{ role: 'user', content: 'hello' }],
+        response_format: {
+          type: 'json_schema',
+          json_schema: { name: 'verdict', strict: true, schema: { type: 'object' } },
+        },
+      }),
+    });
+    await handleCloudflareChat(request, makeEnv({ AI: { run } as unknown as Env['AI'] }));
+    const input = (run.mock.calls[0] as unknown[])[1] as Record<string, unknown>;
+    expect(input.response_format).toEqual({
+      type: 'json_schema',
+      json_schema: { name: 'verdict', strict: true, schema: { type: 'object' } },
+    });
+  });
+
+  it('does not set response_format on env.AI.run input when the body omits it', async () => {
+    const run = vi.fn(async () => new ReadableStream());
+    await handleCloudflareChat(makeChatRequest(), makeEnv({ AI: { run } as unknown as Env['AI'] }));
+    const input = (run.mock.calls[0] as unknown[])[1] as Record<string, unknown>;
+    expect(input.response_format).toBeUndefined();
+  });
 });
 
 describe('handleOpenRouterModels', () => {
