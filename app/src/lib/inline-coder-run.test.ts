@@ -94,6 +94,8 @@ import type { AnyToolCall } from './tool-dispatch';
 import { buildGitHubToolProtocol } from './github-tools';
 import { ASK_USER_TOOL_PROTOCOL } from './ask-user-tools';
 import { ARTIFACT_TOOL_PROTOCOL } from './artifact-tools';
+import { SCRATCHPAD_TOOL_PROTOCOL } from './scratchpad-tools';
+import { TODO_TOOL_PROTOCOL } from './todo-tools';
 import type { ChatCard, ChatMessage, HarnessProfileSettings } from '@/types';
 import type {
   LlmMessage,
@@ -643,6 +645,23 @@ describe('lead tool surface (inline foreground lane)', () => {
         taskPreamble: 'Task: what changed recently?',
         branchContext: { activeBranch: 'main', defaultBranch: 'main', protectMain: false },
         memoryScope: { repoFullName: 'KvFxKaido/Push', branch: 'main', chatId: 'chat-1' },
+        scratchpad: {
+          content: 'Remember the release train constraint.',
+          replace: vi.fn(),
+          append: vi.fn(),
+        },
+        todo: {
+          todos: [
+            {
+              id: 'inspect-history',
+              content: 'Inspect recent history',
+              activeForm: 'Inspecting recent history',
+              status: 'pending',
+            },
+          ],
+          replace: vi.fn(),
+          clear: vi.fn(),
+        },
         leadToolSurface,
       },
       { onStatus: () => {} },
@@ -654,6 +673,8 @@ describe('lead tool surface (inline foreground lane)', () => {
     const options = await runLeadCall(true);
     expect(options.extraToolProtocols).toEqual([
       buildGitHubToolProtocol({ includeDelegation: false }),
+      SCRATCHPAD_TOOL_PROTOCOL,
+      TODO_TOOL_PROTOCOL,
       ASK_USER_TOOL_PROTOCOL,
       ARTIFACT_TOOL_PROTOCOL,
       LEAD_EXPLORER_DELEGATION_PROTOCOL,
@@ -670,6 +691,67 @@ describe('lead tool surface (inline foreground lane)', () => {
     expect(options.persona).toBe('lead');
     // The web lead opts into the web-named tool-routing/error guidance.
     expect(options.leadToolGuidance).toBe(true);
+    expect(options.linkedLibraryContent).toContain('[SCRATCHPAD]');
+    expect(options.linkedLibraryContent).toContain('Remember the release train constraint.');
+    expect(options.linkedLibraryContent).toContain('[TODO]');
+    expect(options.linkedLibraryContent).toContain('Inspect recent history');
+  });
+
+  it('executes scratchpad and todo calls through inline chat-state handlers', async () => {
+    await runInPageCoderKernel(
+      {
+        provider: 'openrouter',
+        modelId: 'coder-model-x',
+        sandboxId: 'sb-1',
+        taskPreamble: 'Task: plan',
+        memoryScope: { repoFullName: 'KvFxKaido/Push', branch: 'main', chatId: 'chat-1' },
+        scratchpad: {
+          content: 'old',
+          replace: vi.fn(),
+          append: vi.fn(),
+        },
+        todo: {
+          todos: [],
+          replace: vi.fn(),
+          clear: vi.fn(),
+        },
+        leadToolSurface: true,
+      },
+      { onStatus: () => {} },
+    );
+    const { options } = lastKernelCall();
+
+    const scratchResult = await options.toolExec(
+      {
+        source: 'scratchpad',
+        call: { tool: 'append_scratchpad', content: 'new note' },
+      } as AnyToolCall,
+      { round: 0 },
+    );
+    const todoResult = await options.toolExec(
+      {
+        source: 'todo',
+        call: {
+          tool: 'todo_write',
+          todos: [
+            {
+              id: 'a',
+              content: 'Do A',
+              activeForm: 'Doing A',
+              status: 'in_progress',
+            },
+          ],
+        },
+      } as AnyToolCall,
+      { round: 0 },
+    );
+
+    expect(scratchResult.kind).toBe('executed');
+    if (scratchResult.kind !== 'executed') throw new Error('scratchpad should execute');
+    expect(scratchResult.resultText).toContain('Scratchpad updated');
+    expect(todoResult.kind).toBe('executed');
+    if (todoResult.kind !== 'executed') throw new Error('todo should execute');
+    expect(todoResult.resultText).toContain('Todo updated');
   });
 
   it('fans out up to two Explorer delegations into the parallel bucket, rejecting a third', async () => {
