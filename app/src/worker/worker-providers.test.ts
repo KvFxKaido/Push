@@ -588,6 +588,55 @@ describe('handleCloudflareChat — Cloudflare AI Gateway', () => {
     const input = (run.mock.calls[0] as unknown[])[1] as Record<string, unknown>;
     expect(input.response_format).toBeUndefined();
   });
+
+  it('forwards a well-formed tools array into env.AI.run input with tool_choice auto', async () => {
+    const run = vi.fn(async () => new ReadableStream());
+    const tools = [
+      {
+        type: 'function',
+        function: {
+          name: 'exec',
+          description: 'Run a shell command',
+          parameters: {
+            type: 'object',
+            properties: { command: { type: 'string' } },
+            required: ['command'],
+            additionalProperties: false,
+          },
+        },
+      },
+    ];
+    const request = new Request('https://push.example.test/api/chat', {
+      method: 'POST',
+      headers: { Origin: 'https://push.example.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'test-model',
+        messages: [{ role: 'user', content: 'hello' }],
+        tools,
+      }),
+    });
+    await handleCloudflareChat(request, makeEnv({ AI: { run } as unknown as Env['AI'] }));
+    const input = (run.mock.calls[0] as unknown[])[1] as Record<string, unknown>;
+    expect(input.tools).toEqual(tools);
+    expect(input.tool_choice).toBe('auto');
+  });
+
+  it('drops a malformed tools payload rather than forwarding it', async () => {
+    const run = vi.fn(async () => new ReadableStream());
+    const request = new Request('https://push.example.test/api/chat', {
+      method: 'POST',
+      headers: { Origin: 'https://push.example.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'test-model',
+        messages: [{ role: 'user', content: 'hello' }],
+        tools: [{ type: 'function' }, { nope: true }],
+      }),
+    });
+    await handleCloudflareChat(request, makeEnv({ AI: { run } as unknown as Env['AI'] }));
+    const input = (run.mock.calls[0] as unknown[])[1] as Record<string, unknown>;
+    expect(input.tools).toBeUndefined();
+    expect(input.tool_choice).toBeUndefined();
+  });
 });
 
 describe('handleOpenRouterModels', () => {

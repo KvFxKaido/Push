@@ -212,6 +212,12 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
         'leadToolScope',
         'memoryToolProtocol',
         'modelId',
+        // Parity decision: the delegated arc threads `nativeToolSchemas:
+        // undefined` here — the gate (`providerModelSupportsNativeToolCalling`)
+        // returns false for this openrouter model, and native tool calling is
+        // scoped to the Cloudflare Kimi/GLM lead today. Additive regardless:
+        // native tool_calls normalize back into fenced JSON.
+        'nativeToolSchemas',
         'projectInstructions',
         'provider',
         'resumeState',

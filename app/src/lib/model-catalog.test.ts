@@ -15,6 +15,7 @@ import {
   filterModelByContext,
   MIN_CONTEXT_TOKENS,
   parseOpenRouterCatalog,
+  providerModelSupportsNativeToolCalling,
   providerModelSupportsStructuredOutput,
 } from './model-catalog';
 
@@ -1245,6 +1246,20 @@ describe('providerModelSupportsStructuredOutput', () => {
   it('returns false when no modelId is given', () => {
     stubWindow();
     expect(providerModelSupportsStructuredOutput('openrouter', undefined)).toBe(false);
+  });
+
+  it('gates native tool calling to Cloudflare Kimi/GLM only', () => {
+    stubWindow();
+    expect(
+      providerModelSupportsNativeToolCalling('cloudflare', '@cf/moonshotai/kimi-k2.7-code'),
+    ).toBe(true);
+    expect(providerModelSupportsNativeToolCalling('cloudflare', '@cf/zai-org/glm-5.2')).toBe(true);
+    expect(
+      providerModelSupportsNativeToolCalling('cloudflare', '@cf/qwen/qwen2.5-coder-32b-instruct'),
+    ).toBe(false);
+    // Other providers stay text-dispatch only for now, even capable ones.
+    expect(providerModelSupportsNativeToolCalling('openrouter', 'moonshotai/kimi-k2')).toBe(false);
+    expect(providerModelSupportsNativeToolCalling('cloudflare', undefined)).toBe(false);
   });
 
   it('returns false for an allowlisted provider when the catalog reports no support', () => {

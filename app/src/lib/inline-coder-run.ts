@@ -78,6 +78,8 @@ import type {
 import type { CorrelationContext } from '@push/lib/correlation-context';
 import { getActiveProvider, getProviderPushStream, type ActiveProvider } from './orchestrator';
 import { getModelForRole } from './providers';
+import { providerModelSupportsNativeToolCalling } from './model-catalog';
+import { getToolFunctionSchemas } from '@push/lib/tool-function-schemas';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import {
   detectSandboxToolCall,
@@ -765,6 +767,13 @@ export async function runInPageCoderKernel(
     // so opt into that guidance here. The CLI lead leaves it off (its
     // TOOL_PROTOCOL uses different names).
     leadToolGuidance: spec.leadToolSurface,
+    // Native function calling for models that support it (Cloudflare Kimi/GLM
+    // today). Additive: the binding emits native tool_calls which the pump
+    // normalizes back into fenced JSON, so dispatch is unchanged. Other
+    // models stay text-dispatch only (gate returns false → undefined).
+    nativeToolSchemas: providerModelSupportsNativeToolCalling(spec.provider, spec.modelId)
+      ? getToolFunctionSchemas()
+      : undefined,
   };
 
   // --- Run the lib kernel ---

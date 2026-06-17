@@ -50,6 +50,7 @@ import type {
   LlmContentPart,
   LlmMessage,
   PushStream,
+  ToolFunctionSchema,
 } from './provider-contract.js';
 import type { AcceptanceCriterion, RunEventInput } from './runtime-contract.js';
 import { createId } from './id-utils.js';
@@ -898,6 +899,15 @@ export interface CoderAgentOptions<TCall, TCard> {
    * promote / artifact / ask-user tools. Only meaningful with `leadMode`.
    */
   leadToolScope?: LeadToolScope;
+  /**
+   * Native function-calling tool schemas to attach to each round's request
+   * (the OpenAI `tools` array). Set by the caller only for models that support
+   * native tool calling; the provider adapter serializes it. Additive to the
+   * prompt-described tool protocol — native `tool_calls` are normalized back
+   * into fenced JSON by `openai-sse-pump`, so the dispatch path is unchanged.
+   * Omitted ⇒ text-dispatch only (today's behavior for every other model).
+   */
+  nativeToolSchemas?: ToolFunctionSchema[];
 }
 
 /**
@@ -961,6 +971,7 @@ export async function runCoderAgent<TCall, TCard>(
     persona,
     leadToolGuidance = false,
     leadToolScope = 'full',
+    nativeToolSchemas,
   } = options;
 
   // Derive the legacy boolean once for the body's prompt-section + round-cap
@@ -1268,6 +1279,7 @@ export async function runCoderAgent<TCall, TCard>(
         messages,
         systemPromptOverride: systemPrompt,
         hasSandbox: true,
+        ...(nativeToolSchemas && nativeToolSchemas.length > 0 ? { tools: nativeToolSchemas } : {}),
       },
       CODER_ROUND_TIMEOUT_MS,
       `Coder round ${rounds} timed out after ${CODER_ROUND_TIMEOUT_MS / 1000}s — model may be unresponsive.`,
