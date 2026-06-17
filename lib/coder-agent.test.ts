@@ -818,6 +818,49 @@ describe('runCoderAgent (PushStream consumer)', () => {
     ]);
   });
 
+  it('emits a balanced turn_end for a single-tool-call round (natural fall-through)', async () => {
+    // Round 0 runs ONE tool call through the single-call path (empty batch
+    // buckets + a non-null detectAnyToolCall), so it loops back via the natural
+    // fall-through rather than an early continue/return. That path must still
+    // finish the round — the regression was a turn_start with no turn_end.
+    const { stream } = makePushStream([
+      [
+        { type: 'text_delta', text: '{"tool":"sandbox_read_file","args":{"path":"README.md"}}' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', text: 'Done reading.' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+    const events: Array<{ type: string; round?: number; outcome?: string }> = [];
+
+    await runCoderAgent(
+      baseCoderOptions({
+        stream,
+        // No policy halt/inject, so round 0 reaches the single-tool path.
+        evaluateAfterModel: async () => null,
+        // Text-based so it's robust to how many times the loop probes per round.
+        detectAnyToolCall: (text: string) =>
+          text.includes('sandbox_read_file')
+            ? ({
+                source: 'sandbox',
+                call: { tool: 'sandbox_read_file', args: { path: 'README.md' } },
+              } as never)
+            : null,
+      }),
+      { onStatus: () => {}, onRunEvent: (event) => events.push(event) },
+    );
+
+    expect(events.filter((e) => e.type === 'assistant.turn_start').map((e) => e.round)).toEqual([
+      0, 1,
+    ]);
+    expect(events.filter((e) => e.type === 'assistant.turn_end')).toEqual([
+      { type: 'assistant.turn_end', round: 0, outcome: 'continued' },
+      { type: 'assistant.turn_end', round: 1, outcome: 'completed' },
+    ]);
+  });
+
   it('nudges and continues when a tool call is buried in reasoning tokens', async () => {
     const { stream, capturedRequests } = makePushStream([
       [

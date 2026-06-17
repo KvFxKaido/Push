@@ -2282,5 +2282,12 @@ export async function runCoderAgent<TCall, TCard>(
         lastInjectedStateRound = null;
       }
     }
+
+    // Normal fall-through: a round that executed a single tool call (or trimmed
+    // context) without taking an early continue/return loops back here. Emit the
+    // matching turn_end so every `assistant.turn_start` above is balanced.
+    // Idempotent via the `roundEnded` guard — paths that already finished the
+    // round are unaffected.
+    finishRound('continued');
   }
 }
