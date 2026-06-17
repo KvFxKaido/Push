@@ -74,6 +74,11 @@ function isCloudflareTextGenerationModel(model: AiModelsSearchObject): boolean {
  * (`toOpenAIResponseFormat`). Returns `undefined` for any shape that isn't a
  * complete `json_schema` block so a malformed field is dropped rather than
  * forwarded to `env.AI.run` and rejected upstream.
+ *
+ * `json_schema` is intentionally the only `type` accepted — it's the sole
+ * structured-output shape Push emits (`ResponseFormatSpec`). A future
+ * format type (e.g. plain `json_object`) would extend `ResponseFormatSpec`
+ * first, then this parser; until then anything else is correctly dropped.
  */
 function parseResponseFormatSpec(raw: unknown): ResponseFormatSpec | undefined {
   if (!raw || typeof raw !== 'object') return undefined;

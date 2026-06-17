@@ -320,6 +320,13 @@ const STRUCTURED_OUTPUT_PROVIDERS: ReadonlySet<string> = new Set([
  * advertise JSON-schema structured outputs for the Kimi K2.x and GLM families
  * specifically; gate on those by name and leave every other Workers AI model
  * prompt-only (it falls back to `parseStructured`).
+ *
+ * Substring `.includes()` (not anchored) is intentional and matches
+ * `guessWindowFromName`: the family token can appear anywhere in the id —
+ * notably behind the `@cf/<org>/` prefix (`@cf/moonshotai/kimi-k2.7-code`,
+ * `@cf/zai-org/glm-5.2`). A hypothetical `foobar-kimi` matching is the
+ * desired behavior — it is a Kimi model — and the downside is only a
+ * conservative attempt at a constraint `parseStructured` already backstops.
  */
 function cloudflareModelSupportsStructuredOutput(modelId: string): boolean {
   const m = modelId.toLowerCase();
