@@ -899,9 +899,8 @@ describe('validateRunEventPayload — RunEventInput passthrough events', () => {
   it('accepts turn.route and rejects an unknown route', () => {
     assert.deepEqual(
       validateRunEventPayload('turn.route', {
-        route: 'orchestrator',
-        reason: 'conversational_downgrade',
-        suppressedRoute: 'inline-delegation',
+        route: 'inline-delegation',
+        reason: 'conversational_inline',
         intent: 'conversational',
         repoBranchReady: true,
       }),
@@ -909,7 +908,7 @@ describe('validateRunEventPayload — RunEventInput passthrough events', () => {
     );
     const issues = validateRunEventPayload('turn.route', {
       route: 'side-quest',
-      reason: 'conversational_downgrade',
+      reason: 'conversational_inline',
       intent: 'conversational',
       repoBranchReady: true,
     });

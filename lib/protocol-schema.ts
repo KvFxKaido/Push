@@ -440,7 +440,7 @@ export const TASK_GRAPH_AGENTS = ['explorer', 'coder'] as const;
 
 export const TURN_ROUTES = ['orchestrator', 'inline-delegation', 'background-mode'] as const;
 export const TURN_SUPPRESSED_ROUTES = ['inline-delegation', 'background-mode'] as const;
-export const TURN_ROUTE_REASONS = ['conversational_downgrade'] as const;
+export const TURN_ROUTE_REASONS = ['conversational_inline', 'conversational_escape_hatch'] as const;
 export const TURN_INTENTS = ['conversational', 'task'] as const;
 
 function validateTurnRoute(payload: unknown, basePath: string): ValidationIssue[] {

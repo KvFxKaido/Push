@@ -335,9 +335,9 @@ export function toLLMMessages(
     // Start from the shared base and layer in runtime-dependent blocks.
     //
     // LOAD-BEARING (not test-only): this runs on every turn that stays on the
-    // foreground Orchestrator role/loop — conversational lead turns with a
-    // repo, no-repo workspaces (chat / scratch / local-pc), and the `delegated`
-    // opt-out. See the routing in delegation-mode-settings.ts
+    // foreground Orchestrator role/loop — no-repo workspaces (chat / scratch /
+    // local-pc), the `delegated` opt-out, and the conversational-inline escape
+    // hatch while Phase 3 bakes. See the routing in delegation-mode-settings.ts
     // (`resolveTurnEngineTrigger` → `null`). The inline Coder/Explorer lanes
     // pass their own `systemPromptOverride` and skip this path; don't mistake
     // that for the Orchestrator builder being dead.

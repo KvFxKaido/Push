@@ -126,9 +126,8 @@ describe('protocol drift characterization — schema surface', () => {
   it('accepts turn.route and rejects an unknown route', () => {
     assert.deepEqual(
       validateRunEventPayload('turn.route', {
-        route: 'orchestrator',
-        reason: 'conversational_downgrade',
-        suppressedRoute: 'inline-delegation',
+        route: 'inline-delegation',
+        reason: 'conversational_inline',
         intent: 'conversational',
         repoBranchReady: true,
       }),
@@ -136,7 +135,7 @@ describe('protocol drift characterization — schema surface', () => {
     );
     const issues = validateRunEventPayload('turn.route', {
       route: 'side-quest',
-      reason: 'conversational_downgrade',
+      reason: 'conversational_inline',
       intent: 'conversational',
       repoBranchReady: true,
     });

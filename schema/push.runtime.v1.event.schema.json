@@ -958,7 +958,8 @@
         "reason": {
           "type": "string",
           "enum": [
-            "conversational_downgrade"
+            "conversational_inline",
+            "conversational_escape_hatch"
           ]
         },
         "suppressedRoute": {
