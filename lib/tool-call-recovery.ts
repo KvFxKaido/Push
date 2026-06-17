@@ -59,6 +59,37 @@ export interface ToolCallRecoveryState {
 export const MAX_REASONING_TOOL_CALL_NUDGES = 2;
 
 /**
+ * Salvage for a final answer stranded in the reasoning channel.
+ *
+ * Some heavy reasoners — observed on Kimi-k2.7 over Workers AI — occasionally
+ * emit a complete final answer into `reasoning_content`, leave the response
+ * content empty, and stop with no tool call anywhere. The dispatcher only reads
+ * response content, so the turn finalizes blank and the answer is silently
+ * dropped (the web materializer discards empty assistant turns). The symptom is
+ * a turn that "just stops": HTTP 200, `finish_reason: stop`, nothing rendered.
+ *
+ * This is distinct from a tool call buried in reasoning — that case belongs to
+ * the buried-call recovery, which re-prompts the model rather than executing the
+ * untrusted reasoning-channel call. Hence the `reasoningHasToolCall` guard:
+ * promoting a reasoning-channel tool call would execute it, which we never do.
+ *
+ * Returns the promoted answer (trimmed reasoning) to use as the response
+ * content, or `null` when there is nothing to salvage. `null` is the common
+ * case (response content present), so callers treat it as "leave the turn
+ * untouched".
+ */
+export function promoteReasoningAnswer(
+  responseContent: string,
+  reasoning: string,
+  reasoningHasToolCall: boolean,
+): string | null {
+  if (responseContent.trim() !== '') return null;
+  if (reasoningHasToolCall) return null;
+  const promoted = reasoning.trim();
+  return promoted.length > 0 ? promoted : null;
+}
+
+/**
  * Cap on "announced an action but emitted no tool call" nudges per run.
  * One nudge resolves the common case (the model emits the call it described).
  * The cap is a safety valve: the Web round loop is otherwise unbounded, so a
