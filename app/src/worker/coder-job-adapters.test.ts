@@ -1070,11 +1070,11 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
       env: env(),
       origin: 'https://push.example.test',
       provider: 'zen',
-      modelId: 'minimax-m2.5',
+      modelId: 'minimax-m2.7',
       jobId: 'job-zen-go-anthropic',
       zenGo: true,
     });
-    const { tokens, errors } = await drainAs(stream, 'zen', 'minimax-m2.5');
+    const { tokens, errors } = await drainAs(stream, 'zen', 'minimax-m2.7');
     expect(errors).toEqual([]);
     expect(tokens.join('')).toBe('ok');
     expect(providerHandlerMocks.handleZenGoChat).toHaveBeenCalledTimes(1);

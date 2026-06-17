@@ -250,7 +250,12 @@ function resolveFromProviderMetadata(meta: ModelsDevProviderMetadata): ResolvedM
 export function getModelCapabilities(provider: string, modelId: string): ResolvedModelCapabilities {
   if (provider === 'openrouter') {
     const metadata = readCachedModelsDevOpenRouterMetadata();
-    const meta = metadata?.[modelId];
+    // OpenRouter ids carry routing suffixes (`:nitro`, `:free`, `:online`) but
+    // models.dev keys metadata by the base id, so fall back to the
+    // suffix-stripped id — mirrors the blackbox base-id fallback below. Without
+    // this, every routed (`:nitro`/`:free`) model resolves to EMPTY_CAPABILITIES
+    // and silently loses reasoning / structured-output / native-tool gating.
+    const meta = metadata?.[modelId] ?? metadata?.[openRouterBaseId(modelId)];
     return meta ? resolveFromOpenRouterMetadata(meta) : EMPTY_CAPABILITIES;
   }
 
@@ -369,12 +374,23 @@ export function providerModelSupportsStructuredOutput(
 
 /**
  * Whether to attach native function-calling `tools` for the given
- * provider/model. Scoped to Cloudflare Workers AI today (Kimi/GLM) — the
- * catalog-less provider where the name gate lives and the surface this was
- * introduced for. Other providers stay on the text-dispatch tool protocol
- * until native tool calling is wired and validated for them. Additive
- * regardless: `openai-sse-pump` normalizes any native `tool_calls` back into
- * the fenced JSON the dispatcher consumes.
+ * provider/model. Two provider paths today:
+ *   - **Cloudflare Workers AI** (Kimi/GLM) — name-based, the catalog-less
+ *     provider this was introduced for.
+ *   - **OpenRouter** — capability-based: the model's models.dev metadata must
+ *     advertise tool support (`toolCall`). Mirrors the structured-output gate
+ *     (`providerModelSupportsStructuredOutput`) so the two can't drift, and
+ *     auto-tracks the catalog rather than a hardcoded allowlist — the curated
+ *     gateways (OpenCode Zen, OpenRouter) surface nearly the entire current
+ *     coding frontier, so an allowlist would just be a brittle mirror of it.
+ *     `getModelCapabilities` is routing-suffix-insensitive (see its
+ *     `openRouterBaseId` fallback), so `:nitro` / `:free` variants resolve to
+ *     their base model's capability; a cold metadata cache resolves to
+ *     `toolCall: false` and safely falls back to text-dispatch.
+ * Other providers stay on the text-dispatch tool protocol until native tool
+ * calling is wired and validated for them. Additive regardless: `openai-sse-pump`
+ * normalizes any native `tool_calls` back into the fenced JSON the dispatcher
+ * consumes, so a non-gated model simply never receives a `tools` array.
  */
 export function providerModelSupportsNativeToolCalling(
   provider: string,
@@ -382,6 +398,7 @@ export function providerModelSupportsNativeToolCalling(
 ): boolean {
   if (!modelId) return false;
   if (provider === 'cloudflare') return isCloudflareKimiOrGlm(modelId);
+  if (provider === 'openrouter') return getModelCapabilities('openrouter', modelId).toolCall;
   return false;
 }
 
