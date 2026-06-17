@@ -7,6 +7,7 @@ import {
   buildValidationFailedHint,
   formatToolResultEnvelope,
   MAX_TOOL_CALL_DIAGNOSIS_RETRIES,
+  promoteReasoningAnswer,
   resolveToolCallRecovery,
 } from './tool-call-recovery';
 
@@ -154,5 +155,35 @@ describe('tool-call-recovery', () => {
     expect(result.kind).toBe('diagnosis_exhausted');
     if (result.kind !== 'diagnosis_exhausted') return;
     expect(result.diagnosis.reason).toBe('natural_language_intent');
+  });
+});
+
+describe('promoteReasoningAnswer', () => {
+  const answer = 'Short answer: yes, but Ollama is a different beast. Here is why...';
+
+  it('promotes a stranded answer when response content is empty', () => {
+    // The Kimi-k2.7 (Workers AI) failure mode: full answer in reasoning, empty
+    // response content, no tool call anywhere. Salvage it so the turn delivers.
+    expect(promoteReasoningAnswer('', answer, false)).toBe(answer);
+    expect(promoteReasoningAnswer('   \n  ', answer, false)).toBe(answer);
+  });
+
+  it('trims surrounding whitespace from the promoted answer', () => {
+    expect(promoteReasoningAnswer('', `\n\n${answer}\n  `, false)).toBe(answer);
+  });
+
+  it('is a no-op when response content is already present', () => {
+    expect(promoteReasoningAnswer('a delivered reply', answer, false)).toBeNull();
+  });
+
+  it('does not promote when the reasoning holds a tool call', () => {
+    // A tool call in reasoning belongs to the buried-call recovery, which
+    // re-prompts the model — promoting would execute an untrusted call.
+    expect(promoteReasoningAnswer('', '{"tool":"repo_read","args":{}}', true)).toBeNull();
+  });
+
+  it('is a no-op when there is nothing in either channel', () => {
+    expect(promoteReasoningAnswer('', '', false)).toBeNull();
+    expect(promoteReasoningAnswer('', '   ', false)).toBeNull();
   });
 });

@@ -21,6 +21,8 @@ import {
   spliceLinkedImagesIntoLastUser,
 } from '@/lib/linked-library-context';
 import { buildTodoContext } from '@/lib/todo-tools';
+import { detectAnyToolCall } from '@/lib/tool-dispatch';
+import { promoteReasoningAnswer } from '@/lib/tool-call-recovery';
 import { setOpenRouterSessionId } from '@/lib/openrouter-session';
 import { getDefaultMemoryStore } from '@push/lib/context-memory-store';
 import { type SessionDigest, SESSION_DIGEST_HEADER } from '@push/lib/session-digest';
@@ -444,23 +446,47 @@ export async function streamAssistantRound(
     });
   }
 
-  // Safety net: some providers (observed on Workers AI / GLM-4.7-flash) emit a
-  // round's entire output on the reasoning channel — either via native
+  // Safety net: some providers (observed on Workers AI — Kimi-k2.7, GLM-4.7-flash)
+  // emit a round's entire output on the reasoning channel — either via native
   // `reasoning_content` deltas or an unclosed `<think>` block that
   // `normalizeReasoning` flushes as `reasoning_delta` at stream end. The user
   // sees the final answer trapped inside a "Thought process" block and no
-  // visible reply. If the stream completed without error, wasn't cancelled by
-  // the user, emitted no content, and produced no native tool call (those
-  // flush through the content parser via `flushNativeToolCalls`), promote the
-  // reasoning tail to content. Skipping the promotion on abort is load-bearing:
-  // `streamAssistantRound` resolves with `error === null` on user cancel, so
-  // without the guard a cancelled turn with only reasoning tokens would
-  // surface that partial reasoning as if it were the model's final answer.
-  if (!error && !abortRef.current && !accumulated && thinkingAccumulated) {
-    console.warn(
-      `[Push] Round ${round}: no content emitted, promoting reasoning tail (${thinkingAccumulated.length} chars) to content.`,
+  // visible reply. When the stream completed without error and wasn't cancelled,
+  // promote a stranded *answer* (empty content + reasoning text) to content so
+  // it's delivered. Skipping on abort is load-bearing: `streamAssistantRound`
+  // resolves with `error === null` on user cancel, so without the guard a
+  // cancelled reasoning-only turn would surface partial reasoning as if it were
+  // the final answer.
+  //
+  // Native tool calls already flush into content (so empty content implies no
+  // native call), but a *text-form* `{"tool": ...}` call placed in the reasoning
+  // channel does NOT flush — promoting it would feed it to `detectAnyToolCall`
+  // downstream and execute an untrusted reasoning-channel call. The
+  // `reasoningHasToolCall` guard in `promoteReasoningAnswer` excludes that case;
+  // it instead falls through to the buried-call recovery, which re-prompts the
+  // model to re-emit the call in content. Shares the helper with the kernel
+  // salvage in `lib/coder-agent.ts`.
+  const promotedReasoning =
+    !error && !abortRef.current
+      ? promoteReasoningAnswer(
+          accumulated,
+          thinkingAccumulated,
+          Boolean(detectAnyToolCall(thinkingAccumulated)),
+        )
+      : null;
+  if (promotedReasoning !== null) {
+    // Symmetric structured log: greppable counterpart to the kernel's
+    // `coder_reasoning_answer_promoted`; the drop is otherwise invisible to ops.
+    console.log(
+      JSON.stringify({
+        level: 'warn',
+        event: 'orchestrator_reasoning_answer_promoted',
+        chatId,
+        round,
+        reasoningChars: promotedReasoning.length,
+      }),
     );
-    accumulated = thinkingAccumulated;
+    accumulated = promotedReasoning;
     thinkingAccumulated = '';
     setConversations((prev) => {
       const conv = prev[chatId];

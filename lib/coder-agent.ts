@@ -66,6 +66,7 @@ import {
   buildValidationFailedHint,
   formatToolResultEnvelope,
   MAX_REASONING_TOOL_CALL_NUDGES,
+  promoteReasoningAnswer,
 } from './tool-call-recovery.js';
 import {
   buildLoopSteeringText,
@@ -1318,7 +1319,7 @@ export async function runCoderAgent<TCall, TCard>(
     // Stream Coder response via the active provider, with a per-round timeout
     const {
       error: streamError,
-      text: accumulated,
+      text: rawModelText,
       reasoningText,
     } = await iteratePushStreamText(
       cancellableStream,
@@ -1357,6 +1358,63 @@ export async function runCoderAgent<TCall, TCard>(
       }
       finishRound('error');
       throw streamError;
+    }
+
+    // --- Answer stranded in the reasoning channel ---
+    // Distinct from the buried *tool-call* recovery below (which re-prompts a
+    // model that placed a tool call in reasoning and never executes it): here
+    // the model emitted a complete *answer* into `reasoning_content`, left the
+    // response content empty, and finished with no tool call anywhere. The
+    // natural-completion return below is `summary: accumulated + ...`, and the
+    // web materializer drops empty assistant turns, so that answer silently
+    // vanishes — observed on Kimi-k2.7 (Workers AI) conversational wrap-up
+    // turns, where a heavy reasoner occasionally never transitions out of the
+    // reasoning channel. Promote the reasoning into the response so the turn is
+    // delivered. `null` (the common case: content present, or a tool call in
+    // reasoning) is a no-op.
+    let accumulated = rawModelText;
+    // `detectAnyToolCall` deliberately excludes the Coder-internal calls
+    // (`update_state` / `checkpoint`) — the kernel detects those separately
+    // downstream (`detectUpdateStateCall` / `detectCheckpointCall`) and EXECUTES
+    // them, mutating working memory or pausing the run. If the guard ignored
+    // them, a reasoning-only internal call would be promoted into `accumulated`
+    // and then run from the untrusted reasoning channel — exactly what this
+    // salvage must not do. Fold the internal detectors into the guard so an
+    // internal call in reasoning blocks promotion. Such a call is then
+    // suppressed (not promoted, hence never executed) rather than nudged — the
+    // buried-call recovery below also keys on `detectAnyToolCall`, so it omits
+    // these internal tools; suppression (the call simply doesn't run) is the
+    // property we need. An ordinary reasoning-channel tool call still routes to
+    // that recovery's re-emit nudge as before. (Codex P2 on #962.)
+    const reasoningHasToolCall = Boolean(
+      detectAnyToolCall(reasoningText) ||
+        detectUpdateStateCall(reasoningText) ||
+        detectCheckpointCall(reasoningText),
+    );
+    const promotedReasoningAnswer = promoteReasoningAnswer(
+      rawModelText,
+      reasoningText,
+      reasoningHasToolCall,
+    );
+    if (promotedReasoningAnswer !== null) {
+      accumulated = promotedReasoningAnswer;
+      // Symmetric structured log: the drop is otherwise invisible to ops — the
+      // turn ends 200 / finish=stop and nothing distinguishes it from a healthy
+      // completion until you read the response body. Greppable counterpart to a
+      // normal completion (which never emits this event).
+      console.log(
+        JSON.stringify({
+          level: 'warn',
+          event: 'coder_reasoning_answer_promoted',
+          round,
+          model: coderModelId ?? '',
+          reasoningChars: accumulated.length,
+        }),
+      );
+      callbacks.onStatus(
+        'Recovered answer',
+        'Model placed its reply in the reasoning channel — promoted to the response.',
+      );
     }
 
     // Add Coder response to messages
