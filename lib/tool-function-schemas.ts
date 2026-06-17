@@ -24,7 +24,7 @@
  * schema; every signature param appears in its schema).
  */
 
-import { getAllToolSpecs, type ToolSpec } from './tool-registry.js';
+import { getAllToolSpecs, type ToolSpec, type ToolRegistrySource } from './tool-registry.js';
 import type {
   JsonSchemaType,
   ToolFunctionParameterSchema,
@@ -166,4 +166,19 @@ let cached: ToolFunctionSchema[] | null = null;
 export function getToolFunctionSchemas(): ToolFunctionSchema[] {
   if (!cached) cached = getAllToolSpecs().map(toolSpecToFunctionSchema);
   return cached;
+}
+
+/**
+ * Function schemas for only the given tool `source`s. Callers MUST scope the
+ * `tools` array to the surface they actually wire — a native call to an
+ * advertised-but-unexecutable tool (e.g. the lead has no `delegate` arc) is
+ * filtered by the detectors and silently no-ops. Pass exactly the sources whose
+ * executors are wired for the run.
+ */
+export function getToolFunctionSchemasForSources(
+  sources: ReadonlySet<ToolRegistrySource>,
+): ToolFunctionSchema[] {
+  return getAllToolSpecs()
+    .filter((spec) => sources.has(spec.source))
+    .map(toolSpecToFunctionSchema);
 }

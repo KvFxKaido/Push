@@ -79,7 +79,8 @@ import type { CorrelationContext } from '@push/lib/correlation-context';
 import { getActiveProvider, getProviderPushStream, type ActiveProvider } from './orchestrator';
 import { getModelForRole } from './providers';
 import { providerModelSupportsNativeToolCalling } from './model-catalog';
-import { getToolFunctionSchemas } from '@push/lib/tool-function-schemas';
+import { getToolFunctionSchemasForSources } from '@push/lib/tool-function-schemas';
+import type { ToolRegistrySource } from '@push/lib/tool-registry';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import {
   detectSandboxToolCall,
@@ -133,6 +134,22 @@ const LEAD_EXTRA_TOOL_SOURCES: ReadonlySet<string> = new Set<string>([
   'ask-user',
   'artifacts',
 ]);
+
+/**
+ * The registry tool sources wired for the inline lead — the surface a native
+ * `tools` array may advertise. Base sandbox + web-search (always wired), memory
+ * only when a scope is threaded, plus the lead's extra GitHub/ask/artifact
+ * sources. Mirrors exactly what the kernel advertises in the prompt; anything
+ * outside this (delegate, scratchpad, todo) isn't executable here and must not
+ * appear as a native function. Keep in lockstep with the protocols passed to
+ * the kernel below.
+ */
+function leadNativeToolSources(hasMemoryScope: boolean): ReadonlySet<ToolRegistrySource> {
+  const sources = new Set<ToolRegistrySource>(['sandbox', 'web-search']);
+  if (hasMemoryScope) sources.add('memory');
+  for (const source of LEAD_EXTRA_TOOL_SOURCES) sources.add(source as ToolRegistrySource);
+  return sources;
+}
 
 // ---------------------------------------------------------------------------
 // Stream tee
@@ -769,11 +786,17 @@ export async function runInPageCoderKernel(
     leadToolGuidance: spec.leadToolSurface,
     // Native function calling for models that support it (Cloudflare Kimi/GLM
     // today). Additive: the binding emits native tool_calls which the pump
-    // normalizes back into fenced JSON, so dispatch is unchanged. Other
-    // models stay text-dispatch only (gate returns false → undefined).
-    nativeToolSchemas: providerModelSupportsNativeToolCalling(spec.provider, spec.modelId)
-      ? getToolFunctionSchemas()
-      : undefined,
+    // normalizes back into fenced JSON, so dispatch is unchanged. Two guards:
+    //   1. Lead surface only (`leadRuntime`). The delegated Coder wires a
+    //      narrower surface and stays text-dispatch for now.
+    //   2. Scope schemas to the EXACT sources wired for this run — base
+    //      sandbox/web (+ memory when a scope is threaded) plus the lead's
+    //      extra GitHub/ask/artifact surface. Advertising a tool the lead
+    //      can't execute (e.g. `delegate_*`) would let a native call no-op.
+    nativeToolSchemas:
+      leadRuntime && providerModelSupportsNativeToolCalling(spec.provider, spec.modelId)
+        ? getToolFunctionSchemasForSources(leadNativeToolSources(Boolean(spec.memoryScope)))
+        : undefined,
   };
 
   // --- Run the lib kernel ---

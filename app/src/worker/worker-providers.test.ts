@@ -621,6 +621,36 @@ describe('handleCloudflareChat — Cloudflare AI Gateway', () => {
     expect(input.tool_choice).toBe('auto');
   });
 
+  it('forwards a native tool_call from env.AI.run to the client as fenced JSON', async () => {
+    // P1 regression guard: Workers AI emits OpenAI `delta.tool_calls` when the
+    // model uses native function calling. The Worker must accumulate + flush
+    // them as the fenced JSON the dispatcher consumes — otherwise the native
+    // call is dropped inside the Worker and the turn reaches the Coder empty.
+    const encoder = new TextEncoder();
+    const frames = [
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"exec"}}]}}]}',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"command\\":\\"npm test\\"}"}}]}}]}',
+      'data: {"choices":[{"finish_reason":"tool_calls","delta":{}}]}',
+      'data: [DONE]',
+    ];
+    const upstream = new ReadableStream<Uint8Array>({
+      start(c) {
+        for (const f of frames) c.enqueue(encoder.encode(`${f}\n`));
+        c.close();
+      },
+    });
+    const run = vi.fn(async () => upstream);
+    const response = await handleCloudflareChat(
+      makeChatRequest(),
+      makeEnv({ AI: { run } as unknown as Env['AI'] }),
+    );
+    const body = await new Response(response.body).text();
+    // The fenced tool JSON is re-serialized into client `content` frames.
+    expect(body).toContain('exec');
+    expect(body).toContain('npm test');
+    expect(body).toContain('```json');
+  });
+
   it('drops a malformed tools payload rather than forwarding it', async () => {
     const run = vi.fn(async () => new ReadableStream());
     const request = new Request('https://push.example.test/api/chat', {

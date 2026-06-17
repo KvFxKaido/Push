@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { getAllToolSpecs } from './tool-registry.js';
-import { getToolFunctionSchemas, toolSpecToFunctionSchema } from './tool-function-schemas.js';
+import type { ToolRegistrySource } from './tool-registry.js';
+import {
+  getToolFunctionSchemas,
+  getToolFunctionSchemasForSources,
+  toolSpecToFunctionSchema,
+} from './tool-function-schemas.js';
 
 describe('getToolFunctionSchemas', () => {
   it('emits exactly one schema per registry tool (completeness)', () => {
@@ -62,5 +67,36 @@ describe('getToolFunctionSchemas', () => {
       type: 'array',
       items: { type: 'object' },
     });
+  });
+});
+
+describe('getToolFunctionSchemasForSources', () => {
+  it('returns only schemas whose tool source is in the set', () => {
+    const sources = new Set<ToolRegistrySource>(['sandbox', 'web-search']);
+    const schemas = getToolFunctionSchemasForSources(sources);
+    const specBySource = new Map(getAllToolSpecs().map((s) => [s.publicName, s.source]));
+    expect(schemas.length).toBeGreaterThan(0);
+    for (const schema of schemas) {
+      expect(sources.has(specBySource.get(schema.function.name)!)).toBe(true);
+    }
+  });
+
+  it('excludes unwired sources (e.g. delegate) so a native call cannot no-op', () => {
+    // The lead has no delegation arc; advertising delegate_* as native
+    // functions would let a native call slip past the detectors. The lead's
+    // wired surface must not include them.
+    const leadSources = new Set<ToolRegistrySource>([
+      'sandbox',
+      'web-search',
+      'github',
+      'ask-user',
+      'artifacts',
+    ]);
+    const names = getToolFunctionSchemasForSources(leadSources).map((s) => s.function.name);
+    expect(names).toContain('exec'); // sandbox
+    expect(names).toContain('pr'); // github
+    expect(names).not.toContain('coder'); // delegate
+    expect(names).not.toContain('explorer'); // delegate
+    expect(names).not.toContain('plan_tasks'); // delegate
   });
 });
