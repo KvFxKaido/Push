@@ -96,7 +96,12 @@ function baseCoderOptions(overrides: {
   leadToolGuidance?: boolean;
   leadToolScope?: CoderAgentOptions<Call, never>['leadToolScope'];
   harnessMaxRounds?: number;
+  initialMessages?: CoderAgentOptions<Call, never>['initialMessages'];
   initialUserContentParts?: LlmContentPart[];
+  linkedLibraryContent?: string;
+  sessionDigestRecords?: CoderAgentOptions<Call, never>['sessionDigestRecords'];
+  priorSessionDigest?: CoderAgentOptions<Call, never>['priorSessionDigest'];
+  onSessionDigestEmitted?: CoderAgentOptions<Call, never>['onSessionDigestEmitted'];
   resumeState?: CoderAgentOptions<Call, never>['resumeState'];
 }): CoderAgentOptions<Call, never> {
   return {
@@ -111,7 +116,12 @@ function baseCoderOptions(overrides: {
     allowedRepo: 'kvfxkaido/push',
     userProfile: null,
     taskPreamble: 'Implement the auth fix.',
+    initialMessages: overrides.initialMessages,
     initialUserContentParts: overrides.initialUserContentParts,
+    linkedLibraryContent: overrides.linkedLibraryContent,
+    sessionDigestRecords: overrides.sessionDigestRecords,
+    priorSessionDigest: overrides.priorSessionDigest,
+    onSessionDigestEmitted: overrides.onSessionDigestEmitted,
     symbolSummary: null,
     resumeState: overrides.resumeState,
     toolExec: async () => ({ kind: 'executed', resultText: 'tool ok' }),
@@ -260,6 +270,53 @@ describe('runCoderAgent (PushStream consumer)', () => {
       content: 'Resume text',
     });
     expect(resumeReq.messages[0]?.contentParts).toBeUndefined();
+  });
+
+  it('seeds fresh conversational runs from initialMessages and renders library context', async () => {
+    const { stream, capturedRequests } = makePushStream([
+      [
+        { type: 'text_delta', text: 'I am done.' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+    const initialMessages = [
+      { id: 'u1', role: 'user' as const, content: 'earlier question', timestamp: 1 },
+      { id: 'a1', role: 'assistant' as const, content: 'earlier answer', timestamp: 2 },
+      { id: 'u2', role: 'user' as const, content: 'current question', timestamp: 3 },
+    ];
+
+    const onSessionDigestEmitted = () => {};
+    await runCoderAgent(
+      baseCoderOptions({
+        stream,
+        leadMode: true,
+        initialMessages,
+        linkedLibraryContent: '# Linked libraries\n\n## Library: Design notes',
+        sessionDigestRecords: [],
+        priorSessionDigest: undefined,
+        onSessionDigestEmitted,
+      }),
+      { onStatus: () => {} },
+    );
+
+    const req = capturedRequests[0] as {
+      messages: Array<{ content: string }>;
+      systemPromptOverride?: string;
+      sessionDigestRecords?: unknown;
+      onSessionDigestEmitted?: unknown;
+    };
+    expect(req.messages.slice(0, 3).map((m) => m.content)).toEqual([
+      'earlier question',
+      'earlier answer',
+      'current question',
+    ]);
+    expect(req.messages.some((m) => m.content === 'Implement the auth fix.')).toBe(false);
+    expect(req.systemPromptOverride).toContain('# Linked libraries');
+    expect(req.systemPromptOverride).toContain('Design notes');
+    // The digest inputs are forwarded on the request so the stream's
+    // toLLMMessages runs the single context transform (no pre-transform).
+    expect(req.sessionDigestRecords).toEqual([]);
+    expect(req.onSessionDigestEmitted).toBe(onSessionDigestEmitted);
   });
 
   it('swaps the implementer prompt for lead-mode framing when leadMode is set', async () => {

@@ -209,8 +209,10 @@ content) — lives in
 [`../runbooks/Conversational Lead Convergence.md`](<../runbooks/Conversational Lead Convergence.md>).
 Phase 0 landed: the cognitive-drift guard is now gated on `taskInFlight === false`
 (the last coder-policy guard that could misfire on a chat reply, mirroring the
-no-fake-completion guard). The routing flip stays gated until the history +
-linked-library + policy/telemetry gaps in that runbook are closed.
+no-fake-completion guard). Phase 1 landed: conversational inline turns now seed
+the kernel from managed transcript messages and linked-library context instead
+of collapsing history into the bounded task preamble. The routing flip stays
+gated until the policy/telemetry gaps in that runbook are closed.
 
 Protected during convergence: the shared runtime semantics in §1 (one kernel,
 drift tests), the durable job engine, and the safety/Auditor boundary — the

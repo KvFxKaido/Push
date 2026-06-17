@@ -52,7 +52,8 @@ import type {
   PushStream,
   ToolFunctionSchema,
 } from './provider-contract.js';
-import type { AcceptanceCriterion, RunEventInput } from './runtime-contract.js';
+import type { AcceptanceCriterion, MemoryRecord, RunEventInput } from './runtime-contract.js';
+import type { SessionDigest } from './session-digest.js';
 import { createId } from './id-utils.js';
 import { summarizeToolResultPreview } from './run-events.js';
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
@@ -791,6 +792,14 @@ export interface CoderAgentOptions<TCall, TCard> {
   taskPreamble: string;
 
   /**
+   * Full initial loop transcript. Lead conversational turns use this to seed
+   * the kernel with managed chat history instead of collapsing history into a
+   * synthetic task preamble. Omitted keeps the task-shaped single-user-message
+   * startup used by delegated Coders and inline coding turns.
+   */
+  initialMessages?: CoderLoopMessage[];
+
+  /**
    * Rich multipart representation of the initial user turn. Shells build this
    * from their local attachment types; the shared kernel only carries provider
    * content parts. Ignored when resuming from a checkpoint.
@@ -843,6 +852,21 @@ export interface CoderAgentOptions<TCall, TCard> {
 
   /** Pre-built approval-mode block (Web shim calls `buildApprovalModeBlock(getApprovalMode())`). */
   approvalModeBlock: string | null;
+
+  /** User-linked library text, already rendered by the web shell. */
+  linkedLibraryContent?: string;
+
+  /**
+   * Session-digest inputs forwarded to the provider stream's `toLLMMessages`
+   * context transform (the inline conversational lead threads these so history
+   * management — compaction / USER_GOAL / session digest — happens once,
+   * stream-side, over the raw seed). Undefined for delegated Coders and coding
+   * turns, which carry a single task message that needs no digest. The kernel
+   * does not interpret these; it forwards them verbatim on each round's request.
+   */
+  sessionDigestRecords?: ReadonlyArray<MemoryRecord>;
+  priorSessionDigest?: SessionDigest;
+  onSessionDigestEmitted?: (digest: SessionDigest | null) => void;
 
   /** After-model policy callback (identical shape to Explorer). */
   evaluateAfterModel: (response: string, round: number) => Promise<CoderAfterModelResult>;
@@ -953,6 +977,7 @@ export async function runCoderAgent<TCall, TCard>(
     instructionFilename,
     userProfile,
     taskPreamble,
+    initialMessages,
     initialUserContentParts,
     symbolSummary,
     toolExec: rawToolExec,
@@ -964,6 +989,10 @@ export async function runCoderAgent<TCall, TCard>(
     extraToolProtocols,
     verificationPolicyBlock,
     approvalModeBlock,
+    linkedLibraryContent,
+    sessionDigestRecords,
+    priorSessionDigest,
+    onSessionDigestEmitted,
     evaluateAfterModel,
     acceptanceCriteria,
     harnessMaxRounds,
@@ -1036,6 +1065,10 @@ export async function runCoderAgent<TCall, TCard>(
       projectContent += `\n\nFull file available at /workspace/${filename} — use ${getToolPublicName('sandbox_read_file')} if you need details not shown above.`;
     }
     promptBuilder.set('project_context', projectContent);
+  }
+
+  if (linkedLibraryContent) {
+    promptBuilder.set('library_context', linkedLibraryContent);
   }
 
   // Workspace context (branch metadata; repo name when a GitHub-tool lead
@@ -1203,17 +1236,19 @@ export async function runCoderAgent<TCall, TCard>(
   // Build initial messages (or restore them from the resume seed).
   const messages: CoderLoopMessage[] = resumeState
     ? resumeState.messages.map((m) => ({ ...m }))
-    : [
-        {
-          id: 'coder-task',
-          role: 'user',
-          content: taskPreamble,
-          ...(initialUserContentParts && initialUserContentParts.length > 0
-            ? { contentParts: initialUserContentParts }
-            : {}),
-          timestamp: Date.now(),
-        },
-      ];
+    : initialMessages
+      ? initialMessages.map((m) => ({ ...m }))
+      : [
+          {
+            id: 'coder-task',
+            role: 'user',
+            content: taskPreamble,
+            ...(initialUserContentParts && initialUserContentParts.length > 0
+              ? { contentParts: initialUserContentParts }
+              : {}),
+            timestamp: Date.now(),
+          },
+        ];
 
   const getAwarenessBlock = (prefixNewline = true): string => {
     const awarenessSummary = callbacks.getFileAwarenessSummary?.();
@@ -1279,6 +1314,12 @@ export async function runCoderAgent<TCall, TCard>(
         messages,
         systemPromptOverride: systemPrompt,
         hasSandbox: true,
+        // Conversational lead turns thread digest inputs so the stream's
+        // `toLLMMessages` runs the single context transform over the raw seed.
+        // Undefined elsewhere (a single task message needs no digest).
+        ...(sessionDigestRecords ? { sessionDigestRecords } : {}),
+        ...(priorSessionDigest ? { priorSessionDigest } : {}),
+        ...(onSessionDigestEmitted ? { onSessionDigestEmitted } : {}),
         ...(nativeToolSchemas && nativeToolSchemas.length > 0 ? { tools: nativeToolSchemas } : {}),
       },
       CODER_ROUND_TIMEOUT_MS,

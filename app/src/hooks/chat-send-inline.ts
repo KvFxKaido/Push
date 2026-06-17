@@ -36,6 +36,7 @@
 
 import type { MutableRefObject } from 'react';
 import { getProviderPushStream } from '@/lib/orchestrator';
+import { buildInlineConversationSeed } from '@/lib/inline-conversation-context';
 import { getSandboxDiff, getSandboxEnvironment } from '@/lib/sandbox-client';
 import { getRepoMetadata } from '@/lib/repo-metadata';
 import { getVibeVerbs } from '@/lib/repo-vibe-verbs';
@@ -67,7 +68,13 @@ import {
   buildPriorTurnAttachmentParts,
   mergeInitialUserContentParts,
 } from '@/lib/attachment-content-parts';
+import {
+  buildLinkedLibraryContext,
+  spliceLinkedImagesIntoLastUser,
+} from '@/lib/linked-library-context';
 import { createId } from '@push/lib/id-utils';
+import { getDefaultMemoryStore } from '@push/lib/context-memory-store';
+import { SESSION_DIGEST_HEADER, type SessionDigest } from '@push/lib/session-digest';
 import type { CoderCheckpointState } from '@push/lib/coder-agent';
 import type { RunEventInput } from '@push/lib/runtime-contract';
 import type {
@@ -293,6 +300,27 @@ export function createInlineTranscriptMirror(
 // ---------------------------------------------------------------------------
 
 type InlineTurnOutcome = 'ok' | 'aborted' | 'failed' | 'precondition-failed';
+
+/**
+ * Message-count threshold above which a conversational turn prefetches memory
+ * records for the session-digest stage even without a compaction marker.
+ * Mirrors `MIN_MESSAGES_BEFORE_PREFETCH` in `chat-stream-round.ts` (rough gate;
+ * the real compaction decision happens in `manageContext`).
+ */
+const MIN_MESSAGES_BEFORE_INLINE_PREFETCH = 20;
+
+const MAX_CACHED_INLINE_DIGESTS = 64;
+const _lastInlineSessionDigests = new Map<string, SessionDigest>();
+
+function recordInlineSessionDigest(chatId: string, digest: SessionDigest): void {
+  if (_lastInlineSessionDigests.has(chatId)) {
+    _lastInlineSessionDigests.delete(chatId);
+  } else if (_lastInlineSessionDigests.size >= MAX_CACHED_INLINE_DIGESTS) {
+    const oldest = _lastInlineSessionDigests.keys().next().value;
+    if (oldest !== undefined) _lastInlineSessionDigests.delete(oldest);
+  }
+  _lastInlineSessionDigests.set(chatId, digest);
+}
 
 function logInlineTurnCompleted(fields: {
   chatId: string;
@@ -692,13 +720,60 @@ export async function startInlineCoderTurn(
   // Collect tool completion events so we can synthesize the per-turn
   // collapsible disclosure after the kernel finishes.
   const capturedToolEvents: ToolCompleteEvent[] = [];
-  const taskPreamble = buildInlineTurnPreamble(args.trimmedText, args.apiMessages);
+  const taskInFlight = classifyTurnIntent(args.trimmedText) === 'task';
+
+  const linkedLibraryIds = ctx.conversationsRef.current[chatId]?.linkedLibraryIds ?? [];
+  const linkedLibraryPayload =
+    linkedLibraryIds.length > 0
+      ? await buildLinkedLibraryContext(linkedLibraryIds)
+      : { systemText: undefined, imageAttachments: [] };
+  const apiMessagesForContext = spliceLinkedImagesIntoLastUser(
+    args.apiMessages,
+    linkedLibraryPayload.imageAttachments,
+  );
+
+  let sessionDigestRecords: Awaited<ReturnType<ReturnType<typeof getDefaultMemoryStore>['list']>> =
+    [];
+  if (!taskInFlight) {
+    // Mirror the Orchestrator's prefetch gate (chat-stream-round.ts): the memory
+    // store's `list(predicate)` loads every record before filtering, so only pay
+    // it when the session-digest stage can actually fire — a prior compaction
+    // marker already in the transcript, or enough messages that compaction is
+    // plausible this turn. Otherwise the digest no-ops and the read is wasted
+    // work on every conversational turn (PR #574 review).
+    const compactionLikely =
+      apiMessagesForContext.some(
+        (m) =>
+          typeof m.content === 'string' &&
+          (m.content.includes('[CONTEXT DIGEST]') ||
+            m.content.includes(SESSION_DIGEST_HEADER) ||
+            m.content.includes('[USER_GOAL]')),
+      ) || apiMessagesForContext.length > MIN_MESSAGES_BEFORE_INLINE_PREFETCH;
+    if (compactionLikely) {
+      try {
+        const listed = getDefaultMemoryStore().list((record) => record.scope.chatId === chatId);
+        sessionDigestRecords = await Promise.resolve(listed);
+      } catch {
+        sessionDigestRecords = [];
+      }
+    }
+  }
+
+  const taskPreamble = buildInlineTurnPreamble(args.trimmedText, apiMessagesForContext);
+  // Conversational turns seed the kernel with the raw visible transcript and let
+  // the provider stream's `toLLMMessages` run the single context transform
+  // (compaction / USER_GOAL / session digest / safety net) with the digest
+  // inputs threaded below — no pre-transform here, so history management happens
+  // exactly once (see inline-conversation-context.ts).
+  const initialMessages = !taskInFlight
+    ? buildInlineConversationSeed(apiMessagesForContext)
+    : undefined;
 
   // Derive the exact window buildInlineTurnPreamble uses (same filter + cap)
   // so attachment extraction never drifts outside the text preamble's horizon.
   // `visibleToModel !== false` mirrors the Orchestrator's filterVisibleStage —
   // display-only messages (fork dividers, aborted partials) never reach the wire.
-  const priorWindow = args.apiMessages
+  const priorWindow = apiMessagesForContext
     .slice(0, -1)
     .filter(
       (m) =>
@@ -725,11 +800,10 @@ export async function startInlineCoderTurn(
 
   // preamble text → prior-turn images → current-turn images; undefined when
   // there's no multimodal content (kernel uses the plain taskPreamble string).
-  const initialUserContentParts = mergeInitialUserContentParts(
-    taskPreamble,
-    priorAttParts,
-    args.attachments,
-  );
+  const initialUserContentParts = mergeInitialUserContentParts(taskPreamble, priorAttParts, [
+    ...(args.attachments ?? []),
+    ...linkedLibraryPayload.imageAttachments,
+  ]);
 
   let result: Awaited<ReturnType<typeof runInPageCoderKernel>>;
   try {
@@ -739,7 +813,18 @@ export async function startInlineCoderTurn(
         modelId: resolvedModel || undefined,
         sandboxId,
         taskPreamble,
+        initialMessages,
         initialUserContentParts,
+        linkedLibraryContent: linkedLibraryPayload.systemText,
+        // Digest inputs for the stream's single context transform (only the
+        // conversational seed needs them; task turns leave them undefined).
+        sessionDigestRecords: !taskInFlight ? sessionDigestRecords : undefined,
+        priorSessionDigest: !taskInFlight ? _lastInlineSessionDigests.get(chatId) : undefined,
+        onSessionDigestEmitted: !taskInFlight
+          ? (digest) => {
+              if (digest) recordInlineSessionDigest(chatId, digest);
+            }
+          : undefined,
         branchContext: {
           activeBranch,
           defaultBranch: branchInfo?.defaultBranch || 'main',
@@ -761,7 +846,7 @@ export async function startInlineCoderTurn(
         // from the same classifier the router uses, so even if a conversational
         // turn ever reaches this lane the guard stays quiet. `task` by default;
         // attachment-only turns (no text) read as a task and stay guarded.
-        taskInFlight: classifyTurnIntent(args.trimmedText) === 'task',
+        taskInFlight,
         // Per-round capture: the foreground client mirror is the durable
         // copy adoption resumes from, so don't skip rounds.
         checkpointCadenceRounds: 1,
