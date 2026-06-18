@@ -527,8 +527,9 @@ export function createTurnRunContext(
 //   2. Verification mutation fallback for `sandbox_exec` (best-effort)
 //   3. Verification command result + artifact (typed-check / test-results /
 //      sandbox `exec` cards)
-//   4. Verification artifact for `sandbox_diff` / `sandbox_prepare_commit` /
-//      `sandbox_push` (artifact-only commands without a typed result)
+//   4. Verification artifact for `sandbox_diff` / `sandbox_commit` /
+//      `prepare_push` / `sandbox_push` (artifact-only commands without a typed
+//      result)
 //   5. Repo promotion (`promotion.repo` → bind sandbox, update conversation,
 //      fire onSandboxPromoted)
 //   6. Branch-desync detection from sandbox_exec branch stamps
@@ -601,7 +602,8 @@ export function applyPostExecutionSideEffects(
   } else if (
     call.source === 'sandbox' &&
     (call.call.tool === 'sandbox_diff' ||
-      call.call.tool === 'sandbox_prepare_commit' ||
+      call.call.tool === 'sandbox_commit' ||
+      call.call.tool === 'prepare_push' ||
       call.call.tool === 'sandbox_push')
   ) {
     updateVerificationState(chatId, (state) =>

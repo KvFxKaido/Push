@@ -864,6 +864,16 @@ export interface DiffPreviewCardData {
 // Phase 4 — User Confirmation + CI Status
 
 export interface CommitReviewCardData {
+  /**
+   * Which delivery step this card gates (Gate-at-Push Move A):
+   *   - `'commit'` (default when absent, for back-compat): the legacy
+   *     prepare-commit card — approval commits the working tree then pushes.
+   *   - `'push'`: the diff is the *cumulative push diff* and the commits
+   *     already exist locally (made silently via `sandbox_commit`), so
+   *     approval runs the push only — no commit step. `commitMessage` is
+   *     not required for this kind.
+   */
+  kind?: 'commit' | 'push';
   diff: DiffPreviewCardData;
   auditVerdict: AuditVerdictCardData;
   commitMessage: string;

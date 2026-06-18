@@ -385,15 +385,26 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     exampleJson: '{"tool": "switch_branch", "args": {"branch": "main", "carry_chat": true}}',
   },
   {
-    canonicalName: 'sandbox_prepare_commit',
+    canonicalName: 'sandbox_commit',
     publicName: 'commit',
-    aliases: ['sandbox_commit'],
     source: 'sandbox',
     readOnly: false,
-    statusLabel: 'Reviewing commit...',
+    statusLabel: 'Committing...',
     protocolSignature: 'commit(message)',
-    protocolDescription: 'Prepare a commit for review and auditor approval',
+    protocolDescription:
+      'Commit the working-tree changes locally (no Auditor, no review card). Auto-forks off the default branch first so a commit never lands on main.',
     exampleJson: '{"tool": "commit", "args": {"message": "fix: update validation flow"}}',
+  },
+  {
+    canonicalName: 'prepare_push',
+    publicName: 'prepare_push',
+    source: 'sandbox',
+    readOnly: false,
+    statusLabel: 'Reviewing push...',
+    protocolSignature: 'prepare_push()',
+    protocolDescription:
+      'Run the Auditor over the cumulative push diff and return a review card. On approval the push executes (gated). UNSAFE blocks.',
+    exampleJson: '{"tool": "prepare_push", "args": {}}',
   },
   {
     canonicalName: 'sandbox_push',
@@ -402,7 +413,7 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     readOnly: false,
     statusLabel: 'Pushing to remote...',
     protocolSignature: 'push()',
-    protocolDescription: 'Retry a failed push after approval',
+    protocolDescription: 'Push the audited commits to the remote (re-runs the Auditor gate).',
     exampleJson: '{"tool": "push", "args": {}}',
   },
   {

@@ -458,11 +458,11 @@ function buildLeadToolGuidance(): string {
   const sandboxReadFile = getToolPublicName('sandbox_read_file');
   const readFile = getToolPublicName('read_file');
   const listDir = getToolPublicName('sandbox_list_dir');
-  const prepareCommit = getToolPublicName('sandbox_prepare_commit');
-  const push = getToolPublicName('sandbox_push');
+  const commit = getToolPublicName('sandbox_commit');
+  const preparePush = getToolPublicName('prepare_push');
   return `## Tool Routing
 
-- Use **sandbox tools** for local work: reading/editing code, running commands (${sandboxExec}), tests, type checks, diffs, and commits (via ${prepareCommit}, which runs the Auditor gate — not a raw git commit).
+- Use **sandbox tools** for local work: reading/editing code, running commands (${sandboxExec}), tests, type checks, diffs, and local commits (via ${commit} — a silent local commit, not a raw git commit; the Auditor gate runs later at ${preparePush}).
 - Use **GitHub tools** for remote repo metadata: PRs, branches, CI checks, commit history, cross-repo search, workflow dispatch.
 - Prefer ${sandboxSearch} over ${searchFiles} and ${sandboxReadFile} over ${readFile} for the active repo — they're faster and reflect uncommitted edits.
 
@@ -474,7 +474,7 @@ Tool results may carry structured error fields (error_type, retryable). Respond 
 - EXEC_NON_ZERO_EXIT → read the output, fix the issue, retry.
 - RATE_LIMITED (retryable) → wait briefly, then retry once.
 - SANDBOX_UNREACHABLE → the sandbox likely expired; tell the user.
-- GIT_GUARD_BLOCKED → direct git commit/push/merge/rebase in ${sandboxExec} is blocked; use ${prepareCommit} + ${push}.
+- GIT_GUARD_BLOCKED → direct git commit/push/merge/rebase in ${sandboxExec} is blocked; use ${commit} to commit and ${preparePush} to ship (the Auditor runs at push).
 
 General rules: if retryable is false, pivot to a different approach — don't repeat the same call. If retryable is true, retry silently up to 3 times with corrected arguments. Never claim success unless a tool result confirms it.`;
 }
@@ -535,7 +535,8 @@ export function resolveLeadRoundOptions(input: {
 
 function buildCoderGuidelines(leadMode = false, leadToolScope: LeadToolScope = 'full'): string {
   const diffToolName = getToolPublicName('sandbox_diff');
-  const prepareCommitToolName = getToolPublicName('sandbox_prepare_commit');
+  const commitToolName = getToolPublicName('sandbox_commit');
+  const preparePushToolName = getToolPublicName('prepare_push');
   const delegateCoderName = getToolPublicName('delegate_coder');
   const delegateExplorerName = getToolPublicName('delegate_explorer');
   const createPrName = getToolPublicName('create_pr');
@@ -562,7 +563,7 @@ function buildCoderGuidelines(leadMode = false, leadToolScope: LeadToolScope = '
 - You are speaking directly to the user in this chat. Lead with the answer and keep it conversational.
 ${investigateLine}
 - Change code ONLY when the user asks you to change something. For questions ("what changed recently?", "how does X work?"), answer in prose — do not edit files, and do not propose a commit.
-- When you DO change code: keep changes minimal and focused, fix failing tests before reporting success, then use ${diffToolName} to show what you changed and ${prepareCommitToolName} to propose a commit.
+- When you DO change code: keep changes minimal and focused, fix failing tests before reporting success, then use ${diffToolName} to show what you changed, ${commitToolName} to commit locally (silent — the Auditor runs at push), and ${preparePushToolName} to ship it (runs the Auditor gate and returns a review card for approval).
 - Match your closing to the work. After a code change, end with this summary:
   **Done:** [one sentence]
   **Changed:** [brief scope summary, not a file-by-file transcript]
@@ -599,7 +600,7 @@ Working Memory:
 - Be methodical: read first, plan, implement, test
 - Keep changes minimal and focused on the task
 - If tests fail, fix them before reporting success
-- When done, use ${diffToolName} to show what you changed, then ${prepareCommitToolName} to propose a commit
+- When done, use ${diffToolName} to show what you changed, then ${commitToolName} to commit your work locally (silent commit; the lead ships it via ${preparePushToolName}, where the Auditor gate runs)
 - Do NOT call ${delegateCoderName}, ${delegateExplorerName}, ${createPrName}, ${mergePrName}, or other GitHub tools. You are the Coder; your job is to implement, not delegate or manage PRs.
 - End with a completion summary in this exact format:
   **Done:** [one sentence]

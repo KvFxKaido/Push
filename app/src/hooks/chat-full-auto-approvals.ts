@@ -2,8 +2,10 @@
  * Full Auto commit-approval watcher.
  *
  * In Full Auto mode there is no human present to tap "Approve" on the
- * `commit-review` card that `sandbox_prepare_commit` emits after a SAFE
- * Auditor verdict. Left alone, that card sits pending forever (and, before
+ * `commit-review` card that `prepare_push` emits after a SAFE Auditor
+ * verdict (Gate-at-Push Move A — a push-kind card; legacy commit-kind cards
+ * auto-approve the same way). Left alone, that card sits pending forever
+ * (and, before
  * the transcript hoist, invisibly so). This watcher detects each freshly
  * created pending commit-review card and dispatches the *same*
  * `commit-approve` action a human tap would — reusing the vetted commit +

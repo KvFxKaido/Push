@@ -103,7 +103,8 @@ export type SandboxToolCall =
   | { tool: 'sandbox_list_dir'; args: { path?: string } }
   | { tool: 'sandbox_diff'; args: Record<string, never> }
   | { tool: 'sandbox_show_commit'; args: { ref: string; paths?: string[]; stat?: boolean } }
-  | { tool: 'sandbox_prepare_commit'; args: { message: string } }
+  | { tool: 'sandbox_commit'; args: { message: string } }
+  | { tool: 'prepare_push'; args: Record<string, never> }
   | { tool: 'sandbox_push'; args: Record<string, never> }
   | { tool: 'sandbox_run_tests'; args: { framework?: string } }
   | { tool: 'sandbox_check_types'; args: Record<string, never> }
@@ -350,8 +351,11 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
       },
     };
   }
-  if (tool === 'sandbox_prepare_commit' && typeof args.message === 'string') {
-    return { tool: 'sandbox_prepare_commit', args: { message: args.message } };
+  if (tool === 'sandbox_commit' && typeof args.message === 'string') {
+    return { tool: 'sandbox_commit', args: { message: args.message } };
+  }
+  if (tool === 'prepare_push') {
+    return { tool: 'prepare_push', args: {} };
   }
   if (tool === 'sandbox_push') {
     return { tool: 'sandbox_push', args: {} };
@@ -521,7 +525,8 @@ const EDIT_TOOL = getToolPublicName('sandbox_edit_file');
 const WRITE_TOOL = getToolPublicName('sandbox_write_file');
 const LIST_DIR_TOOL = getToolPublicName('sandbox_list_dir');
 const DIFF_TOOL = getToolPublicName('sandbox_diff');
-const PREPARE_COMMIT_TOOL = getToolPublicName('sandbox_prepare_commit');
+const COMMIT_TOOL = getToolPublicName('sandbox_commit');
+const PREPARE_PUSH_TOOL = getToolPublicName('prepare_push');
 const PUSH_TOOL = getToolPublicName('sandbox_push');
 const RUN_TESTS_TOOL = getToolPublicName('sandbox_run_tests');
 const CHECK_TYPES_TOOL = getToolPublicName('sandbox_check_types');
@@ -547,8 +552,9 @@ Additional tools available when sandbox is active:
 - ${REPLACE_TOOL}(path, search, replace, expected_version?) — Find the unique line in path containing search (case-sensitive substring) and replace that substring with replace. Errors if search matches zero lines (not found) or multiple lines (ambiguous — add more context). replace may contain newlines to expand one line into several. Best for targeted one-line edits when you can name a distinctive string without knowing the hash.
 - ${EDIT_TOOL}(path, edits, expected_version?) — Edit a file using content hashes as line references. edits is an array of HashlineOp: { op: "replace_line" | "insert_after" | "insert_before" | "delete_line", ref: string, content: string }. ${READ_TOOL} results show each line as "lineNo:hash\\tcontent" — the "lineNo:hash" prefix is a ready-made ref you can copy directly into edits. Bare hashes ("abc1234", 7-12 hex chars) also work when the hash is unique. If an edit fails with an ambiguity or stale-ref error, the error includes direct retry targets. Prefer ${EDIT_RANGE_TOOL} for contiguous block replacements; use ${EDIT_TOOL} for surgical anchored edits and multi-point changes in one file. After a successful edit, a fast syntax check runs automatically and appends [DIAGNOSTICS] if errors are found.
 - ${DIFF_TOOL}() — Get the git diff of all uncommitted changes
-- ${PREPARE_COMMIT_TOOL}(message) — Prepare a commit for review. Gets diff, runs a pre-commit hook if present, then runs Auditor on the post-hook diff. If SAFE, returns a review card for user approval. Does NOT commit — user must approve via the UI.
-- ${PUSH_TOOL}() — Retry a failed push. Use this only if a push failed after approval. No Auditor needed (commit was already audited).
+- ${COMMIT_TOOL}(message) — Commit the working-tree changes locally. Runs a pre-commit hook if present, then commits silently — no Auditor, no review card. If you are on the default branch it auto-forks to a feature branch first so the commit never lands on main. Commit freely as you work; the gate is at push time.
+- ${PREPARE_PUSH_TOOL}() — Ship your committed work. Runs the Auditor over the cumulative push diff (everything the push would upload) and returns a review card for user approval. If SAFE, approval pushes; if UNSAFE the push is blocked. Does NOT push on its own — the user (or full-auto) approves via the UI.
+- ${PUSH_TOOL}() — Retry a push after approval. Use this only if a push failed after ${PREPARE_PUSH_TOOL} approval; it re-runs the Auditor gate.
 - ${RUN_TESTS_TOOL}(framework?) — Run the test suite. Auto-detects npm/pytest/cargo/go if framework not specified. Returns pass/fail counts and output.
 - ${CHECK_TYPES_TOOL}() — Run type checker (tsc for TypeScript, pyright/mypy for Python). Auto-detects from config files. Returns errors with file:line locations.
 - ${VERIFY_WORKSPACE_TOOL}() — Best-effort verification pass for common repo workflows. Uses workspace readiness hints to install JS dependencies when missing, then runs inferred typecheck and test commands in sequence. Stops on the first failing step and summarizes what happened.
@@ -566,7 +572,7 @@ Usage: Output a fenced JSON block just like GitHub tools:
 {"tool": "${EXEC_TOOL}", "args": {"command": "npm test"}}
 \`\`\`
 
-Commit message guidelines for ${PREPARE_COMMIT_TOOL}:
+Commit message guidelines for ${COMMIT_TOOL}:
 - Use conventional commit format (feat:, fix:, refactor:, docs:, etc.)
 - Keep under 72 characters
 - Describe what changed and why, not how
@@ -579,9 +585,10 @@ Sandbox rules:
 - You may emit multiple tool calls in one message. Read-only calls (${SANDBOX_READ_ONLY_TOOL_NAMES}) run in parallel. Place any mutating call (${SANDBOX_MUTATING_TOOL_NAMES}) LAST — it runs after all reads complete. Maximum 6 parallel reads per turn.
 - Prefer ${READ_TOOL} → write/edit flows for changes. Use expected_version from ${READ_TOOL} to avoid stale overwrites. For large files, use start_line/end_line to read only the relevant section before editing.
 - ${DIFF_TOOL} shows what you've changed — review before committing.
-- ${PREPARE_COMMIT_TOOL} runs a pre-commit hook if present, then triggers the Auditor on the post-hook diff and presents a review card. The user approves or rejects via the UI.
-- If the push fails after a successful commit, use ${PUSH_TOOL}() to retry.
-- IMPORTANT: Direct git commit, git push, git merge, and git rebase commands in ${EXEC_TOOL} are blocked. Always use ${PREPARE_COMMIT_TOOL} + ${PUSH_TOOL} for the audited commit flow. If the standard flow fails repeatedly, use ask_user to explain the problem and ask the user for permission. Only if the user explicitly approves, retry with "allowDirectGit": true in your ${EXEC_TOOL} args.
+- ${COMMIT_TOOL} commits locally (silent, no Auditor) after running a pre-commit hook if present. Commit freely as you work; it auto-forks off the default branch so commits never land on main.
+- ${PREPARE_PUSH_TOOL} is the gate: it runs the Auditor over the cumulative push diff and presents a review card. The user approves or rejects via the UI; SAFE approval pushes, UNSAFE blocks.
+- If the push fails after ${PREPARE_PUSH_TOOL} approval, use ${PUSH_TOOL}() to retry.
+- IMPORTANT: Direct git commit, git push, git merge, and git rebase commands in ${EXEC_TOOL} are blocked. Use ${COMMIT_TOOL} to commit locally and ${PREPARE_PUSH_TOOL} to ship (the Auditor runs at push). If the standard flow fails repeatedly, use ask_user to explain the problem and ask the user for permission. Only if the user explicitly approves, retry with "allowDirectGit": true in your ${EXEC_TOOL} args.
 - Keep commands focused — avoid long-running servers or background processes
 - IMPORTANT: ${READ_TOOL} only works on files, not directories. To explore the project structure, use ${LIST_DIR_TOOL} first, then read specific files.
 - Before delegating code changes, locate the relevant files/functions to provide precise context: use the GitHub search for committed code, and ${SEARCH_TOOL} when you need to search uncommitted working-tree changes.

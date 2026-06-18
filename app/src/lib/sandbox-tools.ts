@@ -95,7 +95,8 @@ import {
 import {
   handleSandboxDiff,
   handleShowCommit,
-  handlePrepareCommit,
+  handleSandboxCommit,
+  handlePreparePush,
   handleSandboxPush,
   handlePromoteToGithub,
   handleSaveDraft,
@@ -1099,13 +1100,27 @@ async function executeSandboxToolCallInner(
         };
       }
 
-      case 'sandbox_prepare_commit': {
-        return handlePrepareCommit(
+      case 'sandbox_commit': {
+        return handleSandboxCommit(
           buildGitReleaseContext(sandboxId, {
             currentBranch: options?.currentBranch,
             defaultBranch: options?.defaultBranch,
           }),
           call.args,
+          {
+            providerOverride: options?.auditorProviderOverride,
+            modelOverride: options?.auditorModelOverride ?? undefined,
+          },
+        );
+      }
+
+      case 'prepare_push': {
+        return handlePreparePush(
+          buildGitReleaseContext(sandboxId, {
+            currentBranch: options?.currentBranch,
+            defaultBranch: options?.defaultBranch,
+            isMainProtected: options?.isMainProtected,
+          }),
           {
             providerOverride: options?.auditorProviderOverride,
             modelOverride: options?.auditorModelOverride ?? undefined,

@@ -74,11 +74,14 @@ export function resolveWebSecretScanEnabled(): boolean {
 /**
  * Resolve whether the Auditor runs at the push boundary (Gate-at-Push Move A).
  *
- * Default OFF: the gate is wired but inert. Move A's flip (PR 2b) turns it on
- * alongside removing the prepare-time Auditor and relaxing the local-commit
- * guard — so until then deliveries keep their single prepare-time audit and are
- * never double-audited. `VITE_PUSH_AUDIT_AT_PUSH=1` opts in early (e.g. tests /
- * a canary). Guarded so it's safe under any bundler/test runner.
+ * Default ON (Move A flipped): the SAFE/UNSAFE Auditor gate now lives at the
+ * push step. The agent commits silently via `sandbox_commit` (no audit), then
+ * ships via `prepare_push` / `sandbox_push`, where this gate audits the
+ * cumulative push diff. The gate MUST stay on while silent commits exist, else
+ * committed work would ship unaudited — so this default and the retirement of
+ * the prepare-time audit move together. `VITE_PUSH_AUDIT_AT_PUSH=0` (or
+ * `'false'`) is the kill switch. Guarded so it's safe under any bundler/test
+ * runner.
  */
 export function resolveWebAuditAtPushEnabled(): boolean {
   // Read `process.env` first so vitest's `stubEnv` / a Node runtime can drive it,
@@ -88,7 +91,8 @@ export function resolveWebAuditAtPushEnabled(): boolean {
     typeof process !== 'undefined' && process.env?.VITE_PUSH_AUDIT_AT_PUSH !== undefined
       ? process.env.VITE_PUSH_AUDIT_AT_PUSH
       : (import.meta as { env?: Record<string, unknown> }).env?.VITE_PUSH_AUDIT_AT_PUSH;
-  return raw === '1' || raw === 'true';
+  // Default ON: only an explicit opt-out disables the live gate.
+  return !(raw === '0' || raw === 'false');
 }
 
 /**
@@ -103,6 +107,24 @@ export function createSandboxGitBackend(
   execFn: SandboxExecFn = execInSandbox,
 ): GitBackend {
   return new SandboxPlumbingBackend(makeSandboxGitExec(sandboxId, execFn));
+}
+
+/**
+ * Compute the cumulative push diff for a sandbox — the commits the next `git
+ * push` would upload (uncapped), resolved through the same `GitExec` port the
+ * backend and secret-scan gate use. Returns `null` when the diff read itself
+ * fails (no commits / invalid ref / unreachable sandbox); callers treat that as
+ * infra trouble, not "nothing to push". This is the diff source the push-time
+ * Auditor (`prepare_push`) audits, so it matches what the gate scans byte for
+ * byte. Pass a call-site's injected executor (e.g. a handler's
+ * `ctx.execInSandbox`) when one is available.
+ */
+export function computeSandboxPushedDiff(
+  sandboxId: string,
+  execFn: SandboxExecFn = execInSandbox,
+  opts?: { ref?: string },
+): Promise<string | null> {
+  return computePushedDiff(makeSandboxGitExec(sandboxId, execFn), opts);
 }
 
 /**

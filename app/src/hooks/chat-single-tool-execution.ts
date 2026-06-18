@@ -5,8 +5,8 @@
  * chat-send split: when the model emits exactly one tool call in a turn,
  * this module owns:
  *
- *   1. Pre-dispatch verification gate for commit-class tools
- *      (`sandbox_prepare_commit`, `sandbox_push`).
+ *   1. Pre-dispatch verification gate for delivery tools
+ *      (`prepare_push`, `sandbox_push`).
  *   2. Lazy sandbox auto-spin for sandbox + sandbox-needing delegate calls.
  *   3. Source-keyed dispatch:
  *        - scratchpad/todo → executeChatHookToolCall (local React state)
@@ -141,9 +141,12 @@ export async function executeSingleToolCall(
   });
 
   let toolExecResult: ToolExecutionResult | undefined;
+  // Gate-at-Push Move A: the verification preflight is a "don't ship untested
+  // code" check, so it gates the delivery tools (prepare_push / sandbox_push),
+  // not the now-silent local commit (sandbox_commit).
   const isCommitVerificationTool =
     toolCall.source === 'sandbox' &&
-    (toolCall.call.tool === 'sandbox_prepare_commit' || toolCall.call.tool === 'sandbox_push');
+    (toolCall.call.tool === 'prepare_push' || toolCall.call.tool === 'sandbox_push');
 
   if (isCommitVerificationTool) {
     const verificationEvaluation = evaluateVerificationState(

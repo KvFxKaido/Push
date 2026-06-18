@@ -154,13 +154,14 @@ describe('roleCanUseTool', () => {
   it('Explorer cannot use write tools', () => {
     expect(roleCanUseTool('explorer', 'sandbox_write_file')).toBe(false);
     expect(roleCanUseTool('explorer', 'sandbox_exec')).toBe(false);
-    expect(roleCanUseTool('explorer', 'sandbox_prepare_commit')).toBe(false);
+    expect(roleCanUseTool('explorer', 'sandbox_commit')).toBe(false);
   });
 
   it('Coder can use all sandbox tools', () => {
     expect(roleCanUseTool('coder', 'sandbox_write_file')).toBe(true);
     expect(roleCanUseTool('coder', 'sandbox_exec')).toBe(true);
-    expect(roleCanUseTool('coder', 'sandbox_prepare_commit')).toBe(true);
+    expect(roleCanUseTool('coder', 'sandbox_commit')).toBe(true);
+    expect(roleCanUseTool('coder', 'prepare_push')).toBe(true);
     expect(roleCanUseTool('coder', 'sandbox_push')).toBe(true);
   });
 
@@ -299,7 +300,8 @@ describe('ExecutionMode — orchestrator capability widening for local-daemon', 
       expect(roleCanUseTool('orchestrator', 'sandbox_edit_range', 'cloud')).toBe(true);
       expect(roleCanUseTool('orchestrator', 'sandbox_search_replace', 'cloud')).toBe(true);
       expect(roleCanUseTool('orchestrator', 'sandbox_apply_patchset', 'cloud')).toBe(true);
-      expect(roleCanUseTool('orchestrator', 'sandbox_prepare_commit', 'cloud')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'sandbox_commit', 'cloud')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'prepare_push', 'cloud')).toBe(true);
       expect(roleCanUseTool('orchestrator', 'sandbox_push', 'cloud')).toBe(true);
       // Exec lane is now the lead's — no more delegation just to run something.
       expect(roleCanUseTool('orchestrator', 'sandbox_exec', 'cloud')).toBe(true);
@@ -356,7 +358,9 @@ describe('ExecutionMode — orchestrator capability widening for local-daemon', 
       // TOOL_PROTOCOL advertises (PR #700 / Codex P2).
       expect(roleHasCapability('orchestrator', 'git:commit', 'local-daemon')).toBe(true);
       expect(roleHasCapability('orchestrator', 'git:branch', 'local-daemon')).toBe(true);
-      expect(roleCanUseTool('orchestrator', 'sandbox_prepare_commit', 'local-daemon')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'sandbox_commit', 'local-daemon')).toBe(true);
+      // prepare_push is git:push — remote-bound, so stripped in local-daemon.
+      expect(roleCanUseTool('orchestrator', 'prepare_push', 'local-daemon')).toBe(false);
 
       // Remote-bound ops remain stripped (no remote in a paired session).
       expect(roleHasCapability('orchestrator', 'git:push', 'local-daemon')).toBe(false);

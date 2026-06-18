@@ -161,6 +161,7 @@ describe('chat-card-actions', () => {
         {
           type: 'commit-review',
           data: {
+            kind: 'push',
             diff: {
               diff: 'old diff',
               filesChanged: 1,
@@ -169,7 +170,7 @@ describe('chat-card-actions', () => {
               truncated: false,
             },
             auditVerdict: { verdict: 'safe', summary: 'safe', risks: [], filesReviewed: 1 },
-            commitMessage: 'fix: initial',
+            commitMessage: '',
             status: 'pending',
           },
         },
@@ -179,14 +180,17 @@ describe('chat-card-actions', () => {
     const dirtyConversationIdsRef = { current: new Set<string>() };
     const updateAgentStatus = vi.fn();
 
+    // Gate-at-Push Move A: refresh re-runs prepare_push and the result is a
+    // fresh push-kind review card.
     mockExecuteSandboxToolCall.mockResolvedValue({
-      text: '[Tool Result — sandbox_prepare_commit]\nReady for review.',
+      text: '[Tool Result — prepare_push]\nReady to push.',
       card: {
         type: 'commit-review',
         data: {
+          kind: 'push',
           diff: { diff: 'new diff', filesChanged: 2, additions: 3, deletions: 1, truncated: false },
           auditVerdict: { verdict: 'safe', summary: 'still safe', risks: [], filesReviewed: 2 },
-          commitMessage: 'fix: polished',
+          commitMessage: '',
           status: 'pending',
         },
       },
@@ -216,20 +220,20 @@ describe('chat-card-actions', () => {
     });
 
     expect(mockExecuteSandboxToolCall).toHaveBeenCalledWith(
-      { tool: 'sandbox_prepare_commit', args: { message: 'fix: polished' } },
+      { tool: 'prepare_push', args: {} },
       'sb-1',
       { auditorProviderOverride: undefined, auditorModelOverride: null },
     );
     expect(conversations['chat-1'].messages[0].cards?.[0]).toMatchObject({
       type: 'commit-review',
       data: {
-        commitMessage: 'fix: polished',
+        kind: 'push',
         diff: { diff: 'new diff' },
         auditVerdict: { summary: 'still safe' },
       },
     });
     expect(updateAgentStatus).toHaveBeenCalledWith(
-      { active: true, phase: 'Refreshing commit review...' },
+      { active: true, phase: 'Refreshing push review...' },
       { chatId: 'chat-1', source: 'system' },
     );
   });

@@ -73,7 +73,7 @@ function mapCallToRoute(call: SandboxToolCall): RouteMapping {
       // Mirror the Web executor's git guard — direct
       // `git commit/push/merge/rebase` in `sandbox_exec` is blocked
       // unless the model opts in via `allowDirectGit: true`. The
-      // audited flow is `sandbox_prepare_commit` + `sandbox_push`.
+      // audited flow is `sandbox_commit` + `prepare_push`.
       // Background jobs run under `approvalMode='full-auto'`, but we
       // keep the guard on regardless so background jobs can't silently
       // mutate repo history bypassing the audit trail the foreground
@@ -138,7 +138,8 @@ function mapCallToRoute(call: SandboxToolCall): RouteMapping {
     case 'sandbox_search_replace':
     case 'sandbox_edit_file':
     case 'sandbox_apply_patchset':
-    case 'sandbox_prepare_commit':
+    case 'sandbox_commit':
+    case 'prepare_push':
     case 'sandbox_push':
     case 'sandbox_run_tests':
     case 'sandbox_check_types':
@@ -438,7 +439,7 @@ export function createWebExecutorAdapter(args: WebExecutorAdapterArgs): CoderJob
           ? `Use sandbox_create_branch({"name": "<branch-name>"}) — it creates the branch in the sandbox and keeps Push's branch state in sync. Pass "from": "<base>" to branch from a specific ref instead of HEAD.`
           : isBranchSwitch
             ? `Branch switching isn't available in background Coder jobs. Stop trying it and continue work on the current branch, or use sandbox_create_branch to make a new branch from here.`
-            : `Use sandbox_prepare_commit + sandbox_push for the audited flow, or retry this call with "allowDirectGit": true if you've already decided direct git is necessary.`;
+            : `Use sandbox_commit to commit and prepare_push to ship (the Auditor runs at push), or retry this call with "allowDirectGit": true if you've already decided direct git is necessary.`;
         const messageSuffix = isBranchCreate
           ? ' — use sandbox_create_branch'
           : isBranchSwitch

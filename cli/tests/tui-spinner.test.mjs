@@ -236,7 +236,7 @@ describe('verbForActivity', () => {
       'sandbox_exec',
       'sandbox_run_tests',
       'sandbox_check_types',
-      'sandbox_prepare_commit',
+      'sandbox_commit',
       'sandbox_create_branch',
       'sandbox_switch_branch',
       'plan_tasks',

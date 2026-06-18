@@ -142,7 +142,7 @@ export function buildAuditorContextBlock(context?: AuditorPromptContext): string
       lines.push('Audit source: Pull request diff before merge.');
       break;
     case 'sandbox-prepare-commit':
-      lines.push('Audit source: sandbox_prepare_commit tool preflight.');
+      lines.push('Audit source: pre-commit tool preflight (legacy).');
       break;
     case 'sandbox-push':
       lines.push('Audit source: sandbox_push pre-push gate over the cumulative push diff.');

@@ -322,7 +322,7 @@ describe('createWebExecutorAdapter — sandbox tool dispatch', () => {
     );
     expect(result.structuredError?.type).toBe('APPROVAL_GATE_BLOCKED');
     expect(result.structuredError?.message).toContain('is blocked without allowDirectGit');
-    expect(result.text).toContain('sandbox_prepare_commit + sandbox_push');
+    expect(result.text).toContain('sandbox_commit to commit and prepare_push to ship');
     expect(handleCloudflareSandboxMock).not.toHaveBeenCalled();
   });
 
@@ -645,7 +645,7 @@ describe('createWebExecutorAdapter — sandbox_create_branch (slice 3)', () => {
 
   it('redirects `git checkout -b` in sandbox_exec to sandbox_create_branch (slice 3 guidance)', async () => {
     // Pre-slice-3, the git_blocked branch told the model to use
-    // sandbox_prepare_commit + sandbox_push for ALL blocked git ops,
+    // sandbox_commit + prepare_push for ALL blocked git ops,
     // which was wrong for branch creation. Now that sandbox_create_branch
     // is wired for background jobs, the guidance points there directly.
     const adapter = createWebExecutorAdapter({
@@ -669,7 +669,7 @@ describe('createWebExecutorAdapter — sandbox_create_branch (slice 3)', () => {
     expect(result.structuredError?.type).toBe('APPROVAL_GATE_BLOCKED');
     expect(result.structuredError?.message).toContain('use sandbox_create_branch');
     expect(result.text).toContain('sandbox_create_branch');
-    expect(result.text).not.toContain('sandbox_prepare_commit');
+    expect(result.text).not.toContain('sandbox_commit');
     expect(handleCloudflareSandboxMock).not.toHaveBeenCalled();
   });
 

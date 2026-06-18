@@ -42,8 +42,8 @@ export function notifyWorkspaceMutation(sandboxId: string): void {
  * Tools that run a command which can touch tracked files even though they aren't
  * "file-mutation" tools:
  *  - verification tools run build/test commands (a lockfile from `npm install`);
- *  - `sandbox_prepare_commit` runs the repo's `.git/hooks/pre-commit` (a
- *    formatter / codegen hook can rewrite tracked files before the audit).
+ *  - `sandbox_commit` runs the repo's `.git/hooks/pre-commit` (a formatter /
+ *    codegen hook can rewrite tracked files before the commit).
  * Their typical incidental writes (node_modules, caches) are .gitignored, so the
  * backup capture's tree comparison makes those a no-op — but a real tracked-file
  * change (lockfile, formatter rewrite) must signal.
@@ -52,7 +52,7 @@ const WORKSPACE_MUTATING_TOOLS = new Set([
   'sandbox_run_tests',
   'sandbox_check_types',
   'sandbox_verify_workspace',
-  'sandbox_prepare_commit',
+  'sandbox_commit',
 ]);
 
 /**
@@ -63,8 +63,10 @@ const WORKSPACE_MUTATING_TOOLS = new Set([
  * tree-vs-HEAD comparison is the authoritative filter: if nothing actually
  * changed, the backup is a cheap no-op. File-mutation tools, the
  * command-running verification tools, and a mutating `sandbox_exec` qualify;
- * reads, push, commit, branch ops, diff do not (push/commit change refs, not
+ * reads, push, prepare_push, branch ops, diff do not (push changes refs, not
  * working-tree files, and would otherwise self-trigger auto-back's own push).
+ * `sandbox_commit` qualifies because its pre-commit hook can rewrite tracked
+ * files; the commit's own ref change is not a working-tree mutation.
  */
 export function shouldSignalWorkspaceMutation(
   toolName: string,

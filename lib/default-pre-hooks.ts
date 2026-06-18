@@ -50,10 +50,10 @@ function formatGitGuardBlock(
   } else if (isBranchSwitch) {
     guidance = `Direct "${label}" is blocked. Use sandbox_switch_branch({"branch": "<branch-name>"}) — it switches the sandbox and routes the conversation to the existing chat for that branch (or auto-creates one). For branch-restore-as-file flows, pass an explicit flag (e.g. "git checkout -- <path>").`;
   } else if (mode === 'autonomous') {
-    guidance = `Direct "${label}" is blocked. Use sandbox_prepare_commit + sandbox_push for the audited flow. If the standard flow fails, retry with "allowDirectGit": true — you have autonomous permission.`;
+    guidance = `Direct "${label}" is blocked. Use sandbox_commit to commit and prepare_push to ship (the Auditor runs at push). If the standard flow fails, retry with "allowDirectGit": true — you have autonomous permission.`;
   } else {
     guidance = [
-      `Direct "${label}" is blocked. Commits must go through sandbox_prepare_commit (Auditor review) and pushes through sandbox_push.`,
+      `Direct "${label}" is blocked. Commit locally with sandbox_commit, then ship through prepare_push (Auditor review at the push boundary).`,
       ``,
       `If the standard flow is failing, use ask_user to explain the problem and request explicit permission from the user.`,
       `If the user approves, retry with "allowDirectGit": true in your sandbox_exec args.`,
@@ -72,10 +72,12 @@ function formatGitGuardBlock(
  * and the workspace is on the default branch (or `main` / `master`),
  * these are blocked with structured guidance.
  *
- * Covers both web (`sandbox_prepare_commit` / `sandbox_push`) and CLI
+ * Covers both web (`sandbox_commit` / `prepare_push` / `sandbox_push`) and CLI
  * (`git_commit`) vocabularies so the same rule applies on both surfaces.
+ * `sandbox_commit` auto-forks off main on its own, but it's matched here for
+ * defense-in-depth so a direct commit on a protected branch is still denied.
  */
-const PROTECT_MAIN_TOOLS_MATCHER = 'sandbox_prepare_commit|sandbox_push|git_commit';
+const PROTECT_MAIN_TOOLS_MATCHER = 'sandbox_commit|prepare_push|sandbox_push|git_commit';
 
 export function createProtectMainPreHook(): PreToolHookEntry {
   return {

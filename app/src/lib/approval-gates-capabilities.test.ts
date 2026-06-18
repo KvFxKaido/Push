@@ -61,7 +61,7 @@ describe('buildCapabilityApprovalPrompt', () => {
       'sandbox_read_file',
       'sandbox_write_file',
       'sandbox_exec',
-      'sandbox_prepare_commit',
+      'sandbox_commit',
     ]);
     expect(prompt).toContain('Allow this run to');
     expect(prompt).toContain('read code');
