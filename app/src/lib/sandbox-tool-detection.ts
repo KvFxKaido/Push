@@ -504,6 +504,7 @@ const SANDBOX_READ_ONLY_TOOL_NAMES = getToolPublicNames({ source: 'sandbox', rea
 const SANDBOX_MUTATING_TOOL_NAMES = getToolPublicNames({ source: 'sandbox', readOnly: false }).join(
   ', ',
 );
+const GITHUB_READ_TOOL_NAMES = getToolPublicNames({ source: 'github', readOnly: true }).join(', ');
 const EXEC_TOOL = getToolPublicName('sandbox_exec');
 const READ_TOOL = getToolPublicName('sandbox_read_file');
 const SEARCH_TOOL = getToolPublicName('sandbox_search');
@@ -527,6 +528,8 @@ const APPLY_PATCHSET_TOOL = getToolPublicName('sandbox_apply_patchset');
 
 export const SANDBOX_TOOL_PROTOCOL = `
 SANDBOX TOOLS — You have access to a code sandbox (persistent container with the repo cloned).
+
+READ TIER — Default to the GitHub read tools (${GITHUB_READ_TOOL_NAMES}) for exploring, searching, and reading committed code on the active branch: they reflect the branch's last pushed state and stay available even when the sandbox is slow, starting, or unavailable. Reach for the sandbox read tools below (${SANDBOX_READ_ONLY_TOOL_NAMES}) when you need the WORKING TREE — files you have created or edited this session that are not pushed yet — or when a GitHub read fails. Once you have edited a file locally, read it back with ${READ_TOOL} (not the GitHub tool) so you see your uncommitted changes.
 
 Additional tools available when sandbox is active:
 - ${EXEC_TOOL}(command, workdir?) — Run a shell command in the sandbox (default workdir: /workspace)
@@ -575,8 +578,8 @@ Sandbox rules:
 - IMPORTANT: Direct git commit, git push, git merge, and git rebase commands in ${EXEC_TOOL} are blocked. Always use ${PREPARE_COMMIT_TOOL} + ${PUSH_TOOL} for the audited commit flow. If the standard flow fails repeatedly, use ask_user to explain the problem and ask the user for permission. Only if the user explicitly approves, retry with "allowDirectGit": true in your ${EXEC_TOOL} args.
 - Keep commands focused — avoid long-running servers or background processes
 - IMPORTANT: ${READ_TOOL} only works on files, not directories. To explore the project structure, use ${LIST_DIR_TOOL} first, then read specific files.
-- Before delegating code changes, prefer ${SEARCH_TOOL} to quickly locate relevant files/functions and provide precise context.
-- Search strategy: Start with short, distinctive substrings. If no results, broaden the term or drop the path filter. Use ${LIST_DIR_TOOL} to verify paths exist. Use ${READ_SYMBOLS_TOOL}(path) to discover function/class names in a specific file without reading the whole file. Regex patterns can sharpen results: "^export function", "class \\w+Card", "^import.*from".
+- Before delegating code changes, locate the relevant files/functions to provide precise context: use the GitHub search for committed code, and ${SEARCH_TOOL} when you need to search uncommitted working-tree changes.
+- Search strategy: For committed code, the GitHub read tier is the default — it is more reliable than the sandbox and does not depend on it. Use ${SEARCH_TOOL}/${LIST_DIR_TOOL}/${READ_SYMBOLS_TOOL} when the target is your uncommitted working tree or a GitHub read came back empty. Start with short, distinctive substrings; if no results, broaden the term or drop the path filter. ${READ_SYMBOLS_TOOL}(path) discovers function/class names without reading the whole file. Regex patterns sharpen results: "^export function", "class \\w+Card", "^import.*from".
 - Use ${RUN_TESTS_TOOL} BEFORE committing to catch regressions early. It's faster than ${EXEC_TOOL}("npm test") and gives structured results.
 - Use ${CHECK_TYPES_TOOL} to validate TypeScript/Python code before committing. Catches type errors that tests might miss.
 - Use ${VERIFY_WORKSPACE_TOOL} when the workspace may need "install → typecheck → test" in one step, especially if [SANDBOX_ENVIRONMENT] indicates dependencies are missing.`;

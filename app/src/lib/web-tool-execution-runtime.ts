@@ -28,6 +28,7 @@ import { evaluatePreHooks, evaluatePostHooks, type ToolHookRegistry } from './to
 import { getDefaultWebHookRegistry } from './web-default-hooks';
 import type { ApprovalGateRegistry } from './approval-gates';
 import { executeToolCall } from './github-tools';
+import { mapSandboxReadToGitHubCall } from './sandbox-read-github-fallback';
 import { executeSandboxToolCall } from './sandbox-tools';
 import { executeWebSearch } from './web-search-tools';
 import { executeArtifactToolCall } from './artifact-tools';
@@ -94,6 +95,98 @@ export function applyHookToolArgs(
       return;
     default:
       return;
+  }
+}
+
+/**
+ * Read-tier fallback (decision §11): when a cloud-sandbox read can't run
+ * because the sandbox is unavailable, degrade to the GitHub-tier equivalent
+ * instead of dead-ending on `SANDBOX_UNREACHABLE`. Returns the GitHub read
+ * result (annotated as last-pushed state) on success, or `null` when no
+ * fallback applies — in which case the caller keeps the original sandbox error.
+ *
+ * Every branch emits a symmetric structured log so ops can tell a served
+ * fallback from a skip-no-repo / skip-no-equivalent / GitHub-also-failed.
+ */
+async function tryGitHubReadFallback(
+  sandboxCall: { tool: string; args?: Record<string, unknown> },
+  ctx: { allowedRepo?: string; currentBranch?: string; defaultBranch?: string },
+  reason: 'no_sandbox' | 'sandbox_unreachable',
+): Promise<ToolExecutionResult | null> {
+  const repo = ctx.allowedRepo;
+  if (!repo) {
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'read_tier_github_fallback_skipped',
+        tool: sandboxCall.tool,
+        reason,
+        cause: 'no_active_repo',
+      }),
+    );
+    return null;
+  }
+  const branch = ctx.currentBranch ?? ctx.defaultBranch;
+  const githubCall = mapSandboxReadToGitHubCall(sandboxCall, repo, branch);
+  if (!githubCall) {
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'read_tier_github_fallback_skipped',
+        tool: sandboxCall.tool,
+        reason,
+        cause: 'no_github_equivalent',
+      }),
+    );
+    return null;
+  }
+  try {
+    const result = await executeToolCall(githubCall, repo);
+    // The GitHub executor reports many failures (404s, repo mismatch, "path is
+    // a directory") as `[Tool Error] …` *text* with no `structuredError`.
+    // Treat either signal as a failed fallback so we keep the original, more
+    // relevant sandbox error instead of swapping in a misleading GitHub miss.
+    const failed =
+      Boolean(result.structuredError) || (result.text ?? '').trimStart().startsWith('[Tool Error]');
+    if (failed) {
+      console.log(
+        JSON.stringify({
+          level: 'warn',
+          event: 'read_tier_github_fallback_failed',
+          from: sandboxCall.tool,
+          to: githubCall.tool,
+          reason,
+          error_type: result.structuredError?.type ?? 'tool_error_text',
+        }),
+      );
+      return null;
+    }
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'read_tier_github_fallback',
+        from: sandboxCall.tool,
+        to: githubCall.tool,
+        reason,
+        branch: branch ?? null,
+      }),
+    );
+    return {
+      ...result,
+      text: `[Read tier] Sandbox unavailable — served ${githubCall.tool} from GitHub (branch "${branch ?? 'default'}", last pushed state; uncommitted working-tree edits are NOT reflected).\n${result.text}`,
+    };
+  } catch (error) {
+    console.log(
+      JSON.stringify({
+        level: 'warn',
+        event: 'read_tier_github_fallback_failed',
+        from: sandboxCall.tool,
+        to: githubCall.tool,
+        reason,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+    return null;
   }
 }
 
@@ -336,6 +429,14 @@ export class WebToolExecutionRuntime
           // the shape for any future code that wants to inspect it.
           const localDaemonBinding = context.localDaemonBinding as ToolDispatchBinding | undefined;
           if (!context.sandboxId && !localDaemonBinding) {
+            // No read substrate at all (sandbox not started, no paired daemon).
+            // Read-tier fallback (§11): degrade a read to GitHub rather than
+            // blocking on a sandbox that doesn't exist yet.
+            const fallback = await tryGitHubReadFallback(toolCall.call, context, 'no_sandbox');
+            if (fallback) {
+              result = fallback;
+              break;
+            }
             const err: StructuredToolError = {
               type: 'SANDBOX_UNREACHABLE',
               retryable: true,
@@ -381,6 +482,18 @@ export class WebToolExecutionRuntime
             abortSignal: context.abortSignal,
             onExecProgress: context.onExecProgress,
           });
+          // Read-tier fallback (§11): a cloud sandbox that went unreachable
+          // mid-session should not fail a read the GitHub tier can serve.
+          // Cloud-only — local-PC daemon reads have their own re-pair path and
+          // GitHub can't see the local working tree.
+          if (context.sandboxId && result.structuredError?.type === 'SANDBOX_UNREACHABLE') {
+            const fallback = await tryGitHubReadFallback(
+              toolCall.call,
+              context,
+              'sandbox_unreachable',
+            );
+            if (fallback) result = fallback;
+          }
           break;
         }
 

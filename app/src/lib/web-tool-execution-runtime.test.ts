@@ -740,3 +740,138 @@ describe('WebToolExecutionRuntime — local-daemon binding propagation', () => {
     });
   });
 });
+
+describe('WebToolExecutionRuntime — read-tier GitHub fallback (decision §11)', () => {
+  const runtime = new WebToolExecutionRuntime();
+
+  beforeEach(() => {
+    vi.mocked(sandboxTools.executeSandboxToolCall).mockClear();
+    vi.mocked(githubTools.executeToolCall).mockClear();
+  });
+
+  function sandboxRead(): AnyToolCall {
+    return {
+      source: 'sandbox',
+      call: { tool: 'sandbox_read_file', args: { path: 'src/app.ts' } },
+    };
+  }
+
+  it('serves a read via GitHub when no sandbox exists, instead of SANDBOX_UNREACHABLE', async () => {
+    const result = await runtime.execute(sandboxRead(), {
+      allowedRepo: 'owner/repo',
+      sandboxId: null,
+      role: 'coder',
+      isMainProtected: false,
+      currentBranch: 'feature/x',
+    });
+
+    expect(vi.mocked(githubTools.executeToolCall)).toHaveBeenCalledTimes(1);
+    const [githubCall, allowedRepo] = vi.mocked(githubTools.executeToolCall).mock.calls[0];
+    expect(githubCall).toMatchObject({
+      tool: 'read_file',
+      args: { repo: 'owner/repo', path: 'src/app.ts', branch: 'feature/x' },
+    });
+    expect(allowedRepo).toBe('owner/repo');
+    expect(result.structuredError).toBeUndefined();
+    expect(result.text).toContain('[Read tier]');
+    expect(result.text).toContain('[mock github executor] ok');
+    // The sandbox executor is never reached when there's no sandbox.
+    expect(vi.mocked(sandboxTools.executeSandboxToolCall)).not.toHaveBeenCalled();
+  });
+
+  it('falls back to GitHub when a cloud sandbox read returns SANDBOX_UNREACHABLE', async () => {
+    vi.mocked(sandboxTools.executeSandboxToolCall).mockResolvedValueOnce({
+      text: '[sandbox] gone',
+      structuredError: { type: 'SANDBOX_UNREACHABLE', retryable: true, message: 'sandbox lost' },
+    });
+
+    const result = await runtime.execute(sandboxRead(), {
+      allowedRepo: 'owner/repo',
+      sandboxId: 'sb-cloud-1',
+      role: 'coder',
+      isMainProtected: false,
+    });
+
+    expect(vi.mocked(sandboxTools.executeSandboxToolCall)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(githubTools.executeToolCall)).toHaveBeenCalledTimes(1);
+    expect(result.structuredError).toBeUndefined();
+    expect(result.text).toContain('[Read tier]');
+  });
+
+  it('does NOT fall back for local-PC reads (cloud-only scope)', async () => {
+    const binding = { kind: 'params' } as never;
+    vi.mocked(sandboxTools.executeSandboxToolCall).mockResolvedValueOnce({
+      text: '[daemon] unreachable',
+      structuredError: { type: 'SANDBOX_UNREACHABLE', retryable: true, message: 'daemon gone' },
+    });
+
+    const result = await runtime.execute(sandboxRead(), {
+      allowedRepo: 'owner/repo',
+      sandboxId: null,
+      role: 'coder',
+      isMainProtected: false,
+      localDaemonBinding: binding,
+    });
+
+    // Local-PC keeps its own re-pair path; GitHub can't see the local working tree.
+    expect(vi.mocked(githubTools.executeToolCall)).not.toHaveBeenCalled();
+    expect(result.structuredError?.type).toBe('SANDBOX_UNREACHABLE');
+  });
+
+  it('keeps SANDBOX_UNREACHABLE when there is no active repo to query', async () => {
+    const result = await runtime.execute(sandboxRead(), {
+      allowedRepo: '',
+      sandboxId: null,
+      role: 'coder',
+      isMainProtected: false,
+    });
+
+    expect(vi.mocked(githubTools.executeToolCall)).not.toHaveBeenCalled();
+    expect(result.structuredError?.type).toBe('SANDBOX_UNREACHABLE');
+  });
+
+  it('keeps the original sandbox error when GitHub fails as text-only [Tool Error]', async () => {
+    // The GitHub executor reports 404s / repo mismatch / "path is a directory"
+    // as text with no structuredError — the fallback must not treat that as a
+    // successful read and swap out the retryable SANDBOX_UNREACHABLE.
+    vi.mocked(sandboxTools.executeSandboxToolCall).mockResolvedValueOnce({
+      text: '[sandbox] gone',
+      structuredError: { type: 'SANDBOX_UNREACHABLE', retryable: true, message: 'sandbox lost' },
+    });
+    vi.mocked(githubTools.executeToolCall).mockResolvedValueOnce({
+      text: '[Tool Error] "src/app.ts" not found on branch',
+    });
+
+    const result = await runtime.execute(sandboxRead(), {
+      allowedRepo: 'owner/repo',
+      sandboxId: 'sb-cloud-1',
+      role: 'coder',
+      isMainProtected: false,
+    });
+
+    expect(result.structuredError?.type).toBe('SANDBOX_UNREACHABLE');
+    expect(result.text).toContain('[sandbox] gone');
+    expect(result.text).not.toContain('[Read tier]');
+  });
+
+  it('keeps the original sandbox error when GitHub also fails', async () => {
+    vi.mocked(sandboxTools.executeSandboxToolCall).mockResolvedValueOnce({
+      text: '[sandbox] gone',
+      structuredError: { type: 'SANDBOX_UNREACHABLE', retryable: true, message: 'sandbox lost' },
+    });
+    vi.mocked(githubTools.executeToolCall).mockResolvedValueOnce({
+      text: '[github] not found',
+      structuredError: { type: 'FILE_NOT_FOUND', retryable: false, message: 'path not on branch' },
+    });
+
+    const result = await runtime.execute(sandboxRead(), {
+      allowedRepo: 'owner/repo',
+      sandboxId: 'sb-cloud-1',
+      role: 'coder',
+      isMainProtected: false,
+    });
+
+    expect(result.structuredError?.type).toBe('SANDBOX_UNREACHABLE');
+    expect(result.text).toContain('[sandbox] gone');
+  });
+});
