@@ -155,4 +155,71 @@ describe('createProtectMainPreHook', () => {
     );
     expect(result.decision).toBe('deny');
   });
+
+  it('falls back to the tracked branch when the live read is unavailable (no false block)', async () => {
+    // Sandbox slow/down: the live read nulls out, but Push knows the branch.
+    // The commit must NOT be blocked just because the sandbox blipped — this
+    // is the false-positive the tracked-branch fallback removes.
+    const entry = createProtectMainPreHook();
+    const result = await entry.hook(
+      'sandbox_prepare_commit',
+      {},
+      { ...baseContext, getCurrentBranch: async () => null, currentBranch: 'feature/foo' },
+    );
+    expect(result.decision).toBe('passthrough');
+  });
+
+  it('still denies via the tracked branch when it is the default branch', async () => {
+    const entry = createProtectMainPreHook();
+    const result = await entry.hook(
+      'sandbox_prepare_commit',
+      {},
+      { ...baseContext, getCurrentBranch: async () => null, currentBranch: 'main' },
+    );
+    expect(result.decision).toBe('deny');
+  });
+
+  it('prefers the live read over a stale tracked branch (desync safety)', async () => {
+    // Tracked says feature, but HEAD actually desynced onto main. Live-first
+    // must win so the gate is not bypassed by stale tracked state.
+    const entry = createProtectMainPreHook();
+    const result = await entry.hook(
+      'sandbox_prepare_commit',
+      {},
+      { ...baseContext, getCurrentBranch: async () => 'main', currentBranch: 'feature/foo' },
+    );
+    expect(result.decision).toBe('deny');
+  });
+
+  it('evaluates from the tracked branch alone when there is no live reader', async () => {
+    const entry = createProtectMainPreHook();
+    const passthrough = await entry.hook(
+      'sandbox_prepare_commit',
+      {},
+      {
+        ...baseContext,
+        sandboxId: null,
+        getCurrentBranch: undefined,
+        currentBranch: 'feature/foo',
+      },
+    );
+    expect(passthrough.decision).toBe('passthrough');
+
+    const denied = await entry.hook(
+      'sandbox_prepare_commit',
+      {},
+      { ...baseContext, sandboxId: null, getCurrentBranch: undefined, currentBranch: 'main' },
+    );
+    expect(denied.decision).toBe('deny');
+  });
+
+  it('passes through when neither a live reader nor a tracked branch is available', async () => {
+    const entry = createProtectMainPreHook();
+    const result = await entry.hook(
+      'sandbox_prepare_commit',
+      {},
+      { ...baseContext, sandboxId: null, getCurrentBranch: undefined },
+    );
+    expect(result.decision).toBe('passthrough');
+  });
 });

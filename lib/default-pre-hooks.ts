@@ -88,15 +88,24 @@ export function createProtectMainPreHook(): PreToolHookEntry {
       if (!context.isMainProtected) return { decision: 'passthrough' };
       // No `sandboxId` short-circuit: CLI sets `sandboxId: null` because
       // its workspace IS the local working tree. The hook only needs a
-      // branch reader to make a decision.
-      if (!context.getCurrentBranch) return { decision: 'passthrough' };
+      // branch signal — live reader or Push-tracked branch — to decide.
+      if (!context.getCurrentBranch && !context.currentBranch) {
+        return { decision: 'passthrough' };
+      }
 
-      const currentBranch = await context.getCurrentBranch();
+      // Live sandbox HEAD is ground truth for where the commit will actually
+      // land, so prefer it; fall back to Push's tracked branch when the live
+      // read is unavailable (sandbox slow/down/unborn HEAD). Live-first is the
+      // safety-correct order: trusting a stale tracked branch could *bypass*
+      // the gate if HEAD desynced onto main. The fallback removes a class of
+      // false positives — a transient branch-read blip used to null out and
+      // fail closed onto "treat as main", blocking a legitimate feature-branch
+      // commit even though Push knew the branch all along.
+      const currentBranch = (await context.getCurrentBranch?.()) ?? context.currentBranch ?? null;
       const mainBranches = new Set(['main', 'master']);
       if (context.defaultBranch) mainBranches.add(context.defaultBranch);
-      // Fail-safe: if we couldn't determine the current branch, treat
-      // it as on-main (the inline check this hook replaces did the
-      // same — blocking is safer than letting through).
+      // Fail-safe: if we still couldn't determine the branch, treat it as
+      // on-main — blocking is safer than letting an unverified commit through.
       if (currentBranch && !mainBranches.has(currentBranch)) {
         return { decision: 'passthrough' };
       }

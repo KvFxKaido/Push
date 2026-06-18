@@ -39,6 +39,16 @@ export interface ToolHookContext {
   capabilityLedger?: CapabilityLedger;
   /** Repo default branch name (`main`, `master`, …). */
   defaultBranch?: string;
+  /**
+   * Push-tracked active branch for this session, independent of the sandbox.
+   * Kept in sync with sandbox HEAD because raw `git checkout`/`switch` are
+   * blocked in `sandbox_exec` (desync detector as backstop), so hooks can use
+   * it for branch-aware decisions without a sandbox round-trip — and it stays
+   * available when the sandbox is slow or down. Availability-oriented hooks
+   * (memory/artifact scoping) prefer this; safety gates (Protect Main) prefer
+   * the live `getCurrentBranch()` for ground truth and fall back to this.
+   */
+  currentBranch?: string;
   /** Protect Main toggle — when true, commits/pushes to default branch are denied. */
   isMainProtected?: boolean;
   /**
