@@ -19,6 +19,7 @@ import {
   ZEN_GO_MODELS,
   ZEN_MODELS,
 } from './providers';
+import { getZenGoTransport } from './zen-go';
 import { asRecord } from './utils';
 
 const MODELS_FETCH_TIMEOUT_MS = 12_000;
@@ -379,6 +380,14 @@ export function providerModelSupportsStructuredOutput(
   // every model Push offers on this provider. Name-based like Cloudflare (no
   // models.dev structured-output metadata for the native Anthropic ids).
   if (provider === 'anthropic') return true;
+  // Zen-Go Anthropic-transport models (minimax/qwen) get structured outputs via
+  // the same forced-tool bridge (`handleZenGoChat` → `toAnthropicMessages`),
+  // which works regardless of models.dev metadata — same rationale as the direct
+  // `anthropic` gate above. Zen's OpenAI-transport models stay capability-gated
+  // (`response_format`). `getZenGoTransport` is name-based, so this also enables
+  // the dual-tier ids on standard tier, where `response_format` is sent and
+  // ignored gracefully if unsupported.
+  if (provider === 'zen' && getZenGoTransport(modelId) === 'anthropic') return true;
   return getModelCapabilities(provider, modelId).structuredOutput;
 }
 

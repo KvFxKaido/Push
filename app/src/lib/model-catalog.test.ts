@@ -1233,6 +1233,19 @@ describe('providerModelSupportsStructuredOutput', () => {
     expect(providerModelSupportsStructuredOutput('anthropic', undefined)).toBe(false);
   });
 
+  it('gates Zen-Go Anthropic-transport models on (forced-tool bridge); OpenAI-transport stays capability-based', () => {
+    stubWindow();
+    // minimax/qwen route over the Anthropic Messages transport on Go, where the
+    // forced-tool bridge applies regardless of models.dev metadata.
+    expect(providerModelSupportsStructuredOutput('zen', 'minimax-m3')).toBe(true);
+    expect(providerModelSupportsStructuredOutput('zen', 'qwen3.7-max')).toBe(true);
+    expect(providerModelSupportsStructuredOutput('zen', 'minimax-m2.7')).toBe(true);
+    // OpenAI-transport zen models fall through to the capability probe — with no
+    // seeded opencode metadata here, that resolves false (response_format path).
+    expect(providerModelSupportsStructuredOutput('zen', 'kimi-k2.6')).toBe(false);
+    expect(providerModelSupportsStructuredOutput('zen', 'big-pickle')).toBe(false);
+  });
+
   it('gates Cloudflare Workers AI by model name (Kimi / GLM only)', () => {
     stubWindow();
     // Workers AI has no models.dev metadata, so the gate is name-based. Kimi
