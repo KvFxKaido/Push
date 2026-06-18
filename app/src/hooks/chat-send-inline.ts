@@ -72,6 +72,7 @@ import {
   buildLinkedLibraryContext,
   spliceLinkedImagesIntoLastUser,
 } from '@/lib/linked-library-context';
+import { getToolSourceFromName, isReadOnlyToolName } from '@push/lib/tool-registry';
 import { createId } from '@push/lib/id-utils';
 import { getDefaultMemoryStore } from '@push/lib/context-memory-store';
 import { SESSION_DIGEST_HEADER, type SessionDigest } from '@push/lib/session-digest';
@@ -1006,7 +1007,14 @@ export async function startInlineCoderTurn(
   //   - a brand-new untracked file, which `git diff HEAD` doesn't show at
   //     all — it surfaces only as `?? path` in git_status, so compare the
   //     post-run untracked set against the pre-run baseline (review #897 P1).
-  // When the diff probe failed we can't tell, so audit (conservative). ---
+  // When the diff probe failed we can't tell — but only treat that as a
+  // possible change when the turn actually invoked a sandbox-workspace
+  // mutator. A purely conversational / read-only turn ("what changed
+  // recently?" answered from GitHub reads, memory lookups, or a read-only
+  // `git log`) can't leave a mutation the probe would miss, so a failed probe
+  // must NOT manufacture a verdict: otherwise the Auditor evaluates the prose
+  // answer and appends a spurious "[Evaluation: …]" line — the residual coder
+  // behavior reported against the lead. ---
   const committedSinceStart = Boolean(
     postCoderHead && preCoderHead && postCoderHead !== preCoderHead,
   );
@@ -1014,8 +1022,21 @@ export async function startInlineCoderTurn(
   const addedUntrackedFile = postUntrackedFiles
     ? [...postUntrackedFiles].some((path) => !preUntracked.has(path))
     : false;
-  const workspaceChanged =
-    !diffProbed || Boolean(lastTaskDiff) || committedSinceStart || addedUntrackedFile;
+  const confirmedChange = Boolean(lastTaskDiff) || committedSinceStart || addedUntrackedFile;
+  // Scope the failed-probe fallback to tools that actually touch the sandbox
+  // workspace (`sandbox`-source mutators: sandbox_exec, file writes,
+  // commit/push/branch). The lead also advertises non-read-only tools that
+  // never touch the sandbox — `ask_user`, `create_artifact`, GitHub writes
+  // (`pr_create` etc.) — so keying off `!isReadOnlyToolName` alone would
+  // re-audit prose on a clarification- or artifact-only turn whose probe
+  // happened to fail (Codex P2 on #972). Classify by tool NAME via the
+  // registry: `event.toolSource` is the executing lane (e.g. 'coder'), not the
+  // registry source.
+  const touchedSandboxWorkspace = capturedToolEvents.some(
+    (event) =>
+      getToolSourceFromName(event.toolName) === 'sandbox' && !isReadOnlyToolName(event.toolName),
+  );
+  const workspaceChanged = confirmedChange || (touchedSandboxWorkspace && !diffProbed);
   if (!workspaceChanged) {
     console.log(
       JSON.stringify({
@@ -1037,7 +1058,7 @@ export async function startInlineCoderTurn(
   // also fires when the diff probe failed (no reliable place to run checks).
   // Conversational turns skip this entirely, so "what changed recently?" never
   // pays for a typecheck/test run. ---
-  const turnEdited = Boolean(lastTaskDiff) || committedSinceStart || addedUntrackedFile;
+  const turnEdited = confirmedChange;
   const verification = turnEdited
     ? await runInlineVerificationCriteria(
         sandboxId,
@@ -1142,11 +1163,11 @@ export async function startInlineCoderTurn(
     );
   }
 
-  // --- Complete the transcript: kernel summary (+ Auditor verdict line)
-  // replaces the streamed placeholder. Cards go inside the collapsible
-  // disclosure (on the last synthetic call message) when tool events were
-  // captured, so they fold away like the old Orchestrator path. When no
-  // tools ran (pure conversational turn), cards stay on the final message. ---
+  // --- Complete the transcript: kernel summary replaces the streamed
+  // placeholder. Cards go inside the collapsible disclosure (on the last
+  // synthetic call message) when tool events were captured, so they fold away
+  // like the old Orchestrator path. When no tools ran (pure conversational
+  // turn), cards stay on the final message. ---
   const hasToolDisclosure = capturedToolEvents.length > 0;
   const lastToolCallId = insertSyntheticToolPairs(
     ctx,
@@ -1154,18 +1175,43 @@ export async function startInlineCoderTurn(
     hasToolDisclosure ? result.cards : undefined,
     placeholderId,
   );
-  // Verification block joins the kernel summary the same way the delegated
-  // arc appended its in-kernel acceptance-criteria block; the Auditor verdict
-  // line (when present) sits after both.
+  // The completion verdict renders as a structured card, not appended prose —
+  // matching the delegated arc, which routes the same verdict through the
+  // delegation-result card and strips the `[Evaluation: …]` text from the
+  // user-facing summary. Only `incomplete` surfaces a card: the gaps are the
+  // actionable signal, while a `complete` verdict is a self-grade the user
+  // doesn't need on a successful answer. Unlike the delegated arc (which keeps
+  // the verdict model-side via `summaries` for the Orchestrator's next
+  // decision), the inline lead is human-in-the-loop — the next turn is driven
+  // by the user reading the card — so we deliberately don't replay the verdict
+  // into model context.
+  const evaluationCard: ChatCard | null =
+    auditorGate?.evalResult && auditorGate.evalResult.verdict === 'incomplete'
+      ? {
+          type: 'evaluation',
+          data: {
+            verdict: auditorGate.evalResult.verdict,
+            summary: auditorGate.evalResult.summary,
+            gaps: auditorGate.evalResult.gaps,
+            confidence: auditorGate.evalResult.confidence,
+          },
+        }
+      : null;
+  // Verification block joins the kernel summary the same way the delegated arc
+  // appended its in-kernel acceptance-criteria block.
   const summaryWithVerification = `${result.summary}${verification.summaryLine}`;
-  const finalContent = auditorGate?.auditorSummaryLine
-    ? `${summaryWithVerification}\n\n${auditorGate.auditorSummaryLine}`
-    : summaryWithVerification;
+  // The evaluation card always rides the final (visible) message so an
+  // incomplete verdict isn't buried in the collapsed tool disclosure. Result
+  // cards still fold into the disclosure when tools ran.
+  const finalCards: ChatCard[] = [
+    ...(hasToolDisclosure ? [] : result.cards),
+    ...(evaluationCard ? [evaluationCard] : []),
+  ];
   completeAssistantMessage(
     ctx,
     {
-      content: finalContent,
-      ...(hasToolDisclosure ? {} : { cards: result.cards }),
+      content: summaryWithVerification,
+      ...(finalCards.length > 0 ? { cards: finalCards } : {}),
     },
     placeholderId,
   );

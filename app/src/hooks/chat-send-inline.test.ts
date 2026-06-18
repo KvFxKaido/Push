@@ -794,15 +794,35 @@ describe('startInlineCoderTurn', () => {
     logSpy.mockRestore();
   });
 
-  it('folds the Auditor verdict line into the final message (same gate as the delegated arc)', async () => {
+  it('renders an incomplete verdict as a structured card, not appended prose', async () => {
     mockRunCoderAuditorGate.mockResolvedValue({
-      evalResult: { verdict: 'incomplete', summary: 'gaps', gaps: ['tests'] },
-      auditorSummaryLine: '[Evaluation: INCOMPLETE] gaps',
+      evalResult: {
+        verdict: 'incomplete',
+        summary: 'left work undone',
+        gaps: ['tests'],
+        confidence: 'high',
+      },
+      auditorSummaryLine: '[Evaluation: INCOMPLETE] left work undone',
     });
     const { ctx, store } = makeHarness();
     await startInlineCoderTurn(ctx, laneArgs());
 
-    expect(lastAssistant(store).content).toBe('Did the thing.\n\n[Evaluation: INCOMPLETE] gaps');
+    // The prose verdict no longer leaks into the message body.
+    const final = lastAssistant(store);
+    expect(final.content).toBe('Did the thing.');
+    expect(final.content).not.toContain('[Evaluation:');
+    // It rides the visible message as an `evaluation` card with the gaps.
+    const evalCard = final.cards?.find((c) => c.type === 'evaluation');
+    expect(evalCard).toEqual({
+      type: 'evaluation',
+      data: {
+        verdict: 'incomplete',
+        summary: 'left work undone',
+        gaps: ['tests'],
+        confidence: 'high',
+      },
+    });
+
     const [, gateInput] = mockRunCoderAuditorGate.mock.calls[0] as [
       unknown,
       { auditorInput: Record<string, unknown> },
@@ -811,6 +831,20 @@ describe('startInlineCoderTurn', () => {
     expect(gateInput.auditorInput.preCoderHead).toBe('abc');
     expect(gateInput.auditorInput.preCoderUntrackedFiles).toEqual(['junk.txt']);
     expect(gateInput.auditorInput.currentSandboxId).toBe('sb-1');
+  });
+
+  it('surfaces no evaluation card for a complete verdict (no self-grade footer)', async () => {
+    mockRunCoderAuditorGate.mockResolvedValue({
+      evalResult: { verdict: 'complete', summary: 'all good', gaps: [], confidence: 'high' },
+      auditorSummaryLine: '[Evaluation: COMPLETE] all good',
+    });
+    const { ctx, store } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    const final = lastAssistant(store);
+    expect(final.content).toBe('Did the thing.');
+    expect(final.content).not.toContain('[Evaluation:');
+    expect(final.cards?.some((c) => c.type === 'evaluation')).toBeFalsy();
   });
 
   it('skips the Auditor on a read-only turn (no diff, HEAD unmoved) — no spurious verdict', async () => {
@@ -845,6 +879,118 @@ describe('startInlineCoderTurn', () => {
     const { ctx } = makeHarness();
     await startInlineCoderTurn(ctx, laneArgs());
     expect(mockRunCoderAuditorGate).toHaveBeenCalled();
+  });
+
+  it('skips the Auditor when the diff probe fails but only read-only tools ran — no prose verdict', async () => {
+    // The reported "residual coder behavior": a conversational "what changed
+    // recently?" turn answered from a read-only GitHub `commits` lookup. The
+    // diff probe throws (e.g. the sandbox/runtime is unhealthy), so we can't
+    // confirm a clean tree — but a read-only turn can't have mutated the
+    // workspace, so the conservative fallback must NOT fire and audit prose.
+    mockGetSandboxDiff.mockRejectedValue(new Error('sandbox unreachable'));
+    mockRunInPageCoderKernel.mockImplementationOnce(
+      async (
+        _spec: unknown,
+        callbacks: { onRunEvent: (event: Record<string, unknown>) => void },
+      ) => {
+        callbacks.onRunEvent({
+          type: 'tool.execution_complete',
+          round: 1,
+          executionId: 'x-1',
+          toolName: 'commits',
+          toolSource: 'github',
+          durationMs: 1,
+          isError: false,
+          preview: 'recent commits',
+        });
+        return {
+          summary: 'Here is what changed recently.',
+          cards: [],
+          rounds: 1,
+          checkpoints: 0,
+          criteriaResults: undefined,
+        };
+      },
+    );
+    const { ctx, store } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    expect(mockRunCoderAuditorGate).not.toHaveBeenCalled();
+    expect(lastAssistant(store).content).toBe('Here is what changed recently.');
+  });
+
+  it('still audits when the diff probe fails after a sandbox-workspace mutator ran', async () => {
+    // A real edit turn whose post-run diff probe throws: we genuinely can't
+    // tell whether the write landed, so the conservative fallback stands. The
+    // event's `toolSource` is the executing lane ('coder'); classification is
+    // by tool NAME via the registry, so this still resolves to a sandbox tool.
+    mockGetSandboxDiff.mockRejectedValue(new Error('sandbox unreachable'));
+    mockRunInPageCoderKernel.mockImplementationOnce(
+      async (
+        _spec: unknown,
+        callbacks: { onRunEvent: (event: Record<string, unknown>) => void },
+      ) => {
+        callbacks.onRunEvent({
+          type: 'tool.execution_complete',
+          round: 1,
+          executionId: 'x-1',
+          toolName: 'sandbox_write_file',
+          toolSource: 'coder',
+          durationMs: 1,
+          isError: false,
+          preview: 'wrote src/a.ts',
+        });
+        return {
+          summary: 'Did the thing.',
+          cards: [{ type: 'diff' }],
+          rounds: 1,
+          checkpoints: 0,
+          criteriaResults: undefined,
+        };
+      },
+    );
+    const { ctx } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    expect(mockRunCoderAuditorGate).toHaveBeenCalled();
+  });
+
+  it('skips the Auditor when the diff probe fails but only non-sandbox tools ran (ask_user/artifact)', async () => {
+    // Codex P2 on #972: `ask_user` and `create_artifact` are non-read-only but
+    // never touch the sandbox. A clarification- or artifact-only turn whose
+    // probe happens to fail must NOT re-audit prose just because a non-read-only
+    // tool ran — only sandbox-workspace mutators justify the conservative
+    // fallback.
+    mockGetSandboxDiff.mockRejectedValue(new Error('sandbox unreachable'));
+    mockRunInPageCoderKernel.mockImplementationOnce(
+      async (
+        _spec: unknown,
+        callbacks: { onRunEvent: (event: Record<string, unknown>) => void },
+      ) => {
+        callbacks.onRunEvent({
+          type: 'tool.execution_complete',
+          round: 1,
+          executionId: 'x-1',
+          toolName: 'artifact',
+          toolSource: 'coder',
+          durationMs: 1,
+          isError: false,
+          preview: 'created an artifact',
+        });
+        return {
+          summary: 'Drafted that for you.',
+          cards: [],
+          rounds: 1,
+          checkpoints: 0,
+          criteriaResults: undefined,
+        };
+      },
+    );
+    const { ctx, store } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    expect(mockRunCoderAuditorGate).not.toHaveBeenCalled();
+    expect(lastAssistant(store).content).toBe('Drafted that for you.');
   });
 
   it('bridges the kernel checkpoint into the V1 capture: ROUND_STARTED + transcript swap + flush', async () => {
