@@ -847,6 +847,78 @@ describe('startInlineCoderTurn', () => {
     expect(mockRunCoderAuditorGate).toHaveBeenCalled();
   });
 
+  it('skips the Auditor when the diff probe fails but only read-only tools ran — no prose verdict', async () => {
+    // The reported "residual coder behavior": a conversational "what changed
+    // recently?" turn answered from a read-only GitHub `commits` lookup. The
+    // diff probe throws (e.g. the sandbox/runtime is unhealthy), so we can't
+    // confirm a clean tree — but a read-only turn can't have mutated the
+    // workspace, so the conservative fallback must NOT fire and audit prose.
+    mockGetSandboxDiff.mockRejectedValue(new Error('sandbox unreachable'));
+    mockRunInPageCoderKernel.mockImplementationOnce(
+      async (
+        _spec: unknown,
+        callbacks: { onRunEvent: (event: Record<string, unknown>) => void },
+      ) => {
+        callbacks.onRunEvent({
+          type: 'tool.execution_complete',
+          round: 1,
+          executionId: 'x-1',
+          toolName: 'commits',
+          toolSource: 'github',
+          durationMs: 1,
+          isError: false,
+          preview: 'recent commits',
+        });
+        return {
+          summary: 'Here is what changed recently.',
+          cards: [],
+          rounds: 1,
+          checkpoints: 0,
+          criteriaResults: undefined,
+        };
+      },
+    );
+    const { ctx, store } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    expect(mockRunCoderAuditorGate).not.toHaveBeenCalled();
+    expect(lastAssistant(store).content).toBe('Here is what changed recently.');
+  });
+
+  it('still audits when the diff probe fails after a workspace-touching tool ran', async () => {
+    // A real edit turn whose post-run diff probe throws: we genuinely can't
+    // tell whether the write landed, so the conservative fallback stands.
+    mockGetSandboxDiff.mockRejectedValue(new Error('sandbox unreachable'));
+    mockRunInPageCoderKernel.mockImplementationOnce(
+      async (
+        _spec: unknown,
+        callbacks: { onRunEvent: (event: Record<string, unknown>) => void },
+      ) => {
+        callbacks.onRunEvent({
+          type: 'tool.execution_complete',
+          round: 1,
+          executionId: 'x-1',
+          toolName: 'sandbox_write_file',
+          toolSource: 'sandbox',
+          durationMs: 1,
+          isError: false,
+          preview: 'wrote src/a.ts',
+        });
+        return {
+          summary: 'Did the thing.',
+          cards: [{ type: 'diff' }],
+          rounds: 1,
+          checkpoints: 0,
+          criteriaResults: undefined,
+        };
+      },
+    );
+    const { ctx } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    expect(mockRunCoderAuditorGate).toHaveBeenCalled();
+  });
+
   it('bridges the kernel checkpoint into the V1 capture: ROUND_STARTED + transcript swap + flush', async () => {
     const { ctx, flushCheckpoint, emitRunEngineEvent } = makeHarness();
     await startInlineCoderTurn(ctx, laneArgs());

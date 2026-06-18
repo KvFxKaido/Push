@@ -72,6 +72,7 @@ import {
   buildLinkedLibraryContext,
   spliceLinkedImagesIntoLastUser,
 } from '@/lib/linked-library-context';
+import { isReadOnlyToolName } from '@push/lib/tool-registry';
 import { createId } from '@push/lib/id-utils';
 import { getDefaultMemoryStore } from '@push/lib/context-memory-store';
 import { SESSION_DIGEST_HEADER, type SessionDigest } from '@push/lib/session-digest';
@@ -1006,7 +1007,14 @@ export async function startInlineCoderTurn(
   //   - a brand-new untracked file, which `git diff HEAD` doesn't show at
   //     all — it surfaces only as `?? path` in git_status, so compare the
   //     post-run untracked set against the pre-run baseline (review #897 P1).
-  // When the diff probe failed we can't tell, so audit (conservative). ---
+  // When the diff probe failed we can't tell — but only treat that as a
+  // possible change when the turn actually invoked a workspace-touching
+  // (non-read-only) tool. A purely conversational / read-only turn ("what
+  // changed recently?" answered from GitHub reads, memory lookups, or a
+  // read-only `git log`) can't leave a mutation the probe would miss, so a
+  // failed probe must NOT manufacture a verdict: otherwise the Auditor
+  // evaluates the prose answer and appends a spurious "[Evaluation: …]" line —
+  // the residual coder behavior reported against the lead. ---
   const committedSinceStart = Boolean(
     postCoderHead && preCoderHead && postCoderHead !== preCoderHead,
   );
@@ -1014,8 +1022,11 @@ export async function startInlineCoderTurn(
   const addedUntrackedFile = postUntrackedFiles
     ? [...postUntrackedFiles].some((path) => !preUntracked.has(path))
     : false;
-  const workspaceChanged =
-    !diffProbed || Boolean(lastTaskDiff) || committedSinceStart || addedUntrackedFile;
+  const confirmedChange = Boolean(lastTaskDiff) || committedSinceStart || addedUntrackedFile;
+  const turnTouchedWorkspace = capturedToolEvents.some(
+    (event) => !isReadOnlyToolName(event.toolName),
+  );
+  const workspaceChanged = confirmedChange || (turnTouchedWorkspace && !diffProbed);
   if (!workspaceChanged) {
     console.log(
       JSON.stringify({
@@ -1037,7 +1048,7 @@ export async function startInlineCoderTurn(
   // also fires when the diff probe failed (no reliable place to run checks).
   // Conversational turns skip this entirely, so "what changed recently?" never
   // pays for a typecheck/test run. ---
-  const turnEdited = Boolean(lastTaskDiff) || committedSinceStart || addedUntrackedFile;
+  const turnEdited = confirmedChange;
   const verification = turnEdited
     ? await runInlineVerificationCriteria(
         sandboxId,
