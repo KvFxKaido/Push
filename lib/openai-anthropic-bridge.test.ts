@@ -252,6 +252,58 @@ describe('buildAnthropicMessagesRequest', () => {
     expect(body).not.toHaveProperty('tools');
   });
 
+  it('translates native function tools to Anthropic flat custom-tool shape', () => {
+    const params = {
+      type: 'object' as const,
+      properties: { path: { type: 'string' as const } },
+      required: ['path'],
+      additionalProperties: false as const,
+    };
+    const body = buildAnthropicMessagesRequest({
+      model: 'claude-opus-4-7',
+      messages: [{ role: 'user', content: 'read it' }],
+      stream: true,
+      tools: [
+        {
+          type: 'function',
+          function: { name: 'sandbox_read_file', description: 'Read a file', parameters: params },
+        },
+      ],
+    });
+    // Flat shape: { name, description, input_schema } — not OpenAI-nested.
+    expect(body.tools).toEqual([
+      { name: 'sandbox_read_file', description: 'Read a file', input_schema: params },
+    ]);
+  });
+
+  it('merges native function tools with the web_search server tool (function first)', () => {
+    const body = buildAnthropicMessagesRequest({
+      model: 'claude-opus-4-7',
+      messages: [{ role: 'user', content: 'hi' }],
+      stream: true,
+      anthropic_web_search: true,
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'sandbox_read_file',
+            description: 'Read a file',
+            parameters: {
+              type: 'object',
+              properties: {},
+              required: [],
+              additionalProperties: false,
+            },
+          },
+        },
+      ],
+    });
+    const tools = body.tools as Array<Record<string, unknown>>;
+    expect(tools).toHaveLength(2);
+    expect(tools[0]).toMatchObject({ name: 'sandbox_read_file' });
+    expect(tools[1]).toEqual({ type: 'web_search_20250305', name: 'web_search' });
+  });
+
   it('uses assistant_content_blocks verbatim on the upstream content when present', () => {
     // Pause-turn replay: the prior assistant turn carries an opaque
     // content[] array that Anthropic recognized as continuation context.
@@ -943,6 +995,22 @@ describe('anthropicEventStream — drift vs translate->pump', () => {
       lines: [
         'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"calling"}}',
         'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}',
+      ],
+    },
+    {
+      // A model `tool_use` block: both paths stream tool_call_delta markers and
+      // flush the call as the same fenced JSON text_delta on stop.
+      name: 'native tool_use block -> fenced tool call',
+      lines: [
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":9,"output_tokens":0}}}',
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Let me check."}}',
+        'data: {"type":"content_block_stop","index":0}',
+        'data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01","name":"sandbox_read_file","input":{}}}',
+        'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"path\\":"}}',
+        'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\\"a.ts\\"}"}}',
+        'data: {"type":"content_block_stop","index":1}',
+        'data: {"type":"message_delta","delta":{"stop_reason":"tool_use","usage":{"input_tokens":9,"output_tokens":7}}}',
       ],
     },
     {

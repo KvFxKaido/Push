@@ -61,8 +61,9 @@ export async function* zenStream(
   //      Anthropic transport) and was never a migration target.
   //  Native FC is additive either way — `openAISSEPump` normalizes any native
   //  `tool_calls` back into the dispatcher's fenced JSON. Anthropic-transport Go
-  //  models drop `tools` upstream (`toAnthropicMessages` ignores them today) and
-  //  fall back to text-dispatch — see model-catalog's ZEN_NATIVE_TOOL_CALLING_MODELS.
+  //  models (minimax/qwen) translate `tools` to Anthropic's custom-tool shape via
+  //  `toAnthropicMessages`, and their `tool_use` responses round-trip through
+  //  `createAnthropicTranslatedStream` — see model-catalog's ZEN_NATIVE_TOOL_CALLING_MODELS.
   const goMode = getZenGoMode();
   const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : undefined;
   const body = goMode

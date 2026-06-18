@@ -71,6 +71,27 @@ export function stripTemplateTokens(text: string): string {
   return text.replace(/<\|[a-z_]+\|>/gi, '');
 }
 
+/**
+ * Render an accumulated native tool call as the fenced `{"tool","args"}` JSON the
+ * text dispatcher consumes — the single normalization point both native paths
+ * converge on. `rawArgs` is the concatenated JSON-arguments string; malformed
+ * JSON still emits a fenced shell (with empty args) so the dispatcher's
+ * malformed-tool-call diagnostic can guide a retry rather than dropping silently.
+ *
+ * Single-sourced here so the OpenAI-native flush (`flushNativeToolCalls` below)
+ * and the Anthropic `tool_use` translators (`createAnthropicTranslatedStream` /
+ * `anthropicEventStream` in `openai-anthropic-bridge.ts`) can't drift on format.
+ */
+export function formatNativeToolCallFenced(toolName: string, rawArgs: string): string {
+  let parsedArgs: unknown = {};
+  try {
+    parsedArgs = rawArgs ? JSON.parse(rawArgs) : {};
+  } catch {
+    parsedArgs = {};
+  }
+  return `\n\`\`\`json\n${JSON.stringify({ tool: toolName, args: parsedArgs })}\n\`\`\`\n`;
+}
+
 /** Validate a `delta.reasoning_block` payload into a typed `ReasoningBlock`,
  *  or return `undefined` when the shape is wrong. Treated as a soft drop:
  *  a malformed block on the wire shouldn't kill the stream, it just means
@@ -192,17 +213,9 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
         console.warn(`[Push] Native tool call "${tc.name}" is not a known tool — dropped`);
         continue;
       }
-      let parsedArgs: unknown = {};
-      try {
-        parsedArgs = tc.args ? JSON.parse(tc.args) : {};
-      } catch {
-        // Malformed args — still emit a fenced shell so the malformed-tool-
-        // call diagnostic path in the dispatcher can guide a retry.
-        parsedArgs = {};
-      }
       yield {
         type: 'text_delta',
-        text: `\n\`\`\`json\n${JSON.stringify({ tool: tc.name, args: parsedArgs })}\n\`\`\`\n`,
+        text: formatNativeToolCallFenced(tc.name, tc.args),
       };
     }
     pendingNativeToolCalls.clear();
