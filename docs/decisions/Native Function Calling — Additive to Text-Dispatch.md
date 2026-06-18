@@ -2,9 +2,8 @@
 
 **Status:** Current — shipped on the web lead for Cloudflare Workers AI (Kimi/GLM,
 name-based), OpenRouter (capability-based), and OpenCode Zen (name-based catalog
-allowlist; standard tier + Go OpenAI transport). Other providers, the CLI lead, and
-the Zen Go Anthropic transport are deferred follow-ups, not yet promoted to
-`ROADMAP.md`.
+allowlist; both the OpenAI and Anthropic Go transports). Other providers and the
+CLI lead are deferred follow-ups, not yet promoted to `ROADMAP.md`.
 
 **Date:** 2026-06-17
 
@@ -94,13 +93,16 @@ native tool call — both converge at one dispatch path. Consequences:
 
 - **Other providers.** OpenAI/etc. are function-calling-capable but stay
   text-dispatch only until native calling is validated per provider. The gate is
-  the single switch. OpenRouter (capability-based) and OpenCode Zen (name-based,
-  standard tier + Go OpenAI transport) are now enabled on the web lead. The CLI
+  the single switch. OpenRouter (capability-based) and OpenCode Zen (name-based)
+  are enabled on the web lead — Zen across both transports: the OpenAI-transport
+  models (standard tier + Go) carry `tools` straight through `toOpenAIChat`, and
+  the **Anthropic-transport** Go models (minimax/qwen) translate OpenAI tool
+  schemas to Anthropic's custom-tool shape in `toAnthropicMessages` and turn the
+  model's `tool_use` blocks back into the dispatcher's fenced JSON via
+  `createAnthropicTranslatedStream` (web) / `anthropicEventStream` (CLI). The CLI
   OpenAI-compat adapter (`cli/openai-stream.ts`) is a separate follow-up — its
   lead doesn't attach `nativeToolSchemas` yet, so it stays text-dispatch (the
-  shared `toOpenAIChat` already serializes `tools` once a CLI gate lands). The
-  Zen Go **Anthropic** transport (minimax/qwen) stays text-dispatch until the
-  bridge can translate OpenAI tool schemas to Anthropic `tools`.
+  shared `toOpenAIChat` already serializes `tools` once a CLI gate lands).
 - **Other roles.** Delegated Coder, Explorer, auditor/reviewer are unchanged
   (auditor/reviewer use `response_format` structured outputs, a separate
   mechanism — see `docs/runbooks/OpenRouter Capability Expansion.md`).

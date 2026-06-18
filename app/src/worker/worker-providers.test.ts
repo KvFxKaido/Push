@@ -363,6 +363,41 @@ describe('handleZenGoChat — neutral wire (dual-accept)', () => {
     expect(body.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'hello' }] }]);
   });
 
+  it('translates neutral tools to Anthropic custom-tool shape on the Anthropic transport', async () => {
+    const get = captureUpstream();
+    const tool = {
+      type: 'function',
+      function: {
+        name: 'sandbox_read_file',
+        description: 'Read a file',
+        parameters: {
+          type: 'object',
+          properties: { path: { type: 'string' } },
+          required: ['path'],
+          additionalProperties: false,
+        },
+      },
+    };
+    await handleZenGoChat(
+      makeNeutralRequest({
+        model: 'minimax-m3',
+        messages: [{ role: 'user', content: 'read it' }],
+        tools: [tool],
+      }),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    // Flat Anthropic custom-tool shape — the seam that makes native FC work for
+    // the minimax/qwen Anthropic-transport Go models.
+    expect(body.tools).toEqual([
+      {
+        name: 'sandbox_read_file',
+        description: 'Read a file',
+        input_schema: tool.function.parameters,
+      },
+    ]);
+  });
+
   it('routes an OpenAI-transport model through toOpenAIChat (model in body, /chat/completions)', async () => {
     const get = captureUpstream();
     await handleZenGoChat(

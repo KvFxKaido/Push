@@ -4,9 +4,9 @@ import type {
   OpenAIReasoningBlock,
 } from './openai-chat-types.ts';
 import type { LlmContentPart, LlmMessage, PushStreamRequest } from './provider-contract.ts';
-import type { PushStreamEvent, StreamUsage } from './provider-contract.ts';
+import type { PushStreamEvent, StreamUsage, ToolFunctionSchema } from './provider-contract.ts';
 import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
-import { stripTemplateTokens } from './openai-sse-pump.ts';
+import { formatNativeToolCallFenced, stripTemplateTokens } from './openai-sse-pump.ts';
 
 /**
  * Anthropic removed `temperature`, `top_p`, and `top_k` on Opus 4.7 and every
@@ -198,6 +198,13 @@ function buildOpenAISseChunk(params: {
   model: string;
   content?: string;
   reasoningBlock?: OpenAIReasoningBlock;
+  /**
+   * Emit an OpenAI streaming `tool_calls` delta (translated from an Anthropic
+   * `tool_use` block). The first fragment of a call carries `id` + `name`;
+   * subsequent fragments carry only an `arguments` slice. `openai-sse-pump`
+   * accumulates these by `index` and flushes the call as fenced JSON.
+   */
+  toolCall?: { index: number; id?: string; name?: string; arguments?: string };
   finishReason?: string | null;
   /**
    * Push-private sidecar: when finishReason is `'pause_turn'`, this carries
@@ -215,6 +222,18 @@ function buildOpenAISseChunk(params: {
   if (params.content) delta.content = params.content;
   if (params.reasoningBlock) delta.reasoning_block = params.reasoningBlock;
   if (params.assistantBlocks) delta.assistant_content_blocks = params.assistantBlocks;
+  if (params.toolCall) {
+    const fn: Record<string, unknown> = {};
+    if (params.toolCall.name !== undefined) fn.name = params.toolCall.name;
+    if (params.toolCall.arguments !== undefined) fn.arguments = params.toolCall.arguments;
+    delta.tool_calls = [
+      {
+        index: params.toolCall.index,
+        ...(params.toolCall.id ? { id: params.toolCall.id, type: 'function' } : {}),
+        function: fn,
+      },
+    ];
+  }
 
   const payload: Record<string, unknown> = {
     id: `chatcmpl-${crypto.randomUUID()}`,
@@ -332,6 +351,7 @@ export function buildAnthropicMessagesRequest(
     temperature: request.temperature,
     topP: request.top_p,
     enableWebSearch: request.anthropic_web_search === true,
+    tools: request.tools,
     anthropicVersion: options?.anthropicVersion,
     // `buildAnthropicMessagesRequest` intentionally omits `model` — callers
     // re-attach it (the body translation is provider-version-agnostic).
@@ -357,6 +377,9 @@ interface AnthropicBodyAssembly {
   temperature?: number;
   topP?: number;
   enableWebSearch: boolean;
+  /** Native function-calling schemas (OpenAI shape), translated to Anthropic's
+   *  flat `{ name, description, input_schema }` custom-tool shape. */
+  tools?: ToolFunctionSchema[];
   anthropicVersion?: string;
   /**
    * When set, emitted as the top-level `model`. `buildAnthropicMessagesRequest`
@@ -439,18 +462,40 @@ function assembleAnthropicBody(parts: AnthropicBodyAssembly): Record<string, unk
     }
   }
 
-  // Anthropic's native server-side web search. The model emits
-  // `server_tool_use` + `web_search_tool_result` content blocks alongside
-  // its text response; our SSE translator ignores those block types (only
-  // text and signed thinking flow through), so the user sees the model's
-  // narration including any inline citations. Multi-turn round-trip of
-  // the search blocks is lossy — but the model can simply re-search on
-  // the next turn, so functionally it works.
+  // Tools array: native function-calling schemas (translated to Anthropic's flat
+  // custom-tool shape) plus the server-side web-search tool, in one array —
+  // Anthropic accepts a mix. Function tools come first; the model emits a
+  // `tool_use` content block per call, which the SSE translators turn back into
+  // the OpenAI `tool_calls` / fenced-JSON the dispatcher consumes (additive to
+  // text-dispatch). Web search emits `server_tool_use` + `web_search_tool_result`
+  // blocks instead; the translators capture those for pause_turn but never surface
+  // them as tool calls, so the user just sees the model's narration + citations.
+  const anthropicTools: Array<Record<string, unknown>> = [];
+  if (parts.tools && parts.tools.length > 0) {
+    for (const tool of parts.tools) anthropicTools.push(openAIToolToAnthropicTool(tool));
+  }
   if (parts.enableWebSearch) {
-    body.tools = [{ type: 'web_search_20250305', name: 'web_search' }];
+    anthropicTools.push({ type: 'web_search_20250305', name: 'web_search' });
+  }
+  if (anthropicTools.length > 0) {
+    body.tools = anthropicTools;
   }
 
   return body;
+}
+
+/**
+ * Translate one OpenAI `ToolFunctionSchema` to Anthropic's native custom-tool
+ * shape. Anthropic's Messages API takes tools FLAT — `{ name, description,
+ * input_schema }` — not nested under a `function` key like OpenAI, and the
+ * JSON-Schema parameter object maps straight onto `input_schema`.
+ */
+function openAIToolToAnthropicTool(tool: ToolFunctionSchema): Record<string, unknown> {
+  return {
+    name: tool.function.name,
+    description: tool.function.description,
+    input_schema: tool.function.parameters,
+  };
 }
 
 /** Options for the neutral `PushStreamRequest` → Anthropic Messages serializer. */
@@ -642,6 +687,7 @@ export function toAnthropicMessages(
           : options?.temperatureDefault,
     topP: req.topP,
     enableWebSearch: options?.enableWebSearch ?? req.anthropicWebSearch === true,
+    tools: req.tools,
     anthropicVersion: options?.anthropicVersion,
     // `model` stays the sampling-gate input above; only the top-level body
     // field is suppressed when the transport carries the model out-of-band.
@@ -699,6 +745,11 @@ export function createAnthropicTranslatedStream(
       // Accumulates partial JSON for server_tool_use input across
       // `input_json_delta` events. Joined on content_block_stop.
       const inputJsonBuffers = new Map<number, string>();
+      // Per-index id+name for model `tool_use` blocks (native function calls).
+      // Distinguishes them from `server_tool_use` (web search): only `tool_use`
+      // blocks are streamed out as OpenAI `tool_calls` deltas for the pump to
+      // flush as fenced JSON; web search stays internal.
+      const toolUseBlocks = new Map<number, { id: string; name: string }>();
 
       const processSseLine = (rawLine: string): boolean => {
         const line = rawLine.trim();
@@ -734,6 +785,17 @@ export function createAnthropicTranslatedStream(
                 kind: 'redacted_thinking',
                 data: typeof block.data === 'string' ? block.data : '',
               });
+            } else if (block.type === 'tool_use') {
+              const id = typeof block.id === 'string' ? block.id : '';
+              const name = typeof block.name === 'string' ? block.name : '';
+              toolUseBlocks.set(idx, { id, name });
+              // First tool_calls fragment carries id + name; the arguments stream
+              // in via `input_json_delta` below.
+              controller.enqueue(
+                encoder.encode(
+                  buildOpenAISseChunk({ model, toolCall: { index: idx, id, name, arguments: '' } }),
+                ),
+              );
             }
             // Capture the raw block shape for pause_turn replay. We keep a
             // shallow clone so subsequent delta accumulation doesn't mutate
@@ -840,15 +902,29 @@ export function createAnthropicTranslatedStream(
               state.signature += delta.signature;
             }
           }
-          // server_tool_use blocks stream their `input` field as
-          // `input_json_delta` partials. Concatenate the partials so we
-          // can JSON-parse the complete object at content_block_stop.
+          // tool_use / server_tool_use blocks stream their `input` field as
+          // `input_json_delta` partials. Concatenate the partials so we can
+          // JSON-parse the complete object at content_block_stop (pause_turn
+          // replay). For a model `tool_use` block, ALSO emit the slice as an
+          // OpenAI tool_calls arguments delta so the pump accumulates + flushes
+          // it; server_tool_use (web search) is not tracked, so its input stays
+          // internal.
           if (
             delta?.type === 'input_json_delta' &&
             typeof delta.partial_json === 'string' &&
             idx >= 0
           ) {
             inputJsonBuffers.set(idx, (inputJsonBuffers.get(idx) ?? '') + delta.partial_json);
+            if (toolUseBlocks.has(idx)) {
+              controller.enqueue(
+                encoder.encode(
+                  buildOpenAISseChunk({
+                    model,
+                    toolCall: { index: idx, arguments: delta.partial_json },
+                  }),
+                ),
+              );
+            }
           }
           return false;
         }
@@ -993,6 +1069,18 @@ export async function* anthropicEventStream(
   const openBlocks = new Map<number, ThinkingState | RedactedState>();
   const capturedBlocks = new Map<number, Record<string, unknown>>();
   const inputJsonBuffers = new Map<number, string>();
+  // Per-index model `tool_use` blocks (native function calls). No downstream
+  // pump here (the CLI consumes events directly), so we accumulate name + args
+  // and flush each as the same fenced JSON `text_delta` the pump emits — keeping
+  // event-for-event parity with the translate→pump path (pinned by the drift test).
+  const toolUseBlocks = new Map<number, { id: string; name: string; args: string }>();
+  function* flushToolUse(): Generator<PushStreamEvent> {
+    for (const [, tc] of toolUseBlocks) {
+      if (!tc.name) continue;
+      yield { type: 'text_delta', text: formatNativeToolCallFenced(tc.name, tc.args) };
+    }
+    toolUseBlocks.clear();
+  }
 
   const updateUsage = (usageRec: Record<string, unknown> | undefined): void => {
     if (!usageRec) return;
@@ -1011,6 +1099,7 @@ export async function* anthropicEventStream(
     if (!line.startsWith('data:')) return;
     const jsonStr = line[5] === ' ' ? line.slice(6) : line.slice(5);
     if (jsonStr === '[DONE]') {
+      yield* flushToolUse();
       yield { type: 'done', finishReason: 'stop', usage };
       stopped = true;
       return;
@@ -1039,6 +1128,15 @@ export async function* anthropicEventStream(
             kind: 'redacted_thinking',
             data: typeof block.data === 'string' ? block.data : '',
           });
+        } else if (block.type === 'tool_use') {
+          toolUseBlocks.set(idx, {
+            id: typeof block.id === 'string' ? block.id : '',
+            name: typeof block.name === 'string' ? block.name : '',
+            args: '',
+          });
+          // One `tool_call_delta` progress marker per fragment, matching the
+          // pump (which yields one per OpenAI tool_calls fragment it accumulates).
+          yield { type: 'tool_call_delta' };
         }
         capturedBlocks.set(idx, { ...block });
       }
@@ -1080,6 +1178,11 @@ export async function* anthropicEventStream(
         idx >= 0
       ) {
         inputJsonBuffers.set(idx, (inputJsonBuffers.get(idx) ?? '') + delta.partial_json);
+        const tc = toolUseBlocks.get(idx);
+        if (tc) {
+          tc.args += delta.partial_json;
+          yield { type: 'tool_call_delta' };
+        }
       }
       return;
     }
@@ -1151,6 +1254,9 @@ export async function* anthropicEventStream(
               : null;
         if (stopReason || eventType === 'message_stop') {
           const mapped = mapAnthropicStopReason(stopReason);
+          // Flush accumulated native tool calls before the terminal event, just
+          // as the pump flushes on finish_reason / [DONE].
+          yield* flushToolUse();
           if (mapped === 'pause_turn') {
             const assistantBlocks = Array.from(capturedBlocks.entries())
               .sort(([a], [b]) => a - b)
@@ -1206,6 +1312,7 @@ export async function* anthropicEventStream(
       yield* processLine(buffer);
       if (stopped) return;
     }
+    yield* flushToolUse();
     yield { type: 'done', finishReason: 'stop', usage };
   } finally {
     signal?.removeEventListener('abort', onAbort);
