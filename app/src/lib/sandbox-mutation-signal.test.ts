@@ -56,8 +56,15 @@ describe('shouldSignalWorkspaceMutation', () => {
     ).toBe(true);
   });
 
-  it('fires for the command-running verification tools (lockfile writes)', () => {
-    for (const t of ['sandbox_run_tests', 'sandbox_check_types', 'sandbox_verify_workspace']) {
+  it('fires for command-running tools that can touch tracked files', () => {
+    // verification (lockfile from npm install) + prepare_commit (pre-commit
+    // hook can rewrite tracked files before the audit).
+    for (const t of [
+      'sandbox_run_tests',
+      'sandbox_check_types',
+      'sandbox_verify_workspace',
+      'sandbox_prepare_commit',
+    ]) {
       expect(shouldSignalWorkspaceMutation(t, opts({}))).toBe(true);
     }
   });
@@ -71,13 +78,8 @@ describe('shouldSignalWorkspaceMutation', () => {
     ).toBe(false);
   });
 
-  it('does NOT fire for reads, push, commit, branch ops, diff', () => {
-    for (const t of [
-      'sandbox_read_file',
-      'sandbox_push',
-      'sandbox_prepare_commit',
-      'sandbox_diff',
-    ]) {
+  it('does NOT fire for reads, push, branch ops, diff', () => {
+    for (const t of ['sandbox_read_file', 'sandbox_push', 'sandbox_diff', 'sandbox_list_dir']) {
       expect(shouldSignalWorkspaceMutation(t, opts({}))).toBe(false);
     }
   });

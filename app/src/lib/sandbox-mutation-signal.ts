@@ -39,16 +39,20 @@ export function notifyWorkspaceMutation(sandboxId: string): void {
 }
 
 /**
- * Tools that run a command which can touch tracked files (e.g. a lockfile from
- * `npm install`) even though they aren't "file-mutation" tools. Their handlers
- * run with `markWorkspaceMutated: true`. Their typical writes (node_modules,
- * build/test caches) are .gitignored, so the backup capture's tree comparison
- * makes those a no-op — but a lockfile change is real, so they must signal.
+ * Tools that run a command which can touch tracked files even though they aren't
+ * "file-mutation" tools:
+ *  - verification tools run build/test commands (a lockfile from `npm install`);
+ *  - `sandbox_prepare_commit` runs the repo's `.git/hooks/pre-commit` (a
+ *    formatter / codegen hook can rewrite tracked files before the audit).
+ * Their typical incidental writes (node_modules, caches) are .gitignored, so the
+ * backup capture's tree comparison makes those a no-op — but a real tracked-file
+ * change (lockfile, formatter rewrite) must signal.
  */
 const WORKSPACE_MUTATING_TOOLS = new Set([
   'sandbox_run_tests',
   'sandbox_check_types',
   'sandbox_verify_workspace',
+  'sandbox_prepare_commit',
 ]);
 
 /**
