@@ -31,6 +31,7 @@
 import { makeSecretScanPrePushGate } from '@push/lib/git/secret-scan-gate';
 import { execInSandbox } from './sandbox-client';
 import { createSandboxPushGit, resolveWebSecretScanEnabled } from './git-backend';
+import { isInvalidGitRef } from './git-ref-validation';
 
 /** Git's canonical empty-tree object — the diff base when HEAD is unborn. */
 const EMPTY_TREE_SHA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
@@ -52,21 +53,33 @@ const defaultLog: LogFn = (level, event, ctx) =>
   console.log(JSON.stringify({ level, event, ...ctx }));
 
 // Non-destructive working-tree capture: stage everything into a throwaway index
-// (`.gitignore`-respecting via `add -A`) and `commit-tree` it off HEAD. The real
-// HEAD / index / working tree are untouched. Prints `CLEAN` when there's nothing
-// to back up, `COMMIT <sha>` on success, or `ERR <stage>` on a git failure (kept
-// non-fatal — one bad backup must never brick the session).
+// (seeded from HEAD so only *changes* are re-hashed) and `commit-tree` it off
+// HEAD. The real HEAD / index / working tree are untouched. `git add -A` always
+// includes untracked files regardless of `status.showUntrackedFiles`, and
+// "clean" is decided by comparing the snapshot tree to HEAD's tree — NOT by
+// `git status` (which can report an untracked-only tree as empty under
+// `showUntrackedFiles=no`, and reports failures as empty too; Codex P2 on #980).
+// Prints `CLEAN` when the tree matches HEAD, `COMMIT <sha>` on success, or
+// `ERR <stage>` on a git failure (kept non-fatal — one bad backup must never
+// brick the session).
 const CAPTURE_COMMAND = [
   'cd /workspace 2>/dev/null || { echo "ERR workspace"; exit 0; }',
-  'if [ -z "$(git status --porcelain 2>/dev/null)" ]; then echo CLEAN; exit 0; fi',
   'idx="$(mktemp -u /tmp/push-autoback.XXXXXX)"',
+  'has_head=0',
+  'if git rev-parse -q --verify HEAD >/dev/null 2>&1; then',
+  '  has_head=1',
+  '  GIT_INDEX_FILE="$idx" git read-tree HEAD 2>/dev/null',
+  'fi',
   'GIT_INDEX_FILE="$idx" git add -A 2>/dev/null',
   'tree="$(GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null)"',
   'rm -f "$idx"',
   '[ -z "$tree" ] && { echo "ERR write-tree"; exit 0; }',
-  'if git rev-parse -q --verify HEAD >/dev/null 2>&1; then',
+  'if [ "$has_head" = 1 ]; then',
+  '  head_tree="$(git rev-parse "HEAD^{tree}" 2>/dev/null)"',
+  '  if [ "$tree" = "$head_tree" ]; then echo CLEAN; exit 0; fi',
   '  commit="$(git commit-tree "$tree" -p HEAD -m "push: auto-back WIP" 2>/dev/null)"',
   'else',
+  `  if [ "$tree" = "${EMPTY_TREE_SHA}" ]; then echo CLEAN; exit 0; fi`,
   '  commit="$(git commit-tree "$tree" -m "push: auto-back WIP" 2>/dev/null)"',
   'fi',
   '[ -z "$commit" ] && { echo "ERR commit-tree"; exit 0; }',
@@ -92,6 +105,13 @@ export async function backUpWorkingTree(
   if (!trimmedBranch) {
     log('info', 'auto_back_skipped', { reason: 'no_branch' });
     return { status: 'skipped', reason: 'no_branch' };
+  }
+  // The branch is session-derived (the sandbox's tracked branch), so it's
+  // normally a valid ref — but validate before it goes into the push refspec so
+  // a malformed/garbage value can't produce a bad ref. (push-agent on #980.)
+  if (isInvalidGitRef(trimmedBranch)) {
+    log('info', 'auto_back_skipped', { reason: 'invalid_branch', branch: trimmedBranch });
+    return { status: 'skipped', reason: 'invalid_branch' };
   }
 
   // 1. Capture (non-destructive).

@@ -46,6 +46,12 @@ describe('backUpWorkingTree', () => {
     expect(execInSandbox).not.toHaveBeenCalled();
   });
 
+  it('skips a malformed branch ref before touching the sandbox', async () => {
+    const result = await backUpWorkingTree('sb-1', 'bad branch~name', silent);
+    expect(result).toEqual({ status: 'skipped', reason: 'invalid_branch' });
+    expect(execInSandbox).not.toHaveBeenCalled();
+  });
+
   it('is a no-op when the working tree is clean (no push)', async () => {
     dispatch((cmd) => (cmd.includes('commit-tree') ? { stdout: 'CLEAN' } : {}));
     const result = await backUpWorkingTree('sb-1', 'feature/x', silent);
