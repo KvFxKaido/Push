@@ -392,6 +392,48 @@ describe('buildAnthropicMessagesRequest', () => {
   });
 });
 
+describe('toAnthropicMessages — native tools', () => {
+  // The neutral entry point Zen Go actually uses (buildAnthropicMessagesRequest
+  // shares the same assembleAnthropicBody translation; this pins the neutral path
+  // directly rather than only transitively through the worker integration test).
+  it('translates req.tools to Anthropic flat custom-tool shape, merged with web search', () => {
+    const params = {
+      type: 'object' as const,
+      properties: { path: { type: 'string' as const } },
+      required: ['path'],
+      additionalProperties: false as const,
+    };
+    const body = toAnthropicMessages(
+      {
+        provider: 'zen',
+        model: 'minimax-m3',
+        messages: [{ id: '1', role: 'user', content: 'read it', timestamp: 0 } as LlmMessage],
+        tools: [
+          {
+            type: 'function',
+            function: { name: 'sandbox_read_file', description: 'Read a file', parameters: params },
+          },
+        ],
+      } as PushStreamRequest<LlmMessage>,
+      { enableWebSearch: true },
+    );
+    const tools = body.tools as Array<Record<string, unknown>>;
+    expect(tools).toEqual([
+      { name: 'sandbox_read_file', description: 'Read a file', input_schema: params },
+      { type: 'web_search_20250305', name: 'web_search' },
+    ]);
+  });
+
+  it('omits tools when req.tools is empty and web search is off', () => {
+    const body = toAnthropicMessages({
+      provider: 'zen',
+      model: 'minimax-m3',
+      messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 } as LlmMessage],
+    } as PushStreamRequest<LlmMessage>);
+    expect(body).not.toHaveProperty('tools');
+  });
+});
+
 describe('createAnthropicTranslatedStream', () => {
   it('translates Anthropic SSE events into OpenAI-style SSE chunks', async () => {
     const upstream = createEventStreamResponse([
