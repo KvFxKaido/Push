@@ -38,12 +38,18 @@ branch.**
 
 - **Reads default to GitHub** (§11) — committed state is read without the
   sandbox; the code-enforced fallback degrades sandbox reads to GitHub.
-- **Push-time gating exists.** The deterministic secret scan runs as a
-  `PrePushGate` on `PushGit.push()` (`lib/secret-scan.ts`). Moving the Auditor
-  to push joins infrastructure that is already there; it does not invent it.
+- **Push-time gating exists and is built to compose.** `PushGit.push()`
+  (`lib/git/push-git.ts`) takes a `PrePushGate`, and `composePrePushGates`
+  combines several. Two already ride it: the deterministic secret scan
+  (`makeSecretScanPrePushGate`, `lib/git/secret-scan-gate.ts`, over the scanner
+  in `lib/secret-scan.ts`) and Protect Main (`makeProtectMainPrePushGate`, #976).
+  The Auditor is today a `PreCommitGate` on `PushGit.commit()` — so Move A is
+  adding/moving it as one more composed `PrePushGate`. The seam exists; this
+  joins infrastructure rather than inventing it.
 - **Protect Main is now enforced at the push boundary** (#976) — the gate that
-  used to guard the commit is already migrating to the push. The push boundary
-  is accreting the gates on its own; this doc names the pattern and finishes it.
+  used to guard the commit already migrated to the push via that exact
+  `PrePushGate` seam. The push boundary is accreting the gates on its own; this
+  doc names the pattern and finishes it.
 - **Auto-branch-on-commit + auto-push** ship on web/cloud: a commit on `main`
   auto-creates a branch and auto-pushes through the gated `PushGit` path, so
   nothing lands on `main` and the work is durable the moment it's pushed.

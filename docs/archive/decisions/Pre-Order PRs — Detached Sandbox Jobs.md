@@ -133,6 +133,6 @@ terminal + teardown, and intake — composition over invention.
 
 - Conversation 2026-06-07 (delegation → "lean into DO jobs" → delegated
   worktrees → pre-order PRs → separate sandboxes, cap 1).
-- Related: [`Agent Runtime Decisions.md`](<Agent Runtime Decisions.md>) §2 (the
+- Related: [`Agent Runtime Decisions.md`](<../../decisions/Agent Runtime Decisions.md>) §2 (the
   Orchestrator is the capable lead; delegation is a durable engine path),
   ROADMAP "Single-Agent Loop + Branch-at-Commit Persistence".
