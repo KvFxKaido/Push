@@ -11,9 +11,15 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { SandboxPlumbingBackend, type GitBackend, type GitExec } from '../lib/git/backend.js';
-import { PushGit, type PreCommitGate, type PrePushGate } from '../lib/git/push-git.js';
+import {
+  PushGit,
+  composePrePushGates,
+  type PreCommitGate,
+  type PrePushGate,
+} from '../lib/git/push-git.js';
 import { computePushedDiff } from '../lib/git/pushed-diff.js';
 import { makeSecretScanPrePushGate } from '../lib/git/secret-scan-gate.js';
+import { makeProtectMainPrePushGate } from '../lib/git/protect-main-gate.js';
 import { resolveSecretScanEnabled } from '../lib/secret-scan.js';
 
 const execFileAsync = promisify(execFile);
@@ -55,8 +61,9 @@ export function createLocalGitBackend(cwd: string, opts?: { timeoutMs?: number }
  * CLI uses this to wire the Auditor commit gate (see `makeAuditorPreCommitGate`
  * in `cli/tools.ts`). Pass `secretScan: true` to gate pushes behind the
  * deterministic secret scan over the *uncapped* about-to-be-pushed diff; pass
- * `prePush` to inject a custom gate. Wired for parity even though the CLI does
- * not push today; `PUSH_SECRET_SCAN=0` opts out.
+ * `protectMain: true` (with `defaultBranch`) to refuse a push to the protected
+ * branch at the boundary; pass `prePush` to inject a custom gate. Wired for
+ * parity even though the CLI does not push today; `PUSH_SECRET_SCAN=0` opts out.
  */
 export function createLocalPushGit(
   cwd: string,
@@ -65,19 +72,31 @@ export function createLocalPushGit(
     preCommit?: PreCommitGate;
     prePush?: PrePushGate;
     secretScan?: boolean;
+    protectMain?: boolean;
+    defaultBranch?: string;
   },
 ): PushGit {
   const exec = makeLocalGitExec(cwd, opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const backend = new SandboxPlumbingBackend(exec);
   const prePush =
     opts?.prePush ??
-    (opts?.secretScan
-      ? makeSecretScanPrePushGate({
-          getDiff: () => computePushedDiff(exec),
-          enabled: resolveSecretScanEnabled({ env: process.env.PUSH_SECRET_SCAN }),
-        })
-      : undefined);
+    composePrePushGates([
+      opts?.protectMain
+        ? makeProtectMainPrePushGate({
+            enabled: true,
+            defaultBranch: opts.defaultBranch,
+            getCurrentBranch: () => backend.currentBranch(),
+          })
+        : undefined,
+      opts?.secretScan
+        ? makeSecretScanPrePushGate({
+            getDiff: () => computePushedDiff(exec),
+            enabled: resolveSecretScanEnabled({ env: process.env.PUSH_SECRET_SCAN }),
+          })
+        : undefined,
+    ]);
   return new PushGit({
-    backend: new SandboxPlumbingBackend(exec),
+    backend,
     preCommit: opts?.preCommit,
     prePush,
   });

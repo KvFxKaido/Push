@@ -25,6 +25,12 @@ export interface SandboxExecutionOptions {
   currentBranch?: string;
   defaultBranch?: string;
   /**
+   * Protect Main toggle for this session. Threaded to `sandbox_push` so the
+   * push boundary can enforce it via a fail-closed pre-push gate (defense in
+   * depth behind the Protect Main `PreToolUse` hook).
+   */
+  isMainProtected?: boolean;
+  /**
    * When present, the active workspace is a `kind: 'local-pc'` OR
    * `kind: 'relay'` session and the dispatcher routes whichever tool
    * ops the daemon supports through `local-daemon-sandbox-client`

@@ -508,6 +508,7 @@ export class WebToolExecutionRuntime
             auditorModelOverride: context.activeModel,
             currentBranch: context.currentBranch,
             defaultBranch: context.defaultBranch,
+            isMainProtected: context.isMainProtected,
             localDaemonBinding,
             abortSignal: context.abortSignal,
             onExecProgress: context.onExecProgress,

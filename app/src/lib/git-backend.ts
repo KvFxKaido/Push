@@ -12,9 +12,15 @@
  */
 
 import { SandboxPlumbingBackend, type GitBackend, type GitExec } from '@push/lib/git/backend';
-import { PushGit, type PreCommitGate, type PrePushGate } from '@push/lib/git/push-git';
+import {
+  PushGit,
+  composePrePushGates,
+  type PreCommitGate,
+  type PrePushGate,
+} from '@push/lib/git/push-git';
 import { computePushedDiff } from '@push/lib/git/pushed-diff';
 import { makeSecretScanPrePushGate } from '@push/lib/git/secret-scan-gate';
+import { makeProtectMainPrePushGate } from '@push/lib/git/protect-main-gate';
 import { resolveSecretScanEnabled } from '@push/lib/secret-scan';
 import { execInSandbox, type ExecResult } from './sandbox-client';
 import { shellEscape } from './sandbox-tool-utils';
@@ -82,8 +88,15 @@ export function createSandboxGitBackend(
  * Build a PushGit facade bound to a sandbox. Pass `preCommit` (a closure the
  * handler builds over the Auditor) to gate commits; pass `secretScan: true` to
  * gate pushes behind the deterministic secret scan over the *uncapped*
- * about-to-be-pushed diff (`computePushedDiff`); pass `prePush` to inject a
- * custom push gate; pass `execFn` to reuse a call-site's injected executor.
+ * about-to-be-pushed diff (`computePushedDiff`); pass `protectMain: true`
+ * (with the repo `defaultBranch`) to refuse a push to the protected branch at
+ * the boundary itself (defense-in-depth behind the Protect Main pre-hook); pass
+ * `prePush` to inject a custom push gate; pass `execFn` to reuse a call-site's
+ * injected executor.
+ *
+ * When both `protectMain` and `secretScan` are set, the gates compose and run
+ * safety-first: Protect Main refuses a protected-branch push before the diff is
+ * even scanned.
  */
 export function createSandboxPushGit(
   sandboxId: string,
@@ -92,19 +105,32 @@ export function createSandboxPushGit(
     preCommit?: PreCommitGate;
     prePush?: PrePushGate;
     secretScan?: boolean;
+    protectMain?: boolean;
+    defaultBranch?: string;
   },
 ): PushGit {
   const exec = makeSandboxGitExec(sandboxId, opts?.execFn ?? execInSandbox);
+  const backend = new SandboxPlumbingBackend(exec);
   const prePush =
     opts?.prePush ??
-    (opts?.secretScan
-      ? makeSecretScanPrePushGate({
-          getDiff: () => computePushedDiff(exec),
-          enabled: resolveWebSecretScanEnabled(),
-        })
-      : undefined);
+    composePrePushGates([
+      opts?.protectMain
+        ? makeProtectMainPrePushGate({
+            enabled: true,
+            defaultBranch: opts.defaultBranch,
+            // Authoritative read of the real HEAD right before the push.
+            getCurrentBranch: () => backend.currentBranch(),
+          })
+        : undefined,
+      opts?.secretScan
+        ? makeSecretScanPrePushGate({
+            getDiff: () => computePushedDiff(exec),
+            enabled: resolveWebSecretScanEnabled(),
+          })
+        : undefined,
+    ]);
   return new PushGit({
-    backend: new SandboxPlumbingBackend(exec),
+    backend,
     preCommit: opts?.preCommit,
     prePush,
   });

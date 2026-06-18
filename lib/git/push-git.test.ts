@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PushGit } from './push-git.ts';
+import { PushGit, composePrePushGates } from './push-git.ts';
 import type { GitBackend, GitWriteResult } from './backend.ts';
 
 const writeOk = (stdout = ''): GitWriteResult => ({ ok: true, stdout, stderr: '', exitCode: 0 });
@@ -140,12 +140,14 @@ describe('PushGit.push gate', () => {
     expect(push).toHaveBeenCalledOnce();
   });
 
-  it('runs the gate then pushes when it passes', async () => {
+  it('runs the gate then pushes when it passes, forwarding the push opts', async () => {
     const prePush = vi.fn(async () => ({ ok: true }));
     const push = vi.fn(async () => writeOk());
     const pg = new PushGit({ backend: fakeBackend({ push }), prePush });
     const res = await pg.push({ setUpstream: true, ref: 'feat/x' });
     expect(prePush).toHaveBeenCalledOnce();
+    // The gate must see the push opts so it can inspect the real destination.
+    expect(prePush).toHaveBeenCalledWith({ setUpstream: true, ref: 'feat/x' });
     expect(push).toHaveBeenCalledWith({ setUpstream: true, ref: 'feat/x' });
     expect(res.ok).toBe(true);
   });
@@ -172,5 +174,47 @@ describe('PushGit.push gate', () => {
     expect(res.blocked).toBe(true);
     expect(res.stderr).toContain('gate crashed');
     expect(push).not.toHaveBeenCalled();
+  });
+});
+
+describe('composePrePushGates', () => {
+  it('returns undefined when no gate is supplied', () => {
+    expect(composePrePushGates([undefined, undefined])).toBeUndefined();
+    expect(composePrePushGates([])).toBeUndefined();
+  });
+
+  it('unwraps the single active gate', async () => {
+    const gate = vi.fn(async () => ({ ok: true }));
+    expect(composePrePushGates([undefined, gate])).toBe(gate);
+  });
+
+  it('passes only when every gate passes, forwarding opts to each', async () => {
+    const a = vi.fn(async () => ({ ok: true }));
+    const b = vi.fn(async () => ({ ok: true }));
+    const composed = composePrePushGates([a, b])!;
+    expect(await composed({ ref: 'feat/x' })).toEqual({ ok: true });
+    expect(a).toHaveBeenCalledWith({ ref: 'feat/x' });
+    expect(b).toHaveBeenCalledWith({ ref: 'feat/x' });
+  });
+
+  it('short-circuits on the first denial, in order (safety-first)', async () => {
+    const first = vi.fn(async () => ({ ok: false, reason: 'protect main' }));
+    const second = vi.fn(async () => ({ ok: true }));
+    const composed = composePrePushGates([first, second])!;
+    const verdict = await composed();
+    expect(verdict).toEqual({ ok: false, reason: 'protect main' });
+    expect(first).toHaveBeenCalledOnce();
+    // The later gate never runs once an earlier one denies.
+    expect(second).not.toHaveBeenCalled();
+  });
+
+  it('propagates a throw to the caller (PushGit.push then fail-safe blocks)', async () => {
+    const first = vi.fn(async () => {
+      throw new Error('boom');
+    });
+    const second = vi.fn(async () => ({ ok: true }));
+    const composed = composePrePushGates([first, second])!;
+    await expect(composed()).rejects.toThrow('boom');
+    expect(second).not.toHaveBeenCalled();
   });
 });

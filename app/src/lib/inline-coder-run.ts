@@ -903,6 +903,12 @@ export async function runInPageCoderKernel(
         auditorModelOverride: opts.auditorModelOverride,
         currentBranch: spec.branchContext?.activeBranch,
         defaultBranch: spec.branchContext?.defaultBranch,
+        // Thread Protect Main so a delegated/inline coder push hits the boundary
+        // gate (this path reaches handleSandboxPush). The background CF-route
+        // coder maps typed sandbox_push to not_implemented_yet; its raw
+        // `git push` via sandbox_exec+allowDirectGit is a separate path gated by
+        // the git-guard, not this boundary gate.
+        isMainProtected: spec.branchContext?.protectMain ?? false,
       });
       if (call.tool === 'sandbox_exec' && result.branch) {
         callbacks.onSandboxExecBranch?.({ command: call.args.command, branch: result.branch });
