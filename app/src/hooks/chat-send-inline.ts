@@ -72,7 +72,7 @@ import {
   buildLinkedLibraryContext,
   spliceLinkedImagesIntoLastUser,
 } from '@/lib/linked-library-context';
-import { isReadOnlyToolName } from '@push/lib/tool-registry';
+import { getToolSourceFromName, isReadOnlyToolName } from '@push/lib/tool-registry';
 import { createId } from '@push/lib/id-utils';
 import { getDefaultMemoryStore } from '@push/lib/context-memory-store';
 import { SESSION_DIGEST_HEADER, type SessionDigest } from '@push/lib/session-digest';
@@ -1008,13 +1008,13 @@ export async function startInlineCoderTurn(
   //     all — it surfaces only as `?? path` in git_status, so compare the
   //     post-run untracked set against the pre-run baseline (review #897 P1).
   // When the diff probe failed we can't tell — but only treat that as a
-  // possible change when the turn actually invoked a workspace-touching
-  // (non-read-only) tool. A purely conversational / read-only turn ("what
-  // changed recently?" answered from GitHub reads, memory lookups, or a
-  // read-only `git log`) can't leave a mutation the probe would miss, so a
-  // failed probe must NOT manufacture a verdict: otherwise the Auditor
-  // evaluates the prose answer and appends a spurious "[Evaluation: …]" line —
-  // the residual coder behavior reported against the lead. ---
+  // possible change when the turn actually invoked a sandbox-workspace
+  // mutator. A purely conversational / read-only turn ("what changed
+  // recently?" answered from GitHub reads, memory lookups, or a read-only
+  // `git log`) can't leave a mutation the probe would miss, so a failed probe
+  // must NOT manufacture a verdict: otherwise the Auditor evaluates the prose
+  // answer and appends a spurious "[Evaluation: …]" line — the residual coder
+  // behavior reported against the lead. ---
   const committedSinceStart = Boolean(
     postCoderHead && preCoderHead && postCoderHead !== preCoderHead,
   );
@@ -1023,10 +1023,20 @@ export async function startInlineCoderTurn(
     ? [...postUntrackedFiles].some((path) => !preUntracked.has(path))
     : false;
   const confirmedChange = Boolean(lastTaskDiff) || committedSinceStart || addedUntrackedFile;
-  const turnTouchedWorkspace = capturedToolEvents.some(
-    (event) => !isReadOnlyToolName(event.toolName),
+  // Scope the failed-probe fallback to tools that actually touch the sandbox
+  // workspace (`sandbox`-source mutators: sandbox_exec, file writes,
+  // commit/push/branch). The lead also advertises non-read-only tools that
+  // never touch the sandbox — `ask_user`, `create_artifact`, GitHub writes
+  // (`pr_create` etc.) — so keying off `!isReadOnlyToolName` alone would
+  // re-audit prose on a clarification- or artifact-only turn whose probe
+  // happened to fail (Codex P2 on #972). Classify by tool NAME via the
+  // registry: `event.toolSource` is the executing lane (e.g. 'coder'), not the
+  // registry source.
+  const touchedSandboxWorkspace = capturedToolEvents.some(
+    (event) =>
+      getToolSourceFromName(event.toolName) === 'sandbox' && !isReadOnlyToolName(event.toolName),
   );
-  const workspaceChanged = confirmedChange || (turnTouchedWorkspace && !diffProbed);
+  const workspaceChanged = confirmedChange || (touchedSandboxWorkspace && !diffProbed);
   if (!workspaceChanged) {
     console.log(
       JSON.stringify({

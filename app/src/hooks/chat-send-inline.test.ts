@@ -919,9 +919,11 @@ describe('startInlineCoderTurn', () => {
     expect(lastAssistant(store).content).toBe('Here is what changed recently.');
   });
 
-  it('still audits when the diff probe fails after a workspace-touching tool ran', async () => {
+  it('still audits when the diff probe fails after a sandbox-workspace mutator ran', async () => {
     // A real edit turn whose post-run diff probe throws: we genuinely can't
-    // tell whether the write landed, so the conservative fallback stands.
+    // tell whether the write landed, so the conservative fallback stands. The
+    // event's `toolSource` is the executing lane ('coder'); classification is
+    // by tool NAME via the registry, so this still resolves to a sandbox tool.
     mockGetSandboxDiff.mockRejectedValue(new Error('sandbox unreachable'));
     mockRunInPageCoderKernel.mockImplementationOnce(
       async (
@@ -933,7 +935,7 @@ describe('startInlineCoderTurn', () => {
           round: 1,
           executionId: 'x-1',
           toolName: 'sandbox_write_file',
-          toolSource: 'sandbox',
+          toolSource: 'coder',
           durationMs: 1,
           isError: false,
           preview: 'wrote src/a.ts',
@@ -951,6 +953,44 @@ describe('startInlineCoderTurn', () => {
     await startInlineCoderTurn(ctx, laneArgs());
 
     expect(mockRunCoderAuditorGate).toHaveBeenCalled();
+  });
+
+  it('skips the Auditor when the diff probe fails but only non-sandbox tools ran (ask_user/artifact)', async () => {
+    // Codex P2 on #972: `ask_user` and `create_artifact` are non-read-only but
+    // never touch the sandbox. A clarification- or artifact-only turn whose
+    // probe happens to fail must NOT re-audit prose just because a non-read-only
+    // tool ran — only sandbox-workspace mutators justify the conservative
+    // fallback.
+    mockGetSandboxDiff.mockRejectedValue(new Error('sandbox unreachable'));
+    mockRunInPageCoderKernel.mockImplementationOnce(
+      async (
+        _spec: unknown,
+        callbacks: { onRunEvent: (event: Record<string, unknown>) => void },
+      ) => {
+        callbacks.onRunEvent({
+          type: 'tool.execution_complete',
+          round: 1,
+          executionId: 'x-1',
+          toolName: 'artifact',
+          toolSource: 'coder',
+          durationMs: 1,
+          isError: false,
+          preview: 'created an artifact',
+        });
+        return {
+          summary: 'Drafted that for you.',
+          cards: [],
+          rounds: 1,
+          checkpoints: 0,
+          criteriaResults: undefined,
+        };
+      },
+    );
+    const { ctx, store } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    expect(mockRunCoderAuditorGate).not.toHaveBeenCalled();
+    expect(lastAssistant(store).content).toBe('Drafted that for you.');
   });
 
   it('bridges the kernel checkpoint into the V1 capture: ROUND_STARTED + transcript swap + flush', async () => {
