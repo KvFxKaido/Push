@@ -674,6 +674,7 @@ export type ToolErrorType =
   | 'STALE_FILE'
   | 'EDIT_GUARD_BLOCKED'
   | 'GIT_GUARD_BLOCKED'
+  | 'AUDITOR_UNAVAILABLE'
   | 'PROTECT_MAIN_BLOCKED'
   | 'PRE_HOOK_BLOCKED'
   | 'APPROVAL_GATE_BLOCKED'
@@ -863,6 +864,24 @@ export interface DiffPreviewCardData {
 // Phase 4 — User Confirmation + CI Status
 
 export interface CommitReviewCardData {
+  /**
+   * Which delivery step this card gates (Gate-at-Push Move A):
+   *   - `'commit'` (default when absent, for back-compat): the legacy
+   *     prepare-commit card — approval commits the working tree then pushes.
+   *   - `'push'`: the diff is the *cumulative push diff* and the commits
+   *     already exist locally (made silently via `sandbox_commit`), so
+   *     approval runs the push only — no commit step. `commitMessage` is
+   *     not required for this kind.
+   */
+  kind?: 'commit' | 'push';
+  /**
+   * For a `kind: 'push'` card: the HEAD sha the Auditor verdict was computed
+   * against (the tip being pushed). Approval re-reads HEAD and compares — if a
+   * `sandbox_commit` landed after this review, the sha differs and the approved
+   * push is refused (the pinned verdict no longer covers the new commits), so
+   * work can't ship unaudited through a stale card. Absent on legacy cards.
+   */
+  auditedHeadSha?: string;
   diff: DiffPreviewCardData;
   auditVerdict: AuditVerdictCardData;
   commitMessage: string;

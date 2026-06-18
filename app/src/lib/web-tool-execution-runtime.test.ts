@@ -139,7 +139,7 @@ describe('WebToolExecutionRuntime — runtime-level role capability invariant', 
       expect(vi.mocked(sandboxTools.executeSandboxToolCall)).not.toHaveBeenCalled();
     });
 
-    it('also refuses sandbox_edit_range, sandbox_search_replace, sandbox_exec, sandbox_run_tests, and sandbox_prepare_commit', async () => {
+    it('also refuses sandbox_edit_range, sandbox_search_replace, sandbox_exec, sandbox_run_tests, and sandbox_commit', async () => {
       const blockedCalls: AnyToolCall[] = [
         {
           source: 'sandbox',
@@ -165,7 +165,7 @@ describe('WebToolExecutionRuntime — runtime-level role capability invariant', 
         },
         {
           source: 'sandbox',
-          call: { tool: 'sandbox_prepare_commit', args: { message: 'x' } },
+          call: { tool: 'sandbox_commit', args: { message: 'x' } },
         },
       ];
 
@@ -487,12 +487,17 @@ describe('WebToolExecutionRuntime — runtime-level role capability invariant', 
     it('local-daemon orchestrator: remote-bound git ops are STILL denied (no remote wired)', async () => {
       // The widening grants LOCAL git ops (commit/branch — real working tree)
       // but still skips genuinely remote-bound ops: push/PR/workflow have no
-      // remote in a paired session. The grant must match. (sandbox_prepare_commit
-      // requires only git:commit, so it is now allowed — see the allowed test.)
+      // remote in a paired session. The grant must match. (sandbox_commit
+      // requires only git:commit, so it is now allowed — see the allowed test.
+      // prepare_push is git:push, so it stays denied.)
       const stillDenied: AnyToolCall[] = [
         {
           source: 'sandbox',
           call: { tool: 'sandbox_push', args: {} },
+        },
+        {
+          source: 'sandbox',
+          call: { tool: 'prepare_push', args: {} },
         },
       ];
       for (const call of stillDenied) {
@@ -513,7 +518,7 @@ describe('WebToolExecutionRuntime — runtime-level role capability invariant', 
       // orchestrator's git_commit / git_create_branch / git_switch_branch
       // tools (PR #700). Only git:push and PR/workflow ops stay denied.
       const localGitCalls: AnyToolCall[] = [
-        { source: 'sandbox', call: { tool: 'sandbox_prepare_commit', args: { message: 'x' } } },
+        { source: 'sandbox', call: { tool: 'sandbox_commit', args: { message: 'x' } } },
         { source: 'sandbox', call: { tool: 'sandbox_create_branch', args: { name: 'feat/x' } } },
         { source: 'sandbox', call: { tool: 'sandbox_switch_branch', args: { branch: 'main' } } },
       ];
@@ -686,7 +691,8 @@ describe('WebToolExecutionRuntime — local-daemon binding propagation', () => {
       'sandbox_edit_range',
       'sandbox_search_replace',
       'sandbox_run_tests',
-      'sandbox_prepare_commit',
+      'sandbox_commit',
+      'prepare_push',
       'sandbox_push',
     ])('blocks %s when binding-only with LOCAL_DAEMON_TOOL_UNSUPPORTED', async (tool) => {
       const result = await runtime.execute(

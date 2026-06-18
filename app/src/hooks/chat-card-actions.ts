@@ -176,29 +176,18 @@ export function useChatCardActions({
             return;
           }
 
-          const normalizedCommitMessage = action.commitMessage.replace(/[\r\n]+/g, ' ').trim();
-          if (!normalizedCommitMessage) {
-            updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
-              if (card.type !== 'commit-review') return card;
-              return {
-                ...card,
-                data: {
-                  ...card.data,
-                  status: 'error',
-                  error: 'Commit message cannot be empty.',
-                } as CommitReviewCardData,
-              };
-            });
-            return;
-          }
-
+          // Gate-at-Push Move A: the review card is the push-time Auditor card.
+          // Refresh re-runs `prepare_push` (re-audit the cumulative push diff) —
+          // there is no commit-message to re-audit against; commits are silent
+          // now. A legacy commit-kind card (from an old persisted conversation)
+          // also refreshes as a push review, which is the coherent post-migration
+          // behavior.
           updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
             if (card.type !== 'commit-review') return card;
             return {
               ...card,
               data: {
                 ...card.data,
-                commitMessage: normalizedCommitMessage,
                 status: 'refreshing',
                 error: undefined,
               } as CommitReviewCardData,
@@ -206,13 +195,13 @@ export function useChatCardActions({
           });
 
           updateAgentStatus(
-            { active: true, phase: 'Refreshing commit review...' },
+            { active: true, phase: 'Refreshing push review...' },
             { chatId, source: 'system' },
           );
 
           try {
             const refreshResult = await executeSandboxToolCall(
-              { tool: 'sandbox_prepare_commit', args: { message: normalizedCommitMessage } },
+              { tool: 'prepare_push', args: {} },
               sandboxId,
               {
                 auditorProviderOverride:
@@ -234,7 +223,6 @@ export function useChatCardActions({
                   data: {
                     ...card.data,
                     auditVerdict: refreshResult.card.data,
-                    commitMessage: normalizedCommitMessage,
                     status: 'error',
                     error: formatToolResultDetail(refreshResult.text),
                   } as CommitReviewCardData,
@@ -244,7 +232,6 @@ export function useChatCardActions({
                 ...card,
                 data: {
                   ...card.data,
-                  commitMessage: normalizedCommitMessage,
                   status: 'error',
                   error: formatToolResultDetail(refreshResult.text),
                 } as CommitReviewCardData,
@@ -273,7 +260,20 @@ export function useChatCardActions({
             return;
           }
 
-          // Enforce Protect Main for UI-driven commits
+          // Gate-at-Push Move A: a push-kind card's commits already exist
+          // locally (made silently via sandbox_commit). Approval runs the PUSH
+          // only — routed through the sandbox_push tool so the full gate
+          // (Protect Main boundary, secret scan, Auditor) re-runs at execution,
+          // with no second commit + push code path to drift. The legacy
+          // commit-kind card keeps the in-hook commit()+push() path below.
+          const approveSourceCard = messages.find((m) => m.id === action.messageId)?.cards?.[
+            action.cardIndex
+          ];
+          const isPushKind =
+            approveSourceCard?.type === 'commit-review' && approveSourceCard.data.kind === 'push';
+
+          // Enforce Protect Main for UI-driven delivery (early friendly error;
+          // the push boundary gate is the authoritative backstop for push-kind).
           if (isMainProtectedRef.current) {
             try {
               const currentBranch = await createSandboxPushGit(sandboxId).currentBranch();
@@ -288,7 +288,7 @@ export function useChatCardActions({
                     data: {
                       ...card.data,
                       status: 'error',
-                      error: 'Protect Main is enabled. Create a feature branch before committing.',
+                      error: 'Protect Main is enabled. Create a feature branch before delivering.',
                     } as CommitReviewCardData,
                   };
                 });
@@ -319,10 +319,144 @@ export function useChatCardActions({
               data: {
                 ...card.data,
                 status: 'approved',
-                commitMessage: action.commitMessage,
+                ...(isPushKind ? {} : { commitMessage: action.commitMessage }),
               } as CommitReviewCardData,
             };
           });
+
+          // --- Push-kind: commits already exist; ship via a direct gated push.
+          if (isPushKind) {
+            updateAgentStatus({ active: true, phase: 'Pushing...' }, { chatId, source: 'system' });
+            try {
+              // Staleness guard: this card's verdict was audited against a
+              // specific HEAD (auditedHeadSha). If a sandbox_commit landed after
+              // the review, HEAD moved and those new commits would ship under a
+              // stale verdict — since the approved push deliberately skips
+              // re-auditing, refuse and ask for a refresh. Fail closed when the
+              // pin is missing (legacy card) or HEAD is unreadable.
+              const auditedHeadSha =
+                approveSourceCard?.type === 'commit-review'
+                  ? approveSourceCard.data.auditedHeadSha
+                  : undefined;
+              const liveHeadSha = await createSandboxPushGit(sandboxId).headSha();
+              if (!auditedHeadSha || !liveHeadSha || liveHeadSha !== auditedHeadSha) {
+                updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+                  if (card.type !== 'commit-review') return card;
+                  return {
+                    ...card,
+                    data: {
+                      ...card.data,
+                      status: 'error',
+                      error:
+                        'New commits since this review — refresh to re-audit the full diff before pushing.',
+                    } as CommitReviewCardData,
+                  };
+                });
+                return;
+              }
+
+              updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+                if (card.type !== 'commit-review') return card;
+                return {
+                  ...card,
+                  data: { ...card.data, status: 'pushing' } as CommitReviewCardData,
+                };
+              });
+
+              // Re-run only the CHEAP DETERMINISTIC gates at execution (Protect
+              // Main + secret scan — they can't drift). The expensive,
+              // non-deterministic Auditor already ran at prepare_push and its
+              // verdict is on this card; re-running it here would risk flipping
+              // an already-approved SAFE delivery to UNSAFE. The push-time
+              // Auditor gate stays ON for DIRECT sandbox_push calls that bypass
+              // prepare_push (this approved path is not one of those).
+              const pushResult = await createSandboxPushGit(sandboxId, {
+                secretScan: true,
+                protectMain: isMainProtectedRef.current,
+                defaultBranch: branchInfoRef.current?.defaultBranch,
+              }).push();
+
+              if (!pushResult.ok) {
+                // A gate block (Protect Main / secret scan) reads cleanly on its
+                // own; a real push failure keeps the "Push failed:" prefix.
+                const pushErrorDetail = pushResult.stderr || pushResult.stdout || 'Unknown error';
+                const errorText = pushResult.blocked
+                  ? pushErrorDetail
+                  : `Push failed: ${pushErrorDetail}`;
+                updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+                  if (card.type !== 'commit-review') return card;
+                  return {
+                    ...card,
+                    data: {
+                      ...card.data,
+                      status: 'error',
+                      error: errorText,
+                    } as CommitReviewCardData,
+                  };
+                });
+                return;
+              }
+
+              updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+                if (card.type !== 'commit-review') return card;
+                const committedBranch = branchInfoRef.current?.currentBranch || undefined;
+                const defaultBranch = branchInfoRef.current?.defaultBranch || undefined;
+                return {
+                  ...card,
+                  data: {
+                    ...card.data,
+                    status: 'committed',
+                    committedBranch,
+                    defaultBranch,
+                  } as CommitReviewCardData,
+                };
+              });
+
+              injectSyntheticMessage(chatId, 'Pushed to the remote.');
+
+              // Auto-fetch CI after 3s delay (same as the commit-kind path).
+              const repo = repoRef.current;
+              if (repo) {
+                setTimeout(async () => {
+                  try {
+                    const ciResult = await executeToolCall(
+                      { tool: 'fetch_checks', args: { repo, ref: 'HEAD' } },
+                      repo,
+                    );
+                    if (ciResult.card) {
+                      const ciMsg: ChatMessage = {
+                        id: createId(),
+                        role: 'assistant',
+                        content: 'CI status after push:',
+                        timestamp: Date.now(),
+                        status: 'done',
+                        cards: [ciResult.card],
+                      };
+                      setConversations((prev) => {
+                        const conv = prev[chatId];
+                        if (!conv) return prev;
+                        const updated = {
+                          ...prev,
+                          [chatId]: {
+                            ...conv,
+                            messages: [...conv.messages, ciMsg],
+                            lastMessageAt: Date.now(),
+                          },
+                        };
+                        dirtyConversationIdsRef.current.add(chatId);
+                        return updated;
+                      });
+                    }
+                  } catch {
+                    // CI fetch is best-effort
+                  }
+                }, 3000);
+              }
+            } finally {
+              updateAgentStatus({ active: false, phase: '' });
+            }
+            break;
+          }
 
           updateAgentStatus(
             { active: true, phase: 'Committing & pushing...' },

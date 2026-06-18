@@ -7,7 +7,8 @@
  * git/release-family tools:
  *
  *   - `sandbox_diff`            → {@link handleSandboxDiff}
- *   - `sandbox_prepare_commit`  → {@link handlePrepareCommit}
+ *   - `sandbox_commit`          → {@link handleSandboxCommit}
+ *   - `prepare_push`            → {@link handlePreparePush}
  *   - `sandbox_push`            → {@link handleSandboxPush}
  *   - `sandbox_save_draft`      → {@link handleSaveDraft}
  *   - `promote_to_github`       → {@link handlePromoteToGithub}
@@ -22,10 +23,18 @@
  * in shape to what the inline `case` arms in the dispatcher used to
  * return. Behavior is preserved byte for byte — characterization tests
  * live at two layers: dispatcher-level in `sandbox-tools.test.ts`
- * (describes: `sandbox_diff`, `sandbox_prepare_commit characterization`,
+ * (describes: `sandbox_diff`, `sandbox_commit`, `prepare_push`,
  * `sandbox_push`, `promote_to_github`, `sandbox_save_draft`) and
  * handler-level in `sandbox-git-release-handlers.test.ts` (one
  * describe per handler). Both layers are the regression gate.
+ *
+ * ## Gate-at-Push Move A
+ *
+ * The SAFE/UNSAFE Auditor gate lives at the *push* step, not the commit step.
+ * `sandbox_commit` makes a silent local commit (pre-commit hook + auto-branch
+ * off main, NO Auditor, NO review card). `prepare_push` audits the cumulative
+ * push diff and returns the review card; approval pushes (gated). The retired
+ * prepare-commit tool (audit-at-commit) is replaced by this pair.
  *
  * ## Fitness rules (from the remediation plan)
  *
@@ -62,7 +71,12 @@ import {
   createModelCommitBranchNameProposer,
   ensureCommitTargetBranch,
 } from './ensure-commit-target-branch';
-import { createSandboxPushGit } from './git-backend';
+import {
+  computeSandboxPushedDiff,
+  createSandboxPushGit,
+  resolveWebAuditAtPushEnabled,
+} from './git-backend';
+import type { AuditorPushVerdict } from '@push/lib/git/auditor-push-gate';
 import { GIT_REF_VALIDATION_DETAIL, isInvalidGitRef } from './git-ref-validation';
 import { isDefinitivelyGoneMessage } from './sandbox-error-utils';
 import {
@@ -158,12 +172,16 @@ export interface GitReleaseHandlerContext {
 // Narrow per-handler argument shapes
 // ---------------------------------------------------------------------------
 
-/** Args accepted by `sandbox_prepare_commit`. */
-export interface PrepareCommitArgs {
+/** Args accepted by `sandbox_commit`. */
+export interface SandboxCommitArgs {
   message: string;
 }
 
-/** Auditor provider/model overrides threaded through the dispatcher options. */
+/**
+ * Auditor provider/model overrides threaded through the dispatcher options.
+ * Reused by `handleSandboxPush`, `handleSandboxCommit` (for the branch-name
+ * proposer), and `handlePreparePush` (for the push-time Auditor).
+ */
 export interface PrepareCommitAuditorOverrides {
   providerOverride?: ActiveProvider;
   modelOverride?: string;
@@ -194,9 +212,8 @@ export interface SaveDraftArgs {
 
 /**
  * Maximum length (characters) of pre-commit hook output included in
- * `sandbox_prepare_commit` result text. Applied in two places: the
- * hook-fail preview embedded in the audit-verdict card text, and the
- * post-hook-empty-diff preview appended to the no-changes message.
+ * `sandbox_commit` result text. Applied to the hook-fail / post-hook-empty
+ * previews appended to the commit result message.
  */
 const HOOK_OUTPUT_TRUNCATION_LIMIT = 1200;
 
@@ -335,27 +352,53 @@ export async function handleShowCommit(
   return { text: `${header}\n\n${body}`, card: { type: 'diff-preview', data: cardData } };
 }
 
-export async function handlePrepareCommit(
+/**
+ * `sandbox_commit` (Gate-at-Push Move A) — make a SILENT local commit.
+ *
+ * No Auditor, no review card: commits are now cheap and unaudited; the
+ * SAFE/UNSAFE gate has moved to the push step (`prepare_push`). This runs the
+ * repo's pre-commit hook (so formatters/codegen still fire), auto-forks off the
+ * default branch first (a commit must never land on main), then commits via the
+ * backend (`createSandboxPushGit(...).commit()` — NOT a raw `git commit`, which
+ * stays blocked in `sandbox_exec`).
+ */
+export async function handleSandboxCommit(
   ctx: GitReleaseHandlerContext,
-  args: PrepareCommitArgs,
+  args: SandboxCommitArgs,
   overrides?: PrepareCommitAuditorOverrides,
 ): Promise<ToolExecutionResult> {
-  // Step 1: Get the diff
+  // Step 1: Get the diff — nothing to commit short-circuits.
   const diffResult = await ctx.getSandboxDiff(ctx.sandboxId);
 
   if (diffResult.error) {
-    const commitDiffErr = classifyError(diffResult.error, 'sandbox_prepare_commit');
+    const commitDiffErr = classifyError(diffResult.error, 'sandbox_commit');
+    console.log(
+      JSON.stringify({
+        level: 'error',
+        event: 'sandbox_commit_diff_failed',
+        sandboxId: ctx.sandboxId,
+        error: diffResult.error,
+      }),
+    );
     return {
       text: formatStructuredError(
         commitDiffErr,
-        `[Tool Error — sandbox_prepare_commit]\n${diffResult.error}`,
+        `[Tool Error — sandbox_commit]\n${diffResult.error}`,
       ),
       structuredError: commitDiffErr,
     };
   }
 
   if (!diffResult.diff) {
-    const lines = [`[Tool Result — sandbox_prepare_commit]\nNo changes to commit.`];
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'sandbox_commit_empty',
+        sandboxId: ctx.sandboxId,
+        phase: 'pre-hook',
+      }),
+    );
+    const lines = [`[Tool Result — sandbox_commit]\nNothing to commit.`];
     if (diffResult.git_status) {
       lines.push(`git status shows: ${diffResult.git_status}`);
     } else {
@@ -366,8 +409,7 @@ export async function handlePrepareCommit(
     return { text: lines.join('\n') };
   }
 
-  // Step 2: Run pre-commit hook before auditing so the review reflects
-  // the exact tree the user would commit.
+  // Step 2: Run pre-commit hook before committing so hooks still fire.
   const hookResult = await ctx.execInSandbox(
     ctx.sandboxId,
     'if [ -x .git/hooks/pre-commit ]; then .git/hooks/pre-commit 2>&1 || exit $?; fi',
@@ -382,38 +424,53 @@ export async function handlePrepareCommit(
     const outputPreview = hookOutput
       ? hookOutput.slice(0, HOOK_OUTPUT_TRUNCATION_LIMIT)
       : 'The hook exited without any output.';
-    const verdictCard: AuditVerdictCardData = {
-      verdict: 'unsafe',
-      summary: 'Pre-commit hook failed. Fix the hook errors before preparing this commit.',
-      risks: [
-        {
-          level: 'medium',
-          description: `pre-commit exited with code ${hookResult.exitCode}. ${outputPreview}`,
-        },
-      ],
-      filesReviewed: parseDiffStats(diffResult.diff).filesChanged,
-    };
+    console.log(
+      JSON.stringify({
+        level: 'warn',
+        event: 'sandbox_commit_hook_failed',
+        sandboxId: ctx.sandboxId,
+        exitCode: hookResult.exitCode,
+      }),
+    );
     return {
-      text: `[Tool Result — sandbox_prepare_commit]\nCommit BLOCKED by pre-commit hook (exit ${hookResult.exitCode}).\n${outputPreview}`,
-      card: { type: 'audit-verdict', data: verdictCard },
+      text: `[Tool Result — sandbox_commit]\nCommit BLOCKED by pre-commit hook (exit ${hookResult.exitCode}).\n${outputPreview}`,
     };
   }
 
+  // Re-read the diff after the hook — a formatter/codegen hook may have rewritten
+  // tracked files, and the commit is over the post-hook tree.
   const postHookDiffResult = await ctx.getSandboxDiff(ctx.sandboxId);
   if (postHookDiffResult.error) {
-    const commitDiffErr = classifyError(postHookDiffResult.error, 'sandbox_prepare_commit');
+    const commitDiffErr = classifyError(postHookDiffResult.error, 'sandbox_commit');
+    console.log(
+      JSON.stringify({
+        level: 'error',
+        event: 'sandbox_commit_diff_failed',
+        sandboxId: ctx.sandboxId,
+        phase: 'post-hook',
+        error: postHookDiffResult.error,
+      }),
+    );
     return {
       text: formatStructuredError(
         commitDiffErr,
-        `[Tool Error — sandbox_prepare_commit]\n${postHookDiffResult.error}`,
+        `[Tool Error — sandbox_commit]\n${postHookDiffResult.error}`,
       ),
       structuredError: commitDiffErr,
     };
   }
 
   if (!postHookDiffResult.diff) {
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'sandbox_commit_empty',
+        sandboxId: ctx.sandboxId,
+        phase: 'post-hook',
+      }),
+    );
     const lines = [
-      `[Tool Result — sandbox_prepare_commit]\nNo changes to commit after running the pre-commit hook.`,
+      `[Tool Result — sandbox_commit]\nNothing to commit after running the pre-commit hook.`,
     ];
     if (postHookDiffResult.git_status) {
       lines.push(`git status shows: ${postHookDiffResult.git_status}`);
@@ -424,48 +481,8 @@ export async function handlePrepareCommit(
     return { text: lines.join('\n') };
   }
 
-  // Step 3: Fetch file context for richer Auditor review.
-  let fileContexts: AuditorFileContext[] = [];
-  try {
-    const filePaths = parseDiffStats(postHookDiffResult.diff).fileNames;
-    fileContexts = await ctx.fetchAuditorFileContexts(filePaths, async (path) => {
-      const result = await ctx.readFromSandbox(ctx.sandboxId, `/workspace/${path}`);
-      if (result.error) return null;
-      return { content: result.content, truncated: result.truncated };
-    });
-  } catch {
-    // Degrade gracefully — proceed with diff-only
-  }
-
-  // Step 4: Run Auditor on the post-hook diff.
-  const auditResult = await ctx.runAuditor(
-    postHookDiffResult.diff,
-    (phase) => console.log(`[Push] Auditor: ${phase}`),
-    {
-      source: 'sandbox-prepare-commit',
-      sourceLabel: 'sandbox_prepare_commit preflight',
-    },
-    {
-      exitCode: hookResult.exitCode ?? 0,
-      output: hookResult.stdout + hookResult.stderr,
-    },
-    {
-      providerOverride: overrides?.providerOverride,
-      modelOverride: overrides?.modelOverride,
-    },
-    fileContexts,
-  );
-
-  if (auditResult.verdict === 'unsafe') {
-    // Blocked — return verdict card only, no review card
-    return {
-      text: `[Tool Result — sandbox_prepare_commit]\nCommit BLOCKED by Auditor: ${auditResult.card.summary}`,
-      card: { type: 'audit-verdict', data: auditResult.card },
-    };
-  }
-
-  // Step 5: SAFE — if committing from the default branch, fork before the
-  // review card is approved so the eventual commit cannot land on main.
+  // Step 3: If committing from the default branch, fork first so the commit
+  // cannot land on main. Same proposer path the prepare-commit flow used.
   const branchTarget = await ensureCommitTargetBranch({
     sandboxId: ctx.sandboxId,
     currentBranch: ctx.currentBranch,
@@ -478,43 +495,340 @@ export async function handlePrepareCommit(
     }),
   });
 
-  // Step 6: SAFE — return a review card for user approval (do NOT commit)
+  // Protect Main (fail-closed): the auto-branch above normally forks off the
+  // default branch. If it did NOT fork (auto-branch disabled, or HEAD already
+  // off-default) and Protect Main is on, verify we aren't about to commit onto
+  // the protected branch. The shared pre-hook intentionally does not match
+  // `sandbox_commit` (it runs before the in-handler fork), so this is the
+  // authoritative guard — it mirrors the retired prepare-commit approval check.
+  if (!branchTarget.switched && ctx.isMainProtected) {
+    const liveBranch = await createSandboxPushGit(ctx.sandboxId, {
+      execFn: ctx.execInSandbox,
+    }).currentBranch();
+    const protectedBranches = new Set(['main', 'master']);
+    if (ctx.defaultBranch) protectedBranches.add(ctx.defaultBranch);
+    // Fail closed: an unreadable HEAD under Protect Main is treated as on-main —
+    // blocking a legit commit is a retry; committing onto main is not.
+    if (!liveBranch || protectedBranches.has(liveBranch)) {
+      console.log(
+        JSON.stringify({
+          level: 'warn',
+          event: 'sandbox_commit_protect_main_blocked',
+          sandboxId: ctx.sandboxId,
+          branch: liveBranch,
+        }),
+      );
+      const protectErr: StructuredToolError = {
+        type: 'PROTECT_MAIN_BLOCKED',
+        retryable: false,
+        message:
+          'Protect Main is enabled and auto-branch is off — this commit would land on the protected branch. Create a feature branch first, then retry.',
+      };
+      return {
+        text: formatStructuredError(
+          protectErr,
+          `[Tool Error — sandbox_commit]\n${protectErr.message}`,
+        ),
+        structuredError: protectErr,
+      };
+    }
+  }
+
+  // Step 4: Commit locally via the backend (no gate — silent commit). The
+  // backend stages (`add -A`) then commits and shell-escapes the message.
+  const commitResult = await createSandboxPushGit(ctx.sandboxId, {
+    execFn: ctx.execInSandbox,
+  }).commit({ message: args.message });
+
+  if (!commitResult.ok) {
+    const reason = commitResult.result?.stderr || commitResult.result?.stdout || 'commit failed';
+    const err = classifyError(reason, 'sandbox_commit');
+    console.log(
+      JSON.stringify({
+        level: 'error',
+        event: 'sandbox_commit_failed',
+        sandboxId: ctx.sandboxId,
+        blocked: commitResult.blocked,
+      }),
+    );
+    return {
+      text: formatStructuredError(err, `[Tool Error — sandbox_commit]\n${reason}`),
+      structuredError: err,
+    };
+  }
+
   const stats = parseDiffStats(postHookDiffResult.diff);
-  const reviewData: CommitReviewCardData = {
-    diff: {
-      diff: postHookDiffResult.diff,
+  console.log(
+    JSON.stringify({
+      level: 'info',
+      event: 'sandbox_commit_done',
+      sandboxId: ctx.sandboxId,
       filesChanged: stats.filesChanged,
-      additions: stats.additions,
-      deletions: stats.deletions,
-      truncated: postHookDiffResult.truncated,
-    },
-    auditVerdict: auditResult.card,
-    commitMessage: args.message,
-    status: 'pending',
-  };
+      switched: branchTarget.switched,
+    }),
+  );
 
   return {
-    text: `[Tool Result — sandbox_prepare_commit]\nReady for review: "${args.message}" (${stats.filesChanged} file${stats.filesChanged !== 1 ? 's' : ''}, +${stats.additions} -${stats.deletions}). Waiting for user approval.`,
-    card: { type: 'commit-review', data: reviewData },
+    text: `[Tool Result — sandbox_commit]\nCommitted: "${args.message}" (${stats.filesChanged} file${stats.filesChanged !== 1 ? 's' : ''}, +${stats.additions} -${stats.deletions}).${branchTarget.switched ? ` Forked off the default branch first.` : ''} Use prepare_push to ship.`,
     ...(branchTarget.switched ? { branchSwitch: branchTarget.branchSwitch } : {}),
   };
 }
 
+/**
+ * `prepare_push` (Gate-at-Push Move A) — audit the cumulative push diff and
+ * return the review card.
+ *
+ * This is the delivery gate: it computes everything the next push would upload
+ * (`computeSandboxPushedDiff`), runs the Auditor over it, and on SAFE returns a
+ * `commit-review` card with `kind: 'push'` for approval. On UNSAFE it returns an
+ * `audit-verdict` card and blocks. The actual push happens on approval, which
+ * re-runs only the cheap deterministic gates (Protect Main + secret scan) and
+ * verifies the pinned `auditedHeadSha` still matches HEAD — it does NOT re-audit
+ * (this verdict stands; re-running a non-deterministic LLM check could flip an
+ * approved SAFE delivery). A direct `sandbox_push` that bypasses this flow is
+ * still gated by the always-on push-time Auditor. An Auditor-backend throw here
+ * is surfaced as a retryable `AUDITOR_UNAVAILABLE` error.
+ */
+export async function handlePreparePush(
+  ctx: GitReleaseHandlerContext,
+  overrides?: PrepareCommitAuditorOverrides,
+): Promise<ToolExecutionResult> {
+  // Pin the tip BEFORE computing the diff so the pin is conservative: if a
+  // commit lands between this read and the diff/audit, the pin is the OLDER tip,
+  // so approval (which compares live HEAD to the pin) fails closed and forces a
+  // refresh rather than shipping a newer diff under this verdict. The realistic
+  // staleness vector — committing more in a later turn, then approving this
+  // stale card — is caught the same way.
+  const auditedHeadSha = await createSandboxPushGit(ctx.sandboxId, {
+    execFn: ctx.execInSandbox,
+  }).headSha();
+
+  // Step 1: Compute the cumulative push diff (commits the push would upload).
+  let diff: string | null;
+  try {
+    diff = await computeSandboxPushedDiff(ctx.sandboxId, ctx.execInSandbox);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    const pushDiffErr = classifyError(reason, 'prepare_push');
+    console.log(
+      JSON.stringify({
+        level: 'error',
+        event: 'prepare_push_diff_failed',
+        sandboxId: ctx.sandboxId,
+        error: reason,
+      }),
+    );
+    return {
+      text: formatStructuredError(pushDiffErr, `[Tool Error — prepare_push]\n${reason}`),
+      structuredError: pushDiffErr,
+    };
+  }
+
+  if (diff === null) {
+    // `computeSandboxPushedDiff` returns null on a diff-read FAILURE (no
+    // resolvable commits / invalid ref / unreachable sandbox), NOT on an empty
+    // diff — and the GitExec adapter resolves errors instead of throwing, so the
+    // catch above usually won't fire. Surface it as infra trouble, never as
+    // "nothing to push" (which would hide a broken read).
+    console.log(
+      JSON.stringify({
+        level: 'error',
+        event: 'prepare_push_diff_failed',
+        sandboxId: ctx.sandboxId,
+        error: 'computeSandboxPushedDiff returned null',
+      }),
+    );
+    const pushDiffErr = classifyError('could not read the diff to push', 'prepare_push');
+    return {
+      text: formatStructuredError(
+        pushDiffErr,
+        `[Tool Error — prepare_push]\nCould not compute the diff to push (the sandbox may be unreachable). Retry shortly.`,
+      ),
+      structuredError: pushDiffErr,
+    };
+  }
+
+  if (!diff.trim()) {
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'prepare_push_empty',
+        sandboxId: ctx.sandboxId,
+      }),
+    );
+    return {
+      text: `[Tool Result — prepare_push]\nNothing to push — no committed changes the remote doesn't already have. Use sandbox_commit to commit your work first.`,
+    };
+  }
+
+  // Step 2: Run the Auditor over the cumulative push diff. A backend throw
+  // (Auditor unreachable) surfaces as a retryable AUDITOR_UNAVAILABLE error,
+  // matching handleSandboxPush's gate-failure mapping.
+  let auditVerdict: AuditorPushVerdict;
+  try {
+    auditVerdict = await auditPushedDiff(ctx, diff, overrides);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : 'Auditor unavailable';
+    console.log(
+      JSON.stringify({
+        level: 'error',
+        event: 'prepare_push_auditor_unavailable',
+        sandboxId: ctx.sandboxId,
+        error: reason,
+      }),
+    );
+    const auditorErr: StructuredToolError = {
+      type: 'AUDITOR_UNAVAILABLE',
+      retryable: true,
+      message: reason,
+    };
+    return {
+      text: formatStructuredError(auditorErr, `[Tool Error — prepare_push]\n${reason}`),
+      structuredError: auditorErr,
+    };
+  }
+
+  const stats = parseDiffStats(diff);
+
+  if (auditVerdict.verdict === 'unsafe') {
+    console.log(
+      JSON.stringify({
+        level: 'warn',
+        event: 'prepare_push_blocked',
+        sandboxId: ctx.sandboxId,
+        filesChanged: stats.filesChanged,
+      }),
+    );
+    const verdictCard: AuditVerdictCardData = {
+      verdict: 'unsafe',
+      summary: auditVerdict.summary,
+      risks: [],
+      filesReviewed: stats.filesChanged,
+    };
+    return {
+      text: `[Tool Result — prepare_push]\nPush BLOCKED by Auditor: ${auditVerdict.summary}`,
+      card: { type: 'audit-verdict', data: verdictCard },
+    };
+  }
+
+  // Step 3: SAFE — return a push-kind review card for user approval. Approval
+  // re-runs the cheap deterministic gates (Protect Main + secret scan) and
+  // pushes; it does NOT re-audit (this verdict stands), but it verifies the
+  // pinned `auditedHeadSha` still matches HEAD so commits added after this
+  // review can't ride along unaudited. No commitMessage: commits already exist.
+  console.log(
+    JSON.stringify({
+      level: 'info',
+      event: 'prepare_push_ready',
+      sandboxId: ctx.sandboxId,
+      filesChanged: stats.filesChanged,
+    }),
+  );
+  const reviewData: CommitReviewCardData = {
+    kind: 'push',
+    diff: {
+      diff,
+      filesChanged: stats.filesChanged,
+      additions: stats.additions,
+      deletions: stats.deletions,
+      truncated: false,
+    },
+    auditVerdict: {
+      verdict: 'safe',
+      summary: auditVerdict.summary,
+      risks: [],
+      filesReviewed: stats.filesChanged,
+    },
+    commitMessage: '',
+    status: 'pending',
+    ...(auditedHeadSha ? { auditedHeadSha } : {}),
+  };
+
+  return {
+    text: `[Tool Result — prepare_push]\nReady to push (${stats.filesChanged} file${stats.filesChanged !== 1 ? 's' : ''}, +${stats.additions} -${stats.deletions}). Auditor verdict: SAFE. Waiting for user approval.`,
+    card: { type: 'commit-review', data: reviewData },
+  };
+}
+
+/**
+ * Run the model Auditor over the cumulative diff a push will upload — the
+ * `auditAtPush` adapter for `sandbox_push` (Gate-at-Push Move A), and the
+ * Auditor pass `prepare_push` runs to build its review card. Fetches file
+ * contexts the same way the prepare flow does, runs the Auditor, and
+ * reduces its verdict card to the gate's {verdict, summary} shape. A throw
+ * (Auditor backend unreachable) propagates to the gate, which fails closed +
+ * retryable; the file-context fetch degrades to diff-only on its own errors.
+ */
+async function auditPushedDiff(
+  ctx: GitReleaseHandlerContext,
+  diff: string,
+  overrides?: PrepareCommitAuditorOverrides,
+): Promise<AuditorPushVerdict> {
+  let fileContexts: AuditorFileContext[] = [];
+  try {
+    const filePaths = parseDiffStats(diff).fileNames;
+    fileContexts = await ctx.fetchAuditorFileContexts(filePaths, async (path) => {
+      const result = await ctx.readFromSandbox(ctx.sandboxId, `/workspace/${path}`);
+      if (result.error) return null;
+      return { content: result.content, truncated: result.truncated };
+    });
+  } catch {
+    // Degrade gracefully — proceed with diff-only (mirrors prepare_commit).
+  }
+  const res = await ctx.runAuditor(
+    diff,
+    (phase) => console.log(`[Push] Auditor (push): ${phase}`),
+    { source: 'sandbox-push', sourceLabel: 'sandbox_push pre-push gate' },
+    undefined,
+    {
+      providerOverride: overrides?.providerOverride,
+      modelOverride: overrides?.modelOverride,
+    },
+    fileContexts,
+  );
+  return { verdict: res.verdict, summary: res.card.summary };
+}
+
 export async function handleSandboxPush(
   ctx: GitReleaseHandlerContext,
+  overrides?: PrepareCommitAuditorOverrides,
 ): Promise<ToolExecutionResult> {
   const pushResult = await createSandboxPushGit(ctx.sandboxId, {
     execFn: ctx.execInSandbox,
     secretScan: true,
     protectMain: ctx.isMainProtected,
     defaultBranch: ctx.defaultBranch,
+    // Gate-at-Push Move A (flipped ON): `resolveWebAuditAtPushEnabled()`
+    // defaults true, so this is the LIVE delivery gate. Commits are silent
+    // (`sandbox_commit`); the SAFE/UNSAFE Auditor runs here over the cumulative
+    // push diff. `prepare_push` runs the same audit to build its review card,
+    // and this re-runs it at execution (defense-in-depth, no drift).
+    auditAtPush: {
+      enabled: resolveWebAuditAtPushEnabled(),
+      audit: (diff) => auditPushedDiff(ctx, diff, overrides),
+    },
   }).push();
 
   if (!pushResult.ok) {
     const reason = pushResult.error || pushResult.stderr || pushResult.stdout || 'push failed';
-    // A deterministic pre-push gate block (Protect Main or the secret scan), not
-    // a git/transport failure: the gate's reason in `stderr` explains what to
-    // fix (switch off main, or remove the secret); retrying as-is won't help.
+    // Transient gate failure (the Auditor backend was unreachable), NOT a policy
+    // violation: surface as retryable so the runtime re-runs the push and
+    // re-audits, instead of treating it as an UNSAFE verdict.
+    if (pushResult.blocked && pushResult.retryable) {
+      const err: StructuredToolError = {
+        type: 'AUDITOR_UNAVAILABLE',
+        retryable: true,
+        message: pushResult.stderr || 'Auditor unavailable',
+      };
+      return {
+        text: formatStructuredError(err, `[Tool Error — sandbox_push]\n${pushResult.stderr}`),
+        structuredError: err,
+      };
+    }
+    // A deterministic pre-push gate block (Protect Main, the secret scan, or an
+    // UNSAFE Auditor verdict), not a git/transport failure: the gate's reason in
+    // `stderr` explains what to fix (switch off main, remove the secret, address
+    // the finding); retrying as-is won't help.
     if (pushResult.blocked) {
       const err: StructuredToolError = {
         type: 'GIT_GUARD_BLOCKED',
@@ -701,7 +1015,7 @@ export async function handleSaveDraft(
   }
   if (args.branch_name && !args.branch_name.startsWith('draft/')) {
     return {
-      text: '[Tool Error — sandbox_save_draft]\nbranch_name must start with "draft/". This tool skips Auditor review and is restricted to draft branches. Use sandbox_prepare_commit for non-draft branches.',
+      text: '[Tool Error — sandbox_save_draft]\nbranch_name must start with "draft/". This tool skips Auditor review and is restricted to draft branches. Use sandbox_commit for non-draft branches.',
     };
   }
   const draftBranchName = args.branch_name || `draft/${currentBranch || 'main'}-${timestamp}`;

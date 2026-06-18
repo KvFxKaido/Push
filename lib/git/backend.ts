@@ -62,6 +62,14 @@ export interface GitWriteResult extends GitExecResult {
    * git/transport failure (and not, e.g., trigger sandbox-recovery on a block).
    */
   blocked?: boolean;
+  /**
+   * Set when a gate blocked on transient infra trouble rather than a real policy
+   * violation (e.g. the Auditor backend was unreachable). Carried up from the
+   * gate's `PrePushVerdict.retryable` so callers map it to a retryable structured
+   * error instead of a terminal block — never lump infra trouble into the
+   * verdict bucket (CLAUDE.md).
+   */
+  retryable?: boolean;
 }
 
 export interface GitBackend {

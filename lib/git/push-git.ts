@@ -34,6 +34,15 @@ export interface PrePushVerdict {
   ok: boolean;
   /** Surfaced to the caller when blocked (e.g. the secret scan's findings). */
   reason?: string;
+  /**
+   * Set by a gate that blocked on transient infra trouble rather than a real
+   * policy violation — e.g. the Auditor backend was unreachable, as opposed to
+   * returning an UNSAFE verdict. Callers map this to a retryable structured
+   * error, never to a terminal "unsafe"/"secret found" surface (the
+   * HTTP-status-classification discipline in CLAUDE.md: don't lump infra trouble
+   * into the verdict bucket).
+   */
+  retryable?: boolean;
 }
 
 /** Options accepted by a push — shared by `PushGit.push` and the pre-push gates. */
@@ -163,7 +172,17 @@ export class PushGit {
       }
       if (!verdict.ok) {
         const reason = verdict.reason ?? 'push blocked by pre-push gate';
-        return { ok: false, blocked: true, exitCode: 1, stdout: '', stderr: reason };
+        return {
+          ok: false,
+          blocked: true,
+          exitCode: 1,
+          stdout: '',
+          stderr: reason,
+          // Carry the gate's transient/infra signal so the caller can classify a
+          // retryable failure (e.g. Auditor unreachable) apart from a terminal
+          // policy block (secret found, protected branch).
+          ...(verdict.retryable ? { retryable: true } : {}),
+        };
       }
     }
     return this.backend.push(opts);

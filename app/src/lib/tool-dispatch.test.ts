@@ -518,7 +518,7 @@ describe('detectAllToolCalls', () => {
     expect(detected.readOnly[0].source).toBe('github');
     expect(detected.mutating?.source).toBe('sandbox');
     if (detected.mutating?.source === 'sandbox') {
-      expect(detected.mutating.call.tool).toBe('sandbox_prepare_commit');
+      expect(detected.mutating.call.tool).toBe('sandbox_commit');
     }
   });
 
@@ -723,7 +723,7 @@ describe('detectAllToolCalls', () => {
       '{"tool":"sandbox_read_file","args":{"path":"/workspace/b.ts"}}',
       '{"tool":"sandbox_write_file","args":{"path":"/workspace/c.md","content":"one"}}',
       '{"tool":"sandbox_write_file","args":{"path":"/workspace/d.md","content":"two"}}',
-      '{"tool":"sandbox_prepare_commit","args":{"message":"chore: add docs"}}',
+      '{"tool":"sandbox_commit","args":{"message":"chore: add docs"}}',
     ].join('\n');
 
     const detected = detectAllToolCalls(text);
@@ -731,7 +731,7 @@ describe('detectAllToolCalls', () => {
     expect(detected.fileMutations).toHaveLength(2);
     expect(detected.mutating?.source).toBe('sandbox');
     if (detected.mutating?.source === 'sandbox') {
-      expect(detected.mutating.call.tool).toBe('sandbox_prepare_commit');
+      expect(detected.mutating.call.tool).toBe('sandbox_commit');
     }
     expect(detected.extraMutations).toHaveLength(0);
   });

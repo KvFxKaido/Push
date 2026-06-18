@@ -374,7 +374,8 @@ describe('LOCAL_PC_TOOL_PROTOCOL', () => {
       expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(new RegExp(`^- ${name}\\(`, 'm'));
     }
     // Canonical-name leaks (the longer names, less ambiguous in prose).
-    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/sandbox_prepare_commit/);
+    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/sandbox_commit/);
+    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/prepare_push/);
     expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/sandbox_save_draft/);
     expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/promote_to_github/);
   });
@@ -405,7 +406,7 @@ describe('LOCAL_PC_TOOL_PROTOCOL', () => {
     expect(LOCAL_PC_TOOL_PROTOCOL).toMatch(/at most one|single/i);
     // The cap must stay local-pc-accurate: no commit/PR/delegation tools in the
     // side-effect framing (those are forbidden by NO REMOTE / NO DELEGATION).
-    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/sandbox_prepare_commit|create_pr|delegate_/);
+    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/sandbox_commit|prepare_push|create_pr|delegate_/);
   });
 
   it('lists the core sandbox_* tool public names that the daemon services', async () => {

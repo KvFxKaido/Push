@@ -63,6 +63,20 @@ describe('createGitGuardPreHook', () => {
     expect(result.decision).toBe('passthrough');
   });
 
+  it('blocks raw `git push` in full-auto with no consent (route to audited sandbox_push)', async () => {
+    // Gate-at-Push: the Auditor gate lives at the push, so a raw push in
+    // full-auto (no human, no typed gate) would ship unaudited. Force it through
+    // sandbox_push even though full-auto otherwise lets direct git through.
+    const entry = withMode('full-auto');
+    const result = await entry.hook(
+      'sandbox_exec',
+      { command: 'git push origin main' },
+      emptyContext,
+    );
+    expect(result.decision).toBe('deny');
+    expect(result.errorType).toBe('GIT_GUARD_BLOCKED');
+  });
+
   it('respects allowDirectGit: true for commit/push/merge/rebase only', async () => {
     const entry = withMode('supervised');
     const allowed = await entry.hook(
@@ -147,9 +161,16 @@ describe('createProtectMainPreHook', () => {
     getCurrentBranch: async () => 'main',
   };
 
-  it('denies sandbox_prepare_commit on main', async () => {
+  it('denies sandbox_commit on main', async () => {
     const entry = createProtectMainPreHook();
-    const result = await entry.hook('sandbox_prepare_commit', {}, baseContext);
+    const result = await entry.hook('sandbox_commit', {}, baseContext);
+    expect(result.decision).toBe('deny');
+    expect(result.errorType).toBe('PROTECT_MAIN_BLOCKED');
+  });
+
+  it('denies prepare_push on main', async () => {
+    const entry = createProtectMainPreHook();
+    const result = await entry.hook('prepare_push', {}, baseContext);
     expect(result.decision).toBe('deny');
     expect(result.errorType).toBe('PROTECT_MAIN_BLOCKED');
   });
@@ -172,7 +193,7 @@ describe('createProtectMainPreHook', () => {
   it('passes through when isMainProtected is false', async () => {
     const entry = createProtectMainPreHook();
     const result = await entry.hook(
-      'sandbox_prepare_commit',
+      'sandbox_commit',
       {},
       { ...baseContext, isMainProtected: false },
     );
@@ -182,7 +203,7 @@ describe('createProtectMainPreHook', () => {
   it('passes through when current branch is not main/default', async () => {
     const entry = createProtectMainPreHook();
     const result = await entry.hook(
-      'sandbox_prepare_commit',
+      'sandbox_commit',
       {},
       { ...baseContext, getCurrentBranch: async () => 'feature/foo' },
     );
@@ -192,7 +213,7 @@ describe('createProtectMainPreHook', () => {
   it('fails safe — denies when current branch can not be read', async () => {
     const entry = createProtectMainPreHook();
     const result = await entry.hook(
-      'sandbox_prepare_commit',
+      'sandbox_commit',
       {},
       { ...baseContext, getCurrentBranch: async () => null },
     );
@@ -220,7 +241,7 @@ describe('createProtectMainPreHook', () => {
     // gate. Blocking is safer than an unrecoverable push to main.
     const entry = createProtectMainPreHook();
     const result = await entry.hook(
-      'sandbox_prepare_commit',
+      'sandbox_commit',
       {},
       { ...baseContext, getCurrentBranch: async () => null, currentBranch: 'feature/foo' },
     );
@@ -232,7 +253,7 @@ describe('createProtectMainPreHook', () => {
     // branch is not consulted at all while a live reader is present.
     const entry = createProtectMainPreHook();
     const result = await entry.hook(
-      'sandbox_prepare_commit',
+      'sandbox_commit',
       {},
       { ...baseContext, getCurrentBranch: async () => null, currentBranch: 'main' },
     );
@@ -244,7 +265,7 @@ describe('createProtectMainPreHook', () => {
     // must win so the gate is not bypassed by stale tracked state.
     const entry = createProtectMainPreHook();
     const result = await entry.hook(
-      'sandbox_prepare_commit',
+      'sandbox_commit',
       {},
       { ...baseContext, getCurrentBranch: async () => 'main', currentBranch: 'feature/foo' },
     );
@@ -254,7 +275,7 @@ describe('createProtectMainPreHook', () => {
   it('evaluates from the tracked branch alone when there is no live reader', async () => {
     const entry = createProtectMainPreHook();
     const passthrough = await entry.hook(
-      'sandbox_prepare_commit',
+      'sandbox_commit',
       {},
       {
         ...baseContext,
@@ -266,7 +287,7 @@ describe('createProtectMainPreHook', () => {
     expect(passthrough.decision).toBe('passthrough');
 
     const denied = await entry.hook(
-      'sandbox_prepare_commit',
+      'sandbox_commit',
       {},
       { ...baseContext, sandboxId: null, getCurrentBranch: undefined, currentBranch: 'main' },
     );
@@ -276,7 +297,7 @@ describe('createProtectMainPreHook', () => {
   it('passes through when neither a live reader nor a tracked branch is available', async () => {
     const entry = createProtectMainPreHook();
     const result = await entry.hook(
-      'sandbox_prepare_commit',
+      'sandbox_commit',
       {},
       { ...baseContext, sandboxId: null, getCurrentBranch: undefined },
     );

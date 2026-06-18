@@ -7,7 +7,7 @@
  *
  *   - Protect Main: yes — the CLI's `git_commit` tool commits directly
  *     to the working tree, so the same default-branch-block rule fires
- *     for CLI `git_commit` as for web `sandbox_prepare_commit` /
+ *     for CLI `git_commit` as for web `sandbox_commit` / `prepare_push` /
  *     `sandbox_push`.
  *
  *   - Git guard: no — that rule enforces Push's web-side branch-

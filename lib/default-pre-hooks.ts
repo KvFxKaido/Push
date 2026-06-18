@@ -50,10 +50,10 @@ function formatGitGuardBlock(
   } else if (isBranchSwitch) {
     guidance = `Direct "${label}" is blocked. Use sandbox_switch_branch({"branch": "<branch-name>"}) — it switches the sandbox and routes the conversation to the existing chat for that branch (or auto-creates one). For branch-restore-as-file flows, pass an explicit flag (e.g. "git checkout -- <path>").`;
   } else if (mode === 'autonomous') {
-    guidance = `Direct "${label}" is blocked. Use sandbox_prepare_commit + sandbox_push for the audited flow. If the standard flow fails, retry with "allowDirectGit": true — you have autonomous permission.`;
+    guidance = `Direct "${label}" is blocked. Use sandbox_commit to commit and prepare_push to ship (the Auditor runs at push). If the standard flow fails, retry with "allowDirectGit": true — you have autonomous permission.`;
   } else {
     guidance = [
-      `Direct "${label}" is blocked. Commits must go through sandbox_prepare_commit (Auditor review) and pushes through sandbox_push.`,
+      `Direct "${label}" is blocked. Commit locally with sandbox_commit, then ship through prepare_push (Auditor review at the push boundary).`,
       ``,
       `If the standard flow is failing, use ask_user to explain the problem and request explicit permission from the user.`,
       `If the user approves, retry with "allowDirectGit": true in your sandbox_exec args.`,
@@ -68,14 +68,18 @@ function formatGitGuardBlock(
 // ---------------------------------------------------------------------------
 
 /**
- * Tools that mutate the upstream branch. When `isMainProtected` is on
- * and the workspace is on the default branch (or `main` / `master`),
- * these are blocked with structured guidance.
+ * Tools that push to (or, on CLI, commit to) the upstream branch. When
+ * `isMainProtected` is on and the workspace is on the default branch (or
+ * `main` / `master`), these are blocked with structured guidance.
  *
- * Covers both web (`sandbox_prepare_commit` / `sandbox_push`) and CLI
- * (`git_commit`) vocabularies so the same rule applies on both surfaces.
+ * Covers web push vocab (`prepare_push` / `sandbox_push`) and CLI (`git_commit`).
+ * `sandbox_commit` is deliberately NOT matched: it auto-forks off the default
+ * branch *inside the handler* (this pre-hook runs too early to see the
+ * post-fork branch), and `handleSandboxCommit` carries its own fail-closed
+ * Protect Main check for the auto-branch-disabled case. Matching it here would
+ * deny the very tool whose job is to move work off main.
  */
-const PROTECT_MAIN_TOOLS_MATCHER = 'sandbox_prepare_commit|sandbox_push|git_commit';
+const PROTECT_MAIN_TOOLS_MATCHER = 'prepare_push|sandbox_push|git_commit';
 
 export function createProtectMainPreHook(): PreToolHookEntry {
   return {
@@ -174,7 +178,14 @@ export function createGitGuardPreHook(options: GitGuardOptions): PreToolHookEntr
       }
 
       const mode = options.modeProvider();
-      const shouldBlock = isBranchOp || mode !== 'full-auto';
+      // A raw `git push` is ALWAYS routed to the audited `sandbox_push` tool —
+      // even in full-auto, which otherwise lets raw git through. Under
+      // Gate-at-Push the Auditor gate lives at the push, so a raw push in
+      // full-auto (no human, no typed gate) would ship unaudited — the exact
+      // invariant the gate exists to hold. The `allowDirectGit` consent hatch
+      // below still applies when Protect Main is off; Protect Main blocks raw
+      // push outright (handled above), regardless of consent.
+      const shouldBlock = isBranchOp || isPush || mode !== 'full-auto';
 
       // `allowDirectGit` is the consent escape hatch for commit/push/
       // merge/rebase. It does NOT apply to branch create/switch — those

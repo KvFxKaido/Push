@@ -105,16 +105,20 @@ describe('tool-dispatch smoke -- sandbox_search_replace', () => {
     );
   });
 
-  it('passes the chat-locked provider/model into sandbox_prepare_commit audits', async () => {
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
-      exitCode: 0,
-      stdout: '',
-      stderr: '',
-      truncated: false,
-    });
-    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({
-      diff: 'diff --git a/src/app.ts b/src/app.ts\n+console.log("hi");\n',
-      truncated: false,
+  it('passes the chat-locked provider/model into prepare_push audits', async () => {
+    const cumulativeDiff = 'diff --git a/src/app.ts b/src/app.ts\n+console.log("hi");\n';
+    // prepare_push audits the cumulative push diff via computeSandboxPushedDiff,
+    // which issues `rev-parse @{upstream}` then `log -p base..HEAD` over the
+    // (mocked) execInSandbox — serve the patch series for the log command.
+    vi.mocked(sandboxClient.execInSandbox).mockImplementation(async (_id, command) => {
+      const cmd = String(command);
+      if (cmd.includes('@{upstream}')) {
+        return { exitCode: 0, stdout: 'origin/main', stderr: '', truncated: false };
+      }
+      if (/ 'log' '-p' '--no-color'/.test(cmd)) {
+        return { exitCode: 0, stdout: cumulativeDiff, stderr: '', truncated: false };
+      }
+      return { exitCode: 0, stdout: '', stderr: '', truncated: false };
     });
     vi.mocked(runAuditor).mockResolvedValue({
       verdict: 'safe',
@@ -129,8 +133,8 @@ describe('tool-dispatch smoke -- sandbox_search_replace', () => {
     const callText = [
       '```json',
       JSON.stringify({
-        tool: 'sandbox_prepare_commit',
-        args: { message: 'test commit' },
+        tool: 'prepare_push',
+        args: {},
       }),
       '```',
     ].join('\n');
@@ -157,9 +161,9 @@ describe('tool-dispatch smoke -- sandbox_search_replace', () => {
       expect.any(String),
       expect.any(Function),
       expect.objectContaining({
-        source: 'sandbox-prepare-commit',
+        source: 'sandbox-push',
       }),
-      expect.any(Object),
+      undefined,
       expect.objectContaining({
         providerOverride: 'openrouter',
         modelOverride: 'anthropic/claude-sonnet-4.6:nitro',

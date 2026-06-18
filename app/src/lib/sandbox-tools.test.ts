@@ -2,7 +2,7 @@
  * Tests for sandbox tool validation, detection, and execution in sandbox-tools.ts.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ---- Mocks must be set up before importing the module under test ----
 
@@ -26,7 +26,7 @@ vi.mock('./sandbox-client', () => ({
   downloadFromSandbox: vi.fn(),
 }));
 
-// Mock auditor-agent (needed by sandbox_prepare_commit).
+// Mock auditor-agent (needed by prepare_push).
 vi.mock('./auditor-agent', () => ({
   runAuditor: vi.fn(),
 }));
@@ -710,7 +710,96 @@ describe('executeSandboxToolCall -- stale write handling', () => {
   });
 });
 
-describe('executeSandboxToolCall -- sandbox_prepare_commit auditor overrides', () => {
+describe('executeSandboxToolCall -- prepare_push auditor overrides', () => {
+  // Gate-at-Push Move A: the Auditor runs at prepare_push over the cumulative
+  // push diff. computeSandboxPushedDiff issues `rev-parse @{upstream}` then a
+  // `log -p base..HEAD` through the (mocked) execInSandbox; serve the cumulative
+  // patch series for the `log` command so the dispatcher wiring is exercised
+  // end-to-end.
+  const CUMULATIVE_DIFF = 'diff --git a/src/app.ts b/src/app.ts\n+console.log("hi");\n';
+  beforeEach(() => {
+    vi.mocked(sandboxClient.getSandboxDiff).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockImplementation(async (_id, command) => {
+      const cmd = String(command);
+      // computePushedDiff: resolve the base on the first read, then return the
+      // cumulative patch series for the `git log -p base..HEAD` command.
+      if (cmd.includes('@{upstream}')) {
+        return { stdout: 'origin/main', stderr: '', exitCode: 0, truncated: false };
+      }
+      if (/ 'log' '-p' '--no-color'/.test(cmd)) {
+        return { stdout: CUMULATIVE_DIFF, stderr: '', exitCode: 0, truncated: false };
+      }
+      return { stdout: '', stderr: '', exitCode: 0, truncated: false };
+    });
+    vi.mocked(runAuditor).mockReset();
+  });
+
+  it('passes explicit provider/model overrides to the Auditor', async () => {
+    vi.mocked(runAuditor).mockResolvedValue({
+      verdict: 'safe',
+      card: {
+        verdict: 'safe',
+        summary: 'No issues found.',
+        risks: [],
+        filesReviewed: 1,
+      },
+    });
+
+    await executeSandboxToolCall({ tool: 'prepare_push', args: {} }, 'sb-123', {
+      auditorProviderOverride: 'vertex',
+      auditorModelOverride: 'google/gemini-2.5-pro',
+    });
+
+    expect(runAuditor).toHaveBeenCalledWith(
+      CUMULATIVE_DIFF,
+      expect.any(Function),
+      expect.objectContaining({
+        source: 'sandbox-push',
+      }),
+      undefined,
+      expect.objectContaining({
+        providerOverride: 'vertex',
+        modelOverride: 'google/gemini-2.5-pro',
+      }),
+      expect.any(Array),
+    );
+  });
+
+  it('returns a push-kind review card on a SAFE verdict', async () => {
+    vi.mocked(runAuditor).mockResolvedValue({
+      verdict: 'safe',
+      card: { verdict: 'safe', summary: 'No issues found.', risks: [], filesReviewed: 1 },
+    });
+
+    const result = await executeSandboxToolCall({ tool: 'prepare_push', args: {} }, 'sb-123');
+
+    expect(result.card?.type).toBe('commit-review');
+    if (result.card?.type === 'commit-review') {
+      expect(result.card.data.kind).toBe('push');
+      expect(result.card.data.diff.diff).toBe(CUMULATIVE_DIFF);
+    }
+  });
+
+  it('blocks the push on an UNSAFE verdict with an audit-verdict card', async () => {
+    vi.mocked(runAuditor).mockResolvedValue({
+      verdict: 'unsafe',
+      card: {
+        verdict: 'unsafe',
+        summary: 'Looks dangerous.',
+        risks: [{ level: 'high', description: 'exec' }],
+        filesReviewed: 1,
+      },
+    });
+
+    const result = await executeSandboxToolCall({ tool: 'prepare_push', args: {} }, 'sb-123');
+
+    expect(result.text).toContain('Push BLOCKED by Auditor:');
+    expect(result.card?.type).toBe('audit-verdict');
+  });
+});
+
+describe('executeSandboxToolCall -- sandbox_commit (silent local commit)', () => {
   beforeEach(() => {
     vi.mocked(sandboxClient.getSandboxDiff).mockReset();
     vi.mocked(sandboxClient.execInSandbox).mockReset();
@@ -723,46 +812,23 @@ describe('executeSandboxToolCall -- sandbox_prepare_commit auditor overrides', (
     vi.mocked(runAuditor).mockReset();
   });
 
-  it('passes explicit provider/model overrides to the Auditor', async () => {
+  it('commits silently — no card, no Auditor', async () => {
     vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({
       diff: 'diff --git a/src/app.ts b/src/app.ts\n+console.log("hi");\n',
       truncated: false,
     });
-    vi.mocked(runAuditor).mockResolvedValue({
-      verdict: 'safe',
-      card: {
-        verdict: 'safe',
-        summary: 'No issues found.',
-        risks: [],
-        filesReviewed: 1,
-      },
-    });
 
-    await executeSandboxToolCall(
-      { tool: 'sandbox_prepare_commit', args: { message: 'test commit' } },
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_commit', args: { message: 'test commit' } },
       'sb-123',
-      {
-        auditorProviderOverride: 'vertex',
-        auditorModelOverride: 'google/gemini-2.5-pro',
-      },
     );
 
-    expect(runAuditor).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(Function),
-      expect.objectContaining({
-        source: 'sandbox-prepare-commit',
-      }),
-      expect.any(Object),
-      expect.objectContaining({
-        providerOverride: 'vertex',
-        modelOverride: 'google/gemini-2.5-pro',
-      }),
-      expect.any(Array),
-    );
+    expect(runAuditor).not.toHaveBeenCalled();
+    expect(result.card).toBeUndefined();
+    expect(result.text).toContain('Committed: "test commit"');
   });
 
-  it('blocks commit preparation when the pre-commit hook fails', async () => {
+  it('blocks (no card) when the pre-commit hook fails', async () => {
     vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({
       diff: 'diff --git a/src/app.ts b/src/app.ts\n+console.log("hi");\n',
       truncated: false,
@@ -775,67 +841,13 @@ describe('executeSandboxToolCall -- sandbox_prepare_commit auditor overrides', (
     });
 
     const result = await executeSandboxToolCall(
-      { tool: 'sandbox_prepare_commit', args: { message: 'test commit' } },
+      { tool: 'sandbox_commit', args: { message: 'test commit' } },
       'sb-123',
     );
 
     expect(runAuditor).not.toHaveBeenCalled();
     expect(result.text).toContain('Commit BLOCKED by pre-commit hook');
-    expect(result.card?.type).toBe('audit-verdict');
-    if (result.card?.type === 'audit-verdict') {
-      expect(result.card.data.summary).toContain('Pre-commit hook failed');
-    }
-  });
-
-  it('audits the post-hook diff when the pre-commit hook rewrites files', async () => {
-    vi.mocked(sandboxClient.getSandboxDiff)
-      .mockResolvedValueOnce({
-        diff: 'diff --git a/src/app.ts b/src/app.ts\n-console.log("before");\n+console.log("during hook");\n',
-        truncated: false,
-      })
-      .mockResolvedValueOnce({
-        diff: 'diff --git a/src/app.ts b/src/app.ts\n-console.log("before");\n+console.log("after hook");\n',
-        truncated: false,
-      });
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
-      stdout: 'formatted files',
-      stderr: '',
-      exitCode: 0,
-      truncated: false,
-    });
-    vi.mocked(runAuditor).mockResolvedValue({
-      verdict: 'safe',
-      card: {
-        verdict: 'safe',
-        summary: 'No issues found.',
-        risks: [],
-        filesReviewed: 1,
-      },
-    });
-
-    const result = await executeSandboxToolCall(
-      { tool: 'sandbox_prepare_commit', args: { message: 'test commit' } },
-      'sb-123',
-    );
-
-    expect(runAuditor).toHaveBeenCalledWith(
-      'diff --git a/src/app.ts b/src/app.ts\n-console.log("before");\n+console.log("after hook");\n',
-      expect.any(Function),
-      expect.objectContaining({
-        source: 'sandbox-prepare-commit',
-      }),
-      expect.objectContaining({
-        exitCode: 0,
-        output: 'formatted files',
-      }),
-      expect.any(Object),
-      expect.any(Array),
-    );
-    expect(result.card?.type).toBe('commit-review');
-    if (result.card?.type === 'commit-review') {
-      expect(result.card.data.diff.diff).toContain('after hook');
-      expect(result.card.data.diff.diff).not.toContain('during hook');
-    }
+    expect(result.card).toBeUndefined();
   });
 });
 
@@ -1330,9 +1342,9 @@ describe('executeSandboxToolCall -- sandbox_find_references characterization', (
 });
 
 // ---------------------------------------------------------------------------
-// Git/release family characterization — pin behavior for the four tools
+// Git/release family characterization — pin behavior for the tools
 // extracted into sandbox-git-release-handlers.ts (sandbox_diff,
-// sandbox_prepare_commit, sandbox_push, promote_to_github). These tests
+// sandbox_commit, prepare_push, sandbox_push, promote_to_github). These tests
 // exercise the dispatcher end-to-end and serve as the regression gate for
 // the extraction and future refactors. Originally written to pass at HEAD
 // before the extraction (commit e92b2b8); now pin behavior across the
@@ -1409,10 +1421,16 @@ describe('executeSandboxToolCall -- sandbox_diff', () => {
   });
 });
 
-describe('executeSandboxToolCall -- sandbox_prepare_commit characterization', () => {
+describe('executeSandboxToolCall -- sandbox_commit characterization', () => {
   beforeEach(() => {
     vi.mocked(sandboxClient.getSandboxDiff).mockReset();
     vi.mocked(sandboxClient.execInSandbox).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
     vi.mocked(runAuditor).mockReset();
   });
 
@@ -1424,18 +1442,18 @@ describe('executeSandboxToolCall -- sandbox_prepare_commit characterization', ()
     });
 
     const result = await executeSandboxToolCall(
-      { tool: 'sandbox_prepare_commit', args: { message: 'chore: x' } },
+      { tool: 'sandbox_commit', args: { message: 'chore: x' } },
       'sb-1',
     );
 
-    expect(result.text).toContain('[Tool Error — sandbox_prepare_commit]');
+    expect(result.text).toContain('[Tool Error — sandbox_commit]');
     expect(result.text).toContain('diff failed');
     expect(result.structuredError).toBeDefined();
     expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
     expect(runAuditor).not.toHaveBeenCalled();
   });
 
-  it('returns a no-changes message when the initial diff is empty (with git_status)', async () => {
+  it('returns a nothing-to-commit message when the initial diff is empty (with git_status)', async () => {
     vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({
       diff: '',
       truncated: false,
@@ -1443,26 +1461,26 @@ describe('executeSandboxToolCall -- sandbox_prepare_commit characterization', ()
     });
 
     const result = await executeSandboxToolCall(
-      { tool: 'sandbox_prepare_commit', args: { message: 'chore: x' } },
+      { tool: 'sandbox_commit', args: { message: 'chore: x' } },
       'sb-1',
     );
 
-    expect(result.text).toContain('[Tool Result — sandbox_prepare_commit]');
-    expect(result.text).toContain('No changes to commit.');
+    expect(result.text).toContain('[Tool Result — sandbox_commit]');
+    expect(result.text).toContain('Nothing to commit.');
     expect(result.text).toContain('git status shows:  M src/app.ts');
     expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
     expect(runAuditor).not.toHaveBeenCalled();
   });
 
-  it('returns a no-changes message with the clean-tree hint when there is no git_status', async () => {
+  it('returns a nothing-to-commit message with the clean-tree hint when there is no git_status', async () => {
     vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({ diff: '', truncated: false });
 
     const result = await executeSandboxToolCall(
-      { tool: 'sandbox_prepare_commit', args: { message: 'chore: x' } },
+      { tool: 'sandbox_commit', args: { message: 'chore: x' } },
       'sb-1',
     );
 
-    expect(result.text).toContain('No changes to commit.');
+    expect(result.text).toContain('Nothing to commit.');
     expect(result.text).toContain('Working tree is clean.');
     expect(result.text).not.toContain('git status shows:');
     expect(runAuditor).not.toHaveBeenCalled();
@@ -1483,17 +1501,17 @@ describe('executeSandboxToolCall -- sandbox_prepare_commit characterization', ()
     });
 
     const result = await executeSandboxToolCall(
-      { tool: 'sandbox_prepare_commit', args: { message: 'chore: x' } },
+      { tool: 'sandbox_commit', args: { message: 'chore: x' } },
       'sb-1',
     );
 
-    expect(result.text).toContain('[Tool Error — sandbox_prepare_commit]');
+    expect(result.text).toContain('[Tool Error — sandbox_commit]');
     expect(result.text).toContain('post-hook diff failed');
     expect(result.structuredError).toBeDefined();
     expect(runAuditor).not.toHaveBeenCalled();
   });
 
-  it('returns a post-hook no-changes message and surfaces hook output when the hook clears the diff', async () => {
+  it('returns a post-hook nothing-to-commit message and surfaces hook output when the hook clears the diff', async () => {
     vi.mocked(sandboxClient.getSandboxDiff)
       .mockResolvedValueOnce({
         diff: 'diff --git a/src/app.ts b/src/app.ts\n+x\n',
@@ -1508,49 +1526,39 @@ describe('executeSandboxToolCall -- sandbox_prepare_commit characterization', ()
     });
 
     const result = await executeSandboxToolCall(
-      { tool: 'sandbox_prepare_commit', args: { message: 'chore: x' } },
+      { tool: 'sandbox_commit', args: { message: 'chore: x' } },
       'sb-1',
     );
 
-    expect(result.text).toContain('No changes to commit after running the pre-commit hook.');
+    expect(result.text).toContain('Nothing to commit after running the pre-commit hook.');
     expect(result.text).toContain('pre-commit output:');
     expect(result.text).toContain('formatter rewrote files');
     expect(runAuditor).not.toHaveBeenCalled();
   });
 
-  it('returns an audit-verdict card when the Auditor verdict is unsafe', async () => {
-    const diff = 'diff --git a/src/app.ts b/src/app.ts\n+danger\n';
-    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({ diff, truncated: false });
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
-      stdout: '',
-      stderr: '',
-      exitCode: 0,
+  it('blocks (no card) when the pre-commit hook fails — no Auditor at commit', async () => {
+    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({
+      diff: 'diff --git a/src/app.ts b/src/app.ts\n+danger\n',
       truncated: false,
     });
-    vi.mocked(runAuditor).mockResolvedValue({
-      verdict: 'unsafe',
-      card: {
-        verdict: 'unsafe',
-        summary: 'Looks dangerous.',
-        risks: [{ level: 'high', description: 'arbitrary exec' }],
-        filesReviewed: 1,
-      },
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: 'lint failed',
+      stderr: 'src/app.ts:1 error',
+      exitCode: 1,
+      truncated: false,
     });
 
     const result = await executeSandboxToolCall(
-      { tool: 'sandbox_prepare_commit', args: { message: 'chore: x' } },
+      { tool: 'sandbox_commit', args: { message: 'chore: x' } },
       'sb-1',
     );
 
-    expect(result.text).toContain('Commit BLOCKED by Auditor:');
-    expect(result.text).toContain('Looks dangerous.');
-    expect(result.card?.type).toBe('audit-verdict');
-    if (result.card?.type === 'audit-verdict') {
-      expect(result.card.data.verdict).toBe('unsafe');
-    }
+    expect(result.text).toContain('Commit BLOCKED by pre-commit hook');
+    expect(result.card).toBeUndefined();
+    expect(runAuditor).not.toHaveBeenCalled();
   });
 
-  it('returns a commit-review card with pending status on the safe path', async () => {
+  it('commits silently (no card, no Auditor) on the happy path', async () => {
     const diff = 'diff --git a/src/app.ts b/src/app.ts\n+ok\n';
     vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({ diff, truncated: false });
     vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
@@ -1559,36 +1567,26 @@ describe('executeSandboxToolCall -- sandbox_prepare_commit characterization', ()
       exitCode: 0,
       truncated: false,
     });
-    vi.mocked(runAuditor).mockResolvedValue({
-      verdict: 'safe',
-      card: { verdict: 'safe', summary: 'No issues.', risks: [], filesReviewed: 1 },
-    });
 
     const result = await executeSandboxToolCall(
-      { tool: 'sandbox_prepare_commit', args: { message: 'chore: add greeting' } },
+      { tool: 'sandbox_commit', args: { message: 'chore: add greeting' } },
       'sb-1',
     );
 
-    expect(result.text).toContain('Ready for review: "chore: add greeting"');
+    expect(result.text).toContain('Committed: "chore: add greeting"');
     expect(result.text).toContain('1 file, +1 -0');
-    expect(result.text).toContain('Waiting for user approval.');
-    expect(result.card?.type).toBe('commit-review');
-    if (result.card?.type === 'commit-review') {
-      expect(result.card.data.status).toBe('pending');
-      expect(result.card.data.commitMessage).toBe('chore: add greeting');
-      expect(result.card.data.diff.diff).toBe(diff);
-      expect(result.card.data.diff.filesChanged).toBe(1);
-      expect(result.card.data.auditVerdict.verdict).toBe('safe');
-    }
+    expect(result.card).toBeUndefined();
+    expect(runAuditor).not.toHaveBeenCalled();
   });
 });
 
 // The pre-push secret scan (`computePushedDiff`) issues two distinctive reads
-// (`@{upstream}` and `git 'diff' '--no-color'`) inside `PushGit.push()`. These
-// helpers let the push/promote/save_draft tests stay focused on the handlers'
-// own git commands: `mockExecScan` absorbs the scan reads (base resolves, clean
-// diff) while serving the handlers' results positionally, and `handlerExecCalls`
-// filters the scan reads out of call-count assertions.
+// (`@{upstream}` and `git 'log' '-p' '--no-color'`) inside `PushGit.push()`.
+// These helpers let the push/promote/save_draft tests stay focused on the
+// handlers' own git commands: `mockExecScan` absorbs the scan reads (base
+// resolves, clean patch series) while serving the handlers' results
+// positionally, and `handlerExecCalls` filters the scan reads out of call-count
+// assertions.
 type DispatcherExecResult = { stdout?: string; stderr?: string; exitCode: number };
 function mockExecScan(handlerResults: DispatcherExecResult[]) {
   const queue = handlerResults.map((r) => ({
@@ -1601,7 +1599,7 @@ function mockExecScan(handlerResults: DispatcherExecResult[]) {
     const c = String(cmd);
     if (c.includes('@{upstream}'))
       return { stdout: 'origin/main', stderr: '', exitCode: 0, truncated: false };
-    if (/ 'diff' '--no-color'/.test(c))
+    if (/ 'log' '-p' '--no-color'/.test(c))
       return { stdout: '', stderr: '', exitCode: 0, truncated: false };
     return queue.shift() ?? { stdout: '', stderr: '', exitCode: 0, truncated: false };
   });
@@ -1609,12 +1607,19 @@ function mockExecScan(handlerResults: DispatcherExecResult[]) {
 const handlerExecCalls = () =>
   vi.mocked(sandboxClient.execInSandbox).mock.calls.filter((c) => {
     const cmd = String(c[1]);
-    return !cmd.includes('@{upstream}') && !/ 'diff' '--no-color'/.test(cmd);
+    return !cmd.includes('@{upstream}') && !/ 'log' '-p' '--no-color'/.test(cmd);
   });
 
 describe('executeSandboxToolCall -- sandbox_push', () => {
+  // These tests pin push transport / secret-scan behavior, not the push-time
+  // Auditor gate (covered in the handler tests). Disable the now-default-ON
+  // Auditor gate so a blanket exec mock can't be misread as the cumulative diff.
   beforeEach(() => {
+    vi.stubEnv('VITE_PUSH_AUDIT_AT_PUSH', '0');
     vi.mocked(sandboxClient.execInSandbox).mockReset();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('reports success and threads markWorkspaceMutated on the exec call', async () => {

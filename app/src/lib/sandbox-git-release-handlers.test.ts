@@ -10,9 +10,31 @@
  * for the dispatcher-level layer.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Control the auto-branch-off-main fork from `handleSandboxCommit` without
+// touching real git: the real `ensureCommitTargetBranch` forks via the
+// module-level `execInSandbox` (a real fetch in tests). The proposer is a
+// passthrough so the handler's `createModelCommitBranchNameProposer(...)` call
+// doesn't reach a provider.
+const { ensureCommitTargetBranchMock } = vi.hoisted(() => ({
+  ensureCommitTargetBranchMock: vi.fn(
+    (): Promise<import('./ensure-commit-target-branch').EnsureCommitTargetBranchResult> =>
+      Promise.resolve({ switched: false }),
+  ),
+}));
+vi.mock('./ensure-commit-target-branch', async (importActual) => {
+  const actual = await importActual<typeof import('./ensure-commit-target-branch')>();
+  return {
+    ...actual,
+    ensureCommitTargetBranch: ensureCommitTargetBranchMock,
+    createModelCommitBranchNameProposer: vi.fn(() => async () => null),
+  };
+});
+
 import {
-  handlePrepareCommit,
+  handleSandboxCommit,
+  handlePreparePush,
   handlePromoteToGithub,
   handleSandboxDiff,
   handleShowCommit,
@@ -106,7 +128,7 @@ function makeContext(opts: MakeContextOpts = {}): MockedContext {
       // is recorded and draws from the queue.
       const cmd = String(args[1]);
       if (cmd.includes('@{upstream}')) return ok('origin/main'); // base resolves
-      if (/ 'diff' '--no-color'/.test(cmd)) return ok(opts.pushedDiff ?? '');
+      if (/ 'log' '-p' '--no-color'/.test(cmd)) return ok(opts.pushedDiff ?? '');
       execCalls.push(args);
       return execQueue.shift() ?? ok();
     }),
@@ -264,48 +286,45 @@ describe('handleShowCommit', () => {
 // handlePrepareCommit
 // ---------------------------------------------------------------------------
 
-describe('handlePrepareCommit', () => {
+describe('handleSandboxCommit', () => {
   it('returns a structured error when the initial getSandboxDiff fails', async () => {
     const ctx = makeContext({
       diffResults: [{ diff: '', truncated: false, error: 'diff failed' }],
     });
-    const result = await handlePrepareCommit(ctx, { message: 'chore: x' });
-    expect(result.text).toContain('[Tool Error — sandbox_prepare_commit]');
+    const result = await handleSandboxCommit(ctx, { message: 'chore: x' });
+    expect(result.text).toContain('[Tool Error — sandbox_commit]');
     expect(result.text).toContain('diff failed');
     expect(ctx.execInSandbox).not.toHaveBeenCalled();
     expect(ctx.runAuditor).not.toHaveBeenCalled();
   });
 
-  it('returns no-changes text when the initial diff is empty (with git_status)', async () => {
+  it('returns nothing-to-commit text when the initial diff is empty (with git_status)', async () => {
     const ctx = makeContext({
       diffResults: [{ diff: '', truncated: false, git_status: ' M x.ts' }],
     });
-    const result = await handlePrepareCommit(ctx, { message: 'chore: x' });
-    expect(result.text).toContain('No changes to commit.');
+    const result = await handleSandboxCommit(ctx, { message: 'chore: x' });
+    expect(result.text).toContain('Nothing to commit.');
     expect(result.text).toContain('git status shows:  M x.ts');
-    expect(ctx.runAuditor).not.toHaveBeenCalled();
+    expect(result.card).toBeUndefined();
   });
 
-  it('returns no-changes text with the clean-tree hint when there is no git_status', async () => {
+  it('returns nothing-to-commit text with the clean-tree hint when there is no git_status', async () => {
     const ctx = makeContext({ diffResults: [{ diff: '', truncated: false }] });
-    const result = await handlePrepareCommit(ctx, { message: 'chore: x' });
-    expect(result.text).toContain('No changes to commit.');
+    const result = await handleSandboxCommit(ctx, { message: 'chore: x' });
+    expect(result.text).toContain('Nothing to commit.');
     expect(result.text).toContain('Working tree is clean.');
-    expect(ctx.runAuditor).not.toHaveBeenCalled();
+    expect(result.card).toBeUndefined();
   });
 
-  it('returns an audit-verdict card when the pre-commit hook fails', async () => {
+  it('blocks (no card) when the pre-commit hook fails', async () => {
     const ctx = makeContext({
       diffResults: [{ diff: 'diff --git a/x.ts b/x.ts\n+x\n', truncated: false }],
       execResults: [fail('lint failed', 'src/x.ts:1 error', 1)],
     });
-    const result = await handlePrepareCommit(ctx, { message: 'chore: x' });
+    const result = await handleSandboxCommit(ctx, { message: 'chore: x' });
     expect(result.text).toContain('Commit BLOCKED by pre-commit hook');
-    expect(result.card?.type).toBe('audit-verdict');
-    if (result.card?.type === 'audit-verdict') {
-      expect(result.card.data.verdict).toBe('unsafe');
-      expect(result.card.data.summary).toContain('Pre-commit hook failed');
-    }
+    // Silent commit: no card emitted, and the Auditor never runs at commit time.
+    expect(result.card).toBeUndefined();
     expect(ctx.runAuditor).not.toHaveBeenCalled();
   });
 
@@ -317,13 +336,12 @@ describe('handlePrepareCommit', () => {
       ],
       execResults: [ok()],
     });
-    const result = await handlePrepareCommit(ctx, { message: 'chore: x' });
-    expect(result.text).toContain('[Tool Error — sandbox_prepare_commit]');
+    const result = await handleSandboxCommit(ctx, { message: 'chore: x' });
+    expect(result.text).toContain('[Tool Error — sandbox_commit]');
     expect(result.text).toContain('post-hook failed');
-    expect(ctx.runAuditor).not.toHaveBeenCalled();
   });
 
-  it('returns post-hook no-changes text and surfaces hook output when the hook clears the diff', async () => {
+  it('returns post-hook nothing-to-commit text when the hook clears the diff', async () => {
     const ctx = makeContext({
       diffResults: [
         { diff: 'diff --git a/x.ts b/x.ts\n+x\n', truncated: false },
@@ -331,92 +349,186 @@ describe('handlePrepareCommit', () => {
       ],
       execResults: [ok('formatter rewrote files')],
     });
-    const result = await handlePrepareCommit(ctx, { message: 'chore: x' });
-    expect(result.text).toContain('No changes to commit after running the pre-commit hook.');
+    const result = await handleSandboxCommit(ctx, { message: 'chore: x' });
+    expect(result.text).toContain('Nothing to commit after running the pre-commit hook.');
     expect(result.text).toContain('pre-commit output:');
     expect(result.text).toContain('formatter rewrote files');
+  });
+
+  it('commits silently (no card, no Auditor) on the happy path', async () => {
+    const diff = 'diff --git a/x.ts b/x.ts\n+ok\n';
+    const ctx = makeContext({
+      diffResults: [
+        { diff, truncated: false },
+        { diff, truncated: false },
+      ],
+      // [0] = pre-commit hook, [1] = git add -A, [2] = git commit (backend).
+      execResults: [ok('hook ran'), ok(), ok('[branch abc123] chore: add greeting')],
+    });
+    const result = await handleSandboxCommit(ctx, { message: 'chore: add greeting' });
+    expect(result.text).toContain('Committed: "chore: add greeting"');
+    expect(result.text).toContain('Use prepare_push to ship.');
+    // Silent: no review card and the Auditor never ran at commit time.
+    expect(result.card).toBeUndefined();
+    expect(ctx.runAuditor).not.toHaveBeenCalled();
+    // The pre-commit hook ran at /workspace before the commit.
+    expect(ctx.execCalls[0][1]).toContain('.git/hooks/pre-commit');
+    expect(ctx.execCalls[0][2]).toBe('/workspace');
+    // The backend committed via a real `git commit` (not sandbox_exec).
+    expect(ctx.execCalls.some((c) => String(c[1]).includes("git 'commit'"))).toBe(true);
+  });
+
+  it('returns a structured error when the backend commit fails', async () => {
+    const diff = 'diff --git a/x.ts b/x.ts\n+ok\n';
+    const ctx = makeContext({
+      diffResults: [
+        { diff, truncated: false },
+        { diff, truncated: false },
+      ],
+      // [0] hook ok, [1] git add -A ok, [2] git commit FAILS.
+      execResults: [ok('hook ran'), ok(), fail('', 'nothing staged', 1)],
+    });
+    const result = await handleSandboxCommit(ctx, { message: 'chore: x' });
+    expect(result.text).toContain('[Tool Error — sandbox_commit]');
+    expect(result.structuredError).toBeDefined();
+    expect(result.card).toBeUndefined();
+  });
+
+  it('auto-forks off the default branch and emits a branchSwitch before committing', async () => {
+    const diff = 'diff --git a/x.ts b/x.ts\n+ok\n';
+    // currentBranch === defaultBranch → ensureCommitTargetBranch forks. The
+    // mock returns a deterministic branchSwitch so no real git is touched.
+    const branchSwitch = { name: 'feat/x', kind: 'forked' as const };
+    ensureCommitTargetBranchMock.mockResolvedValueOnce({
+      switched: true as const,
+      branch: 'feat/x',
+      branchSwitch,
+    });
+    const ctx = makeContext({
+      diffResults: [
+        { diff, truncated: false },
+        { diff, truncated: false },
+      ],
+      execResults: [ok('hook ran'), ok(), ok('[feat/x abc123] chore: x')],
+    });
+    ctx.currentBranch = 'main';
+    ctx.defaultBranch = 'main';
+    const result = await handleSandboxCommit(ctx, { message: 'chore: x' });
+    expect(result.text).toContain('Committed:');
+    // The fork-off-main path stamps a branchSwitch payload (forked) and notes it.
+    expect(result.branchSwitch).toEqual(branchSwitch);
+    expect(result.text).toContain('Forked off the default branch first.');
+    expect(result.card).toBeUndefined();
+  });
+
+  it('refuses on a protected branch when the commit did not fork off main (fail-closed)', async () => {
+    // Tracked branch is a feature branch, but the live HEAD reads back as main
+    // (desync). ensureCommitTargetBranch returns switched:false (not on the
+    // default per the tracked branch), so the in-handler fail-closed Protect
+    // Main check must read the LIVE branch and block — the shared pre-hook no
+    // longer matches sandbox_commit.
+    const ctx = makeContext({
+      diffResults: [
+        { diff: 'diff --git a/x b/x\n+a', truncated: false },
+        { diff: 'diff --git a/x b/x\n+a', truncated: false },
+      ],
+      execResults: [ok(''), ok('main')], // [pre-commit hook, live branch read]
+    });
+    ctx.isMainProtected = true;
+    ctx.currentBranch = 'feature/x';
+    ctx.defaultBranch = 'main';
+    const result = await handleSandboxCommit(ctx, { message: 'wip' });
+    expect(result.structuredError?.type).toBe('PROTECT_MAIN_BLOCKED');
+    expect(ctx.execCalls.some((c) => /'commit'/.test(String(c[1])))).toBe(false);
+  });
+});
+
+describe('handlePreparePush', () => {
+  const cleanDiff = '+++ b/x.ts\n@@ -0,0 +1 @@\n+const x = 1;';
+
+  it('returns a nothing-to-push message when the cumulative diff is empty', async () => {
+    const ctx = makeContext({ pushedDiff: '' });
+    const result = await handlePreparePush(ctx);
+    expect(result.text).toContain('Nothing to push');
+    expect(result.card).toBeUndefined();
     expect(ctx.runAuditor).not.toHaveBeenCalled();
   });
 
-  it('returns an audit-verdict card when the Auditor verdict is unsafe', async () => {
-    const diff = 'diff --git a/x.ts b/x.ts\n+danger\n';
-    const ctx = makeContext({
-      diffResults: [
-        { diff, truncated: false },
-        { diff, truncated: false },
-      ],
-      execResults: [ok()],
-      auditorVerdict: unsafeAuditorVerdict(),
-    });
-    const result = await handlePrepareCommit(ctx, { message: 'chore: x' });
-    expect(result.text).toContain('Commit BLOCKED by Auditor:');
-    expect(result.text).toContain('Looks dangerous.');
-    expect(result.card?.type).toBe('audit-verdict');
-  });
-
-  it('returns a commit-review card with pending status on the safe path', async () => {
-    const diff = 'diff --git a/x.ts b/x.ts\n+ok\n';
-    const ctx = makeContext({
-      diffResults: [
-        { diff, truncated: false },
-        { diff, truncated: false },
-      ],
-      execResults: [ok()],
-      auditorVerdict: safeAuditorVerdict(),
-    });
-    const result = await handlePrepareCommit(ctx, { message: 'chore: add greeting' });
-    expect(result.text).toContain('Ready for review: "chore: add greeting"');
-    expect(result.text).toContain('Waiting for user approval.');
+  it('returns a push-kind commit-review card on a SAFE Auditor verdict', async () => {
+    const ctx = makeContext({ pushedDiff: cleanDiff, auditorVerdict: safeAuditorVerdict() });
+    const result = await handlePreparePush(ctx);
+    expect(ctx.runAuditor).toHaveBeenCalledWith(
+      cleanDiff,
+      expect.any(Function),
+      expect.objectContaining({ source: 'sandbox-push' }),
+      undefined,
+      expect.any(Object),
+      expect.any(Array),
+    );
     expect(result.card?.type).toBe('commit-review');
     if (result.card?.type === 'commit-review') {
+      expect(result.card.data.kind).toBe('push');
       expect(result.card.data.status).toBe('pending');
-      expect(result.card.data.commitMessage).toBe('chore: add greeting');
-      expect(result.card.data.diff.diff).toBe(diff);
+      expect(result.card.data.diff.diff).toBe(cleanDiff);
       expect(result.card.data.auditVerdict.verdict).toBe('safe');
+      expect(result.card.data.commitMessage).toBe('');
+    }
+    expect(result.text).toContain('Ready to push');
+    expect(result.text).toContain('SAFE');
+  });
+
+  it('pins the audited HEAD sha on the push-kind card (staleness guard)', async () => {
+    const ctx = makeContext({
+      pushedDiff: cleanDiff,
+      auditorVerdict: safeAuditorVerdict(),
+      execResults: [ok('abc1234')], // the HEAD-sha read (git rev-parse)
+    });
+    const result = await handlePreparePush(ctx);
+    expect(result.card?.type).toBe('commit-review');
+    if (result.card?.type === 'commit-review') {
+      expect(result.card.data.auditedHeadSha).toBe('abc1234');
     }
   });
 
-  it('threads provider/model overrides through to the Auditor call', async () => {
-    const diff = 'diff --git a/x.ts b/x.ts\n+ok\n';
-    const ctx = makeContext({
-      diffResults: [
-        { diff, truncated: false },
-        { diff, truncated: false },
-      ],
-      execResults: [ok()],
-      auditorVerdict: safeAuditorVerdict(),
+  it('returns an audit-verdict card and blocks on an UNSAFE verdict', async () => {
+    const ctx = makeContext({ pushedDiff: cleanDiff, auditorVerdict: unsafeAuditorVerdict() });
+    const result = await handlePreparePush(ctx);
+    expect(result.text).toContain('Push BLOCKED by Auditor:');
+    expect(result.text).toContain('Looks dangerous.');
+    expect(result.card?.type).toBe('audit-verdict');
+    if (result.card?.type === 'audit-verdict') {
+      expect(result.card.data.verdict).toBe('unsafe');
+    }
+  });
+
+  it('returns retryable AUDITOR_UNAVAILABLE when the Auditor backend throws', async () => {
+    const ctx = makeContext({ pushedDiff: cleanDiff });
+    ctx.runAuditor = vi.fn(async () => {
+      throw new Error('provider 503');
     });
-    await handlePrepareCommit(
-      ctx,
-      { message: 'chore: x' },
-      { providerOverride: 'vertex', modelOverride: 'google/gemini-2.5-pro' },
-    );
+    const result = await handlePreparePush(ctx);
+    expect(result.structuredError?.type).toBe('AUDITOR_UNAVAILABLE');
+    expect(result.structuredError?.retryable).toBe(true);
+    expect(result.card).toBeUndefined();
+  });
+
+  it('threads provider/model overrides through to the Auditor call', async () => {
+    const ctx = makeContext({ pushedDiff: cleanDiff, auditorVerdict: safeAuditorVerdict() });
+    await handlePreparePush(ctx, {
+      providerOverride: 'vertex',
+      modelOverride: 'google/gemini-2.5-pro',
+    });
     expect(ctx.runAuditor).toHaveBeenCalledWith(
-      diff,
+      cleanDiff,
       expect.any(Function),
-      expect.objectContaining({ source: 'sandbox-prepare-commit' }),
-      expect.any(Object),
+      expect.objectContaining({ source: 'sandbox-push' }),
+      undefined,
       expect.objectContaining({
         providerOverride: 'vertex',
         modelOverride: 'google/gemini-2.5-pro',
       }),
       expect.any(Array),
     );
-  });
-
-  it('runs the pre-commit hook at /workspace via execInSandbox', async () => {
-    const diff = 'diff --git a/x.ts b/x.ts\n+ok\n';
-    const ctx = makeContext({
-      diffResults: [
-        { diff, truncated: false },
-        { diff, truncated: false },
-      ],
-      execResults: [ok('hook ran')],
-      auditorVerdict: safeAuditorVerdict(),
-    });
-    await handlePrepareCommit(ctx, { message: 'chore: x' });
-    expect(ctx.execCalls[0][1]).toContain('.git/hooks/pre-commit');
-    expect(ctx.execCalls[0][2]).toBe('/workspace');
   });
 });
 
@@ -464,6 +576,81 @@ describe('handleSandboxPush', () => {
     const result = await handleSandboxPush(ctx);
     expect(result.structuredError?.type).toBe('SANDBOX_UNREACHABLE');
     expect(result.text).toContain('[Tool Error — sandbox_push]');
+  });
+
+  it('runs the Auditor by default (Gate-at-Push Move A flipped ON)', async () => {
+    const cleanDiff = '+++ b/x.ts\n@@ -0,0 +1 @@\n+const x = 1;';
+    const ctx = makeContext({ pushedDiff: cleanDiff, execResults: [ok()] });
+    const result = await handleSandboxPush(ctx);
+    // Default ON now: the push-time Auditor runs over the cumulative diff.
+    expect(ctx.runAuditor).toHaveBeenCalled();
+    expect(result.text).toBe('[Tool Result — sandbox_push]\nPushed successfully.');
+  });
+
+  it('does not run the Auditor when the gate is explicitly disabled', async () => {
+    const cleanDiff = '+++ b/x.ts\n@@ -0,0 +1 @@\n+const x = 1;';
+    vi.stubEnv('VITE_PUSH_AUDIT_AT_PUSH', '0');
+    try {
+      const ctx = makeContext({ pushedDiff: cleanDiff, execResults: [ok()] });
+      const result = await handleSandboxPush(ctx);
+      expect(ctx.runAuditor).not.toHaveBeenCalled();
+      expect(result.text).toBe('[Tool Result — sandbox_push]\nPushed successfully.');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  describe('with the Auditor-at-push gate enabled', () => {
+    const cleanDiff = '+++ b/x.ts\n@@ -0,0 +1 @@\n+const x = 1;';
+    beforeEach(() => {
+      vi.stubEnv('VITE_PUSH_AUDIT_AT_PUSH', '1');
+    });
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('audits the cumulative pushed diff (source sandbox-push) and pushes on SAFE', async () => {
+      const ctx = makeContext({ pushedDiff: cleanDiff, execResults: [ok()] });
+      const result = await handleSandboxPush(ctx);
+      expect(ctx.runAuditor).toHaveBeenCalledWith(
+        cleanDiff,
+        expect.any(Function),
+        expect.objectContaining({ source: 'sandbox-push' }),
+        undefined,
+        expect.any(Object),
+        expect.any(Array),
+      );
+      expect(result.text).toBe('[Tool Result — sandbox_push]\nPushed successfully.');
+      expect(ctx.execCalls.some((c) => String(c[1]).includes("git 'push'"))).toBe(true);
+    });
+
+    it('blocks the push on an UNSAFE verdict and surfaces the summary', async () => {
+      const ctx = makeContext({ pushedDiff: cleanDiff, auditorVerdict: unsafeAuditorVerdict() });
+      const result = await handleSandboxPush(ctx);
+      expect(result.structuredError?.type).toBe('GIT_GUARD_BLOCKED');
+      expect(result.structuredError?.retryable).toBe(false);
+      expect(result.text).toContain('Looks dangerous.');
+      expect(ctx.execCalls.some((c) => String(c[1]).includes("git 'push'"))).toBe(false);
+    });
+
+    it('returns retryable AUDITOR_UNAVAILABLE when the Auditor backend throws', async () => {
+      const ctx = makeContext({ pushedDiff: cleanDiff });
+      ctx.runAuditor = vi.fn(async () => {
+        throw new Error('provider 503');
+      });
+      const result = await handleSandboxPush(ctx);
+      expect(result.structuredError?.type).toBe('AUDITOR_UNAVAILABLE');
+      expect(result.structuredError?.retryable).toBe(true);
+      expect(result.text).toContain('retry');
+      expect(ctx.execCalls.some((c) => String(c[1]).includes("git 'push'"))).toBe(false);
+    });
+
+    it('skips the Auditor when there is nothing new to push (empty cumulative diff)', async () => {
+      const ctx = makeContext({ pushedDiff: '', execResults: [ok()] });
+      const result = await handleSandboxPush(ctx);
+      expect(ctx.runAuditor).not.toHaveBeenCalled();
+      expect(result.text).toBe('[Tool Result — sandbox_push]\nPushed successfully.');
+    });
   });
 });
 

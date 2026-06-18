@@ -88,10 +88,10 @@ export function buildOrchestratorToolInstructions(opts: OrchestratorPromptOption
   // diff). The push/ship lines are cloud-only (local-daemon has no remote).
   const shipLines = isLocalDaemon
     ? ''
-    : `\n- To ship a change: write/edit the files, then ${getToolPublicName('sandbox_prepare_commit')} as that turn's single trailing side-effect — it runs the Auditor gate and returns a review card for the user to approve (it does not commit on its own). After approval, publish with ${getToolPublicName('sandbox_push')} in a later turn (one side-effect per turn — never emit commit and push together).`;
+    : `\n- Commit freely as you work: ${getToolPublicName('sandbox_commit')} makes a silent local commit (no Auditor, no card) and auto-forks off the default branch. When ready to ship, ${getToolPublicName('prepare_push')} runs the Auditor gate over the cumulative push diff and returns a review card for the user to approve; after approval the push happens (SAFE ships, UNSAFE blocks). One side-effect per turn — commit and prepare_push go in separate turns.`;
   const toolRoutingBlock = `## Tool Routing
 
-- Use **sandbox tools** for local operations: reading/editing code, running commands (${getToolPublicName('sandbox_exec')}), tests, type checks, diffs, and commits (via ${getToolPublicName('sandbox_prepare_commit')}, which runs the Auditor gate — not a raw git commit). Do the work yourself — edit, then verify by running.${shipLines}
+- Use **sandbox tools** for local operations: reading/editing code, running commands (${getToolPublicName('sandbox_exec')}), tests, type checks, diffs, and local commits (via ${getToolPublicName('sandbox_commit')} — a silent local commit, not a raw git commit; the Auditor gate runs later at ${getToolPublicName('prepare_push')}). Do the work yourself — edit, then verify by running.${shipLines}
 - Use **GitHub tools** for remote repo metadata: PRs, branches, CI checks, cross-repo search, workflow dispatch.
 - Prefer ${getToolPublicName('sandbox_search')} over ${getToolPublicName('search_files')} for code in the active repo — it's faster and reflects local edits.
 - Prefer ${getToolPublicName('sandbox_read_file')} over ${getToolPublicName('read_file')} when the sandbox is active — it reflects uncommitted changes.`;
@@ -100,8 +100,8 @@ export function buildOrchestratorToolInstructions(opts: OrchestratorPromptOption
   // live: a git command inside sandbox_exec is blocked, routing commit (and push,
   // cloud only — local-daemon has no remote) through the typed flow.
   const gitGuardLine = isLocalDaemon
-    ? `\n- GIT_GUARD_BLOCKED → Direct git commit/merge/rebase in ${getToolPublicName('sandbox_exec')} is blocked. Use ${getToolPublicName('sandbox_prepare_commit')} for commits. If the standard flow fails, use ${getToolPublicName('ask_user')} to explain and request permission. Only with explicit user approval, retry with "allowDirectGit": true.`
-    : `\n- GIT_GUARD_BLOCKED → Direct git commit/push/merge/rebase in ${getToolPublicName('sandbox_exec')} is blocked. Use ${getToolPublicName('sandbox_prepare_commit')} + ${getToolPublicName('sandbox_push')}. If the standard flow fails, use ${getToolPublicName('ask_user')} to explain and request permission. Only with explicit user approval, retry with "allowDirectGit": true.`;
+    ? `\n- GIT_GUARD_BLOCKED → Direct git commit/merge/rebase in ${getToolPublicName('sandbox_exec')} is blocked. Use ${getToolPublicName('sandbox_commit')} to commit. If the standard flow fails, use ${getToolPublicName('ask_user')} to explain and request permission. Only with explicit user approval, retry with "allowDirectGit": true.`
+    : `\n- GIT_GUARD_BLOCKED → Direct git commit/push/merge/rebase in ${getToolPublicName('sandbox_exec')} is blocked. Use ${getToolPublicName('sandbox_commit')} to commit and ${getToolPublicName('prepare_push')} to ship (the Auditor runs at push). If the standard flow fails, use ${getToolPublicName('ask_user')} to explain and request permission. Only with explicit user approval, retry with "allowDirectGit": true.`;
 
   return `## Tool Execution Model
 
@@ -162,8 +162,8 @@ export function buildOrchestratorDelegation(opts: OrchestratorPromptOptions = {}
   // doesn't surface them. Threading `remoteGitHubAvailable` into the prompt is a
   // separate follow-up.
   const trailingSideEffectMenu = isLocalDaemon
-    ? `\`${getToolPublicName('sandbox_exec')}\`, \`${getToolPublicName('sandbox_prepare_commit')}\`, \`${getToolPublicName('delegate_explorer')}\`, \`${getToolPublicName('plan_tasks')}\`, \`${getToolPublicName('ask_user')}\`, workflow dispatch, etc.`
-    : `\`${getToolPublicName('sandbox_exec')}\`, \`${getToolPublicName('sandbox_prepare_commit')}\`, \`${getToolPublicName('sandbox_push')}\`, \`${getToolPublicName('delegate_explorer')}\`, \`${getToolPublicName('plan_tasks')}\`, \`${getToolPublicName('ask_user')}\`, \`${getToolPublicName('create_pr')}\`, \`${getToolPublicName('merge_pr')}\`, \`${getToolPublicName('delete_branch')}\`, \`${getToolPublicName('trigger_workflow')}\``;
+    ? `\`${getToolPublicName('sandbox_exec')}\`, \`${getToolPublicName('sandbox_commit')}\`, \`${getToolPublicName('delegate_explorer')}\`, \`${getToolPublicName('plan_tasks')}\`, \`${getToolPublicName('ask_user')}\`, workflow dispatch, etc.`
+    : `\`${getToolPublicName('sandbox_exec')}\`, \`${getToolPublicName('sandbox_commit')}\`, \`${getToolPublicName('prepare_push')}\`, \`${getToolPublicName('sandbox_push')}\`, \`${getToolPublicName('delegate_explorer')}\`, \`${getToolPublicName('plan_tasks')}\`, \`${getToolPublicName('ask_user')}\`, \`${getToolPublicName('create_pr')}\`, \`${getToolPublicName('merge_pr')}\`, \`${getToolPublicName('delete_branch')}\`, \`${getToolPublicName('trigger_workflow')}\``;
   const perTurnBudget = `## Per-turn tool budget
 
 A single turn may emit:

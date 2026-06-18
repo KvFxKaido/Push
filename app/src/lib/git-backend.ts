@@ -21,6 +21,7 @@ import {
 import { computePushedDiff } from '@push/lib/git/pushed-diff';
 import { makeSecretScanPrePushGate } from '@push/lib/git/secret-scan-gate';
 import { makeProtectMainPrePushGate } from '@push/lib/git/protect-main-gate';
+import { makeAuditorPrePushGate, type AuditorPushVerdict } from '@push/lib/git/auditor-push-gate';
 import { resolveSecretScanEnabled } from '@push/lib/secret-scan';
 import { execInSandbox, type ExecResult } from './sandbox-client';
 import { shellEscape } from './sandbox-tool-utils';
@@ -71,6 +72,30 @@ export function resolveWebSecretScanEnabled(): boolean {
 }
 
 /**
+ * Resolve whether the Auditor runs at the push boundary (Gate-at-Push Move A).
+ *
+ * Default ON (Move A flipped): the SAFE/UNSAFE Auditor gate now lives at the
+ * push step. The agent commits silently via `sandbox_commit` (no audit), then
+ * ships via `prepare_push` / `sandbox_push`, where this gate audits the
+ * cumulative push diff. The gate MUST stay on while silent commits exist, else
+ * committed work would ship unaudited — so this default and the retirement of
+ * the prepare-time audit move together. `VITE_PUSH_AUDIT_AT_PUSH=0` (or
+ * `'false'`) is the kill switch. Guarded so it's safe under any bundler/test
+ * runner.
+ */
+export function resolveWebAuditAtPushEnabled(): boolean {
+  // Read `process.env` first so vitest's `stubEnv` / a Node runtime can drive it,
+  // then fall back to `import.meta.env` (Vite inlines `VITE_*` at build time for
+  // production) — the same precedence as `local-pc-binding.ts`.
+  const raw =
+    typeof process !== 'undefined' && process.env?.VITE_PUSH_AUDIT_AT_PUSH !== undefined
+      ? process.env.VITE_PUSH_AUDIT_AT_PUSH
+      : (import.meta as { env?: Record<string, unknown> }).env?.VITE_PUSH_AUDIT_AT_PUSH;
+  // Default ON: only an explicit opt-out disables the live gate.
+  return !(raw === '0' || raw === 'false');
+}
+
+/**
  * Build a GitBackend bound to a sandbox. Defaults to the module-level
  * `execInSandbox`; pass a custom executor (e.g. a tool-handler's injected
  * `ctx.execInSandbox`) when the call-site already has one. Commands run in
@@ -82,6 +107,24 @@ export function createSandboxGitBackend(
   execFn: SandboxExecFn = execInSandbox,
 ): GitBackend {
   return new SandboxPlumbingBackend(makeSandboxGitExec(sandboxId, execFn));
+}
+
+/**
+ * Compute the cumulative push diff for a sandbox — the commits the next `git
+ * push` would upload (uncapped), resolved through the same `GitExec` port the
+ * backend and secret-scan gate use. Returns `null` when the diff read itself
+ * fails (no commits / invalid ref / unreachable sandbox); callers treat that as
+ * infra trouble, not "nothing to push". This is the diff source the push-time
+ * Auditor (`prepare_push`) audits, so it matches what the gate scans byte for
+ * byte. Pass a call-site's injected executor (e.g. a handler's
+ * `ctx.execInSandbox`) when one is available.
+ */
+export function computeSandboxPushedDiff(
+  sandboxId: string,
+  execFn: SandboxExecFn = execInSandbox,
+  opts?: { ref?: string },
+): Promise<string | null> {
+  return computePushedDiff(makeSandboxGitExec(sandboxId, execFn), opts);
 }
 
 /**
@@ -107,6 +150,17 @@ export function createSandboxPushGit(
     secretScan?: boolean;
     protectMain?: boolean;
     defaultBranch?: string;
+    /**
+     * Gate the push behind the model Auditor over the cumulative push diff
+     * (Gate-at-Push Move A). The caller injects `audit` (built over the real
+     * Auditor runner — the same diff source, `computePushedDiff`, is wired here)
+     * and the resolved `enabled` flag. Composed last so the cheap deterministic
+     * gates (Protect Main, secret scan) short-circuit before an LLM call.
+     */
+    auditAtPush?: {
+      audit: (diff: string) => Promise<AuditorPushVerdict>;
+      enabled?: boolean;
+    };
   },
 ): PushGit {
   const exec = makeSandboxGitExec(sandboxId, opts?.execFn ?? execInSandbox);
@@ -126,6 +180,13 @@ export function createSandboxPushGit(
         ? makeSecretScanPrePushGate({
             getDiff: () => computePushedDiff(exec),
             enabled: resolveWebSecretScanEnabled(),
+          })
+        : undefined,
+      opts?.auditAtPush
+        ? makeAuditorPrePushGate({
+            getDiff: () => computePushedDiff(exec),
+            audit: opts.auditAtPush.audit,
+            enabled: opts.auditAtPush.enabled,
           })
         : undefined,
     ]);

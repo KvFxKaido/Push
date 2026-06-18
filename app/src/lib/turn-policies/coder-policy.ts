@@ -250,7 +250,7 @@ export function createCoderPolicy(): TurnPolicy {
           /\b(modified|created|updated|deleted|wrote|edited|changed)\b.*\b(file|\.ts|\.js|\.py|\.json|\.css)\b/i.test(
             trimmed,
           ) ||
-          /sandbox_diff|sandbox_prepare_commit/.test(trimmed) ||
+          /sandbox_diff|sandbox_commit|prepare_push/.test(trimmed) ||
           /acceptance\s+criteria/i.test(trimmed) ||
           /\[Acceptance Criteria\]/i.test(trimmed);
 

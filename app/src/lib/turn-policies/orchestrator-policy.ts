@@ -149,7 +149,7 @@ export function detectTrailingActionIntent(response: string): boolean {
 export function hasArtifactInResponse(response: string): boolean {
   const trimmed = response.trim();
   return (
-    /\b(PR|pull request|commit|merge|branch|diff|sandbox_diff|sandbox_prepare_commit|sandbox_push)\b/i.test(
+    /\b(PR|pull request|commit|merge|branch|diff|sandbox_diff|sandbox_commit|prepare_push|sandbox_push)\b/i.test(
       trimmed,
     ) ||
     /\b(file|\.ts|\.js|\.py)\b.*\b(modified|created|updated|changed)\b/i.test(trimmed) ||

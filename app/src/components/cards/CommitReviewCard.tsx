@@ -26,6 +26,12 @@ interface CommitMessageEditorProps {
   messageId: string;
   cardIndex: number;
   isError: boolean;
+  /**
+   * Push-kind card (Gate-at-Push): the commits already exist, so there is no
+   * commit message to edit — hide the editor and never gate the actions on an
+   * empty message (otherwise the SAFE push card can't be approved).
+   */
+  isPush: boolean;
   onAction?: (action: CardAction) => void;
 }
 
@@ -34,27 +40,32 @@ function CommitMessageEditor({
   messageId,
   cardIndex,
   isError,
+  isPush,
   onAction,
 }: CommitMessageEditorProps) {
   const [editedMessage, setEditedMessage] = useState(initialMessage);
 
   const commitMessage = editedMessage.trim() || initialMessage;
+  // A commit message is only required (and editable) for commit-kind cards.
+  const actionsDisabled = !isPush && !editedMessage.trim();
 
   return (
     <>
-      <textarea
-        value={editedMessage}
-        onChange={(e) => setEditedMessage(e.target.value)}
-        rows={1}
-        placeholder="Enter commit message..."
-        className={`${CARD_INPUT_CLASS} resize-none leading-relaxed`}
-        style={{ minHeight: '38px', maxHeight: '80px' }}
-        onInput={(e) => {
-          const target = e.target as HTMLTextAreaElement;
-          target.style.height = 'auto';
-          target.style.height = Math.min(target.scrollHeight, 80) + 'px';
-        }}
-      />
+      {!isPush && (
+        <textarea
+          value={editedMessage}
+          onChange={(e) => setEditedMessage(e.target.value)}
+          rows={1}
+          placeholder="Enter commit message..."
+          className={`${CARD_INPUT_CLASS} resize-none leading-relaxed`}
+          style={{ minHeight: '38px', maxHeight: '80px' }}
+          onInput={(e) => {
+            const target = e.target as HTMLTextAreaElement;
+            target.style.height = 'auto';
+            target.style.height = Math.min(target.scrollHeight, 80) + 'px';
+          }}
+        />
+      )}
 
       <div className="flex items-center gap-2 px-3 pb-3">
         <button
@@ -66,7 +77,7 @@ function CommitMessageEditor({
               commitMessage,
             })
           }
-          disabled={!editedMessage.trim()}
+          disabled={actionsDisabled}
           className={`${CARD_BUTTON_CLASS} h-11 flex-1 text-emerald-300`}
           style={{ minHeight: '44px' }}
         >
@@ -82,7 +93,7 @@ function CommitMessageEditor({
               commitMessage,
             })
           }
-          disabled={!editedMessage.trim()}
+          disabled={actionsDisabled}
           className={`${CARD_BUTTON_CLASS} h-11`}
           style={{ minHeight: '44px' }}
         >
@@ -111,6 +122,7 @@ function CommitMessageEditor({
 }
 
 export function CommitReviewCard({ data, messageId, cardIndex, onAction }: CommitReviewCardProps) {
+  const isPush = data.kind === 'push';
   const isPending = data.status === 'pending';
   const isRefreshing = data.status === 'refreshing';
   const isApproved = data.status === 'approved';
@@ -225,28 +237,38 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
       )}
 
       {/* Commit message */}
-      <div className="px-3 pb-3">
-        <div className="flex items-center justify-between mb-1.5">
-          <label className="text-push-xs text-push-fg-dim font-medium">Commit message</label>
-          {isPending && (
-            <span className="text-push-2xs text-push-fg-dim italic">auto-filled · tap to edit</span>
+      {/* Commit message section — commit-kind only; push-kind has no message. */}
+      {!isPush && (
+        <div className="px-3 pb-3">
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-push-xs text-push-fg-dim font-medium">Commit message</label>
+            {isPending && (
+              <span className="text-push-2xs text-push-fg-dim italic">
+                auto-filled · tap to edit
+              </span>
+            )}
+          </div>
+          {!(isPending || isError) && (
+            <div className={`${CARD_PANEL_CLASS} px-3 py-2`}>
+              <p className="text-push-base text-push-fg-secondary font-mono">
+                {data.commitMessage}
+              </p>
+            </div>
           )}
         </div>
-        {isPending || isError ? (
-          <CommitMessageEditor
-            key={data.commitMessage}
-            initialMessage={data.commitMessage}
-            messageId={messageId}
-            cardIndex={cardIndex}
-            isError={isError}
-            onAction={onAction}
-          />
-        ) : (
-          <div className={`${CARD_PANEL_CLASS} px-3 py-2`}>
-            <p className="text-push-base text-push-fg-secondary font-mono">{data.commitMessage}</p>
-          </div>
-        )}
-      </div>
+      )}
+      {/* Action row — editor (commit-kind) or bare buttons (push-kind). */}
+      {(isPending || isError) && (
+        <CommitMessageEditor
+          key={data.commitMessage}
+          initialMessage={data.commitMessage}
+          messageId={messageId}
+          cardIndex={cardIndex}
+          isError={isError}
+          isPush={isPush}
+          onAction={onAction}
+        />
+      )}
 
       {/* Error message */}
       {isError && data.error && (

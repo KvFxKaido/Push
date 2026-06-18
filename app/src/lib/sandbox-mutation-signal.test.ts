@@ -57,13 +57,13 @@ describe('shouldSignalWorkspaceMutation', () => {
   });
 
   it('fires for command-running tools that can touch tracked files', () => {
-    // verification (lockfile from npm install) + prepare_commit (pre-commit
-    // hook can rewrite tracked files before the audit).
+    // verification (lockfile from npm install) + sandbox_commit (pre-commit
+    // hook can rewrite tracked files before the commit).
     for (const t of [
       'sandbox_run_tests',
       'sandbox_check_types',
       'sandbox_verify_workspace',
-      'sandbox_prepare_commit',
+      'sandbox_commit',
     ]) {
       expect(shouldSignalWorkspaceMutation(t, opts({}))).toBe(true);
     }

@@ -637,7 +637,7 @@ export function inferToolFromArgs(args: Record<string, unknown>): string | null 
   if ((hasPath || hasFilePath) && hasContent) return 'sandbox_write_file';
   if ((hasPath || hasFilePath) && !hasContent && !hasMessage) return 'sandbox_read_file';
   if (hasQuery && !hasRepo) return 'web_search';
-  if (hasMessage && !hasRepo) return 'sandbox_prepare_commit';
+  if (hasMessage && !hasRepo) return 'sandbox_commit';
 
   return null;
 }
