@@ -8,7 +8,12 @@
  * This file re-exports everything consumers expect so import paths don't change.
  */
 
-import type { ToolExecutionResult, StructuredToolError, SandboxCardData } from '@/types';
+import type {
+  ToolExecutionResult,
+  StructuredToolError,
+  ToolErrorType,
+  SandboxCardData,
+} from '@/types';
 import {
   execInSandbox,
   execLongRunningInSandbox,
@@ -390,15 +395,24 @@ const inlineGitGuardEntry = createGitGuardPreHook({ modeProvider: getApprovalMod
 
 async function evaluateGitGuardForSandboxExec(
   args: Record<string, unknown>,
+  isMainProtected?: boolean,
 ): Promise<ToolExecutionResult | null> {
+  // Thread Protect Main through: the git-guard denies an exec `git push` under
+  // Protect Main regardless of allowDirectGit (issue #977). The Coder-bypass
+  // path reaches this inline evaluation, not the runtime pre-hook that carries
+  // the flag, so it must be passed explicitly or the bypass stays open.
   const result = await inlineGitGuardEntry.hook('sandbox_exec', args, {
     sandboxId: null,
     allowedRepo: '',
+    isMainProtected,
   });
   if (result.decision !== 'deny') return null;
   const reason = result.reason ?? 'Direct git mutation is blocked.';
   const err: StructuredToolError = {
-    type: 'GIT_GUARD_BLOCKED',
+    // Preserve the hook's specific code (e.g. PROTECT_MAIN_BLOCKED) so the
+    // inline path classifies the same as the runtime pre-hook; fall back to the
+    // generic guard code.
+    type: (result.errorType as ToolErrorType | undefined) ?? 'GIT_GUARD_BLOCKED',
     retryable: false,
     message: reason,
   };
@@ -440,7 +454,10 @@ export async function executeSandboxToolCall(
         // Coder-issued git mutations would slip through. Evaluating
         // the same lib hook factory keeps the rule source-of-truth
         // single while covering both call paths.
-        const gitGuardDeny = await evaluateGitGuardForSandboxExec(call.args);
+        const gitGuardDeny = await evaluateGitGuardForSandboxExec(
+          call.args,
+          options?.isMainProtected,
+        );
         if (gitGuardDeny) {
           return gitGuardDeny;
         }
