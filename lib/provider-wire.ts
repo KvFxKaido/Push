@@ -24,7 +24,13 @@
  * system prompt).
  */
 
-import type { AIProviderType, LlmContentPart, ReasoningBlock } from './provider-contract.js';
+import type {
+  AIProviderType,
+  LlmContentPart,
+  ReasoningBlock,
+  ResponseFormatSpec,
+  ToolFunctionSchema,
+} from './provider-contract.js';
 
 /** The discriminator value the client sets and the Worker branches on. */
 export const PUSH_STREAM_WIRE_CONTRACT = 'push.stream.v1' as const;
@@ -61,6 +67,19 @@ export interface PushStreamRequestWire {
   /** Enable Gemini's native `googleSearch` grounding tool. */
   googleSearchGrounding?: boolean;
   /**
+   * Native function-calling tool schemas (OpenAI-compatible shape). Carried so a
+   * neutral OpenAI-compat client (OpenCode Zen Go) keeps native FC after flipping
+   * off the legacy passthrough — the Worker re-serializes via `toOpenAIChat`,
+   * which only emits `tools`/`tool_choice` when `dual.request.tools` is present.
+   */
+  tools?: ToolFunctionSchema[];
+  /**
+   * Native structured-output JSON-Schema constraint. Carried so the flipped
+   * Zen Go client keeps structured outputs the legacy passthrough used to
+   * preserve; the Worker re-serializes it via `toOpenAIChat` → `response_format`.
+   */
+  responseFormat?: ResponseFormatSpec;
+  /**
    * Pause-turn continuation: prior paused assistant content[] arrays
    * (oldest-first), replayed verbatim. Anthropic-only; opaque passthrough. The
    * legacy OpenAI-shape path carried this inline as `assistant_content_blocks`
@@ -95,6 +114,8 @@ export interface ToPushStreamWireOptions {
   cacheBreakpointIndices?: number[];
   anthropicWebSearch?: boolean;
   googleSearchGrounding?: boolean;
+  tools?: ToolFunctionSchema[];
+  responseFormat?: ResponseFormatSpec;
   replayAssistantTurns?: Array<Array<Record<string, unknown>>>;
 }
 
@@ -140,6 +161,8 @@ export function toPushStreamWire(
       : {}),
     ...(options.anthropicWebSearch ? { anthropicWebSearch: true } : {}),
     ...(options.googleSearchGrounding ? { googleSearchGrounding: true } : {}),
+    ...(options.tools && options.tools.length > 0 ? { tools: options.tools } : {}),
+    ...(options.responseFormat ? { responseFormat: options.responseFormat } : {}),
     ...(options.replayAssistantTurns && options.replayAssistantTurns.length > 0
       ? { replayAssistantTurns: options.replayAssistantTurns }
       : {}),
