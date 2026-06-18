@@ -45,8 +45,11 @@ export interface ToolHookContext {
    * blocked in `sandbox_exec` (desync detector as backstop), so hooks can use
    * it for branch-aware decisions without a sandbox round-trip — and it stays
    * available when the sandbox is slow or down. Availability-oriented hooks
-   * (memory/artifact scoping) prefer this; safety gates (Protect Main) prefer
-   * the live `getCurrentBranch()` for ground truth and fall back to this.
+   * (memory/artifact scoping) prefer this. Safety gates (Protect Main) use the
+   * live `getCurrentBranch()` as the authority and only consult this when no
+   * live reader exists at all — never as a fallback for an unreadable live
+   * HEAD, which must fail closed (a desynced session could otherwise bypass
+   * the gate via stale tracked state).
    */
   currentBranch?: string;
   /** Protect Main toggle — when true, commits/pushes to default branch are denied. */

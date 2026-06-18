@@ -156,20 +156,23 @@ describe('createProtectMainPreHook', () => {
     expect(result.decision).toBe('deny');
   });
 
-  it('falls back to the tracked branch when the live read is unavailable (no false block)', async () => {
-    // Sandbox slow/down: the live read nulls out, but Push knows the branch.
-    // The commit must NOT be blocked just because the sandbox blipped — this
-    // is the false-positive the tracked-branch fallback removes.
+  it('fails closed when a live reader returns null, ignoring a feature tracked branch (Codex P1)', async () => {
+    // A live reader is the authority. If it returns null (transient/unreadable
+    // HEAD) we must NOT trust a possibly-stale tracked branch — a desynced
+    // session (tracked feature, HEAD actually main) could otherwise bypass the
+    // gate. Blocking is safer than an unrecoverable push to main.
     const entry = createProtectMainPreHook();
     const result = await entry.hook(
       'sandbox_prepare_commit',
       {},
       { ...baseContext, getCurrentBranch: async () => null, currentBranch: 'feature/foo' },
     );
-    expect(result.decision).toBe('passthrough');
+    expect(result.decision).toBe('deny');
   });
 
-  it('still denies via the tracked branch when it is the default branch', async () => {
+  it('fails closed when a live reader returns null, ignoring a main tracked branch too', async () => {
+    // Same fail-closed path regardless of the tracked value — the tracked
+    // branch is not consulted at all while a live reader is present.
     const entry = createProtectMainPreHook();
     const result = await entry.hook(
       'sandbox_prepare_commit',

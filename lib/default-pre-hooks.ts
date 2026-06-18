@@ -93,15 +93,23 @@ export function createProtectMainPreHook(): PreToolHookEntry {
         return { decision: 'passthrough' };
       }
 
-      // Live sandbox HEAD is ground truth for where the commit will actually
-      // land, so prefer it; fall back to Push's tracked branch when the live
-      // read is unavailable (sandbox slow/down/unborn HEAD). Live-first is the
-      // safety-correct order: trusting a stale tracked branch could *bypass*
-      // the gate if HEAD desynced onto main. The fallback removes a class of
-      // false positives — a transient branch-read blip used to null out and
-      // fail closed onto "treat as main", blocking a legitimate feature-branch
-      // commit even though Push knew the branch all along.
-      const currentBranch = (await context.getCurrentBranch?.()) ?? context.currentBranch ?? null;
+      // Branch resolution is deliberately asymmetric (Codex P1 on #975):
+      //
+      //   - When a live reader exists it is the AUTHORITY on where the commit
+      //     will land. If it returns null (transient / unreadable HEAD) we fail
+      //     closed — treat as on-main — rather than trusting `currentBranch`. A
+      //     desynced session can track a feature branch while sandbox HEAD is
+      //     actually main, and `sandbox_push` has no later branch check before
+      //     PushGit.push(); falling back to stale tracked state there would let
+      //     a push reach main. Blocking a legit commit on a blip is a retry;
+      //     bypassing Protect Main is not recoverable.
+      //   - When there is NO live reader (e.g. a session that never wired one),
+      //     Push's tracked branch is the only signal. Using it is a strict
+      //     improvement over the previous always-passthrough: it can now deny a
+      //     commit to main on those sessions.
+      const currentBranch = context.getCurrentBranch
+        ? await context.getCurrentBranch()
+        : (context.currentBranch ?? null);
       const mainBranches = new Set(['main', 'master']);
       if (context.defaultBranch) mainBranches.add(context.defaultBranch);
       // Fail-safe: if we still couldn't determine the branch, treat it as
