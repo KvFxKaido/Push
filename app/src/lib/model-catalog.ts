@@ -320,6 +320,7 @@ const STRUCTURED_OUTPUT_PROVIDERS: ReadonlySet<string> = new Set([
   'openadapter',
   'zen',
   'cloudflare',
+  'anthropic',
 ]);
 
 /**
@@ -372,6 +373,12 @@ export function providerModelSupportsStructuredOutput(
   // Workers AI has no models.dev metadata, so resolve by name instead of the
   // catalog probe (which would always report `structuredOutput: false`).
   if (provider === 'cloudflare') return cloudflareModelSupportsStructuredOutput(modelId);
+  // Anthropic has no OpenAI-style `response_format`; the bridge expresses the
+  // JSON-Schema constraint as a forced tool (`toAnthropicMessages` →
+  // `STRUCTURED_OUTPUT_TOOL_NAME`), which works on any tool-capable Claude — i.e.
+  // every model Push offers on this provider. Name-based like Cloudflare (no
+  // models.dev structured-output metadata for the native Anthropic ids).
+  if (provider === 'anthropic') return true;
   return getModelCapabilities(provider, modelId).structuredOutput;
 }
 

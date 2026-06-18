@@ -80,9 +80,16 @@ OpenRouter speaks the OpenAI `response_format` field:
 ```
 
 The neutral request carries this intent provider-agnostically; each adapter
-that can honor it serializes it. Adapters that can't (Anthropic/Gemini native
-serializers) ignore the field — Anthropic's structured-output mechanism is
-tool-shaped and is out of scope here.
+that can honor it serializes it. The OpenAI-shaped adapters emit
+`response_format`; the Gemini native serializer ignores it. **Anthropic is now
+supported** via its tool-shaped mechanism: `toAnthropicMessages` /
+`buildAnthropicMessagesRequest` turn `responseFormat` into a single forced tool
+(`STRUCTURED_OUTPUT_TOOL_NAME`) with `tool_choice` pinned to it, and the SSE
+translators route that tool's streamed `input` to plain text content so callers
+`parseStructured` it exactly like an OpenAI `response_format` body. Gated by
+`providerModelSupportsStructuredOutput('anthropic', …)` (name-based — forced tool
+use works on any tool-capable Claude). Vertex-Anthropic and Zen-Go-Anthropic
+share the same bridge but aren't gated on yet.
 
 ### Pieces
 

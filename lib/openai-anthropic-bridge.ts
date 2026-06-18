@@ -9,6 +9,17 @@ import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
 import { formatNativeToolCallFenced, stripTemplateTokens } from './openai-sse-pump.ts';
 
 /**
+ * Reserved tool name for the structured-output forced tool. Anthropic has no
+ * `response_format`, so a JSON-schema constraint becomes a single forced tool
+ * (see `assembleAnthropicBody`). The SSE translators recognize this name and
+ * route the tool's streamed `input` to plain text content — so the JSON arrives
+ * as message content, matching OpenAI `response_format`, rather than as a
+ * fenced `tool_call`. The double-underscore name avoids colliding with any
+ * registry tool (`KNOWN_TOOL_NAMES`).
+ */
+export const STRUCTURED_OUTPUT_TOOL_NAME = '__push_structured_output__';
+
+/**
  * Anthropic removed `temperature`, `top_p`, and `top_k` on Opus 4.7 and every
  * later Opus (4.8 inherits the same request surface). Sending any of them
  * returns a 400 (`invalid_request_error`). Sonnet 4.6, Haiku 4.5, and
@@ -352,6 +363,13 @@ export function buildAnthropicMessagesRequest(
     topP: request.top_p,
     enableWebSearch: request.anthropic_web_search === true,
     tools: request.tools,
+    structuredOutput: request.response_format
+      ? {
+          name: request.response_format.json_schema.name,
+          schema: request.response_format.json_schema.schema,
+          strict: request.response_format.json_schema.strict,
+        }
+      : undefined,
     anthropicVersion: options?.anthropicVersion,
     // `buildAnthropicMessagesRequest` intentionally omits `model` — callers
     // re-attach it (the body translation is provider-version-agnostic).
@@ -380,6 +398,8 @@ interface AnthropicBodyAssembly {
   /** Native function-calling schemas (OpenAI shape), translated to Anthropic's
    *  flat `{ name, description, input_schema }` custom-tool shape. */
   tools?: ToolFunctionSchema[];
+  /** Structured-output JSON-Schema constraint, expressed as a forced tool. */
+  structuredOutput?: { name: string; schema: Record<string, unknown>; strict?: boolean };
   anthropicVersion?: string;
   /**
    * When set, emitted as the top-level `model`. `buildAnthropicMessagesRequest`
@@ -476,6 +496,27 @@ function assembleAnthropicBody(parts: AnthropicBodyAssembly): Record<string, unk
   }
   if (parts.enableWebSearch) {
     anthropicTools.push({ type: 'web_search_20250305', name: 'web_search' });
+  }
+  // Structured outputs: Anthropic has no `response_format`, so a JSON-schema
+  // constraint is expressed as a single forced tool whose `input_schema` is the
+  // schema, with `tool_choice` pinned to it. The model is forced to emit exactly
+  // one `tool_use` block for this tool; the SSE translators recognize the reserved
+  // name (`STRUCTURED_OUTPUT_TOOL_NAME`) and route its streamed `input` to plain
+  // text content (not a tool call), so callers `JSON.parse` the accumulated text
+  // exactly as they do with OpenAI `response_format`.
+  if (parts.structuredOutput) {
+    anthropicTools.push({
+      name: STRUCTURED_OUTPUT_TOOL_NAME,
+      description:
+        'Return the response as a single JSON object matching the schema. Call this tool exactly once.',
+      input_schema: parts.structuredOutput.schema,
+      // Top-level `strict` makes Anthropic enforce schema conformance for the
+      // tool input (without it the model is only forced to *call* the tool, not
+      // to fill the schema exactly). Defaults true, mirroring the OpenAI
+      // `response_format` path (`ResponseFormatSpec.strict ?? true`).
+      strict: parts.structuredOutput.strict ?? true,
+    });
+    body.tool_choice = { type: 'tool', name: STRUCTURED_OUTPUT_TOOL_NAME };
   }
   if (anthropicTools.length > 0) {
     body.tools = anthropicTools;
@@ -688,6 +729,13 @@ export function toAnthropicMessages(
     topP: req.topP,
     enableWebSearch: options?.enableWebSearch ?? req.anthropicWebSearch === true,
     tools: req.tools,
+    structuredOutput: req.responseFormat
+      ? {
+          name: req.responseFormat.name,
+          schema: req.responseFormat.schema,
+          strict: req.responseFormat.strict,
+        }
+      : undefined,
     anthropicVersion: options?.anthropicVersion,
     // `model` stays the sampling-gate input above; only the top-level body
     // field is suppressed when the transport carries the model out-of-band.
@@ -750,6 +798,10 @@ export function createAnthropicTranslatedStream(
       // blocks are streamed out as OpenAI `tool_calls` deltas for the pump to
       // flush as fenced JSON; web search stays internal.
       const toolUseBlocks = new Map<number, { id: string; name: string }>();
+      // Per-index set of structured-output forced-tool blocks. Their streamed
+      // `input` is routed to plain text content (not a tool call), so callers see
+      // the JSON as message content — matching OpenAI `response_format`.
+      const structuredOutputBlocks = new Set<number>();
 
       const processSseLine = (rawLine: string): boolean => {
         const line = rawLine.trim();
@@ -788,14 +840,24 @@ export function createAnthropicTranslatedStream(
             } else if (block.type === 'tool_use') {
               const id = typeof block.id === 'string' ? block.id : '';
               const name = typeof block.name === 'string' ? block.name : '';
-              toolUseBlocks.set(idx, { id, name });
-              // First tool_calls fragment carries id + name; the arguments stream
-              // in via `input_json_delta` below.
-              controller.enqueue(
-                encoder.encode(
-                  buildOpenAISseChunk({ model, toolCall: { index: idx, id, name, arguments: '' } }),
-                ),
-              );
+              if (name === STRUCTURED_OUTPUT_TOOL_NAME) {
+                // Forced structured-output tool: its `input` is the schema-
+                // constrained JSON response. Route to text content (below), not a
+                // tool call — no opening tool_calls fragment.
+                structuredOutputBlocks.add(idx);
+              } else {
+                toolUseBlocks.set(idx, { id, name });
+                // First tool_calls fragment carries id + name; the arguments stream
+                // in via `input_json_delta` below.
+                controller.enqueue(
+                  encoder.encode(
+                    buildOpenAISseChunk({
+                      model,
+                      toolCall: { index: idx, id, name, arguments: '' },
+                    }),
+                  ),
+                );
+              }
             }
             // Capture the raw block shape for pause_turn replay. We keep a
             // shallow clone so subsequent delta accumulation doesn't mutate
@@ -915,7 +977,14 @@ export function createAnthropicTranslatedStream(
             idx >= 0
           ) {
             inputJsonBuffers.set(idx, (inputJsonBuffers.get(idx) ?? '') + delta.partial_json);
-            if (toolUseBlocks.has(idx)) {
+            if (structuredOutputBlocks.has(idx)) {
+              // Structured-output forced tool: stream its JSON `input` as text
+              // content so the caller accumulates + JSON.parses it like an
+              // OpenAI `response_format` response.
+              controller.enqueue(
+                encoder.encode(buildOpenAISseChunk({ model, content: delta.partial_json })),
+              );
+            } else if (toolUseBlocks.has(idx)) {
               controller.enqueue(
                 encoder.encode(
                   buildOpenAISseChunk({
@@ -1074,6 +1143,10 @@ export async function* anthropicEventStream(
   // and flush each as the same fenced JSON `text_delta` the pump emits — keeping
   // event-for-event parity with the translate→pump path (pinned by the drift test).
   const toolUseBlocks = new Map<number, { id: string; name: string; args: string }>();
+  // Structured-output forced-tool blocks: their `input` streams out as plain
+  // text content (mirrors the web translator), so the JSON arrives as message
+  // content for the caller to parse — not a fenced tool call.
+  const structuredOutputBlocks = new Set<number>();
   function* flushToolUse(): Generator<PushStreamEvent> {
     for (const [, tc] of toolUseBlocks) {
       if (!tc.name) continue;
@@ -1129,14 +1202,21 @@ export async function* anthropicEventStream(
             data: typeof block.data === 'string' ? block.data : '',
           });
         } else if (block.type === 'tool_use') {
-          toolUseBlocks.set(idx, {
-            id: typeof block.id === 'string' ? block.id : '',
-            name: typeof block.name === 'string' ? block.name : '',
-            args: '',
-          });
-          // One `tool_call_delta` progress marker per fragment, matching the
-          // pump (which yields one per OpenAI tool_calls fragment it accumulates).
-          yield { type: 'tool_call_delta' };
+          const name = typeof block.name === 'string' ? block.name : '';
+          if (name === STRUCTURED_OUTPUT_TOOL_NAME) {
+            // Forced structured-output tool — its `input` streams out as text
+            // content (below), not a tool call.
+            structuredOutputBlocks.add(idx);
+          } else {
+            toolUseBlocks.set(idx, {
+              id: typeof block.id === 'string' ? block.id : '',
+              name,
+              args: '',
+            });
+            // One `tool_call_delta` progress marker per fragment, matching the
+            // pump (which yields one per OpenAI tool_calls fragment it accumulates).
+            yield { type: 'tool_call_delta' };
+          }
         }
         capturedBlocks.set(idx, { ...block });
       }
@@ -1178,10 +1258,18 @@ export async function* anthropicEventStream(
         idx >= 0
       ) {
         inputJsonBuffers.set(idx, (inputJsonBuffers.get(idx) ?? '') + delta.partial_json);
-        const tc = toolUseBlocks.get(idx);
-        if (tc) {
-          tc.args += delta.partial_json;
-          yield { type: 'tool_call_delta' };
+        if (structuredOutputBlocks.has(idx)) {
+          // Structured-output forced tool: stream its JSON `input` as text content
+          // (through the same template-token strip the text branch uses) so the
+          // caller accumulates + parses it like an OpenAI `response_format` body.
+          const token = stripTemplateTokens(delta.partial_json);
+          if (token) yield { type: 'text_delta', text: token };
+        } else {
+          const tc = toolUseBlocks.get(idx);
+          if (tc) {
+            tc.args += delta.partial_json;
+            yield { type: 'tool_call_delta' };
+          }
         }
       }
       return;

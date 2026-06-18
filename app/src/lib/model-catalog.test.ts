@@ -1213,13 +1213,24 @@ describe('filterModelByContext', () => {
 describe('providerModelSupportsStructuredOutput', () => {
   it('returns false for providers whose adapter does not serialize response_format', () => {
     stubWindow();
-    // Anthropic / Gemini / Vertex native serializers ignore `response_format` by
-    // contract; bedrock / ollama are unconfirmed (Ollama Cloud does not support
-    // structured outputs); demo has no wire. None of these may ever attach a
-    // constraint, regardless of any catalog metadata.
-    for (const provider of ['anthropic', 'google', 'vertex', 'bedrock', 'ollama', 'demo']) {
+    // Gemini / Vertex native serializers ignore `response_format` by contract;
+    // bedrock / ollama are unconfirmed (Ollama Cloud does not support structured
+    // outputs); demo has no wire. None of these may ever attach a constraint,
+    // regardless of any catalog metadata. (Anthropic IS supported now — via the
+    // forced-tool bridge — see the next test.)
+    for (const provider of ['google', 'vertex', 'bedrock', 'ollama', 'demo']) {
       expect(providerModelSupportsStructuredOutput(provider, 'any-model')).toBe(false);
     }
+  });
+
+  it('gates Anthropic structured outputs on (name-based; forced-tool bridge)', () => {
+    stubWindow();
+    // Anthropic has no `response_format`; the bridge expresses the constraint as
+    // a forced tool, which works on any tool-capable Claude — so every Anthropic
+    // model Push offers is supported.
+    expect(providerModelSupportsStructuredOutput('anthropic', 'claude-sonnet-4-6')).toBe(true);
+    expect(providerModelSupportsStructuredOutput('anthropic', 'claude-opus-4-8')).toBe(true);
+    expect(providerModelSupportsStructuredOutput('anthropic', undefined)).toBe(false);
   });
 
   it('gates Cloudflare Workers AI by model name (Kimi / GLM only)', () => {
