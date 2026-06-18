@@ -88,15 +88,32 @@ export function createProtectMainPreHook(): PreToolHookEntry {
       if (!context.isMainProtected) return { decision: 'passthrough' };
       // No `sandboxId` short-circuit: CLI sets `sandboxId: null` because
       // its workspace IS the local working tree. The hook only needs a
-      // branch reader to make a decision.
-      if (!context.getCurrentBranch) return { decision: 'passthrough' };
+      // branch signal — live reader or Push-tracked branch — to decide.
+      if (!context.getCurrentBranch && !context.currentBranch) {
+        return { decision: 'passthrough' };
+      }
 
-      const currentBranch = await context.getCurrentBranch();
+      // Branch resolution is deliberately asymmetric (Codex P1 on #975):
+      //
+      //   - When a live reader exists it is the AUTHORITY on where the commit
+      //     will land. If it returns null (transient / unreadable HEAD) we fail
+      //     closed — treat as on-main — rather than trusting `currentBranch`. A
+      //     desynced session can track a feature branch while sandbox HEAD is
+      //     actually main, and `sandbox_push` has no later branch check before
+      //     PushGit.push(); falling back to stale tracked state there would let
+      //     a push reach main. Blocking a legit commit on a blip is a retry;
+      //     bypassing Protect Main is not recoverable.
+      //   - When there is NO live reader (e.g. a session that never wired one),
+      //     Push's tracked branch is the only signal. Using it is a strict
+      //     improvement over the previous always-passthrough: it can now deny a
+      //     commit to main on those sessions.
+      const currentBranch = context.getCurrentBranch
+        ? await context.getCurrentBranch()
+        : (context.currentBranch ?? null);
       const mainBranches = new Set(['main', 'master']);
       if (context.defaultBranch) mainBranches.add(context.defaultBranch);
-      // Fail-safe: if we couldn't determine the current branch, treat
-      // it as on-main (the inline check this hook replaces did the
-      // same — blocking is safer than letting through).
+      // Fail-safe: if we still couldn't determine the branch, treat it as
+      // on-main — blocking is safer than letting an unverified commit through.
       if (currentBranch && !mainBranches.has(currentBranch)) {
         return { decision: 'passthrough' };
       }

@@ -282,6 +282,11 @@ export class WebToolExecutionRuntime
       activeModel: context.activeModel,
       capabilityLedger: context.capabilityLedger,
       defaultBranch: context.defaultBranch,
+      // Push-tracked branch — sandbox-independent. Memory/artifact scoping
+      // prefer it; Protect Main consults it only when no live reader exists at
+      // all (never as a fallback for an unreadable live HEAD — that fails
+      // closed, so a desynced session can't bypass the gate via stale state).
+      currentBranch: context.currentBranch,
       isMainProtected: context.isMainProtected,
       // Branch reader is lazy — hooks that don't need it never pay the
       // sandbox round-trip. Only Protect Main currently calls it.
@@ -609,11 +614,14 @@ export class WebToolExecutionRuntime
             };
             break;
           }
-          // Branch is best-effort: fall back to null when no sandbox is
-          // attached. The Worker accepts `branch: null` (CLI sessions
-          // outside a git repo do the same), so an artifact filed before
-          // a sandbox warms up still persists, just under a wider scope.
-          const branch = context.sandboxId ? await this.getSandboxBranch(context.sandboxId) : null;
+          // Branch is best-effort: prefer the Push-tracked branch (sandbox-
+          // independent), fall back to a live sandbox read, then to null. The
+          // Worker accepts `branch: null` (CLI sessions outside a git repo do
+          // the same), so an artifact filed before a sandbox warms up — or
+          // while it's down — still persists, just under a wider scope.
+          const branch =
+            context.currentBranch ??
+            (context.sandboxId ? await this.getSandboxBranch(context.sandboxId) : null);
           const scope: ArtifactScope = {
             repoFullName: context.allowedRepo,
             branch,
@@ -644,13 +652,16 @@ export class WebToolExecutionRuntime
           }
           // Scope reads to the active repo/branch/chat from session context —
           // never from model args — so the model can't reach another repo's
-          // memory. Branch is best-effort (null when no sandbox is warm yet, or
-          // for local-daemon sessions); in that case the `chatId` filter still
+          // memory. Prefer the Push-tracked branch so recall keeps working when
+          // the sandbox is slow or down (memory is an availability surface, not
+          // a safety gate); fall back to a live sandbox read, then to null.
+          // Branch is best-effort (null when nothing is warm yet, or for
+          // local-daemon sessions); in that case the `chatId` filter still
           // bounds reads, because chats are branch-scoped (see CLAUDE.md repo/
           // session model) — so an undefined branch is not a cross-branch leak.
-          const memBranch = context.sandboxId
-            ? await this.getSandboxBranch(context.sandboxId)
-            : null;
+          const memBranch =
+            context.currentBranch ??
+            (context.sandboxId ? await this.getSandboxBranch(context.sandboxId) : null);
           const memCtx = {
             scope: {
               repoFullName: context.allowedRepo,

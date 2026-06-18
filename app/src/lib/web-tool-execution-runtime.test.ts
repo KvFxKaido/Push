@@ -52,9 +52,26 @@ vi.mock('./sandbox-client', () => ({
   })),
 }));
 
+// Memory tools are exercised by the branch-scoping tests below; mock the exec
+// + store so we can capture the scope passed to them without a real store.
+vi.mock('@push/lib/memory-tool-exec', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@push/lib/memory-tool-exec')>();
+  return {
+    ...actual,
+    runMemoryGrep: vi.fn(async () => ({ text: '[mock memory] ok' })),
+    runMemoryExpand: vi.fn(async () => ({ text: '[mock memory] ok' })),
+  };
+});
+
+vi.mock('@push/lib/context-memory-store', () => ({
+  getDefaultMemoryStore: vi.fn(() => ({})),
+}));
+
 import { WebToolExecutionRuntime } from './web-tool-execution-runtime';
 import * as sandboxTools from './sandbox-tools';
 import * as githubTools from './github-tools';
+import * as memoryExec from '@push/lib/memory-tool-exec';
+import { execInSandbox } from './sandbox-client';
 import type { AnyToolCall } from './tool-dispatch';
 
 function mutationCall(): AnyToolCall {
@@ -946,5 +963,55 @@ describe('WebToolExecutionRuntime — read-tier GitHub fallback (decision §11)'
     const [githubCall] = vi.mocked(githubTools.executeToolCall).mock.calls[0];
     expect(githubCall).toMatchObject({ tool: 'read_file', args: { branch: 'feature/x' } });
     expect(result.structuredError).toBeUndefined();
+  });
+});
+
+describe('WebToolExecutionRuntime — branch scoping prefers the Push-tracked branch', () => {
+  beforeEach(() => {
+    vi.mocked(memoryExec.runMemoryGrep).mockClear();
+    vi.mocked(execInSandbox).mockClear();
+  });
+
+  function memoryGrep(): AnyToolCall {
+    return { source: 'memory', call: { tool: 'memory_grep', args: { pattern: 'auth' } } };
+  }
+
+  it('scopes memory to the tracked branch without a live sandbox read', async () => {
+    const runtime = new WebToolExecutionRuntime();
+    await runtime.execute(memoryGrep(), {
+      allowedRepo: 'owner/repo',
+      sandboxId: 'sb-1',
+      chatId: 'chat-1',
+      role: 'orchestrator',
+      isMainProtected: false,
+      currentBranch: 'feature/x',
+    });
+
+    const memCtx = vi.mocked(memoryExec.runMemoryGrep).mock.calls[0][1];
+    expect(memCtx.scope.branch).toBe('feature/x');
+    // Tracked branch present → the sandbox branch read is skipped entirely,
+    // so memory recall keeps working when the sandbox is slow or down.
+    expect(vi.mocked(execInSandbox)).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the live sandbox branch read when no tracked branch is set', async () => {
+    vi.mocked(execInSandbox).mockResolvedValueOnce({
+      stdout: 'live-branch\n',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+    const runtime = new WebToolExecutionRuntime();
+    await runtime.execute(memoryGrep(), {
+      allowedRepo: 'owner/repo',
+      sandboxId: 'sb-1',
+      chatId: 'chat-1',
+      role: 'orchestrator',
+      isMainProtected: false,
+    });
+
+    const memCtx = vi.mocked(memoryExec.runMemoryGrep).mock.calls[0][1];
+    expect(memCtx.scope.branch).toBe('live-branch');
+    expect(vi.mocked(execInSandbox)).toHaveBeenCalledTimes(1);
   });
 });
