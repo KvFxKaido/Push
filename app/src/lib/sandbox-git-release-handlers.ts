@@ -593,6 +593,16 @@ export async function handlePreparePush(
   ctx: GitReleaseHandlerContext,
   overrides?: PrepareCommitAuditorOverrides,
 ): Promise<ToolExecutionResult> {
+  // Pin the tip BEFORE computing the diff so the pin is conservative: if a
+  // commit lands between this read and the diff/audit, the pin is the OLDER tip,
+  // so approval (which compares live HEAD to the pin) fails closed and forces a
+  // refresh rather than shipping a newer diff under this verdict. The realistic
+  // staleness vector — committing more in a later turn, then approving this
+  // stale card — is caught the same way.
+  const auditedHeadSha = await createSandboxPushGit(ctx.sandboxId, {
+    execFn: ctx.execInSandbox,
+  }).headSha();
+
   // Step 1: Compute the cumulative push diff (commits the push would upload).
   let diff: string | null;
   try {
@@ -650,13 +660,6 @@ export async function handlePreparePush(
       text: `[Tool Result — prepare_push]\nNothing to push — no committed changes the remote doesn't already have. Use sandbox_commit to commit your work first.`,
     };
   }
-
-  // Pin the tip being pushed so approval can detect commits added between this
-  // review and the click — the Auditor verdict below only covers THIS diff, and
-  // the approved push deliberately skips re-auditing (see chat-card-actions).
-  const auditedHeadSha = await createSandboxPushGit(ctx.sandboxId, {
-    execFn: ctx.execInSandbox,
-  }).headSha();
 
   // Step 2: Run the Auditor over the cumulative push diff. A backend throw
   // (Auditor unreachable) surfaces as a retryable AUDITOR_UNAVAILABLE error,

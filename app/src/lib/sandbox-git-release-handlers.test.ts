@@ -420,6 +420,27 @@ describe('handleSandboxCommit', () => {
     expect(result.text).toContain('Forked off the default branch first.');
     expect(result.card).toBeUndefined();
   });
+
+  it('refuses on a protected branch when the commit did not fork off main (fail-closed)', async () => {
+    // Tracked branch is a feature branch, but the live HEAD reads back as main
+    // (desync). ensureCommitTargetBranch returns switched:false (not on the
+    // default per the tracked branch), so the in-handler fail-closed Protect
+    // Main check must read the LIVE branch and block — the shared pre-hook no
+    // longer matches sandbox_commit.
+    const ctx = makeContext({
+      diffResults: [
+        { diff: 'diff --git a/x b/x\n+a', truncated: false },
+        { diff: 'diff --git a/x b/x\n+a', truncated: false },
+      ],
+      execResults: [ok(''), ok('main')], // [pre-commit hook, live branch read]
+    });
+    ctx.isMainProtected = true;
+    ctx.currentBranch = 'feature/x';
+    ctx.defaultBranch = 'main';
+    const result = await handleSandboxCommit(ctx, { message: 'wip' });
+    expect(result.structuredError?.type).toBe('PROTECT_MAIN_BLOCKED');
+    expect(ctx.execCalls.some((c) => /'commit'/.test(String(c[1])))).toBe(false);
+  });
 });
 
 describe('handlePreparePush', () => {

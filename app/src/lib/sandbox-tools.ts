@@ -1105,6 +1105,10 @@ async function executeSandboxToolCallInner(
           buildGitReleaseContext(sandboxId, {
             currentBranch: options?.currentBranch,
             defaultBranch: options?.defaultBranch,
+            // Threaded so handleSandboxCommit's fail-closed Protect Main check
+            // (for the auto-branch-disabled case) actually runs — see #4 of the
+            // Codex review. Without it ctx.isMainProtected is undefined.
+            isMainProtected: options?.isMainProtected,
           }),
           call.args,
           {
