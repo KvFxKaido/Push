@@ -324,10 +324,37 @@ export function useChatCardActions({
             };
           });
 
-          // --- Push-kind: commits already exist; ship via the sandbox_push tool.
+          // --- Push-kind: commits already exist; ship via a direct gated push.
           if (isPushKind) {
             updateAgentStatus({ active: true, phase: 'Pushing...' }, { chatId, source: 'system' });
             try {
+              // Staleness guard: this card's verdict was audited against a
+              // specific HEAD (auditedHeadSha). If a sandbox_commit landed after
+              // the review, HEAD moved and those new commits would ship under a
+              // stale verdict — since the approved push deliberately skips
+              // re-auditing, refuse and ask for a refresh. Fail closed when the
+              // pin is missing (legacy card) or HEAD is unreadable.
+              const auditedHeadSha =
+                approveSourceCard?.type === 'commit-review'
+                  ? approveSourceCard.data.auditedHeadSha
+                  : undefined;
+              const liveHeadSha = await createSandboxPushGit(sandboxId).headSha();
+              if (!auditedHeadSha || !liveHeadSha || liveHeadSha !== auditedHeadSha) {
+                updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+                  if (card.type !== 'commit-review') return card;
+                  return {
+                    ...card,
+                    data: {
+                      ...card.data,
+                      status: 'error',
+                      error:
+                        'New commits since this review — refresh to re-audit the full diff before pushing.',
+                    } as CommitReviewCardData,
+                  };
+                });
+                return;
+              }
+
               updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
                 if (card.type !== 'commit-review') return card;
                 return {

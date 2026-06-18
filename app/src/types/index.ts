@@ -874,6 +874,14 @@ export interface CommitReviewCardData {
    *     not required for this kind.
    */
   kind?: 'commit' | 'push';
+  /**
+   * For a `kind: 'push'` card: the HEAD sha the Auditor verdict was computed
+   * against (the tip being pushed). Approval re-reads HEAD and compares — if a
+   * `sandbox_commit` landed after this review, the sha differs and the approved
+   * push is refused (the pinned verdict no longer covers the new commits), so
+   * work can't ship unaudited through a stale card. Absent on legacy cards.
+   */
+  auditedHeadSha?: string;
   diff: DiffPreviewCardData;
   auditVerdict: AuditVerdictCardData;
   commitMessage: string;

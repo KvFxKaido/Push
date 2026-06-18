@@ -495,6 +495,45 @@ export async function handleSandboxCommit(
     }),
   });
 
+  // Protect Main (fail-closed): the auto-branch above normally forks off the
+  // default branch. If it did NOT fork (auto-branch disabled, or HEAD already
+  // off-default) and Protect Main is on, verify we aren't about to commit onto
+  // the protected branch. The shared pre-hook intentionally does not match
+  // `sandbox_commit` (it runs before the in-handler fork), so this is the
+  // authoritative guard — it mirrors the retired prepare-commit approval check.
+  if (!branchTarget.switched && ctx.isMainProtected) {
+    const liveBranch = await createSandboxPushGit(ctx.sandboxId, {
+      execFn: ctx.execInSandbox,
+    }).currentBranch();
+    const protectedBranches = new Set(['main', 'master']);
+    if (ctx.defaultBranch) protectedBranches.add(ctx.defaultBranch);
+    // Fail closed: an unreadable HEAD under Protect Main is treated as on-main —
+    // blocking a legit commit is a retry; committing onto main is not.
+    if (!liveBranch || protectedBranches.has(liveBranch)) {
+      console.log(
+        JSON.stringify({
+          level: 'warn',
+          event: 'sandbox_commit_protect_main_blocked',
+          sandboxId: ctx.sandboxId,
+          branch: liveBranch,
+        }),
+      );
+      const protectErr: StructuredToolError = {
+        type: 'PROTECT_MAIN_BLOCKED',
+        retryable: false,
+        message:
+          'Protect Main is enabled and auto-branch is off — this commit would land on the protected branch. Create a feature branch first, then retry.',
+      };
+      return {
+        text: formatStructuredError(
+          protectErr,
+          `[Tool Error — sandbox_commit]\n${protectErr.message}`,
+        ),
+        structuredError: protectErr,
+      };
+    }
+  }
+
   // Step 4: Commit locally via the backend (no gate — silent commit). The
   // backend stages (`add -A`) then commits and shell-escapes the message.
   const commitResult = await createSandboxPushGit(ctx.sandboxId, {
@@ -542,10 +581,13 @@ export async function handleSandboxCommit(
  * This is the delivery gate: it computes everything the next push would upload
  * (`computeSandboxPushedDiff`), runs the Auditor over it, and on SAFE returns a
  * `commit-review` card with `kind: 'push'` for approval. On UNSAFE it returns an
- * `audit-verdict` card and blocks. The actual push happens on approval (the
- * approval handler routes through `sandbox_push`, which re-runs the gate). An
- * Auditor-backend throw is caught and surfaced as a retryable
- * `AUDITOR_UNAVAILABLE` error (matching `handleSandboxPush`'s mapping).
+ * `audit-verdict` card and blocks. The actual push happens on approval, which
+ * re-runs only the cheap deterministic gates (Protect Main + secret scan) and
+ * verifies the pinned `auditedHeadSha` still matches HEAD — it does NOT re-audit
+ * (this verdict stands; re-running a non-deterministic LLM check could flip an
+ * approved SAFE delivery). A direct `sandbox_push` that bypasses this flow is
+ * still gated by the always-on push-time Auditor. An Auditor-backend throw here
+ * is surfaced as a retryable `AUDITOR_UNAVAILABLE` error.
  */
 export async function handlePreparePush(
   ctx: GitReleaseHandlerContext,
@@ -572,7 +614,31 @@ export async function handlePreparePush(
     };
   }
 
-  if (!diff || !diff.trim()) {
+  if (diff === null) {
+    // `computeSandboxPushedDiff` returns null on a diff-read FAILURE (no
+    // resolvable commits / invalid ref / unreachable sandbox), NOT on an empty
+    // diff — and the GitExec adapter resolves errors instead of throwing, so the
+    // catch above usually won't fire. Surface it as infra trouble, never as
+    // "nothing to push" (which would hide a broken read).
+    console.log(
+      JSON.stringify({
+        level: 'error',
+        event: 'prepare_push_diff_failed',
+        sandboxId: ctx.sandboxId,
+        error: 'computeSandboxPushedDiff returned null',
+      }),
+    );
+    const pushDiffErr = classifyError('could not read the diff to push', 'prepare_push');
+    return {
+      text: formatStructuredError(
+        pushDiffErr,
+        `[Tool Error — prepare_push]\nCould not compute the diff to push (the sandbox may be unreachable). Retry shortly.`,
+      ),
+      structuredError: pushDiffErr,
+    };
+  }
+
+  if (!diff.trim()) {
     console.log(
       JSON.stringify({
         level: 'info',
@@ -584,6 +650,13 @@ export async function handlePreparePush(
       text: `[Tool Result — prepare_push]\nNothing to push — no committed changes the remote doesn't already have. Use sandbox_commit to commit your work first.`,
     };
   }
+
+  // Pin the tip being pushed so approval can detect commits added between this
+  // review and the click — the Auditor verdict below only covers THIS diff, and
+  // the approved push deliberately skips re-auditing (see chat-card-actions).
+  const auditedHeadSha = await createSandboxPushGit(ctx.sandboxId, {
+    execFn: ctx.execInSandbox,
+  }).headSha();
 
   // Step 2: Run the Auditor over the cumulative push diff. A backend throw
   // (Auditor unreachable) surfaces as a retryable AUDITOR_UNAVAILABLE error,
@@ -636,8 +709,10 @@ export async function handlePreparePush(
   }
 
   // Step 3: SAFE — return a push-kind review card for user approval. Approval
-  // runs the push (the gate re-runs at execution via sandbox_push). No
-  // commitMessage is needed: the commits already exist locally.
+  // re-runs the cheap deterministic gates (Protect Main + secret scan) and
+  // pushes; it does NOT re-audit (this verdict stands), but it verifies the
+  // pinned `auditedHeadSha` still matches HEAD so commits added after this
+  // review can't ride along unaudited. No commitMessage: commits already exist.
   console.log(
     JSON.stringify({
       level: 'info',
@@ -663,6 +738,7 @@ export async function handlePreparePush(
     },
     commitMessage: '',
     status: 'pending',
+    ...(auditedHeadSha ? { auditedHeadSha } : {}),
   };
 
   return {

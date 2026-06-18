@@ -63,6 +63,20 @@ describe('createGitGuardPreHook', () => {
     expect(result.decision).toBe('passthrough');
   });
 
+  it('blocks raw `git push` in full-auto with no consent (route to audited sandbox_push)', async () => {
+    // Gate-at-Push: the Auditor gate lives at the push, so a raw push in
+    // full-auto (no human, no typed gate) would ship unaudited. Force it through
+    // sandbox_push even though full-auto otherwise lets direct git through.
+    const entry = withMode('full-auto');
+    const result = await entry.hook(
+      'sandbox_exec',
+      { command: 'git push origin main' },
+      emptyContext,
+    );
+    expect(result.decision).toBe('deny');
+    expect(result.errorType).toBe('GIT_GUARD_BLOCKED');
+  });
+
   it('respects allowDirectGit: true for commit/push/merge/rebase only', async () => {
     const entry = withMode('supervised');
     const allowed = await entry.hook(

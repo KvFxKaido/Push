@@ -456,6 +456,19 @@ describe('handlePreparePush', () => {
     expect(result.text).toContain('SAFE');
   });
 
+  it('pins the audited HEAD sha on the push-kind card (staleness guard)', async () => {
+    const ctx = makeContext({
+      pushedDiff: cleanDiff,
+      auditorVerdict: safeAuditorVerdict(),
+      execResults: [ok('abc1234')], // the HEAD-sha read (git rev-parse)
+    });
+    const result = await handlePreparePush(ctx);
+    expect(result.card?.type).toBe('commit-review');
+    if (result.card?.type === 'commit-review') {
+      expect(result.card.data.auditedHeadSha).toBe('abc1234');
+    }
+  });
+
   it('returns an audit-verdict card and blocks on an UNSAFE verdict', async () => {
     const ctx = makeContext({ pushedDiff: cleanDiff, auditorVerdict: unsafeAuditorVerdict() });
     const result = await handlePreparePush(ctx);
