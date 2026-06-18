@@ -430,6 +430,57 @@ describe('zenStream', () => {
     expect(url).toBe('https://zen-go.example/v1/chat/completions');
   });
 
+  it('emits the neutral push.stream.v1 wire (with tools + responseFormat) in Go mode', async () => {
+    vi.doMock('./providers', () => ({
+      getZenGoMode: () => true,
+      PROVIDER_URLS: {
+        zen: {
+          chat: 'https://zen.example/v1/chat/completions',
+          models: 'https://zen.example/v1/models',
+        },
+      },
+      ZEN_GO_URLS: { chat: 'https://zen-go.example/v1/chat/completions' },
+    }));
+    installStreamFetch(fetchMock);
+    const sampleTool = {
+      type: 'function' as const,
+      function: {
+        name: 'sandbox_write_file',
+        description: 'Write a file to the sandbox',
+        parameters: {
+          type: 'object' as const,
+          properties: { path: { type: 'string' as const } },
+          required: ['path'],
+          additionalProperties: false as const,
+        },
+      },
+    };
+    const { zenStream } = await import('./zen-stream');
+    const iter = zenStream({
+      ...baseRequest,
+      maxTokens: 4096,
+      tools: [sampleTool],
+      responseFormat: { name: 'verdict', schema: { type: 'object' } },
+    });
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    // Neutral wire shape — camelCase fields, contract discriminator.
+    expect(body.contract).toBe('push.stream.v1');
+    expect(body.maxTokens).toBe(4096);
+    expect(body.tools).toEqual([sampleTool]);
+    expect(body.responseFormat).toEqual({ name: 'verdict', schema: { type: 'object' } });
+    // The Worker's toOpenAIChat adds tool_choice / response_format on re-serialize;
+    // the wire itself carries neither the OpenAI snake_case fields nor tool_choice.
+    expect(body.tool_choice).toBeUndefined();
+    expect(body.max_tokens).toBeUndefined();
+    expect(body.response_format).toBeUndefined();
+  });
+
   // -------------------------------------------------------------------------
   // Native tool_call bridge — mirrors the OpenRouter coverage.
   // -------------------------------------------------------------------------

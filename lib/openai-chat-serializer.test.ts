@@ -89,6 +89,13 @@ describe('toOpenAIChat', () => {
     expect(body).not.toHaveProperty('tool_choice');
   });
 
+  it('emits stream_options.include_usage only when includeUsage is set', () => {
+    const withUsage = toOpenAIChat(reqWith([llm('1', 'user', 'hi')]), { includeUsage: true });
+    expect(withUsage.stream_options).toEqual({ include_usage: true });
+    const without = toOpenAIChat(reqWith([llm('1', 'user', 'hi')]));
+    expect(without).not.toHaveProperty('stream_options');
+  });
+
   it('serializes multimodal contentParts (data + http image URLs both pass natively)', () => {
     const body = toOpenAIChat(
       reqWith([

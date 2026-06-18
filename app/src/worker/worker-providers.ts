@@ -825,7 +825,11 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
                 enableWebSearch: dual.request.anthropicWebSearch === true,
               }),
             )
-          : JSON.stringify(toOpenAIChat(dual.request));
+          : // `includeUsage` restores the `stream_options: { include_usage: true }`
+            // the legacy guardrail validator defaulted before forwarding — without
+            // it the neutral flip drops the trailing usage chunk (token/cache
+            // accounting) for OpenAI-transport Zen-Go streams.
+            JSON.stringify(toOpenAIChat(dual.request, { includeUsage: true }));
     } catch (err) {
       return Response.json(
         { error: `OpenCode Zen Go request: ${err instanceof Error ? err.message : String(err)}` },

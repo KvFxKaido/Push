@@ -378,6 +378,43 @@ describe('handleZenGoChat — neutral wire (dual-accept)', () => {
     expect(body.model).toBe('glm-5.1');
     expect(body.messages).toEqual([{ role: 'user', content: 'hello' }]);
     expect(body.stream).toBe(true);
+    // Usage accounting: the neutral path must still request the trailing usage
+    // chunk the legacy validator used to default (parity with pre-flip behavior).
+    expect(body.stream_options).toEqual({ include_usage: true });
+  });
+
+  it('forwards neutral tools + responseFormat onto the OpenAI-transport upstream body', async () => {
+    const get = captureUpstream();
+    const tool = {
+      type: 'function',
+      function: {
+        name: 'sandbox_write_file',
+        description: 'Write a file',
+        parameters: {
+          type: 'object',
+          properties: { path: { type: 'string' } },
+          required: ['path'],
+          additionalProperties: false,
+        },
+      },
+    };
+    await handleZenGoChat(
+      makeNeutralRequest({
+        model: 'glm-5.1',
+        messages: [{ role: 'user', content: 'hello' }],
+        tools: [tool],
+        responseFormat: { name: 'verdict', schema: { type: 'object' } },
+      }),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    // toOpenAIChat re-serializes the neutral request: tools + tool_choice + response_format.
+    expect(body.tools).toEqual([tool]);
+    expect(body.tool_choice).toBe('auto');
+    expect(body.response_format).toEqual({
+      type: 'json_schema',
+      json_schema: { name: 'verdict', strict: true, schema: { type: 'object' } },
+    });
   });
 
   it('enables the native web_search tool from the neutral anthropicWebSearch flag', async () => {

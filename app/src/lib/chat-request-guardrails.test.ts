@@ -599,6 +599,69 @@ describe('toPushStreamWire ↔ validateAndNormalizeWireRequest round-trip', () =
     ]);
   });
 
+  it('round-trips native tools + responseFormat (the Zen Go flip carries these)', () => {
+    const tool = {
+      type: 'function' as const,
+      function: {
+        name: 'sandbox_write_file',
+        description: 'Write a file',
+        parameters: {
+          type: 'object' as const,
+          properties: { path: { type: 'string' as const } },
+          required: ['path'],
+          additionalProperties: false as const,
+        },
+      },
+    };
+    const wire = toPushStreamWire([{ role: 'user', content: 'hi' }], {
+      provider: 'zen',
+      model: 'glm-5.1',
+      tools: [tool],
+      responseFormat: { name: 'verdict', schema: { type: 'object' } },
+    });
+    expect(wire.tools).toEqual([tool]);
+    expect(wire.responseFormat).toEqual({ name: 'verdict', schema: { type: 'object' } });
+
+    const result = validateAndNormalizeWireRequest(JSON.stringify(wire), POLICY);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.request.tools).toEqual([tool]);
+    expect(result.value.request.responseFormat).toEqual({
+      name: 'verdict',
+      schema: { type: 'object' },
+    });
+  });
+
+  it('rejects a malformed tools field', () => {
+    const result = validateAndNormalizeWireRequest(
+      JSON.stringify({
+        contract: PUSH_STREAM_WIRE_CONTRACT,
+        model: 'glm-5.1',
+        messages: [{ role: 'user', content: 'hi' }],
+        tools: [{ type: 'function' }], // missing function.name
+      }),
+      POLICY,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/tools/);
+  });
+
+  it('rejects a malformed responseFormat field', () => {
+    const result = validateAndNormalizeWireRequest(
+      JSON.stringify({
+        contract: PUSH_STREAM_WIRE_CONTRACT,
+        model: 'glm-5.1',
+        messages: [{ role: 'user', content: 'hi' }],
+        responseFormat: { name: 'verdict' }, // missing schema
+      }),
+      POLICY,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/responseFormat/);
+  });
+
   it('round-trips multimodal content-part arrays', () => {
     const wire = toPushStreamWire(
       [

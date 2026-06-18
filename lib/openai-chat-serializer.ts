@@ -148,6 +148,14 @@ export interface ToOpenAIChatOptions {
    * Defaults to false — only OpenRouter→Anthropic routing wants it.
    */
   tagCacheBreakpoints?: boolean;
+  /**
+   * Emit `stream_options: { include_usage: true }` so the OpenAI-compat upstream
+   * sends the trailing usage chunk. The Worker's neutral Zen-Go path sets this to
+   * match what the legacy guardrail validator defaulted before forwarding —
+   * without it, flipping Zen-Go to neutral loses token/cache accounting. Off by
+   * default so other callers (CLI) keep their current behavior.
+   */
+  includeUsage?: boolean;
 }
 
 /**
@@ -208,6 +216,7 @@ export function toOpenAIChat(
     ...(typeof temperature === 'number' ? { temperature } : {}),
     ...(typeof req.topP === 'number' ? { top_p: req.topP } : {}),
     ...(typeof req.maxTokens === 'number' ? { max_tokens: req.maxTokens } : {}),
+    ...(options?.includeUsage ? { stream_options: { include_usage: true } } : {}),
     // Native function-calling tool schemas, when the caller attached them (gated
     // on model support upstream). Additive — `openai-sse-pump` normalizes any
     // native `tool_calls` back into the dispatcher's fenced JSON. `tool_choice:

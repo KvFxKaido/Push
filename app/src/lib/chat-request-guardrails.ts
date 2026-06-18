@@ -16,6 +16,8 @@ import type {
   LlmContentPart,
   LlmMessage,
   PushStreamRequest,
+  ResponseFormatSpec,
+  ToolFunctionSchema,
 } from '@push/lib/provider-contract';
 import { PUSH_STREAM_WIRE_CONTRACT } from '@push/lib/provider-wire';
 
@@ -593,6 +595,41 @@ export function validateAndNormalizeWireRequest(
     }
   }
 
+  // Native function-calling tool schemas (OpenAI-compatible shape). Shape-check
+  // the discriminant + function name so a malformed payload can't reach the
+  // provider serializers; the schemas themselves are generated server-internally
+  // (the registry), so deeper validation isn't warranted.
+  let tools: ToolFunctionSchema[] | undefined;
+  if (parsed.tools !== undefined) {
+    const raw = parsed.tools;
+    const valid =
+      Array.isArray(raw) &&
+      raw.every((t) => {
+        const tool = asRecord(t);
+        const fn = tool ? asRecord(tool.function) : null;
+        return tool?.type === 'function' && fn !== null && typeof fn.name === 'string';
+      });
+    if (!valid) {
+      return validationError(
+        `${policy.routeLabel} request field "tools" must be an array of function tool schemas.`,
+      );
+    }
+    tools = raw as ToolFunctionSchema[];
+  }
+
+  // Native structured-output constraint. Shape-check `{ name, schema }` so the
+  // provider serializer (`toOpenAIResponseFormat`) gets a well-formed spec.
+  let responseFormat: ResponseFormatSpec | undefined;
+  if (parsed.responseFormat !== undefined) {
+    const rf = asRecord(parsed.responseFormat);
+    if (!rf || typeof rf.name !== 'string' || !asRecord(rf.schema)) {
+      return validationError(
+        `${policy.routeLabel} request field "responseFormat" must be a { name, schema } object.`,
+      );
+    }
+    responseFormat = rf as unknown as ResponseFormatSpec;
+  }
+
   // Pause-turn replay turns ride through as an opaque passthrough — each entry is
   // one prior paused turn's raw Anthropic content[] array. Shape-check (array of
   // arrays of objects) so a malformed field can't reach `toAnthropicMessages`,
@@ -631,6 +668,8 @@ export function validateAndNormalizeWireRequest(
     ...(typeof parsed.googleSearchGrounding === 'boolean'
       ? { googleSearchGrounding: parsed.googleSearchGrounding }
       : {}),
+    ...(tools ? { tools } : {}),
+    ...(responseFormat ? { responseFormat } : {}),
     ...(replayAssistantTurns ? { replayAssistantTurns } : {}),
   };
 
