@@ -65,7 +65,7 @@ function makeSandboxGitExec(sandboxId: string, execFn: SandboxExecFn): GitExec {
  * (process env isn't readable in the browser). Guarded so it's safe under any
  * bundler/test runner.
  */
-function resolveWebSecretScanEnabled(): boolean {
+export function resolveWebSecretScanEnabled(): boolean {
   const env = (import.meta as { env?: Record<string, unknown> }).env?.VITE_PUSH_SECRET_SCAN;
   return resolveSecretScanEnabled({ env });
 }
