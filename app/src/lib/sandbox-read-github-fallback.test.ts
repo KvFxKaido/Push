@@ -72,12 +72,40 @@ describe('mapSandboxReadToGitHubCall', () => {
     expect(call?.tool).toBe('read_file');
   });
 
-  it('returns null for sandbox reads with no GitHub-tier equivalent', () => {
+  it('maps sandbox_find_references → search_files (symbol → query, scope → path)', () => {
+    expect(
+      mapSandboxReadToGitHubCall(
+        {
+          tool: 'sandbox_find_references',
+          args: { symbol: 'buildPrompt', scope: '/workspace/app' },
+        },
+        REPO,
+        'main',
+      ),
+    ).toEqual({
+      tool: 'search_files',
+      args: { repo: REPO, query: 'buildPrompt', path: 'app', branch: 'main' },
+    });
+  });
+
+  it('maps find_references with the default /workspace scope to a repo-wide search', () => {
+    expect(
+      mapSandboxReadToGitHubCall(
+        { tool: 'sandbox_find_references', args: { symbol: 'x', scope: '/workspace' } },
+        REPO,
+      ),
+    ).toMatchObject({ tool: 'search_files', args: { query: 'x', path: undefined } });
+  });
+
+  it('returns null for read_symbols — its extractor has no GitHub-tier equivalent', () => {
     expect(
       mapSandboxReadToGitHubCall({ tool: 'sandbox_read_symbols', args: { path: 'a.ts' } }, REPO),
     ).toBeNull();
+  });
+
+  it('returns null for find_references with no symbol', () => {
     expect(
-      mapSandboxReadToGitHubCall({ tool: 'sandbox_find_references', args: { symbol: 'x' } }, REPO),
+      mapSandboxReadToGitHubCall({ tool: 'sandbox_find_references', args: {} }, REPO),
     ).toBeNull();
   });
 

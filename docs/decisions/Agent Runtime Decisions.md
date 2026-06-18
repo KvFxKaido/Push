@@ -252,11 +252,13 @@ cloud-sandbox read to its GitHub-tier equivalent
 sandbox session or a cloud read returns `SANDBOX_UNREACHABLE` — annotating the
 result as last-pushed state, since the GitHub tier can't see uncommitted
 working-tree edits. The fallback is cloud-only (local-PC keeps its own re-pair
-path), covers only reads with a clean GitHub analog (`read`/`search`/`list_dir`;
-`read_symbols`/`refs` have none and keep the original error), and emits
-symmetric structured logs (`read_tier_github_fallback` ↔ `_skipped` ↔
-`_failed`). This is the §3 "code-backed, not prompt-backed" closure of the
-precedence.
+path), covers the reads with a clean GitHub analog (`read`/`search`/`list_dir`,
+plus `find_references` → GitHub code search since references ≈ search hits for
+the symbol), and emits symmetric structured logs (`read_tier_github_fallback` ↔
+`_skipped` ↔ `_failed`). `read_symbols` is the one sandbox read with no GitHub
+analog — its extractor runs as a Python script inside the sandbox — so it keeps
+the original error. This is the §3 "code-backed, not prompt-backed" closure of
+the precedence.
 
 ## Active Runtime Work
 
