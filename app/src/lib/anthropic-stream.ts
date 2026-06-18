@@ -75,6 +75,11 @@ export async function* anthropicStream(
     temperature: req.temperature,
     topP: req.topP,
     ...(anthropicWebSearch ? { anthropicWebSearch: true } : {}),
+    // Structured outputs: the neutral wire carries the JSON-Schema constraint
+    // (validated by the wire guardrail); the Worker's `toAnthropicMessages`
+    // turns it into a forced tool + `tool_choice`. Gated upstream by
+    // `providerModelSupportsStructuredOutput('anthropic', model)`.
+    ...(req.responseFormat ? { responseFormat: req.responseFormat } : {}),
   });
 
   // The Worker prefers its own server-side ANTHROPIC_API_KEY when set and

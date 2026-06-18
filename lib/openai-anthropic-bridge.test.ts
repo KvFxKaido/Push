@@ -9,6 +9,7 @@ import {
   anthropicModelRejectsSamplingParams,
   buildAnthropicMessagesRequest,
   createAnthropicTranslatedStream,
+  STRUCTURED_OUTPUT_TOOL_NAME,
   toAnthropicMessages,
 } from './openai-anthropic-bridge.ts';
 import { openAISSEPump } from './openai-sse-pump.ts';
@@ -431,6 +432,58 @@ describe('toAnthropicMessages — native tools', () => {
       messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 } as LlmMessage],
     } as PushStreamRequest<LlmMessage>);
     expect(body).not.toHaveProperty('tools');
+  });
+});
+
+describe('Anthropic structured outputs (forced tool)', () => {
+  const schema = {
+    type: 'object',
+    properties: { verdict: { type: 'string' } },
+    required: ['verdict'],
+    additionalProperties: false,
+  };
+
+  it('toAnthropicMessages turns responseFormat into a forced tool + tool_choice', () => {
+    const body = toAnthropicMessages({
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+      messages: [{ id: '1', role: 'user', content: 'audit', timestamp: 0 } as LlmMessage],
+      responseFormat: { name: 'auditor_verdict', schema },
+    } as PushStreamRequest<LlmMessage>);
+    expect(body.tools).toEqual([
+      {
+        name: STRUCTURED_OUTPUT_TOOL_NAME,
+        description: expect.any(String),
+        input_schema: schema,
+      },
+    ]);
+    expect(body.tool_choice).toEqual({ type: 'tool', name: STRUCTURED_OUTPUT_TOOL_NAME });
+  });
+
+  it('buildAnthropicMessagesRequest turns response_format into a forced tool + tool_choice', () => {
+    const body = buildAnthropicMessagesRequest({
+      model: 'claude-sonnet-4-6',
+      messages: [{ role: 'user', content: 'audit' }],
+      stream: true,
+      response_format: { type: 'json_schema', json_schema: { name: 'auditor_verdict', schema } },
+    });
+    expect(body.tools).toEqual([
+      {
+        name: STRUCTURED_OUTPUT_TOOL_NAME,
+        description: expect.any(String),
+        input_schema: schema,
+      },
+    ]);
+    expect(body.tool_choice).toEqual({ type: 'tool', name: STRUCTURED_OUTPUT_TOOL_NAME });
+  });
+
+  it('omits tool_choice when no responseFormat is set', () => {
+    const body = toAnthropicMessages({
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+      messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 } as LlmMessage],
+    } as PushStreamRequest<LlmMessage>);
+    expect(body).not.toHaveProperty('tool_choice');
   });
 });
 
@@ -1036,6 +1089,19 @@ describe('anthropicEventStream — drift vs translate->pump', () => {
       name: 'tool_use -> tool_calls',
       lines: [
         'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"calling"}}',
+        'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}',
+      ],
+    },
+    {
+      // The structured-output forced tool: its `input` must stream out as plain
+      // text content (NOT a tool call), so callers JSON.parse the accumulated
+      // text like an OpenAI response_format body. Both paths must agree.
+      name: 'structured-output forced tool -> text content',
+      lines: [
+        `data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_so","name":"${STRUCTURED_OUTPUT_TOOL_NAME}","input":{}}}`,
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"verdict\\":"}}',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\\"SAFE\\"}"}}',
+        'data: {"type":"content_block_stop","index":0}',
         'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}',
       ],
     },
