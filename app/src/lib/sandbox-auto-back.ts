@@ -152,6 +152,13 @@ export async function backUpWorkingTree(
   //    secret scan runs over the backup's content vs HEAD — which covers
   //    untracked files a plain `git diff HEAD` would miss — and the push is NOT
   //    Protect-Main-gated (it targets a draft ref, never the protected branch).
+  //
+  //    FOLLOW-UP (Codex P3 on #981): the capture only skips when tree == HEAD,
+  //    not when tree == the last pushed backup. With the conservative signal
+  //    (fire on any mutation attempt), a no-op attempt while the tree is dirty
+  //    re-pushes the identical tree. Harmless (idempotent, no loop), but a
+  //    tree-dedup (thread the last-backed tree through the coordinator and skip
+  //    an unchanged snapshot) would remove the redundant force-push.
   const pushGit = createSandboxPushGit(sandboxId, {
     prePush: makeSecretScanPrePushGate({
       getDiff: () => diffBackupCommit(sandboxId, sha),

@@ -73,6 +73,8 @@ import { sanitizeUntrustedSource } from '@push/lib/untrusted-content';
 import { createGitGuardPreHook } from '@push/lib/default-pre-hooks';
 import { reduceToolOutput } from '@push/lib/tool-output-reducers';
 import { createSandboxPushGit } from './git-backend';
+import { isFileMutationToolName } from '@push/lib/tool-registry';
+import { notifyWorkspaceMutation, shouldSignalWorkspaceMutation } from './sandbox-mutation-signal';
 import { getApprovalMode } from './approval-mode';
 
 import type { SandboxToolCall, SandboxExecutionOptions } from './sandbox-tool-detection';
@@ -422,7 +424,40 @@ async function evaluateGitGuardForSandboxExec(
   };
 }
 
+/**
+ * Public entry: dispatch the tool, then emit the B2 working-tree mutation signal
+ * for a successful file mutation (or mutating exec). Provider-agnostic — fires
+ * off the dispatched tool, not the sandbox's `workspace_revision` — and
+ * self-loop-free: auto-back's own capture/push bypass this dispatcher, and
+ * push/commit aren't file mutations. See `sandbox-mutation-signal.ts`.
+ */
 export async function executeSandboxToolCall(
+  call: SandboxToolCall,
+  sandboxId: string,
+  options?: SandboxExecutionOptions,
+): Promise<ToolExecutionResult> {
+  const result = await executeSandboxToolCallInner(call, sandboxId, options);
+  // Signal on the *attempt* (not gated on success): a tool can mutate then error
+  // (partial patchset; exec that ran before the sandbox went unreachable). The
+  // backup capture's tree comparison is the real filter — a no-op when nothing
+  // changed. Auto-back's own capture/push bypass this dispatcher, so no loop.
+  if (sandboxId) {
+    const isExec = call.tool === 'sandbox_exec';
+    const command = isExec ? ((call.args as { command?: string })?.command ?? '') : '';
+    if (
+      shouldSignalWorkspaceMutation(call.tool, {
+        isFileMutationTool: isFileMutationToolName(call.tool),
+        isExec,
+        execIsMutating: isExec && isLikelyMutatingSandboxExec(command),
+      })
+    ) {
+      notifyWorkspaceMutation(sandboxId);
+    }
+  }
+  return result;
+}
+
+async function executeSandboxToolCallInner(
   call: SandboxToolCall,
   sandboxId: string,
   options?: SandboxExecutionOptions,

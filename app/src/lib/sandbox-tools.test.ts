@@ -100,6 +100,7 @@ import {
   readFilesForCoderPreload,
 } from './sandbox-tools';
 import * as sandboxClient from './sandbox-client';
+import { onWorkspaceMutation } from './sandbox-mutation-signal';
 import {
   LocalDaemonUnreachableError,
   execLocalDaemon,
@@ -339,6 +340,35 @@ describe('executeSandboxToolCall -- sandbox_exec Protect Main git-guard (#977)',
     );
     expect(result.structuredError).toBeUndefined();
     expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalled();
+  });
+});
+
+describe('executeSandboxToolCall -- B2 workspace mutation signal', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockReset();
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValue({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+    });
+  });
+
+  it('emits a mutation signal after a successful mutating exec', async () => {
+    const seen: string[] = [];
+    const off = onWorkspaceMutation((id) => seen.push(id));
+    // `touch` is classified mutating by the exec heuristic.
+    await executeSandboxToolCall({ tool: 'sandbox_exec', args: { command: 'touch f' } }, 'sb-1');
+    off();
+    expect(seen).toEqual(['sb-1']);
+  });
+
+  it('does NOT emit for a read-only exec', async () => {
+    const seen: string[] = [];
+    const off = onWorkspaceMutation((id) => seen.push(id));
+    await executeSandboxToolCall({ tool: 'sandbox_exec', args: { command: 'cat f' } }, 'sb-1');
+    off();
+    expect(seen).toEqual([]);
   });
 });
 
