@@ -389,10 +389,11 @@ function classifySegment(invocation: ParsedGitInvocation): GitDecision {
 
 /**
  * Restrictiveness rank for picking the decisive segment of a compound command.
- * Higher wins. A forbidden op (`block`: merge / rebase / cherry-pick / hard
- * reset) outranks an always-gated route (push, branch create / switch), which
- * outranks an escapable route (commit / revert). This stops a later restricted
- * segment from being masked by an earlier escapable one.
+ * Higher wins. A forbidden op (`block`: merge / rebase / cherry-pick) outranks
+ * an always-gated route (push, branch create / switch), which outranks an
+ * escapable route (commit / revert). This stops a later restricted segment from
+ * being masked by an earlier escapable one. (The guard makes every `block`
+ * unescapable, so surfacing any block in a chain denies the whole command.)
  */
 function restrictivenessRank(decision: GitDecision): number {
   if (decision.kind === 'block') return 3;

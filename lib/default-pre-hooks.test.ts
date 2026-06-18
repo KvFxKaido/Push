@@ -77,7 +77,7 @@ describe('createGitGuardPreHook', () => {
     expect(result.errorType).toBe('GIT_GUARD_BLOCKED');
   });
 
-  it('respects allowDirectGit: true for commit/push/rebase but not branch ops', async () => {
+  it('respects allowDirectGit: true for commit/push but not branch ops or forbidden ops', async () => {
     const entry = withMode('supervised');
     const allowed = await entry.hook(
       'sandbox_exec',
@@ -86,19 +86,21 @@ describe('createGitGuardPreHook', () => {
     );
     expect(allowed.decision).toBe('passthrough');
 
-    const rebaseAllowed = await entry.hook(
-      'sandbox_exec',
-      { command: 'git rebase main', allowDirectGit: true },
-      emptyContext,
-    );
-    expect(rebaseAllowed.decision).toBe('passthrough');
-
-    const stillBlocked = await entry.hook(
+    const branchBlocked = await entry.hook(
       'sandbox_exec',
       { command: 'git checkout -b feature/foo', allowDirectGit: true },
       emptyContext,
     );
-    expect(stillBlocked.decision).toBe('deny');
+    expect(branchBlocked.decision).toBe('deny');
+
+    // Forbidden ops (history rewrites) have no consented form either (#986).
+    const rebaseBlocked = await entry.hook(
+      'sandbox_exec',
+      { command: 'git rebase main', allowDirectGit: true },
+      emptyContext,
+    );
+    expect(rebaseBlocked.decision).toBe('deny');
+    expect(rebaseBlocked.reason).toContain('history rewrites');
   });
 
   it('blocks a local `git merge` even with allowDirectGit (#985: PR-flow only)', async () => {
@@ -140,6 +142,25 @@ describe('createGitGuardPreHook', () => {
     );
     expect(chained.decision).toBe('deny');
     expect(chained.errorType).toBe('GIT_GUARD_BLOCKED');
+  });
+
+  it('blocks a forbidden op chained ahead of a gated one (no block is escapable)', async () => {
+    // `git rebase && git merge` and `git rebase && git push`: rebase is itself a
+    // forbidden block, so it can't pass through and let the trailing merge/push
+    // run — every block is unescapable (Codex follow-up on #986).
+    const entry = withMode('full-auto');
+    const rebaseMerge = await entry.hook(
+      'sandbox_exec',
+      { command: 'git rebase main && git merge feature/x', allowDirectGit: true },
+      emptyContext,
+    );
+    expect(rebaseMerge.decision).toBe('deny');
+    const rebasePush = await entry.hook(
+      'sandbox_exec',
+      { command: 'git rebase main && git push origin main', allowDirectGit: true },
+      emptyContext,
+    );
+    expect(rebasePush.decision).toBe('deny');
   });
 
   // --- Protect Main blocks the exec `git push` escape hatch (issue #977) ----
