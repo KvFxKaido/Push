@@ -242,11 +242,21 @@ uncommitted files still works.
 
 Scope: **web only.** The CLI/daemon (§10) reads a real local filesystem, which
 *is* the reliable default there — its local read tools stay primary and GitHub
-reads serve cross-repo / pushed-state lookups. Known gap: the precedence is
-currently advertisement + contract guidance, so a non-cooperating model could
-still call a sandbox read and fail rather than degrade. A code-enforced
-cross-tier fallback (sandbox read → GitHub equivalent on unavailability) is the
-follow-up that would make this robust against non-cooperating models per §3.
+reads serve cross-repo / pushed-state lookups.
+
+The precedence is also **code-enforced**, not contract-only, so it holds for a
+non-cooperating model that calls a sandbox read anyway when the sandbox is down:
+`tryGitHubReadFallback` in `app/src/lib/web-tool-execution-runtime.ts` maps a
+cloud-sandbox read to its GitHub-tier equivalent
+(`app/src/lib/sandbox-read-github-fallback.ts`) and serves it when there is no
+sandbox session or a cloud read returns `SANDBOX_UNREACHABLE` — annotating the
+result as last-pushed state, since the GitHub tier can't see uncommitted
+working-tree edits. The fallback is cloud-only (local-PC keeps its own re-pair
+path), covers only reads with a clean GitHub analog (`read`/`search`/`list_dir`;
+`read_symbols`/`refs` have none and keep the original error), and emits
+symmetric structured logs (`read_tier_github_fallback` ↔ `_skipped` ↔
+`_failed`). This is the §3 "code-backed, not prompt-backed" closure of the
+precedence.
 
 ## Active Runtime Work
 
@@ -257,8 +267,7 @@ follow-up that would make this robust against non-cooperating models per §3.
 5. Graduate loop detection enforcement only after telemetry supports thresholds.
 6. Decide whether memory Phase 3 immutable verbatim logs are worth the storage cost.
 7. Promote the diff/annotation envelope only when a roadmap item needs it.
-8. Make read-tier precedence (§11) robust against non-cooperating models: add a code-enforced cross-tier fallback so a cloud-sandbox read that fails on unavailability degrades to its GitHub equivalent, instead of relying on contract guidance alone.
-9. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model. Step 1 landed 2026-06-12: interactive turns default to the in-loop lead with the Planner wrapper behind `PUSH_DELEGATION_MODE=delegated`. Step 2 landed 2026-06-12: the lead-kernel lane (`cli/lead-turn.ts`) runs the turn on the shared kernel in `leadMode`. Step 3 landed 2026-06-12: the lane is the **default**; `PUSH_LEAD_RUNTIME=engine` is the exact-match opt-out while it bakes. Remaining: retire the engine loop's duplicated round machinery once the lane has baked.
+8. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model. Step 1 landed 2026-06-12: interactive turns default to the in-loop lead with the Planner wrapper behind `PUSH_DELEGATION_MODE=delegated`. Step 2 landed 2026-06-12: the lead-kernel lane (`cli/lead-turn.ts`) runs the turn on the shared kernel in `leadMode`. Step 3 landed 2026-06-12: the lane is the **default**; `PUSH_LEAD_RUNTIME=engine` is the exact-match opt-out while it bakes. Remaining: retire the engine loop's duplicated round machinery once the lane has baked.
 
 ## Archived Context Worth Knowing
 
