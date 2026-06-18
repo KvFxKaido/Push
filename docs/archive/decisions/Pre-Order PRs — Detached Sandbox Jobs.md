@@ -1,18 +1,16 @@
 # Pre-Order PRs — Detached Sandbox Jobs
 
-Status: **Draft**
+Status: **Merged into** [`Pushed Branch as Source of Truth — Gate at Push`](<../../decisions/Pushed Branch as Source of Truth — Gate at Push.md>)
 Reviewed: 2026-06-07
 
-Design-in-motion. Not yet roadmap-promoted; nothing built. This note exists to
-be lived with and poked at before any code. When promoted, the operating
-contract folds into [`Platform, Sessions, and Sandbox Decisions.md`](<Platform, Sessions, and Sandbox Decisions.md>)
-(it owns background execution + sandbox providers) and this file moves to
-`../archive/decisions/` as provenance.
+> Folded 2026-06-18 into the unified "pushed branch as source of truth" model —
+> pre-order PRs are one application of gating the sandbox behind a pushed branch
+> (one pre-order = one sandbox = one pushed branch = optional PR). The summary
+> lives in the live doc; this file is retained as the detailed source note
+> (provisioning, lifecycle terminal + teardown, cap-1 MVP, the chat intake verb).
 
-> Placement caveat: the folder README says the two live docs are the only
-> default residents here and that design-in-motion belongs under
-> `docs/runbooks/` (impl plan) or folded into a live doc. Parked here by
-> explicit request for review; relocate on promotion.
+Design-in-motion. Not yet roadmap-promoted; nothing built. This note exists to
+be lived with and poked at before any code.
 
 ## The scenario
 

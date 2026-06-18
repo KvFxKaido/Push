@@ -156,6 +156,23 @@ depend on it.
 - **Retiring the model-Auditor entirely** is not proposed — only its *placement*
   is in question (Move A).
 
+## Application: pre-order PRs (detached jobs)
+
+A "pre-order" is the cleanest expression of this model: one detached unit of
+work runs in its **own** isolated sandbox and terminates by **pushing its
+branch** behind the Auditor + secret-scan gates, surfaced for review — opening
+the PR is your opt-in graduation step. One pre-order = one sandbox = one branch
+= one durable `CoderJob` = (optionally) one PR.
+
+It rides Move B directly: each pre-order gets a freshly-provisioned sandbox,
+does an ordinary single clone + checkout (one HEAD), and is torn down on
+terminal — losing nothing, because the branch is already pushed. **Separate
+sandboxes, not git worktrees**, so the "one active branch per repo session"
+invariant simply becomes "one active branch per sandbox" and the
+`git checkout`/`switch` blocks stay intact. The detailed slice
+(provision-your-own `sandboxId`, lifecycle terminal + teardown, cap-1 MVP, the
+chat intake verb) lives in the archived source note linked below.
+
 ## Supersession & consolidation plan
 
 On implementation (status flips happen in the implementing PR, per
@@ -170,10 +187,10 @@ drift):
   that doc moved the *secret scan* to push and kept the Auditor at commit; this
   model moves the Auditor to join it. Mark `Superseded by` this doc when the gate
   moves — not before.
-- **Absorbs** [`Pre-Order PRs — Detached Sandbox Jobs`](<Pre-Order PRs — Detached Sandbox Jobs.md>)
-  (currently Draft): one job = one sandbox = one pushed branch is a direct
-  application of this model. Safe to fold now (it's Draft, not a live contract) —
-  mark `Merged into` this doc.
+- **Absorbed** [`Pre-Order PRs — Detached Sandbox Jobs`](<../archive/decisions/Pre-Order PRs — Detached Sandbox Jobs.md>)
+  (was Draft): folded as the "pre-order PRs" application above and moved to
+  `../archive/decisions/` as a source note (2026-06-18) — it was Draft, not a
+  live contract, so folding now creates no drift.
 - **References** (no change): §11 (reads off GitHub), Durable Runs (RunHost makes
   the sandbox disposable for run continuity),
   [`Main as Scratchpad — Branch on Graduation`](<../archive/decisions/Main as Scratchpad — Branch on Graduation.md>)
