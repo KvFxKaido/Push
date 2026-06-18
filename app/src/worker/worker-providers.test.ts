@@ -378,6 +378,9 @@ describe('handleZenGoChat — neutral wire (dual-accept)', () => {
     expect(body.model).toBe('glm-5.1');
     expect(body.messages).toEqual([{ role: 'user', content: 'hello' }]);
     expect(body.stream).toBe(true);
+    // Usage accounting: the neutral path must still request the trailing usage
+    // chunk the legacy validator used to default (parity with pre-flip behavior).
+    expect(body.stream_options).toEqual({ include_usage: true });
   });
 
   it('forwards neutral tools + responseFormat onto the OpenAI-transport upstream body', async () => {

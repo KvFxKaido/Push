@@ -86,6 +86,9 @@ export interface OpenAIChatRequest extends OpenAIChatRequestNativeWebSearch {
   max_tokens?: number;
   max_completion_tokens?: number;
   stream?: boolean;
+  /** Request the trailing usage chunk on a streamed response (token + prompt-cache
+   *  accounting). OpenAI-compat upstreams omit `usage` on streams unless this is set. */
+  stream_options?: { include_usage?: boolean };
   n?: number;
   response_format?: OpenAIJsonSchemaResponseFormat;
   /** Native function-calling tool schemas + selection mode. Serialized by
