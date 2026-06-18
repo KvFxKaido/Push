@@ -1337,6 +1337,29 @@ describe('providerModelSupportsStructuredOutput', () => {
     expect(providerModelSupportsNativeToolCalling('zen', undefined)).toBe(false);
   });
 
+  it('gates Fireworks native tool calling against the curated catalog allowlist', () => {
+    stubWindow();
+    // Curated FIREWORKS_MODELS ids pass (the default + a couple of families).
+    expect(
+      providerModelSupportsNativeToolCalling(
+        'fireworks',
+        'accounts/fireworks/models/deepseek-v4-pro',
+      ),
+    ).toBe(true);
+    expect(
+      providerModelSupportsNativeToolCalling(
+        'fireworks',
+        'accounts/fireworks/models/kimi-k2p7-code',
+      ),
+    ).toBe(true);
+    // Off-catalog Fireworks ids (e.g. a live-fetch model not in the curated list)
+    // stay text-dispatch.
+    expect(
+      providerModelSupportsNativeToolCalling('fireworks', 'accounts/fireworks/models/not-curated'),
+    ).toBe(false);
+    expect(providerModelSupportsNativeToolCalling('fireworks', undefined)).toBe(false);
+  });
+
   it('returns false for an allowlisted provider when the catalog reports no support', () => {
     stubWindow();
     // `openai` is OpenAI-shaped (allowlisted) but has no models.dev structured-

@@ -12,6 +12,7 @@ import { safeStorageGet, safeStorageSet } from './safe-storage';
 import {
   CLOUDFLARE_MODELS,
   compareProviderModelIds,
+  FIREWORKS_MODELS,
   NVIDIA_MODELS,
   OPENROUTER_MODELS,
   PROVIDER_URLS,
@@ -398,8 +399,21 @@ const ZEN_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Fireworks AI models cleared for native function calling. Like Zen, name-based
+ * against the curated catalog (`FIREWORKS_MODELS`) rather than capability-gated:
+ * the list is hand-maintained and every entry is a current frontier coding /
+ * instruct model that supports function calling (DeepSeek V4, GLM 5.x, Kimi K2.x,
+ * Qwen3.x, MiniMax, GPT-OSS, Nemotron). Deriving the set keeps native FC in
+ * lockstep with manual catalog edits — adding a model to `FIREWORKS_MODELS` opts
+ * it in. Fireworks is a single OpenAI-compatible endpoint (no transport split),
+ * so `fireworks-stream.ts` serializes `tools` straight through and `openai-sse-pump`
+ * normalizes the native `tool_calls`.
+ */
+const FIREWORKS_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(FIREWORKS_MODELS);
+
+/**
  * Whether to attach native function-calling `tools` for the given
- * provider/model. Three provider paths today:
+ * provider/model. Four provider paths today:
  *   - **Cloudflare Workers AI** (Kimi/GLM) — name-based, the catalog-less
  *     provider this was introduced for.
  *   - **OpenRouter** — capability-based: the model's models.dev metadata must
@@ -413,6 +427,8 @@ const ZEN_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set([
  *   - **OpenCode Zen** — name-based against the curated catalog
  *     (`ZEN_NATIVE_TOOL_CALLING_MODELS`); see the note there for why capability
  *     gating isn't viable for Zen.
+ *   - **Fireworks AI** — name-based against the curated catalog
+ *     (`FIREWORKS_NATIVE_TOOL_CALLING_MODELS`).
  * Other providers stay on the text-dispatch tool protocol until native tool
  * calling is wired and validated for them. Additive regardless: `openai-sse-pump`
  * normalizes any native `tool_calls` back into the fenced JSON the dispatcher
@@ -426,6 +442,7 @@ export function providerModelSupportsNativeToolCalling(
   if (provider === 'cloudflare') return isCloudflareKimiOrGlm(modelId);
   if (provider === 'openrouter') return getModelCapabilities('openrouter', modelId).toolCall;
   if (provider === 'zen') return ZEN_NATIVE_TOOL_CALLING_MODELS.has(modelId);
+  if (provider === 'fireworks') return FIREWORKS_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   return false;
 }
 

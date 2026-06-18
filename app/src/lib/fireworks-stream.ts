@@ -46,6 +46,7 @@ export async function* fireworksStream(
   });
 
   // 2. Plain OpenAI-compatible request body — no Fireworks AI-specific fields.
+  const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : undefined;
   const body: Record<string, unknown> = {
     model: req.model,
     messages: llmMessages,
@@ -53,6 +54,13 @@ export async function* fireworksStream(
     ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
+    // Native function calling: forward the caller's tool schemas (gated on model
+    // support via `providerModelSupportsNativeToolCalling`) so the OpenAI-compatible
+    // endpoint can answer through its constrained tool-calling path. Additive to
+    // text-dispatch — `openAISSEPump` normalizes any native `tool_calls` back into
+    // the fenced JSON the dispatcher consumes. `tool_choice: 'auto'` keeps prose
+    // answers available when no tool is needed.
+    ...(nativeTools ? { tools: nativeTools, tool_choice: 'auto' } : {}),
     // Native structured outputs: forward the caller's JSON-Schema constraint so
     // the OpenAI-compatible endpoint constrains generation server-side. Shared
     // wire builder with the CLI/OpenRouter paths. No `provider.require_parameters`

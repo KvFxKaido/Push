@@ -1,9 +1,10 @@
 # Native Function Calling — Additive to Text-Dispatch
 
 **Status:** Current — shipped on the web lead for Cloudflare Workers AI (Kimi/GLM,
-name-based), OpenRouter (capability-based), and OpenCode Zen (name-based catalog
-allowlist; both the OpenAI and Anthropic Go transports). Other providers and the
-CLI lead are deferred follow-ups, not yet promoted to `ROADMAP.md`.
+name-based), OpenRouter (capability-based), OpenCode Zen (name-based catalog
+allowlist; both the OpenAI and Anthropic Go transports), and Fireworks AI
+(name-based catalog allowlist). Other providers and the CLI lead are deferred
+follow-ups, not yet promoted to `ROADMAP.md`.
 
 **Date:** 2026-06-17
 
@@ -93,9 +94,11 @@ native tool call — both converge at one dispatch path. Consequences:
 
 - **Other providers.** OpenAI/etc. are function-calling-capable but stay
   text-dispatch only until native calling is validated per provider. The gate is
-  the single switch. OpenRouter (capability-based) and OpenCode Zen (name-based)
-  are enabled on the web lead — Zen across both transports: the OpenAI-transport
-  models (standard tier + Go) carry `tools` straight through `toOpenAIChat`, and
+  the single switch. OpenRouter (capability-based), OpenCode Zen (name-based), and
+  Fireworks AI (name-based; single OpenAI-compatible endpoint, `tools` straight
+  through `fireworks-stream.ts`) are enabled on the web lead — Zen across both
+  transports: the OpenAI-transport models (standard tier + Go) carry `tools`
+  straight through `toOpenAIChat`, and
   the **Anthropic-transport** Go models (minimax/qwen) translate OpenAI tool
   schemas to Anthropic's custom-tool shape in `toAnthropicMessages` and turn the
   model's `tool_use` blocks back into the dispatcher's fenced JSON via
