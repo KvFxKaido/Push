@@ -48,29 +48,38 @@ export type PushTarget =
   | { kind: 'unverifiable'; detail: string };
 
 /**
- * Resolve the destination a push refspec will update. A safety gate can't chase
- * every Git refspec/option form, so this is an ALLOWLIST: anything that doesn't
- * resolve to the checked-out branch or one concrete destination branch is
- * `unverifiable` and the gate fails closed. `git push origin <ref>` accepts
- * `src:dst`, a plain branch/ref, `HEAD`/`@`, with a leading `+` forcing.
+ * Resolve the destination a push will update. A safety gate must not try to
+ * emulate Git's refspec/rev parser — that's a proven source of bypasses (the
+ * matching refspec `:` pushes main; `:/regex:refs/heads/main` hides the real
+ * destination behind a commit-search rev; `--all`/`--mirror` push everything).
+ * So this is a strict ALLOWLIST: only forms that trivially resolve to the
+ * checked-out branch or one plain destination branch are evaluated; ANYTHING
+ * carrying a colon, a force-with-no-branch, option flags, or rev/glob syntax is
+ * `unverifiable` and the gate fails closed. Push's own push path passes no
+ * `ref` (so it's `current`); explicit refspecs are not a supported flow, so
+ * rejecting them costs nothing and removes the whole parser-emulation risk.
  */
 export function resolvePushTarget(ref: string | undefined): PushTarget {
   if (ref == null) return { kind: 'current' };
   const spec = ref.trim();
   if (!spec) return { kind: 'unverifiable', detail: 'empty ref' };
-  // Option-shaped (`--all`, `--mirror`, `--tags`, `-f`, …): Git pushes many refs,
-  // which a single-branch check can't cover.
+  // Option-shaped (`--all`, `--mirror`, `--tags`, `-f`, …): Git pushes many refs.
   if (spec.startsWith('-')) return { kind: 'unverifiable', detail: 'option-shaped ref' };
   const body = spec.replace(/^\+/, '');
   if (!body) return { kind: 'unverifiable', detail: 'force marker with no ref' };
-  // The matching refspec pushes every same-named branch, including main.
-  if (body === ':') return { kind: 'unverifiable', detail: 'matching refspec' };
   if (body === 'HEAD' || body === '@') return { kind: 'current' };
-  const dst = body.includes(':') ? body.slice(body.indexOf(':') + 1).trim() : body;
-  if (!dst) return { kind: 'unverifiable', detail: 'refspec with empty destination' };
-  const name = dst.replace(/^refs\/heads\//, '').trim();
-  if (!name) return { kind: 'unverifiable', detail: 'unresolvable destination' };
-  if (name === 'HEAD' || name === '@') return { kind: 'current' };
+  // Any colon means a refspec (`src:dst`, `:`, `:/regex:dst`, multi-colon) whose
+  // true destination we won't guess; any rev/glob/whitespace syntax likewise.
+  // Fail closed rather than parse.
+  if (/[\s:^~?*[\]{}\\]/.test(body)) {
+    return { kind: 'unverifiable', detail: 'refspec or rev syntax' };
+  }
+  // Plain destination branch token. Strip the branch-ref abbreviations Git
+  // DWIMs to the same ref (`refs/heads/main` / `heads/main` / `main`) so they
+  // all normalize to `main`; a genuinely different branch like `feature/main`
+  // keeps its full name and is not affected.
+  const name = body.replace(/^(?:refs\/)?heads\//, '').trim();
+  if (!name || name === 'HEAD' || name === '@') return { kind: 'current' };
   return { kind: 'branch', name };
 }
 
@@ -158,9 +167,9 @@ export function makeProtectMainPrePushGate(opts: ProtectMainPrePushGateOptions):
       log('warn', 'protect_main_push_blocked', {
         reason: 'protected_branch',
         branch: normalized,
-        // Distinguish a refspec-targeted push from a checked-out-branch push in
-        // the logs so an unusual destination is visible to ops.
-        ...(target.kind === 'branch' ? { via: 'refspec' } : {}),
+        // Distinguish an explicit-ref destination from a checked-out-branch push
+        // in the logs so an unusual destination is visible to ops.
+        ...(target.kind === 'branch' ? { via: 'explicit_ref' } : {}),
       });
       return {
         ok: false,

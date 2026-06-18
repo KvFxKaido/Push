@@ -120,11 +120,12 @@ describe('makeProtectMainPrePushGate', () => {
     expect((await gate()).ok).toBe(false);
   });
 
-  // --- refspec destination (Codex P1 on #976) -----------------------------
-  // A push refspec destination overrides the checked-out branch, so the gate
-  // must inspect the ref target, not just live HEAD.
+  // --- explicit ref destination + refspec rejection (Codex P1 on #976) ------
+  // A safety gate must not emulate Git's refspec parser. Plain branch tokens are
+  // checked as the destination; anything carrying a colon / rev syntax / option
+  // flag fails closed.
 
-  it('blocks a refspec push to main even from a feature branch', async () => {
+  it('blocks an explicit plain-token push to main even from a feature branch', async () => {
     const { lines, log } = capture();
     const gate = makeProtectMainPrePushGate({
       enabled: true,
@@ -132,25 +133,36 @@ describe('makeProtectMainPrePushGate', () => {
       getCurrentBranch: () => 'feature/foo', // checked out on a feature branch
       log,
     });
-    const verdict = await gate({ ref: 'HEAD:refs/heads/main' });
+    const verdict = await gate({ ref: 'main' });
     expect(verdict.ok).toBe(false);
     expect(lines[0]).toMatchObject({
       event: 'protect_main_push_blocked',
-      ctx: { reason: 'protected_branch', branch: 'main', via: 'refspec' },
+      ctx: { reason: 'protected_branch', branch: 'main', via: 'explicit_ref' },
     });
   });
 
-  it('blocks a forced refspec push to main (+HEAD:main)', async () => {
-    const { log } = capture();
+  it('blocks the branch abbreviations Git DWIMs to main (refs/heads/main, heads/main)', async () => {
     const gate = makeProtectMainPrePushGate({
       enabled: true,
       getCurrentBranch: () => 'feature/foo',
-      log,
+      log: () => {},
     });
-    expect((await gate({ ref: '+HEAD:main' })).ok).toBe(false);
+    expect((await gate({ ref: 'refs/heads/main' })).ok).toBe(false);
+    expect((await gate({ ref: 'heads/main' })).ok).toBe(false);
   });
 
-  it('allows a refspec push to a feature branch', async () => {
+  it('allows a feature branch that merely ends in "main" (feature/main)', async () => {
+    const gate = makeProtectMainPrePushGate({
+      enabled: true,
+      defaultBranch: 'main',
+      getCurrentBranch: () => 'main',
+      log: () => {},
+    });
+    // `feature/main` is a distinct branch, not the protected `main`.
+    expect((await gate({ ref: 'feature/main' })).ok).toBe(true);
+  });
+
+  it('allows an explicit feature-branch token', async () => {
     const { log } = capture();
     const gate = makeProtectMainPrePushGate({
       enabled: true,
@@ -158,11 +170,11 @@ describe('makeProtectMainPrePushGate', () => {
       getCurrentBranch: () => 'main', // even checked out on main…
       log,
     });
-    // …the push targets a feature branch, so it is allowed.
+    // …the push targets a feature branch token, so it is allowed.
     expect((await gate({ ref: 'feature/bar' })).ok).toBe(true);
   });
 
-  it('falls back to live HEAD when the ref is HEAD (no explicit destination)', async () => {
+  it('falls back to live HEAD for HEAD / @ (no explicit destination)', async () => {
     const { log } = capture();
     const gate = makeProtectMainPrePushGate({
       enabled: true,
@@ -171,56 +183,32 @@ describe('makeProtectMainPrePushGate', () => {
       log,
     });
     expect((await gate({ ref: 'HEAD' })).ok).toBe(false);
-  });
-
-  it('treats @ as HEAD and falls back to live HEAD', async () => {
-    const { log } = capture();
-    const gate = makeProtectMainPrePushGate({
-      enabled: true,
-      defaultBranch: 'main',
-      getCurrentBranch: () => 'main', // @ → HEAD → current branch is main
-      log,
-    });
     expect((await gate({ ref: '@' })).ok).toBe(false);
   });
 
-  // --- unverifiable refspecs fail closed (Codex 2nd-pass on #976) ----------
-  // A safety gate can't chase every Git form, so anything that doesn't resolve
-  // to one safe branch is blocked.
-
-  it('fails closed on the matching refspec ":" (pushes every same-named branch incl. main)', async () => {
+  // Refspecs / rev syntax fail closed — the gate refuses to guess the
+  // destination. Covers the bypass vectors from successive Codex passes.
+  it.each([
+    ['HEAD:refs/heads/main', 'src:dst refspec'],
+    ['+HEAD:main', 'forced refspec'],
+    [':', 'matching refspec'],
+    ['+:', 'forced matching refspec'],
+    [':/fix:refs/heads/main', 'commit-search rev + dst (multi-colon)'],
+    [':refs/heads/main', 'delete refspec'],
+    ['--all', 'option-shaped'],
+    ['--mirror', 'option-shaped'],
+    ['main~1', 'rev syntax'],
+    ['ma*n', 'glob'],
+  ])('fails closed on %s (%s)', async (ref) => {
     const { lines, log } = capture();
     const gate = makeProtectMainPrePushGate({
       enabled: true,
-      getCurrentBranch: () => 'feature/foo', // live read says feature, but ":" hits main
+      defaultBranch: 'main',
+      getCurrentBranch: () => 'feature/foo', // live read is safe; the ref is not
       log,
     });
-    const verdict = await gate({ ref: ':' });
+    const verdict = await gate({ ref });
     expect(verdict.ok).toBe(false);
-    expect(lines[0]).toMatchObject({
-      event: 'protect_main_push_blocked',
-      ctx: { reason: 'ref_unverifiable', detail: 'matching refspec' },
-    });
-  });
-
-  it('fails closed on a forced matching refspec "+:"', async () => {
-    const { log } = capture();
-    const gate = makeProtectMainPrePushGate({
-      enabled: true,
-      getCurrentBranch: () => 'feature/foo',
-      log,
-    });
-    expect((await gate({ ref: '+:' })).ok).toBe(false);
-  });
-
-  it('fails closed on option-shaped refs (--all / --mirror)', async () => {
-    const { log } = capture();
-    const gate = makeProtectMainPrePushGate({
-      enabled: true,
-      getCurrentBranch: () => 'feature/foo',
-      log,
-    });
-    expect((await gate({ ref: '--all' })).ok).toBe(false);
-    expect((await gate({ ref: '--mirror' })).ok).toBe(false);
+    expect(lines[0].event).toBe('protect_main_push_blocked');
   });
 });
