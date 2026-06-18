@@ -78,6 +78,22 @@ snapshot, device-local, or hybrid.
 Current owner workflow favors remote-snapshot-primary with per-device slots
 because Android plus WSL continuity matters.
 
+**Auto-back (shipped, web/cloud).** Snapshots are device-local and bounded by a
+~50-min reconnect window. The durable, portable layer above them is **auto-back**:
+while a repo sandbox is live, the working tree is continuously mirrored to a
+pushed `draft/auto/<branch>` ref on origin (debounce-after-edits + flush on
+tab-hide). Non-switching capture (throwaway index + `commit-tree` off HEAD, never
+moves HEAD) → secret-scanned, *non*-Protect-Main draft push. The mutation signal
+is client-side at tool dispatch (not the sandbox `workspace_revision`, which
+self-loops and is 0 on Cloudflare). On a fresh sandbox that wasn't
+snapshot-restored, an **offer-to-restore** banner surfaces a newer backup; apply
+is gated on `backup-parent == HEAD` (so it restores exactly the WIP and never
+reverts intervening commits) and pins the detected sha (no TOCTOU). This is the
+write-side complement to §11's read-tier (reads off GitHub) — together they make
+the sandbox disposable compute attached to a pushed branch. Shipped: #980 / #981
+/ #983; follow-ups #982. Design provenance:
+[`Pushed Branch as Source of Truth — Gate at Push`](<Pushed Branch as Source of Truth — Gate at Push.md>).
+
 Source notes:
 [`Main as Scratchpad`](<../archive/decisions/Main as Scratchpad — Branch on Graduation.md>),
 [`Scratchpad Durable Storage`](<../archive/decisions/Scratchpad Durable Storage — Remote vs Phone-Local.md>),

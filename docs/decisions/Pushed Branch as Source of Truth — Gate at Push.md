@@ -1,12 +1,20 @@
 # Pushed Branch as Source of Truth — Gate at Push, Sandbox as Disposable Compute
 
 Date: 2026-06-18
-Status: **Draft** — design-in-motion; not yet roadmap-promoted. Poses the model
-and the owner calls it needs; does not claim the decisions are settled. On
-implementation, the Current parts fold into
+Status: **Draft (partially implemented)** — design-in-motion; not yet
+roadmap-promoted. Poses the model and the owner calls it needs; does not claim
+the decisions are settled. On implementation, the Current parts fold into
 [`Platform, Sessions, and Sandbox Decisions.md`](<Platform, Sessions, and Sandbox Decisions.md>)
 (which owns the commit/push/sandbox seams) and this file becomes provenance.
 Owner: Push
+
+**Implemented so far (2026-06-18):** Move B / **B2 (auto-back)** has shipped —
+the working tree is continuously mirrored to a pushed `draft/auto/<branch>` ref
+with an offer-to-restore on a fresh sandbox (#980 primitive, #981 coordinator,
+#983 restore; follow-ups #982). The durability decision now lives in
+[`Platform, Sessions, and Sandbox Decisions.md`](<Platform, Sessions, and Sandbox Decisions.md>) §5.
+**Still open:** Move A (gate-at-push / move the Auditor to push) is blocked on
+Open Question 1; B1 (push-to-start) remains the destination beyond B2.
 
 ## Thesis
 
