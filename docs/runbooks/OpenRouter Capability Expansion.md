@@ -88,8 +88,12 @@ supported** via its tool-shaped mechanism: `toAnthropicMessages` /
 translators route that tool's streamed `input` to plain text content so callers
 `parseStructured` it exactly like an OpenAI `response_format` body. Gated by
 `providerModelSupportsStructuredOutput('anthropic', …)` (name-based — forced tool
-use works on any tool-capable Claude). Vertex-Anthropic and Zen-Go-Anthropic
-share the same bridge but aren't gated on yet.
+use works on any tool-capable Claude). **Zen-Go-Anthropic** (minimax/qwen) is
+also gated on — `providerModelSupportsStructuredOutput('zen', …)` returns true
+when `getZenGoTransport` resolves the model to the Anthropic transport, since the
+forced-tool bridge applies there too (the OpenAI-transport zen models stay
+capability-gated on `response_format`). Vertex-Anthropic shares the same bridge
+but isn't gated on yet.
 
 ### Pieces
 

@@ -398,6 +398,34 @@ describe('handleZenGoChat — neutral wire (dual-accept)', () => {
     ]);
   });
 
+  it('turns a neutral responseFormat into a forced structured-output tool on the Anthropic transport', async () => {
+    const get = captureUpstream();
+    const schema = {
+      type: 'object',
+      properties: { verdict: { type: 'string' } },
+      required: ['verdict'],
+      additionalProperties: false,
+    };
+    await handleZenGoChat(
+      makeNeutralRequest({
+        model: 'minimax-m3',
+        messages: [{ role: 'user', content: 'audit' }],
+        responseFormat: { name: 'auditor_verdict', schema },
+      }),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    expect(body.tools).toEqual([
+      {
+        name: '__push_structured_output__',
+        description: expect.any(String),
+        input_schema: schema,
+        strict: true,
+      },
+    ]);
+    expect(body.tool_choice).toEqual({ type: 'tool', name: '__push_structured_output__' });
+  });
+
   it('routes an OpenAI-transport model through toOpenAIChat (model in body, /chat/completions)', async () => {
     const get = captureUpstream();
     await handleZenGoChat(
