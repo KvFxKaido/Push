@@ -43,27 +43,42 @@ describe('onWorkspaceMutation / notifyWorkspaceMutation', () => {
 });
 
 describe('shouldSignalWorkspaceMutation', () => {
+  const opts = (o: Partial<Parameters<typeof shouldSignalWorkspaceMutation>[1]>) => ({
+    isFileMutationTool: false,
+    isExec: false,
+    execIsMutating: false,
+    ...o,
+  });
+
   it('fires for any file-mutation tool', () => {
     expect(
-      shouldSignalWorkspaceMutation(true, {
-        isExec: false,
-        execIsMutating: false,
-      }),
+      shouldSignalWorkspaceMutation('sandbox_write_file', opts({ isFileMutationTool: true })),
     ).toBe(true);
   });
 
-  it('fires for a mutating exec, not a read-only one', () => {
-    expect(shouldSignalWorkspaceMutation(false, { isExec: true, execIsMutating: true })).toBe(true);
-    expect(shouldSignalWorkspaceMutation(false, { isExec: true, execIsMutating: false })).toBe(
-      false,
-    );
+  it('fires for the command-running verification tools (lockfile writes)', () => {
+    for (const t of ['sandbox_run_tests', 'sandbox_check_types', 'sandbox_verify_workspace']) {
+      expect(shouldSignalWorkspaceMutation(t, opts({}))).toBe(true);
+    }
   });
 
-  it('does NOT fire for a non-file-mutation, non-exec tool (reads, push, commit, branch ops)', () => {
-    // These reach dispatch as non-file-mutation tools that aren't sandbox_exec,
-    // so they never signal a working-tree mutation.
-    expect(shouldSignalWorkspaceMutation(false, { isExec: false, execIsMutating: false })).toBe(
-      false,
-    );
+  it('fires for a mutating exec, not a read-only one', () => {
+    expect(
+      shouldSignalWorkspaceMutation('sandbox_exec', opts({ isExec: true, execIsMutating: true })),
+    ).toBe(true);
+    expect(
+      shouldSignalWorkspaceMutation('sandbox_exec', opts({ isExec: true, execIsMutating: false })),
+    ).toBe(false);
+  });
+
+  it('does NOT fire for reads, push, commit, branch ops, diff', () => {
+    for (const t of [
+      'sandbox_read_file',
+      'sandbox_push',
+      'sandbox_prepare_commit',
+      'sandbox_diff',
+    ]) {
+      expect(shouldSignalWorkspaceMutation(t, opts({}))).toBe(false);
+    }
   });
 });

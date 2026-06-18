@@ -39,17 +39,35 @@ export function notifyWorkspaceMutation(sandboxId: string): void {
 }
 
 /**
- * Whether a successfully-dispatched sandbox tool counts as a working-tree
- * mutation for auto-back. File-mutation tools always do; `sandbox_exec` does
- * when it's a mutating command (explicit flag, else the heuristic). Reads,
- * push, commit, branch ops, diff, etc. do not — push/commit change refs, not
- * working-tree files, and would otherwise self-trigger auto-back's own push.
+ * Tools that run a command which can touch tracked files (e.g. a lockfile from
+ * `npm install`) even though they aren't "file-mutation" tools. Their handlers
+ * run with `markWorkspaceMutated: true`. Their typical writes (node_modules,
+ * build/test caches) are .gitignored, so the backup capture's tree comparison
+ * makes those a no-op — but a lockfile change is real, so they must signal.
+ */
+const WORKSPACE_MUTATING_TOOLS = new Set([
+  'sandbox_run_tests',
+  'sandbox_check_types',
+  'sandbox_verify_workspace',
+]);
+
+/**
+ * Whether a dispatched sandbox tool *may* have mutated the working tree, and so
+ * should signal auto-back. Deliberately conservative — it fires on the attempt,
+ * not on success, because a tool can mutate then error (a partial patchset; an
+ * exec that ran before the sandbox went unreachable). The backup capture's
+ * tree-vs-HEAD comparison is the authoritative filter: if nothing actually
+ * changed, the backup is a cheap no-op. File-mutation tools, the
+ * command-running verification tools, and a mutating `sandbox_exec` qualify;
+ * reads, push, commit, branch ops, diff do not (push/commit change refs, not
+ * working-tree files, and would otherwise self-trigger auto-back's own push).
  */
 export function shouldSignalWorkspaceMutation(
-  isFileMutationTool: boolean,
-  opts: { isExec: boolean; execIsMutating: boolean },
+  toolName: string,
+  opts: { isFileMutationTool: boolean; isExec: boolean; execIsMutating: boolean },
 ): boolean {
-  if (isFileMutationTool) return true;
+  if (opts.isFileMutationTool) return true;
+  if (WORKSPACE_MUTATING_TOOLS.has(toolName)) return true;
   if (opts.isExec) return opts.execIsMutating;
   return false;
 }

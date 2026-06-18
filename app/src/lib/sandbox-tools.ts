@@ -437,16 +437,18 @@ export async function executeSandboxToolCall(
   options?: SandboxExecutionOptions,
 ): Promise<ToolExecutionResult> {
   const result = await executeSandboxToolCallInner(call, sandboxId, options);
-  if (sandboxId && !result.structuredError) {
+  // Signal on the *attempt* (not gated on success): a tool can mutate then error
+  // (partial patchset; exec that ran before the sandbox went unreachable). The
+  // backup capture's tree comparison is the real filter — a no-op when nothing
+  // changed. Auto-back's own capture/push bypass this dispatcher, so no loop.
+  if (sandboxId) {
     const isExec = call.tool === 'sandbox_exec';
     const command = isExec ? ((call.args as { command?: string })?.command ?? '') : '';
-    // Mirror the inner dispatch's mutation classification for exec (same
-    // heuristic it uses to mark the workspace mutated).
-    const execIsMutating = isExec && isLikelyMutatingSandboxExec(command);
     if (
-      shouldSignalWorkspaceMutation(isFileMutationToolName(call.tool), {
+      shouldSignalWorkspaceMutation(call.tool, {
+        isFileMutationTool: isFileMutationToolName(call.tool),
         isExec,
-        execIsMutating,
+        execIsMutating: isExec && isLikelyMutatingSandboxExec(command),
       })
     ) {
       notifyWorkspaceMutation(sandboxId);
