@@ -34,6 +34,15 @@ export interface PrePushVerdict {
   ok: boolean;
   /** Surfaced to the caller when blocked (e.g. the secret scan's findings). */
   reason?: string;
+  /**
+   * Set by a gate that blocked on transient infra trouble rather than a real
+   * policy violation — e.g. the Auditor backend was unreachable, as opposed to
+   * returning an UNSAFE verdict. Callers map this to a retryable structured
+   * error, never to a terminal "unsafe"/"secret found" surface (the
+   * HTTP-status-classification discipline in CLAUDE.md: don't lump infra trouble
+   * into the verdict bucket).
+   */
+  retryable?: boolean;
 }
 
 /** Options accepted by a push — shared by `PushGit.push` and the pre-push gates. */
