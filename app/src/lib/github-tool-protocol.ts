@@ -390,6 +390,7 @@ export function buildGitHubToolProtocol(options: GitHubToolProtocolOptions = {})
       ? `- EXPLORER-FIRST: For any task requiring discovery (e.g., "where is X?", "how does Y work?", "trace the flow of Z", "what depends on A?", or "why does B happen?"), use ${DELEGATE_EXPLORER_TOOL}. Do not jump straight to the Coder for investigation.`
       : null,
     `- For "what changed recently?" or "recent activity" use ${LIST_COMMITS_TOOL}`,
+    `- READ TIER: ${READ_FILE_TOOL}, ${SEARCH_FILES_TOOL}, ${GREP_FILE_TOOL}, and ${LIST_DIRECTORY_TOOL} are the DEFAULT way to explore, search, and read this repository — they read the active branch's last pushed state and stay available even when the sandbox is slow or unavailable. Reach for the sandbox read tools only when you need uncommitted working-tree changes you've made this session, or when a GitHub read fails.`,
     `- For "show me [filename]" use ${READ_FILE_TOOL}. For large files (80KB+), use start_line/end_line to read specific sections, or ${GREP_FILE_TOOL} to find what you need first.`,
     `- For large files: use ${GREP_FILE_TOOL} to locate the relevant lines, then ${READ_FILE_TOOL} with start_line/end_line to read the surrounding context.`,
     `- To explore the project structure or find files, use ${LIST_DIRECTORY_TOOL} FIRST, then ${READ_FILE_TOOL} on specific files.`,

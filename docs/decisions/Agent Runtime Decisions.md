@@ -218,6 +218,36 @@ drift tests), the durable job engine, and the safety/Auditor boundary — the
 local lead still goes through the same gates, just without the sandbox's
 constraints.
 
+### 11. Reads default to GitHub; the cloud sandbox is the on-demand exception
+
+On the **web/cloud-sandbox** surface the two read tiers are not peers. The
+GitHub read tier (`repo_read` / `repo_search` / `repo_grep` / `repo_ls` /
+`branches`, registry `source: 'github'`, read-only) is the **default** way the
+lead explores, searches, and reads code: it reflects the active branch's last
+pushed state and stays available even when the cloud sandbox is slow, starting,
+or unavailable. The cloud sandbox read tools (`read` / `search` / `list_dir` /
+`read_symbols` / `refs`) are the **on-demand exception** — reached only for the
+**working tree** (files created or edited this session, not yet pushed) or when
+a GitHub read fails. This decouples exploration from a substrate we don't yet
+trust for reliability; a flaky sandbox no longer blocks "where is X / read Y /
+how does Z work."
+
+The precedence lives in the advertised tool set plus the read-tier framing in
+both web protocol builders (`buildGitHubToolProtocol` in
+`app/src/lib/github-tool-protocol.ts`, `SANDBOX_TOOL_PROTOCOL` in
+`app/src/lib/sandbox-tool-detection.ts`), pinned against silent re-merge by
+`app/src/lib/read-tier-precedence.test.ts`. The sandbox read tools stay
+advertised (precedence is a default, not a ban) so read-before-edit on
+uncommitted files still works.
+
+Scope: **web only.** The CLI/daemon (§10) reads a real local filesystem, which
+*is* the reliable default there — its local read tools stay primary and GitHub
+reads serve cross-repo / pushed-state lookups. Known gap: the precedence is
+currently advertisement + contract guidance, so a non-cooperating model could
+still call a sandbox read and fail rather than degrade. A code-enforced
+cross-tier fallback (sandbox read → GitHub equivalent on unavailability) is the
+follow-up that would make this robust against non-cooperating models per §3.
+
 ## Active Runtime Work
 
 1. Delete the Planner/brief now that inline is the measured default (2026-06-11); attachments-on-engine-envelope is the prerequisite.
@@ -227,7 +257,8 @@ constraints.
 5. Graduate loop detection enforcement only after telemetry supports thresholds.
 6. Decide whether memory Phase 3 immutable verbatim logs are worth the storage cost.
 7. Promote the diff/annotation envelope only when a roadmap item needs it.
-8. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model. Step 1 landed 2026-06-12: interactive turns default to the in-loop lead with the Planner wrapper behind `PUSH_DELEGATION_MODE=delegated`. Step 2 landed 2026-06-12: the lead-kernel lane (`cli/lead-turn.ts`) runs the turn on the shared kernel in `leadMode`. Step 3 landed 2026-06-12: the lane is the **default**; `PUSH_LEAD_RUNTIME=engine` is the exact-match opt-out while it bakes. Remaining: retire the engine loop's duplicated round machinery once the lane has baked.
+8. Make read-tier precedence (§11) robust against non-cooperating models: add a code-enforced cross-tier fallback so a cloud-sandbox read that fails on unavailability degrades to its GitHub equivalent, instead of relying on contract guidance alone.
+9. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model. Step 1 landed 2026-06-12: interactive turns default to the in-loop lead with the Planner wrapper behind `PUSH_DELEGATION_MODE=delegated`. Step 2 landed 2026-06-12: the lead-kernel lane (`cli/lead-turn.ts`) runs the turn on the shared kernel in `leadMode`. Step 3 landed 2026-06-12: the lane is the **default**; `PUSH_LEAD_RUNTIME=engine` is the exact-match opt-out while it bakes. Remaining: retire the engine loop's duplicated round machinery once the lane has baked.
 
 ## Archived Context Worth Knowing
 
