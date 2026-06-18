@@ -119,4 +119,57 @@ describe('makeProtectMainPrePushGate', () => {
     });
     expect((await gate()).ok).toBe(false);
   });
+
+  // --- refspec destination (Codex P1 on #976) -----------------------------
+  // A push refspec destination overrides the checked-out branch, so the gate
+  // must inspect the ref target, not just live HEAD.
+
+  it('blocks a refspec push to main even from a feature branch', async () => {
+    const { lines, log } = capture();
+    const gate = makeProtectMainPrePushGate({
+      enabled: true,
+      defaultBranch: 'main',
+      getCurrentBranch: () => 'feature/foo', // checked out on a feature branch
+      log,
+    });
+    const verdict = await gate({ ref: 'HEAD:refs/heads/main' });
+    expect(verdict.ok).toBe(false);
+    expect(lines[0]).toMatchObject({
+      event: 'protect_main_push_blocked',
+      ctx: { reason: 'protected_branch', branch: 'main', via: 'refspec' },
+    });
+  });
+
+  it('blocks a forced refspec push to main (+HEAD:main)', async () => {
+    const { log } = capture();
+    const gate = makeProtectMainPrePushGate({
+      enabled: true,
+      getCurrentBranch: () => 'feature/foo',
+      log,
+    });
+    expect((await gate({ ref: '+HEAD:main' })).ok).toBe(false);
+  });
+
+  it('allows a refspec push to a feature branch', async () => {
+    const { log } = capture();
+    const gate = makeProtectMainPrePushGate({
+      enabled: true,
+      defaultBranch: 'main',
+      getCurrentBranch: () => 'main', // even checked out on main…
+      log,
+    });
+    // …the push targets a feature branch, so it is allowed.
+    expect((await gate({ ref: 'feature/bar' })).ok).toBe(true);
+  });
+
+  it('falls back to live HEAD when the ref is HEAD (no explicit destination)', async () => {
+    const { log } = capture();
+    const gate = makeProtectMainPrePushGate({
+      enabled: true,
+      defaultBranch: 'main',
+      getCurrentBranch: () => 'main',
+      log,
+    });
+    expect((await gate({ ref: 'HEAD' })).ok).toBe(false);
+  });
 });

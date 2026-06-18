@@ -903,6 +903,10 @@ export async function runInPageCoderKernel(
         auditorModelOverride: opts.auditorModelOverride,
         currentBranch: spec.branchContext?.activeBranch,
         defaultBranch: spec.branchContext?.defaultBranch,
+        // Thread Protect Main so a delegated/inline coder push hits the boundary
+        // gate too (the background CF-route path can't push today — sandbox_push
+        // maps to not_implemented_yet).
+        isMainProtected: spec.branchContext?.protectMain ?? false,
       });
       if (call.tool === 'sandbox_exec' && result.branch) {
         callbacks.onSandboxExecBranch?.({ command: call.args.command, branch: result.branch });

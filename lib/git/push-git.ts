@@ -36,15 +36,28 @@ export interface PrePushVerdict {
   reason?: string;
 }
 
-/** Gate run before a push; the factory builds it over the deterministic secret scan. */
-export type PrePushGate = () => Promise<PrePushVerdict>;
+/** Options accepted by a push — shared by `PushGit.push` and the pre-push gates. */
+export interface PushOptions {
+  setUpstream?: boolean;
+  remote?: string;
+  ref?: string;
+}
+
+/**
+ * Gate run before a push. Receives the push options so a gate can inspect the
+ * actual destination — e.g. a `ref` refspec (`HEAD:refs/heads/main`) that
+ * targets a different branch than the checked-out one. Gates that only care
+ * about the working tree (the secret scan) can ignore the argument.
+ */
+export type PrePushGate = (opts?: PushOptions) => Promise<PrePushVerdict>;
 
 /**
  * Compose multiple `PrePushGate`s into one. Gates run in order and the first
- * denial wins (short-circuit) — so order them safety-first. A throw propagates
- * to `PushGit.push`, which fail-safe-blocks. Returns `undefined` when no gate is
- * supplied (so the caller can leave `prePush` unset) and the single gate
- * unwrapped when only one is active.
+ * denial wins (short-circuit) — so order them safety-first. The push `opts` are
+ * forwarded to every gate. A throw propagates to `PushGit.push`, which
+ * fail-safe-blocks. Returns `undefined` when no gate is supplied (so the caller
+ * can leave `prePush` unset) and the single gate unwrapped when only one is
+ * active.
  */
 export function composePrePushGates(
   gates: ReadonlyArray<PrePushGate | undefined>,
@@ -52,9 +65,9 @@ export function composePrePushGates(
   const active = gates.filter((g): g is PrePushGate => Boolean(g));
   if (active.length === 0) return undefined;
   if (active.length === 1) return active[0];
-  return async () => {
+  return async (opts) => {
     for (const gate of active) {
-      const verdict = await gate();
+      const verdict = await gate(opts);
       if (!verdict.ok) return verdict;
     }
     return { ok: true };
@@ -137,15 +150,13 @@ export class PushGit {
    * *open* on its own infra errors (it can't read the diff), so this catch only
    * trips on an unexpected gate bug.
    */
-  async push(opts?: {
-    setUpstream?: boolean;
-    remote?: string;
-    ref?: string;
-  }): Promise<GitWriteResult> {
+  async push(opts?: PushOptions): Promise<GitWriteResult> {
     if (this.prePush) {
       let verdict: PrePushVerdict;
       try {
-        verdict = await this.prePush();
+        // Forward opts so a gate can inspect the real push destination (e.g. a
+        // refspec targeting a protected branch), not just the checked-out one.
+        verdict = await this.prePush(opts);
       } catch (err) {
         const reason = err instanceof Error ? err.message : 'pre-push gate failed';
         return { ok: false, blocked: true, exitCode: 1, stdout: '', stderr: reason };
