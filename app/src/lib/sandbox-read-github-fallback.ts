@@ -51,11 +51,13 @@ export function mapSandboxReadToGitHubCall(
   switch (githubTool) {
     case 'read_file': {
       if (typeof args.path !== 'string') return null;
+      const path = toRepoRelativePath(args.path);
+      if (!path) return null; // the `/workspace` root is not a readable file
       return {
         tool: 'read_file',
         args: {
           repo,
-          path: args.path,
+          path,
           branch,
           start_line: typeof args.start_line === 'number' ? args.start_line : undefined,
           end_line: typeof args.end_line === 'number' ? args.end_line : undefined,
@@ -66,19 +68,37 @@ export function mapSandboxReadToGitHubCall(
       if (typeof args.query !== 'string') return null;
       return {
         tool: 'search_files',
-        args: {
-          repo,
-          query: args.query,
-          path: typeof args.path === 'string' ? args.path : undefined,
-          branch,
-        },
+        args: { repo, query: args.query, path: repoRelativePathFilter(args.path), branch },
       };
     }
     case 'list_directory': {
       return {
         tool: 'list_directory',
-        args: { repo, path: typeof args.path === 'string' ? args.path : undefined, branch },
+        args: { repo, path: repoRelativePathFilter(args.path), branch },
       };
     }
   }
+}
+
+/**
+ * Sandbox paths are normalized to `/workspace/...` (see `normalizeSandboxPath`
+ * in `sandbox-tool-utils.ts`), but the GitHub contents API addresses files
+ * repo-relative. Strip the workspace prefix so a fallback read doesn't look for
+ * a literal `workspace/` directory. Returns `''` for the workspace root.
+ */
+function toRepoRelativePath(path: string): string {
+  const trimmed = path.trim();
+  if (trimmed === '/workspace' || trimmed === 'workspace' || trimmed === '/') return '';
+  return trimmed.replace(/^\/?workspace\//, '').replace(/^\/+/, '');
+}
+
+/**
+ * Repo-relative form of an optional path filter (search / list_dir): `undefined`
+ * when the arg is absent or resolves to the repo root, so GitHub scopes to the
+ * whole repo rather than a bogus `workspace/` path.
+ */
+function repoRelativePathFilter(path: unknown): string | undefined {
+  if (typeof path !== 'string') return undefined;
+  const rel = toRepoRelativePath(path);
+  return rel === '' ? undefined : rel;
 }

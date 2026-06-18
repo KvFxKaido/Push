@@ -16,6 +16,37 @@ describe('mapSandboxReadToGitHubCall', () => {
     });
   });
 
+  it('strips the /workspace prefix to a repo-relative path (production paths are normalized)', () => {
+    // validateSandboxToolCall runs args through normalizeSandboxPath, so real
+    // calls arrive as /workspace/... — the GitHub contents API wants repo-relative.
+    expect(
+      mapSandboxReadToGitHubCall(
+        { tool: 'sandbox_read_file', args: { path: '/workspace/src/app.ts' } },
+        REPO,
+        'main',
+      ),
+    ).toMatchObject({ tool: 'read_file', args: { path: 'src/app.ts' } });
+
+    expect(
+      mapSandboxReadToGitHubCall(
+        { tool: 'sandbox_search', args: { query: 'x', path: '/workspace/app/src' } },
+        REPO,
+      ),
+    ).toMatchObject({ tool: 'search_files', args: { query: 'x', path: 'app/src' } });
+  });
+
+  it('maps the /workspace root to no path filter (list/search scope the whole repo)', () => {
+    expect(
+      mapSandboxReadToGitHubCall({ tool: 'sandbox_list_dir', args: { path: '/workspace' } }, REPO),
+    ).toMatchObject({ tool: 'list_directory', args: { path: undefined } });
+  });
+
+  it('returns null when a read path resolves to the workspace root (not a file)', () => {
+    expect(
+      mapSandboxReadToGitHubCall({ tool: 'sandbox_read_file', args: { path: '/workspace' } }, REPO),
+    ).toBeNull();
+  });
+
   it('maps sandbox_search → search_files, carrying an optional path filter', () => {
     expect(
       mapSandboxReadToGitHubCall(

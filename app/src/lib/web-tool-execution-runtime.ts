@@ -142,10 +142,13 @@ async function tryGitHubReadFallback(
   }
   try {
     const result = await executeToolCall(githubCall, repo);
-    if (result.structuredError) {
-      // GitHub couldn't serve it either (e.g. path not on the pushed branch,
-      // access denied) — keep the original sandbox error instead of swapping
-      // in a less-relevant one.
+    // The GitHub executor reports many failures (404s, repo mismatch, "path is
+    // a directory") as `[Tool Error] …` *text* with no `structuredError`.
+    // Treat either signal as a failed fallback so we keep the original, more
+    // relevant sandbox error instead of swapping in a misleading GitHub miss.
+    const failed =
+      Boolean(result.structuredError) || (result.text ?? '').trimStart().startsWith('[Tool Error]');
+    if (failed) {
       console.log(
         JSON.stringify({
           level: 'warn',
@@ -153,7 +156,7 @@ async function tryGitHubReadFallback(
           from: sandboxCall.tool,
           to: githubCall.tool,
           reason,
-          error_type: result.structuredError.type,
+          error_type: result.structuredError?.type ?? 'tool_error_text',
         }),
       );
       return null;

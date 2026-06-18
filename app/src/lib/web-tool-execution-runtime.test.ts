@@ -830,6 +830,30 @@ describe('WebToolExecutionRuntime — read-tier GitHub fallback (decision §11)'
     expect(result.structuredError?.type).toBe('SANDBOX_UNREACHABLE');
   });
 
+  it('keeps the original sandbox error when GitHub fails as text-only [Tool Error]', async () => {
+    // The GitHub executor reports 404s / repo mismatch / "path is a directory"
+    // as text with no structuredError — the fallback must not treat that as a
+    // successful read and swap out the retryable SANDBOX_UNREACHABLE.
+    vi.mocked(sandboxTools.executeSandboxToolCall).mockResolvedValueOnce({
+      text: '[sandbox] gone',
+      structuredError: { type: 'SANDBOX_UNREACHABLE', retryable: true, message: 'sandbox lost' },
+    });
+    vi.mocked(githubTools.executeToolCall).mockResolvedValueOnce({
+      text: '[Tool Error] "src/app.ts" not found on branch',
+    });
+
+    const result = await runtime.execute(sandboxRead(), {
+      allowedRepo: 'owner/repo',
+      sandboxId: 'sb-cloud-1',
+      role: 'coder',
+      isMainProtected: false,
+    });
+
+    expect(result.structuredError?.type).toBe('SANDBOX_UNREACHABLE');
+    expect(result.text).toContain('[sandbox] gone');
+    expect(result.text).not.toContain('[Read tier]');
+  });
+
   it('keeps the original sandbox error when GitHub also fails', async () => {
     vi.mocked(sandboxTools.executeSandboxToolCall).mockResolvedValueOnce({
       text: '[sandbox] gone',
