@@ -282,8 +282,10 @@ export class WebToolExecutionRuntime
       activeModel: context.activeModel,
       capabilityLedger: context.capabilityLedger,
       defaultBranch: context.defaultBranch,
-      // Push-tracked branch — sandbox-independent. Protect Main uses this as a
-      // fallback when the live read below is unavailable (sandbox slow/down).
+      // Push-tracked branch — sandbox-independent. Memory/artifact scoping
+      // prefer it; Protect Main consults it only when no live reader exists at
+      // all (never as a fallback for an unreadable live HEAD — that fails
+      // closed, so a desynced session can't bypass the gate via stale state).
       currentBranch: context.currentBranch,
       isMainProtected: context.isMainProtected,
       // Branch reader is lazy — hooks that don't need it never pay the
