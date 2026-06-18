@@ -79,6 +79,12 @@ function restoreErrorMessage(result: Exclude<RestoreResult, { status: 'restored'
   if (result.status === 'skipped-dirty') {
     return 'Restore skipped because the workspace changed.';
   }
+  if (result.reason === 'backup_changed') {
+    return 'The backup was updated — dismiss and reopen to restore the latest.';
+  }
+  if (result.reason === 'stale_base') {
+    return 'The branch moved since this backup, so it can no longer be restored cleanly.';
+  }
   return result.reason || 'Restore failed.';
 }
 
@@ -143,11 +149,14 @@ export function useWorkspaceSandboxRestore({
   }, []);
 
   const restore = useCallback(async () => {
-    if (!sandboxId || !branch) return;
+    if (!sandboxId || !branch || !banner.available || !banner.sha) return;
+    // Pin the SHA detection summarized — apply bails if the ref has since moved
+    // (a new auto-back), so we never restore a different backup than offered.
+    const sha = banner.sha;
     setBanner((current) =>
       current.available ? { ...current, restoring: true, error: null } : current,
     );
-    const result = await applyRef.current(sandboxId, branch);
+    const result = await applyRef.current(sandboxId, branch, sha);
     if (result.status === 'restored') {
       setBanner(initialBannerState);
       return;
@@ -157,7 +166,7 @@ export function useWorkspaceSandboxRestore({
       restoring: false,
       error: restoreErrorMessage(result),
     }));
-  }, [sandboxId, branch]);
+  }, [sandboxId, branch, banner.available, banner.sha]);
 
   return {
     available: visible,

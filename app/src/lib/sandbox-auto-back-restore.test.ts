@@ -72,6 +72,16 @@ describe('detectAutoBackRestore', () => {
     });
   });
 
+  it('reports unavailable when the branch moved past the backup base (stale base)', async () => {
+    // Restoring a backup whose parent != current HEAD would revert the
+    // intervening commits — must not be offered.
+    dispatch((cmd) => (cmd.includes('rev-parse') ? { stdout: 'STALEBASE\n' } : {}));
+    expect(await detectAutoBackRestore('sb-1', 'feature/x', silent)).toEqual({
+      available: false,
+      reason: 'stale_base',
+    });
+  });
+
   it('parses an available backup sha and shortstat summary', async () => {
     dispatch((cmd) =>
       cmd.includes('git diff --shortstat') ? { stdout: `BACKUP ${SHA}\n ${SUMMARY}\n` } : {},
@@ -88,24 +98,36 @@ describe('applyAutoBackRestore', () => {
   beforeEach(() => vi.mocked(execInSandbox).mockReset());
 
   it('guards missing and invalid inputs before touching the sandbox', async () => {
-    expect(await applyAutoBackRestore(null, 'feature/x', silent)).toEqual({
+    expect(await applyAutoBackRestore(null, 'feature/x', SHA, silent)).toEqual({
       status: 'failed',
       reason: 'no_sandbox',
     });
-    expect(await applyAutoBackRestore('sb-1', '  ', silent)).toEqual({
+    expect(await applyAutoBackRestore('sb-1', 'feature/x', 'not-a-sha', silent)).toEqual({
+      status: 'failed',
+      reason: 'invalid_sha',
+    });
+    expect(await applyAutoBackRestore('sb-1', '  ', SHA, silent)).toEqual({
       status: 'failed',
       reason: 'no_branch',
     });
-    expect(await applyAutoBackRestore('sb-1', 'bad branch', silent)).toEqual({
+    expect(await applyAutoBackRestore('sb-1', 'bad branch', SHA, silent)).toEqual({
       status: 'failed',
       reason: 'invalid_branch',
     });
     expect(execInSandbox).not.toHaveBeenCalled();
   });
 
+  it('passes the pinned sha into the apply command', async () => {
+    dispatch((cmd) =>
+      cmd.includes('git read-tree -u --reset') ? { stdout: `RESTORED ${SHA}\n` } : {},
+    );
+    await applyAutoBackRestore('sb-1', 'feature/x', SHA, silent);
+    expect(String(vi.mocked(execInSandbox).mock.calls[0]?.[1])).toContain(`"$backup" != "${SHA}"`);
+  });
+
   it('returns skipped-dirty when the working tree is not clean', async () => {
     dispatch((cmd) => (cmd.includes('git status --porcelain') ? { stdout: 'DIRTY\n' } : {}));
-    expect(await applyAutoBackRestore('sb-1', 'feature/x', silent)).toEqual({
+    expect(await applyAutoBackRestore('sb-1', 'feature/x', SHA, silent)).toEqual({
       status: 'skipped-dirty',
     });
     const command = String(vi.mocked(execInSandbox).mock.calls[0]?.[1]);
@@ -118,7 +140,7 @@ describe('applyAutoBackRestore', () => {
     dispatch((cmd) =>
       cmd.includes('git read-tree -u --reset') ? { stdout: `RESTORED ${SHA}\n` } : {},
     );
-    expect(await applyAutoBackRestore('sb-1', 'feature/x', silent)).toEqual({
+    expect(await applyAutoBackRestore('sb-1', 'feature/x', SHA, silent)).toEqual({
       status: 'restored',
       sha: SHA,
     });
@@ -127,9 +149,25 @@ describe('applyAutoBackRestore', () => {
     );
   });
 
+  it('fails when the backup ref moved since detection (changed)', async () => {
+    dispatch((cmd) => (cmd.includes('git fetch --no-tags') ? { stdout: 'CHANGED\n' } : {}));
+    expect(await applyAutoBackRestore('sb-1', 'feature/x', SHA, silent)).toEqual({
+      status: 'failed',
+      reason: 'backup_changed',
+    });
+  });
+
+  it('fails when the branch moved past the backup base (stale base)', async () => {
+    dispatch((cmd) => (cmd.includes('git fetch --no-tags') ? { stdout: 'STALEBASE\n' } : {}));
+    expect(await applyAutoBackRestore('sb-1', 'feature/x', SHA, silent)).toEqual({
+      status: 'failed',
+      reason: 'stale_base',
+    });
+  });
+
   it('returns a typed failure when the backup ref cannot be fetched', async () => {
     dispatch((cmd) => (cmd.includes('git fetch --no-tags') ? { stdout: 'FETCH_FAILED\n' } : {}));
-    expect(await applyAutoBackRestore('sb-1', 'feature/x', silent)).toEqual({
+    expect(await applyAutoBackRestore('sb-1', 'feature/x', SHA, silent)).toEqual({
       status: 'failed',
       reason: 'FETCH_FAILED',
     });
@@ -137,7 +175,7 @@ describe('applyAutoBackRestore', () => {
 
   it('returns a typed failure when restore fails', async () => {
     dispatch((cmd) => (cmd.includes('read-tree') ? { stdout: 'RESTORE_FAILED\n' } : {}));
-    expect(await applyAutoBackRestore('sb-1', 'feature/x', silent)).toEqual({
+    expect(await applyAutoBackRestore('sb-1', 'feature/x', SHA, silent)).toEqual({
       status: 'failed',
       reason: 'RESTORE_FAILED',
     });
