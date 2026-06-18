@@ -141,7 +141,7 @@ export function createGitGuardPreHook(options: GitGuardOptions): PreToolHookEntr
     hook: (
       _toolName: string,
       args: Record<string, unknown>,
-      _context: ToolHookContext,
+      context: ToolHookContext,
     ): PreToolUseResult => {
       const command = typeof args.command === 'string' ? args.command : '';
       const decision = classifyGitCommand(command);
@@ -152,6 +152,26 @@ export function createGitGuardPreHook(options: GitGuardOptions): PreToolHookEntr
       const isBranchCreate = decision.kind === 'route' && decision.to === 'create_branch';
       const isBranchSwitch = decision.kind === 'route' && decision.to === 'switch_branch';
       const isBranchOp = isBranchCreate || isBranchSwitch;
+      const isPush = decision.kind === 'route' && decision.to === 'push';
+
+      // Protect Main (issue #977): a raw `git push` via sandbox_exec is the
+      // escape hatch that bypasses the audited push flow (sandbox_push) and its
+      // push-boundary Protect Main gate. When Protect Main is on, deny it
+      // *regardless of `allowDirectGit`* — the consent hatch must not reopen the
+      // hole the boundary gate closes. Pushes go through sandbox_push, which
+      // enforces Protect Main at the boundary; the current-branch case the model
+      // actually needs is fully served there. This is target-agnostic on
+      // purpose: predicting the push destination from a raw command string is
+      // the same losing game as refspec prediction (see #976), so block the verb
+      // and route to the audited tool instead.
+      if (context.isMainProtected && isPush) {
+        return {
+          decision: 'deny',
+          errorType: 'PROTECT_MAIN_BLOCKED',
+          reason:
+            'Protect Main is on: direct `git push` via sandbox_exec is blocked (it would bypass the audited push gate), even with allowDirectGit. Use the sandbox_push tool — it enforces Protect Main at the push boundary. If you need to push, switch to a feature branch first.',
+        };
+      }
 
       const mode = options.modeProvider();
       const shouldBlock = isBranchOp || mode !== 'full-auto';
