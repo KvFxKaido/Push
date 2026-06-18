@@ -6,9 +6,11 @@
  * ref while work is happening. Cadence (decided): **debounce after edits +
  * flush before the tab goes away.**
  *
- * - Mutations are observed via `onWorkspaceMutation` — the sandbox's
- *   workspace-revision increase, the single chokepoint every mutating exec
- *   funnels through (see `sandbox-file-version-cache.ts`). No parallel event bus.
+ * - Mutations are observed via `onWorkspaceMutation` — a client-side signal
+ *   emitted at tool dispatch on a successful file mutation / mutating exec (see
+ *   `sandbox-mutation-signal.ts`). Provider-agnostic (not the sandbox's
+ *   `workspace_revision`, which is always 0 on Cloudflare) and self-loop-free
+ *   (auto-back's own push bypasses the dispatcher, so it can't re-trigger).
  * - A burst of edits debounces to one backup `AUTO_BACK_DEBOUNCE_MS` after the
  *   last mutation.
  * - `visibilitychange → hidden` flushes a pending backup immediately (the user
@@ -25,7 +27,7 @@
  */
 
 import { useEffect, useRef } from 'react';
-import { onWorkspaceMutation } from '@/lib/sandbox-file-version-cache';
+import { onWorkspaceMutation } from '@/lib/sandbox-mutation-signal';
 import { backUpWorkingTree, type AutoBackResult } from '@/lib/sandbox-auto-back';
 
 export const AUTO_BACK_DEBOUNCE_MS = 45_000;

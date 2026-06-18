@@ -68,41 +68,8 @@ export function getSandboxWorkspaceRevision(sandboxId: string): number | undefin
   return sandboxWorkspaceRevisions.get(sandboxId);
 }
 
-/**
- * Mutation signal. The sandbox's workspace revision is the single chokepoint
- * every mutating exec funnels through (`setSandboxWorkspaceRevision` is called
- * from ~13 sites in `sandbox-client.ts`), and it only advances on a real
- * workspace mutation — a read-only exec reports the same revision. So a revision
- * *increase* is the one reliable "the working tree just changed" event. The B2
- * auto-back coordinator subscribes here and debounces a backup push; keeping the
- * emitter on the cache (a plain module) avoids inventing a parallel event bus.
- */
-type WorkspaceMutationListener = (sandboxId: string, revision: number) => void;
-const workspaceMutationListeners = new Set<WorkspaceMutationListener>();
-
-/** Subscribe to workspace-revision increases (mutations). Returns unsubscribe. */
-export function onWorkspaceMutation(listener: WorkspaceMutationListener): () => void {
-  workspaceMutationListeners.add(listener);
-  return () => {
-    workspaceMutationListeners.delete(listener);
-  };
-}
-
 export function setSandboxWorkspaceRevision(sandboxId: string, workspaceRevision: number): void {
-  const prev = sandboxWorkspaceRevisions.get(sandboxId);
   sandboxWorkspaceRevisions.set(sandboxId, workspaceRevision);
-  // Notify only on an increase — a mutation. The same revision (read-only exec)
-  // or a lower one (new/reset sandbox, race) is not a mutation signal. A
-  // listener throwing must never break revision bookkeeping.
-  if (prev === undefined || workspaceRevision > prev) {
-    for (const listener of workspaceMutationListeners) {
-      try {
-        listener(sandboxId, workspaceRevision);
-      } catch {
-        // swallow — revision tracking is load-bearing; observers are not.
-      }
-    }
-  }
 }
 
 export function clearSandboxWorkspaceRevision(sandboxId?: string): void {

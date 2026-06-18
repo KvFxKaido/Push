@@ -73,6 +73,8 @@ import { sanitizeUntrustedSource } from '@push/lib/untrusted-content';
 import { createGitGuardPreHook } from '@push/lib/default-pre-hooks';
 import { reduceToolOutput } from '@push/lib/tool-output-reducers';
 import { createSandboxPushGit } from './git-backend';
+import { isFileMutationToolName } from '@push/lib/tool-registry';
+import { notifyWorkspaceMutation, shouldSignalWorkspaceMutation } from './sandbox-mutation-signal';
 import { getApprovalMode } from './approval-mode';
 
 import type { SandboxToolCall, SandboxExecutionOptions } from './sandbox-tool-detection';
@@ -422,7 +424,38 @@ async function evaluateGitGuardForSandboxExec(
   };
 }
 
+/**
+ * Public entry: dispatch the tool, then emit the B2 working-tree mutation signal
+ * for a successful file mutation (or mutating exec). Provider-agnostic — fires
+ * off the dispatched tool, not the sandbox's `workspace_revision` — and
+ * self-loop-free: auto-back's own capture/push bypass this dispatcher, and
+ * push/commit aren't file mutations. See `sandbox-mutation-signal.ts`.
+ */
 export async function executeSandboxToolCall(
+  call: SandboxToolCall,
+  sandboxId: string,
+  options?: SandboxExecutionOptions,
+): Promise<ToolExecutionResult> {
+  const result = await executeSandboxToolCallInner(call, sandboxId, options);
+  if (sandboxId && !result.structuredError) {
+    const isExec = call.tool === 'sandbox_exec';
+    const command = isExec ? ((call.args as { command?: string })?.command ?? '') : '';
+    // Mirror the inner dispatch's mutation classification for exec (same
+    // heuristic it uses to mark the workspace mutated).
+    const execIsMutating = isExec && isLikelyMutatingSandboxExec(command);
+    if (
+      shouldSignalWorkspaceMutation(isFileMutationToolName(call.tool), {
+        isExec,
+        execIsMutating,
+      })
+    ) {
+      notifyWorkspaceMutation(sandboxId);
+    }
+  }
+  return result;
+}
+
+async function executeSandboxToolCallInner(
   call: SandboxToolCall,
   sandboxId: string,
   options?: SandboxExecutionOptions,
