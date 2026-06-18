@@ -367,6 +367,7 @@ export function buildAnthropicMessagesRequest(
       ? {
           name: request.response_format.json_schema.name,
           schema: request.response_format.json_schema.schema,
+          strict: request.response_format.json_schema.strict,
         }
       : undefined,
     anthropicVersion: options?.anthropicVersion,
@@ -398,7 +399,7 @@ interface AnthropicBodyAssembly {
    *  flat `{ name, description, input_schema }` custom-tool shape. */
   tools?: ToolFunctionSchema[];
   /** Structured-output JSON-Schema constraint, expressed as a forced tool. */
-  structuredOutput?: { name: string; schema: Record<string, unknown> };
+  structuredOutput?: { name: string; schema: Record<string, unknown>; strict?: boolean };
   anthropicVersion?: string;
   /**
    * When set, emitted as the top-level `model`. `buildAnthropicMessagesRequest`
@@ -509,6 +510,11 @@ function assembleAnthropicBody(parts: AnthropicBodyAssembly): Record<string, unk
       description:
         'Return the response as a single JSON object matching the schema. Call this tool exactly once.',
       input_schema: parts.structuredOutput.schema,
+      // Top-level `strict` makes Anthropic enforce schema conformance for the
+      // tool input (without it the model is only forced to *call* the tool, not
+      // to fill the schema exactly). Defaults true, mirroring the OpenAI
+      // `response_format` path (`ResponseFormatSpec.strict ?? true`).
+      strict: parts.structuredOutput.strict ?? true,
     });
     body.tool_choice = { type: 'tool', name: STRUCTURED_OUTPUT_TOOL_NAME };
   }
@@ -724,7 +730,11 @@ export function toAnthropicMessages(
     enableWebSearch: options?.enableWebSearch ?? req.anthropicWebSearch === true,
     tools: req.tools,
     structuredOutput: req.responseFormat
-      ? { name: req.responseFormat.name, schema: req.responseFormat.schema }
+      ? {
+          name: req.responseFormat.name,
+          schema: req.responseFormat.schema,
+          strict: req.responseFormat.strict,
+        }
       : undefined,
     anthropicVersion: options?.anthropicVersion,
     // `model` stays the sampling-gate input above; only the top-level body

@@ -455,6 +455,7 @@ describe('Anthropic structured outputs (forced tool)', () => {
         name: STRUCTURED_OUTPUT_TOOL_NAME,
         description: expect.any(String),
         input_schema: schema,
+        strict: true,
       },
     ]);
     expect(body.tool_choice).toEqual({ type: 'tool', name: STRUCTURED_OUTPUT_TOOL_NAME });
@@ -472,6 +473,7 @@ describe('Anthropic structured outputs (forced tool)', () => {
         name: STRUCTURED_OUTPUT_TOOL_NAME,
         description: expect.any(String),
         input_schema: schema,
+        strict: true,
       },
     ]);
     expect(body.tool_choice).toEqual({ type: 'tool', name: STRUCTURED_OUTPUT_TOOL_NAME });
