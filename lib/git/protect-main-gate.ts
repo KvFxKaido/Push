@@ -32,23 +32,46 @@ const defaultLog: LogFn = (level, event, ctx) => {
 };
 
 /**
- * Resolve the branch a push refspec will actually update, or null when the ref
- * is absent or targets the checked-out branch (so the caller reads live HEAD).
- *
- * `git push origin <ref>` accepts `src:dst`, a plain branch/ref, or `HEAD`; a
- * leading `+` forces. The destination side is what lands on the remote, so a
- * refspec like `HEAD:refs/heads/main` from a feature branch still updates main
- * — a current-branch-only check would miss it.
+ * What a push refspec resolves to, for the purpose of the Protect Main check:
+ *   - `current`      — no explicit destination; the push updates the checked-out
+ *                      branch, so the gate reads live HEAD.
+ *   - `branch`       — a single concrete destination branch to check.
+ *   - `unverifiable` — the gate cannot prove a single safe destination, so it
+ *                      must fail closed. Covers Git's matching refspec (`:` /
+ *                      `+:`, which pushes every same-named branch incl. main),
+ *                      option-shaped refs (`--all` / `--mirror` / `-f`, passed
+ *                      verbatim to `git push`), and empty/garbage refs.
  */
-export function resolvePushTargetBranch(ref: string | undefined): string | null {
-  if (!ref) return null;
-  const spec = ref.trim().replace(/^\+/, '');
-  const dst = spec.includes(':') ? spec.slice(spec.indexOf(':') + 1) : spec;
+export type PushTarget =
+  | { kind: 'current' }
+  | { kind: 'branch'; name: string }
+  | { kind: 'unverifiable'; detail: string };
+
+/**
+ * Resolve the destination a push refspec will update. A safety gate can't chase
+ * every Git refspec/option form, so this is an ALLOWLIST: anything that doesn't
+ * resolve to the checked-out branch or one concrete destination branch is
+ * `unverifiable` and the gate fails closed. `git push origin <ref>` accepts
+ * `src:dst`, a plain branch/ref, `HEAD`/`@`, with a leading `+` forcing.
+ */
+export function resolvePushTarget(ref: string | undefined): PushTarget {
+  if (ref == null) return { kind: 'current' };
+  const spec = ref.trim();
+  if (!spec) return { kind: 'unverifiable', detail: 'empty ref' };
+  // Option-shaped (`--all`, `--mirror`, `--tags`, `-f`, …): Git pushes many refs,
+  // which a single-branch check can't cover.
+  if (spec.startsWith('-')) return { kind: 'unverifiable', detail: 'option-shaped ref' };
+  const body = spec.replace(/^\+/, '');
+  if (!body) return { kind: 'unverifiable', detail: 'force marker with no ref' };
+  // The matching refspec pushes every same-named branch, including main.
+  if (body === ':') return { kind: 'unverifiable', detail: 'matching refspec' };
+  if (body === 'HEAD' || body === '@') return { kind: 'current' };
+  const dst = body.includes(':') ? body.slice(body.indexOf(':') + 1).trim() : body;
+  if (!dst) return { kind: 'unverifiable', detail: 'refspec with empty destination' };
   const name = dst.replace(/^refs\/heads\//, '').trim();
-  // `HEAD` / empty destination → the push targets the checked-out branch; defer
-  // to the live read instead of treating "HEAD" as a branch name.
-  if (!name || name === 'HEAD') return null;
-  return name;
+  if (!name) return { kind: 'unverifiable', detail: 'unresolvable destination' };
+  if (name === 'HEAD' || name === '@') return { kind: 'current' };
+  return { kind: 'branch', name };
 }
 
 export interface ProtectMainPrePushGateOptions {
@@ -79,12 +102,28 @@ export function makeProtectMainPrePushGate(opts: ProtectMainPrePushGateOptions):
 
     // The branch the push actually updates: an explicit refspec destination wins
     // over the checked-out branch (a `HEAD:refs/heads/main` push from a feature
-    // branch still lands on main); otherwise the live HEAD is the target.
-    const refTarget = resolvePushTargetBranch(pushOpts?.ref);
+    // branch still lands on main). A refspec we can't resolve to one safe branch
+    // fails closed; otherwise the live HEAD is the target.
+    const target = resolvePushTarget(pushOpts?.ref);
+    if (target.kind === 'unverifiable') {
+      // Can't prove a single safe destination (matching refspec, --all/--mirror,
+      // garbage) — block rather than risk an unchecked push to main.
+      log('warn', 'protect_main_push_blocked', {
+        reason: 'ref_unverifiable',
+        detail: target.detail,
+        ref: pushOpts?.ref ?? null,
+      });
+      return {
+        ok: false,
+        reason: `Protect Main: the push refspec "${pushOpts?.ref}" could not be verified to target a single safe branch (${target.detail}), so it was blocked. Push a single feature branch — or use the default push — and retry.`,
+      };
+    }
+
     let normalized: string;
-    if (refTarget) {
-      normalized = refTarget;
+    if (target.kind === 'branch') {
+      normalized = target.name;
     } else {
+      // target.kind === 'current' → read live HEAD.
       let branch: string | null;
       try {
         branch = await getCurrentBranch();
@@ -121,7 +160,7 @@ export function makeProtectMainPrePushGate(opts: ProtectMainPrePushGateOptions):
         branch: normalized,
         // Distinguish a refspec-targeted push from a checked-out-branch push in
         // the logs so an unusual destination is visible to ops.
-        ...(refTarget ? { via: 'refspec' } : {}),
+        ...(target.kind === 'branch' ? { via: 'refspec' } : {}),
       });
       return {
         ok: false,

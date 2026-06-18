@@ -172,4 +172,55 @@ describe('makeProtectMainPrePushGate', () => {
     });
     expect((await gate({ ref: 'HEAD' })).ok).toBe(false);
   });
+
+  it('treats @ as HEAD and falls back to live HEAD', async () => {
+    const { log } = capture();
+    const gate = makeProtectMainPrePushGate({
+      enabled: true,
+      defaultBranch: 'main',
+      getCurrentBranch: () => 'main', // @ → HEAD → current branch is main
+      log,
+    });
+    expect((await gate({ ref: '@' })).ok).toBe(false);
+  });
+
+  // --- unverifiable refspecs fail closed (Codex 2nd-pass on #976) ----------
+  // A safety gate can't chase every Git form, so anything that doesn't resolve
+  // to one safe branch is blocked.
+
+  it('fails closed on the matching refspec ":" (pushes every same-named branch incl. main)', async () => {
+    const { lines, log } = capture();
+    const gate = makeProtectMainPrePushGate({
+      enabled: true,
+      getCurrentBranch: () => 'feature/foo', // live read says feature, but ":" hits main
+      log,
+    });
+    const verdict = await gate({ ref: ':' });
+    expect(verdict.ok).toBe(false);
+    expect(lines[0]).toMatchObject({
+      event: 'protect_main_push_blocked',
+      ctx: { reason: 'ref_unverifiable', detail: 'matching refspec' },
+    });
+  });
+
+  it('fails closed on a forced matching refspec "+:"', async () => {
+    const { log } = capture();
+    const gate = makeProtectMainPrePushGate({
+      enabled: true,
+      getCurrentBranch: () => 'feature/foo',
+      log,
+    });
+    expect((await gate({ ref: '+:' })).ok).toBe(false);
+  });
+
+  it('fails closed on option-shaped refs (--all / --mirror)', async () => {
+    const { log } = capture();
+    const gate = makeProtectMainPrePushGate({
+      enabled: true,
+      getCurrentBranch: () => 'feature/foo',
+      log,
+    });
+    expect((await gate({ ref: '--all' })).ok).toBe(false);
+    expect((await gate({ ref: '--mirror' })).ok).toBe(false);
+  });
 });
