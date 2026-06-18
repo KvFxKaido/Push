@@ -794,15 +794,35 @@ describe('startInlineCoderTurn', () => {
     logSpy.mockRestore();
   });
 
-  it('folds the Auditor verdict line into the final message (same gate as the delegated arc)', async () => {
+  it('renders an incomplete verdict as a structured card, not appended prose', async () => {
     mockRunCoderAuditorGate.mockResolvedValue({
-      evalResult: { verdict: 'incomplete', summary: 'gaps', gaps: ['tests'] },
-      auditorSummaryLine: '[Evaluation: INCOMPLETE] gaps',
+      evalResult: {
+        verdict: 'incomplete',
+        summary: 'left work undone',
+        gaps: ['tests'],
+        confidence: 'high',
+      },
+      auditorSummaryLine: '[Evaluation: INCOMPLETE] left work undone',
     });
     const { ctx, store } = makeHarness();
     await startInlineCoderTurn(ctx, laneArgs());
 
-    expect(lastAssistant(store).content).toBe('Did the thing.\n\n[Evaluation: INCOMPLETE] gaps');
+    // The prose verdict no longer leaks into the message body.
+    const final = lastAssistant(store);
+    expect(final.content).toBe('Did the thing.');
+    expect(final.content).not.toContain('[Evaluation:');
+    // It rides the visible message as an `evaluation` card with the gaps.
+    const evalCard = final.cards?.find((c) => c.type === 'evaluation');
+    expect(evalCard).toEqual({
+      type: 'evaluation',
+      data: {
+        verdict: 'incomplete',
+        summary: 'left work undone',
+        gaps: ['tests'],
+        confidence: 'high',
+      },
+    });
+
     const [, gateInput] = mockRunCoderAuditorGate.mock.calls[0] as [
       unknown,
       { auditorInput: Record<string, unknown> },
@@ -811,6 +831,20 @@ describe('startInlineCoderTurn', () => {
     expect(gateInput.auditorInput.preCoderHead).toBe('abc');
     expect(gateInput.auditorInput.preCoderUntrackedFiles).toEqual(['junk.txt']);
     expect(gateInput.auditorInput.currentSandboxId).toBe('sb-1');
+  });
+
+  it('surfaces no evaluation card for a complete verdict (no self-grade footer)', async () => {
+    mockRunCoderAuditorGate.mockResolvedValue({
+      evalResult: { verdict: 'complete', summary: 'all good', gaps: [], confidence: 'high' },
+      auditorSummaryLine: '[Evaluation: COMPLETE] all good',
+    });
+    const { ctx, store } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    const final = lastAssistant(store);
+    expect(final.content).toBe('Did the thing.');
+    expect(final.content).not.toContain('[Evaluation:');
+    expect(final.cards?.some((c) => c.type === 'evaluation')).toBeFalsy();
   });
 
   it('skips the Auditor on a read-only turn (no diff, HEAD unmoved) — no spurious verdict', async () => {

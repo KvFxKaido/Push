@@ -5,6 +5,7 @@ import { lazyWithRecovery, toDefaultExport } from '@/lib/lazy-import';
 import { MAX_COMPONENT_STACK_CHARS, reportError } from '@/lib/error-reporting';
 import { DiffPreviewCard } from './DiffPreviewCard';
 import { AuditVerdictCard } from './AuditVerdictCard';
+import { EvaluationCard } from './EvaluationCard';
 import { WorkspacePatchCard } from './WorkspacePatchCard';
 
 // --- Lazy-loaded card components (code-split) ---
@@ -218,6 +219,7 @@ const DATA_ONLY_CARDS: Record<string, ComponentType<{ data: any }>> = {
   'diff-preview': DiffPreviewCard,
   'workspace-patch': WorkspacePatchCard,
   'audit-verdict': AuditVerdictCard,
+  evaluation: EvaluationCard,
   'file-search': FileSearchCard,
   'commit-files': CommitFilesCard,
   'test-results': TestResultsCard,

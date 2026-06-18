@@ -1153,11 +1153,11 @@ export async function startInlineCoderTurn(
     );
   }
 
-  // --- Complete the transcript: kernel summary (+ Auditor verdict line)
-  // replaces the streamed placeholder. Cards go inside the collapsible
-  // disclosure (on the last synthetic call message) when tool events were
-  // captured, so they fold away like the old Orchestrator path. When no
-  // tools ran (pure conversational turn), cards stay on the final message. ---
+  // --- Complete the transcript: kernel summary replaces the streamed
+  // placeholder. Cards go inside the collapsible disclosure (on the last
+  // synthetic call message) when tool events were captured, so they fold away
+  // like the old Orchestrator path. When no tools ran (pure conversational
+  // turn), cards stay on the final message. ---
   const hasToolDisclosure = capturedToolEvents.length > 0;
   const lastToolCallId = insertSyntheticToolPairs(
     ctx,
@@ -1165,18 +1165,43 @@ export async function startInlineCoderTurn(
     hasToolDisclosure ? result.cards : undefined,
     placeholderId,
   );
-  // Verification block joins the kernel summary the same way the delegated
-  // arc appended its in-kernel acceptance-criteria block; the Auditor verdict
-  // line (when present) sits after both.
+  // The completion verdict renders as a structured card, not appended prose —
+  // matching the delegated arc, which routes the same verdict through the
+  // delegation-result card and strips the `[Evaluation: …]` text from the
+  // user-facing summary. Only `incomplete` surfaces a card: the gaps are the
+  // actionable signal, while a `complete` verdict is a self-grade the user
+  // doesn't need on a successful answer. Unlike the delegated arc (which keeps
+  // the verdict model-side via `summaries` for the Orchestrator's next
+  // decision), the inline lead is human-in-the-loop — the next turn is driven
+  // by the user reading the card — so we deliberately don't replay the verdict
+  // into model context.
+  const evaluationCard: ChatCard | null =
+    auditorGate?.evalResult && auditorGate.evalResult.verdict === 'incomplete'
+      ? {
+          type: 'evaluation',
+          data: {
+            verdict: auditorGate.evalResult.verdict,
+            summary: auditorGate.evalResult.summary,
+            gaps: auditorGate.evalResult.gaps,
+            confidence: auditorGate.evalResult.confidence,
+          },
+        }
+      : null;
+  // Verification block joins the kernel summary the same way the delegated arc
+  // appended its in-kernel acceptance-criteria block.
   const summaryWithVerification = `${result.summary}${verification.summaryLine}`;
-  const finalContent = auditorGate?.auditorSummaryLine
-    ? `${summaryWithVerification}\n\n${auditorGate.auditorSummaryLine}`
-    : summaryWithVerification;
+  // The evaluation card always rides the final (visible) message so an
+  // incomplete verdict isn't buried in the collapsed tool disclosure. Result
+  // cards still fold into the disclosure when tools ran.
+  const finalCards: ChatCard[] = [
+    ...(hasToolDisclosure ? [] : result.cards),
+    ...(evaluationCard ? [evaluationCard] : []),
+  ];
   completeAssistantMessage(
     ctx,
     {
-      content: finalContent,
-      ...(hasToolDisclosure ? {} : { cards: result.cards }),
+      content: summaryWithVerification,
+      ...(finalCards.length > 0 ? { cards: finalCards } : {}),
     },
     placeholderId,
   );

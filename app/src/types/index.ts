@@ -491,6 +491,7 @@ export type ChatCard =
   | { type: 'workflow-logs'; data: WorkflowLogsCardData }
   | { type: 'web-search'; data: WebSearchCardData }
   | { type: 'delegation-result'; data: DelegationResultCardData }
+  | { type: 'evaluation'; data: EvaluationCardData }
   | { type: 'ask-user'; data: AskUserCardData }
   | { type: 'coder-progress'; data: CoderWorkingMemory }
   | { type: 'coder-job'; data: CoderJobCardData }
@@ -1266,6 +1267,23 @@ export interface DelegationResultCardData {
   gateVerdicts: DelegationGateVerdict[];
   missingRequirements: string[];
   nextRequiredAction?: string | null;
+}
+
+/**
+ * Inline completion-evaluation verdict, surfaced as a structured card on the
+ * inline lead lane instead of an appended `[Evaluation: …]` prose line. This
+ * is the task-completion gate (`complete | incomplete`), distinct from the
+ * commit-safety `audit-verdict` card (`safe | unsafe`). In practice only the
+ * `incomplete` verdict is rendered — a `complete` turn surfaces no card (a
+ * successful answer doesn't need a self-grade footer). See
+ * `chat-send-inline.ts`.
+ */
+export interface EvaluationCardData {
+  verdict: 'complete' | 'incomplete';
+  summary: string;
+  /** Specific items the turn left incomplete or missing. */
+  gaps: string[];
+  confidence: 'high' | 'medium' | 'low';
 }
 
 export interface AskUserOption {
