@@ -307,6 +307,41 @@ describe('executeSandboxToolCall -- sandbox_verify_workspace', () => {
   });
 });
 
+describe('executeSandboxToolCall -- sandbox_exec Protect Main git-guard (#977)', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockReset();
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValue({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+    });
+  });
+
+  it('blocks exec git push under Protect Main even with allowDirectGit (Coder-bypass path)', async () => {
+    // The Coder bypass reaches the inline git-guard, not the runtime pre-hook,
+    // so isMainProtected must be threaded from options or the bypass stays open.
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git push origin main', allowDirectGit: true } },
+      'sb-123',
+      { isMainProtected: true },
+    );
+    expect(result.structuredError?.type).toBe('PROTECT_MAIN_BLOCKED');
+    expect(result.text).toContain('sandbox_push');
+    expect(sandboxClient.execLongRunningInSandbox).not.toHaveBeenCalled();
+  });
+
+  it('allows exec git push with allowDirectGit when Protect Main is off', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git push origin main', allowDirectGit: true } },
+      'sb-123',
+      { isMainProtected: false },
+    );
+    expect(result.structuredError).toBeUndefined();
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalled();
+  });
+});
+
 describe('executeSandboxToolCall -- sandbox_exec detached path', () => {
   beforeEach(() => {
     vi.mocked(sandboxClient.execLongRunningInSandbox).mockReset();

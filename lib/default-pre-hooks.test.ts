@@ -79,6 +79,63 @@ describe('createGitGuardPreHook', () => {
     );
     expect(stillBlocked.decision).toBe('deny');
   });
+
+  // --- Protect Main blocks the exec `git push` escape hatch (issue #977) ----
+  const protectedContext = { ...emptyContext, isMainProtected: true };
+
+  it('blocks `git push` via exec under Protect Main even with allowDirectGit', async () => {
+    const entry = withMode('supervised');
+    const result = await entry.hook(
+      'sandbox_exec',
+      { command: 'git push origin main', allowDirectGit: true },
+      protectedContext,
+    );
+    expect(result.decision).toBe('deny');
+    expect(result.errorType).toBe('PROTECT_MAIN_BLOCKED');
+    expect(result.reason).toContain('sandbox_push');
+  });
+
+  it('blocks exec `git push` under Protect Main regardless of the target branch', async () => {
+    // Target-agnostic: we don't predict the destination from the command string.
+    const entry = withMode('supervised');
+    const result = await entry.hook(
+      'sandbox_exec',
+      { command: 'git push origin feature/x', allowDirectGit: true },
+      protectedContext,
+    );
+    expect(result.decision).toBe('deny');
+    expect(result.errorType).toBe('PROTECT_MAIN_BLOCKED');
+  });
+
+  it('blocks exec `git push` under Protect Main in full-auto (no allowDirectGit)', async () => {
+    // Full-auto otherwise lets direct git through; Protect Main overrides that.
+    const entry = withMode('full-auto');
+    const result = await entry.hook('sandbox_exec', { command: 'git push' }, protectedContext);
+    expect(result.decision).toBe('deny');
+    expect(result.errorType).toBe('PROTECT_MAIN_BLOCKED');
+  });
+
+  it('still allows exec `git push` with allowDirectGit when Protect Main is OFF', async () => {
+    const entry = withMode('supervised');
+    const result = await entry.hook(
+      'sandbox_exec',
+      { command: 'git push origin main', allowDirectGit: true },
+      emptyContext, // isMainProtected falsy
+    );
+    expect(result.decision).toBe('passthrough');
+  });
+
+  it('does not block exec `git commit` under Protect Main (push-only scope)', async () => {
+    // #977 hardens the push surface only; the commit escape hatch is unchanged
+    // here (the audited commit flow has its own Auditor + Protect Main gate).
+    const entry = withMode('full-auto');
+    const result = await entry.hook(
+      'sandbox_exec',
+      { command: 'git commit -m "x"', allowDirectGit: true },
+      protectedContext,
+    );
+    expect(result.decision).toBe('passthrough');
+  });
 });
 
 describe('createProtectMainPreHook', () => {
