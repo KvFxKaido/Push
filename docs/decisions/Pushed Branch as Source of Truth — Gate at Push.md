@@ -2,8 +2,9 @@
 
 Date: 2026-06-18
 Status: **Draft (partially implemented)** — design-in-motion; not yet
-roadmap-promoted. Poses the model and the owner calls it needs; does not claim
-the decisions are settled. On implementation, the Current parts fold into
+roadmap-promoted. Poses the model and the owner calls it needs; OQ1 is now
+settled (Auditor moves to push — 2026-06-18), the rest remain open. On
+implementation, the Current parts fold into
 [`Platform, Sessions, and Sandbox Decisions.md`](<Platform, Sessions, and Sandbox Decisions.md>)
 (which owns the commit/push/sandbox seams) and this file becomes provenance.
 Owner: Push
@@ -13,8 +14,11 @@ the working tree is continuously mirrored to a pushed `draft/auto/<branch>` ref
 with an offer-to-restore on a fresh sandbox (#980 primitive, #981 coordinator,
 #983 restore; follow-ups #982). The durability decision now lives in
 [`Platform, Sessions, and Sandbox Decisions.md`](<Platform, Sessions, and Sandbox Decisions.md>) §5.
-**Still open:** Move A (gate-at-push / move the Auditor to push) is blocked on
-Open Question 1; B1 (push-to-start) remains the destination beyond B2.
+**Decided (2026-06-18):** Open Question 1 is settled — the Auditor **moves to
+push** (full thesis), on the corrected rationale in [Move A](#move-a--commit-freely-move-the-gate-to-push).
+Move A is unblocked for implementation (not yet built). **Still open:** B1
+(push-to-start) remains the destination beyond B2; OQ2 (B1-vs-B2 trigger) and
+OQ3 (WIP-push cadence).
 
 ## Thesis
 
@@ -95,16 +99,45 @@ Why this is the right boundary:
   `draft/` branch (`sandbox_save_draft`, already unaudited by design) checkpoints
   work without invoking the delivery gate.
 
-**This re-opens a settled call and must own it.** The model-Auditor was kept
-per-commit on 2026-06-08 because "the verdict's reader is the agent loop, not a
-human." The counter-argument this doc makes: in a commit-freely model, commits
-are non-delivery checkpoints, so per-commit auditing audits states that never
-ship; the agent-loop safety signal is better served by the lighter per-edit
-`[DIAGNOSTICS]` already emitted after edits, with the full Auditor reserved for
-the delivery unit (the push). **If we are not willing to move the Auditor, this
-move collapses to "decouple commit from push in the UI but keep the Auditor at
-commit" — still useful, but not the full thesis.** This is the load-bearing
-owner call (Open Question 1).
+**Decided (2026-06-18): the Auditor moves to push.** This re-opens the
+2026-06-08 call that kept the model-Auditor per-commit ("the verdict's reader is
+the agent loop, not a human"), and the resolution corrects that call's framing:
+
+- **What ships is identical either way.** The push gate runs the *same* Auditor
+  rubric over the cumulative diff before anything reaches origin, so the
+  "dangerous-beyond-secrets" band (injection, disabled auth/CORS, novel external
+  network calls — none of which the deterministic secret scan catches) is gated
+  equally. Moving the gate changes *when the loop learns*, not *what escapes*.
+  This is a **feedback-latency tradeoff, not a safety-boundary one** — which is
+  the axis the 2026-06-08 decision conflated.
+- **Per-commit auditing buys earlier feedback, not more safety**, and in a
+  commit-freely model it audits non-delivery checkpoints that may be amended or
+  squashed away before they ship. The cost it imposes — a full LLM audit on
+  every throwaway commit — is real; the safety it adds over the push gate is not.
+- **Do not lean on `[DIAGNOSTICS]` as the continuous safety signal.** An earlier
+  draft of this section did, and it was wrong: `[DIAGNOSTICS]` is a single-file
+  syntax transpile (`ts.transpileModule` / `python3 -m py_compile`, in
+  `app/src/lib/sandbox-edit-ops.ts`) — it catches syntax errors, not even type
+  errors, and carries *none* of the Auditor's security rubric. If the coarser
+  per-push feedback proves painful, the answer is a *real* lightweight continuous
+  security lint, built deliberately — not the syntax check relabeled. Move A is
+  **not** blocked on that lint existing.
+- **The "UI-only" middle is not a stable resting place.** Decoupling commit/push
+  in the UI while keeping the per-commit Auditor makes commits cheap to *create*
+  and expensive to *make* (an audit per checkpoint), which defeats the point of
+  free local commits. If we adopt commit-freely at all, the Auditor has to move.
+
+The old "the loop reads the verdict" premise was itself only partly
+load-bearing: today only the Coder/`sandbox_prepare_commit` path consumes the
+verdict programmatically (it withholds the commit-review card on UNSAFE); the
+file-browser path hard-blocks for a human, and the inline lead surfaces the
+verdict to the approval queue with no programmatic block
+(`app/src/hooks/chat-send-inline.ts`).
+
+**Coarser feedback is the accepted cost**, mitigated two ways: the Auditor
+already attributes findings at hunk granularity, so a batch verdict still points
+at the offending change; and the agent can push more often (auto-back already
+pushes drafts frequently). Flag this, don't hide it (see Design decision 6).
 
 ### Move B — Gate the sandbox behind a pushed branch
 
@@ -212,10 +245,14 @@ drift):
 
 ## Open questions (owner calls)
 
-1. **Does the Auditor move to push, or only the UI/delivery approval?** Moving it
-   re-opens the 2026-06-08 "Auditor stays per-commit" decision. The full thesis
-   wants it at push; the conservative version keeps it at commit and only
-   decouples commit/push in the UI. *(Load-bearing — gates the rest of Move A.)*
+1. **Does the Auditor move to push, or only the UI/delivery approval?**
+   **RESOLVED 2026-06-18 — moves to push** (full thesis). The move is a
+   feedback-latency tradeoff, not a safety regression: the push gate runs the
+   same rubric over the cumulative diff, so nothing unsafe ships either way. The
+   2026-06-08 "stays per-commit" call conflated safety with feedback timing, and
+   its `[DIAGNOSTICS]`-as-substitute framing was factually wrong (syntax-only).
+   See [Move A](#move-a--commit-freely-move-the-gate-to-push) for the full
+   rationale. Move A is unblocked for implementation.
 2. **B1 (push-to-start) or B2 (auto-back) for the sandbox gate?** Recommend B2
    first, B1 as destination. B1 moves cold-start to first-write and is the purer
    model; B2 is the lower-risk increment on top of auto-branch.
