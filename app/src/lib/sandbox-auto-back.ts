@@ -33,9 +33,6 @@ import { execInSandbox } from './sandbox-client';
 import { createSandboxPushGit, resolveWebSecretScanEnabled } from './git-backend';
 import { isInvalidGitRef } from './git-ref-validation';
 
-/** Git's canonical empty-tree object — the diff base when HEAD is unborn. */
-const EMPTY_TREE_SHA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
-
 /** Stable per-working-branch backup ref. One ref per branch, force-updated. */
 export function autoBackRef(branch: string): string {
   return `draft/auto/${branch.trim()}`;
@@ -64,22 +61,34 @@ const defaultLog: LogFn = (level, event, ctx) =>
 // brick the session).
 const CAPTURE_COMMAND = [
   'cd /workspace 2>/dev/null || { echo "ERR workspace"; exit 0; }',
-  'idx="$(mktemp -u /tmp/push-autoback.XXXXXX)"',
+  // Private temp dir (not `mktemp -u`, which races on an unclaimed path); the
+  // trap cleans it up on every exit path.
+  'tmpdir="$(mktemp -d /tmp/push-autoback.XXXXXX)" || { echo "ERR mktemp"; exit 0; }',
+  'trap \'rm -rf "$tmpdir"\' EXIT',
+  'idx="$tmpdir/index"',
   'has_head=0',
   'if git rev-parse -q --verify HEAD >/dev/null 2>&1; then',
   '  has_head=1',
-  '  GIT_INDEX_FILE="$idx" git read-tree HEAD 2>/dev/null',
+  // Every stage is checked: a failed read-tree/add/write-tree must surface as
+  // ERR, never fall through. A failed `add -A` on a HEAD-seeded index would
+  // otherwise leave the index == HEAD, write-tree == HEAD^{tree}, and the clean
+  // check would declare CLEAN while changes exist — silent data loss (Codex P1).
+  '  GIT_INDEX_FILE="$idx" git read-tree HEAD 2>/dev/null || { echo "ERR read-tree"; exit 0; }',
   'fi',
-  'GIT_INDEX_FILE="$idx" git add -A 2>/dev/null',
-  'tree="$(GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null)"',
-  'rm -f "$idx"',
+  'GIT_INDEX_FILE="$idx" git add -A 2>/dev/null || { echo "ERR add"; exit 0; }',
+  'tree="$(GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null)" || { echo "ERR write-tree"; exit 0; }',
   '[ -z "$tree" ] && { echo "ERR write-tree"; exit 0; }',
   'if [ "$has_head" = 1 ]; then',
   '  head_tree="$(git rev-parse "HEAD^{tree}" 2>/dev/null)"',
-  '  if [ "$tree" = "$head_tree" ]; then echo CLEAN; exit 0; fi',
+  // Only declare clean on a confirmed tree match; if HEAD's tree is unreadable,
+  // bias toward backing up rather than risking a false-clean.
+  '  if [ -n "$head_tree" ] && [ "$tree" = "$head_tree" ]; then echo CLEAN; exit 0; fi',
   '  commit="$(git commit-tree "$tree" -p HEAD -m "push: auto-back WIP" 2>/dev/null)"',
   'else',
-  `  if [ "$tree" = "${EMPTY_TREE_SHA}" ]; then echo CLEAN; exit 0; fi`,
+  // Unborn HEAD: compute the empty tree for this repo (hash-agnostic, not a
+  // hard-coded SHA-1 value).
+  '  empty="$(git hash-object -t tree /dev/null 2>/dev/null)"',
+  '  if [ -n "$empty" ] && [ "$tree" = "$empty" ]; then echo CLEAN; exit 0; fi',
   '  commit="$(git commit-tree "$tree" -m "push: auto-back WIP" 2>/dev/null)"',
   'fi',
   '[ -z "$commit" ] && { echo "ERR commit-tree"; exit 0; }',
@@ -180,8 +189,10 @@ export async function backUpWorkingTree(
 async function diffBackupCommit(sandboxId: string, sha: string): Promise<string | null> {
   const command = [
     'cd /workspace 2>/dev/null || exit 0',
-    `if git rev-parse -q --verify HEAD >/dev/null 2>&1; then base=HEAD; else base=${EMPTY_TREE_SHA}; fi`,
-    `git diff --no-color "$base" ${sha} 2>/dev/null`,
+    'if git rev-parse -q --verify HEAD >/dev/null 2>&1; then base=HEAD; else base="$(git hash-object -t tree /dev/null 2>/dev/null)"; fi',
+    // --no-ext-diff so repo config can't substitute an external diff and slip a
+    // secret past the scan; sha is hex-validated but quoted regardless.
+    `git diff --no-ext-diff --no-color "$base" "${sha}" 2>/dev/null`,
   ].join('\n');
   try {
     const result = await execInSandbox(sandboxId, command);
