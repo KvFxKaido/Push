@@ -1,0 +1,193 @@
+# Pushed Branch as Source of Truth — Gate at Push, Sandbox as Disposable Compute
+
+Date: 2026-06-18
+Status: **Draft** — design-in-motion; not yet roadmap-promoted. Poses the model
+and the owner calls it needs; does not claim the decisions are settled. On
+implementation, the Current parts fold into
+[`Platform, Sessions, and Sandbox Decisions.md`](<Platform, Sessions, and Sandbox Decisions.md>)
+(which owns the commit/push/sandbox seams) and this file becomes provenance.
+Owner: Push
+
+## Thesis
+
+**The pushed branch is the durable source of truth; the cloud sandbox is
+disposable compute attached to it.**
+
+Three things that have been decided or drifted toward separately are actually
+one model:
+
+1. **Reads come from GitHub.** Exploration/search/read default to the GitHub
+   tier; the sandbox is the on-demand exception for the working tree (shipped:
+   [`Agent Runtime Decisions §11`](<Agent Runtime Decisions.md>)).
+2. **The push is the durable boundary.** A branch left in the ephemeral sandbox
+   is no more durable than a `main` checkpoint — only the push to origin makes
+   work survive (settled in
+   [`Auto-Branch on Commit`](<Auto-Branch on Commit — Nothing Lands on Main.md>):
+   "auto-branch only buys durability if it auto-pushes").
+3. **The sandbox is unreliable and ephemeral** (30-min token, reclaimed) — which
+   is *why* §11 exists and why reads were pulled off it.
+
+Put together: if reads don't need the sandbox, and the push is the only durable
+boundary, then the sandbox is not the workspace — it is **transient compute that
+exists in service of a branch already on the remote.** This doc proposes
+completing that model in two moves the prior decisions set up but stopped short
+of: **gate at push (not commit)** and **gate the sandbox behind a pushed
+branch.**
+
+## Already true (do not re-litigate)
+
+- **Reads default to GitHub** (§11) — committed state is read without the
+  sandbox; the code-enforced fallback degrades sandbox reads to GitHub.
+- **Push-time gating exists.** The deterministic secret scan runs as a
+  `PrePushGate` on `PushGit.push()` (`lib/secret-scan.ts`). Moving the Auditor
+  to push joins infrastructure that is already there; it does not invent it.
+- **Protect Main is now enforced at the push boundary** (#976) — the gate that
+  used to guard the commit is already migrating to the push. The push boundary
+  is accreting the gates on its own; this doc names the pattern and finishes it.
+- **Auto-branch-on-commit + auto-push** ship on web/cloud: a commit on `main`
+  auto-creates a branch and auto-pushes through the gated `PushGit` path, so
+  nothing lands on `main` and the work is durable the moment it's pushed.
+- **Runs already survive sandbox loss** via `RunHost` checkpoint/adopt
+  ([`Durable Runs — Adopt-on-Silence`](<Durable Runs — Adopt-on-Silence.md>)) —
+  session continuity is already decoupled from sandbox lifetime.
+- **The CLI/daemon has a real local filesystem** — its reliable substrate is
+  local, not a pushed branch. This model is **web/cloud-sandbox scoped** (same
+  scoping as §11).
+
+## The two moves
+
+### Move A — Commit freely; move the gate to push
+
+**Today**, the interactive flow doesn't really commit-then-gate. `prepare_commit`
+audits the *uncommitted working-tree diff*, and the commit happens **at
+approval, coupled with the push**. There is effectively no local-commit step:
+it's "hold edits → audited commit+push as one atomic action." That coupling is
+the thing to break.
+
+**Proposed:** the agent commits freely and locally as it works (real history,
+cheap, no per-commit ceremony). The SAFE/UNSAFE gate + delivery approval fire at
+**push**, over the cumulative diff of the commits being pushed — the unit that
+actually ships.
+
+Why this is the right boundary:
+
+- The push is already the durable *and* trust boundary (secret scan lives
+  there). Gating the commit puts ceremony on an action that ships nothing.
+- The Auditor reviews the same net diff, just at the delivery unit instead of
+  intermediate states that may be amended/squashed away. (PRs squash-merge, so
+  messy local history is already collapsed downstream.)
+- One Auditor run per push instead of per commit — cheaper, faster.
+- Free local commits give us the write-side durability lever: a WIP push to a
+  `draft/` branch (`sandbox_save_draft`, already unaudited by design) checkpoints
+  work without invoking the delivery gate.
+
+**This re-opens a settled call and must own it.** The model-Auditor was kept
+per-commit on 2026-06-08 because "the verdict's reader is the agent loop, not a
+human." The counter-argument this doc makes: in a commit-freely model, commits
+are non-delivery checkpoints, so per-commit auditing audits states that never
+ship; the agent-loop safety signal is better served by the lighter per-edit
+`[DIAGNOSTICS]` already emitted after edits, with the full Auditor reserved for
+the delivery unit (the push). **If we are not willing to move the Auditor, this
+move collapses to "decouple commit from push in the UI but keep the Auditor at
+commit" — still useful, but not the full thesis.** This is the load-bearing
+owner call (Open Question 1).
+
+### Move B — Gate the sandbox behind a pushed branch
+
+If reads are GitHub-tier and the push is the durable boundary, the sandbox has
+exactly one job: execute/mutate against a branch. Make that explicit — **the
+sandbox is booted/attached in service of a branch that exists on the remote**,
+so its working tree is always recoverable by re-cloning that branch. Sandbox
+loss then degrades to "re-clone the pushed branch and replay," and the only
+unrecoverable window is local commits/edits not yet pushed — bounded by frequent
+WIP pushes (Move A's checkpoint).
+
+There is a real design fork in *how* "behind a pushed branch" triggers
+(Open Question 2):
+
+- **B1 — Push-to-start:** the sandbox does not boot until there is a pushed
+  branch to attach to. Exploration/planning happen entirely GitHub-tier (§11);
+  the first mutation creates+pushes a branch (auto-branch already does this on
+  commit — pull it earlier, to *sandbox request*), then the sandbox attaches.
+  Strongest version; biggest behavior change (cold-start moves to first-write).
+- **B2 — Auto-back:** the sandbox boots as today, but its branch is always
+  mirrored to a pushed remote branch from the first write (continuous/auto
+  draft-push), so the sandbox is never the sole home of work. Softer; closer to
+  what auto-branch + `save_draft` already do, made automatic.
+
+B1 is the cleaner expression of the thesis; B2 is the lower-risk increment that
+gets most of the durability. Recommend **B2 first, B1 as the destination** —
+B2 is shippable on top of auto-branch with a periodic/auto WIP push, and it
+de-risks B1 by proving the "always-backed" invariant before we make sandbox boot
+depend on it.
+
+## Design decisions to nail (before code)
+
+1. **Auditor review unit at push** — the diff of commits being pushed: new local
+   commits vs the remote branch tip, or vs base/default for a brand-new branch.
+   Needs a precise definition for the no-upstream case.
+2. **Two push flavors** — *delivery push* (audited + approved, to the working
+   branch) vs *WIP/draft push* (unaudited, to a `draft/` branch, for durability).
+   The latter exists (`sandbox_save_draft`); name and surface the split.
+3. **Sandbox git guard split** — allow local `git commit` (no branch change, low
+   risk) via a typed tool or relaxed `sandbox_exec` rule; keep `git push` gated
+   through the push tool; keep `checkout`/`switch` blocked (branch-sync, per
+   CLAUDE.md). Today both commit and push are blocked in `sandbox_exec`.
+4. **Protect Main + auto-branch move fully to push** — commits are local/branch
+   only; auto-branch-on-first-write keeps work off `main`; Protect Main guards
+   the *push*. **Partially shipped:** Protect Main is already enforced at the
+   push boundary (#976), and auto-branch already makes it "structurally moot" on
+   web. This decision generalizes a direction the code has started.
+5. **UI decoupling** — the app's coupled commit+push action splits into "commit"
+   (cheap, local) and "push / ship" (the gated, reviewed action).
+6. **Approval granularity tradeoff** — per-commit cards (today) pinpoint which
+   change introduced an UNSAFE finding; a per-push batch is coarser. Mitigation:
+   Auditor already attributes findings at hunk granularity, and the agent can
+   push more often. Flag, don't hide.
+
+## What stays / non-goals
+
+- **Reviewer stays advisory at the PR** (only PR-backed branch-diff reviews post
+  to GitHub). **Merges stay GitHub-PR-only**; Push never runs local `git merge`.
+- **CLI/daemon is out of scope** — its local filesystem is its own reliable
+  substrate; the gate-at-push semantics differ (no sandbox lifecycle). Same
+  scoping as §11 and as Auto-Branch's CLI deferral.
+- **`read_symbols` stays sandbox-only** (no GitHub analog; §11 follow-up).
+- **Retiring the model-Auditor entirely** is not proposed — only its *placement*
+  is in question (Move A).
+
+## Supersession & consolidation plan
+
+On implementation (status flips happen in the implementing PR, per
+[`README`](README.md) editing rules — not pre-emptively, to avoid doc/code
+drift):
+
+- **Folds into** [`Platform, Sessions, and Sandbox Decisions.md`](<Platform, Sessions, and Sandbox Decisions.md>):
+  the Current commit/push/gate/sandbox-lifecycle decisions land there (it owns
+  the git/RPC and sandbox seams); this file becomes provenance.
+- **Completes / supersedes**
+  [`Auto-Branch on Commit`](<Auto-Branch on Commit — Nothing Lands on Main.md>):
+  that doc moved the *secret scan* to push and kept the Auditor at commit; this
+  model moves the Auditor to join it. Mark `Superseded by` this doc when the gate
+  moves — not before.
+- **Absorbs** [`Pre-Order PRs — Detached Sandbox Jobs`](<Pre-Order PRs — Detached Sandbox Jobs.md>)
+  (currently Draft): one job = one sandbox = one pushed branch is a direct
+  application of this model. Safe to fold now (it's Draft, not a live contract) —
+  mark `Merged into` this doc.
+- **References** (no change): §11 (reads off GitHub), Durable Runs (RunHost makes
+  the sandbox disposable for run continuity),
+  [`Main as Scratchpad — Branch on Graduation`](<../archive/decisions/Main as Scratchpad — Branch on Graduation.md>)
+  (the archived rationale for branch-at-commit; this doc is its natural sequel).
+
+## Open questions (owner calls)
+
+1. **Does the Auditor move to push, or only the UI/delivery approval?** Moving it
+   re-opens the 2026-06-08 "Auditor stays per-commit" decision. The full thesis
+   wants it at push; the conservative version keeps it at commit and only
+   decouples commit/push in the UI. *(Load-bearing — gates the rest of Move A.)*
+2. **B1 (push-to-start) or B2 (auto-back) for the sandbox gate?** Recommend B2
+   first, B1 as destination. B1 moves cold-start to first-write and is the purer
+   model; B2 is the lower-risk increment on top of auto-branch.
+3. **WIP-push cadence for the "always-backed" invariant** — every N edits, on a
+   timer, before token expiry, on first `SANDBOX_UNREACHABLE`, or some
+   combination? Determines how much unpushed work is at risk between checkpoints.
