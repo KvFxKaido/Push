@@ -12,6 +12,7 @@ import type { ScratchpadMemory } from '@/hooks/useScratchpad';
 import type { TodoItem } from '@/lib/todo-tools';
 import type { SnapshotManager } from '@/hooks/useSnapshotManager';
 import type { SandboxStatus } from '@/hooks/useSandbox';
+import type { WorkspaceSandboxRestoreState } from '@/hooks/useWorkspaceSandboxRestore';
 import type { RunHostAttachHandle } from '@/hooks/useRunHostAttach';
 import type {
   ActiveRepo,
@@ -212,6 +213,7 @@ export interface ChatRouteWorkspaceDataProps {
     repoOverride: RepoOverride;
     setRepoOverride: (value: RepoOverride) => void;
   };
+  autoBackRestore?: WorkspaceSandboxRestoreState;
 }
 
 export interface ChatRouteAuthProps {

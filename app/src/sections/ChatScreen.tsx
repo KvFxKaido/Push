@@ -10,6 +10,7 @@ import { RepoChatDrawer } from '@/components/chat/RepoChatDrawer';
 import { WebSearchMenu } from '@/components/chat/WebSearchMenu';
 import { SandboxExpiryBanner } from '@/components/chat/SandboxExpiryBanner';
 import { SandboxStatusBanner } from '@/components/chat/SandboxStatusBanner';
+import { AutoBackRestoreBanner } from '@/components/chat/AutoBackRestoreBanner';
 import { usePerfMark } from '@/hooks/usePerfMark';
 import {
   HEADER_PILL_BUTTON_CLASS,
@@ -31,6 +32,7 @@ type ChatContainerProps = ComponentProps<typeof ChatContainer>;
 type ChatInputProps = ComponentProps<typeof ChatInput>;
 type SandboxStatusBannerProps = ComponentProps<typeof SandboxStatusBanner>;
 type SandboxExpiryBannerProps = ComponentProps<typeof SandboxExpiryBanner>;
+type AutoBackRestoreBannerProps = ComponentProps<typeof AutoBackRestoreBanner>;
 
 interface ChatScreenWorkspaceProps {
   activeRepo: ActiveRepo | null;
@@ -67,6 +69,7 @@ interface ChatScreenChatProps {
 interface ChatScreenBannerProps {
   sandboxStatusBannerProps: SandboxStatusBannerProps;
   sandboxExpiryBannerProps: SandboxExpiryBannerProps | null;
+  autoBackRestoreBannerProps?: AutoBackRestoreBannerProps | null;
 }
 
 interface ChatScreenProps {
@@ -118,7 +121,8 @@ export function ChatScreen({
     drawerProps,
   } = shell;
   const { containerProps: chatContainerProps, inputProps: chatInputProps } = chat;
-  const { sandboxStatusBannerProps, sandboxExpiryBannerProps } = banners;
+  const { sandboxStatusBannerProps, sandboxExpiryBannerProps, autoBackRestoreBannerProps } =
+    banners;
 
   const resolvedAppearance = activeRepoAppearance ?? DEFAULT_REPO_APPEARANCE;
   const glowColor = getRepoAppearanceColorHex(resolvedAppearance.color);
@@ -299,6 +303,8 @@ export function ChatScreen({
         </header>
 
         <SandboxStatusBanner {...sandboxStatusBannerProps} />
+
+        {autoBackRestoreBannerProps && <AutoBackRestoreBanner {...autoBackRestoreBannerProps} />}
 
         {sandboxExpiryBannerProps && <SandboxExpiryBanner {...sandboxExpiryBannerProps} />}
 

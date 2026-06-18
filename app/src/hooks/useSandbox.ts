@@ -113,6 +113,8 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
   // Declared after the refs the test harness syncs by index (see
   // useSandbox.test.ts syncRefsFromState) so it doesn't shift them.
   const idleHibernatePendingRef = useRef(false);
+  const freshSandboxIdRef = useRef<string | null>(null);
+  const snapshotRestoredSandboxIdRef = useRef<string | null>(null);
   const activeSessionStorageKey = useMemo(
     () => buildSandboxSessionStorageKey(activeRepoFullName, activeBranch),
     [activeRepoFullName, activeBranch],
@@ -164,6 +166,8 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
           toast.error(RESTORE_FAILED_MESSAGE);
           return null;
         }
+        freshSandboxIdRef.current = null;
+        snapshotRestoredSandboxIdRef.current = session.sandboxId;
         setSandboxId(session.sandboxId);
         sandboxIdRef.current = session.sandboxId;
         sessionStorageKeyRef.current = activeSessionStorageKey;
@@ -196,6 +200,8 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       .then(async (result) => {
         if (cancelled) return null;
         if (result.exitCode === 0) {
+          freshSandboxIdRef.current = null;
+          snapshotRestoredSandboxIdRef.current = null;
           setSandboxId(saved.sandboxId);
           sandboxIdRef.current = saved.sandboxId;
           sessionStorageKeyRef.current = activeSessionStorageKey;
@@ -321,6 +327,8 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
           // and signals the UI that the sandbox needs a restore/create.
           setSandboxId(null);
           sandboxIdRef.current = null;
+          freshSandboxIdRef.current = null;
+          snapshotRestoredSandboxIdRef.current = null;
           setStatus('idle');
           setSnapshotInfoTick((n) => n + 1);
           console.log(`[useSandbox] Hibernated → snapshot ${result.snapshotId}`);
@@ -353,6 +361,8 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       setError(null);
       setActiveSandboxEnvironment(null);
       setSandboxOwnerToken(null);
+      freshSandboxIdRef.current = null;
+      snapshotRestoredSandboxIdRef.current = null;
 
       try {
         // Empty repo = sandbox mode (ephemeral workspace, no clone, no token needed)
@@ -401,11 +411,14 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
         const session = await createSandbox(repo, branch, token, getGitHubAppCommitIdentity());
 
         if (session.status === 'error') {
+          freshSandboxIdRef.current = null;
           setStatus('error');
           setError(session.error || 'Sandbox creation failed');
           return null;
         }
 
+        freshSandboxIdRef.current = session.sandboxId;
+        snapshotRestoredSandboxIdRef.current = null;
         setSandboxId(session.sandboxId);
         setStatus('ready');
         setActiveSandboxEnvironment(session.sandboxId);
@@ -467,6 +480,8 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
 
     sandboxIdRef.current = null;
     sessionStorageKeyRef.current = null;
+    freshSandboxIdRef.current = null;
+    snapshotRestoredSandboxIdRef.current = null;
     setSandboxId(null);
     setStatus('idle');
     setError(null);
@@ -564,6 +579,8 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       });
       setSandboxId(null);
       sandboxIdRef.current = null;
+      freshSandboxIdRef.current = null;
+      snapshotRestoredSandboxIdRef.current = null;
       setStatus('idle');
       setSnapshotInfoTick((n) => n + 1);
       console.log(`[useSandbox] Manual hibernate → snapshot ${result.snapshotId}`);
@@ -746,5 +763,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
     hibernate,
     forgetSnapshot,
     snapshotInfo,
+    freshSandboxId: freshSandboxIdRef.current,
+    restoredFromSnapshotSandboxId: snapshotRestoredSandboxIdRef.current,
   };
 }
