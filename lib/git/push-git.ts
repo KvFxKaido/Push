@@ -172,7 +172,17 @@ export class PushGit {
       }
       if (!verdict.ok) {
         const reason = verdict.reason ?? 'push blocked by pre-push gate';
-        return { ok: false, blocked: true, exitCode: 1, stdout: '', stderr: reason };
+        return {
+          ok: false,
+          blocked: true,
+          exitCode: 1,
+          stdout: '',
+          stderr: reason,
+          // Carry the gate's transient/infra signal so the caller can classify a
+          // retryable failure (e.g. Auditor unreachable) apart from a terminal
+          // policy block (secret found, protected branch).
+          ...(verdict.retryable ? { retryable: true } : {}),
+        };
       }
     }
     return this.backend.push(opts);

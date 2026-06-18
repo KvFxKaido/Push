@@ -1120,6 +1120,10 @@ async function executeSandboxToolCallInner(
             defaultBranch: options?.defaultBranch,
             isMainProtected: options?.isMainProtected,
           }),
+          {
+            providerOverride: options?.auditorProviderOverride,
+            modelOverride: options?.auditorModelOverride ?? undefined,
+          },
         );
       }
 

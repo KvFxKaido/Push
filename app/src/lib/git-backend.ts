@@ -21,6 +21,7 @@ import {
 import { computePushedDiff } from '@push/lib/git/pushed-diff';
 import { makeSecretScanPrePushGate } from '@push/lib/git/secret-scan-gate';
 import { makeProtectMainPrePushGate } from '@push/lib/git/protect-main-gate';
+import { makeAuditorPrePushGate, type AuditorPushVerdict } from '@push/lib/git/auditor-push-gate';
 import { resolveSecretScanEnabled } from '@push/lib/secret-scan';
 import { execInSandbox, type ExecResult } from './sandbox-client';
 import { shellEscape } from './sandbox-tool-utils';
@@ -71,6 +72,26 @@ export function resolveWebSecretScanEnabled(): boolean {
 }
 
 /**
+ * Resolve whether the Auditor runs at the push boundary (Gate-at-Push Move A).
+ *
+ * Default OFF: the gate is wired but inert. Move A's flip (PR 2b) turns it on
+ * alongside removing the prepare-time Auditor and relaxing the local-commit
+ * guard — so until then deliveries keep their single prepare-time audit and are
+ * never double-audited. `VITE_PUSH_AUDIT_AT_PUSH=1` opts in early (e.g. tests /
+ * a canary). Guarded so it's safe under any bundler/test runner.
+ */
+export function resolveWebAuditAtPushEnabled(): boolean {
+  // Read `process.env` first so vitest's `stubEnv` / a Node runtime can drive it,
+  // then fall back to `import.meta.env` (Vite inlines `VITE_*` at build time for
+  // production) — the same precedence as `local-pc-binding.ts`.
+  const raw =
+    typeof process !== 'undefined' && process.env?.VITE_PUSH_AUDIT_AT_PUSH !== undefined
+      ? process.env.VITE_PUSH_AUDIT_AT_PUSH
+      : (import.meta as { env?: Record<string, unknown> }).env?.VITE_PUSH_AUDIT_AT_PUSH;
+  return raw === '1' || raw === 'true';
+}
+
+/**
  * Build a GitBackend bound to a sandbox. Defaults to the module-level
  * `execInSandbox`; pass a custom executor (e.g. a tool-handler's injected
  * `ctx.execInSandbox`) when the call-site already has one. Commands run in
@@ -107,6 +128,17 @@ export function createSandboxPushGit(
     secretScan?: boolean;
     protectMain?: boolean;
     defaultBranch?: string;
+    /**
+     * Gate the push behind the model Auditor over the cumulative push diff
+     * (Gate-at-Push Move A). The caller injects `audit` (built over the real
+     * Auditor runner — the same diff source, `computePushedDiff`, is wired here)
+     * and the resolved `enabled` flag. Composed last so the cheap deterministic
+     * gates (Protect Main, secret scan) short-circuit before an LLM call.
+     */
+    auditAtPush?: {
+      audit: (diff: string) => Promise<AuditorPushVerdict>;
+      enabled?: boolean;
+    };
   },
 ): PushGit {
   const exec = makeSandboxGitExec(sandboxId, opts?.execFn ?? execInSandbox);
@@ -126,6 +158,13 @@ export function createSandboxPushGit(
         ? makeSecretScanPrePushGate({
             getDiff: () => computePushedDiff(exec),
             enabled: resolveWebSecretScanEnabled(),
+          })
+        : undefined,
+      opts?.auditAtPush
+        ? makeAuditorPrePushGate({
+            getDiff: () => computePushedDiff(exec),
+            audit: opts.auditAtPush.audit,
+            enabled: opts.auditAtPush.enabled,
           })
         : undefined,
     ]);

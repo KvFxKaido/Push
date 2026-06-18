@@ -10,7 +10,7 @@
  * for the dispatcher-level layer.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   handlePrepareCommit,
   handlePromoteToGithub,
@@ -464,6 +464,67 @@ describe('handleSandboxPush', () => {
     const result = await handleSandboxPush(ctx);
     expect(result.structuredError?.type).toBe('SANDBOX_UNREACHABLE');
     expect(result.text).toContain('[Tool Error — sandbox_push]');
+  });
+
+  it('does not run the Auditor when the gate is off (default, no flag)', async () => {
+    const cleanDiff = '+++ b/x.ts\n@@ -0,0 +1 @@\n+const x = 1;';
+    const ctx = makeContext({ pushedDiff: cleanDiff, execResults: [ok()] });
+    const result = await handleSandboxPush(ctx);
+    expect(ctx.runAuditor).not.toHaveBeenCalled();
+    expect(result.text).toBe('[Tool Result — sandbox_push]\nPushed successfully.');
+  });
+
+  describe('with the Auditor-at-push gate enabled', () => {
+    const cleanDiff = '+++ b/x.ts\n@@ -0,0 +1 @@\n+const x = 1;';
+    beforeEach(() => {
+      vi.stubEnv('VITE_PUSH_AUDIT_AT_PUSH', '1');
+    });
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('audits the cumulative pushed diff (source sandbox-push) and pushes on SAFE', async () => {
+      const ctx = makeContext({ pushedDiff: cleanDiff, execResults: [ok()] });
+      const result = await handleSandboxPush(ctx);
+      expect(ctx.runAuditor).toHaveBeenCalledWith(
+        cleanDiff,
+        expect.any(Function),
+        expect.objectContaining({ source: 'sandbox-push' }),
+        undefined,
+        expect.any(Object),
+        expect.any(Array),
+      );
+      expect(result.text).toBe('[Tool Result — sandbox_push]\nPushed successfully.');
+      expect(ctx.execCalls.some((c) => String(c[1]).includes("git 'push'"))).toBe(true);
+    });
+
+    it('blocks the push on an UNSAFE verdict and surfaces the summary', async () => {
+      const ctx = makeContext({ pushedDiff: cleanDiff, auditorVerdict: unsafeAuditorVerdict() });
+      const result = await handleSandboxPush(ctx);
+      expect(result.structuredError?.type).toBe('GIT_GUARD_BLOCKED');
+      expect(result.structuredError?.retryable).toBe(false);
+      expect(result.text).toContain('Looks dangerous.');
+      expect(ctx.execCalls.some((c) => String(c[1]).includes("git 'push'"))).toBe(false);
+    });
+
+    it('returns retryable AUDITOR_UNAVAILABLE when the Auditor backend throws', async () => {
+      const ctx = makeContext({ pushedDiff: cleanDiff });
+      ctx.runAuditor = vi.fn(async () => {
+        throw new Error('provider 503');
+      });
+      const result = await handleSandboxPush(ctx);
+      expect(result.structuredError?.type).toBe('AUDITOR_UNAVAILABLE');
+      expect(result.structuredError?.retryable).toBe(true);
+      expect(result.text).toContain('retry');
+      expect(ctx.execCalls.some((c) => String(c[1]).includes("git 'push'"))).toBe(false);
+    });
+
+    it('skips the Auditor when there is nothing new to push (empty cumulative diff)', async () => {
+      const ctx = makeContext({ pushedDiff: '', execResults: [ok()] });
+      const result = await handleSandboxPush(ctx);
+      expect(ctx.runAuditor).not.toHaveBeenCalled();
+      expect(result.text).toBe('[Tool Result — sandbox_push]\nPushed successfully.');
+    });
   });
 });
 

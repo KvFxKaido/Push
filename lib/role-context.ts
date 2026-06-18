@@ -12,7 +12,11 @@ const MAX_ROLE_PROJECT_HINTS_CHARS = SIZE_BUDGETS.roleProjectHints;
 const MAX_REVIEW_GUIDANCE_CHARS = SIZE_BUDGETS.reviewGuidance;
 
 export type ReviewerPromptSource = 'branch-diff' | 'pr-diff' | 'last-commit' | 'working-tree';
-export type AuditorPromptSource = 'working-tree-commit' | 'pr-merge' | 'sandbox-prepare-commit';
+export type AuditorPromptSource =
+  | 'working-tree-commit'
+  | 'pr-merge'
+  | 'sandbox-prepare-commit'
+  | 'sandbox-push';
 
 export interface RolePromptContextBase {
   repoFullName?: string;
@@ -139,6 +143,9 @@ export function buildAuditorContextBlock(context?: AuditorPromptContext): string
       break;
     case 'sandbox-prepare-commit':
       lines.push('Audit source: sandbox_prepare_commit tool preflight.');
+      break;
+    case 'sandbox-push':
+      lines.push('Audit source: sandbox_push pre-push gate over the cumulative push diff.');
       break;
   }
 

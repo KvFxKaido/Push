@@ -62,7 +62,8 @@ import {
   createModelCommitBranchNameProposer,
   ensureCommitTargetBranch,
 } from './ensure-commit-target-branch';
-import { createSandboxPushGit } from './git-backend';
+import { createSandboxPushGit, resolveWebAuditAtPushEnabled } from './git-backend';
+import type { AuditorPushVerdict } from '@push/lib/git/auditor-push-gate';
 import { GIT_REF_VALIDATION_DETAIL, isInvalidGitRef } from './git-ref-validation';
 import { isDefinitivelyGoneMessage } from './sandbox-error-utils';
 import {
@@ -500,21 +501,82 @@ export async function handlePrepareCommit(
   };
 }
 
+/**
+ * Run the model Auditor over the cumulative diff a push will upload — the
+ * `auditAtPush` adapter for `sandbox_push` (Gate-at-Push Move A). Fetches file
+ * contexts the same way `sandbox_prepare_commit` does, runs the Auditor, and
+ * reduces its verdict card to the gate's {verdict, summary} shape. A throw
+ * (Auditor backend unreachable) propagates to the gate, which fails closed +
+ * retryable; the file-context fetch degrades to diff-only on its own errors.
+ */
+async function auditPushedDiff(
+  ctx: GitReleaseHandlerContext,
+  diff: string,
+  overrides?: PrepareCommitAuditorOverrides,
+): Promise<AuditorPushVerdict> {
+  let fileContexts: AuditorFileContext[] = [];
+  try {
+    const filePaths = parseDiffStats(diff).fileNames;
+    fileContexts = await ctx.fetchAuditorFileContexts(filePaths, async (path) => {
+      const result = await ctx.readFromSandbox(ctx.sandboxId, `/workspace/${path}`);
+      if (result.error) return null;
+      return { content: result.content, truncated: result.truncated };
+    });
+  } catch {
+    // Degrade gracefully — proceed with diff-only (mirrors prepare_commit).
+  }
+  const res = await ctx.runAuditor(
+    diff,
+    (phase) => console.log(`[Push] Auditor (push): ${phase}`),
+    { source: 'sandbox-push', sourceLabel: 'sandbox_push pre-push gate' },
+    undefined,
+    {
+      providerOverride: overrides?.providerOverride,
+      modelOverride: overrides?.modelOverride,
+    },
+    fileContexts,
+  );
+  return { verdict: res.verdict, summary: res.card.summary };
+}
+
 export async function handleSandboxPush(
   ctx: GitReleaseHandlerContext,
+  overrides?: PrepareCommitAuditorOverrides,
 ): Promise<ToolExecutionResult> {
   const pushResult = await createSandboxPushGit(ctx.sandboxId, {
     execFn: ctx.execInSandbox,
     secretScan: true,
     protectMain: ctx.isMainProtected,
     defaultBranch: ctx.defaultBranch,
+    // Gate-at-Push Move A: inert until `resolveWebAuditAtPushEnabled()` is
+    // flipped on in PR 2b (which also drops the prepare-time audit), so today's
+    // delivery keeps its single prepare-time audit and is not double-audited.
+    auditAtPush: {
+      enabled: resolveWebAuditAtPushEnabled(),
+      audit: (diff) => auditPushedDiff(ctx, diff, overrides),
+    },
   }).push();
 
   if (!pushResult.ok) {
     const reason = pushResult.error || pushResult.stderr || pushResult.stdout || 'push failed';
-    // A deterministic pre-push gate block (Protect Main or the secret scan), not
-    // a git/transport failure: the gate's reason in `stderr` explains what to
-    // fix (switch off main, or remove the secret); retrying as-is won't help.
+    // Transient gate failure (the Auditor backend was unreachable), NOT a policy
+    // violation: surface as retryable so the runtime re-runs the push and
+    // re-audits, instead of treating it as an UNSAFE verdict.
+    if (pushResult.blocked && pushResult.retryable) {
+      const err: StructuredToolError = {
+        type: 'AUDITOR_UNAVAILABLE',
+        retryable: true,
+        message: pushResult.stderr || 'Auditor unavailable',
+      };
+      return {
+        text: formatStructuredError(err, `[Tool Error — sandbox_push]\n${pushResult.stderr}`),
+        structuredError: err,
+      };
+    }
+    // A deterministic pre-push gate block (Protect Main, the secret scan, or an
+    // UNSAFE Auditor verdict), not a git/transport failure: the gate's reason in
+    // `stderr` explains what to fix (switch off main, remove the secret, address
+    // the finding); retrying as-is won't help.
     if (pushResult.blocked) {
       const err: StructuredToolError = {
         type: 'GIT_GUARD_BLOCKED',
