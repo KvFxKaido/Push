@@ -77,7 +77,7 @@ describe('createGitGuardPreHook', () => {
     expect(result.errorType).toBe('GIT_GUARD_BLOCKED');
   });
 
-  it('respects allowDirectGit: true for commit/push/merge/rebase only', async () => {
+  it('respects allowDirectGit: true for commit/push/rebase but not branch ops', async () => {
     const entry = withMode('supervised');
     const allowed = await entry.hook(
       'sandbox_exec',
@@ -86,12 +86,46 @@ describe('createGitGuardPreHook', () => {
     );
     expect(allowed.decision).toBe('passthrough');
 
+    const rebaseAllowed = await entry.hook(
+      'sandbox_exec',
+      { command: 'git rebase main', allowDirectGit: true },
+      emptyContext,
+    );
+    expect(rebaseAllowed.decision).toBe('passthrough');
+
     const stillBlocked = await entry.hook(
       'sandbox_exec',
       { command: 'git checkout -b feature/foo', allowDirectGit: true },
       emptyContext,
     );
     expect(stillBlocked.decision).toBe('deny');
+  });
+
+  it('blocks a local `git merge` even with allowDirectGit (#985: PR-flow only)', async () => {
+    // A local merge is forbidden and a push-gate evasion (its conflict-resolution
+    // combined diff is omitted by the push-time `git log -p` scan), so the
+    // consent hatch must not reopen it — unlike commit/push/rebase.
+    const entry = withMode('supervised');
+    const result = await entry.hook(
+      'sandbox_exec',
+      { command: 'git merge feature/x', allowDirectGit: true },
+      emptyContext,
+    );
+    expect(result.decision).toBe('deny');
+    expect(result.errorType).toBe('GIT_GUARD_BLOCKED');
+    expect(result.reason).toContain('PR flow');
+    expect(result.reason).not.toContain('allowDirectGit": true');
+  });
+
+  it('blocks a local `git merge` in full-auto (no consent escape)', async () => {
+    const entry = withMode('full-auto');
+    const result = await entry.hook(
+      'sandbox_exec',
+      { command: 'git merge feature/x' },
+      emptyContext,
+    );
+    expect(result.decision).toBe('deny');
+    expect(result.errorType).toBe('GIT_GUARD_BLOCKED');
   });
 
   // --- Protect Main blocks the exec `git push` escape hatch (issue #977) ----
