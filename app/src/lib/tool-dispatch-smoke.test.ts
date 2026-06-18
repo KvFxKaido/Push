@@ -108,14 +108,14 @@ describe('tool-dispatch smoke -- sandbox_search_replace', () => {
   it('passes the chat-locked provider/model into prepare_push audits', async () => {
     const cumulativeDiff = 'diff --git a/src/app.ts b/src/app.ts\n+console.log("hi");\n';
     // prepare_push audits the cumulative push diff via computeSandboxPushedDiff,
-    // which issues `rev-parse @{upstream}` then `diff base..HEAD` over the
-    // (mocked) execInSandbox — serve the diff for the diff command.
+    // which issues `rev-parse @{upstream}` then `log -p base..HEAD` over the
+    // (mocked) execInSandbox — serve the patch series for the log command.
     vi.mocked(sandboxClient.execInSandbox).mockImplementation(async (_id, command) => {
       const cmd = String(command);
       if (cmd.includes('@{upstream}')) {
         return { exitCode: 0, stdout: 'origin/main', stderr: '', truncated: false };
       }
-      if (/ 'diff' '--no-color'/.test(cmd)) {
+      if (/ 'log' '-p' '--no-color'/.test(cmd)) {
         return { exitCode: 0, stdout: cumulativeDiff, stderr: '', truncated: false };
       }
       return { exitCode: 0, stdout: '', stderr: '', truncated: false };

@@ -90,3 +90,44 @@ describe('CommitReviewCard branch chips', () => {
     expect(html).toContain('New branch from here');
   });
 });
+
+describe('CommitReviewCard push-kind (Gate-at-Push)', () => {
+  const pendingCard = (overrides: Partial<CommitReviewCardData> = {}): CommitReviewCardData => ({
+    kind: 'push',
+    diff: {
+      diff: 'diff --git a/x b/x',
+      filesChanged: 1,
+      additions: 1,
+      deletions: 0,
+      truncated: false,
+    },
+    auditVerdict: { verdict: 'safe', summary: 'safe', risks: [], filesReviewed: 1 },
+    commitMessage: '',
+    status: 'pending',
+    ...overrides,
+  });
+
+  it('keeps Approve enabled on a push-kind card with no commit message', () => {
+    const html = renderToStaticMarkup(
+      <CommitReviewCard data={pendingCard()} messageId="m1" cardIndex={0} />,
+    );
+    // P1: an empty message must NOT disable the action (push commits already
+    // exist), and there is no commit-message editor for push-kind. Match the
+    // real `disabled=""` attribute, not the Tailwind `disabled:` class variants.
+    expect(html).toContain('Approve');
+    expect(html).not.toContain('disabled=""');
+    expect(html).not.toContain('Enter commit message...');
+    expect(html).not.toContain('Commit message');
+  });
+
+  it('still disables actions on a commit-kind card with an empty message (control)', () => {
+    const html = renderToStaticMarkup(
+      <CommitReviewCard
+        data={pendingCard({ kind: 'commit', commitMessage: '' })}
+        messageId="m1"
+        cardIndex={0}
+      />,
+    );
+    expect(html).toContain('disabled=""');
+  });
+});

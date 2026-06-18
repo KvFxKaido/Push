@@ -11,17 +11,19 @@ function execFrom(handler: (args: string[]) => GitExecResult): GitExec {
 }
 
 describe('computePushedDiff', () => {
+  // The pushed diff is the per-commit PATCH SERIES (`git log -p`), not the net
+  // tree diff — so the gates see secrets added then removed across commits.
   it('uses the upstream as the base when one is set', async () => {
     const exec = execFrom((args) => {
       if (args.includes('@{upstream}') || args.join(' ').includes('@{upstream}'))
         return okRes('origin/feat');
-      if (args[0] === 'diff') {
-        expect(args).toEqual(['diff', '--no-color', 'origin/feat..HEAD']);
-        return okRes('THE DIFF');
+      if (args[0] === 'log') {
+        expect(args).toEqual(['log', '-p', '--no-color', 'origin/feat..HEAD']);
+        return okRes('THE PATCHES');
       }
       return failRes();
     });
-    expect(await computePushedDiff(exec)).toBe('THE DIFF');
+    expect(await computePushedDiff(exec)).toBe('THE PATCHES');
   });
 
   it('falls back to origin/<branch> when there is no upstream', async () => {
@@ -30,8 +32,8 @@ describe('computePushedDiff', () => {
       if (j.includes('@{upstream}')) return failRes();
       if (args[0] === 'branch') return okRes('feature-x');
       if (args[0] === 'rev-parse' && args.includes('origin/feature-x')) return okRes('feature-x');
-      if (args[0] === 'diff') {
-        expect(args[2]).toBe('origin/feature-x..HEAD');
+      if (args[0] === 'log') {
+        expect(args[3]).toBe('origin/feature-x..HEAD');
         return okRes('D2');
       }
       return failRes();
@@ -47,8 +49,8 @@ describe('computePushedDiff', () => {
       if (args[0] === 'rev-parse' && args.includes('origin/brand-new')) return failRes();
       if (args[0] === 'rev-parse' && args.includes('origin/HEAD')) return okRes('origin/HEAD');
       if (args[0] === 'merge-base') return okRes('abc123');
-      if (args[0] === 'diff') {
-        expect(args[2]).toBe('abc123..HEAD');
+      if (args[0] === 'log') {
+        expect(args[3]).toBe('abc123..HEAD');
         return okRes('D3');
       }
       return failRes();
@@ -56,32 +58,32 @@ describe('computePushedDiff', () => {
     expect(await computePushedDiff(exec)).toBe('D3');
   });
 
-  it('falls back to the empty tree when the remote has no baseline (promote)', async () => {
+  it('scans the whole history when the remote has no baseline (promote)', async () => {
     const exec = execFrom((args) => {
       if (args[0] === 'branch') return okRes('lonely');
-      if (args[0] === 'diff') {
-        // Scans the full tree against git's canonical empty-tree object.
-        expect(args[2]).toBe('4b825dc642cb6eb9a060e54bf8d69288fbee4904..HEAD');
-        return okRes('FULL TREE DIFF');
+      if (args[0] === 'log') {
+        // No baseline → log the ref's entire history (no `..range`).
+        expect(args).toEqual(['log', '-p', '--no-color', 'HEAD']);
+        return okRes('FULL HISTORY');
       }
       return failRes(); // no upstream, no origin/<branch>, no origin/HEAD
     });
-    expect(await computePushedDiff(exec)).toBe('FULL TREE DIFF');
+    expect(await computePushedDiff(exec)).toBe('FULL HISTORY');
   });
 
-  it('returns null when the diff command itself fails', async () => {
+  it('returns null when the log command itself fails', async () => {
     const exec = execFrom((args) => {
       if (args.join(' ').includes('@{upstream}')) return okRes('origin/main');
-      if (args[0] === 'diff') return failRes();
+      if (args[0] === 'log') return failRes();
       return failRes();
     });
     expect(await computePushedDiff(exec)).toBeNull();
   });
 
-  it('returns an empty diff (not null) when there is nothing to push', async () => {
+  it('returns an empty string (not null) when there is nothing to push', async () => {
     const exec = execFrom((args) => {
       if (args.join(' ').includes('@{upstream}')) return okRes('origin/main');
-      if (args[0] === 'diff') return okRes('');
+      if (args[0] === 'log') return okRes('');
       return failRes();
     });
     expect(await computePushedDiff(exec)).toBe('');

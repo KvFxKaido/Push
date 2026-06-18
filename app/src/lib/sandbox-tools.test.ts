@@ -713,8 +713,9 @@ describe('executeSandboxToolCall -- stale write handling', () => {
 describe('executeSandboxToolCall -- prepare_push auditor overrides', () => {
   // Gate-at-Push Move A: the Auditor runs at prepare_push over the cumulative
   // push diff. computeSandboxPushedDiff issues `rev-parse @{upstream}` then a
-  // `diff base..HEAD` through the (mocked) execInSandbox; serve the cumulative
-  // diff for the `diff` command so the dispatcher wiring is exercised end-to-end.
+  // `log -p base..HEAD` through the (mocked) execInSandbox; serve the cumulative
+  // patch series for the `log` command so the dispatcher wiring is exercised
+  // end-to-end.
   const CUMULATIVE_DIFF = 'diff --git a/src/app.ts b/src/app.ts\n+console.log("hi");\n';
   beforeEach(() => {
     vi.mocked(sandboxClient.getSandboxDiff).mockReset();
@@ -722,11 +723,11 @@ describe('executeSandboxToolCall -- prepare_push auditor overrides', () => {
     vi.mocked(sandboxClient.execInSandbox).mockImplementation(async (_id, command) => {
       const cmd = String(command);
       // computePushedDiff: resolve the base on the first read, then return the
-      // cumulative diff for the `git diff base..HEAD` command.
+      // cumulative patch series for the `git log -p base..HEAD` command.
       if (cmd.includes('@{upstream}')) {
         return { stdout: 'origin/main', stderr: '', exitCode: 0, truncated: false };
       }
-      if (/ 'diff' '--no-color'/.test(cmd)) {
+      if (/ 'log' '-p' '--no-color'/.test(cmd)) {
         return { stdout: CUMULATIVE_DIFF, stderr: '', exitCode: 0, truncated: false };
       }
       return { stdout: '', stderr: '', exitCode: 0, truncated: false };
@@ -1580,11 +1581,12 @@ describe('executeSandboxToolCall -- sandbox_commit characterization', () => {
 });
 
 // The pre-push secret scan (`computePushedDiff`) issues two distinctive reads
-// (`@{upstream}` and `git 'diff' '--no-color'`) inside `PushGit.push()`. These
-// helpers let the push/promote/save_draft tests stay focused on the handlers'
-// own git commands: `mockExecScan` absorbs the scan reads (base resolves, clean
-// diff) while serving the handlers' results positionally, and `handlerExecCalls`
-// filters the scan reads out of call-count assertions.
+// (`@{upstream}` and `git 'log' '-p' '--no-color'`) inside `PushGit.push()`.
+// These helpers let the push/promote/save_draft tests stay focused on the
+// handlers' own git commands: `mockExecScan` absorbs the scan reads (base
+// resolves, clean patch series) while serving the handlers' results
+// positionally, and `handlerExecCalls` filters the scan reads out of call-count
+// assertions.
 type DispatcherExecResult = { stdout?: string; stderr?: string; exitCode: number };
 function mockExecScan(handlerResults: DispatcherExecResult[]) {
   const queue = handlerResults.map((r) => ({
@@ -1597,7 +1599,7 @@ function mockExecScan(handlerResults: DispatcherExecResult[]) {
     const c = String(cmd);
     if (c.includes('@{upstream}'))
       return { stdout: 'origin/main', stderr: '', exitCode: 0, truncated: false };
-    if (/ 'diff' '--no-color'/.test(c))
+    if (/ 'log' '-p' '--no-color'/.test(c))
       return { stdout: '', stderr: '', exitCode: 0, truncated: false };
     return queue.shift() ?? { stdout: '', stderr: '', exitCode: 0, truncated: false };
   });
@@ -1605,7 +1607,7 @@ function mockExecScan(handlerResults: DispatcherExecResult[]) {
 const handlerExecCalls = () =>
   vi.mocked(sandboxClient.execInSandbox).mock.calls.filter((c) => {
     const cmd = String(c[1]);
-    return !cmd.includes('@{upstream}') && !/ 'diff' '--no-color'/.test(cmd);
+    return !cmd.includes('@{upstream}') && !/ 'log' '-p' '--no-color'/.test(cmd);
   });
 
 describe('executeSandboxToolCall -- sandbox_push', () => {

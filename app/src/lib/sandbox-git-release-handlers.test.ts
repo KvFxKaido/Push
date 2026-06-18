@@ -128,7 +128,7 @@ function makeContext(opts: MakeContextOpts = {}): MockedContext {
       // is recorded and draws from the queue.
       const cmd = String(args[1]);
       if (cmd.includes('@{upstream}')) return ok('origin/main'); // base resolves
-      if (/ 'diff' '--no-color'/.test(cmd)) return ok(opts.pushedDiff ?? '');
+      if (/ 'log' '-p' '--no-color'/.test(cmd)) return ok(opts.pushedDiff ?? '');
       execCalls.push(args);
       return execQueue.shift() ?? ok();
     }),

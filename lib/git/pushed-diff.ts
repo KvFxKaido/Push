@@ -1,34 +1,30 @@
 /**
- * lib/git/pushed-diff.ts — compute the diff of the commits a push will send.
+ * lib/git/pushed-diff.ts — compute the patch series a push will send.
  *
- * The pre-push secret scan must inspect what `git push` will actually upload —
- * the commits on the pushed ref that the remote doesn't have yet — not a
- * working-tree preview (which is capped, and misses already-committed-but-
- * unpushed secrets in branch history). This resolves that *uncapped* diff
- * through the same `GitExec` port the backend uses, so it works on every
- * surface.
+ * The pre-push gates (secret scan + Auditor) must inspect what `git push` will
+ * actually upload — the commits on the pushed ref the remote doesn't have yet —
+ * not a working-tree preview (capped, and blind to already-committed-but-unpushed
+ * history). Crucially this is the per-commit PATCH SERIES (`git log -p`), not the
+ * net tree diff: a secret added in one commit and removed in a later one is
+ * invisible to `git diff base..HEAD` but is still uploaded with the earlier
+ * commit, so the gates must see every commit's patch. Resolved *uncapped* through
+ * the same `GitExec` port the backend uses, so it works on every surface.
  *
  * Base resolution, most-specific first:
  *   1. the ref's upstream (`@{upstream}`) — the normal tracked-branch case;
  *   2. `origin/<branch>` — an existing remote branch with no local upstream set;
  *   3. the merge-base with `origin/HEAD` — a brand-new branch (the
  *      auto-branch-on-commit case): everything since it forked from the default.
- *   4. the empty tree — a remote with no baseline at all (a fresh/empty repo,
- *      e.g. `promote_to_github`'s first push): every commit on HEAD is new, so
- *      scan the whole tree rather than skip. This makes "no baseline" fail
- *      *safe* (scan everything) instead of fail-open.
+ *   4. no baseline at all (a fresh/empty remote, e.g. `promote_to_github`'s first
+ *      push): scan the ref's WHOLE history — every commit is new. This makes "no
+ *      baseline" fail *safe* (scan everything) instead of fail-open.
  *
- * Returns `null` only when the diff read itself fails (e.g. no commits / invalid
- * ref) — the caller (the gate) then fails *open* with a structured log, because
- * that's infra trouble, not a detected secret, and must not brick every push.
+ * Returns `null` only when the read itself fails (e.g. no commits / invalid ref)
+ * — the caller (the gate) then fails *open* with a structured log, because that's
+ * infra trouble, not a detected secret, and must not brick every push.
  */
 
 import type { GitExec } from './backend.js';
-
-// Git's canonical empty-tree object (stable for SHA-1 repos). `git diff
-// <empty-tree>..HEAD` yields the full tree as additions — used when the remote
-// has no baseline to diff against.
-const EMPTY_TREE_SHA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
 async function ok(exec: GitExec, args: string[]): Promise<string | null> {
   const res = await exec(args);
@@ -67,10 +63,20 @@ export async function computePushedDiff(
     }
   }
 
-  // 4. no remote baseline at all → diff the full tree against the empty tree.
-  if (!base) base = EMPTY_TREE_SHA;
-
-  const res = await exec(['diff', '--no-color', `${base}..${ref}`]);
+  // Emit the per-commit PATCH SERIES the push uploads (`git log -p`), NOT the net
+  // tree diff (`git diff base..ref`). A secret added in one commit and removed in
+  // a later one leaves no trace in the net tree, yet the push still uploads the
+  // earlier commit (and its blob); `git log -p` surfaces every commit's patch so
+  // the secret-scan and Auditor gates see intermediate states too. Push only ever
+  // appends linear commits (`git merge` is blocked; merges are GitHub-PR-only),
+  // so there are no local merge commits to need a combined (`--cc`) diff.
+  // (Codex P1: audit pushed commit history, not only the final tree.)
+  //
+  // When no remote baseline resolves (step 1-3 all missed: fresh/empty remote),
+  // every commit reachable from the ref is new — scan the whole history (`ref`
+  // with no range).
+  const range = base ? [`${base}..${ref}`] : [ref];
+  const res = await exec(['log', '-p', '--no-color', ...range]);
   if (res.exitCode !== 0) return null;
   return res.stdout;
 }

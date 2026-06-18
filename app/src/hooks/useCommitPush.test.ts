@@ -58,9 +58,10 @@ type GitExecResult = { exitCode: number; stdout?: string; stderr?: string; error
 
 /**
  * Dispatch `execInSandbox` by command so the pre-push secret scan's
- * `computePushedDiff` reads (rev-parse/branch/merge-base/diff) don't depend on
- * call order. `pushedDiff` is what the scan sees; `push` is the push result;
- * `override(id, cmd)` wins first (used to fail a specific sandbox/command).
+ * `computePushedDiff` reads (rev-parse/branch/merge-base/log) don't depend on
+ * call order. `pushedDiff` is what the scan sees (now the `git log -p` patch
+ * series); `push` is the push result; `override(id, cmd)` wins first (used to
+ * fail a specific sandbox/command).
  */
 function dispatchGit(
   opts: {
@@ -73,7 +74,7 @@ function dispatchGit(
     const ov = opts.override?.(id, cmd);
     if (ov) return { stdout: '', stderr: '', ...ov };
     if (cmd.includes('@{upstream}')) return { exitCode: 0, stdout: 'origin/main', stderr: '' };
-    if (cmd.includes("'diff'")) return { exitCode: 0, stdout: opts.pushedDiff ?? '', stderr: '' };
+    if (cmd.includes("'log'")) return { exitCode: 0, stdout: opts.pushedDiff ?? '', stderr: '' };
     if (cmd.includes("'push'"))
       return { stdout: '', stderr: '', ...(opts.push ?? { exitCode: 0 }) };
     return { exitCode: 0, stdout: '', stderr: '' }; // add, commit, apply, etc.
