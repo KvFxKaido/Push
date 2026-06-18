@@ -14,11 +14,18 @@ the working tree is continuously mirrored to a pushed `draft/auto/<branch>` ref
 with an offer-to-restore on a fresh sandbox (#980 primitive, #981 coordinator,
 #983 restore; follow-ups #982). The durability decision now lives in
 [`Platform, Sessions, and Sandbox Decisions.md`](<Platform, Sessions, and Sandbox Decisions.md>) §5.
-**Decided (2026-06-18):** Open Question 1 is settled — the Auditor **moves to
-push** (full thesis), on the corrected rationale in [Move A](#move-a--commit-freely-move-the-gate-to-push).
-Move A is unblocked for implementation (not yet built). **Still open:** B1
+**Move A (gate-at-push) has shipped (2026-06-18):** OQ1 is settled (the Auditor
+**moves to push** — see [Move A](#move-a--commit-freely-move-the-gate-to-push))
+and implemented. The agent commits silently via `sandbox_commit` (pre-commit
+hook + auto-branch-off-main, no Auditor); `prepare_push` audits the cumulative
+push diff and returns the review card; approval ships through the deterministic
+gates (the push-time Auditor gate defaults on for direct pushes). The retired
+`sandbox_prepare_commit` is replaced by that pair. **Still open:** B1
 (push-to-start) remains the destination beyond B2; OQ2 (B1-vs-B2 trigger) and
-OQ3 (WIP-push cadence).
+OQ3 (WIP-push cadence). Once B1 lands, the Current parts fold into
+[`Platform, Sessions, and Sandbox Decisions.md`](<Platform, Sessions, and Sandbox Decisions.md>)
+and [`Auto-Branch on Commit`](<Auto-Branch on Commit — Nothing Lands on Main.md>)
+is marked `Superseded by` this doc (the gate it kept at commit has now moved).
 
 ## Thesis
 
