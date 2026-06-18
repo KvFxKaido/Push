@@ -874,4 +874,77 @@ describe('WebToolExecutionRuntime — read-tier GitHub fallback (decision §11)'
     expect(result.structuredError?.type).toBe('SANDBOX_UNREACHABLE');
     expect(result.text).toContain('[sandbox] gone');
   });
+
+  function findReferences(): AnyToolCall {
+    return {
+      source: 'sandbox',
+      call: { tool: 'sandbox_find_references', args: { symbol: 'buildPrompt' } },
+    };
+  }
+
+  it('declines the search fallback on a non-default branch (code search is default-branch only)', async () => {
+    // GitHub /search/code only indexes the default branch, so on a feature
+    // branch it would return stale/no-match results as a success. Keep the
+    // retryable sandbox error instead.
+    vi.mocked(sandboxTools.executeSandboxToolCall).mockResolvedValueOnce({
+      text: '[sandbox] gone',
+      structuredError: { type: 'SANDBOX_UNREACHABLE', retryable: true, message: 'sandbox lost' },
+    });
+
+    const result = await runtime.execute(findReferences(), {
+      allowedRepo: 'owner/repo',
+      sandboxId: 'sb-cloud-1',
+      role: 'coder',
+      isMainProtected: false,
+      currentBranch: 'feature/x',
+      defaultBranch: 'main',
+    });
+
+    expect(vi.mocked(githubTools.executeToolCall)).not.toHaveBeenCalled();
+    expect(result.structuredError?.type).toBe('SANDBOX_UNREACHABLE');
+  });
+
+  it('serves the search fallback when the active branch IS the default', async () => {
+    vi.mocked(sandboxTools.executeSandboxToolCall).mockResolvedValueOnce({
+      text: '[sandbox] gone',
+      structuredError: { type: 'SANDBOX_UNREACHABLE', retryable: true, message: 'sandbox lost' },
+    });
+
+    const result = await runtime.execute(findReferences(), {
+      allowedRepo: 'owner/repo',
+      sandboxId: 'sb-cloud-1',
+      role: 'coder',
+      isMainProtected: false,
+      currentBranch: 'main',
+      defaultBranch: 'main',
+    });
+
+    expect(vi.mocked(githubTools.executeToolCall)).toHaveBeenCalledTimes(1);
+    const [githubCall] = vi.mocked(githubTools.executeToolCall).mock.calls[0];
+    expect(githubCall).toMatchObject({ tool: 'search_files', args: { query: 'buildPrompt' } });
+    expect(result.structuredError).toBeUndefined();
+    expect(result.text).toContain('[Read tier]');
+  });
+
+  it('still serves a branch-aware read_file fallback on a feature branch', async () => {
+    // Contents API honors ref, so read_file is unaffected by the search gate.
+    vi.mocked(sandboxTools.executeSandboxToolCall).mockResolvedValueOnce({
+      text: '[sandbox] gone',
+      structuredError: { type: 'SANDBOX_UNREACHABLE', retryable: true, message: 'sandbox lost' },
+    });
+
+    const result = await runtime.execute(sandboxRead(), {
+      allowedRepo: 'owner/repo',
+      sandboxId: 'sb-cloud-1',
+      role: 'coder',
+      isMainProtected: false,
+      currentBranch: 'feature/x',
+      defaultBranch: 'main',
+    });
+
+    expect(vi.mocked(githubTools.executeToolCall)).toHaveBeenCalledTimes(1);
+    const [githubCall] = vi.mocked(githubTools.executeToolCall).mock.calls[0];
+    expect(githubCall).toMatchObject({ tool: 'read_file', args: { branch: 'feature/x' } });
+    expect(result.structuredError).toBeUndefined();
+  });
 });

@@ -257,8 +257,13 @@ plus `find_references` → GitHub code search since references ≈ search hits f
 the symbol), and emits symmetric structured logs (`read_tier_github_fallback` ↔
 `_skipped` ↔ `_failed`). `read_symbols` is the one sandbox read with no GitHub
 analog — its extractor runs as a Python script inside the sandbox — so it keeps
-the original error. This is the §3 "code-backed, not prompt-backed" closure of
-the precedence.
+the original error. The `search_files` fallback (`search` / `find_references`)
+is additionally gated to the **default branch**: GitHub's `/search/code` only
+indexes the default branch and ignores `&ref`, so on a feature branch it would
+return stale/no-match results as a success; there the fallback declines and the
+retryable sandbox error is preserved (`read`/`list_dir` use the branch-aware
+contents API and are unaffected). This is the §3 "code-backed, not
+prompt-backed" closure of the precedence.
 
 ## Active Runtime Work
 

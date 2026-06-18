@@ -13,11 +13,12 @@
  * - **Web/cloud-sandbox only.** The CLI daemon's local filesystem is its own
  *   reliable read substrate, so it has no equivalent fallback.
  * - Covers the sandbox reads with a clean GitHub-API analog: `read`/`search`/
- *   `list_dir`, plus `find_references` → GitHub code search (references ≈
- *   search hits for the symbol, scoped to its path). `read_symbols` has no
- *   GitHub-tier equivalent (its extractor runs as a Python script inside the
- *   sandbox), so it maps to `null` (no fallback) and the caller keeps the
- *   original sandbox error.
+ *   `list_dir`, plus `find_references` → GitHub code search. The reference
+ *   fallback is lexical (search hits for the symbol, scoped to its path) — it
+ *   does not reproduce the sandbox grep's import/call classification, so it's
+ *   approximate. `read_symbols` has no GitHub-tier equivalent (its extractor
+ *   runs as a Python script inside the sandbox), so it maps to `null` (no
+ *   fallback) and the caller keeps the original sandbox error.
  * - The GitHub tier reads the branch's last **pushed** state, so a fallback
  *   read does not reflect uncommitted working-tree edits. That's acceptable
  *   here: the fallback only fires when the sandbox (the working-tree source) is
@@ -71,9 +72,12 @@ export function mapSandboxReadToGitHubCall(
     }
     case 'search_files': {
       // sandbox_search carries `query`/`path`; sandbox_find_references carries
-      // `symbol`/`scope`. Normalize both onto GitHub code search.
-      const query = typeof args.query === 'string' ? args.query : args.symbol;
-      if (typeof query !== 'string' || query.length === 0) return null;
+      // `symbol`/`scope`. Normalize both onto GitHub code search. This is a
+      // lexical fallback — it does NOT reproduce the sandbox's import/call
+      // classification, so reference results are approximate (search hits).
+      const rawQuery = typeof args.query === 'string' ? args.query : args.symbol;
+      const query = typeof rawQuery === 'string' ? rawQuery.trim() : '';
+      if (!query) return null;
       const pathArg = typeof args.path === 'string' ? args.path : args.scope;
       return {
         tool: 'search_files',
