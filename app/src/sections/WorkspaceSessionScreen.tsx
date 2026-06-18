@@ -13,6 +13,7 @@ import { useWorkspaceComposerState } from '@/hooks/useWorkspaceComposerState';
 import { useWorkspacePreferences } from '@/hooks/useWorkspacePreferences';
 import { useWorkspaceSandboxController } from '@/hooks/useWorkspaceSandboxController';
 import { useWorkspaceSandboxAutoBack } from '@/hooks/useWorkspaceSandboxAutoBack';
+import { useWorkspaceSandboxRestore } from '@/hooks/useWorkspaceSandboxRestore';
 import { perfMark } from '@/lib/perf-marks';
 import { getRepoAppearanceColorHex } from '@/lib/repo-appearance';
 import { useWorkspaceSessionBridge } from './useWorkspaceSessionBridge';
@@ -94,6 +95,7 @@ export function WorkspaceSessionScreen({
         ? 'main'
         : workspaceRepo?.current_branch || workspaceRepo?.default_branch || null,
   );
+  const repoBranch = workspaceRepo?.current_branch || workspaceRepo?.default_branch || null;
 
   // B2 auto-back: while a real repo sandbox is live, continuously mirror the
   // working tree to its durable `draft/auto/<branch>` ref (debounce-after-edits
@@ -101,8 +103,17 @@ export function WorkspaceSessionScreen({
   // to until it's promoted. See "Pushed Branch as Source of Truth" §Move B.
   useWorkspaceSandboxAutoBack({
     sandboxId: sandbox.sandboxId,
-    branch: workspaceRepo?.current_branch || workspaceRepo?.default_branch || null,
+    branch: repoBranch,
     enabled: workspaceRepo != null && sandbox.status === 'ready',
+  });
+  const autoBackRestore = useWorkspaceSandboxRestore({
+    sandboxId: sandbox.sandboxId,
+    branch: repoBranch,
+    enabled:
+      workspaceRepo != null &&
+      sandbox.status === 'ready' &&
+      sandbox.freshSandboxId === sandbox.sandboxId &&
+      sandbox.restoredFromSnapshotSandboxId !== sandbox.sandboxId,
   });
 
   const handleWorkspacePromotion = useCallback(
@@ -639,7 +650,14 @@ export function WorkspaceSessionScreen({
     handleSelectGoogleModelFromChat,
   };
 
-  const workspaceDataDomain = { snapshots, instructions, scratchpad, todo, protectMain };
+  const workspaceDataDomain = {
+    snapshots,
+    instructions,
+    scratchpad,
+    todo,
+    protectMain,
+    autoBackRestore,
+  };
 
   const authDomain = {
     token,

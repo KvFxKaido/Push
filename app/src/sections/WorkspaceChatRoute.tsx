@@ -112,6 +112,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     scratchpad,
     todo,
     protectMain,
+    autoBackRestore,
     showToolActivity,
     handleStartWorkspace,
     handleStartChat,
@@ -724,6 +725,18 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
           },
         }
       : null,
+    autoBackRestoreBannerProps:
+      !isScratch && activeRepo && autoBackRestore?.available
+        ? {
+            summary: autoBackRestore.summary,
+            restoring: autoBackRestore.restoring,
+            error: autoBackRestore.error,
+            onRestore: () => {
+              void autoBackRestore.restore();
+            },
+            onDismiss: autoBackRestore.dismiss,
+          }
+        : null,
   };
 
   return (
