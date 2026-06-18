@@ -255,7 +255,13 @@ working-tree edits. The fallback is cloud-only (local-PC keeps its own re-pair
 path), covers the reads with a clean GitHub analog (`read`/`search`/`list_dir`,
 plus `find_references` → GitHub code search since references ≈ search hits for
 the symbol), and emits symmetric structured logs (`read_tier_github_fallback` ↔
-`_skipped` ↔ `_failed`). `read_symbols` is the one sandbox read with no GitHub
+`_skipped` ↔ `_failed`). Those logs are emitted **browser-side** — this runtime
+is the inline lane, and its sandbox/GitHub calls are `fetch` clients to the
+Worker, so the lines land in the client console, not `wrangler tail`. Of the
+branches only the *served* case leaves a durable, greppable trail — via the
+result-text annotation persisted in the chat transcript; the `_skipped` /
+`_failed` branches exist only in the browser console and vanish on tab close.
+`read_symbols` is the one sandbox read with no GitHub
 analog — its extractor runs as a Python script inside the sandbox — so it keeps
 the original error. The `search_files` fallback (`search` / `find_references`)
 is additionally gated to the **default branch**: GitHub's `/search/code` only
@@ -264,6 +270,13 @@ return stale/no-match results as a success; there the fallback declines and the
 retryable sandbox error is preserved (`read`/`list_dir` use the branch-aware
 contents API and are unaffected). This is the §3 "code-backed, not
 prompt-backed" closure of the precedence.
+
+The fallback is also **inline-only by construction**: the background coder path
+(Worker DO) bypasses `WebToolExecutionRuntime` and, on sandbox loss, resumes on
+a fresh sandbox rather than degrading to pushed-state reads. That asymmetry is
+deliberate — degrading a *watched* read to last-pushed state is strictly better
+than failing in front of someone, but an *unwatched* job editing against stale
+bytes is worse than pausing.
 
 ## Active Runtime Work
 
