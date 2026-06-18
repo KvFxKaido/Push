@@ -128,6 +128,20 @@ describe('createGitGuardPreHook', () => {
     expect(result.errorType).toBe('GIT_GUARD_BLOCKED');
   });
 
+  it('blocks `git commit && git merge` — the merge is not masked by the escapable commit', async () => {
+    // The classifier surfaces the MOST restrictive segment, so an earlier
+    // allowDirectGit-eligible commit can't smuggle a forbidden merge through the
+    // chain (Codex P1 on #986).
+    const entry = withMode('full-auto');
+    const chained = await entry.hook(
+      'sandbox_exec',
+      { command: 'git commit -m x && git merge feature/x', allowDirectGit: true },
+      emptyContext,
+    );
+    expect(chained.decision).toBe('deny');
+    expect(chained.errorType).toBe('GIT_GUARD_BLOCKED');
+  });
+
   // --- Protect Main blocks the exec `git push` escape hatch (issue #977) ----
   const protectedContext = { ...emptyContext, isMainProtected: true };
 
