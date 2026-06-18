@@ -140,6 +140,31 @@ async function tryGitHubReadFallback(
     );
     return null;
   }
+  // `search_files` maps to GitHub's `/search/code`, which is NOT branch-aware —
+  // it only indexes the default branch and ignores `&ref`. On a non-default
+  // feature branch the search would return default-branch (stale / no-match)
+  // results as a *success*, hiding the retryable sandbox error — especially
+  // misleading for a references lookup. Decline so the caller keeps
+  // SANDBOX_UNREACHABLE. (read_file / list_dir use the branch-aware contents
+  // API, so they're unaffected.)
+  if (
+    githubCall.tool === 'search_files' &&
+    ctx.currentBranch &&
+    ctx.defaultBranch &&
+    ctx.currentBranch !== ctx.defaultBranch
+  ) {
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'read_tier_github_fallback_skipped',
+        tool: sandboxCall.tool,
+        reason,
+        cause: 'code_search_not_branch_aware',
+        branch: ctx.currentBranch,
+      }),
+    );
+    return null;
+  }
   try {
     const result = await executeToolCall(githubCall, repo);
     // The GitHub executor reports many failures (404s, repo mismatch, "path is

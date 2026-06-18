@@ -12,10 +12,13 @@
  * Scope:
  * - **Web/cloud-sandbox only.** The CLI daemon's local filesystem is its own
  *   reliable read substrate, so it has no equivalent fallback.
- * - Only the three sandbox read tools with a clean GitHub-API analog
- *   (`read`/`search`/`list_dir`). `read_symbols` / `refs` have no GitHub-tier
- *   equivalent, so they map to `null` (no fallback) and the caller keeps the
- *   original sandbox error.
+ * - Covers the sandbox reads with a clean GitHub-API analog: `read`/`search`/
+ *   `list_dir`, plus `find_references` → GitHub code search. The reference
+ *   fallback is lexical (search hits for the symbol, scoped to its path) — it
+ *   does not reproduce the sandbox grep's import/call classification, so it's
+ *   approximate. `read_symbols` has no GitHub-tier equivalent (its extractor
+ *   runs as a Python script inside the sandbox), so it maps to `null` (no
+ *   fallback) and the caller keeps the original sandbox error.
  * - The GitHub tier reads the branch's last **pushed** state, so a fallback
  *   read does not reflect uncommitted working-tree edits. That's acceptable
  *   here: the fallback only fires when the sandbox (the working-tree source) is
@@ -30,6 +33,9 @@ const SANDBOX_TO_GITHUB_READ: Record<string, 'read_file' | 'search_files' | 'lis
   sandbox_read_file: 'read_file',
   sandbox_search: 'search_files',
   sandbox_list_dir: 'list_directory',
+  // find_references is a scoped grep for a symbol — GitHub code search serves
+  // the same intent (file + matching lines) without the sandbox.
+  sandbox_find_references: 'search_files',
 };
 
 /**
@@ -65,10 +71,17 @@ export function mapSandboxReadToGitHubCall(
       };
     }
     case 'search_files': {
-      if (typeof args.query !== 'string') return null;
+      // sandbox_search carries `query`/`path`; sandbox_find_references carries
+      // `symbol`/`scope`. Normalize both onto GitHub code search. This is a
+      // lexical fallback — it does NOT reproduce the sandbox's import/call
+      // classification, so reference results are approximate (search hits).
+      const rawQuery = typeof args.query === 'string' ? args.query : args.symbol;
+      const query = typeof rawQuery === 'string' ? rawQuery.trim() : '';
+      if (!query) return null;
+      const pathArg = typeof args.path === 'string' ? args.path : args.scope;
       return {
         tool: 'search_files',
-        args: { repo, query: args.query, path: repoRelativePathFilter(args.path), branch },
+        args: { repo, query, path: repoRelativePathFilter(pathArg), branch },
       };
     }
     case 'list_directory': {
