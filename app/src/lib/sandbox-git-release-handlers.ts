@@ -127,6 +127,13 @@ export interface GitReleaseHandlerContext {
   currentBranch?: string;
   /** The repo default branch for this workspace, threaded from the UI/tool runtime. */
   defaultBranch?: string;
+  /**
+   * Protect Main toggle for this session, threaded from the tool runtime. When
+   * true, `sandbox_push` enforces it at the push boundary (a fail-closed
+   * pre-push gate that reads the real HEAD), independent of the Protect Main
+   * `PreToolUse` hook — defense-in-depth, not a replacement.
+   */
+  isMainProtected?: boolean;
   /** Execute a shell command in the sandbox. */
   execInSandbox: GitReleaseExecInSandbox;
   /** Produce a unified diff of the sandbox working tree. */
@@ -499,12 +506,15 @@ export async function handleSandboxPush(
   const pushResult = await createSandboxPushGit(ctx.sandboxId, {
     execFn: ctx.execInSandbox,
     secretScan: true,
+    protectMain: ctx.isMainProtected,
+    defaultBranch: ctx.defaultBranch,
   }).push();
 
   if (!pushResult.ok) {
     const reason = pushResult.error || pushResult.stderr || pushResult.stdout || 'push failed';
-    // A deterministic secret-scan block (not a git/transport failure): tell the
-    // model why and that retrying as-is won't help — it must remove the secret.
+    // A deterministic pre-push gate block (Protect Main or the secret scan), not
+    // a git/transport failure: the gate's reason in `stderr` explains what to
+    // fix (switch off main, or remove the secret); retrying as-is won't help.
     if (pushResult.blocked) {
       const err: StructuredToolError = {
         type: 'GIT_GUARD_BLOCKED',

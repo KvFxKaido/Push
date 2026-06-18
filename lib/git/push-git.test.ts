@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PushGit } from './push-git.ts';
+import { PushGit, composePrePushGates } from './push-git.ts';
 import type { GitBackend, GitWriteResult } from './backend.ts';
 
 const writeOk = (stdout = ''): GitWriteResult => ({ ok: true, stdout, stderr: '', exitCode: 0 });
@@ -172,5 +172,47 @@ describe('PushGit.push gate', () => {
     expect(res.blocked).toBe(true);
     expect(res.stderr).toContain('gate crashed');
     expect(push).not.toHaveBeenCalled();
+  });
+});
+
+describe('composePrePushGates', () => {
+  it('returns undefined when no gate is supplied', () => {
+    expect(composePrePushGates([undefined, undefined])).toBeUndefined();
+    expect(composePrePushGates([])).toBeUndefined();
+  });
+
+  it('unwraps the single active gate', async () => {
+    const gate = vi.fn(async () => ({ ok: true }));
+    expect(composePrePushGates([undefined, gate])).toBe(gate);
+  });
+
+  it('passes only when every gate passes', async () => {
+    const a = vi.fn(async () => ({ ok: true }));
+    const b = vi.fn(async () => ({ ok: true }));
+    const composed = composePrePushGates([a, b])!;
+    expect(await composed()).toEqual({ ok: true });
+    expect(a).toHaveBeenCalledOnce();
+    expect(b).toHaveBeenCalledOnce();
+  });
+
+  it('short-circuits on the first denial, in order (safety-first)', async () => {
+    const first = vi.fn(async () => ({ ok: false, reason: 'protect main' }));
+    const second = vi.fn(async () => ({ ok: true }));
+    const composed = composePrePushGates([first, second])!;
+    const verdict = await composed();
+    expect(verdict).toEqual({ ok: false, reason: 'protect main' });
+    expect(first).toHaveBeenCalledOnce();
+    // The later gate never runs once an earlier one denies.
+    expect(second).not.toHaveBeenCalled();
+  });
+
+  it('propagates a throw to the caller (PushGit.push then fail-safe blocks)', async () => {
+    const first = vi.fn(async () => {
+      throw new Error('boom');
+    });
+    const second = vi.fn(async () => ({ ok: true }));
+    const composed = composePrePushGates([first, second])!;
+    await expect(composed()).rejects.toThrow('boom');
+    expect(second).not.toHaveBeenCalled();
   });
 });

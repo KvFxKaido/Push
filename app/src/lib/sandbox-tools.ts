@@ -163,12 +163,13 @@ function buildVerificationContext(sandboxId: string): VerificationHandlerContext
  */
 function buildGitReleaseContext(
   sandboxId: string,
-  branchInfo?: { currentBranch?: string; defaultBranch?: string },
+  branchInfo?: { currentBranch?: string; defaultBranch?: string; isMainProtected?: boolean },
 ): GitReleaseHandlerContext {
   return {
     sandboxId,
     currentBranch: branchInfo?.currentBranch,
     defaultBranch: branchInfo?.defaultBranch,
+    isMainProtected: branchInfo?.isMainProtected,
     execInSandbox,
     getSandboxDiff,
     readFromSandbox,
@@ -1061,7 +1062,13 @@ export async function executeSandboxToolCall(
       }
 
       case 'sandbox_push': {
-        return handleSandboxPush(buildGitReleaseContext(sandboxId));
+        return handleSandboxPush(
+          buildGitReleaseContext(sandboxId, {
+            currentBranch: options?.currentBranch,
+            defaultBranch: options?.defaultBranch,
+            isMainProtected: options?.isMainProtected,
+          }),
+        );
       }
 
       case 'sandbox_run_tests': {

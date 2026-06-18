@@ -39,6 +39,28 @@ export interface PrePushVerdict {
 /** Gate run before a push; the factory builds it over the deterministic secret scan. */
 export type PrePushGate = () => Promise<PrePushVerdict>;
 
+/**
+ * Compose multiple `PrePushGate`s into one. Gates run in order and the first
+ * denial wins (short-circuit) — so order them safety-first. A throw propagates
+ * to `PushGit.push`, which fail-safe-blocks. Returns `undefined` when no gate is
+ * supplied (so the caller can leave `prePush` unset) and the single gate
+ * unwrapped when only one is active.
+ */
+export function composePrePushGates(
+  gates: ReadonlyArray<PrePushGate | undefined>,
+): PrePushGate | undefined {
+  const active = gates.filter((g): g is PrePushGate => Boolean(g));
+  if (active.length === 0) return undefined;
+  if (active.length === 1) return active[0];
+  return async () => {
+    for (const gate of active) {
+      const verdict = await gate();
+      if (!verdict.ok) return verdict;
+    }
+    return { ok: true };
+  };
+}
+
 export interface PushGitDeps {
   backend: GitBackend;
   preCommit?: PreCommitGate;
