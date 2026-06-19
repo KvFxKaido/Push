@@ -69,7 +69,7 @@ import { useBranchForkGuard } from './useBranchForkGuard';
 import { useChatAutoSwitch } from './useChatAutoSwitch';
 
 // Re-export public interfaces from chat-send (avoids circular imports)
-export type { ScratchpadHandlers, UsageHandler, ChatRuntimeHandlers } from './chat-send';
+export type { ScratchpadHandlers, ChatRuntimeHandlers } from './chat-send';
 
 export { detectInterruptedRun, getResumeEvents } from '@/lib/checkpoint-manager';
 
@@ -98,17 +98,11 @@ type AbortStreamOptions = {
 // Hook
 // ---------------------------------------------------------------------------
 
-import type {
-  ScratchpadHandlers,
-  TodoHandlers,
-  UsageHandler,
-  ChatRuntimeHandlers,
-} from './chat-send';
+import type { ScratchpadHandlers, TodoHandlers, ChatRuntimeHandlers } from './chat-send';
 
 export function useChat(
   activeRepoFullName: string | null,
   scratchpad?: ScratchpadHandlers,
-  usageHandler?: UsageHandler,
   runtimeHandlers?: ChatRuntimeHandlers,
   branchInfo?: { currentBranch?: string; defaultBranch?: string },
   todo?: TodoHandlers,
@@ -168,8 +162,6 @@ export function useChat(
   scratchpadRef.current = scratchpad;
   const todoRef = useRef(todo);
   todoRef.current = todo;
-  const usageHandlerRef = useRef(usageHandler);
-  usageHandlerRef.current = usageHandler;
   const runtimeHandlersRef = useRef(runtimeHandlers);
   runtimeHandlersRef.current = runtimeHandlers;
   const branchInfoRef = useRef(branchInfo);
@@ -689,7 +681,6 @@ export function useChat(
         localDaemonBindingRef,
         scratchpadRef,
         todoRef,
-        usageHandlerRef,
         workspaceContextRef,
         runtimeHandlersRef,
         repoRef,

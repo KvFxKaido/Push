@@ -153,18 +153,6 @@ describe('app-db — indices & auto-increment', () => {
     expect(byBranch.map((c) => c.id)).toEqual(['b']);
   });
 
-  it('usageLog auto-increments the numeric id', async () => {
-    const { STORE, put, getAll } = await loadFreshModule();
-    const k1 = await put(STORE.usageLog, { timestamp: 1, cost: 0.01 });
-    const k2 = await put(STORE.usageLog, { timestamp: 2, cost: 0.02 });
-    expect(typeof k1).toBe('number');
-    expect(typeof k2).toBe('number');
-    expect(k2).toBeGreaterThan(k1 as number);
-
-    const rows = await getAll<{ id: number; timestamp: number }>(STORE.usageLog);
-    expect(rows.map((r) => r.timestamp).sort()).toEqual([1, 2]);
-  });
-
   it('memoryRecords index nested scope.repoFullName', async () => {
     const { STORE, put, withStore } = await loadFreshModule();
     await put(STORE.memoryRecords, {

@@ -61,7 +61,6 @@ export type {
   SendLoopContext,
   StreamRoundResult,
   TodoHandlers,
-  UsageHandler,
 } from './chat-send-types';
 
 export { streamAssistantRound } from './chat-stream-round';

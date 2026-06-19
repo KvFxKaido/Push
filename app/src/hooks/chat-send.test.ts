@@ -79,7 +79,6 @@ function makeLoopContext(
     localDaemonBindingRef: { current: null },
     scratchpadRef: { current: undefined },
     todoRef: { current: undefined },
-    usageHandlerRef: { current: undefined },
     workspaceContextRef: { current: null },
     runtimeHandlersRef: { current: undefined },
     repoRef: { current: null },
@@ -123,10 +122,7 @@ describe('chat-send', () => {
       current: makeConversation([makeMessage()]),
     };
     const dirtyRef = { current: new Set<string>() };
-    const usageHandler = { trackUsage: vi.fn() };
-    const ctx = makeLoopContext(conversationsRef, dirtyRef, {
-      usageHandlerRef: { current: usageHandler },
-    });
+    const ctx = makeLoopContext(conversationsRef, dirtyRef);
 
     mockStreamChat.mockImplementation((_messages, onToken, onDone, _onError, onThinkingToken) => {
       onThinkingToken?.('Need to inspect');
@@ -163,7 +159,6 @@ describe('chat-send', () => {
     const lastAccumulated = accumulatedEvents.at(-1);
     expect(lastAccumulated.text).toBe('Hello world');
     expect(lastAccumulated.thinking).toBe('Need to inspect');
-    expect(usageHandler.trackUsage).toHaveBeenCalledWith('k2p5', 11, 7);
   });
 
   it('promotes a reasoning-only answer to content (stranded-answer salvage)', async () => {

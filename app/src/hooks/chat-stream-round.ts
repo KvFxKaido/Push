@@ -79,7 +79,6 @@ export async function streamAssistantRound(
     processedContentRef,
     scratchpadRef,
     todoRef,
-    usageHandlerRef,
     workspaceContextRef,
     abortControllerRef,
     sandboxIdRef,
@@ -216,12 +215,7 @@ export async function streamAssistantRound(
             return { ...prev, [chatId]: { ...conv, messages: msgs } };
           });
         },
-        (usage) => {
-          if (usage && usageHandlerRef.current) {
-            usageHandlerRef.current.trackUsage('k2p5', usage.inputTokens, usage.outputTokens);
-          }
-          resolve(null);
-        },
+        () => resolve(null),
         (err) => resolve(err),
         (thinkingToken) => {
           if (abortRef.current) return;

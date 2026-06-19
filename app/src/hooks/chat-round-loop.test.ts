@@ -83,7 +83,6 @@ function makeHarness(initialMessages: ChatMessage[] = [makeMessage()]): Harness 
     localDaemonBindingRef: { current: null },
     scratchpadRef: { current: undefined },
     todoRef: { current: undefined },
-    usageHandlerRef: { current: undefined },
     workspaceContextRef: { current: null },
     runtimeHandlersRef: { current: undefined },
     repoRef: { current: null },

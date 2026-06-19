@@ -2,12 +2,12 @@
  * Unified IndexedDB database for Push app data.
  *
  * Migrates heavy localStorage consumers into structured object stores
- * with proper indexing. Conversations, model metadata, checkpoints,
- * and usage logs live here instead of serialized JSON blobs in localStorage.
+ * with proper indexing. Conversations, model metadata, and checkpoints
+ * live here instead of serialized JSON blobs in localStorage.
  */
 
 const DB_NAME = 'push-app-db';
-const DB_VERSION = 7;
+const DB_VERSION = 8;
 
 export const STORE = {
   conversations: 'conversations',
@@ -18,7 +18,6 @@ export const STORE = {
   // are keyed by chatId and the legacy client-anchored delta keeps its own
   // lifecycle until the RunHost adoption path replaces it.
   runCheckpointsV1: 'run_checkpoints_v1',
-  usageLog: 'usage_log',
   runJournal: 'run_journal',
   memoryRecords: 'memory_records',
   pairedDevices: 'paired_devices',
@@ -76,6 +75,14 @@ function openDb(): Promise<IDBDatabase> {
         throw new Error('IndexedDB upgrade transaction unavailable');
       }
 
+      // #950: drop the dormant usage-tracking store. Its panel was never
+      // wired to a caller, so `trackUsage` never fired for web turns and the
+      // store holds no data worth keeping. Guarded so it's a no-op on fresh
+      // DBs (v8+) that never created it.
+      if (db.objectStoreNames.contains('usage_log')) {
+        db.deleteObjectStore('usage_log');
+      }
+
       // Conversations — one record per conversation
       if (!db.objectStoreNames.contains(STORE.conversations)) {
         const convStore = db.createObjectStore(STORE.conversations, { keyPath: 'id' });
@@ -99,15 +106,6 @@ function openDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORE.runCheckpointsV1)) {
         const v1Store = db.createObjectStore(STORE.runCheckpointsV1, { keyPath: 'chatId' });
         v1Store.createIndex('savedAt', 'savedAt', { unique: false });
-      }
-
-      // Usage log — auto-increment ID, indexed by timestamp
-      if (!db.objectStoreNames.contains(STORE.usageLog)) {
-        const usageStore = db.createObjectStore(STORE.usageLog, {
-          keyPath: 'id',
-          autoIncrement: true,
-        });
-        usageStore.createIndex('timestamp', 'timestamp', { unique: false });
       }
 
       // Run journal — one entry per run, keyed by runId (Track B)

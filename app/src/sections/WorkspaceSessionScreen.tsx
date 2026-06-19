@@ -196,7 +196,6 @@ export function WorkspaceSessionScreen({
       replace: scratchpad.replace,
       append: scratchpad.append,
     },
-    undefined,
     {
       bindSandboxSessionToRepo: (repoFullName, branch) => {
         sandbox.rebindSessionRepo(repoFullName, branch);

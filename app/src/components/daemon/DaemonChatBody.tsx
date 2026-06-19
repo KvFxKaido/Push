@@ -384,9 +384,8 @@ export function DaemonChatBody({
       replace: scratchpad.replace,
       append: scratchpad.append,
     },
-    // usageHandler / runtimeHandlers / branchInfo are cloud-sandbox
-    // concerns; daemon sessions don't drive them.
-    undefined,
+    // runtimeHandlers / branchInfo are cloud-sandbox concerns; daemon
+    // sessions don't drive them.
     undefined,
     undefined,
     // Todo handlers — wire so model `todo_write` / `todo_clear` calls
