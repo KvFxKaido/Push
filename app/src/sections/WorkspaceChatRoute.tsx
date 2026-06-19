@@ -8,6 +8,7 @@ import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
 import { useMergeDetectedBanner } from '@/hooks/useMergeDetectedBanner';
 import { useWorkspaceChatComposerController } from '@/hooks/useWorkspaceChatComposerController';
 import { useWorkspaceChatPanelsController } from '@/hooks/useWorkspaceChatPanelsController';
+import { getSandboxConnectivityToast } from '@/lib/sandbox-connectivity-notifications';
 import type { BranchSwitchProbe } from '@/lib/branch-switch-probe';
 import { getRepoAppearanceColorHex, hexToRgba } from '@/lib/repo-appearance';
 import { getSandboxDiff } from '@/lib/sandbox-client';
@@ -232,54 +233,23 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
   const [commitSwitchError, setCommitSwitchError] = useState<string | null>(null);
   const [commitSwitchingBranch, setCommitSwitchingBranch] = useState<string | null>(null);
   const previousSandboxStatusRef = useRef(sandbox.status);
+  const previousSandboxErrorRef = useRef(sandbox.error);
 
   const { markSnapshotActivity } = snapshots;
 
   useEffect(() => {
     const previousStatus = previousSandboxStatusRef.current;
-    if (previousStatus === sandbox.status) return;
+    const previousError = previousSandboxErrorRef.current;
+    const notification = getSandboxConnectivityToast(
+      previousStatus,
+      sandbox.status,
+      sandbox.error,
+      previousError,
+    );
     previousSandboxStatusRef.current = sandbox.status;
-
-    if (sandbox.status === 'reconnecting') {
-      toast.info('Reconnecting to sandbox...', { id: 'sandbox-connectivity' });
-      return;
-    }
-
-    if (sandbox.status === 'ready') {
-      if (previousStatus === 'reconnecting') {
-        toast.success('Sandbox reconnected', { id: 'sandbox-connectivity' });
-      } else if (previousStatus === 'creating') {
-        toast.success('Sandbox ready', { id: 'sandbox-connectivity' });
-      }
-      return;
-    }
-
-    if (sandbox.status === 'idle') {
-      // A reconnect that can't restore the saved session lands on idle (not
-      // error) — see useSandbox. Without this case the shared 'Reconnecting...'
-      // toast would just expire, leaving no notice that code tools are now
-      // offline (the idle top banner that used to cover this was removed).
-      if (previousStatus === 'reconnecting') {
-        toast.info(
-          "Couldn't reconnect to the sandbox. Code tools will start a new one when needed.",
-          {
-            id: 'sandbox-connectivity',
-          },
-        );
-      } else if (previousStatus === 'ready') {
-        toast.info('Sandbox idle. Code tools will start it again when needed.', {
-          id: 'sandbox-connectivity',
-        });
-      }
-      return;
-    }
-
-    if (sandbox.status === 'error' && sandbox.error) {
-      toast.error('Sandbox needs attention', {
-        id: 'sandbox-connectivity',
-        description: 'Open the workspace status for retry and restart options.',
-      });
-    }
+    previousSandboxErrorRef.current = sandbox.error;
+    if (!notification) return;
+    toast[notification.kind](notification.message, notification.options);
   }, [sandbox.error, sandbox.status]);
 
   const sandboxStart = sandbox.start;
