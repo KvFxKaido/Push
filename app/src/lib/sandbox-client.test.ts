@@ -24,8 +24,10 @@ vi.stubGlobal('fetch', mockFetch);
 // We need to set the owner token before each test since the client
 // checks for it on every request.
 import {
+  batchWriteToSandbox,
   clearSandboxEnvironment,
   createSandbox,
+  deleteFromSandbox,
   execInSandbox,
   execLongRunningInSandbox,
   getSandboxLifecycleEvents,
@@ -36,8 +38,10 @@ import {
   SANDBOX_TS_ARROW_FUNCTION_REGEX,
   setSandboxOwnerToken,
   suppressIdleTouch,
+  writeToSandbox,
 } from './sandbox-client';
 import { SANDBOX_USER_TOKEN_ACK_KEY, USER_TOKEN_GATE_MESSAGE } from './sandbox-auth-gate';
+import { onWorkspaceMutation } from './sandbox-mutation-signal';
 
 function createStorageMock() {
   const data = new Map<string, string>();
@@ -960,6 +964,164 @@ describe('execInSandbox — timeout retry behavior', () => {
     const { execInSandbox } = await import('./sandbox-client');
     await expect(execInSandbox('sb-1', 'echo hi')).rejects.toThrow();
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Workspace mutation signal rooting
+// ---------------------------------------------------------------------------
+
+describe('sandbox client workspace mutation signal', () => {
+  it('notifies after a marked exec completes', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ stdout: '', stderr: '', exit_code: 0, truncated: false }),
+    });
+    const seen: string[] = [];
+    const off = onWorkspaceMutation((id) => seen.push(id));
+    try {
+      await execInSandbox('sb-1', 'touch f', undefined, { markWorkspaceMutated: true });
+    } finally {
+      off();
+    }
+    expect(seen).toEqual(['sb-1']);
+  });
+
+  it('suppresses marked exec notifications for internal callers', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ stdout: '', stderr: '', exit_code: 0, truncated: false }),
+    });
+    const seen: string[] = [];
+    const off = onWorkspaceMutation((id) => seen.push(id));
+    try {
+      await execInSandbox('sb-1', 'git push origin HEAD', undefined, {
+        markWorkspaceMutated: true,
+        suppressWorkspaceMutationSignal: true,
+      });
+    } finally {
+      off();
+    }
+    expect(seen).toEqual([]);
+  });
+
+  it('notifies after a successful file write', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, bytes_written: 5, workspace_revision: 2 }),
+    });
+    const seen: string[] = [];
+    const off = onWorkspaceMutation((id) => seen.push(id));
+    try {
+      const { writeToSandbox } = await import('./sandbox-client');
+      await writeToSandbox('sb-1', '/workspace/a.txt', 'hello');
+    } finally {
+      off();
+    }
+    expect(seen).toEqual(['sb-1']);
+  });
+
+  // #996 Codex P2: fire on ATTEMPT — a marked exec / write that times out may
+  // have mutated server-side, so the signal must survive a throw / `!ok`.
+  it('notifies a marked exec even when the exec call throws (timeout)', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 504,
+      text: () => Promise.resolve(JSON.stringify({ error: 'exec timed out', code: 'TIMEOUT' })),
+    });
+    const seen: string[] = [];
+    const off = onWorkspaceMutation((id) => seen.push(id));
+    try {
+      await expect(
+        execInSandbox('sb-1', 'npm install', undefined, { markWorkspaceMutated: true }),
+      ).rejects.toThrow();
+    } finally {
+      off();
+    }
+    expect(seen).toEqual(['sb-1']);
+  });
+
+  it('does not notify an unmarked exec that throws', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 504,
+      text: () => Promise.resolve(JSON.stringify({ error: 'exec timed out', code: 'TIMEOUT' })),
+    });
+    const seen: string[] = [];
+    const off = onWorkspaceMutation((id) => seen.push(id));
+    try {
+      await expect(execInSandbox('sb-1', 'ls')).rejects.toThrow();
+    } finally {
+      off();
+    }
+    expect(seen).toEqual([]);
+  });
+
+  it('does not notify a marked exec when owner-token preflight fails before fetch', async () => {
+    setSandboxOwnerToken(null);
+    const seen: string[] = [];
+    const off = onWorkspaceMutation((id) => seen.push(id));
+    try {
+      await expect(
+        execInSandbox('sb-missing-token', 'touch f', undefined, { markWorkspaceMutated: true }),
+      ).rejects.toThrow(/Sandbox access token missing/);
+    } finally {
+      off();
+    }
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(seen).toEqual([]);
+  });
+
+  it('does not notify a marked long-running exec when start preflight fails before fetch', async () => {
+    setSandboxOwnerToken(null);
+    const seen: string[] = [];
+    const off = onWorkspaceMutation((id) => seen.push(id));
+    try {
+      await expect(
+        execLongRunningInSandbox('sb-missing-token', 'touch f', { markWorkspaceMutated: true }),
+      ).rejects.toThrow(/Sandbox access token missing/);
+    } finally {
+      off();
+    }
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(seen).toEqual([]);
+  });
+
+  it('notifies a write that reports failure (it may have landed server-side)', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ ok: false, error: 'version conflict' }),
+    });
+    const seen: string[] = [];
+    const off = onWorkspaceMutation((id) => seen.push(id));
+    try {
+      const { writeToSandbox } = await import('./sandbox-client');
+      await writeToSandbox('sb-1', '/workspace/a.txt', 'hello');
+    } finally {
+      off();
+    }
+    expect(seen).toEqual(['sb-1']);
+  });
+
+  it('does not notify file mutations when owner-token preflight fails before fetch', async () => {
+    setSandboxOwnerToken(null);
+    const seen: string[] = [];
+    const off = onWorkspaceMutation((id) => seen.push(id));
+    try {
+      await expect(writeToSandbox('sb-missing-token', '/workspace/a.txt', 'hello')).rejects.toThrow(
+        /Sandbox access token missing/,
+      );
+      await expect(
+        batchWriteToSandbox('sb-missing-token', [{ path: '/workspace/b.txt', content: 'hello' }]),
+      ).rejects.toThrow(/Sandbox access token missing/);
+      await expect(deleteFromSandbox('sb-missing-token', '/workspace/c.txt')).rejects.toThrow(
+        /Sandbox access token missing/,
+      );
+    } finally {
+      off();
+    }
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(seen).toEqual([]);
   });
 });
 

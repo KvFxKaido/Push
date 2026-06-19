@@ -27,6 +27,7 @@ import type { ActiveProvider } from '@/lib/orchestrator';
 import { executeSandboxToolCall } from '@/lib/sandbox-tools';
 import { createId } from '@/hooks/chat-persistence';
 import { fileLedger } from '@/lib/file-awareness-ledger';
+import { notifyWorkspaceMutation } from '@/lib/sandbox-mutation-signal';
 
 // ---------------------------------------------------------------------------
 // Params
@@ -556,6 +557,7 @@ export function useChatCardActions({
             const commit = await pushGit.commit({ message: normalizedCommitMessage });
 
             if (!commit.ok) {
+              notifyWorkspaceMutation(sandboxId);
               const errorDetail = commit.result?.stderr || commit.result?.stdout || 'Unknown error';
               updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
                 if (card.type !== 'commit-review') return card;

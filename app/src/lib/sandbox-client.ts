@@ -34,6 +34,7 @@ import {
   evaluateRepoAuth,
   hasAcknowledgedUserTokenInjection,
 } from './sandbox-auth-gate';
+import { notifyWorkspaceMutation } from './sandbox-mutation-signal';
 
 // --- Types ---
 
@@ -80,6 +81,20 @@ export interface ExecResult {
   workspaceRevision?: number;
   /** Workspace git branch after the command completed. Omitted when unavailable. */
   branch?: string;
+}
+
+interface WorkspaceMutationExecOptions {
+  markWorkspaceMutated?: boolean;
+  suppressWorkspaceMutationSignal?: boolean;
+}
+
+function notifyMarkedWorkspaceMutation(
+  sandboxId: string,
+  options?: WorkspaceMutationExecOptions,
+): void {
+  if (options?.markWorkspaceMutated === true && options.suppressWorkspaceMutationSignal !== true) {
+    notifyWorkspaceMutation(sandboxId);
+  }
 }
 
 export interface FileReadResult {
@@ -901,6 +916,13 @@ function withOwnerToken(
   return { ...body, owner_token: token };
 }
 
+function isMissingOwnerTokenError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    err.message === 'Sandbox access token missing. Start or reconnect the sandbox session.'
+  );
+}
+
 function withSnapshotIndexContext(
   body: Record<string, unknown>,
   context: { repoFullName?: string | null; branch?: string | null },
@@ -1241,22 +1263,11 @@ export async function execInSandbox(
   sandboxId: string,
   command: string,
   workdir?: string,
-  options?: {
-    markWorkspaceMutated?: boolean;
-  },
+  options?: WorkspaceMutationExecOptions,
 ): Promise<ExecResult> {
-  // API returns snake_case, we need camelCase
-  const raw = await sandboxFetch<{
-    stdout: string;
-    stderr: string;
-    exit_code: number;
-    truncated: boolean;
-    error?: string;
-    workspace_revision?: number;
-    branch?: string;
-  }>(
-    'exec',
-    withOwnerToken(
+  let requestAttempted = false;
+  try {
+    const body = withOwnerToken(
       {
         sandbox_id: sandboxId,
         command,
@@ -1264,21 +1275,40 @@ export async function execInSandbox(
         mark_workspace_mutated: options?.markWorkspaceMutated === true,
       },
       sandboxId,
-    ),
-    EXEC_TIMEOUT_MS,
-  );
-  if (typeof raw.workspace_revision === 'number') {
-    setSandboxWorkspaceRevision(sandboxId, raw.workspace_revision);
+    );
+    requestAttempted = true;
+    // API returns snake_case, we need camelCase
+    const raw = await sandboxFetch<{
+      stdout: string;
+      stderr: string;
+      exit_code: number;
+      truncated: boolean;
+      error?: string;
+      workspace_revision?: number;
+      branch?: string;
+    }>('exec', body, EXEC_TIMEOUT_MS);
+    if (typeof raw.workspace_revision === 'number') {
+      setSandboxWorkspaceRevision(sandboxId, raw.workspace_revision);
+    }
+    return {
+      stdout: raw.stdout,
+      stderr: raw.stderr,
+      exitCode: raw.exit_code,
+      truncated: raw.truncated,
+      error: raw.error,
+      workspaceRevision: raw.workspace_revision,
+      branch: raw.branch,
+    };
+  } finally {
+    // Fire on ATTEMPT, not success (Codex P2 on #996): a marked (mutating)
+    // exec that times out or whose response is lost may still have mutated
+    // server-side. Signaling here — even when `sandboxFetch` threw — keeps
+    // auto-back able to capture it before a later sandbox loss, restoring the
+    // dispatcher's old fire-on-attempt coverage. A redundant signal is a cheap
+    // no-op (the backup capture's tree/HEAD comparison is the authoritative
+    // filter, #995). Only fires for marked, non-suppressed execs.
+    if (requestAttempted) notifyMarkedWorkspaceMutation(sandboxId, options);
   }
-  return {
-    stdout: raw.stdout,
-    stderr: raw.stderr,
-    exitCode: raw.exit_code,
-    truncated: raw.truncated,
-    error: raw.error,
-    workspaceRevision: raw.workspace_revision,
-    branch: raw.branch,
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1377,6 +1407,7 @@ export async function execLongRunningInSandbox(
   opts?: {
     workdir?: string;
     markWorkspaceMutated?: boolean;
+    suppressWorkspaceMutationSignal?: boolean;
     overallTimeoutMs?: number;
     /**
      * Cooperative cancel for the detached path (interrupt + drain + exit
@@ -1394,15 +1425,19 @@ export async function execLongRunningInSandbox(
     interrupt: (processId) => execInterruptInSandbox(sandboxId, processId),
   };
   try {
-    return await runDetachedToCompletion(primitives, command, {
+    const result = await runDetachedToCompletion(primitives, command, {
       workdir: opts?.workdir,
       overallTimeoutMs: opts?.overallTimeoutMs,
       abortSignal: opts?.abortSignal,
       onProgress: opts?.onProgress,
     });
+    notifyMarkedWorkspaceMutation(sandboxId, opts);
+    return result;
   } catch (err) {
     // runDetachedToCompletion throws ONLY when the start call failed. What we
     // do next depends on how it failed:
+    if (isMissingOwnerTokenError(err)) throw err;
+
     const statusCode = (err as { statusCode?: number }).statusCode;
     const message = err instanceof Error ? err.message : String(err);
 
@@ -1444,6 +1479,7 @@ export async function execLongRunningInSandbox(
           message,
         }),
       );
+      notifyMarkedWorkspaceMutation(sandboxId, opts);
       return {
         stdout: '',
         stderr: '',
@@ -1469,6 +1505,7 @@ export async function execLongRunningInSandbox(
     );
     return await execInSandbox(sandboxId, command, opts?.workdir, {
       markWorkspaceMutated: opts?.markWorkspaceMutated,
+      suppressWorkspaceMutationSignal: opts?.suppressWorkspaceMutationSignal,
     });
   }
 }
@@ -1673,32 +1710,44 @@ export async function writeToSandbox(
   expectedVersion?: string,
   expectedWorkspaceRevision?: number,
 ): Promise<WriteResult> {
-  const result = await sandboxFetch<WriteResult>(
-    'write',
-    {
+  let requestAttempted = false;
+  try {
+    const body = {
       ...withOwnerToken({}, sandboxId),
       sandbox_id: sandboxId,
       path,
       content,
       expected_version: expectedVersion,
       expected_workspace_revision: expectedWorkspaceRevision,
-    },
-    WRITE_TIMEOUT_MS,
-    undefined,
-    WRITE_MAX_RETRIES,
-  );
-  if (typeof result.workspace_revision === 'number') {
-    setSandboxWorkspaceRevision(sandboxId, result.workspace_revision);
-    if (result.ok && typeof result.new_version === 'string' && result.new_version) {
-      const key = fileVersionKey(sandboxId, path);
-      setFileVersionByKey(key, result.new_version);
-      setWorkspaceRevisionByKey(key, result.workspace_revision);
+    };
+    requestAttempted = true;
+    const result = await sandboxFetch<WriteResult>(
+      'write',
+      body,
+      WRITE_TIMEOUT_MS,
+      undefined,
+      WRITE_MAX_RETRIES,
+    );
+    if (typeof result.workspace_revision === 'number') {
+      setSandboxWorkspaceRevision(sandboxId, result.workspace_revision);
+      if (result.ok && typeof result.new_version === 'string' && result.new_version) {
+        const key = fileVersionKey(sandboxId, path);
+        setFileVersionByKey(key, result.new_version);
+        setWorkspaceRevisionByKey(key, result.workspace_revision);
+      }
     }
+    if (typeof result.current_workspace_revision === 'number') {
+      setSandboxWorkspaceRevision(sandboxId, result.current_workspace_revision);
+    }
+    return result;
+  } finally {
+    // Fire on ATTEMPT (Codex P2 on #996): a write that times out may have
+    // landed server-side (the request retries, and the server renames the temp
+    // file before the revision bump), so signal even on `!ok` / a thrown
+    // timeout, not just clean success. A redundant signal is a cheap no-op
+    // (auto-back's tree/HEAD dedup, #995).
+    if (requestAttempted) notifyWorkspaceMutation(sandboxId);
   }
-  if (typeof result.current_workspace_revision === 'number') {
-    setSandboxWorkspaceRevision(sandboxId, result.current_workspace_revision);
-  }
-  return result;
 }
 
 // --- Batch write ---
@@ -1738,32 +1787,42 @@ export async function batchWriteToSandbox(
   files: BatchWriteEntry[],
   expectedWorkspaceRevision?: number,
 ): Promise<BatchWriteResult> {
-  const result = await sandboxFetch<BatchWriteResult>(
-    'batch-write',
-    {
+  let requestAttempted = false;
+  try {
+    const body = {
       ...withOwnerToken({}, sandboxId),
       sandbox_id: sandboxId,
       files,
       expected_workspace_revision: expectedWorkspaceRevision,
-    },
-    BATCH_WRITE_TIMEOUT_MS,
-    undefined,
-    WRITE_MAX_RETRIES,
-  );
-  if (typeof result.workspace_revision === 'number') {
-    setSandboxWorkspaceRevision(sandboxId, result.workspace_revision);
-    for (const entry of result.results) {
-      if (entry.ok && typeof entry.new_version === 'string' && entry.new_version) {
-        const key = fileVersionKey(sandboxId, entry.path);
-        setFileVersionByKey(key, entry.new_version);
-        setWorkspaceRevisionByKey(key, result.workspace_revision);
+    };
+    requestAttempted = true;
+    const result = await sandboxFetch<BatchWriteResult>(
+      'batch-write',
+      body,
+      BATCH_WRITE_TIMEOUT_MS,
+      undefined,
+      WRITE_MAX_RETRIES,
+    );
+    if (typeof result.workspace_revision === 'number') {
+      setSandboxWorkspaceRevision(sandboxId, result.workspace_revision);
+      for (const entry of result.results) {
+        if (entry.ok && typeof entry.new_version === 'string' && entry.new_version) {
+          const key = fileVersionKey(sandboxId, entry.path);
+          setFileVersionByKey(key, entry.new_version);
+          setWorkspaceRevisionByKey(key, result.workspace_revision);
+        }
       }
     }
+    if (typeof result.current_workspace_revision === 'number') {
+      setSandboxWorkspaceRevision(sandboxId, result.current_workspace_revision);
+    }
+    return result;
+  } finally {
+    // Fire on ATTEMPT (Codex P2 on #996): a batch write that times out may have
+    // applied some entries server-side before the response was lost, so signal
+    // regardless of outcome. Redundant signals are cheap no-ops (#995 dedup).
+    if (requestAttempted) notifyWorkspaceMutation(sandboxId);
   }
-  if (typeof result.current_workspace_revision === 'number') {
-    setSandboxWorkspaceRevision(sandboxId, result.current_workspace_revision);
-  }
-  return result;
 }
 
 /**
@@ -1977,26 +2036,36 @@ export async function deleteFromSandbox(
   path: string,
   expectedWorkspaceRevision?: number,
 ): Promise<number | undefined> {
-  const data = await sandboxFetch<{
-    ok: boolean;
-    error?: string;
-    workspace_revision?: number;
-    current_workspace_revision?: number;
-  }>('delete', {
-    ...withOwnerToken({}, sandboxId),
-    sandbox_id: sandboxId,
-    path,
-    expected_workspace_revision: expectedWorkspaceRevision,
-  });
-  if (typeof data.workspace_revision === 'number') {
-    setSandboxWorkspaceRevision(sandboxId, data.workspace_revision);
-    deleteFileVersion(sandboxId, path);
+  let requestAttempted = false;
+  try {
+    const body = {
+      ...withOwnerToken({}, sandboxId),
+      sandbox_id: sandboxId,
+      path,
+      expected_workspace_revision: expectedWorkspaceRevision,
+    };
+    requestAttempted = true;
+    const data = await sandboxFetch<{
+      ok: boolean;
+      error?: string;
+      workspace_revision?: number;
+      current_workspace_revision?: number;
+    }>('delete', body);
+    if (typeof data.workspace_revision === 'number') {
+      setSandboxWorkspaceRevision(sandboxId, data.workspace_revision);
+      deleteFileVersion(sandboxId, path);
+    }
+    if (typeof data.current_workspace_revision === 'number') {
+      setSandboxWorkspaceRevision(sandboxId, data.current_workspace_revision);
+    }
+    if (!data.ok) throw new Error(data.error || 'Delete failed');
+    return data.workspace_revision;
+  } finally {
+    // Fire on ATTEMPT (Codex P2 on #996): a delete that times out may have
+    // removed the file server-side before the response was lost. Redundant
+    // signals are cheap no-ops (#995 dedup).
+    if (requestAttempted) notifyWorkspaceMutation(sandboxId);
   }
-  if (typeof data.current_workspace_revision === 'number') {
-    setSandboxWorkspaceRevision(sandboxId, data.current_workspace_revision);
-  }
-  if (!data.ok) throw new Error(data.error || 'Delete failed');
-  return data.workspace_revision;
 }
 
 export async function renameInSandbox(

@@ -1,18 +1,17 @@
 /**
  * Client-side "the working tree was mutated" signal.
  *
- * Emitted at tool dispatch (`executeSandboxToolCall`) when a file-mutation tool
- * — or a mutating `sandbox_exec` — completes successfully. Two reasons it lives
+ * Emitted at the sandbox client boundary when a write endpoint succeeds or an
+ * exec path is explicitly marked `markWorkspaceMutated`. Two reasons it lives
  * here and not on the sandbox's `workspace_revision`:
  *
  *  - **Provider-agnostic.** It does not depend on the sandbox reporting an
  *    increasing revision. The Cloudflare provider returns `workspace_revision: 0`
  *    for exec/write paths, so a revision-based signal is dead on the default
  *    backend.
- *  - **Self-loop-free.** It fires only from the tool dispatcher, on actual file
- *    mutations. Auto-back's own capture/push go through `execInSandbox` / the git
- *    backend directly (not the dispatcher), and push/commit aren't file
- *    mutations — so a backup never re-triggers itself.
+ *  - **Self-loop-free.** Internal git/auto-back operations explicitly suppress
+ *    the client-side signal, so auto-back's own capture/push never wakes itself
+ *    while ordinary mutating exec/write paths do.
  *
  * The B2 auto-back coordinator subscribes here and debounces a backup push.
  */
@@ -36,44 +35,4 @@ export function notifyWorkspaceMutation(sandboxId: string): void {
       // Observers must never break tool dispatch.
     }
   }
-}
-
-/**
- * Tools that run a command which can touch tracked files even though they aren't
- * "file-mutation" tools:
- *  - verification tools run build/test commands (a lockfile from `npm install`);
- *  - `sandbox_commit` runs the repo's `.git/hooks/pre-commit` (a formatter /
- *    codegen hook can rewrite tracked files before the commit).
- * Their typical incidental writes (node_modules, caches) are .gitignored, so the
- * backup capture's tree comparison makes those a no-op — but a real tracked-file
- * change (lockfile, formatter rewrite) must signal.
- */
-const WORKSPACE_MUTATING_TOOLS = new Set([
-  'sandbox_run_tests',
-  'sandbox_check_types',
-  'sandbox_verify_workspace',
-  'sandbox_commit',
-]);
-
-/**
- * Whether a dispatched sandbox tool *may* have mutated the working tree, and so
- * should signal auto-back. Deliberately conservative — it fires on the attempt,
- * not on success, because a tool can mutate then error (a partial patchset; an
- * exec that ran before the sandbox went unreachable). The backup capture's
- * tree-vs-HEAD comparison is the authoritative filter: if nothing actually
- * changed, the backup is a cheap no-op. File-mutation tools, the
- * command-running verification tools, and a mutating `sandbox_exec` qualify;
- * reads, push, prepare_push, branch ops, diff do not (push changes refs, not
- * working-tree files, and would otherwise self-trigger auto-back's own push).
- * `sandbox_commit` qualifies because its pre-commit hook can rewrite tracked
- * files; the commit's own ref change is not a working-tree mutation.
- */
-export function shouldSignalWorkspaceMutation(
-  toolName: string,
-  opts: { isFileMutationTool: boolean; isExec: boolean; execIsMutating: boolean },
-): boolean {
-  if (opts.isFileMutationTool) return true;
-  if (WORKSPACE_MUTATING_TOOLS.has(toolName)) return true;
-  if (opts.isExec) return opts.execIsMutating;
-  return false;
 }

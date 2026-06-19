@@ -100,7 +100,6 @@ import {
   readFilesForCoderPreload,
 } from './sandbox-tools';
 import * as sandboxClient from './sandbox-client';
-import { onWorkspaceMutation } from './sandbox-mutation-signal';
 import {
   LocalDaemonUnreachableError,
   execLocalDaemon,
@@ -343,7 +342,7 @@ describe('executeSandboxToolCall -- sandbox_exec Protect Main git-guard (#977)',
   });
 });
 
-describe('executeSandboxToolCall -- B2 workspace mutation signal', () => {
+describe('executeSandboxToolCall -- B2 workspace mutation mark', () => {
   beforeEach(() => {
     vi.mocked(sandboxClient.execLongRunningInSandbox).mockReset();
     vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValue({
@@ -354,21 +353,23 @@ describe('executeSandboxToolCall -- B2 workspace mutation signal', () => {
     });
   });
 
-  it('emits a mutation signal after a successful mutating exec', async () => {
-    const seen: string[] = [];
-    const off = onWorkspaceMutation((id) => seen.push(id));
+  it('marks a mutating exec so the sandbox client can signal auto-back', async () => {
     // `touch` is classified mutating by the exec heuristic.
     await executeSandboxToolCall({ tool: 'sandbox_exec', args: { command: 'touch f' } }, 'sb-1');
-    off();
-    expect(seen).toEqual(['sb-1']);
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith(
+      'sb-1',
+      'touch f',
+      expect.objectContaining({ markWorkspaceMutated: true }),
+    );
   });
 
-  it('does NOT emit for a read-only exec', async () => {
-    const seen: string[] = [];
-    const off = onWorkspaceMutation((id) => seen.push(id));
+  it('does NOT mark a read-only exec', async () => {
     await executeSandboxToolCall({ tool: 'sandbox_exec', args: { command: 'cat f' } }, 'sb-1');
-    off();
-    expect(seen).toEqual([]);
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith(
+      'sb-1',
+      'cat f',
+      expect.objectContaining({ markWorkspaceMutated: false }),
+    );
   });
 });
 
@@ -1637,7 +1638,7 @@ describe('executeSandboxToolCall -- sandbox_push', () => {
       'sb-1',
       "git 'push' 'origin' 'HEAD'",
       undefined,
-      { markWorkspaceMutated: true },
+      { markWorkspaceMutated: true, suppressWorkspaceMutationSignal: true },
     );
     expect(handlerExecCalls()).toHaveLength(1);
     expect(result.text).toBe('[Tool Result — sandbox_push]\nPushed successfully.');
@@ -1819,14 +1820,13 @@ describe('executeSandboxToolCall -- promote_to_github', () => {
     expect(result.text).toContain('Visibility: public');
     expect(result.text).toContain('Default branch: main');
     expect(result.text).toContain('Push: successful on branch main');
-    // The terminal git push exec must thread markWorkspaceMutated: true,
-    // matching sandbox_push's behavior — both push to origin and both
-    // mutate the workspace from the cache's perspective.
+    // The terminal git push exec mutates git/cache state but suppresses the
+    // auto-back observer to avoid draft-push feedback loops (#982).
     expect(sandboxClient.execInSandbox).toHaveBeenLastCalledWith(
       'sb-1',
       expect.stringMatching(/git 'push' '-u' 'origin'/),
       undefined,
-      { markWorkspaceMutated: true },
+      { markWorkspaceMutated: true, suppressWorkspaceMutationSignal: true },
     );
     expect(result.promotion).toEqual({
       repo: {

@@ -1,9 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import {
-  onWorkspaceMutation,
-  notifyWorkspaceMutation,
-  shouldSignalWorkspaceMutation,
-} from './sandbox-mutation-signal';
+import { onWorkspaceMutation, notifyWorkspaceMutation } from './sandbox-mutation-signal';
 
 describe('onWorkspaceMutation / notifyWorkspaceMutation', () => {
   const cleanups: Array<() => void> = [];
@@ -39,48 +35,5 @@ describe('onWorkspaceMutation / notifyWorkspaceMutation', () => {
     sub(ok);
     expect(() => notifyWorkspaceMutation('sb-1')).not.toThrow();
     expect(ok).toHaveBeenCalledWith('sb-1');
-  });
-});
-
-describe('shouldSignalWorkspaceMutation', () => {
-  const opts = (o: Partial<Parameters<typeof shouldSignalWorkspaceMutation>[1]>) => ({
-    isFileMutationTool: false,
-    isExec: false,
-    execIsMutating: false,
-    ...o,
-  });
-
-  it('fires for any file-mutation tool', () => {
-    expect(
-      shouldSignalWorkspaceMutation('sandbox_write_file', opts({ isFileMutationTool: true })),
-    ).toBe(true);
-  });
-
-  it('fires for command-running tools that can touch tracked files', () => {
-    // verification (lockfile from npm install) + sandbox_commit (pre-commit
-    // hook can rewrite tracked files before the commit).
-    for (const t of [
-      'sandbox_run_tests',
-      'sandbox_check_types',
-      'sandbox_verify_workspace',
-      'sandbox_commit',
-    ]) {
-      expect(shouldSignalWorkspaceMutation(t, opts({}))).toBe(true);
-    }
-  });
-
-  it('fires for a mutating exec, not a read-only one', () => {
-    expect(
-      shouldSignalWorkspaceMutation('sandbox_exec', opts({ isExec: true, execIsMutating: true })),
-    ).toBe(true);
-    expect(
-      shouldSignalWorkspaceMutation('sandbox_exec', opts({ isExec: true, execIsMutating: false })),
-    ).toBe(false);
-  });
-
-  it('does NOT fire for reads, push, branch ops, diff', () => {
-    for (const t of ['sandbox_read_file', 'sandbox_push', 'sandbox_diff', 'sandbox_list_dir']) {
-      expect(shouldSignalWorkspaceMutation(t, opts({}))).toBe(false);
-    }
   });
 });

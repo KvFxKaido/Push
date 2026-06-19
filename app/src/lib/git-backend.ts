@@ -30,7 +30,7 @@ type SandboxExecFn = (
   sandboxId: string,
   command: string,
   workdir?: string,
-  options?: { markWorkspaceMutated?: boolean },
+  options?: { markWorkspaceMutated?: boolean; suppressWorkspaceMutationSignal?: boolean },
 ) => Promise<ExecResult>;
 
 /**
@@ -45,7 +45,9 @@ function makeSandboxGitExec(sandboxId: string, execFn: SandboxExecFn): GitExec {
         sandboxId,
         command,
         undefined,
-        opts?.mutates ? { markWorkspaceMutated: true } : undefined,
+        opts?.mutates
+          ? { markWorkspaceMutated: true, suppressWorkspaceMutationSignal: true }
+          : undefined,
       );
       // Pass `error` through (a gone/unreachable sandbox sets it out-of-band)
       // so write callers can detect expiry from the result.
