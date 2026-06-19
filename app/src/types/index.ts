@@ -887,6 +887,13 @@ export interface CommitReviewCardData {
    * work can't ship unaudited through a stale card. Absent on legacy cards.
    */
   auditedHeadSha?: string;
+  /**
+   * For a `kind: 'push'` card: the sandbox branch and upstream destination in
+   * effect when the Auditor verdict was computed. Approval re-reads both and
+   * refuses stale cards if the destination changed while HEAD stayed the same.
+   */
+  auditedBranch?: string;
+  auditedUpstream?: string;
   diff: DiffPreviewCardData;
   auditVerdict: AuditVerdictCardData;
   commitMessage: string;

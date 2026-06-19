@@ -26,6 +26,9 @@ OQ3 (WIP-push cadence). Once B1 lands, the Current parts fold into
 [`Platform, Sessions, and Sandbox Decisions.md`](<Platform, Sessions, and Sandbox Decisions.md>)
 and [`Auto-Branch on Commit`](<Auto-Branch on Commit — Nothing Lands on Main.md>)
 is marked `Superseded by` this doc (the gate it kept at commit has now moved).
+**Destination pin follow-up (2026-06-19):** `prepare_push` review cards now pin
+the audited branch/upstream alongside `auditedHeadSha`; approval re-reads all
+three and fails closed if the sandbox destination changed before push.
 
 ## Thesis
 
@@ -267,34 +270,14 @@ drift):
    timer, before token expiry, on first `SANDBOX_UNREACHABLE`, or some
    combination? Determines how much unpushed work is at risk between checkpoints.
 4. **Pin the destination ref on the approval card, not just source HEAD** —
-   B1 makes this acute, but a **narrow live exposure already exists** (corrected
-   from an earlier draft that called it purely a B1 precondition). Move A's
-   approval pins `auditedHeadSha` and re-checks it fail-closed at push
-   (`app/src/hooks/chat-card-actions.ts`), so the approved push ships *the same
-   commits* that were audited. It does **not** pin the destination: the target
-   branch/remote is resolved live at push time from `branchInfoRef.current`
-   (`committedBranch` is written *after* the push from live state), and the
-   approved push calls `push()` with no refspec — so it targets whatever branch
-   is checked out *at approval*, not the one audited. The card guarantees "same
-   commits as audited" but not "same destination as audited."
-   **Why the HEAD pin doesn't fully cover this:** the typed branch tools
-   (`create_branch` / `switch_branch`) **preserve the sandbox** —
-   `handleSandboxBranchSwitch` sets `skipBranchTeardownRef` so the controller
-   skips `stopSandbox()` (per CLAUDE.md: only *UI-initiated* swaps restart it).
-   So a `create_branch` (`kind: 'forked'`) at the **same HEAD** with a pending
-   `prepare_push` card migrates that card onto the new branch while leaving HEAD
-   at the audited sha — the `auditedHeadSha` re-check still passes, and the push
-   redirects to the new branch. (A plain `switch` to an existing branch moves
-   HEAD, so the pin *does* catch that case.) Blast radius is bounded today —
-   the commits are still Auditor-approved content and a wrong-branch push still
-   faces PR review before landing — but the verdict is being honored against a
-   destination it never reviewed. **B1 (push-to-start) and OQ3 (WIP-push
-   cadence) widen this sharply** — more push targets, more concurrent
-   destinations in flight — turning a narrow forked-switch window into a routine
-   stale-target gap. Fix (do not defer past the warm-switch flow that already
-   needs it): add
-   `auditedBranch?: string` / `auditedUpstream?: string` to `CommitReviewCardData`
-   (`app/src/types/index.ts`) and re-check them alongside the HEAD pin at
-   approval, fail-closed on mismatch. Cover the new fields where the HEAD pin is
-   already asserted — `app/src/lib/sandbox-git-release-handlers.test.ts:489`
-   (`auditedHeadSha`) and `app/src/components/cards/CommitReviewCard.test.tsx`.
+   **RESOLVED 2026-06-19.** Move A's approval already pinned
+   `auditedHeadSha` and re-checked it fail-closed at push
+   (`app/src/hooks/chat-card-actions.ts`), so the approved push shipped *the
+   same commits* that were audited. The missing piece was destination: a
+   `create_branch` (`kind: 'forked'`) at the **same HEAD** with a pending
+   `prepare_push` card could migrate that card onto the new branch while leaving
+   HEAD at the audited sha, so the `auditedHeadSha` re-check still passed.
+   `prepare_push` cards now also carry `auditedBranch` / `auditedUpstream`
+   (`app/src/types/index.ts`); approval re-reads branch/upstream through the
+   typed Git backend and fails closed with a refresh prompt on mismatch. Covered
+   where the HEAD pin was already asserted plus approval-card behavior tests.

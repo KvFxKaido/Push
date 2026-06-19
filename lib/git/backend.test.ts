@@ -64,6 +64,24 @@ describe('SandboxPlumbingBackend.headSha', () => {
   });
 });
 
+describe('SandboxPlumbingBackend.upstreamRef', () => {
+  it('returns the upstream ref for the current branch', async () => {
+    const backend = new SandboxPlumbingBackend(
+      fakeExec({
+        'rev-parse --abbrev-ref --symbolic-full-name @{u}': ok('origin/feature/x\n'),
+      }),
+    );
+    expect(await backend.upstreamRef()).toBe('origin/feature/x');
+  });
+
+  it('returns null when no upstream is configured', async () => {
+    const backend = new SandboxPlumbingBackend(
+      fakeExec({ 'rev-parse --abbrev-ref --symbolic-full-name @{u}': fail('no upstream') }),
+    );
+    expect(await backend.upstreamRef()).toBeNull();
+  });
+});
+
 describe('SandboxPlumbingBackend.status', () => {
   it('parses porcelain -b into typed status', async () => {
     const backend = new SandboxPlumbingBackend(

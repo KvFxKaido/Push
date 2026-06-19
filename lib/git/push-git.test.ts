@@ -13,6 +13,7 @@ const writeFail = (stderr = 'boom'): GitWriteResult => ({
 function fakeBackend(overrides: Partial<GitBackend> = {}): GitBackend {
   return {
     currentBranch: async () => 'main',
+    upstreamRef: async () => 'origin/main',
     headSha: async () => 'abc1234',
     status: async () => null,
     createBranch: async () => writeOk(),

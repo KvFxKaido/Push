@@ -75,6 +75,8 @@ export interface GitWriteResult extends GitExecResult {
 export interface GitBackend {
   /** Current branch name, or null when detached / not a repo / error. */
   currentBranch(): Promise<string | null>;
+  /** Upstream ref for the current branch (e.g. `origin/feature/x`), or null when unset / unreadable. */
+  upstreamRef(): Promise<string | null>;
   /** HEAD commit sha (full, or abbreviated with `short`), or null on error. */
   headSha(opts?: { short?: boolean }): Promise<string | null>;
   /** Typed working-tree status, or null on error / not a repo. */
@@ -127,6 +129,12 @@ export class SandboxPlumbingBackend implements GitBackend {
     // HEAD` would print `HEAD` when detached and fail on an unborn branch,
     // losing the name in a freshly-initialized repo.)
     const res = await this.exec(['branch', '--show-current']);
+    if (res.exitCode !== 0) return null;
+    return res.stdout.trim() || null;
+  }
+
+  async upstreamRef(): Promise<string | null> {
+    const res = await this.exec(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
     if (res.exitCode !== 0) return null;
     return res.stdout.trim() || null;
   }
