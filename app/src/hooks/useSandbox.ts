@@ -397,7 +397,10 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
           // Persist the snapshot as the safety net for a LATER real CF reclaim
           // (and for snapshot restore on reconnect). Preserve the original
           // createdAt — it's the container's real age, which the reconnect probe
-          // window keys off; only the snapshot timestamp is fresh.
+          // window keys off; only the snapshot timestamp is fresh. Also preserve
+          // lastActivityAt (the interval stamped it just above): without it a
+          // later forgetSnapshot would have nothing to carry forward, so a reload
+          // of the still-live snapshot-less container would discard it on age.
           if (activeRepoFullName != null && activeBranch) {
             const existing = loadSandboxSession(activeRepoFullName, activeBranch);
             saveSandboxSession(activeRepoFullName, activeBranch, {
@@ -406,6 +409,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
               repoFullName: activeRepoFullName,
               branch: activeBranch,
               createdAt: existing?.createdAt ?? snapshotAt,
+              lastActivityAt: existing?.lastActivityAt,
               snapshotId: result.snapshotId,
               restoreToken: result.restoreToken,
               snapshotCreatedAt: Date.now(),
