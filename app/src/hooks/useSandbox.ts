@@ -62,20 +62,22 @@ import { isDefinitivelyGoneMessage, isDefinitivelyGoneError } from '@/lib/sandbo
 export type SandboxStatus = 'idle' | 'reconnecting' | 'creating' | 'ready' | 'error';
 
 const APP_COMMIT_IDENTITY_KEY = 'github_app_commit_identity';
-// Max age of a saved session we'll still try to reconnect to. Kept well under
-// the sandbox's real lifetime (Modal containers live ~2h) so we don't waste a
-// round-trip probing a container that's almost certainly gone — but generous
-// enough that a long session that idled survives a reconnect. A stale guess is
-// cheap: the reconnect does a liveness check and falls back to a fresh sandbox.
+// Max age of a saved session we'll still try to reconnect to. Kept under the
+// container's idle-sleep window (CF's sleepAfter is raised to ~1h in
+// worker-cf-sandbox.ts; Modal lives ~2h) so we don't waste a round-trip probing
+// a container that's almost certainly gone — but generous enough that a long
+// session that idled survives a reconnect. A stale guess is cheap: the
+// reconnect does a liveness check and falls back to a fresh sandbox.
 const SANDBOX_MAX_AGE_MS = 50 * 60 * 1000; // 50 min
 // Idle threshold before the reaper takes a keep-warm safety snapshot. It used
 // to be 8 min AND terminated the container, so a foregrounded idle session lost
 // its sandbox while the user was just sitting there (reading/thinking/composing
 // don't count as activity — only tool calls touch the idle clock). Now 45 min,
-// and the reaper snapshots WITHOUT terminating (see the keep-warm reaper below):
-// the container stays live to its ~2h lifetime and the snapshot is just a safety
-// net for an eventual real CF reclaim. Kept under SANDBOX_MAX_AGE_MS (50) so the
-// snapshot-then-reconnect window still aligns.
+// and the reaper snapshots WITHOUT terminating (see the keep-warm reaper below).
+// The container's own idle-sleep is the real lifetime ceiling — raised from CF's
+// 10-min default via sleepAfter (worker-cf-sandbox.ts) — and this snapshot is
+// the safety net for that eventual reclaim. Kept under SANDBOX_MAX_AGE_MS (50)
+// so the snapshot-then-reconnect window still aligns.
 const IDLE_HIBERNATE_MS = 45 * 60 * 1000; // 45 min idle before keep-warm snapshot
 // Shown when a saved snapshot existed but couldn't be restored on reconnect, so
 // the user knows their prior workspace is gone and they're on a fresh sandbox
