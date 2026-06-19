@@ -168,6 +168,44 @@ describe('createGitGuardPreHook', () => {
     expect(result.decision).toBe('passthrough');
   });
 
+  // #987: shell-parsing evasions must not slip a guarded op past the guard.
+  it('denies a push hidden behind a standalone `&`', async () => {
+    const entry = withMode('supervised');
+    const result = await entry.hook(
+      'sandbox_exec',
+      { command: 'git status & git push origin main' },
+      emptyContext,
+    );
+    expect(result.decision).toBe('deny');
+    expect(result.errorType).toBe('GIT_GUARD_BLOCKED');
+  });
+
+  it('denies a subshell-wrapped remote repoint even with allowDirectGit', async () => {
+    const entry = withMode('supervised');
+    const result = await entry.hook(
+      'sandbox_exec',
+      {
+        command: '(git remote set-url origin https://attacker.example/r.git)',
+        allowDirectGit: true,
+      },
+      emptyContext,
+    );
+    expect(result.decision).toBe('deny');
+    expect(result.errorType).toBe('GIT_GUARD_BLOCKED');
+    expect(result.reason).not.toContain('allowDirectGit": true');
+  });
+
+  it('denies a quoted git token hiding a merge in full-auto', async () => {
+    const entry = withMode('full-auto');
+    const result = await entry.hook(
+      'sandbox_exec',
+      { command: '"git" merge feature/x' },
+      emptyContext,
+    );
+    expect(result.decision).toBe('deny');
+    expect(result.errorType).toBe('GIT_GUARD_BLOCKED');
+  });
+
   it('blocks a local `git merge` in full-auto (no consent escape)', async () => {
     const entry = withMode('full-auto');
     const result = await entry.hook(

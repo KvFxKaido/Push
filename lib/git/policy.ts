@@ -28,6 +28,16 @@
  *     in the drift corpus so the gap stays visible.
  *   - Protect Main: stays in the typed-tool pre-hook; folding it in would
  *     require the branch context this pure oracle doesn't take.
+ *
+ * Shell-parsing evasions (#987): interim hardening covers the cheap, high-value
+ * vectors — a standalone `&` is now a separator (`git status & git push`), and
+ * `tokenizeSegment` unwraps parens/quotes/leading-escape so `(git push)`,
+ * `"git" push`, and `\git push` no longer hide the invocation. Residual vectors
+ * remain (aliases / shell functions / variable-indirected git, and arbitrary
+ * `eval`/`bash -c` nesting) and are NOT fully solvable by string parsing — the
+ * authoritative fix is the transport boundary (scope the sandbox's git
+ * credentials so it can't reach origin except through the audited path). This
+ * parser stays best-effort and biased toward over-detection.
  */
 
 // ---------------------------------------------------------------------------
@@ -158,25 +168,48 @@ function isGitToken(token: string): boolean {
 
 /**
  * Split a shell command on top-level list separators (`;`, `|`, `||`,
- * `&&`) and newlines. `sandbox_exec` runs under `bash -c`, where a newline
- * separates commands just like `;` — without splitting on it, only the
- * first invocation in `git status\ngit push` would be classified and the
- * `git push` would bypass the guard. Single `&` is intentionally NOT a
- * separator (it appears inside fd duplicates like `2>&1`). Quote handling
- * is best-effort — embedded separators inside quoted strings are treated as
+ * `&&`, and a standalone `&`) and newlines. `sandbox_exec` runs under
+ * `bash -c`, where a newline separates commands just like `;` — without
+ * splitting on it, only the first invocation in `git status\ngit push`
+ * would be classified and the `git push` would bypass the guard. A
+ * standalone `&` (background / sequencing) is also a separator so
+ * `git status & git push` doesn't hide the push (#987); the lookbehind /
+ * lookahead exclude the `&` inside fd duplicates (`2>&1`, `>&-`) and the
+ * `&>`/`&&` operators so those aren't mis-split. Quote handling is
+ * best-effort — embedded separators inside quoted strings are treated as
  * separators too, which biases toward over-detection (safer for a guard).
  */
 function splitOnListSeparators(command: string): string[] {
   return command
-    .split(/(?:&&|\|\|?|;|\r?\n)/)
+    .split(/(?:&&|\|\|?|;|\r?\n|(?<![>&])&(?![>&]))/)
     .map((s) => s.trim())
     .filter(Boolean);
 }
 
 /**
+ * Strip shell wrapping a model could use to hide a git invocation from the
+ * token scanner: subshell / group parens (`(git push)`, `{ git push; }`),
+ * surrounding quotes (`"git"`, `'git'`), and a leading escape (`\git`, which
+ * defeats a git *alias* but still runs the real git). Best-effort and biased
+ * toward exposing the inner command — over-normalization at worst surfaces a
+ * non-git token, which classifies as a harmless passthrough. Backticks are
+ * deliberately left intact so command-substitution detection (`$(...)` /
+ * backtick operands in checkout/switch) still fires downstream.
+ */
+function stripShellWrapping(token: string): string {
+  return token
+    .replace(/^[({]+/, '')
+    .replace(/[)}]+$/, '')
+    .replace(/['"]/g, '')
+    .replace(/^\\+/, '');
+}
+
+/**
  * Tokenize a single segment, dropping shell-side operator artifacts
- * (redirects, fd dups). The returned tokens read like a clean `argv` from
- * git's perspective.
+ * (redirects, fd dups) and stripping shell wrapping (parens / quotes /
+ * leading escape) off each surviving token. The returned tokens read like a
+ * clean `argv` from git's perspective — so `(git push)` and `"git" push`
+ * expose the same `['git', 'push']` a bare `git push` would.
  */
 function tokenizeSegment(segment: string): string[] {
   const raw = segment.trim().split(/\s+/).filter(Boolean);
@@ -189,7 +222,11 @@ function tokenizeSegment(segment: string): string[] {
       continue;
     }
     if (FUSED_REDIRECT.test(t)) continue;
-    tokens.push(t);
+    // Unwrap parens/quotes/escape AFTER the operator checks (those match raw
+    // shell forms); a token that was pure wrapping (`(`, `"`) normalizes to
+    // empty and is dropped.
+    const normalized = stripShellWrapping(t);
+    if (normalized) tokens.push(normalized);
   }
   return tokens;
 }
