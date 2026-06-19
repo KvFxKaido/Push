@@ -38,6 +38,41 @@ describe('adaptiveHashDisplayLength', () => {
   });
 });
 
+describe('whitespace-insensitive hashing (reformatting resilience)', () => {
+  it('hashes are identical regardless of internal/edge whitespace', async () => {
+    const canonical = await calculateLineHash('foo(a, b)', 12);
+    expect(await calculateLineHash('  foo( a,b )  ', 12)).toBe(canonical);
+    expect(await calculateLineHash('foo(a,b)', 12)).toBe(canonical);
+    expect(await calculateLineHash('\tfoo(a, b)\r', 12)).toBe(canonical);
+  });
+
+  it('resolves an anchor whose content was reformatted (operator spacing)', async () => {
+    // File now has tightened spacing; the agent's anchor came from the old layout.
+    const content = 'const sum=a+b;';
+    const staleLayoutRef = await calculateLineHash('const sum = a + b;', 10);
+
+    const result = await applyHashlineEdits(content, [
+      { op: 'replace_line', ref: staleLayoutRef, content: 'const sum = a + b + c;' },
+    ]);
+    expect(result.applied).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('const sum = a + b + c;');
+  });
+
+  it('resolves a line-qualified anchor after the line is reindented', async () => {
+    const content = 'function f() {\n        return 42;\n}';
+    // Anchor captured when the body was indented with 2 spaces, not 8.
+    const ref = `2:${await calculateLineHash('  return 42;', 7)}`;
+
+    const result = await applyHashlineEdits(content, [
+      { op: 'replace_line', ref, content: '    return 43;' },
+    ]);
+    expect(result.applied).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('function f() {\n    return 43;\n}');
+  });
+});
+
 describe('applyHashlineEdits with longer refs (8–12 chars)', () => {
   it('matches successfully with an 8-char ref', async () => {
     const content = 'alpha\nbeta\ngamma';

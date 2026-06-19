@@ -83,6 +83,26 @@ describe('delete_line (unchanged)', () => {
   });
 });
 
+describe('whitespace-insensitive hashing', () => {
+  it('resolves an anchor whose content was reformatted', () => {
+    const content = 'const sum=a+b;';
+    // Anchor computed from a differently-spaced version of the same line.
+    const ref = `1:${calculateLineHash('const sum = a + b;')}`;
+    const result = applyHashlineEdits(content, [
+      { op: 'replace_line', ref, content: 'const sum = a + b + c;' },
+    ]);
+    assert.equal(result.content, 'const sum = a + b + c;');
+    assert.equal(result.applied[0].op, 'replace_line');
+  });
+
+  it('matches a reindented line via a hash-only ref', () => {
+    const content = 'a\n        return 42;\nb';
+    const ref = calculateLineHash('  return 42;');
+    const result = applyHashlineEdits(content, [{ op: 'delete_line', ref }]);
+    assert.equal(result.content, 'a\nb');
+  });
+});
+
 describe('multi-line sequential edits', () => {
   it('handles replace then insert_after on shifted lines', () => {
     const content = 'line1\nline2\nline3';

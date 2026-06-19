@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import {
   type HashlineOp,
   adaptiveHashDisplayLength,
+  normalizeLineForHash,
   resolveHashlineRefs,
   applyResolvedHashlineEdits,
 } from '../lib/hashline.ts';
@@ -22,7 +23,7 @@ export type { HashlineOp };
 
 export function calculateLineHash(line: unknown, length: number = 7): string {
   return createHash('sha256')
-    .update(String(line).trim())
+    .update(normalizeLineForHash(String(line)))
     .digest('hex')
     .slice(0, Math.min(Math.max(length, 7), 12));
 }
@@ -125,7 +126,7 @@ export function applyHashlineEdits(content: unknown, edits: unknown): CliHashlin
   // Sync crypto, shared resolution + application engine
   const resultLines = String(content).split('\n');
   const hashCache = resultLines.map((l) =>
-    createHash('sha256').update(l.trim()).digest('hex').slice(0, 12),
+    createHash('sha256').update(normalizeLineForHash(l)).digest('hex').slice(0, 12),
   );
 
   const resolved = resolveHashlineRefs(hashCache, resultLines, validated);

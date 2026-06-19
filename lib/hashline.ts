@@ -54,18 +54,35 @@ function clampHashLength(length: number): number {
   return Math.min(Math.max(length, 7), 12);
 }
 
+/**
+ * Normalize a line before hashing so an anchor survives reformatting.
+ *
+ * All whitespace is removed (not just trimmed), so a line keeps the same hash
+ * after reindentation, alignment changes, or operator-spacing churn
+ * (`foo(a,b)` ≡ `foo( a, b )`). The trade-off is that two physically distinct
+ * lines whose only difference is whitespace collapse to the same hash; that
+ * collision is resolved by line-qualified refs (`42:abc1234`) and surfaced by
+ * the ambiguity diagnostics in `resolveHashlineRefs`. `\s` also covers the
+ * trailing `\r` left by CRLF files after splitting on `\n`.
+ */
+export function normalizeLineForHash(line: string): string {
+  return String(line).replace(/\s+/g, '');
+}
+
 export async function getNodeCrypto(): Promise<null> {
   return null;
 }
 
 /**
- * Calculate a hash for a line of text (trimmed).
+ * Calculate a hash for a line of text (whitespace-normalized via
+ * `normalizeLineForHash`, so anchors survive reformatting).
  * Uses SHA-256 truncated to `length` hex characters (default 7).
  *
  * Collision properties:
  * - 7 hex chars = 28 bits → ~50% collision chance at ~19K lines (birthday paradox).
- *   In practice most "collisions" are identical-content lines (duplicate imports,
- *   blank lines, closing braces), not hash collisions.
+ *   In practice most "collisions" are lines that are identical after whitespace
+ *   normalization (duplicate imports, blank lines, closing braces), not hash
+ *   collisions.
  * - Internal caches store 12-char (48-bit) hashes; short refs match via prefix.
  *   At 12 chars the birthday threshold is ~20M lines — effectively collision-free.
  * - When a short ref is ambiguous, the resolver suggests line-qualified refs
@@ -73,27 +90,27 @@ export async function getNodeCrypto(): Promise<null> {
  *   content so agents can self-correct.
  */
 export async function calculateLineHash(line: string, length: number = 7): Promise<string> {
-  const trimmed = line.trim();
+  const normalized = normalizeLineForHash(line);
 
   // 1. Prefer Web Crypto (modern browsers + current Node runtimes)
   if (hasWebCrypto()) {
     const webCrypto = getWebCrypto();
     if (!webCrypto) throw new Error('Web Crypto disappeared during hashing');
-    const msgUint8 = new TextEncoder().encode(trimmed);
+    const msgUint8 = new TextEncoder().encode(normalized);
     const hashBuffer = await webCrypto.subtle.digest('SHA-256', msgUint8);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
     return hashHex.slice(0, clampHashLength(length));
   }
 
-  return fallbackHashHex(trimmed).slice(0, clampHashLength(length));
+  return fallbackHashHex(normalized).slice(0, clampHashLength(length));
 }
 
 /**
  * Sync version for legacy utility callers. Uses the deterministic JS fallback.
  */
 export function calculateLineHashSync(line: string, length: number = 7): string {
-  return fallbackHashHex(line.trim()).slice(0, clampHashLength(length));
+  return fallbackHashHex(normalizeLineForHash(line)).slice(0, clampHashLength(length));
 }
 
 /**
@@ -257,7 +274,7 @@ export function resolveHashlineRefs(
           retryRefs.push(`"${idx + 1}:${parsed.hash.slice(0, 7)}"`);
         }
         resolved.push({
-          error: `Reference "${edit.ref}" is ambiguous (${matches.length} matches) — lines have identical content. Retry with a line-qualified ref such as ${retryRefs.join(', ')}:\n${diagnostics.join('\n')}`,
+          error: `Reference "${edit.ref}" is ambiguous (${matches.length} matches) — lines are identical after whitespace normalization. Retry with a line-qualified ref such as ${retryRefs.join(', ')}:\n${diagnostics.join('\n')}`,
         });
       }
       continue;
