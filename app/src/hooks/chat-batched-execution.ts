@@ -228,6 +228,7 @@ export async function executeBatchedToolCalls(
       durationMs: result.durationMs,
       isError,
       preview: summarizeToolResultPreview(result.raw.text),
+      target: getToolStatusDetail(result.call),
       ...(result.raw.branch ? { branch: result.raw.branch } : {}),
     });
   });
@@ -344,6 +345,7 @@ export async function executeBatchedToolCalls(
         durationMs: batchRawResult.durationMs,
         isError: isBatchError,
         preview: summarizeToolResultPreview(batchOutcome.raw.text),
+        target: getToolStatusDetail(batchCall),
         ...(batchOutcome.raw.branch ? { branch: batchOutcome.raw.branch } : {}),
       });
 
@@ -545,6 +547,7 @@ export async function executeBatchedToolCalls(
       durationMs: mutRawResult.durationMs,
       isError: isMutError,
       preview: summarizeToolResultPreview(mutOutcome.raw.text),
+      target: getToolStatusDetail(mutCall),
       ...(mutOutcome.raw.branch ? { branch: mutOutcome.raw.branch } : {}),
     });
 

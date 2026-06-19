@@ -89,6 +89,7 @@ import {
   TOOL_REGISTRY_SCHEMA_VERSION,
   TOOL_SCHEMA_VERSION_PREFIX,
 } from './tool-registry.js';
+import { getToolTargetDetail } from './tool-target-detail.js';
 import type { DetectedToolCalls } from './deep-reviewer-agent.js';
 import { buildContextSummaryBlock, normalizeTrimmedRoleAlternation } from './coder-context-trim.js';
 import {
@@ -1726,6 +1727,10 @@ export async function runCoderAgent<TCall, TCard>(
             durationMs: Date.now() - pStartMs,
             isError: entry.kind === 'executed' ? Boolean(entry.errorType) : false,
             preview: entry.kind === 'executed' ? summarizeToolResultPreview(entry.resultText) : '',
+            target: getToolTargetDetail(
+              pToolName,
+              (call as unknown as { call: { args?: unknown } }).call.args,
+            ),
           });
           return entry;
         }),
@@ -1791,6 +1796,10 @@ export async function runCoderAgent<TCall, TCard>(
           isError: mutResult.kind === 'executed' ? Boolean(mutResult.errorType) : false,
           preview:
             mutResult.kind === 'executed' ? summarizeToolResultPreview(mutResult.resultText) : '',
+          target: getToolTargetDetail(
+            mqToolName,
+            (mutationCall as unknown as { call: { args?: unknown } }).call.args,
+          ),
         });
         if (mutResult.kind === 'denied') {
           messages.push({
@@ -2199,6 +2208,7 @@ export async function runCoderAgent<TCall, TCard>(
       durationMs: Date.now() - singleStartMs,
       isError: result.kind === 'executed' ? Boolean(result.errorType) : false,
       preview: result.kind === 'executed' ? summarizeToolResultPreview(result.resultText) : '',
+      target: getToolTargetDetail(singleCall.call.tool, singleCall.call.args),
     });
 
     if (result.kind === 'denied') {

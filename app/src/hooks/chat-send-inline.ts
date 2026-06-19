@@ -449,6 +449,7 @@ function insertSyntheticToolPairs(
     const isLast = i === events.length - 1;
     const meta = buildToolMeta({
       toolName: event.toolName,
+      target: event.target,
       source: event.toolSource,
       durationMs: event.durationMs,
       isError: event.isError,

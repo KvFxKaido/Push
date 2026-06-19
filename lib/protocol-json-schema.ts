@@ -227,6 +227,7 @@ const PAYLOAD_DEFS: Record<string, JsonSchemaNode> = {
     isError: bool(),
     text: str(),
     preview: str(),
+    target: str(),
     durationMs: num(),
     branch: str(),
   }),

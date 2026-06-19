@@ -507,6 +507,9 @@
         "preview": {
           "type": "string"
         },
+        "target": {
+          "type": "string"
+        },
         "durationMs": {
           "type": "number"
         },

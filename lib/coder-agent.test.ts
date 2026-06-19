@@ -833,7 +833,13 @@ describe('runCoderAgent (PushStream consumer)', () => {
         { type: 'done', finishReason: 'stop' },
       ],
     ]);
-    const events: Array<{ type: string; round?: number; outcome?: string }> = [];
+    const events: Array<{
+      type: string;
+      round?: number;
+      outcome?: string;
+      toolName?: string;
+      target?: string;
+    }> = [];
 
     await runCoderAgent(
       baseCoderOptions({
@@ -859,6 +865,12 @@ describe('runCoderAgent (PushStream consumer)', () => {
       { type: 'assistant.turn_end', round: 0, outcome: 'continued' },
       { type: 'assistant.turn_end', round: 1, outcome: 'completed' },
     ]);
+    expect(events.find((e) => e.type === 'tool.execution_complete')).toEqual(
+      expect.objectContaining({
+        toolName: 'sandbox_read_file',
+        target: 'README.md',
+      }),
+    );
   });
 
   it('nudges and continues when a tool call is buried in reasoning tokens', async () => {
