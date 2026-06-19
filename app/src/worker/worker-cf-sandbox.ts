@@ -509,7 +509,7 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
         // rewrite origin to the public URL so raw sandbox_exec commands cannot
         // reuse a credential persisted in .git/config. Typed PushGit operations
         // add auth transiently when they intentionally talk to GitHub.
-        await time('clone', () =>
+        const stripResult = await time('clone', () =>
           withExecDeadline(
             sandbox.exec(
               `git -C /workspace remote set-url origin ${shellSingleQuote(publicGitHubRepoUrl(repo))} && ` +
@@ -517,6 +517,22 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
             ),
           ),
         );
+        // Fail CLOSED (#987): if the strip didn't succeed, the tokenized clone
+        // URL may still be in .git/config — a reusable credential a raw
+        // sandbox_exec could push with. Destroy the sandbox now (mirroring
+        // Modal's terminate-on-cleanup-failure) so a credential-bearing
+        // container doesn't linger until the idle reaper, then abort the create.
+        // The error text carries no token (the command targets the public URL).
+        const stripExit = (stripResult as { exitCode?: number }).exitCode ?? 0;
+        if (stripExit !== 0) {
+          const stripErr = (stripResult as { stderr?: string }).stderr ?? '';
+          await sandbox.destroy?.().catch(() => {});
+          throw new Error(
+            `Failed to strip clone credentials from sandbox remote (exit ${stripExit})${
+              stripErr ? `: ${stripErr}` : ''
+            }`,
+          );
+        }
       }
 
       // Pre-populate /workspace/{,app/}node_modules from the image-baked
