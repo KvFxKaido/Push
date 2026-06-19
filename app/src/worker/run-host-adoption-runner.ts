@@ -209,6 +209,11 @@ export async function runAdoptedLoop(args: RunAdoptedLoopArgs): Promise<void> {
     ownerToken,
     provider: checkpoint.provider as AIProviderType,
     jobId: runId,
+    // The checkpoint doesn't carry the session's Protect Main flag, so fail
+    // safe: block raw `git push` via sandbox_exec in adopted runs (they ship
+    // through the audited prepare_push flow, not raw pushes). Forbidden ops and
+    // branch ops are unescapable regardless of this flag. (#977)
+    protectMain: true,
   });
   const capabilityLedger = new CapabilityLedger(Array.from(ROLE_CAPABILITIES.coder));
   const turnCtx: CoderTurnContext = {

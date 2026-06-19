@@ -29,8 +29,7 @@ import type { ChatCard } from '@/types';
 import type { AIProviderType } from '@push/lib/provider-contract';
 import { GIT_REF_VALIDATION_DETAIL, isInvalidGitRef } from '@/lib/git-ref-validation';
 import { shellEscape } from '@/lib/sandbox-tool-utils';
-import { SANDBOX_EXEC_POLICY } from '@/lib/sandbox-git-policy';
-import { evaluateProcess } from '@push/lib/sandbox-policy';
+import { classifyGitCommand } from '@push/lib/git/policy';
 import type { SandboxToolCall } from './coder-job-detector-adapter';
 
 export interface CoderJobExecutorAdapter {
@@ -49,6 +48,16 @@ export interface WebExecutorAdapterArgs {
   sandboxId: string;
   ownerToken: string;
   provider: AIProviderType;
+  /**
+   * Whether Protect Main is on for this job's session. Gates raw `git push`
+   * via sandbox_exec in the background lane the same way the web git-guard does
+   * (#977): under Protect Main a raw push is blocked even with allowDirectGit.
+   * Production callers MUST pass it (both do); optional only so tests that don't
+   * exercise the push gate can omit it. Absent ⇒ fail closed for raw push —
+   * note the forbidden-op and branch-op blocks are unconditional and don't
+   * depend on it.
+   */
+  protectMain?: boolean;
   /** Unique per-job id — used to produce a stable rate-limit bucket
    * (`X-Forwarded-For: job:<jobId>`) so background-job traffic doesn't
    * collapse into the global `'unknown'` IP bucket and spuriously 429
@@ -60,33 +69,63 @@ export interface WebExecutorAdapterArgs {
 // Tool → sandbox-cf route mapping.
 // ---------------------------------------------------------------------------
 
+/**
+ * Why a guarded git op was blocked, so the guidance can be accurate about
+ * whether `allowDirectGit` would help:
+ *   - `escapable`      — commit/revert, or push when Protect Main is off;
+ *                        retrying with allowDirectGit clears it.
+ *   - `protected-push` — push under Protect Main; NO allowDirectGit escape.
+ *   - `forbidden`      — merge/rebase/cherry-pick/remote-mutation; no escape.
+ *   - `branch-*`       — route to the typed branch tool (or unsupported).
+ */
+type GitBlockCategory =
+  | 'escapable'
+  | 'protected-push'
+  | 'forbidden'
+  | 'branch-create'
+  | 'branch-switch';
+
 type RouteMapping =
   | { kind: 'ok'; route: string; body: Record<string, unknown> }
-  | { kind: 'git_blocked'; op: string }
+  | { kind: 'git_blocked'; op: string; category: GitBlockCategory }
   | { kind: 'invalid_arg'; field: string; value: string; detail: string }
   | { kind: 'not_implemented_yet' }
   | { kind: 'unsupported' };
 
-function mapCallToRoute(call: SandboxToolCall): RouteMapping {
+function mapCallToRoute(call: SandboxToolCall, protectMain: boolean): RouteMapping {
   switch (call.tool) {
     case 'sandbox_exec': {
-      // Mirror the Web executor's git guard — direct
-      // `git commit/push/merge/rebase` in `sandbox_exec` is blocked
-      // unless the model opts in via `allowDirectGit: true`. The
-      // audited flow is `sandbox_commit` + `prepare_push`.
-      // Background jobs run under `approvalMode='full-auto'`, but we
-      // keep the guard on regardless so background jobs can't silently
-      // mutate repo history bypassing the audit trail the foreground
-      // loop enforces.
-      const gitGuardDecision = evaluateProcess(SANDBOX_EXEC_POLICY, {
-        command: 'sh',
-        argv: [],
-        raw: call.args.command,
-      });
-      const blockedGitOp: string | null =
-        gitGuardDecision.action === 'deny' ? (gitGuardDecision.reason ?? null) : null;
-      if (blockedGitOp && !call.args.allowDirectGit) {
-        return { kind: 'git_blocked', op: blockedGitOp };
+      // Mirror the Web git-guard (lib/default-pre-hooks.ts) exactly, so the
+      // background lane isn't a weaker path (#977). `allowDirectGit` escapes
+      // ONLY commit/revert and push-when-Protect-Main-off; it does NOT escape:
+      //   - forbidden ops (merge/rebase/cherry-pick, and remote-mutation —
+      //     `git remote set-url` / `git config remote.*` — which would repoint
+      //     an audited push, #985/#986/#991);
+      //   - branch create/switch (state-sync — use the typed tools);
+      //   - `git push` under Protect Main (it would bypass the push-boundary
+      //     gate and land on the protected branch, #977 vector 1).
+      // Background jobs run full-auto with no human, so this is the only gate.
+      const decision = classifyGitCommand(
+        typeof call.args.command === 'string' ? call.args.command : '',
+      );
+      if (decision.kind === 'block' || decision.kind === 'route') {
+        const isForbidden = decision.kind === 'block';
+        const isBranchCreate = decision.kind === 'route' && decision.to === 'create_branch';
+        const isBranchSwitch = decision.kind === 'route' && decision.to === 'switch_branch';
+        const isProtectedPush = decision.kind === 'route' && decision.to === 'push' && protectMain;
+        const escapable = !isForbidden && !isBranchCreate && !isBranchSwitch && !isProtectedPush;
+        if (!escapable || call.args.allowDirectGit !== true) {
+          const category: GitBlockCategory = isBranchCreate
+            ? 'branch-create'
+            : isBranchSwitch
+              ? 'branch-switch'
+              : isForbidden
+                ? 'forbidden'
+                : isProtectedPush
+                  ? 'protected-push'
+                  : 'escapable';
+          return { kind: 'git_blocked', op: decision.label, category };
+        }
       }
       return {
         kind: 'ok',
@@ -391,9 +430,10 @@ export function createWebExecutorAdapter(args: WebExecutorAdapterArgs): CoderJob
   // `https://host//api/...` when the caller passes a normalized origin
   // with a trailing slash.
   const origin = args.origin.replace(/\/$/, '');
+  const protectMain = args.protectMain ?? true;
   return {
     executeSandboxToolCall: async (call, sandboxId) => {
-      const mapping = mapCallToRoute(call);
+      const mapping = mapCallToRoute(call, protectMain);
       if (mapping.kind === 'not_implemented_yet') {
         return {
           text:
@@ -421,30 +461,29 @@ export function createWebExecutorAdapter(args: WebExecutorAdapterArgs): CoderJob
         };
       }
       if (mapping.kind === 'git_blocked') {
-        // Route the guidance to the right tool now that slice 2.5 detects
-        // branch-targeting checkouts and slice 3 makes sandbox_create_branch
-        // available in background jobs:
-        //   - `git checkout -b` / `git switch -c` → sandbox_create_branch
-        //     (now wired for background; allowDirectGit fallback removed
-        //     for branch-create since the proper tool exists).
-        //   - `git checkout <branch>` / `git switch <branch>` → no path
-        //     forward (sandbox_switch_branch is foreground-only). Tell the
-        //     model to stop trying and continue on the current branch.
-        //   - everything else (commit/push/merge/rebase) → existing audited
-        //     flow guidance.
-        const isBranchCreate = mapping.op === 'git checkout -b' || mapping.op === 'git switch -c';
-        const isBranchSwitch =
-          mapping.op === 'git checkout <branch>' || mapping.op === 'git switch <branch>';
-        const guidance = isBranchCreate
-          ? `Use sandbox_create_branch({"name": "<branch-name>"}) — it creates the branch in the sandbox and keeps Push's branch state in sync. Pass "from": "<base>" to branch from a specific ref instead of HEAD.`
-          : isBranchSwitch
-            ? `Branch switching isn't available in background Coder jobs. Stop trying it and continue work on the current branch, or use sandbox_create_branch to make a new branch from here.`
-            : `Use sandbox_commit to commit and prepare_push to ship (the Auditor runs at push), or retry this call with "allowDirectGit": true if you've already decided direct git is necessary.`;
-        const messageSuffix = isBranchCreate
-          ? ' — use sandbox_create_branch'
-          : isBranchSwitch
-            ? ' — branch switching unsupported in background jobs'
-            : ' without allowDirectGit';
+        // Guidance keyed on WHY it was blocked (see GitBlockCategory). Only the
+        // `escapable` category may suggest allowDirectGit — telling the model to
+        // retry it on a forbidden / protected-push op would just loop.
+        const guidance =
+          mapping.category === 'branch-create'
+            ? `Use sandbox_create_branch({"name": "<branch-name>"}) — it creates the branch in the sandbox and keeps Push's branch state in sync. Pass "from": "<base>" to branch from a specific ref instead of HEAD.`
+            : mapping.category === 'branch-switch'
+              ? `Branch switching isn't available in background Coder jobs. Stop trying it and continue work on the current branch, or use sandbox_create_branch to make a new branch from here.`
+              : mapping.category === 'forbidden'
+                ? `Push doesn't run this op locally (no "allowDirectGit" escape). Commit with sandbox_commit and ship via prepare_push; integrate branches through the GitHub PR flow. Don't retry with allowDirectGit — it won't apply.`
+                : mapping.category === 'protected-push'
+                  ? `Protect Main is on: direct \`git push\` is blocked here even with allowDirectGit (it would bypass the audited push gate and land on the protected branch). Switch to a feature branch and ship via prepare_push.`
+                  : `Use sandbox_commit to commit and prepare_push to ship (the Auditor runs at push), or retry this call with "allowDirectGit": true if you've already decided direct git is necessary.`;
+        const messageSuffix =
+          mapping.category === 'branch-create'
+            ? ' — use sandbox_create_branch'
+            : mapping.category === 'branch-switch'
+              ? ' — branch switching unsupported in background jobs'
+              : mapping.category === 'forbidden'
+                ? ' — no allowDirectGit escape'
+                : mapping.category === 'protected-push'
+                  ? ' — Protect Main on'
+                  : ' without allowDirectGit';
         return {
           text: `[Tool Blocked — sandbox_exec] Direct "${mapping.op}" is blocked in background Coder jobs. ${guidance}`,
           structuredError: {

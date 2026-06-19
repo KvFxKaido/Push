@@ -818,6 +818,10 @@ export class CoderJob {
           ownerToken,
           provider: input.provider,
           jobId: input.jobId,
+          // Honor the session's Protect Main in the background lane (#977): a
+          // raw `git push` via sandbox_exec is blocked under Protect Main even
+          // with allowDirectGit, matching the web git-guard.
+          protectMain: input.envelope.branchContext?.protectMain ?? false,
         });
       const turnCtx: CoderTurnContext = {
         role: 'coder',
