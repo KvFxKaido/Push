@@ -154,8 +154,17 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
     const saved = loadSandboxSession(activeRepoFullName, activeBranch);
     if (!saved) return;
 
+    // Only give up outright when the session is BOTH too old to expect a live
+    // container AND has no snapshot to restore. With sleepAfter raising the
+    // container's lifetime and a keep-warm snapshot saved, an "old" session is
+    // often still recoverable: fall through to the liveness probe (which warm-
+    // reattaches if the container survived) and then snapshot restore (governed
+    // by the snapshot's own TTL, not the original container createdAt). Probing
+    // a likely-dead container costs one cheap round-trip; discarding a
+    // recoverable session costs the user their work.
     const ageMs = Date.now() - saved.createdAt;
-    if (ageMs > SANDBOX_MAX_AGE_MS) {
+    const hasSnapshot = Boolean(saved.snapshotId && saved.restoreToken);
+    if (ageMs > SANDBOX_MAX_AGE_MS && !hasSnapshot) {
       clearTrackedSession(activeSessionStorageKey, saved.sandboxId);
       return;
     }
