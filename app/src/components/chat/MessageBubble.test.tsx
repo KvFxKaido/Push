@@ -74,6 +74,34 @@ describe('MessageBubble', () => {
     expect(html).not.toContain('repo_read');
   });
 
+  it('surfaces intent narration on a tool-call message, stripping the JSON', () => {
+    const message = assistantMessage({
+      content: 'Let me check the config file.\n{"tool":"repo_read","args":{"path":"config.json"}}',
+      isToolCall: true,
+    });
+    const html = renderToStaticMarkup(<MessageBubble message={message} />);
+    expect(html).toContain('Let me check the config file.');
+    expect(html).not.toContain('repo_read');
+  });
+
+  it('hides a tool-call message whose leftover is machinery (envelope marker)', () => {
+    const message = assistantMessage({
+      content: '[CODER_STATE] working memory dump\n{"tool":"repo_read","args":{"path":"x"}}',
+      isToolCall: true,
+    });
+    const html = renderToStaticMarkup(<MessageBubble message={message} />);
+    expect(html).toBe('');
+  });
+
+  it('keeps a no-prose tool-call message hidden (prior behavior preserved)', () => {
+    const message = assistantMessage({
+      content: '{"tool":"repo_read","args":{"path":"x"}}',
+      isToolCall: true,
+    });
+    const html = renderToStaticMarkup(<MessageBubble message={message} />);
+    expect(html).toBe('');
+  });
+
   it('strips non-http(s) markdown link schemes, keeping the link text as plain', () => {
     const message = assistantMessage({
       content: '[js](javascript:alert(1)) [data](data:text/html,<b>x</b>) [safe](https://ok.com)',
