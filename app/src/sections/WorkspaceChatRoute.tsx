@@ -254,10 +254,23 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
       return;
     }
 
-    if (sandbox.status === 'idle' && previousStatus === 'ready') {
-      toast.info('Sandbox idle. Code tools will start it again when needed.', {
-        id: 'sandbox-connectivity',
-      });
+    if (sandbox.status === 'idle') {
+      // A reconnect that can't restore the saved session lands on idle (not
+      // error) — see useSandbox. Without this case the shared 'Reconnecting...'
+      // toast would just expire, leaving no notice that code tools are now
+      // offline (the idle top banner that used to cover this was removed).
+      if (previousStatus === 'reconnecting') {
+        toast.info(
+          "Couldn't reconnect to the sandbox. Code tools will start a new one when needed.",
+          {
+            id: 'sandbox-connectivity',
+          },
+        );
+      } else if (previousStatus === 'ready') {
+        toast.info('Sandbox idle. Code tools will start it again when needed.', {
+          id: 'sandbox-connectivity',
+        });
+      }
       return;
     }
 
