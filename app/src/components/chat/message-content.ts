@@ -196,9 +196,11 @@ export function stripToolCallPayload(content: string): string {
  * can't tag model-echoed text at emit time — Push didn't emit it — so a pattern
  * match is the right tool here. Kept intentionally broad (any `[UPPER_ENVELOPE]`
  * token): the echo case is rare, and erring toward hiding a stray bracket beats
- * leaking a state dump into the transcript.
+ * leaking a state dump into the transcript. Spaces are allowed inside the token
+ * because real markers use both styles — `[CODER_STATE]` and `[PROJECT
+ * INSTRUCTIONS]` / `[CONTEXT DIGEST]` / `[FILE CONTEXT]` all exist in `lib/`.
  */
-const MACHINERY_ENVELOPE_RE = /\[[A-Z][A-Z_]{2,}\]/;
+const MACHINERY_ENVELOPE_RE = /\[[A-Z][A-Z _]{2,}\]/;
 
 /**
  * Decide what (if anything) of a tool-call message's prose is worth showing.

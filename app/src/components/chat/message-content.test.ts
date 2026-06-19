@@ -142,6 +142,12 @@ describe('toolCallNarration', () => {
     expect(toolCallNarration('[SCRATCHPAD] working notes')).toBe('');
   });
 
+  it('hides spaced envelope markers (real markers use spaces too)', () => {
+    expect(toolCallNarration('[PROJECT INSTRUCTIONS]\nLoader order is...')).toBe('');
+    expect(toolCallNarration('[CONTEXT DIGEST] prior session summary')).toBe('');
+    expect(toolCallNarration('[FILE CONTEXT]\nsrc/main.ts')).toBe('');
+  });
+
   it('drops JSON residue the strip pass missed', () => {
     expect(toolCallNarration('{"tool":"sandbox_exec"')).toBe('');
     expect(toolCallNarration('repo_ls", "args": {"repo": "a/b"}}')).toBe('');
