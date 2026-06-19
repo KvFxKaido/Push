@@ -352,6 +352,16 @@ const CORPUS: Case[] = [
     command: 'git push 2>&1',
     expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
   },
+  // `&>` / `&>>` (bash stdout+stderr redirect) is NOT a separator either — the
+  // `&` is fused to `>`, so the push stays one segment and is still classified.
+  {
+    command: 'git push &>/dev/null',
+    expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
+  },
+  {
+    command: 'git push &>> out.log',
+    expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
+  },
   // subshell / group wrapping no longer hides the git token.
   {
     command: '(git push)',
