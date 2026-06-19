@@ -29,6 +29,7 @@ import {
   ONLY_BRACKETS_RE,
   stripToolCallPayload,
   stripToolResultEnvelopes,
+  toolCallNarration,
 } from './message-content';
 
 // Streamdown adapter is loaded only when the flag is on, so the markdown
@@ -559,11 +560,12 @@ export const MessageBubble = memo(function MessageBubble({
     if (message.isToolCall || message.isMalformed || looksLikeToolCall(text)) {
       text = stripToolCallPayload(text);
     }
-    // Tool-call messages: any leftover text after stripping is the model narrating
-    // its intent (e.g. "Let me check..." or a delegation task brief). Force-clear
-    // so only the tool result / cards are visible — not internal machinery.
+    // Tool-call messages: the leftover after stripping is the model narrating
+    // its intent (e.g. "Let me check..."). Surface that narration, but keep
+    // internal machinery (delegation briefs / state envelopes) hidden — the
+    // guard drops anything that isn't genuine prose.
     if (message.isToolCall) {
-      text = '';
+      text = toolCallNarration(text);
     }
     // Malformed messages are failed tool calls — any leftover text is garbage
     // (e.g. orphaned shell command fragments). Force-clear so the bubble hides.

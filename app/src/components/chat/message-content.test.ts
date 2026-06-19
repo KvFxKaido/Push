@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { looksLikeToolCall, stripToolCallPayload } from './message-content';
+import { looksLikeToolCall, stripToolCallPayload, toolCallNarration } from './message-content';
 
 describe('looksLikeToolCall', () => {
   it('detects braced tool objects during streaming', () => {
@@ -121,5 +121,37 @@ describe('stripToolCallPayload', () => {
     const content =
       'repo_read", "args": {"repo": "a/b", "path": "AGENTS.md"}}\n```json\n{"tool":"repo_read","args":{"repo":"a/b","path":"AGENTS.md"}}\n```';
     expect(stripToolCallPayload(content)).toBe('');
+  });
+});
+
+describe('toolCallNarration', () => {
+  it('surfaces genuine intent narration left after stripping', () => {
+    expect(toolCallNarration('Let me check the config file.')).toBe(
+      'Let me check the config file.',
+    );
+  });
+
+  it('returns empty for whitespace-only leftovers', () => {
+    expect(toolCallNarration('')).toBe('');
+    expect(toolCallNarration('   \n  ')).toBe('');
+  });
+
+  it('hides delegation briefs / state envelopes (machinery, not prose)', () => {
+    expect(toolCallNarration('[USER_GOAL]\nShip the gate-at-push change')).toBe('');
+    expect(toolCallNarration('Context follows.\n[CODER_STATE]\n...')).toBe('');
+    expect(toolCallNarration('[SCRATCHPAD] working notes')).toBe('');
+  });
+
+  it('drops JSON residue the strip pass missed', () => {
+    expect(toolCallNarration('{"tool":"sandbox_exec"')).toBe('');
+    expect(toolCallNarration('repo_ls", "args": {"repo": "a/b"}}')).toBe('');
+  });
+
+  it('end-to-end: narration survives strip + guard, brief does not', () => {
+    expect(
+      toolCallNarration(
+        stripToolCallPayload('Let me read it.\n{"tool":"repo_read","args":{"path":"x"}}'),
+      ),
+    ).toBe('Let me read it.');
   });
 });

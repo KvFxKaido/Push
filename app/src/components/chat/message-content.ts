@@ -186,6 +186,38 @@ export function stripToolCallPayload(content: string): string {
   return stripped;
 }
 
+/**
+ * Machinery envelope markers — delegation briefs, state dumps, and other
+ * internal blocks (e.g. `[USER_GOAL]`, `[CODER_STATE]`, `[SCRATCHPAD]`) that can
+ * ride in an assistant tool-call message's content. They are addressed to the
+ * agent loop, not the transcript, so they must never surface as narration.
+ */
+const MACHINERY_ENVELOPE_RE = /\[[A-Z][A-Z_]{2,}\]/;
+
+/**
+ * Decide what (if anything) of a tool-call message's prose is worth showing.
+ *
+ * `stripToolCallPayload` removes the tool JSON and returns the surrounding
+ * prose; the leftover is usually the model narrating its intent ("Let me check
+ * the config…"), which is useful context. But the same leftover channel also
+ * carries internal machinery (delegation briefs, state envelopes) that should
+ * stay hidden. This guard surfaces genuine narration and drops machinery:
+ *
+ * - empty / whitespace-only → '' (nothing to show)
+ * - contains a `[UPPER_ENVELOPE]` marker → '' (a brief/state dump, not prose)
+ * - still reads as a tool call after stripping → '' (JSON residue, not prose)
+ * - otherwise → the trimmed narration
+ *
+ * Pass the already-stripped output of `stripToolCallPayload`, not raw content.
+ */
+export function toolCallNarration(strippedContent: string): string {
+  const text = strippedContent.trim();
+  if (!text) return '';
+  if (MACHINERY_ENVELOPE_RE.test(text)) return '';
+  if (looksLikeToolCall(text)) return '';
+  return text;
+}
+
 export function stripToolResultEnvelopes(content: string): string {
   if (!content) return '';
   let text = content.replace(
