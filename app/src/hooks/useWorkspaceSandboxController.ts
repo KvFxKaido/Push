@@ -275,10 +275,15 @@ export function useWorkspaceSandboxController({
       abortStream({ clearQueuedFollowUps: true });
     }
     setShowFileBrowser(false);
+    // Explicit disconnect is a deliberate "I'm done / sever this" — unlike a
+    // transient navigate-away (Home/Settings), which now persists for warm
+    // re-attach. So tear the container down here rather than waiting on the
+    // sleepAfter reclaim (Codex P2 on #1001).
+    void stopSandbox();
     onDisconnect();
-  }, [abortStream, isStreaming, onDisconnect]);
+  }, [abortStream, isStreaming, onDisconnect, stopSandbox]);
 
-  // Deliberately NO teardown on unmount. Leaving the workspace view (Home,
+  // Deliberately NO destroy on unmount. Leaving the workspace view (Home,
   // Settings, another chat, PWA backgrounding) used to destroy the container,
   // so returning meant a cold start — the "sandbox disappeared while I just
   // navigated away" complaint. We now let the container persist: returning
@@ -286,8 +291,27 @@ export function useWorkspaceSandboxController({
   // container. Abandoned containers are reclaimed by Cloudflare's sleepAfter
   // (raised to ~1h in worker-cf-sandbox.ts), so nothing leaks — the unmount
   // destroy was a multi-tenant cost guard that doesn't apply to this
-  // single-user deployment. Branch swaps (the desync guard above) and
-  // cross-workspace session changes still tear down as before.
+  // single-user deployment. Explicit disconnect still tears down (above), and
+  // branch swaps / cross-workspace session changes still tear down as before.
+  //
+  // We do log the persist (declared after the other refs so the test harness's
+  // by-index ref tracking isn't shifted) so a "container missing on return"
+  // report is traceable to whether the sandbox was left warm.
+  const lastSandboxIdRef = useRef(sandboxId);
+  lastSandboxIdRef.current = sandboxId;
+  useEffect(() => {
+    return () => {
+      if (lastSandboxIdRef.current) {
+        console.log(
+          JSON.stringify({
+            level: 'info',
+            event: 'sandbox_persisted_on_unmount',
+            sandboxId: lastSandboxIdRef.current,
+          }),
+        );
+      }
+    };
+  }, []);
 
   return {
     showFileBrowser,
