@@ -7,11 +7,9 @@ const noop = vi.fn();
 
 const baseBannerProps = {
   error: null,
-  hasMessages: true,
   isStreaming: false,
   sandboxId: 'sbx-1',
   isInScratchWorkspace: false,
-  onStart: noop,
   onRetry: noop,
   onNewSandbox: noop,
 };

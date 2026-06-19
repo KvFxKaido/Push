@@ -738,11 +738,9 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     sandboxStatusBannerProps: {
       status: sandbox.status,
       error: sandbox.error,
-      hasMessages: messages.length > 0,
       isStreaming,
       sandboxId: sandbox.sandboxId,
       isInScratchWorkspace: Boolean(isScratch),
-      onStart: startCurrentSandbox,
       onRetry: () => {
         void sandbox.refresh();
       },

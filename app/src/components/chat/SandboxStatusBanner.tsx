@@ -11,11 +11,9 @@ import {
 interface SandboxStatusBannerProps {
   status: SandboxStatus;
   error: string | null;
-  hasMessages: boolean;
   isStreaming: boolean;
   sandboxId: string | null;
   isInScratchWorkspace: boolean;
-  onStart: () => void;
   onRetry: () => void;
   onNewSandbox: () => void;
   onExitWorkspace?: () => void;
