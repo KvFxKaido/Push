@@ -61,6 +61,8 @@ const sandboxSession = vi.hoisted(() => ({
   clearSandboxSessionByStorageKey: vi.fn(),
   loadSandboxSession: vi.fn<() => unknown>(() => null),
   saveSandboxSession: vi.fn(),
+  touchSandboxSessionActivity: vi.fn(),
+  isSavedSessionRecoverable: vi.fn<() => boolean>(() => true),
 }));
 
 vi.mock('@/lib/sandbox-client', () => sandboxClient);

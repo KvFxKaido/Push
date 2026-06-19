@@ -10,6 +10,16 @@ export interface PersistedSandboxSession {
   repoFullName: string;
   branch: string;
   createdAt: number;
+  /**
+   * Epoch ms of the last real sandbox activity. Distinct from `createdAt` (the
+   * container's birth): an actively-used container keeps resetting CF's
+   * sleepAfter clock, so it stays alive well past the container's nominal age.
+   * Refreshed by the keep-warm interval so a full reload/eviction — which wipes
+   * the in-memory activity clock — can still tell a recently-active, still-live
+   * container from a stale one on reconnect. Absent on legacy/just-created
+   * sessions; reconnect falls back to `createdAt` then.
+   */
+  lastActivityAt?: number;
   /** Snapshot ID from a prior hibernate. Used to restore when the container is gone. */
   snapshotId?: string;
   /** Token required to authorize snapshot restore. Stored alongside snapshotId. */
@@ -109,4 +119,48 @@ export function saveSandboxSession(
   const storageKey = buildSandboxSessionStorageKey(repoFullName, branch);
   if (!storageKey) return false;
   return safeStorageSet(storageKey, JSON.stringify(session));
+}
+
+/**
+ * Refresh only the `lastActivityAt` field of the stored session, leaving the
+ * rest of the record untouched. Called from the keep-warm interval so the
+ * persisted activity timestamp stays at most one tick stale — that's what lets a
+ * reconnect after a full reload (which clears the in-memory activity clock) keep
+ * a recently-active, still-live container instead of discarding it as too old.
+ * No-op when the stored session is missing or points at a different sandbox (a
+ * stale interval from a swapped-out container must not stamp the new one).
+ */
+export function touchSandboxSessionActivity(
+  repoFullName: string | null | undefined,
+  branch: string | null | undefined,
+  sandboxId: string,
+  at: number,
+): boolean {
+  const storageKey = buildSandboxSessionStorageKey(repoFullName, branch);
+  if (!storageKey) return false;
+  const existing = parsePersistedSandboxSession(safeStorageGet(storageKey));
+  if (!existing || existing.sandboxId !== sandboxId) return false;
+  return safeStorageSet(storageKey, JSON.stringify({ ...existing, lastActivityAt: at }));
+}
+
+/**
+ * Whether a saved session is worth a reconnect probe. The container may have
+ * survived even when its nominal age exceeds `maxAgeMs`: an actively-used
+ * container keeps resetting CF's sleepAfter clock. So a session is recoverable
+ * when it's young, was recently active, OR has a snapshot to restore from — and
+ * is discarded outright only when it's old AND idle AND snapshot-less, where a
+ * probe would almost certainly just confirm a dead container. `idleMs` is the
+ * freshest of the in-memory activity clock and the persisted `lastActivityAt`.
+ */
+export function isSavedSessionRecoverable(args: {
+  ageMs: number;
+  idleMs: number;
+  hasSnapshot: boolean;
+  maxAgeMs: number;
+}): boolean {
+  const { ageMs, idleMs, hasSnapshot, maxAgeMs } = args;
+  if (hasSnapshot) return true;
+  if (ageMs <= maxAgeMs) return true;
+  if (idleMs <= maxAgeMs) return true;
+  return false;
 }
