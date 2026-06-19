@@ -280,6 +280,8 @@ drift):
    exactly what loosen that invariant** — more push targets, more concurrent
    destinations in flight — at which point an unpinned destination becomes a real
    stale-target gap, not a theoretical one. Before that work lands: add
-   `auditedBranch`/`auditedUpstream` to `CommitReviewCardData`
+   `auditedBranch?: string` / `auditedUpstream?: string` to `CommitReviewCardData`
    (`app/src/types/index.ts`) and re-check them alongside the HEAD pin at
-   approval, fail-closed on mismatch.
+   approval, fail-closed on mismatch. Cover the new fields where the HEAD pin is
+   already asserted — `app/src/lib/sandbox-git-release-handlers.test.ts:489`
+   (`auditedHeadSha`) and `app/src/components/cards/CommitReviewCard.test.tsx`.
