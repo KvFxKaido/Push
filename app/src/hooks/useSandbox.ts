@@ -86,6 +86,10 @@ const IDLE_HIBERNATE_MS = 45 * 60 * 1000; // 45 min idle before keep-warm snapsh
 // (otherwise the restore failure is silent and looks like a normal cold start).
 const RESTORE_FAILED_MESSAGE = 'Could not restore your saved workspace — starting a fresh sandbox.';
 const IDLE_CHECK_INTERVAL_MS = 60 * 1000; // check every minute
+// `lastActivityAt` is refreshed by the keep-warm interval, so it can be up to one
+// tick stale. Bias toward one extra cheap probe rather than discarding a live
+// sandbox that had real activity just before a reload.
+const SANDBOX_ACTIVITY_STALENESS_GRACE_MS = IDLE_CHECK_INTERVAL_MS;
 
 function getGitHubAppCommitIdentity(): GitCommitIdentity | undefined {
   const appToken = safeStorageGet(APP_TOKEN_STORAGE_KEY);
@@ -174,7 +178,15 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
     const persistedIdleMs =
       typeof saved.lastActivityAt === 'number' ? Date.now() - saved.lastActivityAt : Infinity;
     const idleMs = Math.min(msSinceLastSandboxCall(), persistedIdleMs);
-    if (!isSavedSessionRecoverable({ ageMs, idleMs, hasSnapshot, maxAgeMs: SANDBOX_MAX_AGE_MS })) {
+    if (
+      !isSavedSessionRecoverable({
+        ageMs,
+        idleMs,
+        hasSnapshot,
+        maxAgeMs: SANDBOX_MAX_AGE_MS,
+        maxIdleMs: SANDBOX_MAX_AGE_MS + SANDBOX_ACTIVITY_STALENESS_GRACE_MS,
+      })
+    ) {
       clearTrackedSession(activeSessionStorageKey, saved.sandboxId);
       return;
     }

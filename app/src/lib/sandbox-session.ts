@@ -157,10 +157,11 @@ export function isSavedSessionRecoverable(args: {
   idleMs: number;
   hasSnapshot: boolean;
   maxAgeMs: number;
+  maxIdleMs?: number;
 }): boolean {
-  const { ageMs, idleMs, hasSnapshot, maxAgeMs } = args;
+  const { ageMs, idleMs, hasSnapshot, maxAgeMs, maxIdleMs = maxAgeMs } = args;
   if (hasSnapshot) return true;
   if (ageMs <= maxAgeMs) return true;
-  if (idleMs <= maxAgeMs) return true;
+  if (idleMs <= maxIdleMs) return true;
   return false;
 }

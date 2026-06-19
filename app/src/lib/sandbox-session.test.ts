@@ -178,6 +178,22 @@ describe('sandbox-session', () => {
       ).toBe(true);
     });
 
+    it('keeps an old session whose persisted activity is within the caller grace window', () => {
+      // `lastActivityAt` is maintained by an interval, so it can be slightly
+      // stale when a reload lands between a real call and the next persistence
+      // tick. The caller can allow that staleness without extending the raw age
+      // gate for sessions that were never recently active.
+      expect(
+        isSavedSessionRecoverable({
+          ageMs: 3 * 60 * 60 * 1000,
+          idleMs: MAX + 30 * 1000,
+          hasSnapshot: false,
+          maxAgeMs: MAX,
+          maxIdleMs: MAX + 60 * 1000,
+        }),
+      ).toBe(true);
+    });
+
     it('keeps an old, idle session that still has a snapshot to restore', () => {
       expect(
         isSavedSessionRecoverable({
