@@ -54,8 +54,10 @@ import { checkRepoCoverage } from '@/lib/github-repo-coverage';
 import {
   buildSandboxSessionStorageKey,
   clearSandboxSessionByStorageKey,
+  isSavedSessionRecoverable,
   loadSandboxSession,
   saveSandboxSession,
+  touchSandboxSessionActivity,
 } from '@/lib/sandbox-session';
 import { isDefinitivelyGoneMessage, isDefinitivelyGoneError } from '@/lib/sandbox-error-utils';
 
@@ -84,6 +86,10 @@ const IDLE_HIBERNATE_MS = 45 * 60 * 1000; // 45 min idle before keep-warm snapsh
 // (otherwise the restore failure is silent and looks like a normal cold start).
 const RESTORE_FAILED_MESSAGE = 'Could not restore your saved workspace — starting a fresh sandbox.';
 const IDLE_CHECK_INTERVAL_MS = 60 * 1000; // check every minute
+// `lastActivityAt` is refreshed by the keep-warm interval, so it can be up to one
+// tick stale. Bias toward one extra cheap probe rather than discarding a live
+// sandbox that had real activity just before a reload.
+const SANDBOX_ACTIVITY_STALENESS_GRACE_MS = IDLE_CHECK_INTERVAL_MS;
 
 function getGitHubAppCommitIdentity(): GitCommitIdentity | undefined {
   const appToken = safeStorageGet(APP_TOKEN_STORAGE_KEY);
@@ -154,17 +160,33 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
     const saved = loadSandboxSession(activeRepoFullName, activeBranch);
     if (!saved) return;
 
-    // Only give up outright when the session is BOTH too old to expect a live
-    // container AND has no snapshot to restore. With sleepAfter raising the
-    // container's lifetime and a keep-warm snapshot saved, an "old" session is
-    // often still recoverable: fall through to the liveness probe (which warm-
-    // reattaches if the container survived) and then snapshot restore (governed
-    // by the snapshot's own TTL, not the original container createdAt). Probing
-    // a likely-dead container costs one cheap round-trip; discarding a
-    // recoverable session costs the user their work.
+    // Only give up outright when the session is too old to expect a live
+    // container, hasn't been active recently, AND has no snapshot to restore.
+    // `createdAt` is the container's BIRTH, not its last use — an actively-used
+    // container keeps resetting CF's sleepAfter clock, so a long *active* session
+    // outlives SANDBOX_MAX_AGE_MS while staying perfectly alive. So we gate on
+    // recency too: msSinceLastSandboxCall() is module-level (survives a
+    // navigate-away → back remount; only a full reload resets it to Infinity),
+    // and lastActivityAt is the persisted fallback the keep-warm interval keeps
+    // fresh so a reload/eviction can still tell a recently-active container from
+    // a stale one. When recoverable we fall through to the liveness probe (warm-
+    // reattaches if the container survived) and then snapshot restore. Probing a
+    // likely-dead container costs one cheap round-trip; discarding a recoverable
+    // session costs the user their work.
     const ageMs = Date.now() - saved.createdAt;
     const hasSnapshot = Boolean(saved.snapshotId && saved.restoreToken);
-    if (ageMs > SANDBOX_MAX_AGE_MS && !hasSnapshot) {
+    const persistedIdleMs =
+      typeof saved.lastActivityAt === 'number' ? Date.now() - saved.lastActivityAt : Infinity;
+    const idleMs = Math.min(msSinceLastSandboxCall(), persistedIdleMs);
+    if (
+      !isSavedSessionRecoverable({
+        ageMs,
+        idleMs,
+        hasSnapshot,
+        maxAgeMs: SANDBOX_MAX_AGE_MS,
+        maxIdleMs: SANDBOX_MAX_AGE_MS + SANDBOX_ACTIVITY_STALENESS_GRACE_MS,
+      })
+    ) {
       clearTrackedSession(activeSessionStorageKey, saved.sandboxId);
       return;
     }
@@ -231,6 +253,17 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
           sessionStorageKeyRef.current = activeSessionStorageKey;
           setActiveSandboxEnvironment(saved.sandboxId);
           setStatus('ready');
+          // A successful probe is the strongest possible liveness proof, but it's
+          // suppressIdleTouch'd so it won't reset the in-memory clock (which would
+          // defeat hibernation). Persist the recency directly so a subsequent
+          // reload before any real call doesn't see Infinity + a stale
+          // lastActivityAt and discard this still-live container.
+          touchSandboxSessionActivity(
+            activeRepoFullName,
+            activeBranch,
+            saved.sandboxId,
+            Date.now(),
+          );
           const symbolKey = saved.repoFullName
             ? `${saved.repoFullName}:${saved.branch || 'main'}`
             : 'scratch';
@@ -299,6 +332,16 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
 
     const timer = setInterval(() => {
       const idle = msSinceLastSandboxCall();
+
+      // Keep the persisted activity timestamp ≤1 tick stale so a reconnect after
+      // a full reload/eviction (which clears the in-memory clock) can still tell
+      // this recently-active, still-live container from a stale one. Skip when
+      // `idle` is Infinity (no call since page load) — the persisted value is the
+      // better record then, so don't clobber it with a fabricated "just now".
+      if (Number.isFinite(idle)) {
+        touchSandboxSessionActivity(activeRepoFullName, activeBranch, id, Date.now() - idle);
+      }
+
       if (idle < IDLE_HIBERNATE_MS) return;
 
       // Status may have changed between ticks.
@@ -366,7 +409,10 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
           // Persist the snapshot as the safety net for a LATER real CF reclaim
           // (and for snapshot restore on reconnect). Preserve the original
           // createdAt — it's the container's real age, which the reconnect probe
-          // window keys off; only the snapshot timestamp is fresh.
+          // window keys off; only the snapshot timestamp is fresh. Also preserve
+          // lastActivityAt (the interval stamped it just above): without it a
+          // later forgetSnapshot would have nothing to carry forward, so a reload
+          // of the still-live snapshot-less container would discard it on age.
           if (activeRepoFullName != null && activeBranch) {
             const existing = loadSandboxSession(activeRepoFullName, activeBranch);
             saveSandboxSession(activeRepoFullName, activeBranch, {
@@ -375,6 +421,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
               repoFullName: activeRepoFullName,
               branch: activeBranch,
               createdAt: existing?.createdAt ?? snapshotAt,
+              lastActivityAt: existing?.lastActivityAt,
               snapshotId: result.snapshotId,
               restoreToken: result.restoreToken,
               snapshotCreatedAt: Date.now(),
@@ -566,10 +613,14 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
 
     const existing = currentSessionStorageKey ? safeStorageGet(currentSessionStorageKey) : null;
     let createdAt = Date.now();
+    let lastActivityAt: number | undefined;
     if (existing) {
       try {
-        const parsed = JSON.parse(existing) as { createdAt?: unknown };
+        const parsed = JSON.parse(existing) as { createdAt?: unknown; lastActivityAt?: unknown };
         if (typeof parsed.createdAt === 'number') createdAt = parsed.createdAt;
+        // Carry recency forward: the container is the same live one, just
+        // re-keyed, so the reconnect gate shouldn't fall back to createdAt-age.
+        if (typeof parsed.lastActivityAt === 'number') lastActivityAt = parsed.lastActivityAt;
       } catch {
         // Ignore malformed storage and keep the fresh timestamp.
       }
@@ -581,6 +632,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       repoFullName,
       branch,
       createdAt,
+      lastActivityAt,
     });
     const nextSessionStorageKey = buildSandboxSessionStorageKey(repoFullName, branch);
     if (currentSessionStorageKey && currentSessionStorageKey !== nextSessionStorageKey) {
@@ -677,6 +729,9 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
         repoFullName: saved.repoFullName,
         branch: saved.branch,
         createdAt: saved.createdAt,
+        // Keep the recency signal: this drops the snapshot but the container is
+        // still live, so a reconnect must not fall back to createdAt-age alone.
+        lastActivityAt: saved.lastActivityAt,
       });
     } else {
       const storageKey = buildSandboxSessionStorageKey(activeRepoFullName, activeBranch);
