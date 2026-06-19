@@ -895,7 +895,7 @@ export async function handlePromoteToGithub(
   if (!authToken) {
     return { text: '[Tool Error] GitHub auth token missing after repo creation.' };
   }
-  const remoteUrl = `https://x-access-token:${authToken}@github.com/${createdRepo.full_name}.git`;
+  const remoteUrl = `https://github.com/${createdRepo.full_name}.git`;
 
   // Promote needs the exact current ref, so this read stays raw rather than
   // going through the normalized `currentBranch()`. A detached HEAD must
@@ -928,6 +928,7 @@ export async function handlePromoteToGithub(
   const pushResult = await createSandboxPushGit(ctx.sandboxId, {
     execFn: ctx.execInSandbox,
     secretScan: true,
+    getGitHubToken: ctx.getActiveGitHubToken,
   }).push({ setUpstream: true, ref: branchName });
 
   // A secret-scan block on the first publish: the repo exists but nothing was

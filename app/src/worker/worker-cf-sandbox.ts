@@ -74,6 +74,16 @@ const MAX_READ_BYTES = 5_000_000;
 const MAX_ARCHIVE_BYTES = 100_000_000;
 const OWNER_TOKEN_PATH = '/tmp/push-owner-token';
 
+function githubRepoUrl(repo: string, token?: string): string {
+  return token
+    ? `https://x-access-token:${token}@github.com/${repo}.git`
+    : `https://github.com/${repo}.git`;
+}
+
+function publicGitHubRepoUrl(repo: string): string {
+  return `https://github.com/${repo}.git`;
+}
+
 // Upper bound for a single `sandbox.exec` call. The Cloudflare Sandbox SDK's
 // exec has no abort path — if the container is wedged (commonly after a heavy
 // FS write like `npm install`), the returned promise never resolves, the
@@ -486,9 +496,7 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
     }
 
     if (repo && repo.length > 0) {
-      const cloneUrl = githubToken
-        ? `https://x-access-token:${githubToken}@github.com/${repo}.git`
-        : `https://github.com/${repo}.git`;
+      const cloneUrl = githubRepoUrl(repo, githubToken);
       // Shallow clone — Push sessions are scoped to a single branch tip and
       // never inspect history beyond the current commit, so the full pack is
       // pure cold-start tax. `depth: 1` is SDK-supported; deeper history can
@@ -496,6 +504,36 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
       await time('clone', () =>
         sandbox.gitCheckout(cloneUrl, { branch, targetDir: '/workspace', depth: 1 }),
       );
+      if (githubToken) {
+        // gitCheckout uses the tokenized URL for private clone auth. Immediately
+        // rewrite origin to the public URL so raw sandbox_exec commands cannot
+        // reuse a credential persisted in .git/config. Typed PushGit operations
+        // add auth transiently when they intentionally talk to GitHub.
+        const stripResult = await time('clone', () =>
+          withExecDeadline(
+            sandbox.exec(
+              `git -C /workspace remote set-url origin ${shellSingleQuote(publicGitHubRepoUrl(repo))} && ` +
+                '(git -C /workspace config --unset-all remote.origin.pushurl >/dev/null 2>&1 || true)',
+            ),
+          ),
+        );
+        // Fail CLOSED (#987): if the strip didn't succeed, the tokenized clone
+        // URL may still be in .git/config — a reusable credential a raw
+        // sandbox_exec could push with. Destroy the sandbox now (mirroring
+        // Modal's terminate-on-cleanup-failure) so a credential-bearing
+        // container doesn't linger until the idle reaper, then abort the create.
+        // The error text carries no token (the command targets the public URL).
+        const stripExit = (stripResult as { exitCode?: number }).exitCode ?? 0;
+        if (stripExit !== 0) {
+          const stripErr = (stripResult as { stderr?: string }).stderr ?? '';
+          await sandbox.destroy?.().catch(() => {});
+          throw new Error(
+            `Failed to strip clone credentials from sandbox remote (exit ${stripExit})${
+              stripErr ? `: ${stripErr}` : ''
+            }`,
+          );
+        }
+      }
 
       // Pre-populate /workspace/{,app/}node_modules from the image-baked
       // cache via hardlink copy. Dockerfile.sandbox stages root and app

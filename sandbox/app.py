@@ -1054,6 +1054,28 @@ def create(data: dict):
             stderr = p.stderr.read()
             sb.terminate()
             return {"error": f"Clone failed: {stderr}", "sandbox_id": None}
+
+        if github_token:
+            # Use the tokenized URL only for clone auth, then strip it from
+            # .git/config. Audited PushGit operations inject auth transiently;
+            # raw sandbox_exec must not inherit a reusable origin credential.
+            public_url = f"https://github.com/{repo}.git"
+            p = sb.exec("git", "-C", "/workspace", "remote", "set-url", "origin", public_url)
+            p.wait()
+            if p.returncode != 0:
+                stderr = p.stderr.read()
+                sb.terminate()
+                return {"error": f"Clone credential cleanup failed: {stderr}", "sandbox_id": None}
+            # Ignore "no such key": the important boundary is that no pushurl
+            # with embedded credentials survives.
+            sb.exec(
+                "git",
+                "-C",
+                "/workspace",
+                "config",
+                "--unset-all",
+                "remote.origin.pushurl",
+            ).wait()
     else:
         p = sb.exec("mkdir", "-p", "/workspace")
         p.wait()

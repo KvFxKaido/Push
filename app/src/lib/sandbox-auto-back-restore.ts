@@ -9,6 +9,7 @@
 
 import { autoBackRef } from './sandbox-auto-back';
 import { execInSandbox } from './sandbox-client';
+import { gitHubAuthCommandPrefix } from './git-backend';
 import { isInvalidGitRef } from './git-ref-validation';
 
 export type RestoreAvailability =
@@ -39,7 +40,10 @@ function resolveAutoBackRef(
 // safe only because `resolveAutoBackRef` rejects anything outside git's
 // `[A-Za-z0-9._/-]` ref charset (isInvalidGitRef) and `expectedSha` is a hex
 // commit id validated before we get here — no shell metacharacters can reach
-// this point. Do NOT call these with unvalidated input.
+// this point. Do NOT call these with unvalidated input. `authPrefix` is the
+// shell-escaped `git -c …` GitHub-auth prefix (or '' for public/no-token):
+// origin is tokenless after clone (#987), so the fetch must carry transient auth
+// to reach a private repo's backup ref.
 //
 // Correctness note (Codex P1 on #983): the auto-back commit is HEAD-at-capture +
 // WIP, so we ONLY offer/apply when the backup's parent still equals the current
@@ -47,10 +51,10 @@ function resolveAutoBackRef(
 // surfaces), restoring the backup's full tree would make the intervening commits
 // show as local reverts. Gating on parent==HEAD makes the read-tree restore
 // exactly the WIP diff, with no revert.
-function detectCommand(ref: string): string {
+function detectCommand(ref: string, authPrefix: string): string {
   return [
     'cd /workspace 2>/dev/null || { echo "ERR"; exit 0; }',
-    `git fetch --no-tags origin "${ref}" 2>/dev/null || { echo "NONE"; exit 0; }`,
+    `git ${authPrefix}fetch --no-tags origin "${ref}" 2>/dev/null || { echo "NONE"; exit 0; }`,
     'backup="$(git rev-parse FETCH_HEAD 2>/dev/null)"; [ -z "$backup" ] && { echo "NONE"; exit 0; }',
     'head="$(git rev-parse HEAD 2>/dev/null)"',
     'head_tree="$(git rev-parse \'HEAD^{tree}\' 2>/dev/null)"',
@@ -63,10 +67,10 @@ function detectCommand(ref: string): string {
   ].join('\n');
 }
 
-function applyCommand(ref: string, expectedSha: string): string {
+function applyCommand(ref: string, expectedSha: string, authPrefix: string): string {
   return [
     'cd /workspace 2>/dev/null || { echo "ERR"; exit 0; }',
-    `git fetch --no-tags origin "${ref}" 2>/dev/null || { echo "FETCH_FAILED"; exit 0; }`,
+    `git ${authPrefix}fetch --no-tags origin "${ref}" 2>/dev/null || { echo "FETCH_FAILED"; exit 0; }`,
     'backup="$(git rev-parse FETCH_HEAD 2>/dev/null)"; [ -z "$backup" ] && { echo "FETCH_FAILED"; exit 0; }',
     // Pin the detected backup: if the ref was force-updated since detection (a
     // new auto-back), restore nothing rather than the wrong commit. (Codex P1.)
@@ -110,7 +114,10 @@ export async function detectAutoBackRestore(
   let stdout: string;
   let execError: string | undefined;
   try {
-    const result = await execInSandbox(sandboxId, detectCommand(resolved.ref));
+    const result = await execInSandbox(
+      sandboxId,
+      detectCommand(resolved.ref, gitHubAuthCommandPrefix()),
+    );
     stdout = result.stdout ?? '';
     execError = result.error;
   } catch (err) {
@@ -189,7 +196,10 @@ export async function applyAutoBackRestore(
   let stdout: string;
   let execError: string | undefined;
   try {
-    const result = await execInSandbox(sandboxId, applyCommand(resolved.ref, expectedSha));
+    const result = await execInSandbox(
+      sandboxId,
+      applyCommand(resolved.ref, expectedSha, gitHubAuthCommandPrefix()),
+    );
     stdout = result.stdout ?? '';
     execError = result.error;
   } catch (err) {

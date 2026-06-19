@@ -38,7 +38,7 @@ import {
   createModelCommitBranchNameProposer,
   ensureCommitTargetBranch,
 } from '@/lib/ensure-commit-target-branch';
-import { createSandboxPushGit } from '@/lib/git-backend';
+import { createSandboxPushGit, gitHubAuthCommandPrefix } from '@/lib/git-backend';
 import type {
   ForkBranchInWorkspaceResult,
   SwitchBranchInWorkspaceResult,
@@ -57,6 +57,7 @@ import {
   sanitizeBranchName,
 } from '@/lib/branch-names';
 import { parseDiffStats } from '@/lib/diff-utils';
+import { shellEscape } from '@/lib/sandbox-tool-utils';
 import { getActiveProvider, getProviderPushStream } from '@/lib/orchestrator';
 import { getModelForRole, type PreferredProvider } from '@/lib/providers';
 import { iteratePushStreamText } from '@push/lib/stream-utils';
@@ -694,9 +695,11 @@ export function WorkspaceHubSheet({
           // message instead. ls-remote network failures fall through (the
           // `>/dev/null 2>&1` wrap turns transport errors into "not present"
           // — same as the prior implementation).
+          const escapedBranchName = shellEscape(target.branchName);
+          const authPrefix = gitHubAuthCommandPrefix();
           const preflight = await execInSandbox(
             sandboxId,
-            `cd /workspace && if git show-ref --verify --quiet refs/heads/${target.branchName}; then echo "__PUSH_BRANCH_EXISTS_LOCAL__"; exit 10; fi && if git ls-remote --exit-code --heads origin ${target.branchName} >/dev/null 2>&1; then echo "__PUSH_BRANCH_EXISTS_REMOTE__"; exit 11; fi`,
+            `cd /workspace && if git show-ref --verify --quiet refs/heads/${escapedBranchName}; then echo "__PUSH_BRANCH_EXISTS_LOCAL__"; exit 10; fi && if git ${authPrefix}ls-remote --exit-code --heads origin ${escapedBranchName} >/dev/null 2>&1; then echo "__PUSH_BRANCH_EXISTS_REMOTE__"; exit 11; fi`,
           );
           if (preflight.exitCode === 10 || preflight.exitCode === 11) {
             setCommitPhase('error');

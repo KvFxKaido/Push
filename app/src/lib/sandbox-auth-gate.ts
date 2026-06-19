@@ -1,11 +1,12 @@
 /**
  * Cloud-sandbox repo-authorization gate.
  *
- * When a cloud sandbox clones a repo, the active GitHub token is baked into the
- * clone URL and persists in the container's `.git/config` for the sandbox's
- * lifetime (see worker-cf-sandbox.ts). The blessed path is a GitHub App
- * *installation* token — repo-scoped, ~1h, auto-refreshing. The job of this gate
- * is therefore repo-auth *clarity*:
+ * When a cloud sandbox clones a private repo, the active GitHub token is sent to
+ * the sandbox backend for clone auth. The backend strips it from the repo remote
+ * immediately after clone; sanctioned PushGit network operations inject auth
+ * transiently for the single git process that needs it. The blessed path is a
+ * GitHub App *installation* token — repo-scoped, ~1h, auto-refreshing. The job
+ * of this gate is therefore repo-auth *clarity*:
  *
  *   - App installation token (the default) → check that the installation
  *     actually covers the active repo. If it does, clone. If it doesn't, stop
@@ -38,9 +39,9 @@ export type RepoCoverage = 'covered' | 'not_covered' | 'unknown';
  */
 export const USER_TOKEN_GATE_MESSAGE =
   'This is a legacy full-account GitHub token (OAuth or PAT). It would be ' +
-  'written into the cloud sandbox and readable for its lifetime. Acknowledge ' +
-  'this in Settings → GitHub connection to use it, or connect the GitHub App ' +
-  'for scoped, auto-expiring access (recommended).';
+  'sent to the cloud sandbox for clone/auth operations. Acknowledge this in ' +
+  'Settings → GitHub connection to use it, or connect the GitHub App for ' +
+  'scoped, auto-expiring access (recommended).';
 
 /** Actionable message when the App installation doesn't cover the active repo. */
 export function formatRepoNotCoveredMessage(repo: string, installUrl?: string): string {

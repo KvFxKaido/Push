@@ -324,14 +324,48 @@ describe('handleCloudflareSandbox happy paths', () => {
       { branch: 'feature', targetDir: '/workspace', depth: 1 },
     );
     expect(sandbox.writeFile).toHaveBeenCalledWith('/workspace/README.md', 'hello');
-    // Call 2 is the hardlink copy from the image-baked /opt/push-cache
+    // Call 2 strips the tokenized clone URL out of .git/config so raw
+    // sandbox_exec cannot reuse the clone credential (#987).
+    expect(sandbox.exec.mock.calls[1]?.[0]).toContain(
+      "git -C /workspace remote set-url origin 'https://github.com/owner/repo.git'",
+    );
+    expect(sandbox.exec.mock.calls[1]?.[0]).not.toContain('ghs_token');
+    // Call 3 is the hardlink copy from the image-baked /opt/push-cache
     // cache (see routeCreate). Assert on a substring rather than the
     // whole script so the guard shape stays an implementation detail
     // the test doesn't pin.
-    expect(sandbox.exec.mock.calls[1]?.[0]).toEqual(
+    expect(sandbox.exec.mock.calls[2]?.[0]).toEqual(
       expect.stringContaining('cp -al "$src/node_modules"'),
     );
-    expect(sandbox.exec).toHaveBeenCalledTimes(3);
+    expect(sandbox.exec).toHaveBeenCalledTimes(4);
+  });
+
+  it('fails closed (destroys the sandbox) when the clone-credential strip fails', async () => {
+    // #987: if the post-clone `git remote set-url` to the tokenless URL fails,
+    // the tokenized clone URL may still be in .git/config — a reusable
+    // credential. The create must abort and tear the sandbox down rather than
+    // hand back a session whose origin carries a persisted token.
+    const sandbox = mockSandbox();
+    mockUuid();
+    sandbox.exec.mockImplementation(async (command: string) =>
+      command.includes('remote set-url origin')
+        ? { stdout: '', stderr: 'fatal: No such remote', exitCode: 1 }
+        : { stdout: probeStdout(), stderr: '', exitCode: 0 },
+    );
+
+    const env = makeEnv();
+    const response = await callRoute(
+      'create',
+      { repo: 'owner/repo', branch: 'feature', github_token: 'ghs_token' },
+      env,
+    );
+
+    expect(response.status).toBe(500);
+    const body = await jsonBody(response);
+    // The aborted create must not leak the token in its error.
+    expect(JSON.stringify(body)).not.toContain('ghs_token');
+    // Fail closed: the credential-bearing container is destroyed.
+    expect(sandbox.destroy).toHaveBeenCalled();
   });
 
   it('emits cf_sandbox_create_timing on the success path with hashed repo and no raw identifiers', async () => {

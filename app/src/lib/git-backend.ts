@@ -24,6 +24,7 @@ import { makeProtectMainPrePushGate } from '@push/lib/git/protect-main-gate';
 import { makeAuditorPrePushGate, type AuditorPushVerdict } from '@push/lib/git/auditor-push-gate';
 import { resolveSecretScanEnabled } from '@push/lib/secret-scan';
 import { execInSandbox, type ExecResult } from './sandbox-client';
+import { getActiveGitHubToken } from './github-auth';
 import { shellEscape } from './sandbox-tool-utils';
 
 type SandboxExecFn = (
@@ -33,13 +34,57 @@ type SandboxExecFn = (
   options?: { markWorkspaceMutated?: boolean; suppressWorkspaceMutationSignal?: boolean },
 ) => Promise<ExecResult>;
 
+type GitHubTokenProvider = () => string;
+
+function base64Encode(value: string): string {
+  if (typeof btoa === 'function') return btoa(value);
+  return Buffer.from(value, 'utf8').toString('base64');
+}
+
+function shouldInjectGitHubAuth(args: string[]): boolean {
+  return args[0] === 'fetch' || args[0] === 'push' || args[0] === 'ls-remote';
+}
+
+function gitHubAuthConfigArgs(token: string): string[] {
+  const encoded = base64Encode(`x-access-token:${token}`);
+  return ['-c', `http.https://github.com/.extraheader=AUTHORIZATION: basic ${encoded}`];
+}
+
+function withTransientGitHubAuth(args: string[], token: string): string[] {
+  if (!token || !shouldInjectGitHubAuth(args)) return args;
+  return [...gitHubAuthConfigArgs(token), ...args];
+}
+
+/**
+ * Shell-escaped `git -c …` prefix that injects transient GitHub auth into a RAW
+ * git command string that talks to origin. Origin is rewritten tokenless after
+ * clone (#987), so code that builds shell commands directly (NOT via the
+ * GitBackend argv path) must add auth itself for network reads against origin —
+ * e.g. auto-back restore's `git fetch origin <ref>` and the remote
+ * branch-collision `git ls-remote origin`. Returns '' when no token is active,
+ * so public-repo / no-auth calls are unchanged. Splice as `git ${prefix}fetch …`
+ * (the non-empty form carries a trailing space).
+ */
+export function gitHubAuthCommandPrefix(
+  getToken: GitHubTokenProvider = getActiveGitHubToken,
+): string {
+  const token = getToken();
+  if (!token) return '';
+  return `${gitHubAuthConfigArgs(token).map(shellEscape).join(' ')} `;
+}
+
 /**
  * Build the argv-based `GitExec` port over a sandbox executor. Shared by the
  * backend and the secret-scan diff source so both run git the same way.
  */
-function makeSandboxGitExec(sandboxId: string, execFn: SandboxExecFn): GitExec {
+function makeSandboxGitExec(
+  sandboxId: string,
+  execFn: SandboxExecFn,
+  getGitHubToken: GitHubTokenProvider = getActiveGitHubToken,
+): GitExec {
   return async (args, opts) => {
-    const command = `git ${args.map(shellEscape).join(' ')}`;
+    const commandArgs = withTransientGitHubAuth(args, getGitHubToken());
+    const command = `git ${commandArgs.map(shellEscape).join(' ')}`;
     try {
       const res = await execFn(
         sandboxId,
@@ -107,8 +152,9 @@ export function resolveWebAuditAtPushEnabled(): boolean {
 export function createSandboxGitBackend(
   sandboxId: string,
   execFn: SandboxExecFn = execInSandbox,
+  opts?: { getGitHubToken?: GitHubTokenProvider },
 ): GitBackend {
-  return new SandboxPlumbingBackend(makeSandboxGitExec(sandboxId, execFn));
+  return new SandboxPlumbingBackend(makeSandboxGitExec(sandboxId, execFn, opts?.getGitHubToken));
 }
 
 /**
@@ -124,9 +170,9 @@ export function createSandboxGitBackend(
 export function computeSandboxPushedDiff(
   sandboxId: string,
   execFn: SandboxExecFn = execInSandbox,
-  opts?: { ref?: string },
+  opts?: { ref?: string; getGitHubToken?: GitHubTokenProvider },
 ): Promise<string | null> {
-  return computePushedDiff(makeSandboxGitExec(sandboxId, execFn), opts);
+  return computePushedDiff(makeSandboxGitExec(sandboxId, execFn, opts?.getGitHubToken), opts);
 }
 
 /**
@@ -163,9 +209,10 @@ export function createSandboxPushGit(
       audit: (diff: string) => Promise<AuditorPushVerdict>;
       enabled?: boolean;
     };
+    getGitHubToken?: GitHubTokenProvider;
   },
 ): PushGit {
-  const exec = makeSandboxGitExec(sandboxId, opts?.execFn ?? execInSandbox);
+  const exec = makeSandboxGitExec(sandboxId, opts?.execFn ?? execInSandbox, opts?.getGitHubToken);
   const backend = new SandboxPlumbingBackend(exec);
   const prePush =
     opts?.prePush ??
