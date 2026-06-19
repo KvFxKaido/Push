@@ -8,6 +8,7 @@
 export {
   calculateLineHash,
   calculateContentVersion,
+  normalizeLineForHash,
   adaptiveHashDisplayLength,
   resolveHashlineRefs,
   applyResolvedHashlineEdits,

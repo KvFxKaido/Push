@@ -83,6 +83,42 @@ describe('delete_line (unchanged)', () => {
   });
 });
 
+describe('trimmed line hashing', () => {
+  it('keeps internal whitespace significant', () => {
+    // Trim does not collapse internal runs, so spacing inside literals/data stays in the hash.
+    assert.notEqual(
+      calculateLineHash('label = "a b"', 12),
+      calculateLineHash('label = "a  b"', 12),
+    );
+  });
+
+  it('matches a reindented line via a hash-only ref', () => {
+    const content = 'a\n        return 42;\nb';
+    const ref = calculateLineHash('  return 42;');
+    const result = applyHashlineEdits(content, [{ op: 'delete_line', ref }]);
+    assert.equal(result.content, 'a\nb');
+  });
+});
+
+describe('stale-anchor relocation', () => {
+  it('relocates a stale line-qualified anchor and warns', () => {
+    const content = 'new1\nnew2\nfiller\ntarget\nafter';
+    const ref = `2:${calculateLineHash('target')}`;
+    const result = applyHashlineEdits(content, [{ op: 'replace_line', ref, content: 'TARGET' }]);
+    assert.equal(result.content, 'new1\nnew2\nfiller\nTARGET\nafter');
+    assert.ok(result.warnings.some((w) => w.includes('Relocated')));
+  });
+
+  it('throws (strict CLI mode) when a surviving duplicate blocks relocation', () => {
+    const content = 'dup\nx\ndup\ny';
+    const ref = `4:${calculateLineHash('dup')}`;
+    assert.throws(
+      () => applyHashlineEdits(content, [{ op: 'replace_line', ref, content: 'Z' }]),
+      /multiple other lines/,
+    );
+  });
+});
+
 describe('multi-line sequential edits', () => {
   it('handles replace then insert_after on shifted lines', () => {
     const content = 'line1\nline2\nline3';

@@ -54,12 +54,28 @@ function clampHashLength(length: number): number {
   return Math.min(Math.max(length, 7), 12);
 }
 
+/**
+ * Normalize a line before hashing.
+ *
+ * Only leading/trailing whitespace is trimmed, so anchors survive
+ * reindentation (the common formatter churn for source) while *internal*
+ * whitespace stays significant. Keeping internal whitespace in the hash means
+ * a content change that only alters spacing inside a string literal, JSON, or
+ * Markdown (`"a  b"` → `"a b"`) still trips the stale-anchor check instead of
+ * silently overwriting the changed line. Centralized here so the async and
+ * sync (CLI) hashing paths can't drift.
+ */
+export function normalizeLineForHash(line: string): string {
+  return String(line).trim();
+}
+
 export async function getNodeCrypto(): Promise<null> {
   return null;
 }
 
 /**
- * Calculate a hash for a line of text (trimmed).
+ * Calculate a hash for a line of text (trimmed via `normalizeLineForHash`, so
+ * anchors survive reindentation but internal whitespace stays significant).
  * Uses SHA-256 truncated to `length` hex characters (default 7).
  *
  * Collision properties:
@@ -73,27 +89,27 @@ export async function getNodeCrypto(): Promise<null> {
  *   content so agents can self-correct.
  */
 export async function calculateLineHash(line: string, length: number = 7): Promise<string> {
-  const trimmed = line.trim();
+  const normalized = normalizeLineForHash(line);
 
   // 1. Prefer Web Crypto (modern browsers + current Node runtimes)
   if (hasWebCrypto()) {
     const webCrypto = getWebCrypto();
     if (!webCrypto) throw new Error('Web Crypto disappeared during hashing');
-    const msgUint8 = new TextEncoder().encode(trimmed);
+    const msgUint8 = new TextEncoder().encode(normalized);
     const hashBuffer = await webCrypto.subtle.digest('SHA-256', msgUint8);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
     return hashHex.slice(0, clampHashLength(length));
   }
 
-  return fallbackHashHex(trimmed).slice(0, clampHashLength(length));
+  return fallbackHashHex(normalized).slice(0, clampHashLength(length));
 }
 
 /**
  * Sync version for legacy utility callers. Uses the deterministic JS fallback.
  */
 export function calculateLineHashSync(line: string, length: number = 7): string {
-  return fallbackHashHex(line.trim()).slice(0, clampHashLength(length));
+  return fallbackHashHex(normalizeLineForHash(line)).slice(0, clampHashLength(length));
 }
 
 /**
@@ -158,7 +174,51 @@ async function batchHashLines(lines: string[]): Promise<string[]> {
 // after computing 12-char hashes with their respective crypto backends.
 // ---------------------------------------------------------------------------
 
-export type ResolvedEdit = { index: number; edit: HashlineOp } | { error: string };
+export type ResolvedEdit =
+  | { index: number; edit: HashlineOp; warning?: string }
+  | { error: string };
+
+/**
+ * How far (in lines) a stale line-qualified anchor's unique surviving match may
+ * sit from its original line and still be relocated. Drift between read and
+ * edit is normally small; bounding it keeps relocation from silently jumping
+ * across the file to a far-away (if unique) match.
+ */
+const STALE_REF_RELOCATION_WINDOW = 25;
+
+type StaleRefRelocation =
+  | { kind: 'relocated'; index: number }
+  | { kind: 'ambiguous'; indices: number[] }
+  | { kind: 'none' };
+
+/**
+ * Decide whether a stale line-qualified anchor can be safely relocated.
+ *
+ * The anchored content must be **globally unique** in the file: if two or more
+ * other lines still carry the hash, the line number was the only disambiguator
+ * among duplicates, and relocating the edit onto a surviving copy would
+ * silently target the wrong line. Only when exactly one occurrence survives —
+ * and it sits within the ±window (a small, plausible drift) — do we relocate;
+ * a lone match further away is left stale for an explicit re-read.
+ */
+function relocateStaleRef(
+  hashCache: string[],
+  originalIdx: number,
+  hashPrefix: string,
+): StaleRefRelocation {
+  const matches: number[] = [];
+  for (let i = 0; i < hashCache.length; i++) {
+    if (i === originalIdx) continue;
+    if (hashCache[i].startsWith(hashPrefix)) matches.push(i);
+  }
+  if (matches.length === 0) return { kind: 'none' };
+  if (matches.length > 1) return { kind: 'ambiguous', indices: matches };
+  const target = matches[0];
+  if (Math.abs(target - originalIdx) <= STALE_REF_RELOCATION_WINDOW) {
+    return { kind: 'relocated', index: target };
+  }
+  return { kind: 'none' };
+}
 
 /**
  * Phase 1 — Resolve all hashline refs against pre-computed 12-char hashes.
@@ -196,6 +256,29 @@ export function resolveHashlineRefs(
         continue;
       }
       if (!hashCache[idx].startsWith(parsed.hash)) {
+        const relocation = relocateStaleRef(hashCache, idx, parsed.hash);
+        if (relocation.kind === 'relocated') {
+          const delta = relocation.index - idx;
+          const direction = delta < 0 ? 'earlier' : 'later';
+          resolved.push({
+            index: relocation.index,
+            edit,
+            warning: `Stale anchor "${edit.ref}": line ${parsed.lineNo} no longer matches, but the anchored content was found ${Math.abs(delta)} line${Math.abs(delta) === 1 ? '' : 's'} ${direction} at line ${relocation.index + 1}. Relocated the edit there — verify it targeted the intended line.`,
+          });
+          continue;
+        }
+        if (relocation.kind === 'ambiguous') {
+          const shown = relocation.indices.slice(0, 5);
+          const retryRefs = shown.map((i) => `"${i + 1}:${hashCache[i].slice(0, 7)}"`);
+          const more =
+            relocation.indices.length > shown.length
+              ? ` (and ${relocation.indices.length - shown.length} more)`
+              : '';
+          resolved.push({
+            error: `Stale line-qualified ref "${edit.ref}": line ${parsed.lineNo} no longer matches, and the anchored content still appears at multiple other lines${more}, so the line number can no longer disambiguate it. Re-read and retry with a fresh line-qualified ref such as ${retryRefs.join(', ')}.`,
+          });
+          continue;
+        }
         const refreshedRef = `${parsed.lineNo}:${hashCache[idx].slice(0, parsed.hash.length)}`;
         resolved.push({
           error: `Stale line-qualified ref "${edit.ref}": line ${parsed.lineNo} hash is now ${hashCache[idx].slice(0, 7)}. Retry with "${refreshedRef}" to target the same line, or re-read the file if the intended content moved.`,
@@ -257,7 +340,7 @@ export function resolveHashlineRefs(
           retryRefs.push(`"${idx + 1}:${parsed.hash.slice(0, 7)}"`);
         }
         resolved.push({
-          error: `Reference "${edit.ref}" is ambiguous (${matches.length} matches) — lines have identical content. Retry with a line-qualified ref such as ${retryRefs.join(', ')}:\n${diagnostics.join('\n')}`,
+          error: `Reference "${edit.ref}" is ambiguous (${matches.length} matches) — lines have identical trimmed content. Retry with a line-qualified ref such as ${retryRefs.join(', ')}:\n${diagnostics.join('\n')}`,
         });
       }
       continue;
@@ -372,6 +455,7 @@ export function applyResolvedHashlineEdits(
       linesAdded,
       adjustedLine: adjustedIdx + 1,
     });
+    if (r.warning) warnings.push(r.warning);
   }
 
   return {

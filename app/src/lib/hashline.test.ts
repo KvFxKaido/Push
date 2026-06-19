@@ -38,6 +38,34 @@ describe('adaptiveHashDisplayLength', () => {
   });
 });
 
+describe('trimmed line hashing (reindentation resilience)', () => {
+  it('ignores leading and trailing whitespace', async () => {
+    const canonical = await calculateLineHash('a = foo(b, c)', 12);
+    expect(await calculateLineHash('\t  a = foo(b, c)  \r', 12)).toBe(canonical);
+  });
+
+  it('keeps internal whitespace significant (string/data content)', async () => {
+    // Trim must NOT collapse internal runs, or a change inside a literal/data line
+    // (`"a  b"` → `"a b"`) would slip through the stale-anchor check.
+    const tight = await calculateLineHash('label = "a b"', 12);
+    const spaced = await calculateLineHash('label = "a  b"', 12);
+    expect(tight).not.toBe(spaced);
+  });
+
+  it('resolves a line-qualified anchor after the line is reindented', async () => {
+    const content = 'function f() {\n        return 42;\n}';
+    // Anchor captured when the body was indented with 2 spaces, not 8.
+    const ref = `2:${await calculateLineHash('  return 42;', 7)}`;
+
+    const result = await applyHashlineEdits(content, [
+      { op: 'replace_line', ref, content: '    return 43;' },
+    ]);
+    expect(result.applied).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('function f() {\n    return 43;\n}');
+  });
+});
+
 describe('applyHashlineEdits with longer refs (8–12 chars)', () => {
   it('matches successfully with an 8-char ref', async () => {
     const content = 'alpha\nbeta\ngamma';
@@ -114,8 +142,10 @@ describe('ambiguous 7-char ref → diagnostic → retry with longer ref', () => 
   });
 
   it('suggests a refreshed same-line ref for stale line-qualified edits', async () => {
+    // The anchored content is absent from the file, so relocation finds nothing
+    // and we fall back to the refreshed same-line suggestion.
     const content = 'before\nafter';
-    const staleRef = `2:${await calculateLineHash('before', 7)}`;
+    const staleRef = `2:${await calculateLineHash('a line that does not exist', 7)}`;
 
     const result = await applyHashlineEdits(content, [
       { op: 'replace_line', ref: staleRef, content: 'updated' },
@@ -151,6 +181,58 @@ describe('ambiguous 7-char ref → diagnostic → retry with longer ref', () => 
     expect(result.applied).toBe(2);
     expect(result.failed).toBe(0);
     expect(result.content).toBe('AAA\nbbb\nCCC\nddd');
+  });
+});
+
+describe('bounded auto-relocation of stale line-qualified anchors', () => {
+  it('relocates a stale anchor to the nearby line its content moved to', async () => {
+    // Anchor captured "target" at line 2; two lines were prepended, so it is now line 4.
+    const content = 'new1\nnew2\nfiller\ntarget\nafter';
+    const ref = `2:${await calculateLineHash('target', 7)}`;
+
+    const result = await applyHashlineEdits(content, [
+      { op: 'replace_line', ref, content: 'TARGET' },
+    ]);
+    expect(result.applied).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('new1\nnew2\nfiller\nTARGET\nafter');
+    expect(result.warnings.some((w) => w.includes('Relocated') && w.includes('line 4'))).toBe(true);
+  });
+
+  it('refuses to relocate when a surviving duplicate makes the content non-unique', async () => {
+    // The line-qualified ref was the only disambiguator among duplicate lines;
+    // relocating onto a surviving copy would silently edit the wrong line.
+    const content = 'dup\nx\ndup\ny';
+    // ref claims line 4 but hashes "dup", which still appears at lines 1 and 3
+    const ref = `4:${await calculateLineHash('dup', 7)}`;
+
+    const result = await applyHashlineEdits(content, [{ op: 'replace_line', ref, content: 'Z' }]);
+    expect(result.applied).toBe(0);
+    expect(result.failed).toBe(1);
+    expect(result.errors[0]).toContain('multiple other lines');
+    expect(result.errors[0]).toContain('"1:');
+    expect(result.errors[0]).toContain('"3:');
+  });
+
+  it('relocates across a distance only when the content is globally unique', async () => {
+    // "anchor" is unique and shifted 3 lines down → safe to relocate.
+    const content = 'h0\nh1\nh2\nanchor\ntail';
+    const ref = `1:${await calculateLineHash('anchor', 7)}`;
+    const result = await applyHashlineEdits(content, [{ op: 'delete_line', ref }]);
+    expect(result.applied).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('h0\nh1\nh2\ntail');
+  });
+
+  it('does not relocate when the matching content is outside the window', async () => {
+    const body = Array.from({ length: 59 }, (_, i) => `line${i}`);
+    const content = [...body, 'ANCHOR'].join('\n'); // ANCHOR sits at line 60
+    const ref = `1:${await calculateLineHash('ANCHOR', 7)}`; // 59 lines away from line 1
+
+    const result = await applyHashlineEdits(content, [{ op: 'replace_line', ref, content: 'X' }]);
+    expect(result.failed).toBe(1);
+    expect(result.errors[0]).toContain('Stale line-qualified ref');
+    expect(result.errors[0]).toContain('Retry with "1:');
   });
 });
 
