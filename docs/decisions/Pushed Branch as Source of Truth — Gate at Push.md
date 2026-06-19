@@ -30,13 +30,14 @@ is marked `Superseded by` this doc (the gate it kept at commit has now moved).
 the audited branch/upstream/remote-URL alongside `auditedHeadSha`; approval
 re-reads all four and fails closed if the sandbox destination changed before
 push. The remote-URL pin (`auditedRemoteUrl`) closes a deeper variant of the
-same vector: the upstream *ref* (`origin/foo`) survives a `git remote set-url`,
-so a repointed `origin` would pass the branch/upstream check while redirecting
-the push to another repo. Defense-in-depth: `git remote` identity mutations
-(`set-url` / `add` / `rename` / `remove` / `set-head` / `set-branches`) are also
-blocked outright in the sandbox git policy (`lib/git/policy.ts`,
-`remote-mutation`), with no `allowDirectGit` escape — same treatment as a local
-merge, since the session's remote is fixed.
+same vector: the upstream *ref* (`origin/foo`) survives a remote repoint, and
+`git push origin HEAD` can use `remote.origin.pushurl`, so the pin reads the
+resolved push URL (`git remote get-url --push origin`). Defense-in-depth:
+remote identity mutations via `git remote` (`set-url` / `add` / `rename` /
+`remove` / `set-head` / `set-branches`) and equivalent `git config remote.*` /
+`git config url.*InsteadOf` repoints are also blocked outright in the sandbox git
+policy (`lib/git/policy.ts`, `remote-mutation`), with no `allowDirectGit`
+escape — same treatment as a local merge, since the session's remote is fixed.
 
 ## Thesis
 
@@ -295,8 +296,10 @@ drift):
    `git remote set-url origin <other>`, so a repointed `origin` passes the HEAD,
    branch, and upstream checks while the approved `git push origin HEAD` ships to
    a different repo. Closed with defense in depth: (1) cards also pin
-   `auditedRemoteUrl` (origin's resolved fetch URL via a new typed
-   `GitBackend.remoteUrl()`), re-verified fail-closed at approval with a loud
-   "Remote identity changed" refusal; (2) `git remote` identity mutations are
-   blocked outright in the sandbox policy (`remote-mutation`, no `allowDirectGit`
-   escape), so the repoint can't happen in-sandbox in the first place.
+   `auditedRemoteUrl` (origin's resolved push URL via a new typed
+   `GitBackend.remoteUrl(..., { push: true })`), re-verified fail-closed at
+   approval with a loud "Remote identity changed" refusal; (2) remote identity
+   mutations through `git remote` and equivalent `git config remote.*` /
+   `git config url.*InsteadOf` forms are blocked outright in the sandbox policy
+   (`remote-mutation`, no `allowDirectGit` escape), so the repoint can't happen
+   in-sandbox in the first place.

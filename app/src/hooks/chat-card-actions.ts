@@ -346,7 +346,7 @@ export function useChatCardActions({
                 pushGit.headSha(),
                 pushGit.currentBranch(),
                 pushGit.upstreamRef(),
-                pushGit.remoteUrl(),
+                pushGit.remoteUrl('origin', { push: true }),
               ]);
               if (!auditedHeadSha || !liveHeadSha || liveHeadSha !== auditedHeadSha) {
                 updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
@@ -384,11 +384,11 @@ export function useChatCardActions({
                 return;
               }
               // Remote-identity guard: the upstream *ref* (`origin/foo`) survives
-              // a `git remote set-url origin <other>`, so HEAD + branch + upstream
-              // can all still match while origin now points at a different repo —
-              // shipping the audited diff to an unreviewed destination. Pin and
-              // re-verify origin's resolved URL; fail closed when it's missing
-              // (legacy card / no remote) or has moved.
+              // a `git remote set-url origin <other>` or `remote.origin.pushurl`
+              // change, so HEAD + branch + upstream can all still match while
+              // origin now pushes to a different repo. Pin and re-verify origin's
+              // resolved push URL; fail closed when it's missing (legacy card /
+              // no remote) or has moved.
               if (!auditedRemoteUrl || !liveRemoteUrl || liveRemoteUrl !== auditedRemoteUrl) {
                 updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
                   if (card.type !== 'commit-review') return card;

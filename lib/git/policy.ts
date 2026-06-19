@@ -297,6 +297,61 @@ const REMOTE_MUTATING_SUBCOMMANDS = new Set([
   'set-branches',
 ]);
 
+const CONFIG_OPTIONS_WITH_VALUE = new Set([
+  '--file',
+  '-f',
+  '--blob',
+  '--type',
+  '--expiry-date',
+  '--default',
+]);
+
+const CONFIG_MUTATING_FLAGS = new Set([
+  '--add',
+  '--replace-all',
+  '--unset',
+  '--unset-all',
+  '--remove-section',
+  '--rename-section',
+]);
+
+const CONFIG_MUTATING_ACTIONS = new Set(['set', 'unset', 'rename-section', 'remove-section']);
+const CONFIG_READ_ACTIONS = new Set(['get', 'get-all', 'get-regexp', 'list']);
+
+function configPositionals(rest: string[]): string[] {
+  const positionals: string[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    const token = rest[i];
+    if (CONFIG_OPTIONS_WITH_VALUE.has(token)) {
+      i++;
+      continue;
+    }
+    if (token.startsWith('-')) continue;
+    positionals.push(token);
+  }
+  return positionals;
+}
+
+function configKeyAffectsRemoteIdentity(token: string): boolean {
+  const key = token.toLowerCase();
+  return (
+    /^remote\.[^.]+(?:\.|$)/.test(key) || /^url\..+\.(?:insteadOf|pushInsteadOf)$/i.test(token)
+  );
+}
+
+function configMutatesRemoteIdentity(rest: string[]): boolean {
+  const positionals = configPositionals(rest);
+  if (!positionals.some(configKeyAffectsRemoteIdentity)) return false;
+
+  const first = positionals[0]?.toLowerCase();
+  if (CONFIG_READ_ACTIONS.has(first)) return false;
+  if (CONFIG_MUTATING_ACTIONS.has(first)) return true;
+  if (rest.some((token) => CONFIG_MUTATING_FLAGS.has(token.toLowerCase()))) return true;
+
+  // Legacy set form: `git config remote.origin.url <value>`.
+  return positionals.length >= 2 && configKeyAffectsRemoteIdentity(positionals[0]);
+}
+
 /**
  * The branch name for a create form (`-b`/`-c`/`--create <name>`). Tokens
  * after a `--` separator are positional regardless of a leading `-`, so an
@@ -407,6 +462,13 @@ function classifySegment(invocation: ParsedGitInvocation): GitDecision {
     if (op && REMOTE_MUTATING_SUBCOMMANDS.has(op)) {
       return { kind: 'block', reason: 'remote-mutation', label: `git remote ${op}` };
     }
+  }
+
+  // `git config remote.origin.url ...`, `remote.origin.pushurl`, and
+  // `url.*InsteadOf` rewrites are equivalent remote-identity mutations. A
+  // push URL can differ from the fetch URL, so block the config route too.
+  if (subcommand === 'config' && configMutatesRemoteIdentity(rest)) {
+    return { kind: 'block', reason: 'remote-mutation', label: 'git config remote' };
   }
 
   const readFamily = READ_FAMILIES.get(subcommand);

@@ -149,6 +149,19 @@ describe('createGitGuardPreHook', () => {
     expect(result.errorType).toBe('GIT_GUARD_BLOCKED');
   });
 
+  it('blocks remote URL repoints through `git config`', async () => {
+    const entry = withMode('supervised');
+    const result = await entry.hook(
+      'sandbox_exec',
+      { command: 'git config remote.origin.pushurl https://github.com/attacker/repo.git' },
+      emptyContext,
+    );
+    expect(result.decision).toBe('deny');
+    expect(result.errorType).toBe('GIT_GUARD_BLOCKED');
+    expect(result.reason).toContain('git config remote');
+    expect(result.reason).not.toContain('allowDirectGit": true');
+  });
+
   it('allows read-only `git remote -v`', async () => {
     const entry = withMode('supervised');
     const result = await entry.hook('sandbox_exec', { command: 'git remote -v' }, emptyContext);

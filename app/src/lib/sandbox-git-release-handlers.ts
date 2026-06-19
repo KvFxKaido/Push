@@ -584,11 +584,11 @@ export async function handleSandboxCommit(
  * `audit-verdict` card and blocks. The actual push happens on approval, which
  * re-runs only the cheap deterministic gates (Protect Main + secret scan) and
  * verifies the pinned `auditedHeadSha`, `auditedBranch`, `auditedUpstream`, and
- * `auditedRemoteUrl` still match the sandbox destination — it does NOT re-audit (this verdict
- * stands; re-running a non-deterministic LLM check could flip an approved SAFE
- * delivery). A direct `sandbox_push` that bypasses this flow is still gated by
- * the always-on push-time Auditor. An Auditor-backend throw here is surfaced as
- * a retryable `AUDITOR_UNAVAILABLE` error.
+ * `auditedRemoteUrl` still match the sandbox destination — it does NOT
+ * re-audit (this verdict stands; re-running a non-deterministic LLM check could
+ * flip an approved SAFE delivery). A direct `sandbox_push` that bypasses this
+ * flow is still gated by the always-on push-time Auditor. An Auditor-backend
+ * throw here is surfaced as a retryable `AUDITOR_UNAVAILABLE` error.
  */
 export async function handlePreparePush(
   ctx: GitReleaseHandlerContext,
@@ -607,7 +607,7 @@ export async function handlePreparePush(
     pushGit.headSha(),
     pushGit.currentBranch(),
     pushGit.upstreamRef(),
-    pushGit.remoteUrl(),
+    pushGit.remoteUrl('origin', { push: true }),
   ]);
 
   // Step 1: Compute the cumulative push diff (commits the push would upload).

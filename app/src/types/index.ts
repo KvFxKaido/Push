@@ -895,10 +895,11 @@ export interface CommitReviewCardData {
   auditedBranch?: string;
   auditedUpstream?: string;
   /**
-   * For a `kind: 'push'` card: origin's resolved fetch URL when the verdict was
-   * computed. The upstream *ref* (`origin/foo`) survives a `git remote set-url`,
-   * so this is the only pin that catches origin being repointed at another repo
-   * between review and push. Approval re-reads it and fails closed on mismatch.
+   * For a `kind: 'push'` card: origin's resolved push URL when the verdict was
+   * computed. The upstream *ref* (`origin/foo`) survives a remote repoint, and
+   * `git push origin HEAD` can use `remote.origin.pushurl`; this pin catches
+   * origin being aimed at another repo between review and push. Approval
+   * re-reads it and fails closed on mismatch.
    */
   auditedRemoteUrl?: string;
   diff: DiffPreviewCardData;

@@ -97,6 +97,17 @@ describe('SandboxPlumbingBackend.remoteUrl', () => {
     expect(await backend.remoteUrl('upstream')).toBe('git@github.com:other/repo.git');
   });
 
+  it('returns the push URL when requested', async () => {
+    const backend = new SandboxPlumbingBackend(
+      fakeExec({
+        'remote get-url --push origin': ok('https://github.com/push-destination/repo.git\n'),
+      }),
+    );
+    expect(await backend.remoteUrl('origin', { push: true })).toBe(
+      'https://github.com/push-destination/repo.git',
+    );
+  });
+
   it('returns null when the remote is unset / unreadable', async () => {
     const backend = new SandboxPlumbingBackend(
       fakeExec({ 'remote get-url origin': fail('No such remote') }),

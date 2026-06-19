@@ -391,7 +391,7 @@ describe('chat-card-actions', () => {
       if (cmd.includes("'rev-parse' '--abbrev-ref' '--symbolic-full-name' '@{u}'")) {
         return { stdout: 'origin/feature/reviewed\n', stderr: '', exitCode: 0 };
       }
-      if (cmd.includes("'remote' 'get-url' 'origin'")) {
+      if (cmd.includes("'remote' 'get-url' '--push' 'origin'")) {
         return { stdout: 'https://github.com/attacker/repo.git\n', stderr: '', exitCode: 0 };
       }
       return { stdout: '', stderr: '', exitCode: 0 };
