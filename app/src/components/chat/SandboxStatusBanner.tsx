@@ -1,4 +1,5 @@
 import { Loader2, RefreshCw, Plus } from 'lucide-react';
+import type React from 'react';
 import type { SandboxStatus } from '@/hooks/useSandbox';
 import { categorizeSandboxError } from '@/lib/sandbox-error-utils';
 import { SandboxCubeIcon } from '@/components/icons/push-custom-icons';
@@ -10,64 +11,81 @@ import {
 interface SandboxStatusBannerProps {
   status: SandboxStatus;
   error: string | null;
-  hasMessages: boolean;
   isStreaming: boolean;
   sandboxId: string | null;
   isInScratchWorkspace: boolean;
-  onStart: () => void;
   onRetry: () => void;
   onNewSandbox: () => void;
   onExitWorkspace?: () => void;
 }
 
+interface SandboxStatusChipProps {
+  status: SandboxStatus;
+  error: string | null;
+  onOpenWorkspaceHub: () => void;
+}
+
+export function SandboxStatusChip({ status, error, onOpenWorkspaceHub }: SandboxStatusChipProps) {
+  if (status === 'ready') return null;
+
+  const errorTitle = error ? categorizeSandboxError(error).title : 'Sandbox needs attention';
+  const config: {
+    label: string;
+    title: string;
+    className: string;
+    indicator: React.ReactNode;
+  } =
+    status === 'creating'
+      ? {
+          label: 'Starting',
+          title: 'Sandbox is starting',
+          className: 'text-push-fg-dim hover:text-push-fg-secondary',
+          indicator: <Loader2 className="h-3 w-3 animate-spin" />,
+        }
+      : status === 'reconnecting'
+        ? {
+            label: 'Reconnecting',
+            title: 'Reconnecting to sandbox',
+            className: 'text-amber-300/85 hover:text-amber-200',
+            indicator: <Loader2 className="h-3 w-3 animate-spin" />,
+          }
+        : status === 'error'
+          ? {
+              label: 'Sandbox',
+              title: errorTitle,
+              className: 'text-red-300 hover:text-red-200',
+              indicator: <span className="h-1.5 w-1.5 rounded-full bg-red-400" />,
+            }
+          : {
+              label: 'Idle',
+              title: 'Sandbox is idle',
+              className: 'text-push-fg-dim hover:text-push-fg-secondary',
+              indicator: <SandboxCubeIcon className="h-3 w-3" />,
+            };
+
+  return (
+    <button
+      type="button"
+      onClick={onOpenWorkspaceHub}
+      className={`flex h-9 max-w-[132px] items-center gap-1.5 px-1.5 text-push-xs transition-colors active:scale-[0.98] ${config.className}`}
+      aria-label={`${config.title}. Open workspace status.`}
+      title={`${config.title} - open workspace`}
+    >
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center">{config.indicator}</span>
+      <span className="hidden truncate sm:inline">{config.label}</span>
+    </button>
+  );
+}
+
 export function SandboxStatusBanner({
   status,
   error,
-  hasMessages,
-  isStreaming,
   sandboxId,
   isInScratchWorkspace,
-  onStart,
   onRetry,
   onNewSandbox,
   onExitWorkspace,
 }: SandboxStatusBannerProps) {
-  const bannerBaseClass = `mx-4 mt-5 px-1 py-2.5 ${HUB_TOP_BANNER_STRIP_CLASS} border-push-edge/70`;
-
-  // Idle after a confirmed cold session (reconnect already failed or never attempted)
-  if (status === 'idle' && hasMessages && !isStreaming) {
-    return (
-      <div className={`${bannerBaseClass} flex items-center justify-between gap-2`}>
-        <div className="flex min-w-0 items-center gap-2.5">
-          <SandboxCubeIcon className="h-3.5 w-3.5 flex-shrink-0 text-push-fg-dim" />
-          <div>
-            <p className="text-xs font-medium text-push-fg-muted">Sandbox not running</p>
-            <p className="text-push-2xs text-push-fg-dim">
-              Start to enable code tools for this workspace.
-            </p>
-          </div>
-        </div>
-        <button
-          onClick={onStart}
-          className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} flex-shrink-0 px-3 text-push-link`}
-        >
-          <span>Start</span>
-        </button>
-      </div>
-    );
-  }
-
-  // Creating (user-initiated, not driven by the agent — agent has AgentStatusBar)
-  if (status === 'creating' && !isStreaming) {
-    return (
-      <div className={`${bannerBaseClass} flex items-center gap-2.5`}>
-        <Loader2 className="h-3.5 w-3.5 animate-spin flex-shrink-0 text-push-accent" />
-        <p className="text-xs text-push-fg-muted">Starting sandbox…</p>
-      </div>
-    );
-  }
-
-  // Error
   if (status === 'error' && error) {
     const { title, detail } = categorizeSandboxError(error);
     return (

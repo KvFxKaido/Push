@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import type { ApprovalMode } from '@/lib/approval-mode';
 import { Toaster } from '@/components/ui/sonner';
@@ -8,6 +8,7 @@ import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
 import { useMergeDetectedBanner } from '@/hooks/useMergeDetectedBanner';
 import { useWorkspaceChatComposerController } from '@/hooks/useWorkspaceChatComposerController';
 import { useWorkspaceChatPanelsController } from '@/hooks/useWorkspaceChatPanelsController';
+import { getSandboxConnectivityToast } from '@/lib/sandbox-connectivity-notifications';
 import type { BranchSwitchProbe } from '@/lib/branch-switch-probe';
 import { getRepoAppearanceColorHex, hexToRgba } from '@/lib/repo-appearance';
 import { getSandboxDiff } from '@/lib/sandbox-client';
@@ -231,8 +232,25 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
   const [commitSwitchProbe, setCommitSwitchProbe] = useState<BranchSwitchProbe | null>(null);
   const [commitSwitchError, setCommitSwitchError] = useState<string | null>(null);
   const [commitSwitchingBranch, setCommitSwitchingBranch] = useState<string | null>(null);
+  const previousSandboxStatusRef = useRef(sandbox.status);
+  const previousSandboxErrorRef = useRef(sandbox.error);
 
   const { markSnapshotActivity } = snapshots;
+
+  useEffect(() => {
+    const previousStatus = previousSandboxStatusRef.current;
+    const previousError = previousSandboxErrorRef.current;
+    const notification = getSandboxConnectivityToast(
+      previousStatus,
+      sandbox.status,
+      sandbox.error,
+      previousError,
+    );
+    previousSandboxStatusRef.current = sandbox.status;
+    previousSandboxErrorRef.current = sandbox.error;
+    if (!notification) return;
+    toast[notification.kind](notification.message, notification.options);
+  }, [sandbox.error, sandbox.status]);
 
   const sandboxStart = sandbox.start;
   const sandboxStop = sandbox.stop;
@@ -703,11 +721,9 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     sandboxStatusBannerProps: {
       status: sandbox.status,
       error: sandbox.error,
-      hasMessages: messages.length > 0,
       isStreaming,
       sandboxId: sandbox.sandboxId,
       isInScratchWorkspace: Boolean(isScratch),
-      onStart: startCurrentSandbox,
       onRetry: () => {
         void sandbox.refresh();
       },
