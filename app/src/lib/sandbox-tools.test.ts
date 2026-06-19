@@ -3270,11 +3270,14 @@ describe('sandbox_edit_file symbolic guard', () => {
     expect(vi.mocked(sandboxClient.writeToSandbox)).toHaveBeenCalled();
   });
 
-  it('auto-retries stale line-qualified refs by hash when content shifted lines', async () => {
+  it('auto-retries stale line-qualified refs by hash when content shifted beyond the relocation window', async () => {
     const path = '/workspace/src/retry.ts';
-    // A header line was inserted before the target — content unchanged, line number stale.
+    // A 30-line header was inserted before the target — content unchanged, but it
+    // shifted further than the in-engine ±25 relocation window, so the whole-file
+    // hash-only retry ladder (not window relocation) is what recovers it.
+    const header = Array.from({ length: 30 }, (_, i) => `h${i}`).join('\n');
     const oldContent = 'const value = 1;\n';
-    const latestContent = 'header line\nconst value = 1;\n';
+    const latestContent = `${header}\nconst value = 1;\n`;
 
     vi.mocked(sandboxClient.readFromSandbox)
       // Initial explicit read (to satisfy edit guard).
@@ -3311,13 +3314,13 @@ describe('sandbox_edit_file symbolic guard', () => {
       'sb-123',
     );
 
-    // Hash-only retry finds the content at its new line (2) and applies correctly.
+    // Hash-only retry finds the content at its new line and applies correctly.
     expect(result.text).toContain('Edited /workspace/src/retry.ts');
     expect(result.text).toContain('Auto-retry succeeded');
     expect(vi.mocked(sandboxClient.writeToSandbox)).toHaveBeenCalledWith(
       'sb-123',
       path,
-      'header line\nconst value = 3;\n',
+      `${header}\nconst value = 3;\n`,
       'v2',
     );
     // 4 calls: initial read + edit read + auto-retry re-read + post-write verification

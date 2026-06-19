@@ -149,8 +149,10 @@ describe('ambiguous 7-char ref → diagnostic → retry with longer ref', () => 
   });
 
   it('suggests a refreshed same-line ref for stale line-qualified edits', async () => {
+    // The anchored content is absent from the file, so relocation finds nothing
+    // and we fall back to the refreshed same-line suggestion.
     const content = 'before\nafter';
-    const staleRef = `2:${await calculateLineHash('before', 7)}`;
+    const staleRef = `2:${await calculateLineHash('a line that does not exist', 7)}`;
 
     const result = await applyHashlineEdits(content, [
       { op: 'replace_line', ref: staleRef, content: 'updated' },
@@ -186,6 +188,46 @@ describe('ambiguous 7-char ref → diagnostic → retry with longer ref', () => 
     expect(result.applied).toBe(2);
     expect(result.failed).toBe(0);
     expect(result.content).toBe('AAA\nbbb\nCCC\nddd');
+  });
+});
+
+describe('bounded auto-relocation of stale line-qualified anchors', () => {
+  it('relocates a stale anchor to the nearby line its content moved to', async () => {
+    // Anchor captured "target" at line 2; two lines were prepended, so it is now line 4.
+    const content = 'new1\nnew2\nfiller\ntarget\nafter';
+    const ref = `2:${await calculateLineHash('target', 7)}`;
+
+    const result = await applyHashlineEdits(content, [
+      { op: 'replace_line', ref, content: 'TARGET' },
+    ]);
+    expect(result.applied).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('new1\nnew2\nfiller\nTARGET\nafter');
+    expect(result.warnings.some((w) => w.includes('Relocated') && w.includes('line 4'))).toBe(true);
+  });
+
+  it('refuses to relocate when the content matches multiple nearby lines', async () => {
+    const content = 'dup\nx\ndup\ny';
+    // ref claims line 4 but hashes "dup", which appears at lines 1 and 3
+    const ref = `4:${await calculateLineHash('dup', 7)}`;
+
+    const result = await applyHashlineEdits(content, [{ op: 'replace_line', ref, content: 'Z' }]);
+    expect(result.applied).toBe(0);
+    expect(result.failed).toBe(1);
+    expect(result.errors[0]).toContain('multiple nearby lines');
+    expect(result.errors[0]).toContain('"1:');
+    expect(result.errors[0]).toContain('"3:');
+  });
+
+  it('does not relocate when the matching content is outside the window', async () => {
+    const body = Array.from({ length: 59 }, (_, i) => `line${i}`);
+    const content = [...body, 'ANCHOR'].join('\n'); // ANCHOR sits at line 60
+    const ref = `1:${await calculateLineHash('ANCHOR', 7)}`; // 59 lines away from line 1
+
+    const result = await applyHashlineEdits(content, [{ op: 'replace_line', ref, content: 'X' }]);
+    expect(result.failed).toBe(1);
+    expect(result.errors[0]).toContain('Stale line-qualified ref');
+    expect(result.errors[0]).toContain('Retry with "1:');
   });
 });
 

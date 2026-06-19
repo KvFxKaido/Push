@@ -175,7 +175,44 @@ async function batchHashLines(lines: string[]): Promise<string[]> {
 // after computing 12-char hashes with their respective crypto backends.
 // ---------------------------------------------------------------------------
 
-export type ResolvedEdit = { index: number; edit: HashlineOp } | { error: string };
+export type ResolvedEdit =
+  | { index: number; edit: HashlineOp; warning?: string }
+  | { error: string };
+
+/**
+ * How far (in lines) from a stale line-qualified anchor we search for the
+ * content it used to point at. Drift between read and edit is normally small;
+ * a bounded window keeps relocation from silently jumping across the file to a
+ * coincidental hash match.
+ */
+const STALE_REF_RELOCATION_WINDOW = 25;
+
+type StaleRefRelocation =
+  | { kind: 'relocated'; index: number }
+  | { kind: 'ambiguous'; indices: number[] }
+  | { kind: 'none' };
+
+/**
+ * Search a bounded window around a stale line-qualified anchor for the line
+ * whose hash still matches. Returns `relocated` only when exactly one nearby
+ * line matches, so duplicate content stays ambiguous rather than guessed.
+ */
+function relocateStaleRef(
+  hashCache: string[],
+  originalIdx: number,
+  hashPrefix: string,
+): StaleRefRelocation {
+  const lo = Math.max(0, originalIdx - STALE_REF_RELOCATION_WINDOW);
+  const hi = Math.min(hashCache.length - 1, originalIdx + STALE_REF_RELOCATION_WINDOW);
+  const matches: number[] = [];
+  for (let i = lo; i <= hi; i++) {
+    if (i === originalIdx) continue;
+    if (hashCache[i].startsWith(hashPrefix)) matches.push(i);
+  }
+  if (matches.length === 0) return { kind: 'none' };
+  if (matches.length === 1) return { kind: 'relocated', index: matches[0] };
+  return { kind: 'ambiguous', indices: matches };
+}
 
 /**
  * Phase 1 — Resolve all hashline refs against pre-computed 12-char hashes.
@@ -213,6 +250,29 @@ export function resolveHashlineRefs(
         continue;
       }
       if (!hashCache[idx].startsWith(parsed.hash)) {
+        const relocation = relocateStaleRef(hashCache, idx, parsed.hash);
+        if (relocation.kind === 'relocated') {
+          const delta = relocation.index - idx;
+          const direction = delta < 0 ? 'earlier' : 'later';
+          resolved.push({
+            index: relocation.index,
+            edit,
+            warning: `Stale anchor "${edit.ref}": line ${parsed.lineNo} no longer matches, but the anchored content was found ${Math.abs(delta)} line${Math.abs(delta) === 1 ? '' : 's'} ${direction} at line ${relocation.index + 1}. Relocated the edit there — verify it targeted the intended line.`,
+          });
+          continue;
+        }
+        if (relocation.kind === 'ambiguous') {
+          const shown = relocation.indices.slice(0, 5);
+          const retryRefs = shown.map((i) => `"${i + 1}:${hashCache[i].slice(0, 7)}"`);
+          const more =
+            relocation.indices.length > shown.length
+              ? ` (and ${relocation.indices.length - shown.length} more)`
+              : '';
+          resolved.push({
+            error: `Stale line-qualified ref "${edit.ref}": line ${parsed.lineNo} no longer matches, and the anchored content now appears at multiple nearby lines${more}. Retry with one of ${retryRefs.join(', ')}.`,
+          });
+          continue;
+        }
         const refreshedRef = `${parsed.lineNo}:${hashCache[idx].slice(0, parsed.hash.length)}`;
         resolved.push({
           error: `Stale line-qualified ref "${edit.ref}": line ${parsed.lineNo} hash is now ${hashCache[idx].slice(0, 7)}. Retry with "${refreshedRef}" to target the same line, or re-read the file if the intended content moved.`,
@@ -389,6 +449,7 @@ export function applyResolvedHashlineEdits(
       linesAdded,
       adjustedLine: adjustedIdx + 1,
     });
+    if (r.warning) warnings.push(r.warning);
   }
 
   return {
