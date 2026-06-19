@@ -68,7 +68,15 @@ const APP_COMMIT_IDENTITY_KEY = 'github_app_commit_identity';
 // enough that a long session that idled survives a reconnect. A stale guess is
 // cheap: the reconnect does a liveness check and falls back to a fresh sandbox.
 const SANDBOX_MAX_AGE_MS = 50 * 60 * 1000; // 50 min
-const IDLE_HIBERNATE_MS = 8 * 60 * 1000; // 8 min idle before snapshot
+// Idle before the reaper snapshots + frees the container. Interim relief: was
+// 8 min, which felt like "the sandbox vanished while I was just sitting in the
+// app" (reading/thinking/composing don't count as activity — only tool calls
+// touch the idle clock). Bumped to 45 min — kept under SANDBOX_MAX_AGE_MS (50)
+// so the snapshot-then-reconnect window still aligns, and well under the
+// container's ~2h lifetime so the durability snapshot fires before any real CF
+// reclaim. The proper fix (snapshot WITHOUT terminating — keep the container
+// warm) is a follow-up; this just stops the bleeding.
+const IDLE_HIBERNATE_MS = 45 * 60 * 1000; // 45 min idle before snapshot
 // Shown when a saved snapshot existed but couldn't be restored on reconnect, so
 // the user knows their prior workspace is gone and they're on a fresh sandbox
 // (otherwise the restore failure is silent and looks like a normal cold start).
