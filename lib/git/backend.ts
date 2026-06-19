@@ -77,6 +77,13 @@ export interface GitBackend {
   currentBranch(): Promise<string | null>;
   /** Upstream ref for the current branch (e.g. `origin/feature/x`), or null when unset / unreadable. */
   upstreamRef(): Promise<string | null>;
+  /**
+   * Fetch URL for a remote (default `origin`) — the resolved push *identity*,
+   * not the symbolic ref name. Null when the remote is unset / unreadable.
+   * `upstreamRef` can stay `origin/foo` across a `git remote set-url`, so this
+   * is the only read that catches origin being repointed at another repo.
+   */
+  remoteUrl(remote?: string): Promise<string | null>;
   /** HEAD commit sha (full, or abbreviated with `short`), or null on error. */
   headSha(opts?: { short?: boolean }): Promise<string | null>;
   /** Typed working-tree status, or null on error / not a repo. */
@@ -135,6 +142,12 @@ export class SandboxPlumbingBackend implements GitBackend {
 
   async upstreamRef(): Promise<string | null> {
     const res = await this.exec(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
+    if (res.exitCode !== 0) return null;
+    return res.stdout.trim() || null;
+  }
+
+  async remoteUrl(remote = 'origin'): Promise<string | null> {
+    const res = await this.exec(['remote', 'get-url', remote]);
     if (res.exitCode !== 0) return null;
     return res.stdout.trim() || null;
   }

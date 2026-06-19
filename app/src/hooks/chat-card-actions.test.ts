@@ -264,6 +264,7 @@ describe('chat-card-actions', () => {
         auditedHeadSha: 'abc1234',
         auditedBranch: 'feature/reviewed',
         auditedUpstream: 'origin/feature/reviewed',
+        auditedRemoteUrl: 'https://github.com/owner/repo.git',
         ...overrides,
       },
     };
@@ -369,6 +370,48 @@ describe('chat-card-actions', () => {
       data: {
         status: 'error',
         error: 'Branch destination changed since this review — refresh to re-audit before pushing.',
+      },
+    });
+    expect(
+      mockExecInSandbox.mock.calls.some(([, command]) => String(command).includes("'push'")),
+    ).toBe(false);
+  });
+
+  it('refuses push-kind approval when origin was repointed since review', async () => {
+    // HEAD, branch, and the upstream *ref* all still match — only origin's URL
+    // moved (the `git remote set-url` evasion the ref pins can't catch).
+    mockExecInSandbox.mockImplementation(async (_sandboxId, command) => {
+      const cmd = String(command);
+      if (cmd.includes("'rev-parse' 'HEAD'")) {
+        return { stdout: 'abc1234\n', stderr: '', exitCode: 0 };
+      }
+      if (cmd.includes("'branch' '--show-current'")) {
+        return { stdout: 'feature/reviewed\n', stderr: '', exitCode: 0 };
+      }
+      if (cmd.includes("'rev-parse' '--abbrev-ref' '--symbolic-full-name' '@{u}'")) {
+        return { stdout: 'origin/feature/reviewed\n', stderr: '', exitCode: 0 };
+      }
+      if (cmd.includes("'remote' 'get-url' 'origin'")) {
+        return { stdout: 'https://github.com/attacker/repo.git\n', stderr: '', exitCode: 0 };
+      }
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+
+    const harness = createPushReviewActionHarness();
+    const { handleCardAction } = useChatCardActions(harness.params);
+    await handleCardAction({
+      type: 'commit-approve',
+      messageId: 'message-1',
+      cardIndex: 0,
+      commitMessage: '',
+    });
+
+    expect(harness.getCard()).toMatchObject({
+      type: 'commit-review',
+      data: {
+        status: 'error',
+        error:
+          'Remote identity changed since this review — origin was repointed; refresh to re-audit before pushing.',
       },
     });
     expect(

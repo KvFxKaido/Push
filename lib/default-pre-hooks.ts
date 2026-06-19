@@ -47,6 +47,7 @@ function formatGitGuardBlock(
   const isBranchSwitch = decision.kind === 'route' && decision.to === 'switch_branch';
 
   const isLocalMerge = decision.kind === 'block' && decision.reason === 'no-local-merge';
+  const isRemoteMutation = decision.kind === 'block' && decision.reason === 'remote-mutation';
 
   let guidance: string;
   if (isBranchCreate) {
@@ -57,6 +58,13 @@ function formatGitGuardBlock(
     // Distinct from commit/push: there is NO consented form — "allowDirectGit"
     // does not apply (it would bypass the push-time audit; see the guard).
     guidance = `Direct "${label}" is blocked. Push never runs local merges — integrate branches through the GitHub PR flow (open a PR, then merge it there). "allowDirectGit" does NOT apply to a local merge.`;
+  } else if (isRemoteMutation) {
+    // Distinct from history rewrites: the harm is destination integrity, not
+    // history. Repointing origin (set-url / add / rename / …) would redirect an
+    // audited push to another repo while the Gate-at-Push pins (HEAD, branch,
+    // upstream ref) still match. No consented form — the session's remote is
+    // fixed, so "allowDirectGit" does NOT apply.
+    guidance = `Direct "${label}" is blocked. Push pins the session's remote — changing it (e.g. \`git remote set-url\`) would redirect an audited push to a different repository while the push-time destination checks still pass. "allowDirectGit" does NOT apply. The remote is fixed for the session; it can't be changed from inside the sandbox.`;
   } else if (decision.kind === 'block') {
     // History rewrites (rebase / cherry-pick): forbidden, no consented form.
     guidance = `Direct "${label}" is blocked. Push doesn't run local history rewrites — commit normally with sandbox_commit and ship via prepare_push (PRs squash-merge, so local history cleanup isn't needed). "allowDirectGit" does NOT apply.`;

@@ -84,6 +84,7 @@ Roles are locked internally and models are replaceable. Presentation is phase-fi
 - Reviewer is advisory; **only PR-backed branch-diff reviews** can be posted back to GitHub.
 - Standard merges go through the **GitHub PR flow** only — Push **never** runs local `git merge`.
 - `Protect Main` may block direct commits to `main`.
+- `git remote` **identity mutations** (`set-url` / `add` / `rename` / `remove` / `set-head` / `set-branches`) are **blocked** in `sandbox_exec` regardless of approval mode or `allowDirectGit` (`lib/git/policy.ts`, `remote-mutation`). The session's remote is fixed; repointing `origin` would redirect an audited `prepare_push` to another repo while the destination pins (HEAD/branch/upstream ref) still match. Read-only forms (`git remote -v` / `show` / `get-url`) pass through.
 
 ### Shared runtime in root `lib/`
 

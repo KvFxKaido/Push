@@ -485,6 +485,7 @@ describe('handlePreparePush', () => {
         ok('abc1234'), // the HEAD-sha read (git rev-parse)
         ok('feature/work'), // the branch read
         ok('origin/feature/work'), // the upstream read
+        ok('https://github.com/owner/repo.git'), // the remote-url read
       ],
     });
     const result = await handlePreparePush(ctx);
@@ -493,6 +494,7 @@ describe('handlePreparePush', () => {
       expect(result.card.data.auditedHeadSha).toBe('abc1234');
       expect(result.card.data.auditedBranch).toBe('feature/work');
       expect(result.card.data.auditedUpstream).toBe('origin/feature/work');
+      expect(result.card.data.auditedRemoteUrl).toBe('https://github.com/owner/repo.git');
     }
   });
 

@@ -82,6 +82,29 @@ describe('SandboxPlumbingBackend.upstreamRef', () => {
   });
 });
 
+describe('SandboxPlumbingBackend.remoteUrl', () => {
+  it('returns origin url by default', async () => {
+    const backend = new SandboxPlumbingBackend(
+      fakeExec({ 'remote get-url origin': ok('https://github.com/owner/repo.git\n') }),
+    );
+    expect(await backend.remoteUrl()).toBe('https://github.com/owner/repo.git');
+  });
+
+  it('resolves a named remote', async () => {
+    const backend = new SandboxPlumbingBackend(
+      fakeExec({ 'remote get-url upstream': ok('git@github.com:other/repo.git\n') }),
+    );
+    expect(await backend.remoteUrl('upstream')).toBe('git@github.com:other/repo.git');
+  });
+
+  it('returns null when the remote is unset / unreadable', async () => {
+    const backend = new SandboxPlumbingBackend(
+      fakeExec({ 'remote get-url origin': fail('No such remote') }),
+    );
+    expect(await backend.remoteUrl()).toBeNull();
+  });
+});
+
 describe('SandboxPlumbingBackend.status', () => {
   it('parses porcelain -b into typed status', async () => {
     const backend = new SandboxPlumbingBackend(

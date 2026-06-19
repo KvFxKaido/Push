@@ -327,22 +327,26 @@ export function useChatCardActions({
             updateAgentStatus({ active: true, phase: 'Pushing...' }, { chatId, source: 'system' });
             try {
               // Staleness guard: this card's verdict was audited against a
-              // specific HEAD and destination. If a sandbox_commit landed after
-              // the review, HEAD moved; if a branch operation happened at the
-              // same HEAD, the destination may have moved while the HEAD pin
-              // still passes. Since the approved push deliberately skips
-              // re-auditing, refuse stale cards and ask for a refresh. Fail
-              // closed when the required pins are missing or unreadable.
+              // specific HEAD and destination (branch, upstream, and origin's
+              // resolved URL). If a sandbox_commit landed after the review, HEAD
+              // moved; if a branch op happened at the same HEAD, the branch /
+              // upstream moved while the HEAD pin still passes; if `git remote
+              // set-url` repointed origin, the URL moved while HEAD, branch, and
+              // the upstream *ref* all still match. Since the approved push
+              // deliberately skips re-auditing, refuse stale cards and ask for a
+              // refresh. Fail closed when any required pin is missing or unreadable.
               const approveSourceData =
                 approveSourceCard?.type === 'commit-review' ? approveSourceCard.data : undefined;
               const auditedHeadSha = approveSourceData?.auditedHeadSha;
               const auditedBranch = approveSourceData?.auditedBranch;
               const auditedUpstream = approveSourceData?.auditedUpstream ?? null;
+              const auditedRemoteUrl = approveSourceData?.auditedRemoteUrl;
               const pushGit = createSandboxPushGit(sandboxId);
-              const [liveHeadSha, liveBranch, liveUpstream] = await Promise.all([
+              const [liveHeadSha, liveBranch, liveUpstream, liveRemoteUrl] = await Promise.all([
                 pushGit.headSha(),
                 pushGit.currentBranch(),
                 pushGit.upstreamRef(),
+                pushGit.remoteUrl(),
               ]);
               if (!auditedHeadSha || !liveHeadSha || liveHeadSha !== auditedHeadSha) {
                 updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
@@ -374,6 +378,27 @@ export function useChatCardActions({
                       status: 'error',
                       error:
                         'Branch destination changed since this review — refresh to re-audit before pushing.',
+                    } as CommitReviewCardData,
+                  };
+                });
+                return;
+              }
+              // Remote-identity guard: the upstream *ref* (`origin/foo`) survives
+              // a `git remote set-url origin <other>`, so HEAD + branch + upstream
+              // can all still match while origin now points at a different repo —
+              // shipping the audited diff to an unreviewed destination. Pin and
+              // re-verify origin's resolved URL; fail closed when it's missing
+              // (legacy card / no remote) or has moved.
+              if (!auditedRemoteUrl || !liveRemoteUrl || liveRemoteUrl !== auditedRemoteUrl) {
+                updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+                  if (card.type !== 'commit-review') return card;
+                  return {
+                    ...card,
+                    data: {
+                      ...card.data,
+                      status: 'error',
+                      error:
+                        'Remote identity changed since this review — origin was repointed; refresh to re-audit before pushing.',
                     } as CommitReviewCardData,
                   };
                 });

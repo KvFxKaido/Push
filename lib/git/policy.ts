@@ -49,7 +49,7 @@ export type GitAllowFamily = 'restore-file' | 'mutate';
 export type GitRouteTarget = 'create_branch' | 'switch_branch' | 'commit' | 'push';
 
 /** Hard-blocked operations (no typed tool, forbidden outright). */
-export type GitBlockReason = 'no-local-merge' | 'history-rewrite';
+export type GitBlockReason = 'no-local-merge' | 'history-rewrite' | 'remote-mutation';
 
 export interface GitPassthroughDecision {
   kind: 'passthrough';
@@ -279,6 +279,25 @@ const READ_FAMILIES = new Map<string, GitReadFamily>([
 ]);
 
 /**
+ * `git remote` operations that mutate remote identity/config. Blocked outright
+ * (no typed tool, no `allowDirectGit` escape) because repointing `origin` —
+ * e.g. `git remote set-url origin <other>` — silently redirects the
+ * Gate-at-Push approved push to a different repository: HEAD, branch, and the
+ * upstream *ref* (`origin/foo`) all stay unchanged, so the approval-time
+ * destination pins don't catch it. The read-only forms (`git remote`,
+ * `git remote -v`, `git remote show`, `git remote get-url`) are unaffected.
+ */
+const REMOTE_MUTATING_SUBCOMMANDS = new Set([
+  'add',
+  'rename',
+  'remove',
+  'rm',
+  'set-url',
+  'set-head',
+  'set-branches',
+]);
+
+/**
  * The branch name for a create form (`-b`/`-c`/`--create <name>`). Tokens
  * after a `--` separator are positional regardless of a leading `-`, so an
  * explicitly-separated name (`-b -- <name>`) is extracted even when it
@@ -377,6 +396,17 @@ function classifySegment(invocation: ParsedGitInvocation): GitDecision {
       };
     }
     return classifyCheckoutOrSwitch(subcommand, rest);
+  }
+
+  // `git remote <mutation>` (set-url / add / rename / …) repoints or rewrites
+  // remote identity, which evades the Gate-at-Push destination pins. Block the
+  // mutating forms outright; read-only `git remote [-v|show|get-url]` falls
+  // through to the allow path below.
+  if (subcommand === 'remote') {
+    const op = rest.find((t) => !t.startsWith('-'))?.toLowerCase();
+    if (op && REMOTE_MUTATING_SUBCOMMANDS.has(op)) {
+      return { kind: 'block', reason: 'remote-mutation', label: `git remote ${op}` };
+    }
   }
 
   const readFamily = READ_FAMILIES.get(subcommand);
