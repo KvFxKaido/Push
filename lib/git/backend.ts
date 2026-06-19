@@ -75,6 +75,17 @@ export interface GitWriteResult extends GitExecResult {
 export interface GitBackend {
   /** Current branch name, or null when detached / not a repo / error. */
   currentBranch(): Promise<string | null>;
+  /** Upstream ref for the current branch (e.g. `origin/feature/x`), or null when unset / unreadable. */
+  upstreamRef(): Promise<string | null>;
+  /**
+   * URL for a remote (default `origin`) — the resolved remote *identity*, not
+   * the symbolic ref name. Pass `{ push: true }` to read the actual push URL
+   * (`git remote get-url --push`), which honors `remote.<name>.pushurl`.
+   * Null when the remote is unset / unreadable. `upstreamRef` can stay
+   * `origin/foo` across a remote repoint, so this is the read that catches
+   * origin being aimed at another repo.
+   */
+  remoteUrl(remote?: string, opts?: { push?: boolean }): Promise<string | null>;
   /** HEAD commit sha (full, or abbreviated with `short`), or null on error. */
   headSha(opts?: { short?: boolean }): Promise<string | null>;
   /** Typed working-tree status, or null on error / not a repo. */
@@ -127,6 +138,21 @@ export class SandboxPlumbingBackend implements GitBackend {
     // HEAD` would print `HEAD` when detached and fail on an unborn branch,
     // losing the name in a freshly-initialized repo.)
     const res = await this.exec(['branch', '--show-current']);
+    if (res.exitCode !== 0) return null;
+    return res.stdout.trim() || null;
+  }
+
+  async upstreamRef(): Promise<string | null> {
+    const res = await this.exec(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
+    if (res.exitCode !== 0) return null;
+    return res.stdout.trim() || null;
+  }
+
+  async remoteUrl(remote = 'origin', opts?: { push?: boolean }): Promise<string | null> {
+    const args = opts?.push
+      ? ['remote', 'get-url', '--push', remote]
+      : ['remote', 'get-url', remote];
+    const res = await this.exec(args);
     if (res.exitCode !== 0) return null;
     return res.stdout.trim() || null;
   }

@@ -583,11 +583,12 @@ export async function handleSandboxCommit(
  * `commit-review` card with `kind: 'push'` for approval. On UNSAFE it returns an
  * `audit-verdict` card and blocks. The actual push happens on approval, which
  * re-runs only the cheap deterministic gates (Protect Main + secret scan) and
- * verifies the pinned `auditedHeadSha` still matches HEAD — it does NOT re-audit
- * (this verdict stands; re-running a non-deterministic LLM check could flip an
- * approved SAFE delivery). A direct `sandbox_push` that bypasses this flow is
- * still gated by the always-on push-time Auditor. An Auditor-backend throw here
- * is surfaced as a retryable `AUDITOR_UNAVAILABLE` error.
+ * verifies the pinned `auditedHeadSha`, `auditedBranch`, `auditedUpstream`, and
+ * `auditedRemoteUrl` still match the sandbox destination — it does NOT
+ * re-audit (this verdict stands; re-running a non-deterministic LLM check could
+ * flip an approved SAFE delivery). A direct `sandbox_push` that bypasses this
+ * flow is still gated by the always-on push-time Auditor. An Auditor-backend
+ * throw here is surfaced as a retryable `AUDITOR_UNAVAILABLE` error.
  */
 export async function handlePreparePush(
   ctx: GitReleaseHandlerContext,
@@ -599,9 +600,15 @@ export async function handlePreparePush(
   // refresh rather than shipping a newer diff under this verdict. The realistic
   // staleness vector — committing more in a later turn, then approving this
   // stale card — is caught the same way.
-  const auditedHeadSha = await createSandboxPushGit(ctx.sandboxId, {
+  const pushGit = createSandboxPushGit(ctx.sandboxId, {
     execFn: ctx.execInSandbox,
-  }).headSha();
+  });
+  const [auditedHeadSha, auditedBranch, auditedUpstream, auditedRemoteUrl] = await Promise.all([
+    pushGit.headSha(),
+    pushGit.currentBranch(),
+    pushGit.upstreamRef(),
+    pushGit.remoteUrl('origin', { push: true }),
+  ]);
 
   // Step 1: Compute the cumulative push diff (commits the push would upload).
   let diff: string | null;
@@ -714,8 +721,9 @@ export async function handlePreparePush(
   // Step 3: SAFE — return a push-kind review card for user approval. Approval
   // re-runs the cheap deterministic gates (Protect Main + secret scan) and
   // pushes; it does NOT re-audit (this verdict stands), but it verifies the
-  // pinned `auditedHeadSha` still matches HEAD so commits added after this
-  // review can't ride along unaudited. No commitMessage: commits already exist.
+  // pinned `auditedHeadSha` and destination still match so commits or branch
+  // routing changes after this review can't ride along unaudited. No
+  // commitMessage: commits already exist.
   console.log(
     JSON.stringify({
       level: 'info',
@@ -742,6 +750,9 @@ export async function handlePreparePush(
     commitMessage: '',
     status: 'pending',
     ...(auditedHeadSha ? { auditedHeadSha } : {}),
+    ...(auditedBranch ? { auditedBranch } : {}),
+    ...(auditedUpstream ? { auditedUpstream } : {}),
+    ...(auditedRemoteUrl ? { auditedRemoteUrl } : {}),
   };
 
   return {

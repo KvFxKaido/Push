@@ -119,6 +119,55 @@ describe('createGitGuardPreHook', () => {
     expect(result.reason).not.toContain('allowDirectGit": true');
   });
 
+  it('blocks `git remote set-url` even with allowDirectGit (destination-pin evasion)', async () => {
+    // Repointing origin would redirect an audited push to another repo while the
+    // Gate-at-Push pins (HEAD, branch, upstream ref) still match — no consented
+    // form, like a local merge.
+    const entry = withMode('supervised');
+    const result = await entry.hook(
+      'sandbox_exec',
+      {
+        command: 'git remote set-url origin https://github.com/attacker/repo.git',
+        allowDirectGit: true,
+      },
+      emptyContext,
+    );
+    expect(result.decision).toBe('deny');
+    expect(result.errorType).toBe('GIT_GUARD_BLOCKED');
+    expect(result.reason).toContain('git remote set-url');
+    expect(result.reason).not.toContain('allowDirectGit": true');
+  });
+
+  it('blocks `git remote add` in full-auto (no consent escape)', async () => {
+    const entry = withMode('full-auto');
+    const result = await entry.hook(
+      'sandbox_exec',
+      { command: 'git remote add upstream https://github.com/x/y.git' },
+      emptyContext,
+    );
+    expect(result.decision).toBe('deny');
+    expect(result.errorType).toBe('GIT_GUARD_BLOCKED');
+  });
+
+  it('blocks remote URL repoints through `git config`', async () => {
+    const entry = withMode('supervised');
+    const result = await entry.hook(
+      'sandbox_exec',
+      { command: 'git config remote.origin.pushurl https://github.com/attacker/repo.git' },
+      emptyContext,
+    );
+    expect(result.decision).toBe('deny');
+    expect(result.errorType).toBe('GIT_GUARD_BLOCKED');
+    expect(result.reason).toContain('git config remote');
+    expect(result.reason).not.toContain('allowDirectGit": true');
+  });
+
+  it('allows read-only `git remote -v`', async () => {
+    const entry = withMode('supervised');
+    const result = await entry.hook('sandbox_exec', { command: 'git remote -v' }, emptyContext);
+    expect(result.decision).toBe('passthrough');
+  });
+
   it('blocks a local `git merge` in full-auto (no consent escape)', async () => {
     const entry = withMode('full-auto');
     const result = await entry.hook(

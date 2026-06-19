@@ -109,7 +109,15 @@ describe('CommitReviewCard push-kind (Gate-at-Push)', () => {
 
   it('keeps Approve enabled on a push-kind card with no commit message', () => {
     const html = renderToStaticMarkup(
-      <CommitReviewCard data={pendingCard()} messageId="m1" cardIndex={0} />,
+      <CommitReviewCard
+        data={pendingCard({
+          auditedHeadSha: 'abc1234',
+          auditedBranch: 'feature/reviewed',
+          auditedUpstream: 'origin/feature/reviewed',
+        })}
+        messageId="m1"
+        cardIndex={0}
+      />,
     );
     // P1: an empty message must NOT disable the action (push commits already
     // exist), and there is no commit-message editor for push-kind. Match the
@@ -118,6 +126,27 @@ describe('CommitReviewCard push-kind (Gate-at-Push)', () => {
     expect(html).not.toContain('disabled=""');
     expect(html).not.toContain('Enter commit message...');
     expect(html).not.toContain('Commit message');
+  });
+
+  it('renders a stale destination error on a push-kind card', () => {
+    const html = renderToStaticMarkup(
+      <CommitReviewCard
+        data={pendingCard({
+          status: 'error',
+          error:
+            'Branch destination changed since this review — refresh to re-audit before pushing.',
+          auditedHeadSha: 'abc1234',
+          auditedBranch: 'feature/reviewed',
+          auditedUpstream: 'origin/feature/reviewed',
+        })}
+        messageId="m1"
+        cardIndex={0}
+      />,
+    );
+
+    expect(html).toContain('Branch destination changed since this review');
+    expect(html).toContain('Try again');
+    expect(html).not.toContain('Enter commit message...');
   });
 
   it('still disables actions on a commit-kind card with an empty message (control)', () => {

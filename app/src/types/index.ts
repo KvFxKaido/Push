@@ -887,6 +887,21 @@ export interface CommitReviewCardData {
    * work can't ship unaudited through a stale card. Absent on legacy cards.
    */
   auditedHeadSha?: string;
+  /**
+   * For a `kind: 'push'` card: the sandbox branch and upstream destination in
+   * effect when the Auditor verdict was computed. Approval re-reads both and
+   * refuses stale cards if the destination changed while HEAD stayed the same.
+   */
+  auditedBranch?: string;
+  auditedUpstream?: string;
+  /**
+   * For a `kind: 'push'` card: origin's resolved push URL when the verdict was
+   * computed. The upstream *ref* (`origin/foo`) survives a remote repoint, and
+   * `git push origin HEAD` can use `remote.origin.pushurl`; this pin catches
+   * origin being aimed at another repo between review and push. Approval
+   * re-reads it and fails closed on mismatch.
+   */
+  auditedRemoteUrl?: string;
   diff: DiffPreviewCardData;
   auditVerdict: AuditVerdictCardData;
   commitMessage: string;

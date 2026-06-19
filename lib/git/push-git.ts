@@ -123,6 +123,12 @@ export class PushGit {
   currentBranch(): Promise<string | null> {
     return this.backend.currentBranch();
   }
+  upstreamRef(): Promise<string | null> {
+    return this.backend.upstreamRef();
+  }
+  remoteUrl(remote?: string, opts?: { push?: boolean }): Promise<string | null> {
+    return this.backend.remoteUrl(remote, opts);
+  }
   headSha(opts?: { short?: boolean }): Promise<string | null> {
     return this.backend.headSha(opts);
   }

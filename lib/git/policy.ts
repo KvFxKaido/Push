@@ -49,7 +49,7 @@ export type GitAllowFamily = 'restore-file' | 'mutate';
 export type GitRouteTarget = 'create_branch' | 'switch_branch' | 'commit' | 'push';
 
 /** Hard-blocked operations (no typed tool, forbidden outright). */
-export type GitBlockReason = 'no-local-merge' | 'history-rewrite';
+export type GitBlockReason = 'no-local-merge' | 'history-rewrite' | 'remote-mutation';
 
 export interface GitPassthroughDecision {
   kind: 'passthrough';
@@ -279,6 +279,80 @@ const READ_FAMILIES = new Map<string, GitReadFamily>([
 ]);
 
 /**
+ * `git remote` operations that mutate remote identity/config. Blocked outright
+ * (no typed tool, no `allowDirectGit` escape) because repointing `origin` —
+ * e.g. `git remote set-url origin <other>` — silently redirects the
+ * Gate-at-Push approved push to a different repository: HEAD, branch, and the
+ * upstream *ref* (`origin/foo`) all stay unchanged, so the approval-time
+ * destination pins don't catch it. The read-only forms (`git remote`,
+ * `git remote -v`, `git remote show`, `git remote get-url`) are unaffected.
+ */
+const REMOTE_MUTATING_SUBCOMMANDS = new Set([
+  'add',
+  'rename',
+  'remove',
+  'rm',
+  'set-url',
+  'set-head',
+  'set-branches',
+]);
+
+const CONFIG_OPTIONS_WITH_VALUE = new Set([
+  '--file',
+  '-f',
+  '--blob',
+  '--type',
+  '--expiry-date',
+  '--default',
+]);
+
+const CONFIG_MUTATING_FLAGS = new Set([
+  '--add',
+  '--replace-all',
+  '--unset',
+  '--unset-all',
+  '--remove-section',
+  '--rename-section',
+]);
+
+const CONFIG_MUTATING_ACTIONS = new Set(['set', 'unset', 'rename-section', 'remove-section']);
+const CONFIG_READ_ACTIONS = new Set(['get', 'get-all', 'get-regexp', 'list']);
+
+function configPositionals(rest: string[]): string[] {
+  const positionals: string[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    const token = rest[i];
+    if (CONFIG_OPTIONS_WITH_VALUE.has(token)) {
+      i++;
+      continue;
+    }
+    if (token.startsWith('-')) continue;
+    positionals.push(token);
+  }
+  return positionals;
+}
+
+function configKeyAffectsRemoteIdentity(token: string): boolean {
+  const key = token.toLowerCase();
+  return (
+    /^remote\.[^.]+(?:\.|$)/.test(key) || /^url\..+\.(?:insteadOf|pushInsteadOf)$/i.test(token)
+  );
+}
+
+function configMutatesRemoteIdentity(rest: string[]): boolean {
+  const positionals = configPositionals(rest);
+  if (!positionals.some(configKeyAffectsRemoteIdentity)) return false;
+
+  const first = positionals[0]?.toLowerCase();
+  if (CONFIG_READ_ACTIONS.has(first)) return false;
+  if (CONFIG_MUTATING_ACTIONS.has(first)) return true;
+  if (rest.some((token) => CONFIG_MUTATING_FLAGS.has(token.toLowerCase()))) return true;
+
+  // Legacy set form: `git config remote.origin.url <value>`.
+  return positionals.length >= 2 && configKeyAffectsRemoteIdentity(positionals[0]);
+}
+
+/**
  * The branch name for a create form (`-b`/`-c`/`--create <name>`). Tokens
  * after a `--` separator are positional regardless of a leading `-`, so an
  * explicitly-separated name (`-b -- <name>`) is extracted even when it
@@ -377,6 +451,24 @@ function classifySegment(invocation: ParsedGitInvocation): GitDecision {
       };
     }
     return classifyCheckoutOrSwitch(subcommand, rest);
+  }
+
+  // `git remote <mutation>` (set-url / add / rename / …) repoints or rewrites
+  // remote identity, which evades the Gate-at-Push destination pins. Block the
+  // mutating forms outright; read-only `git remote [-v|show|get-url]` falls
+  // through to the allow path below.
+  if (subcommand === 'remote') {
+    const op = rest.find((t) => !t.startsWith('-'))?.toLowerCase();
+    if (op && REMOTE_MUTATING_SUBCOMMANDS.has(op)) {
+      return { kind: 'block', reason: 'remote-mutation', label: `git remote ${op}` };
+    }
+  }
+
+  // `git config remote.origin.url ...`, `remote.origin.pushurl`, and
+  // `url.*InsteadOf` rewrites are equivalent remote-identity mutations. A
+  // push URL can differ from the fetch URL, so block the config route too.
+  if (subcommand === 'config' && configMutatesRemoteIdentity(rest)) {
+    return { kind: 'block', reason: 'remote-mutation', label: 'git config remote' };
   }
 
   const readFamily = READ_FAMILIES.get(subcommand);

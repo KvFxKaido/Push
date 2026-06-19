@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
-import type { ChatCard, ChatMessage, Conversation } from '@/types';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ChatCard, ChatMessage, CommitReviewCardData, Conversation } from '@/types';
+import type { ChatCardActionsParams } from './chat-card-actions';
 
 const {
   mockExecInSandbox,
@@ -53,6 +54,10 @@ function makeConversation(messages: ChatMessage[]): Record<string, Conversation>
 }
 
 describe('chat-card-actions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it('forwards ask-user answers with the original question context', async () => {
     const sourceMessage: ChatMessage = {
       id: 'message-1',
@@ -236,5 +241,181 @@ describe('chat-card-actions', () => {
       { active: true, phase: 'Refreshing push review...' },
       { chatId: 'chat-1', source: 'system' },
     );
+  });
+
+  function pushReviewCard(overrides: Partial<CommitReviewCardData> = {}): {
+    type: 'commit-review';
+    data: CommitReviewCardData;
+  } {
+    return {
+      type: 'commit-review',
+      data: {
+        kind: 'push',
+        diff: {
+          diff: 'diff --git a/x.ts b/x.ts',
+          filesChanged: 1,
+          additions: 1,
+          deletions: 0,
+          truncated: false,
+        },
+        auditVerdict: { verdict: 'safe', summary: 'safe', risks: [], filesReviewed: 1 },
+        commitMessage: '',
+        status: 'pending',
+        auditedHeadSha: 'abc1234',
+        auditedBranch: 'feature/reviewed',
+        auditedUpstream: 'origin/feature/reviewed',
+        auditedRemoteUrl: 'https://github.com/owner/repo.git',
+        ...overrides,
+      },
+    };
+  }
+
+  function createPushReviewActionHarness(card = pushReviewCard()) {
+    const sourceMessage: ChatMessage = {
+      id: 'message-1',
+      role: 'assistant',
+      content: 'Review ready',
+      timestamp: 1,
+      status: 'done',
+      cards: [card],
+    };
+    let conversations = makeConversation([sourceMessage]);
+    const dirtyConversationIdsRef = { current: new Set<string>() };
+    const updateAgentStatus = vi.fn();
+    const setConversations: ChatCardActionsParams['setConversations'] = (updater) => {
+      conversations = typeof updater === 'function' ? updater(conversations) : updater;
+    };
+
+    return {
+      params: {
+        setConversations,
+        dirtyConversationIdsRef,
+        activeChatId: 'chat-1',
+        sandboxIdRef: { current: 'sb-1' },
+        isMainProtectedRef: { current: false },
+        branchInfoRef: { current: { currentBranch: 'feature/reviewed', defaultBranch: 'main' } },
+        repoRef: { current: 'owner/repo' },
+        updateAgentStatus,
+        sendMessageRef: { current: null },
+        isStreaming: false,
+        messages: conversations['chat-1'].messages,
+      },
+      getCard: () => conversations['chat-1'].messages[0].cards?.[0],
+      updateAgentStatus,
+    };
+  }
+
+  it('refuses push-kind approval when the sandbox branch changed since review', async () => {
+    mockExecInSandbox.mockImplementation(async (_sandboxId, command) => {
+      const cmd = String(command);
+      if (cmd.includes("'rev-parse' 'HEAD'")) {
+        return { stdout: 'abc1234\n', stderr: '', exitCode: 0 };
+      }
+      if (cmd.includes("'branch' '--show-current'")) {
+        return { stdout: 'feature/other\n', stderr: '', exitCode: 0 };
+      }
+      if (cmd.includes("'rev-parse' '--abbrev-ref' '--symbolic-full-name' '@{u}'")) {
+        return { stdout: 'origin/feature/reviewed\n', stderr: '', exitCode: 0 };
+      }
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+
+    const harness = createPushReviewActionHarness();
+    const { handleCardAction } = useChatCardActions(harness.params);
+    await handleCardAction({
+      type: 'commit-approve',
+      messageId: 'message-1',
+      cardIndex: 0,
+      commitMessage: '',
+    });
+
+    expect(harness.getCard()).toMatchObject({
+      type: 'commit-review',
+      data: {
+        status: 'error',
+        error: 'Branch destination changed since this review — refresh to re-audit before pushing.',
+      },
+    });
+    expect(
+      mockExecInSandbox.mock.calls.some(([, command]) => String(command).includes("'push'")),
+    ).toBe(false);
+  });
+
+  it('refuses push-kind approval when the upstream changed since review', async () => {
+    mockExecInSandbox.mockImplementation(async (_sandboxId, command) => {
+      const cmd = String(command);
+      if (cmd.includes("'rev-parse' 'HEAD'")) {
+        return { stdout: 'abc1234\n', stderr: '', exitCode: 0 };
+      }
+      if (cmd.includes("'branch' '--show-current'")) {
+        return { stdout: 'feature/reviewed\n', stderr: '', exitCode: 0 };
+      }
+      if (cmd.includes("'rev-parse' '--abbrev-ref' '--symbolic-full-name' '@{u}'")) {
+        return { stdout: 'origin/feature/other\n', stderr: '', exitCode: 0 };
+      }
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+
+    const harness = createPushReviewActionHarness();
+    const { handleCardAction } = useChatCardActions(harness.params);
+    await handleCardAction({
+      type: 'commit-approve',
+      messageId: 'message-1',
+      cardIndex: 0,
+      commitMessage: '',
+    });
+
+    expect(harness.getCard()).toMatchObject({
+      type: 'commit-review',
+      data: {
+        status: 'error',
+        error: 'Branch destination changed since this review — refresh to re-audit before pushing.',
+      },
+    });
+    expect(
+      mockExecInSandbox.mock.calls.some(([, command]) => String(command).includes("'push'")),
+    ).toBe(false);
+  });
+
+  it('refuses push-kind approval when origin was repointed since review', async () => {
+    // HEAD, branch, and the upstream *ref* all still match — only origin's URL
+    // moved (the `git remote set-url` evasion the ref pins can't catch).
+    mockExecInSandbox.mockImplementation(async (_sandboxId, command) => {
+      const cmd = String(command);
+      if (cmd.includes("'rev-parse' 'HEAD'")) {
+        return { stdout: 'abc1234\n', stderr: '', exitCode: 0 };
+      }
+      if (cmd.includes("'branch' '--show-current'")) {
+        return { stdout: 'feature/reviewed\n', stderr: '', exitCode: 0 };
+      }
+      if (cmd.includes("'rev-parse' '--abbrev-ref' '--symbolic-full-name' '@{u}'")) {
+        return { stdout: 'origin/feature/reviewed\n', stderr: '', exitCode: 0 };
+      }
+      if (cmd.includes("'remote' 'get-url' '--push' 'origin'")) {
+        return { stdout: 'https://github.com/attacker/repo.git\n', stderr: '', exitCode: 0 };
+      }
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+
+    const harness = createPushReviewActionHarness();
+    const { handleCardAction } = useChatCardActions(harness.params);
+    await handleCardAction({
+      type: 'commit-approve',
+      messageId: 'message-1',
+      cardIndex: 0,
+      commitMessage: '',
+    });
+
+    expect(harness.getCard()).toMatchObject({
+      type: 'commit-review',
+      data: {
+        status: 'error',
+        error:
+          'Remote identity changed since this review — origin was repointed; refresh to re-audit before pushing.',
+      },
+    });
+    expect(
+      mockExecInSandbox.mock.calls.some(([, command]) => String(command).includes("'push'")),
+    ).toBe(false);
   });
 });
