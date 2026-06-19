@@ -41,10 +41,6 @@ export interface TodoHandlers {
   clear: () => void;
 }
 
-export interface UsageHandler {
-  trackUsage: (model: string, inputTokens: number, outputTokens: number) => void;
-}
-
 export interface ChatRuntimeHandlers {
   onSandboxPromoted?: (repo: ActiveRepo) => void;
   bindSandboxSessionToRepo?: (repoFullName: string, branch?: string) => void;
@@ -91,7 +87,6 @@ export interface SendLoopContext {
   localDaemonBindingRef: MutableRefObject<ToolDispatchBinding | null>;
   scratchpadRef: MutableRefObject<ScratchpadHandlers | undefined>;
   todoRef: MutableRefObject<TodoHandlers | undefined>;
-  usageHandlerRef: MutableRefObject<UsageHandler | undefined>;
   workspaceContextRef: MutableRefObject<WorkspaceContext | null>;
   runtimeHandlersRef: MutableRefObject<ChatRuntimeHandlers | undefined>;
   repoRef: MutableRefObject<string | null>;
