@@ -157,6 +157,37 @@
   animation: agent-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
+/* Status-bar verb swap — the thinking-verb rotation (and phase-label changes)
+   in AgentStatusBar used to hard-cut from one word to the next. This enters each
+   new label from just below with a brief blur, matching the blur-bloom vocabulary
+   the streaming text already uses (`stream-word-in` / `stream-block-in`).
+   Enter-only by design: the label span is remounted via a React `key` on the
+   label text, so the animation fires exactly once per change (mount) — the same
+   pattern `stream-word` relies on. No exit animation, no transition library. */
+@keyframes status-verb-swap-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.4em);
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+.status-verb-swap {
+  display: inline-block;
+  animation: status-verb-swap-in 0.42s var(--ease-default) backwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-verb-swap {
+    animation: none;
+  }
+}
+
 /* Streaming caret — a soft, rounded, glowing cursor that trails revealed text.
    Pulses on a smooth ease (alternating fade) instead of a hard on/off blink,
    pairing with the smooth character reveal. The bar color comes from a utility

@@ -9,7 +9,7 @@ interface AgentStatusBarProps {
 // Rotation cadence for themed thinking verbs. Derived from wall-clock `now`
 // (which ticks every second) so rotation needs no extra state and never
 // resets when the lane re-sets the same status mid-stream.
-const VERB_ROTATE_MS = 2200;
+const VERB_ROTATE_MS = 3500;
 
 export function AgentStatusBar({ status }: AgentStatusBarProps) {
   // Re-render once a second when there's a startedAt to render against
@@ -46,7 +46,13 @@ export function AgentStatusBar({ status }: AgentStatusBarProps) {
     <div className="flex items-center gap-2.5 px-5 py-2.5 animate-fade-in">
       <span className="agent-pulse inline-block h-1.5 w-1.5 rounded-full bg-push-accent shadow-[0_0_8px_rgba(0,112,243,0.4)]" />
       <span className="text-xs text-push-fg-secondary tracking-wide">
-        {label}
+        {/* Keyed on `label` so each verb/phase change remounts the span and
+            replays `status-verb-swap-in` exactly once (enter-only). The 1s
+            elapsed-timer tick re-renders the parent but leaves this key
+            unchanged, so the swap fires only on real text changes. */}
+        <span key={label} className="status-verb-swap">
+          {label}
+        </span>
         {!hasVerbs && status.detail && (
           <span className="text-push-fg-dimmest ml-1.5">{status.detail}</span>
         )}
