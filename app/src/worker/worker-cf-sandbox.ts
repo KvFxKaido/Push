@@ -1782,6 +1782,13 @@ async function routeHibernate(env: Env, body: Json): Promise<Response> {
   const sandboxId = requireStr(body, 'sandbox_id');
   const repoFullName = str(body.repo_full_name);
   const branch = str(body.branch);
+  // keep_warm: take the durability snapshot but DON'T free the container. Used
+  // by the idle reaper so a foregrounded-but-idle session keeps its sandbox
+  // (the snapshot is a safety net for an eventual real CF reclaim), turning
+  // "the sandbox vanished while I was sitting there" into a no-op. The
+  // terminate was a multi-tenant cost guard; it doesn't apply to this
+  // single-user deployment.
+  const keepWarm = body.keep_warm === true;
 
   const snap = await createWorkspaceSnapshot(env, { sandboxId, repoFullName, branch });
   if (!snap.ok) {
@@ -1802,15 +1809,20 @@ async function routeHibernate(env: Env, body: Json): Promise<Response> {
 
   // Free the container now that its state is durable — mirrors Modal's
   // snapshot-and-terminate. Best-effort; the snapshot is already safe in R2.
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
-  await sandbox.destroy?.().catch(() => {});
-  await revokeToken(env.SANDBOX_TOKENS, sandboxId).catch(() => {});
+  // Skipped under keep_warm: the snapshot stands as the safety net while the
+  // live container + its owner token survive for warm re-attach.
+  if (!keepWarm) {
+    const sandbox = getSandbox(env.Sandbox!, sandboxId);
+    await sandbox.destroy?.().catch(() => {});
+    await revokeToken(env.SANDBOX_TOKENS, sandboxId).catch(() => {});
+  }
 
   return Response.json({
     ok: true,
     snapshot_id: snap.snapshotId,
     restore_token: snap.restoreToken,
     size_bytes: snap.sizeBytes,
+    kept_warm: keepWarm,
   });
 }
 

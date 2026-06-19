@@ -121,6 +121,11 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
   // Declared after the refs the test harness syncs by index (see
   // useSandbox.test.ts syncRefsFromState) so it doesn't shift them.
   const idleHibernatePendingRef = useRef(false);
+  // Timestamp of the last idle keep-warm snapshot. The keep-warm reaper leaves
+  // the container 'ready', so its interval keeps running — this gates it to one
+  // snapshot per idle period (re-armed only by real activity), avoiding a
+  // re-snapshot of an unchanged tree every tick.
+  const lastKeepWarmSnapshotAtRef = useRef(0);
   const freshSandboxIdRef = useRef<string | null>(null);
   const snapshotRestoredSandboxIdRef = useRef<string | null>(null);
   const activeSessionStorageKey = useMemo(
@@ -295,29 +300,48 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
         return;
       }
 
-      // A hibernate from a prior tick may still be pending — it's suppressed
+      // A snapshot from a prior tick may still be pending — it's suppressed
       // (invisible to the in-flight counter), so guard explicitly against
       // launching a second one.
       if (idleHibernatePendingRef.current) return;
+
+      // Keep-warm cadence: take ONE safety snapshot per idle period. Unlike the
+      // old reaper (which terminated → status 'idle' → the interval stopped),
+      // keep-warm leaves the container 'ready', so this interval keeps ticking.
+      // Re-arm only after real activity — a tool call advances the last-call
+      // time past our last snapshot. Without this we'd re-snapshot an unchanged
+      // tree every 60s.
+      const lastCallAt = Date.now() - idle;
+      if (lastKeepWarmSnapshotAtRef.current >= lastCallAt) return;
+
       idleHibernatePendingRef.current = true;
+      console.log(
+        `[useSandbox] Idle for ${Math.round(idle / 1000)}s — keep-warm snapshot of ${id} (container stays live)`,
+      );
 
-      console.log(`[useSandbox] Idle for ${Math.round(idle / 1000)}s — hibernating sandbox ${id}`);
-
-      // Capture the owner token BEFORE hibernate clears it.
-      const ownerToken = getSandboxOwnerToken(id) || '';
-
-      // The reaper's own hibernate is maintenance, not activity: a FAILED
-      // attempt must not stamp the idle clock, or the 60s-tick retry slips
-      // out by a full idle window.
+      // The reaper's own snapshot is maintenance, not activity: don't stamp the
+      // idle clock (a FAILED attempt would otherwise slip the 60s-tick retry out
+      // by a full idle window).
       suppressIdleTouch();
-      hibernateSandbox(id, { repoFullName: activeRepoFullName, branch: activeBranch })
+      const snapshotAt = Date.now();
+      hibernateSandbox(
+        id,
+        { repoFullName: activeRepoFullName, branch: activeBranch },
+        { keepWarm: true },
+      )
         .then((result) => {
           if (!result.ok || !result.snapshotId) {
-            console.debug('[useSandbox] Idle hibernate failed:', result.error);
+            console.debug('[useSandbox] Idle keep-warm snapshot failed:', result.error);
             return;
           }
-          // Persist the snapshotId for restore on next app open.
+          lastKeepWarmSnapshotAtRef.current = snapshotAt;
+          // Persist the snapshot so a LATER real CF reclaim can still restore —
+          // but keep the live container + owner token (saved alongside) so
+          // returning to the tab is a warm re-attach, not a cold restore. The
+          // user never sees the sandbox vanish during idle, and status stays
+          // 'ready' (we do NOT clear sandboxId).
           if (activeRepoFullName != null && activeBranch) {
+            const ownerToken = getSandboxOwnerToken(id) || '';
             const now = Date.now();
             saveSandboxSession(activeRepoFullName, activeBranch, {
               sandboxId: id,
@@ -330,19 +354,13 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
               snapshotCreatedAt: now,
             });
           }
-          // Transition to idle — the container is terminated. This stops
-          // the interval from firing again (status !== 'ready' guard)
-          // and signals the UI that the sandbox needs a restore/create.
-          setSandboxId(null);
-          sandboxIdRef.current = null;
-          freshSandboxIdRef.current = null;
-          snapshotRestoredSandboxIdRef.current = null;
-          setStatus('idle');
           setSnapshotInfoTick((n) => n + 1);
-          console.log(`[useSandbox] Hibernated → snapshot ${result.snapshotId}`);
+          console.log(
+            `[useSandbox] Keep-warm snapshot ${result.snapshotId} (sandbox ${id} still live)`,
+          );
         })
         .catch((err: unknown) => {
-          console.debug('[useSandbox] Idle hibernate error:', err);
+          console.debug('[useSandbox] Idle keep-warm error:', err);
         })
         .finally(() => {
           idleHibernatePendingRef.current = false;
