@@ -24,8 +24,10 @@ vi.stubGlobal('fetch', mockFetch);
 // We need to set the owner token before each test since the client
 // checks for it on every request.
 import {
+  batchWriteToSandbox,
   clearSandboxEnvironment,
   createSandbox,
+  deleteFromSandbox,
   execInSandbox,
   execLongRunningInSandbox,
   getSandboxLifecycleEvents,
@@ -36,6 +38,7 @@ import {
   SANDBOX_TS_ARROW_FUNCTION_REGEX,
   setSandboxOwnerToken,
   suppressIdleTouch,
+  writeToSandbox,
 } from './sandbox-client';
 import { SANDBOX_USER_TOKEN_ACK_KEY, USER_TOKEN_GATE_MESSAGE } from './sandbox-auth-gate';
 import { onWorkspaceMutation } from './sandbox-mutation-signal';
@@ -1054,6 +1057,36 @@ describe('sandbox client workspace mutation signal', () => {
     expect(seen).toEqual([]);
   });
 
+  it('does not notify a marked exec when owner-token preflight fails before fetch', async () => {
+    setSandboxOwnerToken(null);
+    const seen: string[] = [];
+    const off = onWorkspaceMutation((id) => seen.push(id));
+    try {
+      await expect(
+        execInSandbox('sb-missing-token', 'touch f', undefined, { markWorkspaceMutated: true }),
+      ).rejects.toThrow(/Sandbox access token missing/);
+    } finally {
+      off();
+    }
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(seen).toEqual([]);
+  });
+
+  it('does not notify a marked long-running exec when start preflight fails before fetch', async () => {
+    setSandboxOwnerToken(null);
+    const seen: string[] = [];
+    const off = onWorkspaceMutation((id) => seen.push(id));
+    try {
+      await expect(
+        execLongRunningInSandbox('sb-missing-token', 'touch f', { markWorkspaceMutated: true }),
+      ).rejects.toThrow(/Sandbox access token missing/);
+    } finally {
+      off();
+    }
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(seen).toEqual([]);
+  });
+
   it('notifies a write that reports failure (it may have landed server-side)', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
@@ -1068,6 +1101,27 @@ describe('sandbox client workspace mutation signal', () => {
       off();
     }
     expect(seen).toEqual(['sb-1']);
+  });
+
+  it('does not notify file mutations when owner-token preflight fails before fetch', async () => {
+    setSandboxOwnerToken(null);
+    const seen: string[] = [];
+    const off = onWorkspaceMutation((id) => seen.push(id));
+    try {
+      await expect(writeToSandbox('sb-missing-token', '/workspace/a.txt', 'hello')).rejects.toThrow(
+        /Sandbox access token missing/,
+      );
+      await expect(
+        batchWriteToSandbox('sb-missing-token', [{ path: '/workspace/b.txt', content: 'hello' }]),
+      ).rejects.toThrow(/Sandbox access token missing/);
+      await expect(deleteFromSandbox('sb-missing-token', '/workspace/c.txt')).rejects.toThrow(
+        /Sandbox access token missing/,
+      );
+    } finally {
+      off();
+    }
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(seen).toEqual([]);
   });
 });
 
