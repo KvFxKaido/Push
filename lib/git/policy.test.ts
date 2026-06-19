@@ -330,6 +330,97 @@ const CORPUS: Case[] = [
     command: 'git status\ngit commit -m x',
     expected: { kind: 'route', to: 'commit', args: {}, label: 'git commit' },
   },
+
+  // --- shell-parsing evasions (#987 interim hardening) --------------------
+  // standalone `&` (background/sequencing) is a separator, so a guarded op
+  // after it is still classified — without masking the fd-dup `&` in 2>&1.
+  {
+    command: 'git status & git push origin main',
+    expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
+  },
+  {
+    command: 'true & git merge feature/x',
+    expected: { kind: 'block', reason: 'no-local-merge', label: 'git merge' },
+  },
+  // the remote-identity block (#991) must survive the same evasion.
+  {
+    command: 'git status & git remote set-url origin https://evil.example/r.git',
+    expected: { kind: 'block', reason: 'remote-mutation', label: 'git remote set-url' },
+  },
+  // fd-dup `&` is NOT a separator (regression pin for the lookbehind/lookahead).
+  {
+    command: 'git push 2>&1',
+    expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
+  },
+  // `&>` / `&>>` (bash stdout+stderr redirect) is NOT a separator either — the
+  // `&` is fused to `>`, so the push stays one segment and is still classified.
+  {
+    command: 'git push &>/dev/null',
+    expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
+  },
+  {
+    command: 'git push &>> out.log',
+    expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
+  },
+  // INPUT fd-duplicates (`<&0`, `0<&-`) between `git` and the subcommand: the
+  // `&` is preceded by `<`, so it must NOT split (else `git <&0 push` becomes
+  // `git <` with no subcommand → passthrough, reopening the bypass — Codex P1).
+  {
+    command: 'git <&0 push',
+    expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
+  },
+  {
+    command: 'git remote <&0 set-url origin https://evil.example/r.git',
+    expected: { kind: 'block', reason: 'remote-mutation', label: 'git remote set-url' },
+  },
+  {
+    command: 'git 0<&- merge feature/x',
+    expected: { kind: 'block', reason: 'no-local-merge', label: 'git merge' },
+  },
+  // Redirections can be attached to command words with no whitespace. Bash
+  // still runs `git push`; the redirect suffix must not become part of argv.
+  {
+    command: 'git>/tmp/git.log push origin main',
+    expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
+  },
+  {
+    command: 'git< /dev/null push origin main',
+    expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
+  },
+  {
+    command: 'git push>/tmp/git.log',
+    expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
+  },
+  {
+    command: 'git&>/tmp/git.log push origin main',
+    expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
+  },
+  {
+    command: 'git remote set-url>&2 origin https://evil.example/r.git',
+    expected: { kind: 'block', reason: 'remote-mutation', label: 'git remote set-url' },
+  },
+  // subshell / group wrapping no longer hides the git token.
+  {
+    command: '(git push)',
+    expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
+  },
+  {
+    command: '( git remote set-url origin https://evil.example/r.git )',
+    expected: { kind: 'block', reason: 'remote-mutation', label: 'git remote set-url' },
+  },
+  // quoted / escaped command names no longer slip isGitToken.
+  {
+    command: '"git" push origin main',
+    expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
+  },
+  {
+    command: "'git' merge feature/x",
+    expected: { kind: 'block', reason: 'no-local-merge', label: 'git merge' },
+  },
+  {
+    command: '\\git push',
+    expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
+  },
 ];
 
 describe('classifyGitCommand — decision snapshot (drift guard)', () => {
