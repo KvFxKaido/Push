@@ -39,24 +39,32 @@ describe('adaptiveHashDisplayLength', () => {
 });
 
 describe('whitespace-insensitive hashing (reformatting resilience)', () => {
-  it('hashes are identical regardless of internal/edge whitespace', async () => {
-    const canonical = await calculateLineHash('foo(a, b)', 12);
-    expect(await calculateLineHash('  foo( a,b )  ', 12)).toBe(canonical);
-    expect(await calculateLineHash('foo(a,b)', 12)).toBe(canonical);
-    expect(await calculateLineHash('\tfoo(a, b)\r', 12)).toBe(canonical);
+  it('ignores leading/trailing whitespace and collapses internal runs', async () => {
+    const canonical = await calculateLineHash('a = foo(b, c)', 12);
+    // leading/trailing whitespace and tabs/CR don't change the hash
+    expect(await calculateLineHash('\t  a = foo(b, c)  \r', 12)).toBe(canonical);
+    // internal whitespace runs collapse to a single space
+    expect(await calculateLineHash('a   =    foo(b,    c)', 12)).toBe(canonical);
   });
 
-  it('resolves an anchor whose content was reformatted (operator spacing)', async () => {
-    // File now has tightened spacing; the agent's anchor came from the old layout.
-    const content = 'const sum=a+b;';
-    const staleLayoutRef = await calculateLineHash('const sum = a + b;', 10);
+  it('still distinguishes lines whose tokens differ only by spacing', async () => {
+    // collapse preserves token boundaries: `a,b` and `a, b` stay distinct
+    const tight = await calculateLineHash('foo(a,b)', 12);
+    const spaced = await calculateLineHash('foo(a, b)', 12);
+    expect(tight).not.toBe(spaced);
+  });
+
+  it('resolves an anchor whose alignment whitespace was reformatted', async () => {
+    // File tightened the alignment padding; the agent's anchor came from the old layout.
+    const content = 'const x = 1;';
+    const staleLayoutRef = await calculateLineHash('const   x   =   1;', 10);
 
     const result = await applyHashlineEdits(content, [
-      { op: 'replace_line', ref: staleLayoutRef, content: 'const sum = a + b + c;' },
+      { op: 'replace_line', ref: staleLayoutRef, content: 'const x = 2;' },
     ]);
     expect(result.applied).toBe(1);
     expect(result.failed).toBe(0);
-    expect(result.content).toBe('const sum = a + b + c;');
+    expect(result.content).toBe('const x = 2;');
   });
 
   it('resolves a line-qualified anchor after the line is reindented', async () => {

@@ -57,16 +57,16 @@ function clampHashLength(length: number): number {
 /**
  * Normalize a line before hashing so an anchor survives reformatting.
  *
- * All whitespace is removed (not just trimmed), so a line keeps the same hash
- * after reindentation, alignment changes, or operator-spacing churn
- * (`foo(a,b)` ≡ `foo( a, b )`). The trade-off is that two physically distinct
- * lines whose only difference is whitespace collapse to the same hash; that
- * collision is resolved by line-qualified refs (`42:abc1234`) and surfaced by
- * the ambiguity diagnostics in `resolveHashlineRefs`. `\s` also covers the
- * trailing `\r` left by CRLF files after splitting on `\n`.
+ * Leading/trailing whitespace is trimmed and internal whitespace runs collapse
+ * to a single space, so a line keeps the same hash after reindentation or
+ * alignment changes (`a   =   1` ≡ `a = 1`). Token boundaries are preserved:
+ * spacing *around* tokens still matters (`foo(a,b)` ≠ `foo(a, b)`), so two
+ * physically distinct lines don't collapse together as readily as they would
+ * under full whitespace removal. `\s` also covers the trailing `\r` left by
+ * CRLF files after splitting on `\n`.
  */
 export function normalizeLineForHash(line: string): string {
-  return String(line).replace(/\s+/g, '');
+  return String(line).trim().replace(/\s+/g, ' ');
 }
 
 export async function getNodeCrypto(): Promise<null> {

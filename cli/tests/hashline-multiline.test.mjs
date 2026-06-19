@@ -84,14 +84,14 @@ describe('delete_line (unchanged)', () => {
 });
 
 describe('whitespace-insensitive hashing', () => {
-  it('resolves an anchor whose content was reformatted', () => {
-    const content = 'const sum=a+b;';
-    // Anchor computed from a differently-spaced version of the same line.
-    const ref = `1:${calculateLineHash('const sum = a + b;')}`;
+  it('matches a line whose internal whitespace runs were collapsed', () => {
+    const content = 'const x = 1;';
+    // Anchor computed from a differently-aligned version of the same line.
+    const ref = `1:${calculateLineHash('const   x   =   1;')}`;
     const result = applyHashlineEdits(content, [
-      { op: 'replace_line', ref, content: 'const sum = a + b + c;' },
+      { op: 'replace_line', ref, content: 'const x = 2;' },
     ]);
-    assert.equal(result.content, 'const sum = a + b + c;');
+    assert.equal(result.content, 'const x = 2;');
     assert.equal(result.applied[0].op, 'replace_line');
   });
 
