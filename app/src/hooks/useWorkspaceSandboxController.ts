@@ -278,13 +278,16 @@ export function useWorkspaceSandboxController({
     onDisconnect();
   }, [abortStream, isStreaming, onDisconnect]);
 
-  // Stop sandbox on unmount only — stopSandbox is extracted at the top
-  // of the hook as a stable reference.
-  useEffect(() => {
-    return () => {
-      void stopSandbox();
-    };
-  }, [stopSandbox]);
+  // Deliberately NO teardown on unmount. Leaving the workspace view (Home,
+  // Settings, another chat, PWA backgrounding) used to destroy the container,
+  // so returning meant a cold start — the "sandbox disappeared while I just
+  // navigated away" complaint. We now let the container persist: returning
+  // remounts and the useSandbox reconnect effect warm-reattaches to the live
+  // container. Abandoned containers are reclaimed by Cloudflare's sleepAfter
+  // (raised to ~1h in worker-cf-sandbox.ts), so nothing leaks — the unmount
+  // destroy was a multi-tenant cost guard that doesn't apply to this
+  // single-user deployment. Branch swaps (the desync guard above) and
+  // cross-workspace session changes still tear down as before.
 
   return {
     showFileBrowser,
