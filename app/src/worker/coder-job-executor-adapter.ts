@@ -53,8 +53,9 @@ export interface WebExecutorAdapterArgs {
    * via sandbox_exec in the background lane the same way the web git-guard does
    * (#977): under Protect Main a raw push is blocked even with allowDirectGit.
    * Production callers MUST pass it (both do); optional only so tests that don't
-   * exercise the push gate can omit it. Absent ⇒ treated as off — note the
-   * forbidden-op and branch-op blocks are unconditional and don't depend on it.
+   * exercise the push gate can omit it. Absent ⇒ fail closed for raw push —
+   * note the forbidden-op and branch-op blocks are unconditional and don't
+   * depend on it.
    */
   protectMain?: boolean;
   /** Unique per-job id — used to produce a stable rate-limit bucket
@@ -429,9 +430,10 @@ export function createWebExecutorAdapter(args: WebExecutorAdapterArgs): CoderJob
   // `https://host//api/...` when the caller passes a normalized origin
   // with a trailing slash.
   const origin = args.origin.replace(/\/$/, '');
+  const protectMain = args.protectMain ?? true;
   return {
     executeSandboxToolCall: async (call, sandboxId) => {
-      const mapping = mapCallToRoute(call, args.protectMain ?? false);
+      const mapping = mapCallToRoute(call, protectMain);
       if (mapping.kind === 'not_implemented_yet') {
         return {
           text:

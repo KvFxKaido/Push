@@ -314,6 +314,7 @@ describe('createWebExecutorAdapter — sandbox tool dispatch', () => {
       ownerToken: 'tok-1',
       provider: 'openrouter',
       jobId: 'job-test-1',
+      protectMain: false,
     });
     const result = await adapter.executeSandboxToolCall(
       { tool: 'sandbox_exec', args: { command: 'git push origin main' } } as SandboxToolCall,
@@ -337,6 +338,7 @@ describe('createWebExecutorAdapter — sandbox tool dispatch', () => {
       ownerToken: 'tok-1',
       provider: 'openrouter',
       jobId: 'job-test-1',
+      protectMain: false,
     });
     const result = await adapter.executeSandboxToolCall(
       {
@@ -353,6 +355,28 @@ describe('createWebExecutorAdapter — sandbox tool dispatch', () => {
 
   // #977: the background lane must match the web git-guard — Protect Main blocks
   // raw push even with allowDirectGit, and forbidden ops have no escape at all.
+  it('fails closed for raw `git push` when Protect Main context is missing', async () => {
+    const adapter = createWebExecutorAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok-1',
+      provider: 'openrouter',
+      jobId: 'job-test-1',
+    });
+    const result = await adapter.executeSandboxToolCall(
+      {
+        tool: 'sandbox_exec',
+        args: { command: 'git push origin HEAD:main', allowDirectGit: true },
+      } as SandboxToolCall,
+      'sb-1',
+      { auditorProviderOverride: 'openrouter', auditorModelOverride: undefined },
+    );
+    expect(result.structuredError?.type).toBe('APPROVAL_GATE_BLOCKED');
+    expect(result.structuredError?.message).toContain('Protect Main on');
+    expect(handleCloudflareSandboxMock).not.toHaveBeenCalled();
+  });
+
   it('blocks direct `git push` under Protect Main even with allowDirectGit', async () => {
     const adapter = createWebExecutorAdapter({
       env: env(),
