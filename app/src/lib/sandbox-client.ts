@@ -2170,6 +2170,13 @@ export interface HibernateResult {
   snapshotId?: string;
   /** Token required to authorize restore. Store alongside snapshotId. */
   restoreToken?: string;
+  /**
+   * Whether the SERVER kept the container alive (keep_warm honored). The caller
+   * trusts this over its requested intent: an out-of-sync backend may terminate
+   * despite the flag, in which case the container is gone and the session must
+   * be treated as hibernated, not warm.
+   */
+  keptWarm?: boolean;
   error?: string;
 }
 
@@ -2193,6 +2200,7 @@ export async function hibernateSandbox(
     ok: boolean;
     snapshot_id?: string;
     restore_token?: string;
+    kept_warm?: boolean;
     error?: string;
   }>(
     'hibernate',
@@ -2206,8 +2214,13 @@ export async function hibernateSandbox(
     HIBERNATE_TIMEOUT_MS,
   );
 
+  // Trust the server's verdict, not the request: an out-of-sync backend without
+  // keep_warm support terminates despite the flag, so the container is gone and
+  // we MUST clear the local token/env (otherwise reconnect stalls on a dead
+  // session). Only treat it as warm when the server confirms it.
+  const serverKeptWarm = raw.kept_warm === true;
   if (raw.ok && raw.snapshot_id) {
-    if (keepWarm) {
+    if (keepWarm && serverKeptWarm) {
       recordSandboxLifecycleEvent(
         sandboxId,
         `Idle keep-warm snapshot (sandbox stays live: ${raw.snapshot_id})`,
@@ -2227,6 +2240,7 @@ export async function hibernateSandbox(
     ok: raw.ok,
     snapshotId: raw.snapshot_id,
     restoreToken: raw.restore_token,
+    keptWarm: serverKeptWarm,
     error: raw.error,
   };
 }

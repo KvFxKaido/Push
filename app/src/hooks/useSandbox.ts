@@ -68,15 +68,15 @@ const APP_COMMIT_IDENTITY_KEY = 'github_app_commit_identity';
 // enough that a long session that idled survives a reconnect. A stale guess is
 // cheap: the reconnect does a liveness check and falls back to a fresh sandbox.
 const SANDBOX_MAX_AGE_MS = 50 * 60 * 1000; // 50 min
-// Idle before the reaper snapshots + frees the container. Interim relief: was
-// 8 min, which felt like "the sandbox vanished while I was just sitting in the
-// app" (reading/thinking/composing don't count as activity — only tool calls
-// touch the idle clock). Bumped to 45 min — kept under SANDBOX_MAX_AGE_MS (50)
-// so the snapshot-then-reconnect window still aligns, and well under the
-// container's ~2h lifetime so the durability snapshot fires before any real CF
-// reclaim. The proper fix (snapshot WITHOUT terminating — keep the container
-// warm) is a follow-up; this just stops the bleeding.
-const IDLE_HIBERNATE_MS = 45 * 60 * 1000; // 45 min idle before snapshot
+// Idle threshold before the reaper takes a keep-warm safety snapshot. It used
+// to be 8 min AND terminated the container, so a foregrounded idle session lost
+// its sandbox while the user was just sitting there (reading/thinking/composing
+// don't count as activity — only tool calls touch the idle clock). Now 45 min,
+// and the reaper snapshots WITHOUT terminating (see the keep-warm reaper below):
+// the container stays live to its ~2h lifetime and the snapshot is just a safety
+// net for an eventual real CF reclaim. Kept under SANDBOX_MAX_AGE_MS (50) so the
+// snapshot-then-reconnect window still aligns.
+const IDLE_HIBERNATE_MS = 45 * 60 * 1000; // 45 min idle before keep-warm snapshot
 // Shown when a saved snapshot existed but couldn't be restored on reconnect, so
 // the user knows their prior workspace is gone and they're on a fresh sandbox
 // (otherwise the restore failure is silent and looks like a normal cold start).
@@ -290,12 +290,12 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       const idle = msSinceLastSandboxCall();
       if (idle < IDLE_HIBERNATE_MS) return;
 
-      // Don't hibernate if something else already changed the status.
+      // Status may have changed between ticks.
       if (statusRef.current !== 'ready') return;
 
       if (hasInFlightSandboxCalls()) {
         console.log(
-          `[useSandbox] Idle ${Math.round(idle / 1000)}s but a sandbox call is in flight — deferring hibernation`,
+          `[useSandbox] Idle ${Math.round(idle / 1000)}s but a sandbox call is in flight — deferring keep-warm snapshot`,
         );
         return;
       }
@@ -308,13 +308,23 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       // Keep-warm cadence: take ONE safety snapshot per idle period. Unlike the
       // old reaper (which terminated → status 'idle' → the interval stopped),
       // keep-warm leaves the container 'ready', so this interval keeps ticking.
-      // Re-arm only after real activity — a tool call advances the last-call
-      // time past our last snapshot. Without this we'd re-snapshot an unchanged
-      // tree every 60s.
-      const lastCallAt = Date.now() - idle;
-      if (lastKeepWarmSnapshotAtRef.current >= lastCallAt) return;
+      // Re-arm only after real activity advances the last-call time past our
+      // last snapshot — otherwise we'd re-snapshot an unchanged tree every tick.
+      // `idle` is Infinity until the first sandbox call; the `> 0` guard still
+      // lets that first idle snapshot through (lastCallAt would be -Infinity).
+      const lastCallAt = Number.isFinite(idle) ? Date.now() - idle : 0;
+      if (
+        lastKeepWarmSnapshotAtRef.current > 0 &&
+        lastKeepWarmSnapshotAtRef.current >= lastCallAt
+      ) {
+        return;
+      }
 
       idleHibernatePendingRef.current = true;
+      // Capture the owner token BEFORE the await: a concurrent
+      // session-change/unmount teardown clears it (and swaps sandboxId), so the
+      // late `.then` must not persist a session with a stale/empty token.
+      const ownerToken = getSandboxOwnerToken(id) || '';
       console.log(
         `[useSandbox] Idle for ${Math.round(idle / 1000)}s — keep-warm snapshot of ${id} (container stays live)`,
       );
@@ -334,30 +344,53 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
             console.debug('[useSandbox] Idle keep-warm snapshot failed:', result.error);
             return;
           }
-          lastKeepWarmSnapshotAtRef.current = snapshotAt;
-          // Persist the snapshot so a LATER real CF reclaim can still restore —
-          // but keep the live container + owner token (saved alongside) so
-          // returning to the tab is a warm re-attach, not a cold restore. The
-          // user never sees the sandbox vanish during idle, and status stays
-          // 'ready' (we do NOT clear sandboxId).
+          // A concurrent teardown may have swapped/cleared the session while we
+          // awaited — don't clobber it; the teardown owns persistence then.
+          if (sandboxIdRef.current !== id) {
+            console.debug(
+              '[useSandbox] Keep-warm snapshot stale (session changed) — skipping save',
+            );
+            return;
+          }
+          // Persist the snapshot as the safety net for a LATER real CF reclaim
+          // (and for snapshot restore on reconnect). Preserve the original
+          // createdAt — it's the container's real age, which the reconnect probe
+          // window keys off; only the snapshot timestamp is fresh.
           if (activeRepoFullName != null && activeBranch) {
-            const ownerToken = getSandboxOwnerToken(id) || '';
-            const now = Date.now();
+            const existing = loadSandboxSession(activeRepoFullName, activeBranch);
             saveSandboxSession(activeRepoFullName, activeBranch, {
               sandboxId: id,
               ownerToken,
               repoFullName: activeRepoFullName,
               branch: activeBranch,
-              createdAt: now,
+              createdAt: existing?.createdAt ?? snapshotAt,
               snapshotId: result.snapshotId,
               restoreToken: result.restoreToken,
-              snapshotCreatedAt: now,
+              snapshotCreatedAt: Date.now(),
             });
           }
           setSnapshotInfoTick((n) => n + 1);
-          console.log(
-            `[useSandbox] Keep-warm snapshot ${result.snapshotId} (sandbox ${id} still live)`,
-          );
+
+          if (result.keptWarm) {
+            // Container stays live + 'ready' — the user never sees it vanish.
+            lastKeepWarmSnapshotAtRef.current = snapshotAt;
+            console.log(
+              `[useSandbox] Keep-warm snapshot ${result.snapshotId} (sandbox ${id} still live)`,
+            );
+          } else {
+            // Deploy skew: an out-of-sync backend terminated despite keep_warm.
+            // The container is gone (the client already cleared the token), so
+            // go idle and let reconnect/restore take over — don't arm the
+            // keep-warm clock against a dead container.
+            setSandboxId(null);
+            sandboxIdRef.current = null;
+            freshSandboxIdRef.current = null;
+            snapshotRestoredSandboxIdRef.current = null;
+            setStatus('idle');
+            console.log(
+              `[useSandbox] Backend terminated despite keep_warm → hibernated to ${result.snapshotId}`,
+            );
+          }
         })
         .catch((err: unknown) => {
           console.debug('[useSandbox] Idle keep-warm error:', err);
