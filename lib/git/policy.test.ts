@@ -248,6 +248,16 @@ const CORPUS: Case[] = [
     command: 'cat log | grep error && git push',
     expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
   },
+  // Most restrictive wins, NOT first block/route: an escapable commit must not
+  // mask a later forbidden merge (#985) or an always-gated push.
+  {
+    command: 'git commit -m x && git merge feature/x',
+    expected: { kind: 'block', reason: 'no-local-merge', label: 'git merge' },
+  },
+  {
+    command: 'git commit -m x && git push origin main',
+    expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
+  },
   // no blocking segment → first git segment's non-blocking decision.
   { command: 'git add . && git status', expected: { kind: 'allow', family: 'mutate' } },
   // newline separators: bash -c treats `\n` like `;`, so each line is

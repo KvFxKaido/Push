@@ -21,10 +21,12 @@ import type { PreToolHookEntry, PreToolUseResult, ToolHookContext } from './tool
 
 interface GitGuardOptions {
   /**
-   * Returns the current approval mode. The guard short-circuits non-
-   * branch-changing mutations (commit/push/merge/rebase) in full-auto
-   * mode; branch create / branch switch are blocked regardless of
-   * mode because the issue is state synchronization, not consent.
+   * Returns the current approval mode. In full-auto the guard short-circuits a
+   * raw `git commit` (it has a safe form); a raw `git push` is always routed to
+   * the audited tool (Gate-at-Push) and the forbidden ops (merge / rebase /
+   * cherry-pick) are always blocked, regardless of mode or `allowDirectGit`
+   * (#985/#986). Branch create / switch are blocked regardless of mode — the
+   * issue there is state synchronization, not consent.
    */
   modeProvider: () => ApprovalMode;
 }
@@ -44,11 +46,20 @@ function formatGitGuardBlock(
   const isBranchCreate = decision.kind === 'route' && decision.to === 'create_branch';
   const isBranchSwitch = decision.kind === 'route' && decision.to === 'switch_branch';
 
+  const isLocalMerge = decision.kind === 'block' && decision.reason === 'no-local-merge';
+
   let guidance: string;
   if (isBranchCreate) {
     guidance = `Direct "${label}" is blocked. Use sandbox_create_branch({"name": "<branch-name>"}) — it creates the branch in the sandbox and keeps Push's branch state in sync. Pass "from": "<base>" to branch from a specific ref instead of HEAD.`;
   } else if (isBranchSwitch) {
     guidance = `Direct "${label}" is blocked. Use sandbox_switch_branch({"branch": "<branch-name>"}) — it switches the sandbox and routes the conversation to the existing chat for that branch (or auto-creates one). For branch-restore-as-file flows, pass an explicit flag (e.g. "git checkout -- <path>").`;
+  } else if (isLocalMerge) {
+    // Distinct from commit/push: there is NO consented form — "allowDirectGit"
+    // does not apply (it would bypass the push-time audit; see the guard).
+    guidance = `Direct "${label}" is blocked. Push never runs local merges — integrate branches through the GitHub PR flow (open a PR, then merge it there). "allowDirectGit" does NOT apply to a local merge.`;
+  } else if (decision.kind === 'block') {
+    // History rewrites (rebase / cherry-pick): forbidden, no consented form.
+    guidance = `Direct "${label}" is blocked. Push doesn't run local history rewrites — commit normally with sandbox_commit and ship via prepare_push (PRs squash-merge, so local history cleanup isn't needed). "allowDirectGit" does NOT apply.`;
   } else if (mode === 'autonomous') {
     guidance = `Direct "${label}" is blocked. Use sandbox_commit to commit and prepare_push to ship (the Auditor runs at push). If the standard flow fails, retry with "allowDirectGit": true — you have autonomous permission.`;
   } else {
@@ -178,6 +189,18 @@ export function createGitGuardPreHook(options: GitGuardOptions): PreToolHookEntr
       }
 
       const mode = options.modeProvider();
+      // Every `kind: 'block'` op (local merge, rebase, cherry-pick) is forbidden
+      // and has NO audited typed path, so neither full-auto nor `allowDirectGit`
+      // may run it. A local merge is also a push-gate evasion (its
+      // conflict-resolution combined diff is omitted by the push-time
+      // `git log -p` scan, so a secret there would ship unaudited — #985). Making
+      // ALL blocks unescapable also stops chain-masking: the classifier surfaces
+      // the most-restrictive segment, and since no block is escapable,
+      // `git rebase && git merge` / `git rebase && git push` can't slip the
+      // forbidden/gated op through on the rebase. The Push flow doesn't need
+      // local rebases — PRs squash-merge.
+      const isForbiddenGit = decision.kind === 'block';
+
       // A raw `git push` is ALWAYS routed to the audited `sandbox_push` tool —
       // even in full-auto, which otherwise lets raw git through. Under
       // Gate-at-Push the Auditor gate lives at the push, so a raw push in
@@ -185,13 +208,13 @@ export function createGitGuardPreHook(options: GitGuardOptions): PreToolHookEntr
       // invariant the gate exists to hold. The `allowDirectGit` consent hatch
       // below still applies when Protect Main is off; Protect Main blocks raw
       // push outright (handled above), regardless of consent.
-      const shouldBlock = isBranchOp || isPush || mode !== 'full-auto';
+      const shouldBlock = isForbiddenGit || isBranchOp || isPush || mode !== 'full-auto';
 
-      // `allowDirectGit` is the consent escape hatch for commit/push/
-      // merge/rebase. It does NOT apply to branch create/switch — those
-      // would desync Push's tracked branch from sandbox HEAD even with
-      // explicit user approval, so the only safe path is the typed tool.
-      const allowDirectGitApplies = !isBranchOp && args.allowDirectGit === true;
+      // `allowDirectGit` is the consent escape hatch for commit/push only. It
+      // does NOT apply to branch create/switch (would desync Push's tracked
+      // branch from sandbox HEAD) or to a forbidden op (merge/rebase/cherry-pick
+      // — no safe consented form, only the typed tool or the GitHub PR flow).
+      const allowDirectGitApplies = !isForbiddenGit && !isBranchOp && args.allowDirectGit === true;
       if (allowDirectGitApplies || !shouldBlock) return { decision: 'passthrough' };
 
       const { reason, errorType } = formatGitGuardBlock(decision, mode);

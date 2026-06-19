@@ -388,24 +388,52 @@ function classifySegment(invocation: ParsedGitInvocation): GitDecision {
 }
 
 /**
- * Classify a raw shell command line containing zero or more git
- * invocations. A compound command (`a && git push`) is decided by its
- * most restrictive git segment, scanned left to right: the first segment
- * that yields `block` or `route` wins (matching the legacy
- * first-blocking-segment semantics). With no blocking segment, the first
- * git segment's read/allow decision is returned; with no git at all, a
- * `non-git` passthrough.
+ * Restrictiveness rank for picking the decisive segment of a compound command.
+ * Higher wins. A forbidden op (`block`: merge / rebase / cherry-pick) outranks
+ * an always-gated route (push, branch create / switch), which outranks an
+ * escapable route (commit / revert). This stops a later restricted segment from
+ * being masked by an earlier escapable one. (The guard makes every `block`
+ * unescapable, so surfacing any block in a chain denies the whole command.)
+ */
+function restrictivenessRank(decision: GitDecision): number {
+  if (decision.kind === 'block') return 3;
+  if (decision.kind === 'route') {
+    // push / create_branch / switch_branch are always gated; commit is escapable.
+    return decision.to === 'commit' ? 1 : 2;
+  }
+  return 0;
+}
+
+/**
+ * Classify a raw shell command line containing zero or more git invocations.
+ * A compound command (`a && git merge`) is decided by its MOST RESTRICTIVE git
+ * segment (see {@link restrictivenessRank}), NOT the first block/route segment:
+ * a forbidden op outranks an always-gated route, which outranks an escapable
+ * one. This stops a later restricted segment from being masked by an earlier
+ * escapable one — `git commit && git merge` surfaces the merge (#985), and
+ * `git commit && git push` surfaces the push (Gate-at-Push). Ties resolve to the
+ * first (left-to-right). With no block/route segment, the first git segment's
+ * read/allow decision is returned; with no git at all, a `non-git` passthrough.
  */
 export function classifyGitCommand(command: string): GitDecision {
+  let best: GitDecision | null = null;
+  let bestRank = -1;
   let firstNonBlocking: GitDecision | null = null;
   for (const segment of splitOnListSeparators(command)) {
     const invocation = parseGitInvocation(tokenizeSegment(segment));
     if (!invocation) continue;
     const decision = classifySegment(invocation);
-    if (decision.kind === 'block' || decision.kind === 'route') return decision;
-    if (!firstNonBlocking) firstNonBlocking = decision;
+    if (decision.kind === 'block' || decision.kind === 'route') {
+      const rank = restrictivenessRank(decision);
+      if (rank > bestRank) {
+        best = decision;
+        bestRank = rank;
+      }
+    } else if (!firstNonBlocking) {
+      firstNonBlocking = decision;
+    }
   }
-  return firstNonBlocking ?? { kind: 'passthrough', family: 'non-git' };
+  return best ?? firstNonBlocking ?? { kind: 'passthrough', family: 'non-git' };
 }
 
 /**
