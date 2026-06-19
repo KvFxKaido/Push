@@ -21,6 +21,7 @@ import {
   buildToolResultMessage,
   buildToolResultMetaLine,
   getToolName,
+  getToolStatusDetail,
   type BuildToolResultMetaLineOptions,
   type ToolResultMetaSnapshot,
 } from '@/lib/chat-tool-messages';
@@ -237,6 +238,7 @@ export function buildToolOutcome(
     metaLine,
     toolMeta: buildToolMeta({
       toolName: getToolName(rawResult.call),
+      target: getToolStatusDetail(rawResult.call),
       source: rawResult.call.source,
       provider,
       durationMs: rawResult.durationMs,

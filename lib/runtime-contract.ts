@@ -381,6 +381,8 @@ export type RunEventInput =
       durationMs: number;
       isError: boolean;
       preview: string;
+      /** Compact target label: path, command, query, or task summary when available. */
+      target?: string;
       /** Workspace git branch stamped after sandbox_exec; omitted when unavailable. */
       branch?: string;
     }

@@ -934,6 +934,8 @@ function validateToolResult(payload: unknown, basePath: string): ValidationIssue
   if (t) issues.push(t);
   const p = expectOptionalString(payload, 'preview', basePath);
   if (p) issues.push(p);
+  const target = expectOptionalString(payload, 'target', basePath);
+  if (target) issues.push(target);
   const d = expectOptionalFiniteNumber(payload, 'durationMs', basePath);
   if (d) issues.push(d);
   const b = expectOptionalString(payload, 'branch', basePath);

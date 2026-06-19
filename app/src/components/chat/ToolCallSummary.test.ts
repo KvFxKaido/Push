@@ -3,6 +3,7 @@ import type { ChatCard, ChatMessage } from '@/types';
 import {
   groupChatMessages,
   buildSummaryLine,
+  getLabel,
   isPendingActionCard,
   collectPendingActionCards,
   type ToolCallPair,
@@ -27,7 +28,10 @@ function toolCallMsg(id: string): ChatMessage {
     status: 'done',
     isToolCall: true,
     toolMeta: {
-      toolName: 'sandbox_exec',
+      // Public name (production reality — getToolName → getToolPublicName),
+      // not the canonical 'sandbox_exec'. Using the public name here guards
+      // the label-resolution path the way production actually exercises it.
+      toolName: 'exec',
       source: 'assistant',
       durationMs: 120,
       triggeredBy: 'assistant',
@@ -35,7 +39,7 @@ function toolCallMsg(id: string): ChatMessage {
   };
 }
 
-function toolResultMsg(id: string, toolName = 'sandbox_exec'): ChatMessage {
+function toolResultMsg(id: string, toolName = 'exec'): ChatMessage {
   return {
     id,
     role: 'user',
@@ -79,9 +83,9 @@ describe('groupChatMessages', () => {
   it('groups multiple consecutive tool-call pairs', () => {
     const msgs = [
       toolCallMsg('tc1'),
-      toolResultMsg('tr1', 'read_file'),
+      toolResultMsg('tr1', 'read'),
       toolCallMsg('tc2'),
-      toolResultMsg('tr2', 'sandbox_exec'),
+      toolResultMsg('tr2', 'exec'),
     ];
     const out = groupChatMessages(msgs);
     expect(out).toHaveLength(1);
@@ -118,29 +122,83 @@ describe('groupChatMessages', () => {
 describe('buildSummaryLine', () => {
   it('summarises a single command as "Ran a command"', () => {
     const items: ToolCallPair[] = [
-      { callMsg: toolCallMsg('1'), resultMsg: toolResultMsg('1', 'sandbox_exec') },
+      { callMsg: toolCallMsg('1'), resultMsg: toolResultMsg('1', 'exec') },
     ];
     expect(buildSummaryLine(items)).toBe('Ran a command');
+  });
+
+  it('uses the captured target for a single call: "Ran npm test"', () => {
+    const call = toolCallMsg('1');
+    call.toolMeta = { ...call.toolMeta!, target: 'npm test' };
+    const items: ToolCallPair[] = [{ callMsg: call, resultMsg: toolResultMsg('1', 'exec') }];
+    expect(buildSummaryLine(items)).toBe('Ran npm test');
+  });
+
+  it('reads the target off the result message too', () => {
+    const result = toolResultMsg('1', 'read');
+    result.toolMeta = { ...result.toolMeta!, target: 'config.json' };
+    const items: ToolCallPair[] = [{ callMsg: toolCallMsg('1'), resultMsg: result }];
+    expect(buildSummaryLine(items)).toBe('Read config.json');
+  });
+
+  it('falls back to the noun form when a single call has no target', () => {
+    const items: ToolCallPair[] = [
+      { callMsg: toolCallMsg('1'), resultMsg: toolResultMsg('1', 'exec') },
+    ];
+    expect(buildSummaryLine(items)).toBe('Ran a command');
+  });
+
+  it('ignores the target for batches (keeps the aggregated count form)', () => {
+    const items: ToolCallPair[] = Array.from({ length: 2 }, (_, i) => {
+      const call = toolCallMsg(`c${i}`);
+      call.toolMeta = { ...call.toolMeta!, toolName: 'read', target: `file${i}.ts` };
+      return { callMsg: call, resultMsg: toolResultMsg(`r${i}`, 'read') };
+    });
+    expect(buildSummaryLine(items)).toBe('Read 2 files');
   });
 
   it('summarises 3 files as "Read 3 files"', () => {
     const items: ToolCallPair[] = Array.from({ length: 3 }, (_, i) => ({
       callMsg: toolCallMsg(`c${i}`),
-      resultMsg: toolResultMsg(`r${i}`, 'read_file'),
+      resultMsg: toolResultMsg(`r${i}`, 'read'),
     }));
     expect(buildSummaryLine(items)).toBe('Read 3 files');
   });
 
   it('summarises mixed tools', () => {
     const items: ToolCallPair[] = [
-      { callMsg: toolCallMsg('1'), resultMsg: toolResultMsg('1', 'sandbox_exec') },
-      { callMsg: toolCallMsg('2'), resultMsg: toolResultMsg('2', 'read_file') },
-      { callMsg: toolCallMsg('3'), resultMsg: toolResultMsg('3', 'read_file') },
+      { callMsg: toolCallMsg('1'), resultMsg: toolResultMsg('1', 'exec') },
+      { callMsg: toolCallMsg('2'), resultMsg: toolResultMsg('2', 'read') },
+      { callMsg: toolCallMsg('3'), resultMsg: toolResultMsg('3', 'read') },
     ];
     const line = buildSummaryLine(items);
     expect(line).toContain('Ran 1 command');
     expect(line).toContain('Read 2 files');
     expect(line).toContain(',');
+  });
+});
+
+describe('getLabel', () => {
+  // toolMeta.toolName is the PUBLIC name in production; the table is keyed by
+  // canonical. These pin the public → canonical → verb resolution so a real
+  // single call reads "Ran npm test", not "Used npm test".
+  it('resolves public tool names to the right verb', () => {
+    expect(getLabel('exec').verb).toBe('Ran'); // sandbox_exec
+    expect(getLabel('read').verb).toBe('Read'); // sandbox_read_file
+    expect(getLabel('repo_read').verb).toBe('Read'); // read_file
+    expect(getLabel('write').verb).toBe('Wrote'); // sandbox_write_file
+    expect(getLabel('edit').verb).toBe('Edited'); // sandbox_edit_file
+    expect(getLabel('coder').verb).toBe('Delegated'); // delegate_coder
+    expect(getLabel('web').verb).toBe('Searched'); // web_search
+  });
+
+  it('still resolves canonical names directly', () => {
+    expect(getLabel('sandbox_exec').verb).toBe('Ran');
+    expect(getLabel('delegate_explorer').verb).toBe('Delegated');
+  });
+
+  it('falls back to "Used" for unknown tools', () => {
+    expect(getLabel('totally_unknown_tool').verb).toBe('Used');
   });
 });
 

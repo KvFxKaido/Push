@@ -953,6 +953,26 @@ describe('validateRunEventPayload — RunEventInput passthrough events', () => {
     assert.ok(issues.some((i) => i.path === 'payload.outcome'));
   });
 
+  it('accepts tool.execution_complete target and rejects a non-string target', () => {
+    const payload = {
+      round: 1,
+      executionId: 'exec_1',
+      toolName: 'exec',
+      toolSource: 'sandbox',
+      durationMs: 12,
+      isError: false,
+      preview: 'ok',
+      target: 'npm test',
+    };
+    assert.deepEqual(validateRunEventPayload('tool.execution_complete', payload), []);
+
+    const issues = validateRunEventPayload('tool.execution_complete', {
+      ...payload,
+      target: 42,
+    });
+    assert.ok(issues.some((i) => i.path === 'payload.target'));
+  });
+
   it('accepts job.started (detail optional)', () => {
     assert.deepEqual(
       validateRunEventPayload('job.started', { executionId: 'job_1', role: 'coder' }),

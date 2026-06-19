@@ -1134,7 +1134,7 @@ describe('startInlineCoderTurn', () => {
 
 describe('card routing: disclosure vs. final message', () => {
   /** Simulate the kernel firing onRunEvent with one tool.execution_complete event. */
-  function kernelWithToolEvent(cards: object[]) {
+  function kernelWithToolEvent(cards: object[], target?: string) {
     mockRunInPageCoderKernel.mockImplementation(
       async (_spec: unknown, callbacks: { onRunEvent?: (e: unknown) => void }) => {
         callbacks.onRunEvent?.({
@@ -1146,6 +1146,7 @@ describe('card routing: disclosure vs. final message', () => {
           durationMs: 120,
           isError: false,
           preview: 'preview text',
+          ...(target ? { target } : {}),
         });
         return { summary: 'Done.', cards, rounds: 1, checkpoints: 0 };
       },
@@ -1162,6 +1163,18 @@ describe('card routing: disclosure vs. final message', () => {
     const callMsg = messages.find((m) => m.isToolCall);
     expect(callMsg).toBeDefined();
     expect(callMsg?.cards).toEqual([commitCard]);
+  });
+
+  it('threads event targets onto synthetic tool metadata', async () => {
+    kernelWithToolEvent([], 'src/app.ts');
+    const { ctx, store } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    const messages = store.current['chat-1'].messages;
+    const callMsg = messages.find((m) => m.isToolCall);
+    const resultMsg = messages.find((m) => m.isToolResult);
+    expect(callMsg?.toolMeta?.target).toBe('src/app.ts');
+    expect(resultMsg?.toolMeta?.target).toBe('src/app.ts');
   });
 
   it('leaves no cards key on the final message when the disclosure absorbed them', async () => {

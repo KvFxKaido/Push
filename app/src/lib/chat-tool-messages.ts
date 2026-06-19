@@ -5,6 +5,7 @@ import { getSandboxEnvironment } from './sandbox-client';
 import type { AnyToolCall } from './tool-dispatch';
 import { formatToolResultEnvelope } from './tool-call-recovery';
 import { getToolStatusLabelFromName, getToolPublicName } from './tool-registry';
+import { getToolTargetDetail } from '@push/lib/tool-target-detail';
 
 export interface ToolResultMetaSnapshot {
   dirty: boolean;
@@ -21,6 +22,7 @@ export interface BuildToolResultMetaLineOptions {
 
 export interface BuildToolMetaOptions {
   toolName: string;
+  target?: string;
   source: string;
   provider?: AIProviderType;
   durationMs: number;
@@ -77,41 +79,7 @@ export function getToolStatusDetail(toolCall: AnyToolCall): string | undefined {
       ? (toolCall.call.args as Record<string, unknown>)
       : {};
 
-  // Sandbox exec — show the command (the most common slow operation).
-  if (tool === 'sandbox_exec') {
-    return truncateDetail(asNonEmptyString(args.command), 60);
-  }
-
-  // File-targeted tools — show the path. Covers read_file, write_file,
-  // edit_range, search_replace, apply_patchset, etc.
-  if (typeof args.path === 'string') {
-    return truncateDetail(asNonEmptyString(args.path), 60);
-  }
-
-  // Delegations — show the task summary so the user knows what's
-  // delegated.
-  if (tool === 'delegate_coder' || tool === 'delegate_explorer') {
-    return truncateDetail(asNonEmptyString(args.task), 50);
-  }
-
-  // Web search — show the query.
-  if (tool === 'web_search') {
-    return truncateDetail(asNonEmptyString(args.query), 50);
-  }
-
-  return undefined;
-}
-
-function asNonEmptyString(v: unknown): string | undefined {
-  if (typeof v !== 'string') return undefined;
-  const trimmed = v.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function truncateDetail(s: string | undefined, max: number): string | undefined {
-  if (!s) return undefined;
-  if (s.length <= max) return s;
-  return s.slice(0, max - 1).trimEnd() + '…';
+  return getToolTargetDetail(tool, args);
 }
 
 export function buildToolResultMetaLine(
@@ -184,6 +152,7 @@ export function buildToolResultMetaLine(
 export function buildToolMeta(options: BuildToolMetaOptions): ToolMeta {
   return {
     toolName: options.toolName,
+    target: options.target,
     source: options.source,
     provider: options.provider,
     durationMs: options.durationMs,
