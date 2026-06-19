@@ -41,12 +41,12 @@ export function autoBackRef(branch: string): string {
 export type AutoBackResult =
   | { status: 'skipped'; reason: string }
   | { status: 'clean' }
-  | { status: 'backed-up'; ref: string; sha: string; tree: string }
-  // Dirty (tree != HEAD) but the snapshot tree matches the last backup already
-  // pushed this session — the durable ref already holds this content, so the
-  // redundant force-push is skipped. `tree` is carried so the coordinator keeps
-  // its dedup pin.
-  | { status: 'unchanged'; ref: string; sha: string; tree: string }
+  | { status: 'backed-up'; ref: string; sha: string; tree: string; head: string }
+  // Dirty (tree != HEAD) but the snapshot tree AND base HEAD match the last
+  // backup already pushed this session — the durable ref already holds this
+  // content on the current base, so the redundant force-push is skipped. `tree`
+  // and `head` are carried so the coordinator keeps its dedup pin.
+  | { status: 'unchanged'; ref: string; sha: string; tree: string; head: string }
   | { status: 'blocked'; reason: string }
   | { status: 'failed'; reason: string };
 
@@ -61,12 +61,13 @@ const defaultLog: LogFn = (level, event, ctx) =>
 // "clean" is decided by comparing the snapshot tree to HEAD's tree — NOT by
 // `git status` (which can report an untracked-only tree as empty under
 // `showUntrackedFiles=no`, and reports failures as empty too; Codex P2 on #980).
-// Prints `CLEAN` when the tree matches HEAD, `COMMIT <commit-sha> <tree-sha>`
-// on success (the tree sha lets the coordinator skip re-pushing an unchanged
-// snapshot — two captures of the same tree produce different commit shas via
-// commit-tree's timestamp, so the commit sha alone can't dedup), or
-// `ERR <stage>` on a git failure (kept non-fatal — one bad backup must never
-// brick the session).
+// Prints `CLEAN` when the tree matches HEAD, `COMMIT <commit-sha> <tree-sha>
+// <head-sha|none>` on success (the tree + base-HEAD shas let the coordinator
+// skip re-pushing an unchanged snapshot — two captures of the same tree produce
+// different commit shas via commit-tree's timestamp, so the commit sha alone
+// can't dedup; HEAD is in the key so a same-tree snapshot on a newer base still
+// pushes), or `ERR <stage>` on a git failure (kept non-fatal — one bad backup
+// must never brick the session).
 const CAPTURE_COMMAND = [
   'cd /workspace 2>/dev/null || { echo "ERR workspace"; exit 0; }',
   // Private temp dir (not `mktemp -u`, which races on an unclaimed path); the
@@ -86,8 +87,16 @@ const CAPTURE_COMMAND = [
   'GIT_INDEX_FILE="$idx" git add -A 2>/dev/null || { echo "ERR add"; exit 0; }',
   'tree="$(GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null)" || { echo "ERR write-tree"; exit 0; }',
   '[ -z "$tree" ] && { echo "ERR write-tree"; exit 0; }',
+  // `head` is the parent the backup commit gets (= HEAD at capture), `none` when
+  // unborn. The coordinator keys dedup on (head, tree): the restore path only
+  // offers a backup whose parent == current HEAD, so a same-tree snapshot on a
+  // *newer* HEAD must still push (else the durable ref stays stale-based and
+  // recovery is refused — Codex P1 on #982).
+  'head_sha=none',
   'if [ "$has_head" = 1 ]; then',
   '  head_tree="$(git rev-parse "HEAD^{tree}" 2>/dev/null)"',
+  '  head_sha="$(git rev-parse HEAD 2>/dev/null)"',
+  '  [ -z "$head_sha" ] && head_sha=none',
   // Only declare clean on a confirmed tree match; if HEAD's tree is unreadable,
   // bias toward backing up rather than risking a false-clean.
   '  if [ -n "$head_tree" ] && [ "$tree" = "$head_tree" ]; then echo CLEAN; exit 0; fi',
@@ -100,7 +109,7 @@ const CAPTURE_COMMAND = [
   '  commit="$(git commit-tree "$tree" -m "push: auto-back WIP" 2>/dev/null)"',
   'fi',
   '[ -z "$commit" ] && { echo "ERR commit-tree"; exit 0; }',
-  'echo "COMMIT $commit $tree"',
+  'echo "COMMIT $commit $tree $head_sha"',
 ].join('\n');
 
 /**
@@ -111,7 +120,7 @@ const CAPTURE_COMMAND = [
 export async function backUpWorkingTree(
   sandboxId: string | null,
   branch: string | null | undefined,
-  opts?: { log?: LogFn; lastBackedTree?: string },
+  opts?: { log?: LogFn; lastBackedTree?: string; lastBackedHead?: string },
 ): Promise<AutoBackResult> {
   const log = opts?.log ?? defaultLog;
   const trimmedBranch = branch?.trim();
@@ -147,7 +156,9 @@ export async function backUpWorkingTree(
     log('info', 'auto_back_clean', { branch: trimmedBranch });
     return { status: 'clean' };
   }
-  const match = /^COMMIT ([0-9a-f]{7,40}) ([0-9a-f]{7,40})$/m.exec(captureOut);
+  const match = /^COMMIT ([0-9a-f]{7,40}) ([0-9a-f]{7,40}) (none|[0-9a-f]{7,40})$/m.exec(
+    captureOut,
+  );
   if (!match) {
     const reason = captureErr ?? captureOut ?? 'capture produced no commit';
     log('warn', 'auto_back_failed', { reason, stage: 'capture' });
@@ -155,17 +166,21 @@ export async function backUpWorkingTree(
   }
   const sha = match[1];
   const tree = match[2];
+  const head = match[3];
   const ref = autoBackRef(trimmedBranch);
 
   // Dedup (Codex P3 on #981): the conservative mutation signal fires on any
   // attempt, so a no-op edit while the tree is dirty would re-push a tree
-  // identical to the last backup. The snapshot tree is content-addressed, so if
-  // it matches the last one pushed this session the durable ref already holds
-  // it — skip the redundant force-push (+ its secret scan). The commit sha
-  // can't dedup: commit-tree stamps a fresh timestamp each run.
-  if (opts?.lastBackedTree && tree === opts.lastBackedTree) {
-    log('info', 'auto_back_unchanged', { ref, tree });
-    return { status: 'unchanged', ref, sha, tree };
+  // identical to the last backup. Skip the redundant force-push (+ secret scan)
+  // when BOTH the snapshot tree and the base HEAD match the last backup this
+  // session — the durable ref already holds this content on the current base.
+  // HEAD is part of the key because the restore path only offers a backup whose
+  // parent == current HEAD; a same-tree snapshot on a newer HEAD must still
+  // push, or the ref stays stale-based and recovery is refused (Codex P1 on
+  // #982). The commit sha can't dedup: commit-tree stamps a fresh timestamp.
+  if (opts?.lastBackedTree === tree && opts?.lastBackedHead === head) {
+    log('info', 'auto_back_unchanged', { ref, tree, head });
+    return { status: 'unchanged', ref, sha, tree, head };
   }
 
   // 2. Push the backup commit to the stable per-branch ref (force-update). The
@@ -199,7 +214,7 @@ export async function backUpWorkingTree(
   }
 
   log('info', 'auto_back_pushed', { ref, sha });
-  return { status: 'backed-up', ref, sha, tree };
+  return { status: 'backed-up', ref, sha, tree, head };
 }
 
 /**

@@ -37,7 +37,7 @@ describe('createAutoBackScheduler', () => {
     expect(backUp).toHaveBeenCalledWith('sb-1', 'feature/x', undefined);
   });
 
-  it('threads the last backed-up tree into the next backup so it can dedup (#982)', async () => {
+  it('threads the last backed-up (tree, head) into the next backup so it can dedup (#982)', async () => {
     const ctx: AutoBackContext = { sandboxId: 'sb-1', branch: 'feature/x', enabled: true };
     const backUp = vi.fn(
       async (): Promise<AutoBackResult> => ({
@@ -45,6 +45,7 @@ describe('createAutoBackScheduler', () => {
         ref: 'draft/auto/feature/x',
         sha: 's',
         tree: 'tree-1',
+        head: 'head-1',
       }),
     );
     const scheduler = createAutoBackScheduler({
@@ -59,11 +60,14 @@ describe('createAutoBackScheduler', () => {
 
     scheduler.onMutation('sb-1');
     await vi.advanceTimersByTimeAsync(DEBOUNCE);
-    // Second run carries the tree the first backup pinned.
-    expect(backUp).toHaveBeenNthCalledWith(2, 'sb-1', 'feature/x', 'tree-1');
+    // Second run carries the (tree, head) the first backup pinned.
+    expect(backUp).toHaveBeenNthCalledWith(2, 'sb-1', 'feature/x', {
+      tree: 'tree-1',
+      head: 'head-1',
+    });
   });
 
-  it('does not reuse the dedup tree across a branch change', async () => {
+  it('does not reuse the dedup pin across a branch change', async () => {
     const ctx: AutoBackContext = { sandboxId: 'sb-1', branch: 'feature/x', enabled: true };
     const backUp = vi.fn(
       async (_id: string, branch: string): Promise<AutoBackResult> => ({
@@ -71,6 +75,7 @@ describe('createAutoBackScheduler', () => {
         ref: `draft/auto/${branch}`,
         sha: 's',
         tree: `tree-${branch}`,
+        head: `head-${branch}`,
       }),
     );
     const scheduler = createAutoBackScheduler({
@@ -85,7 +90,7 @@ describe('createAutoBackScheduler', () => {
     ctx.branch = 'feature/y';
     scheduler.onMutation('sb-1');
     await vi.advanceTimersByTimeAsync(DEBOUNCE);
-    // New branch → no carried tree (the pin was for feature/x).
+    // New branch → no carried pin (the pin was for feature/x).
     expect(backUp).toHaveBeenNthCalledWith(2, 'sb-1', 'feature/y', undefined);
   });
 
@@ -131,7 +136,8 @@ describe('createAutoBackScheduler', () => {
     const backUp = vi.fn(
       () =>
         new Promise<AutoBackResult>((resolve) => {
-          resolveBackup = () => resolve({ status: 'backed-up', ref: 'r', sha: 's', tree: 't' });
+          resolveBackup = () =>
+            resolve({ status: 'backed-up', ref: 'r', sha: 's', tree: 't', head: 'h' });
         }),
     );
     const ctx: AutoBackContext = { sandboxId: 'sb-1', branch: 'feature/x', enabled: true };
