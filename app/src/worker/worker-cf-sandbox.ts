@@ -74,6 +74,26 @@ const MAX_READ_BYTES = 5_000_000;
 const MAX_ARCHIVE_BYTES = 100_000_000;
 const OWNER_TOKEN_PATH = '/tmp/push-owner-token';
 
+// CF Sandbox containers sleep after 10 min of inactivity by DEFAULT and lose
+// filesystem state on the next request. For this single-user deployment that's
+// the "sandbox vanished while I was just idling in the app" bug — reading,
+// thinking, and composing don't hit the sandbox, so the container wipes out
+// from under a foregrounded session. Raise the idle-sleep window well past
+// realistic think/read pauses. We use sleepAfter (auto-reclaim) rather than
+// keepAlive (never sleeps → orphaned-container cost leak if the client fails to
+// destroy). The client idle reaper still snapshots before this as the safety
+// net for the eventual reclaim. Tunable in one place.
+const SANDBOX_SLEEP_AFTER = '1h';
+
+/**
+ * Get the sandbox handle with Push's idle-sleep policy applied. Every accessor
+ * routes through here so the container's sleep window is consistent across
+ * create / exec / snapshot / etc. — not the SDK's 10-min default.
+ */
+function sandboxFor(env: Env, sandboxId: string) {
+  return getSandbox(env.Sandbox!, sandboxId, { sleepAfter: SANDBOX_SLEEP_AFTER });
+}
+
 function githubRepoUrl(repo: string, token?: string): string {
   return token
     ? `https://x-access-token:${token}@github.com/${repo}.git`
@@ -196,7 +216,7 @@ export async function probeSandboxLiveness(
   sandboxId: string,
   opts?: { deadlineMs?: number },
 ): Promise<SandboxLivenessResult> {
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  const sandbox = sandboxFor(env, sandboxId);
   const maxAttempts = LIVENESS_PROBE_BACKOFF_MS.length + 1;
   let lastError = '';
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -441,7 +461,7 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
   const ownerHint = str(body.owner_hint);
 
   const sandboxId = crypto.randomUUID();
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  const sandbox = sandboxFor(env, sandboxId);
 
   // Per-phase ready-state timing. Emitted once at the tail of routeCreate (or
   // in the failure path) as `cf_sandbox_create_timing` so we can see whether
@@ -646,7 +666,7 @@ async function sha256Hex(input: string, hexChars: number): Promise<string> {
 
 async function routeConnect(env: Env, body: Json): Promise<Response> {
   const sandboxId = requireStr(body, 'sandbox_id');
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  const sandbox = sandboxFor(env, sandboxId);
 
   // Liveness check: run a trivial exec and propagate failures. probeEnvironment
   // swallows exec errors (returning an empty payload) so we can't rely on it
@@ -696,7 +716,7 @@ async function routeConnect(env: Env, body: Json): Promise<Response> {
 
 async function routeCleanup(env: Env, body: Json): Promise<Response> {
   const sandboxId = requireStr(body, 'sandbox_id');
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  const sandbox = sandboxFor(env, sandboxId);
   // Sandbox SDK's `destroy()` tears down the container + DO state. Optional
   // chain keeps this idempotent if the instance is already gone.
   await sandbox.destroy?.();
@@ -726,7 +746,7 @@ async function routeExec(env: Env, body: Json): Promise<Response> {
       ? Math.min(timeoutMs, CONTAINER_EXEC_TIMEOUT_SECONDS * 1000)
       : undefined;
 
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  const sandbox = sandboxFor(env, sandboxId);
   // Wrap the user command in `timeout -k <grace> <seconds> bash -c '<cmd>'`
   // so the container kills a stuck process instead of leaving it running
   // after our SDK-level deadline abandons the call. `timeout` lives in
@@ -864,7 +884,7 @@ async function routeExecStart(env: Env, body: Json): Promise<Response> {
   // immediate timeout in the SDK, so treat non-positive as "unbounded".
   const timeoutMs = num(body.timeout_ms);
 
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  const sandbox = sandboxFor(env, sandboxId);
   // The start call itself should return a handle promptly; guard it with the
   // SDK-level deadline so a wedged container surfaces TIMEOUT instead of
   // hanging the route. The process's own runtime is NOT bounded here — that's
@@ -890,7 +910,7 @@ async function routeExecStatus(env: Env, body: Json): Promise<Response> {
   const sandboxId = requireStr(body, 'sandbox_id');
   const processId = requireStr(body, 'process_id');
 
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  const sandbox = sandboxFor(env, sandboxId);
   const proc = (await withExecDeadline(sandbox.getProcess(processId))) as ProcessLike | null;
 
   if (!proc) {
@@ -932,7 +952,7 @@ async function routeExecLogs(env: Env, body: Json): Promise<Response> {
   const cursorStdout = Math.max(0, num(body.cursor_stdout) ?? 0);
   const cursorStderr = Math.max(0, num(body.cursor_stderr) ?? 0);
 
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  const sandbox = sandboxFor(env, sandboxId);
   let logs: { stdout?: string; stderr?: string };
   try {
     logs = (await withExecDeadline(sandbox.getProcessLogs(processId))) as {
@@ -990,7 +1010,7 @@ async function routeExecKill(env: Env, body: Json): Promise<Response> {
   const processId = requireStr(body, 'process_id');
   const signal = str(body.signal);
 
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  const sandbox = sandboxFor(env, sandboxId);
   try {
     await withExecDeadline(sandbox.killProcess(processId, signal));
   } catch (err) {
@@ -1023,7 +1043,7 @@ async function routeRead(env: Env, body: Json): Promise<Response> {
   const CAP = MAX_READ_BYTES;
   const PROBE_BYTES = CAP + 1;
 
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  const sandbox = sandboxFor(env, sandboxId);
   const contentCommand = isLineRangeRead
     ? `sed -n '${requestedStartLine},${requestedEndLine ?? '$'}p' -- ${quotedPath} | head -c ${PROBE_BYTES}`
     : `head -c ${PROBE_BYTES} -- ${quotedPath}`;
@@ -1142,7 +1162,7 @@ async function routeWrite(env: Env, body: Json): Promise<Response> {
   const content = requireStr(body, 'content');
   const expectedVersion = str(body.expected_version);
 
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  const sandbox = sandboxFor(env, sandboxId);
 
   if (expectedVersion !== undefined) {
     const existing = (await sandbox.readFile(path).catch(() => null)) as {
@@ -1180,7 +1200,7 @@ async function routeBatchWrite(env: Env, body: Json): Promise<Response> {
     expected_version?: string;
   }>;
 
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  const sandbox = sandboxFor(env, sandboxId);
   const results: Array<Record<string, unknown>> = [];
   let overallOk = true;
 
@@ -1223,7 +1243,7 @@ async function routeBatchWrite(env: Env, body: Json): Promise<Response> {
 async function routeDelete(env: Env, body: Json): Promise<Response> {
   const sandboxId = requireStr(body, 'sandbox_id');
   const path = requireStr(body, 'path');
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  const sandbox = sandboxFor(env, sandboxId);
   await sandbox.deleteFile(path);
   return Response.json({ workspace_revision: 0 });
 }
@@ -1231,7 +1251,7 @@ async function routeDelete(env: Env, body: Json): Promise<Response> {
 async function routeList(env: Env, body: Json): Promise<Response> {
   const sandboxId = requireStr(body, 'sandbox_id');
   const path = requireStr(body, 'path');
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  const sandbox = sandboxFor(env, sandboxId);
   const result = (await sandbox.listFiles(path)) as {
     entries?: Array<{ name: string; type?: string; isDirectory?: boolean; size?: number }>;
     files?: Array<{ name: string; type?: string; isDirectory?: boolean; size?: number }>;
@@ -1256,7 +1276,7 @@ async function routeDiff(env: Env, body: Json): Promise<Response> {
   // else is silently ignored and the response omits diff_since_ref.
   const sinceRefRaw = typeof body.since_ref === 'string' ? body.since_ref.trim() : '';
   const sinceRef = /^[0-9a-f]{7,40}$/i.test(sinceRefRaw) ? sinceRefRaw : '';
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  const sandbox = sandboxFor(env, sandboxId);
 
   const diffRes = (await withExecDeadline(sandbox.exec('git -C /workspace diff HEAD'))) as {
     stdout?: string;
@@ -1356,7 +1376,7 @@ async function routeDownload(env: Env, body: Json): Promise<Response> {
     return Response.json({ ok: false, error: 'Path must be within /workspace' });
   }
 
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  const sandbox = sandboxFor(env, sandboxId);
 
   // Canonicalize in-container before doing anything with the path. `realpath -e`
   // resolves `..` segments and follows symlinks (requiring every component to
@@ -1600,7 +1620,7 @@ async function routeHydrate(env: Env, body: Json): Promise<Response> {
   const sandboxId = requireStr(body, 'sandbox_id');
   const archive = requireStr(body, 'archive');
   const path = (str(body.path) ?? '/workspace').replace(/\/+$/g, '') || '/workspace';
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  const sandbox = sandboxFor(env, sandboxId);
 
   const result = await hydrateBase64IntoSandbox(sandbox, archive, path);
   if (!result.ok) {
@@ -1710,7 +1730,7 @@ export async function createWorkspaceSnapshot(
     return { ok: false, error: 'Cloudflare Sandbox is not configured', status: 503 };
   }
   const { sandboxId, repoFullName, branch } = args;
-  const sandbox = getSandbox(env.Sandbox, sandboxId);
+  const sandbox = sandboxFor(env, sandboxId);
 
   try {
     const archived = await archiveWorkspaceToBase64(sandbox, SNAPSHOT_DIR_EXCLUDES);
@@ -1782,6 +1802,13 @@ async function routeHibernate(env: Env, body: Json): Promise<Response> {
   const sandboxId = requireStr(body, 'sandbox_id');
   const repoFullName = str(body.repo_full_name);
   const branch = str(body.branch);
+  // keep_warm: take the durability snapshot but DON'T free the container. Used
+  // by the idle reaper so a foregrounded-but-idle session keeps its sandbox
+  // (the snapshot is a safety net for an eventual real CF reclaim), turning
+  // "the sandbox vanished while I was sitting there" into a no-op. The
+  // terminate was a multi-tenant cost guard; it doesn't apply to this
+  // single-user deployment.
+  const keepWarm = body.keep_warm === true;
 
   const snap = await createWorkspaceSnapshot(env, { sandboxId, repoFullName, branch });
   if (!snap.ok) {
@@ -1802,15 +1829,20 @@ async function routeHibernate(env: Env, body: Json): Promise<Response> {
 
   // Free the container now that its state is durable — mirrors Modal's
   // snapshot-and-terminate. Best-effort; the snapshot is already safe in R2.
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
-  await sandbox.destroy?.().catch(() => {});
-  await revokeToken(env.SANDBOX_TOKENS, sandboxId).catch(() => {});
+  // Skipped under keep_warm: the snapshot stands as the safety net while the
+  // live container + its owner token survive for warm re-attach.
+  if (!keepWarm) {
+    const sandbox = sandboxFor(env, sandboxId);
+    await sandbox.destroy?.().catch(() => {});
+    await revokeToken(env.SANDBOX_TOKENS, sandboxId).catch(() => {});
+  }
 
   return Response.json({
     ok: true,
     snapshot_id: snap.snapshotId,
     restore_token: snap.restoreToken,
     size_bytes: snap.sizeBytes,
+    kept_warm: keepWarm,
   });
 }
 
@@ -1880,7 +1912,7 @@ export async function restoreWorkspaceSnapshot(
     const archive = await object.text();
 
     const sandboxId = crypto.randomUUID();
-    const sandbox = getSandbox(env.Sandbox, sandboxId);
+    const sandbox = sandboxFor(env, sandboxId);
     createdSandbox = sandbox;
     createdSandboxId = sandboxId;
 
@@ -2016,7 +2048,7 @@ async function routeDeleteSnapshot(env: Env, body: Json): Promise<Response> {
 
 async function routeProbe(env: Env, body: Json): Promise<Response> {
   const sandboxId = requireStr(body, 'sandbox_id');
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  const sandbox = sandboxFor(env, sandboxId);
   const environment = await probeEnvironment(sandbox);
   return Response.json(environment);
 }
@@ -2121,7 +2153,7 @@ async function verifySandboxOwnerToken(
     return { ok: false, status: 403, code: 'AUTH_FAILURE' };
   }
 
-  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  const sandbox = sandboxFor(env, sandboxId);
   const tokenRead = (await withExecDeadline(
     sandbox.exec(`head -c ${MAX_TOKEN_BYTES + 1} ${shellSingleQuote(OWNER_TOKEN_PATH)}`),
   ).catch((err) => ({ __error: err }))) as

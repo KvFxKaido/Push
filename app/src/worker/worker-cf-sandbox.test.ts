@@ -314,7 +314,9 @@ describe('handleCloudflareSandbox happy paths', () => {
         writable_root: '/workspace',
       },
     });
-    expect(getSandboxMock).toHaveBeenCalledWith(env.Sandbox, sandboxId);
+    // Every accessor applies Push's raised idle-sleep policy (not CF's 10-min
+    // default) so a foregrounded idle session doesn't get wiped from under it.
+    expect(getSandboxMock).toHaveBeenCalledWith(env.Sandbox, sandboxId, { sleepAfter: '1h' });
     expect(sandbox.exec).toHaveBeenNthCalledWith(
       1,
       "git config --global user.name 'Push Bot' && git config --global user.email 'bot@example.test'",
@@ -491,7 +493,7 @@ describe('handleCloudflareSandbox happy paths', () => {
         writable_root: '/workspace',
       },
     });
-    expect(getSandboxMock).toHaveBeenCalledWith(expect.anything(), 'sb-1');
+    expect(getSandboxMock).toHaveBeenCalledWith(expect.anything(), 'sb-1', { sleepAfter: '1h' });
     expect(sandbox.exec.mock.calls[0]?.[0]).toContain(`head -c ${MAX_TOKEN_BYTES + 1}`);
     expect(sandbox.exec).toHaveBeenNthCalledWith(2, 'true');
     expect(sandbox.exec).toHaveBeenCalledTimes(3);
@@ -1456,6 +1458,7 @@ describe('handleCloudflareSandbox snapshots (R2)', () => {
       snapshot_id: `cf-snapshots/${uuid}`,
       restore_token: uuid,
       size_bytes: 1024,
+      kept_warm: false,
     });
     expect(r2.put).toHaveBeenCalledTimes(1);
     expect(r2.store.get(`cf-snapshots/${uuid}`)).toEqual({
@@ -1470,6 +1473,42 @@ describe('handleCloudflareSandbox snapshots (R2)', () => {
     const tarCall = sandbox.exec.mock.calls[1]?.[0] as string;
     expect(tarCall).toContain("--exclude='node_modules'");
     expect(tarCall).not.toContain("--exclude='.git'");
+  });
+
+  it('hibernate with keep_warm snapshots but does NOT free the container', async () => {
+    const sandbox = mockSandbox();
+    const uuid = mockUuid();
+    const r2 = makeR2();
+    const tokensKV = makeDefaultTokensKV();
+    queueExecResults(sandbox, [
+      { exitCode: 0 }, // tar
+      { stdout: '1024', exitCode: 0 }, // stat size
+      { stdout: 'QkFTRTY0', exitCode: 0 }, // base64
+      { exitCode: 0 }, // rm (finally)
+    ]);
+
+    const response = await callRoute(
+      'hibernate',
+      { sandbox_id: 'sb-1', keep_warm: true },
+      makeEnv({
+        SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'],
+        SANDBOX_TOKENS: tokensKV as unknown as Env['SANDBOX_TOKENS'],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      snapshot_id: `cf-snapshots/${uuid}`,
+      restore_token: uuid,
+      size_bytes: 1024,
+      kept_warm: true,
+    });
+    // The durability snapshot still happens...
+    expect(r2.put).toHaveBeenCalledTimes(1);
+    // ...but the container and its token survive for warm re-attach.
+    expect(sandbox.destroy).not.toHaveBeenCalled();
+    expect(tokensKV.delete).not.toHaveBeenCalled();
   });
 
   it('hibernate reclaims the previous snapshot object for the same repo/branch', async () => {

@@ -2170,6 +2170,13 @@ export interface HibernateResult {
   snapshotId?: string;
   /** Token required to authorize restore. Store alongside snapshotId. */
   restoreToken?: string;
+  /**
+   * Whether the SERVER kept the container alive (keep_warm honored). The caller
+   * trusts this over its requested intent: an out-of-sync backend may terminate
+   * despite the flag, in which case the container is gone and the session must
+   * be treated as hibernated, not warm.
+   */
+  keptWarm?: boolean;
   error?: string;
 }
 
@@ -2182,31 +2189,58 @@ export interface SnapshotIndexContext {
 export async function hibernateSandbox(
   sandboxId: string,
   context: SnapshotIndexContext = {},
+  opts: { keepWarm?: boolean } = {},
 ): Promise<HibernateResult> {
+  // keepWarm: take the durability snapshot but leave the container (and its
+  // owner token) alive — used by the idle reaper so a foregrounded-but-idle
+  // session keeps its sandbox instead of being torn down. The worker skips the
+  // destroy/revoke; the client must likewise NOT clear the local token/env.
+  const keepWarm = opts.keepWarm === true;
   const raw = await sandboxFetch<{
     ok: boolean;
     snapshot_id?: string;
     restore_token?: string;
+    kept_warm?: boolean;
     error?: string;
   }>(
     'hibernate',
-    withSnapshotIndexContext(withOwnerToken({ sandbox_id: sandboxId }, sandboxId), context),
+    withSnapshotIndexContext(
+      withOwnerToken(
+        { sandbox_id: sandboxId, ...(keepWarm ? { keep_warm: true } : {}) },
+        sandboxId,
+      ),
+      context,
+    ),
     HIBERNATE_TIMEOUT_MS,
   );
 
+  // Trust the server's verdict, not the request: an out-of-sync backend without
+  // keep_warm support terminates despite the flag, so the container is gone and
+  // we MUST clear the local token/env (otherwise reconnect stalls on a dead
+  // session). Only treat it as warm when the server confirms it.
+  const serverKeptWarm = raw.kept_warm === true;
   if (raw.ok && raw.snapshot_id) {
-    recordSandboxLifecycleEvent(sandboxId, `Workspace hibernated (snapshot: ${raw.snapshot_id})`);
-    // Only clear local state after confirmed successful hibernate.
-    // On failure the container may still be alive — clearing tokens
-    // would strand an otherwise-recoverable session.
-    setSandboxOwnerToken(null, sandboxId);
-    clearSandboxEnvironment(sandboxId);
+    if (keepWarm && serverKeptWarm) {
+      recordSandboxLifecycleEvent(
+        sandboxId,
+        `Idle keep-warm snapshot (sandbox stays live: ${raw.snapshot_id})`,
+      );
+      // Container + token survive — do NOT clear local state.
+    } else {
+      recordSandboxLifecycleEvent(sandboxId, `Workspace hibernated (snapshot: ${raw.snapshot_id})`);
+      // Only clear local state after confirmed successful hibernate.
+      // On failure the container may still be alive — clearing tokens
+      // would strand an otherwise-recoverable session.
+      setSandboxOwnerToken(null, sandboxId);
+      clearSandboxEnvironment(sandboxId);
+    }
   }
 
   return {
     ok: raw.ok,
     snapshotId: raw.snapshot_id,
     restoreToken: raw.restore_token,
+    keptWarm: serverKeptWarm,
     error: raw.error,
   };
 }

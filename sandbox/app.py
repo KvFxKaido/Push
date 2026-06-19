@@ -1680,6 +1680,11 @@ def snapshot_and_terminate(data: dict):
     """
     sandbox_id = data.get("sandbox_id")
     owner_token = data.get("owner_token", "")
+    # keep_warm: take the snapshot but leave the container running (idle-reaper
+    # parity with the CF backend). The terminate was a cost guard; for a
+    # single-user deployment an idle session should keep its sandbox so
+    # returning to the tab is a warm re-attach, not a cold restore.
+    keep_warm = data.get("keep_warm") is True
 
     if not sandbox_id:
         return {"ok": False, "error": "Missing sandbox_id"}
@@ -1712,14 +1717,18 @@ def snapshot_and_terminate(data: dict):
             return {"ok": False, "error": "Failed to write restore token"}
         snapshot = sb.snapshot_filesystem()
         snapshot_id = snapshot.object_id
-        sb.terminate()
+        # Skip the terminate under keep_warm — the snapshot stands as the safety
+        # net while the live container survives for warm re-attach.
+        if not keep_warm:
+            sb.terminate()
         duration_ms = round((time.time() - t0) * 1000)
         _log_action(str(sandbox_id), "snapshot_and_terminate",
-                     snapshot_id=snapshot_id, duration_ms=duration_ms)
+                     snapshot_id=snapshot_id, duration_ms=duration_ms, kept_warm=keep_warm)
         return {
             "ok": True,
             "snapshot_id": snapshot_id,
             "restore_token": restore_token,
+            "kept_warm": keep_warm,
         }
     except Exception as exc:
         return _sandbox_error_response(exc, {"ok": False})
