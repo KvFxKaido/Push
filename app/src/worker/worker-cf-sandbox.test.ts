@@ -324,14 +324,20 @@ describe('handleCloudflareSandbox happy paths', () => {
       { branch: 'feature', targetDir: '/workspace', depth: 1 },
     );
     expect(sandbox.writeFile).toHaveBeenCalledWith('/workspace/README.md', 'hello');
-    // Call 2 is the hardlink copy from the image-baked /opt/push-cache
+    // Call 2 strips the tokenized clone URL out of .git/config so raw
+    // sandbox_exec cannot reuse the clone credential (#987).
+    expect(sandbox.exec.mock.calls[1]?.[0]).toContain(
+      "git -C /workspace remote set-url origin 'https://github.com/owner/repo.git'",
+    );
+    expect(sandbox.exec.mock.calls[1]?.[0]).not.toContain('ghs_token');
+    // Call 3 is the hardlink copy from the image-baked /opt/push-cache
     // cache (see routeCreate). Assert on a substring rather than the
     // whole script so the guard shape stays an implementation detail
     // the test doesn't pin.
-    expect(sandbox.exec.mock.calls[1]?.[0]).toEqual(
+    expect(sandbox.exec.mock.calls[2]?.[0]).toEqual(
       expect.stringContaining('cp -al "$src/node_modules"'),
     );
-    expect(sandbox.exec).toHaveBeenCalledTimes(3);
+    expect(sandbox.exec).toHaveBeenCalledTimes(4);
   });
 
   it('emits cf_sandbox_create_timing on the success path with hashed repo and no raw identifiers', async () => {

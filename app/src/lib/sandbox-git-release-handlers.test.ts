@@ -760,11 +760,20 @@ describe('handlePromoteToGithub', () => {
     expect(result.text).toContain('Repository created: myuser/my-repo');
     expect(result.text).toContain('Visibility: public');
     expect(result.text).toContain('Push: successful on branch main');
+    const remoteConfigCall = ctx.execCalls.find((call) =>
+      String(call[1]).includes('remote get-url origin'),
+    );
+    expect(String(remoteConfigCall?.[1])).toContain('https://github.com/myuser/my-repo.git');
+    expect(String(remoteConfigCall?.[1])).not.toContain('x-access-token');
     // Final exec is the git push — it mutates git/cache state but suppresses
-    // the auto-back observer to avoid draft-push feedback loops (#982).
+    // the auto-back observer to avoid draft-push feedback loops (#982). The
+    // GitHub token is injected as a transient extraheader, not persisted in the
+    // remote URL (#987).
     expect(ctx.execCalls.at(-1)).toEqual([
       'sb-1',
-      expect.stringMatching(/git 'push' '-u' 'origin'/),
+      expect.stringMatching(
+        /git '-c' 'http\.https:\/\/github\.com\/\.extraheader=AUTHORIZATION: basic [^']+' 'push' '-u' 'origin'/,
+      ),
       undefined,
       { markWorkspaceMutated: true, suppressWorkspaceMutationSignal: true },
     ]);

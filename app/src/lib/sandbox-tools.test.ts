@@ -1821,10 +1821,14 @@ describe('executeSandboxToolCall -- promote_to_github', () => {
     expect(result.text).toContain('Default branch: main');
     expect(result.text).toContain('Push: successful on branch main');
     // The terminal git push exec mutates git/cache state but suppresses the
-    // auto-back observer to avoid draft-push feedback loops (#982).
+    // auto-back observer to avoid draft-push feedback loops (#982). GitHub auth
+    // is added as a transient extraheader rather than a persisted remote URL
+    // (#987).
     expect(sandboxClient.execInSandbox).toHaveBeenLastCalledWith(
       'sb-1',
-      expect.stringMatching(/git 'push' '-u' 'origin'/),
+      expect.stringMatching(
+        /git '-c' 'http\.https:\/\/github\.com\/\.extraheader=AUTHORIZATION: basic [^']+' 'push' '-u' 'origin'/,
+      ),
       undefined,
       { markWorkspaceMutated: true, suppressWorkspaceMutationSignal: true },
     );

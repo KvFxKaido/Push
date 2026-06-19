@@ -34,10 +34,11 @@
  * `tokenizeSegment` unwraps parens/quotes/leading-escape so `(git push)`,
  * `"git" push`, and `\git push` no longer hide the invocation. Residual vectors
  * remain (aliases / shell functions / variable-indirected git, and arbitrary
- * `eval`/`bash -c` nesting) and are NOT fully solvable by string parsing — the
- * authoritative fix is the transport boundary (scope the sandbox's git
- * credentials so it can't reach origin except through the audited path). This
- * parser stays best-effort and biased toward over-detection.
+ * `eval`/`bash -c` nesting) and are NOT fully solvable by string parsing. The
+ * transport boundary now strips persistent clone credentials from sandbox
+ * remotes and injects GitHub auth transiently for typed PushGit network
+ * operations, so this parser remains defense-in-depth rather than the
+ * authority boundary.
  */
 
 // ---------------------------------------------------------------------------

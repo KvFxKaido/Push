@@ -74,6 +74,16 @@ const MAX_READ_BYTES = 5_000_000;
 const MAX_ARCHIVE_BYTES = 100_000_000;
 const OWNER_TOKEN_PATH = '/tmp/push-owner-token';
 
+function githubRepoUrl(repo: string, token?: string): string {
+  return token
+    ? `https://x-access-token:${token}@github.com/${repo}.git`
+    : `https://github.com/${repo}.git`;
+}
+
+function publicGitHubRepoUrl(repo: string): string {
+  return `https://github.com/${repo}.git`;
+}
+
 // Upper bound for a single `sandbox.exec` call. The Cloudflare Sandbox SDK's
 // exec has no abort path — if the container is wedged (commonly after a heavy
 // FS write like `npm install`), the returned promise never resolves, the
@@ -486,9 +496,7 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
     }
 
     if (repo && repo.length > 0) {
-      const cloneUrl = githubToken
-        ? `https://x-access-token:${githubToken}@github.com/${repo}.git`
-        : `https://github.com/${repo}.git`;
+      const cloneUrl = githubRepoUrl(repo, githubToken);
       // Shallow clone — Push sessions are scoped to a single branch tip and
       // never inspect history beyond the current commit, so the full pack is
       // pure cold-start tax. `depth: 1` is SDK-supported; deeper history can
@@ -496,6 +504,20 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
       await time('clone', () =>
         sandbox.gitCheckout(cloneUrl, { branch, targetDir: '/workspace', depth: 1 }),
       );
+      if (githubToken) {
+        // gitCheckout uses the tokenized URL for private clone auth. Immediately
+        // rewrite origin to the public URL so raw sandbox_exec commands cannot
+        // reuse a credential persisted in .git/config. Typed PushGit operations
+        // add auth transiently when they intentionally talk to GitHub.
+        await time('clone', () =>
+          withExecDeadline(
+            sandbox.exec(
+              `git -C /workspace remote set-url origin ${shellSingleQuote(publicGitHubRepoUrl(repo))} && ` +
+                '(git -C /workspace config --unset-all remote.origin.pushurl >/dev/null 2>&1 || true)',
+            ),
+          ),
+        );
+      }
 
       // Pre-populate /workspace/{,app/}node_modules from the image-baked
       // cache via hardlink copy. Dockerfile.sandbox stages root and app
