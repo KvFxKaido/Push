@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { ShieldCheck, ShieldAlert } from 'lucide-react';
 import type { AuditVerdictCardData } from '@/types';
 import {
@@ -19,8 +20,37 @@ const riskColors = {
   high: CARD_BADGE_ERROR,
 };
 
+// SAFE verdicts play a one-shot pop+glow on arrival. The transcript virtualizes
+// (react-virtuoso), so this card unmounts/remounts as it scrolls, and StrictMode
+// remounts it once in dev — both would replay a naive mount animation. The data
+// carries no id, so key on its content and record when each distinct verdict last
+// celebrated. Suppress a replay only when the previous play was long enough ago to
+// be a real scroll-back; an instant remount (StrictMode, or scroll jitter) falls
+// inside the window and re-animates, so the beat is still visible in dev.
+const lastCelebrated = new Map<string, number>();
+const REPLAY_SUPPRESS_MS = 1000;
+
 export function AuditVerdictCard({ data }: { data: AuditVerdictCardData }) {
   const isSafe = data.verdict === 'safe';
+  const sig = `${data.verdict}|${data.filesReviewed}|${data.summary}`;
+
+  // When this card instance mounted. Captured in a lazy initializer (render-safe
+  // per react-hooks/purity — the same pattern AgentStatusBar uses) so we have a
+  // comparable "now" without calling Date.now() in the render body.
+  const [mountTime] = useState(() => Date.now());
+
+  // Decide in render so the icon paints with the class on the first frame — the
+  // keyframe starts at opacity:0, so applying it post-paint would flash the
+  // settled icon first. Suppress only when this instance mounted well after the
+  // last play (a real scroll-back); an instant remount falls inside the window
+  // and re-animates. The effect records the play time after commit.
+  const lastPlay = lastCelebrated.get(sig);
+  const animateSafe =
+    isSafe && (lastPlay === undefined || mountTime - lastPlay < REPLAY_SUPPRESS_MS);
+
+  useEffect(() => {
+    if (animateSafe) lastCelebrated.set(sig, Date.now());
+  }, [animateSafe, sig]);
 
   return (
     <div className={CARD_SHELL_CLASS}>
@@ -29,7 +59,9 @@ export function AuditVerdictCard({ data }: { data: AuditVerdictCardData }) {
         className={`px-3.5 py-3 flex items-center gap-2.5 ${isSafe ? CARD_HEADER_BG_SUCCESS : CARD_HEADER_BG_ERROR}`}
       >
         {isSafe ? (
-          <ShieldCheck className={`h-4 w-4 shrink-0 ${CARD_TEXT_SUCCESS}`} />
+          <ShieldCheck
+            className={`h-4 w-4 shrink-0 ${CARD_TEXT_SUCCESS} ${animateSafe ? 'verdict-safe-icon' : ''}`}
+          />
         ) : (
           <ShieldAlert className={`h-4 w-4 shrink-0 ${CARD_TEXT_ERROR}`} />
         )}
