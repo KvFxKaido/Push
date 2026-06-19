@@ -51,7 +51,18 @@ interface AutoBackSchedulerDeps {
   debounceMs: number;
   /** Read the latest context — the hook backs this with refs. */
   getContext: () => AutoBackContext;
-  backUp: (sandboxId: string, branch: string) => Promise<AutoBackResult>;
+  /**
+   * `lastBacked` is the (tree, head) of the most recent successful backup for
+   * the *same branch* this session, so the primitive can skip re-pushing when
+   * both still match (#982). Both are needed: the restore path only accepts a
+   * backup whose parent == current HEAD, so a same-tree snapshot on a newer
+   * HEAD must still push. Undefined on the first backup or after a branch change.
+   */
+  backUp: (
+    sandboxId: string,
+    branch: string,
+    lastBacked?: { tree: string; head: string },
+  ) => Promise<AutoBackResult>;
 }
 
 /**
@@ -64,6 +75,11 @@ export function createAutoBackScheduler(deps: AutoBackSchedulerDeps): AutoBackSc
   let inFlight = false;
   let pending = false; // a mutation arrived while a backup was running
   let disposed = false;
+  // (tree, head) of the last backup we pushed (or skipped as unchanged), with
+  // the branch it belonged to — passed back into the primitive to dedup an
+  // unchanged re-push (#982). Reset implicitly when the branch differs; HEAD is
+  // tracked so a commit (new HEAD, same tree) still re-pushes onto the new base.
+  let lastBacked: { branch: string; tree: string; head: string } | null = null;
 
   const clearTimer = () => {
     if (timer) {
@@ -85,7 +101,17 @@ export function createAutoBackScheduler(deps: AutoBackSchedulerDeps): AutoBackSc
     inFlight = true;
     pending = false;
     try {
-      await backUp(sandboxId, branch);
+      const carried =
+        lastBacked?.branch === branch
+          ? { tree: lastBacked.tree, head: lastBacked.head }
+          : undefined;
+      const result = await backUp(sandboxId, branch, carried);
+      // Pin (tree, head) on a real push or an unchanged skip — both confirm the
+      // durable ref holds this tree on this base, so the next identical snapshot
+      // can dedup.
+      if (result.status === 'backed-up' || result.status === 'unchanged') {
+        lastBacked = { branch, tree: result.tree, head: result.head };
+      }
     } finally {
       inFlight = false;
       if (!disposed && pending) {
@@ -152,7 +178,11 @@ export function useWorkspaceSandboxAutoBack({
     const scheduler = createAutoBackScheduler({
       debounceMs,
       getContext: () => ctxRef.current,
-      backUp: (id, br) => backUpRef.current(id, br),
+      backUp: (id, br, lastBacked) =>
+        backUpRef.current(id, br, {
+          lastBackedTree: lastBacked?.tree,
+          lastBackedHead: lastBacked?.head,
+        }),
     });
     const unsubscribe = onWorkspaceMutation((mutatedSandboxId) => {
       scheduler.onMutation(mutatedSandboxId);
