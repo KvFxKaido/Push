@@ -136,7 +136,7 @@ describe('toolCallNarration', () => {
     expect(toolCallNarration('   \n  ')).toBe('');
   });
 
-  it('hides delegation briefs / state envelopes (machinery, not prose)', () => {
+  it('hides model-echoed machinery envelopes (state dumps, not prose)', () => {
     expect(toolCallNarration('[USER_GOAL]\nShip the gate-at-push change')).toBe('');
     expect(toolCallNarration('Context follows.\n[CODER_STATE]\n...')).toBe('');
     expect(toolCallNarration('[SCRATCHPAD] working notes')).toBe('');

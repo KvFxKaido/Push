@@ -187,10 +187,16 @@ export function stripToolCallPayload(content: string): string {
 }
 
 /**
- * Machinery envelope markers — delegation briefs, state dumps, and other
- * internal blocks (e.g. `[USER_GOAL]`, `[CODER_STATE]`, `[SCRATCHPAD]`) that can
- * ride in an assistant tool-call message's content. They are addressed to the
- * agent loop, not the transcript, so they must never surface as narration.
+ * Machinery envelope markers — internal blocks like `[USER_GOAL]`,
+ * `[CODER_STATE]`, `[SCRATCHPAD]`, `[SESSION_DIGEST]`. Push never puts these in
+ * an assistant message itself: delegation briefs ride a background sub-agent's
+ * `role: 'user'` prompt (`coder-agent.ts` / `explorer-agent.ts`), not the
+ * orchestrator's response stream. The only way one reaches displayed narration
+ * is the model *echoing* a marker into its own content (instruction bleed). We
+ * can't tag model-echoed text at emit time — Push didn't emit it — so a pattern
+ * match is the right tool here. Kept intentionally broad (any `[UPPER_ENVELOPE]`
+ * token): the echo case is rare, and erring toward hiding a stray bracket beats
+ * leaking a state dump into the transcript.
  */
 const MACHINERY_ENVELOPE_RE = /\[[A-Z][A-Z_]{2,}\]/;
 
@@ -204,7 +210,7 @@ const MACHINERY_ENVELOPE_RE = /\[[A-Z][A-Z_]{2,}\]/;
  * stay hidden. This guard surfaces genuine narration and drops machinery:
  *
  * - empty / whitespace-only → '' (nothing to show)
- * - contains a `[UPPER_ENVELOPE]` marker → '' (a brief/state dump, not prose)
+ * - contains a `[UPPER_ENVELOPE]` marker → '' (model echoed machinery, not prose)
  * - still reads as a tool call after stripping → '' (JSON residue, not prose)
  * - otherwise → the trimmed narration
  *
