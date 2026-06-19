@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import type { ApprovalMode } from '@/lib/approval-mode';
 import { Toaster } from '@/components/ui/sonner';
@@ -231,8 +231,43 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
   const [commitSwitchProbe, setCommitSwitchProbe] = useState<BranchSwitchProbe | null>(null);
   const [commitSwitchError, setCommitSwitchError] = useState<string | null>(null);
   const [commitSwitchingBranch, setCommitSwitchingBranch] = useState<string | null>(null);
+  const previousSandboxStatusRef = useRef(sandbox.status);
 
   const { markSnapshotActivity } = snapshots;
+
+  useEffect(() => {
+    const previousStatus = previousSandboxStatusRef.current;
+    if (previousStatus === sandbox.status) return;
+    previousSandboxStatusRef.current = sandbox.status;
+
+    if (sandbox.status === 'reconnecting') {
+      toast.info('Reconnecting to sandbox...', { id: 'sandbox-connectivity' });
+      return;
+    }
+
+    if (sandbox.status === 'ready') {
+      if (previousStatus === 'reconnecting') {
+        toast.success('Sandbox reconnected', { id: 'sandbox-connectivity' });
+      } else if (previousStatus === 'creating') {
+        toast.success('Sandbox ready', { id: 'sandbox-connectivity' });
+      }
+      return;
+    }
+
+    if (sandbox.status === 'idle' && previousStatus === 'ready') {
+      toast.info('Sandbox idle. Code tools will start it again when needed.', {
+        id: 'sandbox-connectivity',
+      });
+      return;
+    }
+
+    if (sandbox.status === 'error' && sandbox.error) {
+      toast.error('Sandbox needs attention', {
+        id: 'sandbox-connectivity',
+        description: 'Open the workspace status for retry and restart options.',
+      });
+    }
+  }, [sandbox.error, sandbox.status]);
 
   const sandboxStart = sandbox.start;
   const sandboxStop = sandbox.stop;

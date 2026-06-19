@@ -17,6 +17,9 @@ vi.mock('@/components/chat/SandboxStatusBanner', () => ({
   SandboxStatusBanner: ({ status }: { status: string }) => (
     <div data-testid="sandbox-status-banner">status:{status}</div>
   ),
+  SandboxStatusChip: ({ status }: { status: string }) => (
+    <div data-testid="sandbox-status-chip">chip:{status}</div>
+  ),
 }));
 vi.mock('@/components/chat/SandboxExpiryBanner', () => ({
   SandboxExpiryBanner: () => <div data-testid="sandbox-expiry-banner">expiry</div>,

@@ -9,7 +9,7 @@ import { ChatInput } from '@/components/chat/ChatInput';
 import { RepoChatDrawer } from '@/components/chat/RepoChatDrawer';
 import { WebSearchMenu } from '@/components/chat/WebSearchMenu';
 import { SandboxExpiryBanner } from '@/components/chat/SandboxExpiryBanner';
-import { SandboxStatusBanner } from '@/components/chat/SandboxStatusBanner';
+import { SandboxStatusBanner, SandboxStatusChip } from '@/components/chat/SandboxStatusBanner';
 import { AutoBackRestoreBanner } from '@/components/chat/AutoBackRestoreBanner';
 import { usePerfMark } from '@/hooks/usePerfMark';
 import {
@@ -259,6 +259,11 @@ export function ChatScreen({
           )}
 
           <div className="relative z-20 flex min-w-0 items-center justify-end gap-2">
+            <SandboxStatusChip
+              status={sandboxStatus}
+              error={sandboxStatusBannerProps.error}
+              onOpenWorkspaceHub={onOpenWorkspaceHub}
+            />
             <WebSearchMenu
               triggerClassName={HEADER_ROUND_BUTTON_CLASS}
               lockedProvider={chat.lockedProvider}
