@@ -266,3 +266,20 @@ drift):
 3. **WIP-push cadence for the "always-backed" invariant** — every N edits, on a
    timer, before token expiry, on first `SANDBOX_UNREACHABLE`, or some
    combination? Determines how much unpushed work is at risk between checkpoints.
+4. **Pin the destination ref on the approval card, not just source HEAD** —
+   precondition on B1, not a fix for today. Move A's approval pins
+   `auditedHeadSha` and re-checks it fail-closed at push
+   (`app/src/hooks/chat-card-actions.ts`), so the approved push ships *the same
+   commits* that were audited. It does **not** pin the destination: the target
+   branch/remote is resolved live at push time from `branchInfoRef.current`
+   (`committedBranch` is written *after* the push from live state), so the card
+   guarantees "same commits as audited" but not "same destination as audited."
+   This is safe **only** while the session model holds one push target per
+   sandbox (one active branch per sandbox; UI branch swaps restart the sandbox
+   as the desync guard). **B1 (push-to-start) and OQ3 (WIP-push cadence) are
+   exactly what loosen that invariant** — more push targets, more concurrent
+   destinations in flight — at which point an unpinned destination becomes a real
+   stale-target gap, not a theoretical one. Before that work lands: add
+   `auditedBranch`/`auditedUpstream` to `CommitReviewCardData`
+   (`app/src/types/index.ts`) and re-check them alongside the HEAD pin at
+   approval, fail-closed on mismatch.
