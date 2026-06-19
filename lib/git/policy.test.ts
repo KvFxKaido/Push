@@ -362,6 +362,21 @@ const CORPUS: Case[] = [
     command: 'git push &>> out.log',
     expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
   },
+  // INPUT fd-duplicates (`<&0`, `0<&-`) between `git` and the subcommand: the
+  // `&` is preceded by `<`, so it must NOT split (else `git <&0 push` becomes
+  // `git <` with no subcommand → passthrough, reopening the bypass — Codex P1).
+  {
+    command: 'git <&0 push',
+    expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
+  },
+  {
+    command: 'git remote <&0 set-url origin https://evil.example/r.git',
+    expected: { kind: 'block', reason: 'remote-mutation', label: 'git remote set-url' },
+  },
+  {
+    command: 'git 0<&- merge feature/x',
+    expected: { kind: 'block', reason: 'no-local-merge', label: 'git merge' },
+  },
   // subshell / group wrapping no longer hides the git token.
   {
     command: '(git push)',

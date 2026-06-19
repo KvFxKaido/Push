@@ -206,6 +206,18 @@ describe('createGitGuardPreHook', () => {
     expect(result.errorType).toBe('GIT_GUARD_BLOCKED');
   });
 
+  it('denies a push behind an input fd-duplicate redirect', async () => {
+    // `<&0` is a redirect, not a separator — the guard must still see the push.
+    const entry = withMode('supervised');
+    const result = await entry.hook(
+      'sandbox_exec',
+      { command: 'git <&0 push origin main' },
+      emptyContext,
+    );
+    expect(result.decision).toBe('deny');
+    expect(result.errorType).toBe('GIT_GUARD_BLOCKED');
+  });
+
   it('blocks a local `git merge` in full-auto (no consent escape)', async () => {
     const entry = withMode('full-auto');
     const result = await entry.hook(

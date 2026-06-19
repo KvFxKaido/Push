@@ -174,14 +174,17 @@ function isGitToken(token: string): boolean {
  * would be classified and the `git push` would bypass the guard. A
  * standalone `&` (background / sequencing) is also a separator so
  * `git status & git push` doesn't hide the push (#987); the lookbehind /
- * lookahead exclude the `&` inside fd duplicates (`2>&1`, `>&-`) and the
- * `&>`/`&&` operators so those aren't mis-split. Quote handling is
+ * lookahead exclude the `&` inside fd duplicates — both output (`2>&1`,
+ * `>&-`) and input (`<&0`, `0<&-`) forms, hence `<` in the lookbehind — and
+ * the `&>`/`&&` operators, so those aren't mis-split. (Without `<` excluded,
+ * `git <&0 push` would split into `git <` (no subcommand → passthrough) and
+ * reopen the raw-push / remote-mutation bypass.) Quote handling is
  * best-effort — embedded separators inside quoted strings are treated as
  * separators too, which biases toward over-detection (safer for a guard).
  */
 function splitOnListSeparators(command: string): string[] {
   return command
-    .split(/(?:&&|\|\|?|;|\r?\n|(?<![>&])&(?![>&]))/)
+    .split(/(?:&&|\|\|?|;|\r?\n|(?<![<>&])&(?![>&]))/)
     .map((s) => s.trim())
     .filter(Boolean);
 }
