@@ -45,10 +45,32 @@ function shouldInjectGitHubAuth(args: string[]): boolean {
   return args[0] === 'fetch' || args[0] === 'push' || args[0] === 'ls-remote';
 }
 
+function gitHubAuthConfigArgs(token: string): string[] {
+  const encoded = base64Encode(`x-access-token:${token}`);
+  return ['-c', `http.https://github.com/.extraheader=AUTHORIZATION: basic ${encoded}`];
+}
+
 function withTransientGitHubAuth(args: string[], token: string): string[] {
   if (!token || !shouldInjectGitHubAuth(args)) return args;
-  const encoded = base64Encode(`x-access-token:${token}`);
-  return ['-c', `http.https://github.com/.extraheader=AUTHORIZATION: basic ${encoded}`, ...args];
+  return [...gitHubAuthConfigArgs(token), ...args];
+}
+
+/**
+ * Shell-escaped `git -c …` prefix that injects transient GitHub auth into a RAW
+ * git command string that talks to origin. Origin is rewritten tokenless after
+ * clone (#987), so code that builds shell commands directly (NOT via the
+ * GitBackend argv path) must add auth itself for network reads against origin —
+ * e.g. auto-back restore's `git fetch origin <ref>` and the remote
+ * branch-collision `git ls-remote origin`. Returns '' when no token is active,
+ * so public-repo / no-auth calls are unchanged. Splice as `git ${prefix}fetch …`
+ * (the non-empty form carries a trailing space).
+ */
+export function gitHubAuthCommandPrefix(
+  getToken: GitHubTokenProvider = getActiveGitHubToken,
+): string {
+  const token = getToken();
+  if (!token) return '';
+  return `${gitHubAuthConfigArgs(token).map(shellEscape).join(' ')} `;
 }
 
 /**

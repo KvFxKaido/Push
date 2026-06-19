@@ -4,7 +4,14 @@ vi.mock('./sandbox-client', () => ({
   execInSandbox: vi.fn(),
 }));
 
+vi.mock('./git-backend', () => ({
+  // Default to no token → empty prefix, so command-string assertions that don't
+  // exercise auth stay unchanged. Tests that cover private-repo auth override it.
+  gitHubAuthCommandPrefix: vi.fn(() => ''),
+}));
+
 import { execInSandbox } from './sandbox-client';
+import { gitHubAuthCommandPrefix } from './git-backend';
 import { applyAutoBackRestore, detectAutoBackRestore } from './sandbox-auto-back-restore';
 
 const SHA = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -27,7 +34,22 @@ function dispatch(handler: (command: string) => ExecReply) {
 }
 
 describe('detectAutoBackRestore', () => {
-  beforeEach(() => vi.mocked(execInSandbox).mockReset());
+  beforeEach(() => {
+    vi.mocked(execInSandbox).mockReset();
+    vi.mocked(gitHubAuthCommandPrefix).mockReturnValue('');
+  });
+
+  it('injects transient GitHub auth into the origin fetch when a token is active (#987)', async () => {
+    // Origin is tokenless after clone, so private-repo restore must carry auth
+    // on the `git fetch origin <ref>` or it degrades to NONE/FETCH_FAILED.
+    const authPrefix = "-c 'http.https://github.com/.extraheader=AUTHORIZATION: basic eC1h' ";
+    vi.mocked(gitHubAuthCommandPrefix).mockReturnValue(authPrefix);
+    dispatch((cmd) => (cmd.includes('git fetch --no-tags') ? { stdout: 'NONE\n' } : {}));
+    await detectAutoBackRestore('sb-1', 'feature/x', silent);
+    expect(String(vi.mocked(execInSandbox).mock.calls[0]?.[1])).toContain(
+      `git ${authPrefix}fetch --no-tags origin "draft/auto/feature/x"`,
+    );
+  });
 
   it('guards missing and invalid inputs before touching the sandbox', async () => {
     expect(await detectAutoBackRestore(null, 'feature/x', silent)).toEqual({

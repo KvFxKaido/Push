@@ -3,6 +3,7 @@ import type { BranchSwitchPayload, ChatMessage } from '@/types';
 import { parseDiffStats } from '@/lib/diff-utils';
 import { forkBranchInWorkspace } from '@/lib/fork-branch-in-workspace';
 import { execInSandbox } from '@/lib/sandbox-client';
+import { gitHubAuthCommandPrefix } from '@/lib/git-backend';
 import { shellEscape } from '@/lib/sandbox-tool-utils';
 import { getActiveProvider, getProviderPushStream, type ActiveProvider } from '@/lib/orchestrator';
 import { getModelForRole } from '@/lib/providers';
@@ -161,11 +162,14 @@ function isBranchExistsMessage(message: string | undefined): boolean {
 
 async function branchExists(sandboxId: string, branch: string): Promise<boolean> {
   const escaped = shellEscape(branch);
+  // origin is tokenless after clone (#987); ls-remote against a private repo
+  // needs transient auth, or the remote-collision check goes blind.
+  const authPrefix = gitHubAuthCommandPrefix();
   const result = await execInSandbox(
     sandboxId,
     [
       `if git show-ref --verify --quiet refs/heads/${escaped}; then exit 10; fi`,
-      `if git ls-remote --exit-code --heads origin ${escaped} >/dev/null 2>&1; then exit 10; fi`,
+      `if git ${authPrefix}ls-remote --exit-code --heads origin ${escaped} >/dev/null 2>&1; then exit 10; fi`,
       'exit 0',
     ].join(' && '),
     '/workspace',
