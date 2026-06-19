@@ -120,6 +120,10 @@ const FUSED_REDIRECT = /^(?:[0-9]*[<>]|[0-9]*>{1,2}&[0-9-]*)/;
 // Pipe / list separators. `&` is intentionally NOT a top-level separator
 // here because it appears inside fd duplicates like `2>&1`.
 const LIST_SEPARATOR_TOKEN = /^(?:&&|\|\|?|;)$/;
+// Redirect operators can be glued to a command word or arg with no whitespace:
+// `git>/tmp/log push`, `git push>/tmp/log`, `git&>/tmp/log push`. Bash still
+// runs `git` / `push`; the redirect suffix is shell syntax, not part of argv.
+const ATTACHED_REDIRECT_SUFFIX = /^(.+?)(?:&>>?|<>|<<|>>|<&|>&|[<>])(.*)$/;
 
 // Git global options that consume a separate argument token (e.g.
 // `-C <path>`). When parsing past these to find the subcommand, the next
@@ -207,12 +211,20 @@ function stripShellWrapping(token: string): string {
     .replace(/^\\+/, '');
 }
 
+function stripAttachedRedirect(token: string): { token: string; skipNext: boolean } {
+  const match = token.match(ATTACHED_REDIRECT_SUFFIX);
+  if (!match) return { token, skipNext: false };
+  const [, prefix, target = ''] = match;
+  return { token: prefix, skipNext: target.length === 0 };
+}
+
 /**
  * Tokenize a single segment, dropping shell-side operator artifacts
- * (redirects, fd dups) and stripping shell wrapping (parens / quotes /
- * leading escape) off each surviving token. The returned tokens read like a
- * clean `argv` from git's perspective — so `(git push)` and `"git" push`
- * expose the same `['git', 'push']` a bare `git push` would.
+ * (redirects, fd dups), peeling redirect suffixes glued to command words, and
+ * stripping shell wrapping (parens / quotes / leading escape) off each
+ * surviving token. The returned tokens read like a clean `argv` from git's
+ * perspective — so `(git push)`, `"git" push`, and `git>/tmp/log push` expose
+ * the same `['git', 'push']` a bare `git push` would.
  */
 function tokenizeSegment(segment: string): string[] {
   const raw = segment.trim().split(/\s+/).filter(Boolean);
@@ -225,10 +237,12 @@ function tokenizeSegment(segment: string): string[] {
       continue;
     }
     if (FUSED_REDIRECT.test(t)) continue;
+    const { token: withoutRedirect, skipNext } = stripAttachedRedirect(t);
+    if (skipNext) i++;
     // Unwrap parens/quotes/escape AFTER the operator checks (those match raw
     // shell forms); a token that was pure wrapping (`(`, `"`) normalizes to
     // empty and is dropped.
-    const normalized = stripShellWrapping(t);
+    const normalized = stripShellWrapping(withoutRedirect);
     if (normalized) tokens.push(normalized);
   }
   return tokens;

@@ -377,6 +377,28 @@ const CORPUS: Case[] = [
     command: 'git 0<&- merge feature/x',
     expected: { kind: 'block', reason: 'no-local-merge', label: 'git merge' },
   },
+  // Redirections can be attached to command words with no whitespace. Bash
+  // still runs `git push`; the redirect suffix must not become part of argv.
+  {
+    command: 'git>/tmp/git.log push origin main',
+    expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
+  },
+  {
+    command: 'git< /dev/null push origin main',
+    expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
+  },
+  {
+    command: 'git push>/tmp/git.log',
+    expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
+  },
+  {
+    command: 'git&>/tmp/git.log push origin main',
+    expected: { kind: 'route', to: 'push', args: {}, label: 'git push' },
+  },
+  {
+    command: 'git remote set-url>&2 origin https://evil.example/r.git',
+    expected: { kind: 'block', reason: 'remote-mutation', label: 'git remote set-url' },
+  },
   // subshell / group wrapping no longer hides the git token.
   {
     command: '(git push)',

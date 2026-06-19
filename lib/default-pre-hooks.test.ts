@@ -218,6 +218,17 @@ describe('createGitGuardPreHook', () => {
     expect(result.errorType).toBe('GIT_GUARD_BLOCKED');
   });
 
+  it('denies a push when redirection is attached to the git token', async () => {
+    const entry = withMode('supervised');
+    const result = await entry.hook(
+      'sandbox_exec',
+      { command: 'git>/tmp/git.log push origin main' },
+      emptyContext,
+    );
+    expect(result.decision).toBe('deny');
+    expect(result.errorType).toBe('GIT_GUARD_BLOCKED');
+  });
+
   it('blocks a local `git merge` in full-auto (no consent escape)', async () => {
     const entry = withMode('full-auto');
     const result = await entry.hook(
