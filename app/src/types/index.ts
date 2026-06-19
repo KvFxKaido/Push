@@ -316,6 +316,11 @@ export interface AttachmentData {
 export interface ToolMeta {
   /** The tool that was executed (e.g. 'sandbox_write_file', 'delegate_coder'). */
   toolName: string;
+  /** Salient argument for a compact settled summary — the file path, command,
+   *  or query (`getToolStatusDetail`), already truncated. Lets the tool group
+   *  render "Read config.json" instead of "Read a file". Undefined for tools
+   *  with no useful target (and for error/rejection paths). */
+  target?: string;
   /** Tool dispatch source ('github' | 'sandbox' | 'delegate' | 'scratchpad' | 'web-search'). */
   source: string;
   /** Provider locked to the conversation when the tool was executed. */

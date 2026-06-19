@@ -311,6 +311,7 @@ export async function executeSingleToolCall(
       metaLine,
       toolMeta: buildToolMeta({
         toolName: getToolName(toolCall),
+        target: getToolStatusDetail(toolCall),
         source: toolCall.source,
         provider: lockedProvider,
         durationMs: toolExecDurationMs,

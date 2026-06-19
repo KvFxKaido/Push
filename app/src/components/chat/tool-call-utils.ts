@@ -96,6 +96,18 @@ export function getLabel(toolName: string): ToolLabel {
 /* ------------------------------------------------------------------ */
 
 export function buildSummaryLine(items: ToolCallPair[]): string {
+  // Single call → prefer the concrete target ("Read config.json", "Ran npm
+  // test") over the generic noun ("Read a file") when we captured one. Falls
+  // back to the noun form for tools with no useful target. Only applies to a
+  // lone call — batches keep the aggregated "Read 3 files" form below.
+  if (items.length === 1) {
+    const item = items[0];
+    const name = item.resultMsg.toolMeta?.toolName ?? item.callMsg.toolMeta?.toolName ?? 'unknown';
+    const target = item.callMsg.toolMeta?.target ?? item.resultMsg.toolMeta?.target;
+    const { verb, noun } = getLabel(name);
+    return target ? `${verb} ${target}` : `${verb} a ${noun}`;
+  }
+
   const counts = new Map<string, number>();
   for (const item of items) {
     const name = item.resultMsg.toolMeta?.toolName ?? item.callMsg.toolMeta?.toolName ?? 'unknown';

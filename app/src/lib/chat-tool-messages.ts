@@ -21,6 +21,7 @@ export interface BuildToolResultMetaLineOptions {
 
 export interface BuildToolMetaOptions {
   toolName: string;
+  target?: string;
   source: string;
   provider?: AIProviderType;
   durationMs: number;
@@ -184,6 +185,7 @@ export function buildToolResultMetaLine(
 export function buildToolMeta(options: BuildToolMetaOptions): ToolMeta {
   return {
     toolName: options.toolName,
+    target: options.target,
     source: options.source,
     provider: options.provider,
     durationMs: options.durationMs,

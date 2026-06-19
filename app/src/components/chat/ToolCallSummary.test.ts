@@ -123,6 +123,38 @@ describe('buildSummaryLine', () => {
     expect(buildSummaryLine(items)).toBe('Ran a command');
   });
 
+  it('uses the captured target for a single call: "Ran npm test"', () => {
+    const call = toolCallMsg('1');
+    call.toolMeta = { ...call.toolMeta!, target: 'npm test' };
+    const items: ToolCallPair[] = [
+      { callMsg: call, resultMsg: toolResultMsg('1', 'sandbox_exec') },
+    ];
+    expect(buildSummaryLine(items)).toBe('Ran npm test');
+  });
+
+  it('reads the target off the result message too', () => {
+    const result = toolResultMsg('1', 'read_file');
+    result.toolMeta = { ...result.toolMeta!, target: 'config.json' };
+    const items: ToolCallPair[] = [{ callMsg: toolCallMsg('1'), resultMsg: result }];
+    expect(buildSummaryLine(items)).toBe('Read config.json');
+  });
+
+  it('falls back to the noun form when a single call has no target', () => {
+    const items: ToolCallPair[] = [
+      { callMsg: toolCallMsg('1'), resultMsg: toolResultMsg('1', 'sandbox_exec') },
+    ];
+    expect(buildSummaryLine(items)).toBe('Ran a command');
+  });
+
+  it('ignores the target for batches (keeps the aggregated count form)', () => {
+    const items: ToolCallPair[] = Array.from({ length: 2 }, (_, i) => {
+      const call = toolCallMsg(`c${i}`);
+      call.toolMeta = { ...call.toolMeta!, toolName: 'read_file', target: `file${i}.ts` };
+      return { callMsg: call, resultMsg: toolResultMsg(`r${i}`, 'read_file') };
+    });
+    expect(buildSummaryLine(items)).toBe('Read 2 files');
+  });
+
   it('summarises 3 files as "Read 3 files"', () => {
     const items: ToolCallPair[] = Array.from({ length: 3 }, (_, i) => ({
       callMsg: toolCallMsg(`c${i}`),
