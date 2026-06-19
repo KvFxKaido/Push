@@ -33,7 +33,60 @@ describe('createAutoBackScheduler', () => {
     expect(backUp).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(backUp).toHaveBeenCalledTimes(1);
-    expect(backUp).toHaveBeenCalledWith('sb-1', 'feature/x');
+    // First backup has no prior tree to dedup against.
+    expect(backUp).toHaveBeenCalledWith('sb-1', 'feature/x', undefined);
+  });
+
+  it('threads the last backed-up tree into the next backup so it can dedup (#982)', async () => {
+    const ctx: AutoBackContext = { sandboxId: 'sb-1', branch: 'feature/x', enabled: true };
+    const backUp = vi.fn(
+      async (): Promise<AutoBackResult> => ({
+        status: 'backed-up',
+        ref: 'draft/auto/feature/x',
+        sha: 's',
+        tree: 'tree-1',
+      }),
+    );
+    const scheduler = createAutoBackScheduler({
+      debounceMs: DEBOUNCE,
+      getContext: () => ctx,
+      backUp,
+    });
+
+    scheduler.onMutation('sb-1');
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+    expect(backUp).toHaveBeenNthCalledWith(1, 'sb-1', 'feature/x', undefined);
+
+    scheduler.onMutation('sb-1');
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+    // Second run carries the tree the first backup pinned.
+    expect(backUp).toHaveBeenNthCalledWith(2, 'sb-1', 'feature/x', 'tree-1');
+  });
+
+  it('does not reuse the dedup tree across a branch change', async () => {
+    const ctx: AutoBackContext = { sandboxId: 'sb-1', branch: 'feature/x', enabled: true };
+    const backUp = vi.fn(
+      async (_id: string, branch: string): Promise<AutoBackResult> => ({
+        status: 'backed-up',
+        ref: `draft/auto/${branch}`,
+        sha: 's',
+        tree: `tree-${branch}`,
+      }),
+    );
+    const scheduler = createAutoBackScheduler({
+      debounceMs: DEBOUNCE,
+      getContext: () => ctx,
+      backUp,
+    });
+
+    scheduler.onMutation('sb-1');
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+
+    ctx.branch = 'feature/y';
+    scheduler.onMutation('sb-1');
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+    // New branch → no carried tree (the pin was for feature/x).
+    expect(backUp).toHaveBeenNthCalledWith(2, 'sb-1', 'feature/y', undefined);
   });
 
   it('ignores mutations for a different sandbox', async () => {
@@ -78,7 +131,7 @@ describe('createAutoBackScheduler', () => {
     const backUp = vi.fn(
       () =>
         new Promise<AutoBackResult>((resolve) => {
-          resolveBackup = () => resolve({ status: 'backed-up', ref: 'r', sha: 's' });
+          resolveBackup = () => resolve({ status: 'backed-up', ref: 'r', sha: 's', tree: 't' });
         }),
     );
     const ctx: AutoBackContext = { sandboxId: 'sb-1', branch: 'feature/x', enabled: true };

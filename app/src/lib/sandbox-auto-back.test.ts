@@ -8,6 +8,7 @@ import { execInSandbox } from './sandbox-client';
 import { backUpWorkingTree, autoBackRef } from './sandbox-auto-back';
 
 const SHA = 'abcdef1234567890abcdef1234567890abcdef12';
+const TREE = '1111111111111111111111111111111111111111';
 const silent = { log: () => {} };
 
 type ExecReply = { stdout?: string; stderr?: string; exitCode?: number; error?: string };
@@ -61,20 +62,61 @@ describe('backUpWorkingTree', () => {
 
   it('captures + force-pushes the backup commit to the per-branch ref', async () => {
     dispatch((cmd) => {
-      if (cmd.includes('commit-tree')) return { stdout: `COMMIT ${SHA}` };
+      if (cmd.includes('commit-tree')) return { stdout: `COMMIT ${SHA} ${TREE}` };
       if (cmd.includes('git diff')) return { stdout: 'diff --git a/x b/x\n+ a clean line\n' };
       if (cmd.includes('origin')) return { stdout: '' };
       return {};
     });
     const result = await backUpWorkingTree('sb-1', 'feature/x', silent);
-    expect(result).toEqual({ status: 'backed-up', ref: 'draft/auto/feature/x', sha: SHA });
+    expect(result).toEqual({
+      status: 'backed-up',
+      ref: 'draft/auto/feature/x',
+      sha: SHA,
+      tree: TREE,
+    });
     // Force refspec to the stable ref.
     expect(String(pushCalls()[0]?.[1])).toContain(`+${SHA}:refs/heads/draft/auto/feature/x`);
   });
 
+  it('skips the redundant push when the snapshot tree matches the last backup (#982)', async () => {
+    dispatch((cmd) => {
+      if (cmd.includes('commit-tree')) return { stdout: `COMMIT ${SHA} ${TREE}` };
+      if (cmd.includes('git diff')) return { stdout: 'diff --git a/x b/x\n+ a clean line\n' };
+      if (cmd.includes('origin')) return { stdout: '' };
+      return {};
+    });
+    const result = await backUpWorkingTree('sb-1', 'feature/x', {
+      ...silent,
+      lastBackedTree: TREE,
+    });
+    expect(result).toEqual({
+      status: 'unchanged',
+      ref: 'draft/auto/feature/x',
+      sha: SHA,
+      tree: TREE,
+    });
+    // Dirty tree, but identical to the last backup → no force-push, no scan.
+    expect(pushCalls()).toHaveLength(0);
+  });
+
+  it('still pushes when the snapshot tree differs from the last backup', async () => {
+    dispatch((cmd) => {
+      if (cmd.includes('commit-tree')) return { stdout: `COMMIT ${SHA} ${TREE}` };
+      if (cmd.includes('git diff')) return { stdout: 'diff --git a/x b/x\n+ a clean line\n' };
+      if (cmd.includes('origin')) return { stdout: '' };
+      return {};
+    });
+    const result = await backUpWorkingTree('sb-1', 'feature/x', {
+      ...silent,
+      lastBackedTree: '9999999999999999999999999999999999999999',
+    });
+    expect(result.status).toBe('backed-up');
+    expect(pushCalls()).toHaveLength(1);
+  });
+
   it('blocks (does not push) when the backup content contains a secret', async () => {
     dispatch((cmd) => {
-      if (cmd.includes('commit-tree')) return { stdout: `COMMIT ${SHA}` };
+      if (cmd.includes('commit-tree')) return { stdout: `COMMIT ${SHA} ${TREE}` };
       // Untracked .env with an AWS key — the scan must catch it before the push.
       if (cmd.includes('git diff'))
         return { stdout: 'diff --git a/.env b/.env\n+AWS_KEY=AKIAIOSFODNN7EXAMPLE\n' };
@@ -94,7 +136,7 @@ describe('backUpWorkingTree', () => {
 
   it('returns a typed failure when the push itself fails', async () => {
     dispatch((cmd) => {
-      if (cmd.includes('commit-tree')) return { stdout: `COMMIT ${SHA}` };
+      if (cmd.includes('commit-tree')) return { stdout: `COMMIT ${SHA} ${TREE}` };
       if (cmd.includes('git diff')) return { stdout: '' };
       if (cmd.includes('origin')) return { stdout: '', stderr: 'remote rejected', exitCode: 1 };
       return {};

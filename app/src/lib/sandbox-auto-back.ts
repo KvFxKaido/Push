@@ -24,8 +24,8 @@
  * local filesystem and needs no remote backup.
  *
  * Symmetric structured logs, one per branch (see CLAUDE.md):
- * `auto_back_pushed` ↔ `auto_back_clean` ↔ `auto_back_blocked` ↔
- * `auto_back_skipped` ↔ `auto_back_failed`.
+ * `auto_back_pushed` ↔ `auto_back_clean` ↔ `auto_back_unchanged` ↔
+ * `auto_back_blocked` ↔ `auto_back_skipped` ↔ `auto_back_failed`.
  */
 
 import { makeSecretScanPrePushGate } from '@push/lib/git/secret-scan-gate';
@@ -41,7 +41,12 @@ export function autoBackRef(branch: string): string {
 export type AutoBackResult =
   | { status: 'skipped'; reason: string }
   | { status: 'clean' }
-  | { status: 'backed-up'; ref: string; sha: string }
+  | { status: 'backed-up'; ref: string; sha: string; tree: string }
+  // Dirty (tree != HEAD) but the snapshot tree matches the last backup already
+  // pushed this session — the durable ref already holds this content, so the
+  // redundant force-push is skipped. `tree` is carried so the coordinator keeps
+  // its dedup pin.
+  | { status: 'unchanged'; ref: string; sha: string; tree: string }
   | { status: 'blocked'; reason: string }
   | { status: 'failed'; reason: string };
 
@@ -56,7 +61,10 @@ const defaultLog: LogFn = (level, event, ctx) =>
 // "clean" is decided by comparing the snapshot tree to HEAD's tree — NOT by
 // `git status` (which can report an untracked-only tree as empty under
 // `showUntrackedFiles=no`, and reports failures as empty too; Codex P2 on #980).
-// Prints `CLEAN` when the tree matches HEAD, `COMMIT <sha>` on success, or
+// Prints `CLEAN` when the tree matches HEAD, `COMMIT <commit-sha> <tree-sha>`
+// on success (the tree sha lets the coordinator skip re-pushing an unchanged
+// snapshot — two captures of the same tree produce different commit shas via
+// commit-tree's timestamp, so the commit sha alone can't dedup), or
 // `ERR <stage>` on a git failure (kept non-fatal — one bad backup must never
 // brick the session).
 const CAPTURE_COMMAND = [
@@ -92,7 +100,7 @@ const CAPTURE_COMMAND = [
   '  commit="$(git commit-tree "$tree" -m "push: auto-back WIP" 2>/dev/null)"',
   'fi',
   '[ -z "$commit" ] && { echo "ERR commit-tree"; exit 0; }',
-  'echo "COMMIT $commit"',
+  'echo "COMMIT $commit $tree"',
 ].join('\n');
 
 /**
@@ -103,7 +111,7 @@ const CAPTURE_COMMAND = [
 export async function backUpWorkingTree(
   sandboxId: string | null,
   branch: string | null | undefined,
-  opts?: { log?: LogFn },
+  opts?: { log?: LogFn; lastBackedTree?: string },
 ): Promise<AutoBackResult> {
   const log = opts?.log ?? defaultLog;
   const trimmedBranch = branch?.trim();
@@ -139,26 +147,33 @@ export async function backUpWorkingTree(
     log('info', 'auto_back_clean', { branch: trimmedBranch });
     return { status: 'clean' };
   }
-  const match = /^COMMIT ([0-9a-f]{7,40})$/m.exec(captureOut);
+  const match = /^COMMIT ([0-9a-f]{7,40}) ([0-9a-f]{7,40})$/m.exec(captureOut);
   if (!match) {
     const reason = captureErr ?? captureOut ?? 'capture produced no commit';
     log('warn', 'auto_back_failed', { reason, stage: 'capture' });
     return { status: 'failed', reason };
   }
   const sha = match[1];
+  const tree = match[2];
   const ref = autoBackRef(trimmedBranch);
+
+  // Dedup (Codex P3 on #981): the conservative mutation signal fires on any
+  // attempt, so a no-op edit while the tree is dirty would re-push a tree
+  // identical to the last backup. The snapshot tree is content-addressed, so if
+  // it matches the last one pushed this session the durable ref already holds
+  // it — skip the redundant force-push (+ its secret scan). The commit sha
+  // can't dedup: commit-tree stamps a fresh timestamp each run.
+  if (opts?.lastBackedTree && tree === opts.lastBackedTree) {
+    log('info', 'auto_back_unchanged', { ref, tree });
+    return { status: 'unchanged', ref, sha, tree };
+  }
 
   // 2. Push the backup commit to the stable per-branch ref (force-update). The
   //    secret scan runs over the backup's content vs HEAD — which covers
   //    untracked files a plain `git diff HEAD` would miss — and the push is NOT
   //    Protect-Main-gated (it targets a draft ref, never the protected branch).
-  //
-  //    FOLLOW-UP (Codex P3 on #981): the capture only skips when tree == HEAD,
-  //    not when tree == the last pushed backup. With the conservative signal
-  //    (fire on any mutation attempt), a no-op attempt while the tree is dirty
-  //    re-pushes the identical tree. Harmless (idempotent, no loop), but a
-  //    tree-dedup (thread the last-backed tree through the coordinator and skip
-  //    an unchanged snapshot) would remove the redundant force-push.
+  //    The tree-dedup above (the `lastBackedTree` check) already skipped the
+  //    redundant force-push for an unchanged snapshot (Codex P3 on #981).
   const pushGit = createSandboxPushGit(sandboxId, {
     prePush: makeSecretScanPrePushGate({
       getDiff: () => diffBackupCommit(sandboxId, sha),
@@ -184,7 +199,7 @@ export async function backUpWorkingTree(
   }
 
   log('info', 'auto_back_pushed', { ref, sha });
-  return { status: 'backed-up', ref, sha };
+  return { status: 'backed-up', ref, sha, tree };
 }
 
 /**
