@@ -1,5 +1,6 @@
 import type { ChatCard, ChatMessage } from '@/types';
 import { Terminal, FileText, Search, Globe, Hammer, Wrench } from 'lucide-react';
+import { resolveToolName } from '@/lib/tool-registry';
 
 /* ------------------------------------------------------------------ */
 /*  ToolCallPair                                                      */
@@ -70,25 +71,42 @@ type ToolLabel = {
   icon: React.ElementType;
 };
 
+// Keyed by CANONICAL tool name. `toolMeta.toolName` is the *public* name in
+// production (getToolName → getToolPublicName: sandbox_exec → exec, etc.), so
+// `getLabel` normalizes to canonical before lookup — otherwise public names
+// miss and fall to "Used a tool".
 const LABELS: Record<string, ToolLabel> = {
-  sandbox_exec: { noun: 'command', verb: 'Ran', icon: Terminal },
+  // Read
   read_file: { noun: 'file', verb: 'Read', icon: FileText },
-  write_file: { noun: 'file', verb: 'Wrote', icon: FileText },
-  edit_range: { noun: 'file', verb: 'Edited', icon: FileText },
-  replace: { noun: 'file', verb: 'Edited', icon: FileText },
-  search: { noun: 'search', verb: 'Searched', icon: Search },
-  repo_search: { noun: 'search', verb: 'Searched', icon: Search },
-  repo_grep: { noun: 'search', verb: 'Searched', icon: Search },
-  repo_read: { noun: 'file', verb: 'Read', icon: FileText },
-  repo_ls: { noun: 'list', verb: 'Listed', icon: FileText },
+  sandbox_read_file: { noun: 'file', verb: 'Read', icon: FileText },
+  // Search
+  search_files: { noun: 'search', verb: 'Searched', icon: Search },
+  grep_file: { noun: 'search', verb: 'Searched', icon: Search },
+  sandbox_search: { noun: 'search', verb: 'Searched', icon: Search },
+  sandbox_find_references: { noun: 'search', verb: 'Searched', icon: Search },
   web_search: { noun: 'search', verb: 'Searched', icon: Globe },
+  // List
+  list_directory: { noun: 'list', verb: 'Listed', icon: FileText },
+  sandbox_list_dir: { noun: 'list', verb: 'Listed', icon: FileText },
+  // Exec
+  sandbox_exec: { noun: 'command', verb: 'Ran', icon: Terminal },
+  // Write / edit
+  sandbox_write_file: { noun: 'file', verb: 'Wrote', icon: FileText },
+  sandbox_edit_file: { noun: 'file', verb: 'Edited', icon: FileText },
+  sandbox_edit_range: { noun: 'file', verb: 'Edited', icon: FileText },
+  sandbox_search_replace: { noun: 'file', verb: 'Edited', icon: FileText },
+  sandbox_apply_patchset: { noun: 'file', verb: 'Edited', icon: FileText },
+  // Delegate
   delegate_coder: { noun: 'task', verb: 'Delegated', icon: Hammer },
   delegate_explorer: { noun: 'task', verb: 'Delegated', icon: Hammer },
   default: { noun: 'tool', verb: 'Used', icon: Wrench },
 };
 
 export function getLabel(toolName: string): ToolLabel {
-  return LABELS[toolName] ?? LABELS.default;
+  // Resolve public → canonical (resolveToolName accepts either form). Falls
+  // back to the raw name, then the default, for tools not in the table.
+  const canonical = resolveToolName(toolName) ?? toolName;
+  return LABELS[canonical] ?? LABELS[toolName] ?? LABELS.default;
 }
 
 /* ------------------------------------------------------------------ */
