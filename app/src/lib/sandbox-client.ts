@@ -34,6 +34,7 @@ import {
   evaluateRepoAuth,
   hasAcknowledgedUserTokenInjection,
 } from './sandbox-auth-gate';
+import { notifyWorkspaceMutation } from './sandbox-mutation-signal';
 
 // --- Types ---
 
@@ -80,6 +81,20 @@ export interface ExecResult {
   workspaceRevision?: number;
   /** Workspace git branch after the command completed. Omitted when unavailable. */
   branch?: string;
+}
+
+interface WorkspaceMutationExecOptions {
+  markWorkspaceMutated?: boolean;
+  suppressWorkspaceMutationSignal?: boolean;
+}
+
+function notifyMarkedWorkspaceMutation(
+  sandboxId: string,
+  options?: WorkspaceMutationExecOptions,
+): void {
+  if (options?.markWorkspaceMutated === true && options.suppressWorkspaceMutationSignal !== true) {
+    notifyWorkspaceMutation(sandboxId);
+  }
 }
 
 export interface FileReadResult {
@@ -1241,9 +1256,7 @@ export async function execInSandbox(
   sandboxId: string,
   command: string,
   workdir?: string,
-  options?: {
-    markWorkspaceMutated?: boolean;
-  },
+  options?: WorkspaceMutationExecOptions,
 ): Promise<ExecResult> {
   // API returns snake_case, we need camelCase
   const raw = await sandboxFetch<{
@@ -1270,6 +1283,7 @@ export async function execInSandbox(
   if (typeof raw.workspace_revision === 'number') {
     setSandboxWorkspaceRevision(sandboxId, raw.workspace_revision);
   }
+  notifyMarkedWorkspaceMutation(sandboxId, options);
   return {
     stdout: raw.stdout,
     stderr: raw.stderr,
@@ -1377,6 +1391,7 @@ export async function execLongRunningInSandbox(
   opts?: {
     workdir?: string;
     markWorkspaceMutated?: boolean;
+    suppressWorkspaceMutationSignal?: boolean;
     overallTimeoutMs?: number;
     /**
      * Cooperative cancel for the detached path (interrupt + drain + exit
@@ -1394,12 +1409,14 @@ export async function execLongRunningInSandbox(
     interrupt: (processId) => execInterruptInSandbox(sandboxId, processId),
   };
   try {
-    return await runDetachedToCompletion(primitives, command, {
+    const result = await runDetachedToCompletion(primitives, command, {
       workdir: opts?.workdir,
       overallTimeoutMs: opts?.overallTimeoutMs,
       abortSignal: opts?.abortSignal,
       onProgress: opts?.onProgress,
     });
+    notifyMarkedWorkspaceMutation(sandboxId, opts);
+    return result;
   } catch (err) {
     // runDetachedToCompletion throws ONLY when the start call failed. What we
     // do next depends on how it failed:
@@ -1444,6 +1461,7 @@ export async function execLongRunningInSandbox(
           message,
         }),
       );
+      notifyMarkedWorkspaceMutation(sandboxId, opts);
       return {
         stdout: '',
         stderr: '',
@@ -1469,6 +1487,7 @@ export async function execLongRunningInSandbox(
     );
     return await execInSandbox(sandboxId, command, opts?.workdir, {
       markWorkspaceMutated: opts?.markWorkspaceMutated,
+      suppressWorkspaceMutationSignal: opts?.suppressWorkspaceMutationSignal,
     });
   }
 }
@@ -1698,6 +1717,9 @@ export async function writeToSandbox(
   if (typeof result.current_workspace_revision === 'number') {
     setSandboxWorkspaceRevision(sandboxId, result.current_workspace_revision);
   }
+  if (result.ok) {
+    notifyWorkspaceMutation(sandboxId);
+  }
   return result;
 }
 
@@ -1762,6 +1784,9 @@ export async function batchWriteToSandbox(
   }
   if (typeof result.current_workspace_revision === 'number') {
     setSandboxWorkspaceRevision(sandboxId, result.current_workspace_revision);
+  }
+  if (result.ok || result.results.some((entry) => entry.ok)) {
+    notifyWorkspaceMutation(sandboxId);
   }
   return result;
 }
@@ -1996,6 +2021,7 @@ export async function deleteFromSandbox(
     setSandboxWorkspaceRevision(sandboxId, data.current_workspace_revision);
   }
   if (!data.ok) throw new Error(data.error || 'Delete failed');
+  notifyWorkspaceMutation(sandboxId);
   return data.workspace_revision;
 }
 

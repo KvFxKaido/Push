@@ -44,6 +44,7 @@ import {
 } from './sandbox-git-release-handlers';
 import type { DiffResult, ExecResult, FileReadResult } from './sandbox-client';
 import type { CreatedRepoResponse } from './sandbox-tool-utils';
+import { onWorkspaceMutation } from './sandbox-mutation-signal';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -326,6 +327,7 @@ describe('handleSandboxCommit', () => {
     // Silent commit: no card emitted, and the Auditor never runs at commit time.
     expect(result.card).toBeUndefined();
     expect(ctx.runAuditor).not.toHaveBeenCalled();
+    expect(ctx.execCalls[0][3]).toEqual({ markWorkspaceMutated: true });
   });
 
   it('returns a structured error when the post-hook getSandboxDiff fails', async () => {
@@ -392,6 +394,25 @@ describe('handleSandboxCommit', () => {
     expect(result.text).toContain('[Tool Error — sandbox_commit]');
     expect(result.structuredError).toBeDefined();
     expect(result.card).toBeUndefined();
+  });
+
+  it('signals auto-back when the backend commit fails after the hook path (#982)', async () => {
+    const diff = 'diff --git a/x.ts b/x.ts\n+ok\n';
+    const ctx = makeContext({
+      diffResults: [
+        { diff, truncated: false },
+        { diff, truncated: false },
+      ],
+      execResults: [ok('hook ran'), ok(), fail('', 'pre-commit rejected rewritten files', 1)],
+    });
+    const seen: string[] = [];
+    const off = onWorkspaceMutation((id) => seen.push(id));
+    try {
+      await handleSandboxCommit(ctx, { message: 'chore: x' });
+    } finally {
+      off();
+    }
+    expect(seen).toEqual(['sb-1']);
   });
 
   it('auto-forks off the default branch and emits a branchSwitch before committing', async () => {
@@ -553,7 +574,7 @@ describe('handleSandboxPush', () => {
       'sb-1',
       "git 'push' 'origin' 'HEAD'",
       undefined,
-      { markWorkspaceMutated: true },
+      { markWorkspaceMutated: true, suppressWorkspaceMutationSignal: true },
     ]);
     expect(result.text).toBe('[Tool Result — sandbox_push]\nPushed successfully.');
     expect(result.card).toBeUndefined();
@@ -739,12 +760,13 @@ describe('handlePromoteToGithub', () => {
     expect(result.text).toContain('Repository created: myuser/my-repo');
     expect(result.text).toContain('Visibility: public');
     expect(result.text).toContain('Push: successful on branch main');
-    // Final exec is the git push — must thread the mutation flag (commit 8b4cbe7).
+    // Final exec is the git push — it mutates git/cache state but suppresses
+    // the auto-back observer to avoid draft-push feedback loops (#982).
     expect(ctx.execCalls.at(-1)).toEqual([
       'sb-1',
       expect.stringMatching(/git 'push' '-u' 'origin'/),
       undefined,
-      { markWorkspaceMutated: true },
+      { markWorkspaceMutated: true, suppressWorkspaceMutationSignal: true },
     ]);
     expect(result.promotion).toEqual({
       repo: {
@@ -873,6 +895,26 @@ describe('handleSaveDraft', () => {
     // 5 handler execs: branch-detect, stage, commit, rev-parse (sha), push
     // (no checkout). execCalls excludes the transparent pre-push scan reads.
     expect(ctx.execCalls).toHaveLength(5);
+  });
+
+  it('signals auto-back when the draft commit fails after a possible hook rewrite (#982)', async () => {
+    const ctx = makeContext({
+      diffResults: [{ diff: 'diff --git a/x.ts b/x.ts\n+a\n', truncated: false }],
+      execResults: [
+        ok('draft/existing'),
+        ok(), // git add -A
+        fail('', 'pre-commit rejected rewritten files', 1), // git commit
+      ],
+    });
+    const seen: string[] = [];
+    const off = onWorkspaceMutation((id) => seen.push(id));
+    try {
+      const result = await handleSaveDraft(ctx, {});
+      expect(result.text).toContain('Failed to commit draft');
+    } finally {
+      off();
+    }
+    expect(seen).toEqual(['sb-1']);
   });
 
   it('checks out a different draft branch when an explicit branch_name is requested while already on a draft branch', async () => {

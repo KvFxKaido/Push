@@ -38,6 +38,7 @@ import {
   suppressIdleTouch,
 } from './sandbox-client';
 import { SANDBOX_USER_TOKEN_ACK_KEY, USER_TOKEN_GATE_MESSAGE } from './sandbox-auth-gate';
+import { onWorkspaceMutation } from './sandbox-mutation-signal';
 
 function createStorageMock() {
   const data = new Map<string, string>();
@@ -960,6 +961,61 @@ describe('execInSandbox — timeout retry behavior', () => {
     const { execInSandbox } = await import('./sandbox-client');
     await expect(execInSandbox('sb-1', 'echo hi')).rejects.toThrow();
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Workspace mutation signal rooting
+// ---------------------------------------------------------------------------
+
+describe('sandbox client workspace mutation signal', () => {
+  it('notifies after a marked exec completes', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ stdout: '', stderr: '', exit_code: 0, truncated: false }),
+    });
+    const seen: string[] = [];
+    const off = onWorkspaceMutation((id) => seen.push(id));
+    try {
+      await execInSandbox('sb-1', 'touch f', undefined, { markWorkspaceMutated: true });
+    } finally {
+      off();
+    }
+    expect(seen).toEqual(['sb-1']);
+  });
+
+  it('suppresses marked exec notifications for internal callers', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ stdout: '', stderr: '', exit_code: 0, truncated: false }),
+    });
+    const seen: string[] = [];
+    const off = onWorkspaceMutation((id) => seen.push(id));
+    try {
+      await execInSandbox('sb-1', 'git push origin HEAD', undefined, {
+        markWorkspaceMutated: true,
+        suppressWorkspaceMutationSignal: true,
+      });
+    } finally {
+      off();
+    }
+    expect(seen).toEqual([]);
+  });
+
+  it('notifies after a successful file write', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, bytes_written: 5, workspace_revision: 2 }),
+    });
+    const seen: string[] = [];
+    const off = onWorkspaceMutation((id) => seen.push(id));
+    try {
+      const { writeToSandbox } = await import('./sandbox-client');
+      await writeToSandbox('sb-1', '/workspace/a.txt', 'hello');
+    } finally {
+      off();
+    }
+    expect(seen).toEqual(['sb-1']);
   });
 });
 

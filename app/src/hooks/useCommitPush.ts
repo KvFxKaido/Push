@@ -31,6 +31,7 @@ import {
   ensureCommitTargetBranch,
 } from '@/lib/ensure-commit-target-branch';
 import { isDefinitivelyGoneMessage } from '@/lib/sandbox-error-utils';
+import { notifyWorkspaceMutation } from '@/lib/sandbox-mutation-signal';
 import type { BranchSwitchPayload, DiffPreviewCardData, AuditVerdictCardData } from '@/types';
 
 export type CommitPushPhase =
@@ -326,6 +327,7 @@ export function useCommitPush(
         const pushGit = createSandboxPushGit(targetSandbox, { secretScan: true });
         const commit = await pushGit.commit({ message });
         if (!commit.ok) {
+          notifyWorkspaceMutation(targetSandbox);
           const r = commit.result;
           if (r && isExecResultGone(r)) return { status: 'expired' };
           const detail = r?.stderr || r?.stdout || r?.error || 'Unknown error';

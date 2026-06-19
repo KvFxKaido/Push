@@ -86,6 +86,7 @@ import {
   shellEscape,
 } from './sandbox-tool-utils';
 import type { StructuredToolError } from '@/types';
+import { notifyWorkspaceMutation } from './sandbox-mutation-signal';
 
 // ---------------------------------------------------------------------------
 // Handler context
@@ -96,7 +97,7 @@ export type GitReleaseExecInSandbox = (
   sandboxId: string,
   command: string,
   workdir?: string,
-  options?: { markWorkspaceMutated?: boolean },
+  options?: { markWorkspaceMutated?: boolean; suppressWorkspaceMutationSignal?: boolean },
 ) => Promise<ExecResult>;
 
 /** Signature of the diff-fetch primitive the handlers call through. */
@@ -414,6 +415,7 @@ export async function handleSandboxCommit(
     ctx.sandboxId,
     'if [ -x .git/hooks/pre-commit ]; then .git/hooks/pre-commit 2>&1 || exit $?; fi',
     '/workspace',
+    { markWorkspaceMutated: true },
   );
   const hookOutput = [hookResult.stdout, hookResult.stderr]
     .filter((part): part is string => typeof part === 'string' && part.length > 0)
@@ -541,6 +543,7 @@ export async function handleSandboxCommit(
   }).commit({ message: args.message });
 
   if (!commitResult.ok) {
+    notifyWorkspaceMutation(ctx.sandboxId);
     const reason = commitResult.result?.stderr || commitResult.result?.stdout || 'commit failed';
     const err = classifyError(reason, 'sandbox_commit');
     console.log(
@@ -1054,6 +1057,7 @@ export async function handleSaveDraft(
   const draftMessage = args.message || 'WIP: draft save';
   const commitResult = await pushGit.commit({ message: draftMessage });
   if (!commitResult.ok) {
+    notifyWorkspaceMutation(ctx.sandboxId);
     return {
       text: `[Tool Error — sandbox_save_draft]\nFailed to commit draft: ${commitResult.result?.stderr ?? ''}`,
     };

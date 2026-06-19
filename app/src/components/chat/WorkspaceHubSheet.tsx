@@ -49,6 +49,7 @@ import {
   readFromSandbox,
   writeToSandbox,
 } from '@/lib/sandbox-client';
+import { notifyWorkspaceMutation } from '@/lib/sandbox-mutation-signal';
 import {
   deriveBranchNameFromCommitMessage,
   getBranchSuggestionPrefix,
@@ -795,6 +796,7 @@ export function WorkspaceHubSheet({
         const pushGit = createSandboxPushGit(sandboxId, { secretScan: true });
         const commit = await pushGit.commit({ message });
         if (!commit.ok) {
+          notifyWorkspaceMutation(sandboxId);
           const detail =
             commit.result?.stderr || commit.result?.stdout || commit.reason || 'Unknown git error';
           setCommitPhase('error');
