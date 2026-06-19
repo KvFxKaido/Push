@@ -83,16 +83,13 @@ describe('delete_line (unchanged)', () => {
   });
 });
 
-describe('whitespace-insensitive hashing', () => {
-  it('matches a line whose internal whitespace runs were collapsed', () => {
-    const content = 'const x = 1;';
-    // Anchor computed from a differently-aligned version of the same line.
-    const ref = `1:${calculateLineHash('const   x   =   1;')}`;
-    const result = applyHashlineEdits(content, [
-      { op: 'replace_line', ref, content: 'const x = 2;' },
-    ]);
-    assert.equal(result.content, 'const x = 2;');
-    assert.equal(result.applied[0].op, 'replace_line');
+describe('trimmed line hashing', () => {
+  it('keeps internal whitespace significant', () => {
+    // Trim does not collapse internal runs, so spacing inside literals/data stays in the hash.
+    assert.notEqual(
+      calculateLineHash('label = "a b"', 12),
+      calculateLineHash('label = "a  b"', 12),
+    );
   });
 
   it('matches a reindented line via a hash-only ref', () => {
@@ -112,12 +109,12 @@ describe('stale-anchor relocation', () => {
     assert.ok(result.warnings.some((w) => w.includes('Relocated')));
   });
 
-  it('throws (strict CLI mode) when relocation is ambiguous', () => {
+  it('throws (strict CLI mode) when a surviving duplicate blocks relocation', () => {
     const content = 'dup\nx\ndup\ny';
     const ref = `4:${calculateLineHash('dup')}`;
     assert.throws(
       () => applyHashlineEdits(content, [{ op: 'replace_line', ref, content: 'Z' }]),
-      /multiple nearby lines/,
+      /multiple other lines/,
     );
   });
 });

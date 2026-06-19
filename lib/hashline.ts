@@ -55,18 +55,18 @@ function clampHashLength(length: number): number {
 }
 
 /**
- * Normalize a line before hashing so an anchor survives reformatting.
+ * Normalize a line before hashing.
  *
- * Leading/trailing whitespace is trimmed and internal whitespace runs collapse
- * to a single space, so a line keeps the same hash after reindentation or
- * alignment changes (`a   =   1` ≡ `a = 1`). Token boundaries are preserved:
- * spacing *around* tokens still matters (`foo(a,b)` ≠ `foo(a, b)`), so two
- * physically distinct lines don't collapse together as readily as they would
- * under full whitespace removal. `\s` also covers the trailing `\r` left by
- * CRLF files after splitting on `\n`.
+ * Only leading/trailing whitespace is trimmed, so anchors survive
+ * reindentation (the common formatter churn for source) while *internal*
+ * whitespace stays significant. Keeping internal whitespace in the hash means
+ * a content change that only alters spacing inside a string literal, JSON, or
+ * Markdown (`"a  b"` → `"a b"`) still trips the stale-anchor check instead of
+ * silently overwriting the changed line. Centralized here so the async and
+ * sync (CLI) hashing paths can't drift.
  */
 export function normalizeLineForHash(line: string): string {
-  return String(line).trim().replace(/\s+/g, ' ');
+  return String(line).trim();
 }
 
 export async function getNodeCrypto(): Promise<null> {
@@ -74,15 +74,14 @@ export async function getNodeCrypto(): Promise<null> {
 }
 
 /**
- * Calculate a hash for a line of text (whitespace-normalized via
- * `normalizeLineForHash`, so anchors survive reformatting).
+ * Calculate a hash for a line of text (trimmed via `normalizeLineForHash`, so
+ * anchors survive reindentation but internal whitespace stays significant).
  * Uses SHA-256 truncated to `length` hex characters (default 7).
  *
  * Collision properties:
  * - 7 hex chars = 28 bits → ~50% collision chance at ~19K lines (birthday paradox).
- *   In practice most "collisions" are lines that are identical after whitespace
- *   normalization (duplicate imports, blank lines, closing braces), not hash
- *   collisions.
+ *   In practice most "collisions" are identical-content lines (duplicate imports,
+ *   blank lines, closing braces), not hash collisions.
  * - Internal caches store 12-char (48-bit) hashes; short refs match via prefix.
  *   At 12 chars the birthday threshold is ~20M lines — effectively collision-free.
  * - When a short ref is ambiguous, the resolver suggests line-qualified refs
@@ -180,10 +179,10 @@ export type ResolvedEdit =
   | { error: string };
 
 /**
- * How far (in lines) from a stale line-qualified anchor we search for the
- * content it used to point at. Drift between read and edit is normally small;
- * a bounded window keeps relocation from silently jumping across the file to a
- * coincidental hash match.
+ * How far (in lines) a stale line-qualified anchor's unique surviving match may
+ * sit from its original line and still be relocated. Drift between read and
+ * edit is normally small; bounding it keeps relocation from silently jumping
+ * across the file to a far-away (if unique) match.
  */
 const STALE_REF_RELOCATION_WINDOW = 25;
 
@@ -193,25 +192,32 @@ type StaleRefRelocation =
   | { kind: 'none' };
 
 /**
- * Search a bounded window around a stale line-qualified anchor for the line
- * whose hash still matches. Returns `relocated` only when exactly one nearby
- * line matches, so duplicate content stays ambiguous rather than guessed.
+ * Decide whether a stale line-qualified anchor can be safely relocated.
+ *
+ * The anchored content must be **globally unique** in the file: if two or more
+ * other lines still carry the hash, the line number was the only disambiguator
+ * among duplicates, and relocating the edit onto a surviving copy would
+ * silently target the wrong line. Only when exactly one occurrence survives —
+ * and it sits within the ±window (a small, plausible drift) — do we relocate;
+ * a lone match further away is left stale for an explicit re-read.
  */
 function relocateStaleRef(
   hashCache: string[],
   originalIdx: number,
   hashPrefix: string,
 ): StaleRefRelocation {
-  const lo = Math.max(0, originalIdx - STALE_REF_RELOCATION_WINDOW);
-  const hi = Math.min(hashCache.length - 1, originalIdx + STALE_REF_RELOCATION_WINDOW);
   const matches: number[] = [];
-  for (let i = lo; i <= hi; i++) {
+  for (let i = 0; i < hashCache.length; i++) {
     if (i === originalIdx) continue;
     if (hashCache[i].startsWith(hashPrefix)) matches.push(i);
   }
   if (matches.length === 0) return { kind: 'none' };
-  if (matches.length === 1) return { kind: 'relocated', index: matches[0] };
-  return { kind: 'ambiguous', indices: matches };
+  if (matches.length > 1) return { kind: 'ambiguous', indices: matches };
+  const target = matches[0];
+  if (Math.abs(target - originalIdx) <= STALE_REF_RELOCATION_WINDOW) {
+    return { kind: 'relocated', index: target };
+  }
+  return { kind: 'none' };
 }
 
 /**
@@ -269,7 +275,7 @@ export function resolveHashlineRefs(
               ? ` (and ${relocation.indices.length - shown.length} more)`
               : '';
           resolved.push({
-            error: `Stale line-qualified ref "${edit.ref}": line ${parsed.lineNo} no longer matches, and the anchored content now appears at multiple nearby lines${more}. Retry with one of ${retryRefs.join(', ')}.`,
+            error: `Stale line-qualified ref "${edit.ref}": line ${parsed.lineNo} no longer matches, and the anchored content still appears at multiple other lines${more}, so the line number can no longer disambiguate it. Re-read and retry with a fresh line-qualified ref such as ${retryRefs.join(', ')}.`,
           });
           continue;
         }
@@ -334,7 +340,7 @@ export function resolveHashlineRefs(
           retryRefs.push(`"${idx + 1}:${parsed.hash.slice(0, 7)}"`);
         }
         resolved.push({
-          error: `Reference "${edit.ref}" is ambiguous (${matches.length} matches) — lines are identical after whitespace normalization. Retry with a line-qualified ref such as ${retryRefs.join(', ')}:\n${diagnostics.join('\n')}`,
+          error: `Reference "${edit.ref}" is ambiguous (${matches.length} matches) — lines have identical trimmed content. Retry with a line-qualified ref such as ${retryRefs.join(', ')}:\n${diagnostics.join('\n')}`,
         });
       }
       continue;
