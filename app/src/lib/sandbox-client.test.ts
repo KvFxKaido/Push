@@ -1017,6 +1017,58 @@ describe('sandbox client workspace mutation signal', () => {
     }
     expect(seen).toEqual(['sb-1']);
   });
+
+  // #996 Codex P2: fire on ATTEMPT — a marked exec / write that times out may
+  // have mutated server-side, so the signal must survive a throw / `!ok`.
+  it('notifies a marked exec even when the exec call throws (timeout)', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 504,
+      text: () => Promise.resolve(JSON.stringify({ error: 'exec timed out', code: 'TIMEOUT' })),
+    });
+    const seen: string[] = [];
+    const off = onWorkspaceMutation((id) => seen.push(id));
+    try {
+      await expect(
+        execInSandbox('sb-1', 'npm install', undefined, { markWorkspaceMutated: true }),
+      ).rejects.toThrow();
+    } finally {
+      off();
+    }
+    expect(seen).toEqual(['sb-1']);
+  });
+
+  it('does not notify an unmarked exec that throws', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 504,
+      text: () => Promise.resolve(JSON.stringify({ error: 'exec timed out', code: 'TIMEOUT' })),
+    });
+    const seen: string[] = [];
+    const off = onWorkspaceMutation((id) => seen.push(id));
+    try {
+      await expect(execInSandbox('sb-1', 'ls')).rejects.toThrow();
+    } finally {
+      off();
+    }
+    expect(seen).toEqual([]);
+  });
+
+  it('notifies a write that reports failure (it may have landed server-side)', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ ok: false, error: 'version conflict' }),
+    });
+    const seen: string[] = [];
+    const off = onWorkspaceMutation((id) => seen.push(id));
+    try {
+      const { writeToSandbox } = await import('./sandbox-client');
+      await writeToSandbox('sb-1', '/workspace/a.txt', 'hello');
+    } finally {
+      off();
+    }
+    expect(seen).toEqual(['sb-1']);
+  });
 });
 
 // ---------------------------------------------------------------------------
