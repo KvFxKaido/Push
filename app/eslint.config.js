@@ -29,7 +29,7 @@ export default defineConfig([
   // trips 67 of them across 24 files — mostly benign patterns like clearing
   // error state at the top of an effect. Demote to 'warn' so the signal stays
   // visible without blocking the lint gate; the compiler migration is tracked
-  // as separate work. Remove these overrides as the violations get fixed.
+  // in issue #1040. Remove these overrides as the violations get fixed.
   {
     files: ['**/*.{ts,tsx}'],
     rules: {
@@ -44,7 +44,7 @@ export default defineConfig([
   // no-useless-assignment (26 hits) and preserve-caught-error (17 hits, missing
   // `{ cause }` on rethrows). Same treatment as the react-hooks rules above —
   // demote to 'warn' so the eslint 10 bump lands without a 43-site refactor;
-  // the cleanup is tracked separately. Remove as the violations get fixed.
+  // the cleanup is tracked in issue #1040. Remove as the violations get fixed.
   {
     files: ['**/*.{ts,tsx}'],
     rules: {
