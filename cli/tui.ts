@@ -655,11 +655,11 @@ function renderActivityIndicator(buf, layout, theme, tuiState, tokens, sessionId
   const tokenStr = typeof tokens === 'number' ? formatTokenCount(tokens) : null;
 
   const sep = theme.style('fg.dim', '·');
-  const star = theme.style('fg.dim', '*');
+  const marker = theme.style('fg.dim', theme.glyphs.hexagon);
   const verbStyled = theme.style('fg.muted', `${verb}…`);
   const metaInner = tokenStr ? `${elapsed} ${sep} ${tokenStr} tokens` : elapsed;
   const meta = theme.style('fg.dim', `(${metaInner})`);
-  const row = `${star} ${verbStyled} ${meta}`;
+  const row = `${marker} ${verbStyled} ${meta}`;
 
   buf.writeLine(top, layout.innerLeft, padTo(row, layout.innerWidth));
 }

@@ -83,6 +83,7 @@ describe('GLYPHS', () => {
     assert.equal(GLYPHS_UNICODE.vertical, '│');
     assert.equal(GLYPHS_UNICODE.prompt, '›');
     assert.equal(GLYPHS_UNICODE.statusDot, '●');
+    assert.equal(GLYPHS_UNICODE.hexagon, '⬡');
   });
 
   it('ASCII set has fallback characters', () => {
@@ -91,6 +92,7 @@ describe('GLYPHS', () => {
     assert.equal(GLYPHS_ASCII.vertical, '|');
     assert.equal(GLYPHS_ASCII.prompt, '>');
     assert.equal(GLYPHS_ASCII.statusDot, '*');
+    assert.equal(GLYPHS_ASCII.hexagon, '*');
   });
 
   it('both sets have the same keys', () => {
