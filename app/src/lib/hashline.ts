@@ -16,6 +16,8 @@ export {
   renderAnchoredRange,
   type HashlineOp,
   type HashlineEditResult,
+  type HashlineDiagnostic,
+  type HashlineDiagnosticCode,
   type ResolvedEdit,
   type AppliedEditDetail,
 } from '@push/lib/hashline';
