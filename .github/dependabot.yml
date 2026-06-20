@@ -1,0 +1,92 @@
+# Dependabot version updates for the Push monorepo.
+# Docs: https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# Scope: npm (4 manifests), GitHub Actions, pip (Modal sandbox), and Docker.
+# Minor/patch bumps are grouped into a single PR per manifest to limit churn —
+# every PR here also spins up the codex/gemini review workflows and a Workers
+# Builds deploy, so noise has a real cost. Major bumps come as individual PRs
+# so they get reviewed on their own.
+version: 2
+
+updates:
+  # ── npm: root (CLI + MCP wiring) ─────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    groups:
+      root-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # ── npm: web app ─────────────────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/app"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    groups:
+      app-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # ── npm: Cloudflare Functions ────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/functions"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    groups:
+      functions-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # ── npm: GitHub MCP server ───────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/mcp/github-server"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    groups:
+      mcp-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # ── GitHub Actions: workflow action versions ─────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    groups:
+      actions-all:
+        patterns: ["*"]
+
+  # ── pip: Modal sandbox (sandbox/requirements.txt) ────────────────
+  - package-ecosystem: "pip"
+    directory: "/sandbox"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+
+  # ── Docker: Dockerfile + Dockerfile.sandbox (repo root) ──────────
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
