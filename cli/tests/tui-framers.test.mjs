@@ -110,8 +110,8 @@ describe('renderEntryLines: tool_call', () => {
 });
 
 describe('renderEntryLines: status / error / warning / reasoning', () => {
-  it('renders status with star marker', () => {
-    assert.deepEqual(render({ role: 'status', text: 'connected' }), ['* connected']);
+  it('renders status with hexagon marker', () => {
+    assert.deepEqual(render({ role: 'status', text: 'connected' }), ['⬡ connected']);
   });
 
   it('renders error with bullet (no badge)', () => {
@@ -122,8 +122,8 @@ describe('renderEntryLines: status / error / warning / reasoning', () => {
     assert.deepEqual(render({ role: 'warning', text: 'careful' }), ['• careful']);
   });
 
-  it('renders reasoning as star + thinking', () => {
-    assert.deepEqual(render({ role: 'reasoning' }), ['* thinking']);
+  it('renders reasoning as hexagon + thinking', () => {
+    assert.deepEqual(render({ role: 'reasoning' }), ['⬡ thinking']);
   });
 });
 
@@ -159,7 +159,7 @@ describe('renderEntryLines: sources', () => {
           { url: 'https://b.test/x', title: 'B', content: '', startIndex: 0, endIndex: 0 },
         ],
       }),
-      ['* sources', '  1. A', '     https://a.test/', '  2. B', '     https://b.test/x'],
+      ['⬡ sources', '  1. A', '     https://a.test/', '  2. B', '     https://b.test/x'],
     );
   });
 
@@ -177,7 +177,7 @@ describe('renderEntryLines: sources', () => {
           },
         ],
       }),
-      ['* sources', '  1. example.com', '     https://www.example.com/page'],
+      ['⬡ sources', '  1. example.com', '     https://www.example.com/page'],
     );
   });
 

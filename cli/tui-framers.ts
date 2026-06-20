@@ -474,7 +474,7 @@ const toolCallFramer: EntryFramer = {
 
 const statusFramer: EntryFramer = {
   render(out, entry, width, theme) {
-    const firstPrefix = `${theme.style('fg.dim', '*')} `;
+    const firstPrefix = `${theme.style('fg.dim', theme.glyphs.hexagon)} `;
     pushWrappedLines(out, String(entry.text ?? ''), width, {
       firstPrefix,
       nextPrefix: '  ',
@@ -509,7 +509,9 @@ const warningFramer: EntryFramer = {
 
 const reasoningFramer: EntryFramer = {
   render(out, _entry, _width, theme) {
-    out.push(`${theme.style('fg.dim', '*')} ${theme.style('fg.muted', 'thinking')}`);
+    out.push(
+      `${theme.style('fg.dim', theme.glyphs.hexagon)} ${theme.style('fg.muted', 'thinking')}`,
+    );
   },
 };
 
@@ -517,7 +519,9 @@ const sourcesFramer: EntryFramer = {
   render(out, entry, width, theme) {
     const safe = safeCitations((entry.citations as UrlCitation[] | undefined) ?? []);
     if (safe.length === 0) return;
-    out.push(`${theme.style('fg.dim', '*')} ${theme.style('fg.muted', 'sources')}`);
+    out.push(
+      `${theme.style('fg.dim', theme.glyphs.hexagon)} ${theme.style('fg.muted', 'sources')}`,
+    );
     safe.forEach(({ citation, url }, i) => {
       const host = citationHost(url);
       const title = sanitizeCitationText(citation.title) || host;

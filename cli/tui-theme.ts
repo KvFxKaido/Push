@@ -25,6 +25,8 @@ export interface GlyphSet {
   prompt: string;
   divider: string;
   statusDot: string;
+  /** Dim line-lead marker for agent meta lines (activity row, thinking, sources). */
+  hexagon: string;
   teeRight: string;
   teeLeft: string;
   teeDown: string;
@@ -367,6 +369,7 @@ export const GLYPHS_UNICODE: GlyphSet = {
   prompt: '›',
   divider: '─',
   statusDot: '●',
+  hexagon: '⬡',
   teeRight: '├',
   teeLeft: '┤',
   teeDown: '┬',
@@ -390,6 +393,7 @@ export const GLYPHS_ASCII: GlyphSet = {
   prompt: '>',
   divider: '-',
   statusDot: '*',
+  hexagon: '*',
   teeRight: '+',
   teeLeft: '+',
   teeDown: '+',
