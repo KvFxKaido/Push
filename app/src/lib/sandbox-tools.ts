@@ -143,18 +143,54 @@ export {
  * the extraction boundary stays one-way: the handler module never imports
  * from `sandbox-tools.ts`, and this wiring lives inside the dispatcher.
  */
-function buildVerificationContext(sandboxId: string): VerificationHandlerContext {
+function buildVerificationContext(
+  sandboxId: string,
+  execOptions?: Pick<SandboxExecutionOptions, 'abortSignal' | 'onExecProgress'>,
+): VerificationHandlerContext {
   return {
     sandboxId,
     execInSandbox,
     // Adapt the (sandboxId, command, workdir?, options?) handler signature onto
     // execLongRunningInSandbox's opts-bag shape. Detached on CF; transparently
     // falls back to buffered exec on backends without background routes.
+    // The live-tail observer and abort signal ride the dispatcher's execution
+    // options so a long verification run (test suite / cold install) streams
+    // progress into the status bar and honours Stop — same as `sandbox_exec`.
     execLongRunning: (id, command, workdir, options) =>
       execLongRunningInSandbox(id, command, {
         workdir,
         markWorkspaceMutated: options?.markWorkspaceMutated,
+        abortSignal: execOptions?.abortSignal,
+        onProgress: execOptions?.onExecProgress,
       }),
+    // Read the repo's `# test:` override sources in precedence order
+    // (AGENTS.md beats CLAUDE.md). One bounded exec catting both files; the
+    // `head -c` cap keeps a large CLAUDE.md from bloating the result while the
+    // directive block lives near the top of either file. Best-effort — a read
+    // failure resolves to no override rather than blocking the test run.
+    readValidationInstructions: async () => {
+      try {
+        const probe = await execInSandbox(
+          sandboxId,
+          'cd /workspace && for f in AGENTS.md CLAUDE.md; do ' +
+            'if [ -f "$f" ]; then printf "\\n===PUSH_VC_FILE===\\n"; head -c 20000 "$f"; fi; done',
+        );
+        return probe.stdout
+          .split('===PUSH_VC_FILE===')
+          .map((section) => section.trim())
+          .filter((section) => section.length > 0);
+      } catch (err) {
+        console.log(
+          JSON.stringify({
+            level: 'warn',
+            event: 'validation_instructions_read_failed',
+            sandboxId,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
+        return [];
+      }
+    },
     getSandboxEnvironment,
     clearFileVersionCache,
     clearPrefetchedEditFileCache,
@@ -1126,7 +1162,7 @@ async function executeSandboxToolCallInner(
       }
 
       case 'sandbox_run_tests': {
-        return handleRunTests(buildVerificationContext(sandboxId), call.args);
+        return handleRunTests(buildVerificationContext(sandboxId, options), call.args);
       }
 
       case 'sandbox_check_types': {

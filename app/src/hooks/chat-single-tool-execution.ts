@@ -205,7 +205,8 @@ export async function executeSingleToolCall(
     // line into the status bar's `detail` slot (phase + startedAt stay put so
     // the elapsed timer keeps ticking). Local-pc execs ignore the observer.
     const execProgressTail =
-      toolCall.source === 'sandbox' && toolCall.call.tool === 'sandbox_exec'
+      toolCall.source === 'sandbox' &&
+      (toolCall.call.tool === 'sandbox_exec' || toolCall.call.tool === 'sandbox_run_tests')
         ? createExecProgressTail({
             onTail: (line) => {
               // A cancel mid-drain must not resurrect the running status —
