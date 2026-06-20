@@ -1,7 +1,7 @@
 # Platform, Sessions, and Sandbox Decisions
 
 Status: **Current**
-Reviewed: 2026-06-07
+Reviewed: 2026-06-17
 
 This is the live decision surface for Push's platform, auth, sessions, sandbox,
 remote-control, provider, and GitHub integration choices. Archived source notes
@@ -201,6 +201,36 @@ Status:
 
 Design note:
 [`Settings Unification`](<../runbooks/Settings Unification — GitHub-Identity-Keyed Config.md>).
+
+### 12. Cloudflare Agents SDK is not adopted for the worker DOs
+
+The `agents` package (`Agent` base class, `this.schedule()`, durable-execution
+fibers) was evaluated for the existing worker Durable Objects — `CoderJob`,
+`RunHost`, `PrReviewJob`. **Decision: do not retrofit.** Push already uses the
+Cloudflare primitives the SDK sits on (Workers, Durable Objects, the
+`@cloudflare/sandbox` container DO, SQLite-in-DO, alarms, WebSockets); the SDK's
+scheduling, durable-resume, and state-persistence value-adds are things these
+DOs have already built with better testability and portability than the SDK
+gives back.
+
+The blockers are concrete: the SDK's scheduler and fibers are reachable only by
+subclassing `Agent`, which (a) pulls `partyserver` + `cloudflare:workers`,
+fighting `coder-job-do.ts`'s deliberate choice not to extend even the
+`DurableObject` base; (b) commandeers the DO `alarm()` handler, which in these
+DOs is doing irreplaceable multiplexed / state-machine work whose decisions
+already live as pure, unit-tested functions in `lib/run-host-adoption`; and
+(c) couples worker-layer logic to Cloudflare, against the `SandboxProvider`
+neutrality seam (#4). The `AIChatAgent` chat loop collides with Push's own
+`lib/` tool/runtime contract and can't run on CLI/Android.
+
+Revisit only for a greenfield Cloudflare-only surface (no `lib/`-neutrality or
+CLI/Android requirement), or if server-pushed browser state sync / large MCP
+client fan-out become product requirements. None holds today.
+
+Status: **Current** — evaluated 2026-06-17, not adopted.
+
+Research note:
+[`Cloudflare Agents SDK Evaluation`](<../research/Cloudflare Agents SDK Evaluation.md>).
 
 ## Active Platform Work
 
