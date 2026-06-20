@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Loader2, Github, Globe, Key, MessageSquare, Monitor } from 'lucide-react';
+import { Loader2, Globe, Key, MessageSquare, Monitor } from 'lucide-react';
 import {
   HUB_MATERIAL_BUTTON_CLASS,
   HUB_MATERIAL_INPUT_CLASS,
@@ -9,7 +9,7 @@ import {
 } from '@/components/chat/hub-styles';
 import { PageScaffold } from '@/components/layout';
 import { ChatBackgroundGlow } from '@/components/chat/ChatBackgroundGlow';
-import { PushMarkIcon } from '@/components/icons/push-custom-icons';
+import { GitHubMarkIcon, PushMarkIcon } from '@/components/icons/push-custom-icons';
 import { DEFAULT_REPO_APPEARANCE, getRepoAppearanceColorHex } from '@/lib/repo-appearance';
 import type { GitHubUser } from '@/types';
 
@@ -188,7 +188,7 @@ export function OnboardingScreen({
                     </>
                   ) : (
                     <>
-                      <Github className="h-4 w-4" />
+                      <GitHubMarkIcon className="h-4 w-4" />
                       <span>Connect Existing Install</span>
                     </>
                   )}
@@ -230,7 +230,7 @@ export function OnboardingScreen({
                     </>
                   ) : (
                     <>
-                      <Github className="h-4 w-4" />
+                      <GitHubMarkIcon className="h-4 w-4" />
                       <span>Connect with GitHub</span>
                     </>
                   )}
@@ -249,7 +249,7 @@ export function OnboardingScreen({
 
                 {/* Install GitHub App (secondary — for first-time users) */}
                 <button onClick={onInstallApp} disabled={loading} className={onboardingButtonClass}>
-                  <Github className="h-4 w-4" />
+                  <GitHubMarkIcon className="h-4 w-4" />
                   <span>Install GitHub App</span>
                 </button>
 
