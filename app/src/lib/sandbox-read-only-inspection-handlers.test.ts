@@ -192,8 +192,8 @@ describe('handleListDir', () => {
 
     expect(ctx.listDirectory).toHaveBeenCalledWith('sb-1', '/workspace');
     expect(result.text).toContain('(1 sensitive entry hidden)');
-    expect(result.text).toContain('📁 src/');
-    expect(result.text).toContain('📄 app.ts (1234 bytes)');
+    expect(result.text).toContain('  src/');
+    expect(result.text).toContain('  app.ts (1234 bytes)');
     expect(result.text).not.toContain('.env');
     expect(result.card?.type).toBe('file-list');
     if (result.card?.type === 'file-list') {

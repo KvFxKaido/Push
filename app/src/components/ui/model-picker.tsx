@@ -1,5 +1,11 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState, type ComponentType, type ReactNode, type SVGProps } from 'react';
 import { Check, ChevronsUpDown, Loader2, Pencil, RefreshCw } from 'lucide-react';
+import {
+  ImageGenIcon,
+  ReasoningBoltIcon,
+  ToolWrenchIcon,
+  VisionEyeIcon,
+} from '@/components/icons/push-custom-icons';
 import {
   Command,
   CommandEmpty,
@@ -9,7 +15,11 @@ import {
   CommandList,
 } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { formatModelCapabilityHints, getModelCapabilities } from '@/lib/model-catalog';
+import {
+  getModelCapabilities,
+  getModelCapabilityHints,
+  type ModelCapabilityHint,
+} from '@/lib/model-catalog';
 import {
   formatModelDisplayName,
   getModelDisplayGroupKey,
@@ -20,10 +30,20 @@ import { cn } from '@/lib/utils';
 
 const CUSTOM_MODEL_VALUE = '__custom_model__';
 
+const CAPABILITY_ICONS: Record<
+  ModelCapabilityHint,
+  { Icon: ComponentType<SVGProps<SVGSVGElement>>; label: string }
+> = {
+  reasoning: { Icon: ReasoningBoltIcon, label: 'Reasoning' },
+  vision: { Icon: VisionEyeIcon, label: 'Vision input' },
+  imageGen: { Icon: ImageGenIcon, label: 'Image generation' },
+  toolCall: { Icon: ToolWrenchIcon, label: 'Tool calling' },
+};
+
 interface ModelPickerGroup {
   key: string;
   label: string | null;
-  models: { id: string; display: string; hints: string }[];
+  models: { id: string; display: string; hints: ModelCapabilityHint[] }[];
 }
 
 function buildGroups(provider: string, options: string[]): ModelPickerGroup[] {
@@ -35,7 +55,7 @@ function buildGroups(provider: string, options: string[]): ModelPickerGroup[] {
     const display = label
       ? getModelDisplayLeafName(provider, model)
       : formatModelDisplayName(provider, model);
-    const hints = formatModelCapabilityHints(getModelCapabilities(provider, model));
+    const hints = getModelCapabilityHints(getModelCapabilities(provider, model));
     const existing = groups.get(mapKey);
     if (existing) {
       existing.models.push({ id: model, display, hints });
@@ -208,8 +228,15 @@ export function ModelPicker({
                       className="text-push-fg-soft data-[selected=true]:bg-push-surface-active"
                     >
                       <span className="flex-1 truncate">{model.display}</span>
-                      {model.hints && (
-                        <span className="ml-2 shrink-0 text-push-fg-faint">{model.hints}</span>
+                      {model.hints.length > 0 && (
+                        <span className="ml-2 flex shrink-0 items-center gap-1 text-push-fg-faint">
+                          {model.hints.map((hint) => {
+                            const { Icon, label } = CAPABILITY_ICONS[hint];
+                            return (
+                              <Icon key={hint} width={12} height={12} role="img" aria-label={label} />
+                            );
+                          })}
+                        </span>
                       )}
                       {model.id === value && (
                         <Check className="ml-2 h-4 w-4 shrink-0 text-push-fg-soft" />

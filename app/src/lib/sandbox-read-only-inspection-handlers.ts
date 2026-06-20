@@ -453,11 +453,11 @@ export async function handleListDir(
   ];
 
   for (const dir of dirs) {
-    lines.push(`  📁 ${dir.name}/`);
+    lines.push(`  ${dir.name}/`);
   }
   for (const file of files) {
     const size = file.size ? ` (${file.size} bytes)` : '';
-    lines.push(`  📄 ${file.name}${size}`);
+    lines.push(`  ${file.name}${size}`);
   }
 
   const cardData: FileListCardData = {

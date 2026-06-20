@@ -540,13 +540,20 @@ export function filterModelByContext(
 
   return { allowed: true };
 }
-export function formatModelCapabilityHints(caps: ResolvedModelCapabilities): string {
-  const icons: string[] = [];
-  if (caps.reasoning) icons.push('⚡'); // reasoning/thinking
-  if (caps.vision) icons.push('👁'); // vision input
-  if (caps.imageGen) icons.push('🎨'); // image generation
-  if (caps.toolCall) icons.push('⚙'); // tool/function calling
-  return icons.join(' ');
+export type ModelCapabilityHint = 'reasoning' | 'vision' | 'imageGen' | 'toolCall';
+
+/**
+ * Capability flags for a model, ordered for the picker's hint row. The picker
+ * maps each to a bespoke icon (see `push-custom-icons.tsx`); this stays
+ * presentation-free so the data layer doesn't own glyphs.
+ */
+export function getModelCapabilityHints(caps: ResolvedModelCapabilities): ModelCapabilityHint[] {
+  const hints: ModelCapabilityHint[] = [];
+  if (caps.reasoning) hints.push('reasoning');
+  if (caps.vision) hints.push('vision');
+  if (caps.imageGen) hints.push('imageGen');
+  if (caps.toolCall) hints.push('toolCall');
+  return hints;
 }
 
 function writeCachedModelsDevOpenRouterMetadata(

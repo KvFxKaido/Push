@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ChevronDown, Loader2, RefreshCw, Trash2 } from 'lucide-react';
-import { BranchWaveIcon } from '@/components/icons/push-custom-icons';
+import { BranchWaveIcon, GitHubMarkIcon, LockIcon } from '@/components/icons/push-custom-icons';
 import { getMalformedToolCallMetrics } from '@/lib/tool-call-metrics';
 import { getContextMetrics } from '@/lib/context-metrics';
 import { fileLedger } from '@/lib/file-awareness-ledger';
@@ -310,7 +310,7 @@ export function SettingsSectionContent({
                             }}
                             className="text-push-link hover:text-push-fg w-full justify-start"
                           >
-                            ⬆️ Connect with GitHub
+                            <GitHubMarkIcon className="size-4" /> Connect with GitHub
                           </Button>
                           <Button
                             variant="ghost"
@@ -460,7 +460,7 @@ export function SettingsSectionContent({
                     }}
                     className="text-push-link hover:text-push-fg w-full justify-start"
                   >
-                    ⬆️ Connect with GitHub
+                    <GitHubMarkIcon className="size-4" /> Connect with GitHub
                   </Button>
                   <Button
                     variant="ghost"
@@ -1108,7 +1108,7 @@ export function SettingsSectionContent({
             {ai.isProviderLocked && ai.lockedProvider && (
               <div className="rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2">
                 <p className="inline-flex items-center gap-1.5 text-xs text-amber-400">
-                  <span aria-hidden="true">🔒</span>
+                  <LockIcon width={12} height={12} aria-hidden="true" />
                   <ProviderIcon provider={ai.lockedProvider} size={12} />
                   This chat is staying on {PROVIDER_LABELS[ai.lockedProvider]}
                 </p>
