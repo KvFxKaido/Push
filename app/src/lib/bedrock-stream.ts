@@ -57,6 +57,7 @@ export async function* bedrockStream(
   });
 
   // 2. Plain OpenAI-compatible request body. The Worker forwards verbatim.
+  const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : undefined;
   const body: Record<string, unknown> = {
     model: req.model,
     messages: llmMessages,
@@ -64,6 +65,9 @@ export async function* bedrockStream(
     ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
+    // Native function calling: gated upstream by model support. The shared SSE
+    // pump normalizes native tool_calls back into fenced JSON for dispatch.
+    ...(nativeTools ? { tools: nativeTools, tool_choice: 'auto' } : {}),
   };
 
   // 3. Headers. The Worker reads `X-Push-Upstream-Base` to pick the upstream

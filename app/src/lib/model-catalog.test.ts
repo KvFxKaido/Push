@@ -1384,6 +1384,31 @@ describe('providerModelSupportsStructuredOutput', () => {
     expect(providerModelSupportsNativeToolCalling('fireworks', undefined)).toBe(false);
   });
 
+  it('gates validated OpenAI-compatible adapters by catalog or OpenAI-family id', () => {
+    stubWindow();
+    expect(providerModelSupportsNativeToolCalling('openai', 'gpt-5.4')).toBe(true);
+    expect(providerModelSupportsNativeToolCalling('openai', 'gpt-4o')).toBe(true);
+    expect(providerModelSupportsNativeToolCalling('azure', 'gpt-4.1')).toBe(true);
+    expect(providerModelSupportsNativeToolCalling('azure', 'my-custom-deployment')).toBe(false);
+
+    expect(providerModelSupportsNativeToolCalling('kilocode', 'anthropic/claude-sonnet-4.6')).toBe(
+      true,
+    );
+    expect(providerModelSupportsNativeToolCalling('kilocode', 'unknown/model')).toBe(false);
+
+    expect(providerModelSupportsNativeToolCalling('openadapter', 'deepseek/deepseek-v3')).toBe(
+      true,
+    );
+    expect(providerModelSupportsNativeToolCalling('openadapter', 'unknown/model')).toBe(false);
+
+    expect(
+      providerModelSupportsNativeToolCalling('blackbox', 'blackboxai/anthropic/claude-sonnet-4.6'),
+    ).toBe(true);
+    expect(providerModelSupportsNativeToolCalling('bedrock', 'us.anthropic.claude-sonnet-4')).toBe(
+      false,
+    );
+  });
+
   it('returns false for an allowlisted provider when the catalog reports no support', () => {
     stubWindow();
     // `openai` is OpenAI-shaped (allowlisted) but has no models.dev structured-
@@ -1427,6 +1452,9 @@ describe('providerModelSupportsStructuredOutput', () => {
     const mc = await import('./model-catalog');
     await mc.fetchNvidiaModels();
     expect(mc.providerModelSupportsStructuredOutput('nvidia', 'meta/llama-3.3-70b-instruct')).toBe(
+      true,
+    );
+    expect(mc.providerModelSupportsNativeToolCalling('nvidia', 'meta/llama-3.3-70b-instruct')).toBe(
       true,
     );
   });

@@ -1127,9 +1127,9 @@ export async function runInPageCoderKernel(
     // so opt into that guidance here. The CLI lead leaves it off (its
     // TOOL_PROTOCOL uses different names).
     leadToolGuidance: spec.leadToolSurface,
-    // Native function calling for models that support it (Cloudflare Kimi/GLM
-    // today). Additive: the binding emits native tool_calls which the pump
-    // normalizes back into fenced JSON, so dispatch is unchanged. Two guards:
+    // Native function calling for models that support it. Additive: the binding
+    // emits native tool_calls which the pump normalizes back into fenced JSON,
+    // so dispatch is unchanged. Two guards:
     //   1. Lead surface only (`leadRuntime`). The delegated Coder wires a
     //      narrower surface and stays text-dispatch for now.
     //   2. Scope schemas to the EXACT sources wired for this run — base
