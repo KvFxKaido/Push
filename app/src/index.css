@@ -1,8 +1,11 @@
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+/* Tailwind v4 reads the design system (colors, type scale, shadows, keyframes,
+   content globs, tailwindcss-animate) from the existing JS config via @config,
+   rather than re-expressing it as CSS-first @theme. */
+@config '../tailwind.config.js';
 
 /* tailwindcss-animate v1.0.7 omits fill-mode — without it, animate-out
    elements snap back to visible after the exit animation completes,
