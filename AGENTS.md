@@ -1,8 +1,8 @@
 # Push — Agent Context
 
-This is the **required entry doc** for Push. Repo instruction loaders read `PUSH.md` first (Push-specific override) and fall back to `AGENTS.md` → `CLAUDE.md` → `GEMINI.md`, so this file must remain self-sufficient when no `PUSH.md` is present.
+Startup loaders use the first existing file in this order: `PUSH.md` → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md`. With no `PUSH.md`, keep this file self-sufficient.
 
-[`ARCHITECTURE.md`](ARCHITECTURE.md) is the deeper canonical reference for architecture and implementation details; this file carries the minimum contract Push agents need at startup. On conflict between the two, prefer `ARCHITECTURE.md` for detailed behavior and this file for the startup contract.
+[`ARCHITECTURE.md`](ARCHITECTURE.md) is canonical for detailed behavior; this file is the startup contract.
 
 ## Core model
 
@@ -11,8 +11,8 @@ This is the **required entry doc** for Push. Repo instruction loaders read `PUSH
 - Repo context is locked to the selected repo.
 - Chats are branch-scoped.
 - The **active branch** is the commit target, push target, diff base, and chat context.
-- Branch transitions through the typed branch tools preserve context: the sandbox stays alive, and the active chat either migrates to the new branch (fork) or routes to the existing chat for that branch (switch). UI-initiated branch swaps may restart the sandbox unless routed through that typed path.
-- Models can create branches via `create_branch` and switch to existing branches via `switch_branch` (long-form aliases `sandbox_create_branch` / `sandbox_switch_branch` still resolve). Both keep Push's tracked branch in sync with sandbox HEAD. Raw `git checkout <branch>` / `git switch <branch>` (and `-b` / `-c` variants) are blocked in `sandbox_exec` and route through the typed tools. Both subcommands block any single bare positional operand: for `git checkout` the syntax doesn't disambiguate branch from path (so `git checkout feat/foo` and `git checkout src/utils.ts` both block); for `git switch` (branch-only) the block forces branch ops through the typed tools. File restores require the explicit form — `git checkout -- <path>` or two-positional `git checkout HEAD <path>`. Ref expressions (`HEAD`, `HEAD~1`, `main^`, `branch@{upstream}`) pass through. Use the typed tools when the operand is a known branch.
+- Typed branch tools preserve context: the sandbox stays alive; fork migrates the active chat; switch routes to the target branch chat. UI swaps may restart the sandbox.
+- Models can create branches with `create_branch` and switch with `switch_branch` (`sandbox_create_branch` / `sandbox_switch_branch` still resolve). These keep Push's tracked branch in sync with sandbox HEAD. Raw `git checkout` / `git switch` branch ops and any single bare operand (`feat/foo`, `src/utils.ts`) block in `sandbox_exec` and route through typed tools. File restores require `git checkout -- <path>` or `git checkout HEAD <path>`; ref expressions (`HEAD~1`, `main^`, `branch@{upstream}`) pass through.
 
 ## Repo map
 
