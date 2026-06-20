@@ -919,9 +919,13 @@ describe('lsp_diagnostics tool', () => {
 
       // Result should be ok or have a known error code
       if (result.ok) {
-        // If filtered, only errors from a.ts should appear
-        // (This depends on tsc behavior with single-file filtering)
+        // The project check runs against tsconfig.json, then results are
+        // filtered to the requested path — so b.ts errors must not leak into an
+        // a.ts query. Asserts only when tsc actually produced diagnostics.
         assert.ok(result.meta);
+        for (const d of result.meta.diagnostics ?? []) {
+          assert.equal(d.file, 'a.ts', `unexpected diagnostic for ${d.file}; expected only a.ts`);
+        }
       } else {
         assert.ok(
           ['DIAGNOSTIC_TOOL_NOT_FOUND', 'DIAGNOSTIC_FAILED', 'UNSUPPORTED_PROJECT_TYPE'].includes(
