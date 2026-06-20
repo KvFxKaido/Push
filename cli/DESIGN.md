@@ -64,6 +64,24 @@ When possible, pair color with a second signal:
 - focus marker
 - positional consistency
 
+## Themes and Color Tiers
+
+Presentation adapts to terminal capability rather than assuming one environment.
+
+- **Color tiers** — truecolor (24-bit), 256-color, 16-color ANSI, and `none`. The tier is detected from `COLORTERM` / `TERM`, forced to `none` by `NO_COLOR`, and to truecolor by `FORCE_COLOR`.
+- **Glyph sets** — a Unicode set with an ASCII fallback (box characters, markers, arrows), chosen by locale/terminal detection.
+- **Named themes** — default, neon, metallic, mono, solarized, and forest. Themes restyle tokens, not semantics: accent / success / warning / error / muted keep their meaning across all of them.
+
+## Line-lead Markers
+
+Transcript and status lines lead with a single-glyph marker so role and state read before the text does. The marker is the symbol half of the color-plus-symbol pairing above, so it must carry meaning on its own.
+
+- **Message bullet** (`•`) — user and assistant turns, and errors/warnings (recolored, not reshaped)
+- **Agent meta marker** (`⬡`) — the lead's non-message lines: the activity row, `thinking`, `sources`, and passive status text. Dim by default; it groups "what the agent is doing" apart from the conversation.
+- **Run-state dot** (`●`) — the header status indicator; becomes a spinner frame while running and takes success / warning / error color by run state.
+
+Markers degrade: a non-Unicode terminal falls back to an ASCII equivalent (`*`), and meaning never rests on glyph shape alone — color, wording, or position carries it too.
+
 ## Diff and Review Presentation
 
 Diffs are core CLI content and should remain legible in both wide and narrow terminals.
@@ -74,13 +92,21 @@ Diffs are core CLI content and should remain legible in both wide and narrow ter
 - file headers should remain scannable when many files are present
 - line wrapping should avoid making add/remove state ambiguous
 
+**Gutter rendering.** Fenced diffs render with a colored left gutter bar rather than relying on the leading `+`/`-` character:
+
+- additions and removals carry a green / red gutter bar, and the leading marker char is dropped so the change reads as a block instead of a column of punctuation
+- hunk headers take an accent gutter; file headers and context lines stay muted
+- a `diff · +A -B` summary leads the block
+- the gutter holds a fixed column — lines truncate rather than wrap, so add/remove state never goes ambiguous mid-wrap (full text stays reachable via copy)
+- degrades: the bar is `▌` in Unicode and `|` in ASCII; with no color the gutter falls back to the literal `+` / `-` / space marker so state survives without color
+
 ## TUI Primitives
 
 The full-screen TUI is composed from a small set of terminal-native primitives:
 
 - **Panels** — bounded content areas with stable titles
 - **Lists** — navigable collections with a clear active row
-- **Tabs or segmented views** — small sets of mode or content switches
+- **Toggleable side pane** — an optional panel (e.g. the tool feed) shown beside the transcript
 - **Status bar** — compact session, workspace, or mode summary
 - **Input region** — persistent compose surface with strong focus treatment
 - **Modal overlays** — blocking input flows that temporarily take priority
@@ -101,6 +127,14 @@ CLI/TUI presentation should make these states immediately visible:
 - **Disabled** — visible but intentionally unavailable
 
 Focus and selection should not rely on color alone.
+
+## Motion
+
+Motion is used sparingly, to signal activity rather than to decorate.
+
+- **Spinners** — the running indicator cycles a one-cell frame. Five variants (braille, orbit, breathe, pulse, helix) plus a static `off` fallback.
+- **Reduced motion** — `PUSH_REDUCED_MOTION` / `REDUCED_MOTION` forces the static dot; no meaning ever depends on animation.
+- Animation is never the sole carrier of state — it pairs with a glyph, color, or wording.
 
 ## Layout Behavior
 
