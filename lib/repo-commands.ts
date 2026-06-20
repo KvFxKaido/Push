@@ -225,20 +225,20 @@ function inferFromConfig(
 // AGENTS.md hint parsing
 // ---------------------------------------------------------------------------
 
-const HINT_DIRECTIVE = /^#\s*(test|lint|typecheck|format|build|check)\s*:\s*$/i;
+// Captures the kind and any inline command after the colon. An empty trailing
+// group means the command is on the following line(s).
+const HINT_DIRECTIVE = /^#\s*(test|lint|typecheck|format|build|check)\s*:\s*(.*)$/i;
 
 /**
  * Parse fenced ```bash (or ```sh / ```shell) blocks that contain `# kind:`
- * directives. The next non-blank, non-comment line after a directive is the
- * command. Multiple directives can share one fenced block.
+ * directives. Two equivalent forms are accepted:
  *
- * Example:
- *   ```bash
- *   # test:
- *   npm run test:unit
- *   # lint:
- *   npx biome check .
- *   ```
+ *   - inline:    `# test: npm run test:unit`
+ *   - next-line: `# test:` followed by `npm run test:unit`
+ *
+ * For the next-line form, the next non-blank, non-comment line is the command.
+ * Multiple directives can share one fenced block. The command is a single
+ * line — chain multi-step commands with `&&` / `;` rather than across lines.
  *
  * First hit per kind wins (so AGENTS.md ordering is meaningful).
  */
@@ -247,6 +247,13 @@ export function parseAgentsMdHints(markdown: string): AgentsMdHint[] {
   const fenceRegex = /```(?:bash|sh|shell)\b[^\n]*\n([\s\S]*?)\n?```/gi;
   const hints: AgentsMdHint[] = [];
   const seen = new Set<RepoCommandKind>();
+
+  const record = (kind: RepoCommandKind, command: string): void => {
+    if (!seen.has(kind)) {
+      hints.push({ kind, command });
+      seen.add(kind);
+    }
+  };
 
   let match: RegExpExecArray | null;
   while ((match = fenceRegex.exec(markdown)) !== null) {
@@ -260,16 +267,24 @@ export function parseAgentsMdHints(markdown: string): AgentsMdHint[] {
 
       const directive = line.match(HINT_DIRECTIVE);
       if (directive) {
-        pendingKind = directive[1].toLowerCase() as RepoCommandKind;
+        const kind = directive[1].toLowerCase() as RepoCommandKind;
+        const inline = directive[2]?.trim();
+        if (inline) {
+          // Inline form — the command lives on the directive line itself, so no
+          // pending kind is left dangling for the next line.
+          record(kind, inline);
+          pendingKind = null;
+        } else {
+          pendingKind = kind;
+        }
         continue;
       }
 
       // Skip other comment lines without consuming the pending kind.
       if (line.startsWith('#')) continue;
 
-      if (pendingKind && !seen.has(pendingKind)) {
-        hints.push({ kind: pendingKind, command: line });
-        seen.add(pendingKind);
+      if (pendingKind) {
+        record(pendingKind, line);
       }
       pendingKind = null;
     }

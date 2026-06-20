@@ -213,6 +213,21 @@ describe('parseAgentsMdHints', () => {
     assert.deepEqual(parseAgentsMdHints(md), [{ kind: 'test', command: 'npm run test:unit' }]);
   });
 
+  it('accepts the inline `# kind: command` form', () => {
+    const md = ['```bash', '# test: npm run test:cli && npm run test:mcp:github', '```'].join('\n');
+    assert.deepEqual(parseAgentsMdHints(md), [
+      { kind: 'test', command: 'npm run test:cli && npm run test:mcp:github' },
+    ]);
+  });
+
+  it('mixes inline and next-line directives in one block', () => {
+    const md = ['```bash', '# test: vitest run', '# lint:', 'npx biome check .', '```'].join('\n');
+    assert.deepEqual(parseAgentsMdHints(md), [
+      { kind: 'test', command: 'vitest run' },
+      { kind: 'lint', command: 'npx biome check .' },
+    ]);
+  });
+
   it('returns an empty list for empty input', () => {
     assert.deepEqual(parseAgentsMdHints(''), []);
   });
