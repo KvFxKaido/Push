@@ -165,3 +165,53 @@ export function isSavedSessionRecoverable(args: {
   if (idleMs <= maxIdleMs) return true;
   return false;
 }
+
+/** A record of the last auto-reconnect probe issued for a saved sandbox. */
+export interface ReconnectAttempt {
+  /** The saved sandbox id that was probed. */
+  sandboxId: string;
+  /** When the probe was issued (ms epoch). Set to `0` to force the cooldown open. */
+  at: number;
+  /** How many probes have been issued for this sandbox in the current burst. */
+  attempts: number;
+}
+
+/**
+ * Decide whether to (re-)probe a saved sandbox on the auto-reconnect path, and
+ * with what attempt count. This is the spin-breaker: a *transient* probe failure
+ * parks the hook's status back at 'idle' — the very trigger the reconnect effect
+ * waits on — so without a cooldown it re-probes immediately, forever (and
+ * keep-warm snapshots keep `isSavedSessionRecoverable` true, so the spin never
+ * self-terminates). When the same sandbox was probed within `backoffMs`, skip;
+ * otherwise probe and return the attempt record to persist. The attempt count
+ * carries forward for the same sandbox (so the retry budget holds) and resets to
+ * 1 for a different one.
+ */
+export function decideReconnectProbe(args: {
+  savedSandboxId: string;
+  prior: ReconnectAttempt | null;
+  now: number;
+  backoffMs: number;
+}): { probe: boolean; nextAttempt: ReconnectAttempt } {
+  const { savedSandboxId, prior, now, backoffMs } = args;
+  if (prior !== null && prior.sandboxId === savedSandboxId) {
+    if (now - prior.at < backoffMs) {
+      return { probe: false, nextAttempt: prior };
+    }
+    return {
+      probe: true,
+      nextAttempt: { sandboxId: savedSandboxId, at: now, attempts: prior.attempts + 1 },
+    };
+  }
+  return { probe: true, nextAttempt: { sandboxId: savedSandboxId, at: now, attempts: 1 } };
+}
+
+/**
+ * Whether a transiently-failed reconnect should schedule another backoff retry.
+ * Bounds the auto-retry burst to `maxAttempts` probes total; past that the
+ * session is kept but left alone until a real trigger (user action, repo/branch
+ * change) re-enters the reconnect path.
+ */
+export function shouldRetryReconnect(attempts: number, maxAttempts: number): boolean {
+  return attempts < maxAttempts;
+}

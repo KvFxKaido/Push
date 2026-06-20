@@ -2,9 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildSandboxSessionStorageKey,
   clearSandboxSessionByStorageKey,
+  decideReconnectProbe,
   isSavedSessionRecoverable,
   loadSandboxSession,
+  type ReconnectAttempt,
   saveSandboxSession,
+  shouldRetryReconnect,
   touchSandboxSessionActivity,
   type PersistedSandboxSession,
 } from './sandbox-session';
@@ -214,6 +217,132 @@ describe('sandbox-session', () => {
           maxAgeMs: MAX,
         }),
       ).toBe(false);
+    });
+  });
+
+  describe('decideReconnectProbe', () => {
+    const BACKOFF = 30 * 1000;
+    const NOW = 1_700_000_000_000; // realistic epoch so the `at: 0` sentinel reads as cooldown-open
+
+    it('probes a fresh saved sandbox (no prior attempt) as attempt 1', () => {
+      const d = decideReconnectProbe({
+        savedSandboxId: 'sb-1',
+        prior: null,
+        now: NOW,
+        backoffMs: BACKOFF,
+      });
+      expect(d.probe).toBe(true);
+      expect(d.nextAttempt).toEqual({ sandboxId: 'sb-1', at: NOW, attempts: 1 });
+    });
+
+    it('resets to attempt 1 when the saved sandbox differs from the prior attempt', () => {
+      const prior: ReconnectAttempt = { sandboxId: 'sb-old', at: NOW, attempts: 2 };
+      const d = decideReconnectProbe({
+        savedSandboxId: 'sb-new',
+        prior,
+        now: NOW + 500,
+        backoffMs: BACKOFF,
+      });
+      expect(d.probe).toBe(true);
+      expect(d.nextAttempt).toEqual({ sandboxId: 'sb-new', at: NOW + 500, attempts: 1 });
+    });
+
+    it('skips re-probing the same sandbox within the backoff window (the spin-breaker)', () => {
+      const prior: ReconnectAttempt = { sandboxId: 'sb-1', at: NOW, attempts: 1 };
+      const d = decideReconnectProbe({
+        savedSandboxId: 'sb-1',
+        prior,
+        now: NOW + BACKOFF - 1, // still inside the window
+        backoffMs: BACKOFF,
+      });
+      expect(d.probe).toBe(false);
+      expect(d.nextAttempt).toBe(prior); // unchanged — no new probe stamped
+    });
+
+    it('re-probes the same sandbox once the backoff elapses, incrementing the attempt', () => {
+      const prior: ReconnectAttempt = { sandboxId: 'sb-1', at: NOW, attempts: 1 };
+      const d = decideReconnectProbe({
+        savedSandboxId: 'sb-1',
+        prior,
+        now: NOW + BACKOFF, // window just elapsed
+        backoffMs: BACKOFF,
+      });
+      expect(d.probe).toBe(true);
+      expect(d.nextAttempt).toEqual({ sandboxId: 'sb-1', at: NOW + BACKOFF, attempts: 2 });
+    });
+
+    it('treats at:0 as cooldown-open so the retry timer can force a re-probe', () => {
+      const prior: ReconnectAttempt = { sandboxId: 'sb-1', at: 0, attempts: 1 };
+      const d = decideReconnectProbe({
+        savedSandboxId: 'sb-1',
+        prior,
+        now: NOW,
+        backoffMs: BACKOFF,
+      });
+      expect(d.probe).toBe(true);
+      expect(d.nextAttempt.attempts).toBe(2);
+    });
+
+    it('does not spin: repeated same-tick re-entries after a probe all skip', () => {
+      // This is the regression: a transient failure parks status back at 'idle',
+      // re-entering the effect on the SAME tick. Pre-fix that re-probed forever;
+      // now every same-tick re-entry for the same sandbox skips.
+      let prior: ReconnectAttempt | null = null;
+      const first = decideReconnectProbe({
+        savedSandboxId: 'sb-1',
+        prior,
+        now: NOW,
+        backoffMs: BACKOFF,
+      });
+      expect(first.probe).toBe(true);
+      prior = first.nextAttempt;
+      let extraProbes = 0;
+      for (let i = 0; i < 50; i++) {
+        const d = decideReconnectProbe({
+          savedSandboxId: 'sb-1',
+          prior,
+          now: NOW,
+          backoffMs: BACKOFF,
+        });
+        if (d.probe) extraProbes++;
+        prior = d.nextAttempt;
+      }
+      expect(extraProbes).toBe(0); // exactly one probe across 51 same-tick entries
+    });
+  });
+
+  describe('shouldRetryReconnect', () => {
+    it('retries while under the attempt budget', () => {
+      expect(shouldRetryReconnect(1, 2)).toBe(true);
+    });
+
+    it('stops once the budget is reached (single backoff retry, then give up)', () => {
+      expect(shouldRetryReconnect(2, 2)).toBe(false);
+      expect(shouldRetryReconnect(3, 2)).toBe(false);
+    });
+
+    it('bounds the auto-retry burst to exactly maxAttempts probes', () => {
+      const BACKOFF = 30 * 1000;
+      const MAX = 2;
+      let prior: ReconnectAttempt | null = null;
+      let now = 1_700_000_000_000;
+      let probes = 0;
+      // Drive the real failure loop: probe → transient fail → wait backoff → repeat,
+      // stopping when the retry budget is spent.
+      for (let i = 0; i < 20; i++) {
+        const d = decideReconnectProbe({
+          savedSandboxId: 'sb-1',
+          prior,
+          now,
+          backoffMs: BACKOFF,
+        });
+        expect(d.probe).toBe(true); // clock advanced past backoff each round
+        probes++;
+        prior = d.nextAttempt;
+        if (!shouldRetryReconnect(prior.attempts, MAX)) break; // gave up auto-retry
+        now += BACKOFF; // retry timer waited out the cooldown
+      }
+      expect(probes).toBe(MAX); // initial probe + exactly one retry
     });
   });
 });

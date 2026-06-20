@@ -54,9 +54,12 @@ import { checkRepoCoverage } from '@/lib/github-repo-coverage';
 import {
   buildSandboxSessionStorageKey,
   clearSandboxSessionByStorageKey,
+  decideReconnectProbe,
   isSavedSessionRecoverable,
   loadSandboxSession,
+  type ReconnectAttempt,
   saveSandboxSession,
+  shouldRetryReconnect,
   touchSandboxSessionActivity,
 } from '@/lib/sandbox-session';
 import { isDefinitivelyGoneMessage, isDefinitivelyGoneError } from '@/lib/sandbox-error-utils';
@@ -90,6 +93,15 @@ const IDLE_CHECK_INTERVAL_MS = 60 * 1000; // check every minute
 // tick stale. Bias toward one extra cheap probe rather than discarding a live
 // sandbox that had real activity just before a reload.
 const SANDBOX_ACTIVITY_STALENESS_GRACE_MS = IDLE_CHECK_INTERVAL_MS;
+// Backoff before re-probing a saved session that returned a *transient*
+// reconnect failure. Without this the reconnect effect spins: a transient probe
+// failure parks status back at 'idle' (the very value this effect's guard waits
+// on), so it immediately re-probes. Keep-warm snapshots make
+// `isSavedSessionRecoverable` always-true for idle sessions, so the spin never
+// self-terminates. A cooldown + one backoff retry breaks it while still
+// auto-healing a container that's genuinely on its way back.
+const RECONNECT_RETRY_BACKOFF_MS = 30 * 1000; // 30s between transient-failure re-probes
+const MAX_RECONNECT_ATTEMPTS = 2; // initial probe + 1 backoff retry, then wait for a real trigger
 
 function getGitHubAppCommitIdentity(): GitCommitIdentity | undefined {
   const appToken = safeStorageGet(APP_TOKEN_STORAGE_KEY);
@@ -124,6 +136,11 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
   const [restoredFromSnapshotSandboxId, setRestoredFromSnapshotSandboxId] = useState<string | null>(
     null,
   );
+  // Bumped by the backoff retry timer to re-enter the reconnect effect once a
+  // transient failure's cooldown has elapsed (auto-heal without the spin).
+  // Declared after the state cells the test harness reads by index (0=sandboxId,
+  // 1=status, 2=error) so it can't shift them.
+  const [reconnectNonce, setReconnectNonce] = useState(0);
   const sandboxIdRef = useRef<string | null>(null);
   const sessionStorageKeyRef = useRef<string | null>(null);
   const statusRef = useRef<SandboxStatus>('idle');
@@ -140,6 +157,12 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
   const lastKeepWarmSnapshotAtRef = useRef(0);
   const freshSandboxIdRef = useRef<string | null>(null);
   const snapshotRestoredSandboxIdRef = useRef<string | null>(null);
+  // Reconnect backoff bookkeeping (see RECONNECT_RETRY_BACKOFF_MS): the last
+  // saved sandbox we probed + attempt count, so a transient failure backs off
+  // instead of re-probing on the next 'idle' tick. Declared last so they can't
+  // shift the index-synced refs above (0=sandboxIdRef, 2=statusRef).
+  const lastReconnectAttemptRef = useRef<ReconnectAttempt | null>(null);
+  const reconnectRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeSessionStorageKey = useMemo(
     () => buildSandboxSessionStorageKey(activeRepoFullName, activeBranch),
     [activeRepoFullName, activeBranch],
@@ -195,6 +218,20 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       return;
     }
 
+    // Transient-failure cooldown: if we just probed this same saved sandbox and
+    // it failed transiently, don't immediately re-probe — status parked back at
+    // 'idle' (our own write) would otherwise respin this effect. Wait out the
+    // backoff; the retry timer bumps `reconnectNonce` to re-enter once it passes.
+    const probeDecision = decideReconnectProbe({
+      savedSandboxId: saved.sandboxId,
+      prior: lastReconnectAttemptRef.current,
+      now: Date.now(),
+      backoffMs: RECONNECT_RETRY_BACKOFF_MS,
+    });
+    if (!probeDecision.probe) return;
+    const reconnectAttempts = probeDecision.nextAttempt.attempts;
+    lastReconnectAttemptRef.current = probeDecision.nextAttempt;
+
     let cancelled = false;
     reconnectingRef.current = true;
     const reconnectStartTimer = setTimeout(() => {
@@ -228,6 +265,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
         sessionStorageKeyRef.current = activeSessionStorageKey;
         setActiveSandboxEnvironment(session.sandboxId);
         setStatus('ready');
+        lastReconnectAttemptRef.current = null; // restored — reset retry budget
         const symbolKey = saved.repoFullName
           ? `${saved.repoFullName}:${saved.branch || 'main'}`
           : 'scratch';
@@ -250,6 +288,31 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       }
     };
 
+    // After a transient probe failure, schedule exactly one backoff retry so a
+    // container that's genuinely coming back reconnects on its own — then stop,
+    // leaving further attempts to a real trigger (user action, repo/branch
+    // change). The cooldown guard above prevents the status='idle' write from
+    // re-probing before this fires.
+    const scheduleReconnectRetry = () => {
+      if (cancelled) return;
+      if (!shouldRetryReconnect(reconnectAttempts, MAX_RECONNECT_ATTEMPTS)) {
+        console.debug(
+          `[useSandbox] Reconnect: gave up auto-retry for ${saved.sandboxId} after ${reconnectAttempts} transient failures — will retry on next real trigger`,
+        );
+        return;
+      }
+      if (reconnectRetryTimerRef.current) clearTimeout(reconnectRetryTimerRef.current);
+      reconnectRetryTimerRef.current = setTimeout(() => {
+        reconnectRetryTimerRef.current = null;
+        // Clear the cooldown's timestamp so re-entry actually probes; the attempt
+        // count is preserved so the retry budget (MAX_RECONNECT_ATTEMPTS) holds.
+        if (lastReconnectAttemptRef.current?.sandboxId === saved.sandboxId) {
+          lastReconnectAttemptRef.current = { ...lastReconnectAttemptRef.current, at: 0 };
+        }
+        setReconnectNonce((n) => n + 1);
+      }, RECONNECT_RETRY_BACKOFF_MS);
+    };
+
     suppressIdleTouch(); // Don't let reconnect probes reset idle clock
     const reconnectPromise = execInSandbox(saved.sandboxId, 'true')
       .then(async (result) => {
@@ -264,6 +327,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
           sessionStorageKeyRef.current = activeSessionStorageKey;
           setActiveSandboxEnvironment(saved.sandboxId);
           setStatus('ready');
+          lastReconnectAttemptRef.current = null; // reconnected — reset retry budget
           // A successful probe is the strongest possible liveness proof, but it's
           // suppressIdleTouch'd so it won't reset the in-memory clock (which would
           // defeat hibernation). Persist the recency directly so a subsequent
@@ -295,6 +359,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
           console.debug(
             `[useSandbox] Reconnect: transient failure for ${saved.sandboxId} (exit ${result.exitCode}): ${reason} — keeping session`,
           );
+          scheduleReconnectRetry();
         }
         setStatus('idle');
         return null;
@@ -311,6 +376,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
           console.debug(
             `[useSandbox] Reconnect: transient error for ${saved.sandboxId}: ${msg} — keeping session`,
           );
+          scheduleReconnectRetry();
         }
         setStatus('idle');
         return null;
@@ -327,10 +393,14 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
     return () => {
       cancelled = true;
       clearTimeout(reconnectStartTimer);
+      if (reconnectRetryTimerRef.current) {
+        clearTimeout(reconnectRetryTimerRef.current);
+        reconnectRetryTimerRef.current = null;
+      }
       reconnectingRef.current = false;
       reconnectPromiseRef.current = null;
     };
-  }, [activeBranch, activeRepoFullName, activeSessionStorageKey, status]);
+  }, [activeBranch, activeRepoFullName, activeSessionStorageKey, status, reconnectNonce]);
 
   // Idle hibernation timer — snapshot the sandbox after 8 min of no tool calls.
   // The snapshot preserves the full working tree so restore is fast. Without this,
