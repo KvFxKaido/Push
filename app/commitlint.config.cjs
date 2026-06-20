@@ -22,6 +22,7 @@ module.exports = {
         'scratchpad',
         'providers',
         'deps',
+        'lint',
         'ci',
       ],
     ],
