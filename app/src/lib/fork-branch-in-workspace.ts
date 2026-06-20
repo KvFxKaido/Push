@@ -15,6 +15,7 @@
  * implementation of the migration logic.
  */
 
+import { executeSandboxToolCall } from './sandbox-tools';
 import type { BranchSwitchPayload, ToolExecutionResult } from '@/types';
 import type { SandboxToolCall } from './sandbox-tool-detection';
 
@@ -27,7 +28,6 @@ async function executeSandboxTool(
   call: SandboxToolCall,
   sandboxId: string,
 ): Promise<ToolExecutionResult> {
-  const { executeSandboxToolCall } = await import('./sandbox-tools');
   return executeSandboxToolCall(call, sandboxId);
 }
 
