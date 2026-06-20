@@ -235,6 +235,37 @@
   }
 }
 
+/* Icon swap — scale + blur as one icon replaces another whose meaning changed
+   (copy → check today; any future state-bearing icon). A reusable primitive in
+   the same family as the verb swap and the verdict pop: motion marks a real
+   state change, never decoration. The class goes on the *incoming* icon only,
+   so a fresh mount (the swap) replays it once; `backwards` holds the scaled +
+   blurred start so the icon never flashes settled before it animates.
+   Neutralized under reduced motion. */
+@keyframes icon-swap-in {
+  from {
+    opacity: 0;
+    transform: scale(0.55);
+    filter: blur(2.5px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+}
+
+.icon-swap {
+  transform-origin: center;
+  animation: icon-swap-in 0.26s var(--ease-spring) backwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .icon-swap {
+    animation: none;
+  }
+}
+
 /* Streaming caret — a soft, rounded, glowing cursor that trails revealed text.
    Pulses on a smooth ease (alternating fade) instead of a hard on/off blink,
    pairing with the smooth character reveal. The bar color comes from a utility

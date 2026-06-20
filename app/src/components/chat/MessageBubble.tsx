@@ -521,8 +521,14 @@ function CopyButton({ text }: { text: string }) {
       className="rounded-md p-1.5 text-push-fg-dim transition-colors duration-150 hover:bg-push-surface-active hover:text-push-fg-soft"
       title={copied ? 'Copied!' : 'Copy to clipboard'}
     >
+      {/* `icon-swap` only on the incoming Check: `copied` always inits false,
+          so the Check appears solely via a click within a mounted instance —
+          never on initial render or a Virtuoso scroll-remount. The resting Copy
+          (initial + 2s reset) stays static, marking the earned state, not the
+          return — the same "celebrate the verdict, not the reset" instinct as
+          the SAFE/UNSAFE split. */}
       {copied ? (
-        <Check className="h-3.5 w-3.5 text-push-status-success" />
+        <Check className="icon-swap h-3.5 w-3.5 text-push-status-success" />
       ) : (
         <Copy className="h-3.5 w-3.5" />
       )}
