@@ -10,7 +10,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { renderEntryLines } from '../tui-framers.ts';
+import { renderEntryLines, looksLikeUnifiedDiff } from '../tui-framers.ts';
 import { createTheme } from '../tui-theme.ts';
 
 const WIDTH = 80;
@@ -106,6 +106,32 @@ describe('renderEntryLines: tool_call', () => {
       duration: 5,
     });
     assert.deepEqual(lines, ['• ✗ Bash(false) 5ms']);
+  });
+});
+
+describe('renderEntryLines: diff fences', () => {
+  it('renders a ```diff fence with a gutter, summary, and stripped markers', () => {
+    assert.deepEqual(
+      render({
+        role: 'assistant',
+        text: '```diff\n@@ -1,2 +1,2 @@\n-old line\n+new line\n context\n```',
+      }),
+      ['• diff (+1 -1)', '    @@ -1,2 +1,2 @@', '  - old line', '  + new line', '    context'],
+    );
+  });
+
+  it('auto-detects an untagged fence whose body is a unified diff', () => {
+    assert.deepEqual(render({ role: 'assistant', text: '```\n@@ -1,1 +1,1 @@\n-a\n+b\n```' }), [
+      '• diff (+1 -1)',
+      '    @@ -1,1 +1,1 @@',
+      '  - a',
+      '  + b',
+    ]);
+  });
+
+  it('does not mistake ordinary prose for a diff', () => {
+    assert.equal(looksLikeUnifiedDiff('a line with + and - chars\nbut no hunk header'), false);
+    assert.equal(looksLikeUnifiedDiff('@@ -1,2 +1,2 @@ ctx'), true);
   });
 });
 

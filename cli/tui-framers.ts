@@ -127,6 +127,14 @@ export function pushWrappedLines(
   }
 }
 
+// Conservative unified-diff sniff for untagged fences: a real hunk header, or
+// both file headers present. Tight enough that prose containing a stray `+`/`-`
+// line won't trip it — only fenced bodies that are unambiguously a patch.
+export function looksLikeUnifiedDiff(body: string): boolean {
+  if (/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/m.test(body)) return true;
+  return /^--- /m.test(body) && /^\+\+\+ /m.test(body);
+}
+
 // ── Assistant rendering (markdown-aware) ────────────────────────────
 
 export interface PayloadBlock {
@@ -226,6 +234,57 @@ export function renderAssistantEntryLines(
     }
   };
 
+  // Render a unified-diff fence with a colored left gutter bar so the change
+  // reads as a scannable block instead of relying on the easily-missed leading
+  // +/- char. The bar carries the meaning (green add / red remove / blue hunk),
+  // so the marker char is stripped from the content. Degrades cleanly: ascii
+  // gutter is `|`; at tier `none` (no color) the gutter falls back to the
+  // literal +/- marker so the diff stays legible without color. Lines are
+  // truncated (not wrapped) to keep the gutter column flush — the untruncated
+  // text is still available via `/copy`.
+  const pushDiffFence = (): void => {
+    const gutterGlyph = theme.unicode ? '▌' : '|';
+    const noColor = theme.tier === 'none';
+    let adds = 0;
+    let dels = 0;
+    for (const l of fenceBuf) {
+      if (/^\+(?!\+\+)/.test(l)) adds++;
+      else if (/^-(?!--)/.test(l)) dels++;
+    }
+    const label = noColor
+      ? `diff (+${adds} -${dels})`
+      : `${theme.style('fg.dim', 'diff ·')} ${theme.style('state.success', `+${adds}`)} ${theme.style('state.error', `-${dels}`)}`;
+    pushAssistant(label, (s) => s);
+
+    const avail = Math.max(4, width - visibleWidth(nextPrefix) - 2);
+    for (const raw of fenceBuf) {
+      let token: TokenName = 'fg.secondary';
+      let gutterToken: TokenName = 'fg.dim';
+      let marker = ' ';
+      let content = raw;
+      if (/^@@/.test(raw)) {
+        token = 'accent.link';
+        gutterToken = 'accent.link';
+      } else if (/^(\+\+\+|---|diff |index |new file|deleted file|rename |similarity )/.test(raw)) {
+        token = 'fg.dim';
+      } else if (raw.startsWith('+')) {
+        token = 'state.success';
+        gutterToken = 'state.success';
+        marker = '+';
+        content = raw.slice(1);
+      } else if (raw.startsWith('-')) {
+        token = 'state.error';
+        gutterToken = 'state.error';
+        marker = '-';
+        content = raw.slice(1);
+      } else if (raw.startsWith(' ')) {
+        content = raw.slice(1);
+      }
+      const gutter = noColor ? marker : theme.style(gutterToken, gutterGlyph);
+      pushAssistant(`${gutter} ${theme.style(token, truncate(content, avail))}`, (s) => s);
+    }
+  };
+
   const lines = String(text ?? '').split('\n');
   let fenceLang: string | null = null;
   let fenceBuf: string[] = [];
@@ -282,6 +341,13 @@ export function renderAssistantEntryLines(
         fenceBuf = [];
         return;
       }
+    }
+
+    if ((lang === 'diff' || lang === 'patch' || (!lang && looksLikeUnifiedDiff(body))) && body) {
+      pushDiffFence();
+      fenceLang = null;
+      fenceBuf = [];
+      return;
     }
 
     if (body) {
