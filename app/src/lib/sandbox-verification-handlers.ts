@@ -200,33 +200,51 @@ export async function handleRunTests(
         framework = 'unknown';
     }
   } else {
-    // Auto-detect by checking for config files
-    const detectResult = await execInSandbox(
-      sandboxId,
-      'cd /workspace && ls -1 package.json Cargo.toml go.mod pytest.ini pyproject.toml setup.py 2>/dev/null | head -1',
-    );
-    const detected = detectResult.stdout.trim();
-
-    if (detected === 'package.json') {
-      command = 'npm test';
+    // Prefer the test command the sandbox already resolved from the project's
+    // package.json scripts (e.g. `npm run test`, `pnpm test`). It's the
+    // actually-runnable command, so it sidesteps the `npm test` →
+    // "Missing script: test" dead-end that happens whenever the project names
+    // its test script anything other than `test`.
+    const detectedCommand = ctx.getSandboxEnvironment(sandboxId)?.readiness?.test_command?.trim();
+    if (detectedCommand) {
+      command = detectedCommand;
       framework = 'npm';
-    } else if (detected === 'Cargo.toml') {
-      command = 'cargo test';
-      framework = 'cargo';
-    } else if (detected === 'go.mod') {
-      command = 'go test ./...';
-      framework = 'go';
-    } else if (['pytest.ini', 'pyproject.toml', 'setup.py'].includes(detected)) {
-      command = 'pytest -v';
-      framework = 'pytest';
     } else {
-      // Fallback: try npm test
-      command = 'npm test';
-      framework = 'npm';
+      // Fall back to config-file probing when readiness carries no test command
+      // (e.g. non-JS projects, or a package.json with no test script).
+      const detectResult = await execInSandbox(
+        sandboxId,
+        'cd /workspace && ls -1 package.json Cargo.toml go.mod pytest.ini pyproject.toml setup.py 2>/dev/null | head -1',
+      );
+      const detected = detectResult.stdout.trim();
+
+      if (detected === 'package.json') {
+        command = 'npm test';
+        framework = 'npm';
+      } else if (detected === 'Cargo.toml') {
+        command = 'cargo test';
+        framework = 'cargo';
+      } else if (detected === 'go.mod') {
+        command = 'go test ./...';
+        framework = 'go';
+      } else if (['pytest.ini', 'pyproject.toml', 'setup.py'].includes(detected)) {
+        command = 'pytest -v';
+        framework = 'pytest';
+      } else {
+        // Fallback: try npm test
+        command = 'npm test';
+        framework = 'npm';
+      }
     }
   }
 
-  const result = await execInSandbox(sandboxId, `cd /workspace && ${command}`, undefined, {
+  // Run the test command through the detached long-running path when available:
+  // it isn't bound by the buffered per-exec ceiling (so a multi-minute suite can
+  // actually finish), it streams live output into the status-bar tail, and it
+  // honours Stop. Falls back to buffered exec on backends without background
+  // routes — same pattern as the cold-install step in handleCheckTypes.
+  const runTests = ctx.execLongRunning ?? execInSandbox;
+  const result = await runTests(sandboxId, `cd /workspace && ${command}`, undefined, {
     markWorkspaceMutated: true,
   });
   const durationMs = Date.now() - start;

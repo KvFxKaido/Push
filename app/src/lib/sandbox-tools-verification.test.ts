@@ -102,6 +102,7 @@ const fail = (stdout = '', stderr = '', exitCode = 1): ExecResult => ({
 function resetMocks() {
   vi.mocked(sandboxClient.execInSandbox).mockReset();
   vi.mocked(sandboxClient.execLongRunningInSandbox).mockReset();
+  vi.mocked(sandboxClient.getSandboxEnvironment).mockReset();
   vi.mocked(clearFileVersionCache).mockReset();
   vi.mocked(clearPrefetchedEditFileCache).mockReset();
 }
@@ -116,29 +117,26 @@ describe('executeSandboxToolCall -- sandbox_run_tests', () => {
   });
 
   it('auto-detects npm from package.json and runs npm test with mutation flag + cache clear', async () => {
-    vi.mocked(sandboxClient.execInSandbox)
-      // 1. detection probe
-      .mockResolvedValueOnce(ok('package.json\n'))
-      // 2. actual test run — jest-style output
-      .mockResolvedValueOnce(
-        ok('Tests: 5 passed, 0 failed, 5 total\nTest Suites: 1 passed, 1 total\n'),
-      );
+    // Detection probe stays on the buffered exec; the actual test run goes
+    // through the detached long-running path (live tail, no buffered ceiling).
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValueOnce(ok('package.json\n'));
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(
+      ok('Tests: 5 passed, 0 failed, 5 total\nTest Suites: 1 passed, 1 total\n'),
+    );
 
     const result = await executeSandboxToolCall({ tool: 'sandbox_run_tests', args: {} }, 'sb-run');
 
-    // Detection call: no mutation flag
+    // Detection call: buffered exec, no mutation flag.
     expect(sandboxClient.execInSandbox).toHaveBeenNthCalledWith(
       1,
       'sb-run',
       'cd /workspace && ls -1 package.json Cargo.toml go.mod pytest.ini pyproject.toml setup.py 2>/dev/null | head -1',
     );
-    // Exec call: mutation flag is always true, even on success.
-    expect(sandboxClient.execInSandbox).toHaveBeenNthCalledWith(
-      2,
+    // Run call: detached path, mutation flag is always true, even on success.
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith(
       'sb-run',
       'cd /workspace && npm test',
-      undefined,
-      { markWorkspaceMutated: true },
+      expect.objectContaining({ markWorkspaceMutated: true }),
     );
     // Caches are always cleared after a test run.
     expect(clearFileVersionCache).toHaveBeenCalledWith('sb-run');
@@ -172,18 +170,17 @@ describe('executeSandboxToolCall -- sandbox_run_tests', () => {
     // counts agree. The cargo failure test below pins the parsed-with-failure
     // branch; keeping this scenario clean avoids any ambiguity about whether
     // PASS/FAIL keys off exit code or parsed counts.
-    vi.mocked(sandboxClient.execInSandbox)
-      .mockResolvedValueOnce(ok('pyproject.toml\n'))
-      .mockResolvedValueOnce(ok('3 passed, 0 failed in 0.12s\n', ''));
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValueOnce(ok('pyproject.toml\n'));
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(
+      ok('3 passed, 0 failed in 0.12s\n', ''),
+    );
 
     const result = await executeSandboxToolCall({ tool: 'sandbox_run_tests', args: {} }, 'sb-py');
 
-    expect(sandboxClient.execInSandbox).toHaveBeenNthCalledWith(
-      2,
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith(
       'sb-py',
       'cd /workspace && pytest -v',
-      undefined,
-      { markWorkspaceMutated: true },
+      expect.objectContaining({ markWorkspaceMutated: true }),
     );
     expect(result.text).toContain('✓ Tests PASSED (pytest)');
     const data = result.card?.data as {
@@ -197,28 +194,76 @@ describe('executeSandboxToolCall -- sandbox_run_tests', () => {
   });
 
   it('falls back to npm test when auto-detection finds nothing', async () => {
-    vi.mocked(sandboxClient.execInSandbox)
-      .mockResolvedValueOnce(ok('')) // nothing detected
-      .mockResolvedValueOnce(ok('Tests: 0 passed, 0 failed, 0 total\n'));
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValueOnce(ok('')); // nothing detected
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(
+      ok('Tests: 0 passed, 0 failed, 0 total\n'),
+    );
 
     const result = await executeSandboxToolCall(
       { tool: 'sandbox_run_tests', args: {} },
       'sb-fallback',
     );
 
-    expect(sandboxClient.execInSandbox).toHaveBeenNthCalledWith(
-      2,
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith(
       'sb-fallback',
       'cd /workspace && npm test',
-      undefined,
-      { markWorkspaceMutated: true },
+      expect.objectContaining({ markWorkspaceMutated: true }),
     );
     const data = result.card?.data as { framework: string };
     expect(data.framework).toBe('npm');
   });
 
+  it('prefers the readiness-detected test command over the npm test fallback', async () => {
+    // The sandbox already resolved the real test script — run_tests should use
+    // it directly and skip the config-file probe entirely.
+    vi.mocked(sandboxClient.getSandboxEnvironment).mockReturnValueOnce({
+      tools: {},
+      readiness: { test_command: 'npm run test:cli' },
+    });
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(
+      ok('Tests: 9 passed, 0 failed, 9 total\n'),
+    );
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_run_tests', args: {} },
+      'sb-readiness',
+    );
+
+    // No config-file detection probe — the readiness command short-circuits it.
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith(
+      'sb-readiness',
+      'cd /workspace && npm run test:cli',
+      expect.objectContaining({ markWorkspaceMutated: true }),
+    );
+    expect(result.text).toContain('Command: npm run test:cli');
+    const data = result.card?.data as { framework: string; passed: number };
+    expect(data.framework).toBe('npm');
+    expect(data.passed).toBe(9);
+  });
+
+  it('forwards the live-output observer + abort signal to the detached test run', async () => {
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValueOnce(ok('package.json\n'));
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(
+      ok('Tests: 1 passed, 0 failed, 1 total\n'),
+    );
+    const onExecProgress = vi.fn();
+    const abortSignal = new AbortController().signal;
+
+    await executeSandboxToolCall({ tool: 'sandbox_run_tests', args: {} }, 'sb-progress', {
+      onExecProgress,
+      abortSignal,
+    });
+
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith(
+      'sb-progress',
+      'cd /workspace && npm test',
+      expect.objectContaining({ onProgress: onExecProgress, abortSignal }),
+    );
+  });
+
   it('honors an explicit framework arg and parses cargo output on failure', async () => {
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValueOnce(
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(
       fail('test result: FAILED. 7 passed; 2 failed; 0 ignored; 0 measured\n', '', 101),
     );
 
@@ -227,14 +272,12 @@ describe('executeSandboxToolCall -- sandbox_run_tests', () => {
       'sb-cargo',
     );
 
-    // Explicit framework skips the detection probe — exec happens on the first call.
-    expect(sandboxClient.execInSandbox).toHaveBeenCalledTimes(1);
-    expect(sandboxClient.execInSandbox).toHaveBeenNthCalledWith(
-      1,
+    // Explicit framework skips the detection probe — no buffered exec at all.
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith(
       'sb-cargo',
       'cd /workspace && cargo test',
-      undefined,
-      { markWorkspaceMutated: true },
+      expect.objectContaining({ markWorkspaceMutated: true }),
     );
     // Cache still cleared even on failure.
     expect(clearFileVersionCache).toHaveBeenCalledWith('sb-cargo');
@@ -254,19 +297,19 @@ describe('executeSandboxToolCall -- sandbox_run_tests', () => {
   });
 
   it('treats an unrecognized framework arg as a literal command with framework=unknown', async () => {
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValueOnce(ok('custom test runner output\n'));
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(
+      ok('custom test runner output\n'),
+    );
 
     const result = await executeSandboxToolCall(
       { tool: 'sandbox_run_tests', args: { framework: 'make check' } },
       'sb-custom',
     );
 
-    expect(sandboxClient.execInSandbox).toHaveBeenNthCalledWith(
-      1,
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith(
       'sb-custom',
       'cd /workspace && make check',
-      undefined,
-      { markWorkspaceMutated: true },
+      expect.objectContaining({ markWorkspaceMutated: true }),
     );
     const data = result.card?.data as { framework: string };
     expect(data.framework).toBe('unknown');
@@ -274,9 +317,8 @@ describe('executeSandboxToolCall -- sandbox_run_tests', () => {
 
   it('marks the card truncated and appends the truncation marker when output exceeds 8000 chars', async () => {
     const big = 'x'.repeat(8500);
-    vi.mocked(sandboxClient.execInSandbox)
-      .mockResolvedValueOnce(ok('package.json\n'))
-      .mockResolvedValueOnce(ok(big));
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValueOnce(ok('package.json\n'));
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(ok(big));
 
     const result = await executeSandboxToolCall(
       { tool: 'sandbox_run_tests', args: {} },

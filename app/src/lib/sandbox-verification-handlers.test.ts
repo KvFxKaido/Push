@@ -153,6 +153,37 @@ describe('handleRunTests — framework resolution', () => {
     await handleRunTests(ctx, { framework: 'npm' });
     expect(ctx.calls[0][3]).toEqual({ markWorkspaceMutated: true });
   });
+
+  it('prefers readiness.test_command and skips the config-file detection probe', async () => {
+    const ctx = makeContext(
+      [ok('Tests: 4 passed, 0 failed, 4 total')],
+      envWith({ test_command: 'npm run test:cli' }),
+    );
+    const result = await handleRunTests(ctx, {});
+    // No `ls` probe — the readiness-resolved command short-circuits detection.
+    expect(ctx.calls).toHaveLength(1);
+    expect(ctx.calls[0][1]).toBe('cd /workspace && npm run test:cli');
+    if (result.card?.type === 'test-results') {
+      expect(result.card.data.framework).toBe('npm');
+      expect(result.card.data.passed).toBe(4);
+    }
+  });
+
+  it('routes the test run through execLongRunning when the context provides it', async () => {
+    const longCalls: ExecArgs[] = [];
+    const ctx = makeContext([ok('package.json\n')]); // detection probe → execInSandbox
+    ctx.execLongRunning = vi.fn(async (...args: ExecArgs) => {
+      longCalls.push(args);
+      return ok('Tests: 1 passed, 0 failed, 1 total');
+    });
+    await handleRunTests(ctx, {});
+    // Detection probe stays on the buffered exec; the run is dispatched to the
+    // detached long-running path with the mutation flag intact.
+    expect(ctx.calls).toHaveLength(1);
+    expect(longCalls).toHaveLength(1);
+    expect(longCalls[0][1]).toBe('cd /workspace && npm test');
+    expect(longCalls[0][3]).toEqual({ markWorkspaceMutated: true });
+  });
 });
 
 // ---------------------------------------------------------------------------
