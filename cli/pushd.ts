@@ -1329,6 +1329,91 @@ function startDrainIdleWatcher() {
   drainIdleWatcher = setTimeout(tick, DRAIN_IDLE_POLL_MS);
 }
 
+// ── Idle lifecycle exit ────────────────────────────────────────────────────
+// Default-on: the daemon's lifetime tracks the local TUI's. When the last
+// loopback client disconnects, self-exit after a grace window — but only once
+// the daemon is idle (durable runs / delegations finish first) and no relay
+// (paired phone) is attached. The grace window is cancelled if a client
+// reconnects, so the self-heal drain→respawn and transient disconnects never
+// kill a daemon that's still in use. This bends the persistence default toward
+// the single-user "quit the TUI, the daemon goes too" behaviour; remote and
+// durable use stay alive via the two guards.
+let liveConnections = 0;
+let lifecycleExitTimer = null;
+let lifecycleExitArmed = false;
+let lifecycleExitFired = false;
+let lifecycleGraceMs = (() => {
+  const raw = Number(process.env.PUSH_DAEMON_IDLE_GRACE_MS);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 8000;
+})();
+// Injectable so a test can observe the exit decision without SIGTERM-ing the
+// runner. Production raises SIGTERM so `main()`'s shutdown closure runs the full
+// teardown (relay close, WS close, socket/pidfile cleanup) — same path as drain.
+let lifecycleExitFn = () => {
+  process.kill(process.pid, 'SIGTERM');
+};
+
+function clearLifecycleExitTimer() {
+  if (lifecycleExitTimer) {
+    clearTimeout(lifecycleExitTimer);
+    lifecycleExitTimer = null;
+  }
+}
+
+/** A client (re)connected or a relay attached — abort any pending exit. */
+function cancelLifecycleExit(reason) {
+  clearLifecycleExitTimer();
+  if (lifecycleExitArmed) {
+    lifecycleExitArmed = false;
+    console.log(JSON.stringify({ level: 'info', event: 'pushd_lifecycle_exit_cancelled', reason }));
+  }
+}
+
+/**
+ * Arm (or re-arm) the grace-window self-exit. Safe to call repeatedly — from the
+ * last socket close, a relay detach, or a run settling. When the grace timer
+ * fires it re-checks every guard: it exits only with no clients, no relay, and
+ * an idle daemon; re-arms if a durable run/delegation is still finishing; and
+ * bails if a client or relay came back. The drain path owns the exit while
+ * draining, so this defers to it.
+ */
+function maybeScheduleLifecycleExit() {
+  if (draining || drainExitScheduled || lifecycleExitFired) return;
+  if (liveConnections > 0 || activeRelayClient) {
+    cancelLifecycleExit('client_or_relay_present');
+    return;
+  }
+  if (lifecycleExitTimer) return; // already counting down
+  if (!lifecycleExitArmed) {
+    lifecycleExitArmed = true;
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'pushd_lifecycle_exit_armed',
+        graceMs: lifecycleGraceMs,
+        idle: isDaemonIdle(),
+      }),
+    );
+  }
+  lifecycleExitTimer = setTimeout(() => {
+    lifecycleExitTimer = null;
+    if (draining || drainExitScheduled || lifecycleExitFired) return;
+    if (liveConnections > 0 || activeRelayClient) {
+      cancelLifecycleExit('client_or_relay_present');
+      return;
+    }
+    if (!isDaemonIdle()) {
+      // Still finishing a durable run / delegation — wait another window.
+      maybeScheduleLifecycleExit();
+      return;
+    }
+    lifecycleExitFired = true;
+    lifecycleExitArmed = false;
+    console.log(JSON.stringify({ level: 'info', event: 'pushd_lifecycle_exit_fired' }));
+    lifecycleExitFn();
+  }, lifecycleGraceMs);
+}
+
 /**
  * Test seam: replace the drain self-exit and reset drain state so a test can
  * drive `handleDrain` / `noteRunSettled` and observe the exit decision without
@@ -1341,7 +1426,36 @@ export function __setDrainExitForTesting(fn) {
   clearDrainIdleWatcher();
 }
 
-export { handleDrain, noteRunSettled, isDaemonIdle };
+/**
+ * Test seam: replace the lifecycle self-exit and reset its state so a test can
+ * drive `maybeScheduleLifecycleExit` and observe the decision without
+ * terminating the runner. `opts.graceMs` shrinks the grace window for fast
+ * tests. Call with no args to restore the SIGTERM default.
+ */
+export function __setLifecycleExitForTesting(fn, opts) {
+  lifecycleExitFn = typeof fn === 'function' ? fn : () => process.kill(process.pid, 'SIGTERM');
+  if (opts && Number.isFinite(opts.graceMs)) lifecycleGraceMs = opts.graceMs;
+  liveConnections = 0;
+  lifecycleExitArmed = false;
+  lifecycleExitFired = false;
+  clearLifecycleExitTimer();
+}
+
+export function __setLiveConnectionsForTesting(n) {
+  liveConnections = Math.max(0, Math.trunc(n) || 0);
+}
+
+export function __setActiveRelayForTesting(handle) {
+  activeRelayClient = handle ?? null;
+}
+
+export {
+  handleDrain,
+  noteRunSettled,
+  isDaemonIdle,
+  maybeScheduleLifecycleExit,
+  cancelLifecycleExit,
+};
 
 /**
  * Called when an assistant run settles (activeRunId cleared) — the 0-latency
@@ -7121,6 +7235,10 @@ export async function handleRequest(req, emitEvent, context = null) {
 // ─── Connection handling ─────────────────────────────────────────
 
 function handleConnection(socket) {
+  // A local client connected — count it and abort any pending lifecycle exit so
+  // a transient disconnect / self-heal respawn never kills a daemon back in use.
+  liveConnections += 1;
+  cancelLifecycleExit('client_connected');
   let buffer = '';
   const attachedSessions = new Set(); // track which sessions this socket is observing
   // Remember the capabilities the client most recently advertised at
@@ -7203,19 +7321,22 @@ function handleConnection(socket) {
     }
   });
 
-  socket.on('close', () => {
+  // close and error can both fire for one socket — decrement exactly once, then
+  // re-evaluate the lifecycle exit (last client gone → arm the grace window).
+  let connectionClosed = false;
+  const cleanupConnection = () => {
+    if (connectionClosed) return;
+    connectionClosed = true;
     for (const sessionId of attachedSessions) {
       removeSessionClient(sessionId, emitEvent);
     }
     attachedSessions.clear();
-  });
+    liveConnections = Math.max(0, liveConnections - 1);
+    maybeScheduleLifecycleExit();
+  };
 
-  socket.on('error', () => {
-    for (const sessionId of attachedSessions) {
-      removeSessionClient(sessionId, emitEvent);
-    }
-    attachedSessions.clear();
-  });
+  socket.on('close', cleanupConnection);
+  socket.on('error', cleanupConnection);
 }
 
 // ─── Crash recovery ──────────────────────────────────────────────

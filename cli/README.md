@@ -405,6 +405,8 @@ The `push-sandbox` image must exist locally. File reads/writes still go through 
 
 It listens on a Unix domain socket (`~/.push/run/pushd.sock`) for CLI attach/admin commands and, when enabled, a loopback WebSocket for paired web clients. Remote sessions use an outbound Worker/Durable Object relay connection configured by `push daemon relay enable`. All transports carry the same `push.runtime.v1` JSON envelopes. Current request families include session start/attach/send/cancel, approval submission, role delegation, task graphs, daemon-backed sandbox exec/read/write/list/diff, pairing/token admin, relay admin, and audit/device inspection.
 
+**Lifecycle.** The daemon's lifetime tracks the local client's: when the last loopback client disconnects, `pushd` self-exits after a short grace window — but only once it's idle (in-flight runs / delegations / task graphs finish first) and no relay (paired phone) is attached. The grace window is cancelled if a client reconnects, so the self-heal drain→respawn and transient disconnects don't kill a daemon still in use. Tune the window with `PUSH_DAEMON_IDLE_GRACE_MS` (default `8000`). A paired phone (active relay) keeps the daemon alive with no local client.
+
 ## File layout
 
 ```
