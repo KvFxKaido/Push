@@ -9,7 +9,7 @@
 # Bun, Python 3.11 (pip + venv), git, curl, wget, jq, zip, unzip, procps,
 # ca-certificates, matplotlib, numpy, pandas, ipython.
 
-FROM docker.io/cloudflare/sandbox:0.8.11-python
+FROM docker.io/cloudflare/sandbox:0.12.1-python
 
 # ripgrep is not in the default image — required by Push tool execution.
 RUN apt-get update \
