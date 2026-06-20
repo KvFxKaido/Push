@@ -19,6 +19,20 @@
  *   trailing flush timer to manage or leak.
  */
 
+/**
+ * Sandbox tools whose execution runs on the detached path and therefore streams
+ * a live output tail into the status bar. The chat round loops (single-tool and
+ * batched) gate the progress observer on this set, so adding a tool here is the
+ * one place that opts it into live-tail rendering. Kept beside the tail
+ * implementation so the gate and the renderer can't drift.
+ */
+export const EXEC_PROGRESS_TAIL_TOOLS: ReadonlySet<string> = new Set([
+  'sandbox_exec',
+  'sandbox_run_tests',
+  'sandbox_check_types',
+  'sandbox_verify_workspace',
+]);
+
 export interface ExecProgressTailOptions {
   onTail: (line: string) => void;
   /** Minimum ms between emissions. Default 500. */

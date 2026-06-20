@@ -39,7 +39,7 @@ import {
   markLastAssistantToolCall,
 } from '@/lib/chat-tool-messages';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
-import { createExecProgressTail } from '@/lib/exec-progress';
+import { EXEC_PROGRESS_TAIL_TOOLS, createExecProgressTail } from '@/lib/exec-progress';
 import { isReadOnlyToolCall, type AnyToolCall } from '@/lib/tool-dispatch';
 import { evaluateVerificationState, formatVerificationBlock } from '@/lib/verification-runtime';
 import { createId } from '@push/lib/id-utils';
@@ -205,8 +205,7 @@ export async function executeSingleToolCall(
     // line into the status bar's `detail` slot (phase + startedAt stay put so
     // the elapsed timer keeps ticking). Local-pc execs ignore the observer.
     const execProgressTail =
-      toolCall.source === 'sandbox' &&
-      (toolCall.call.tool === 'sandbox_exec' || toolCall.call.tool === 'sandbox_run_tests')
+      toolCall.source === 'sandbox' && EXEC_PROGRESS_TAIL_TOOLS.has(toolCall.call.tool)
         ? createExecProgressTail({
             onTail: (line) => {
               // A cancel mid-drain must not resurrect the running status —

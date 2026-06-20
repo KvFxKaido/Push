@@ -38,7 +38,7 @@
  * functions deal in.
  */
 
-import { resolveValidationCommandOverride } from '@push/lib/validation-commands';
+import { parseAgentsMdHints } from '@push/lib/repo-commands';
 import type { TestResultsCardData, ToolExecutionResult, TypeCheckCardData } from '@/types';
 import type { ExecResult, SandboxEnvironment } from './sandbox-client';
 
@@ -227,11 +227,21 @@ export async function handleRunTests(
     // the authoritative source — it beats the package.json-derived command and
     // is the only thing that resolves repos whose test script is named
     // non-standardly (`test:cli`, `test:ci`, …) or is a multi-step chain, which
-    // the environment probe (literal `test` script only) cannot express.
+    // the environment probe (literal `test` script only) cannot express. Parsed
+    // with the same canonical `parseAgentsMdHints` the CLI uses, so both
+    // surfaces read the override format from one source of truth. Sources are
+    // returned in precedence order (AGENTS.md before CLAUDE.md).
     const overrideSources = ctx.readValidationInstructions
       ? await ctx.readValidationInstructions()
       : [];
-    const overrideCommand = resolveValidationCommandOverride(overrideSources, 'test');
+    let overrideCommand: string | null = null;
+    for (const source of overrideSources) {
+      const hit = parseAgentsMdHints(source).find((hint) => hint.kind === 'test');
+      if (hit) {
+        overrideCommand = hit.command;
+        break;
+      }
+    }
 
     // 2) Otherwise prefer the test command the sandbox already resolved from the
     // project's package.json `test` script — the actually-runnable command for
@@ -460,7 +470,12 @@ export async function handleCheckTypes(
     }
   }
 
-  const result = await execInSandbox(sandboxId, `cd /workspace && ${command}`, undefined, {
+  // Run the typecheck through the detached long-running path when available —
+  // a cold `tsc`/`pyright` over a large tree can outrun the buffered ceiling,
+  // and routing it here streams live output into the status-bar tail and
+  // honours Stop, same as the test run. Falls back to buffered exec otherwise.
+  const runTypecheck = ctx.execLongRunning ?? execInSandbox;
+  const result = await runTypecheck(sandboxId, `cd /workspace && ${command}`, undefined, {
     markWorkspaceMutated: true,
   });
   const durationMs = Date.now() - start;
@@ -607,9 +622,15 @@ export async function handleVerifyWorkspace(
   const stepResults: StepResult[] = [];
   let failedStep: StepResult | null = null;
 
+  // Each step (install / typecheck / test) can be long-running, so route them
+  // through the detached path when available: no buffered ceiling, live output
+  // streamed into the status-bar tail, and Stop is honoured. Falls back to
+  // buffered exec on backends without background routes.
+  const runStep = ctx.execLongRunning ?? execInSandbox;
+
   for (const step of steps) {
     const stepStart = Date.now();
-    const result = await execInSandbox(sandboxId, `cd /workspace && ${step.command}`, undefined, {
+    const result = await runStep(sandboxId, `cd /workspace && ${step.command}`, undefined, {
       markWorkspaceMutated: step.markWorkspaceMutated,
     });
     const durationMs = Date.now() - stepStart;
