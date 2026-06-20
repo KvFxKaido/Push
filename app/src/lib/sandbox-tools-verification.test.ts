@@ -117,11 +117,11 @@ describe('executeSandboxToolCall -- sandbox_run_tests', () => {
   });
 
   it('auto-detects npm from package.json and runs npm test with mutation flag + cache clear', async () => {
-    // First buffered exec reads AGENTS.md/CLAUDE.md for a `# test:` override
+    // First buffered exec reads instruction files for a `# test:` override
     // (none here), then the config-file detection probe; the actual test run
     // goes through the detached long-running path (live tail, no ceiling).
     vi.mocked(sandboxClient.execInSandbox)
-      .mockResolvedValueOnce(ok('')) // override read: no AGENTS/CLAUDE override
+      .mockResolvedValueOnce(ok('')) // override read: no instruction-file override
       .mockResolvedValueOnce(ok('package.json\n')); // detection probe
     vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(
       ok('Tests: 5 passed, 0 failed, 5 total\nTest Suites: 1 passed, 1 total\n'),
@@ -253,6 +253,41 @@ describe('executeSandboxToolCall -- sandbox_run_tests', () => {
       expect.objectContaining({ markWorkspaceMutated: true }),
     );
     expect(result.text).toContain('Command: npm run test:cli && npm run test:mcp:github');
+  });
+
+  it('honors a `# test:` override from PUSH.md before AGENTS.md', async () => {
+    const overrideSources = [
+      '===PUSH_VC_FILE===',
+      '```bash',
+      '# test:',
+      'npm run push-test',
+      '```',
+      '===PUSH_VC_FILE===',
+      '```bash',
+      '# test:',
+      'npm run agents-test',
+      '```',
+    ].join('\n');
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValueOnce(ok(overrideSources));
+    vi.mocked(sandboxClient.getSandboxEnvironment).mockReturnValueOnce({
+      tools: {},
+      readiness: { package_manager: 'npm', test_command: 'npm test' },
+    });
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(
+      ok('Tests: 3 passed, 0 failed, 3 total\n'),
+    );
+
+    await executeSandboxToolCall({ tool: 'sandbox_run_tests', args: {} }, 'sb-push');
+
+    expect(sandboxClient.execInSandbox).toHaveBeenCalledWith(
+      'sb-push',
+      'cd /workspace && for f in PUSH.md AGENTS.md CLAUDE.md GEMINI.md; do if [ -f "$f" ]; then printf "\\n===PUSH_VC_FILE===\\n"; head -c 20000 "$f"; fi; done',
+    );
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith(
+      'sb-push',
+      'cd /workspace && npm run push-test',
+      expect.objectContaining({ markWorkspaceMutated: true }),
+    );
   });
 
   it('prefers the readiness-detected test command over the npm test fallback', async () => {

@@ -314,6 +314,18 @@ describe('buildRepoCommandsSnapshot', () => {
     ]);
   });
 
+  it('PUSH.md hints win over AGENTS.md hints for the same kind', async (t) => {
+    const root = await makeFixture(t, {
+      'PUSH.md': '```bash\n# test:\nFROM_PUSH\n```\n',
+      'AGENTS.md': '```bash\n# test:\nFROM_AGENTS\n# lint:\nFROM_AGENTS_LINT\n```\n',
+    });
+    const snapshot = await buildRepoCommandsSnapshot(root);
+    assert.deepEqual(snapshot.agentsMdHints, [
+      { kind: 'test', command: 'FROM_PUSH' },
+      { kind: 'lint', command: 'FROM_AGENTS_LINT' },
+    ]);
+  });
+
   it('handles a missing package.json gracefully', async (t) => {
     const root = await makeFixture(t, { 'biome.json': '{}' });
     const snapshot = await buildRepoCommandsSnapshot(root);

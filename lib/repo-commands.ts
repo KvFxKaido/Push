@@ -8,7 +8,7 @@
  * lives in the CLI adapter (`cli/repo-commands.ts`).
  *
  * Resolution priority per kind (independent across kinds):
- *   1. AGENTS.md / CLAUDE.md fenced-block hint    → explicit, agents-md
+ *   1. Project-instruction fenced-block hint       → explicit, agents-md
  *   2. package.json#scripts named match           → explicit | heuristic, package-script
  *   3. Config file inference (vitest.config.*, …) → heuristic, config-file
  *
@@ -51,7 +51,7 @@ export interface RepoCommandsSnapshot {
   packageScripts?: Record<string, string>;
   /** Basenames of root-level config files we recognize (case-sensitive). */
   configFiles?: readonly string[];
-  /** Pre-parsed AGENTS.md / CLAUDE.md hints in priority order (AGENTS first). */
+  /** Pre-parsed project-instruction hints in canonical priority order. */
   agentsMdHints?: readonly AgentsMdHint[];
 }
 

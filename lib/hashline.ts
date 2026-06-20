@@ -187,7 +187,39 @@ export function resolveHashlineRefs(
 
     if (parsed.lineNo !== null) {
       const idx = parsed.lineNo - 1;
-      if (idx < 0 || idx >= lines.length) {
+      if (idx < 0) {
+        resolved.push({
+          error: `Line-qualified ref "${edit.ref}": line ${parsed.lineNo} is out of range (file has ${lines.length} lines).`,
+        });
+        continue;
+      }
+      if (idx >= lines.length) {
+        const relocation = relocateStaleRef(hashCache, idx, parsed.hash);
+        if (relocation.kind === 'relocated') {
+          const delta = relocation.index - idx;
+          resolved.push({
+            index: relocation.index,
+            edit,
+            warning: {
+              code: 'stale_ref_relocated',
+              message: `Stale anchor "${edit.ref}": line ${parsed.lineNo} is now out of range (file has ${lines.length} lines), but the anchored content was found ${Math.abs(delta)} line${Math.abs(delta) === 1 ? '' : 's'} earlier at line ${relocation.index + 1}. Relocated the edit there — verify it targeted the intended line.`,
+            },
+          });
+          continue;
+        }
+        if (relocation.kind === 'ambiguous') {
+          const shown = relocation.indices.slice(0, 5);
+          const retryRefs = shown.map((i) => `"${i + 1}:${hashCache[i].slice(0, 7)}"`);
+          const more =
+            relocation.indices.length > shown.length
+              ? ` (and ${relocation.indices.length - shown.length} more)`
+              : '';
+          resolved.push({
+            error: `Stale line-qualified ref "${edit.ref}": line ${parsed.lineNo} is now out of range (file has ${lines.length} lines), and the anchored content still appears at multiple other lines${more}, so the line number can no longer disambiguate it. Re-read and retry with a fresh line-qualified ref such as ${retryRefs.join(', ')}.`,
+            errorCode: 'stale_ref_ambiguous',
+          });
+          continue;
+        }
         resolved.push({
           error: `Line-qualified ref "${edit.ref}": line ${parsed.lineNo} is out of range (file has ${lines.length} lines).`,
         });

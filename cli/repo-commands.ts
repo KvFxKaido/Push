@@ -3,13 +3,17 @@
  * feeds them into the pure derivation in `lib/repo-commands.ts`.
  *
  * The pure module owns priority rules and provenance. This file owns IO:
- * reading package.json, listing config-file basenames, and pulling AGENTS.md
- * / CLAUDE.md hints.
+ * reading package.json, listing config-file basenames, and pulling project
+ * instruction hints.
  */
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
+import {
+  PROJECT_INSTRUCTION_FILENAMES,
+  type ProjectInstructionFilename,
+} from '../lib/project-instructions-source.ts';
 import {
   KNOWN_CONFIG_FILES,
   deriveRepoCommands,
@@ -20,11 +24,7 @@ import {
 } from '../lib/repo-commands.ts';
 import type { CoderWorkingMemory } from '../lib/working-memory.ts';
 
-/**
- * AGENTS.md is the required entry doc per the repo's startup contract, so
- * its hints take precedence over CLAUDE.md when both define the same kind.
- */
-const HINT_FILES: readonly string[] = ['AGENTS.md', 'CLAUDE.md'];
+const HINT_FILES: readonly ProjectInstructionFilename[] = PROJECT_INSTRUCTION_FILENAMES;
 const COMMAND_ROOT_MARKERS: readonly string[] = [
   'package.json',
   ...HINT_FILES,
@@ -76,7 +76,7 @@ async function collectAgentsMdHints(repoRoot: string): Promise<AgentsMdHint[]> {
       continue;
     }
     for (const hint of parseAgentsMdHints(content)) {
-      // First file wins per kind, matching the priority of AGENTS over CLAUDE.
+      // First file wins per kind, matching project-instruction precedence.
       if (!hints.some((h) => h.kind === hint.kind)) hints.push(hint);
     }
   }

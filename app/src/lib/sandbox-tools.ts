@@ -72,6 +72,7 @@ import { GIT_REF_VALIDATION_DETAIL, isInvalidGitRef } from './git-ref-validation
 import { sanitizeUntrustedSource } from '@push/lib/untrusted-content';
 import { createGitGuardPreHook } from '@push/lib/default-pre-hooks';
 import { reduceToolOutput } from '@push/lib/tool-output-reducers';
+import { PROJECT_INSTRUCTION_FILENAMES } from '@push/lib/project-instructions-source';
 import { createSandboxPushGit } from './git-backend';
 import { getApprovalMode } from './approval-mode';
 
@@ -163,16 +164,18 @@ function buildVerificationContext(
         abortSignal: execOptions?.abortSignal,
         onProgress: execOptions?.onExecProgress,
       }),
-    // Read the repo's `# test:` override sources in precedence order
-    // (AGENTS.md beats CLAUDE.md). One bounded exec catting both files; the
+    // Read the repo's `# test:` override sources in canonical instruction-file
+    // precedence order. One bounded exec catting the candidate files; the
     // `head -c` cap keeps a large CLAUDE.md from bloating the result while the
-    // directive block lives near the top of either file. Best-effort — a read
+    // directive block usually lives near the top of the instruction file.
+    // Best-effort — a read
     // failure resolves to no override rather than blocking the test run.
     readValidationInstructions: async () => {
       try {
+        const instructionFiles = PROJECT_INSTRUCTION_FILENAMES.join(' ');
         const probe = await execInSandbox(
           sandboxId,
-          'cd /workspace && for f in AGENTS.md CLAUDE.md; do ' +
+          `cd /workspace && for f in ${instructionFiles}; do ` +
             'if [ -f "$f" ]; then printf "\\n===PUSH_VC_FILE===\\n"; head -c 20000 "$f"; fi; done',
         );
         return probe.stdout

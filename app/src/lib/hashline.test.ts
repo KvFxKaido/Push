@@ -224,6 +224,26 @@ describe('bounded auto-relocation of stale line-qualified anchors', () => {
     expect(result.content).toBe('h0\nh1\nh2\ntail');
   });
 
+  it('relocates when deletion before the target makes the old line number out of range', async () => {
+    // Anchor captured "target" at line 10; two lines above it were deleted, so
+    // the file now has only 8 lines and the content sits nearby at line 8.
+    const content = ['line1', 'line2', 'line3', 'line4', 'line5', 'line6', 'line7', 'target'].join(
+      '\n',
+    );
+    const ref = `10:${await calculateLineHash('target', 7)}`;
+
+    const result = await applyHashlineEdits(content, [
+      { op: 'replace_line', ref, content: 'TARGET' },
+    ]);
+
+    expect(result.applied).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('line1\nline2\nline3\nline4\nline5\nline6\nline7\nTARGET');
+    expect(result.warningDetails).toEqual([
+      expect.objectContaining({ code: 'stale_ref_relocated' }),
+    ]);
+  });
+
   it('does not relocate when the matching content is outside the window', async () => {
     const body = Array.from({ length: 59 }, (_, i) => `line${i}`);
     const content = [...body, 'ANCHOR'].join('\n'); // ANCHOR sits at line 60
