@@ -663,6 +663,27 @@ describe('executeSandboxToolCall -- sandbox_check_types', () => {
     expect(sandboxClient.execInSandbox).toHaveBeenCalledTimes(2);
   });
 
+  it('forwards the live-output observer + abort signal to the detached typecheck run', async () => {
+    vi.mocked(sandboxClient.execInSandbox)
+      .mockResolvedValueOnce(ok('tsconfig.json\n'))
+      .mockResolvedValueOnce(ok('node_modules\n'))
+      .mockResolvedValueOnce(ok('Version 5.4.0\n'));
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(ok('', ''));
+    const onExecProgress = vi.fn();
+    const abortSignal = new AbortController().signal;
+
+    await executeSandboxToolCall({ tool: 'sandbox_check_types', args: {} }, 'sb-ts-progress', {
+      onExecProgress,
+      abortSignal,
+    });
+
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith(
+      'sb-ts-progress',
+      'cd /workspace && npx tsc --noEmit',
+      expect.objectContaining({ onProgress: onExecProgress, abortSignal }),
+    );
+  });
+
   it('parses multiple tsc errors into the card up to the per-call limit', async () => {
     const tscOut = [
       'src/a.ts(10,5): error TS2322: Type "string" is not assignable to type "number".',

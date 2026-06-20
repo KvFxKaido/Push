@@ -194,9 +194,9 @@ sub-Coder keeps the same call refused at the source gate.
 
 **Conversational-lead convergence (routing fork removed by default).**
 Repo-backed *conversational* turns now route to the inline lead by default
-(`chat-send-background.ts`: `inlineEligible = repoBranchReady`, unless the
-Phase 3 escape hatch is set). The full parity matrix for what a conversational
-turn must not lose lives in
+(`chat-send-background.ts`: `inlineEligible = repoBranchReady`; the Phase 3
+escape hatch has been retired). The full parity matrix for what a
+conversational turn must not lose lives in
 [`../runbooks/Conversational Lead Convergence.md`](<../runbooks/Conversational Lead Convergence.md>).
 Phase 0 landed: the cognitive-drift guard is now gated on `taskInFlight === false`
 (mirroring the no-fake-completion guard). Phase 1 landed: conversational inline

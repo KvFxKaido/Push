@@ -1169,11 +1169,11 @@ async function executeSandboxToolCallInner(
       }
 
       case 'sandbox_check_types': {
-        return handleCheckTypes(buildVerificationContext(sandboxId));
+        return handleCheckTypes(buildVerificationContext(sandboxId, options));
       }
 
       case 'sandbox_verify_workspace': {
-        return handleVerifyWorkspace(buildVerificationContext(sandboxId));
+        return handleVerifyWorkspace(buildVerificationContext(sandboxId, options));
       }
 
       case 'sandbox_download': {

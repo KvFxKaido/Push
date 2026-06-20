@@ -313,10 +313,10 @@ export type RunEventInput =
       // browser console logs.
       type: 'turn.route';
       route: 'orchestrator' | 'inline-delegation' | 'background-mode';
-      // `conversational_downgrade` is legacy (pre-Phase-3): never emitted by
-      // current code, but kept in the union so persisted/replayed events from
-      // older clients read back and validate. Current emitters use only the two
-      // `conversational_*` reasons.
+      // `conversational_downgrade` and `conversational_escape_hatch` are
+      // legacy: never emitted by current code, but kept in the union so
+      // persisted/replayed events from older clients read back and validate.
+      // Current emitters use only `conversational_inline`.
       reason: 'conversational_inline' | 'conversational_escape_hatch' | 'conversational_downgrade';
       suppressedRoute?: 'inline-delegation' | 'background-mode';
       intent: 'conversational' | 'task';

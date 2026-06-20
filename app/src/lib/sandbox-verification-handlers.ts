@@ -88,11 +88,11 @@ export interface VerificationHandlerContext {
    */
   execLongRunning?: VerificationExecInSandbox;
   /**
-   * Read the repo's validation-override sources (AGENTS.md, CLAUDE.md) in
-   * precedence order so `run_tests` can honor a `# test:` directive that
-   * overrides the package.json-derived command. Optional: when absent, no
-   * override is consulted. Returns raw file contents; empty array when none
-   * exist or the read fails.
+   * Read the repo's validation-override instruction sources in precedence
+   * order so `run_tests` can honor a `# test:` directive that overrides the
+   * package.json-derived command. Optional: when absent, no override is
+   * consulted. Returns raw file contents; empty array when none exist or the
+   * read fails.
    */
   readValidationInstructions?: () => Promise<string[]>;
   /** Read the sandbox's environment readiness data (for verify_workspace). */

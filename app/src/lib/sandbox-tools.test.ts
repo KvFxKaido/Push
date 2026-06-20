@@ -304,6 +304,40 @@ describe('executeSandboxToolCall -- sandbox_verify_workspace', () => {
     expect(result.text).toContain('typecheck boom');
     expect(result.text).toContain('rerun test() or typecheck() directly');
   });
+
+  it('forwards the live-output observer + abort signal to every detached verification step', async () => {
+    vi.mocked(sandboxClient.getSandboxEnvironment).mockReturnValue({
+      readiness: {
+        package_manager: 'npm',
+        dependencies: 'installed',
+        typecheck_command: 'npm run typecheck',
+        test_command: 'npm test',
+      },
+    } as never);
+    vi.mocked(sandboxClient.execLongRunningInSandbox)
+      .mockResolvedValueOnce({ exitCode: 0, stdout: 'typecheck ok', stderr: '', truncated: false })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: 'tests ok', stderr: '', truncated: false });
+    const onExecProgress = vi.fn();
+    const abortSignal = new AbortController().signal;
+
+    await executeSandboxToolCall({ tool: 'sandbox_verify_workspace', args: {} }, 'sb-progress', {
+      onExecProgress,
+      abortSignal,
+    });
+
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenNthCalledWith(
+      1,
+      'sb-progress',
+      'cd /workspace && npm run typecheck',
+      expect.objectContaining({ onProgress: onExecProgress, abortSignal }),
+    );
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenNthCalledWith(
+      2,
+      'sb-progress',
+      'cd /workspace && npm test',
+      expect.objectContaining({ onProgress: onExecProgress, abortSignal }),
+    );
+  });
 });
 
 describe('executeSandboxToolCall -- sandbox_exec Protect Main git-guard (#977)', () => {
