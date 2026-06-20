@@ -125,7 +125,8 @@ export default defineConfig({
     // rejects the Tailwind v4 `--spacing()` function the shadcn components emit
     // under Tailwind 3 (e.g. `[--cell-size:--spacing(8)]`). esbuild (vite 7's
     // minifier) tolerated it; pin to esbuild to preserve that behavior until
-    // those components are migrated off the v4 syntax (or Tailwind 4 lands).
+    // those components are migrated off the v4 syntax or Tailwind 4 lands.
+    // Tracked in #1042 — drop this override + the esbuild devDep once fixed.
     cssMinify: 'esbuild',
     rollupOptions: {
       output: {
