@@ -11,9 +11,13 @@ import { getOpenAIKey } from '@/hooks/useOpenAIConfig';
 import { safeStorageGet, safeStorageSet } from './safe-storage';
 import {
   CLOUDFLARE_MODELS,
+  BLACKBOX_MODELS,
   compareProviderModelIds,
   FIREWORKS_MODELS,
+  KILOCODE_MODELS,
   NVIDIA_MODELS,
+  OPENADAPTER_MODELS,
+  OPENAI_MODELS,
   OPENROUTER_MODELS,
   PROVIDER_URLS,
   ZEN_GO_MODELS,
@@ -426,10 +430,19 @@ const ZEN_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set([
  * normalizes the native `tool_calls`.
  */
 const FIREWORKS_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(FIREWORKS_MODELS);
+const KILOCODE_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(KILOCODE_MODELS);
+const OPENADAPTER_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(OPENADAPTER_MODELS);
+const BLACKBOX_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(BLACKBOX_MODELS);
+const OPENAI_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(OPENAI_MODELS);
+
+function looksLikeOpenAIToolCallingModel(modelId: string): boolean {
+  const m = modelId.trim().toLowerCase();
+  return OPENAI_NATIVE_TOOL_CALLING_MODELS.has(modelId) || /^gpt-[45](?:$|[-.]|o)/.test(m);
+}
 
 /**
  * Whether to attach native function-calling `tools` for the given
- * provider/model. Four provider paths today:
+ * provider/model. Provider paths today:
  *   - **Cloudflare Workers AI** (Kimi/GLM) — name-based, the catalog-less
  *     provider this was introduced for.
  *   - **OpenRouter** — capability-based: the model's models.dev metadata must
@@ -445,6 +458,11 @@ const FIREWORKS_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(FIREWO
  *     gating isn't viable for Zen.
  *   - **Fireworks AI** — name-based against the curated catalog
  *     (`FIREWORKS_NATIVE_TOOL_CALLING_MODELS`).
+ *   - **Ollama Cloud / Nvidia NIM / Blackbox AI** — capability-based, using the
+ *     existing models.dev metadata caches.
+ *   - **OpenAI / Azure OpenAI / Kilo Code / OpenAdapter** — name-based against
+ *     curated OpenAI-compatible catalogs or OpenAI-family model ids. Free-text
+ *     unknowns stay text-dispatch.
  * Other providers stay on the text-dispatch tool protocol until native tool
  * calling is wired and validated for them. Additive regardless: `openai-sse-pump`
  * normalizes any native `tool_calls` back into the fenced JSON the dispatcher
@@ -459,6 +477,18 @@ export function providerModelSupportsNativeToolCalling(
   if (provider === 'openrouter') return getModelCapabilities('openrouter', modelId).toolCall;
   if (provider === 'zen') return ZEN_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'fireworks') return FIREWORKS_NATIVE_TOOL_CALLING_MODELS.has(modelId);
+  if (provider === 'ollama') return getModelCapabilities('ollama', modelId).toolCall;
+  if (provider === 'nvidia') return getModelCapabilities('nvidia', modelId).toolCall;
+  if (provider === 'blackbox') {
+    return (
+      getModelCapabilities('blackbox', modelId).toolCall ||
+      BLACKBOX_NATIVE_TOOL_CALLING_MODELS.has(modelId)
+    );
+  }
+  if (provider === 'openai') return looksLikeOpenAIToolCallingModel(modelId);
+  if (provider === 'azure') return looksLikeOpenAIToolCallingModel(modelId);
+  if (provider === 'kilocode') return KILOCODE_NATIVE_TOOL_CALLING_MODELS.has(modelId);
+  if (provider === 'openadapter') return OPENADAPTER_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   return false;
 }
 

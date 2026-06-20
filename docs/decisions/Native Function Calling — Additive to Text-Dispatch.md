@@ -2,9 +2,13 @@
 
 **Status:** Current — shipped on the web lead for Cloudflare Workers AI (Kimi/GLM,
 name-based), OpenRouter (capability-based), OpenCode Zen (name-based catalog
-allowlist; both the OpenAI and Anthropic Go transports), and Fireworks AI
-(name-based catalog allowlist). Other providers and the CLI lead are deferred
-follow-ups, not yet promoted to `ROADMAP.md`.
+allowlist; both the OpenAI and Anthropic Go transports), Fireworks AI
+(name-based catalog allowlist), and the validated OpenAI-compatible adapters:
+OpenAI / Azure OpenAI (OpenAI-family model ids), Kilo Code / OpenAdapter
+(curated catalog allowlists), plus Ollama Cloud / Nvidia NIM / Blackbox AI
+(models.dev capability-gated). Bedrock, direct Anthropic, Google/Gemini,
+Vertex, and the CLI lead are deferred follow-ups, not yet promoted to
+`ROADMAP.md`.
 
 **Date:** 2026-06-17
 
@@ -72,18 +76,20 @@ native tool call — both converge at one dispatch path. Consequences:
   in `app/src/lib/model-catalog.ts` — name-based (Kimi/GLM) for Cloudflare, which
   has no models.dev metadata; capability-based for OpenRouter (the model's
   models.dev `toolCall` flag, via `getModelCapabilities`), mirroring the
-  structured-output gate. The curated gateways surface nearly the entire current
-  coding frontier, so a hardcoded allowlist would just be a brittle mirror;
-  capability-gating auto-tracks the catalog. `getModelCapabilities` resolves
-  `:nitro` / `:free` routing suffixes to the base id (an `openRouterBaseId`
-  fallback added alongside this — without it every routed variant resolved to
-  empty capabilities, silently losing reasoning / structured-output / native-tool
+  structured-output gate. `getModelCapabilities` resolves `:nitro` / `:free`
+  routing suffixes to the base id (an `openRouterBaseId` fallback added
+  alongside this — without it every routed variant resolved to empty
+  capabilities, silently losing reasoning / structured-output / native-tool
   gating). **Zen is name-based** against the curated catalog union
   (`ZEN_NATIVE_TOOL_CALLING_MODELS` = `ZEN_MODELS` ∪ `ZEN_GO_MODELS`): its default
   `big-pickle` is a proprietary id absent from models.dev and the `opencode`
   block's `tool_call` coverage is unverifiable, so capability-gating would
-  silently leave native FC off; the curated catalog is the allowlist. Other
-  providers return `false`.
+  silently leave native FC off; the curated catalog is the allowlist. Fireworks,
+  Kilo Code, OpenAdapter, and Blackbox have similar curated allowlists where the
+  gateway catalog is hand-maintained; Ollama Cloud / Nvidia NIM / Blackbox also
+  honor models.dev capability metadata when present. Direct OpenAI and Azure
+  OpenAI enable native tools for OpenAI-family model ids (`gpt-4*` / `gpt-5*`).
+  Other providers return `false`.
 - **Lead wiring.** `inline-coder-run.ts` attaches `getToolFunctionSchemas()`
   when the gate passes; the coder kernel (`lib/coder-agent.ts`) threads the new
   `nativeToolSchemas` option into each round's request. Provider-agnostic — once
@@ -92,13 +98,12 @@ native tool call — both converge at one dispatch path. Consequences:
 
 ## Scope / deferred
 
-- **Other providers.** OpenAI/etc. are function-calling-capable but stay
-  text-dispatch only until native calling is validated per provider. The gate is
-  the single switch. OpenRouter (capability-based), OpenCode Zen (name-based), and
-  Fireworks AI (name-based; single OpenAI-compatible endpoint, `tools` straight
-  through `fireworks-stream.ts`) are enabled on the web lead — Zen across both
-  transports: the OpenAI-transport models (standard tier + Go) carry `tools`
-  straight through `toOpenAIChat`, and
+- **Other providers.** The gate is the single switch. OpenRouter
+  (capability-based), OpenCode Zen (name-based), Fireworks AI (name-based; single
+  OpenAI-compatible endpoint, `tools` straight through `fireworks-stream.ts`),
+  and the validated OpenAI-compatible adapters are enabled on the web lead — Zen
+  across both transports: the OpenAI-transport models (standard tier + Go) carry
+  `tools` straight through `toOpenAIChat`, and
   the **Anthropic-transport** Go models (minimax/qwen) translate OpenAI tool
   schemas to Anthropic's custom-tool shape in `toAnthropicMessages` and turn the
   model's `tool_use` blocks back into the dispatcher's fenced JSON via

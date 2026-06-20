@@ -90,6 +90,20 @@ const baseRequest: PushStreamRequest<ChatMessage> = {
   messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 } as unknown as ChatMessage],
 };
 
+const sampleTool = {
+  type: 'function' as const,
+  function: {
+    name: 'sandbox_write_file',
+    description: 'Write a file to the sandbox',
+    parameters: {
+      type: 'object' as const,
+      properties: { path: { type: 'string' as const } },
+      required: ['path'],
+      additionalProperties: false as const,
+    },
+  },
+};
+
 describe('openaiStream', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
   let collect: (stream: AsyncIterable<PushStreamEvent>) => Promise<PushStreamEvent[]>;
@@ -123,6 +137,36 @@ describe('openaiStream', () => {
       { type: 'text_delta', text: 'hello' },
       { type: 'done', finishReason: 'stop', usage: undefined },
     ]);
+  });
+
+  it('forwards native function tools + tool_choice into the request body', async () => {
+    installStreamFetch(fetchMock);
+    const { openaiStream } = await import('./openai-stream');
+    const iter = openaiStream({ ...baseRequest, tools: [sampleTool] });
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.tools).toEqual([sampleTool]);
+    expect(body.tool_choice).toBe('auto');
+  });
+
+  it('omits tools / tool_choice when no native tools are attached', async () => {
+    installStreamFetch(fetchMock);
+    const { openaiStream } = await import('./openai-stream');
+    const iter = openaiStream(baseRequest);
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.tools).toBeUndefined();
+    expect(body.tool_choice).toBeUndefined();
   });
 
   it('hits PROVIDER_URLS.openai.chat', async () => {

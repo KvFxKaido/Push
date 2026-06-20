@@ -62,6 +62,7 @@ export async function* ollamaStream(
   // 3. OpenAI-compatible request body. Aside from `reasoning_effort` above,
   //    Ollama Cloud has no provider-specific extensions on
   //    `/v1/chat/completions`.
+  const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : undefined;
   const body: Record<string, unknown> = {
     model: req.model,
     messages: llmMessages,
@@ -70,6 +71,9 @@ export async function* ollamaStream(
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
     ...(supportsReasoning ? { reasoning_effort: reasoningEffort } : {}),
+    // Native function calling: gated upstream by model support. The shared SSE
+    // pump normalizes native tool_calls back into fenced JSON for dispatch.
+    ...(nativeTools ? { tools: nativeTools, tool_choice: 'auto' } : {}),
   };
 
   // 4. Headers. Ollama Cloud uses a straight Bearer token; the Worker proxy

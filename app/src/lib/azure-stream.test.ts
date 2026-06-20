@@ -95,6 +95,20 @@ const baseRequest: PushStreamRequest<ChatMessage> = {
   messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 } as unknown as ChatMessage],
 };
 
+const sampleTool = {
+  type: 'function' as const,
+  function: {
+    name: 'sandbox_write_file',
+    description: 'Write a file to the sandbox',
+    parameters: {
+      type: 'object' as const,
+      properties: { path: { type: 'string' as const } },
+      required: ['path'],
+      additionalProperties: false as const,
+    },
+  },
+};
+
 // `vi.resetModules()` in beforeEach reloads the test module so module-level
 // mocks re-apply, but vi.doMock state from previous tests persists. Tests
 // that override mocks via `vi.doMock` therefore live at the end of the suite
@@ -133,6 +147,36 @@ describe('azureStream', () => {
       { type: 'text_delta', text: 'hello' },
       { type: 'done', finishReason: 'stop', usage: undefined },
     ]);
+  });
+
+  it('forwards native function tools + tool_choice into the request body', async () => {
+    installStreamFetch(fetchMock);
+    const { azureStream } = await import('./azure-stream');
+    const iter = azureStream({ ...baseRequest, tools: [sampleTool] });
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.tools).toEqual([sampleTool]);
+    expect(body.tool_choice).toBe('auto');
+  });
+
+  it('omits tools / tool_choice when no native tools are attached', async () => {
+    installStreamFetch(fetchMock);
+    const { azureStream } = await import('./azure-stream');
+    const iter = azureStream(baseRequest);
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.tools).toBeUndefined();
+    expect(body.tool_choice).toBeUndefined();
   });
 
   it('hits PROVIDER_URLS.azure.chat', async () => {

@@ -51,6 +51,7 @@ export async function* blackboxStream(
     linkedLibraryContent: req.linkedLibraryContent,
   });
 
+  const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : undefined;
   const body: Record<string, unknown> = {
     model: req.model,
     messages: llmMessages,
@@ -58,6 +59,9 @@ export async function* blackboxStream(
     ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
+    // Native function calling: gated upstream by model support. The shared SSE
+    // pump normalizes native tool_calls back into fenced JSON for dispatch.
+    ...(nativeTools ? { tools: nativeTools, tool_choice: 'auto' } : {}),
     // Native structured outputs: forward the caller's JSON-Schema constraint so
     // the OpenAI-compatible endpoint constrains generation server-side. Shared
     // wire builder with the CLI/OpenRouter paths. No `provider.require_parameters`
