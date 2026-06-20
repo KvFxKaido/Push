@@ -66,9 +66,9 @@ For this repo:
 # test:
 TMPDIR=/tmp TEMP=/tmp TMP=/tmp npm run test:cli && npm run test:mcp:github
 # typecheck:
-npm run typecheck:tsgo
+npm run typecheck:all
 # check:
-npm run typecheck:tsgo
+npm run typecheck:all
 ```
 
 ## Scratch workspace

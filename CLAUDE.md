@@ -40,22 +40,22 @@ cd app && npm run android:sync && cd android && ./gradlew installDebug
 # test:
 TMPDIR=/tmp TEMP=/tmp TMP=/tmp npm run test:cli && npm run test:mcp:github
 # typecheck:
-npm run typecheck:tsgo
+npm run typecheck:all
 # check:
-npm run typecheck:tsgo
+npm run typecheck:all
 ```
 
 Per-surface:
 
 | Surface | Lint | Typecheck | Test | Build |
 |---|---|---|---|---|
-| Root (CLI + MCP wiring) | `npm run lint` (delegates to app ESLint) / `npm run format:check` (Biome format) | `npm run typecheck:tsgo` | `npm run test:cli` | `npm run build:cli` |
+| Root (CLI + MCP wiring) | `npm run lint` (delegates to app ESLint) / `npm run format:check` (Biome format) | `npm run typecheck:all` | `npm run test:cli` | `npm run build:cli` |
 | `app/` | `npm run lint` (ESLint) | `npm run typecheck` | `npm test` (vitest) / `npm run test:watch` | `npm run build` |
 | `mcp/github-server/` | — | `npm run typecheck` | `npm test` | `npm run build` |
 
 Run a single CLI test with `node --import tsx --test cli/tests/<name>.test.mjs`. Run a single app test with `cd app && npx vitest run path/to/file.test.ts`.
 
-Typechecking uses `tsgo` from `@typescript/native-preview` (TypeScript 7). If `tsgo: not found` (unsupported platform, `--no-optional` install), fall back to `npx tsc --noEmit` for `cli/` and `mcp/github-server`, `npx tsc -b` for `app/`. Emit: `build:cli` and `mcp/github-server`'s `build` use `tsc`; `app/` uses `vite build` (esbuild/rollup), with `tsgo`/`tsc` only running for typecheck.
+The TypeScript toolchain is mid-transition to 7.0 and is split by package. **`cli/` and `mcp/github-server` run TS 7.0 RC** (`typescript@rc`) — both typecheck *and* emit (`build:cli`, MCP `build`) go through the native `tsc`. **`app/` stays on TS 7 native-preview typecheck (`tsgo` from `@typescript/native-preview`) + TS 6 for emit/ESLint** because TS 7.0 only ships the `./unstable/*` programmatic API and `typescript-eslint` needs the legacy API that lands in TS 7.1; the app folds onto `typescript@rc` once that's available. App emit is `vite build` (esbuild/rollup); `tsgo`/`tsc` only typecheck. `npm run typecheck:all` runs everything (cli/mcp via `tsc`, app via `tsgo`). If `tsgo: not found` (unsupported platform, `--no-optional` install), fall back to `npx tsc -b` for `app/`.
 
 Biome formats the entire monorepo from the root config (`biome.json`); the linter is intentionally disabled there — ESLint runs only inside `app/`. Biome ignores `app/src/components/ui/**`, `sandbox/**`, and the standard build artifacts.
 

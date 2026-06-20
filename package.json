@@ -16,17 +16,16 @@
     "r2:snapshots:lifecycle": "npx wrangler r2 bucket lifecycle add push-cf-snapshots --expire-days 7",
     "test:cli": "node --import tsx --import ./cli/tests/setup-test-home-isolation.mjs --test cli/tests/*.test.mjs",
     "test:mcp:github": "cd mcp/github-server && npm test",
-    "typecheck": "cd cli && npx tsgo --noEmit",
+    "typecheck": "cd cli && npx tsc --noEmit",
     "typecheck:mcp:github": "cd mcp/github-server && npm run typecheck",
-    "typecheck:tsgo": "npx tsgo --noEmit -p cli/tsconfig.json && npm --prefix mcp/github-server run typecheck && npm --prefix app run typecheck"
+    "typecheck:all": "npx tsc --noEmit -p cli/tsconfig.json && npm --prefix mcp/github-server run typecheck && npm --prefix app run typecheck"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.0",
     "@types/node": "^26.0.0",
     "@types/ws": "^8.18.1",
-    "@typescript/native-preview": "7.0.0-dev.20260620.1",
     "tsx": "^4.22.4",
-    "typescript": "^6.0.3"
+    "typescript": "rc"
   },
   "dependencies": {
     "ws": "^8.21.0",
