@@ -1,7 +1,7 @@
 # Dependabot version updates for the Push monorepo.
 # Docs: https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 #
-# Scope: npm (4 manifests), GitHub Actions, pip (Modal sandbox), and Docker.
+# Scope: npm (3 manifests), GitHub Actions, pip (Modal sandbox), and Docker.
 # Minor/patch bumps are grouped into a single PR per manifest to limit churn —
 # every PR here also spins up the codex/gemini review workflows and a Workers
 # Builds deploy, so noise has a real cost. Major bumps come as individual PRs
@@ -32,19 +32,6 @@ updates:
       - "dependencies"
     groups:
       app-minor-patch:
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
-
-  # ── npm: Cloudflare Functions ────────────────────────────────────
-  - package-ecosystem: "npm"
-    directory: "/functions"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-    groups:
-      functions-minor-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
 
