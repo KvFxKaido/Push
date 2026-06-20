@@ -101,7 +101,7 @@
     "@biomejs/biome": "2.5.0",
     "@cloudflare/workers-types": "^4.20260620.1",
     "@commitlint/cli": "^20.4.1",
-    "@commitlint/config-conventional": "^20.4.1",
+    "@commitlint/config-conventional": "^21.0.2",
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.17",
