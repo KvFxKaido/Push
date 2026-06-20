@@ -40,6 +40,18 @@ export default defineConfig([
       'react-hooks/immutability': 'warn',
     },
   },
+  // eslint 10 promotes two new core rules to errors in js.configs.recommended:
+  // no-useless-assignment (26 hits) and preserve-caught-error (17 hits, missing
+  // `{ cause }` on rethrows). Same treatment as the react-hooks rules above —
+  // demote to 'warn' so the eslint 10 bump lands without a 43-site refactor;
+  // the cleanup is tracked separately. Remove as the violations get fixed.
+  {
+    files: ['**/*.{ts,tsx}'],
+    rules: {
+      'no-useless-assignment': 'warn',
+      'preserve-caught-error': 'warn',
+    },
+  },
   // Containment guard for useChat.ts. The hook regrew from 770 -> 1,733
   // lines between 2026-03-25 and 2026-04-19 because new features kept
   // landing sibling modules *and* hook-level coordinators. This ceiling
