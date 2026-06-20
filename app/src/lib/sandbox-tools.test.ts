@@ -227,6 +227,7 @@ describe('classifyError', () => {
 describe('executeSandboxToolCall -- sandbox_verify_workspace', () => {
   beforeEach(() => {
     vi.mocked(sandboxClient.execInSandbox).mockReset();
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockReset();
     vi.mocked(sandboxClient.getSandboxEnvironment).mockReset();
   });
 
@@ -240,7 +241,8 @@ describe('executeSandboxToolCall -- sandbox_verify_workspace', () => {
       },
     } as never);
 
-    vi.mocked(sandboxClient.execInSandbox)
+    // Each step runs on the detached long-running path now.
+    vi.mocked(sandboxClient.execLongRunningInSandbox)
       .mockResolvedValueOnce({ exitCode: 0, stdout: 'installed', stderr: '', truncated: false })
       .mockResolvedValueOnce({ exitCode: 0, stdout: 'typecheck ok', stderr: '', truncated: false })
       .mockResolvedValueOnce({ exitCode: 0, stdout: 'tests ok', stderr: '', truncated: false });
@@ -250,26 +252,23 @@ describe('executeSandboxToolCall -- sandbox_verify_workspace', () => {
       'sb-123',
     );
 
-    expect(sandboxClient.execInSandbox).toHaveBeenNthCalledWith(
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenNthCalledWith(
       1,
       'sb-123',
       'cd /workspace && npm install',
-      undefined,
-      { markWorkspaceMutated: true },
+      expect.objectContaining({ markWorkspaceMutated: true }),
     );
-    expect(sandboxClient.execInSandbox).toHaveBeenNthCalledWith(
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenNthCalledWith(
       2,
       'sb-123',
       'cd /workspace && npm run typecheck',
-      undefined,
-      { markWorkspaceMutated: false },
+      expect.objectContaining({ markWorkspaceMutated: false }),
     );
-    expect(sandboxClient.execInSandbox).toHaveBeenNthCalledWith(
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenNthCalledWith(
       3,
       'sb-123',
       'cd /workspace && npm test',
-      undefined,
-      { markWorkspaceMutated: true },
+      expect.objectContaining({ markWorkspaceMutated: true }),
     );
     expect(result.text).toContain('Workspace verification PASSED');
     expect(result.text).toContain('Install dependencies: npm install');
@@ -287,7 +286,7 @@ describe('executeSandboxToolCall -- sandbox_verify_workspace', () => {
       },
     } as never);
 
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValueOnce({
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce({
       exitCode: 1,
       stdout: '',
       stderr: 'typecheck boom',
@@ -299,7 +298,7 @@ describe('executeSandboxToolCall -- sandbox_verify_workspace', () => {
       'sb-123',
     );
 
-    expect(sandboxClient.execInSandbox).toHaveBeenCalledTimes(1);
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledTimes(1);
     expect(result.text).toContain('Workspace verification FAILED at typecheck');
     expect(result.text).toContain('Output from failed step (Typecheck):');
     expect(result.text).toContain('typecheck boom');

@@ -328,6 +328,21 @@ describe('handleCheckTypes — detection & tool routing', () => {
     await handleCheckTypes(ctx);
     expect(ctx.calls.at(-1)?.[1]).toBe('cd /workspace && npx tsc --noEmit');
   });
+
+  it('routes the typecheck through execLongRunning when the context provides it', async () => {
+    const longCalls: ExecArgs[] = [];
+    // detect → tsconfig, node_modules present, tsc version — all buffered probes.
+    const ctx = makeContext([ok('tsconfig.json\n'), ok('node_modules\n'), ok('Version 5.4.0\n')]);
+    ctx.execLongRunning = vi.fn(async (...args: ExecArgs) => {
+      longCalls.push(args);
+      return ok('', '');
+    });
+    await handleCheckTypes(ctx);
+    // The probes stay buffered; the typecheck itself runs detached.
+    expect(longCalls).toHaveLength(1);
+    expect(longCalls[0][1]).toBe('cd /workspace && npx tsc --noEmit');
+    expect(longCalls[0][3]).toEqual({ markWorkspaceMutated: true });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -437,5 +452,24 @@ describe('handleVerifyWorkspace — step assembly', () => {
     const ctx = makeContext([ok('')], envWith({ dependencies: 'missing', package_manager: pm }));
     await handleVerifyWorkspace(ctx);
     expect(ctx.calls[0][1]).toBe(`cd /workspace && ${expected}`);
+  });
+
+  it('routes every step through execLongRunning when the context provides it', async () => {
+    const longCalls: ExecArgs[] = [];
+    const ctx = makeContext(
+      [],
+      envWith({ typecheck_command: 'tsc --noEmit', test_command: 'vitest run' }),
+    );
+    ctx.execLongRunning = vi.fn(async (...args: ExecArgs) => {
+      longCalls.push(args);
+      return ok('');
+    });
+    await handleVerifyWorkspace(ctx);
+    // No step touches the buffered exec; all run on the detached path.
+    expect(ctx.calls).toHaveLength(0);
+    expect(longCalls.map((c) => c[1])).toEqual([
+      'cd /workspace && tsc --noEmit',
+      'cd /workspace && vitest run',
+    ]);
   });
 });

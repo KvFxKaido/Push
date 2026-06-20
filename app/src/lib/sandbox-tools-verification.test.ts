@@ -396,9 +396,9 @@ describe('executeSandboxToolCall -- sandbox_check_types', () => {
       // 2. node_modules probe — present
       .mockResolvedValueOnce(ok('node_modules\n'))
       // 3. tsc version check
-      .mockResolvedValueOnce(ok('Version 5.4.0\n'))
-      // 4. actual type check
-      .mockResolvedValueOnce(ok('', ''));
+      .mockResolvedValueOnce(ok('Version 5.4.0\n'));
+    // 4. actual type check — now runs on the detached long-running path.
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(ok('', ''));
 
     const result = await executeSandboxToolCall({ tool: 'sandbox_check_types', args: {} }, 'sb-ts');
 
@@ -414,12 +414,11 @@ describe('executeSandboxToolCall -- sandbox_check_types', () => {
     expect(clearPrefetchedEditFileCache).toHaveBeenCalledTimes(1);
     expect(clearPrefetchedEditFileCache).toHaveBeenCalledWith('sb-ts');
 
-    // The actual typecheck exec call is marked mutated (matches current behavior).
-    expect(sandboxClient.execInSandbox).toHaveBeenLastCalledWith(
+    // The actual typecheck runs detached, marked mutated.
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith(
       'sb-ts',
       'cd /workspace && npx tsc --noEmit',
-      undefined,
-      { markWorkspaceMutated: true },
+      expect.objectContaining({ markWorkspaceMutated: true }),
     );
 
     expect(result.text).toContain('[Tool Result — sandbox_check_types]');
@@ -446,13 +445,12 @@ describe('executeSandboxToolCall -- sandbox_check_types', () => {
       // node_modules probe — missing
       .mockResolvedValueOnce(fail('', 'No such file', 1))
       // tsc version check
-      .mockResolvedValueOnce(ok('Version 5.4.0\n'))
-      // actual type check
-      .mockResolvedValueOnce(ok('', ''));
-    // npm install now runs through the detached long-running path.
-    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(
-      ok('added 123 packages\n'),
-    );
+      .mockResolvedValueOnce(ok('Version 5.4.0\n'));
+    // Both npm install and the typecheck now run through the detached path, in
+    // that order.
+    vi.mocked(sandboxClient.execLongRunningInSandbox)
+      .mockResolvedValueOnce(ok('added 123 packages\n')) // npm install
+      .mockResolvedValueOnce(ok('', '')); // typecheck
 
     const result = await executeSandboxToolCall(
       { tool: 'sandbox_check_types', args: {} },
@@ -464,7 +462,13 @@ describe('executeSandboxToolCall -- sandbox_check_types', () => {
     expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith(
       'sb-install',
       'cd /workspace && npm install',
-      { workdir: undefined, markWorkspaceMutated: true },
+      expect.objectContaining({ workdir: undefined, markWorkspaceMutated: true }),
+    );
+    // ...and the typecheck runs detached too.
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith(
+      'sb-install',
+      'cd /workspace && npx tsc --noEmit',
+      expect.objectContaining({ markWorkspaceMutated: true }),
     );
     // Caches cleared twice: once after the npm install, and once after
     // the final typecheck exec (which also marks the workspace mutated).
@@ -503,19 +507,18 @@ describe('executeSandboxToolCall -- sandbox_check_types', () => {
     vi.mocked(sandboxClient.execInSandbox)
       .mockResolvedValueOnce(ok('tsconfig.app.json\n'))
       .mockResolvedValueOnce(ok('node_modules\n'))
-      .mockResolvedValueOnce(ok('Version 5.4.0\n'))
-      .mockResolvedValueOnce(ok('', ''));
+      .mockResolvedValueOnce(ok('Version 5.4.0\n'));
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(ok('', ''));
 
     const result = await executeSandboxToolCall(
       { tool: 'sandbox_check_types', args: {} },
       'sb-tsapp',
     );
 
-    expect(sandboxClient.execInSandbox).toHaveBeenLastCalledWith(
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith(
       'sb-tsapp',
       'cd /workspace && npx tsc --noEmit',
-      undefined,
-      { markWorkspaceMutated: true },
+      expect.objectContaining({ markWorkspaceMutated: true }),
     );
     const data = result.card?.data as { tool: string };
     expect(data.tool).toBe('tsc');
@@ -524,21 +527,20 @@ describe('executeSandboxToolCall -- sandbox_check_types', () => {
   it('routes pyrightconfig.json to pyright and parses pyright error lines', async () => {
     vi.mocked(sandboxClient.execInSandbox)
       .mockResolvedValueOnce(ok('pyrightconfig.json\n'))
-      .mockResolvedValueOnce(ok('pyright 1.1.350\n'))
-      .mockResolvedValueOnce(
-        fail('src/foo.py:10:5 - error: Argument of type "int" is not assignable\n', '', 1),
-      );
+      .mockResolvedValueOnce(ok('pyright 1.1.350\n'));
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(
+      fail('src/foo.py:10:5 - error: Argument of type "int" is not assignable\n', '', 1),
+    );
 
     const result = await executeSandboxToolCall(
       { tool: 'sandbox_check_types', args: {} },
       'sb-pyright',
     );
 
-    expect(sandboxClient.execInSandbox).toHaveBeenLastCalledWith(
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith(
       'sb-pyright',
       'cd /workspace && pyright',
-      undefined,
-      { markWorkspaceMutated: true },
+      expect.objectContaining({ markWorkspaceMutated: true }),
     );
     expect(result.text).toContain('✗ Type check FAILED (pyright)');
     const data = result.card?.data as {
@@ -565,19 +567,20 @@ describe('executeSandboxToolCall -- sandbox_check_types', () => {
   it('routes mypy.ini to mypy and runs the bare `mypy` command', async () => {
     vi.mocked(sandboxClient.execInSandbox)
       .mockResolvedValueOnce(ok('mypy.ini\n'))
-      .mockResolvedValueOnce(ok('mypy 1.9.0\n'))
-      .mockResolvedValueOnce(ok('Success: no issues found\n'));
+      .mockResolvedValueOnce(ok('mypy 1.9.0\n'));
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(
+      ok('Success: no issues found\n'),
+    );
 
     const result = await executeSandboxToolCall(
       { tool: 'sandbox_check_types', args: {} },
       'sb-mypy',
     );
 
-    expect(sandboxClient.execInSandbox).toHaveBeenLastCalledWith(
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith(
       'sb-mypy',
       'cd /workspace && mypy',
-      undefined,
-      { markWorkspaceMutated: true },
+      expect.objectContaining({ markWorkspaceMutated: true }),
     );
     const data = result.card?.data as { tool: string };
     expect(data.tool).toBe('mypy');
@@ -588,20 +591,19 @@ describe('executeSandboxToolCall -- sandbox_check_types', () => {
       // detect — returns nothing
       .mockResolvedValueOnce(ok(''))
       // package.json cat with typescript dep
-      .mockResolvedValueOnce(ok('{"devDependencies":{"typescript":"^5.4.0"}}'))
-      // actual tsc run
-      .mockResolvedValueOnce(ok('', ''));
+      .mockResolvedValueOnce(ok('{"devDependencies":{"typescript":"^5.4.0"}}'));
+    // actual tsc run — detached path
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(ok('', ''));
 
     const result = await executeSandboxToolCall(
       { tool: 'sandbox_check_types', args: {} },
       'sb-tsfallback',
     );
 
-    expect(sandboxClient.execInSandbox).toHaveBeenLastCalledWith(
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith(
       'sb-tsfallback',
       'cd /workspace && npx tsc --noEmit',
-      undefined,
-      { markWorkspaceMutated: true },
+      expect.objectContaining({ markWorkspaceMutated: true }),
     );
     const data = result.card?.data as { tool: string };
     expect(data.tool).toBe('tsc');
@@ -637,8 +639,8 @@ describe('executeSandboxToolCall -- sandbox_check_types', () => {
     vi.mocked(sandboxClient.execInSandbox)
       .mockResolvedValueOnce(ok('tsconfig.json\n'))
       .mockResolvedValueOnce(ok('node_modules\n'))
-      .mockResolvedValueOnce(ok('Version 5.4.0\n'))
-      .mockResolvedValueOnce(fail(tscOut, '', 1));
+      .mockResolvedValueOnce(ok('Version 5.4.0\n'));
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(fail(tscOut, '', 1));
 
     const result = await executeSandboxToolCall(
       { tool: 'sandbox_check_types', args: {} },
