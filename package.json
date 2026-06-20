@@ -18,7 +18,7 @@
     "test:mcp:github": "cd mcp/github-server && npm test",
     "typecheck": "cd cli && npx tsc --noEmit",
     "typecheck:mcp:github": "cd mcp/github-server && npm run typecheck",
-    "typecheck:tsgo": "npx tsc --noEmit -p cli/tsconfig.json && npm --prefix mcp/github-server run typecheck && npm --prefix app run typecheck"
+    "typecheck:all": "npx tsc --noEmit -p cli/tsconfig.json && npm --prefix mcp/github-server run typecheck && npm --prefix app run typecheck"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.0",
