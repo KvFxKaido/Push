@@ -28,12 +28,9 @@ vi.mock('./safe-storage', () => ({
 }));
 
 import {
-  CONVERSATIONAL_INLINE_ESCAPE_HATCH_STORAGE_KEY,
-  isConversationalInlineEscapeHatchEnabled,
   getDelegationMode,
   isInlineDelegationEnabled,
   resolveTurnEngineTrigger,
-  setConversationalInlineEscapeHatch,
 } from './delegation-mode-settings';
 
 const INLINE_KEY = 'push:delegation-mode-preference';
@@ -61,16 +58,6 @@ describe('delegation-mode-settings', () => {
     storage.map.set(INLINE_KEY, 'delegated');
     expect(getDelegationMode()).toBe('delegated');
     expect(isInlineDelegationEnabled()).toBe(false);
-  });
-
-  it('defaults the conversational inline escape hatch off and persists exact opt-out state', () => {
-    expect(isConversationalInlineEscapeHatchEnabled()).toBe(false);
-    setConversationalInlineEscapeHatch(true);
-    expect(storage.map.get(CONVERSATIONAL_INLINE_ESCAPE_HATCH_STORAGE_KEY)).toBe('1');
-    expect(isConversationalInlineEscapeHatchEnabled()).toBe(true);
-    setConversationalInlineEscapeHatch(false);
-    expect(storage.map.get(CONVERSATIONAL_INLINE_ESCAPE_HATCH_STORAGE_KEY)).toBe('0');
-    expect(isConversationalInlineEscapeHatchEnabled()).toBe(false);
   });
 
   it('keeps the delegated opt-out on the foreground Orchestrator loop (null)', () => {
