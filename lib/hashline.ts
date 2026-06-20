@@ -12,13 +12,25 @@ export type HashlineOp =
   | { op: 'insert_before'; ref: string; content: string }
   | { op: 'delete_line'; ref: string };
 
+export type HashlineDiagnosticCode =
+  | 'stale_ref_relocated'
+  | 'stale_ref_ambiguous'
+  | 'stale_ref_mismatch'
+  | 'double_replace_warning';
+
+export interface HashlineDiagnostic {
+  code: HashlineDiagnosticCode;
+  message: string;
+}
+
 export interface HashlineEditResult {
   content: string;
   applied: number;
   failed: number;
   errors: string[];
   warnings: string[];
-  /** 1-indexed line numbers of successfully resolved edit targets (against the original content). */
+  errorDetails: HashlineDiagnostic[];
+  warningDetails: HashlineDiagnostic[];
   resolvedLines: number[];
 }
 
@@ -35,7 +47,6 @@ function hasWebCrypto(): boolean {
 }
 
 function fallbackHashHex(input: string): string {
-  // Deterministic non-cryptographic fallback used only when Web Crypto is absent.
   let primary = 0x811c9dc5;
   let secondary = 0x9e3779b1;
 
@@ -54,17 +65,6 @@ function clampHashLength(length: number): number {
   return Math.min(Math.max(length, 7), 12);
 }
 
-/**
- * Normalize a line before hashing.
- *
- * Only leading/trailing whitespace is trimmed, so anchors survive
- * reindentation (the common formatter churn for source) while *internal*
- * whitespace stays significant. Keeping internal whitespace in the hash means
- * a content change that only alters spacing inside a string literal, JSON, or
- * Markdown (`"a  b"` → `"a b"`) still trips the stale-anchor check instead of
- * silently overwriting the changed line. Centralized here so the async and
- * sync (CLI) hashing paths can't drift.
- */
 export function normalizeLineForHash(line: string): string {
   return String(line).trim();
 }
@@ -73,25 +73,9 @@ export async function getNodeCrypto(): Promise<null> {
   return null;
 }
 
-/**
- * Calculate a hash for a line of text (trimmed via `normalizeLineForHash`, so
- * anchors survive reindentation but internal whitespace stays significant).
- * Uses SHA-256 truncated to `length` hex characters (default 7).
- *
- * Collision properties:
- * - 7 hex chars = 28 bits → ~50% collision chance at ~19K lines (birthday paradox).
- *   In practice most "collisions" are identical-content lines (duplicate imports,
- *   blank lines, closing braces), not hash collisions.
- * - Internal caches store 12-char (48-bit) hashes; short refs match via prefix.
- *   At 12 chars the birthday threshold is ~20M lines — effectively collision-free.
- * - When a short ref is ambiguous, the resolver suggests line-qualified refs
- *   (e.g. "42:abc1234") and distinguishes true hash ambiguity from identical
- *   content so agents can self-correct.
- */
 export async function calculateLineHash(line: string, length: number = 7): Promise<string> {
   const normalized = normalizeLineForHash(line);
 
-  // 1. Prefer Web Crypto (modern browsers + current Node runtimes)
   if (hasWebCrypto()) {
     const webCrypto = getWebCrypto();
     if (!webCrypto) throw new Error('Web Crypto disappeared during hashing');
@@ -105,20 +89,10 @@ export async function calculateLineHash(line: string, length: number = 7): Promi
   return fallbackHashHex(normalized).slice(0, clampHashLength(length));
 }
 
-/**
- * Sync version for legacy utility callers. Uses the deterministic JS fallback.
- */
 export function calculateLineHashSync(line: string, length: number = 7): string {
   return fallbackHashHex(normalizeLineForHash(line)).slice(0, clampHashLength(length));
 }
 
-/**
- * Choose hash display length to minimize ambiguity in rendered output.
- *
- * Given an array of full-length (12-char) hashes, returns the shortest
- * length (7–10) where ≥95% of hashes are unique.  Files with ≤10 lines
- * always return the default (ambiguity is unlikely and cheap to resolve).
- */
 export function adaptiveHashDisplayLength(fullHashes: string[], minLength: number = 7): number {
   if (fullHashes.length <= 10) return minLength;
   for (let len = minLength; len <= 10; len++) {
@@ -128,14 +102,9 @@ export function adaptiveHashDisplayLength(fullHashes: string[], minLength: numbe
   return 10;
 }
 
-/**
- * Calculate a content version hash (used for file versioning).
- * Universal implementation using Web Crypto or Node.js fallback.
- */
 export async function calculateContentVersion(content: string): Promise<string> {
   const str = String(content);
 
-  // 1. Prefer Web Crypto
   if (hasWebCrypto()) {
     const webCrypto = getWebCrypto();
     if (!webCrypto) throw new Error('Web Crypto disappeared during content hashing');
@@ -151,8 +120,6 @@ export async function calculateContentVersion(content: string): Promise<string> 
   return fallbackHashHex(str).slice(0, 12);
 }
 
-// --- Ref parsing ---
-
 function parseRef(ref: string): { lineNo: number | null; hash: string } {
   const raw = ref.trim();
   if (!raw) throw new Error('ref is required');
@@ -167,23 +134,10 @@ async function batchHashLines(lines: string[]): Promise<string[]> {
   return Promise.all(lines.map((l) => calculateLineHash(l, 12)));
 }
 
-// ---------------------------------------------------------------------------
-// Shared two-phase edit engine (sync, crypto-agnostic)
-//
-// Both the async Web Crypto path and the sync CLI Node.js path delegate here
-// after computing 12-char hashes with their respective crypto backends.
-// ---------------------------------------------------------------------------
-
 export type ResolvedEdit =
-  | { index: number; edit: HashlineOp; warning?: string }
-  | { error: string };
+  | { index: number; edit: HashlineOp; warning?: HashlineDiagnostic }
+  | { error: string; errorCode?: HashlineDiagnosticCode };
 
-/**
- * How far (in lines) a stale line-qualified anchor's unique surviving match may
- * sit from its original line and still be relocated. Drift between read and
- * edit is normally small; bounding it keeps relocation from silently jumping
- * across the file to a far-away (if unique) match.
- */
 const STALE_REF_RELOCATION_WINDOW = 25;
 
 type StaleRefRelocation =
@@ -191,16 +145,6 @@ type StaleRefRelocation =
   | { kind: 'ambiguous'; indices: number[] }
   | { kind: 'none' };
 
-/**
- * Decide whether a stale line-qualified anchor can be safely relocated.
- *
- * The anchored content must be **globally unique** in the file: if two or more
- * other lines still carry the hash, the line number was the only disambiguator
- * among duplicates, and relocating the edit onto a surviving copy would
- * silently target the wrong line. Only when exactly one occurrence survives —
- * and it sits within the ±window (a small, plausible drift) — do we relocate;
- * a lone match further away is left stale for an explicit re-read.
- */
 function relocateStaleRef(
   hashCache: string[],
   originalIdx: number,
@@ -220,12 +164,6 @@ function relocateStaleRef(
   return { kind: 'none' };
 }
 
-/**
- * Phase 1 — Resolve all hashline refs against pre-computed 12-char hashes.
- *
- * Pure sync function. Returns one ResolvedEdit per input edit, in the same
- * order. Errors are collected, never thrown — the caller decides policy.
- */
 export function resolveHashlineRefs(
   hashCache: string[],
   lines: string[],
@@ -263,7 +201,10 @@ export function resolveHashlineRefs(
           resolved.push({
             index: relocation.index,
             edit,
-            warning: `Stale anchor "${edit.ref}": line ${parsed.lineNo} no longer matches, but the anchored content was found ${Math.abs(delta)} line${Math.abs(delta) === 1 ? '' : 's'} ${direction} at line ${relocation.index + 1}. Relocated the edit there — verify it targeted the intended line.`,
+            warning: {
+              code: 'stale_ref_relocated',
+              message: `Stale anchor "${edit.ref}": line ${parsed.lineNo} no longer matches, but the anchored content was found ${Math.abs(delta)} line${Math.abs(delta) === 1 ? '' : 's'} ${direction} at line ${relocation.index + 1}. Relocated the edit there — verify it targeted the intended line.`,
+            },
           });
           continue;
         }
@@ -276,12 +217,14 @@ export function resolveHashlineRefs(
               : '';
           resolved.push({
             error: `Stale line-qualified ref "${edit.ref}": line ${parsed.lineNo} no longer matches, and the anchored content still appears at multiple other lines${more}, so the line number can no longer disambiguate it. Re-read and retry with a fresh line-qualified ref such as ${retryRefs.join(', ')}.`,
+            errorCode: 'stale_ref_ambiguous',
           });
           continue;
         }
         const refreshedRef = `${parsed.lineNo}:${hashCache[idx].slice(0, parsed.hash.length)}`;
         resolved.push({
           error: `Stale line-qualified ref "${edit.ref}": line ${parsed.lineNo} hash is now ${hashCache[idx].slice(0, 7)}. Retry with "${refreshedRef}" to target the same line, or re-read the file if the intended content moved.`,
+          errorCode: 'stale_ref_mismatch',
         });
         continue;
       }
@@ -299,7 +242,6 @@ export function resolveHashlineRefs(
     }
 
     if (matches.length > 1) {
-      // Try to disambiguate — cache already has 12-char hashes
       if (parsed.hash.length < 12) {
         const distinctGroups = new Map<string, number[]>();
         for (const idx of matches) {
@@ -330,7 +272,6 @@ export function resolveHashlineRefs(
           });
         }
       } else {
-        // Even at max hash length, lines are identical — suggest line-qualified refs
         const MAX_DIAGNOSTIC_LINES = 5;
         const diagnostics: string[] = [];
         const retryRefs: string[] = [];
@@ -352,7 +293,6 @@ export function resolveHashlineRefs(
   return resolved;
 }
 
-/** Per-edit metadata exposed to callers that need adjusted line positions. */
 export interface AppliedEditDetail {
   originalIndex: number;
   op: HashlineOp['op'];
@@ -360,12 +300,6 @@ export interface AppliedEditDetail {
   linesAdded: number;
 }
 
-/**
- * Phase 2 — Apply resolved edits to a mutable lines array with offset tracking.
- *
- * Pure sync function. Mutates `resultLines` in place and returns the combined
- * result. Resolution errors from Phase 1 are carried through as failures.
- */
 export function applyResolvedHashlineEdits(
   resultLines: string[],
   resolved: ResolvedEdit[],
@@ -374,6 +308,8 @@ export function applyResolvedHashlineEdits(
   let failedCount = 0;
   const errors: string[] = [];
   const warnings: string[] = [];
+  const errorDetails: HashlineDiagnostic[] = [];
+  const warningDetails: HashlineDiagnostic[] = [];
   const applied: (AppliedEditDetail & { edit: HashlineOp })[] = [];
   const deletedOriginalIndices = new Set<number>();
   const replacedOriginalIndices = new Set<number>();
@@ -382,6 +318,7 @@ export function applyResolvedHashlineEdits(
     if ('error' in r) {
       failedCount++;
       errors.push(r.error);
+      if (r.errorCode) errorDetails.push({ code: r.errorCode, message: r.error });
       continue;
     }
 
@@ -392,13 +329,11 @@ export function applyResolvedHashlineEdits(
     }
 
     if (replacedOriginalIndices.has(r.index) && r.edit.op === 'replace_line') {
-      warnings.push(
-        `Line ${r.index + 1} was already replaced by a prior op in this batch — the second replace targets the mutated content, which is usually unintended.`,
-      );
+      const warningMessage = `Line ${r.index + 1} was already replaced by a prior op in this batch — the second replace targets the mutated content, which is usually unintended.`;
+      warnings.push(warningMessage);
+      warningDetails.push({ code: 'double_replace_warning', message: warningMessage });
     }
 
-    // Offset adjustment logic (honors array order for same-line inserts/deletes).
-    // Each prior op may shift the target by more than 1 line when content is multi-line.
     let adjustedIdx = r.index;
     for (const prior of applied) {
       if (prior.op === 'insert_after') {
@@ -408,11 +343,9 @@ export function applyResolvedHashlineEdits(
       } else if (prior.op === 'insert_before' && r.index >= prior.originalIndex) {
         adjustedIdx += prior.linesAdded;
       } else if (prior.op === 'replace_line') {
-        // replace_line with multi-line content adds (N-1) extra lines
         if (r.index > prior.originalIndex) {
           adjustedIdx += prior.linesAdded - 1;
         } else if (r.index === prior.originalIndex && r.edit.op === 'insert_after') {
-          // insert_after the same line that was replaced: shift past the full replaced block
           adjustedIdx += prior.linesAdded - 1;
         }
       } else if (prior.op === 'delete_line' && r.index > prior.originalIndex) {
@@ -441,21 +374,22 @@ export function applyResolvedHashlineEdits(
         linesAdded = newLines.length;
         break;
       }
-      case 'delete_line':
+      case 'delete_line': {
         resultLines.splice(adjustedIdx, 1);
+        deletedOriginalIndices.add(r.index);
+        linesAdded = 0;
         break;
+      }
     }
-    appliedCount++;
-    if (edit.op === 'delete_line') deletedOriginalIndices.add(r.index);
+
     if (edit.op === 'replace_line') replacedOriginalIndices.add(r.index);
-    applied.push({
-      originalIndex: r.index,
-      op: edit.op,
-      edit,
-      linesAdded,
-      adjustedLine: adjustedIdx + 1,
-    });
-    if (r.warning) warnings.push(r.warning);
+
+    appliedCount++;
+    applied.push({ originalIndex: r.index, op: edit.op, adjustedLine: adjustedIdx + 1, linesAdded, edit });
+    if (r.warning) {
+      warnings.push(r.warning.message);
+      warningDetails.push(r.warning);
+    }
   }
 
   return {
@@ -464,6 +398,8 @@ export function applyResolvedHashlineEdits(
     failed: failedCount,
     errors,
     warnings,
+    errorDetails,
+    warningDetails,
     resolvedLines: applied.map((a) => a.originalIndex + 1),
     appliedDetails: applied.map(({ originalIndex, op, adjustedLine, linesAdded }) => ({
       originalIndex,
@@ -474,12 +410,6 @@ export function applyResolvedHashlineEdits(
   };
 }
 
-/**
- * Apply a set of hashline edits to file content.
- *
- * Thin async wrapper: hashes lines via the runtime crypto backend,
- * then delegates to the shared sync resolve → apply pipeline.
- */
 export async function applyHashlineEdits(
   originalContent: string,
   edits: HashlineOp[],
@@ -490,9 +420,6 @@ export async function applyHashlineEdits(
   return applyResolvedHashlineEdits(resultLines, resolved);
 }
 
-/**
- * Render content with anchored line numbers and hashes.
- */
 export async function renderAnchoredRange(
   content: string,
   startLine: number = 1,
@@ -506,9 +433,11 @@ export async function renderAnchoredRange(
   const rangeHashes = hashes.slice(start - 1, end);
   const displayLen = adaptiveHashDisplayLength(rangeHashes);
 
-  const out = [];
+  const out: string[] = [];
   for (let i = start - 1; i < end; i++) {
-    out.push(`${i + 1}:${hashes[i].slice(0, displayLen)}\t${lines[i]}`);
+    const lineNo = i + 1;
+    const hash = hashes[i].slice(0, displayLen);
+    out.push(`${lineNo.toString().padStart(String(end).length, ' ')}:${hash}\t${lines[i] ?? ''}`);
   }
 
   return { text: out.join('\n') || '<empty file>', startLine: start, endLine: end, totalLines };
