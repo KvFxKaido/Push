@@ -121,6 +121,12 @@ export default defineConfig({
   base: './',
   plugins: [react(), stampServiceWorkerCache()],
   build: {
+    // vite 8 defaults CSS minification to lightningcss, whose strict parser
+    // rejects the Tailwind v4 `--spacing()` function the shadcn components emit
+    // under Tailwind 3 (e.g. `[--cell-size:--spacing(8)]`). esbuild (vite 7's
+    // minifier) tolerated it; pin to esbuild to preserve that behavior until
+    // those components are migrated off the v4 syntax (or Tailwind 4 lands).
+    cssMinify: 'esbuild',
     rollupOptions: {
       output: {
         entryFileNames: 'assets/entry/[name]-[hash].js',
