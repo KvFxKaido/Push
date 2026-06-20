@@ -79,11 +79,12 @@ async function runTypeScriptDiagnostics(
   specificPath: string | null,
 ): Promise<DiagnosticResult> {
   try {
+    // Always run the project-level check so tsconfig.json is honored. Passing a
+    // file path on the command line makes tsc ignore tsconfig (error TS5112
+    // since TypeScript 6.0; an isolated default-config compile before that),
+    // producing spurious results instead of real project diagnostics. Filter to
+    // the requested file after parsing instead — same as the Rust path below.
     const args: string[] = ['--noEmit', '--pretty', 'false'];
-    if (specificPath) {
-      // tsc can filter by file when given specific paths
-      args.push(specificPath);
-    }
 
     const { stdout, stderr } = await execFileAsync('tsc', args, {
       cwd: workspaceRoot,
@@ -98,13 +99,25 @@ async function runTypeScriptDiagnostics(
       return { diagnostics: [] };
     }
 
-    return { diagnostics: parseTscOutput(output, workspaceRoot) };
+    // Filter to the specific path if requested (project check reports all files)
+    let diagnostics: Diagnostic[] = parseTscOutput(output, workspaceRoot);
+    if (specificPath) {
+      const relativeSpecific: string = path.relative(workspaceRoot, specificPath);
+      diagnostics = diagnostics.filter((d: Diagnostic) => d.file === relativeSpecific);
+    }
+
+    return { diagnostics };
   } catch (err) {
     const execErr = err as ExecError;
     // tsc exits with code 1 on type errors — this is expected
     if (execErr.code === 1 && (execErr.stdout || execErr.stderr)) {
       const output: string = execErr.stdout || execErr.stderr;
-      return { diagnostics: parseTscOutput(output, workspaceRoot) };
+      let diagnostics: Diagnostic[] = parseTscOutput(output, workspaceRoot);
+      if (specificPath) {
+        const relativeSpecific: string = path.relative(workspaceRoot, specificPath);
+        diagnostics = diagnostics.filter((d: Diagnostic) => d.file === relativeSpecific);
+      }
+      return { diagnostics };
     }
 
     // Check for "command not found"
