@@ -585,7 +585,7 @@ async function fetchCIStatusSummary(
   );
 
   let checks: CICheck[] = [];
-  let overall: CIOverallStatus = 'no-checks';
+  let overall: CIOverallStatus;
 
   if (checkRunsRes.ok) {
     const data = (await checkRunsRes.json()) as {

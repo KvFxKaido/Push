@@ -149,13 +149,16 @@ export function RepoChatDrawer({
 
   useEffect(() => {
     if (open) return;
-    setSearchQuery('');
-    setEditingChatId(null);
-    setEditingTitle('');
-    setBranchMenuOpen(false);
-    setPendingDeleteBranch(null);
-    setDeletingBranch(null);
-    setAppearanceRepoState(null);
+    const id = setTimeout(() => {
+      setSearchQuery('');
+      setEditingChatId(null);
+      setEditingTitle('');
+      setBranchMenuOpen(false);
+      setPendingDeleteBranch(null);
+      setDeletingBranch(null);
+      setAppearanceRepoState(null);
+    }, 0);
+    return () => clearTimeout(id);
   }, [open]);
 
   const drawerBranchOptions = useMemo(() => {

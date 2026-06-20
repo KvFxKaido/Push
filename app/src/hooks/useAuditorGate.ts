@@ -60,7 +60,8 @@ export function useAuditorGate(repoFullName?: string) {
   );
 
   useEffect(() => {
-    setRepoOverrideState(loadRepoOverride(repoFullName));
+    const id = setTimeout(() => setRepoOverrideState(loadRepoOverride(repoFullName)), 0);
+    return () => clearTimeout(id);
   }, [repoFullName]);
 
   const setGlobalDefault = useCallback((value: boolean) => {

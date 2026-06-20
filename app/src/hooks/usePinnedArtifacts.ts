@@ -27,7 +27,8 @@ export function usePinnedArtifacts(repoFullName: string | null) {
   const [artifacts, setArtifacts] = useState<PinnedArtifact[]>(() => readArtifacts(repoFullName));
 
   useEffect(() => {
-    setArtifacts(readArtifacts(repoFullName));
+    const id = setTimeout(() => setArtifacts(readArtifacts(repoFullName)), 0);
+    return () => clearTimeout(id);
   }, [repoFullName]);
 
   const updateArtifacts = useCallback(

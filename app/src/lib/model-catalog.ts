@@ -1258,6 +1258,7 @@ export async function fetchOllamaModels(
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(
         `Ollama model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+        { cause: err },
       );
     }
     throw err;
@@ -1305,6 +1306,7 @@ export async function fetchOpenRouterModels(
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(
         `OpenRouter model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+        { cause: err },
       );
     }
     throw err;
@@ -1347,6 +1349,7 @@ export async function fetchCloudflareModels(): Promise<string[]> {
         `Cloudflare Workers AI model list timed out after ${Math.floor(
           MODELS_FETCH_TIMEOUT_MS / 1000,
         )}s`,
+        { cause: err },
       );
     }
     throw err;
@@ -1392,6 +1395,7 @@ export async function fetchZenModels(
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(
         `OpenCode Zen model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+        { cause: err },
       );
     }
     throw err;
@@ -1437,6 +1441,7 @@ export async function fetchNvidiaModels(
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(
         `Nvidia NIM model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+        { cause: err },
       );
     }
     throw err;
@@ -1482,6 +1487,7 @@ export async function fetchBlackboxModels(
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(
         `Blackbox AI model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+        { cause: err },
       );
     }
     throw err;
@@ -1518,6 +1524,7 @@ export async function fetchKilocodeModels(): Promise<string[]> {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(
         `Kilo Code model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+        { cause: err },
       );
     }
     throw err;
@@ -1554,6 +1561,7 @@ export async function fetchFireworksModels(): Promise<string[]> {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(
         `Fireworks AI model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+        { cause: err },
       );
     }
     throw err;
@@ -1590,6 +1598,7 @@ export async function fetchOpenAdapterModels(): Promise<string[]> {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(
         `OpenAdapter model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+        { cause: err },
       );
     }
     throw err;
@@ -1632,6 +1641,7 @@ export async function fetchOpenAIModels(): Promise<string[]> {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(
         `OpenAI model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+        { cause: err },
       );
     }
     throw err;
@@ -1668,6 +1678,7 @@ export async function fetchGoogleModels(): Promise<string[]> {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(
         `Google Gemini model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+        { cause: err },
       );
     }
     throw err;

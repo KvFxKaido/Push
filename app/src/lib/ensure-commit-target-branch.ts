@@ -258,7 +258,7 @@ export async function ensureCommitTargetBranch({
     fork ?? ((branch) => forkBranchInWorkspace(sandboxId, branch));
 
   const diffSummary = summarizeDiffForBranchName(diff);
-  let proposed: string | null = null;
+  let proposed: string | null;
   try {
     proposed = usableBranchName(
       await proposeName({ commitMessage, diffSummary }),

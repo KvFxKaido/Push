@@ -156,7 +156,9 @@ export async function saveSnapshotToIndexedDB(
       const retryQuotaError =
         retryErr instanceof DOMException && retryErr.name === 'QuotaExceededError';
       if (retryQuotaError) {
-        throw new Error('Snapshot is too large for local browser storage quota.');
+        throw new Error('Snapshot is too large for local browser storage quota.', {
+          cause: retryErr,
+        });
       }
       throw retryErr;
     }

@@ -178,26 +178,27 @@ export function PrBrowser({ repoFullName, activeBranch, onOpenDiff }: PrBrowserP
   }, [activeBranch, repoFullName]);
 
   useEffect(() => {
-    setDetail(null);
-    setDetailError(null);
-    setExpandedFiles(new Set());
-    void refreshList();
+    const id = setTimeout(() => {
+      setDetail(null);
+      setDetailError(null);
+      setExpandedFiles(new Set());
+      void refreshList();
+    }, 0);
+    return () => clearTimeout(id);
   }, [refreshList]);
 
   useEffect(() => {
     if (!repoFullName || !selectedPrNumber) {
-      setDetail(null);
-      setDetailError(null);
-      return;
+      const id = setTimeout(() => {
+        setDetail(null);
+        setDetailError(null);
+      }, 0);
+      return () => clearTimeout(id);
     }
 
     const repo = repoFullName;
     const prNumber = selectedPrNumber;
     let cancelled = false;
-    setDetailLoading(true);
-    setDetailError(null);
-    setDetailSection('overview');
-
     async function loadDetail() {
       try {
         const nextDetail = await fetchPullRequestDetail(repo, prNumber);
@@ -215,9 +216,15 @@ export function PrBrowser({ repoFullName, activeBranch, onOpenDiff }: PrBrowserP
       }
     }
 
-    void loadDetail();
+    const startTimer = setTimeout(() => {
+      setDetailLoading(true);
+      setDetailError(null);
+      setDetailSection('overview');
+      void loadDetail();
+    }, 0);
     return () => {
       cancelled = true;
+      clearTimeout(startTimer);
     };
   }, [detailReloadNonce, repoFullName, selectedPrNumber]);
 

@@ -45,7 +45,6 @@ export function SandboxExpiryBanner({
   // Tick every second to update countdown
   useEffect(() => {
     if (!createdAt || sandboxStatus !== 'ready') {
-      setRemainingMs(null);
       return;
     }
 
@@ -59,9 +58,12 @@ export function SandboxExpiryBanner({
       }
     }
 
-    tick(); // Initial
+    const initialId = setTimeout(tick, 0);
     const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
+    return () => {
+      clearTimeout(initialId);
+      clearInterval(id);
+    };
   }, [createdAt, sandboxStatus, onWarningThresholdReached]);
 
   const handleDownload = useCallback(async () => {
@@ -88,11 +90,13 @@ export function SandboxExpiryBanner({
     }
   }, [sandboxId, downloading]);
 
+  const visibleRemainingMs = createdAt && sandboxStatus === 'ready' ? remainingMs : null;
+
   // Nothing to show when no createdAt, not ready, or plenty of time left
-  if (remainingMs === null) return null;
+  if (visibleRemainingMs === null) return null;
 
   // Expired
-  if (remainingMs <= 0) {
+  if (visibleRemainingMs <= 0) {
     return (
       <div
         className={`mx-3 mt-5 flex items-center justify-between gap-3 px-1 py-2.5 ${HUB_TOP_BANNER_STRIP_CLASS} border-red-500/25`}
@@ -118,7 +122,7 @@ export function SandboxExpiryBanner({
   }
 
   // Warning zone (5 min remaining)
-  if (remainingMs <= WARNING_THRESHOLD_MS) {
+  if (visibleRemainingMs <= WARNING_THRESHOLD_MS) {
     return (
       <div
         className={`mx-3 mt-5 flex items-center justify-between gap-3 px-1 py-2.5 ${HUB_TOP_BANNER_STRIP_CLASS} border-amber-500/25`}
@@ -127,7 +131,7 @@ export function SandboxExpiryBanner({
           <Clock className="h-4 w-4 flex-shrink-0 text-amber-400" />
           <div className="min-w-0">
             <p className="text-xs font-medium text-amber-300">
-              {formatRemaining(remainingMs)} remaining
+              {formatRemaining(visibleRemainingMs)} remaining
             </p>
             <p className="text-push-2xs text-amber-400/70">
               Download your work before this workspace runtime expires.

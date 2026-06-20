@@ -95,17 +95,22 @@ export function useBranchManager(
   useEffect(() => {
     if (!activeRepoFullName || workspaceSession?.kind !== 'repo') {
       branchFetchSeqRef.current++;
-      setRepoBranches([]);
-      setRepoBranchesError(null);
-      setRepoBranchesLoading(false);
-      setBranchMenuOpen(false);
+      const id = setTimeout(() => {
+        setRepoBranches([]);
+        setRepoBranchesError(null);
+        setRepoBranchesLoading(false);
+        setBranchMenuOpen(false);
+        setPendingDeleteBranch(null);
+        setDeletingBranch(null);
+      }, 0);
+      return () => clearTimeout(id);
+    }
+    const id = setTimeout(() => {
       setPendingDeleteBranch(null);
       setDeletingBranch(null);
-      return;
-    }
-    setPendingDeleteBranch(null);
-    setDeletingBranch(null);
-    void loadRepoBranches(activeRepoFullName);
+      void loadRepoBranches(activeRepoFullName);
+    }, 0);
+    return () => clearTimeout(id);
   }, [activeRepoFullName, workspaceSession, loadRepoBranches]);
 
   const handleDeleteBranch = useCallback(

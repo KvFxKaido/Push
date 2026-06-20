@@ -124,11 +124,12 @@ function readStoredTodos(repoFullName: string | null): TodoItem[] {
 }
 
 export function useTodo(repoFullName: string | null = null) {
-  const [todos, setTodosState] = useState<TodoItem[]>([]);
+  const [todos, setTodosState] = useState<TodoItem[]>(() => readStoredTodos(repoFullName));
 
   // Load on repo change
   useEffect(() => {
-    setTodosState(readStoredTodos(repoFullName));
+    const id = setTimeout(() => setTodosState(readStoredTodos(repoFullName)), 0);
+    return () => clearTimeout(id);
   }, [repoFullName]);
 
   // Persist on change

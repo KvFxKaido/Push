@@ -84,10 +84,12 @@ export function usePrReviewHistory(
 
   useEffect(() => {
     if (!repoFullName || !prNumber) {
-      setReviews([]);
-      setError(null);
-      setLoading(false);
-      return;
+      const id = setTimeout(() => {
+        setReviews([]);
+        setError(null);
+        setLoading(false);
+      }, 0);
+      return () => clearTimeout(id);
     }
 
     let cancelled = false;
@@ -139,11 +141,14 @@ export function usePrReviewHistory(
       }
     };
 
-    setLoading(true);
-    void poll();
+    const startTimer = setTimeout(() => {
+      setLoading(true);
+      void poll();
+    }, 0);
 
     return () => {
       cancelled = true;
+      clearTimeout(startTimer);
       controller.abort();
       clearTimer();
     };

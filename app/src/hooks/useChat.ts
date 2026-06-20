@@ -107,13 +107,13 @@ export function useChat(
   branchInfo?: { currentBranch?: string; defaultBranch?: string },
   todo?: TodoHandlers,
 ) {
-  const initialConversationsRef = useRef<Record<string, Conversation> | null>(null);
-  if (initialConversationsRef.current === null) {
-    initialConversationsRef.current = loadConversations();
-  }
-  const initialConversations = initialConversationsRef.current;
-  const initialAgentEventsByChat = buildAgentEventsByChat(initialConversations);
-  const initialQueuedFollowUpsByChat = buildQueuedFollowUpsByChat(initialConversations);
+  const [initialConversations] = useState<Record<string, Conversation>>(() => loadConversations());
+  const [initialAgentEventsByChat] = useState<Record<string, AgentStatusEvent[]>>(() =>
+    buildAgentEventsByChat(initialConversations),
+  );
+  const [initialQueuedFollowUpsByChat] = useState(() =>
+    buildQueuedFollowUpsByChat(initialConversations),
+  );
 
   // --- Core state ---
   const [conversations, setConversations] =
@@ -128,7 +128,9 @@ export function useChat(
     useState<Record<string, AgentStatusEvent[]>>(initialAgentEventsByChat);
 
   const conversationsRef = useRef(conversations);
-  conversationsRef.current = conversations;
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
 
   // --- Conversation persistence (dirty/deleted sets + flush lifecycle) ---
   const { dirtyConversationIdsRef, deletedConversationIdsRef } = useConversationPersistence({
@@ -137,7 +139,9 @@ export function useChat(
   });
 
   const agentEventsByChatRef = useRef<Record<string, AgentStatusEvent[]>>(initialAgentEventsByChat);
-  agentEventsByChatRef.current = agentEventsByChat;
+  useEffect(() => {
+    agentEventsByChatRef.current = agentEventsByChat;
+  }, [agentEventsByChat]);
   const activeChatIdRef = useRef(activeChatId);
   const abortRef = useRef(false);
   const processedContentRef = useRef<Set<string>>(new Set());
@@ -157,15 +161,17 @@ export function useChat(
 
   // --- Prop mirror refs (always up-to-date in callbacks) ---
   const repoRef = useRef(activeRepoFullName);
-  repoRef.current = activeRepoFullName;
   const scratchpadRef = useRef(scratchpad);
-  scratchpadRef.current = scratchpad;
   const todoRef = useRef(todo);
-  todoRef.current = todo;
   const runtimeHandlersRef = useRef(runtimeHandlers);
-  runtimeHandlersRef.current = runtimeHandlers;
   const branchInfoRef = useRef(branchInfo);
-  branchInfoRef.current = branchInfo;
+  useEffect(() => {
+    repoRef.current = activeRepoFullName;
+    scratchpadRef.current = scratchpad;
+    todoRef.current = todo;
+    runtimeHandlersRef.current = runtimeHandlers;
+    branchInfoRef.current = branchInfo;
+  }, [activeRepoFullName, scratchpad, todo, runtimeHandlers, branchInfo]);
   const previousMemoryBranchScopeRef = useRef<{
     repoFullName: string;
     branch: string;
@@ -787,7 +793,9 @@ export function useChat(
   );
 
   // Wire sendMessageRef so useChatCheckpoint's resumeInterruptedRun can call it
-  sendMessageRef.current = sendMessage as (text: string) => Promise<void>;
+  useEffect(() => {
+    sendMessageRef.current = sendMessage as (text: string) => Promise<void>;
+  }, [sendMessage]);
 
   // --- Chat replay (regenerate, editAndResend, diagnoseCIFailure) ---
   const { regenerateLastResponse, editMessageAndResend, diagnoseCIFailure } = useChatReplay({

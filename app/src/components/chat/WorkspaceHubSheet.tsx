@@ -576,35 +576,49 @@ export function WorkspaceHubSheet({
 
   useEffect(() => {
     if (!externalTabRequest) return;
-    if (externalTabRequest.tab === 'console' && !showToolActivity) {
-      setActiveTab(fallbackTab);
-      return;
-    }
-    setActiveTab(
-      tabs.some((tab) => tab.key === externalTabRequest.tab) ? externalTabRequest.tab : fallbackTab,
-    );
+    const id = setTimeout(() => {
+      if (externalTabRequest.tab === 'console' && !showToolActivity) {
+        setActiveTab(fallbackTab);
+        return;
+      }
+      setActiveTab(
+        tabs.some((tab) => tab.key === externalTabRequest.tab)
+          ? externalTabRequest.tab
+          : fallbackTab,
+      );
+    }, 0);
+    return () => clearTimeout(id);
   }, [externalTabRequest, fallbackTab, showToolActivity, tabs]);
 
   useEffect(() => {
     if (tabs.some((tab) => tab.key === activeTab)) return;
-    setActiveTab(fallbackTab);
+    const id = setTimeout(() => setActiveTab(fallbackTab), 0);
+    return () => clearTimeout(id);
   }, [activeTab, fallbackTab, tabs]);
 
   // Mount the review tab on first open, then keep it mounted to preserve state.
   useEffect(() => {
-    if (activeTab === 'review' && !reviewTabMounted) setReviewTabMounted(true);
+    if (activeTab !== 'review' || reviewTabMounted) return;
+    const id = setTimeout(() => setReviewTabMounted(true), 0);
+    return () => clearTimeout(id);
   }, [activeTab, reviewTabMounted]);
 
   useEffect(() => {
     if (capabilities.canCommitAndPush) return;
     if (!commitTargetSheetOpen) return;
-    setCommitTargetSheetOpen(false);
-    setCommitTargetError(null);
+    const id = setTimeout(() => {
+      setCommitTargetSheetOpen(false);
+      setCommitTargetError(null);
+    }, 0);
+    return () => clearTimeout(id);
   }, [capabilities.canCommitAndPush, commitTargetSheetOpen]);
 
   useEffect(() => {
-    setReviewDiffSelection(null);
-    setDiffJumpTarget(null);
+    const id = setTimeout(() => {
+      setReviewDiffSelection(null);
+      setDiffJumpTarget(null);
+    }, 0);
+    return () => clearTimeout(id);
   }, [repoFullName, branchProps.currentBranch]);
 
   // ---- Commit & Push flow ----
@@ -1176,33 +1190,43 @@ export function WorkspaceHubSheet({
   // ---- Effects ----
   useEffect(() => {
     if (!open) {
-      setCommitPhase('idle');
-      setCommitError(null);
-      setCommitTargetSheetOpen(false);
-      setCommitTargetError(null);
-      setBranchDropdownOpen(false);
-      setPendingDeleteBranch(null);
-      setSwitchConfirmBranch(null);
-      branchSuggestionAttemptedRef.current = false;
+      const id = setTimeout(() => {
+        setCommitPhase('idle');
+        setCommitError(null);
+        setCommitTargetSheetOpen(false);
+        setCommitTargetError(null);
+        setBranchDropdownOpen(false);
+        setPendingDeleteBranch(null);
+        setSwitchConfirmBranch(null);
+        branchSuggestionAttemptedRef.current = false;
+      }, 0);
+      return () => clearTimeout(id);
     }
   }, [open]);
 
   useEffect(() => {
-    setCommitPhase('idle');
-    setCommitError(null);
+    const id = setTimeout(() => {
+      setCommitPhase('idle');
+      setCommitError(null);
+    }, 0);
+    return () => clearTimeout(id);
   }, [activeTab]);
 
   useEffect(() => {
-    setCommitTargetSheetOpen(false);
-    setCommitTargetError(null);
-    setCommitTargetMode(blockedByProtectMain ? 'new' : 'current');
-    setNewBranchName('');
-    branchSuggestionAttemptedRef.current = false;
+    const id = setTimeout(() => {
+      setCommitTargetSheetOpen(false);
+      setCommitTargetError(null);
+      setCommitTargetMode(blockedByProtectMain ? 'new' : 'current');
+      setNewBranchName('');
+      branchSuggestionAttemptedRef.current = false;
+    }, 0);
+    return () => clearTimeout(id);
   }, [repoFullName, branchProps.currentBranch, blockedByProtectMain]);
 
   useEffect(() => {
     if (!showToolActivity && activeTab === 'console') {
-      setActiveTab('files');
+      const id = setTimeout(() => setActiveTab('files'), 0);
+      return () => clearTimeout(id);
     }
   }, [showToolActivity, activeTab]);
 

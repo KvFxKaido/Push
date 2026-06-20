@@ -63,7 +63,7 @@ async function call<T>(route: string, body: Record<string, unknown>): Promise<T>
   });
 
   const text = await res.text();
-  let parsed: Record<string, unknown> = {};
+  let parsed: Record<string, unknown>;
   try {
     parsed = text ? (JSON.parse(text) as Record<string, unknown>) : {};
   } catch {

@@ -122,7 +122,7 @@ export async function* anthropicStream(
 
     if (!response.ok) {
       const errBody = await response.text().catch(() => '');
-      let detail = errBody;
+      let detail: string;
       try {
         const parsed = JSON.parse(errBody);
         detail = parseProviderError(parsed, errBody.slice(0, 200), true);

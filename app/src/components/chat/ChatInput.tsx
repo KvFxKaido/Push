@@ -555,20 +555,23 @@ export function ChatInput({
   };
   // Reasoning effort (per-provider, only for models that support it)
   const modelCaps = getModelCapabilities(selectedProvider, selectedModel);
-  const [reasoningEffort, setReasoningEffortState] = useState<ReasoningEffort>(() =>
-    getReasoningEffort(selectedProvider),
-  );
-
-  // Sync reasoning effort when provider changes
-  useEffect(() => {
-    setReasoningEffortState(getReasoningEffort(selectedProvider));
-  }, [selectedProvider]);
+  const [reasoningEffortState, setReasoningEffortState] = useState<{
+    provider: AIProviderType;
+    effort: ReasoningEffort;
+  }>(() => ({
+    provider: selectedProvider,
+    effort: getReasoningEffort(selectedProvider),
+  }));
+  const reasoningEffort =
+    reasoningEffortState.provider === selectedProvider
+      ? reasoningEffortState.effort
+      : getReasoningEffort(selectedProvider);
 
   const handleCycleReasoning = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation(); // Don't open the popover
       const next = cycleReasoningEffort(selectedProvider);
-      setReasoningEffortState(next);
+      setReasoningEffortState({ provider: selectedProvider, effort: next });
     },
     [selectedProvider],
   );

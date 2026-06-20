@@ -131,9 +131,9 @@ async function fetchAppToken(installationId: string): Promise<TokenResponse> {
     });
   } catch (err) {
     if (isNetworkFetchError(err)) {
-      throw new Error(formatProxyUnavailableError('/api/github/app-token'));
+      throw new Error(formatProxyUnavailableError('/api/github/app-token'), { cause: err });
     }
-    throw err instanceof Error ? err : new Error(String(err));
+    throw err instanceof Error ? err : new Error(String(err), { cause: err });
   }
 
   if (!res.ok) {
@@ -166,9 +166,9 @@ async function fetchAppOAuth(code: string): Promise<TokenResponse & { installati
     });
   } catch (err) {
     if (isNetworkFetchError(err)) {
-      throw new Error(formatProxyUnavailableError('/api/github/app-oauth'));
+      throw new Error(formatProxyUnavailableError('/api/github/app-oauth'), { cause: err });
     }
-    throw err instanceof Error ? err : new Error(String(err));
+    throw err instanceof Error ? err : new Error(String(err), { cause: err });
   }
 
   if (!res.ok) {
@@ -236,7 +236,7 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
 
   // Schedule token refresh before expiry
   const scheduleRefresh = useCallback(
-    (expiresAt: string, instId: string) => {
+    function scheduleRefresh(expiresAt: string, instId: string) {
       if (refreshTimeoutRef.current) {
         clearTimeout(refreshTimeoutRef.current);
       }
@@ -385,57 +385,75 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
   // Handle installation callback from GitHub (install flow) or OAuth code callback (connect flow)
   useEffect(() => {
     const url = new URL(window.location.href);
+    let timer: ReturnType<typeof setTimeout> | null = null;
 
     // Install callback: ?installation_id=...&setup_action=install
     const instId = url.searchParams.get('installation_id');
     const setupAction = url.searchParams.get('setup_action');
     if (instId && setupAction === 'install') {
       window.history.replaceState({}, document.title, window.location.pathname);
-      fetchAndSetToken(instId);
-      return;
+      timer = setTimeout(() => {
+        void fetchAndSetToken(instId);
+      }, 0);
+      return () => {
+        if (timer) clearTimeout(timer);
+      };
     }
 
     // OAuth callback: ?code=...
     const code = url.searchParams.get('code');
     if (code) {
       window.history.replaceState({}, document.title, window.location.pathname);
-      handleOAuthCallback(code);
+      timer = setTimeout(() => {
+        void handleOAuthCallback(code);
+      }, 0);
+      return () => {
+        if (timer) clearTimeout(timer);
+      };
     }
   }, [fetchAndSetToken, handleOAuthCallback]);
 
   // On mount: validate existing installation
   useEffect(() => {
-    if (mountInitialized.current) return;
-    mountInitialized.current = true;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      if (mountInitialized.current || cancelled) return;
+      mountInitialized.current = true;
 
-    const storedInstId = safeStorageGet(INSTALLATION_ID_KEY);
-    const storedToken = safeStorageGet(TOKEN_KEY);
-    const storedExpiry = safeStorageGet(TOKEN_EXPIRY_KEY);
+      const storedInstId = safeStorageGet(INSTALLATION_ID_KEY);
+      const storedToken = safeStorageGet(TOKEN_KEY);
+      const storedExpiry = safeStorageGet(TOKEN_EXPIRY_KEY);
 
-    if (!storedInstId) return;
+      if (!storedInstId) return;
 
-    // Check if token is still valid
-    if (storedToken && storedExpiry) {
-      const expiryTime = new Date(storedExpiry).getTime();
-      const now = Date.now();
+      // Check if token is still valid
+      if (storedToken && storedExpiry) {
+        const expiryTime = new Date(storedExpiry).getTime();
+        const now = Date.now();
 
-      if (expiryTime > now + REFRESH_BUFFER_MS) {
-        // Token still valid — validate user and schedule refresh
-        validateToken(storedToken).then((user) => {
-          if (user) {
-            saveValidatedUser(user);
-            scheduleRefresh(storedExpiry, storedInstId);
-          } else {
-            // Token invalid — try to refresh
-            fetchAndSetToken(storedInstId);
-          }
-        });
-        return;
+        if (expiryTime > now + REFRESH_BUFFER_MS) {
+          // Token still valid — validate user and schedule refresh
+          validateToken(storedToken).then((user) => {
+            if (cancelled) return;
+            if (user) {
+              saveValidatedUser(user);
+              scheduleRefresh(storedExpiry, storedInstId);
+            } else {
+              // Token invalid — try to refresh
+              void fetchAndSetToken(storedInstId);
+            }
+          });
+          return;
+        }
       }
-    }
 
-    // Token expired or missing — fetch new one
-    fetchAndSetToken(storedInstId);
+      // Token expired or missing — fetch new one
+      void fetchAndSetToken(storedInstId);
+    }, 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [fetchAndSetToken, saveValidatedUser, scheduleRefresh]);
 
   // Cleanup on unmount

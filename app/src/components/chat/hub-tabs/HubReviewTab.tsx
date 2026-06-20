@@ -470,28 +470,34 @@ export function HubReviewTab({
   );
 
   useEffect(() => {
-    const nextSelected =
-      selectedProvider && providerOptions.some((provider) => provider.type === selectedProvider)
-        ? selectedProvider
-        : activeProvider !== 'demo' &&
-            providerOptions.some((provider) => provider.type === activeProvider)
-          ? activeProvider
-          : (providerOptions[0]?.type ?? null);
+    const id = setTimeout(() => {
+      const nextSelected =
+        selectedProvider && providerOptions.some((provider) => provider.type === selectedProvider)
+          ? selectedProvider
+          : activeProvider !== 'demo' &&
+              providerOptions.some((provider) => provider.type === activeProvider)
+            ? activeProvider
+            : (providerOptions[0]?.type ?? null);
 
-    if (nextSelected !== selectedProvider) {
-      setSelectedProvider(nextSelected);
-    }
+      if (nextSelected !== selectedProvider) {
+        setSelectedProvider(nextSelected);
+      }
 
-    if (providerOptions.length === 0) {
-      setResult(null);
-      setReviewDiffData(null);
-      setError(null);
-    }
+      if (providerOptions.length === 0) {
+        setResult(null);
+        setReviewDiffData(null);
+        setError(null);
+      }
+    }, 0);
+    return () => clearTimeout(id);
   }, [activeProvider, providerOptions, selectedProvider]);
 
   useEffect(() => {
-    setSavedReview(parseSavedReviewPayload(safeStorageGet(reviewStorageKey)));
-    setSavedReviewNotice(null);
+    const id = setTimeout(() => {
+      setSavedReview(parseSavedReviewPayload(safeStorageGet(reviewStorageKey)));
+      setSavedReviewNotice(null);
+    }, 0);
+    return () => clearTimeout(id);
   }, [reviewStorageKey]);
 
   useEffect(() => {
@@ -503,15 +509,18 @@ export function HubReviewTab({
       (reviewSource === 'github' && !hasGitHubSource) ||
       (reviewSource === 'commit' && !hasCommitSource);
     if (needsReset) {
-      setReviewSource('sandbox');
-      setResult(null);
-      setReviewContext(null);
-      setReviewDiffData(null);
-      setError(null);
-      setSavedReviewNotice(null);
-      setLoadedSavedReviewMeta(null);
-      setPostState('idle');
-      setPostError(null);
+      const id = setTimeout(() => {
+        setReviewSource('sandbox');
+        setResult(null);
+        setReviewContext(null);
+        setReviewDiffData(null);
+        setError(null);
+        setSavedReviewNotice(null);
+        setLoadedSavedReviewMeta(null);
+        setPostState('idle');
+        setPostError(null);
+      }, 0);
+      return () => clearTimeout(id);
     }
   }, [hasCommitSource, hasGitHubSource, reviewSource]);
 

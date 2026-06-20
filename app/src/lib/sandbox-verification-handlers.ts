@@ -191,8 +191,8 @@ export async function handleRunTests(
   const start = Date.now();
 
   // Auto-detect test framework if not specified
-  let command = '';
-  let framework: TestResultsCardData['framework'] = 'unknown';
+  let command: string;
+  let framework: TestResultsCardData['framework'];
 
   if (args.framework) {
     // User specified framework

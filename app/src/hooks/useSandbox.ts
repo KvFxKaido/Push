@@ -120,6 +120,10 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
   const [error, setError] = useState<string | null>(null);
   // Bumped whenever the persisted snapshot fields change so `snapshotInfo` re-reads localStorage.
   const [snapshotInfoTick, setSnapshotInfoTick] = useState(0);
+  const [freshSandboxId, setFreshSandboxId] = useState<string | null>(null);
+  const [restoredFromSnapshotSandboxId, setRestoredFromSnapshotSandboxId] = useState<string | null>(
+    null,
+  );
   const sandboxIdRef = useRef<string | null>(null);
   const sessionStorageKeyRef = useRef<string | null>(null);
   const statusRef = useRef<SandboxStatus>('idle');
@@ -193,10 +197,13 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
 
     let cancelled = false;
     reconnectingRef.current = true;
-    setStatus('reconnecting');
-    setActiveSandboxEnvironment(null);
-    setSandboxOwnerToken(saved.ownerToken);
-    setSandboxOwnerToken(saved.ownerToken, saved.sandboxId);
+    const reconnectStartTimer = setTimeout(() => {
+      if (cancelled) return;
+      setStatus('reconnecting');
+      setActiveSandboxEnvironment(null);
+      setSandboxOwnerToken(saved.ownerToken);
+      setSandboxOwnerToken(saved.ownerToken, saved.sandboxId);
+    }, 0);
 
     const attemptSnapshotRestore = async (): Promise<string | null> => {
       if (!saved.snapshotId || !saved.restoreToken) return null;
@@ -213,7 +220,9 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
           return null;
         }
         freshSandboxIdRef.current = null;
+        setFreshSandboxId(null);
         snapshotRestoredSandboxIdRef.current = session.sandboxId;
+        setRestoredFromSnapshotSandboxId(session.sandboxId);
         setSandboxId(session.sandboxId);
         sandboxIdRef.current = session.sandboxId;
         sessionStorageKeyRef.current = activeSessionStorageKey;
@@ -247,7 +256,9 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
         if (cancelled) return null;
         if (result.exitCode === 0) {
           freshSandboxIdRef.current = null;
+          setFreshSandboxId(null);
           snapshotRestoredSandboxIdRef.current = null;
+          setRestoredFromSnapshotSandboxId(null);
           setSandboxId(saved.sandboxId);
           sandboxIdRef.current = saved.sandboxId;
           sessionStorageKeyRef.current = activeSessionStorageKey;
@@ -315,6 +326,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
 
     return () => {
       cancelled = true;
+      clearTimeout(reconnectStartTimer);
       reconnectingRef.current = false;
       reconnectPromiseRef.current = null;
     };
@@ -443,7 +455,9 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
             setSandboxId(null);
             sandboxIdRef.current = null;
             freshSandboxIdRef.current = null;
+            setFreshSandboxId(null);
             snapshotRestoredSandboxIdRef.current = null;
+            setRestoredFromSnapshotSandboxId(null);
             setStatus('idle');
             console.log(
               `[useSandbox] Backend terminated despite keep_warm → hibernated to ${result.snapshotId}`,
@@ -479,7 +493,9 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       setActiveSandboxEnvironment(null);
       setSandboxOwnerToken(null);
       freshSandboxIdRef.current = null;
+      setFreshSandboxId(null);
       snapshotRestoredSandboxIdRef.current = null;
+      setRestoredFromSnapshotSandboxId(null);
 
       try {
         // Empty repo = sandbox mode (ephemeral workspace, no clone, no token needed)
@@ -529,13 +545,16 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
 
         if (session.status === 'error') {
           freshSandboxIdRef.current = null;
+          setFreshSandboxId(null);
           setStatus('error');
           setError(session.error || 'Sandbox creation failed');
           return null;
         }
 
         freshSandboxIdRef.current = session.sandboxId;
+        setFreshSandboxId(session.sandboxId);
         snapshotRestoredSandboxIdRef.current = null;
+        setRestoredFromSnapshotSandboxId(null);
         setSandboxId(session.sandboxId);
         setStatus('ready');
         setActiveSandboxEnvironment(session.sandboxId);
@@ -598,7 +617,9 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
     sandboxIdRef.current = null;
     sessionStorageKeyRef.current = null;
     freshSandboxIdRef.current = null;
+    setFreshSandboxId(null);
     snapshotRestoredSandboxIdRef.current = null;
+    setRestoredFromSnapshotSandboxId(null);
     setSandboxId(null);
     setStatus('idle');
     setError(null);
@@ -702,7 +723,9 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       setSandboxId(null);
       sandboxIdRef.current = null;
       freshSandboxIdRef.current = null;
+      setFreshSandboxId(null);
       snapshotRestoredSandboxIdRef.current = null;
+      setRestoredFromSnapshotSandboxId(null);
       setStatus('idle');
       setSnapshotInfoTick((n) => n + 1);
       console.log(`[useSandbox] Manual hibernate → snapshot ${result.snapshotId}`);
@@ -888,7 +911,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
     hibernate,
     forgetSnapshot,
     snapshotInfo,
-    freshSandboxId: freshSandboxIdRef.current,
-    restoredFromSnapshotSandboxId: snapshotRestoredSandboxIdRef.current,
+    freshSandboxId,
+    restoredFromSnapshotSandboxId,
   };
 }

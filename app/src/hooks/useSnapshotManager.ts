@@ -151,9 +151,9 @@ export function useSnapshotManager(
     null,
   );
 
-  const snapshotLastActivityRef = useRef<number>(Date.now());
+  const snapshotLastActivityRef = useRef<number>(0);
   const snapshotLastSavedAtRef = useRef<number>(0);
-  const snapshotSessionStartedAtRef = useRef<number>(Date.now());
+  const snapshotSessionStartedAtRef = useRef<number>(0);
   const snapshotHardCapNotifiedRef = useRef(false);
 
   const markSnapshotActivity = useCallback(() => {
@@ -256,7 +256,10 @@ export function useSnapshotManager(
   // Load latest snapshot metadata when scratch workspace is active
   useEffect(() => {
     if (!isScratch) return;
-    refreshLatestSnapshot();
+    const id = setTimeout(() => {
+      void refreshLatestSnapshot();
+    }, 0);
+    return () => clearTimeout(id);
   }, [isScratch, refreshLatestSnapshot]);
 
   // Snapshot activity heartbeat: user input + chat agent activity
@@ -278,7 +281,9 @@ export function useSnapshotManager(
   // Reset session timer when new sandbox created
   useEffect(() => {
     if (!sandbox.sandboxId) return;
-    snapshotSessionStartedAtRef.current = Date.now();
+    const now = Date.now();
+    snapshotSessionStartedAtRef.current = now;
+    snapshotLastActivityRef.current = now;
     snapshotHardCapNotifiedRef.current = false;
   }, [sandbox.sandboxId]);
 

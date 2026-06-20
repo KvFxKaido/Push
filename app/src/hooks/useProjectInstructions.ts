@@ -135,38 +135,47 @@ export function useProjectInstructions(
 
   // Phase A — GitHub API fetch (immediate)
   useEffect(() => {
-    if (!activeRepo) {
-      setAgentsMdContent(null);
-      setAgentsMd(null);
-      setInstructionFilenameState(null);
-      setInstructionFilename(null);
-      setProjectInstructionsChecked(false);
-      return;
-    }
-    setProjectInstructionsChecked(false);
-    setProjectInstructionsCheckFailed(false);
     let cancelled = false;
-    fetchProjectInstructions(activeRepo.full_name)
-      .then((result) => {
-        if (cancelled) return;
-        applyEffectiveInstructions(result?.content ?? null);
-        const filename = result?.filename ?? null;
-        setInstructionFilenameState(filename);
-        setInstructionFilename(filename);
-        setProjectInstructionsChecked(true);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        applyEffectiveInstructions(null);
+    const startTimer = setTimeout(() => {
+      if (!activeRepo) {
+        setAgentsMdContent(null);
+        setAgentsMd(null);
         setInstructionFilenameState(null);
         setInstructionFilename(null);
-        setProjectInstructionsChecked(true);
-        setProjectInstructionsCheckFailed(true);
-      });
+        setProjectInstructionsChecked(false);
+        return;
+      }
+      setProjectInstructionsChecked(false);
+      setProjectInstructionsCheckFailed(false);
+      fetchProjectInstructions(activeRepo.full_name)
+        .then((result) => {
+          if (cancelled) return;
+          applyEffectiveInstructions(result?.content ?? null);
+          const filename = result?.filename ?? null;
+          setInstructionFilenameState(filename);
+          setInstructionFilename(filename);
+          setProjectInstructionsChecked(true);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          applyEffectiveInstructions(null);
+          setInstructionFilenameState(null);
+          setInstructionFilename(null);
+          setProjectInstructionsChecked(true);
+          setProjectInstructionsCheckFailed(true);
+        });
+    }, 0);
     return () => {
       cancelled = true;
+      clearTimeout(startTimer);
     };
-  }, [activeRepo, applyEffectiveInstructions, setAgentsMd, setInstructionFilename]);
+  }, [
+    activeRepo,
+    applyEffectiveInstructions,
+    setAgentsMd,
+    setInstructionFilename,
+    setAgentsMdContent,
+  ]);
 
   // Phase B — Sandbox upgrade (overrides Phase A when sandbox is ready)
   useEffect(() => {

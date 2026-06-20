@@ -192,7 +192,7 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
     if (pendingToolCalls.size === 0) return;
     for (const [, tc] of pendingToolCalls) {
       const known = Boolean(tc.name && KNOWN_TOOL_NAMES.has(tc.name));
-      let parsedArgs: unknown = {};
+      let parsedArgs: unknown;
       let parsedOk = true;
       try {
         parsedArgs = tc.args ? JSON.parse(tc.args) : {};

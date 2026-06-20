@@ -381,7 +381,6 @@ export async function runAdoptedLoop(args: RunAdoptedLoopArgs): Promise<void> {
       // ownership loss, or the abort landed mid-round (register/release/
       // expiry) — no writes owed, the new owner's state is authoritative.
       if (outcome !== 'paused') {
-        outcome = 'reclaimed';
         log('info', 'run_host_loop_reclaimed', { runId, adoptionId });
       }
       return;

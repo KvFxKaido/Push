@@ -57,7 +57,8 @@ export function useDraftChatComposer({ seed, repos, loadRepoBranches }: UseDraft
   // parent resets the hook, but if the parent re-renders without
   // remount, this keeps state aligned with the latest seed).
   useEffect(() => {
-    setState(seedToState(seed));
+    const id = setTimeout(() => setState(seedToState(seed)), 0);
+    return () => clearTimeout(id);
   }, [seed]);
 
   // Trigger branch fetch whenever a repo is selected. Safe to call repeatedly —

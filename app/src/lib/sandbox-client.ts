@@ -1112,6 +1112,7 @@ async function sandboxFetch<T>(
               if (err instanceof DOMException && err.name === 'AbortError') {
                 throw new Error(
                   `Sandbox ${endpoint} timed out after ${Math.round(timeoutMs / 1000)}s — the server may be slow or unreachable.`,
+                  { cause: err },
                 );
               }
               throw err;

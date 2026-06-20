@@ -43,23 +43,34 @@ function loadMermaid(): Promise<MermaidApi> {
 
 export function MermaidArtifact({ record }: MermaidArtifactProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const [svg, setSvg] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [renderState, setRenderState] = useState<{
+    source: string;
+    svg: string | null;
+    error: string | null;
+  }>(() => ({ source: record.source, svg: null, error: null }));
+  const currentRenderState =
+    renderState.source === record.source
+      ? renderState
+      : { source: record.source, svg: null, error: null };
+  const { svg, error } = currentRenderState;
 
   useEffect(() => {
     let cancelled = false;
+    const source = record.source;
     const id = `push-mermaid-${++renderCounter}`;
-    setSvg(null);
-    setError(null);
 
     (async () => {
       try {
         const mermaid = await loadMermaid();
-        const result = await mermaid.render(id, record.source);
-        if (!cancelled) setSvg(result.svg);
+        const result = await mermaid.render(id, source);
+        if (!cancelled) setRenderState({ source, svg: result.svg, error: null });
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : String(err));
+          setRenderState({
+            source,
+            svg: null,
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       }
     })();

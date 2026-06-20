@@ -37,7 +37,6 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [hasChanges, setHasChanges] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [fileVersion, setFileVersion] = useState<string | undefined>(undefined);
@@ -98,13 +97,13 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
 
   // Load file content on mount
   useEffect(() => {
-    loadFile();
+    const id = setTimeout(() => {
+      void loadFile();
+    }, 0);
+    return () => clearTimeout(id);
   }, [loadFile]);
 
-  // Track changes
-  useEffect(() => {
-    setHasChanges(content !== originalContent);
-  }, [content, originalContent]);
+  const hasChanges = content !== originalContent;
 
   const handleSave = async () => {
     if (!hasChanges) {

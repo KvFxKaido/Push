@@ -951,7 +951,10 @@ export function useModelCatalog(): ModelCatalog {
   // The active provider fetches immediately; all others are deferred via
   // requestIdleCallback (or a short setTimeout) so startup isn't blocked.
   useEffect(() => {
-    void refreshCloudflareStatus();
+    const id = setTimeout(() => {
+      void refreshCloudflareStatus();
+    }, 0);
+    return () => clearTimeout(id);
   }, [refreshCloudflareStatus]);
 
   useEffect(
@@ -1213,81 +1216,114 @@ export function useModelCatalog(): ModelCatalog {
   // Clear models when key is removed
   useEffect(() => {
     if (!cloudflareConfigured) {
-      setCloudflareModelList([]);
-      setCloudflareError(null);
-      setCloudflareUpdatedAt(null);
-      setCloudflareLoading(false);
+      const id = setTimeout(() => {
+        setCloudflareModelList([]);
+        setCloudflareError(null);
+        setCloudflareUpdatedAt(null);
+        setCloudflareLoading(false);
+      }, 0);
+      return () => clearTimeout(id);
     }
   }, [cloudflareConfigured]);
   useEffect(() => {
     if (!ollamaCfg.hasKey) {
-      setOllamaModelList([]);
-      setOllamaError(null);
-      setOllamaUpdatedAt(null);
+      const id = setTimeout(() => {
+        setOllamaModelList([]);
+        setOllamaError(null);
+        setOllamaUpdatedAt(null);
+      }, 0);
+      return () => clearTimeout(id);
     }
   }, [ollamaCfg.hasKey]);
   useEffect(() => {
     if (!openRouterCfg.hasKey) {
-      setOpenRouterModelList([]);
-      setOpenRouterError(null);
-      setOpenRouterUpdatedAt(null);
+      const id = setTimeout(() => {
+        setOpenRouterModelList([]);
+        setOpenRouterError(null);
+        setOpenRouterUpdatedAt(null);
+      }, 0);
+      return () => clearTimeout(id);
     }
   }, [openRouterCfg.hasKey]);
   useEffect(() => {
     if (!zenCfg.hasKey) {
-      setZenModelList([]);
-      setZenError(null);
-      setZenUpdatedAt(null);
-      setZenLoading(false);
+      const id = setTimeout(() => {
+        setZenModelList([]);
+        setZenError(null);
+        setZenUpdatedAt(null);
+        setZenLoading(false);
+      }, 0);
+      return () => clearTimeout(id);
     }
   }, [zenCfg.hasKey]);
   useEffect(() => {
     if (!nvidiaCfg.hasKey) {
-      setNvidiaModelList([]);
-      setNvidiaError(null);
-      setNvidiaUpdatedAt(null);
+      const id = setTimeout(() => {
+        setNvidiaModelList([]);
+        setNvidiaError(null);
+        setNvidiaUpdatedAt(null);
+      }, 0);
+      return () => clearTimeout(id);
     }
   }, [nvidiaCfg.hasKey]);
   useEffect(() => {
     if (!blackboxCfg.hasKey) {
-      setBlackboxModelList([]);
-      setBlackboxError(null);
-      setBlackboxUpdatedAt(null);
+      const id = setTimeout(() => {
+        setBlackboxModelList([]);
+        setBlackboxError(null);
+        setBlackboxUpdatedAt(null);
+      }, 0);
+      return () => clearTimeout(id);
     }
   }, [blackboxCfg.hasKey]);
   useEffect(() => {
     if (!kilocodeCfg.hasKey) {
-      setKilocodeModelList([]);
-      setKilocodeError(null);
-      setKilocodeUpdatedAt(null);
+      const id = setTimeout(() => {
+        setKilocodeModelList([]);
+        setKilocodeError(null);
+        setKilocodeUpdatedAt(null);
+      }, 0);
+      return () => clearTimeout(id);
     }
   }, [kilocodeCfg.hasKey]);
   useEffect(() => {
     if (!fireworksCfg.hasKey) {
-      setFireworksModelList([]);
-      setFireworksError(null);
-      setFireworksUpdatedAt(null);
+      const id = setTimeout(() => {
+        setFireworksModelList([]);
+        setFireworksError(null);
+        setFireworksUpdatedAt(null);
+      }, 0);
+      return () => clearTimeout(id);
     }
   }, [fireworksCfg.hasKey]);
   useEffect(() => {
     if (!openAdapterCfg.hasKey) {
-      setOpenAdapterModelList([]);
-      setOpenAdapterError(null);
-      setOpenAdapterUpdatedAt(null);
+      const id = setTimeout(() => {
+        setOpenAdapterModelList([]);
+        setOpenAdapterError(null);
+        setOpenAdapterUpdatedAt(null);
+      }, 0);
+      return () => clearTimeout(id);
     }
   }, [openAdapterCfg.hasKey]);
   useEffect(() => {
     if (!googleCfg.hasKey) {
-      setGoogleModelList([]);
-      setGoogleError(null);
-      setGoogleUpdatedAt(null);
+      const id = setTimeout(() => {
+        setGoogleModelList([]);
+        setGoogleError(null);
+        setGoogleUpdatedAt(null);
+      }, 0);
+      return () => clearTimeout(id);
     }
   }, [googleCfg.hasKey]);
   useEffect(() => {
     if (!openaiCfg.hasKey) {
-      setOpenaiModelList([]);
-      setOpenaiError(null);
-      setOpenaiUpdatedAt(null);
+      const id = setTimeout(() => {
+        setOpenaiModelList([]);
+        setOpenaiError(null);
+        setOpenaiUpdatedAt(null);
+      }, 0);
+      return () => clearTimeout(id);
     }
   }, [openaiCfg.hasKey]);
 

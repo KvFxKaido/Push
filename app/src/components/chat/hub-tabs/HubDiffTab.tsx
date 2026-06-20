@@ -106,9 +106,10 @@ export function HubDiffTab({
     }
   }, [ensureHubSandbox, onDiffUpdate, onDiffLoadingChange]);
 
+  const diffText = diffData?.diff ?? '';
   const fileDiffs: FileDiff[] = useMemo(
-    () => (diffData?.diff ? parseDiffIntoFiles(diffData.diff) : []),
-    [diffData?.diff],
+    () => (diffText ? parseDiffIntoFiles(diffText) : []),
+    [diffText],
   );
 
   const parsedFileDiffs: ParsedFileDiff[] = useMemo(() => {
@@ -178,22 +179,23 @@ export function HubDiffTab({
 
   useEffect(() => {
     if (!jumpTargetPath) {
-      setHighlightedFile(null);
-      setHighlightedLineKey(null);
-      return;
+      const id = requestAnimationFrame(() => {
+        setHighlightedFile(null);
+        setHighlightedLineKey(null);
+      });
+      return () => cancelAnimationFrame(id);
     }
 
     const file = parsedFileDiffs.find((fd) => fd.path === jumpTargetPath);
     if (!file) return;
 
-    setCollapsedFiles((prev) => {
-      const next = new Set(prev);
-      next.delete(jumpTargetPath);
-      return next;
-    });
-
     let rafB: number | null = null;
     const rafA = requestAnimationFrame(() => {
+      setCollapsedFiles((prev) => {
+        const next = new Set(prev);
+        next.delete(jumpTargetPath);
+        return next;
+      });
       rafB = requestAnimationFrame(() => {
         const lineKey =
           jumpTargetLine !== undefined ? (file.lineKeyByNewLine.get(jumpTargetLine) ?? null) : null;

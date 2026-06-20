@@ -127,7 +127,7 @@ export async function handleGitHubTools(request: Request, env: Env): Promise<Res
     return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
   }
 
-  let parsed: GitHubToolPayload | null = null;
+  let parsed: GitHubToolPayload | null;
   try {
     parsed = parseToolPayload(JSON.parse(bodyResult.text));
   } catch {

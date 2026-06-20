@@ -233,22 +233,34 @@ describe('useBranchManager', () => {
   });
 
   it('the auto-load effect clears branches and aborts when no repo is active', () => {
-    render(null, null);
-    // Seed some branches so we can watch them get cleared.
-    reactState.cells[0].value = [{ name: 'main', isDefault: true, isProtected: false }];
-    // Re-render & run the effect.
-    render(null, null);
-    reactState.effects[0]?.fn();
-    expect(reactState.cells[0].value).toEqual([]);
-    expect(fetchRepoBranches).not.toHaveBeenCalled();
+    vi.useFakeTimers();
+    try {
+      render(null, null);
+      // Seed some branches so we can watch them get cleared.
+      reactState.cells[0].value = [{ name: 'main', isDefault: true, isProtected: false }];
+      // Re-render & run the effect.
+      render(null, null);
+      reactState.effects[0]?.fn();
+      vi.runAllTimers();
+      expect(reactState.cells[0].value).toEqual([]);
+      expect(fetchRepoBranches).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('the auto-load effect fires loadRepoBranches when a repo+session is active', async () => {
-    fetchRepoBranches.mockResolvedValue({ branches: [] });
-    render(makeRepo(), repoSession());
-    const effect = reactState.effects[0];
-    expect(effect).toBeDefined();
-    await effect?.fn();
-    expect(fetchRepoBranches).toHaveBeenCalledWith('owner/repo', 500);
+    vi.useFakeTimers();
+    try {
+      fetchRepoBranches.mockResolvedValue({ branches: [] });
+      render(makeRepo(), repoSession());
+      const effect = reactState.effects[0];
+      expect(effect).toBeDefined();
+      effect?.fn();
+      await vi.runAllTimersAsync();
+      expect(fetchRepoBranches).toHaveBeenCalledWith('owner/repo', 500);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -123,7 +123,7 @@ export class WebKvArtifactStore implements ArtifactStore {
       return JSON.parse(raw) as ArtifactRecord;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Corrupt artifact at ${key}: ${message}`);
+      throw new Error(`Corrupt artifact at ${key}: ${message}`, { cause: err });
     }
   }
 
@@ -145,7 +145,7 @@ export class WebKvArtifactStore implements ArtifactStore {
           return JSON.parse(raw) as ArtifactRecord;
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          throw new Error(`Corrupt artifact at ${entry.name}: ${message}`);
+          throw new Error(`Corrupt artifact at ${entry.name}: ${message}`, { cause: err });
         }
       }),
     );

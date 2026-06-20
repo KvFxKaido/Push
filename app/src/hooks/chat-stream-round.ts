@@ -335,7 +335,7 @@ export async function streamAssistantRound(
   // corrupt reasoning/tool-call coherence. A connect-time blip (the common
   // flaky-gateway case) fails with `accumulated`/`thinking` still empty, which
   // is exactly what we re-attempt. Mid-stream failures stay terminal.
-  let error: Error | null = null;
+  let error: Error | null;
   let retried = false;
   for (let attempt = 0; ; attempt++) {
     error = await attemptStream();

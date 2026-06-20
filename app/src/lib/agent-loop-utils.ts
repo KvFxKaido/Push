@@ -95,7 +95,7 @@ export async function executeReadOnlyTool(
       },
     },
     async (span) => {
-      let resultText = '';
+      let resultText: string;
       const card: ChatCard | undefined = undefined;
 
       if (toolCall.source === 'github' && !allowedRepo) {

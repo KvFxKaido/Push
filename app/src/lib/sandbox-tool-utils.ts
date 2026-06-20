@@ -426,7 +426,7 @@ export async function createGitHubRepo(
   });
 
   if (!response.ok) {
-    let details = '';
+    let details: string;
     try {
       const text = await response.text().catch(() => '');
       try {

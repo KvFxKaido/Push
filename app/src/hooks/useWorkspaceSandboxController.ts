@@ -104,8 +104,9 @@ export function useWorkspaceSandboxController({
   useEffect(() => {
     if (sandboxStatus !== 'ready' || !sandboxId) {
       if (sandboxStatus === 'idle') {
-        setSandboxState(null);
         sandboxStateFetchedFor.current = null;
+        const id = setTimeout(() => setSandboxState(null), 0);
+        return () => clearTimeout(id);
       }
       return;
     }
@@ -298,7 +299,9 @@ export function useWorkspaceSandboxController({
   // by-index ref tracking isn't shifted) so a "container missing on return"
   // report is traceable to whether the sandbox was left warm.
   const lastSandboxIdRef = useRef(sandboxId);
-  lastSandboxIdRef.current = sandboxId;
+  useEffect(() => {
+    lastSandboxIdRef.current = sandboxId;
+  }, [sandboxId]);
   useEffect(() => {
     return () => {
       if (lastSandboxIdRef.current) {
