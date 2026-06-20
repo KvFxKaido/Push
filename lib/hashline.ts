@@ -385,7 +385,13 @@ export function applyResolvedHashlineEdits(
     if (edit.op === 'replace_line') replacedOriginalIndices.add(r.index);
 
     appliedCount++;
-    applied.push({ originalIndex: r.index, op: edit.op, adjustedLine: adjustedIdx + 1, linesAdded, edit });
+    applied.push({
+      originalIndex: r.index,
+      op: edit.op,
+      adjustedLine: adjustedIdx + 1,
+      linesAdded,
+      edit,
+    });
     if (r.warning) {
       warnings.push(r.warning.message);
       warningDetails.push(r.warning);
