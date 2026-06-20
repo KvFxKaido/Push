@@ -529,9 +529,8 @@ describe('workspaceModeToExecutionMode — canonical WorkspaceMode → Execution
       'local-pc',
       'relay',
     ] as const satisfies readonly WorkspaceMode[];
-    type _Exhaustive = Exclude<WorkspaceMode, (typeof allModes)[number]> extends never
-      ? true
-      : false;
+    type _Exhaustive =
+      Exclude<WorkspaceMode, (typeof allModes)[number]> extends never ? true : false;
     const _exhaustive: _Exhaustive = true;
     void _exhaustive;
     for (const mode of allModes) {
