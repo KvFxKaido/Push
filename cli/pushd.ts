@@ -1360,6 +1360,16 @@ function clearLifecycleExitTimer() {
   }
 }
 
+function noteLifecycleClientConnected() {
+  liveConnections += 1;
+  cancelLifecycleExit('client_connected');
+}
+
+function noteLifecycleClientDisconnected() {
+  liveConnections = Math.max(0, liveConnections - 1);
+  maybeScheduleLifecycleExit();
+}
+
 /** A client (re)connected or a relay attached — abort any pending exit. */
 function cancelLifecycleExit(reason) {
   clearLifecycleExitTimer();
@@ -7237,8 +7247,7 @@ export async function handleRequest(req, emitEvent, context = null) {
 function handleConnection(socket) {
   // A local client connected — count it and abort any pending lifecycle exit so
   // a transient disconnect / self-heal respawn never kills a daemon back in use.
-  liveConnections += 1;
-  cancelLifecycleExit('client_connected');
+  noteLifecycleClientConnected();
   let buffer = '';
   const attachedSessions = new Set(); // track which sessions this socket is observing
   // Remember the capabilities the client most recently advertised at
@@ -7331,8 +7340,7 @@ function handleConnection(socket) {
       removeSessionClient(sessionId, emitEvent);
     }
     attachedSessions.clear();
-    liveConnections = Math.max(0, liveConnections - 1);
-    maybeScheduleLifecycleExit();
+    noteLifecycleClientDisconnected();
   };
 
   socket.on('close', cleanupConnection);
@@ -7719,6 +7727,8 @@ export async function main() {
             removeSessionClient,
             makeErrorResponse,
             makeRequestId,
+            onClientConnected: noteLifecycleClientConnected,
+            onClientDisconnected: noteLifecycleClientDisconnected,
           },
           { portFilePath: getPortPath() },
         );

@@ -135,6 +135,12 @@ export interface PushdWsAdapterDeps {
   makeErrorResponse: (requestId: string, type: string, code: string, message: string) => unknown;
   /** Helper to mint request ids for synthesized errors. */
   makeRequestId: () => string;
+  /**
+   * Optional process-lifecycle hooks. pushd uses these to count local browser
+   * clients alongside Unix-socket TUI clients for idle self-exit decisions.
+   */
+  onClientConnected?: () => void;
+  onClientDisconnected?: () => void;
 }
 
 export interface PushdWsOptions {
@@ -441,6 +447,8 @@ export async function startPushdWs(
   });
 
   wss.on('connection', (ws: WebSocket, _req: IncomingMessage, auth: PushdWsAuthRecord) => {
+    deps.onClientConnected?.();
+
     // Touch lastUsedAt on the device-token record best-effort. For
     // attach-token principals we ALSO touch the parent device so
     // listing it shows "this device was active recently" even when
@@ -574,7 +582,10 @@ export async function startPushdWs(
       }
     });
 
+    let cleanedUp = false;
     const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
       for (const sid of attachedSessions) deps.removeSessionClient(sid, emit);
       attachedSessions.clear();
       // Abort any in-flight sandbox_exec runs tied to this connection.
@@ -597,6 +608,7 @@ export async function startPushdWs(
         reg.delete(registryEntry);
         if (reg.size === 0) connectionsByDeviceTokenId.delete(auth.parentDeviceTokenId);
       }
+      deps.onClientDisconnected?.();
     };
     ws.on('close', cleanup);
     ws.on('error', cleanup);

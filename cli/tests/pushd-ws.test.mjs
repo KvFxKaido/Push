@@ -288,6 +288,46 @@ describe('pushd-ws auth gate', () => {
     );
   });
 
+  it('reports accepted WebSocket clients to daemon lifecycle hooks exactly once', async () => {
+    const lifecycleCalls = [];
+    const hookPortPath = path.join(tmpDir, 'pushd-ws-hooks.port');
+    const hookHandle = await startPushdWs(
+      {
+        ...stubDeps,
+        onClientConnected: () => lifecycleCalls.push('connected'),
+        onClientDisconnected: () => lifecycleCalls.push('disconnected'),
+      },
+      { portFilePath: hookPortPath },
+    );
+    try {
+      const hookUrl = `ws://127.0.0.1:${hookHandle.port}`;
+      const rejected = new WebSocket(hookUrl, {
+        headers: { Origin: 'http://localhost:5173' },
+      });
+      const rejectedOutcome = await waitForUpgradeOutcome(rejected);
+      assert.equal(rejectedOutcome.kind, 'rejected');
+      assert.deepEqual(lifecycleCalls, [], 'rejected upgrades are not live clients');
+
+      const { token } = await mintDeviceToken({ boundOrigin: 'loopback' });
+      const accepted = new WebSocket(hookUrl, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Origin: 'http://localhost:5173',
+        },
+      });
+      const acceptedOutcome = await waitForUpgradeOutcome(accepted);
+      assert.equal(acceptedOutcome.kind, 'open');
+      assert.deepEqual(lifecycleCalls, ['connected']);
+
+      await closeAndWait(accepted);
+      await new Promise((r) => setTimeout(r, 20));
+      assert.deepEqual(lifecycleCalls, ['connected', 'disconnected']);
+    } finally {
+      await hookHandle.close();
+      await fs.rm(hookPortPath, { force: true });
+    }
+  });
+
   describe('listConnectedDevices + disconnectByTokenId (Phase 3)', () => {
     // Helper: open a WS, wait for the upgrade to complete, return it.
     async function openAndWaitOpen({ token, origin = 'http://localhost:5173' }) {
