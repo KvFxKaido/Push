@@ -29,7 +29,7 @@
     "typescript": "^6.0.2"
   },
   "dependencies": {
-    "ws": "^8.20.0",
+    "ws": "^8.21.0",
     "zod": "^4.3.5"
   },
   "optionalDependencies": {
