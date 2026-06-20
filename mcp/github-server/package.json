@@ -16,12 +16,12 @@
     "typecheck": "tsgo --noEmit"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1"
+    "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
     "@typescript/native-preview": "7.0.0-dev.20260421.2",
-    "tsx": "^4.19.0",
-    "typescript": "^6.0.2"
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
   }
 }
