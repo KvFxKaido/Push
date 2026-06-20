@@ -13,15 +13,14 @@
     "build": "tsc",
     "dev": "node --import tsx src/index.ts",
     "test": "node --import tsx --experimental-test-module-mocks --test src/*.test.ts",
-    "typecheck": "tsgo --noEmit"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "devDependencies": {
     "@types/node": "^26.0.0",
-    "@typescript/native-preview": "7.0.0-dev.20260620.1",
     "tsx": "^4.22.4",
-    "typescript": "^6.0.3"
+    "typescript": "rc"
   }
 }
