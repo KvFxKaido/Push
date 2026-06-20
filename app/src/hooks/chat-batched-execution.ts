@@ -484,7 +484,8 @@ export async function executeBatchedToolCalls(
       // Live tail for the cloud detached-exec path — same shape as the
       // single-tool branch (see chat-single-tool-execution.ts).
       const execProgressTail =
-        mutCall.source === 'sandbox' && mutCall.call.tool === 'sandbox_exec'
+        mutCall.source === 'sandbox' &&
+        (mutCall.call.tool === 'sandbox_exec' || mutCall.call.tool === 'sandbox_run_tests')
           ? createExecProgressTail({
               onTail: (line) => {
                 // A cancel mid-drain must not resurrect the running status —

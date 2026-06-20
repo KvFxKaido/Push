@@ -218,7 +218,7 @@ describe('executeSandboxToolCall -- sandbox_run_tests', () => {
     // it directly and skip the config-file probe entirely.
     vi.mocked(sandboxClient.getSandboxEnvironment).mockReturnValueOnce({
       tools: {},
-      readiness: { test_command: 'npm run test:cli' },
+      readiness: { package_manager: 'pnpm', test_command: 'pnpm test' },
     });
     vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(
       ok('Tests: 9 passed, 0 failed, 9 total\n'),
@@ -233,10 +233,10 @@ describe('executeSandboxToolCall -- sandbox_run_tests', () => {
     expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
     expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith(
       'sb-readiness',
-      'cd /workspace && npm run test:cli',
+      'cd /workspace && pnpm test',
       expect.objectContaining({ markWorkspaceMutated: true }),
     );
-    expect(result.text).toContain('Command: npm run test:cli');
+    expect(result.text).toContain('Command: pnpm test');
     const data = result.card?.data as { framework: string; passed: number };
     expect(data.framework).toBe('npm');
     expect(data.passed).toBe(9);

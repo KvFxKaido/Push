@@ -201,10 +201,13 @@ export async function handleRunTests(
     }
   } else {
     // Prefer the test command the sandbox already resolved from the project's
-    // package.json scripts (e.g. `npm run test`, `pnpm test`). It's the
-    // actually-runnable command, so it sidesteps the `npm test` →
-    // "Missing script: test" dead-end that happens whenever the project names
-    // its test script anything other than `test`.
+    // package.json `test` script. When present it's the actually-runnable
+    // command for the detected package manager (e.g. `pnpm test` / `yarn test`
+    // rather than a blind `npm test`), and it lets us skip the config-file
+    // probe entirely. NOTE: the environment probe only populates this from a
+    // literal `test` script (sandbox-client.ts), so a project whose test
+    // script is named non-standardly (`test:ci`, `test:cli`, …) still falls
+    // through to probing + `npm test` below — see PR #1005 discussion.
     const detectedCommand = ctx.getSandboxEnvironment(sandboxId)?.readiness?.test_command?.trim();
     if (detectedCommand) {
       command = detectedCommand;
