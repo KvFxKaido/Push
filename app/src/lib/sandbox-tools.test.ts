@@ -1187,9 +1187,9 @@ describe('executeSandboxToolCall -- sandbox_list_dir characterization', () => {
     expect(result.text).toContain('Directory: /workspace');
     expect(result.text).toContain('2 directories, 1 files');
     expect(result.text).toContain('(1 sensitive entry hidden)');
-    expect(result.text).toContain('  📁 src/');
-    expect(result.text).toContain('  📁 public/');
-    expect(result.text).toContain('  📄 app.ts (1234 bytes)');
+    expect(result.text).toContain('  src/');
+    expect(result.text).toContain('  public/');
+    expect(result.text).toContain('  app.ts (1234 bytes)');
     expect(result.text).not.toContain('.env');
     expect(result.card?.type).toBe('file-list');
     if (result.card?.type === 'file-list') {
