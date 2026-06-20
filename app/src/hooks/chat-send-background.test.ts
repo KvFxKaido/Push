@@ -47,7 +47,6 @@ import { resolveSendEngineTrigger, startBackgroundMainChatTurn } from './chat-se
 
 const BG_KEY = 'push:background-mode-preference';
 const MODE_KEY = 'push:delegation-mode-preference';
-const CONVERSATIONAL_INLINE_ESCAPE_HATCH_KEY = 'push:conversational-inline-escape-hatch';
 
 function makeRefs(opts?: { repo?: string | null; branch?: string | null }) {
   return {
@@ -192,30 +191,6 @@ describe('resolveSendEngineTrigger', () => {
         type: 'turn.route',
         route: 'inline-delegation',
         reason: 'conversational_inline',
-        intent: 'conversational',
-        repoBranchReady: true,
-      },
-    ]);
-  });
-
-  it('keeps the conversational escape hatch on the Orchestrator loop', () => {
-    const routeEvents: unknown[] = [];
-    storage.map.set(CONVERSATIONAL_INLINE_ESCAPE_HATCH_KEY, '1');
-    expect(
-      resolveSendEngineTrigger({
-        ...makeRefs(),
-        conversationsRef: makeConversations('ollama'),
-        chatId: 'chat1',
-        messageText: 'how does the branch switcher work?',
-        onRouteEvent: (event) => routeEvents.push(event),
-      }),
-    ).toBeNull();
-    expect(routeEvents).toEqual([
-      {
-        type: 'turn.route',
-        route: 'orchestrator',
-        reason: 'conversational_escape_hatch',
-        suppressedRoute: 'inline-delegation',
         intent: 'conversational',
         repoBranchReady: true,
       },

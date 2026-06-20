@@ -124,14 +124,11 @@ Source: behavior audit of the Orchestrator null-trigger path
   turns route to the foreground inline lead. The old `conversational_downgrade`
   event is replaced by `turn.route` telemetry on the new path:
   `route: "inline-delegation", reason: "conversational_inline"`.
-- Bake-period rollback is a storage escape hatch, default off:
-  `localStorage["push:conversational-inline-escape-hatch"] = "1"` forces
-  repo-backed conversational turns back to the foreground Orchestrator loop and
-  emits `reason: "conversational_escape_hatch"` with
-  `suppressedRoute: "inline-delegation"`.
-- The Orchestrator loop's live triggers are now no-repo workspaces, the
-  `delegated` opt-out, and the temporary conversational escape hatch (see the
-  LOAD-BEARING markers in `delegation-mode-settings.ts` / `orchestrator.ts`).
+- The bake-period rollback escape hatch has been removed — inline routing is
+  now the sole path for repo-backed conversational turns.
+- The Orchestrator loop's live triggers are now no-repo workspaces and the
+  `delegated` opt-out (see the LOAD-BEARING markers in
+  `delegation-mode-settings.ts` / `orchestrator.ts`).
 
 ## Follow-up
 - No-repo workspaces (chat/scratch/local-pc) still need the Orchestrator loop —

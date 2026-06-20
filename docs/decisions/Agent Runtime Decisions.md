@@ -37,10 +37,7 @@ Status:
   (→ foreground Orchestrator loop, prompt built at runtime by
   `buildOrchestratorBaseBuilder` in `app/src/lib/orchestrator.ts`) on two
   primary live triggers: (1) **no-repo workspaces** (chat / scratch / local-pc),
-  which are never inline-eligible; (2) the **`delegated` opt-out**. During the
-  Conversational Lead Convergence Phase 3 bake, the storage escape hatch
-  `push:conversational-inline-escape-hatch=1` also forces repo-backed
-  conversational turns back through this loop. Only the Orchestrator→Coder
+  which are never inline-eligible; (2) the **`delegated` opt-out**. Only the Orchestrator→Coder
   *wrapper/Planner* arc is slated for deletion below — the lead loop itself
   stays until those triggers are re-homed.
   (Correction: an earlier note here claimed attachment turns force the
@@ -210,8 +207,8 @@ needed before the flip — trailing-action-intent nudges in `coder-policy.ts`,
 reasoning-channel buried-tool recovery in `lib/coder-agent.ts`, scratchpad/todo
 tool wiring for the inline lead, per-round `assistant.turn_start/end`, and
 `tool.call_malformed` events for dropped candidates. Phase 3 landed the routing
-flip behind `push:conversational-inline-escape-hatch=1`, default off; bake and
-A/B measurement continue as follow-up, not as a blocker for the default route.
+flip (inline default); the bake-period escape hatch has been retired. A/B
+measurement continues as follow-up, not as a blocker for the default route.
 
 Protected during convergence: the shared runtime semantics in §1 (one kernel,
 drift tests), the durable job engine, and the safety/Auditor boundary — the

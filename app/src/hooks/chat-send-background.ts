@@ -17,7 +17,6 @@
 
 import type React from 'react';
 import {
-  isConversationalInlineEscapeHatchEnabled,
   isInlineDelegationEnabled,
   resolveTurnEngineTrigger,
   type EngineTrigger,
@@ -109,8 +108,6 @@ export function resolveSendEngineTrigger(opts: {
     Boolean(opts.messageText?.trim()) &&
     classifyTurnIntent(opts.messageText ?? '') === 'conversational';
   const engineEligible = repoBranchReady && isProviderEngineCapable(provider);
-  const conversationalEscapeHatch =
-    conversationalTurn && isConversationalInlineEscapeHatchEnabled();
   const conversationalInlineCandidate =
     conversationalTurn && repoBranchReady && isInlineDelegationEnabled();
   const trigger = resolveTurnEngineTrigger({
@@ -124,24 +121,14 @@ export function resolveSendEngineTrigger(opts: {
     engineEligible,
     // The inline lane is a foreground run — browser-held Settings keys
     // work directly, so no capability fold here. Repo-backed conversational
-    // lead chatter rides the same inline path by default; the bake-period
-    // escape hatch can still force those turns back to the Orchestrator loop.
-    inlineEligible: repoBranchReady && !conversationalEscapeHatch,
+    // lead chatter rides the same inline path by default.
+    inlineEligible: repoBranchReady,
   });
   if (conversationalInlineCandidate && trigger === 'inline-delegation') {
     opts.onRouteEvent?.({
       type: 'turn.route',
       route: 'inline-delegation',
       reason: 'conversational_inline',
-      intent: 'conversational',
-      repoBranchReady,
-    });
-  } else if (conversationalInlineCandidate && conversationalEscapeHatch && trigger === null) {
-    opts.onRouteEvent?.({
-      type: 'turn.route',
-      route: 'orchestrator',
-      reason: 'conversational_escape_hatch',
-      suppressedRoute: 'inline-delegation',
       intent: 'conversational',
       repoBranchReady,
     });
