@@ -38,8 +38,23 @@
  * functions deal in.
  */
 
+import { resolveValidationCommandOverride } from '@push/lib/validation-commands';
 import type { TestResultsCardData, ToolExecutionResult, TypeCheckCardData } from '@/types';
 import type { ExecResult, SandboxEnvironment } from './sandbox-client';
+
+/**
+ * Best-effort framework label for a resolved test command (override or
+ * readiness-derived). Cosmetic only — result parsing runs every pattern
+ * regardless — but it keeps the result card honest instead of always saying
+ * "npm".
+ */
+function inferFrameworkFromCommand(command: string): TestResultsCardData['framework'] {
+  const c = command.toLowerCase();
+  if (c.includes('pytest')) return 'pytest';
+  if (c.includes('cargo test')) return 'cargo';
+  if (c.includes('go test')) return 'go';
+  return 'npm';
+}
 
 // ---------------------------------------------------------------------------
 // Handler context
@@ -72,6 +87,14 @@ export interface VerificationHandlerContext {
    * handlers fall back to `execInSandbox`. Same `ExecResult` shape.
    */
   execLongRunning?: VerificationExecInSandbox;
+  /**
+   * Read the repo's validation-override sources (AGENTS.md, CLAUDE.md) in
+   * precedence order so `run_tests` can honor a `# test:` directive that
+   * overrides the package.json-derived command. Optional: when absent, no
+   * override is consulted. Returns raw file contents; empty array when none
+   * exist or the read fails.
+   */
+  readValidationInstructions?: () => Promise<string[]>;
   /** Read the sandbox's environment readiness data (for verify_workspace). */
   getSandboxEnvironment: (sandboxId?: string) => SandboxEnvironment | null;
   /** Clear the file-version cache for a sandbox after a workspace mutation. */
@@ -200,21 +223,32 @@ export async function handleRunTests(
         framework = 'unknown';
     }
   } else {
-    // Prefer the test command the sandbox already resolved from the project's
-    // package.json `test` script. When present it's the actually-runnable
-    // command for the detected package manager (e.g. `pnpm test` / `yarn test`
-    // rather than a blind `npm test`), and it lets us skip the config-file
-    // probe entirely. NOTE: the environment probe only populates this from a
-    // literal `test` script (sandbox-client.ts), so a project whose test
-    // script is named non-standardly (`test:ci`, `test:cli`, …) still falls
-    // through to probing + `npm test` below — see PR #1005 discussion.
+    // 1) Honor a `# test:` override declared in AGENTS.md / CLAUDE.md. This is
+    // the authoritative source — it beats the package.json-derived command and
+    // is the only thing that resolves repos whose test script is named
+    // non-standardly (`test:cli`, `test:ci`, …) or is a multi-step chain, which
+    // the environment probe (literal `test` script only) cannot express.
+    const overrideSources = ctx.readValidationInstructions
+      ? await ctx.readValidationInstructions()
+      : [];
+    const overrideCommand = resolveValidationCommandOverride(overrideSources, 'test');
+
+    // 2) Otherwise prefer the test command the sandbox already resolved from the
+    // project's package.json `test` script — the actually-runnable command for
+    // the detected package manager (e.g. `pnpm test` rather than a blind
+    // `npm test`), which also lets us skip the config-file probe.
     const detectedCommand = ctx.getSandboxEnvironment(sandboxId)?.readiness?.test_command?.trim();
-    if (detectedCommand) {
+
+    if (overrideCommand) {
+      command = overrideCommand;
+      framework = inferFrameworkFromCommand(overrideCommand);
+    } else if (detectedCommand) {
       command = detectedCommand;
-      framework = 'npm';
+      framework = inferFrameworkFromCommand(detectedCommand);
     } else {
-      // Fall back to config-file probing when readiness carries no test command
-      // (e.g. non-JS projects, or a package.json with no test script).
+      // 3) Fall back to config-file probing when neither an override nor a
+      // readiness command is available (e.g. non-JS projects, or a package.json
+      // with no test script).
       const detectResult = await execInSandbox(
         sandboxId,
         'cd /workspace && ls -1 package.json Cargo.toml go.mod pytest.ini pyproject.toml setup.py 2>/dev/null | head -1',

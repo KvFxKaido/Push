@@ -117,18 +117,22 @@ describe('executeSandboxToolCall -- sandbox_run_tests', () => {
   });
 
   it('auto-detects npm from package.json and runs npm test with mutation flag + cache clear', async () => {
-    // Detection probe stays on the buffered exec; the actual test run goes
-    // through the detached long-running path (live tail, no buffered ceiling).
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValueOnce(ok('package.json\n'));
+    // First buffered exec reads AGENTS.md/CLAUDE.md for a `# test:` override
+    // (none here), then the config-file detection probe; the actual test run
+    // goes through the detached long-running path (live tail, no ceiling).
+    vi.mocked(sandboxClient.execInSandbox)
+      .mockResolvedValueOnce(ok('')) // override read: no AGENTS/CLAUDE override
+      .mockResolvedValueOnce(ok('package.json\n')); // detection probe
     vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(
       ok('Tests: 5 passed, 0 failed, 5 total\nTest Suites: 1 passed, 1 total\n'),
     );
 
     const result = await executeSandboxToolCall({ tool: 'sandbox_run_tests', args: {} }, 'sb-run');
 
-    // Detection call: buffered exec, no mutation flag.
+    // Detection call: buffered exec, no mutation flag (2nd exec, after the
+    // override read).
     expect(sandboxClient.execInSandbox).toHaveBeenNthCalledWith(
-      1,
+      2,
       'sb-run',
       'cd /workspace && ls -1 package.json Cargo.toml go.mod pytest.ini pyproject.toml setup.py 2>/dev/null | head -1',
     );
@@ -170,7 +174,9 @@ describe('executeSandboxToolCall -- sandbox_run_tests', () => {
     // counts agree. The cargo failure test below pins the parsed-with-failure
     // branch; keeping this scenario clean avoids any ambiguity about whether
     // PASS/FAIL keys off exit code or parsed counts.
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValueOnce(ok('pyproject.toml\n'));
+    vi.mocked(sandboxClient.execInSandbox)
+      .mockResolvedValueOnce(ok('')) // override read: none
+      .mockResolvedValueOnce(ok('pyproject.toml\n')); // detection probe
     vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(
       ok('3 passed, 0 failed in 0.12s\n', ''),
     );
@@ -194,7 +200,9 @@ describe('executeSandboxToolCall -- sandbox_run_tests', () => {
   });
 
   it('falls back to npm test when auto-detection finds nothing', async () => {
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValueOnce(ok('')); // nothing detected
+    vi.mocked(sandboxClient.execInSandbox)
+      .mockResolvedValueOnce(ok('')) // override read: none
+      .mockResolvedValueOnce(ok('')); // detection probe: nothing detected
     vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(
       ok('Tests: 0 passed, 0 failed, 0 total\n'),
     );
@@ -213,9 +221,44 @@ describe('executeSandboxToolCall -- sandbox_run_tests', () => {
     expect(data.framework).toBe('npm');
   });
 
+  it('honors a `# test:` override from AGENTS.md over readiness and probing', async () => {
+    // The override read (1st buffered exec) returns an AGENTS.md fenced block;
+    // it beats both readiness and the config-file probe, and no probe runs.
+    const agentsOverride = [
+      '===PUSH_VC_FILE===',
+      '```bash',
+      '# test:',
+      'npm run test:cli && npm run test:mcp:github',
+      '```',
+    ].join('\n');
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValueOnce(ok(agentsOverride));
+    vi.mocked(sandboxClient.getSandboxEnvironment).mockReturnValueOnce({
+      tools: {},
+      readiness: { package_manager: 'npm', test_command: 'npm test' },
+    });
+    vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(
+      ok('Tests: 12 passed, 0 failed, 12 total\n'),
+    );
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_run_tests', args: {} },
+      'sb-override',
+    );
+
+    // Only the override read ran on the buffered exec — no `ls` detection probe.
+    expect(sandboxClient.execInSandbox).toHaveBeenCalledTimes(1);
+    expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith(
+      'sb-override',
+      'cd /workspace && npm run test:cli && npm run test:mcp:github',
+      expect.objectContaining({ markWorkspaceMutated: true }),
+    );
+    expect(result.text).toContain('Command: npm run test:cli && npm run test:mcp:github');
+  });
+
   it('prefers the readiness-detected test command over the npm test fallback', async () => {
-    // The sandbox already resolved the real test script — run_tests should use
-    // it directly and skip the config-file probe entirely.
+    // No override (1st exec returns nothing), but the sandbox already resolved
+    // the real test script — run_tests uses it and skips the config-file probe.
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValueOnce(ok('')); // override read: none
     vi.mocked(sandboxClient.getSandboxEnvironment).mockReturnValueOnce({
       tools: {},
       readiness: { package_manager: 'pnpm', test_command: 'pnpm test' },
@@ -229,8 +272,9 @@ describe('executeSandboxToolCall -- sandbox_run_tests', () => {
       'sb-readiness',
     );
 
-    // No config-file detection probe — the readiness command short-circuits it.
-    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+    // Only the override read ran on the buffered exec — the readiness command
+    // short-circuits the config-file detection probe.
+    expect(sandboxClient.execInSandbox).toHaveBeenCalledTimes(1);
     expect(sandboxClient.execLongRunningInSandbox).toHaveBeenCalledWith(
       'sb-readiness',
       'cd /workspace && pnpm test',
@@ -243,7 +287,9 @@ describe('executeSandboxToolCall -- sandbox_run_tests', () => {
   });
 
   it('forwards the live-output observer + abort signal to the detached test run', async () => {
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValueOnce(ok('package.json\n'));
+    vi.mocked(sandboxClient.execInSandbox)
+      .mockResolvedValueOnce(ok('')) // override read: none
+      .mockResolvedValueOnce(ok('package.json\n')); // detection probe
     vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(
       ok('Tests: 1 passed, 0 failed, 1 total\n'),
     );
@@ -317,7 +363,9 @@ describe('executeSandboxToolCall -- sandbox_run_tests', () => {
 
   it('marks the card truncated and appends the truncation marker when output exceeds 8000 chars', async () => {
     const big = 'x'.repeat(8500);
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValueOnce(ok('package.json\n'));
+    vi.mocked(sandboxClient.execInSandbox)
+      .mockResolvedValueOnce(ok('')) // override read: none
+      .mockResolvedValueOnce(ok('package.json\n')); // detection probe
     vi.mocked(sandboxClient.execLongRunningInSandbox).mockResolvedValueOnce(ok(big));
 
     const result = await executeSandboxToolCall(

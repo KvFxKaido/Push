@@ -171,6 +171,32 @@ describe('handleRunTests — framework resolution', () => {
     }
   });
 
+  it('honors a `# test:` override from instructions over readiness and probing', async () => {
+    const ctx = makeContext(
+      [ok('Tests: 7 passed, 0 failed, 7 total')],
+      envWith({ package_manager: 'npm', test_command: 'npm test' }),
+    );
+    ctx.readValidationInstructions = vi.fn(async () => [
+      '```bash\n# test:\nnpm run test:cli && npm run test:mcp:github\n```',
+    ]);
+    const result = await handleRunTests(ctx, {});
+    // Override wins: the only exec is the test run itself (no `ls` probe).
+    expect(ctx.calls).toHaveLength(1);
+    expect(ctx.calls[0][1]).toBe('cd /workspace && npm run test:cli && npm run test:mcp:github');
+    if (result.card?.type === 'test-results') {
+      expect(result.card.data.framework).toBe('npm');
+      expect(result.card.data.passed).toBe(7);
+    }
+  });
+
+  it('infers a non-npm framework label from the resolved command', async () => {
+    const ctx = makeContext([ok('test result: ok. 3 passed; 0 failed')]);
+    ctx.readValidationInstructions = vi.fn(async () => ['```bash\n# test:\ncargo test\n```']);
+    const result = await handleRunTests(ctx, {});
+    expect(ctx.calls[0][1]).toBe('cd /workspace && cargo test');
+    if (result.card?.type === 'test-results') expect(result.card.data.framework).toBe('cargo');
+  });
+
   it('routes the test run through execLongRunning when the context provides it', async () => {
     const longCalls: ExecArgs[] = [];
     const ctx = makeContext([ok('package.json\n')]); // detection probe → execInSandbox
