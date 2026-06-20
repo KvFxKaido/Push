@@ -11,7 +11,7 @@ This is the **required entry doc** for Push. Repo instruction loaders read `PUSH
 - Repo context is locked to the selected repo.
 - Chats are branch-scoped.
 - The **active branch** is the commit target, push target, diff base, and chat context.
-- Branch transitions preserve context: the sandbox stays alive, and the active chat either migrates to the new branch (fork) or routes to the existing chat for that branch (switch).
+- Branch transitions through the typed branch tools preserve context: the sandbox stays alive, and the active chat either migrates to the new branch (fork) or routes to the existing chat for that branch (switch). UI-initiated branch swaps may restart the sandbox unless routed through that typed path.
 - Models can create branches via `create_branch` and switch to existing branches via `switch_branch` (long-form aliases `sandbox_create_branch` / `sandbox_switch_branch` still resolve). Both keep Push's tracked branch in sync with sandbox HEAD. Raw `git checkout <branch>` / `git switch <branch>` (and `-b` / `-c` variants) are blocked in `sandbox_exec` and route through the typed tools. Both subcommands block any single bare positional operand: for `git checkout` the syntax doesn't disambiguate branch from path (so `git checkout feat/foo` and `git checkout src/utils.ts` both block); for `git switch` (branch-only) the block forces branch ops through the typed tools. File restores require the explicit form — `git checkout -- <path>` or two-positional `git checkout HEAD <path>`. Ref expressions (`HEAD`, `HEAD~1`, `main^`, `branch@{upstream}`) pass through. Use the typed tools when the operand is a known branch.
 
 ## Repo map

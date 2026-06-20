@@ -3,7 +3,7 @@
 [![Deploy Modal](https://github.com/KvFxKaido/Push/actions/workflows/deploy-modal.yml/badge.svg)](https://github.com/KvFxKaido/Push/actions/workflows/deploy-modal.yml)
 [![CI](https://github.com/KvFxKaido/Push/actions/workflows/ci.yml/badge.svg)](https://github.com/KvFxKaido/Push/actions/workflows/ci.yml)
 
-Mobile-native AI coding agent for developers who ship from anywhere.
+Mobile-first AI coding notebook for developers who ship from anywhere.
 
 Self-hosted, provider-flexible, and built to stay tied to real code — not a managed cloud.
 

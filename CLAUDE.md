@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Push is a mobile-first AI coding agent with three surfaces — a web app, an experimental Capacitor Android shell, and a local CLI — all sharing runtime contracts in root `lib/`. Roles remain an internal execution/capability model; user-facing surfaces render workflow phases through `lib/role-display.ts`. **Every surface targets the same single conversational lead** (the agent you talk to); the CLI/daemon is that same lead with *more reach* because it's local — real filesystem, real shell, persistent daemon, no sandbox limits — not a different interaction model. The web `inline` lane is the collapsed lead today; converging the TUI/daemon off the delegated org-chart model onto it is tracked work. See [`docs/decisions/Agent Runtime Decisions.md`](docs/decisions/Agent%20Runtime%20Decisions.md) §10.
+Push is a mobile-first AI coding notebook with three surfaces — a web app, an experimental Capacitor Android shell, and a local CLI — all sharing runtime contracts in root `lib/`. Roles remain an internal execution/capability model; user-facing surfaces render workflow phases through `lib/role-display.ts`. **Every surface targets the same single conversational lead** (the agent you talk to); the CLI/daemon is that same lead with *more reach* because it's local — real filesystem, real shell, persistent daemon, no sandbox limits — not a different interaction model. The web `inline` lane is the collapsed lead today; converging the TUI/daemon off the delegated org-chart model onto it is tracked work. See [`docs/decisions/Agent Runtime Decisions.md`](docs/decisions/Agent%20Runtime%20Decisions.md) §10.
 
 > Loader order is `PUSH.md` → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md` (first found wins). `PUSH.md` is the Push-specific override when present; otherwise `AGENTS.md` carries the startup contract and overrides this file when they conflict. `ARCHITECTURE.md` is the canonical source of truth for architecture details.
 
@@ -80,7 +80,7 @@ Roles are locked internally and models are replaceable. Presentation is phase-fi
 
 ### Delivery rules
 
-- Standard commits go through **Auditor** as a required SAFE/UNSAFE gate.
+- Standard commits go through **Auditor** as a default-on SAFE/UNSAFE gate. The gate fails closed when enabled but unrunnable.
 - Reviewer is advisory; **only PR-backed branch-diff reviews** can be posted back to GitHub.
 - Standard merges go through the **GitHub PR flow** only — Push **never** runs local `git merge`.
 - `Protect Main` may block direct commits to `main`.
@@ -113,7 +113,7 @@ Tool calls normalize to the same text-dispatch path: fenced/bare JSON in the mod
 
 ### Surface-specific landmarks
 
-- **Web app** (`app/src/`): `hooks/chat-*` is the round loop and queue (`useChat.ts` is guarded by an ESLint `max-lines` rule — new feature hooks ship as sibling modules under `hooks/` or `lib/`, not appended here). `worker.ts` is the Cloudflare Worker entry; `worker/worker-cf-sandbox.ts` is the CF Sandbox handler. `components/ui/` is shadcn — Biome and contributors generally leave it alone.
+- **Web app** (`app/src/` plus `app/worker.ts`): `hooks/chat-*` is the round loop and queue (`useChat.ts` is guarded by an ESLint `max-lines` rule — new feature hooks ship as sibling modules under `hooks/` or `lib/`, not appended here). `app/worker.ts` is the Cloudflare Worker entry; `app/src/worker/worker-cf-sandbox.ts` is the CF Sandbox handler. `components/ui/` is shadcn — Biome and contributors generally leave it alone.
 - **CLI** (`cli/`): entry `cli.ts`, loop `engine.ts`, executor `tools.ts`, hashline edits `hashline.ts`, sessions `session-store.ts`, daemon `pushd.ts`. CLI auto-loads workspace skills from `.push/skills/*.md` and `.claude/commands/**/*.md` (nested paths flatten with hyphens).
 - **MCP** (`mcp/github-server/`): the GitHub MCP server consumed in the chat layer. It has its own `package.json`, `tsconfig`, and test runner.
 

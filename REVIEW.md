@@ -4,7 +4,7 @@ Repository-specific review guidance for Push. Adapted from our GitHub Actions
 review bot (`.github/workflows/gemini-review.yml`) so automated and human reviews
 share one standard.
 
-Push is a mobile-first AI coding agent with three surfaces — a web app, an
+Push is a mobile-first AI coding notebook with three surfaces — a web app, an
 experimental Capacitor Android shell, and a local CLI — all sharing a role-based
 runtime in root `lib/`. Most review value here is **cross-surface consistency**
 and **runtime-vs-prompt discipline**, not generic lint. The canonical references
@@ -131,7 +131,9 @@ runtime contract, not re-implement it.
   **intentionally blocked** in `sandbox_exec`. Branch ops must go through the
   typed tools (`create_branch` / `switch_branch`). Do not "fix" the block by
   re-enabling raw checkout — the issue is HEAD-vs-tracked-branch desync, not
-  consent.
+  consent. A single bare operand blocks even when it looks path-shaped, such as
+  `git checkout src/utils.ts`, because `checkout` does not disambiguate branch
+  and path intent without `--`.
 - File restores must use the explicit form: `git checkout -- <path>` or
   two-positional `git checkout HEAD <path>`. Ref expressions (`HEAD~1`, `main^`,
   `branch@{upstream}`) are expected to pass through.
@@ -187,7 +189,7 @@ their spec at "Draft". See `docs/decisions/README.md` for the label vocabulary.
 
 PRs should keep these green (canonical commands in `AGENTS.md`):
 
-- **Test:** `npm run test:cli && npm run test:mcp:github` (web: `cd app && npm test`)
+- **Test:** `TMPDIR=/tmp TEMP=/tmp TMP=/tmp npm run test:cli && npm run test:mcp:github` (web: `cd app && npm test`)
 - **Typecheck:** `npm run typecheck:tsgo` (falls back to `npx tsc` where `tsgo`
   is unavailable)
 - **Lint/format:** `npm run lint` (ESLint, app-scoped) / `npm run format:check`

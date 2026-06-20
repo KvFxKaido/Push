@@ -8,7 +8,7 @@ Push is built around execution-first reliability. We favor explicit state and hu
 - **Repo-anchored context** — behavior is always bound to a specific branch and repository state.
 - **Runtime delegation, phase-first presentation** — internal roles provide separation of concerns and layered verification, while user-facing surfaces render workflow phases through a display vocabulary seam.
 - **Surgical edits** — preference for hashline-anchored changes and patchset transactions over broad file overwrites.
-- **Audited delivery** — the Auditor role serves as a mandatory safety gate for all standard commits.
+- **Audited delivery** — the Auditor role serves as a default-on, fail-closed safety gate for standard commits.
 
 ## Tech Stack
 
@@ -67,8 +67,8 @@ The runtime role contract is not the user-facing vocabulary. Human-readable labe
 - Exactly one active branch exists per repo session.
 - The active branch is the commit target, push target, diff base, and chat context.
 - Chats are branch-scoped. They stay bound to the branch they were started on, except in a *fork*: when the user (or a model tool call) creates a new branch from the current workspace state, the active conversation migrates to the new branch alongside the still-running sandbox.
-- Branch transitions are explicit but preserve context. The sandbox is *not* torn down — it stays alive across the switch. The chat hook receives a normalized `BranchSwitchPayload { kind: 'forked' | 'switched', name, previous?, ... }`: `'forked'` migrates the active conversation onto the new branch, `'switched'` routes to the existing chat for the target branch (or auto-creates one).
-- Branch creation and switching are tool-callable, not UI-only. Foreground tools `create_branch` (creates a new branch from current state, emits `kind: 'forked'`) and `switch_branch` (switches to an existing branch, emits `kind: 'switched'`) keep Push's tracked branch in sync with sandbox HEAD. Long-form aliases `sandbox_create_branch` and `sandbox_switch_branch` still resolve. Raw `git checkout <branch>` / `git switch <branch>` (and `-b` / `-c` variants) are blocked in `sandbox_exec` regardless of approval mode and routed through the typed tools — the issue is state synchronization, not consent. The detection is best-effort: bare names are caught; for `git checkout`, `/` or `.` in the operand defers to the user so file restores like `src/utils` still work; for `git switch`, slash-shaped branch names like `feat/foo` are blocked because `switch` is branch-only. Models that know they're switching branches should use the typed tools directly.
+- Branch transitions are explicit. Transitions initiated via the typed branch tools preserve context: the sandbox stays alive and the chat hook receives a normalized `BranchSwitchPayload { kind: 'forked' | 'switched', name, previous?, ... }`. `'forked'` migrates the active conversation onto the new branch; `'switched'` routes to the existing chat for the target branch (or auto-creates one). UI-initiated branch swaps restart the sandbox by design unless they go through the typed branch-tool path.
+- Branch creation and switching are tool-callable, not UI-only. Foreground tools `create_branch` (creates a new branch from current state, emits `kind: 'forked'`) and `switch_branch` (switches to an existing branch, emits `kind: 'switched'`) keep Push's tracked branch in sync with sandbox HEAD. Long-form aliases `sandbox_create_branch` and `sandbox_switch_branch` still resolve. Raw `git checkout <branch>` / `git switch <branch>` (and `-b` / `-c` variants) are blocked in `sandbox_exec` regardless of approval mode and routed through the typed tools — the issue is state synchronization, not consent. Both subcommands block any single bare positional operand: for `git checkout` the syntax does not disambiguate branch from path, so `git checkout feat/foo` and `git checkout src/utils.ts` both block; for `git switch` (branch-only), the block forces branch ops through the typed tools. File restores require the explicit form: `git checkout -- <path>` or two-positional `git checkout HEAD <path>`. Ref expressions (`HEAD`, `HEAD~1`, `main^`, `branch@{upstream}`) pass through. Models that know they're switching branches should use the typed tools directly.
 - Foreground/background result boundary: foreground tools emit `branchSwitch` for UI routing (chat migration / selection); background coder jobs emit `meta: { branchCreated?, branchSwitched? }` for observability only. No background result fires chat or routing side effects. `create_branch` is wired for both surfaces; `switch_branch` is foreground-only.
 
 ## Delivery and Review Rules
@@ -84,7 +84,7 @@ The runtime role contract is not the user-facing vocabulary. Human-readable labe
 
 - **Repo-backed mode** — repo-locked context, branch-scoped chats, GitHub-backed review/commit/push flows
 - **Scratch workspace mode** — sandbox-only workspace for quick experiments without repo auth
-- **Local PC / Remote modes** — flag-gated daemon-backed chat surfaces (`VITE_LOCAL_PC_MODE`, `VITE_RELAY_MODE`) that drive a paired `pushd`; they intentionally omit cloud-sandbox and GitHub repo affordances
+- **Local PC / Remote modes** — flag-gated daemon-backed chat surfaces (`VITE_LOCAL_PC_MODE`, `VITE_RELAY_MODE`) that drive a paired `pushd`. Their web hub surface is intentionally trimmed compared with cloud repo mode; the local-daemon runtime drops remote write capabilities by default, then restores token-backed GitHub PR/workflow capabilities when a real GitHub remote is available.
 - **Workspace publish flow** — scratch work can be promoted into a user-owned GitHub repo from inside the app, with explicit `Private`/`Public` visibility
 
 ## Shared Runtime Shape
