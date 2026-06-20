@@ -181,6 +181,15 @@ Shadows are used for overlays and floating elements (dialogs, popovers, dropdown
 - **Expand/collapse:** ScaleY 0.96 to 1 with opacity
 - Reduced motion is respected via `prefers-reduced-motion`
 
+### Animation Classes
+
+Named keyframe animations in `app/src/index.css`. Consume the class directly — don't re-declare keyframes in components. All respect `prefers-reduced-motion`.
+
+| Class | Keyframes | Timing | Use |
+| ----- | --------- | ------ | --- |
+| `.status-verb-swap` | `status-verb-swap-in`: enter from 0.4em below, 3px blur clearing to 0 | 0.42s `--ease-default` | AgentStatusBar verb / phase-label rotation. Enter-only — fires once per mount via a React `key` on the label span (same pattern as `stream-word`). |
+| `.verdict-safe-icon`, `.commit-landed-icon` | `success-pop` (scale 0.4 → 1.18 → 1) + `success-glow` (green drop-shadow bloom → settle) | pop 0.5s `--ease-spring`; glow 0.9s `--ease-default` 0.1s delay | The earned-success beat: Auditor SAFE shield and commit-landed check. Confident, not celebratory — no rotate or stroke-draw. Each consumer fires once and guards against Virtuoso scroll-remount replays. |
+
 ## Components
 
 ### Buttons
