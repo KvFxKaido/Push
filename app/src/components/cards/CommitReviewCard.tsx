@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AlertCircle, Check, GitBranch, Loader2, Plus, X } from 'lucide-react';
 import type { CommitReviewCardData, CardAction } from '@/types';
 import { DiffPreviewCard } from './DiffPreviewCard';
@@ -121,6 +121,34 @@ function CommitMessageEditor({
   );
 }
 
+// The green check that marks a commit landing on the remote plays the shared
+// earned-success beat once. Encapsulated here (rather than inline in the header)
+// so its replay guard sits next to the icon it guards, and so CommitReviewCard's
+// own body stays hook-free. Keyed by the card's stable identity
+// (messageId:cardIndex): the first time a given card commits it animates; a later
+// Virtuoso scroll-remount (mountTime well past the recorded play) is suppressed,
+// while an instant remount (StrictMode in dev) falls inside the window and
+// re-plays — the same guard AuditVerdictCard uses for its SAFE shield.
+const lastLanded = new Map<string, number>();
+const REPLAY_SUPPRESS_MS = 1000;
+
+function CommitLandedCheck({ messageId, cardIndex }: { messageId: string; cardIndex: number }) {
+  const cardKey = `${messageId}:${cardIndex}`;
+  const [mountTime] = useState(() => Date.now());
+  const lastPlay = lastLanded.get(cardKey);
+  const animate = lastPlay === undefined || mountTime - lastPlay < REPLAY_SUPPRESS_MS;
+
+  useEffect(() => {
+    if (animate) lastLanded.set(cardKey, Date.now());
+  }, [animate, cardKey]);
+
+  return (
+    <Check
+      className={`h-4 w-4 shrink-0 text-push-status-success${animate ? ' commit-landed-icon' : ''}`}
+    />
+  );
+}
+
 export function CommitReviewCard({ data, messageId, cardIndex, onAction }: CommitReviewCardProps) {
   const isPush = data.kind === 'push';
   const isPending = data.status === 'pending';
@@ -154,7 +182,7 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
         }`}
       >
         {isCommitted ? (
-          <Check className="h-4 w-4 shrink-0 text-push-status-success" />
+          <CommitLandedCheck messageId={messageId} cardIndex={cardIndex} />
         ) : isRejected ? (
           <X className="h-4 w-4 shrink-0 text-push-fg-dim" />
         ) : isError ? (

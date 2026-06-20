@@ -188,14 +188,17 @@
   }
 }
 
-/* Auditor SAFE verdict — the one "earned" beat in the commit gate. The shield
-   icon pops in with a soft overshoot and a brief success-tinted glow that blooms
-   then settles: the confident end of the success-check recipe, deliberately
-   without the rotate / Y-bob / stroke-draw flourishes (a security verdict
-   confirms, it doesn't celebrate). Fired once per verdict via a content-keyed
-   guard in AuditVerdictCard so Virtuoso remounts on scroll don't replay it.
-   SAFE only — UNSAFE never animates — and neutralized under reduced-motion. */
-@keyframes verdict-safe-pop {
+/* Earned-success beat — a green pop with a soft overshoot and a brief glow that
+   blooms then settles. Shared by the two "earned" green moments in the commit
+   gate: the shield on an Auditor SAFE verdict, and the check when a commit
+   lands on the remote. Both are the confident end of the success-check recipe,
+   deliberately without the rotate / Y-bob / stroke-draw flourishes (these
+   moments confirm, they don't celebrate). Each consumer fires it once and
+   suppresses Virtuoso scroll-remount replays its own way — the verdict via a
+   content-keyed guard in AuditVerdictCard, the commit via an identity-keyed
+   guard in CommitReviewCard's CommitLandedCheck. SAFE/landed only; neutralized
+   under reduced motion. */
+@keyframes success-pop {
   0% {
     opacity: 0;
     transform: scale(0.4);
@@ -210,7 +213,7 @@
   }
 }
 
-@keyframes verdict-safe-glow {
+@keyframes success-glow {
   0% {
     filter: drop-shadow(0 0 0 rgba(34, 197, 94, 0));
   }
@@ -222,15 +225,17 @@
   }
 }
 
-.verdict-safe-icon {
+.verdict-safe-icon,
+.commit-landed-icon {
   transform-origin: center;
   animation:
-    verdict-safe-pop 0.5s var(--ease-spring),
-    verdict-safe-glow 0.9s var(--ease-default) 0.1s;
+    success-pop 0.5s var(--ease-spring),
+    success-glow 0.9s var(--ease-default) 0.1s;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .verdict-safe-icon {
+  .verdict-safe-icon,
+  .commit-landed-icon {
     animation: none;
   }
 }
