@@ -899,9 +899,9 @@ export function SettingsSectionContent({
               </button>
             </div>
             <p className="text-push-xs text-push-fg-secondary">
-              If a chat's provider fails mid-request (rate limit, outage, bad key), retry the round
-              on another configured provider of the same kind. Your chosen provider stays the
-              default — failover only rescues the failing turn.
+              When enabled, a chat whose provider fails mid-request (rate limit, outage, bad key)
+              retries the round on another configured provider of the same kind. Your chosen
+              provider stays the default — failover only rescues the failing turn.
             </p>
           </div>
 

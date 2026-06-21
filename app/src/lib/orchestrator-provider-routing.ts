@@ -259,6 +259,13 @@ export function routesThroughAnthropicBridge(
   return false;
 }
 
+function getProviderFailoverShape(provider: Exclude<ActiveProvider, 'demo'>): ProviderWireShape {
+  if (routesThroughAnthropicBridge(provider, resolveChatDefaultModel(provider))) {
+    return 'anthropic';
+  }
+  return PROVIDER_STREAM_SHAPE[provider];
+}
+
 /**
  * Ordered failover candidates for a round that failed on the locked
  * provider+model: configured providers of the SAME wire shape, excluding any
@@ -268,8 +275,9 @@ export function routesThroughAnthropicBridge(
  * Anthropic-transport — direct `anthropic`, or a model-dependent bridge route
  * (`vertex` Claude, `zen` Go MiniMax/Qwen) — the history carries signed
  * thinking blocks bound to that route's account, so we **never** fail over
- * (signatures can't be replayed elsewhere). Otherwise we group by the locked
- * provider's static wire shape. Pure modulo the `isProviderAvailable`
+ * (signatures can't be replayed elsewhere). Candidate routes are checked with
+ * their configured model too, so a non-Anthropic lock cannot fail over into a
+ * model-dependent Anthropic target. Pure modulo the `isProviderAvailable`
  * credential reads, so the actual pick stays in `lib/`'s `decideStreamFailover`.
  */
 export function resolveFailoverCandidates(
@@ -283,7 +291,7 @@ export function resolveFailoverCandidates(
   if (routesThroughAnthropicBridge(locked, model)) return [];
   const shape = PROVIDER_STREAM_SHAPE[locked];
   return FAILOVER_PROVIDER_ORDER.filter(
-    (p) => !tried.has(p) && PROVIDER_STREAM_SHAPE[p] === shape && isProviderAvailable(p),
+    (p) => !tried.has(p) && isProviderAvailable(p) && getProviderFailoverShape(p) === shape,
   );
 }
 

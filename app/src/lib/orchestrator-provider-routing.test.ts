@@ -143,22 +143,32 @@ describe('Cloudflare provider routing', () => {
 function mockFailoverState(opts?: {
   openai?: boolean;
   openrouter?: boolean;
+  google?: boolean;
+  zen?: boolean;
   azure?: boolean;
+  vertex?: boolean;
+  vertexModel?: string;
   zenTransport?: 'anthropic' | 'openai';
   vertexTransport?: 'anthropic' | 'gemini';
 }): void {
   const {
     openai = true,
     openrouter = true,
+    google = false,
+    zen = false,
     azure = true,
+    vertex = false,
     zenTransport = 'openai',
     vertexTransport = 'gemini',
+    vertexModel = vertexTransport === 'anthropic'
+      ? 'claude-sonnet-4-5@20250929'
+      : 'google/gemini-2.5-pro',
   } = opts ?? {};
   vi.doMock('@/hooks/useOllamaConfig', () => ({ getOllamaKey: () => '' }));
   vi.doMock('@/hooks/useOpenRouterConfig', () => ({
     getOpenRouterKey: () => (openrouter ? 'k-openrouter' : ''),
   }));
-  vi.doMock('@/hooks/useZenConfig', () => ({ getZenKey: () => '' }));
+  vi.doMock('@/hooks/useZenConfig', () => ({ getZenKey: () => (zen ? 'k-zen' : '') }));
   vi.doMock('@/hooks/useNvidiaConfig', () => ({ getNvidiaKey: () => '' }));
   vi.doMock('@/hooks/useBlackboxConfig', () => ({ getBlackboxKey: () => '' }));
   vi.doMock('@/hooks/useKilocodeConfig', () => ({ getKilocodeKey: () => '' }));
@@ -169,7 +179,9 @@ function mockFailoverState(opts?: {
     getAnthropicModelName: () => '',
   }));
   vi.doMock('@/hooks/useOpenAIConfig', () => ({ getOpenAIKey: () => (openai ? 'k-openai' : '') }));
-  vi.doMock('@/hooks/useGoogleConfig', () => ({ getGoogleKey: () => '' }));
+  vi.doMock('@/hooks/useGoogleConfig', () => ({
+    getGoogleKey: () => (google ? 'k-google' : ''),
+  }));
   vi.doMock('@/hooks/useExperimentalProviderConfig', () => ({
     getAzureBaseUrl: () => (azure ? 'https://res.openai.azure.com/openai/v1' : ''),
     getAzureKey: () => (azure ? 'k-azure' : ''),
@@ -180,10 +192,10 @@ function mockFailoverState(opts?: {
   }));
   vi.doMock('@/hooks/useVertexConfig', () => ({
     getVertexBaseUrl: () => '',
-    getVertexKey: () => '',
+    getVertexKey: () => (vertex ? 'k-vertex' : ''),
     getVertexMode: () => 'native' as const,
-    getVertexModelName: () => '',
-    getVertexRegion: () => '',
+    getVertexModelName: () => (vertex ? vertexModel : ''),
+    getVertexRegion: () => (vertex ? 'global' : ''),
   }));
   vi.doMock('./providers', async () => {
     const actual = await vi.importActual<typeof import('./providers')>('./providers');
@@ -260,6 +272,45 @@ describe('resolveFailoverCandidates — same-shape selection + ordering (Codex #
     expect(resolveFailoverCandidates('openai', 'gpt-4o', new Set(['openai']))).toEqual([
       'openrouter',
       'azure',
+    ]);
+  });
+
+  it('excludes model-dependent Anthropic-transport targets from openai-compatible failover', async () => {
+    mockFailoverState({ zen: true, zenTransport: 'anthropic' });
+    const { resolveFailoverCandidates } = await import('./orchestrator-provider-routing');
+    expect(resolveFailoverCandidates('openai', 'gpt-4o', new Set(['openai']))).toEqual([
+      'openrouter',
+      'azure',
+    ]);
+  });
+
+  it('excludes Vertex Claude targets from Gemini failover', async () => {
+    mockFailoverState({
+      openai: false,
+      openrouter: false,
+      azure: false,
+      google: true,
+      vertex: true,
+      vertexTransport: 'anthropic',
+    });
+    const { resolveFailoverCandidates } = await import('./orchestrator-provider-routing');
+    expect(resolveFailoverCandidates('google', 'gemini-3.5-flash', new Set(['google']))).toEqual(
+      [],
+    );
+  });
+
+  it('allows Vertex Gemini targets for Gemini failover', async () => {
+    mockFailoverState({
+      openai: false,
+      openrouter: false,
+      azure: false,
+      google: true,
+      vertex: true,
+      vertexTransport: 'gemini',
+    });
+    const { resolveFailoverCandidates } = await import('./orchestrator-provider-routing');
+    expect(resolveFailoverCandidates('google', 'gemini-3.5-flash', new Set(['google']))).toEqual([
+      'vertex',
     ]);
   });
 

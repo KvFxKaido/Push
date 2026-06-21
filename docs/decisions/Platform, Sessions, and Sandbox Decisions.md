@@ -234,7 +234,7 @@ Research note:
 
 ### 13. Provider failover is round-scoped and lock-respecting
 
-**Status: Draft** (proposed 2026-06-21). Prompted by a review of
+**Status: Current** (adopted 2026-06-21). Prompted by a review of
 [QuantumNous/new-api](https://github.com/QuantumNous/new-api), a Go LLM gateway
 whose core value-add is weighted multi-channel routing with automatic failover.
 Push has the inverse: one provider/model is **locked** per chat (#8 — routing is
@@ -291,7 +291,7 @@ not a new routing model.
   (same-provider), `stream_failover` (with `from`/`to`), `stream_recovery_exhausted`
   (with `triedCount`).
 
-Shipped so far (this branch):
+Current implementation:
 - The pure decision kernel + unit tests (`lib/provider-failover.ts`).
 - Web wiring in `app/src/hooks/chat-stream-round.ts`, with the capability-aware
   candidate resolver `resolveFailoverCandidates` + `PROVIDER_STREAM_SHAPE` in
@@ -305,8 +305,10 @@ Shipped so far (this branch):
     Anthropic bridge *per model*. The resolver isolates any locked route where
     `routesThroughAnthropicBridge(locked, model)` holds — returning no
     candidates — so a model-dependent Anthropic route can't fail over to a
-    provider that can't replay its signed reasoning. That predicate is now
-    shared one-source-of-truth with `orchestrator.ts`'s reasoning-block gate.
+    provider that can't replay its signed reasoning. Candidate routes are also
+    checked with their configured model, so a non-Anthropic lock can't fail over
+    into a model-dependent Anthropic target. That predicate is now shared
+    one-source-of-truth with `orchestrator.ts`'s reasoning-block gate.
   - **Failover order ≠ initial-pick order.** Candidate ordering uses a
     dedicated `FAILOVER_PROVIDER_ORDER` that includes every real provider
     (azure/bedrock/vertex too), unlike `PROVIDER_FALLBACK_ORDER` which omits the
