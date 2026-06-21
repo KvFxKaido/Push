@@ -3879,7 +3879,9 @@ export async function main() {
       throw err;
     }
     effectiveCwd = activeWorktree.path;
-    process.stdout.write(
+    // `[worktree]` status goes to stderr so it never pollutes `--json` stdout
+    // (headless JSON mode must stay machine-parseable); it's diagnostic output.
+    process.stderr.write(
       `${fmt.dim('[worktree]')} sandbox ready at ${activeWorktree.path} on branch ${fmt.green(branch)}\n`,
     );
   }
@@ -3921,12 +3923,16 @@ export async function main() {
     if (stillThere) {
       activeWorktree = wt;
       state.cwd = wt.path;
-      process.stdout.write(
+      process.stderr.write(
         `${fmt.dim('[worktree]')} resumed in sandbox ${wt.path} (branch ${fmt.green(wt.branch)})\n`,
       );
     } else {
-      process.stdout.write(
-        `${fmt.warn('[worktree]')} previous sandbox ${wt.path} is gone; continuing in the main tree.\n`,
+      // The worktree was cleaned up since the last run. Re-root cwd at the main
+      // repo so subsequent tool calls + saves don't target the missing dir, and
+      // drop the stale pointer so teardown doesn't try to act on it.
+      state.cwd = wt.repoRoot;
+      process.stderr.write(
+        `${fmt.warn('[worktree]')} previous sandbox ${wt.path} is gone; continuing in ${wt.repoRoot}.\n`,
       );
       delete state.worktree;
     }
@@ -4022,11 +4028,11 @@ export async function main() {
       try {
         const outcome = await teardownWorktree(activeWorktree);
         if (outcome.removed) {
-          process.stdout.write(
+          process.stderr.write(
             `${fmt.dim('[worktree]')} removed disposable sandbox (branch ${outcome.branch}) — no changes to keep\n`,
           );
         } else {
-          process.stdout.write(
+          process.stderr.write(
             `${fmt.warn('[worktree]')} kept ${outcome.path} (branch ${fmt.green(outcome.branch)}) — ${outcome.reason}.\n` +
               `${fmt.dim('           ')}Commit/push from there, then remove with: git worktree remove ${outcome.path}\n`,
           );
