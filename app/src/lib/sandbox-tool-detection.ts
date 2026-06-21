@@ -25,6 +25,13 @@ export interface SandboxExecutionOptions {
   currentBranch?: string;
   defaultBranch?: string;
   /**
+   * Session memory scope (repo / branch / chat) for LCM Phase 3 verbatim
+   * retention: when `sandbox_exec` output is reduced, the full raw output is
+   * stored in the verbatim log under this scope so the model can recall it via
+   * `memory_expand` refs. Absent ⇒ retention is skipped (best-effort).
+   */
+  memoryScope?: { repoFullName?: string; branch?: string; chatId?: string };
+  /**
    * Protect Main toggle for this session. Threaded to `sandbox_push` so the
    * push boundary can enforce it via a fail-closed pre-push gate (defense in
    * depth behind the Protect Main `PreToolUse` hook).

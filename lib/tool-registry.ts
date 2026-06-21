@@ -613,11 +613,12 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     source: 'memory',
     readOnly: true,
     statusLabel: 'Recalling memory...',
-    protocolSignature: 'memory_expand(ids)',
+    protocolSignature: 'memory_expand(ids?, refs?)',
     protocolDescription:
-      'Retrieve the full verbatim text of memory records by id (ids come from memory_grep ' +
-      'results or the [mem_…] tags in retrieved-memory blocks)',
-    exampleJson: '{"tool": "memory_expand", "args": {"ids": ["mem_coder_abc"]}}',
+      'Retrieve full verbatim text. Pass `ids` for memory records (from memory_grep results ' +
+      'or [mem_…] tags) and/or `refs` for verbatim refs (vb_… handles shown in a reduced ' +
+      "tool result's recall marker). At least one is required",
+    exampleJson: '{"tool": "memory_expand", "args": {"refs": ["vb_1a2b3c4d_5120"]}}',
   },
 ] as const;
 

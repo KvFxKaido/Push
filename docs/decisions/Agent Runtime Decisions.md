@@ -102,8 +102,11 @@ log that makes retrieval truly lossless (the typed store caps `detail` at
 backend (`cli/verbatim-log-file-store.ts`, append-only), write-path stamping of
 `verbatimRef` when detail overflows (`persistRecord` in `lib/context-memory.ts`),
 and read-path resolution through `memory_expand` (full original at a 12k render
-cap). Only the Worker durable backend remains deferred (no Worker-side store).
-The same log backs the "keep the raw output" half of `lib/tool-output-reducers.ts`.
+cap). The reducer's raw-retention half also shipped (2026-06-21): a reduced
+`sandbox_exec` result retains its full output (`lib/verbatim-retain.ts`) and the
+model recalls it via `memory_expand` `refs` (scope-guarded). Only the **Worker
+durable backend** remains deferred — it has no consumer until a Worker-side typed
+store exists; tracked in **#1063**.
 
 Source notes:
 [`Context Memory and Retrieval Architecture`](<../archive/decisions/Context Memory and Retrieval Architecture.md>),
@@ -380,15 +383,16 @@ command shapes (pipes, chains, substitution), and passes small wins through
 unchanged to protect prompt-cache stability.
 
 The decision (borrow the pattern, not the project) stands and is **already lived**.
-What remains is the half the reducer's own header promises but couldn't yet keep:
-*"lossless for the human — keep the raw stdout/stderr for the UI card / session
-store."* There was no durable place to keep that raw text, so "keep the raw" was
-aspirational. **LCM Phase 3 supplies it.** The append-only verbatim log
-(`lib/verbatim-log.ts`, §5) is exactly that store: a reduced exec result stamps a
-`verbatimRef`, the raw bytes live in the log, and the model can expand them back
-to the true original on demand — the same store that makes `memory_expand`
-lossless. So the two threads converge on one backing store, which is why Phase 3
-is the keystone, not the TokenJuice rule engine.
+The other half — *"keep the raw stdout/stderr"* the reducer's header promised but
+had nowhere durable to put — **shipped 2026-06-21**: when `sandbox_exec` output is
+reduced, the full (sanitized, unreduced) output is retained in the verbatim log
+(`lib/verbatim-retain.ts`, both surfaces) and the model-facing result gets a recall
+marker. The model pulls it back via `memory_expand` `refs` — `lib/memory-tool-exec.ts`
+now accepts verbatim `vb_…` refs alongside record `ids`, reading the log directly
+with a cross-repo scope guard (`verbatimScopeMatches`). On web the retained copy is
+sanitized (recall re-enters the model, so it carries the same injection defanging as
+the inline output); the raw card data stays untouched. So the two threads converged
+on one backing store, exactly as predicted.
 
 Deliberately **not** pursued (revisit only with evidence): a fully declarative,
 repo-checked-in `.push/`-scoped rule overlay à la TokenJuice's three layers. The
@@ -408,7 +412,7 @@ until a repo actually needs custom rules.
 3. Decide scratchpad durable-storage substrate per platform.
 4. Finish TUI daemon-session controller extraction.
 5. Graduate loop detection enforcement only after telemetry supports thresholds.
-6. Memory Phase 3 immutable verbatim logs — **shipped 2026-06-21** (kernel + CLI file backend + write-path `verbatimRef` stamping + `memory_expand` resolution). Only the Worker durable backend remains deferred (no Worker-side store). See the LCM doc's Phase 3.
+6. Memory Phase 3 immutable verbatim logs — **shipped 2026-06-21** (kernel + CLI file backend + write-path `verbatimRef` stamping + `memory_expand` resolution + reducer raw-retention/recall via `memory_expand` `refs`). Only the Worker durable backend remains, tracked in **#1063** (blocked on a Worker-side typed-memory store). See the LCM doc's Phase 3.
 7. Promote the diff/annotation envelope only when a roadmap item needs it.
 8. TUI focus-stack migration (§12) — **complete**: the whole `processInput` dispatch resolves through the stack across six declarative scopes. Push/pop self-registration was considered and declined (see §12); declarative `isActive()` against authoritative state is the end state.
 9. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model. Step 1 landed 2026-06-12: interactive turns default to the in-loop lead with the Planner wrapper behind `PUSH_DELEGATION_MODE=delegated`. Step 2 landed 2026-06-12: the lead-kernel lane (`cli/lead-turn.ts`) runs the turn on the shared kernel in `leadMode`. Step 3 landed 2026-06-12: the lane is the **default**; `PUSH_LEAD_RUNTIME=engine` is the exact-match opt-out while it bakes. Step 4 — **complete**: the bake-period `PUSH_LEAD_RUNTIME=engine` opt-out and the CLI-local engine round loop are retired; `runAssistantTurn` delegates unconditionally to the kernel lane and the now-unreachable helper cluster the loop left behind in `cli/engine.ts` (awareness guard, finalization/parse-error builders, mid-session distill — no callers once `runAssistantLoop` was gone; the kernel owns these live concerns) plus its obsolete tests were removed. Behavior-neutral removal.

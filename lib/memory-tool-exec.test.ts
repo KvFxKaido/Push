@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createInMemoryStore } from './context-memory-store';
 import { createMemoryRecord } from './context-memory';
 import { runMemoryGrep, runMemoryExpand, createMemoryToolExecutor } from './memory-tool-exec';
+import { createInMemoryVerbatimLog } from './verbatim-log';
 import type { ContextMemoryStore } from './context-memory-store';
 
 const repo = 'owner/repo';
@@ -166,7 +167,76 @@ describe('runMemoryExpand', () => {
       { scope: { repoFullName: 'someone/else', branch }, store },
     );
     expect(result.meta.found).toBe(0);
-    expect(result.text).toContain('No records found');
+    expect(result.text).toContain('Nothing found');
+  });
+});
+
+describe('runMemoryExpand — verbatim refs', () => {
+  it('recalls a verbatim entry by ref within scope', async () => {
+    const store = createInMemoryStore();
+    const verbatimLog = createInMemoryVerbatimLog();
+    const full = 'npm error full log\n'.repeat(500);
+    const entry = await verbatimLog.append({
+      scope: { repoFullName: repo, branch },
+      text: full,
+      kind: 'tool_output',
+      command: 'npm install',
+    });
+
+    const res = await runMemoryExpand(
+      { refs: [entry.ref] },
+      { scope: { repoFullName: repo, branch }, store, verbatimLog },
+    );
+
+    expect(res.text).toContain('content (verbatim)');
+    expect(res.text).toContain('npm error full log');
+    expect(res.meta.refsFound).toBe(1);
+  });
+
+  it('refuses a ref from another repo (scope guard)', async () => {
+    const store = createInMemoryStore();
+    const verbatimLog = createInMemoryVerbatimLog();
+    const entry = await verbatimLog.append({
+      scope: { repoFullName: 'other/repo', branch },
+      text: 'secret from another repo',
+    });
+
+    const res = await runMemoryExpand(
+      { refs: [entry.ref] },
+      { scope: { repoFullName: repo, branch }, store, verbatimLog },
+    );
+
+    expect(res.text).toContain('Nothing found');
+    expect(res.text).not.toContain('secret from another repo');
+    expect(res.meta.refsMissing).toBe(1);
+  });
+
+  it('accepts ids and refs together, and tolerates the bracketed/quoted display form', async () => {
+    const store = createInMemoryStore();
+    const { verify } = seed(store);
+    const verbatimLog = createInMemoryVerbatimLog();
+    const entry = await verbatimLog.append({
+      scope: { repoFullName: repo, branch },
+      text: 'combined recall body',
+    });
+
+    const res = await runMemoryExpand(
+      { ids: [`[${verify.id}]`], refs: [`"${entry.ref}"`] },
+      { scope: { repoFullName: repo, branch }, store, verbatimLog },
+    );
+
+    expect(res.meta.found).toBe(1);
+    expect(res.meta.refsFound).toBe(1);
+    expect(res.text).toContain('combined recall body');
+  });
+
+  it('errors when neither ids nor refs are supplied', async () => {
+    const res = await runMemoryExpand(
+      {},
+      { scope: { repoFullName: repo, branch }, store: createInMemoryStore() },
+    );
+    expect(res.text).toContain('ids');
+    expect(res.text).toContain('refs');
   });
 });
 

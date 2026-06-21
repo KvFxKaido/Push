@@ -17,7 +17,12 @@
 import { grepMemory, expandMemoryRecords } from './context-memory.js';
 import { getDefaultMemoryStore, type ContextMemoryStore } from './context-memory-store.js';
 import type { ExpandedMemoryRecord, MemoryGrepMatch } from './context-memory-expand.js';
-import { getDefaultVerbatimLog, type VerbatimLog } from './verbatim-log.js';
+import {
+  getDefaultVerbatimLog,
+  verbatimScopeMatches,
+  type VerbatimEntry,
+  type VerbatimLog,
+} from './verbatim-log.js';
 import { MEMORY_RECORD_KINDS, type MemoryRecordKind } from './runtime-contract.js';
 
 export interface MemoryToolScope {
@@ -52,6 +57,7 @@ const VERBATIM_EXPAND_CAP = 12_000;
 const DEFAULT_GREP_LIMIT = 10;
 const MAX_GREP_LIMIT = 25;
 const MAX_EXPAND_IDS = 20;
+const MAX_EXPAND_REFS = 20;
 
 function indentDetail(detail: string, cap: number, opts: { trim?: boolean } = {}): string {
   // Verbatim recall passes trim:false so byte-exact whitespace survives; the
@@ -198,34 +204,86 @@ function formatExpandedRecord(record: ExpandedMemoryRecord): string {
   return lines.join('\n');
 }
 
+function normalizeTokens(raw: unknown, cap: number): string[] {
+  const list = Array.isArray(raw) ? raw : raw === undefined || raw === null ? [] : [raw];
+  return (
+    list
+      .filter((v): v is string => typeof v === 'string')
+      // Tolerate the display form: retrieved-memory blocks and markers wrap tokens
+      // as `[mem_…]` / `["vb_…"]`, so strip surrounding brackets/quotes.
+      .map((v) =>
+        v
+          .trim()
+          .replace(/^[["']+/, '')
+          .replace(/[\]"']+$/, '')
+          .trim(),
+      )
+      .filter((v) => v.length > 0)
+      .slice(0, cap)
+  );
+}
+
+function formatVerbatimEntry(entry: VerbatimEntry): string {
+  const lines = [`[${entry.ref}] (verbatim${entry.kind ? ` | ${entry.kind}` : ''})`];
+  if (entry.label) lines.push(`  label: ${entry.label}`);
+  lines.push('  content (verbatim):');
+  lines.push(indentDetail(entry.text, VERBATIM_EXPAND_CAP, { trim: false }));
+  if (entry.text.length > VERBATIM_EXPAND_CAP) {
+    lines.push(
+      `    … (showing ${VERBATIM_EXPAND_CAP} of ${entry.text.length} chars for verbatim ref ${entry.ref})`,
+    );
+  }
+  return lines.join('\n');
+}
+
 export async function runMemoryExpand(
-  args: { ids?: unknown },
+  args: { ids?: unknown; refs?: unknown },
   ctx: MemoryToolContext,
 ): Promise<MemoryToolResult> {
-  const rawIds = Array.isArray(args.ids) ? args.ids : args.ids === undefined ? [] : [args.ids];
-  const ids = rawIds
-    .filter((id): id is string => typeof id === 'string')
-    // Tolerate the display form: retrieved-memory blocks and grep results show
-    // ids wrapped as `[mem_…]`, so a model may copy the bracketed token. Strip
-    // surrounding brackets so `[mem_x]` and `mem_x` both resolve.
-    .map((id) => id.trim().replace(/^\[+/, '').replace(/\]+$/, '').trim())
-    .filter((id) => id.length > 0)
-    .slice(0, MAX_EXPAND_IDS);
+  const ids = normalizeTokens(args.ids, MAX_EXPAND_IDS);
+  const refs = normalizeTokens(args.refs, MAX_EXPAND_REFS);
+  const verbatimLog = ctx.verbatimLog ?? getDefaultVerbatimLog();
 
-  if (ids.length === 0) {
-    return errorResult('memory_expand', 'ids must be a non-empty array of record ids');
+  if (ids.length === 0 && refs.length === 0) {
+    return errorResult(
+      'memory_expand',
+      'pass `ids` (record ids from memory_grep) and/or `refs` (verbatim refs like vb_… from a reduced tool result)',
+    );
   }
 
-  const result = await expandMemoryRecords({
-    ids,
-    scope: {
-      repoFullName: ctx.scope.repoFullName,
-      branch: ctx.scope.branch,
-      chatId: ctx.scope.chatId,
-    },
-    store: ctx.store,
-    verbatimLog: ctx.verbatimLog ?? getDefaultVerbatimLog(),
-  });
+  // --- Record ids → typed records (verbatim-resolved when they carry a ref) ---
+  const result =
+    ids.length > 0
+      ? await expandMemoryRecords({
+          ids,
+          scope: {
+            repoFullName: ctx.scope.repoFullName,
+            branch: ctx.scope.branch,
+            chatId: ctx.scope.chatId,
+          },
+          store: ctx.store,
+          verbatimLog,
+        })
+      : { found: [], missing: [] };
+
+  // --- Direct verbatim refs → raw entries, scope-guarded against the session ---
+  const refEntries: VerbatimEntry[] = [];
+  const refsMissing: string[] = [];
+  for (const ref of refs) {
+    let entry: VerbatimEntry | undefined;
+    try {
+      entry = await verbatimLog.read(ref);
+    } catch {
+      entry = undefined; // best-effort: a broken store reads as a miss
+    }
+    // Cross-repo guard: a ref only resolves when its entry is in the caller's
+    // scope, so a model can't read another repo's verbatim by guessing a ref.
+    if (entry && verbatimScopeMatches({ ...ctx.scope }, entry.scope)) {
+      refEntries.push(entry);
+    } else {
+      refsMissing.push(ref);
+    }
+  }
 
   const verbatimResolved = result.found.filter((r) => r.verbatim).length;
   // A log is always supplied above, so any found record that still carries a
@@ -239,10 +297,13 @@ export async function runMemoryExpand(
     requested: ids.length,
     found: result.found.length,
     missing: result.missing.length,
+    refsRequested: refs.length,
+    refsFound: refEntries.length,
+    refsMissing: refsMissing.length,
     verbatim: verbatimResolved,
     verbatimUnresolved,
   };
-  const meta = { ...logCtx, missingIds: result.missing };
+  const meta = { ...logCtx, missingIds: result.missing, missingRefs: refsMissing };
 
   if (verbatimUnresolved > 0) {
     console.log(
@@ -256,22 +317,28 @@ export async function runMemoryExpand(
     );
   }
 
-  if (result.found.length === 0) {
+  const totalFound = result.found.length + refEntries.length;
+  if (totalFound === 0) {
     log('memory_expand_miss', logCtx);
+    const asked = [...ids, ...refs].join(', ');
     return {
-      text: `[Tool Result — memory_expand]\nNo records found for: ${ids.join(', ')}. The ids may be out of scope, expired, or invalid — use memory_grep to find current ids.`,
+      text: `[Tool Result — memory_expand]\nNothing found for: ${asked}. Record ids may be out of scope/expired (use memory_grep to find current ids); verbatim refs may be pruned, out of scope, or invalid.`,
       meta,
     };
   }
 
   log('memory_expand_hit', logCtx);
-  const body = result.found.map(formatExpandedRecord).join('\n\n');
-  const footer = result.missing.length > 0 ? `\n\nNot found: ${result.missing.join(', ')}` : '';
+  const blocks: string[] = [];
+  if (result.found.length > 0) blocks.push(result.found.map(formatExpandedRecord).join('\n\n'));
+  if (refEntries.length > 0) blocks.push(refEntries.map(formatVerbatimEntry).join('\n\n'));
+  const notFound = [...result.missing, ...refsMissing];
+  const footer = notFound.length > 0 ? `\n\nNot found: ${notFound.join(', ')}` : '';
+  const requested = ids.length + refs.length;
   return {
     text:
       `[Tool Result — memory_expand]\n` +
-      `Recalled ${result.found.length} of ${ids.length} record${ids.length === 1 ? '' : 's'}:\n\n` +
-      `${body}${footer}`,
+      `Recalled ${totalFound} of ${requested} item${requested === 1 ? '' : 's'}:\n\n` +
+      `${blocks.join('\n\n')}${footer}`,
     meta,
   };
 }

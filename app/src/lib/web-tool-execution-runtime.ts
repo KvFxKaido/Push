@@ -512,6 +512,11 @@ export class WebToolExecutionRuntime
             localDaemonBinding,
             abortSignal: context.abortSignal,
             onExecProgress: context.onExecProgress,
+            memoryScope: {
+              repoFullName: context.allowedRepo,
+              branch: context.currentBranch,
+              chatId: context.chatId,
+            },
           });
           // Read-tier fallback (§11): a cloud sandbox that went unreachable
           // mid-session should not fail a read the GitHub tier can serve.

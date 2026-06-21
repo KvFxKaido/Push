@@ -248,21 +248,33 @@ on a genuine collision, so a hash collision can never return the wrong verbatim 
    `verbatim_stamped` ↔ `verbatim_stamp_failed` (stderr, per the CLI stdout rule).
 3. **Read path** — `expandMemoryRecords` resolves `verbatimRef` against an
    injected `verbatimLog`, returning the full original (`verbatim: true`); a
-   pruned/absent entry degrades silently to the capped detail. `memory_expand`
-   (`lib/memory-tool-exec.ts`) wires the process log and renders verbatim detail at
-   a far larger cap (12k) with an explicit truncation marker + ref. The `verbatim`
-   count rides the existing `memory_expand_hit` log.
-4. **Worker durable backend** — still deferred exactly like Phase 2's
-   background-coder memory (no Worker-side persistent store yet). The `lib/`
-   contract is live, so the Worker implements `VerbatimLog` when one exists; until
-   then web uses the in-memory default (session-lived, same as the typed store
-   there). This is the only remaining piece of Phase 3.
+   pruned/absent/unreadable entry degrades to the capped detail (the call-site
+   logs `verbatim_expand_unresolved`). `memory_expand` (`lib/memory-tool-exec.ts`)
+   wires the process log and renders verbatim detail at a far larger cap (12k) with
+   an explicit truncation marker + ref.
+4. **Reducer raw retention + recall — SHIPPED 2026-06-21.** The "keep the raw
+   output" half: when `sandbox_exec` output is reduced, `lib/verbatim-retain.ts`
+   stores the full unreduced output (sanitized on web, since recall re-enters the
+   model) and the result gets a recall marker. `memory_expand` now accepts verbatim
+   `refs` alongside record `ids`, reading the log directly with a cross-repo scope
+   guard (`verbatimScopeMatches`). Wired at the CLI exec sites (`cli/tools.ts`, scope
+   from `resolveWorkspaceIdentity`) and the web `sandbox_exec` handler
+   (`app/src/lib/sandbox-tools.ts`, scope threaded via `SandboxExecutionOptions.memoryScope`).
+   Tool registry / protocol docs / web detection updated; drift tests green.
+5. **Worker durable backend** — the **only** remaining piece, tracked in **#1063**.
+   Deferred because it has no live consumer until a Worker-side durable *typed*-memory
+   store exists (the DO doesn't write memory; web writes are browser-side in-memory),
+   and it needs a new KV namespace provisioned. The `lib/` contract is live, so the
+   Worker implements `VerbatimLog` when that store lands; until then web uses the
+   in-memory default (session-lived, same as the typed store there).
 
-Coverage: `lib/verbatim-log.test.ts` (kernel, 8), verbatim resolution in
-`lib/context-memory-expand.test.ts`, write-path stamping in
+Coverage: `lib/verbatim-log.test.ts` (kernel), verbatim resolution +
+degrade-on-throw in `lib/context-memory-expand.test.ts`, write-path stamping in
 `app/src/lib/context-memory.test.ts`, file backend in
-`cli/tests/verbatim-log-file-store.test.mjs`. App + CLI typecheck green; CLI suite
-(364) green including the drift pins.
+`cli/tests/verbatim-log-file-store.test.mjs`, reducer retention in
+`lib/verbatim-retain.test.ts`, and `memory_expand` refs (recall + scope guard) in
+`lib/memory-tool-exec.test.ts`. App + CLI typecheck green; full CLI suite (2714)
+green including the protocol/daemon drift pins.
 
 ## Non-Goals
 

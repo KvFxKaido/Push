@@ -135,9 +135,11 @@ export function verbatimBaseRef(text: string): string {
 /**
  * Soft scope match mirroring `scoreRecord`/`expandMemoryRecords`: a dimension
  * excludes only when the query names it and the entry's value differs. A query
- * that omits `branch`/`chatId` matches entries regardless of theirs.
+ * that omits `branch`/`chatId` matches entries regardless of theirs. Exported as
+ * `verbatimScopeMatches` so direct ref reads (`memory_expand` refs) enforce the
+ * same cross-repo guard.
  */
-function scopeMatches(query: VerbatimScope, entry: VerbatimScope): boolean {
+export function verbatimScopeMatches(query: VerbatimScope, entry: VerbatimScope): boolean {
   if (query.repoFullName && entry.repoFullName && query.repoFullName !== entry.repoFullName) {
     return false;
   }
@@ -185,7 +187,7 @@ export function createInMemoryVerbatimLog(): VerbatimLog {
     listByScope(scope, predicate) {
       const out: VerbatimEntry[] = [];
       for (const entry of entries.values()) {
-        if (!scopeMatches(scope, entry.scope)) continue;
+        if (!verbatimScopeMatches(scope, entry.scope)) continue;
         if (predicate && !predicate(entry)) continue;
         out.push(entry);
       }
