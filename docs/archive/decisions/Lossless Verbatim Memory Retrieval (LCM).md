@@ -1,8 +1,10 @@
 # Lossless Verbatim Memory Retrieval (LCM)
 
 Status: Current for Phases 0–2 + follow-through part a — web Coder (delegated) +
-Deep-Reviewer memory routing (shipped 2026-06-01). Background coder-job memory
-deferred (no Worker-side store) and Phase 3 (verbatim log) remain Draft.
+Deep-Reviewer memory routing (shipped 2026-06-01). Phase 3 (verbatim log) shipped
+2026-06-21 — `lib/verbatim-log.ts` kernel, CLI file backend, write-path stamping,
+and read-path resolution through `memory_expand`. Only the Worker durable backend
+remains deferred (no Worker-side store, same as background coder-job memory).
 Origin: [Context Memory and Retrieval Architecture](Context%20Memory%20and%20Retrieval%20Architecture.md) (the layer this extends), external reference: Ehrlich & Blackman, "LCM: Lossless Context Management", Voltropy PBC, arXiv 2605.04050 (Feb 2026)
 
 ## TL;DR
@@ -190,15 +192,77 @@ cross-surface PR:
   id-exposure assertion; drift test (`daemon-integration.test.mjs`) passes with the new
   advertised==callable tools.
 
-### Phase 3 — true verbatim immutable log (optional, the "lossless" part)
+### Phase 3 — true verbatim immutable log (the "lossless" part) — SHIPPED 2026-06-21 (Worker backend deferred)
 
-Today `detail` is synthesized and capped, so even Phases 1–2 return lossy-ish text
-for long outputs. Real losslessness needs an append-only raw store. If pursued, the
-durable backend must live in `lib/` from day one with a `repoFullName + branch` scope
-resolver (new-feature checklist #1) — the shared `lib/context-memory-store.ts` is
-in-memory-only and the CLI has a JSONL store, so a web/CLI-symmetric durable contract
-has to be designed, not bolted onto one surface. Likely defer until Phases 1–2 prove
-the retrieval seam earns its keep.
+Today `detail` is synthesized and capped (2000 on write `lib/context-memory.ts:45`,
+800 on persist `lib/memory-persistence-policy.ts:9`), so even Phases 1–2 return
+lossy-ish text for long outputs. Real losslessness needs an append-only raw store.
+With Phases 1–2 in production the retrieval seam has earned its keep, so Phase 3 is
+now being built — kernel first, wiring after.
+
+**Design.** The verbatim log is a *separate* store from the typed-record store, not
+a bigger `detail`. The typed store stays small, ranked, packed, and
+freshness-expired; the verbatim log is large, **append-only, never mutated** (the
+only mutation is age-based pruning of whole entries), and **content-addressed** so
+identical outputs dedup and the same handle can be carried by both a typed
+`MemoryRecord` and a reduced tool result. A record points at its full text via the
+additive optional `MemoryRecord.verbatimRef` (`lib/runtime-contract.ts`) — the
+record stays self-describing when the ref is absent.
+
+This is the missing backing store for **two** consumers, which is why it pays for
+itself: (a) lossless `memory_expand`, and (b) the "keep the raw stdout/stderr for the
+UI card / session store" half that `lib/tool-output-reducers.ts` already promises but
+has nowhere durable to put — a reduced exec result can stamp a `verbatimRef` and the
+model can expand it back to the full original.
+
+**Kernel — SHIPPED 2026-06-21.** `lib/verbatim-log.ts` defines the cross-surface
+contract (`VerbatimLog`) plus the in-memory backend (default + tests), mirroring the
+`ContextMemoryStore` shape (every method `T | Promise<T>`; `getDefaultVerbatimLog` /
+`setDefaultVerbatimLog` swap pair). Scope is `repoFullName + branch (+ chatId)` with
+the same soft-match semantics as retrieval (new-feature checklist #1). Hashing is
+dependency-free FNV-1a + byte length — `lib/` is bundled for the browser and the
+Worker where `node:crypto` is unavailable — and `append` is **collision-safe by
+construction**: it verifies stored text on a ref hit and probes a disambiguated ref
+on a genuine collision, so a hash collision can never return the wrong verbatim text
+(the one failure mode a lossless store cannot tolerate). Pure, log-free kernel
+(symmetric logs belong at the wiring call-site, per the parent doc); 8 cases in
+`lib/verbatim-log.test.ts`.
+
+**Wiring — SHIPPED 2026-06-21.**
+
+1. **CLI file backend** — `cli/verbatim-log-file-store.ts` mirrors
+   `cli/context-memory-file-store.ts` (shared `assertSafePathSegment` — now
+   exported from the typed store so the traversal guard has one canonical copy —
+   serialize-chain, atomic-rewrite) at `<baseDir>/<repo>/<branch>.verbatim.jsonl`
+   (default `~/.push/verbatim`, `PUSH_VERBATIM_DIR` override). **Append-only**: no
+   `update`/`remove` of historical entries; only `pruneOlderThan` drops whole aged
+   entries. Wired through `setDefaultVerbatimLog` in `cli/cli.ts` + `cli/pushd.ts`
+   next to `setDefaultMemoryStore`. 7 characterization cases in
+   `cli/tests/verbatim-log-file-store.test.mjs`.
+2. **Write path** — `persistRecord` (create → stamp → write) in
+   `lib/context-memory.ts` stamps `verbatimRef` when `detail` exceeds the cap; all
+   four write helpers route through it. Highest-value capture is the Coder's
+   `verification_result` (`check.output`, the verbose test/typecheck log the
+   Auditor most wants verbatim). Best-effort like `enrichEmbeddings` — a log
+   failure degrades to a capped record, never blocks the write — with symmetric
+   `verbatim_stamped` ↔ `verbatim_stamp_failed` (stderr, per the CLI stdout rule).
+3. **Read path** — `expandMemoryRecords` resolves `verbatimRef` against an
+   injected `verbatimLog`, returning the full original (`verbatim: true`); a
+   pruned/absent entry degrades silently to the capped detail. `memory_expand`
+   (`lib/memory-tool-exec.ts`) wires the process log and renders verbatim detail at
+   a far larger cap (12k) with an explicit truncation marker + ref. The `verbatim`
+   count rides the existing `memory_expand_hit` log.
+4. **Worker durable backend** — still deferred exactly like Phase 2's
+   background-coder memory (no Worker-side persistent store yet). The `lib/`
+   contract is live, so the Worker implements `VerbatimLog` when one exists; until
+   then web uses the in-memory default (session-lived, same as the typed store
+   there). This is the only remaining piece of Phase 3.
+
+Coverage: `lib/verbatim-log.test.ts` (kernel, 8), verbatim resolution in
+`lib/context-memory-expand.test.ts`, write-path stamping in
+`app/src/lib/context-memory.test.ts`, file backend in
+`cli/tests/verbatim-log-file-store.test.mjs`. App + CLI typecheck green; CLI suite
+(364) green including the drift pins.
 
 ## Non-Goals
 

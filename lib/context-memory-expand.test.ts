@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createInMemoryStore } from './context-memory-store';
 import { createMemoryRecord } from './context-memory';
 import { expandMemoryRecords, grepMemory } from './context-memory-expand';
+import { createInMemoryVerbatimLog } from './verbatim-log';
 import type { ContextMemoryStore } from './context-memory-store';
 import type { MemoryRecordKind } from './runtime-contract';
 
@@ -232,5 +233,80 @@ describe('grepMemory kind filter coverage', () => {
     });
 
     expect(result.matches).toHaveLength(KNOWN_KINDS.length);
+  });
+});
+
+describe('expandMemoryRecords — verbatim resolution (LCM Phase 3)', () => {
+  it('replaces capped detail with the full original when a verbatimRef + log are present', async () => {
+    const store = createInMemoryStore();
+    const verbatimLog = createInMemoryVerbatimLog();
+
+    const full = 'L'.repeat(9000); // far past the 2000-char detail cap
+    const entry = await verbatimLog.append({ scope: { repoFullName: repo, branch }, text: full });
+
+    const record = createMemoryRecord({
+      kind: 'verification_result',
+      summary: 'tests: failed (exit 1)',
+      detail: full, // createMemoryRecord truncates this to the cap
+      scope: { repoFullName: repo, branch, role: 'coder' },
+      source: { kind: 'coder', label: 'Verification: tests' },
+    });
+    record.verbatimRef = entry.ref;
+    await store.write(record);
+
+    // No log → capped stored detail, not flagged verbatim.
+    const capped = await expandMemoryRecords({ ids: [record.id], store });
+    expect(capped.found[0]?.verbatim).toBeUndefined();
+    expect(capped.found[0]?.detail!.length).toBeLessThanOrEqual(2000);
+    // The ref is still surfaced so a caller knows a fuller version exists.
+    expect(capped.found[0]?.verbatimRef).toBe(entry.ref);
+
+    // With the log → full original, byte-for-byte, flagged verbatim.
+    const resolved = await expandMemoryRecords({ ids: [record.id], store, verbatimLog });
+    expect(resolved.found[0]?.verbatim).toBe(true);
+    expect(resolved.found[0]?.detail).toBe(full);
+  });
+
+  it('degrades to capped detail when the verbatim entry was pruned', async () => {
+    const store = createInMemoryStore();
+    const verbatimLog = createInMemoryVerbatimLog();
+
+    const record = createMemoryRecord({
+      kind: 'finding',
+      summary: 'big finding',
+      detail: 'D'.repeat(5000),
+      scope: { repoFullName: repo, branch },
+      source: { kind: 'explorer', label: 'Explorer investigation' },
+    });
+    record.verbatimRef = 'vb_missing_5000'; // points at nothing (e.g. pruned)
+    await store.write(record);
+
+    const resolved = await expandMemoryRecords({ ids: [record.id], store, verbatimLog });
+    expect(resolved.found[0]?.verbatim).toBeUndefined();
+    expect(resolved.found[0]?.detail!.length).toBeLessThanOrEqual(2000);
+  });
+
+  it('degrades to capped detail when the verbatim log read throws (broken store)', async () => {
+    const store = createInMemoryStore();
+    const record = createMemoryRecord({
+      kind: 'finding',
+      summary: 'big finding',
+      detail: 'D'.repeat(5000),
+      scope: { repoFullName: repo, branch },
+      source: { kind: 'explorer', label: 'Explorer investigation' },
+    });
+    record.verbatimRef = 'vb_whatever_5000';
+    await store.write(record);
+
+    // A log whose read rejects (e.g. permission denied) must not fail the expand.
+    const brokenLog = {
+      ...createInMemoryVerbatimLog(),
+      read: () => Promise.reject(new Error('EACCES')),
+    };
+
+    const resolved = await expandMemoryRecords({ ids: [record.id], store, verbatimLog: brokenLog });
+    expect(resolved.found).toHaveLength(1);
+    expect(resolved.found[0]?.verbatim).toBeUndefined();
+    expect(resolved.found[0]?.detail!.length).toBeLessThanOrEqual(2000);
   });
 });

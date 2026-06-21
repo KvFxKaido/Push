@@ -29,6 +29,7 @@ import type {
   MemorySource,
 } from './runtime-contract.js';
 import { getDefaultMemoryStore, type ContextMemoryStore } from './context-memory-store.js';
+import type { VerbatimLog } from './verbatim-log.js';
 
 /** A record returned with its full stored text, free of packer truncation. */
 export interface ExpandedMemoryRecord {
@@ -36,8 +37,17 @@ export interface ExpandedMemoryRecord {
   kind: MemoryRecordKind;
   /** Verbatim stored summary (capped at write time to 400 chars, not the packer's 220). */
   summary: string;
-  /** Verbatim stored detail (capped at write time to 2000 chars), if any. */
+  /**
+   * Record detail. By default the typed-store copy (capped at write time to
+   * 2000 chars). When `verbatim` is true this is the **full original** resolved
+   * from the append-only verbatim log (LCM Phase 3), free of that cap.
+   */
   detail?: string;
+  /** True when `detail` was resolved losslessly from the verbatim log. */
+  verbatim?: boolean;
+  /** The verbatim-log handle, present whenever the record carries one (even if
+   *  no log was supplied to resolve it — so a caller can report the gap). */
+  verbatimRef?: string;
   freshness: MemoryFreshness;
   source: MemorySource;
   relatedFiles?: string[];
@@ -58,6 +68,7 @@ function toExpanded(record: MemoryRecord): ExpandedMemoryRecord {
     relatedSymbols: record.relatedSymbols,
     tags: record.tags,
     derivedFrom: record.derivedFrom,
+    ...(record.verbatimRef ? { verbatimRef: record.verbatimRef } : {}),
   };
 }
 
@@ -87,6 +98,13 @@ export interface MemoryExpandInput {
   scope?: MemoryScopeGuard;
   /** Expired records are excluded by default; set true to retrieve them anyway. */
   includeExpired?: boolean;
+  /**
+   * When supplied, a record carrying a `verbatimRef` has its `detail` replaced
+   * with the full original from this log (`verbatim: true` on the result). When
+   * omitted, records still expand to their capped stored `detail` — losslessly
+   * resolving is purely additive, never required.
+   */
+  verbatimLog?: VerbatimLog;
 }
 
 export interface MemoryExpandResult {
@@ -120,7 +138,26 @@ export async function expandMemoryRecords(input: MemoryExpandInput): Promise<Mem
       missing.push(id);
       continue;
     }
-    found.push(toExpanded(record));
+    const expanded = toExpanded(record);
+    // Resolve the lossless original when the record points at one and a log is
+    // available. Verbatim resolution is purely additive, so it is best-effort: a
+    // pruned/absent entry — or a read that throws on a broken store — degrades to
+    // the capped stored detail rather than failing the expand. The degrade is not
+    // silent: the call-site (`runMemoryExpand`) logs records left with a
+    // `verbatimRef` but `verbatim !== true` as `verbatim_expand_unresolved`.
+    if (record.verbatimRef && input.verbatimLog) {
+      let entry: Awaited<ReturnType<typeof input.verbatimLog.read>> | undefined;
+      try {
+        entry = await input.verbatimLog.read(record.verbatimRef);
+      } catch {
+        entry = undefined;
+      }
+      if (entry) {
+        expanded.detail = entry.text;
+        expanded.verbatim = true;
+      }
+    }
+    found.push(expanded);
   }
 
   return { found, missing };

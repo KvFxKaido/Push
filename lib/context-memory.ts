@@ -26,6 +26,7 @@ import {
   memoryRecordEmbeddingText,
   type EmbeddingProvider,
 } from './embedding-provider.js';
+import { getDefaultVerbatimLog, type VerbatimLog } from './verbatim-log.js';
 
 const MAX_SUMMARY_CHARS = 400;
 
@@ -38,7 +39,11 @@ const MEMORY_EMBED_DEBUG =
   typeof process !== 'undefined' &&
   (process.env?.PUSH_DEBUG === '1' || process.env?.PUSH_DEBUG === 'true');
 
-function logEmbedEvent(level: 'debug' | 'warn', event: string, ctx: Record<string, unknown>): void {
+function logMemoryEvent(
+  level: 'debug' | 'warn',
+  event: string,
+  ctx: Record<string, unknown>,
+): void {
   if (level === 'debug' && !MEMORY_EMBED_DEBUG) return;
   console.error(JSON.stringify({ level, event, ...ctx }));
 }
@@ -97,6 +102,76 @@ export function createMemoryRecord(input: CreateMemoryRecordInput): MemoryRecord
   };
 }
 
+function detailExceedsCap(detail?: string): boolean {
+  return detail !== undefined && detail.trim().length > MAX_DETAIL_CHARS;
+}
+
+/**
+ * LCM Phase 3: when a record's `detail` was truncated on write, append the full
+ * original to the verbatim log and stamp `record.verbatimRef`, so `memory_expand`
+ * can recall the exact text the typed store dropped. No-op when detail already
+ * fits (the stored copy is then the full text and a ref would be redundant).
+ *
+ * Best-effort like `enrichEmbeddings`: a verbatim-log failure logs and degrades
+ * to a capped record — it never blocks the memory write. Mutates `record` in
+ * place (before it is written) so the ref persists with the record.
+ */
+async function stampVerbatimDetail(
+  record: MemoryRecord,
+  originalDetail: string | undefined,
+  verbatimLog: VerbatimLog,
+): Promise<void> {
+  if (!detailExceedsCap(originalDetail)) return;
+  // Store the RAW original bytes — leading/trailing whitespace, a trailing
+  // newline, or an indented stack trace are part of "verbatim". Trimming is only
+  // used (in detailExceedsCap, matching createMemoryRecord's truncate) to decide
+  // whether the detail overflowed; the stored copy must be byte-exact or the
+  // lossless promise is broken.
+  const text = originalDetail as string;
+  try {
+    const entry = await verbatimLog.append({
+      scope: {
+        repoFullName: record.scope.repoFullName,
+        branch: record.scope.branch,
+        chatId: record.scope.chatId,
+      },
+      text,
+      kind: 'memory_detail',
+      label: record.id,
+    });
+    record.verbatimRef = entry.ref;
+    logMemoryEvent('debug', 'verbatim_stamped', {
+      recordId: record.id,
+      ref: entry.ref,
+      bytes: text.length,
+      kind: record.kind,
+    });
+  } catch (err) {
+    logMemoryEvent('warn', 'verbatim_stamp_failed', {
+      recordId: record.id,
+      bytes: text.length,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * Standard persist path for the write helpers: create the record, stamp a
+ * verbatim-log ref when detail overflowed, then write. Keeps the
+ * create-then-write pattern in one place so every helper gets lossless capture
+ * for free.
+ */
+async function persistRecord(
+  input: CreateMemoryRecordInput,
+  store: ContextMemoryStore,
+  verbatimLog: VerbatimLog,
+): Promise<MemoryRecord> {
+  const record = createMemoryRecord(input);
+  await stampVerbatimDetail(record, input.detail, verbatimLog);
+  await store.write(record);
+  return record;
+}
+
 /**
  * Best-effort: compute embeddings for freshly-written records and patch them
  * back onto the store. Batches all texts into one provider call. Never throws —
@@ -117,7 +192,7 @@ async function enrichEmbeddings(
 ): Promise<void> {
   if (!provider || records.length === 0) {
     if (records.length > 0) {
-      logEmbedEvent('debug', 'memory_embed_skipped', { count: records.length });
+      logMemoryEvent('debug', 'memory_embed_skipped', { count: records.length });
     }
     return;
   }
@@ -140,9 +215,9 @@ async function enrichEmbeddings(
         enriched++;
       }),
     );
-    logEmbedEvent('debug', 'memory_embed_enriched', { count: records.length, enriched });
+    logMemoryEvent('debug', 'memory_embed_enriched', { count: records.length, enriched });
   } catch (error) {
-    logEmbedEvent('warn', 'memory_embed_failed', {
+    logMemoryEvent('warn', 'memory_embed_failed', {
       count: records.length,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -167,21 +242,26 @@ export interface WriteDecisionMemoryInput {
   question: string;
   answer: string;
   store?: ContextMemoryStore;
+  verbatimLog?: VerbatimLog;
 }
 
 export async function writeDecisionMemory(input: WriteDecisionMemoryInput): Promise<MemoryRecord> {
   const store = input.store ?? getDefaultMemoryStore();
-  const record = createMemoryRecord({
-    kind: 'decision',
-    summary: input.answer,
-    detail: `Question: ${input.question}`,
-    scope: { ...input.scope, role: 'orchestrator' },
-    source: {
-      kind: 'orchestrator',
-      label: 'Interactive Checkpoint Decision',
+  const verbatimLog = input.verbatimLog ?? getDefaultVerbatimLog();
+  const record = await persistRecord(
+    {
+      kind: 'decision',
+      summary: input.answer,
+      detail: `Question: ${input.question}`,
+      scope: { ...input.scope, role: 'orchestrator' },
+      source: {
+        kind: 'orchestrator',
+        label: 'Interactive Checkpoint Decision',
+      },
     },
-  });
-  await store.write(record);
+    store,
+    verbatimLog,
+  );
   await enrichEmbeddings([record], store);
   return record;
 }
@@ -193,6 +273,7 @@ export interface WriteExplorerMemoryInput {
   relatedSymbols?: string[];
   rounds?: number;
   store?: ContextMemoryStore;
+  verbatimLog?: VerbatimLog;
 }
 
 export async function writeExplorerMemory(
@@ -200,18 +281,22 @@ export async function writeExplorerMemory(
 ): Promise<MemoryRecord | null> {
   if (!input.summary?.trim()) return null;
   const store = input.store ?? getDefaultMemoryStore();
-  const record = createMemoryRecord({
-    kind: 'finding',
-    summary: input.summary,
-    scope: { ...input.scope, role: 'explorer' },
-    source: {
-      kind: 'explorer',
-      label: `Explorer investigation${input.rounds ? ` (${input.rounds} rounds)` : ''}`,
+  const verbatimLog = input.verbatimLog ?? getDefaultVerbatimLog();
+  const record = await persistRecord(
+    {
+      kind: 'finding',
+      summary: input.summary,
+      scope: { ...input.scope, role: 'explorer' },
+      source: {
+        kind: 'explorer',
+        label: `Explorer investigation${input.rounds ? ` (${input.rounds} rounds)` : ''}`,
+      },
+      relatedFiles: input.relatedFiles,
+      relatedSymbols: input.relatedSymbols,
     },
-    relatedFiles: input.relatedFiles,
-    relatedSymbols: input.relatedSymbols,
-  });
-  await store.write(record);
+    store,
+    verbatimLog,
+  );
   await enrichEmbeddings([record], store);
   return record;
 }
@@ -222,43 +307,53 @@ export interface WriteCoderMemoryInput {
   diffPaths?: string[];
   verificationCommandsById?: Record<string, string>;
   store?: ContextMemoryStore;
+  verbatimLog?: VerbatimLog;
 }
 
 export async function writeCoderMemory(input: WriteCoderMemoryInput): Promise<MemoryRecord[]> {
   if (input.outcome.agent !== 'coder') return [];
   const store = input.store ?? getDefaultMemoryStore();
+  const verbatimLog = input.verbatimLog ?? getDefaultVerbatimLog();
   const written: MemoryRecord[] = [];
   const coderScope: MemoryScope = { ...input.scope, role: 'coder' };
 
   const outcome = input.outcome;
-  const outcomeRecord = createMemoryRecord({
-    kind: 'task_outcome',
-    summary: outcome.summary || `Coder run: ${outcome.status}`,
-    detail: outcome.nextRequiredAction ? `Next required: ${outcome.nextRequiredAction}` : undefined,
-    scope: coderScope,
-    source: {
-      kind: 'coder',
-      label: `Coder delegation (${outcome.status}, ${outcome.rounds}r)`,
-    },
-    relatedFiles: input.diffPaths,
-    tags: [outcome.status],
-  });
-  await store.write(outcomeRecord);
-  written.push(outcomeRecord);
-
-  if (input.diffPaths && input.diffPaths.length > 0) {
-    const fileChange = createMemoryRecord({
-      kind: 'file_change',
-      summary: `Touched ${input.diffPaths.length} file${input.diffPaths.length === 1 ? '' : 's'} in ${input.scope.branch ?? 'workspace'}`,
+  const outcomeRecord = await persistRecord(
+    {
+      kind: 'task_outcome',
+      summary: outcome.summary || `Coder run: ${outcome.status}`,
+      detail: outcome.nextRequiredAction
+        ? `Next required: ${outcome.nextRequiredAction}`
+        : undefined,
       scope: coderScope,
       source: {
         kind: 'coder',
-        label: 'Workspace diff',
+        label: `Coder delegation (${outcome.status}, ${outcome.rounds}r)`,
       },
       relatedFiles: input.diffPaths,
-      derivedFrom: [outcomeRecord.id],
-    });
-    await store.write(fileChange);
+      tags: [outcome.status],
+    },
+    store,
+    verbatimLog,
+  );
+  written.push(outcomeRecord);
+
+  if (input.diffPaths && input.diffPaths.length > 0) {
+    const fileChange = await persistRecord(
+      {
+        kind: 'file_change',
+        summary: `Touched ${input.diffPaths.length} file${input.diffPaths.length === 1 ? '' : 's'} in ${input.scope.branch ?? 'workspace'}`,
+        scope: coderScope,
+        source: {
+          kind: 'coder',
+          label: 'Workspace diff',
+        },
+        relatedFiles: input.diffPaths,
+        derivedFrom: [outcomeRecord.id],
+      },
+      store,
+      verbatimLog,
+    );
     written.push(fileChange);
   }
 
@@ -269,25 +364,31 @@ export async function writeCoderMemory(input: WriteCoderMemoryInput): Promise<Me
       command: input.verificationCommandsById?.[check.id],
       store,
     });
-    const verification = createMemoryRecord({
-      kind: 'verification_result',
-      summary: `${check.id}: ${check.passed ? 'passed' : 'failed'}${check.exitCode !== undefined ? ` (exit ${check.exitCode})` : ''}`,
-      detail: check.output,
-      scope: coderScope,
-      source: {
-        kind: 'coder',
-        label: `Verification: ${check.id}`,
+    // `check.output` is the verbose verification log — often far past the
+    // detail cap, and exactly the text the Auditor most wants verbatim. This is
+    // the highest-value verbatim capture in the write path.
+    const verification = await persistRecord(
+      {
+        kind: 'verification_result',
+        summary: `${check.id}: ${check.passed ? 'passed' : 'failed'}${check.exitCode !== undefined ? ` (exit ${check.exitCode})` : ''}`,
+        detail: check.output,
+        scope: coderScope,
+        source: {
+          kind: 'coder',
+          label: `Verification: ${check.id}`,
+        },
+        tags: [
+          check.passed ? 'pass' : 'fail',
+          `check:${check.id}`,
+          ...(input.verificationCommandsById?.[check.id]
+            ? [`command:${input.verificationCommandsById[check.id].trim().replace(/\s+/g, ' ')}`]
+            : []),
+        ],
+        derivedFrom: [outcomeRecord.id],
       },
-      tags: [
-        check.passed ? 'pass' : 'fail',
-        `check:${check.id}`,
-        ...(input.verificationCommandsById?.[check.id]
-          ? [`command:${input.verificationCommandsById[check.id].trim().replace(/\s+/g, ' ')}`]
-          : []),
-      ],
-      derivedFrom: [outcomeRecord.id],
-    });
-    await store.write(verification);
+      store,
+      verbatimLog,
+    );
     written.push(verification);
   }
 
@@ -299,6 +400,7 @@ export interface WriteTaskGraphNodeMemoryInput {
   scope: MemoryScope;
   nodeState: TaskGraphNodeState;
   store?: ContextMemoryStore;
+  verbatimLog?: VerbatimLog;
 }
 
 export async function writeTaskGraphNodeMemory(
@@ -310,28 +412,32 @@ export async function writeTaskGraphNodeMemory(
   if (!summary?.trim()) return null;
 
   const store = input.store ?? getDefaultMemoryStore();
+  const verbatimLog = input.verbatimLog ?? getDefaultVerbatimLog();
   const evidenceLabels = nodeState.delegationOutcome?.evidence?.map((evidence) => evidence.label);
   const kind: MemoryRecordKind = nodeState.node.agent === 'coder' ? 'task_outcome' : 'finding';
 
-  const record = createMemoryRecord({
-    kind,
-    summary,
-    detail: nodeState.delegationOutcome?.nextRequiredAction
-      ? `Next required: ${nodeState.delegationOutcome.nextRequiredAction}`
-      : undefined,
-    scope: {
-      ...input.scope,
-      role: nodeState.node.agent,
-      taskId: nodeState.node.id,
+  const record = await persistRecord(
+    {
+      kind,
+      summary,
+      detail: nodeState.delegationOutcome?.nextRequiredAction
+        ? `Next required: ${nodeState.delegationOutcome.nextRequiredAction}`
+        : undefined,
+      scope: {
+        ...input.scope,
+        role: nodeState.node.agent,
+        taskId: nodeState.node.id,
+      },
+      source: {
+        kind: 'task_graph',
+        label: `Graph node "${nodeState.node.id}" (${nodeState.node.agent})`,
+      },
+      relatedFiles: nodeState.node.files,
+      tags: evidenceLabels,
     },
-    source: {
-      kind: 'task_graph',
-      label: `Graph node "${nodeState.node.id}" (${nodeState.node.agent})`,
-    },
-    relatedFiles: nodeState.node.files,
-    tags: evidenceLabels,
-  });
-  await store.write(record);
+    store,
+    verbatimLog,
+  );
   await enrichEmbeddings([record], store);
   return record;
 }
@@ -397,3 +503,9 @@ export {
 } from './context-memory-invalidation.js';
 export type { ContextMemoryStore } from './context-memory-store.js';
 export type { MemoryPackOptions, MemoryPackResult } from './context-memory-packing.js';
+export {
+  getDefaultVerbatimLog,
+  setDefaultVerbatimLog,
+  createInMemoryVerbatimLog,
+} from './verbatim-log.js';
+export type { VerbatimLog, VerbatimEntry, VerbatimScope } from './verbatim-log.js';

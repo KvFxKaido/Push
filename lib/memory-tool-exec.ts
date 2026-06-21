@@ -17,6 +17,7 @@
 import { grepMemory, expandMemoryRecords } from './context-memory.js';
 import { getDefaultMemoryStore, type ContextMemoryStore } from './context-memory-store.js';
 import type { ExpandedMemoryRecord, MemoryGrepMatch } from './context-memory-expand.js';
+import { getDefaultVerbatimLog, type VerbatimLog } from './verbatim-log.js';
 import { MEMORY_RECORD_KINDS, type MemoryRecordKind } from './runtime-contract.js';
 
 export interface MemoryToolScope {
@@ -33,6 +34,8 @@ export interface MemoryToolResult {
 export interface MemoryToolContext {
   scope: MemoryToolScope;
   store?: ContextMemoryStore;
+  /** Verbatim log for lossless `memory_expand`. Defaults to the process log. */
+  verbatimLog?: VerbatimLog;
 }
 
 // Validation whitelist derives from the canonical contract list, so a new kind
@@ -41,14 +44,20 @@ const VALID_KINDS: ReadonlySet<string> = new Set<MemoryRecordKind>(MEMORY_RECORD
 
 const GREP_DETAIL_SNIPPET_CAP = 400;
 const EXPAND_DETAIL_CAP = 2000;
+// Verbatim-resolved detail is the whole point of LCM, so it gets a far larger
+// window than the capped stored detail — but still bounded, since the output
+// has to fit the model's context. Anything beyond is marked, with the ref, so
+// the model knows the full text is retained and can be re-fetched.
+const VERBATIM_EXPAND_CAP = 12_000;
 const DEFAULT_GREP_LIMIT = 10;
 const MAX_GREP_LIMIT = 25;
 const MAX_EXPAND_IDS = 20;
 
-function indentDetail(detail: string, cap: number): string {
-  const trimmed = detail.trim();
-  const capped =
-    trimmed.length <= cap ? trimmed : `${trimmed.slice(0, Math.max(0, cap - 1)).trimEnd()}…`;
+function indentDetail(detail: string, cap: number, opts: { trim?: boolean } = {}): string {
+  // Verbatim recall passes trim:false so byte-exact whitespace survives; the
+  // summary/grep snippets keep the default trim for compact display.
+  const base = opts.trim === false ? detail : detail.trim();
+  const capped = base.length <= cap ? base : `${base.slice(0, Math.max(0, cap - 1))}…`;
   return capped
     .split('\n')
     .map((line) => `    ${line}`)
@@ -171,8 +180,20 @@ function formatExpandedRecord(record: ExpandedMemoryRecord): string {
     `  summary: ${record.summary.replace(/\s+/g, ' ').trim()}`,
   ];
   if (record.detail) {
-    lines.push('  detail:');
-    lines.push(indentDetail(record.detail, EXPAND_DETAIL_CAP));
+    if (record.verbatim) {
+      // Byte-exact by contract — preserve the whitespace the lossless store kept.
+      const full = record.detail;
+      lines.push('  detail (verbatim):');
+      lines.push(indentDetail(full, VERBATIM_EXPAND_CAP, { trim: false }));
+      if (full.length > VERBATIM_EXPAND_CAP) {
+        lines.push(
+          `    … (showing ${VERBATIM_EXPAND_CAP} of ${full.length} chars; full text retained at verbatim ref ${record.verbatimRef})`,
+        );
+      }
+    } else {
+      lines.push('  detail:');
+      lines.push(indentDetail(record.detail, EXPAND_DETAIL_CAP));
+    }
   }
   return lines.join('\n');
 }
@@ -203,16 +224,37 @@ export async function runMemoryExpand(
       chatId: ctx.scope.chatId,
     },
     store: ctx.store,
+    verbatimLog: ctx.verbatimLog ?? getDefaultVerbatimLog(),
   });
 
+  const verbatimResolved = result.found.filter((r) => r.verbatim).length;
+  // A log is always supplied above, so any found record that still carries a
+  // verbatimRef without `verbatim` set is one whose backing entry was pruned,
+  // absent, or unreadable — surface it so a broken/over-pruned verbatim store
+  // is visible instead of silently degrading to capped detail.
+  const verbatimUnresolved = result.found.filter((r) => r.verbatimRef && !r.verbatim).length;
   const logCtx = {
     repoFullName: ctx.scope.repoFullName,
     branch: ctx.scope.branch ?? null,
     requested: ids.length,
     found: result.found.length,
     missing: result.missing.length,
+    verbatim: verbatimResolved,
+    verbatimUnresolved,
   };
   const meta = { ...logCtx, missingIds: result.missing };
+
+  if (verbatimUnresolved > 0) {
+    console.log(
+      JSON.stringify({
+        level: 'warn',
+        event: 'verbatim_expand_unresolved',
+        repoFullName: ctx.scope.repoFullName,
+        branch: ctx.scope.branch ?? null,
+        unresolved: verbatimUnresolved,
+      }),
+    );
+  }
 
   if (result.found.length === 0) {
     log('memory_expand_miss', logCtx);
