@@ -64,11 +64,14 @@ export const HUB_TOP_BANNER_STRIP_CLASS = 'animate-fade-in border-b bg-transpare
 // Panel shell: the frosted surface *and* its outer frame weight. Callers add
 // only the side (`border-l` / `border-r` / `border-t`) so the frame lives here,
 // one step stronger than the inner hairline by design (a defined outer edge).
-// `shadow-push-glass-edge` adds the frosted-pane tell: a lit top inner edge and
-// a soft dark bottom inner edge, so the menu reads as a real sheet of glass
-// catching light rather than a flat translucent slab.
+// Shadow-free by design: a drawer that uses this also supplies its own outer
+// elevation, and two `shadow-*` utilities on one element collide (only one
+// box-shadow wins). The frosted edge is folded into the `shadow-push-glass`
+// token applied at the drawer call sites instead, so elevation + edge live in
+// one utility. Internal seams (e.g. a glass footer) compose this class with no
+// shadow, exactly as before.
 export const HUB_GLASS_PANEL_CLASS =
-  'border-white/[0.07] bg-[linear-gradient(180deg,rgba(12,16,24,0.82)_0%,rgba(6,9,14,0.93)_100%)] shadow-push-glass-edge backdrop-blur-2xl';
+  'border-white/[0.07] bg-[linear-gradient(180deg,rgba(12,16,24,0.82)_0%,rgba(6,9,14,0.93)_100%)] backdrop-blur-2xl';
 
 // Soft hairline for dividers *inside* the glass menus. Replaces the hard
 // `border-push-edge` slabs so stacked sections read as one continuous panel,

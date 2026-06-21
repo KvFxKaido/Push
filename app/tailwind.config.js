@@ -141,12 +141,12 @@ module.exports = {
         'push-card-hover': '0 8px 28px rgba(0, 0, 0, 0.4), 0 2px 6px rgba(0, 0, 0, 0.2)',
         // ── Neumorphic depth (surgical) ───────────────────────────
         // The dark-neumorphism layer. Recessed wells *sink* (inset), raised
-        // chrome *lifts* with a lit top edge, and the glass shell gains a
-        // frosted edge. All grayscale (black ambient + white sheen) so the
-        // depth reads on the near-black canvas without introducing a hue.
-        // Dense content cards stay flat (border + fill contrast) — these
-        // tokens are for chrome + recessed surfaces only. See DESIGN.md →
-        // Shadows.
+        // chrome *lifts* with a lit top edge, and the glass drawer shells get a
+        // combined elevation + frosted edge (`push-glass`). All grayscale
+        // (black ambient + white sheen) so the depth reads on the near-black
+        // canvas without introducing a hue. Dense content cards stay flat
+        // (border + fill contrast) — these tokens are for chrome + recessed
+        // surfaces only. See DESIGN.md → Shadows.
         'push-inset':
           'inset 0 1px 2px 0 rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.015)',
         'push-inset-strong':
@@ -155,8 +155,13 @@ module.exports = {
           '0 1px 2px rgba(0, 0, 0, 0.4), 0 3px 9px -2px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.04)',
         'push-raised-hover':
           '0 2px 4px rgba(0, 0, 0, 0.45), 0 8px 20px -4px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
-        'push-glass-edge':
-          'inset 0 1px 0 0 rgba(255, 255, 255, 0.08), inset 0 -1px 0 0 rgba(0, 0, 0, 0.3)',
+        // Glass drawer shell: outer floating elevation *and* the frosted inner
+        // edge (lit top, soft dark bottom) folded into ONE box-shadow utility,
+        // so a drawer that already needs elevation doesn't end up with two
+        // colliding `shadow-*` classes (only one box-shadow can win). Applied at
+        // the drawer call sites, not on the shared glass class.
+        'push-glass':
+          '0 16px 48px rgba(0, 0, 0, 0.5), 0 4px 16px rgba(0, 0, 0, 0.28), inset 0 1px 0 0 rgba(255, 255, 255, 0.08), inset 0 -1px 0 0 rgba(0, 0, 0, 0.3)',
       },
       keyframes: {
         'accordion-down': {

@@ -147,9 +147,9 @@ Standard Tailwind gap classes: `gap-2`, `gap-4`, `gap-6`.
 Two distinct shadow families, kept separate on purpose:
 
 1. **Overlay shadows** (`push-sm` … `push-xl`, `push-card*`) float dialogs, popovers, dropdowns and floating cards *off the page*. They are not used to distinguish in-page surface layers.
-2. **Neumorphic depth** (`push-inset*`, `push-raised*`, `push-glass-edge`) gives chrome and recessed surfaces tactile relief on the near-black canvas. This is the **surgical dark-neumorphism layer**: raised chrome lifts with a lit top edge and presses in on `:active`; inputs and other recessed wells sink with an inset; the glass shell catches an edge highlight. All depth shadows are **grayscale** (black ambient + a faint white sheen) so they read on `#070a10` without introducing a hue.
+2. **Neumorphic depth** (`push-inset*`, `push-raised*`, `push-glass`) gives chrome and recessed surfaces tactile relief on the near-black canvas. This is the **surgical dark-neumorphism layer**: raised chrome lifts with a lit top edge and presses in on `:active`; recessed wells sink with an inset; the glass drawer shells get a single combined elevation + frosted edge. All depth shadows are **grayscale** (black ambient + a faint white sheen) so they read on `#070a10` without introducing a hue.
 
-Surface hierarchy for **dense content** (chat bubbles, diff/code cards, data tables) still comes from border + background contrast — those surfaces stay flat. Depth is reserved for *chrome* (buttons, pills, panels) and *recessed wells* (inputs, the console log, nested inset panels). The split is the whole point: extruded chrome around flat, legible content.
+Surface hierarchy for **dense content** (chat bubbles, diff/code cards, data tables) still comes from border + background contrast — those surfaces stay flat. Depth is reserved for *chrome* (hub buttons, pills, panels) and *recessed wells* (the hub inline input, the console log, nested inset panels). The split is the whole point: extruded chrome around flat, legible content. **One box-shadow per element** — never stack two `shadow-*` utilities (they collide; only one wins). When a surface needs more than one effect (e.g. a glass drawer wanting elevation *and* a frosted edge), fold them into a single combined token like `push-glass`.
 
 | Token             | Value                                                               | Use                  |
 | ----------------- | ------------------------------------------------------------------- | -------------------- |
@@ -166,9 +166,9 @@ Surface hierarchy for **dense content** (chat bubbles, diff/code cards, data tab
 | -------------------- | --------------------------------------------------------------- | ---------------------------------------------------- |
 | `push-raised`        | Soft drop + lit top inner edge (`white 0.04`)                   | Raised chrome at rest — hub buttons, pills, panels   |
 | `push-raised-hover`  | Stronger drop + brighter top edge (`white 0.06`)               | Hover lift on raised chrome                          |
-| `push-inset`         | Inset top shadow + faint inner ring                             | Recessed wells — inputs, console body, nested panels |
+| `push-inset`         | Inset top shadow + faint inner ring                             | Recessed wells — hub input, console body, nested panels |
 | `push-inset-strong`  | Deeper inset                                                    | Emphasized recess (reserved; deeper wells)           |
-| `push-glass-edge`    | Lit top inner edge + soft dark bottom inner edge               | The glass menu shell (frosted-pane edge)             |
+| `push-glass`         | Outer floating elevation + frosted inner edge, in one shadow   | Glass drawer shells (`RepoChatDrawer`, `WorkspaceHubSheet`) |
 
 Buttons press in on `:active` by swapping `shadow-push-raised` → `shadow-push-inset` (wired into `HUB_MATERIAL_INTERACTIVE_CLASS`). Don't compose two `shadow-*` utilities on one element — they collide on source order; pick raised **or** inset per surface. Raw shadow values live once in `tailwind.config.js`; consume the `shadow-push-*` token classes, never inline rgba.
 
@@ -224,7 +224,7 @@ Named keyframe animations in `app/src/index.css`. Consume the class directly —
 - Background: semi-transparent `bg-input/30`
 - Border: `border-input`, focus adds 3px ring
 - Placeholder text: `text-muted-foreground`
-- **Recessed:** the shadcn `Input` / `Textarea` carry `shadow-push-inset`, and the hub inline input (`HUB_MATERIAL_INPUT_CLASS`) does too — a field reads as carved into the surface. This is the recessed half of the neumorphic pair (buttons lift, inputs sink).
+- **Recessed:** the hub inline input (`HUB_MATERIAL_INPUT_CLASS`) carries `shadow-push-inset` — a field reads as carved into the surface, the recessed half of the neumorphic pair (buttons lift, inputs sink). The shadcn `Input` / `Textarea` primitives keep their `shadow-xs` default: they're composed inside dialogs/sheets that already supply elevation, and several wrappers (`InputGroupInput`, `SidebarInput`) pass `shadow-none` to opt out — baking an inset into the primitive would override that opt-out and stack a competing depth inside an already-elevated shell.
 
 ### Cards
 
@@ -272,7 +272,7 @@ Neumorphic chrome: pill buttons, solid panels, 1px borders. These are the visual
 | `HUB_TAG_CLASS`                    | Rounded-full, uppercase mono, `tracking-[0.16em]`     | Inline metadata tag (`RECOMMENDED`, `EXPERIMENTAL`)       |
 | `HEADER_ROUND_BUTTON_CLASS`        | `h-9 w-9` plain interactive (no surface)              | Chat app-bar icon buttons (palette, dock, web search)     |
 | `HEADER_PILL_BUTTON_CLASS`         | `h-9 px-1.5` plain interactive with gap-2             | Chat app-bar pill (launcher button in the center cell)    |
-| `HUB_GLASS_PANEL_CLASS`            | Translucent gradient + `backdrop-blur-2xl` + `border-white/[0.07]` frame + frosted edge (`shadow-push-glass-edge`) | Menu shell — `<SheetContent>` of the Chats drawer / Workspace hub (caller adds the side: `border-l`/`-r`/`-t`) |
+| `HUB_GLASS_PANEL_CLASS`            | Translucent gradient + `backdrop-blur-2xl` + `border-white/[0.07]` frame (shadow-free; drawer shells add `shadow-push-glass` for elevation + frosted edge) | Menu shell — `<SheetContent>` of the Chats drawer / Workspace hub (caller adds the side: `border-l`/`-r`/`-t`) |
 | `HUB_GLASS_HAIRLINE`               | `border-white/[0.06]`                                | Soft dividers inside a glass menu (header / strip / seam) and resting tile outlines |
 | `GLASS_SURFACE` / `…_HOVER`        | `border-white/[0.06] bg-white/[0.02]` + hover lift   | Resting bordered tile — Chats-drawer repo & section cards                        |
 | `GLASS_ACTIVE_CLASS`               | Accent tint + ring + soft glow (`--push-accent-rgb`) | Active/selected tile — live repo card, live workspace tool tab                   |
