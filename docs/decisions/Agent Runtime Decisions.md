@@ -172,14 +172,19 @@ existing approval/Auditor gates) and speaking the engine's existing event
 vocabulary so the TUI/REPL/daemon clients render it unchanged. Routing lives
 at the `runAssistantTurn` seam, which now delegates **unconditionally** to the
 kernel lane: the bake-period `PUSH_LEAD_RUNTIME=engine` opt-out and the
-CLI-local engine round loop (`runAssistantLoop`) have both been retired, and
-their orphaned duplicates in `cli/engine.ts` (the file-awareness guard cluster,
-the max-rounds / empty-success / parse-error finalization builders, mid-session
-distill) — which the shared kernel reimplements — were removed once the lane
-baked. `cli/engine.ts` is now a thin seam: prompt assembly, shared message
-builders, and the `runAssistantTurn` → `runLeadKernelTurn` delegator. The
-daemon's delegated task-graph nodes keep the implementer prompt by design (they
-are delegations, not the lead).
+CLI-local engine round loop (`runAssistantLoop`) have both been retired. With
+the loop gone, its helper cluster in `cli/engine.ts` (the file-awareness guard,
+the max-rounds / empty-success / parse-error builders, the mid-session distill
+check) had **no remaining callers** — verified repo-wide; the functions sat at
+their definitions only — so removing them is behavior-neutral. The live concerns
+those helpers used to serve are owned by the shared kernel under different
+shapes: file awareness via `getAwarenessBlock`, the round-cap finalization and
+parse-error envelopes inline in `lib/coder-agent.ts`, empty-final-turn handling
+in the same loop, and context compaction through the kernel's stream pipeline
+(`toLLMMessages`). `cli/engine.ts` is now a thin seam: prompt assembly, the live
+`buildToolResultMessage`, and the `runAssistantTurn` → `runLeadKernelTurn`
+delegator. The daemon's delegated task-graph nodes keep the implementer prompt
+by design (they are delegations, not the lead).
 
 The inline lead is not delegation-free: it wires a narrow, **Explorer-only**
 delegation arc (`delegate_explorer` via the kernel's `extraToolSources` /
@@ -349,7 +354,7 @@ added (YAGNI). If one appears, add `push()` then.
 6. Decide whether memory Phase 3 immutable verbatim logs are worth the storage cost.
 7. Promote the diff/annotation envelope only when a roadmap item needs it.
 8. TUI focus-stack migration (§12) — **complete**: the whole `processInput` dispatch resolves through the stack across six declarative scopes. Push/pop self-registration was considered and declined (see §12); declarative `isActive()` against authoritative state is the end state.
-9. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model. Step 1 landed 2026-06-12: interactive turns default to the in-loop lead with the Planner wrapper behind `PUSH_DELEGATION_MODE=delegated`. Step 2 landed 2026-06-12: the lead-kernel lane (`cli/lead-turn.ts`) runs the turn on the shared kernel in `leadMode`. Step 3 landed 2026-06-12: the lane is the **default**; `PUSH_LEAD_RUNTIME=engine` is the exact-match opt-out while it bakes. Step 4 — **complete**: the bake-period `PUSH_LEAD_RUNTIME=engine` opt-out and the CLI-local engine round loop are retired; `runAssistantTurn` delegates unconditionally to the kernel lane and the orphaned duplicate machinery in `cli/engine.ts` (awareness guard cluster, finalization/parse-error builders, mid-session distill — all reimplemented by the shared kernel) plus its obsolete tests were removed.
+9. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model. Step 1 landed 2026-06-12: interactive turns default to the in-loop lead with the Planner wrapper behind `PUSH_DELEGATION_MODE=delegated`. Step 2 landed 2026-06-12: the lead-kernel lane (`cli/lead-turn.ts`) runs the turn on the shared kernel in `leadMode`. Step 3 landed 2026-06-12: the lane is the **default**; `PUSH_LEAD_RUNTIME=engine` is the exact-match opt-out while it bakes. Step 4 — **complete**: the bake-period `PUSH_LEAD_RUNTIME=engine` opt-out and the CLI-local engine round loop are retired; `runAssistantTurn` delegates unconditionally to the kernel lane and the now-unreachable helper cluster the loop left behind in `cli/engine.ts` (awareness guard, finalization/parse-error builders, mid-session distill — no callers once `runAssistantLoop` was gone; the kernel owns these live concerns) plus its obsolete tests were removed. Behavior-neutral removal.
 
 ## Archived Context Worth Knowing
 

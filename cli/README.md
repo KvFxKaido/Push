@@ -235,6 +235,8 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 
 Fallback env vars from the web app (`VITE_OLLAMA_API_KEY`, `OLLAMA_API_KEY`, `VITE_TAVILY_API_KEY`, etc.) are also checked.
 
+> **Retired:** `PUSH_LEAD_RUNTIME` no longer exists — interactive turns always run on the shared coder kernel (`cli/lead-turn.ts`, Agent Runtime Decisions §10). The former `=engine` opt-out is a no-op; setting it has no effect.
+
 ## Providers
 
 The CLI ships eleven providers. Eight (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`, `fireworks`, `blackbox`, `openadapter`) plus `openai` speak OpenAI Chat Completions natively. `anthropic` and `google` carry the upstream's native wire shape — the CLI translates OpenAI-shaped messages via the shared bridges in `lib/openai-anthropic-bridge.ts` and `lib/openai-gemini-bridge.ts`, then pipes the response back through the same OpenAI SSE pump so downstream consumers see one event surface. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
