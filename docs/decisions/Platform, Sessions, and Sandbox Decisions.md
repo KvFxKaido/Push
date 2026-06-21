@@ -232,6 +232,70 @@ Status: **Current** — evaluated 2026-06-17, not adopted.
 Research note:
 [`Cloudflare Agents SDK Evaluation`](<../research/Cloudflare Agents SDK Evaluation.md>).
 
+### 13. Provider failover is round-scoped and lock-respecting
+
+**Status: Draft** (proposed 2026-06-21). Prompted by a review of
+[QuantumNous/new-api](https://github.com/QuantumNous/new-api), a Go LLM gateway
+whose core value-add is weighted multi-channel routing with automatic failover.
+Push has the inverse: one provider/model is **locked** per chat (#8 — routing is
+owned by chat lock and role context, not the observability layer), so a single
+transient upstream failure (a gateway 5xx, a 429, an expired key) kills the whole
+turn even when other configured providers could have served it. The existing
+recovery is **same-provider only**: `shouldRetryStreamRound` in
+`app/src/lib/stream-error.ts` re-attempts a transient failure up to
+`STREAM_RETRY_MAX`, then surfaces the error. There is no cross-provider step.
+
+The decision: add failover as a **round-scoped, lock-respecting** extension —
+not a new routing model.
+
+- **Round-scoped, not re-locking.** Failover rescues the *current* round by
+  trying an alternate provider; it does **not** mutate the chat lock. The lock
+  encodes user intent plus capability guarantees (notably Anthropic
+  signed-reasoning round-trip), so permanently swapping the user's chosen
+  provider on one blip is surprising. If the primary stays down, each subsequent
+  round re-tries it first (cheap if it recovered) and fails over again. Promoting
+  failover to a sticky re-lock is a deliberate future step, not v1.
+
+- **Error classification drives the action, not message text.** Reuse the
+  structured `ProviderStreamError` fields (`retryable`, `status`) — never
+  `.message` (the HTTP-status anti-pattern in CLAUDE.md / REVIEW.md). Two
+  distinct predicates:
+  - *retry-same-worthy* = transient (5xx / 429 / 408 / 425 / stall) — the same
+    provider may recover.
+  - *failover-worthy* = transient **or** provider-specific deterministic failures
+    a different provider could survive: **401/403** (the failing key is
+    per-provider) and **404** (model absent on this provider). **Excluded:
+    400/422** — a malformed request fails identically everywhere, so failing
+    over just burns a second provider's quota to reproduce the error.
+
+- **The output guard is also the safety seam.** Failover only fires before any
+  assistant-visible output streamed this round (the same `hasOutput` guard the
+  same-provider retry uses). This is load-bearing twice over: it prevents
+  duplicated/rewritten visible text, *and* it sidesteps the reasoning-block
+  compatibility hazard — a failover round has emitted no signed thinking yet, so
+  there is nothing provider-incompatible to strand.
+
+- **Candidate selection is capability-aware and lives at the call site.** The
+  decision kernel is pure (`lib/provider-failover.ts`,
+  `decideStreamFailover`): it takes a pre-extracted `StreamErrorClassification`
+  and a **pre-filtered, ordered candidate list**. The caller — which has the
+  message history — resolves candidates to providers that are (a) configured
+  (have a key) and (b) compatible with the conversation's reasoning-block
+  requirements. The open hazard wiring must respect: a history containing
+  Anthropic signed reasoning blocks must not fail over to an OpenAI-shaped
+  provider that can't echo them back. Until that filter is precise, the
+  conservative default is "fail over only among providers sharing the locked
+  provider's stream shape."
+
+- **Symmetric structured logs.** Each branch emits one line — `stream_failover`
+  (with `from`/`to`), `stream_failover_exhausted` (with `reason`), pairing with
+  the existing `stream_round_retry` / `stream_round_retry_exhausted`.
+
+Shipped so far (this branch): the pure decision kernel + unit tests. Remaining:
+wire it into `app/src/hooks/chat-stream-round.ts` (and later `cli/lead-turn.ts`)
+with the capability-aware candidate resolver, behind a settings toggle defaulting
+off until validated.
+
 ## Active Platform Work
 
 1. Apply/verify webhook PR-review production migration and permissions.
