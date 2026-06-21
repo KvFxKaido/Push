@@ -115,6 +115,7 @@ import {
   rewriteMessagesLog,
 } from './session-store.js';
 import { runCheckpointCommand } from './checkpoint-command.js';
+import { formatWorktreeStatus } from './worktree.js';
 import {
   buildSystemPromptBase,
   ensureSystemPromptReady,
@@ -5732,6 +5733,7 @@ export async function runTUI(options = {}) {
             '  /unrevert             Daemon: restore the messages a /revert dropped',
             '  /children [id]        Daemon: list delegated child runs (or inspect one by subagentId)',
             '  /checkpoint           Snapshot/rollback (create | list | load | delete)',
+            '  /worktree             Show the git-worktree sandbox status (if any)',
             '  /copy [last|code|tool|remote]  Copy content to clipboard via OSC 52 (default: last)',
             '  /<skill> [args]      Run a skill (e.g. /commit, /review)',
             '  /resume              Open resumable session picker',
@@ -5864,6 +5866,10 @@ export async function runTUI(options = {}) {
 
       case 'checkpoint':
         await handleCheckpointCommand(arg || null);
+        return true;
+
+      case 'worktree':
+        addTranscriptEntry(tuiState, 'status', await formatWorktreeStatus(state));
         return true;
 
       case 'revert':

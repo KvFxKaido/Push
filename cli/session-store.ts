@@ -67,6 +67,19 @@ export interface SessionState {
    * `'interactive'` for those rows so consumers can rely on the column.
    */
   mode?: string;
+  /**
+   * Set when the session is rooted in an opt-in git-worktree sandbox
+   * (`push run --worktree`). `cwd` points at `worktree.path`, so every tool
+   * operates inside the worktree instead of the real checkout. Persisted so a
+   * resumed session knows where its sandbox lives and can be torn down. Absent
+   * for ordinary sessions that work the real tree directly. See `cli/worktree.ts`.
+   */
+  worktree?: {
+    path: string;
+    branch: string;
+    baseSha: string;
+    repoRoot: string;
+  };
   [key: string]: unknown;
 }
 
