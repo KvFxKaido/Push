@@ -444,8 +444,17 @@ transcript divider ("Compacted context 88k → 42k", rendered like the `branch_*
 events and filtered from the wire), and a retuned `ContextMeter` that warns
 (amber → red + pulse) as the window approaches the compaction boundary (~85%).
 
-CLI parity (a `leadMode` pre-turn LLM compaction mirroring the coordinator) is the
-remaining half — see Active Runtime Work item 11.
+**CLI parity** shipped alongside (`cli/lead-compaction.ts`, wired pre-turn in
+`cli/lead-turn.ts`). The CLI lead turn differs architecturally: it feeds the
+model a *bounded* preamble (`buildLeadTurnPreamble` — last `PRIOR_TURNS_MAX`
+turns, each clipped), so a long session silently forgets the early thread. The
+coordinator closes that gap with the **same shared engine**: when the durable
+history exceeds budget, it collapses the older span into a `[CONTEXT HANDOFF]`
+message the preamble now renders un-clipped. Because the CLI `Message` has no
+`visibleToModel` flag, this is a destructive collapse (matching the existing
+`compactContext`/`[CONTEXT DIGEST]` model) rather than a hide — tool-output
+losslessness is already covered by the verbatim log. Surfaced via the existing
+`context_compacted` session event + `cli_llm_compaction_*` structured logs.
 
 Source notes: [`How Codex CLI Handles Compacting`](<../research/codex-compacting.md>).
 
@@ -461,7 +470,7 @@ Source notes: [`How Codex CLI Handles Compacting`](<../research/codex-compacting
 8. TUI focus-stack migration (§12) — **complete**: the whole `processInput` dispatch resolves through the stack across six declarative scopes. Push/pop self-registration was considered and declined (see §12); declarative `isActive()` against authoritative state is the end state.
 9. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model. Step 1 landed 2026-06-12: interactive turns default to the in-loop lead with the Planner wrapper behind `PUSH_DELEGATION_MODE=delegated`. Step 2 landed 2026-06-12: the lead-kernel lane (`cli/lead-turn.ts`) runs the turn on the shared kernel in `leadMode`. Step 3 landed 2026-06-12: the lane is the **default**; `PUSH_LEAD_RUNTIME=engine` is the exact-match opt-out while it bakes. Step 4 — **complete**: the bake-period `PUSH_LEAD_RUNTIME=engine` opt-out and the CLI-local engine round loop are retired; `runAssistantTurn` delegates unconditionally to the kernel lane and the now-unreachable helper cluster the loop left behind in `cli/engine.ts` (awareness guard, finalization/parse-error builders, mid-session distill — no callers once `runAssistantLoop` was gone; the kernel owns these live concerns) plus its obsolete tests were removed. Behavior-neutral removal.
 10. Tool-output compaction (§13): the TokenJuice pattern is **already shipped** (`lib/tool-output-reducers.ts`, both surfaces). The remaining "keep the raw output losslessly" half is folded into memory Phase 3 (item 6) — a reduced result stamps a `verbatimRef` into `lib/verbatim-log.ts`. A declarative `.push/`-scoped rule overlay is deliberately deferred (YAGNI until a repo needs custom rules).
-11. Context-window compaction (§14): **always-on + visible + LLM-summarized shipped 2026-06-21 (web)** — toggle removed, `lib/llm-compaction.ts` engine + `app/src/hooks/chat-compaction.ts` coordinator wired pre-turn, three visibility surfaces. Remaining: CLI/daemon parity (a `leadMode` pre-turn LLM compaction reusing the shared engine), and graduating the run-event `phase` vocabulary if ops need to distinguish heuristic-summarization from LLM-summarization (today both report `phase: 'summarization'` to avoid churning the drift-pinned `context.compaction` schema).
+11. Context-window compaction (§14): **always-on + visible + LLM-summarized shipped 2026-06-21 (web + CLI)** — toggle removed, `lib/llm-compaction.ts` engine, `app/src/hooks/chat-compaction.ts` (web) + `cli/lead-compaction.ts` (CLI lead) coordinators wired pre-turn, three web visibility surfaces + the CLI `context_compacted` event. Remaining: graduate the run-event `phase` vocabulary if ops need to distinguish heuristic- from LLM-summarization (today both report `phase: 'summarization'` to avoid churning the drift-pinned `context.compaction` schema), and a Worker-side background-coder integration if those long jobs need it.
 
 ## Archived Context Worth Knowing
 
