@@ -74,6 +74,19 @@ describe('file-backed VerbatimLog', () => {
     assert.equal(await log.size(), 2);
   });
 
+  it('keeps refs globally unique across scope files so read(ref) is unambiguous', async () => {
+    const log = createFileVerbatimLog({ baseDir });
+    // Two distinct texts in two different scope files. Even if their base refs
+    // ever collided, the global probe must hand out distinct refs so read(ref)
+    // can never return the wrong scope's bytes.
+    const a = await log.append({ scope: { repoFullName: repo, branch: 'main' }, text: 'alpha' });
+    const b = await log.append({ scope: { repoFullName: repo, branch: 'feat' }, text: 'beta' });
+
+    assert.notEqual(a.ref, b.ref);
+    assert.equal((await log.read(a.ref))?.text, 'alpha');
+    assert.equal((await log.read(b.ref))?.text, 'beta');
+  });
+
   it('listByScope soft-matches and orders newest-first', async () => {
     const log = createFileVerbatimLog({ baseDir });
     await log.append({ scope: { repoFullName: repo, branch: 'main' }, text: 'm', now: 1 });

@@ -133,7 +133,9 @@ describe('verbatim capture (LCM Phase 3)', () => {
       verbatimLog,
     });
     expect(lossless.found[0]?.verbatim).toBe(true);
-    expect(lossless.found[0]?.detail).toBe(hugeOutput.trim());
+    // Byte-exact, including the trailing newline the typed store would have trimmed.
+    expect(lossless.found[0]?.detail).toBe(hugeOutput);
+    expect(hugeOutput.endsWith('\n')).toBe(true);
   });
 
   it('does not stamp a ref when detail fits the cap', async () => {

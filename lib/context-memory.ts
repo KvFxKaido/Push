@@ -122,7 +122,12 @@ async function stampVerbatimDetail(
   verbatimLog: VerbatimLog,
 ): Promise<void> {
   if (!detailExceedsCap(originalDetail)) return;
-  const text = (originalDetail as string).trim();
+  // Store the RAW original bytes — leading/trailing whitespace, a trailing
+  // newline, or an indented stack trace are part of "verbatim". Trimming is only
+  // used (in detailExceedsCap, matching createMemoryRecord's truncate) to decide
+  // whether the detail overflowed; the stored copy must be byte-exact or the
+  // lossless promise is broken.
+  const text = originalDetail as string;
   try {
     const entry = await verbatimLog.append({
       scope: {

@@ -157,15 +157,26 @@ export function createFileVerbatimLog(options: CreateFileVerbatimLogOptions): Ve
       return serialize(async () => {
         const { scope, text, kind, label, now = Date.now() } = input;
         const file = fileFor(baseDir, scope);
-        const existing = parseEntries((await readFileIfExists(file)) ?? '');
+
+        // Collision-safe identity probed across the WHOLE store, not just this
+        // scope file. `read(ref)` scans every file and returns the first match,
+        // so a ref must be globally unique or two scopes could persist the same
+        // ref for different bytes (FNV-32 + length collisions are producible) and
+        // read would recall the wrong text for one of them. Gathering all entries
+        // is the same O(N) scan read/list/size already do; pushd is single-process
+        // and serialized, so this stays correct without locking.
+        const all: VerbatimEntry[] = [];
+        for (const f of await listAllFiles(baseDir)) {
+          const t = await readFileIfExists(f);
+          if (t) all.push(...parseEntries(t));
+        }
         const base = verbatimBaseRef(text);
 
-        // Collision-safe identity, same rule as the in-memory backend: reuse on
-        // an exact text match, else probe a disambiguated ref so two distinct
-        // texts can never share one.
+        // Reuse on an exact text match anywhere (content dedup); else probe a
+        // disambiguated ref so two distinct texts can never share one — globally.
         let ref = base;
         for (let probe = 1; ; probe++) {
-          const hit = existing.find((e) => e.ref === ref);
+          const hit = all.find((e) => e.ref === ref);
           if (!hit) break;
           if (hit.text === text) return hit;
           ref = `${base}_${probe + 1}`;

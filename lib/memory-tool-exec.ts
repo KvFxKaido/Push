@@ -53,10 +53,11 @@ const DEFAULT_GREP_LIMIT = 10;
 const MAX_GREP_LIMIT = 25;
 const MAX_EXPAND_IDS = 20;
 
-function indentDetail(detail: string, cap: number): string {
-  const trimmed = detail.trim();
-  const capped =
-    trimmed.length <= cap ? trimmed : `${trimmed.slice(0, Math.max(0, cap - 1)).trimEnd()}…`;
+function indentDetail(detail: string, cap: number, opts: { trim?: boolean } = {}): string {
+  // Verbatim recall passes trim:false so byte-exact whitespace survives; the
+  // summary/grep snippets keep the default trim for compact display.
+  const base = opts.trim === false ? detail : detail.trim();
+  const capped = base.length <= cap ? base : `${base.slice(0, Math.max(0, cap - 1))}…`;
   return capped
     .split('\n')
     .map((line) => `    ${line}`)
@@ -180,9 +181,10 @@ function formatExpandedRecord(record: ExpandedMemoryRecord): string {
   ];
   if (record.detail) {
     if (record.verbatim) {
-      const full = record.detail.trim();
+      // Byte-exact by contract — preserve the whitespace the lossless store kept.
+      const full = record.detail;
       lines.push('  detail (verbatim):');
-      lines.push(indentDetail(full, VERBATIM_EXPAND_CAP));
+      lines.push(indentDetail(full, VERBATIM_EXPAND_CAP, { trim: false }));
       if (full.length > VERBATIM_EXPAND_CAP) {
         lines.push(
           `    … (showing ${VERBATIM_EXPAND_CAP} of ${full.length} chars; full text retained at verbatim ref ${record.verbatimRef})`,
