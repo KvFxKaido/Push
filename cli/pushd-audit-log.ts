@@ -41,6 +41,7 @@
  * (e.g. recovering from disk-full).
  */
 import { promises as fs } from 'node:fs';
+import { renameWithRetry } from './fs-atomic.ts';
 import path from 'node:path';
 import os from 'node:os';
 
@@ -220,14 +221,14 @@ async function rotateIfNeeded(): Promise<void> {
     const from = `${livePath}.${i}`;
     const to = `${livePath}.${i + 1}`;
     try {
-      await fs.rename(from, to);
+      await renameWithRetry(from, to);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
       throw err;
     }
   }
   try {
-    await fs.rename(livePath, `${livePath}.1`);
+    await renameWithRetry(livePath, `${livePath}.1`);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
   }

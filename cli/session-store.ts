@@ -6,6 +6,7 @@ import process from 'node:process';
 
 import { PROTOCOL_VERSION } from '../lib/protocol-schema.js';
 import type { DelegationOutcome } from '../lib/runtime-contract.ts';
+import { renameWithRetry } from './fs-atomic.ts';
 
 // PROTOCOL_VERSION moved to lib/protocol-schema.ts (the canonical
 // owner of the wire contract). Re-exported here so the ~6 CLI files
@@ -383,7 +384,7 @@ async function writeSlimState(state: SessionState, root: string): Promise<void> 
       encoding: 'utf8',
       mode: 0o600,
     });
-    await fs.rename(tempPath, statePath);
+    await renameWithRetry(tempPath, statePath);
   } catch (error) {
     await fs.rm(tempPath, { force: true });
     throw error;
@@ -481,7 +482,7 @@ export async function rewriteMessagesLog(state: SessionState): Promise<void> {
   const lines = messages.length > 0 ? `${messages.map((m) => JSON.stringify(m)).join('\n')}\n` : '';
   try {
     await fs.writeFile(tempPath, lines, { encoding: 'utf8', mode: 0o600 });
-    await fs.rename(tempPath, messagesPath);
+    await renameWithRetry(tempPath, messagesPath);
   } catch (error) {
     await fs.rm(tempPath, { force: true });
     throw error;

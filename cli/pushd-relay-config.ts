@@ -17,6 +17,7 @@
  * a meaningful gain) on purpose.
  */
 import { promises as fs } from 'node:fs';
+import { renameWithRetry } from './fs-atomic.ts';
 import path from 'node:path';
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
@@ -133,7 +134,7 @@ export async function writeRelayConfig(cfg: Omit<RelayConfig, 'enabledAt'>): Pro
     await handle.close();
   }
   try {
-    await fs.rename(tmpPath, targetPath);
+    await renameWithRetry(tmpPath, targetPath);
   } catch (err) {
     await fs.unlink(tmpPath).catch(() => {});
     throw err;

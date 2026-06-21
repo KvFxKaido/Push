@@ -12,6 +12,7 @@
  *   - serialized concurrent mints don't lose entries
  */
 import { describe, it, beforeEach, afterEach } from 'node:test';
+import { skipOnWindows } from './test-environment.mjs';
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -208,7 +209,7 @@ describe('listDeviceAttachTokens', () => {
 });
 
 describe('file permissions + concurrency', () => {
-  it('persists with mode 0600', async () => {
+  it('persists with mode 0600', skipOnWindows, async () => {
     await mintDeviceAttachToken({ parentTokenId: 'pdt_parent_1', boundOrigin: 'loopback' });
     const stat = await fs.stat(process.env.PUSHD_ATTACH_TOKENS_PATH);
     assert.equal(stat.mode & 0o777, 0o600);

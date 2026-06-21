@@ -35,6 +35,7 @@
  *    back to "delete the file" so the implicit default re-engages.
  */
 import { promises as fs } from 'node:fs';
+import { renameWithRetry } from './fs-atomic.ts';
 import path from 'node:path';
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
@@ -167,7 +168,7 @@ async function writeAllowlistFileLocked(entries: AllowlistEntry[]): Promise<void
     await handle.close();
   }
   try {
-    await fs.rename(tmpPath, allowlistPath);
+    await renameWithRetry(tmpPath, allowlistPath);
   } catch (err) {
     await fs.unlink(tmpPath).catch(() => {});
     throw err;

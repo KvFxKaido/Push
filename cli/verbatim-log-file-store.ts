@@ -32,6 +32,7 @@
  */
 
 import { promises as fs } from 'node:fs';
+import { renameWithRetry } from './fs-atomic.ts';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -109,7 +110,7 @@ async function writeJsonlAtomic(filepath: string, entries: VerbatimEntry[]): Pro
   const tmp = `${filepath}.tmp-${process.pid}-${Date.now()}`;
   const body = entries.length === 0 ? '' : `${entries.map((e) => JSON.stringify(e)).join('\n')}\n`;
   await fs.writeFile(tmp, body, 'utf8');
-  await fs.rename(tmp, filepath);
+  await renameWithRetry(tmp, filepath);
 }
 
 async function appendJsonlLine(filepath: string, entry: VerbatimEntry): Promise<void> {

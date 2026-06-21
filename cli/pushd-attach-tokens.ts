@@ -28,6 +28,7 @@
  *    children behind.
  */
 import { promises as fs } from 'node:fs';
+import { renameWithRetry } from './fs-atomic.ts';
 import path from 'node:path';
 import os from 'node:os';
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
@@ -179,7 +180,7 @@ async function writeAttachTokenFileLocked(records: AttachTokenRecord[]): Promise
     await handle.close();
   }
   try {
-    await fs.rename(tmpPath, tokensPath);
+    await renameWithRetry(tmpPath, tokensPath);
   } catch (err) {
     await fs.unlink(tmpPath).catch(() => {});
     throw err;

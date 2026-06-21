@@ -17,6 +17,7 @@
  *    origin is intentionally not supported. Revoke + remint instead.
  */
 import { promises as fs } from 'node:fs';
+import { renameWithRetry } from './fs-atomic.ts';
 import path from 'node:path';
 import os from 'node:os';
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
@@ -159,7 +160,7 @@ async function writeTokenFileLocked(records: DeviceTokenRecord[]): Promise<void>
     await handle.close();
   }
   try {
-    await fs.rename(tmpPath, tokensPath);
+    await renameWithRetry(tmpPath, tokensPath);
   } catch (err) {
     // Best-effort cleanup of the unique tmp file if rename failed for
     // any reason — don't leak it next to the real tokens file.
