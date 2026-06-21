@@ -903,6 +903,11 @@ export async function runInPageCoderKernel(
         auditorModelOverride: opts.auditorModelOverride,
         currentBranch: spec.branchContext?.activeBranch,
         defaultBranch: spec.branchContext?.defaultBranch,
+        // Thread the Coder's memory scope so a reduced sandbox_exec retains its
+        // full output (LCM Phase 3 recall). This direct path bypasses
+        // WebToolExecutionRuntime, so without it retention would no-op for Coder
+        // runs — the primary coding path.
+        memoryScope: spec.memoryScope,
         // Thread Protect Main so a delegated/inline coder push hits the boundary
         // gate (this path reaches handleSandboxPush). The background CF-route
         // coder maps typed sandbox_push to not_implemented_yet; its raw
