@@ -22,6 +22,8 @@ import {
   type EngineTrigger,
   type TurnEngineTrigger,
 } from '@/lib/delegation-mode-settings';
+import { resolveHarnessSettings } from '@/lib/model-capabilities';
+import { getRunTokenBudgetPref } from '@/lib/run-token-budget-pref';
 import type {
   AIProviderType,
   AttachmentData,
@@ -247,6 +249,13 @@ export async function startBackgroundMainChatTurn(
     originBranch: branchInfo?.currentBranch,
     projectInstructions: refs.agentsMdRef.current ?? undefined,
     instructionFilename: refs.instructionFilenameRef.current ?? undefined,
+    // Resolve harness settings client-side so the background *lead* job honors
+    // the user's per-run token budget (and adaptive profile). leadMode ignores
+    // the round cap, but the token budget is round-independent — without this
+    // a backgrounded main-chat turn ran uncapped.
+    harnessSettings: resolveHarnessSettings(lockedProvider, resolvedModel, {
+      runTokenBudget: getRunTokenBudgetPref(),
+    }),
   };
 
   const startResult = await backgroundCoderJob.startMainChatJob({

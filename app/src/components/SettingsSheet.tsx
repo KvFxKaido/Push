@@ -220,6 +220,8 @@ export interface SettingsWorkspaceProps {
   setShowToolActivity: (value: boolean) => void;
   providerFailover: boolean;
   setProviderFailover: (value: boolean) => void;
+  runTokenBudget: number | null;
+  setRunTokenBudget: (value: number | null) => void;
   activeRepoFullName: string | null;
 }
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ChevronDown, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 import { BranchWaveIcon, GitHubMarkIcon, LockIcon } from '@/components/icons/push-custom-icons';
 import { getMalformedToolCallMetrics } from '@/lib/tool-call-metrics';
+import { RUN_TOKEN_BUDGET_PRESETS } from '@/lib/run-token-budget-pref';
 import { getContextMetrics } from '@/lib/context-metrics';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 import { ProviderIcon } from '@/components/ui/provider-icon';
@@ -902,6 +903,46 @@ export function SettingsSectionContent({
               When enabled, a chat whose provider fails mid-request (rate limit, outage, bad key)
               retries the round on another configured provider of the same kind. Your chosen
               provider stays the default — failover only rescues the failing turn.
+            </p>
+          </div>
+
+          {/* Run Token Budget */}
+          <div className={SECTION_CARD_CLASS}>
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-push-fg">Run Token Budget</label>
+              <span className="text-xs text-push-fg-secondary">
+                {workspace.runTokenBudget
+                  ? `${Math.round(workspace.runTokenBudget / 1000)}K`
+                  : 'Off'}
+              </span>
+            </div>
+            <div className="flex gap-2">
+              {RUN_TOKEN_BUDGET_PRESETS.map((preset) => {
+                const active = (workspace.runTokenBudget ?? null) === preset.value;
+                const activeClass =
+                  preset.value === null
+                    ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
+                    : 'border-amber-500/50 bg-amber-500/10 text-amber-400';
+                return (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() => workspace.setRunTokenBudget(preset.value)}
+                    className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                      active
+                        ? activeClass
+                        : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-push-xs text-push-fg-secondary">
+              Stops a run once it has spent this many tokens — a cost circuit breaker on top of the
+              round limit. Applies to the chat lead and any Coder it delegates. Off means no token
+              cap.
             </p>
           </div>
 

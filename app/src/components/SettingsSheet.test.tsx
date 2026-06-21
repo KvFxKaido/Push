@@ -128,6 +128,8 @@ function emptyWorkspace(): SettingsWorkspaceProps {
     setShowToolActivity: vi.fn(),
     providerFailover: false,
     setProviderFailover: vi.fn(),
+    runTokenBudget: null,
+    setRunTokenBudget: vi.fn(),
     activeRepoFullName: null,
   };
 }

@@ -31,6 +31,7 @@ import {
   type CoderToolExecResult,
   type DetectedToolCalls,
 } from '../lib/coder-agent.ts';
+import { RUN_TOKEN_BUDGET_ENV_VAR, resolveRunTokenBudget } from '../lib/run-cost-budget.ts';
 import type {
   AIProviderType,
   LlmMessage,
@@ -579,6 +580,12 @@ export async function runLeadKernelTurn(
         approvalModeBlock: null,
         evaluateAfterModel: async () => null,
         harnessMaxRounds: maxRounds,
+        // Per-run token budget. Config (`config.runTokenBudget`) is forwarded
+        // to `PUSH_RUN_TOKEN_BUDGET` by `applyConfigToEnv` at startup, so
+        // resolving from env here folds in both the operator override and the
+        // user setting. Null (uncapped) maps to undefined for the kernel.
+        harnessTokenBudget:
+          resolveRunTokenBudget({ env: process.env[RUN_TOKEN_BUDGET_ENV_VAR] }) ?? undefined,
         persona: 'lead',
         // Exempt poll-by-repeat tools (`exec_poll`) from the lead exact-repeat
         // breaker — a quiet long-running command is polled with identical args.
@@ -597,18 +604,23 @@ export async function runLeadKernelTurn(
     // RUN_COMPLETE_OUTCOMES allows `max_rounds`/`failed` but NOT `error`, so a
     // repeated-tool-call loop maps to an `error` return + a `failed` event
     // (mirroring the catch path below). The round cap is `max_rounds` on both.
-    const runOutcome: RunResult['outcome'] =
-      result.stopReason === 'max_rounds'
-        ? 'max_rounds'
-        : result.stopReason === 'loop'
-          ? 'error'
-          : 'success';
-    const eventOutcome =
-      result.stopReason === 'max_rounds'
-        ? 'max_rounds'
-        : result.stopReason === 'loop'
-          ? 'failed'
-          : 'success';
+    // A token-budget halt is a graceful circuit-breaker stop ("incomplete"),
+    // the same shape as the round cap — so it maps to the `max_rounds` outcome
+    // on both the RunResult and the event (the kernel's summary already says it
+    // was a budget stop). Keeping the existing vocabulary avoids widening the
+    // outcome enum across the daemon protocol for a sibling stop class.
+    const isCircuitBreakerStop =
+      result.stopReason === 'max_rounds' || result.stopReason === 'budget_exceeded';
+    const runOutcome: RunResult['outcome'] = isCircuitBreakerStop
+      ? 'max_rounds'
+      : result.stopReason === 'loop'
+        ? 'error'
+        : 'success';
+    const eventOutcome = isCircuitBreakerStop
+      ? 'max_rounds'
+      : result.stopReason === 'loop'
+        ? 'failed'
+        : 'success';
 
     if (!suppressRunComplete) {
       await persistEvent('run_complete', {

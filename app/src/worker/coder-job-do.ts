@@ -881,6 +881,10 @@ export class CoderJob {
         // cap and the "[Coder stopped after N rounds…]" marker. See
         // `resolveJobLeadModeOptions`.
         ...resolveJobLeadModeOptions(input.envelope),
+        // Per-run token budget rides the envelope's harness settings (resolved
+        // client-side with the user's preference folded in), so the background
+        // lane honors the same cap as the foreground lead.
+        harnessTokenBudget: input.envelope.harnessSettings?.runTokenBudget,
         harnessContextResetsEnabled: input.envelope.harnessSettings?.contextResetsEnabled,
         resumeState,
       };

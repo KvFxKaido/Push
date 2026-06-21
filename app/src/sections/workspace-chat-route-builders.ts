@@ -384,6 +384,8 @@ export function buildSettingsWorkspace(props: ChatRouteProps): SettingsWorkspace
     setShowToolActivity: props.updateShowToolActivity,
     providerFailover: props.providerFailover,
     setProviderFailover: props.updateProviderFailover,
+    runTokenBudget: props.runTokenBudget,
+    setRunTokenBudget: props.updateRunTokenBudget,
     activeRepoFullName: props.activeRepo?.full_name ?? null,
   };
 }

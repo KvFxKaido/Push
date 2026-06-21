@@ -655,6 +655,7 @@ import { buildSystemPrompt, runAssistantTurn, DEFAULT_MAX_ROUNDS } from './engin
 import { appendUserMessageWithFileReferences } from './file-references.js';
 import { runExplorerAgent } from '../lib/explorer-agent.ts';
 import { runCoderAgent } from '../lib/coder-agent.ts';
+import { RUN_TOKEN_BUDGET_ENV_VAR, resolveRunTokenBudget } from '../lib/run-cost-budget.ts';
 import { isSensitivePath as isDaemonSensitivePath } from '../lib/sensitive-paths.ts';
 import { isPathAllowed, snapshotAllowlist } from './pushd-allowlist.js';
 import { runReviewer } from '../lib/reviewer-agent.ts';
@@ -3364,6 +3365,11 @@ async function runCoderForTaskGraph(
       verificationPolicyBlock: null,
       approvalModeBlock: null,
       evaluateAfterModel,
+      // Per-run token budget for this daemon task-graph Coder node. Resolved
+      // from env (config is forwarded to `PUSH_RUN_TOKEN_BUDGET` by
+      // `applyConfigToEnv`); null (uncapped) maps to undefined for the kernel.
+      harnessTokenBudget:
+        resolveRunTokenBudget({ env: process.env[RUN_TOKEN_BUDGET_ENV_VAR] }) ?? undefined,
     },
     {
       onStatus: () => {},
@@ -5058,6 +5064,11 @@ async function handleDelegateCoder(req) {
           verificationPolicyBlock: null,
           approvalModeBlock: null,
           evaluateAfterModel,
+          // Per-run token budget for this daemon delegated Coder. Resolved from
+          // env (config forwarded to `PUSH_RUN_TOKEN_BUDGET` by
+          // `applyConfigToEnv`); null (uncapped) maps to undefined.
+          harnessTokenBudget:
+            resolveRunTokenBudget({ env: process.env[RUN_TOKEN_BUDGET_ENV_VAR] }) ?? undefined,
         },
         {
           onStatus: () => {

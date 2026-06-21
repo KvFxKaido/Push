@@ -18,6 +18,15 @@ const ALLOWLIST_SECRET_COMMAND = 'npx wrangler secret put GITHUB_ALLOWED_INSTALL
 const coerceBoolean = (raw: unknown): boolean | undefined =>
   typeof raw === 'boolean' ? raw : undefined;
 
+// The token budget is stored as a positive number (cap) or `null` (off). A
+// non-positive number normalizes to `null`; anything else is "no opinion"
+// (→ fall back to the default off).
+const coerceTokenBudget = (raw: unknown): number | null | undefined => {
+  if (raw === null) return null;
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw > 0 ? raw : null;
+  return undefined;
+};
+
 function legacyToolActivity(): boolean | undefined {
   const raw = safeStorageGet(TOOL_ACTIVITY_STORAGE_KEY);
   if (raw === null) return undefined;
@@ -40,6 +49,11 @@ export function useWorkspacePreferences(validatedGithubLogin: string | null | un
     SETTINGS_KEYS.providerFailover,
     false,
     { coerce: coerceBoolean },
+  );
+  const [runTokenBudget, setRunTokenBudgetValue] = useSetting<number | null>(
+    SETTINGS_KEYS.runTokenBudget,
+    null,
+    { coerce: coerceTokenBudget },
   );
   const [sandboxStartMode, setSandboxStartModeState] = useState<SandboxStartMode>(() =>
     getSandboxStartMode(),
@@ -112,6 +126,13 @@ export function useWorkspacePreferences(validatedGithubLogin: string | null | un
     [setProviderFailoverValue],
   );
 
+  const updateRunTokenBudget = useCallback(
+    (value: number | null) => {
+      setRunTokenBudgetValue(value);
+    },
+    [setRunTokenBudgetValue],
+  );
+
   const handleDisplayNameBlur = useCallback(() => {
     const nextDisplayName = displayNameDraft.trim();
     if (nextDisplayName !== profile.displayName) {
@@ -164,6 +185,8 @@ export function useWorkspacePreferences(validatedGithubLogin: string | null | un
     updateShowToolActivity,
     providerFailover,
     updateProviderFailover,
+    runTokenBudget,
+    updateRunTokenBudget,
     sandboxStartMode,
     updateSandboxStartMode,
     contextMode,

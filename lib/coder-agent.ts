@@ -58,6 +58,8 @@ import { createId } from './id-utils.js';
 import { buildMalformedToolCallEvents, summarizeToolResultPreview } from './run-events.js';
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
 import { iteratePushStreamText, asRecord } from './stream-utils.js';
+import { createRunTokenLedger } from './run-cost-budget.js';
+import { estimateTokens } from './context-budget.js';
 import { detectToolFromText } from './tool-call-parsing.js';
 import { SIZE_BUDGETS } from './size-budgets.js';
 import { formatProjectInstructionsBlock } from './project-instructions.js';
@@ -888,6 +890,15 @@ export interface CoderAgentOptions<TCall, TCard> {
   /** Optional per-task overrides — envelope harness + acceptance criteria. */
   acceptanceCriteria?: AcceptanceCriterion[];
   harnessMaxRounds?: number;
+  /**
+   * Per-run token budget (a circuit breaker on consumption, complementing the
+   * round cap). When the run's accumulated token usage reaches this many
+   * tokens, the loop halts with `stopReason: 'budget_exceeded'`. Resolved
+   * cross-surface via `lib/run-cost-budget.ts` (env > explicit > off); the
+   * host passes the already-resolved explicit value here, env is folded in by
+   * the kernel. `undefined`/`null` ⇒ uncapped.
+   */
+  harnessTokenBudget?: number | null;
   harnessContextResetsEnabled?: boolean;
 
   /**
@@ -976,7 +987,7 @@ export interface CoderAgentResult<TCard> {
    *  normal completion. Lets a caller surface a non-success outcome instead
    *  of treating the graceful stop summary as success — headless `push run`
    *  relies on this for its exit code / `--json` outcome. */
-  stopReason?: 'max_rounds' | 'loop';
+  stopReason?: 'max_rounds' | 'loop' | 'budget_exceeded';
   criteriaResults?: Array<{
     id: string;
     passed: boolean;
@@ -1023,6 +1034,7 @@ export async function runCoderAgent<TCall, TCard>(
     evaluateAfterModel,
     acceptanceCriteria,
     harnessMaxRounds,
+    harnessTokenBudget,
     harnessContextResetsEnabled,
     persona,
     leadToolGuidance = false,
@@ -1201,6 +1213,38 @@ export async function runCoderAgent<TCall, TCard>(
   // 30-round wall.
   const maxRounds = harnessMaxRounds ?? (leadMode ? LEAD_MAX_ROUNDS : MAX_CODER_ROUNDS);
   const contextResetsEnabled = harnessContextResetsEnabled ?? false;
+
+  // Per-run token budget (consumption circuit breaker). The host resolves the
+  // effective cap (env > explicit > off via `lib/run-cost-budget.ts`) at its
+  // surface boundary and passes the result — the kernel stays runtime-agnostic
+  // (it also runs in the Worker, which has no `process.env`). Normalize to a
+  // positive cap or null.
+  const tokenBudget =
+    typeof harnessTokenBudget === 'number' &&
+    Number.isFinite(harnessTokenBudget) &&
+    harnessTokenBudget > 0
+      ? Math.floor(harnessTokenBudget)
+      : null;
+  const tokenLedger = createRunTokenLedger();
+  // Warn fires once on the crossing into `warn`, not every round past it.
+  let tokenBudgetWarned = false;
+  // Fail-closed estimate for the rare adapter that never reports usage. Input
+  // recurs every round (the whole transcript is re-sent), so summing the
+  // message text per round is the correct cumulative cost proxy, not a leak.
+  const estimateRoundTokens = (
+    transcript: ReadonlyArray<{ content?: unknown }>,
+    output: string,
+    reasoning: string,
+  ): number => {
+    let total = estimateTokens(output) + estimateTokens(reasoning);
+    for (const msg of transcript) {
+      const content = msg?.content;
+      total += estimateTokens(
+        typeof content === 'string' ? content : JSON.stringify(content ?? ''),
+      );
+    }
+    return total;
+  };
   const checkpointCadenceRounds =
     options.checkpointCadenceRounds ?? CODER_CHECKPOINT_CADENCE_ROUNDS;
 
@@ -1336,6 +1380,60 @@ export async function runCoderAgent<TCall, TCard>(
       };
     }
 
+    // Circuit breaker: per-run token budget. Checked top-of-round on the total
+    // accumulated by *prior* rounds (round 0 always runs — the ledger is empty)
+    // so we halt before spending more once over budget, mirroring the round
+    // cap above. Off when `tokenBudget` is null.
+    if (tokenBudget !== null) {
+      const verdict = tokenLedger.check(tokenBudget);
+      if (verdict.state === 'exceeded') {
+        // Symmetric structured log — the cap-hit branch, greppable against a
+        // normal completion (which never emits this) and against the warn line.
+        console.log(
+          JSON.stringify({
+            level: 'warn',
+            event: 'coder_budget_exceeded',
+            round,
+            limitTokens: verdict.limitTokens,
+            ...tokenLedger.snapshot(),
+            model: coderModelId ?? '',
+          }),
+        );
+        callbacks.onStatus(
+          'Coder stopped',
+          `Hit ${tokenBudget.toLocaleString()}-token budget (used ~${verdict.usedTokens.toLocaleString()})`,
+        );
+        const sandboxState = (await callbacks.fetchSandboxStateSummary?.()) ?? '';
+        const leadClose =
+          "I've used up the token budget for this task, so I'm stopping here rather than spending further.";
+        return {
+          summary: leadMode
+            ? sandboxState
+              ? `${leadClose} Here's where things stand:${sandboxState}`
+              : leadClose
+            : `[Coder stopped after reaching the ${tokenBudget}-token run budget — task may be incomplete. Review sandbox state with sandbox_diff.]${sandboxState}`,
+          cards: allCards,
+          rounds: round,
+          checkpoints: checkpointCount,
+          stopReason: 'budget_exceeded',
+        };
+      }
+      if (verdict.state === 'warn' && !tokenBudgetWarned) {
+        tokenBudgetWarned = true;
+        console.log(
+          JSON.stringify({
+            level: 'info',
+            event: 'coder_budget_warning',
+            round,
+            usedTokens: verdict.usedTokens,
+            limitTokens: verdict.limitTokens,
+            remainingTokens: verdict.remainingTokens,
+            model: coderModelId ?? '',
+          }),
+        );
+      }
+    }
+
     rounds = round + 1;
     callbacks.onAdvanceRound?.();
     callbacks.onStatus('Coder working...', `Round ${rounds}`);
@@ -1366,6 +1464,7 @@ export async function runCoderAgent<TCall, TCard>(
       error: streamError,
       text: rawModelText,
       reasoningText,
+      usage: roundUsage,
     } = await iteratePushStreamText(
       cancellableStream,
       {
@@ -1403,6 +1502,19 @@ export async function runCoderAgent<TCall, TCard>(
       }
       finishRound('error');
       throw streamError;
+    }
+
+    // Account this round against the run token budget. Prefer the provider's
+    // reported usage; estimate from the transcript only when usage is absent
+    // (avoids the per-round estimate cost on the common reported-usage path).
+    if (tokenBudget !== null) {
+      const reportedTotal =
+        (roundUsage?.totalTokens ?? 0) +
+        (roundUsage?.inputTokens ?? 0) +
+        (roundUsage?.outputTokens ?? 0);
+      const estimatedTokens =
+        reportedTotal > 0 ? 0 : estimateRoundTokens(messages, rawModelText, reasoningText);
+      tokenLedger.record({ usage: roundUsage, estimatedTokens });
     }
 
     // --- Answer stranded in the reasoning channel ---

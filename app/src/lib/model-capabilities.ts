@@ -276,14 +276,23 @@ const BASE_HARNESS_PROFILE: HarnessProfileSettings = {
   maxCoderRounds: 30,
   contextResetsEnabled: false,
   evaluateAfterCoder: true,
+  runTokenBudget: null,
 };
 
 /** Resolve harness settings: the base profile, then behavior-driven
  *  adaptation (`computeAdaptiveProfile` — clamps rounds / enables context
- *  resets when the model's observed signals warrant it). */
+ *  resets when the model's observed signals warrant it).
+ *
+ *  `overrides` carries user-set preferences that aren't model-adaptive — today
+ *  the per-run token budget. Passing it here (rather than mutating the result
+ *  at each call site) keeps the one field that's a *user choice* folded into
+ *  the same struct the kernel reads, so the inline lead, delegated sub-Coder,
+ *  and background job all see the same value. Omit on worker call sites that
+ *  have no client preference (they inherit the base `null` / the envelope's). */
 export function resolveHarnessSettings(
   provider: AIProviderType,
   modelId: string | null | undefined,
+  overrides?: { runTokenBudget?: number | null },
 ): HarnessProfileSettings {
   const adaptiveResult = computeAdaptiveProfile(
     { ...BASE_HARNESS_PROFILE },
@@ -291,5 +300,9 @@ export function resolveHarnessSettings(
     modelId ?? undefined,
   );
   logAdaptiveProfile(adaptiveResult, provider, modelId ?? undefined);
-  return adaptiveResult.adaptedProfile;
+  const resolved = adaptiveResult.adaptedProfile;
+  if (overrides && overrides.runTokenBudget !== undefined) {
+    return { ...resolved, runTokenBudget: overrides.runTokenBudget };
+  }
+  return resolved;
 }
