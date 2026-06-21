@@ -144,7 +144,12 @@ Standard Tailwind gap classes: `gap-2`, `gap-4`, `gap-6`.
 
 ## Shadows
 
-Shadows are used for overlays and floating elements (dialogs, popovers, dropdowns) — not for distinguishing surface layers. Surface hierarchy uses border and background contrast instead.
+Two distinct shadow families, kept separate on purpose:
+
+1. **Overlay shadows** (`push-sm` … `push-xl`, `push-card*`) float dialogs, popovers, dropdowns and floating cards *off the page*. They are not used to distinguish in-page surface layers.
+2. **Neumorphic depth** (`push-inset*`, `push-raised*`, `push-glass-edge`) gives chrome and recessed surfaces tactile relief on the near-black canvas. This is the **surgical dark-neumorphism layer**: raised chrome lifts with a lit top edge and presses in on `:active`; inputs and other recessed wells sink with an inset; the glass shell catches an edge highlight. All depth shadows are **grayscale** (black ambient + a faint white sheen) so they read on `#070a10` without introducing a hue.
+
+Surface hierarchy for **dense content** (chat bubbles, diff/code cards, data tables) still comes from border + background contrast — those surfaces stay flat. Depth is reserved for *chrome* (buttons, pills, panels) and *recessed wells* (inputs, the console log, nested inset panels). The split is the whole point: extruded chrome around flat, legible content.
 
 | Token             | Value                                                               | Use                  |
 | ----------------- | ------------------------------------------------------------------- | -------------------- |
@@ -154,6 +159,18 @@ Shadows are used for overlays and floating elements (dialogs, popovers, dropdown
 | `push-xl`         | `0 20px 48px rgba(0,0,0,0.55)`                                     | Full-screen overlays |
 | `push-card`       | `0 4px 16px rgba(0,0,0,0.3), 0 1px 4px rgba(0,0,0,0.15)`          | Floating cards       |
 | `push-card-hover` | `0 8px 28px rgba(0,0,0,0.4), 0 2px 6px rgba(0,0,0,0.2)`           | Card hover lift      |
+
+### Neumorphic depth
+
+| Token                | Treatment                                                        | Use                                                  |
+| -------------------- | --------------------------------------------------------------- | ---------------------------------------------------- |
+| `push-raised`        | Soft drop + lit top inner edge (`white 0.04`)                   | Raised chrome at rest — hub buttons, pills, panels   |
+| `push-raised-hover`  | Stronger drop + brighter top edge (`white 0.06`)               | Hover lift on raised chrome                          |
+| `push-inset`         | Inset top shadow + faint inner ring                             | Recessed wells — inputs, console body, nested panels |
+| `push-inset-strong`  | Deeper inset                                                    | Emphasized recess (reserved; deeper wells)           |
+| `push-glass-edge`    | Lit top inner edge + soft dark bottom inner edge               | The glass menu shell (frosted-pane edge)             |
+
+Buttons press in on `:active` by swapping `shadow-push-raised` → `shadow-push-inset` (wired into `HUB_MATERIAL_INTERACTIVE_CLASS`). Don't compose two `shadow-*` utilities on one element — they collide on source order; pick raised **or** inset per surface. Raw shadow values live once in `tailwind.config.js`; consume the `shadow-push-*` token classes, never inline rgba.
 
 ## Motion
 
@@ -207,13 +224,14 @@ Named keyframe animations in `app/src/index.css`. Consume the class directly —
 - Background: semi-transparent `bg-input/30`
 - Border: `border-input`, focus adds 3px ring
 - Placeholder text: `text-muted-foreground`
+- **Recessed:** the shadcn `Input` / `Textarea` carry `shadow-push-inset`, and the hub inline input (`HUB_MATERIAL_INPUT_CLASS`) does too — a field reads as carved into the surface. This is the recessed half of the neumorphic pair (buttons lift, inputs sink).
 
 ### Cards
 
 - Background: `bg-card`, radius `rounded-xl` (14px)
 - Padding: `py-6`, content `px-6`
 - Shadow: `shadow-sm`
-- No elevation model — relies on border + background contrast
+- **Flat by design** — dense content cards rely on border + background contrast, *not* neumorphic depth. The raised/inset tokens are for chrome and recessed wells; extruding content cards would fight legibility and density.
 
 ### Badges
 
@@ -240,21 +258,21 @@ The tables above are the **token** layer. The components in `components/ui/` are
 
 ### Hub utility classes — `app/src/components/chat/hub-styles.tsx`
 
-Flat chrome: pill buttons, solid panels, 1px borders. These are the visual identity most surfaces already use (HomeScreen, OnboardingScreen, ChatScreen, ChatSurfaceScreen, LauncherHomeContent). Compose them with token classes for color and size; the hub class supplies the surface — a solid raised step over the canvas with a clean border, **no `backdrop-blur`, no drop shadow, no gloss**. Surface hierarchy comes from border + fill contrast (see Shadows above).
+Neumorphic chrome: pill buttons, solid panels, 1px borders. These are the visual identity most surfaces already use (HomeScreen, OnboardingScreen, ChatScreen, ChatSurfaceScreen, LauncherHomeContent). Compose them with token classes for color and size; the hub class supplies the surface — a solid step over the canvas with a clean border and **dark-neumorphic depth**: buttons/panels carry `shadow-push-raised` (a soft drop + lit top edge), buttons press in on `:active`, and `HUB_MATERIAL_INPUT_CLASS` recesses with `shadow-push-inset`. Still **no `backdrop-blur`** (that stays the glass exception below). The base surface class is depth-free so each consumer opts into raise *or* recess (two `shadow-*` on one element collide). See Shadows → Neumorphic depth.
 
 | Class                              | Shape                                                 | Use                                                       |
 | ---------------------------------- | ----------------------------------------------------- | --------------------------------------------------------- |
-| `HUB_MATERIAL_BUTTON_CLASS`        | Solid raised surface + border + interactive hover     | Default button surface — wrap with size/layout            |
+| `HUB_MATERIAL_BUTTON_CLASS`        | Raised surface (`shadow-push-raised`) + border + hover lift + press-to-recess | Default button surface — wrap with size/layout            |
 | `HUB_MATERIAL_PILL_BUTTON_CLASS`   | `h-8 rounded-full px-3 text-push-xs`                  | Inline pill action (header chips, mode pickers)           |
 | `HUB_MATERIAL_ROUND_BUTTON_CLASS`  | `h-8 w-8 rounded-full`                                | Icon-only header actions (back, settings, menu)           |
-| `HUB_MATERIAL_INPUT_CLASS`         | `h-8 rounded-full px-3 text-xs`                       | Inline input — auth forms, pairing forms                  |
-| `HUB_PANEL_SURFACE_CLASS`          | `rounded-[20px]` solid raised panel (`bg-push-surface-raised`) + border | Top-level panel containing a form / section group         |
-| `HUB_PANEL_SUBTLE_SURFACE_CLASS`   | `rounded-[18px]` recessed inset panel (`bg-push-surface-inset`) + border | Nested panel inside a HUB_PANEL                           |
+| `HUB_MATERIAL_INPUT_CLASS`         | `h-8 rounded-full px-3 text-xs` + recessed (`shadow-push-inset`) | Inline input — auth forms, pairing forms                  |
+| `HUB_PANEL_SURFACE_CLASS`          | `rounded-[20px]` raised panel (`bg-push-surface-raised` + `shadow-push-raised`) + border | Top-level panel containing a form / section group         |
+| `HUB_PANEL_SUBTLE_SURFACE_CLASS`   | `rounded-[18px]` recessed inset panel (`bg-push-surface-inset` + `shadow-push-inset`) + border | Nested panel inside a HUB_PANEL                           |
 | `HUB_TOP_BANNER_STRIP_CLASS`       | Animated full-width banner strip                      | Top-of-page status (sandbox state, missing AGENTS.md)     |
 | `HUB_TAG_CLASS`                    | Rounded-full, uppercase mono, `tracking-[0.16em]`     | Inline metadata tag (`RECOMMENDED`, `EXPERIMENTAL`)       |
 | `HEADER_ROUND_BUTTON_CLASS`        | `h-9 w-9` plain interactive (no surface)              | Chat app-bar icon buttons (palette, dock, web search)     |
 | `HEADER_PILL_BUTTON_CLASS`         | `h-9 px-1.5` plain interactive with gap-2             | Chat app-bar pill (launcher button in the center cell)    |
-| `HUB_GLASS_PANEL_CLASS`            | Translucent gradient + `backdrop-blur-2xl` + `border-white/[0.07]` frame | Menu shell — `<SheetContent>` of the Chats drawer / Workspace hub (caller adds the side: `border-l`/`-r`/`-t`) |
+| `HUB_GLASS_PANEL_CLASS`            | Translucent gradient + `backdrop-blur-2xl` + `border-white/[0.07]` frame + frosted edge (`shadow-push-glass-edge`) | Menu shell — `<SheetContent>` of the Chats drawer / Workspace hub (caller adds the side: `border-l`/`-r`/`-t`) |
 | `HUB_GLASS_HAIRLINE`               | `border-white/[0.06]`                                | Soft dividers inside a glass menu (header / strip / seam) and resting tile outlines |
 | `GLASS_SURFACE` / `…_HOVER`        | `border-white/[0.06] bg-white/[0.02]` + hover lift   | Resting bordered tile — Chats-drawer repo & section cards                        |
 | `GLASS_ACTIVE_CLASS`               | Accent tint + ring + soft glow (`--push-accent-rgb`) | Active/selected tile — live repo card, live workspace tool tab                   |
@@ -305,7 +323,8 @@ Common sizes: `size-3` (12px), `size-3.5` (14px), `size-4` (16px), `size-8` (32p
 - Do use the gradient backgrounds (`bg-push-grad-card`, `bg-push-grad-panel`) for layered surfaces instead of flat colors
 - Do respect `prefers-reduced-motion`
 - Don't mix rounded and sharp corners in the same view
-- Don't use shadows to distinguish surface layers — use border and background contrast. Shadows are reserved for floating elements (dialogs, popovers, dropdowns)
+- Do reach for the neumorphic depth tokens (`shadow-push-raised` / `shadow-push-inset`) only on **chrome** (buttons, pills, panels) and **recessed wells** (inputs, console). Keep dense **content** cards flat — distinguish those layers with border + background contrast, not depth
+- Don't compose two `shadow-*` utilities on one element (e.g. raised + inset) — they collide on source order. Pick one per surface; use `:active` to swap raised → inset for a press
 - Don't introduce light-mode colors; the app is dark-only
 - Don't hardcode colors — use the token classes with Tailwind prefixes: `text-push-fg`, `bg-push-surface`, `border-push-edge`, etc.
 - Don't use shadcn `Button` from `components/ui/button.tsx` for chrome — its `default` variant is now the Sky tinted-outline treatment (flat, on-accent), but chrome surfaces want the hub material (solid raised surface + border), so reach for `HUB_MATERIAL_BUTTON_CLASS` (or `HUB_MATERIAL_PILL_BUTTON_CLASS` for inline pills). The shadcn Button is fine **inside** `<Dialog>` / `<Sheet>` forms — see the composition layer notes above.
