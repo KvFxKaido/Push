@@ -33,7 +33,13 @@ import { type SessionDigest, SESSION_DIGEST_HEADER } from '@push/lib/session-dig
  *  but high enough to skip the cost on warm-up turns. The actual
  *  compaction decision still happens in `manageContext`. */
 const MIN_MESSAGES_BEFORE_PREFETCH = 20;
-import { shouldRetryStreamRound, streamRetryDelayMs } from '@/lib/stream-error';
+import { STREAM_RETRY_MAX, isRetryableStreamError, streamRetryDelayMs } from '@/lib/stream-error';
+import { decideStreamFailover } from '@push/lib/provider-failover';
+import {
+  resolveFailoverCandidates,
+  type ActiveProvider,
+} from '@/lib/orchestrator-provider-routing';
+import { getProviderFailoverEnabled } from '@/lib/providers';
 import type { ChatMessage, ReasoningBlock, UrlCitation } from '@/types';
 import type { SendLoopContext, StreamRoundResult } from './chat-send-types';
 
@@ -178,7 +184,10 @@ export async function streamAssistantRound(
     linkedLibraryPayload.imageAttachments,
   );
 
-  const attemptStream = (): Promise<Error | null> =>
+  const attemptStream = (
+    provider: ActiveProvider | undefined,
+    model: string | undefined,
+  ): Promise<Error | null> =>
     new Promise<Error | null>((resolve) => {
       // Set OpenRouter session_id so all requests in this conversation are
       // grouped. Re-armed per attempt because the getter is consume-and-clear,
@@ -256,8 +265,8 @@ export async function streamAssistantRound(
         hasSandboxThisRound,
         scratchpadRef.current?.content,
         abortControllerRef.current?.signal,
-        lockedProvider,
-        resolvedModel,
+        provider,
+        model,
         undefined,
         todoRef.current ? buildTodoContext(todoRef.current.todos) : undefined,
         (block) => {
@@ -328,50 +337,100 @@ export async function streamAssistantRound(
       );
     });
 
-  // Retry a transient stream failure (gateway 5xx, rate limit, stall/timeout)
-  // — but ONLY before any output streamed this round. Tokens write into the
-  // assistant message live (status:'streaming'), so retrying after partial
-  // output would duplicate or visibly rewrite text the user already saw and
-  // corrupt reasoning/tool-call coherence. A connect-time blip (the common
-  // flaky-gateway case) fails with `accumulated`/`thinking` still empty, which
-  // is exactly what we re-attempt. Mid-stream failures stay terminal.
+  // Recover from a transient stream failure (gateway 5xx, rate limit,
+  // stall/timeout) — but ONLY before any output streamed this round. Tokens
+  // write into the assistant message live (status:'streaming'), so retrying
+  // after partial output would duplicate or visibly rewrite text the user
+  // already saw and corrupt reasoning/tool-call coherence. A connect-time blip
+  // (the common flaky-gateway case) fails with `accumulated`/`thinking` still
+  // empty, which is exactly what we re-attempt. Mid-stream failures stay
+  // terminal.
+  //
+  // Two recovery tiers (decision #13): (1) same-provider transient retry, then
+  // (2) round-scoped failover to an alternate configured provider of the SAME
+  // wire shape, when the failover setting is on. Failover does NOT mutate the
+  // chat lock — it rescues this round only; the next round re-tries the locked
+  // provider first. With failover disabled the candidate list is empty, so
+  // `decideStreamFailover` collapses to the prior same-provider-retry behavior.
+  const failoverEnabled = getProviderFailoverEnabled();
+  let currentProvider: ActiveProvider = lockedProvider;
+  // The locked round uses its resolved model; a failover provider passes
+  // `undefined` so `streamChat` resolves that provider's own default model.
+  let currentModel: string | undefined = resolvedModel;
+  const tried = new Set<string>([currentProvider]);
   let error: Error | null;
-  let retried = false;
-  for (let attempt = 0; ; attempt++) {
-    error = await attemptStream();
+  let recovered = false;
+  let sameProviderAttempt = 0;
+  for (;;) {
+    error = await attemptStream(currentProvider, currentModel);
+    if (!error) break;
     // Any assistant-visible side effect this round — streamed text, thinking,
-    // signed reasoning blocks, or web-search citations — makes a retry unsafe:
-    // it would duplicate/rewrite what the user already saw, or leave a stale
-    // signed-thinking sidecar on the message that the next turn forwards to the
-    // model. Only a clean pre-output failure (the flaky-gateway connect blip)
-    // is retried.
+    // signed reasoning blocks, or web-search citations — makes re-attempting
+    // unsafe on ANY provider: it would duplicate/rewrite what the user already
+    // saw, or leave a stale signed-thinking sidecar the next turn forwards to
+    // the model. Only a clean pre-output failure is recoverable.
     const hasOutput =
       accumulated.length > 0 ||
       thinkingAccumulated.length > 0 ||
       reasoningBlocks.length > 0 ||
       citationsByUrl.size > 0;
-    if (!shouldRetryStreamRound({ error, aborted: abortRef.current, hasOutput, attempt })) break;
-    retried = true;
+    const decision = decideStreamFailover({
+      classification: {
+        retryable: isRetryableStreamError(error),
+        status: (error as { status?: number }).status,
+      },
+      aborted: abortRef.current,
+      hasOutput,
+      sameProviderAttempt,
+      sameProviderMax: STREAM_RETRY_MAX,
+      tried,
+      candidates: failoverEnabled ? resolveFailoverCandidates(currentProvider, tried) : [],
+      retryDelayMs: streamRetryDelayMs(sameProviderAttempt),
+    });
+    if (decision.action === 'give-up') break;
+    recovered = true;
+    if (decision.action === 'retry-same') {
+      console.log(
+        JSON.stringify({
+          level: 'warn',
+          event: 'stream_round_retry',
+          round,
+          provider: currentProvider,
+          attempt: sameProviderAttempt + 1,
+          status: (error as { status?: number }).status,
+        }),
+      );
+      sameProviderAttempt++;
+      await new Promise<void>((resolve) => setTimeout(resolve, decision.delayMs));
+      if (abortRef.current) break; // user may have cancelled during backoff
+      continue;
+    }
+    // decision.action === 'failover'
     console.log(
       JSON.stringify({
         level: 'warn',
-        event: 'stream_round_retry',
+        event: 'stream_failover',
         round,
-        attempt: attempt + 1,
+        from: currentProvider,
+        to: decision.provider,
         status: (error as { status?: number }).status,
       }),
     );
-    await new Promise<void>((resolve) => setTimeout(resolve, streamRetryDelayMs(attempt)));
-    if (abortRef.current) break; // user may have cancelled during backoff
+    currentProvider = decision.provider as ActiveProvider;
+    currentModel = undefined; // resolve the failover provider's own default model
+    tried.add(decision.provider);
+    sameProviderAttempt = 0;
   }
   // Gate the exhausted log on !aborted — an abort during backoff exits here too,
   // but the round loop handles that as a cancel, not a failure.
-  if (error && retried && !abortRef.current) {
+  if (error && recovered && !abortRef.current) {
     console.log(
       JSON.stringify({
         level: 'warn',
-        event: 'stream_round_retry_exhausted',
+        event: 'stream_recovery_exhausted',
         round,
+        provider: currentProvider,
+        triedCount: tried.size,
         status: (error as { status?: number }).status,
       }),
     );

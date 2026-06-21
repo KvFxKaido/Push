@@ -173,6 +173,66 @@ export function isProviderAvailable(provider: ActiveProvider): boolean {
   return check ? check() : false;
 }
 
+// ---------------------------------------------------------------------------
+// Provider failover candidate resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * Native wire shape per provider. Drives same-shape failover candidate
+ * selection so a round never fails over across an incompatible reasoning
+ * contract. This is the *provider's* contract, not the client SSE parser —
+ * every provider streams OpenAI-compatible SSE back to the browser (the
+ * anthropic/gemini wire shapes are translated server-side), but the
+ * reasoning-round-trip compatibility that matters for failover follows the
+ * native contract.
+ *
+ * `anthropic` is intentionally alone in its bucket: signed reasoning blocks
+ * are Anthropic-only today, and a history carrying them must never be replayed
+ * to a provider that can't echo the signatures back. Leaving anthropic
+ * single-member means a chat locked on Anthropic simply has no same-shape
+ * candidate and never fails over — the maximally safe default for the
+ * reasoning-block hazard called out in decision #13.
+ */
+export type ProviderWireShape = 'anthropic' | 'gemini' | 'openai-compat';
+
+const PROVIDER_STREAM_SHAPE: Record<ActiveProvider, ProviderWireShape> = {
+  anthropic: 'anthropic',
+  google: 'gemini',
+  vertex: 'gemini',
+  ollama: 'openai-compat',
+  openrouter: 'openai-compat',
+  cloudflare: 'openai-compat',
+  zen: 'openai-compat',
+  nvidia: 'openai-compat',
+  blackbox: 'openai-compat',
+  kilocode: 'openai-compat',
+  fireworks: 'openai-compat',
+  openadapter: 'openai-compat',
+  azure: 'openai-compat',
+  bedrock: 'openai-compat',
+  openai: 'openai-compat',
+  // 'demo' has no wire shape; it can never be a failover source or target.
+  demo: 'openai-compat',
+};
+
+/**
+ * Ordered failover candidates for a round that failed on `locked`: configured
+ * providers of the SAME wire shape, excluding any already tried this round and
+ * the demo provider. Order follows `PROVIDER_FALLBACK_ORDER` (neutral — no
+ * provider favoured). Pure modulo the `isProviderAvailable` credential reads,
+ * so the actual pick stays in `lib/`'s `decideStreamFailover`.
+ */
+export function resolveFailoverCandidates(
+  locked: ActiveProvider,
+  tried: ReadonlySet<string>,
+): ActiveProvider[] {
+  if (locked === 'demo') return [];
+  const shape = PROVIDER_STREAM_SHAPE[locked];
+  return PROVIDER_FALLBACK_ORDER.filter(
+    (p) => !tried.has(p) && PROVIDER_STREAM_SHAPE[p] === shape && isProviderAvailable(p),
+  );
+}
+
 /**
  * Determine which provider is active.
  *
