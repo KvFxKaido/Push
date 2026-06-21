@@ -229,6 +229,26 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
         <AuditVerdictCard data={data.auditVerdict} />
       </div>
 
+      {/* Ref-only push plan summary (push-kind only) — what the push does to
+          origin: creates the branch or fast-forwards it, and by how much. */}
+      {isPush &&
+        data.pushPlan &&
+        (data.pushPlan.kind === 'create' || data.pushPlan.kind === 'fast-forward') && (
+          <div className="flex items-center gap-1.5 px-3 pb-2 text-push-xs text-push-fg-dim">
+            {data.pushPlan.kind === 'create' ? (
+              <Plus className="h-3.5 w-3.5 shrink-0" />
+            ) : (
+              <GitBranch className="h-3.5 w-3.5 shrink-0" />
+            )}
+            <span>
+              {data.pushPlan.kind === 'create' ? 'Creates this branch on origin' : 'Fast-forward'}
+              {typeof data.pushPlan.ahead === 'number' && data.pushPlan.ahead > 0
+                ? ` · ${data.pushPlan.ahead} commit${data.pushPlan.ahead === 1 ? '' : 's'} ahead`
+                : ''}
+            </span>
+          </div>
+        )}
+
       {isCommitted && (
         <div className="flex flex-wrap items-center gap-2 px-3 pb-3">
           {showSwitchToDefault && defaultBranch && (

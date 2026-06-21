@@ -19,6 +19,7 @@ import {
   type PrePushGate,
 } from '@push/lib/git/push-git';
 import { computePushedDiff } from '@push/lib/git/pushed-diff';
+import { computePushPlan, type PushPlan } from '@push/lib/git/push-plan';
 import { makeSecretScanPrePushGate } from '@push/lib/git/secret-scan-gate';
 import { makeProtectMainPrePushGate } from '@push/lib/git/protect-main-gate';
 import { makeAuditorPrePushGate, type AuditorPushVerdict } from '@push/lib/git/auditor-push-gate';
@@ -173,6 +174,25 @@ export function computeSandboxPushedDiff(
   opts?: { ref?: string; getGitHubToken?: GitHubTokenProvider },
 ): Promise<string | null> {
   return computePushedDiff(makeSandboxGitExec(sandboxId, execFn, opts?.getGitHubToken), opts);
+}
+
+/**
+ * Compute the ref-only push plan for a sandbox — what the next `git push` would
+ * do (create / fast-forward / force / skip) plus origin's live tip as the
+ * force-with-lease value — resolved through the same auth-injecting `GitExec`
+ * port the backend uses (so `ls-remote` against origin carries the GitHub
+ * token). Side-effect-free. `prepare_push` uses it to block a diverged push and
+ * to pin the lease; the approval check re-reads the live tip the same way to
+ * detect a remote that moved between review and push.
+ */
+export function computeSandboxPushPlan(
+  sandboxId: string,
+  execFn: SandboxExecFn = execInSandbox,
+  opts?: { ref?: string; getGitHubToken?: GitHubTokenProvider },
+): Promise<PushPlan> {
+  return computePushPlan(makeSandboxGitExec(sandboxId, execFn, opts?.getGitHubToken), {
+    ref: opts?.ref,
+  });
 }
 
 /**

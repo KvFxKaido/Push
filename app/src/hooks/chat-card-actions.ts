@@ -21,7 +21,7 @@ import type {
   SandboxStateCardData,
 } from '@/types';
 import { execInSandbox, writeToSandbox } from '@/lib/sandbox-client';
-import { createSandboxPushGit } from '@/lib/git-backend';
+import { computeSandboxPushPlan, createSandboxPushGit } from '@/lib/git-backend';
 import { executeToolCall } from '@/lib/github-tools';
 import type { ActiveProvider } from '@/lib/orchestrator';
 import { executeSandboxToolCall } from '@/lib/sandbox-tools';
@@ -404,6 +404,55 @@ export function useChatCardActions({
                   };
                 });
                 return;
+              }
+
+              // Force-with-lease guard: the verdict was audited against the diff
+              // base origin had at review time. If origin's tip for this branch
+              // moved since (a teammate pushed, CI amended), the audited diff no
+              // longer describes what ships — git would reject it non-fast-forward
+              // and any reconcile would be unaudited. Re-read the live tip the
+              // same way prepare_push pinned it and refuse on drift. Only enforced
+              // when a lease was actually pinned (origin reachable at audit time);
+              // a live read failure fails closed but retryable, since "can't
+              // confirm the remote didn't move" is exactly what this guard exists
+              // to refuse. (git-sync's --force-with-lease, applied at our gate.)
+              const auditedRemoteTipSha = approveSourceData?.auditedRemoteTipSha;
+              if (auditedRemoteTipSha) {
+                const livePlan = await computeSandboxPushPlan(sandboxId);
+                if (!livePlan.leaseEstablished) {
+                  updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+                    if (card.type !== 'commit-review') return card;
+                    return {
+                      ...card,
+                      data: {
+                        ...card.data,
+                        status: 'error',
+                        error:
+                          'Could not reach origin to confirm the remote tip before pushing — retry to verify.',
+                      } as CommitReviewCardData,
+                    };
+                  });
+                  return;
+                }
+                // `leasedRemoteSha` re-read here is origin's CURRENT live tip (the
+                // plan recomputes it); `auditedRemoteTipSha` is the historical lease
+                // pinned at review time. Drift between the two means origin moved.
+                const liveRemoteTip = livePlan.leasedRemoteSha;
+                if (liveRemoteTip !== auditedRemoteTipSha) {
+                  updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+                    if (card.type !== 'commit-review') return card;
+                    return {
+                      ...card,
+                      data: {
+                        ...card.data,
+                        status: 'error',
+                        error:
+                          'Origin moved since this review — the remote branch advanced; refresh to re-audit against the new base before pushing.',
+                      } as CommitReviewCardData,
+                    };
+                  });
+                  return;
+                }
               }
 
               updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {

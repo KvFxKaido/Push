@@ -868,6 +868,19 @@ export interface DiffPreviewCardData {
 
 // Phase 4 — User Confirmation + CI Status
 
+/**
+ * Display-only summary of the ref-only push plan (`computePushPlan`) carried on
+ * a push-kind review card. `kind` mirrors `RefMoveKind` from
+ * `lib/git/push-plan.ts` minus `force` (a diverged push is blocked before a card
+ * exists, so it never reaches the UI). `ahead`/`behind` are commit counts vs
+ * origin, null when not computable.
+ */
+export interface PushPlanSummary {
+  kind: 'create' | 'fast-forward' | 'skip' | 'unknown';
+  ahead: number | null;
+  behind: number | null;
+}
+
 export interface CommitReviewCardData {
   /**
    * Which delivery step this card gates (Gate-at-Push Move A):
@@ -902,6 +915,25 @@ export interface CommitReviewCardData {
    * re-reads it and fails closed on mismatch.
    */
   auditedRemoteUrl?: string;
+  /**
+   * For a `kind: 'push'` card: origin's LIVE tip sha for the pushed branch when
+   * the verdict was computed — the force-with-lease value (`computePushPlan`).
+   * `'0000…0'` (ZERO_OID) encodes "no remote branch yet" (a create) so it stays
+   * distinguishable from an absent pin. Unlike the other pins, this is read over
+   * the network (`ls-remote`), so it's only set when origin was reachable;
+   * approval re-reads the live tip and refuses the push if it moved (the audited
+   * diff was computed against the old base). Absent on legacy cards and when
+   * origin was unreadable at audit time — the lease check then no-ops (git's own
+   * non-fast-forward rejection remains the backstop).
+   */
+  auditedRemoteTipSha?: string;
+  /**
+   * For a `kind: 'push'` card: the classified ref move surfaced to the user —
+   * whether the push creates the branch or fast-forwards it, and by how many
+   * commits. Display-only; the prepare step already blocks a `force`/diverged
+   * push before a card is ever produced.
+   */
+  pushPlan?: PushPlanSummary;
   diff: DiffPreviewCardData;
   auditVerdict: AuditVerdictCardData;
   commitMessage: string;
