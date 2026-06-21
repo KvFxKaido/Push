@@ -552,6 +552,10 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
       // Stop this dial's heartbeat first — the socket is going away and
       // a stray tick must not fire against a dead/replaced connection.
       clearHeartbeat();
+      // Manual reconnects replace `ws` before terminating the old socket.
+      // That old socket will still emit close/error afterward; ignore it so
+      // it cannot arm a stale backoff timer against the fresh dial.
+      if (!clientClosed && ws !== socket) return;
       // `ws` does NOT auto-close the socket on `unexpected-response`, and a
       // terminal close/error leaves nothing to reuse — terminate so the
       // underlying TCP socket can't leak across the (now dead) dial.

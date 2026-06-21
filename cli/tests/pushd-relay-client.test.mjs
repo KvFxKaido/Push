@@ -407,6 +407,35 @@ describe('pushd-relay-client', () => {
       await server.close();
     }
   });
+
+  it('manual reconnect() ignores the replaced socket terminal and does not leave a stale retry timer', async () => {
+    const server = await makeServer();
+    try {
+      const client = startPushdRelayClient({
+        deploymentUrl: server.url,
+        sessionId: 'sess-reconnect-stale-close',
+        token: RELAY_TOKEN,
+        backoffScheduleMs: [40],
+        maxReconnectAttempts: 3,
+        heartbeatIntervalMs: 0,
+      });
+      await awaitOpen(client, 2000);
+      assert.equal(server.inspect().upgrades, 1);
+
+      client.reconnect();
+      await awaitStatus(client, () => server.inspect().upgrades >= 2, 2000);
+      assert.equal(server.inspect().upgrades, 2);
+
+      // The old socket's close/error path used to schedule a backoff retry
+      // after reconnect() had already opened the replacement socket.
+      await new Promise((r) => setTimeout(r, 120));
+      assert.equal(server.inspect().upgrades, 2, 'old socket terminal must not arm a retry');
+      assert.equal(client.status.state, 'open');
+      client.close();
+    } finally {
+      await server.close();
+    }
+  });
 });
 
 describe('pushd-relay-client — liveness heartbeat (GOpencode review #1)', () => {
