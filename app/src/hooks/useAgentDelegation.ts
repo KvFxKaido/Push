@@ -2,6 +2,8 @@ import type React from 'react';
 import { useCallback } from 'react';
 import { type ActiveProvider } from '@/lib/orchestrator';
 import { isProviderEngineCapable } from '@/lib/provider-engine-capability';
+import { resolveHarnessSettings } from '@/lib/model-capabilities';
+import { getRunTokenBudgetPref } from '@/lib/run-token-budget-pref';
 import {
   handleExplorerDelegation,
   type ExplorerHandlerContext,
@@ -166,6 +168,16 @@ async function startBackgroundCoderJob(
     verificationPolicy: input.verificationPolicy,
     declaredCapabilities: args.declaredCapabilities,
     correlation: input.baseCorrelation,
+    // Resolve harness settings on the client (same as the inline lead and the
+    // delegated-arc handler) so the background job inherits the adaptive
+    // round/context-reset profile AND the user's per-run token budget. Without
+    // this the background lane silently fell back to defaults (30 rounds, no
+    // budget) — the coder-job DO reads every harness value off this envelope.
+    harnessSettings: resolveHarnessSettings(
+      input.lockedProviderForChat,
+      input.resolvedModelForChat,
+      { runTokenBudget: getRunTokenBudgetPref() },
+    ),
   };
 
   const startResult = await backgroundCoderJob.startJob({
