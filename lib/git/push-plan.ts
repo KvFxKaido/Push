@@ -30,6 +30,7 @@
  */
 
 import type { GitExec } from './backend.js';
+import { resolvePushDestination } from './push-destination.js';
 
 /**
  * Git's all-zero object id — the conventional "this ref does not exist" sentinel
@@ -117,8 +118,11 @@ export async function computePushPlan(
   const remote = opts?.remote ?? 'origin';
   const ref = opts?.ref?.trim() || 'HEAD';
 
-  const branch = ref === 'HEAD' ? await read(exec, ['branch', '--show-current']) : ref;
-  const localSha = await read(exec, ['rev-parse', '--verify', '--quiet', ref]);
+  const target = await resolvePushDestination(exec, { ref });
+  const branch = target.branch;
+  const localSha = target.sourceRef
+    ? await read(exec, ['rev-parse', '--verify', '--quiet', target.sourceRef])
+    : null;
 
   // Live remote tip via ls-remote (NOT the local origin/<branch> mirror). Exit 0
   // with empty output means the branch truly doesn't exist on origin (a create);
@@ -156,7 +160,9 @@ export async function computePushPlan(
     // (fast-forward), exit 1 = not an ancestor (proven divergence → force), any
     // other exit = origin's object isn't present locally (stale mirror) so we
     // can't classify — stay `unknown` rather than misreport a force.
-    const anc = await exec(['merge-base', '--is-ancestor', remoteSha, ref]);
+    const anc = target.sourceRef
+      ? await exec(['merge-base', '--is-ancestor', remoteSha, target.sourceRef])
+      : { stdout: '', stderr: '', exitCode: 128 };
     if (anc.exitCode === 0) {
       kind = 'fast-forward';
       reason = `fast-forward over ${remote}/${branch}`;
@@ -173,12 +179,12 @@ export async function computePushPlan(
   // Best-effort ahead/behind; only meaningful when both tips are local objects.
   let ahead: number | null = null;
   let behind: number | null = null;
-  if (localSha && remoteSha && remoteSha !== localSha) {
+  if (target.sourceRef && localSha && remoteSha && remoteSha !== localSha) {
     const counts = await read(exec, [
       'rev-list',
       '--left-right',
       '--count',
-      `${remoteSha}...${ref}`,
+      `${remoteSha}...${target.sourceRef}`,
     ]);
     if (counts) {
       const [b, a] = counts.split(/\s+/).map((n) => Number.parseInt(n, 10));

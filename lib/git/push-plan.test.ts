@@ -15,7 +15,7 @@ const silent = () => {};
 describe('computePushPlan', () => {
   it('classifies a missing remote branch as a create and leases ZERO_OID', async () => {
     const exec = execFrom((args) => {
-      if (args[0] === 'branch') return okRes('feature-x');
+      if (args[0] === 'symbolic-ref') return okRes('feature-x');
       if (args[0] === 'rev-parse') return okRes('localsha');
       if (args[0] === 'ls-remote') return okRes(''); // exit 0, empty → branch absent
       return exitRes(1);
@@ -29,7 +29,7 @@ describe('computePushPlan', () => {
 
   it('classifies an ancestor remote tip as a fast-forward and leases the tip', async () => {
     const exec = execFrom((args) => {
-      if (args[0] === 'branch') return okRes('feature-x');
+      if (args[0] === 'symbolic-ref') return okRes('feature-x');
       if (args[0] === 'rev-parse') return okRes('localsha');
       if (args[0] === 'ls-remote') return okRes('remotesha\trefs/heads/feature-x');
       if (args[0] === 'merge-base') return exitRes(0); // remote IS an ancestor
@@ -44,9 +44,34 @@ describe('computePushPlan', () => {
     expect(plan.move.behind).toBe(0);
   });
 
+  it('uses an explicit push refspec destination for the remote lease', async () => {
+    const exec = execFrom((args) => {
+      if (args[0] === 'rev-parse') return okRes('localsha');
+      if (args[0] === 'ls-remote') {
+        expect(args).toEqual(['ls-remote', 'upstream', 'refs/heads/release']);
+        return okRes('remotesha\trefs/heads/release');
+      }
+      if (args[0] === 'merge-base') {
+        expect(args).toEqual(['merge-base', '--is-ancestor', 'remotesha', 'HEAD']);
+        return exitRes(0);
+      }
+      if (args[0] === 'rev-list') return okRes('0\t2');
+      return exitRes(1);
+    });
+    const plan = await computePushPlan(exec, {
+      remote: 'upstream',
+      ref: 'HEAD:refs/heads/release',
+      log: silent,
+    });
+    expect(plan.move.branch).toBe('release');
+    expect(plan.move.kind).toBe('fast-forward');
+    expect(plan.leasedRemoteSha).toBe('remotesha');
+    expect(plan.move.ahead).toBe(2);
+  });
+
   it('classifies a diverged remote as a PROVEN force', async () => {
     const exec = execFrom((args) => {
-      if (args[0] === 'branch') return okRes('feature-x');
+      if (args[0] === 'symbolic-ref') return okRes('feature-x');
       if (args[0] === 'rev-parse') return okRes('localsha');
       if (args[0] === 'ls-remote') return okRes('remotesha\trefs/heads/feature-x');
       if (args[0] === 'merge-base') return exitRes(1); // NOT an ancestor → diverged
@@ -62,7 +87,7 @@ describe('computePushPlan', () => {
 
   it('classifies an unchanged remote as skip', async () => {
     const exec = execFrom((args) => {
-      if (args[0] === 'branch') return okRes('feature-x');
+      if (args[0] === 'symbolic-ref') return okRes('feature-x');
       if (args[0] === 'rev-parse') return okRes('samesha');
       if (args[0] === 'ls-remote') return okRes('samesha\trefs/heads/feature-x');
       return exitRes(1);
@@ -75,7 +100,7 @@ describe('computePushPlan', () => {
 
   it('does NOT force when ls-remote fails — unknown, lease unestablished', async () => {
     const exec = execFrom((args) => {
-      if (args[0] === 'branch') return okRes('feature-x');
+      if (args[0] === 'symbolic-ref') return okRes('feature-x');
       if (args[0] === 'rev-parse') return okRes('localsha');
       if (args[0] === 'ls-remote') return exitRes(128); // network/auth read failure
       return exitRes(1);
@@ -89,7 +114,7 @@ describe('computePushPlan', () => {
 
   it('stays unknown (not force) when the remote tip is not present locally', async () => {
     const exec = execFrom((args) => {
-      if (args[0] === 'branch') return okRes('feature-x');
+      if (args[0] === 'symbolic-ref') return okRes('feature-x');
       if (args[0] === 'rev-parse') return okRes('localsha');
       if (args[0] === 'ls-remote') return okRes('remotesha\trefs/heads/feature-x');
       if (args[0] === 'merge-base') return exitRes(128); // missing object locally

@@ -20,7 +20,7 @@
  */
 
 import { scanDiffForSecrets, formatSecretFindings } from '../secret-scan.js';
-import type { PrePushGate } from './push-git.js';
+import type { PrePushGate, PushOptions } from './push-git.js';
 
 type LogLevel = 'info' | 'warn' | 'error';
 type LogFn = (level: LogLevel, event: string, ctx: Record<string, unknown>) => void;
@@ -34,7 +34,7 @@ export interface SecretScanPrePushGateOptions {
    * Resolve the diff to scan. Return `null` when no diff is available (the gate
    * then skips, logging `secret_scan_no_diff`).
    */
-  getDiff: () => Promise<string | null> | string | null;
+  getDiff: (opts?: PushOptions) => Promise<string | null> | string | null;
   /** Whether the scan runs. Defaults to true; pass the resolved policy value. */
   enabled?: boolean;
   /** Injectable for tests; defaults to a JSON-line `console.log`. */
@@ -43,7 +43,7 @@ export interface SecretScanPrePushGateOptions {
 
 export function makeSecretScanPrePushGate(opts: SecretScanPrePushGateOptions): PrePushGate {
   const { getDiff, enabled = true, log = defaultLog } = opts;
-  return async () => {
+  return async (pushOpts?: PushOptions) => {
     if (!enabled) {
       log('info', 'secret_scan_skipped', { reason: 'disabled' });
       return { ok: true };
@@ -51,7 +51,7 @@ export function makeSecretScanPrePushGate(opts: SecretScanPrePushGateOptions): P
 
     let diff: string | null;
     try {
-      diff = await getDiff();
+      diff = await getDiff(pushOpts);
     } catch (err) {
       // Fail open: a diff-read failure is infra, not a detected secret. Blocking
       // here would replicate the model-Auditor's "flaky backend blocks the

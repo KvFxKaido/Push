@@ -10,12 +10,11 @@
  * commit, so the gates must see every commit's patch. Resolved *uncapped* through
  * the same `GitExec` port the backend uses, so it works on every surface.
  *
- * Base resolution, most-specific first:
- *   1. the ref's upstream (`@{upstream}`) — the normal tracked-branch case;
- *   2. `origin/<branch>` — an existing remote branch with no local upstream set;
- *   3. the merge-base with `origin/HEAD` — a brand-new branch (the
- *      auto-branch-on-commit case): everything since it forked from the default.
- *   4. no baseline at all (a fresh/empty remote, e.g. `promote_to_github`'s first
+ * Base resolution mirrors the push destination (`git push <remote> <ref>`):
+ *   1. `<remote>/<destination-branch>` — the branch the push updates;
+ *   2. the merge-base with `<remote>/HEAD` — a brand-new branch (the
+ *      auto-branch-on-commit case): everything since it forked from the default;
+ *   3. no baseline at all (a fresh/empty remote, e.g. `promote_to_github`'s first
  *      push): scan the ref's WHOLE history — every commit is new. This makes "no
  *      baseline" fail *safe* (scan everything) instead of fail-open.
  *
@@ -25,6 +24,12 @@
  */
 
 import type { GitExec } from './backend.js';
+import { resolvePushDestination } from './push-destination.js';
+
+export interface PushedDiffOptions {
+  ref?: string;
+  remote?: string;
+}
 
 async function ok(exec: GitExec, args: string[]): Promise<string | null> {
   const res = await exec(args);
@@ -35,31 +40,24 @@ async function ok(exec: GitExec, args: string[]): Promise<string | null> {
 
 export async function computePushedDiff(
   exec: GitExec,
-  opts?: { ref?: string },
+  opts?: PushedDiffOptions,
 ): Promise<string | null> {
-  const ref = opts?.ref?.trim() || 'HEAD';
+  const remote = opts?.remote?.trim() || 'origin';
+  const target = await resolvePushDestination(exec, opts);
+  if (!target.sourceRef) return '';
 
-  // 1. upstream of the ref being pushed
-  let base = await ok(exec, [
-    'rev-parse',
-    '--abbrev-ref',
-    '--symbolic-full-name',
-    `${ref}@{upstream}`,
-  ]);
-
-  // 2. origin/<branch> for the ref's branch name
-  if (!base) {
-    const branch = ref === 'HEAD' ? await ok(exec, ['branch', '--show-current']) : ref;
-    if (branch) {
-      const remoteRef = `origin/${branch}`;
-      if (await ok(exec, ['rev-parse', '--verify', '--quiet', remoteRef])) base = remoteRef;
-    }
+  // 1. <remote>/<destination-branch> for the branch this push updates.
+  let base: string | null = null;
+  if (target.branch) {
+    const remoteRef = `${remote}/${target.branch}`;
+    if (await ok(exec, ['rev-parse', '--verify', '--quiet', remoteRef])) base = remoteRef;
   }
 
-  // 3. fork point from origin/HEAD (a new branch with no remote counterpart)
+  // 2. fork point from <remote>/HEAD (a new branch with no remote counterpart).
   if (!base) {
-    if (await ok(exec, ['rev-parse', '--verify', '--quiet', 'origin/HEAD'])) {
-      base = await ok(exec, ['merge-base', 'origin/HEAD', ref]);
+    const remoteHead = `${remote}/HEAD`;
+    if (await ok(exec, ['rev-parse', '--verify', '--quiet', remoteHead])) {
+      base = await ok(exec, ['merge-base', remoteHead, target.sourceRef]);
     }
   }
 
@@ -75,7 +73,7 @@ export async function computePushedDiff(
   // When no remote baseline resolves (step 1-3 all missed: fresh/empty remote),
   // every commit reachable from the ref is new — scan the whole history (`ref`
   // with no range).
-  const range = base ? [`${base}..${ref}`] : [ref];
+  const range = base ? [`${base}..${target.sourceRef}`] : [target.sourceRef];
   const res = await exec(['log', '-p', '--no-color', ...range]);
   if (res.exitCode !== 0) return null;
   return res.stdout;

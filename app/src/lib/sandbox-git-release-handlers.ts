@@ -616,9 +616,14 @@ export async function handlePreparePush(
   ]);
 
   // Step 1: Compute the cumulative push diff (commits the push would upload).
+  // Reuse the branch pin captured above when available so the audited diff and
+  // ref-only plan share the same explicit destination instead of independently
+  // resolving HEAD's branch.
+  const auditedPushRef = auditedBranch || undefined;
+  const auditedPushRefOpts = auditedPushRef ? { ref: auditedPushRef } : undefined;
   let diff: string | null;
   try {
-    diff = await computeSandboxPushedDiff(ctx.sandboxId, ctx.execInSandbox);
+    diff = await computeSandboxPushedDiff(ctx.sandboxId, ctx.execInSandbox, auditedPushRefOpts);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     const pushDiffErr = classifyError(reason, 'prepare_push');
@@ -682,7 +687,7 @@ export async function handlePreparePush(
   // review and push (the audited diff was computed against the old base). The
   // read is side-effect-free; an unreadable origin yields `leaseEstablished:
   // false` and we simply don't pin (git's own rejection remains the backstop).
-  const plan = await computeSandboxPushPlan(ctx.sandboxId, ctx.execInSandbox);
+  const plan = await computeSandboxPushPlan(ctx.sandboxId, ctx.execInSandbox, auditedPushRefOpts);
   if (plan.requiresForce) {
     console.log(
       JSON.stringify({

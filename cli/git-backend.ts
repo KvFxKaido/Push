@@ -90,7 +90,7 @@ export function createLocalPushGit(
         : undefined,
       opts?.secretScan
         ? makeSecretScanPrePushGate({
-            getDiff: () => computePushedDiff(exec),
+            getDiff: (pushOpts) => computePushedDiff(exec, pushOpts),
             enabled: resolveSecretScanEnabled({ env: process.env.PUSH_SECRET_SCAN }),
           })
         : undefined,

@@ -40,12 +40,13 @@ policy (`lib/git/policy.ts`, `remote-mutation`), with no `allowDirectGit`
 escape — same treatment as a local merge, since the session's remote is fixed.
 
 **Force-with-lease + ref-only plan follow-up (2026-06-21):** the destination
-pins above all read *local* state (HEAD, branch, the local `origin/<branch>`
-mirror, the configured remote URL); none caught origin's branch tip *advancing*
-between review and push. `lib/git/push-plan.ts` (`computePushPlan`) adds a
-side-effect-free, ref-only preview — modeled on `entireio/git-sync`'s `plan`
-step — that reads origin's **live** tip via `ls-remote` (not the possibly-stale
-local mirror `computePushedDiff` bases its diff on) and classifies the move
+pins above all read *local* state (HEAD, branch, the local remote-tracking
+mirror for the pushed branch, the configured remote URL); none caught origin's
+branch tip *advancing* between review and push. `lib/git/push-plan.ts`
+(`computePushPlan`) adds a side-effect-free, ref-only preview — modeled on
+`entireio/git-sync`'s `plan` step — that reads origin's **live** tip via
+`ls-remote` (not the possibly-stale local mirror `computePushedDiff` bases its
+diff on) and classifies the move
 (`create` / `fast-forward` / `force` / `skip` / `unknown`). Two uses: (1)
 `prepare_push` blocks a **proven-diverged** push up front — Push never
 force-pushes and local merge/rebase are policy-blocked, so a diverged remote is

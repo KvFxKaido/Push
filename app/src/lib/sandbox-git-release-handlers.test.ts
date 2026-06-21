@@ -121,14 +121,16 @@ function makeContext(opts: MakeContextOpts = {}): MockedContext {
     diffCalls,
     readCalls,
     execInSandbox: vi.fn(async (...args: ExecArgs) => {
-      // Absorb the pre-push secret scan's `computePushedDiff` reads — transparent
-      // to both the positional execResults queue AND `execCalls`, so handlers'
-      // command sequences and counts are unaffected. Resolving the base on the
-      // first read (`@{upstream}`) means the scan only ever issues these two
-      // distinctive commands; everything else (incl. the real `git 'push'`)
-      // is recorded and draws from the queue.
+      // Absorb pre-push `computePushedDiff` reads — transparent to both the
+      // positional execResults queue AND `execCalls`, so handlers' command
+      // sequences and counts are unaffected. These commands are the hidden
+      // destination-base probe plus the final `git log -p`; everything else
+      // (incl. the real `git 'push'`) is recorded and draws from the queue.
       const cmd = String(args[1]);
-      if (cmd.includes('@{upstream}')) return ok('origin/main'); // base resolves
+      if (cmd.includes("'symbolic-ref' '--quiet' '--short' 'HEAD'")) return ok('main');
+      if (/ 'rev-parse' '--verify' '--quiet' 'origin\/[^']+'/.test(cmd)) {
+        return ok('origin/main');
+      }
       if (/ 'log' '-p' '--no-color'/.test(cmd)) return ok(opts.pushedDiff ?? '');
       execCalls.push(args);
       return execQueue.shift() ?? ok();
@@ -529,8 +531,7 @@ describe('handlePreparePush', () => {
         ok('feature/work'),
         ok('origin/feature/work'),
         ok('https://github.com/owner/repo.git'),
-        // push plan: branch, rev-parse, ls-remote, merge-base (ancestor → FF), rev-list.
-        ok('feature/work'),
+        // push plan: rev-parse, ls-remote, merge-base (ancestor → FF), rev-list.
         ok('localsha'),
         ok('remotesha\trefs/heads/feature/work'),
         ok(''), // merge-base --is-ancestor exit 0 → fast-forward
@@ -556,8 +557,7 @@ describe('handlePreparePush', () => {
         ok('feature/work'),
         ok('origin/feature/work'),
         ok('https://github.com/owner/repo.git'),
-        // push plan: branch, rev-parse, ls-remote, merge-base (NOT ancestor), rev-list.
-        ok('feature/work'),
+        // push plan: rev-parse, ls-remote, merge-base (NOT ancestor), rev-list.
         ok('localsha'),
         ok('remotesha\trefs/heads/feature/work'),
         fail('', '', 1), // merge-base --is-ancestor exit 1 → diverged

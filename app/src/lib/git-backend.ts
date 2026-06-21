@@ -171,7 +171,7 @@ export function createSandboxGitBackend(
 export function computeSandboxPushedDiff(
   sandboxId: string,
   execFn: SandboxExecFn = execInSandbox,
-  opts?: { ref?: string; getGitHubToken?: GitHubTokenProvider },
+  opts?: { ref?: string; remote?: string; getGitHubToken?: GitHubTokenProvider },
 ): Promise<string | null> {
   return computePushedDiff(makeSandboxGitExec(sandboxId, execFn, opts?.getGitHubToken), opts);
 }
@@ -188,10 +188,11 @@ export function computeSandboxPushedDiff(
 export function computeSandboxPushPlan(
   sandboxId: string,
   execFn: SandboxExecFn = execInSandbox,
-  opts?: { ref?: string; getGitHubToken?: GitHubTokenProvider },
+  opts?: { ref?: string; remote?: string; getGitHubToken?: GitHubTokenProvider },
 ): Promise<PushPlan> {
   return computePushPlan(makeSandboxGitExec(sandboxId, execFn, opts?.getGitHubToken), {
     ref: opts?.ref,
+    remote: opts?.remote,
   });
 }
 
@@ -247,13 +248,13 @@ export function createSandboxPushGit(
         : undefined,
       opts?.secretScan
         ? makeSecretScanPrePushGate({
-            getDiff: () => computePushedDiff(exec),
+            getDiff: (pushOpts) => computePushedDiff(exec, pushOpts),
             enabled: resolveWebSecretScanEnabled(),
           })
         : undefined,
       opts?.auditAtPush
         ? makeAuditorPrePushGate({
-            getDiff: () => computePushedDiff(exec),
+            getDiff: (pushOpts) => computePushedDiff(exec, pushOpts),
             audit: opts.auditAtPush.audit,
             enabled: opts.auditAtPush.enabled,
           })

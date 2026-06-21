@@ -418,7 +418,9 @@ export function useChatCardActions({
               // to refuse. (git-sync's --force-with-lease, applied at our gate.)
               const auditedRemoteTipSha = approveSourceData?.auditedRemoteTipSha;
               if (auditedRemoteTipSha) {
-                const livePlan = await computeSandboxPushPlan(sandboxId);
+                const livePlan = await computeSandboxPushPlan(sandboxId, undefined, {
+                  ref: liveBranch,
+                });
                 if (!livePlan.leaseEstablished) {
                   updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
                     if (card.type !== 'commit-review') return card;
