@@ -18,6 +18,19 @@
  * reachable. After exhaustion the client surfaces `exhausted: true`
  * on its status callback and stops; a manual `reconnect()` re-arms.
  *
+ * Liveness heartbeat (GOpencode review #1): the ladder only fires on an
+ * *observed* terminal. A WS-level ping with a bounded pong window
+ * (`RELAY_HEARTBEAT_INTERVAL_MS`) catches the half-open case the network
+ * never reports — miss a pong/traffic and we `terminate()` into the
+ * ladder. Suspended while the send buffer is backlogged so a slow-but-
+ * live transfer isn't mistaken for a dead link.
+ *
+ * Backoff nudge (GOpencode review #3): `nudge()` is a no-op while the
+ * link is healthy or a dial is in flight, but collapses a pending
+ * backoff wait (or an exhausted/stranded state) and re-dials from the
+ * top. Drive it from an external "network restored / app foregrounded"
+ * signal to skip the wait without disturbing a working connection.
+ *
  * Token discipline: the token is held in closure scope and passed
  * once to the `WebSocket` constructor via `protocols`. It never
  * appears in status objects, log lines, audit events, or close
@@ -49,6 +62,37 @@ export const RELAY_RECONNECT_MAX_ATTEMPTS = 6;
 
 const SUBPROTOCOL_SELECTOR = 'push.relay.v1';
 const SEND_QUEUE_MAX = 64;
+
+/**
+ * App-level liveness heartbeat (GOpencode review, suggested-priority #1).
+ *
+ * The reconnect ladder above only fires on an *observed* terminal —
+ * a `close`/`error` event, or a non-101 upgrade. On a flaky mobile /
+ * NAT path the TCP connection can go **half-open**: the peer is gone
+ * but no FIN/RST ever arrives, so `ws` never emits `close` and the
+ * ladder never arms. The daemon then sits "open" forever against a
+ * dead relay. A WS-level ping with a bounded pong window is the only
+ * thing that surfaces that state: miss a pong and we `terminate()`,
+ * which synthesizes the `close` the network failed to deliver and
+ * routes into the existing reconnect path.
+ *
+ * Default cadence: ping every `RELAY_HEARTBEAT_INTERVAL_MS`; if no
+ * pong (or any inbound frame — traffic proves liveness too) arrived
+ * since the previous tick, the link is declared dead. Effective
+ * detection window is therefore ~1–2 intervals. Set the interval to
+ * 0 (or any value ≤ 0) to disable — used by tests that don't want a
+ * background timer.
+ */
+export const RELAY_HEARTBEAT_INTERVAL_MS = 20_000;
+
+/**
+ * When the socket has more than this many bytes still buffered for
+ * send, the heartbeat tick is suspended for that round: a large
+ * backlog means we're mid-transfer (the link is up, just slow), so
+ * pinging-and-timing-out would be a false positive that kills a
+ * working transfer. Mirrors GOpencode's `bufferedAmount` guard.
+ */
+const RELAY_HEARTBEAT_BUFFER_SUSPEND_BYTES = 64 * 1024;
 
 export type RelayConnectionStatus =
   | { state: 'connecting'; attempt: number }
@@ -156,6 +200,13 @@ export interface PushdRelayClientOptions {
   backoffScheduleMs?: readonly number[];
   /** Test seam: override the max-attempts cap. */
   maxReconnectAttempts?: number;
+  /**
+   * App-level liveness heartbeat interval (ms). Default
+   * `RELAY_HEARTBEAT_INTERVAL_MS`. Set ≤ 0 to disable the heartbeat
+   * entirely (no background timer) — tests that aren't exercising
+   * half-open detection pass 0 so they don't leave a timer running.
+   */
+  heartbeatIntervalMs?: number;
 }
 
 export interface RelayClientHandle {
@@ -178,6 +229,19 @@ export interface RelayClientHandle {
    * only one dial is in flight at a time.
    */
   reconnect(): void;
+  /**
+   * Backoff nudge (GOpencode review, suggested-priority #3). Unlike
+   * `reconnect()`, this is a *no-op when the link is healthy or a dial
+   * is already in flight* — it never disrupts a working connection.
+   * It only acts when we're parked in a backoff wait or sitting
+   * exhausted/stranded: it collapses the remaining wait, resets the
+   * ladder to the top, and dials immediately. The intended trigger is
+   * an external "things changed, try now" signal — network restored,
+   * the controlling app returned to foreground — where waiting out the
+   * full 30s backoff would be needless latency. A `fatal` (bad token /
+   * origin) latch is left untouched, since no network event fixes it.
+   */
+  nudge(): void;
   /**
    * Tear down: close the WS, clear any pending reconnect timer.
    * Idempotent.
@@ -224,6 +288,7 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
   const url = buildRelayUrl(opts.deploymentUrl, opts.sessionId);
   const schedule = opts.backoffScheduleMs ?? RELAY_RECONNECT_BACKOFF_MS;
   const maxAttempts = opts.maxReconnectAttempts ?? RELAY_RECONNECT_MAX_ATTEMPTS;
+  const heartbeatIntervalMs = opts.heartbeatIntervalMs ?? RELAY_HEARTBEAT_INTERVAL_MS;
 
   // The token lives only in this closure variable + the `protocols`
   // array we pass to `WebSocket`. NEVER copy it into status objects,
@@ -362,12 +427,74 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
     }
     ws = socket;
 
+    // App-level liveness state for THIS dial. `alive` is set by any
+    // inbound signal (pong frame or data message) and cleared on each
+    // heartbeat tick right before the next ping is sent; a tick that
+    // finds it still cleared declares the link half-open and forces a
+    // reconnect. The timer is dial-scoped and torn down in
+    // `fireTerminalOnce` so it can never outlive its socket.
+    let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+    let alive = true;
+    const clearHeartbeat = (): void => {
+      if (heartbeatTimer !== null) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+    };
+    const markAlive = (): void => {
+      alive = true;
+    };
+
     socket.on('open', () => {
       hasEverOpened = true;
       openedThisDial = true;
       attempt = 0;
       setStatus({ state: 'open' });
       flushSendQueue();
+
+      // Arm the liveness heartbeat now that the socket is open. Disabled
+      // when the interval is ≤ 0 (test seam). `.unref()` keeps the timer
+      // from holding the daemon's event loop open on its own — the WS
+      // already does that while the connection matters.
+      alive = true;
+      if (heartbeatIntervalMs > 0) {
+        heartbeatTimer = setInterval(() => {
+          // Gate on THIS dial's socket, never the module-level `ws`
+          // (which may already point at a newer dial). A non-open
+          // socket means the close path is mid-flight; let it clear us.
+          if (socket.readyState !== socket.OPEN) return;
+          // Mid-transfer backlog: link is up but slow. Treat as alive
+          // and skip this round rather than risk a false-positive kill.
+          if (socket.bufferedAmount > RELAY_HEARTBEAT_BUFFER_SUSPEND_BYTES) {
+            alive = true;
+            return;
+          }
+          if (!alive) {
+            // No pong/traffic since the previous tick → half-open. The
+            // network never delivered a close; synthesize one. The event
+            // name calls out the half-open cause explicitly so ops can
+            // grep heartbeat-driven kills apart from peer-initiated
+            // closes (which never emit this line). Never logs the bearer.
+            process.stderr.write(
+              `${JSON.stringify({ level: 'warn', event: 'relay_heartbeat_half_open', attempt })}\n`,
+            );
+            clearHeartbeat();
+            try {
+              socket.terminate();
+            } catch {
+              // best-effort — the close handler still routes to reconnect
+            }
+            return;
+          }
+          alive = false;
+          try {
+            socket.ping();
+          } catch {
+            // best-effort; a failed ping surfaces as a missed pong next tick
+          }
+        }, heartbeatIntervalMs);
+        if (typeof heartbeatTimer.unref === 'function') heartbeatTimer.unref();
+      }
       try {
         opts.onOpen?.((frame: string) => {
           if (ws && ws.readyState === ws.OPEN) {
@@ -383,7 +510,13 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
       }
     });
 
+    // Any pong proves the peer is alive. So does any data frame, so the
+    // `message` handler also marks alive — a chatty relay keeps the link
+    // certified without depending on pong support specifically.
+    socket.on('pong', markAlive);
+
     socket.on('message', (data, isBinary) => {
+      markAlive();
       if (isBinary) return; // wire is NDJSON text only
       const text = data.toString('utf8');
       try {
@@ -416,6 +549,9 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
     const fireTerminalOnce = (code: number, reason: string, isFatal = false): void => {
       if (terminalFired) return;
       terminalFired = true;
+      // Stop this dial's heartbeat first — the socket is going away and
+      // a stray tick must not fire against a dead/replaced connection.
+      clearHeartbeat();
       // `ws` does NOT auto-close the socket on `unexpected-response`, and a
       // terminal close/error leaves nothing to reuse — terminate so the
       // underlying TCP socket can't leak across the (now dead) dial.
@@ -556,6 +692,26 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
       // queueMicrotask so the caller's status observer sees the
       // 'connecting' transition AFTER they've finished handling the
       // reconnect() call.
+      queueMicrotask(() => {
+        if (!clientClosed) dial();
+      });
+    },
+    nudge(): void {
+      // A backoff nudge from an external "try now" signal (network
+      // restored, app foregrounded). Unlike reconnect(), it must never
+      // disturb a healthy link or a dial that's already in flight.
+      if (clientClosed || fatal) return;
+      // Healthy or actively connecting — nothing to accelerate.
+      if (currentStatus.state === 'open' || currentStatus.state === 'connecting') return;
+      // A dial is already scheduled to fire immediately (microtask path,
+      // no backoff timer pending) — let it land instead of stacking.
+      if (dialPending && reconnectTimer === null) return;
+      // Otherwise we're either parked mid-backoff (timer armed) or
+      // exhausted/stranded (no timer). Collapse the wait, reset the
+      // ladder to the top, and dial now.
+      clearReconnectTimer();
+      attempt = 0;
+      dialPending = true;
       queueMicrotask(() => {
         if (!clientClosed) dial();
       });

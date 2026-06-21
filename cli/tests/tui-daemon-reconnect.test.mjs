@@ -6,6 +6,7 @@ import {
   RECONNECT_BACKOFF_MS,
   cancelReconnect,
   createReconnectState,
+  nudgeReconnect,
   pickBackoffMs,
   planNextRetry,
   recordAttemptResult,
@@ -97,6 +98,31 @@ describe('cancelReconnect', () => {
     assert.equal(next.phase, 'idle');
     assert.equal(next.attempts, 4);
     assert.equal(next.nextRetryAtMs, null);
+  });
+});
+
+describe('nudgeReconnect', () => {
+  it('returns to idle AND zeroes the attempt count (unlike cancelReconnect)', () => {
+    const state = { phase: 'reconnecting', attempts: 5, nextRetryAtMs: 999 };
+    const next = nudgeReconnect(state);
+    assert.equal(next.phase, 'idle');
+    assert.equal(next.attempts, 0);
+    assert.equal(next.nextRetryAtMs, null);
+  });
+
+  it('makes the next planNextRetry start from the top of the ladder', () => {
+    // Climb the ladder a few rungs, then nudge: the next plan should be
+    // back at the 1s tier, not the deep-backoff tier it had reached.
+    let state = createReconnectState();
+    for (let i = 0; i < 4; i += 1) state = recordAttemptResult(state, 'fail');
+    assert.equal(state.attempts, 4);
+    const deep = planNextRetry(state, 0).delayMs;
+    assert.equal(deep, RECONNECT_BACKOFF_MS[4]);
+
+    state = nudgeReconnect(state);
+    const afterNudge = planNextRetry(state, 0).delayMs;
+    assert.equal(afterNudge, RECONNECT_BACKOFF_MS[0]);
+    assert.equal(afterNudge, 1_000);
   });
 });
 
