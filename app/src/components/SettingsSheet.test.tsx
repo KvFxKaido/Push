@@ -110,8 +110,6 @@ function emptyWorkspace(): SettingsWorkspaceProps {
   return {
     approvalMode: 'supervised',
     updateApprovalMode: vi.fn(),
-    contextMode: 'graceful',
-    updateContextMode: vi.fn(),
     sandboxStartMode: 'smart',
     updateSandboxStartMode: vi.fn(),
     sandboxStatus: 'idle',

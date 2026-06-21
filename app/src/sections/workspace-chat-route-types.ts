@@ -1,5 +1,4 @@
 import type { ApprovalMode } from '@/lib/approval-mode';
-import type { ContextMode } from '@/lib/orchestrator';
 import type { PreferredProvider } from '@/lib/providers';
 import type { RepoAppearance } from '@/lib/repo-appearance';
 import type { SandboxStartMode } from '@/lib/sandbox-start-mode';
@@ -234,8 +233,6 @@ export interface ChatRouteUiStateProps {
   showToolActivity: boolean;
   approvalMode: ApprovalMode;
   updateApprovalMode: (mode: ApprovalMode) => void;
-  contextMode: ContextMode;
-  updateContextMode: (mode: ContextMode) => void;
   sandboxStartMode: SandboxStartMode;
   updateSandboxStartMode: (mode: SandboxStartMode) => void;
   updateShowToolActivity: (value: boolean) => void;

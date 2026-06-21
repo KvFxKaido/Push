@@ -71,6 +71,8 @@ import {
 import type { SessionState } from './session-store.js';
 import { isParseErrorMessage, isToolResultMessage } from './context-manager.js';
 import type { Message } from './context-manager.js';
+import { maybeCompactLeadHistory } from './lead-compaction.js';
+import { isHandoffBlock } from '../lib/llm-compaction.ts';
 import { getDefaultCliHookRegistry, readCliCurrentBranch } from './tool-hooks-default.ts';
 import type { RunOptions, RunResult } from './engine.js';
 
@@ -231,7 +233,22 @@ export function buildLeadTurnPreamble(
   } else if (tail?.role === 'user' && tail.content.trim() === userText.trim()) {
     conversational.pop();
   }
-  const prior = conversational.slice(-PRIOR_TURNS_MAX);
+  let prior = conversational.slice(-PRIOR_TURNS_MAX);
+  // The most recent `[CONTEXT HANDOFF]` is the only surviving summary of the
+  // turns compaction already removed from `state.messages`. The token-based
+  // partition can preserve a tail longer than PRIOR_TURNS_MAX, pushing the
+  // handoff out of this window — so carry it forward explicitly when it falls
+  // outside, or the lead silently loses all the compacted history (§14).
+  let latestHandoff: Message | null = null;
+  for (let i = conversational.length - 1; i >= 0; i--) {
+    if (isHandoffBlock(conversational[i].content)) {
+      latestHandoff = conversational[i];
+      break;
+    }
+  }
+  if (latestHandoff && !prior.includes(latestHandoff)) {
+    prior = [latestHandoff, ...prior];
+  }
 
   const lines: string[] = [];
   if (workspaceSnapshot.trim()) {
@@ -246,8 +263,14 @@ export function buildLeadTurnPreamble(
     lines.push('Prior conversation in this chat (oldest to newest, truncated):');
     for (const msg of prior) {
       const text = msg.content.trim();
+      // A `[CONTEXT HANDOFF]` block is a model-written compaction summary of the
+      // turns that were collapsed (CLI parity, §14) — render it un-clipped so the
+      // summary survives instead of being chopped to PRIOR_TURN_MAX_CHARS like a
+      // raw turn. Same exemption pattern as the `[REFERENCED_FILES]` block.
       const clipped =
-        text.length > PRIOR_TURN_MAX_CHARS ? `${text.slice(0, PRIOR_TURN_MAX_CHARS)}…` : text;
+        !isHandoffBlock(text) && text.length > PRIOR_TURN_MAX_CHARS
+          ? `${text.slice(0, PRIOR_TURN_MAX_CHARS)}…`
+          : text;
       lines.push(`[${msg.role}] ${clipped}`);
     }
     lines.push('');
@@ -327,6 +350,16 @@ export async function runLeadKernelTurn(
     loadMemory(state.cwd).catch((): null => null),
     getGitHubToolProtocolAsync().catch((): string => ''),
   ]);
+
+  // Pre-turn LLM compaction (§14, CLI parity): when the durable history has
+  // grown past the budget, collapse the older span into a model-written
+  // `[CONTEXT HANDOFF]` summary the preamble renders un-clipped — so the lead
+  // stops silently forgetting everything beyond the last few turns. Fails soft;
+  // the shared kernel's own context management backstops the within-turn wire.
+  await maybeCompactLeadHistory(state, providerConfig, apiKey, {
+    onStatus: (phase) => dispatchEvent('status', { source: 'lead', phase }),
+    persistEvent,
+  });
 
   const taskPreamble = buildLeadTurnPreamble(
     userText,

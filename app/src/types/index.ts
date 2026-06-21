@@ -388,7 +388,12 @@ export interface ChatMessage {
   branch?: string;
   /** Discriminator for synthetic message kinds. Plain user/assistant messages
    *  leave this undefined. */
-  kind?: 'branch_forked' | 'branch_merged' | 'branch_carried';
+  kind?: 'branch_forked' | 'branch_merged' | 'branch_carried' | 'compaction';
+  /** Payload for `kind: 'compaction'` events. Records that the runtime
+   *  trimmed the working context to fit the model's window at this point in
+   *  the conversation. Rendered as a centered transcript divider; never
+   *  model-visible (`visibleToModel: false`). */
+  compactionMeta?: CompactionMeta;
   /** Payload for `kind: 'branch_forked'` events. Records the branch
    *  transition that happened at this point in the conversation. */
   branchForkedMeta?: BranchForkedMeta;
@@ -477,6 +482,17 @@ export interface BranchCarriedMeta {
   from: string;
   to: string;
   source?: BranchSwitchSource;
+}
+
+/** Payload for `kind: 'compaction'` transcript markers. The net token figures
+ *  are the working-set estimate before and after the runtime trimmed the
+ *  window for the turn; `phase` is the heaviest stage that ran. */
+export interface CompactionMeta {
+  beforeTokens: number;
+  afterTokens: number;
+  phase: 'summarization' | 'digest_drop' | 'hard_trim';
+  /** Number of whole messages dropped (0 when only summarization ran). */
+  messagesDropped: number;
 }
 
 // Discriminated union for rich inline cards

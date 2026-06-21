@@ -422,8 +422,6 @@ export function useDaemonSettingsBundles({
     const settingsWorkspace: SettingsWorkspaceProps = {
       approvalMode: prefs.approvalMode,
       updateApprovalMode: prefs.updateApprovalMode,
-      contextMode: prefs.contextMode,
-      updateContextMode: prefs.updateContextMode,
       sandboxStartMode: prefs.sandboxStartMode,
       updateSandboxStartMode: prefs.updateSandboxStartMode,
       // Daemon sessions don't have a cloud sandbox. The Settings UI's

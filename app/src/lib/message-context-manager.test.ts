@@ -22,14 +22,12 @@ describe('lib/message-context-manager (generic)', () => {
   };
 
   const makeDeps = () => ({
-    mode: 'graceful' as 'graceful' | 'none',
     metrics: [] as Array<{ phase: string; beforeTokens: number; afterTokens: number }>,
     logs: [] as string[],
   });
 
   const build = (state: ReturnType<typeof makeDeps>) =>
     createContextManager<FakeMsg>({
-      getContextMode: () => state.mode,
       // 1 token per character — simple linear estimator
       estimateMessageTokens: (m) => m.content.length,
       estimateContextTokens: (ms) => ms.reduce((sum, m) => sum + m.content.length, 0),
@@ -59,20 +57,6 @@ describe('lib/message-context-manager (generic)', () => {
     ];
     const out = mgr.manageContext(messages, BUDGET);
     expect(out).toBe(messages);
-    expect(state.metrics).toHaveLength(0);
-  });
-
-  it('short-circuits when the context mode is disabled', () => {
-    const state = makeDeps();
-    state.mode = 'none';
-    const mgr = build(state);
-    const huge: FakeMsg[] = Array.from({ length: 20 }, (_, i) => ({
-      id: String(i),
-      role: 'user' as const,
-      content: 'x'.repeat(200),
-    }));
-    const out = mgr.manageContext(huge, BUDGET);
-    expect(out).toBe(huge);
     expect(state.metrics).toHaveLength(0);
   });
 
@@ -157,7 +141,6 @@ describe('lib/message-context-manager (generic)', () => {
         messagesDropped?: number;
       }> = [];
       const mgr = createContextManager<FakeMsg>({
-        getContextMode: () => 'graceful',
         estimateMessageTokens: (m) => m.content.length,
         estimateContextTokens: (ms) => ms.reduce((sum, m) => sum + m.content.length, 0),
         compactMessage: (m) => ({ ...m, content: m.content.slice(0, 4) }),
@@ -295,7 +278,6 @@ describe('lib/message-context-manager (generic)', () => {
      */
     const buildPinnedMessageScenario = () => {
       const mgr = createContextManager<FakeMsg>({
-        getContextMode: () => 'graceful',
         estimateMessageTokens: (m) => m.content.length,
         estimateContextTokens: (ms) => ms.reduce((sum, m) => sum + m.content.length, 0),
         // Less-aggressive compaction than the PR #283 scenario — we need

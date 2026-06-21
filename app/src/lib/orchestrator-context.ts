@@ -14,10 +14,6 @@ import { getModelCapabilities } from './model-catalog';
 export type { ContextBudget };
 export { DEFAULT_CONTEXT_BUDGET };
 
-// Context mode config (runtime toggle from Settings)
-const CONTEXT_MODE_STORAGE_KEY = 'push_context_mode';
-export type ContextMode = 'graceful' | 'none';
-
 // Catalog metadata (models.dev) only loads for providers that fetch it:
 // openrouter, blackbox, nvidia, ollama, zen. Other providers (cloudflare,
 // vertex, bedrock, azure, kilocode, fireworks, openadapter) hand us a model name with
@@ -65,24 +61,6 @@ export function getContextBudget(provider?: AIProviderType, model?: string): Con
   // exactly what the CLI does, so the two surfaces converge whenever the
   // catalog is silent.
   return getContextBudgetByName(provider, normalizedModel);
-}
-
-export function getContextMode(): ContextMode {
-  try {
-    const stored = localStorage.getItem(CONTEXT_MODE_STORAGE_KEY);
-    if (stored === 'none') return 'none';
-  } catch {
-    // ignore storage errors
-  }
-  return 'graceful';
-}
-
-export function setContextMode(mode: ContextMode): void {
-  try {
-    localStorage.setItem(CONTEXT_MODE_STORAGE_KEY, mode);
-  } catch {
-    // ignore storage errors
-  }
 }
 
 // ---------------------------------------------------------------------------

@@ -17,6 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { runLeadKernelTurn, buildLeadTurnPreamble } from '../lead-turn.ts';
+import { buildHandoffBlock } from '../../lib/llm-compaction.ts';
 import { runAssistantTurn } from '../engine.ts';
 import { PROVIDER_CONFIGS } from '../provider.ts';
 import { makeSessionId } from '../session-store.ts';
@@ -380,6 +381,35 @@ describe('buildLeadTurnPreamble', () => {
     assert.ok(preamble.endsWith('Task: current question'));
     // The trailing user turn is the task — it must not be duplicated as history.
     assert.ok(!preamble.includes('[user] current question'));
+  });
+
+  it('carries the latest [CONTEXT HANDOFF] even when it falls outside the last PRIOR_TURNS_MAX', () => {
+    // Compaction replaces the old span in state.messages with a handoff, but the
+    // token-based tail can preserve more than PRIOR_TURNS_MAX (6) turns, pushing
+    // the handoff out of the slice(-6) window. Since the raw turns it summarizes
+    // are already gone, dropping it would silently lose all compacted history —
+    // so it must be carried forward un-clipped (Codex P1 on #1065).
+    const summaryBody = 'SUMMARY-LINE '.repeat(120); // > PRIOR_TURN_MAX_CHARS (700)
+    // Use the real engine helper so the content carries the full handoff prefix
+    // that `isHandoffBlock` matches (not just the bare `[CONTEXT HANDOFF]` tag).
+    const handoff = { role: 'user', content: buildHandoffBlock(summaryBody) };
+    const messages = [
+      handoff,
+      { role: 'user', content: 'q1' },
+      { role: 'assistant', content: 'a1' },
+      { role: 'user', content: 'q2' },
+      { role: 'assistant', content: 'a2' },
+      { role: 'user', content: 'q3' },
+      { role: 'assistant', content: 'a3' },
+      { role: 'user', content: 'current task' },
+    ];
+    const preamble = buildLeadTurnPreamble('current task', messages, '');
+
+    assert.ok(preamble.includes('[CONTEXT HANDOFF]'), 'handoff dropped from preamble');
+    // Un-clipped: the full summary body survives, not just the first 700 chars.
+    assert.ok(preamble.includes(summaryBody.trim()), 'handoff summary was clipped or dropped');
+    // The recent turns still ride along.
+    assert.ok(preamble.includes('[assistant] a3'));
   });
 
   it('carries a trailing [REFERENCED_FILES] block into the task section un-clipped', () => {

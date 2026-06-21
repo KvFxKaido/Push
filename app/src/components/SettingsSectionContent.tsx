@@ -655,45 +655,6 @@ export function SettingsSectionContent({
             </p>
           </div>
 
-          {/* Context Mode */}
-          <div className={SECTION_CARD_CLASS}>
-            <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-push-fg">Long-chat behavior</label>
-              <span className="text-xs text-push-fg-secondary">
-                {workspace.contextMode === 'graceful' ? 'Keep chats steady' : 'Keep everything'}
-              </span>
-            </div>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => workspace.updateContextMode('graceful')}
-                className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
-                  workspace.contextMode === 'graceful'
-                    ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
-                    : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
-                }`}
-              >
-                Keep steady
-              </button>
-              <button
-                type="button"
-                onClick={() => workspace.updateContextMode('none')}
-                className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
-                  workspace.contextMode === 'none'
-                    ? 'border-amber-500/50 bg-amber-500/10 text-amber-400'
-                    : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
-                }`}
-              >
-                Keep all
-              </button>
-            </div>
-            {workspace.contextMode === 'none' && (
-              <p className="text-push-xs text-push-fg-secondary">
-                This keeps every message, but very long chats can run into model limits.
-              </p>
-            )}
-          </div>
-
           {/* Sandbox Start Mode */}
           <div className={SECTION_CARD_CLASS}>
             <div className="flex items-center justify-between">

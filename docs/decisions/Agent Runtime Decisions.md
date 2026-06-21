@@ -405,6 +405,59 @@ such layer must stay advisory over the raw result the Auditor sees, never a filt
 on it. No demand yet; the hard-coded reducer covers the high-noise commands. YAGNI
 until a repo actually needs custom rules.
 
+### 14. Context-window compaction is always-on, runtime-owned, visible, and LLM-summarized
+
+Status: **Current** — shipped 2026-06-21 (web).
+
+Two prior gaps: compaction was (a) silently applied — it fired `context.compaction`
+run events that only surfaced in the Hub console, so a user never saw the window
+being trimmed — and (b) *optional*: a `contextMode` Settings toggle ("Keep all")
+could disable it entirely, whose only possible outcome on a long chat is a
+provider context-window error. Both are removed.
+
+**Runtime-owned.** The `contextMode` toggle and its `ContextMode`/`getContextMode`/
+`setContextMode` plumbing are deleted end-to-end. `manageContext` compacts
+unconditionally; there is no user opt-out. Context management is a correctness
+concern, not a preference.
+
+**Two-tier mechanism, lossless.** The synchronous heuristic
+(`lib/message-context-manager.ts`: summarize tool output → drop oldest pairs →
+hard-trim) stays as the always-on backstop inside the pure
+`transformContextBeforeLLM` boundary — it guarantees a turn never overflows. On
+top of it, a **pre-turn LLM compaction** (`lib/llm-compaction.ts` engine +
+`app/src/hooks/chat-compaction.ts` web coordinator) asks the model itself to write
+a Codex-style "[CONTEXT HANDOFF]" summary of the older span when the working set
+nears budget. It is **lossless** (LCM §5/§13): the summarized span is never
+deleted — it is marked `visibleToModel: false` (the existing wire-filter drops it
+from the prompt) while remaining in the durable transcript and the verbatim log.
+A model-visible handoff message carries the summary forward; repeated compactions
+fold the prior handoff in (Codex #14347 cumulative mitigation). The engine is pure
+and provider-agnostic — the model call goes through an injected `PushStream` (the
+Auditor/Reviewer seam, `iteratePushStreamText`), so it unit-tests against a fake
+stream. It **fails soft**: any error/timeout/empty summary leaves the transcript
+untouched and the heuristic backstops the turn.
+
+**Visible.** Three surfaces, mirroring Codex's "Compacting context" affordance:
+the transient `AgentStatusBar` pill ("Compacting context…", driven by the
+`onPreCompact` callback and the coordinator), a persistent `kind: 'compaction'`
+transcript divider ("Compacted context 88k → 42k", rendered like the `branch_*`
+events and filtered from the wire), and a retuned `ContextMeter` that warns
+(amber → red + pulse) as the window approaches the compaction boundary (~85%).
+
+**CLI parity** shipped alongside (`cli/lead-compaction.ts`, wired pre-turn in
+`cli/lead-turn.ts`). The CLI lead turn differs architecturally: it feeds the
+model a *bounded* preamble (`buildLeadTurnPreamble` — last `PRIOR_TURNS_MAX`
+turns, each clipped), so a long session silently forgets the early thread. The
+coordinator closes that gap with the **same shared engine**: when the durable
+history exceeds budget, it collapses the older span into a `[CONTEXT HANDOFF]`
+message the preamble now renders un-clipped. Because the CLI `Message` has no
+`visibleToModel` flag, this is a destructive collapse (matching the existing
+`compactContext`/`[CONTEXT DIGEST]` model) rather than a hide — tool-output
+losslessness is already covered by the verbatim log. Surfaced via the existing
+`context_compacted` session event + `cli_llm_compaction_*` structured logs.
+
+Source notes: [`How Codex CLI Handles Compacting`](<../research/codex-compacting.md>).
+
 ## Active Runtime Work
 
 1. Delete the Planner/brief now that inline is the measured default (2026-06-11); attachments-on-engine-envelope is the prerequisite.
@@ -417,6 +470,7 @@ until a repo actually needs custom rules.
 8. TUI focus-stack migration (§12) — **complete**: the whole `processInput` dispatch resolves through the stack across six declarative scopes. Push/pop self-registration was considered and declined (see §12); declarative `isActive()` against authoritative state is the end state.
 9. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model. Step 1 landed 2026-06-12: interactive turns default to the in-loop lead with the Planner wrapper behind `PUSH_DELEGATION_MODE=delegated`. Step 2 landed 2026-06-12: the lead-kernel lane (`cli/lead-turn.ts`) runs the turn on the shared kernel in `leadMode`. Step 3 landed 2026-06-12: the lane is the **default**; `PUSH_LEAD_RUNTIME=engine` is the exact-match opt-out while it bakes. Step 4 — **complete**: the bake-period `PUSH_LEAD_RUNTIME=engine` opt-out and the CLI-local engine round loop are retired; `runAssistantTurn` delegates unconditionally to the kernel lane and the now-unreachable helper cluster the loop left behind in `cli/engine.ts` (awareness guard, finalization/parse-error builders, mid-session distill — no callers once `runAssistantLoop` was gone; the kernel owns these live concerns) plus its obsolete tests were removed. Behavior-neutral removal.
 10. Tool-output compaction (§13): the TokenJuice pattern is **already shipped** (`lib/tool-output-reducers.ts`, both surfaces). The remaining "keep the raw output losslessly" half is folded into memory Phase 3 (item 6) — a reduced result stamps a `verbatimRef` into `lib/verbatim-log.ts`. A declarative `.push/`-scoped rule overlay is deliberately deferred (YAGNI until a repo needs custom rules).
+11. Context-window compaction (§14): **always-on + visible + LLM-summarized shipped 2026-06-21 (web + CLI)** — toggle removed, `lib/llm-compaction.ts` engine, `app/src/hooks/chat-compaction.ts` (web) + `cli/lead-compaction.ts` (CLI lead) coordinators wired pre-turn, three web visibility surfaces + the CLI `context_compacted` event. Remaining: graduate the run-event `phase` vocabulary if ops need to distinguish heuristic- from LLM-summarization (today both report `phase: 'summarization'` to avoid churning the drift-pinned `context.compaction` schema), and a Worker-side background-coder integration if those long jobs need it.
 
 ## Archived Context Worth Knowing
 

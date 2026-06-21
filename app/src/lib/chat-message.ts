@@ -21,6 +21,7 @@ import type {
   BranchMergedMeta,
   BranchSwitchSource,
   ChatMessage,
+  CompactionMeta,
 } from '@/types';
 
 /** Generate a stable conversation-relative message id. Mirrors the existing
@@ -174,6 +175,37 @@ export function createBranchCarriedMessage(input: CreateBranchCarriedMessageInpu
     branch: input.to,
     kind: 'branch_carried',
     branchCarriedMeta: meta,
+    visibleToModel: false,
+  };
+}
+
+interface CreateCompactionMessageInput extends CompactionMeta {
+  /** Branch active when the compaction happened, stamped for attribution. */
+  branch?: string;
+  id?: string;
+  timestamp?: number;
+}
+
+/** Create a typed `compaction` transcript marker for insertion when the
+ *  runtime trims the working context for a turn. Mirrors the branch-event
+ *  factories — `visibleToModel: false`, empty content, rendered by
+ *  `MessageBubble.tsx` as a centered "Compacted context X → Y" divider. The
+ *  durable counterpart to the transient "Compacting context…" status pill. */
+export function createCompactionMessage(input: CreateCompactionMessageInput): ChatMessage {
+  const meta: CompactionMeta = {
+    beforeTokens: input.beforeTokens,
+    afterTokens: input.afterTokens,
+    phase: input.phase,
+    messagesDropped: input.messagesDropped,
+  };
+  return {
+    id: input.id ?? createMessageId(),
+    role: 'assistant',
+    content: '',
+    timestamp: input.timestamp ?? Date.now(),
+    ...(input.branch ? { branch: input.branch } : {}),
+    kind: 'compaction',
+    compactionMeta: meta,
     visibleToModel: false,
   };
 }

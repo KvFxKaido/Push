@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react';
 import { useUserProfile } from '@/hooks/useUserProfile';
 import { useSetting } from '@/hooks/useSetting';
 import { getApprovalMode, setApprovalMode, type ApprovalMode } from '@/lib/approval-mode';
-import { getContextMode, setContextMode, type ContextMode } from '@/lib/orchestrator';
 import {
   getSandboxStartMode,
   setSandboxStartMode,
@@ -58,7 +57,6 @@ export function useWorkspacePreferences(validatedGithubLogin: string | null | un
   const [sandboxStartMode, setSandboxStartModeState] = useState<SandboxStartMode>(() =>
     getSandboxStartMode(),
   );
-  const [contextMode, setContextModeState] = useState<ContextMode>(() => getContextMode());
   const [approvalMode, setApprovalModeState] = useState<ApprovalMode>(() => getApprovalMode());
 
   useEffect(() => {
@@ -95,11 +93,6 @@ export function useWorkspacePreferences(validatedGithubLogin: string | null | un
       document.execCommand('copy');
       document.body.removeChild(textarea);
     }
-  }, []);
-
-  const updateContextMode = useCallback((mode: ContextMode) => {
-    setContextMode(mode);
-    setContextModeState(mode);
   }, []);
 
   const updateApprovalMode = useCallback((mode: ApprovalMode) => {
@@ -189,8 +182,6 @@ export function useWorkspacePreferences(validatedGithubLogin: string | null | un
     updateRunTokenBudget,
     sandboxStartMode,
     updateSandboxStartMode,
-    contextMode,
-    updateContextMode,
     approvalMode,
     updateApprovalMode,
     allowlistSecretCmd: ALLOWLIST_SECRET_COMMAND,
