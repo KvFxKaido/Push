@@ -250,6 +250,29 @@ export async function teardownWorktree(handle: WorktreeHandle): Promise<Teardown
   };
 }
 
+/**
+ * One-block human status for the `/worktree` command (REPL + TUI). Reports the
+ * sandbox path/branch, its current work state, and what teardown will do — so
+ * the user can see whether their session is isolated and whether exiting will
+ * keep or discard the worktree. Returns a plain string the caller renders.
+ */
+export async function formatWorktreeStatus(state: { worktree?: WorktreeHandle }): Promise<string> {
+  if (!state.worktree) {
+    return 'No git-worktree sandbox active — this session works the real tree directly.';
+  }
+  const wt = state.worktree;
+  const s = await worktreeState(wt);
+  const disposable = !s.dirty && s.commitsAhead === 0;
+  return [
+    `Worktree sandbox: ${wt.path}`,
+    `Branch: ${wt.branch} (from ${wt.baseSha.slice(0, 8)})`,
+    `State: ${s.dirty ? 'uncommitted changes' : 'clean'}, ${s.commitsAhead} commit(s) beyond base`,
+    disposable
+      ? 'On exit: removed automatically (nothing to keep).'
+      : `On exit: kept (has work) — commit/push, then \`git worktree remove ${wt.path}\`.`,
+  ].join('\n');
+}
+
 export interface WorktreeListEntry {
   path: string;
   head: string;

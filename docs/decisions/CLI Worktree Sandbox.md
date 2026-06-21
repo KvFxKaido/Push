@@ -1,9 +1,10 @@
 # CLI Worktree Sandbox
 
 Date: 2026-06-21
-Status: **Current (Phase 1 shipped)** — `push run --worktree` is implemented;
-the interactive surfaces (TUI / REPL) and daemon-orphan GC are tracked Phase 2
-below. Owner: Push CLI.
+Status: **Current** — `--worktree` is wired across headless `push run`, the
+default TUI, and the REPL, with a `/worktree` status command and
+resume-into-worktree. The only deferred piece is lazy daemon orphan-GC (see
+Phase 3 below). Owner: Push CLI.
 
 ## Problem
 
@@ -57,28 +58,41 @@ call, decided at session start), with a clean-if-clean lifecycle.
   discard uncommitted work. Persistent named worktrees were the other option but
   accumulate trees the user must GC; clean-if-clean is the safer default.
 
-## Implementation (Phase 1)
+## Implementation
+
+**Phase 1 — plumbing + headless.**
 
 - `cli/worktree.ts` — `addWorktree` / `removeWorktree` / `listWorktrees` /
-  `worktreeState` / `isDisposableWorktree` / `teardownWorktree`, plus path +
-  branch derivation. Git plumbing runs through the exported `makeLocalGitExec`
-  (`cli/git-backend.ts`) so it shares the CLI's escaped, timeout-aware exec
-  path. Covered by `cli/tests/worktree.test.mjs` against a real temp repo.
-- `cli/cli.ts` — `--worktree` / `--worktree-name` parsing, setup before
-  `initSession` (worktree path → session cwd), and clean-if-clean teardown
-  around the headless run.
+  `worktreeState` / `isDisposableWorktree` / `teardownWorktree` /
+  `formatWorktreeStatus`, plus path + branch derivation. Git plumbing runs
+  through the exported `makeLocalGitExec` (`cli/git-backend.ts`) so it shares
+  the CLI's escaped, timeout-aware exec path. Covered by
+  `cli/tests/worktree.test.mjs` against a real temp repo.
 - `cli/session-store.ts` — `SessionState.worktree`.
 
-## Phase 2 (tracked, not yet shipped)
+**Phase 2 — interactive + ergonomics.**
 
-- **Interactive surfaces.** Wire `--worktree` into the default TUI and the REPL
-  (bare `push` opens the TUI, so Phase 1's headless-only scope misses most
-  interactive users). Needs the worktree setup hoisted above the surface
-  dispatch and teardown on TUI/REPL exit. `--worktree` currently errors outside
-  `push run`.
-- **A `/worktree` command** for status (where am I, is it disposable) within a
-  running session.
-- **Daemon orphan GC.** The daemon should track session→worktree and clean
-  disposable orphans on session delete / shutdown via `listWorktrees`.
-- **Resume.** Resuming a session whose worktree still exists should re-root in
-  it; today `--worktree` refuses `--session`.
+- **All surfaces.** `--worktree` / `--worktree-name` work for headless
+  `push run`, the default TUI (bare `push`), and the REPL. Worktree setup runs
+  once before `initSession` (worktree path → session cwd); a single
+  `try/finally` around the whole dispatch in `main()` applies clean-if-clean
+  teardown on any exit. `return await` on each surface keeps it inside the
+  `try` until it actually exits — without the `await` the `finally` would fire
+  the instant the promise was created. Interactive `--worktree` requires a TTY
+  (the no-TTY/no-task path `process.exit`s, skipping the finally), so it's
+  refused up front there rather than leaking a worktree.
+- **`/worktree` command** (REPL + TUI) — read-only status: path, branch, work
+  state, and what teardown will do. Shares `formatWorktreeStatus`.
+- **Resume-into-worktree.** Resuming a session whose persisted `worktree` still
+  exists re-roots `cwd` there and re-arms teardown; if it was cleaned up since,
+  the stale pointer is dropped and the session continues in the main tree.
+  `--worktree` itself still refuses `--session` (it *starts* a sandbox).
+
+## Phase 3 (deferred)
+
+- **Lazy daemon orphan-GC.** A worktree is normally torn down by the owning
+  process's `finally`. A hard-killed process (SIGKILL) can orphan one. This
+  should be GC'd lazily — remove a sandbox worktree only when its session state
+  no longer exists on disk — **not** on daemon shutdown, since a daemon restart
+  is not a session end and must not delete a user's (clean) worktree.
+  `listWorktrees` + a session-existence check is the shape; not yet built.

@@ -12,6 +12,7 @@ import { isInvalidGitRef, matchingRiskPatternIndex, suggestApprovalPrefix } from
 import {
   addWorktree,
   autoWorktreeBranchName,
+  formatWorktreeStatus,
   resolveGitRoot,
   teardownWorktree,
   WorktreeError,
@@ -264,8 +265,8 @@ Options:
   --accept <cmd>                Acceptance check command (repeatable)
   --max-rounds <n>              Tool-loop cap per user prompt (default: 50, max: 200; harness may extend on healthy progress)
   --allow-exec                  Allow exec tool in headless mode (blocked by default)
-  --worktree                    push run: run in an isolated git worktree + branch (auto-named); kept on exit only if it has changes
-  --worktree-name <name>        push run: --worktree with a custom branch name
+  --worktree                    Run in an isolated git worktree + branch (auto-named); kept on exit only if it has changes
+  --worktree-name <name>        --worktree with a custom branch name
   --mode <strict|auto|yolo>     Exec approval mode: strict=prompt all, auto=prompt high-risk (default), yolo=no prompts
   --json                        JSON output in headless mode / resume
   --no-attach                   Resume: list sessions without prompting (script-friendly)
@@ -1068,6 +1069,7 @@ async function runInteractive(
             `  ${fmt.bold('/skills')} reload       Reload workspace + Claude skills\n` +
             `  ${fmt.bold('/compact')} [turns]     Compact older context (default keep ${DEFAULT_COMPACT_TURNS} turns)\n` +
             `  ${fmt.bold('/checkpoint')}           Snapshot/rollback (create | list | load | delete)\n` +
+            `  ${fmt.bold('/worktree')}            Show the git-worktree sandbox status (if any)\n` +
             `  ${fmt.bold('/<skill>')} [args]      Run a skill (e.g. /commit, /review src/app.ts)\n` +
             `  ${fmt.dim('@path[:line[-end]]')}     Preload file refs into context (e.g. @src/app.ts:10-40)\n` +
             `  ${fmt.bold('/session')}             Print session id\n` +
@@ -1185,6 +1187,14 @@ async function runInteractive(
       // /checkpoint [op] [args] — Nano-style snapshot/rollback
       if (line === '/checkpoint' || line.startsWith('/checkpoint ')) {
         await handleCheckpointCommand(line.slice('/checkpoint'.length));
+        continue;
+      }
+
+      // /worktree — show the session's git-worktree sandbox status, if any
+      if (line === '/worktree' || line.startsWith('/worktree ')) {
+        process.stdout.write(
+          `${await formatWorktreeStatus(state as { worktree?: WorktreeHandle })}\n`,
+        );
         continue;
       }
 
@@ -3843,14 +3853,15 @@ export async function main() {
   let activeWorktree: WorktreeHandle | null = null;
   let effectiveCwd = cwd;
   if (worktreeEnabled) {
-    if (!runHeadlessMode) {
-      throw new Error(
-        '--worktree is currently supported only with `push run` (headless). Interactive worktree sessions are not wired yet.',
-      );
+    // Interactive worktree sessions need a TTY (TUI/REPL); headless `push run`
+    // does not. With neither there's nothing to run and we'd `process.exit`
+    // below (skipping teardown), so refuse up front rather than leak a worktree.
+    if (!runHeadlessMode && !process.stdin.isTTY) {
+      throw new Error('--worktree needs either `push run` (headless) or an interactive TTY.');
     }
     if (resumedSessionId) {
       throw new Error(
-        '--worktree starts a fresh sandbox session and cannot be combined with --session (resume).',
+        '--worktree starts a fresh sandbox; to continue an existing one, resume with just --session (its worktree is reused automatically).',
       );
     }
     const gitRoot = await resolveGitRoot(cwd);
@@ -3897,19 +3908,44 @@ export async function main() {
       baseSha: activeWorktree.baseSha,
       repoRoot: activeWorktree.repoRoot,
     };
+  } else if (state.worktree) {
+    // Resume into an existing worktree session: re-root `cwd` at the persisted
+    // worktree when it still exists, so a resumed session lands back in its
+    // sandbox (and gets the same teardown). If it was cleaned up since, drop
+    // the stale pointer and continue in the main tree rather than failing.
+    const wt = state.worktree;
+    const stillThere = await fs
+      .stat(wt.path)
+      .then(() => true)
+      .catch(() => false);
+    if (stillThere) {
+      activeWorktree = wt;
+      state.cwd = wt.path;
+      process.stdout.write(
+        `${fmt.dim('[worktree]')} resumed in sandbox ${wt.path} (branch ${fmt.green(wt.branch)})\n`,
+      );
+    } else {
+      process.stdout.write(
+        `${fmt.warn('[worktree]')} previous sandbox ${wt.path} is gone; continuing in the main tree.\n`,
+      );
+      delete state.worktree;
+    }
   }
   await saveSessionState(state);
 
-  if (runHeadlessMode) {
-    if (!task) {
-      throw new Error(
-        'Headless mode requires a task. Use: push run --task "..." or push run --skill <name>',
-      );
-    }
-    // The worktree (when set) is already created here, so the teardown
-    // `finally` must wrap API-key resolution + opts setup too — not just the
-    // run — otherwise a throw in between (e.g. a missing key) leaks the sandbox.
-    try {
+  // One teardown site for the worktree across every surface. Headless,
+  // bare-push TUI, and the REPL all run in-process and return here, so a single
+  // `finally` applies the clean-if-clean lifecycle no matter how the session
+  // ends (normal exit, /quit, Ctrl-C, or a thrown error). `return await` is
+  // load-bearing: it keeps each surface inside the `try` until it actually
+  // exits, so teardown runs after the run — not the instant its promise is made.
+  try {
+    if (runHeadlessMode) {
+      if (!task) {
+        throw new Error(
+          'Headless mode requires a task. Use: push run --task "..." or push run --skill <name>',
+        );
+      }
       // Resolve API key late — after all validation — so missing keys
       // don't mask argument or environment errors.
       const apiKey = resolveApiKey(providerConfig);
@@ -3949,61 +3985,60 @@ export async function main() {
         acceptanceChecks,
         headlessRunOpts,
       );
-    } finally {
-      // Clean-if-clean teardown: remove the worktree only when it has no
-      // uncommitted changes and no commits beyond base; otherwise keep it and
-      // report the path so unpushed work is never silently destroyed. Runs in
-      // `finally` so an aborted/failed run still gets the keep-if-work check.
-      if (activeWorktree) {
-        try {
-          const outcome = await teardownWorktree(activeWorktree);
-          if (outcome.removed) {
-            process.stdout.write(
-              `${fmt.dim('[worktree]')} removed disposable sandbox (branch ${outcome.branch}) — no changes to keep\n`,
-            );
-          } else {
-            process.stdout.write(
-              `${fmt.warn('[worktree]')} kept ${outcome.path} (branch ${fmt.green(outcome.branch)}) — ${outcome.reason}.\n` +
-                `${fmt.dim('           ')}Commit/push from there, then remove with: git worktree remove ${outcome.path}\n`,
-            );
-          }
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          process.stderr.write(
-            `${fmt.warn('[worktree]')} teardown check failed (${message}); left ${activeWorktree.path} in place.\n`,
-          );
-        }
-      }
     }
-  }
 
-  // Default UX: bare "push" opens TUI when enabled.
-  // Non-TTY callers were already redirected to headless above when they
-  // had a task or piped stdin; reaching here without a TTY means there
-  // was nothing to fall back to, so print the friendly hint and exit.
-  if (subcommand === '' && tuiEnabled) {
+    // Default UX: bare "push" opens TUI when enabled.
+    // Non-TTY callers were already redirected to headless above when they
+    // had a task or piped stdin; reaching here without a TTY means there
+    // was nothing to fall back to, so print the friendly hint and exit.
+    if (subcommand === '' && tuiEnabled) {
+      if (!process.stdin.isTTY) {
+        exitNonInteractiveNoTask();
+      }
+      const { runTUI } = await import('./tui.js');
+      return await runTUI({
+        sessionId: state.sessionId,
+        maxRounds,
+      });
+    }
+
     if (!process.stdin.isTTY) {
       exitNonInteractiveNoTask();
     }
-    const { runTUI } = await import('./tui.js');
-    return runTUI({
-      sessionId: state.sessionId,
-      maxRounds,
+
+    const apiKey = resolveApiKey(providerConfig);
+    return await runInteractive(state, providerConfig, apiKey, maxRounds, {
+      // Resumed sessions (either via --session or via the bare-push picker)
+      // already have their state + session_started event on disk; without
+      // this runInteractive would lazily re-emit session_started on the
+      // first user message.
+      alreadyPersisted: !!resumedSessionId,
     });
+  } finally {
+    // Clean-if-clean teardown: remove the worktree only when it has no
+    // uncommitted changes and no commits beyond base; otherwise keep it and
+    // report the path so unpushed work is never silently destroyed.
+    if (activeWorktree) {
+      try {
+        const outcome = await teardownWorktree(activeWorktree);
+        if (outcome.removed) {
+          process.stdout.write(
+            `${fmt.dim('[worktree]')} removed disposable sandbox (branch ${outcome.branch}) — no changes to keep\n`,
+          );
+        } else {
+          process.stdout.write(
+            `${fmt.warn('[worktree]')} kept ${outcome.path} (branch ${fmt.green(outcome.branch)}) — ${outcome.reason}.\n` +
+              `${fmt.dim('           ')}Commit/push from there, then remove with: git worktree remove ${outcome.path}\n`,
+          );
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        process.stderr.write(
+          `${fmt.warn('[worktree]')} teardown check failed (${message}); left ${activeWorktree.path} in place.\n`,
+        );
+      }
+    }
   }
-
-  if (!process.stdin.isTTY) {
-    exitNonInteractiveNoTask();
-  }
-
-  const apiKey = resolveApiKey(providerConfig);
-  return runInteractive(state, providerConfig, apiKey, maxRounds, {
-    // Resumed sessions (either via --session or via the bare-push picker)
-    // already have their state + session_started event on disk; without
-    // this runInteractive would lazily re-emit session_started on the
-    // first user message.
-    alreadyPersisted: !!resumedSessionId,
-  });
 }
 
 // Only run main() when this module is executed directly (not when it's
