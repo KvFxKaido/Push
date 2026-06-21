@@ -6782,9 +6782,12 @@ export async function runTUI(options = {}) {
 
   // Focus stack: ordered key-scope resolution (highest priority first).
   // Borrowed from giggles' "each component owns its keys" model — scopes
-  // claim the keys they own and let the rest fall through to the global
-  // keybind map (the implicit bottom of the stack). Precedence here is the
-  // exact pre-existing cascade: approval pane → ask-user → overlay modal.
+  // claim the keys they own and let the rest fall through to the next scope.
+  // The whole dispatch now lives here, in precedence order:
+  //   approval pane → ask-user → overlay modal → tab completion →
+  //   global keybinds → composer.
+  // The composer is the bottom scope; a key no scope claims is a deliberate
+  // no-op. Behavior is identical to the prior hand-rolled cascade.
   const focusStack = new FocusStack()
     .register({
       // Approval pane is the only *soft* scope today: its handleKey returns
@@ -6828,6 +6831,235 @@ export async function runTUI(options = {}) {
             return true;
           case 'resume':
             runAsync(() => handleResumeModalInput(key), 'resume picker input failed');
+            return true;
+          default:
+            return false;
+        }
+      },
+    })
+    .register({
+      // Tab completion owns Tab while idle; any non-Tab key resets the
+      // completer's state before falling through. Mirrors the prior
+      // tab-intercept + reset that sat just above the keybind map.
+      id: 'tab_completion',
+      isActive: () => true,
+      handleKey: (key) => {
+        if (key.name === 'tab') {
+          // Tab outside idle falls through (it may be a configured keybind).
+          if (tuiState.runState !== 'idle') return false;
+          const result = tabCompleter.tab(composer.getText(), key.shift);
+          if (result) {
+            composer.setText(result.text);
+            tuiState.dirty.add('composer');
+            scheduler.schedule();
+          }
+          return true;
+        }
+        // Any non-Tab keystroke resets completion, then falls through.
+        tabCompleter.reset();
+        return false;
+      },
+    })
+    .register({
+      // Global keybind map — the configurable action layer. Unbound keys
+      // fall through to the composer scope below.
+      id: 'global_keybinds',
+      isActive: () => true,
+      handleKey: (key) => {
+        const action = keybinds.lookup(key);
+        switch (action) {
+          case 'send':
+            runAsync(() => sendMessage(), 'send failed');
+            return true;
+          case 'newline':
+            composer.insertNewline();
+            tuiState.dirty.add('composer');
+            scheduler.schedule();
+            return true;
+          case 'cancel_or_exit':
+            if (tuiState.runState === 'running') {
+              // Local turn → abort its controller (which also cancels the daemon
+              // run for a local daemon turn). Reattached daemon run → cancel over
+              // the socket. Neither handle available → fall through to exit so
+              // Ctrl+C is never a dead key (Codex #744).
+              if (runAbort) {
+                cancelRun();
+              } else if (!cancelDaemonRun()) {
+                exitResolve();
+              }
+            } else {
+              exitResolve();
+            }
+            return true;
+          case 'toggle_tools':
+            toggleTools();
+            return true;
+          case 'toggle_tool_json_payloads':
+            toggleToolJsonPayloads();
+            return true;
+          case 'toggle_reasoning':
+            toggleReasoningModal();
+            return true;
+          case 'clear_viewport':
+            clearViewport();
+            return true;
+          case 'reattach':
+            runAsync(() => openResumeModal(), 'session picker failed');
+            return true;
+          case 'approve':
+            approveAction();
+            return true;
+          case 'deny':
+            denyAction();
+            return true;
+          case 'provider_switcher':
+            openProviderSwitcher();
+            return true;
+          case 'close_modal':
+            closeModal();
+            return true;
+          case 'line_start':
+            composer.moveHome();
+            tuiState.dirty.add('composer');
+            scheduler.schedule();
+            return true;
+          case 'line_end':
+            composer.moveEnd();
+            tuiState.dirty.add('composer');
+            scheduler.schedule();
+            return true;
+          case 'kill_line_backward':
+            composer.killLineBackward();
+            tuiState.dirty.add('composer');
+            scheduler.schedule();
+            return true;
+          case 'kill_line_forward':
+            composer.killLineForward();
+            tuiState.dirty.add('composer');
+            scheduler.schedule();
+            return true;
+          case 'kill_word_backward':
+            composer.killWordBackward();
+            tuiState.dirty.add('composer');
+            scheduler.schedule();
+            return true;
+          case 'delete_or_exit':
+            if (composer.isEmpty() && tuiState.runState === 'idle') {
+              exitResolve();
+            } else {
+              composer.deleteForward();
+              tuiState.dirty.add('composer');
+              scheduler.schedule();
+            }
+            return true;
+          case 'word_left':
+            composer.moveWordLeft();
+            tuiState.dirty.add('composer');
+            scheduler.schedule();
+            return true;
+          case 'word_right':
+            composer.moveWordRight();
+            tuiState.dirty.add('composer');
+            scheduler.schedule();
+            return true;
+          case 'scroll_up': {
+            const { rows } = getTermSize();
+            const step = Math.max(1, Math.floor(rows / 3));
+            tuiState.scrollOffset += step;
+            tuiState.dirty.add('transcript');
+            scheduler.schedule();
+            return true;
+          }
+          case 'scroll_down': {
+            const { rows } = getTermSize();
+            const step = Math.max(1, Math.floor(rows / 3));
+            tuiState.scrollOffset = Math.max(0, tuiState.scrollOffset - step);
+            tuiState.dirty.add('transcript');
+            scheduler.schedule();
+            return true;
+          }
+          default:
+            return false;
+        }
+      },
+    })
+    .register({
+      // Composer is the bottom scope: printable input, editing keys, and
+      // single-line input-history recall. Keys it doesn't recognize fall
+      // through to a deliberate no-op (handledBy: null), exactly as before.
+      id: 'composer',
+      isActive: () => true,
+      handleKey: (key) => {
+        // Printable char (no modifiers) → insert.
+        if (key.ch && !key.ctrl && !key.meta) {
+          composer.insertChar(key.ch);
+          tuiState.dirty.add('composer');
+          scheduler.schedule();
+          return true;
+        }
+        switch (key.name) {
+          case 'backspace':
+            composer.backspace();
+            tuiState.dirty.add('composer');
+            scheduler.schedule();
+            return true;
+          case 'delete':
+            composer.deleteForward();
+            tuiState.dirty.add('composer');
+            scheduler.schedule();
+            return true;
+          case 'left':
+            composer.moveLeft();
+            tuiState.dirty.add('composer');
+            scheduler.schedule();
+            return true;
+          case 'right':
+            composer.moveRight();
+            tuiState.dirty.add('composer');
+            scheduler.schedule();
+            return true;
+          case 'up': {
+            // Input history: recall older entry when on first line with
+            // single-line content.
+            if (composer.getLines().length === 1 && composer.getCursor().line === 0) {
+              const recalled = inputHistory.up(composer.getText());
+              if (recalled !== null) {
+                composer.setText(recalled);
+                tuiState.dirty.add('composer');
+                scheduler.schedule();
+                return true;
+              }
+            }
+            composer.moveUp();
+            tuiState.dirty.add('composer');
+            scheduler.schedule();
+            return true;
+          }
+          case 'down': {
+            // Input history: recall newer entry when navigating.
+            if (inputHistory.isNavigating()) {
+              const recalled = inputHistory.down(composer.getText());
+              if (recalled !== null) {
+                composer.setText(recalled);
+                tuiState.dirty.add('composer');
+                scheduler.schedule();
+                return true;
+              }
+            }
+            composer.moveDown();
+            tuiState.dirty.add('composer');
+            scheduler.schedule();
+            return true;
+          }
+          case 'home':
+            composer.moveHome();
+            tuiState.dirty.add('composer');
+            scheduler.schedule();
+            return true;
+          case 'end':
+            composer.moveEnd();
+            tuiState.dirty.add('composer');
+            scheduler.schedule();
             return true;
           default:
             return false;
@@ -6890,224 +7122,11 @@ export async function runTUI(options = {}) {
     const keyBuf = Buffer.from(str);
     const key = parseKey(keyBuf);
 
-    // Focus-stack resolution: approval pane → ask-user → overlay modals.
-    // A consumed key stops here; `handledBy: null` falls through to tab
-    // completion + the global keybind map + composer editing below (the
-    // implicit bottom of the stack). Precedence and behavior are identical to
-    // the prior hand-rolled cascade; the scopes are declared at `focusStack`.
-    if (focusStack.dispatch(key).handledBy !== null) {
-      return;
-    }
-
-    // Tab completion — intercept before keybind map
-    if (key.name === 'tab' && tuiState.runState === 'idle') {
-      const result = tabCompleter.tab(composer.getText(), key.shift);
-      if (result) {
-        composer.setText(result.text);
-        tuiState.dirty.add('composer');
-        scheduler.schedule();
-      }
-      return;
-    }
-
-    // Reset tab completion on any non-Tab keystroke
-    if (key.name !== 'tab') {
-      tabCompleter.reset();
-    }
-
-    // Check keybinds
-    const action = keybinds.lookup(key);
-
-    switch (action) {
-      case 'send':
-        runAsync(() => sendMessage(), 'send failed');
-        return;
-      case 'newline':
-        composer.insertNewline();
-        tuiState.dirty.add('composer');
-        scheduler.schedule();
-        return;
-      case 'cancel_or_exit':
-        if (tuiState.runState === 'running') {
-          // Local turn → abort its controller (which also cancels the daemon
-          // run for a local daemon turn). Reattached daemon run → cancel over
-          // the socket. Neither handle available → fall through to exit so
-          // Ctrl+C is never a dead key (Codex #744).
-          if (runAbort) {
-            cancelRun();
-          } else if (!cancelDaemonRun()) {
-            exitResolve();
-          }
-        } else {
-          exitResolve();
-        }
-        return;
-      case 'toggle_tools':
-        toggleTools();
-        return;
-      case 'toggle_tool_json_payloads':
-        toggleToolJsonPayloads();
-        return;
-      case 'toggle_reasoning':
-        toggleReasoningModal();
-        return;
-      case 'clear_viewport':
-        clearViewport();
-        return;
-      case 'reattach':
-        runAsync(() => openResumeModal(), 'session picker failed');
-        return;
-      case 'approve':
-        approveAction();
-        return;
-      case 'deny':
-        denyAction();
-        return;
-      case 'provider_switcher':
-        openProviderSwitcher();
-        return;
-      case 'close_modal':
-        closeModal();
-        return;
-      case 'line_start':
-        composer.moveHome();
-        tuiState.dirty.add('composer');
-        scheduler.schedule();
-        return;
-      case 'line_end':
-        composer.moveEnd();
-        tuiState.dirty.add('composer');
-        scheduler.schedule();
-        return;
-      case 'kill_line_backward':
-        composer.killLineBackward();
-        tuiState.dirty.add('composer');
-        scheduler.schedule();
-        return;
-      case 'kill_line_forward':
-        composer.killLineForward();
-        tuiState.dirty.add('composer');
-        scheduler.schedule();
-        return;
-      case 'kill_word_backward':
-        composer.killWordBackward();
-        tuiState.dirty.add('composer');
-        scheduler.schedule();
-        return;
-      case 'delete_or_exit':
-        if (composer.isEmpty() && tuiState.runState === 'idle') {
-          exitResolve();
-        } else {
-          composer.deleteForward();
-          tuiState.dirty.add('composer');
-          scheduler.schedule();
-        }
-        return;
-      case 'word_left':
-        composer.moveWordLeft();
-        tuiState.dirty.add('composer');
-        scheduler.schedule();
-        return;
-      case 'word_right':
-        composer.moveWordRight();
-        tuiState.dirty.add('composer');
-        scheduler.schedule();
-        return;
-      case 'scroll_up': {
-        const { rows } = getTermSize();
-        const step = Math.max(1, Math.floor(rows / 3));
-        tuiState.scrollOffset += step;
-        tuiState.dirty.add('transcript');
-        scheduler.schedule();
-        return;
-      }
-      case 'scroll_down': {
-        const { rows } = getTermSize();
-        const step = Math.max(1, Math.floor(rows / 3));
-        tuiState.scrollOffset = Math.max(0, tuiState.scrollOffset - step);
-        tuiState.dirty.add('transcript');
-        scheduler.schedule();
-        return;
-      }
-    }
-
-    // If idle and it's a printable char, feed to composer
-    if (key.ch && !key.ctrl && !key.meta) {
-      composer.insertChar(key.ch);
-      tuiState.dirty.add('composer');
-      scheduler.schedule();
-      return;
-    }
-
-    // Editing keys (not bound to actions)
-    if (key.name === 'backspace') {
-      composer.backspace();
-      tuiState.dirty.add('composer');
-      scheduler.schedule();
-      return;
-    }
-    if (key.name === 'delete') {
-      composer.deleteForward();
-      tuiState.dirty.add('composer');
-      scheduler.schedule();
-      return;
-    }
-    if (key.name === 'left') {
-      composer.moveLeft();
-      tuiState.dirty.add('composer');
-      scheduler.schedule();
-      return;
-    }
-    if (key.name === 'right') {
-      composer.moveRight();
-      tuiState.dirty.add('composer');
-      scheduler.schedule();
-      return;
-    }
-    if (key.name === 'up') {
-      // Input history: recall older entry when on first line with single-line content
-      if (composer.getLines().length === 1 && composer.getCursor().line === 0) {
-        const recalled = inputHistory.up(composer.getText());
-        if (recalled !== null) {
-          composer.setText(recalled);
-          tuiState.dirty.add('composer');
-          scheduler.schedule();
-          return;
-        }
-      }
-      composer.moveUp();
-      tuiState.dirty.add('composer');
-      scheduler.schedule();
-      return;
-    }
-    if (key.name === 'down') {
-      // Input history: recall newer entry when navigating
-      if (inputHistory.isNavigating()) {
-        const recalled = inputHistory.down(composer.getText());
-        if (recalled !== null) {
-          composer.setText(recalled);
-          tuiState.dirty.add('composer');
-          scheduler.schedule();
-          return;
-        }
-      }
-      composer.moveDown();
-      tuiState.dirty.add('composer');
-      scheduler.schedule();
-      return;
-    }
-    if (key.name === 'home') {
-      composer.moveHome();
-      tuiState.dirty.add('composer');
-      scheduler.schedule();
-      return;
-    }
-    if (key.name === 'end') {
-      composer.moveEnd();
-      tuiState.dirty.add('composer');
-      scheduler.schedule();
-      return;
-    }
+    // Resolve the key through the focus stack: approval pane → ask-user →
+    // overlay modal → tab completion → global keybinds → composer (bottom).
+    // A key no scope claims (`handledBy: null`) is a deliberate no-op, exactly
+    // as the prior hand-rolled cascade left unrecognized keys.
+    focusStack.dispatch(key);
   }
 
   io.stdin.on('data', onData);

@@ -305,18 +305,23 @@ to the global map — but the precedence lived as a hand-maintained cascade
 
 Shipped: `cli/tui-focus.ts` is a generic, dependency-free `FocusStack` —
 ordered `KeyScope`s evaluated highest-priority-first, each owning its keys and
-returning consumed/fall-through, with the global keybind map + composer editing
-as the implicit bottom of the stack. The dispatcher's modal/pane cascade
-(approval pane → ask-user → overlay modals) now resolves through
-`focusStack.dispatch(key)`; precedence and behavior are byte-for-byte the prior
-cascade, but the resolution is data-driven, inspectable (`activeScope()`), and
-unit-tested (`cli/tests/tui-focus.test.mjs`) instead of buried in an
-imperative branch ladder. This is consistent with §9: it extracts a
-testability seam from `tui.ts` orchestration rather than reaching for leaf
-helpers. Remaining (incremental, not blocking): migrate tab-completion and the
-composer's own editing keys into named scopes so the global keybind map becomes
-just another (bottom) scope, and let panes push/pop themselves onto the stack
-at their lifecycle points rather than the stack reading `tuiState` flags.
+returning consumed/fall-through. The **entire** `processInput` key dispatch now
+resolves through `focusStack.dispatch(key)` over six scopes in precedence
+order: approval pane → ask-user → overlay modal → tab completion → global
+keybinds → composer (bottom). The global keybind map and composer editing are
+no longer a special imperative tail — they are just the lowest-priority scopes,
+and a key no scope claims is a deliberate no-op exactly as before. Precedence
+and behavior are byte-for-byte the prior hand-rolled cascade; the resolution is
+data-driven, inspectable (`activeScope()`), and unit-tested
+(`cli/tests/tui-focus.test.mjs`), with the full CLI suite (2707 tests) green
+across the migration. This is consistent with §9: it extracts a testability
+seam from `tui.ts` orchestration rather than reaching for leaf helpers.
+
+Remaining (incremental, not blocking): scopes still read `tuiState` flags to
+decide `isActive()`; the next step is to let panes/modals push and pop
+themselves onto the stack at their own lifecycle points, so focus ownership is
+held by the component rather than inferred from shared state — the last piece
+of giggles' model worth borrowing.
 
 ## Active Runtime Work
 
@@ -327,7 +332,7 @@ at their lifecycle points rather than the stack reading `tuiState` flags.
 5. Graduate loop detection enforcement only after telemetry supports thresholds.
 6. Decide whether memory Phase 3 immutable verbatim logs are worth the storage cost.
 7. Promote the diff/annotation envelope only when a roadmap item needs it.
-8. Finish the TUI focus-stack migration (§12): move tab-completion + composer editing into named scopes so the global keybind map is just the bottom scope, and have panes push/pop themselves rather than the stack reading `tuiState` flags.
+8. Finish the TUI focus-stack migration (§12): tab-completion, the global keybind map, and composer editing now resolve as scopes (the whole dispatch is the stack). Remaining: have panes/modals push/pop themselves onto the stack rather than the stack reading `tuiState` flags.
 9. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model. Step 1 landed 2026-06-12: interactive turns default to the in-loop lead with the Planner wrapper behind `PUSH_DELEGATION_MODE=delegated`. Step 2 landed 2026-06-12: the lead-kernel lane (`cli/lead-turn.ts`) runs the turn on the shared kernel in `leadMode`. Step 3 landed 2026-06-12: the lane is the **default**; `PUSH_LEAD_RUNTIME=engine` is the exact-match opt-out while it bakes. Remaining: retire the engine loop's duplicated round machinery once the lane has baked.
 
 ## Archived Context Worth Knowing
