@@ -1697,7 +1697,10 @@ export async function backupFile(filePath, workspaceRoot) {
     await fs.access(filePath); // only backup if file exists
     const backupDir = path.join(workspaceRoot, '.push', 'backups');
     await fs.mkdir(backupDir, { recursive: true });
-    const relative = path.relative(workspaceRoot, filePath).replace(/\//g, '__');
+    // Flatten both separators — path.relative emits OS-native ones (backslash
+    // on Windows), so matching only `/` would leave the separator in the name
+    // and scatter backups into nested dirs instead of one flat backups/ folder.
+    const relative = path.relative(workspaceRoot, filePath).replace(/[/\\]/g, '__');
     const backupPath = path.join(backupDir, `${relative}.${Date.now()}.bak`);
     await fs.copyFile(filePath, backupPath);
   } catch {
@@ -3030,7 +3033,10 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           asString(call.args.path, 'path'),
         );
         const backupDir = path.join(workspaceRoot, '.push', 'backups');
-        const relative = path.relative(workspaceRoot, filePath).replace(/\//g, '__');
+        // Flatten both separators — path.relative emits OS-native ones (backslash
+        // on Windows), so matching only `/` would leave the separator in the name
+        // and scatter backups into nested dirs instead of one flat backups/ folder.
+        const relative = path.relative(workspaceRoot, filePath).replace(/[/\\]/g, '__');
         const prefix = `${relative}.`;
 
         let entries;
