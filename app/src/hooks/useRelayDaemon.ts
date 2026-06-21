@@ -554,6 +554,12 @@ export function useRelayDaemon(
     if (!shouldNudgeReconnect(wsStatusRef.current)) return;
     dispatchReconnect({ type: 'MANUAL_RESET' });
     setLocalReconnectKey((k) => k + 1);
+    // Empty deps is intentional: this reads `wsStatusRef.current` (the
+    // live mutable ref) rather than a captured `wsStatus` snapshot, so
+    // the callback must stay referentially stable. Adding `wsStatus` (or
+    // anything else) here would re-create it on every status transition,
+    // which re-binds the env listeners below — and reading the ref makes
+    // those deps unnecessary anyway. Do not add deps.
   }, []);
   useEffect(() => {
     if (deploymentUrl === null || sessionId === null || token === null) return;
