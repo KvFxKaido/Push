@@ -498,6 +498,73 @@ describe('runCoderAgent (PushStream consumer)', () => {
     expect(result.summary).toContain('sandbox_diff');
   });
 
+  it('lead aborts on a consecutive identical tool call (exact-repeat breaker)', async () => {
+    const rounds: PushStreamEvent[][] = Array.from({ length: 6 }, () => [
+      { type: 'text_delta', text: 'working' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+    const { stream } = makePushStream(rounds);
+    // The SAME single read every round, nothing intervening — the
+    // consecutive-identical streak accrues until the oracle aborts. (A
+    // multi-call batch would reset the streak; see the round-cap tests above.)
+    // A lone call routes through the single-call path, so `detectAnyToolCall`
+    // must return it too or the loop halts at round 0 with no call to run.
+    const call = { call: { tool: 'sandbox_read_file', args: { path: 'a' } } };
+    const detectAllToolCalls = () => ({
+      readOnly: [call],
+      mutating: null,
+      fileMutations: [],
+      extraMutations: [],
+      droppedCandidates: [],
+    });
+    const result = await runCoderAgent(
+      baseCoderOptions({
+        stream,
+        leadMode: true,
+        // Higher than EXACT_REPEAT_LIMIT so the loop breaker fires before the cap.
+        harnessMaxRounds: 10,
+        detectAllToolCalls,
+        detectAnyToolCall: () => call,
+        evaluateAfterModel: async () => null,
+      }),
+      { onStatus: () => {} },
+    );
+    expect(result.stopReason).toBe('loop');
+    expect(result.summary).toContain('Detected repeated tool call loop');
+    // Aborts on the 4th identical call (limit 3), not at the round cap.
+    expect(result.rounds).toBe(4);
+  });
+
+  it('delegated Coder does not take the lead-only exact-repeat breaker', async () => {
+    const rounds: PushStreamEvent[][] = Array.from({ length: 6 }, () => [
+      { type: 'text_delta', text: 'working' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+    const { stream } = makePushStream(rounds);
+    const call = { call: { tool: 'sandbox_read_file', args: { path: 'a' } } };
+    const detectAllToolCalls = () => ({
+      readOnly: [call],
+      mutating: null,
+      fileMutations: [],
+      extraMutations: [],
+      droppedCandidates: [],
+    });
+    const result = await runCoderAgent(
+      baseCoderOptions({
+        stream,
+        leadMode: false,
+        harnessMaxRounds: 3,
+        detectAllToolCalls,
+        detectAnyToolCall: () => call,
+        evaluateAfterModel: async () => null,
+      }),
+      { onStatus: () => {} },
+    );
+    // Same repeated call, but the exact-repeat breaker is lead-only — the
+    // delegated Coder runs to the round cap instead of aborting on the loop.
+    expect(result.stopReason).toBe('max_rounds');
+  });
+
   it('surfaces overflowed calls (extraMutations) to the model instead of dropping them silently', async () => {
     const rounds: PushStreamEvent[][] = Array.from({ length: 3 }, () => [
       { type: 'text_delta', text: 'working' },

@@ -72,9 +72,11 @@ import {
   buildLoopSteeringText,
   createSimilarityLoopDetector,
   evaluateLoopState,
+  EXACT_REPEAT_LIMIT,
   isSimilarityLoopDetectionEnabled,
   writeTargetOf,
 } from './loop-detection.js';
+import { createMutationFailureTracker, getToolInvocationKey } from './agent-loop-utils.js';
 import { recordLoopVerdict } from './loop-metrics.js';
 import { SystemPromptBuilder } from './system-prompt-builder.js';
 import {
@@ -1210,17 +1212,28 @@ export async function runCoderAgent<TCall, TCard>(
   // because the Coder legitimately re-reads the same files across many rounds
   // and an always-on exact-batch abort would cut those runs short.
   //
-  // Enforcement split (see the `similarityEnforced` arg on the verdict call
-  // below): the delegated Coder keeps the ladder DARK unless
-  // PUSH_LOOP_DETECTION=1, but the conversational lead (`persona: 'lead'`)
-  // enforces it unconditionally. The lead lane (CLI `cli/lead-turn.ts`, web
-  // inline) has no Orchestrator round loop above it and never wired in the
-  // exact-repeat breaker, so the similarity ladder is the only loop guard left
-  // before the round cap — leaving it dark made the lead's only backstop the
-  // round budget. Windows + counters are per-run (reset on resume).
+  // Enforcement split: the delegated Coder keeps the near-duplicate ladder
+  // DARK unless PUSH_LOOP_DETECTION=1 and takes no exact-repeat abort (it
+  // legitimately re-reads the same files across rounds). The conversational
+  // lead (`persona: 'lead'`) gets both guards — the lead lane (CLI
+  // `cli/lead-turn.ts`, web inline) has no Orchestrator round loop above it,
+  // so without these its only backstop was the round budget:
+  //   1. the similarity ladder, enforced unconditionally (see
+  //      `similarityEnforced` on the verdict call below); and
+  //   2. the consecutive-identical-call breaker (`leadCallTracker` below) that
+  //      the web orchestrator round loop carries but the lead lane never had.
+  //      It feeds the oracle's always-enforced `exactBreakers` input, so it
+  //      catches repeated *reads* the similarity ladder (writes-only) misses.
+  //      The streak resets when a different call intervenes, so lead re-reads
+  //      with work between rounds don't trip it.
+  // Windows + counters are per-run (reset on resume).
   const loopDetector = createSimilarityLoopDetector();
   let loopBlocksIssued = 0;
   let loopCompactsIssued = 0;
+  // Consecutive-identical-call tracker, lead-only (see split above). Mirrors
+  // the web orchestrator's signal collection (`getToolInvocationKey` +
+  // `isRepeatedCall`) so both surfaces key the breaker identically.
+  const leadCallTracker = createMutationFailureTracker();
 
   // Wrap the host toolExec so a genuinely-gone sandbox — SANDBOX_UNREACHABLE
   // across SANDBOX_LOSS_THRESHOLD consecutive calls — throws
@@ -1615,7 +1628,28 @@ export async function runCoderAgent<TCall, TCard>(
         }
       }
 
+      // Lead-only exact-repeat breaker: feed the oracle's always-enforced
+      // `exactBreakers` input from the consecutive-identical-call tracker.
+      // Check the first call against the prior-round streak BEFORE recording
+      // this round's calls, so the limit counts rounds (matching the web
+      // orchestrator's signal collection). A multi-call round resets the
+      // streak, so only a single identical call repeated across rounds trips.
+      const exactBreakers: string[] = [];
+      if (leadMode) {
+        for (let i = 0; i < loopCalls.length; i++) {
+          const call = loopCalls[i];
+          const key = getToolInvocationKey(call.tool, call.args);
+          if (i === 0 && leadCallTracker.isRepeatedCall(key, EXACT_REPEAT_LIMIT)) {
+            exactBreakers.push(
+              `consecutive identical call: ${call.tool} (${EXACT_REPEAT_LIMIT}+ rounds in a row)`,
+            );
+          }
+          leadCallTracker.recordCall(key);
+        }
+      }
+
       const loopVerdict = evaluateLoopState({
+        exactBreakers,
         similarity: worstSimilarity,
         blocksIssued: loopBlocksIssued,
         compactsIssued: loopCompactsIssued,
