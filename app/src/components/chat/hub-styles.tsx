@@ -1,38 +1,46 @@
-// Flat chrome. The "glass" identity (backdrop-blur + translucent gradient +
-// heavy floating shadow) is gone: chrome surfaces are now a solid raised step
-// over the canvas with a clean 1px border, the way DeepSeek/Kimi build chips
-// and panels. Surface hierarchy comes from border + fill contrast, not blur or
-// shadow (see DESIGN.md → Shadows).
+// Neumorphic chrome. Chrome surfaces are a solid step over the canvas with a
+// clean 1px border, but they now carry dark-neumorphic *depth*: raised controls
+// lift with a lit top edge (`shadow-push-raised`) and press in on `:active`
+// (`shadow-push-inset`), while input-shaped chrome sinks into the surface as a
+// recessed well. The base surface itself stays depth-free so each consumer opts
+// into the raise or the recess explicitly (two `shadow-*` utilities on one
+// element would collide on source order). Dense *content* cards remain flat —
+// the depth tokens are chrome- and recess-only. See DESIGN.md → Shadows.
 const HUB_MATERIAL_SURFACE_BASE_CLASS =
   'relative overflow-hidden border border-push-edge bg-push-surface-raised';
 
-// The flat chrome surface. (Formerly this added `backdrop-blur-xl` over the
-// base; flat chrome has no blur, so the two collapsed into one.)
+// The depth-free chrome surface. Buttons compose `shadow-push-raised` on top;
+// inputs compose `shadow-push-inset`. (Formerly this added `backdrop-blur-xl`
+// over the base; flat chrome has no blur, so the two collapsed into one.)
 export const HUB_MATERIAL_SURFACE_CLASS = HUB_MATERIAL_SURFACE_BASE_CLASS;
 
+// Raised + pressable: a stronger lift on hover and a press-to-recess on
+// `:active`, so a hub button reads as a physical key rather than a flat chip.
 export const HUB_MATERIAL_INTERACTIVE_CLASS =
-  'transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110';
+  'transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 hover:shadow-push-raised-hover active:shadow-push-inset';
 
 const HUB_MATERIAL_PILL_LAYOUT_CLASS =
   'inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-push-xs text-push-fg-dim disabled:opacity-50';
 
-export const HUB_MATERIAL_BUTTON_CLASS = `${HUB_MATERIAL_SURFACE_CLASS} ${HUB_MATERIAL_INTERACTIVE_CLASS}`;
+export const HUB_MATERIAL_BUTTON_CLASS = `${HUB_MATERIAL_SURFACE_CLASS} shadow-push-raised ${HUB_MATERIAL_INTERACTIVE_CLASS}`;
 
 export const HUB_MATERIAL_PILL_BUTTON_CLASS = `${HUB_MATERIAL_BUTTON_CLASS} ${HUB_MATERIAL_PILL_LAYOUT_CLASS}`;
 
 export const HUB_MATERIAL_ROUND_BUTTON_CLASS = `${HUB_MATERIAL_BUTTON_CLASS} inline-flex h-8 w-8 items-center justify-center rounded-full text-push-fg-dim disabled:opacity-50`;
 
-export const HUB_MATERIAL_INPUT_CLASS = `${HUB_MATERIAL_SURFACE_CLASS} h-8 rounded-full px-3 text-xs text-push-fg-secondary outline-none transition-all placeholder:text-push-fg-dim focus:border-push-sky/50 disabled:opacity-50`;
+// Input chrome recesses (inset) instead of lifting — a field reads as carved
+// into the surface, the neumorphic counterpart to the raised button.
+export const HUB_MATERIAL_INPUT_CLASS = `${HUB_MATERIAL_SURFACE_CLASS} shadow-push-inset h-8 rounded-full px-3 text-xs text-push-fg-secondary outline-none transition-all placeholder:text-push-fg-dim focus:border-push-sky/50 disabled:opacity-50`;
 
-// Top-level panel: a solid raised surface one clear step above the canvas,
-// defined by a 1px border instead of a translucent gradient + drop shadow.
+// Top-level panel: a solid surface one clear step above the canvas, lifted with
+// the raised depth so it floats over the page.
 export const HUB_PANEL_SURFACE_CLASS =
-  'rounded-[20px] border border-push-edge bg-push-surface-raised';
+  'rounded-[20px] border border-push-edge bg-push-surface-raised shadow-push-raised';
 
-// Nested panel: recesses below its parent (inset fill) so the two layers read
-// as distinct without any blur or shadow.
+// Nested panel: recesses below its parent (inset fill + inset shadow) so the
+// two layers read as distinct — a well sunk into the raised panel above it.
 export const HUB_PANEL_SUBTLE_SURFACE_CLASS =
-  'rounded-[18px] border border-push-edge-subtle bg-push-surface-inset';
+  'rounded-[18px] border border-push-edge-subtle bg-push-surface-inset shadow-push-inset';
 
 export const HUB_TOP_BANNER_STRIP_CLASS = 'animate-fade-in border-b bg-transparent';
 
@@ -56,6 +64,12 @@ export const HUB_TOP_BANNER_STRIP_CLASS = 'animate-fade-in border-b bg-transpare
 // Panel shell: the frosted surface *and* its outer frame weight. Callers add
 // only the side (`border-l` / `border-r` / `border-t`) so the frame lives here,
 // one step stronger than the inner hairline by design (a defined outer edge).
+// Shadow-free by design: a drawer that uses this also supplies its own outer
+// elevation, and two `shadow-*` utilities on one element collide (only one
+// box-shadow wins). The frosted edge is folded into the `shadow-push-glass`
+// token applied at the drawer call sites instead, so elevation + edge live in
+// one utility. Internal seams (e.g. a glass footer) compose this class with no
+// shadow, exactly as before.
 export const HUB_GLASS_PANEL_CLASS =
   'border-white/[0.07] bg-[linear-gradient(180deg,rgba(12,16,24,0.82)_0%,rgba(6,9,14,0.93)_100%)] backdrop-blur-2xl';
 

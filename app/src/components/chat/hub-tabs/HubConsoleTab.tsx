@@ -283,7 +283,7 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-3 font-mono text-xs leading-relaxed text-push-fg-secondary">
+      <div className="flex-1 overflow-y-auto bg-push-surface-inset p-3 font-mono text-xs leading-relaxed text-push-fg-secondary shadow-push-inset">
         <div className="space-y-2">
           {logs.map((log, idx) => (
             <div

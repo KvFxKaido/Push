@@ -1278,7 +1278,7 @@ export function WorkspaceHubSheet({
       <SheetContent
         side="right"
         overlayClassName="bg-transparent"
-        className={`w-[94vw] rounded-l-2xl border-l ${HUB_GLASS_PANEL_CLASS} p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.5),0_4px_16px_rgba(0,0,0,0.28)] sm:max-w-none [&>[data-slot=sheet-close]]:hidden`}
+        className={`w-[94vw] rounded-l-2xl border-l ${HUB_GLASS_PANEL_CLASS} p-0 text-push-fg shadow-push-glass sm:max-w-none [&>[data-slot=sheet-close]]:hidden`}
       >
         <SheetHeader className="sr-only">
           <SheetTitle>

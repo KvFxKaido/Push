@@ -463,7 +463,7 @@ export function RepoChatDrawer({
         <SheetContent
           side="left"
           overlayClassName="bg-transparent"
-          className={`w-[86vw] rounded-r-2xl border-r ${HUB_GLASS_PANEL_CLASS} p-0 text-push-fg shadow-[0_16px_48px_rgba(0,0,0,0.5),0_4px_16px_rgba(0,0,0,0.28)] sm:max-w-sm [&>[data-slot=sheet-close]]:text-push-fg-secondary [&>[data-slot=sheet-close]]:hover:text-push-fg`}
+          className={`w-[86vw] rounded-r-2xl border-r ${HUB_GLASS_PANEL_CLASS} p-0 text-push-fg shadow-push-glass sm:max-w-sm [&>[data-slot=sheet-close]]:text-push-fg-secondary [&>[data-slot=sheet-close]]:hover:text-push-fg`}
         >
           {/* Subtle top highlight */}
           <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-16 rounded-tr-2xl bg-gradient-to-b from-white/[0.03] to-transparent" />
