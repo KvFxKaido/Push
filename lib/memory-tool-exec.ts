@@ -247,7 +247,7 @@ export async function runMemoryExpand(
   if (ids.length === 0 && refs.length === 0) {
     return errorResult(
       'memory_expand',
-      'pass `ids` (record ids from memory_grep) and/or `refs` (verbatim refs like vb_… from a reduced tool result)',
+      'no ids or refs given — pass `ids` (record ids from memory_grep) and/or `refs` (verbatim refs like vb_… from a reduced tool result); at least one must be non-empty',
     );
   }
 

@@ -1267,7 +1267,18 @@ async function reductionRecallMarker(reduced, rawText, command, workspaceRoot) {
       scope: { repoFullName: identity.repoFullName, branch: identity.branch ?? undefined },
     });
     return marker ?? '';
-  } catch {
+  } catch (err) {
+    // Best-effort: identity resolution (or the retain call) failing must not
+    // break exec — but log it so a consistently-failing retain is observable,
+    // matching the web path's verbatim_retain_failed. stderr, per the CLI
+    // stdout-is-the-output-channel rule.
+    console.error(
+      JSON.stringify({
+        level: 'warn',
+        event: 'verbatim_retain_marker_failed',
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
     return '';
   }
 }
