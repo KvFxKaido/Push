@@ -157,6 +157,15 @@ export const READ_ONLY_TOOLS = new Set([
 // trailing side-effecting call (exec, git_commit, etc.).
 export const FILE_MUTATION_TOOLS = new Set(['write_file', 'edit_file', 'undo_edit']);
 
+// Read-only tools whose correct usage includes re-calling with identical args,
+// so the lead exact-repeat loop breaker (`lib/coder-agent.ts`) must exempt
+// them. `exec_poll` is the canonical case: polling a quiet long-running command
+// returns `<no new output>` with an unchanged `next_seq`, so the right next
+// call is the same `{session_id, from_seq}` — repeating it is waiting, not a
+// loop. Without the exemption a slow command that doesn't emit output every
+// round would trip the breaker on its 4th poll and abort the lead turn.
+export const REPEAT_EXEMPT_TOOLS = new Set(['exec_poll']);
+
 export function isFileMutationToolCall(call) {
   return Boolean(call && FILE_MUTATION_TOOLS.has(call.tool));
 }

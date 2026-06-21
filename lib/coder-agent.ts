@@ -72,9 +72,11 @@ import {
   buildLoopSteeringText,
   createSimilarityLoopDetector,
   evaluateLoopState,
+  EXACT_REPEAT_LIMIT,
   isSimilarityLoopDetectionEnabled,
   writeTargetOf,
 } from './loop-detection.js';
+import { createMutationFailureTracker, getToolInvocationKey } from './agent-loop-utils.js';
 import { recordLoopVerdict } from './loop-metrics.js';
 import { SystemPromptBuilder } from './system-prompt-builder.js';
 import {
@@ -944,6 +946,19 @@ export interface CoderAgentOptions<TCall, TCard> {
    * Omitted ⇒ text-dispatch only (today's behavior for every other model).
    */
   nativeToolSchemas?: ToolFunctionSchema[];
+  /**
+   * Read-only tools whose correct usage includes re-calling with identical
+   * args, so they must be EXEMPT from the lead exact-repeat breaker. Polling a
+   * quiet long-running command (`exec_poll` returns `<no new output>` with an
+   * unchanged `next_seq`, so the right next call is the same `{session_id,
+   * from_seq}`) is the canonical case — without the exemption a slow command
+   * that doesn't emit output every round trips the breaker on its 4th poll.
+   * Surface-declared because the kernel can't know which tool names carry
+   * wait-by-repeat semantics; the CLI lead passes its poll tools, the web
+   * inline lead has none (its exec is the side-effecting `sandbox_exec`).
+   * Only consulted in lead mode. Defaults to empty.
+   */
+  repeatExemptTools?: ReadonlySet<string>;
 }
 
 /**
@@ -1013,6 +1028,7 @@ export async function runCoderAgent<TCall, TCard>(
     leadToolGuidance = false,
     leadToolScope = 'full',
     nativeToolSchemas,
+    repeatExemptTools,
   } = options;
 
   // Derive the legacy boolean once for the body's prompt-section + round-cap
@@ -1206,13 +1222,32 @@ export async function runCoderAgent<TCall, TCard>(
   // shared oracle. Scoped to the similarity signal only — the Coder keeps its
   // existing mutation-failure breaker (`mutationFailures` above) and the
   // orchestrator's delegation circuit breaker; it deliberately does NOT take
-  // the always-on exact-repeat abort the CLI/web round loops carry, because the
-  // Coder legitimately re-reads the same files across many rounds and an
-  // always-on exact-batch abort would cut those runs short. Dark unless
-  // PUSH_LOOP_DETECTION=1; windows + counters are per-run (reset on resume).
+  // the always-on exact-repeat abort the web orchestrator round loop carries,
+  // because the Coder legitimately re-reads the same files across many rounds
+  // and an always-on exact-batch abort would cut those runs short.
+  //
+  // Enforcement split: the delegated Coder keeps the near-duplicate ladder
+  // DARK unless PUSH_LOOP_DETECTION=1 and takes no exact-repeat abort (it
+  // legitimately re-reads the same files across rounds). The conversational
+  // lead (`persona: 'lead'`) gets both guards — the lead lane (CLI
+  // `cli/lead-turn.ts`, web inline) has no Orchestrator round loop above it,
+  // so without these its only backstop was the round budget:
+  //   1. the similarity ladder, enforced unconditionally (see
+  //      `similarityEnforced` on the verdict call below); and
+  //   2. the consecutive-identical-call breaker (`leadCallTracker` below) that
+  //      the web orchestrator round loop carries but the lead lane never had.
+  //      It feeds the oracle's always-enforced `exactBreakers` input, so it
+  //      catches repeated *reads* the similarity ladder (writes-only) misses.
+  //      The streak resets when a different call intervenes, so lead re-reads
+  //      with work between rounds don't trip it.
+  // Windows + counters are per-run (reset on resume).
   const loopDetector = createSimilarityLoopDetector();
   let loopBlocksIssued = 0;
   let loopCompactsIssued = 0;
+  // Consecutive-identical-call tracker, lead-only (see split above). Mirrors
+  // the web orchestrator's signal collection (`getToolInvocationKey` +
+  // `isRepeatedCall`) so both surfaces key the breaker identically.
+  const leadCallTracker = createMutationFailureTracker();
 
   // Wrap the host toolExec so a genuinely-gone sandbox — SANDBOX_UNREACHABLE
   // across SANDBOX_LOSS_THRESHOLD consecutive calls — throws
@@ -1607,11 +1642,46 @@ export async function runCoderAgent<TCall, TCard>(
         }
       }
 
+      // Lead-only exact-repeat breaker: feed the oracle's always-enforced
+      // `exactBreakers` input from the consecutive-identical-call tracker.
+      // Check the first call against the prior-round streak BEFORE recording
+      // this round's calls, so the limit counts rounds (matching the web
+      // orchestrator's signal collection). A multi-call round resets the
+      // streak, so only a single identical call repeated across rounds trips.
+      const exactBreakers: string[] = [];
+      if (leadMode) {
+        for (let i = 0; i < loopCalls.length; i++) {
+          const call = loopCalls[i];
+          const key = getToolInvocationKey(call.tool, call.args);
+          // Record every call (so a different intervening call resets the
+          // streak) but only break on the FIRST — same per-surface rule the
+          // web orchestrator applies, since a repeated lone call is the loop
+          // we're catching; a multi-call round is already varied work. Tools
+          // that wait by re-calling with identical args (e.g. `exec_poll` on a
+          // quiet long-running command) are exempt — repeating them is correct,
+          // not a loop.
+          if (
+            i === 0 &&
+            !repeatExemptTools?.has(call.tool) &&
+            leadCallTracker.isRepeatedCall(key, EXACT_REPEAT_LIMIT)
+          ) {
+            exactBreakers.push(
+              `consecutive identical call: ${call.tool} (${EXACT_REPEAT_LIMIT}+ rounds in a row)`,
+            );
+          }
+          leadCallTracker.recordCall(key);
+        }
+      }
+
       const loopVerdict = evaluateLoopState({
+        exactBreakers,
         similarity: worstSimilarity,
         blocksIssued: loopBlocksIssued,
         compactsIssued: loopCompactsIssued,
-        similarityEnforced: isSimilarityLoopDetectionEnabled(),
+        // Lead turns enforce the near-duplicate ladder unconditionally; the
+        // delegated Coder stays dark unless PUSH_LOOP_DETECTION=1. See the
+        // enforcement-split note on the loop-detection state above.
+        similarityEnforced: leadMode || isSimilarityLoopDetectionEnabled(),
       });
       recordLoopVerdict({
         surface: 'coder',
