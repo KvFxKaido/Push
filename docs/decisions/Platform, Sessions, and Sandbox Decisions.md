@@ -232,6 +232,106 @@ Status: **Current** — evaluated 2026-06-17, not adopted.
 Research note:
 [`Cloudflare Agents SDK Evaluation`](<../research/Cloudflare Agents SDK Evaluation.md>).
 
+### 13. Provider failover is round-scoped and lock-respecting
+
+**Status: Current** (adopted 2026-06-21). Prompted by a review of
+[QuantumNous/new-api](https://github.com/QuantumNous/new-api), a Go LLM gateway
+whose core value-add is weighted multi-channel routing with automatic failover.
+Push has the inverse: one provider/model is **locked** per chat (#8 — routing is
+owned by chat lock and role context, not the observability layer), so a single
+transient upstream failure (a gateway 5xx, a 429, an expired key) kills the whole
+turn even when other configured providers could have served it. The existing
+recovery is **same-provider only**: `shouldRetryStreamRound` in
+`app/src/lib/stream-error.ts` re-attempts a transient failure up to
+`STREAM_RETRY_MAX`, then surfaces the error. There is no cross-provider step.
+
+The decision: add failover as a **round-scoped, lock-respecting** extension —
+not a new routing model.
+
+- **Round-scoped, not re-locking.** Failover rescues the *current* round by
+  trying an alternate provider; it does **not** mutate the chat lock. The lock
+  encodes user intent plus capability guarantees (notably Anthropic
+  signed-reasoning round-trip), so permanently swapping the user's chosen
+  provider on one blip is surprising. If the primary stays down, each subsequent
+  round re-tries it first (cheap if it recovered) and fails over again. Promoting
+  failover to a sticky re-lock is a deliberate future step, not v1.
+
+- **Error classification drives the action, not message text.** Reuse the
+  structured `ProviderStreamError` fields (`retryable`, `status`) — never
+  `.message` (the HTTP-status anti-pattern in CLAUDE.md / REVIEW.md). Two
+  distinct predicates:
+  - *retry-same-worthy* = transient (5xx / 429 / 408 / 425 / stall) — the same
+    provider may recover.
+  - *failover-worthy* = transient **or** provider-specific deterministic failures
+    a different provider could survive: **401/403** (the failing key is
+    per-provider) and **404** (model absent on this provider). **Excluded:
+    400/422** — a malformed request fails identically everywhere, so failing
+    over just burns a second provider's quota to reproduce the error.
+
+- **The output guard is also the safety seam.** Failover only fires before any
+  assistant-visible output streamed this round (the same `hasOutput` guard the
+  same-provider retry uses). This is load-bearing twice over: it prevents
+  duplicated/rewritten visible text, *and* it sidesteps the reasoning-block
+  compatibility hazard — a failover round has emitted no signed thinking yet, so
+  there is nothing provider-incompatible to strand.
+
+- **Candidate selection is capability-aware and lives at the call site.** The
+  decision kernel is pure (`lib/provider-failover.ts`,
+  `decideStreamFailover`): it takes a pre-extracted `StreamErrorClassification`
+  and a **pre-filtered, ordered candidate list**. The caller — which has the
+  message history — resolves candidates to providers that are (a) configured
+  (have a key) and (b) compatible with the conversation's reasoning-block
+  requirements. The open hazard wiring must respect: a history containing
+  Anthropic signed reasoning blocks must not fail over to an OpenAI-shaped
+  provider that can't echo them back. Until that filter is precise, the
+  conservative default is "fail over only among providers sharing the locked
+  provider's stream shape."
+
+- **Symmetric structured logs.** Each branch emits one line — `stream_round_retry`
+  (same-provider), `stream_failover` (with `from`/`to`), `stream_recovery_exhausted`
+  (with `triedCount`).
+
+Current implementation:
+- The pure decision kernel + unit tests (`lib/provider-failover.ts`).
+- Web wiring in `app/src/hooks/chat-stream-round.ts`, with the capability-aware
+  candidate resolver `resolveFailoverCandidates` + `PROVIDER_STREAM_SHAPE` in
+  `orchestrator-provider-routing.ts`. The reasoning-block hazard is closed
+  structurally: `anthropic` is alone in its wire-shape bucket, so a chat carrying
+  Anthropic signed reasoning blocks has no same-shape candidate and never fails
+  over. The same-provider retry decision moved into the kernel
+  (`shouldRetryStreamRound` was deleted) so there is one source of truth.
+  - **Transport-aware isolation.** Static provider→shape keying isn't enough:
+    `zen` (Zen Go MiniMax/Qwen) and `vertex` (Claude) route through the
+    Anthropic bridge *per model*. The resolver isolates any locked route where
+    `routesThroughAnthropicBridge(locked, model)` holds — returning no
+    candidates — so a model-dependent Anthropic route can't fail over to a
+    provider that can't replay its signed reasoning. Candidate routes are also
+    checked with their configured model, so a non-Anthropic lock can't fail over
+    into a model-dependent Anthropic target. That predicate is now shared
+    one-source-of-truth with `orchestrator.ts`'s reasoning-block gate.
+  - **Failover order ≠ initial-pick order.** Candidate ordering uses a
+    dedicated `FAILOVER_PROVIDER_ORDER` that includes every real provider
+    (azure/bedrock/vertex too), unlike `PROVIDER_FALLBACK_ORDER` which omits the
+    experimental trio for initial selection — otherwise an OpenAI-locked chat
+    whose only backup key is Azure would get no candidate.
+- A user-facing toggle defaulting **off**, in the unified settings doc
+  (`SETTINGS_KEYS.providerFailover`, surfaced in the Settings UI on both the web
+  and daemon surfaces). The round loop reads it synchronously via `getSetting`;
+  with failover off the candidate list is empty and the kernel collapses to the
+  prior same-provider-retry behavior.
+- CLI wiring in `cli/lead-turn.ts`: the stream handed to the shared
+  `runCoderAgent` kernel is wrapped in a per-round retry/failover generator, so
+  failover lands without kernel changes. Candidates come from
+  `resolveCliFailoverCandidates` (`cli/provider.ts`) — same wire-shape rule,
+  same anthropic/gemini isolation (both are single-member buckets in the CLI
+  registry). Gated by the `PUSH_PROVIDER_FAILOVER` env flag (default off);
+  retry/failover transitions surface as `warning` events
+  (`PROVIDER_RETRY` / `PROVIDER_FAILOVER`).
+
+Remaining: consider promoting round-scoped failover to a sticky re-lock once
+validated in real use; a shared CLI/web failover-enabled signal if the CLI ever
+adopts the synced settings doc.
+
 ## Active Platform Work
 
 1. Apply/verify webhook PR-review production migration and permissions.

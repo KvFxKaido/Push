@@ -53,26 +53,14 @@ export function isRetryableStreamError(err: unknown): boolean {
   return false;
 }
 
-/** Max retries (in addition to the initial attempt) for a pre-output stream failure. */
-export const STREAM_RETRY_MAX = 2;
-
 /**
- * Whether a stream round should be re-attempted. Pure decision so the guard is
- * testable in isolation. Retries only when: there is an error, the user has not
- * aborted, NO output streamed yet this round (`hasOutput` — retrying after
- * partial output would duplicate/rewrite visible text), the retry budget isn't
- * spent, and the error is transient.
+ * Max same-provider retries (in addition to the initial attempt) for a
+ * pre-output stream failure. Consumed by `decideStreamFailover`
+ * (`lib/provider-failover.ts`) as `sameProviderMax`: the retry/failover/give-up
+ * decision now lives in that shared kernel — this module owns only the
+ * structured error classification it feeds.
  */
-export function shouldRetryStreamRound(params: {
-  error: unknown;
-  aborted: boolean;
-  hasOutput: boolean;
-  attempt: number;
-}): boolean {
-  if (!params.error || params.aborted || params.hasOutput) return false;
-  if (params.attempt >= STREAM_RETRY_MAX) return false;
-  return isRetryableStreamError(params.error);
-}
+export const STREAM_RETRY_MAX = 2;
 
 /** Exponential backoff before the next stream retry: 500ms, 1s, 2s, capped at 4s. */
 export function streamRetryDelayMs(attempt: number): number {

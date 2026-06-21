@@ -222,6 +222,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_GOOGLE_URL` | Google Gemini base URL (default: `https://generativelanguage.googleapis.com/v1beta`) |
 | `PUSH_GOOGLE_API_KEY` | Google Gemini API key (also accepted as `GEMINI_API_KEY`) |
 | `PUSH_GOOGLE_MODEL` | Google Gemini model (default: `gemini-3.5-flash`) |
+| `PUSH_PROVIDER_FAILOVER` | `1`/`true` to opt into round-scoped provider failover. The CLI retries the locked provider first, then may rescue the current round on another configured provider with the same wire shape. Default: off. |
 | `PUSH_TAVILY_API_KEY` | Optional Tavily key for premium web search (`web_search`) |
 | `PUSH_WEB_SEARCH_BACKEND` | Web search backend: `auto` (default), `tavily`, `ollama`, `duckduckgo` |
 | `PUSH_AUDITOR_GATE` | `0`/`false` to disable the Auditor commit gate, `1`/`true` to force it on (default: on). Overrides the `auditorGate` config setting. |

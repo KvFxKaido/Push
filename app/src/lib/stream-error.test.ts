@@ -5,7 +5,6 @@ import {
   STREAM_RETRY_MAX,
   isRetryableStreamError,
   isTransientHttpStatus,
-  shouldRetryStreamRound,
   streamRetryDelayMs,
 } from './stream-error';
 
@@ -46,55 +45,6 @@ describe('isRetryableStreamError', () => {
     expect(isRetryableStreamError(new Error('Blackbox AI 502: x'))).toBe(false); // status only in text → not retried
     expect(isRetryableStreamError(null)).toBe(false);
     expect(isRetryableStreamError('502')).toBe(false);
-  });
-});
-
-describe('shouldRetryStreamRound', () => {
-  const transient = new ProviderStreamError('502', { status: 502 });
-
-  it('retries a transient error with no output and budget left', () => {
-    expect(
-      shouldRetryStreamRound({ error: transient, aborted: false, hasOutput: false, attempt: 0 }),
-    ).toBe(true);
-    expect(
-      shouldRetryStreamRound({
-        error: transient,
-        aborted: false,
-        hasOutput: false,
-        attempt: STREAM_RETRY_MAX - 1,
-      }),
-    ).toBe(true);
-  });
-
-  it('does NOT retry once any output has streamed (the partial-output guard)', () => {
-    expect(
-      shouldRetryStreamRound({ error: transient, aborted: false, hasOutput: true, attempt: 0 }),
-    ).toBe(false);
-  });
-
-  it('does not retry on success, abort, exhausted budget, or terminal error', () => {
-    expect(
-      shouldRetryStreamRound({ error: null, aborted: false, hasOutput: false, attempt: 0 }),
-    ).toBe(false);
-    expect(
-      shouldRetryStreamRound({ error: transient, aborted: true, hasOutput: false, attempt: 0 }),
-    ).toBe(false);
-    expect(
-      shouldRetryStreamRound({
-        error: transient,
-        aborted: false,
-        hasOutput: false,
-        attempt: STREAM_RETRY_MAX,
-      }),
-    ).toBe(false);
-    expect(
-      shouldRetryStreamRound({
-        error: new ProviderStreamError('400', { status: 400 }),
-        aborted: false,
-        hasOutput: false,
-        attempt: 0,
-      }),
-    ).toBe(false);
   });
 });
 

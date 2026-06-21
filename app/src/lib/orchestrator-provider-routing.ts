@@ -23,6 +23,8 @@ import { anthropicStream } from './anthropic-stream';
 import { openaiStream } from './openai-stream';
 import { geminiStream } from './gemini-stream';
 import { iterateChatStream, type IterateChatStreamTimeouts } from './iterate-chat-stream';
+import { getZenGoTransport } from './zen-go';
+import { getVertexModelTransport } from './vertex-provider';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
@@ -171,6 +173,126 @@ export function isProviderAvailable(provider: ActiveProvider): boolean {
   if (provider === 'demo') return false;
   const check = PROVIDER_READY_CHECKS[provider as PreferredProvider];
   return check ? check() : false;
+}
+
+// ---------------------------------------------------------------------------
+// Provider failover candidate resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * Native wire shape per provider. Drives same-shape failover candidate
+ * selection so a round never fails over across an incompatible reasoning
+ * contract. This is the *provider's* contract, not the client SSE parser —
+ * every provider streams OpenAI-compatible SSE back to the browser (the
+ * anthropic/gemini wire shapes are translated server-side), but the
+ * reasoning-round-trip compatibility that matters for failover follows the
+ * native contract.
+ *
+ * NOTE: this static table keys on provider id only. Some routes are
+ * Anthropic-transport *per model* (Vertex Claude, Zen Go MiniMax/Qwen), which
+ * this table can't express — those are handled by the
+ * `routesThroughAnthropicBridge` guard in `resolveFailoverCandidates`, not
+ * here. `anthropic` is alone in its bucket for the static case.
+ */
+export type ProviderWireShape = 'anthropic' | 'gemini' | 'openai-compat';
+
+const PROVIDER_STREAM_SHAPE: Record<ActiveProvider, ProviderWireShape> = {
+  anthropic: 'anthropic',
+  google: 'gemini',
+  vertex: 'gemini',
+  ollama: 'openai-compat',
+  openrouter: 'openai-compat',
+  cloudflare: 'openai-compat',
+  zen: 'openai-compat',
+  nvidia: 'openai-compat',
+  blackbox: 'openai-compat',
+  kilocode: 'openai-compat',
+  fireworks: 'openai-compat',
+  openadapter: 'openai-compat',
+  azure: 'openai-compat',
+  bedrock: 'openai-compat',
+  openai: 'openai-compat',
+  // 'demo' has no wire shape; it can never be a failover source or target.
+  demo: 'openai-compat',
+};
+
+/**
+ * Failover candidate ordering. Unlike `PROVIDER_FALLBACK_ORDER` (which picks the
+ * *initial* provider and intentionally omits the experimental
+ * azure/bedrock/vertex trio), failover must consider every real configured
+ * provider as a backup — an OpenAI-locked chat whose only other key is Azure,
+ * or a Google-locked chat that can fall back to Vertex, would otherwise get no
+ * candidate. Neutral order; the actual pick is `decideStreamFailover`'s.
+ */
+const FAILOVER_PROVIDER_ORDER: Exclude<ActiveProvider, 'demo'>[] = [
+  'ollama',
+  'openrouter',
+  'cloudflare',
+  'zen',
+  'nvidia',
+  'blackbox',
+  'kilocode',
+  'fireworks',
+  'openadapter',
+  'azure',
+  'bedrock',
+  'vertex',
+  'anthropic',
+  'openai',
+  'google',
+];
+
+/**
+ * Whether a provider+model pair speaks the Anthropic Messages transport (and so
+ * round-trips signed reasoning blocks). Single source of truth shared with
+ * `orchestrator.ts`'s reasoning-block emission gate. Model-aware: `zen` and
+ * `vertex` route through the bridge only for specific models.
+ */
+export function routesThroughAnthropicBridge(
+  provider: Exclude<ActiveProvider, 'demo'> | undefined,
+  model: string | undefined,
+): boolean {
+  if (!provider || !model) return false;
+  if (provider === 'anthropic') return true;
+  if (provider === 'zen') return getZenGoTransport(model) === 'anthropic';
+  if (provider === 'vertex') return getVertexModelTransport(model) === 'anthropic';
+  return false;
+}
+
+function getProviderFailoverShape(provider: Exclude<ActiveProvider, 'demo'>): ProviderWireShape {
+  if (routesThroughAnthropicBridge(provider, resolveChatDefaultModel(provider))) {
+    return 'anthropic';
+  }
+  return PROVIDER_STREAM_SHAPE[provider];
+}
+
+/**
+ * Ordered failover candidates for a round that failed on the locked
+ * provider+model: configured providers of the SAME wire shape, excluding any
+ * already tried this round and the demo provider.
+ *
+ * Reasoning-block safety (decision #13): if the LOCKED route is
+ * Anthropic-transport — direct `anthropic`, or a model-dependent bridge route
+ * (`vertex` Claude, `zen` Go MiniMax/Qwen) — the history carries signed
+ * thinking blocks bound to that route's account, so we **never** fail over
+ * (signatures can't be replayed elsewhere). Candidate routes are checked with
+ * their configured model too, so a non-Anthropic lock cannot fail over into a
+ * model-dependent Anthropic target. Pure modulo the `isProviderAvailable`
+ * credential reads, so the actual pick stays in `lib/`'s `decideStreamFailover`.
+ */
+export function resolveFailoverCandidates(
+  locked: ActiveProvider,
+  model: string | undefined,
+  tried: ReadonlySet<string>,
+): ActiveProvider[] {
+  if (locked === 'demo') return [];
+  // Isolate every Anthropic-transport route, including the model-dependent
+  // ones the static shape table can't see.
+  if (routesThroughAnthropicBridge(locked, model)) return [];
+  const shape = PROVIDER_STREAM_SHAPE[locked];
+  return FAILOVER_PROVIDER_ORDER.filter(
+    (p) => !tried.has(p) && isProviderAvailable(p) && getProviderFailoverShape(p) === shape,
+  );
 }
 
 /**

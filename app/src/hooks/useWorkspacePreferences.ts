@@ -15,7 +15,7 @@ import { SETTINGS_KEYS } from '@/lib/settings-store';
 const TOOL_ACTIVITY_STORAGE_KEY = 'push:workspace:show-tool-activity';
 const ALLOWLIST_SECRET_COMMAND = 'npx wrangler secret put GITHUB_ALLOWED_INSTALLATION_IDS';
 
-const coerceToolActivity = (raw: unknown): boolean | undefined =>
+const coerceBoolean = (raw: unknown): boolean | undefined =>
   typeof raw === 'boolean' ? raw : undefined;
 
 function legacyToolActivity(): boolean | undefined {
@@ -34,7 +34,12 @@ export function useWorkspacePreferences(validatedGithubLogin: string | null | un
   const [showToolActivity, setShowToolActivityValue] = useSetting<boolean>(
     SETTINGS_KEYS.showToolActivity,
     false,
-    { coerce: coerceToolActivity, legacyFallback: legacyToolActivity },
+    { coerce: coerceBoolean, legacyFallback: legacyToolActivity },
+  );
+  const [providerFailover, setProviderFailoverValue] = useSetting<boolean>(
+    SETTINGS_KEYS.providerFailover,
+    false,
+    { coerce: coerceBoolean },
   );
   const [sandboxStartMode, setSandboxStartModeState] = useState<SandboxStartMode>(() =>
     getSandboxStartMode(),
@@ -100,6 +105,13 @@ export function useWorkspacePreferences(validatedGithubLogin: string | null | un
     [setShowToolActivityValue],
   );
 
+  const updateProviderFailover = useCallback(
+    (value: boolean) => {
+      setProviderFailoverValue(value);
+    },
+    [setProviderFailoverValue],
+  );
+
   const handleDisplayNameBlur = useCallback(() => {
     const nextDisplayName = displayNameDraft.trim();
     if (nextDisplayName !== profile.displayName) {
@@ -150,6 +162,8 @@ export function useWorkspacePreferences(validatedGithubLogin: string | null | un
     setShowInstallIdInput,
     showToolActivity,
     updateShowToolActivity,
+    providerFailover,
+    updateProviderFailover,
     sandboxStartMode,
     updateSandboxStartMode,
     contextMode,

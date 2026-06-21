@@ -305,6 +305,65 @@ export function resolveApiKey(config: ProviderConfig): string {
   return '';
 }
 
+/** Same-provider retry backoff (1s, 2s, 4s…) for the lead-turn failover
+ *  wrapper. Mirrors the legacy `streamCompletion` backoff. */
+export function cliStreamRetryDelayMs(attempt: number): number {
+  return RETRY_BASE_DELAY_MS * 2 ** attempt;
+}
+
+/** Structured classification of a CLI provider stream failure, shaped for
+ *  `decideStreamFailover` (`lib/provider-failover.ts`). Reads
+ *  `CliProviderError.status`; a transport-level failure (no HTTP `Response`) is
+ *  treated as transient — matching the legacy `isRetryableError`. Must not be
+ *  called for an `AbortError` (the caller guards aborts first). */
+export function classifyCliStreamError(err: unknown): { retryable: boolean; status?: number } {
+  if (err instanceof CliProviderError) {
+    const status = err.status;
+    return {
+      retryable: status === 408 || status === 425 || status === 429 || status >= 500,
+      status,
+    };
+  }
+  return { retryable: true };
+}
+
+function cliProviderShape(config: ProviderConfig): CliProviderStreamShape {
+  return config.streamShape ?? 'openai-compat';
+}
+
+/**
+ * Ordered failover candidates for a lead turn whose locked provider failed:
+ * other configured providers (a key resolves) of the SAME wire shape, excluding
+ * any already tried this round. Order follows `PROVIDER_CONFIGS` declaration.
+ *
+ * `anthropic` and `gemini` are single-member buckets in the CLI registry, so a
+ * turn locked on either never fails over — the same reasoning-block safety the
+ * web resolver provides (a history with Anthropic signed thinking must not be
+ * replayed to a provider that can't echo the signatures). See decision #13.
+ */
+export function resolveCliFailoverCandidates(
+  lockedId: string,
+  tried: ReadonlySet<string>,
+): Array<{ config: ProviderConfig; apiKey: string }> {
+  const locked = PROVIDER_CONFIGS[lockedId];
+  if (!locked) return [];
+  const shape = cliProviderShape(locked);
+  const out: Array<{ config: ProviderConfig; apiKey: string }> = [];
+  for (const config of Object.values(PROVIDER_CONFIGS)) {
+    if (config.id === lockedId || tried.has(config.id)) continue;
+    if (cliProviderShape(config) !== shape) continue;
+    let apiKey = '';
+    try {
+      apiKey = resolveApiKey(config);
+    } catch {
+      continue; // no key configured for this provider
+    }
+    if (config.requiresKey && !apiKey) continue;
+    out.push({ config, apiKey });
+  }
+  return out;
+}
+
 /**
  * Return enriched metadata for all providers.
  * hasKey probes resolveApiKey without throwing.

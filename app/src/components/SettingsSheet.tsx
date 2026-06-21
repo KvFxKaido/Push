@@ -218,6 +218,8 @@ export interface SettingsWorkspaceProps {
   setProtectMainRepoOverride: (value: RepoOverride) => void;
   showToolActivity: boolean;
   setShowToolActivity: (value: boolean) => void;
+  providerFailover: boolean;
+  setProviderFailover: (value: boolean) => void;
   activeRepoFullName: string | null;
 }
 

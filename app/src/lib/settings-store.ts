@@ -34,6 +34,7 @@ export const SETTINGS_KEYS = {
   protectMainDefault: 'prefs.protectMain.default',
   protectMainByRepo: 'prefs.protectMain.byRepo',
   showToolActivity: 'prefs.showToolActivity',
+  providerFailover: 'prefs.providerFailover',
   lastUsedModels: 'chat.lastUsedModels',
   reviewerAdvisoryProvider: 'reviewer.advisory.provider',
   reviewerAdvisoryModelByProvider: 'reviewer.advisory.modelByProvider',

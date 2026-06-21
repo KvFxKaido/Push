@@ -382,6 +382,8 @@ export function buildSettingsWorkspace(props: ChatRouteProps): SettingsWorkspace
     setProtectMainRepoOverride: props.protectMain.setRepoOverride,
     showToolActivity: props.showToolActivity,
     setShowToolActivity: props.updateShowToolActivity,
+    providerFailover: props.providerFailover,
+    setProviderFailover: props.updateProviderFailover,
     activeRepoFullName: props.activeRepo?.full_name ?? null,
   };
 }

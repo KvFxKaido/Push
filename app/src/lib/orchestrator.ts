@@ -31,27 +31,13 @@ import {
   PROJECT_INSTRUCTIONS_CLOSE,
 } from '@push/lib/project-instructions';
 import { isSyntheticDigestMessage, parseSessionDigest } from '@push/lib/session-digest';
-import { getZenGoTransport } from './zen-go';
-import { getVertexModelTransport } from './vertex-provider';
 import { buildAttachmentContentParts } from './attachment-content-parts';
-
-/** Whether a `(provider, model)` route lands on the Anthropic Messages API
- *  via the Worker bridge (`buildAnthropicMessagesRequest` →
- *  `createAnthropicTranslatedStream`). Only routes that pass through the
- *  bridge can consume the Push-private `reasoning_blocks` sidecar — all
- *  other paths forward the OpenAI-shape body verbatim and a strict
- *  upstream (Azure, OpenAI Chat, legacy Vertex) may reject the unknown
- *  field. Default false so new providers don't silently leak the sidecar. */
-function routesThroughAnthropicBridge(
-  provider: Exclude<ActiveProvider, 'demo'> | undefined,
-  model: string | undefined,
-): boolean {
-  if (!provider || !model) return false;
-  if (provider === 'anthropic') return true;
-  if (provider === 'zen') return getZenGoTransport(model) === 'anthropic';
-  if (provider === 'vertex') return getVertexModelTransport(model) === 'anthropic';
-  return false;
-}
+// Whether a `(provider, model)` route lands on the Anthropic Messages API via
+// the Worker bridge. Shared with the failover candidate resolver — only routes
+// that pass through the bridge can consume the Push-private `reasoning_blocks`
+// sidecar, so both the emission gate here and failover isolation there must
+// agree. One source of truth in orchestrator-provider-routing.ts.
+import { routesThroughAnthropicBridge } from './orchestrator-provider-routing';
 // --- Re-exports from orchestrator-streaming (break circular dependency) ---
 export {
   parseProviderError,
