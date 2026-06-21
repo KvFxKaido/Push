@@ -6,6 +6,15 @@
  *
  * Stable sections define who the agent is and how it operates; volatile
  * sections carry workspace snapshots, memory, and turn-specific state.
+ *
+ * Layout is stable-first: `build()` emits all `volatile: false` sections as a
+ * contiguous block, then all `volatile: true` ones, each band ordered by
+ * priority. This keeps the large stable blocks (tool protocol, delegation,
+ * guidelines) as one byte-stable prefix so provider prefix caches (DeepSeek/
+ * Kimi automatic caching, Anthropic cached prefixes) survive a turn where only
+ * a volatile section changed — e.g. `environment` flipping when a file is
+ * edited. The `volatile` flag drives layout, not just snapshot telemetry; the
+ * per-section `priority` numbers order within each band.
  */
 
 export const PROMPT_SECTION_IDS = [
@@ -121,9 +130,33 @@ export class SystemPromptBuilder {
     return this.sections.get(id)?.volatile ?? SECTION_CONFIG[id].volatile;
   }
 
+  /**
+   * Stable and volatile content as separate strings, each band ordered by
+   * priority. Callers that place a provider cache breakpoint at the stable/
+   * volatile boundary (e.g. Anthropic `cache_control`) consume these directly so
+   * the stable prefix is cached independently of the volatile tail. `build()`
+   * is just these two joined by the section separator.
+   */
+  buildSegments(): { stable: string; volatile: string } {
+    // Stable-first, then priority within each volatility band. Grouping all
+    // stable sections ahead of volatile ones keeps the expensive stable bytes
+    // as a contiguous prefix that a provider prefix cache can reuse when only a
+    // volatile section (e.g. environment git status) changed between turns.
+    const sorted = [...this.sections.values()].sort((a, b) => {
+      if (a.volatile !== b.volatile) return a.volatile ? 1 : -1;
+      return a.priority - b.priority;
+    });
+    const stable: string[] = [];
+    const volatile: string[] = [];
+    for (const section of sorted) {
+      (section.volatile ? volatile : stable).push(section.content);
+    }
+    return { stable: stable.join('\n\n'), volatile: volatile.join('\n\n') };
+  }
+
   build(): string {
-    const sorted = [...this.sections.values()].sort((a, b) => a.priority - b.priority);
-    return sorted.map((section) => section.content).join('\n\n');
+    const { stable, volatile } = this.buildSegments();
+    return [stable, volatile].filter(Boolean).join('\n\n');
   }
 
   sizes(): Record<string, number> {

@@ -21,6 +21,7 @@ vi.mock('./web-search-mode', () => ({
 }));
 
 import { getContextBudget, ORCHESTRATOR_SYSTEM_PROMPT, toLLMMessages } from './orchestrator';
+import { TOOL_PROTOCOL } from './github-tools';
 
 describe('ORCHESTRATOR_SYSTEM_PROMPT', () => {
   it('includes clarification guidance for when to ask vs assume', () => {
@@ -420,6 +421,40 @@ describe('chat-mode web-search gating', () => {
     } finally {
       webSearchModeForTest = 'auto';
     }
+  });
+});
+
+describe('toLLMMessages — GitHub tool protocol lands in the cached stable block', () => {
+  function buildMessages(): ChatMessage[] {
+    return [{ id: 'u1', role: 'user', content: 'hi', timestamp: 0 } as unknown as ChatMessage];
+  }
+
+  it('puts the GitHub protocol in the cache_control stable block, not the volatile tail', () => {
+    const llm = toLLMMessages(buildMessages(), {
+      providerType: 'anthropic',
+      providerModel: 'claude-sonnet-4-6',
+      workspaceContext: {
+        // Genuinely-volatile workspace status that changes between turns.
+        description: 'Repo: acme/widgets\nBranch: main\nDirty files: 3',
+        includeGitHubTools: true,
+        mode: 'repo',
+      },
+    });
+    const system = llm.find((m) => m.role === 'system');
+    // Cacheable provider → system content is the two-block split.
+    expect(Array.isArray(system?.content)).toBe(true);
+    const blocks = system?.content as Array<{ text?: string; cache_control?: unknown }>;
+    expect(blocks.length).toBe(2);
+    const [stableBlock, volatileBlock] = blocks;
+    // The stable block carries the cache breakpoint; the volatile tail does not.
+    expect(stableBlock.cache_control).toEqual({ type: 'ephemeral' });
+    expect(volatileBlock.cache_control).toBeUndefined();
+    // The large, session-stable GitHub protocol is cached…
+    const marker = TOOL_PROTOCOL.split('\n', 1)[0];
+    expect(stableBlock.text).toContain(marker);
+    // …while the per-turn dirty-file status rides the uncached tail.
+    expect(volatileBlock.text).toContain('Dirty files: 3');
+    expect(stableBlock.text).not.toContain('Dirty files: 3');
   });
 });
 
