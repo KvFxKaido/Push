@@ -57,11 +57,12 @@ describe('normalizeAllowlistPath', () => {
   });
 
   it('collapses `..` segments via path.resolve (absolute input)', () => {
-    // path.resolve('/foo/..') → '/'. The behaviour is documented but
-    // intentional: we accept it (the literal `..` doesn't survive
-    // into the stored entry). Enforcement compares against the
-    // resolved form so there's no traversal-via-bypass risk.
-    assert.equal(normalizeAllowlistPath('/foo/..'), '/');
+    // path.resolve('/foo/..') collapses the `..` (→ '/' on POSIX, '<drive>:\' on
+    // Windows). The literal `..` doesn't survive into the stored entry, and
+    // enforcement compares against the resolved form, so there's no
+    // traversal-via-bypass risk. Compare against path.resolve (not a hardcoded
+    // POSIX value) so the assertion holds on both platforms.
+    assert.equal(normalizeAllowlistPath('/foo/..'), path.resolve('/foo/..'));
   });
 });
 
@@ -201,30 +202,36 @@ describe('isPathAllowed', () => {
 });
 
 describe('snapshotAllowlist resilience (Kilo PR #518)', () => {
-  it('falls back to implicit-cwd default with a stderr warning when the file is unreadable', async () => {
-    // Drop a deliberately-broken file at the configured path. Setting
-    // mode 0o000 makes it unreadable as a non-root user, which simulates
-    // the EACCES case. If the test runs as root (some CI environments)
-    // this is a no-op and the test will fall through the happy path —
-    // node:fs honors process credentials, so root would still read it.
-    const allowlistPath = process.env.PUSHD_ALLOWLIST_PATH;
-    await fs.writeFile(allowlistPath, '{"path":"/foo","addedAt":1}\n', { mode: 0o000 });
-    // Capture stderr to verify the warning fires. We can't easily
-    // intercept process.stderr.write without a global shim; instead,
-    // assert that the snapshot fell back to implicit-default — that's
-    // the user-visible side effect we care about. The warning text
-    // pins to stderr but is best-effort.
-    const { __test__ } = await import('../pushd-allowlist.ts');
-    __test__.resetSnapshotErrorGate();
-    if (process.getuid && process.getuid() === 0) {
-      // Running as root — chmod 0 doesn't prevent reads. Skip the
-      // assertion; the test only matters in the EACCES regime.
-      return;
-    }
-    const snapshot = await snapshotAllowlist('/tmp/fixture-cwd');
-    assert.equal(snapshot.isImplicitDefault, true);
-    assert.deepEqual(snapshot.allowed, [path.resolve('/tmp/fixture-cwd')]);
-  });
+  // POSIX-only: the "unreadable file" scenario is set up via chmod, which has no
+  // effect on Windows (the file stays readable, so the fallback never triggers).
+  it(
+    'falls back to implicit-cwd default with a stderr warning when the file is unreadable',
+    skipOnWindows,
+    async () => {
+      // Drop a deliberately-broken file at the configured path. Setting
+      // mode 0o000 makes it unreadable as a non-root user, which simulates
+      // the EACCES case. If the test runs as root (some CI environments)
+      // this is a no-op and the test will fall through the happy path —
+      // node:fs honors process credentials, so root would still read it.
+      const allowlistPath = process.env.PUSHD_ALLOWLIST_PATH;
+      await fs.writeFile(allowlistPath, '{"path":"/foo","addedAt":1}\n', { mode: 0o000 });
+      // Capture stderr to verify the warning fires. We can't easily
+      // intercept process.stderr.write without a global shim; instead,
+      // assert that the snapshot fell back to implicit-default — that's
+      // the user-visible side effect we care about. The warning text
+      // pins to stderr but is best-effort.
+      const { __test__ } = await import('../pushd-allowlist.ts');
+      __test__.resetSnapshotErrorGate();
+      if (process.getuid && process.getuid() === 0) {
+        // Running as root — chmod 0 doesn't prevent reads. Skip the
+        // assertion; the test only matters in the EACCES regime.
+        return;
+      }
+      const snapshot = await snapshotAllowlist('/tmp/fixture-cwd');
+      assert.equal(snapshot.isImplicitDefault, true);
+      assert.deepEqual(snapshot.allowed, [path.resolve('/tmp/fixture-cwd')]);
+    },
+  );
 });
 
 describe('serial mutations under concurrency', () => {
