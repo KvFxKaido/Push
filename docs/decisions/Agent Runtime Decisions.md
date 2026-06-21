@@ -95,8 +95,12 @@ independent attribution is a trust signal.
 Context memory is scoped by durable repo/branch/chat identity, not incidental
 session IDs. Summary packing is the default. Lossless verbatim memory retrieval
 has shipped through the deterministic expand/grep kernel, top-detail packing
-override, and model-facing memory tools. Optional immutable verbatim logging and
-broader prompt advertising remain draft/future work.
+override, and model-facing memory tools. **Phase 3 — the append-only verbatim
+log that makes retrieval truly lossless (today `detail` is capped 800/2000 chars
+before storage) — is now in progress:** the cross-surface `lib/verbatim-log.ts`
+kernel (content-addressed, collision-safe, in-memory backend) landed 2026-06-21;
+the CLI file backend, write/read wiring, and the Worker durable backend remain.
+The same log backs the "keep the raw output" half of `lib/tool-output-reducers.ts`.
 
 Source notes:
 [`Context Memory and Retrieval Architecture`](<../archive/decisions/Context Memory and Retrieval Architecture.md>),
@@ -344,72 +348,55 @@ push/pop would only earn its keep for a genuinely transient overlay with no
 backing state — there is none today, so the primitive is intentionally not
 added (YAGNI). If one appears, add `push()` then.
 
-### 13. Tool-output compaction: borrow OpenHuman's TokenJuice rule-overlay, do not adopt the project
+### 13. Tool-output compaction: the TokenJuice pattern is already adopted; lossless raw retention is the remaining half
 
-Status: **Draft** (design-in-motion; needs roadmap promotion before code)
+Status: **Current** for the reducer; the lossless-retention half is tracked under §5 / LCM Phase 3.
+
+> Correction (2026-06-21): an earlier draft of this section claimed Push had "no
+> content-aware reducer, only blunt byte caps" and proposed building one. That was
+> wrong — `lib/tool-output-reducers.ts` already exists and is wired on both
+> surfaces. This section is rewritten to record the actual state.
 
 [OpenHuman](https://github.com/tinyhumansai/openhuman) (`tinyhumansai/openhuman`,
-GPL-3.0, Rust + Tauri) is a local-first personal-assistant agent over ~118 OAuth
-integrations. It is a different product from Push, but one subsystem maps
-directly onto a gap in our runtime: **TokenJuice**, a rule overlay that compacts
-verbose tool output *before* it ever enters LLM context
-(`tool result → TokenJuice → context`). It ships builtin reduction rules for
-common commands (git, npm, cargo, docker, kubectl, ls), layered under a user
-layer (`~/.config/tokenjuice/rules/`) and a repo-checked-in project layer
-(`.tokenjuice/rules/`, later layers override earlier), with declarative
-transforms — `truncate, dedup lines, fold whitespace, drop matching regexes,
-summarize sections` — keyed by tool/command pattern, plus a debug log of which
-rule matched and the reduction ratio. The decision is **borrow the pattern, do
-not adopt the project.**
+GPL-3.0, Rust + Tauri) ships **TokenJuice**, a rule overlay that compacts verbose
+tool output *before* it enters LLM context (`tool result → TokenJuice → context`):
+builtin rules for common commands (git, npm, cargo, docker, kubectl, ls) under
+user and repo-checked-in layers, declarative transforms (`truncate, dedup lines,
+fold whitespace, drop matching regexes, summarize sections`), and a debug log of
+which rule matched and the reduction ratio. Push **already adopted this pattern**
+(clean-room — OpenHuman's GPL-3.0 Rust can be read for ideas, not copied):
+`lib/tool-output-reducers.ts` (`reduceToolOutput`) is a command-aware,
+deterministic, pure reducer wired into both surfaces — CLI `cli/tools.ts` and web
+`app/src/lib/sandbox-tools.ts`. It runs *upstream of* the blunt byte caps
+(`SIZE_BUDGETS.toolResultReadOnly` 8k / `toolResultCoder` 24k in
+`lib/size-budgets.ts`), so the budget that survives into context — and into
+context-memory packing (§5) — is mostly signal, not the first 24k of progress
+bars. Its own design boundaries are sound: it reduces only the text it is given
+(never exit-code/failure semantics), bails out unchanged on unsafe/ambiguous
+command shapes (pipes, chains, substitution), and passes small wins through
+unchanged to protect prompt-cache stability.
 
-Adopt is a non-starter on three independent grounds, none about quality. (1)
-**License:** OpenHuman is GPL-3.0 — its code can be *read for ideas* but not
-copied into Push. Any implementation here is clean-room from the design, not a
-port. (2) **Runtime:** it's a Rust crate (`src/openhuman/tokenjuice/`) inside a
-Tauri desktop binary; Push's runtime is the TS shared kernel in `lib/`. (3)
-**Domain:** its builtin rules target a personal-assistant's tool surface (email,
-calendar, web-scrape dumps), not a coding loop's `sandbox_exec` / read output.
+The decision (borrow the pattern, not the project) stands and is **already lived**.
+What remains is the half the reducer's own header promises but couldn't yet keep:
+*"lossless for the human — keep the raw stdout/stderr for the UI card / session
+store."* There was no durable place to keep that raw text, so "keep the raw" was
+aspirational. **LCM Phase 3 supplies it.** The append-only verbatim log
+(`lib/verbatim-log.ts`, §5) is exactly that store: a reduced exec result stamps a
+`verbatimRef`, the raw bytes live in the log, and the model can expand them back
+to the true original on demand — the same store that makes `memory_expand`
+lossless. So the two threads converge on one backing store, which is why Phase 3
+is the keystone, not the TokenJuice rule engine.
 
-What is worth taking is the *idea*: a **content-aware reducer that runs before
-our blunt byte caps.** Today Push's only pre-context reduction of tool output is
-character-count truncation — `SIZE_BUDGETS.toolResultReadOnly` (8k) and
-`toolResultCoder` (24k) in `lib/size-budgets.ts` — after which
-`lib/context-memory-packing.ts` summary-packs records for later turns (§5). A
-blunt cap spends its byte budget on whatever came first, signal or noise: a
-30k-line `npm install` log truncates to its first 24k of progress bars and keeps
-none of the actual error. A TokenJuice-style overlay slots *upstream of the cap*
-— dedup/fold/drop-regex/summarize the known-noisy commands first, so the byte
-budget that survives into context (and into context-memory) is mostly signal.
-This is compaction, not a new budget: the caps stay; they just truncate cleaner
-input.
-
-If built, three CLAUDE.md disciplines bound the shape from day one:
-
-- **Cross-surface → `lib/` from the first line (New-feature checklist #3).** The
-  reducer runs on both web `sandbox_exec` output (the inline lead / Coder
-  kernel) and CLI exec output (`cli/tools.ts`), so it is a shared-kernel concern,
-  not a per-surface helper. The rule format is a new vocabulary → it needs a
-  single canonical definition and a drift test in the same PR.
-- **Project layer reuses the loader-order precedence we already have.** A
-  repo-checked-in `.push/`-scoped rule set (alongside `.push/skills/`) layered
-  under builtin defaults, later-overrides-earlier, mirrors the existing
-  `PUSH.md → AGENTS.md → CLAUDE.md` loader precedence — same mental model, no new
-  one to teach.
-- **Per-rule match/reduction structured log (Symmetric structured logs).**
-  Emit one line per outcome — rule matched + bytes-in/bytes-out vs. no-rule
-  passthrough vs. rule-compile-failure — so a misfiring rule that silently eats
-  the signal is greppable, not an invisible degradation. This is the
-  observability TokenJuice exposes via `RUST_LOG`, expressed in our
-  `console.log(JSON.stringify({ level, event, ... }))` shape.
-
-Open questions before roadmap promotion: (a) builtin rule coverage — start with
-the highest-noise commands in our loop (`npm`/`pnpm` install, `git status`/`log`,
-test runners) rather than a broad table; (b) whether rules are pure
-string-transforms or may call a fast model to "summarize sections" (the latter
-adds a network hop in the tool path — likely defer); (c) safety — a `drop regex`
-rule must never be able to strip the one line a security-relevant exec needed,
-so the reducer stays advisory over the raw result the Auditor sees, not a filter
-on it.
+Deliberately **not** pursued (revisit only with evidence): a fully declarative,
+repo-checked-in `.push/`-scoped rule overlay à la TokenJuice's three layers. The
+current reducer hard-codes its command awareness in `lib/`. A `.push/`-checked-in
+rule layer (mirroring the `PUSH.md → AGENTS.md → CLAUDE.md` loader precedence)
+would be the natural extension *if* repos need per-project compaction rules — but
+it adds a new vocabulary (canonical definition + drift test obligation) and a
+`drop regex` rule could strip the one line a security-relevant exec needed, so any
+such layer must stay advisory over the raw result the Auditor sees, never a filter
+on it. No demand yet; the hard-coded reducer covers the high-noise commands. YAGNI
+until a repo actually needs custom rules.
 
 ## Active Runtime Work
 
@@ -418,11 +405,11 @@ on it.
 3. Decide scratchpad durable-storage substrate per platform.
 4. Finish TUI daemon-session controller extraction.
 5. Graduate loop detection enforcement only after telemetry supports thresholds.
-6. Decide whether memory Phase 3 immutable verbatim logs are worth the storage cost.
+6. Memory Phase 3 immutable verbatim logs — **in progress**: `lib/verbatim-log.ts` kernel landed 2026-06-21 (content-addressed, collision-safe, in-memory backend). Remaining: CLI file backend, write/read wiring (`verbatimRef` stamping + `memory_expand` resolution), Worker durable backend. See the LCM doc's Phase 3.
 7. Promote the diff/annotation envelope only when a roadmap item needs it.
 8. TUI focus-stack migration (§12) — **complete**: the whole `processInput` dispatch resolves through the stack across six declarative scopes. Push/pop self-registration was considered and declined (see §12); declarative `isActive()` against authoritative state is the end state.
 9. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model. Step 1 landed 2026-06-12: interactive turns default to the in-loop lead with the Planner wrapper behind `PUSH_DELEGATION_MODE=delegated`. Step 2 landed 2026-06-12: the lead-kernel lane (`cli/lead-turn.ts`) runs the turn on the shared kernel in `leadMode`. Step 3 landed 2026-06-12: the lane is the **default**; `PUSH_LEAD_RUNTIME=engine` is the exact-match opt-out while it bakes. Step 4 — **complete**: the bake-period `PUSH_LEAD_RUNTIME=engine` opt-out and the CLI-local engine round loop are retired; `runAssistantTurn` delegates unconditionally to the kernel lane and the now-unreachable helper cluster the loop left behind in `cli/engine.ts` (awareness guard, finalization/parse-error builders, mid-session distill — no callers once `runAssistantLoop` was gone; the kernel owns these live concerns) plus its obsolete tests were removed. Behavior-neutral removal.
-10. Evaluate a TokenJuice-style tool-output compaction overlay (§13) — content-aware reduction (dedup/fold/drop-regex/summarize) upstream of the `lib/size-budgets.ts` truncation caps, shared in `lib/`, with builtin defaults plus a `.push/`-checked-in project rule layer. Draft; needs roadmap promotion before code, and is clean-room from the GPL-3.0 source (idea only, no port).
+10. Tool-output compaction (§13): the TokenJuice pattern is **already shipped** (`lib/tool-output-reducers.ts`, both surfaces). The remaining "keep the raw output losslessly" half is folded into memory Phase 3 (item 6) — a reduced result stamps a `verbatimRef` into `lib/verbatim-log.ts`. A declarative `.push/`-scoped rule overlay is deliberately deferred (YAGNI until a repo needs custom rules).
 
 ## Archived Context Worth Knowing
 

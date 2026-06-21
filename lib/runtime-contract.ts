@@ -211,6 +211,15 @@ export interface MemoryRecord {
   invalidatedAt?: number;
   invalidationReason?: string;
   /**
+   * Optional pointer into the append-only verbatim log (`lib/verbatim-log.ts`)
+   * holding this record's full, untruncated source text. Set on write when
+   * `detail` exceeds the typed-store cap, so `memory_expand` can return the true
+   * original (LCM Phase 3) rather than the lossy 800/2000-char `detail`. Absent
+   * when the record's `detail` already fits losslessly or no verbatim log is
+   * configured — the record stays fully self-describing without it.
+   */
+  verbatimRef?: string;
+  /**
    * Dense semantic embedding of the record's searchable text, computed
    * best-effort at write time when an EmbeddingProvider is configured (see
    * `lib/embedding-provider.ts`). Absent when no provider is available — the
