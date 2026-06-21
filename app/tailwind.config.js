@@ -129,6 +129,9 @@ module.exports = {
         xs: 'calc(var(--radius) - 6px)',
       },
       boxShadow: {
+        // `xs` is the shadcn hairline default (a 1px lift on small controls). It
+        // is intentionally NOT folded into the neumorphic scale below — it's a
+        // subtle generic shadow, not part of the raised/inset depth vocabulary.
         xs: '0 1px 2px 0 rgb(0 0 0 / 0.05)',
         'push-sm': '0 2px 8px rgba(0, 0, 0, 0.25)',
         'push-md': '0 8px 24px rgba(0, 0, 0, 0.35)',
@@ -144,11 +147,16 @@ module.exports = {
         // Dense content cards stay flat (border + fill contrast) — these
         // tokens are for chrome + recessed surfaces only. See DESIGN.md →
         // Shadows.
-        'push-inset': 'inset 0 1px 2px 0 rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.015)',
-        'push-inset-strong': 'inset 0 2px 5px 0 rgba(0, 0, 0, 0.65), inset 0 1px 0 0 rgba(255, 255, 255, 0.02)',
-        'push-raised': '0 1px 2px rgba(0, 0, 0, 0.4), 0 3px 9px -2px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.04)',
-        'push-raised-hover': '0 2px 4px rgba(0, 0, 0, 0.45), 0 8px 20px -4px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
-        'push-glass-edge': 'inset 0 1px 0 0 rgba(255, 255, 255, 0.08), inset 0 -1px 0 0 rgba(0, 0, 0, 0.3)',
+        'push-inset':
+          'inset 0 1px 2px 0 rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.015)',
+        'push-inset-strong':
+          'inset 0 2px 5px 0 rgba(0, 0, 0, 0.65), inset 0 1px 0 0 rgba(255, 255, 255, 0.02)',
+        'push-raised':
+          '0 1px 2px rgba(0, 0, 0, 0.4), 0 3px 9px -2px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.04)',
+        'push-raised-hover':
+          '0 2px 4px rgba(0, 0, 0, 0.45), 0 8px 20px -4px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
+        'push-glass-edge':
+          'inset 0 1px 0 0 rgba(255, 255, 255, 0.08), inset 0 -1px 0 0 rgba(0, 0, 0, 0.3)',
       },
       keyframes: {
         'accordion-down': {
