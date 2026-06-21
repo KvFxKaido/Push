@@ -1622,6 +1622,20 @@ describe('executeSandboxToolCall -- sandbox_commit characterization', () => {
 // positionally, and `handlerExecCalls` filters the scan reads out of call-count
 // assertions.
 type DispatcherExecResult = { stdout?: string; stderr?: string; exitCode: number };
+// Read-only pre-push machinery the handlers run before the actual push: the
+// upstream check, the cumulative-diff scan, and — since the force-with-lease
+// push plan (#1054) — the local-tip rev-parse + remote-tip ls-remote. These are
+// read-only and deterministic; the tests script the *mutating* push call, so
+// both the mock queue and the call-count filter must skip past them. One
+// predicate so the two can't drift.
+function isPrePushRead(cmd: string): boolean {
+  return (
+    cmd.includes('@{upstream}') ||
+    / 'log' '-p' '--no-color'/.test(cmd) ||
+    cmd.includes("'ls-remote'") ||
+    cmd.includes("'rev-parse' '--verify' '--quiet'")
+  );
+}
 function mockExecScan(handlerResults: DispatcherExecResult[]) {
   const queue = handlerResults.map((r) => ({
     stdout: '',
@@ -1631,18 +1645,20 @@ function mockExecScan(handlerResults: DispatcherExecResult[]) {
   }));
   vi.mocked(sandboxClient.execInSandbox).mockImplementation(async (_id, cmd) => {
     const c = String(cmd);
-    if (c.includes('@{upstream}'))
-      return { stdout: 'origin/main', stderr: '', exitCode: 0, truncated: false };
-    if (/ 'log' '-p' '--no-color'/.test(c))
+    if (isPrePushRead(c)) {
+      // Upstream check wants a tracking ref; the local-tip rev-parse wants a
+      // sha; ls-remote/log return empty (no remote tip → first push, no lease).
+      if (c.includes('@{upstream}'))
+        return { stdout: 'origin/main', stderr: '', exitCode: 0, truncated: false };
+      if (c.includes("'rev-parse' '--verify' '--quiet'"))
+        return { stdout: 'localsha', stderr: '', exitCode: 0, truncated: false };
       return { stdout: '', stderr: '', exitCode: 0, truncated: false };
+    }
     return queue.shift() ?? { stdout: '', stderr: '', exitCode: 0, truncated: false };
   });
 }
 const handlerExecCalls = () =>
-  vi.mocked(sandboxClient.execInSandbox).mock.calls.filter((c) => {
-    const cmd = String(c[1]);
-    return !cmd.includes('@{upstream}') && !/ 'log' '-p' '--no-color'/.test(cmd);
-  });
+  vi.mocked(sandboxClient.execInSandbox).mock.calls.filter((c) => !isPrePushRead(String(c[1])));
 
 describe('executeSandboxToolCall -- sandbox_push', () => {
   // These tests pin push transport / secret-scan behavior, not the push-time
@@ -1657,23 +1673,25 @@ describe('executeSandboxToolCall -- sandbox_push', () => {
   });
 
   it('reports success and threads markWorkspaceMutated on the exec call', async () => {
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
-      stdout: 'Everything up-to-date',
-      stderr: '',
-      exitCode: 0,
-      truncated: false,
-    });
+    // Two scripted exec calls reach the queue: the current-branch detect
+    // (symbolic-ref) and the push. mockExecScan early-returns the read-only
+    // force-with-lease plan + secret-scan reads (rev-parse / ls-remote / log) so
+    // they neither consume the queue nor count as handler calls.
+    mockExecScan([
+      { stdout: 'main', exitCode: 0 }, // symbolic-ref → current branch
+      { stdout: 'Everything up-to-date', exitCode: 0 }, // push
+    ]);
 
     const result = await executeSandboxToolCall({ tool: 'sandbox_push', args: {} }, 'sb-1');
 
-    // The real push is the last exec (the pre-push scan's reads precede it).
+    // The real push is the last exec (the branch detect + scan reads precede it).
     expect(sandboxClient.execInSandbox).toHaveBeenLastCalledWith(
       'sb-1',
       "git 'push' 'origin' 'HEAD'",
       undefined,
       { markWorkspaceMutated: true, suppressWorkspaceMutationSignal: true },
     );
-    expect(handlerExecCalls()).toHaveLength(1);
+    expect(handlerExecCalls()).toHaveLength(2);
     expect(result.text).toBe('[Tool Result — sandbox_push]\nPushed successfully.');
     expect(result.card).toBeUndefined();
   });
