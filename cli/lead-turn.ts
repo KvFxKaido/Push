@@ -38,7 +38,14 @@ import type {
   PushStreamEvent,
 } from '../lib/provider-contract.ts';
 import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
-import { createProviderStream } from './provider.js';
+import { decideStreamFailover } from '../lib/provider-failover.ts';
+import {
+  createProviderStream,
+  classifyCliStreamError,
+  cliStreamRetryDelayMs,
+  resolveCliFailoverCandidates,
+  MAX_RETRIES,
+} from './provider.js';
 import type { ProviderConfig } from './provider.js';
 import {
   detectAllToolCalls as cliDetectAllToolCalls,
@@ -355,14 +362,96 @@ export async function runLeadKernelTurn(
       dispatchEvent('assistant_done', { messageId });
     }
   };
-  const baseStream = createProviderStream(providerConfig, apiKey, {
-    sessionId: state.sessionId,
-  });
+  // Provider failover (decision #13), opt-in via PUSH_PROVIDER_FAILOVER. The
+  // kernel makes one stream() call per round; this wrapper retries the same
+  // provider on a transient failure, then fails over to another configured
+  // provider of the SAME wire shape — round-scoped, so the locked provider is
+  // tried first again on the next round. With the flag off the candidate list
+  // is empty and `decideStreamFailover` collapses to the same-provider retry
+  // the legacy `streamCompletion` applied. Failover only fires before any event
+  // streamed this round (`yieldedAny`), so a partially-rendered round is never
+  // re-attempted on another provider.
+  const failoverEnabled =
+    process.env.PUSH_PROVIDER_FAILOVER === '1' || process.env.PUSH_PROVIDER_FAILOVER === 'true';
+
   const stream: PushStream<LlmMessage> = (req) =>
     (async function* () {
-      for await (const event of normalizeReasoning(baseStream(req))) {
-        mirror(event);
-        yield event;
+      const tried = new Set<string>([providerConfig.id]);
+      let activeConfig = providerConfig;
+      let activeKey = apiKey;
+      let activeModel = req.model;
+      let sameProviderAttempt = 0;
+      for (;;) {
+        const providerStream = createProviderStream(activeConfig, activeKey, {
+          sessionId: state.sessionId,
+        });
+        let yieldedAny = false;
+        try {
+          const events = normalizeReasoning(
+            providerStream({
+              ...req,
+              provider: activeConfig.id as AIProviderType,
+              model: activeModel,
+            }),
+          );
+          for await (const event of events) {
+            yieldedAny = true;
+            mirror(event);
+            yield event;
+          }
+          return;
+        } catch (err) {
+          // Aborts never fail over — propagate so the lead turn's catch maps it
+          // to an `aborted` outcome.
+          if ((err instanceof Error && err.name === 'AbortError') || (signal?.aborted ?? false)) {
+            throw err;
+          }
+          const candidates = failoverEnabled
+            ? resolveCliFailoverCandidates(activeConfig.id, tried)
+            : [];
+          const decision = decideStreamFailover({
+            classification: classifyCliStreamError(err),
+            aborted: signal?.aborted ?? false,
+            hasOutput: yieldedAny,
+            sameProviderAttempt,
+            sameProviderMax: MAX_RETRIES - 1,
+            tried,
+            candidates: candidates.map((c) => c.config.id),
+            retryDelayMs: cliStreamRetryDelayMs(sameProviderAttempt),
+          });
+          if (decision.action === 'give-up') throw err;
+          if (decision.action === 'retry-same') {
+            dispatchEvent('warning', {
+              code: 'PROVIDER_RETRY',
+              message: `Retrying ${activeConfig.id} after a transient error`,
+              provider: activeConfig.id,
+              attempt: sameProviderAttempt + 1,
+            });
+            sameProviderAttempt += 1;
+            await new Promise<void>((resolve) => setTimeout(resolve, decision.delayMs));
+            if (signal?.aborted) {
+              const abortErr = new Error('Request aborted.');
+              abortErr.name = 'AbortError';
+              throw abortErr;
+            }
+            continue;
+          }
+          // decision.action === 'failover'
+          const next = candidates.find((c) => c.config.id === decision.provider);
+          if (!next) throw err; // resolver race — nothing left to fail over to
+          dispatchEvent('warning', {
+            code: 'PROVIDER_FAILOVER',
+            message: `Provider ${activeConfig.id} failed; failing over to ${next.config.id}`,
+            from: activeConfig.id,
+            to: next.config.id,
+          });
+          activeConfig = next.config;
+          activeKey = next.apiKey;
+          activeModel = next.config.defaultModel;
+          tried.add(next.config.id);
+          sameProviderAttempt = 0;
+          continue;
+        }
       }
     })();
 

@@ -305,9 +305,18 @@ Shipped so far (this branch):
   and daemon surfaces). The round loop reads it synchronously via `getSetting`;
   with failover off the candidate list is empty and the kernel collapses to the
   prior same-provider-retry behavior.
+- CLI wiring in `cli/lead-turn.ts`: the stream handed to the shared
+  `runCoderAgent` kernel is wrapped in a per-round retry/failover generator, so
+  failover lands without kernel changes. Candidates come from
+  `resolveCliFailoverCandidates` (`cli/provider.ts`) — same wire-shape rule,
+  same anthropic/gemini isolation (both are single-member buckets in the CLI
+  registry). Gated by the `PUSH_PROVIDER_FAILOVER` env flag (default off);
+  retry/failover transitions surface as `warning` events
+  (`PROVIDER_RETRY` / `PROVIDER_FAILOVER`).
 
-Remaining: wire `cli/lead-turn.ts` onto the same kernel; consider promoting
-round-scoped failover to a sticky re-lock once validated in real use.
+Remaining: consider promoting round-scoped failover to a sticky re-lock once
+validated in real use; a shared CLI/web failover-enabled signal if the CLI ever
+adopts the synced settings doc.
 
 ## Active Platform Work
 
