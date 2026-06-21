@@ -74,6 +74,7 @@ import { runCoderAgent } from '@/lib/coder-agent';
 import { runExplorerAgent } from '@/lib/explorer-agent';
 import { runAuditorEvaluation, type EvaluationResult } from '@/lib/auditor-agent';
 import { resolveHarnessSettings } from '@/lib/model-capabilities';
+import { getRunTokenBudgetPref } from '@/lib/run-token-budget-pref';
 import {
   validateTaskGraph,
   validateTaskGraphAgainstGoal,
@@ -293,7 +294,9 @@ export async function handleTaskGraphDelegation(
     }
 
     const harnessSettings = hasCoderTasks
-      ? resolveHarnessSettings(lockedProviderForChat, resolvedModelForChat)
+      ? resolveHarnessSettings(lockedProviderForChat, resolvedModelForChat, {
+          runTokenBudget: getRunTokenBudgetPref(),
+        })
       : null;
     const verificationCriteria = hasCoderTasks
       ? buildVerificationAcceptanceCriteria(verificationPolicy, 'always')
