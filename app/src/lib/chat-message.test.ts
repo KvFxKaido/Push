@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   createBranchCarriedMessage,
   createBranchForkedMessage,
+  createCompactionMessage,
   createMessage,
   effectiveMessageBranch,
   filterModelVisibleMessages,
@@ -108,6 +109,53 @@ describe('createBranchCarriedMessage', () => {
     const msg = createBranchCarriedMessage({ from: 'feature/foo', to: 'main' });
     expect(msg.role).toBe('assistant');
     expect(msg.content).toBe('');
+  });
+});
+
+describe('createCompactionMessage', () => {
+  it('produces a non-model-visible compaction marker with the net token figures', () => {
+    const msg = createCompactionMessage({
+      beforeTokens: 88000,
+      afterTokens: 42000,
+      phase: 'digest_drop',
+      messagesDropped: 12,
+      branch: 'feature/foo',
+    });
+    expect(msg.kind).toBe('compaction');
+    // Filtered from every prompt-pack path — the marker is transcript-only and
+    // must never be read by the model as an instruction.
+    expect(msg.visibleToModel).toBe(false);
+    expect(msg.branch).toBe('feature/foo');
+    expect(msg.compactionMeta).toEqual({
+      beforeTokens: 88000,
+      afterTokens: 42000,
+      phase: 'digest_drop',
+      messagesDropped: 12,
+    });
+  });
+
+  it('uses assistant role and empty content (transcript metadata)', () => {
+    const msg = createCompactionMessage({
+      beforeTokens: 100,
+      afterTokens: 50,
+      phase: 'summarization',
+      messagesDropped: 0,
+    });
+    expect(msg.role).toBe('assistant');
+    expect(msg.content).toBe('');
+    expect(msg.branch).toBeUndefined();
+  });
+
+  it('is stripped by filterModelVisibleMessages', () => {
+    const marker = createCompactionMessage({
+      beforeTokens: 100,
+      afterTokens: 50,
+      phase: 'hard_trim',
+      messagesDropped: 3,
+    });
+    const messages = [{ id: 'a' }, marker, { id: 'b' }];
+    const out = filterModelVisibleMessages(messages);
+    expect(out.map((m) => (m as { id?: string }).id)).toEqual(['a', 'b']);
   });
 });
 

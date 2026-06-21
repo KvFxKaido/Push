@@ -15,6 +15,7 @@
 import { streamChat, peekLastPromptSnapshot } from '@/lib/orchestrator';
 import { emitPromptCompositionCost } from '@push/lib/prompt-cost-telemetry';
 import { drainRecentContextMetrics } from '@/lib/context-metrics';
+import { createCompactionMessage } from '@/lib/chat-message';
 import { assertReadyForAssistantTurn } from '@push/lib/llm-message-invariants';
 import {
   buildLinkedLibraryContext,
@@ -267,7 +268,17 @@ export async function streamAssistantRound(
         abortControllerRef.current?.signal,
         provider,
         model,
-        undefined,
+        // onPreCompact — fired by `manageContext` the instant it decides the
+        // working set is over budget, before any message is rewritten. Surface
+        // it as a transient "Compacting context…" status so the user sees the
+        // runtime trimming the window (matches the Codex "Compacting context"
+        // pill). `log: false` keeps it out of the persisted agent-event log —
+        // the durable record is the `context.compaction` run event drained
+        // after the stream resolves (rendered inline in the transcript).
+        () => {
+          if (abortRef.current) return;
+          updateAgentStatus({ active: true, phase: 'Compacting context…' }, { chatId, log: false });
+        },
         todoRef.current ? buildTodoContext(todoRef.current.todos) : undefined,
         (block) => {
           if (abortRef.current) return;
@@ -490,7 +501,8 @@ export async function streamAssistantRound(
   // silent operation — the model saw a context different from prior
   // turns and couldn't tell why. Audit item #8 from the OpenCode
   // silent-failure inventory.
-  for (const metric of drainRecentContextMetrics()) {
+  const compactionMetrics = drainRecentContextMetrics();
+  for (const metric of compactionMetrics) {
     appendRunEvent(chatId, {
       type: 'context.compaction',
       round,
@@ -500,6 +512,42 @@ export async function streamAssistantRound(
       messagesDropped: metric.messagesDropped ?? 0,
       ...(metric.provider ? { provider: metric.provider } : {}),
       ...(metric.cause ? { cause: metric.cause } : {}),
+    });
+  }
+  // Drop a single durable transcript marker for the turn's compaction so the
+  // user can see, in-line, that the window was trimmed and by how much — the
+  // persistent counterpart to the transient "Compacting context…" status pill.
+  // One marker per turn: the net is the first stage's `beforeTokens` to the
+  // last stage's `afterTokens` (phases run oldest→newest: summarization →
+  // digest_drop → hard_trim), and the heaviest phase is whichever ran last.
+  if (compactionMetrics.length > 0 && !abortRef.current) {
+    const first = compactionMetrics[0];
+    const last = compactionMetrics[compactionMetrics.length - 1];
+    const messagesDropped = compactionMetrics.reduce((sum, m) => sum + (m.messagesDropped ?? 0), 0);
+    const marker = createCompactionMessage({
+      beforeTokens: first.beforeTokens,
+      afterTokens: last.afterTokens,
+      phase: last.phase,
+      messagesDropped,
+    });
+    setConversations((prev) => {
+      const conv = prev[chatId];
+      if (!conv) return prev;
+      const msgs = [...conv.messages];
+      // Compaction logically happened before this turn's response was
+      // generated, so the marker belongs just before the trailing assistant
+      // message. Inserting *before* (not after) it also keeps the assistant
+      // message last, preserving the `msgs[msgs.length - 1].role === 'assistant'`
+      // assumption the streaming/finalization callbacks rely on this round.
+      let insertAt = msgs.length;
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i].role === 'assistant') {
+          insertAt = i;
+          break;
+        }
+      }
+      msgs.splice(insertAt, 0, marker);
+      return { ...prev, [chatId]: { ...conv, messages: msgs } };
     });
   }
 

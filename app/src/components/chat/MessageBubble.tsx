@@ -17,6 +17,7 @@ import {
   Pencil,
   RefreshCw,
   ExternalLink,
+  Minimize2,
 } from 'lucide-react';
 import type { ChatMessage, CardAction, AttachmentData, UrlCitation } from '@/types';
 import { CardRenderer } from '@/components/cards/CardRenderer';
@@ -652,6 +653,37 @@ export const MessageBubble = memo(function MessageBubble({
             <span className="font-mono text-push-fg-secondary">{to}</span>
             {prNumber !== undefined ? (
               <span className="ml-1 text-push-fg-dim">(#{prNumber})</span>
+            ) : null}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  // Context compaction: the runtime trimmed the working window to fit the
+  // model's context limit before this turn. Render as a centered divider (same
+  // treatment as branch events) so the user can see *when* and *how much* was
+  // compacted — the durable counterpart to the transient "Compacting context…"
+  // status pill. The event has empty `content` and is `visibleToModel: false`,
+  // so it never reaches the prompt; this special case keeps it from drawing an
+  // empty assistant row.
+  if (message.kind === 'compaction' && message.compactionMeta) {
+    const { beforeTokens, afterTokens, messagesDropped } = message.compactionMeta;
+    const fmt = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`);
+    return (
+      <div className="my-3 flex items-center justify-center px-4">
+        <div className="flex items-center gap-2 rounded-full border border-push-border bg-push-surface px-3 py-1 text-push-2xs text-push-fg-dim">
+          <Minimize2 className="h-3 w-3" />
+          <span>
+            Compacted context{' '}
+            <span className="font-mono text-push-fg-secondary">{fmt(beforeTokens)}</span>
+            <span className="mx-1">→</span>
+            <span className="font-mono text-push-fg-secondary">{fmt(afterTokens)}</span>
+            <span className="ml-1">tokens</span>
+            {messagesDropped > 0 ? (
+              <span className="ml-1 text-push-fg-dim">
+                · {messagesDropped} message{messagesDropped === 1 ? '' : 's'} folded
+              </span>
             ) : null}
           </span>
         </div>
