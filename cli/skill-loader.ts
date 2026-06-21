@@ -112,7 +112,7 @@ function parseFrontmatter(raw: string): {
   if (!raw.startsWith('---\n') && !raw.startsWith('---\r\n')) {
     return { frontmatter: null, remainder: raw };
   }
-  const lines = raw.split('\n');
+  const lines = raw.split(/\r?\n/);
   // Line 0 is the opening fence; find the closing fence.
   let closeIdx = -1;
   for (let i = 1; i < lines.length; i++) {
@@ -218,7 +218,11 @@ function parseSkillFile(
 ): Skill | null {
   const includePromptTemplate = options.includePromptTemplate !== false;
   const { frontmatter, remainder } = parseFrontmatter(raw);
-  const lines = remainder.split('\n');
+  // Split on CRLF or LF so a skill file saved with Windows line endings (e.g. a
+  // user-authored .push/skills/*.md) still parses — otherwise the trailing \r
+  // defeats the `^# (.+)$` heading match (JS `.` excludes \r), the description
+  // comes back empty, and the skill is silently dropped.
+  const lines = remainder.split(/\r?\n/);
 
   // First # heading = description (frontmatter `description` overrides if present)
   let headingDescription = '';
