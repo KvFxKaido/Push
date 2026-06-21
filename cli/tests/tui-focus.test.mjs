@@ -112,6 +112,40 @@ describe('FocusStack', () => {
     );
   });
 
+  it('a throwing scope is surfaced via onError, consumes the key, and does not crash dispatch', () => {
+    const errors = [];
+    const lower = [];
+    const stack = new FocusStack({
+      onError: (scopeId, key, err) => errors.push({ scopeId, key, message: err.message }),
+    })
+      .register({
+        id: 'throws',
+        isActive: () => true,
+        handleKey: () => {
+          throw new Error('boom');
+        },
+      })
+      .register({
+        id: 'lower',
+        isActive: () => true,
+        handleKey: () => {
+          lower.push('ran');
+          return true;
+        },
+      });
+
+    const k = key('a');
+    // Does not throw; treats the key as consumed by the failing scope.
+    assert.deepEqual(stack.dispatch(k), { handledBy: 'throws' });
+    // The error was surfaced to the injected sink with full context.
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0].scopeId, 'throws');
+    assert.equal(errors[0].message, 'boom');
+    assert.equal(errors[0].key, k);
+    // The key did NOT leak to the lower-priority scope.
+    assert.deepEqual(lower, []);
+  });
+
   it('preserves registration order in scopeIds', () => {
     const stack = new FocusStack()
       .register({ id: 'a', isActive: () => true, handleKey: () => false })

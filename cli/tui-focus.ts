@@ -46,6 +46,35 @@ export interface FocusDispatchResult {
 }
 
 /**
+ * Sink for a scope whose `handleKey` throws. The dispatcher never lets the
+ * input loop die on a buggy scope: it surfaces the error here and stops (see
+ * `dispatch`). Kept injectable so the TUI can route into its own error surface
+ * (`handleAsyncError` → transcript) instead of writing to the alt-screen.
+ */
+export type ScopeErrorHandler = (scopeId: string, key: ParsedKey, err: unknown) => void;
+
+export interface FocusStackOptions {
+  /**
+   * Called when a scope's `handleKey` throws. Defaults to a structured
+   * `console.error` line; the TUI overrides it to render into the transcript.
+   */
+  onError?: ScopeErrorHandler;
+}
+
+const defaultOnError: ScopeErrorHandler = (scopeId, _key, err) => {
+  // Structured, single-line (symmetric-logging convention). Default sink for
+  // the generic primitive / tests; the TUI injects a display-safe sink.
+  console.error(
+    JSON.stringify({
+      level: 'error',
+      event: 'focus_scope_handle_threw',
+      scopeId,
+      error: err instanceof Error ? err.message : String(err),
+    }),
+  );
+};
+
+/**
  * Ordered focus stack. Scopes registered earlier have higher priority (top of
  * stack). `dispatch()` walks active scopes top-down; the first to return `true`
  * consumes the key. Anything left unconsumed returns `handledBy: null` so the
@@ -54,6 +83,11 @@ export interface FocusDispatchResult {
  */
 export class FocusStack {
   private readonly scopes: KeyScope[] = [];
+  private readonly onError: ScopeErrorHandler;
+
+  constructor(options: FocusStackOptions = {}) {
+    this.onError = options.onError ?? defaultOnError;
+  }
 
   /** Register a scope. Earlier registrations win on conflict. */
   register(scope: KeyScope): this {
@@ -71,7 +105,18 @@ export class FocusStack {
   dispatch(key: ParsedKey): FocusDispatchResult {
     for (const scope of this.scopes) {
       if (!scope.isActive()) continue;
-      if (scope.handleKey(key)) return { handledBy: scope.id };
+      let consumed: boolean;
+      try {
+        consumed = scope.handleKey(key);
+      } catch (err) {
+        // A scope that throws must not crash the input loop, and must not
+        // leak the key to lower-priority scopes — a thrown hard-modal handler
+        // falling through to the composer would be a worse bug than a no-op.
+        // Surface the error and treat the key as consumed by the failing scope.
+        this.onError(scope.id, key, err);
+        return { handledBy: scope.id };
+      }
+      if (consumed) return { handledBy: scope.id };
     }
     return { handledBy: null };
   }

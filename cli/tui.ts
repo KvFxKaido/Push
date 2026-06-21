@@ -6788,7 +6788,11 @@ export async function runTUI(options = {}) {
   //   global keybinds → composer.
   // The composer is the bottom scope; a key no scope claims is a deliberate
   // no-op. Behavior is identical to the prior hand-rolled cascade.
-  const focusStack = new FocusStack()
+  const focusStack = new FocusStack({
+    // A scope that throws is surfaced into the transcript (the display-safe
+    // error path) rather than crashing the input loop or corrupting the frame.
+    onError: (scopeId, _key, err) => handleAsyncError(err, `focus scope ${scopeId}`),
+  })
     .register({
       // Approval pane is the only *soft* scope today: its handleKey returns
       // true for every key while open (hard-modal in practice), but we honor
