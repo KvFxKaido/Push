@@ -72,6 +72,7 @@ import { GIT_REF_VALIDATION_DETAIL, isInvalidGitRef } from './git-ref-validation
 import { sanitizeUntrustedSource } from '@push/lib/untrusted-content';
 import { createGitGuardPreHook } from '@push/lib/default-pre-hooks';
 import { reduceToolOutput } from '@push/lib/tool-output-reducers';
+import { retainReducedOutput } from '@push/lib/verbatim-retain';
 import { PROJECT_INSTRUCTION_FILENAMES } from '@push/lib/project-instructions-source';
 import { createSandboxPushGit } from './git-backend';
 import { getApprovalMode } from './approval-mode';
@@ -771,6 +772,24 @@ async function executeSandboxToolCallInner(
           truncated: result.truncated,
           durationMs,
         };
+
+        // LCM Phase 3 recall: when output was reduced, retain the full
+        // model-facing (sanitized, unreduced) output in the verbatim log so the
+        // model can `memory_expand` it back. Sanitized — not the raw cardData —
+        // because recall re-enters the model, so it must carry the same
+        // injection defanging the inline stdout/stderr got. Best-effort.
+        const recall = await retainReducedOutput({
+          reduced,
+          rawText: [
+            result.stdout ? `Stdout:\n${sanitizeUntrustedSource(result.stdout)}` : '',
+            result.stderr ? `Stderr:\n${sanitizeUntrustedSource(result.stderr)}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+          command: call.args.command,
+          scope: options?.memoryScope ?? { repoFullName: '' },
+        });
+        if (recall.marker) lines.push(recall.marker);
 
         return {
           text: lines.join('\n'),

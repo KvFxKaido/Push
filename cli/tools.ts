@@ -31,6 +31,7 @@ import {
 } from '../lib/tool-registry.ts';
 import { evaluatePreHooks } from '../lib/tool-hooks.ts';
 import { reduceToolOutput } from '../lib/tool-output-reducers.ts';
+import { retainReducedOutput } from '../lib/verbatim-retain.ts';
 import { runAuditor } from '../lib/auditor-agent.ts';
 import { resolveAuditorGateEnabled, AUDITOR_GATE_ENV_VAR } from '../lib/auditor-policy.ts';
 import { buildAuditorGateRuntimeContext } from './auditor-gate-memory.ts';
@@ -887,7 +888,7 @@ Available tools (all read-only — Explorer has no filesystem or exec mutation s
 - lsp_diagnostics(path?) — run type-checker for the workspace; optional path filters results to a specific file. Supported: TypeScript (tsc), Python (pyright/ruff), Rust (cargo check), Go (go vet).
 - web_search(query, max_results?) — search the public web (backend: auto|tavily|ollama|duckduckgo via PUSH_WEB_SEARCH_BACKEND)
 - memory_grep(pattern, kinds?, limit?) — search persisted memory records (prior decisions/findings/verification) by case-insensitive substring; returns matches with their [mem_…] id and a text snippet (use memory_expand for the full record)
-- memory_expand(ids) — recall the full verbatim text of memory records by id (ids come from memory_grep results or [mem_…] tags; the surrounding brackets are display-only and are accepted either way)
+- memory_expand(ids?, refs?) — recall full verbatim text: ids for memory records (from memory_grep results or [mem_…] tags; surrounding brackets are display-only) and/or refs for verbatim vb_… handles (shown in a reduced tool result's recall marker). At least one is required
 
 Rules:
 - Paths are relative to workspace root unless absolute inside workspace.
@@ -920,7 +921,7 @@ Available tools:
 - search_files(pattern, path?, max_results?) — text search in workspace
 - web_search(query, max_results?) — search the public web (backend: auto|tavily|ollama|duckduckgo via PUSH_WEB_SEARCH_BACKEND)
 - memory_grep(pattern, kinds?, limit?) — search persisted memory records (prior decisions/findings/verification) by case-insensitive substring; returns matches with their [mem_…] id and a text snippet (use memory_expand for the full record)
-- memory_expand(ids) — recall the full verbatim text of memory records by id (ids come from memory_grep results or [mem_…] tags; the surrounding brackets are display-only and are accepted either way)
+- memory_expand(ids?, refs?) — recall full verbatim text: ids for memory records (from memory_grep results or [mem_…] tags; surrounding brackets are display-only) and/or refs for verbatim vb_… handles (shown in a reduced tool result's recall marker). At least one is required
 - exec(command, timeout_ms?) — run a shell command
 - exec_start(command, timeout_ms?, tty?) — start a long-running command session
 - exec_poll(session_id, from_seq?, max_chars?) — read incremental output from a running command session
@@ -1245,6 +1246,41 @@ function reductionMeta(reduced) {
     reduced_chars: reduced.reducedChars,
     saved_chars: reduced.savedChars,
   };
+}
+
+/**
+ * When exec output was reduced, retain the full raw output in the verbatim log
+ * and return a model-facing marker pointing at the ref (LCM Phase 3 recall).
+ * Best-effort: scope is resolved lazily only on reduction, and any failure
+ * yields an empty marker — retention never breaks the exec path.
+ * @param {import('../lib/tool-output-reducers.ts').ReducedOutput} reduced
+ */
+async function reductionRecallMarker(reduced, rawText, command, workspaceRoot) {
+  if (!reduced.reduced) return '';
+  try {
+    const identity = await resolveWorkspaceIdentity(workspaceRoot);
+    if (!identity.repoFullName) return '';
+    const { marker } = await retainReducedOutput({
+      reduced,
+      rawText,
+      command,
+      scope: { repoFullName: identity.repoFullName, branch: identity.branch ?? undefined },
+    });
+    return marker ?? '';
+  } catch (err) {
+    // Best-effort: identity resolution (or the retain call) failing must not
+    // break exec — but log it so a consistently-failing retain is observable,
+    // matching the web path's verbatim_retain_failed. stderr, per the CLI
+    // stdout-is-the-output-channel rule.
+    console.error(
+      JSON.stringify({
+        level: 'warn',
+        event: 'verbatim_retain_marker_failed',
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    return '';
+  }
 }
 
 function classifyToolError(err) {
@@ -2234,9 +2270,15 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           // buffers are a separate path and stay raw. Exit code is still printed
           // verbatim by formatExecOutput.
           const reduced = reduceToolOutput({ command, stdout, stderr, exitCode: 0 });
+          const recall = await reductionRecallMarker(
+            reduced,
+            formatExecOutput(stdout, stderr, 0),
+            command,
+            workspaceRoot,
+          );
           return {
             ok: true,
-            text: truncateText(formatExecOutput(reduced.stdout, reduced.stderr, 0)),
+            text: truncateText(formatExecOutput(reduced.stdout, reduced.stderr, 0)) + recall,
             meta: { command, timeout_ms: timeoutMs, ...reductionMeta(reduced) },
           };
         } catch (err) {
@@ -2248,11 +2290,23 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             stderr: err.stderr || err.message,
             exitCode,
           });
+          const recall = await reductionRecallMarker(
+            reduced,
+            formatExecOutput(
+              err.stdout || '',
+              err.stderr || err.message,
+              exitCode,
+              Boolean(err.killed),
+            ),
+            command,
+            workspaceRoot,
+          );
           return {
             ok: false,
-            text: truncateText(
-              formatExecOutput(reduced.stdout, reduced.stderr, exitCode, Boolean(err.killed)),
-            ),
+            text:
+              truncateText(
+                formatExecOutput(reduced.stdout, reduced.stderr, exitCode, Boolean(err.killed)),
+              ) + recall,
             structuredError: {
               code: err.killed ? 'EXEC_TIMEOUT' : 'EXEC_FAILED',
               message: err.killed ? 'Command timed out' : `Command exited with code ${exitCode}`,

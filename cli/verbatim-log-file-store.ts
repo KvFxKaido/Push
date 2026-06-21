@@ -19,8 +19,9 @@
  *   <baseDir>/<repoFullName>/<branch>.verbatim.jsonl
  *   <baseDir>/<repoFullName>/__no_branch.verbatim.jsonl
  *
- * Content addressing: `append` keys on `verbatimBaseRef(text)` and is
- * collision-safe — it scans the scope file for an exact text match (dedup) and,
+ * Content addressing: `append` keys on `verbatimScopedRef(scope, text)` (scope-
+ * aware, so identical text in different scopes gets distinct refs) and is
+ * collision-safe — it scans all files for an exact text match (dedup) and,
  * on a genuine base-ref collision with *different* text, probes a disambiguated
  * ref, mirroring the in-memory backend. A hash collision therefore never
  * returns the wrong bytes.
@@ -41,7 +42,7 @@ import type {
   VerbatimLog,
   VerbatimScope,
 } from '../lib/verbatim-log.ts';
-import { verbatimBaseRef } from '../lib/verbatim-log.ts';
+import { verbatimScopedRef } from '../lib/verbatim-log.ts';
 // Reuse the typed store's path-safety check — one canonical copy, so the two
 // on-disk stores can never drift on the directory-traversal guard.
 import { assertSafePathSegment } from './context-memory-file-store.ts';
@@ -170,10 +171,12 @@ export function createFileVerbatimLog(options: CreateFileVerbatimLogOptions): Ve
           const t = await readFileIfExists(f);
           if (t) all.push(...parseEntries(t));
         }
-        const base = verbatimBaseRef(text);
+        const base = verbatimScopedRef(scope, text);
 
         // Reuse on an exact text match anywhere (content dedup); else probe a
         // disambiguated ref so two distinct texts can never share one — globally.
+        // The base is scope-aware, so identical text in another scope gets its
+        // own ref and stays resolvable under that scope's guard.
         let ref = base;
         for (let probe = 1; ; probe++) {
           const hit = all.find((e) => e.ref === ref);

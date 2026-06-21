@@ -22,7 +22,7 @@ export interface MemoryGrepToolCall {
 
 export interface MemoryExpandToolCall {
   tool: 'memory_expand';
-  args: { ids: string[] };
+  args: { ids?: string[]; refs?: string[] };
 }
 
 export type MemoryToolCall = MemoryGrepToolCall | MemoryExpandToolCall;
@@ -55,9 +55,9 @@ ${getToolArgHint('memory_expand')}
 - \`${getToolPublicName('memory_grep')}\` takes a case-insensitive substring \`pattern\`
   (optional \`kinds\`, \`limit\`); it returns matches with their \`[mem_…]\` id and a
   short text **snippet** — not the whole record.
-- To read a record in full, call \`${getToolPublicName('memory_expand')}\` with its
-  \`ids\` (from a grep result or a \`[mem_…]\` tag in a retrieved-memory block); it
-  returns the full verbatim records.
+- To read in full, call \`${getToolPublicName('memory_expand')}\` with \`ids\` (records,
+  from a grep result or a \`[mem_…]\` tag) and/or \`refs\` (verbatim \`vb_…\` handles
+  shown in a reduced tool result's recall marker); it returns the full verbatim text.
 - These are read-only and scoped to the current repo/branch automatically.
 `;
 
@@ -93,8 +93,12 @@ export function detectMemoryToolCall(text: string): MemoryToolCall | null {
 
     if (canonical === 'memory_expand') {
       const ids = toStringArray(argObj.ids);
-      if (ids.length === 0) return null;
-      return { tool: 'memory_expand', args: { ids } };
+      const refs = toStringArray(argObj.refs);
+      if (ids.length === 0 && refs.length === 0) return null;
+      const call: MemoryExpandToolCall = { tool: 'memory_expand', args: {} };
+      if (ids.length > 0) call.args.ids = ids;
+      if (refs.length > 0) call.args.refs = refs;
+      return call;
     }
 
     return null;

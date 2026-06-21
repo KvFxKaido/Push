@@ -31,6 +31,20 @@ describe('verbatim-log', () => {
     expect(await log.size()).toBe(1);
   });
 
+  it('gives identical text in different scopes distinct, in-scope refs (no cross-scope dedup)', async () => {
+    const log = createInMemoryVerbatimLog();
+    const text = 'identical reduced output across two branches\n';
+    const onMain = await log.append({ scope: { repoFullName: repo, branch: 'main' }, text });
+    const onFeat = await log.append({ scope: { repoFullName: repo, branch: 'feat' }, text });
+
+    // Distinct refs + two entries — so a ref advertised in branch `feat` resolves
+    // to a `feat`-scoped entry (passing memory_expand's scope guard) rather than
+    // deduping to the `main` entry the guard would reject.
+    expect(onFeat.ref).not.toBe(onMain.ref);
+    expect(onFeat.scope.branch).toBe('feat');
+    expect(await log.size()).toBe(2);
+  });
+
   it('distinct texts never share a ref and always round-trip exactly', async () => {
     const log = createInMemoryVerbatimLog();
     const a = 'first';
