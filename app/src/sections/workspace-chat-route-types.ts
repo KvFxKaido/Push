@@ -239,6 +239,8 @@ export interface ChatRouteUiStateProps {
   sandboxStartMode: SandboxStartMode;
   updateSandboxStartMode: (mode: SandboxStartMode) => void;
   updateShowToolActivity: (value: boolean) => void;
+  providerFailover: boolean;
+  updateProviderFailover: (value: boolean) => void;
   showInstallIdInput: boolean;
   setShowInstallIdInput: (value: boolean) => void;
   installIdInput: string;

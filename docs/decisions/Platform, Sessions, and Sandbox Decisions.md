@@ -287,14 +287,27 @@ not a new routing model.
   conservative default is "fail over only among providers sharing the locked
   provider's stream shape."
 
-- **Symmetric structured logs.** Each branch emits one line — `stream_failover`
-  (with `from`/`to`), `stream_failover_exhausted` (with `reason`), pairing with
-  the existing `stream_round_retry` / `stream_round_retry_exhausted`.
+- **Symmetric structured logs.** Each branch emits one line — `stream_round_retry`
+  (same-provider), `stream_failover` (with `from`/`to`), `stream_recovery_exhausted`
+  (with `triedCount`).
 
-Shipped so far (this branch): the pure decision kernel + unit tests. Remaining:
-wire it into `app/src/hooks/chat-stream-round.ts` (and later `cli/lead-turn.ts`)
-with the capability-aware candidate resolver, behind a settings toggle defaulting
-off until validated.
+Shipped so far (this branch):
+- The pure decision kernel + unit tests (`lib/provider-failover.ts`).
+- Web wiring in `app/src/hooks/chat-stream-round.ts`, with the capability-aware
+  candidate resolver `resolveFailoverCandidates` + `PROVIDER_STREAM_SHAPE` in
+  `orchestrator-provider-routing.ts`. The reasoning-block hazard is closed
+  structurally: `anthropic` is alone in its wire-shape bucket, so a chat carrying
+  Anthropic signed reasoning blocks has no same-shape candidate and never fails
+  over. The same-provider retry decision moved into the kernel
+  (`shouldRetryStreamRound` was deleted) so there is one source of truth.
+- A user-facing toggle defaulting **off**, in the unified settings doc
+  (`SETTINGS_KEYS.providerFailover`, surfaced in the Settings UI on both the web
+  and daemon surfaces). The round loop reads it synchronously via `getSetting`;
+  with failover off the candidate list is empty and the kernel collapses to the
+  prior same-provider-retry behavior.
+
+Remaining: wire `cli/lead-turn.ts` onto the same kernel; consider promoting
+round-scoped failover to a sticky re-lock once validated in real use.
 
 ## Active Platform Work
 

@@ -490,22 +490,6 @@ export function setZenGoMode(enabled: boolean): void {
   else safeStorageRemove(ZEN_GO_MODE_KEY);
 }
 
-// ---------------------------------------------------------------------------
-// Provider failover — opt-in (default off). When enabled, a round that fails
-// on the locked provider with a transient/failover-worthy error may retry an
-// alternate configured provider of the SAME stream shape for THAT round only
-// (the chat lock is unchanged). See `decideStreamFailover` in
-// `lib/provider-failover.ts` and decision #13 in the Platform decisions doc.
-// ---------------------------------------------------------------------------
-const PROVIDER_FAILOVER_ENABLED_KEY = 'provider_failover_enabled';
-export function getProviderFailoverEnabled(): boolean {
-  return safeStorageGet(PROVIDER_FAILOVER_ENABLED_KEY) === 'true';
-}
-export function setProviderFailoverEnabled(enabled: boolean): void {
-  if (enabled) safeStorageSet(PROVIDER_FAILOVER_ENABLED_KEY, 'true');
-  else safeStorageRemove(PROVIDER_FAILOVER_ENABLED_KEY);
-}
-
 const nvidiaModel = createModelNameStorage('nvidia_model', NVIDIA_DEFAULT_MODEL);
 export const getNvidiaModelName = nvidiaModel.get;
 export const setNvidiaModelName = nvidiaModel.set;

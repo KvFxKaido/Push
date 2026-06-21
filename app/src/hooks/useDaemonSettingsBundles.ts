@@ -444,6 +444,8 @@ export function useDaemonSettingsBundles({
       setProtectMainRepoOverride: protectMain.setRepoOverride,
       showToolActivity: prefs.showToolActivity,
       setShowToolActivity: prefs.updateShowToolActivity,
+      providerFailover: prefs.providerFailover,
+      setProviderFailover: prefs.updateProviderFailover,
       activeRepoFullName: null,
     };
 

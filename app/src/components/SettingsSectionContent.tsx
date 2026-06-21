@@ -866,6 +866,45 @@ export function SettingsSectionContent({
             )}
           </div>
 
+          {/* Provider Failover */}
+          <div className={SECTION_CARD_CLASS}>
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-push-fg">Provider Failover</label>
+              <span className="text-xs text-push-fg-secondary">
+                {workspace.providerFailover ? 'On' : 'Off'}
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => workspace.setProviderFailover(false)}
+                className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                  !workspace.providerFailover
+                    ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
+                    : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
+                }`}
+              >
+                Off
+              </button>
+              <button
+                type="button"
+                onClick={() => workspace.setProviderFailover(true)}
+                className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                  workspace.providerFailover
+                    ? 'border-amber-500/50 bg-amber-500/10 text-amber-400'
+                    : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
+                }`}
+              >
+                On
+              </button>
+            </div>
+            <p className="text-push-xs text-push-fg-secondary">
+              If a chat's provider fails mid-request (rate limit, outage, bad key), retry the round
+              on another configured provider of the same kind. Your chosen provider stays the
+              default — failover only rescues the failing turn.
+            </p>
+          </div>
+
           {/* Auditor Gate */}
           <div className={SECTION_CARD_CLASS}>
             <div className="flex items-center justify-between">

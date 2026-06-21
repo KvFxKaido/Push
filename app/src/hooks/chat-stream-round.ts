@@ -39,7 +39,7 @@ import {
   resolveFailoverCandidates,
   type ActiveProvider,
 } from '@/lib/orchestrator-provider-routing';
-import { getProviderFailoverEnabled } from '@/lib/providers';
+import { getSetting, SETTINGS_KEYS } from '@/lib/settings-store';
 import type { ChatMessage, ReasoningBlock, UrlCitation } from '@/types';
 import type { SendLoopContext, StreamRoundResult } from './chat-send-types';
 
@@ -352,7 +352,7 @@ export async function streamAssistantRound(
   // chat lock — it rescues this round only; the next round re-tries the locked
   // provider first. With failover disabled the candidate list is empty, so
   // `decideStreamFailover` collapses to the prior same-provider-retry behavior.
-  const failoverEnabled = getProviderFailoverEnabled();
+  const failoverEnabled = getSetting<boolean>(SETTINGS_KEYS.providerFailover) === true;
   let currentProvider: ActiveProvider = lockedProvider;
   // The locked round uses its resolved model; a failover provider passes
   // `undefined` so `streamChat` resolves that provider's own default model.
