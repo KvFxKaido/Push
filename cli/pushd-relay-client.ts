@@ -471,11 +471,12 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
           }
           if (!alive) {
             // No pong/traffic since the previous tick → half-open. The
-            // network never delivered a close; synthesize one. Symmetric
-            // structured log so ops can tell a heartbeat kill apart from
-            // a peer-initiated close (never logs the bearer).
+            // network never delivered a close; synthesize one. The event
+            // name calls out the half-open cause explicitly so ops can
+            // grep heartbeat-driven kills apart from peer-initiated
+            // closes (which never emit this line). Never logs the bearer.
             process.stderr.write(
-              `${JSON.stringify({ level: 'warn', event: 'relay_heartbeat_timeout', attempt })}\n`,
+              `${JSON.stringify({ level: 'warn', event: 'relay_heartbeat_half_open', attempt })}\n`,
             );
             clearHeartbeat();
             try {
