@@ -1206,10 +1206,18 @@ export async function runCoderAgent<TCall, TCard>(
   // shared oracle. Scoped to the similarity signal only — the Coder keeps its
   // existing mutation-failure breaker (`mutationFailures` above) and the
   // orchestrator's delegation circuit breaker; it deliberately does NOT take
-  // the always-on exact-repeat abort the CLI/web round loops carry, because the
-  // Coder legitimately re-reads the same files across many rounds and an
-  // always-on exact-batch abort would cut those runs short. Dark unless
-  // PUSH_LOOP_DETECTION=1; windows + counters are per-run (reset on resume).
+  // the always-on exact-repeat abort the web orchestrator round loop carries,
+  // because the Coder legitimately re-reads the same files across many rounds
+  // and an always-on exact-batch abort would cut those runs short.
+  //
+  // Enforcement split (see the `similarityEnforced` arg on the verdict call
+  // below): the delegated Coder keeps the ladder DARK unless
+  // PUSH_LOOP_DETECTION=1, but the conversational lead (`persona: 'lead'`)
+  // enforces it unconditionally. The lead lane (CLI `cli/lead-turn.ts`, web
+  // inline) has no Orchestrator round loop above it and never wired in the
+  // exact-repeat breaker, so the similarity ladder is the only loop guard left
+  // before the round cap — leaving it dark made the lead's only backstop the
+  // round budget. Windows + counters are per-run (reset on resume).
   const loopDetector = createSimilarityLoopDetector();
   let loopBlocksIssued = 0;
   let loopCompactsIssued = 0;
@@ -1611,7 +1619,10 @@ export async function runCoderAgent<TCall, TCard>(
         similarity: worstSimilarity,
         blocksIssued: loopBlocksIssued,
         compactsIssued: loopCompactsIssued,
-        similarityEnforced: isSimilarityLoopDetectionEnabled(),
+        // Lead turns enforce the near-duplicate ladder unconditionally; the
+        // delegated Coder stays dark unless PUSH_LOOP_DETECTION=1. See the
+        // enforcement-split note on the loop-detection state above.
+        similarityEnforced: leadMode || isSimilarityLoopDetectionEnabled(),
       });
       recordLoopVerdict({
         surface: 'coder',

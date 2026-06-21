@@ -109,9 +109,9 @@ interface MetaEnvelope {
 
 // ─── Constants ───────────────────────────────────────────────────
 
-export const DEFAULT_MAX_ROUNDS: number = 30;
+export const DEFAULT_MAX_ROUNDS: number = 50;
 
-// Absolute ceiling for the tool-loop round budget. The default stays at 30 as a
+// Absolute ceiling for the tool-loop round budget. The default sits at 50 as a
 // gentle circuit breaker, but big-refactor / long-running sessions can opt into
 // more — either explicitly via `--max-rounds`, or implicitly when the adaptive
 // harness extends the budget on healthy progress (see harness-adaptation.ts).
