@@ -87,13 +87,18 @@ export async function maybeCompactBeforeTurn(
   const budget = getContextBudget(provider, model);
   const triggerTokens = budget.summarizeTokens;
 
-  // Only the model-visible subset counts against the window; a prior
-  // compaction's hidden span must not re-trigger compaction.
+  // Partition (and all downstream token math) runs over ONLY the model-visible
+  // subset. A prior compaction's folded span is still in `apiMessages` with
+  // `visibleToModel: false`; partitioning the full array would re-summarize
+  // those hidden raw turns (a huge, redundant summarizer request) and subtract
+  // their tokens from `beforeTokens` — which counts visible-only — producing
+  // bogus or negative after-token figures. `filterModelVisibleMessages` returns
+  // the same object references, so span ids still map back into `apiMessages`.
   const visible = filterModelVisibleMessages(apiMessages);
   const totalTokens = estimateContextTokens(visible);
   if (!shouldRunLlmCompaction(totalTokens, { triggerTokens })) return apiMessages;
 
-  const partition = partitionForLlmCompaction(apiMessages.map(asCompactable), {
+  const partition = partitionForLlmCompaction(visible.map(asCompactable), {
     estimateMessageTokens: (m) => estimateMessageTokens(m as ChatMessage),
     preserveTailTokens: Math.min(
       PRESERVE_TAIL_CAP,
@@ -106,17 +111,18 @@ export async function maybeCompactBeforeTurn(
     return apiMessages;
   }
 
-  // Map the partitioned span back to the real ChatMessages by position: the
-  // partition preserves order, so the summarize slice corresponds to the same
-  // contiguous run in `apiMessages`.
+  // The partition preserves order over the visible array, so the summarize slice
+  // is the corresponding contiguous run of visible messages. Map back to the
+  // real ChatMessages by id (not position into the full array, which may have
+  // hidden messages interleaved).
   const headLen = partition.head.length;
   const spanLen = partition.summarize.length;
-  const spanMsgs = apiMessages.slice(headLen, headLen + spanLen);
+  const spanMsgs = visible.slice(headLen, headLen + spanLen);
   const spanIds = new Set(spanMsgs.map((m) => m.id));
   const lastSpanId = spanMsgs[spanMsgs.length - 1]?.id;
 
   // Carry forward a prior handoff so repeated compactions stay coherent.
-  const priorHandoff = apiMessages.find((m) =>
+  const priorHandoff = visible.find((m) =>
     isHandoffBlock(typeof m.content === 'string' ? m.content : ''),
   )?.content;
 

@@ -5,10 +5,13 @@ import type { PushStreamEvent } from '@push/lib/provider-contract';
 // --- Mock the two web-module seams; exercise the real engine end-to-end ----
 
 let streamEvents: PushStreamEvent[] = [];
+let lastSpanText: string | null = null;
 vi.mock('@/lib/orchestrator', () => ({
-  // A fake provider stream that replays `streamEvents`.
+  // A fake provider stream that replays `streamEvents` and records the span
+  // text it was asked to summarize (so tests can assert what was sent).
   getProviderPushStream: () =>
-    async function* () {
+    async function* (req: { messages: { content: string }[] }) {
+      lastSpanText = req.messages[0]?.content ?? null;
       for (const e of streamEvents) yield e;
     },
 }));
@@ -78,6 +81,7 @@ beforeEach(() => {
     { type: 'text_delta', text: 'Did A and B. Next: C.' },
     { type: 'done' },
   ] as PushStreamEvent[];
+  lastSpanText = null;
 });
 
 describe('maybeCompactBeforeTurn', () => {
@@ -124,6 +128,50 @@ describe('maybeCompactBeforeTurn', () => {
     // The goal and the recent tail survive verbatim and model-visible.
     expect(out.find((x) => x.id === 'u0')?.visibleToModel).not.toBe(false);
     expect(out.find((x) => x.id === 't1')?.visibleToModel).not.toBe(false);
+  });
+
+  it('partitions over only the model-visible subset on a second compaction', async () => {
+    // Simulate a chat that already compacted once: a large hidden span (folded
+    // by a prior compaction) plus a prior handoff, then a fresh over-budget
+    // visible middle. The hidden raw turns must NOT be re-summarized, and the
+    // token math must stay sane (no subtracting hidden tokens from a
+    // visible-only `beforeTokens`, which previously produced negative afters).
+    const { ctx, appendRunEvent } = makeCtx();
+    const hiddenA = m('h1', 'assistant', 'OLD-A '.repeat(2000), { visibleToModel: false });
+    const hiddenB = m('h2', 'user', 'OLD-B '.repeat(2000), { visibleToModel: false });
+    const priorHandoff = m('ph', 'user', '[CONTEXT HANDOFF]\nearlier work\n[/CONTEXT HANDOFF]', {
+      isToolResult: true,
+      visibleToModel: true,
+    });
+    const apiMessages = [
+      m('u0', 'user', 'GOAL: build the thing'),
+      hiddenA,
+      hiddenB,
+      priorHandoff,
+      ...bigSpan(),
+      m('t1', 'user', 'recent question that must survive'),
+    ];
+
+    const out = await maybeCompactBeforeTurn(ctx, {
+      apiMessages,
+      provider: 'anthropic',
+      model: 'claude-x',
+    });
+
+    // The already-hidden raw turns are untouched and were NOT sent to the
+    // summarizer.
+    expect(out.find((x) => x.id === 'h1')?.visibleToModel).toBe(false);
+    expect(out.find((x) => x.id === 'h2')?.visibleToModel).toBe(false);
+    expect(lastSpanText).not.toContain('OLD-A');
+    expect(lastSpanText).not.toContain('OLD-B');
+
+    // Token math is sane: after < before and strictly positive (the prior bug
+    // subtracted hidden tokens from a visible-only before-count → negative).
+    const evt = appendRunEvent.mock.calls.find(
+      (c) => (c[1] as { type: string }).type === 'context.compaction',
+    )?.[1] as { beforeTokens: number; afterTokens: number };
+    expect(evt.afterTokens).toBeGreaterThan(0);
+    expect(evt.afterTokens).toBeLessThan(evt.beforeTokens);
   });
 
   it('is a no-op when the working set is under the trigger', async () => {

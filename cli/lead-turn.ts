@@ -233,7 +233,22 @@ export function buildLeadTurnPreamble(
   } else if (tail?.role === 'user' && tail.content.trim() === userText.trim()) {
     conversational.pop();
   }
-  const prior = conversational.slice(-PRIOR_TURNS_MAX);
+  let prior = conversational.slice(-PRIOR_TURNS_MAX);
+  // The most recent `[CONTEXT HANDOFF]` is the only surviving summary of the
+  // turns compaction already removed from `state.messages`. The token-based
+  // partition can preserve a tail longer than PRIOR_TURNS_MAX, pushing the
+  // handoff out of this window — so carry it forward explicitly when it falls
+  // outside, or the lead silently loses all the compacted history (§14).
+  let latestHandoff: Message | null = null;
+  for (let i = conversational.length - 1; i >= 0; i--) {
+    if (isHandoffBlock(conversational[i].content)) {
+      latestHandoff = conversational[i];
+      break;
+    }
+  }
+  if (latestHandoff && !prior.includes(latestHandoff)) {
+    prior = [latestHandoff, ...prior];
+  }
 
   const lines: string[] = [];
   if (workspaceSnapshot.trim()) {
