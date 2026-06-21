@@ -54,6 +54,7 @@ import {
   getGitHubToolProtocolAsync,
   FILE_MUTATION_TOOLS,
   READ_ONLY_TOOLS,
+  REPEAT_EXEMPT_TOOLS,
   TOOL_PROTOCOL,
 } from './tools.js';
 import {
@@ -579,6 +580,9 @@ export async function runLeadKernelTurn(
         evaluateAfterModel: async () => null,
         harnessMaxRounds: maxRounds,
         persona: 'lead',
+        // Exempt poll-by-repeat tools (`exec_poll`) from the lead exact-repeat
+        // breaker — a quiet long-running command is polled with identical args.
+        repeatExemptTools: REPEAT_EXEMPT_TOOLS,
       },
       callbacks,
     );

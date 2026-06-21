@@ -946,6 +946,19 @@ export interface CoderAgentOptions<TCall, TCard> {
    * Omitted ⇒ text-dispatch only (today's behavior for every other model).
    */
   nativeToolSchemas?: ToolFunctionSchema[];
+  /**
+   * Read-only tools whose correct usage includes re-calling with identical
+   * args, so they must be EXEMPT from the lead exact-repeat breaker. Polling a
+   * quiet long-running command (`exec_poll` returns `<no new output>` with an
+   * unchanged `next_seq`, so the right next call is the same `{session_id,
+   * from_seq}`) is the canonical case — without the exemption a slow command
+   * that doesn't emit output every round trips the breaker on its 4th poll.
+   * Surface-declared because the kernel can't know which tool names carry
+   * wait-by-repeat semantics; the CLI lead passes its poll tools, the web
+   * inline lead has none (its exec is the side-effecting `sandbox_exec`).
+   * Only consulted in lead mode. Defaults to empty.
+   */
+  repeatExemptTools?: ReadonlySet<string>;
 }
 
 /**
@@ -1015,6 +1028,7 @@ export async function runCoderAgent<TCall, TCard>(
     leadToolGuidance = false,
     leadToolScope = 'full',
     nativeToolSchemas,
+    repeatExemptTools,
   } = options;
 
   // Derive the legacy boolean once for the body's prompt-section + round-cap
@@ -1642,8 +1656,15 @@ export async function runCoderAgent<TCall, TCard>(
           // Record every call (so a different intervening call resets the
           // streak) but only break on the FIRST — same per-surface rule the
           // web orchestrator applies, since a repeated lone call is the loop
-          // we're catching; a multi-call round is already varied work.
-          if (i === 0 && leadCallTracker.isRepeatedCall(key, EXACT_REPEAT_LIMIT)) {
+          // we're catching; a multi-call round is already varied work. Tools
+          // that wait by re-calling with identical args (e.g. `exec_poll` on a
+          // quiet long-running command) are exempt — repeating them is correct,
+          // not a loop.
+          if (
+            i === 0 &&
+            !repeatExemptTools?.has(call.tool) &&
+            leadCallTracker.isRepeatedCall(key, EXACT_REPEAT_LIMIT)
+          ) {
             exactBreakers.push(
               `consecutive identical call: ${call.tool} (${EXACT_REPEAT_LIMIT}+ rounds in a row)`,
             );

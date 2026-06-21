@@ -103,6 +103,7 @@ function baseCoderOptions(overrides: {
   priorSessionDigest?: CoderAgentOptions<Call, never>['priorSessionDigest'];
   onSessionDigestEmitted?: CoderAgentOptions<Call, never>['onSessionDigestEmitted'];
   resumeState?: CoderAgentOptions<Call, never>['resumeState'];
+  repeatExemptTools?: CoderAgentOptions<Call, never>['repeatExemptTools'];
 }): CoderAgentOptions<Call, never> {
   return {
     provider: 'openrouter',
@@ -124,6 +125,7 @@ function baseCoderOptions(overrides: {
     onSessionDigestEmitted: overrides.onSessionDigestEmitted,
     symbolSummary: null,
     resumeState: overrides.resumeState,
+    repeatExemptTools: overrides.repeatExemptTools,
     toolExec: async () => ({ kind: 'executed', resultText: 'tool ok' }),
     detectAllToolCalls:
       overrides.detectAllToolCalls ??
@@ -562,6 +564,39 @@ describe('runCoderAgent (PushStream consumer)', () => {
     );
     // Same repeated call, but the exact-repeat breaker is lead-only — the
     // delegated Coder runs to the round cap instead of aborting on the loop.
+    expect(result.stopReason).toBe('max_rounds');
+  });
+
+  it('lead does not abort on a repeated poll-exempt call (e.g. exec_poll)', async () => {
+    const rounds: PushStreamEvent[][] = Array.from({ length: 8 }, () => [
+      { type: 'text_delta', text: 'working' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+    const { stream } = makePushStream(rounds);
+    // Polling a quiet long-running command: the SAME exec_poll every round.
+    // Without the exemption this would abort as a loop on the 4th poll; with
+    // it, the lead keeps polling until the round cap.
+    const call = { call: { tool: 'exec_poll', args: { session_id: 's1', from_seq: 0 } } };
+    const detectAllToolCalls = () => ({
+      readOnly: [call],
+      mutating: null,
+      fileMutations: [],
+      extraMutations: [],
+      droppedCandidates: [],
+    });
+    const result = await runCoderAgent(
+      baseCoderOptions({
+        stream,
+        leadMode: true,
+        harnessMaxRounds: 6,
+        detectAllToolCalls,
+        detectAnyToolCall: () => call,
+        repeatExemptTools: new Set(['exec_poll']),
+        evaluateAfterModel: async () => null,
+      }),
+      { onStatus: () => {} },
+    );
+    // No loop abort — exec_poll is exempt, so it runs to the round cap.
     expect(result.stopReason).toBe('max_rounds');
   });
 
