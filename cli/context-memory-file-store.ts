@@ -74,7 +74,7 @@ export interface CreateFileMemoryStoreOptions {
  * sanitization shape applies cheaply. Codex + Copilot P2 reviews on
  * PR #333.
  */
-function assertSafePathSegment(value: string, fieldName: string): void {
+export function assertSafePathSegment(value: string, fieldName: string): void {
   if (!value) {
     throw new Error(`${fieldName} must not be empty`);
   }

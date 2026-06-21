@@ -9,7 +9,9 @@ import type {
 import {
   buildRetrievedMemoryKnownContext,
   createInMemoryStore,
+  createInMemoryVerbatimLog,
   createMemoryRecord,
+  expandMemoryRecords,
   getDefaultMemoryStore,
   setDefaultMemoryStore,
   writeCoderMemory,
@@ -90,6 +92,66 @@ describe('createMemoryRecord', () => {
     expect(record.summary.endsWith('…')).toBe(true);
     expect(record.relatedFiles).toBeUndefined();
     expect(record.relatedSymbols).toBeUndefined();
+  });
+});
+
+describe('verbatim capture (LCM Phase 3)', () => {
+  it('stamps a verbatimRef when verification output overflows the detail cap, and memory_expand recalls the full original', async () => {
+    const store = createInMemoryStore();
+    const verbatimLog = createInMemoryVerbatimLog();
+
+    // A verification log far past the 2000-char detail cap — the case the
+    // typed store truncates and the verbatim log preserves.
+    const hugeOutput = 'FAIL src/auth.test.ts\n' + 'stack frame line that matters\n'.repeat(400);
+    expect(hugeOutput.length).toBeGreaterThan(2000);
+
+    const written = await writeCoderMemory({
+      store,
+      verbatimLog,
+      scope: makeScope(),
+      outcome: makeCoderOutcome({
+        checks: [{ id: 'tests', passed: false, exitCode: 1, output: hugeOutput }],
+      }),
+    });
+
+    const verification = written.find((r) => r.kind === 'verification_result');
+    expect(verification).toBeDefined();
+    // Stored detail is truncated...
+    expect(verification!.detail!.length).toBeLessThanOrEqual(2000);
+    // ...but a verbatim pointer was stamped.
+    expect(verification!.verbatimRef).toBeTruthy();
+
+    // Without the log, expand returns the lossy stored detail.
+    const lossy = await expandMemoryRecords({ ids: [verification!.id], store });
+    expect(lossy.found[0]?.verbatim).toBeUndefined();
+    expect(lossy.found[0]?.detail!.length).toBeLessThanOrEqual(2000);
+
+    // With the log, expand returns the full original, byte-for-byte.
+    const lossless = await expandMemoryRecords({
+      ids: [verification!.id],
+      store,
+      verbatimLog,
+    });
+    expect(lossless.found[0]?.verbatim).toBe(true);
+    expect(lossless.found[0]?.detail).toBe(hugeOutput.trim());
+  });
+
+  it('does not stamp a ref when detail fits the cap', async () => {
+    const store = createInMemoryStore();
+    const verbatimLog = createInMemoryVerbatimLog();
+
+    const written = await writeCoderMemory({
+      store,
+      verbatimLog,
+      scope: makeScope(),
+      outcome: makeCoderOutcome({
+        checks: [{ id: 'typecheck', passed: true, exitCode: 0, output: 'ok' }],
+      }),
+    });
+
+    const verification = written.find((r) => r.kind === 'verification_result');
+    expect(verification!.verbatimRef).toBeUndefined();
+    expect(await verbatimLog.size()).toBe(0);
   });
 });
 

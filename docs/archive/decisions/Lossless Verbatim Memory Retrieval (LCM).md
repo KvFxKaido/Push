@@ -1,10 +1,10 @@
 # Lossless Verbatim Memory Retrieval (LCM)
 
 Status: Current for Phases 0–2 + follow-through part a — web Coder (delegated) +
-Deep-Reviewer memory routing (shipped 2026-06-01). Phase 3 (verbatim log) now
-in progress — the `lib/verbatim-log.ts` kernel landed 2026-06-21; CLI file
-backend, write/read wiring, and the Worker durable backend remain. Background
-coder-job memory deferred (no Worker-side store).
+Deep-Reviewer memory routing (shipped 2026-06-01). Phase 3 (verbatim log) shipped
+2026-06-21 — `lib/verbatim-log.ts` kernel, CLI file backend, write-path stamping,
+and read-path resolution through `memory_expand`. Only the Worker durable backend
+remains deferred (no Worker-side store, same as background coder-job memory).
 Origin: [Context Memory and Retrieval Architecture](Context%20Memory%20and%20Retrieval%20Architecture.md) (the layer this extends), external reference: Ehrlich & Blackman, "LCM: Lossless Context Management", Voltropy PBC, arXiv 2605.04050 (Feb 2026)
 
 ## TL;DR
@@ -192,7 +192,7 @@ cross-surface PR:
   id-exposure assertion; drift test (`daemon-integration.test.mjs`) passes with the new
   advertised==callable tools.
 
-### Phase 3 — true verbatim immutable log (the "lossless" part) — IN PROGRESS (kernel landed 2026-06-21)
+### Phase 3 — true verbatim immutable log (the "lossless" part) — SHIPPED 2026-06-21 (Worker backend deferred)
 
 Today `detail` is synthesized and capped (2000 on write `lib/context-memory.ts:45`,
 800 on persist `lib/memory-persistence-policy.ts:9`), so even Phases 1–2 return
@@ -228,24 +228,41 @@ on a genuine collision, so a hash collision can never return the wrong verbatim 
 (symmetric logs belong at the wiring call-site, per the parent doc); 8 cases in
 `lib/verbatim-log.test.ts`.
 
-**Remaining wiring (next increments):**
+**Wiring — SHIPPED 2026-06-21.**
 
-1. **CLI file backend** — `cli/verbatim-log-file-store.ts` mirroring
-   `cli/context-memory-file-store.ts` (same `assertSafePathSegment` path-safety,
-   serialize-chain, `<baseDir>/<repo>/<branch>` layout) but **append-only**: no
-   `update`/`remove` of historical lines, pruning by age/size via atomic rewrite.
-   Wired through `setDefaultVerbatimLog` in `cli/cli.ts` + `cli/pushd.ts` next to the
-   existing `setDefaultMemoryStore`.
-2. **Write path** — stamp `verbatimRef` in the memory write helpers when `detail`
-   exceeds the cap (append the full text first), with symmetric
-   `verbatim_write_*` logs at that integration site.
-3. **Read path** — `expandMemoryRecords` / `memory_expand` resolve `verbatimRef`
-   when present (opt-in `full` flag or automatic), returning the true original;
-   symmetric `verbatim_read_hit` ↔ `verbatim_read_miss`.
-4. **Worker durable backend** — deferred exactly like Phase 2's background-coder
-   memory (no Worker-side persistent store yet). The `lib/` contract lands now so the
-   Worker implements `VerbatimLog` when one exists; until then web uses the in-memory
-   default (session-lived, same as the typed store there).
+1. **CLI file backend** — `cli/verbatim-log-file-store.ts` mirrors
+   `cli/context-memory-file-store.ts` (shared `assertSafePathSegment` — now
+   exported from the typed store so the traversal guard has one canonical copy —
+   serialize-chain, atomic-rewrite) at `<baseDir>/<repo>/<branch>.verbatim.jsonl`
+   (default `~/.push/verbatim`, `PUSH_VERBATIM_DIR` override). **Append-only**: no
+   `update`/`remove` of historical entries; only `pruneOlderThan` drops whole aged
+   entries. Wired through `setDefaultVerbatimLog` in `cli/cli.ts` + `cli/pushd.ts`
+   next to `setDefaultMemoryStore`. 7 characterization cases in
+   `cli/tests/verbatim-log-file-store.test.mjs`.
+2. **Write path** — `persistRecord` (create → stamp → write) in
+   `lib/context-memory.ts` stamps `verbatimRef` when `detail` exceeds the cap; all
+   four write helpers route through it. Highest-value capture is the Coder's
+   `verification_result` (`check.output`, the verbose test/typecheck log the
+   Auditor most wants verbatim). Best-effort like `enrichEmbeddings` — a log
+   failure degrades to a capped record, never blocks the write — with symmetric
+   `verbatim_stamped` ↔ `verbatim_stamp_failed` (stderr, per the CLI stdout rule).
+3. **Read path** — `expandMemoryRecords` resolves `verbatimRef` against an
+   injected `verbatimLog`, returning the full original (`verbatim: true`); a
+   pruned/absent entry degrades silently to the capped detail. `memory_expand`
+   (`lib/memory-tool-exec.ts`) wires the process log and renders verbatim detail at
+   a far larger cap (12k) with an explicit truncation marker + ref. The `verbatim`
+   count rides the existing `memory_expand_hit` log.
+4. **Worker durable backend** — still deferred exactly like Phase 2's
+   background-coder memory (no Worker-side persistent store yet). The `lib/`
+   contract is live, so the Worker implements `VerbatimLog` when one exists; until
+   then web uses the in-memory default (session-lived, same as the typed store
+   there). This is the only remaining piece of Phase 3.
+
+Coverage: `lib/verbatim-log.test.ts` (kernel, 8), verbatim resolution in
+`lib/context-memory-expand.test.ts`, write-path stamping in
+`app/src/lib/context-memory.test.ts`, file backend in
+`cli/tests/verbatim-log-file-store.test.mjs`. App + CLI typecheck green; CLI suite
+(364) green including the drift pins.
 
 ## Non-Goals
 

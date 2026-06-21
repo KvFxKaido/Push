@@ -17,6 +17,7 @@
 import { grepMemory, expandMemoryRecords } from './context-memory.js';
 import { getDefaultMemoryStore, type ContextMemoryStore } from './context-memory-store.js';
 import type { ExpandedMemoryRecord, MemoryGrepMatch } from './context-memory-expand.js';
+import { getDefaultVerbatimLog, type VerbatimLog } from './verbatim-log.js';
 import { MEMORY_RECORD_KINDS, type MemoryRecordKind } from './runtime-contract.js';
 
 export interface MemoryToolScope {
@@ -33,6 +34,8 @@ export interface MemoryToolResult {
 export interface MemoryToolContext {
   scope: MemoryToolScope;
   store?: ContextMemoryStore;
+  /** Verbatim log for lossless `memory_expand`. Defaults to the process log. */
+  verbatimLog?: VerbatimLog;
 }
 
 // Validation whitelist derives from the canonical contract list, so a new kind
@@ -41,6 +44,11 @@ const VALID_KINDS: ReadonlySet<string> = new Set<MemoryRecordKind>(MEMORY_RECORD
 
 const GREP_DETAIL_SNIPPET_CAP = 400;
 const EXPAND_DETAIL_CAP = 2000;
+// Verbatim-resolved detail is the whole point of LCM, so it gets a far larger
+// window than the capped stored detail — but still bounded, since the output
+// has to fit the model's context. Anything beyond is marked, with the ref, so
+// the model knows the full text is retained and can be re-fetched.
+const VERBATIM_EXPAND_CAP = 12_000;
 const DEFAULT_GREP_LIMIT = 10;
 const MAX_GREP_LIMIT = 25;
 const MAX_EXPAND_IDS = 20;
@@ -171,8 +179,19 @@ function formatExpandedRecord(record: ExpandedMemoryRecord): string {
     `  summary: ${record.summary.replace(/\s+/g, ' ').trim()}`,
   ];
   if (record.detail) {
-    lines.push('  detail:');
-    lines.push(indentDetail(record.detail, EXPAND_DETAIL_CAP));
+    if (record.verbatim) {
+      const full = record.detail.trim();
+      lines.push('  detail (verbatim):');
+      lines.push(indentDetail(full, VERBATIM_EXPAND_CAP));
+      if (full.length > VERBATIM_EXPAND_CAP) {
+        lines.push(
+          `    … (showing ${VERBATIM_EXPAND_CAP} of ${full.length} chars; full text retained at verbatim ref ${record.verbatimRef})`,
+        );
+      }
+    } else {
+      lines.push('  detail:');
+      lines.push(indentDetail(record.detail, EXPAND_DETAIL_CAP));
+    }
   }
   return lines.join('\n');
 }
@@ -203,14 +222,17 @@ export async function runMemoryExpand(
       chatId: ctx.scope.chatId,
     },
     store: ctx.store,
+    verbatimLog: ctx.verbatimLog ?? getDefaultVerbatimLog(),
   });
 
+  const verbatimResolved = result.found.filter((r) => r.verbatim).length;
   const logCtx = {
     repoFullName: ctx.scope.repoFullName,
     branch: ctx.scope.branch ?? null,
     requested: ids.length,
     found: result.found.length,
     missing: result.missing.length,
+    verbatim: verbatimResolved,
   };
   const meta = { ...logCtx, missingIds: result.missing };
 

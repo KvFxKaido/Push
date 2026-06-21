@@ -96,10 +96,13 @@ Context memory is scoped by durable repo/branch/chat identity, not incidental
 session IDs. Summary packing is the default. Lossless verbatim memory retrieval
 has shipped through the deterministic expand/grep kernel, top-detail packing
 override, and model-facing memory tools. **Phase 3 — the append-only verbatim
-log that makes retrieval truly lossless (today `detail` is capped 800/2000 chars
-before storage) — is now in progress:** the cross-surface `lib/verbatim-log.ts`
-kernel (content-addressed, collision-safe, in-memory backend) landed 2026-06-21;
-the CLI file backend, write/read wiring, and the Worker durable backend remain.
+log that makes retrieval truly lossless (the typed store caps `detail` at
+800/2000 chars before storage) — shipped 2026-06-21:** the cross-surface
+`lib/verbatim-log.ts` kernel (content-addressed, collision-safe), the CLI file
+backend (`cli/verbatim-log-file-store.ts`, append-only), write-path stamping of
+`verbatimRef` when detail overflows (`persistRecord` in `lib/context-memory.ts`),
+and read-path resolution through `memory_expand` (full original at a 12k render
+cap). Only the Worker durable backend remains deferred (no Worker-side store).
 The same log backs the "keep the raw output" half of `lib/tool-output-reducers.ts`.
 
 Source notes:
@@ -405,7 +408,7 @@ until a repo actually needs custom rules.
 3. Decide scratchpad durable-storage substrate per platform.
 4. Finish TUI daemon-session controller extraction.
 5. Graduate loop detection enforcement only after telemetry supports thresholds.
-6. Memory Phase 3 immutable verbatim logs — **in progress**: `lib/verbatim-log.ts` kernel landed 2026-06-21 (content-addressed, collision-safe, in-memory backend). Remaining: CLI file backend, write/read wiring (`verbatimRef` stamping + `memory_expand` resolution), Worker durable backend. See the LCM doc's Phase 3.
+6. Memory Phase 3 immutable verbatim logs — **shipped 2026-06-21** (kernel + CLI file backend + write-path `verbatimRef` stamping + `memory_expand` resolution). Only the Worker durable backend remains deferred (no Worker-side store). See the LCM doc's Phase 3.
 7. Promote the diff/annotation envelope only when a roadmap item needs it.
 8. TUI focus-stack migration (§12) — **complete**: the whole `processInput` dispatch resolves through the stack across six declarative scopes. Push/pop self-registration was considered and declined (see §12); declarative `isActive()` against authoritative state is the end state.
 9. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model. Step 1 landed 2026-06-12: interactive turns default to the in-loop lead with the Planner wrapper behind `PUSH_DELEGATION_MODE=delegated`. Step 2 landed 2026-06-12: the lead-kernel lane (`cli/lead-turn.ts`) runs the turn on the shared kernel in `leadMode`. Step 3 landed 2026-06-12: the lane is the **default**; `PUSH_LEAD_RUNTIME=engine` is the exact-match opt-out while it bakes. Step 4 — **complete**: the bake-period `PUSH_LEAD_RUNTIME=engine` opt-out and the CLI-local engine round loop are retired; `runAssistantTurn` delegates unconditionally to the kernel lane and the now-unreachable helper cluster the loop left behind in `cli/engine.ts` (awareness guard, finalization/parse-error builders, mid-session distill — no callers once `runAssistantLoop` was gone; the kernel owns these live concerns) plus its obsolete tests were removed. Behavior-neutral removal.
