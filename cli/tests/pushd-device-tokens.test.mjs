@@ -1,5 +1,6 @@
 import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { skipOnWindows } from './test-environment.mjs';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -54,7 +55,7 @@ describe('mintDeviceToken', () => {
     assert.equal(record.boundOrigin, origin);
   });
 
-  it('writes the tokens file with mode 0600', async () => {
+  it('writes the tokens file with mode 0600', skipOnWindows, async () => {
     await mintDeviceToken({ boundOrigin: 'loopback' });
     const stat = await fs.stat(tokensPath);
     // Mask to mode bits; we only assert the 0o077 group/other bits are zero.

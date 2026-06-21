@@ -1,5 +1,6 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { skipOnWindows } from './test-environment.mjs';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -613,7 +614,7 @@ describe('getSessionDir security', () => {
 // ─── File permissions ───────────────────────────────────────────
 
 describe('session file permissions', () => {
-  it('creates session dir with mode 0o700', async () => {
+  it('creates session dir with mode 0o700', skipOnWindows, async () => {
     const id = makeSessionId();
     const state = {
       sessionId: id,
@@ -632,7 +633,7 @@ describe('session file permissions', () => {
     assert.equal(stat.mode & 0o777, 0o700, 'dir should be 0700');
   });
 
-  it('creates state file with mode 0o600', async () => {
+  it('creates state file with mode 0o600', skipOnWindows, async () => {
     const id = makeSessionId();
     const state = {
       sessionId: id,

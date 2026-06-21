@@ -4,6 +4,18 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
+// True on native Windows, where POSIX file-mode bits (chmod 0600/0700) don't
+// exist. Tests that assert those are inherently unrunnable here; the canonical
+// suite runs on WSL/Linux/CI. Pass `skipOnWindows` as node:test's options arg —
+// `it('…', skipOnWindows, fn)` — so a Windows `npm run test:cli` reports
+// green-with-skips instead of misleading red (which otherwise buries real
+// failures in the noise). Use ONLY for genuinely POSIX-only behavior, never to
+// paper over a real Windows portability bug.
+export const isWindows = process.platform === 'win32';
+export const skipOnWindows = isWindows
+  ? { skip: 'POSIX-only file mode; run the CLI suite in WSL/Linux' }
+  : {};
+
 export async function canCaptureChildStdout() {
   try {
     const { stdout } = await execFileAsync(process.execPath, [

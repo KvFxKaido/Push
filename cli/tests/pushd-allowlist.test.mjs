@@ -14,6 +14,7 @@
  */
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { skipOnWindows } from './test-environment.mjs';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -88,7 +89,7 @@ describe('addAllowedPath + listAllowedPaths', () => {
     await assert.rejects(() => addAllowedPath('relative/path'), /Invalid allowlist path/);
   });
 
-  it('persists with 0600 file permissions', async () => {
+  it('persists with 0600 file permissions', skipOnWindows, async () => {
     await addAllowedPath('/home/user/proj-a');
     const stat = await fs.stat(process.env.PUSHD_ALLOWLIST_PATH);
     // POSIX mode mask — the file should be rw for owner only.

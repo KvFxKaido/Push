@@ -15,6 +15,7 @@
  */
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { skipOnWindows } from './test-environment.mjs';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -73,7 +74,7 @@ describe('appendAuditEvent + readAuditEvents', () => {
     assert.ok(events[0].ts > 0);
   });
 
-  it('persists with mode 0600', async () => {
+  it('persists with mode 0600', skipOnWindows, async () => {
     await appendAuditEvent({ type: 'auth.upgrade', surface: 'ws' });
     const stat = await fs.stat(process.env.PUSHD_AUDIT_LOG_PATH);
     assert.equal(stat.mode & 0o777, 0o600);
