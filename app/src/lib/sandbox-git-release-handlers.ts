@@ -55,6 +55,7 @@ import type {
   AuditVerdictCardData,
   CommitReviewCardData,
   DiffPreviewCardData,
+  PushPlanSummary,
   ToolExecutionResult,
 } from '@/types';
 import type { runAuditor as runAuditorFn } from './auditor-agent';
@@ -73,6 +74,7 @@ import {
 } from './ensure-commit-target-branch';
 import {
   computeSandboxPushedDiff,
+  computeSandboxPushPlan,
   createSandboxPushGit,
   resolveWebAuditAtPushEnabled,
 } from './git-backend';
@@ -671,6 +673,32 @@ export async function handlePreparePush(
     };
   }
 
+  // Step 1b: Compute the ref-only push plan (create / fast-forward / force /
+  // skip) against origin's LIVE tip. Two jobs: (a) block a diverged push up
+  // front — Push never force-pushes (`git merge`/rebase are policy-blocked), so
+  // a diverged remote is a reconcile-via-PR situation, not something to retry
+  // into git's opaque non-fast-forward rejection; (b) pin origin's live tip as a
+  // force-with-lease value so approval can detect a remote that moved between
+  // review and push (the audited diff was computed against the old base). The
+  // read is side-effect-free; an unreadable origin yields `leaseEstablished:
+  // false` and we simply don't pin (git's own rejection remains the backstop).
+  const plan = await computeSandboxPushPlan(ctx.sandboxId, ctx.execInSandbox);
+  if (plan.requiresForce) {
+    console.log(
+      JSON.stringify({
+        level: 'warn',
+        event: 'prepare_push_diverged',
+        sandboxId: ctx.sandboxId,
+        branch: plan.move.branch,
+        ahead: plan.move.ahead,
+        behind: plan.move.behind,
+      }),
+    );
+    return {
+      text: `[Tool Result — prepare_push]\nPush BLOCKED: ${plan.move.reason}. Push only fast-forwards a single branch — it never force-pushes, and local merge/rebase are disabled. Open a PR to reconcile with origin, or create a fresh branch from the current work and push that instead.`,
+    };
+  }
+
   // Step 2: Run the Auditor over the cumulative push diff. A backend throw
   // (Auditor unreachable) surfaces as a retryable AUDITOR_UNAVAILABLE error,
   // matching handleSandboxPush's gate-failure mapping.
@@ -756,6 +784,17 @@ export async function handlePreparePush(
     ...(auditedBranch ? { auditedBranch } : {}),
     ...(auditedUpstream ? { auditedUpstream } : {}),
     ...(auditedRemoteUrl ? { auditedRemoteUrl } : {}),
+    // Force-with-lease pin: only set when origin was actually read, so a
+    // network blip can't manufacture a spurious mismatch at approval.
+    ...(plan.leaseEstablished && plan.leasedRemoteSha
+      ? { auditedRemoteTipSha: plan.leasedRemoteSha }
+      : {}),
+    // Display-only plan summary (force is already ruled out above).
+    pushPlan: {
+      kind: plan.move.kind as PushPlanSummary['kind'],
+      ahead: plan.move.ahead,
+      behind: plan.move.behind,
+    },
   };
 
   return {

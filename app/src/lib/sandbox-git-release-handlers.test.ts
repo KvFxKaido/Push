@@ -519,6 +519,59 @@ describe('handlePreparePush', () => {
     }
   });
 
+  it('pins the force-with-lease tip and a fast-forward plan summary on the SAFE card', async () => {
+    const ctx = makeContext({
+      pushedDiff: cleanDiff,
+      auditorVerdict: safeAuditorVerdict(),
+      execResults: [
+        // 4 pins: HEAD sha, branch, upstream, remote-url.
+        ok('abc1234'),
+        ok('feature/work'),
+        ok('origin/feature/work'),
+        ok('https://github.com/owner/repo.git'),
+        // push plan: branch, rev-parse, ls-remote, merge-base (ancestor → FF), rev-list.
+        ok('feature/work'),
+        ok('localsha'),
+        ok('remotesha\trefs/heads/feature/work'),
+        ok(''), // merge-base --is-ancestor exit 0 → fast-forward
+        ok('0\t3'), // behind 0, ahead 3
+      ],
+    });
+    const result = await handlePreparePush(ctx);
+    expect(result.card?.type).toBe('commit-review');
+    if (result.card?.type === 'commit-review') {
+      expect(result.card.data.auditedRemoteTipSha).toBe('remotesha');
+      expect(result.card.data.pushPlan?.kind).toBe('fast-forward');
+      expect(result.card.data.pushPlan?.ahead).toBe(3);
+    }
+  });
+
+  it('blocks a diverged push (force-with-lease) before auditing', async () => {
+    const ctx = makeContext({
+      pushedDiff: cleanDiff,
+      auditorVerdict: safeAuditorVerdict(),
+      execResults: [
+        // 4 pins.
+        ok('abc1234'),
+        ok('feature/work'),
+        ok('origin/feature/work'),
+        ok('https://github.com/owner/repo.git'),
+        // push plan: branch, rev-parse, ls-remote, merge-base (NOT ancestor), rev-list.
+        ok('feature/work'),
+        ok('localsha'),
+        ok('remotesha\trefs/heads/feature/work'),
+        fail('', '', 1), // merge-base --is-ancestor exit 1 → diverged
+        ok('2\t4'), // behind 2, ahead 4
+      ],
+    });
+    const result = await handlePreparePush(ctx);
+    expect(result.text).toContain('Push BLOCKED');
+    expect(result.text).toContain('force-push');
+    expect(result.card).toBeUndefined();
+    // The expensive Auditor must not run for a push that can't ship anyway.
+    expect(ctx.runAuditor).not.toHaveBeenCalled();
+  });
+
   it('returns an audit-verdict card and blocks on an UNSAFE verdict', async () => {
     const ctx = makeContext({ pushedDiff: cleanDiff, auditorVerdict: unsafeAuditorVerdict() });
     const result = await handlePreparePush(ctx);

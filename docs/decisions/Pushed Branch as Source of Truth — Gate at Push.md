@@ -39,6 +39,26 @@ remote identity mutations via `git remote` (`set-url` / `add` / `rename` /
 policy (`lib/git/policy.ts`, `remote-mutation`), with no `allowDirectGit`
 escape — same treatment as a local merge, since the session's remote is fixed.
 
+**Force-with-lease + ref-only plan follow-up (2026-06-21):** the destination
+pins above all read *local* state (HEAD, branch, the local `origin/<branch>`
+mirror, the configured remote URL); none caught origin's branch tip *advancing*
+between review and push. `lib/git/push-plan.ts` (`computePushPlan`) adds a
+side-effect-free, ref-only preview — modeled on `entireio/git-sync`'s `plan`
+step — that reads origin's **live** tip via `ls-remote` (not the possibly-stale
+local mirror `computePushedDiff` bases its diff on) and classifies the move
+(`create` / `fast-forward` / `force` / `skip` / `unknown`). Two uses: (1)
+`prepare_push` blocks a **proven-diverged** push up front — Push never
+force-pushes and local merge/rebase are policy-blocked, so a diverged remote is
+a reconcile-via-PR situation, not git's opaque non-fast-forward rejection to
+retry into; (2) the live tip is pinned on the card (`auditedRemoteTipSha`,
+`ZERO_OID` encoding a create) as a **force-with-lease** value, and approval
+re-reads it — if origin moved, the audited diff no longer describes what ships,
+so the push is refused with a refresh prompt. The lease is read over the network
+(unlike the other, local pins), so it's only enforced when origin was reachable
+at audit time; an unreadable origin leaves git's own non-fast-forward rejection
+as the backstop rather than bricking the push. A `PushPlanSummary` (`fast-forward`
+/ `create` + ahead/behind) surfaces on the review card for the user.
+
 ## Thesis
 
 **The pushed branch is the durable source of truth; the cloud sandbox is
