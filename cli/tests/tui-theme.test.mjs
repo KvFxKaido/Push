@@ -67,7 +67,10 @@ describe('TOKENS', () => {
   });
 
   it('accent.primary matches Push web token push-accent', () => {
-    assert.equal(TOKENS['accent.primary'], '#0070f3');
+    // Sky #7dd3fc — the shared identity accent (lib/design-tokens.ts). This
+    // previously pinned #0070f3, which never actually matched web push-accent;
+    // the TUI now sources the shared palette so the two can't disagree.
+    assert.equal(TOKENS['accent.primary'], '#7dd3fc');
   });
 });
 

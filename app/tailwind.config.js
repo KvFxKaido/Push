@@ -17,7 +17,16 @@ module.exports = {
     extend: {
       colors: {
         // ── Push design tokens ────────────────────────────
-        // Single source of truth. Use these instead of [#hex].
+        // Single source of truth for the web. Use these instead of [#hex].
+        //
+        // The cross-surface *identity* tokens below (push-fg{,-secondary,-muted,
+        // -dim}, push-surface{,-raised}, push-edge{,-hover}, push-status-{success,
+        // warning,error}, push-accent, push-sky, push-link) mirror the shared
+        // palette in lib/design-tokens.ts, which the TUI imports directly. This
+        // CJS config can't import that TS module at build time, so the values
+        // are duplicated here and locked by app/src/lib/design-tokens-drift.test.ts
+        // (fails CI on any mismatch). Web-only nuance shades have no TUI peer and
+        // live only here.
 
         // Text hierarchy (bright → dim)
         'push-fg': '#f5f7ff', // primary text

@@ -1,13 +1,18 @@
 /**
  * tui-theme.ts — Design tokens, color system, and glyph sets for Push TUI.
- * Zero dependencies. Maps web design tokens (tailwind.config.js) to terminal escapes.
  *
- * Supports three color tiers:
+ * The default variant's identity colors come from the shared cross-surface
+ * palette (`lib/design-tokens.ts`) — the same source the web Tailwind `push-*`
+ * tokens mirror — so the TUI and PWA can't drift on brand color. This file maps
+ * those into terminal escapes across three color tiers:
+ *
  *   Tier 1: truecolor (24-bit)  — COLORTERM=truecolor|24bit
  *   Tier 2: 256-color           — TERM contains "256color"
  *   Tier 3: 16-color ANSI       — fallback
  *   none:   no color             — NO_COLOR set
  */
+
+import { identityPalette } from '../lib/design-tokens.ts';
 
 export type ColorTier = 'truecolor' | '256' | '16' | 'none';
 
@@ -136,23 +141,25 @@ function bg256(hex: string): string {
 }
 
 // ── Design tokens ───────────────────────────────────────────────────
-// Source of truth: app/tailwind.config.js push-* colors + Visual Language Spec
-
+// The default variant's identity colors come from the shared cross-surface
+// palette (lib/design-tokens.ts); the web Tailwind `push-*` tokens mirror the
+// same source (drift-guarded by design-tokens-drift.test.ts). Tokens outside
+// that shared layer (e.g. state.warn's exact amber) stay local to the TUI.
 export const TOKENS = {
-  'bg.base': '#070a10',
-  'bg.panel': '#0c1018',
-  'fg.primary': '#f5f7ff',
-  'fg.secondary': '#b4becf',
-  'fg.muted': '#8b96aa',
-  'fg.dim': '#667086',
-  'border.default': '#1f2531',
-  'border.hover': '#2f3949',
-  'accent.primary': '#0070f3',
-  'accent.secondary': '#38bdf8',
-  'accent.link': '#5cb7ff',
-  'state.success': '#10b981',
-  'state.warn': '#fbbf24',
-  'state.error': '#ef4444',
+  'bg.base': identityPalette.surface.base,
+  'bg.panel': identityPalette.surface.raised,
+  'fg.primary': identityPalette.fg.primary,
+  'fg.secondary': identityPalette.fg.secondary,
+  'fg.muted': identityPalette.fg.muted,
+  'fg.dim': identityPalette.fg.dim,
+  'border.default': identityPalette.edge.default,
+  'border.hover': identityPalette.edge.hover,
+  'accent.primary': identityPalette.accent.sky,
+  'accent.secondary': identityPalette.accent.skyMid,
+  'accent.link': identityPalette.accent.link,
+  'state.success': identityPalette.state.success,
+  'state.warn': identityPalette.state.warning,
+  'state.error': identityPalette.state.error,
 } as const;
 
 // 16-color ANSI fallback mapping (from Visual Language Spec)
