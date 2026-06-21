@@ -14,15 +14,22 @@ import { defineConfig, type Plugin } from 'vite';
 // reintroduce stale-cache bugs.
 function stampServiceWorkerCache(): Plugin {
   let outDir = path.resolve(__dirname, 'dist');
+  let sourceSwPath = path.resolve(__dirname, 'public/sw.js');
+  const cacheNameDeclaration = /const\s+CACHE_NAME\s*=\s*['"][^'"]*['"];/;
   return {
     name: 'stamp-sw-cache',
     apply: 'build',
     configResolved(config) {
       outDir = path.resolve(config.root, config.build.outDir);
+      sourceSwPath =
+        typeof config.publicDir === 'string'
+          ? path.resolve(config.publicDir, 'sw.js')
+          : path.resolve(config.root, 'public/sw.js');
     },
     closeBundle() {
       const swPath = path.resolve(outDir, 'sw.js');
-      if (!fs.existsSync(swPath)) return;
+      const inputPath = fs.existsSync(sourceSwPath) ? sourceSwPath : swPath;
+      if (!fs.existsSync(inputPath)) return;
 
       const fromGit = () => {
         try {
@@ -42,17 +49,15 @@ function stampServiceWorkerCache(): Plugin {
         fromGit() ||
         Date.now().toString(36);
 
-      const source = fs.readFileSync(swPath, 'utf8');
-      const stamped = source.replace(
-        /const CACHE_NAME = ['"][^'"]*['"];/,
-        `const CACHE_NAME = 'push-${buildId}';`,
-      );
-      if (stamped === source) {
+      const source = fs.readFileSync(inputPath, 'utf8');
+      if (!cacheNameDeclaration.test(source)) {
         throw new Error(
-          'stampServiceWorkerCache: CACHE_NAME declaration not found in dist/sw.js — ' +
+          `stampServiceWorkerCache: CACHE_NAME declaration not found in ${inputPath} — ` +
             'the PWA cache would not bust on deploy. Check the format in public/sw.js.',
         );
       }
+      const stamped = source.replace(cacheNameDeclaration, `const CACHE_NAME = 'push-${buildId}';`);
+      fs.mkdirSync(outDir, { recursive: true });
       fs.writeFileSync(swPath, stamped);
     },
   };
