@@ -52,6 +52,7 @@ import {
 } from './tui-daemon-reconnect.js';
 import { classifyDaemonSpawnError, readPushdLogTail } from './tui-daemon-errors.js';
 import { createDefaultTuiIo } from './tui-io.js';
+import { FocusStack } from './tui-focus.js';
 import {
   evaluateHelloResponse,
   formatUnknownEventWarning,
@@ -6779,6 +6780,61 @@ export async function runTUI(options = {}) {
     processInput(str);
   }
 
+  // Focus stack: ordered key-scope resolution (highest priority first).
+  // Borrowed from giggles' "each component owns its keys" model — scopes
+  // claim the keys they own and let the rest fall through to the global
+  // keybind map (the implicit bottom of the stack). Precedence here is the
+  // exact pre-existing cascade: approval pane → ask-user → overlay modal.
+  const focusStack = new FocusStack()
+    .register({
+      // Approval pane is the only *soft* scope today: its handleKey returns
+      // true for every key while open (hard-modal in practice), but we honor
+      // the fall-through contract so future non-modal panes can let unhandled
+      // keys reach the global keybind map.
+      id: 'approval_pane',
+      isActive: () => tuiState.runState === 'awaiting_approval' && !!tuiState.approvalPane,
+      handleKey: (key) => tuiState.approvalPane?.handleKey?.(key) === true,
+    })
+    .register({
+      // Ask-user modal captures typed text — hard-modal, consumes everything.
+      id: 'ask_user',
+      isActive: () => tuiState.runState === 'awaiting_user_question' && !!tuiState.userQuestion,
+      handleKey: (key) => {
+        handleQuestionInput(key);
+        return true;
+      },
+    })
+    .register({
+      // UI overlay modals (config / reasoning / payload / model / provider /
+      // resume) — hard-modal; each consumes everything while open.
+      id: 'overlay_modal',
+      isActive: () => getActiveOverlayModal() !== null,
+      handleKey: (key) => {
+        switch (getActiveOverlayModal()) {
+          case 'config':
+            runAsync(() => handleConfigModalInput(key), 'config input failed');
+            return true;
+          case 'reasoning':
+            handleReasoningModalInput(key);
+            return true;
+          case 'payload_inspector':
+            handlePayloadInspectorInput(key);
+            return true;
+          case 'model':
+            runAsync(() => handleModelModalInput(key), 'model picker input failed');
+            return true;
+          case 'provider':
+            runAsync(() => handleProviderModalInput(key), 'provider switch failed');
+            return true;
+          case 'resume':
+            runAsync(() => handleResumeModalInput(key), 'resume picker input failed');
+            return true;
+          default:
+            return false;
+        }
+      },
+    });
+
   function processInput(str) {
     // ── Bracketed paste handling (before parseKey) ──
     if (pasteMode) {
@@ -6834,44 +6890,13 @@ export async function runTUI(options = {}) {
     const keyBuf = Buffer.from(str);
     const key = parseKey(keyBuf);
 
-    // Approval modal: pane owns its key handling (bare y/a/p/n, Ctrl+Y/N, Esc).
-    // The pane is hard-modal — its handleKey returns true for every key while
-    // open — but we still honor the Pane contract here so future, non-modal
-    // panes can let unhandled keys fall through to the global keybind map.
-    if (tuiState.runState === 'awaiting_approval' && tuiState.approvalPane) {
-      if (tuiState.approvalPane.handleKey?.(key)) {
-        return;
-      }
-    }
-
-    // Ask-user modal: captures typed text
-    if (tuiState.runState === 'awaiting_user_question' && tuiState.userQuestion) {
-      handleQuestionInput(key);
+    // Focus-stack resolution: approval pane → ask-user → overlay modals.
+    // A consumed key stops here; `handledBy: null` falls through to tab
+    // completion + the global keybind map + composer editing below (the
+    // implicit bottom of the stack). Precedence and behavior are identical to
+    // the prior hand-rolled cascade; the scopes are declared at `focusStack`.
+    if (focusStack.dispatch(key).handledBy !== null) {
       return;
-    }
-
-    // UI overlay modal router
-    switch (getActiveOverlayModal()) {
-      case 'config':
-        runAsync(() => handleConfigModalInput(key), 'config input failed');
-        return;
-      case 'reasoning':
-        handleReasoningModalInput(key);
-        return;
-      case 'payload_inspector':
-        handlePayloadInspectorInput(key);
-        return;
-      case 'model':
-        runAsync(() => handleModelModalInput(key), 'model picker input failed');
-        return;
-      case 'provider':
-        runAsync(() => handleProviderModalInput(key), 'provider switch failed');
-        return;
-      case 'resume':
-        runAsync(() => handleResumeModalInput(key), 'resume picker input failed');
-        return;
-      default:
-        break;
     }
 
     // Tab completion — intercept before keybind map
