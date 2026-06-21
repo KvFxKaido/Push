@@ -227,7 +227,6 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_WEB_SEARCH_BACKEND` | Web search backend: `auto` (default), `tavily`, `ollama`, `duckduckgo` |
 | `PUSH_AUDITOR_GATE` | `0`/`false` to disable the Auditor commit gate, `1`/`true` to force it on (default: on). Overrides the `auditorGate` config setting. |
 | `PUSH_DELEGATION_MODE` | `delegated` opts interactive turns (TUI/daemon) back into the planner → task-graph wrapper. Default: `inline` — the single conversational lead runs the turn in-loop with no planner pre-pass (Agent Runtime Decisions §10). Headless `push run` keeps its explicit `--delegate` flag. |
-| `PUSH_LEAD_RUNTIME` | Which runtime carries interactive turns. Default: `kernel` (since 2026-06-12) — a `leadMode` run of the shared coder kernel (`cli/lead-turn.ts`, Agent Runtime Decisions §10 step 2). An exact `engine` opts back into the CLI-local loop while the lane bakes. |
 | `PUSH_GITHUB_TOKEN` | GitHub token enabling the GitHub tools (PRs, checks, repo browse, create/merge PR, workflows). Falls back to `GITHUB_TOKEN`, then `GH_TOKEN`, then `gh auth token`. |
 | `PUSH_LOCAL_SANDBOX` | `true` to run exec commands in a Docker container |
 | `PUSH_SHELL` | Override the shell used for `exec` / acceptance checks. Useful on Windows if you want to force Git Bash, WSL bash, PowerShell, etc. |
@@ -235,6 +234,8 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_CONFIG_PATH` | Override config file path |
 
 Fallback env vars from the web app (`VITE_OLLAMA_API_KEY`, `OLLAMA_API_KEY`, `VITE_TAVILY_API_KEY`, etc.) are also checked.
+
+> **Retired:** `PUSH_LEAD_RUNTIME` no longer exists — interactive turns always run on the shared coder kernel (`cli/lead-turn.ts`, Agent Runtime Decisions §10). The former `=engine` opt-out is a no-op; setting it has no effect.
 
 ## Providers
 
