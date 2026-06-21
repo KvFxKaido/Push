@@ -4,6 +4,7 @@ import path from 'node:path';
 import process from 'node:process';
 
 import { AUDITOR_GATE_ENV_VAR } from '../lib/auditor-policy.js';
+import { RUN_TOKEN_BUDGET_ENV_VAR } from '../lib/run-cost-budget.js';
 
 export interface ProviderConfig {
   url?: string;
@@ -54,6 +55,14 @@ export interface PushConfig {
    * pushd daemon) as `PUSH_AUDITOR_GATE` by `applyConfigToEnv`.
    */
   auditorGate?: boolean;
+  /**
+   * Per-run token budget — halts a run once it has consumed this many tokens
+   * (a consumption circuit breaker complementing `--max-rounds`). Resolved by
+   * the shared `lib/run-cost-budget.ts` (env > this setting > off) and
+   * forwarded to child processes (the pushd daemon) as `PUSH_RUN_TOKEN_BUDGET`
+   * by `applyConfigToEnv`. Omit / 0 ⇒ uncapped.
+   */
+  runTokenBudget?: number;
   scrub?: ScrubConfig;
   ollama?: ProviderConfig;
   openrouter?: ProviderConfig;
@@ -133,6 +142,11 @@ export function applyConfigToEnv(config: PushConfig): void {
   // unset, the daemon's own resolver applies the default-on.
   if (config.auditorGate !== undefined) {
     setEnvIfMissing(AUDITOR_GATE_ENV_VAR, String(config.auditorGate));
+  }
+  // Forward the per-run token budget so the daemon's kernel resolves the same
+  // cap without re-reading config. Unset → the resolver's default-off applies.
+  if (config.runTokenBudget !== undefined) {
+    setEnvIfMissing(RUN_TOKEN_BUDGET_ENV_VAR, String(config.runTokenBudget));
   }
   setEnvIfMissing('PUSH_EXEC_MODE', config.execMode);
   setEnvIfMissing('PUSH_THEME', config.theme);
