@@ -1639,6 +1639,10 @@ export async function runCoderAgent<TCall, TCard>(
         for (let i = 0; i < loopCalls.length; i++) {
           const call = loopCalls[i];
           const key = getToolInvocationKey(call.tool, call.args);
+          // Record every call (so a different intervening call resets the
+          // streak) but only break on the FIRST — same per-surface rule the
+          // web orchestrator applies, since a repeated lone call is the loop
+          // we're catching; a multi-call round is already varied work.
           if (i === 0 && leadCallTracker.isRepeatedCall(key, EXACT_REPEAT_LIMIT)) {
             exactBreakers.push(
               `consecutive identical call: ${call.tool} (${EXACT_REPEAT_LIMIT}+ rounds in a row)`,
