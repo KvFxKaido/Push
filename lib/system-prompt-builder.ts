@@ -130,7 +130,14 @@ export class SystemPromptBuilder {
     return this.sections.get(id)?.volatile ?? SECTION_CONFIG[id].volatile;
   }
 
-  build(): string {
+  /**
+   * Stable and volatile content as separate strings, each band ordered by
+   * priority. Callers that place a provider cache breakpoint at the stable/
+   * volatile boundary (e.g. Anthropic `cache_control`) consume these directly so
+   * the stable prefix is cached independently of the volatile tail. `build()`
+   * is just these two joined by the section separator.
+   */
+  buildSegments(): { stable: string; volatile: string } {
     // Stable-first, then priority within each volatility band. Grouping all
     // stable sections ahead of volatile ones keeps the expensive stable bytes
     // as a contiguous prefix that a provider prefix cache can reuse when only a
@@ -139,7 +146,17 @@ export class SystemPromptBuilder {
       if (a.volatile !== b.volatile) return a.volatile ? 1 : -1;
       return a.priority - b.priority;
     });
-    return sorted.map((section) => section.content).join('\n\n');
+    const stable: string[] = [];
+    const volatile: string[] = [];
+    for (const section of sorted) {
+      (section.volatile ? volatile : stable).push(section.content);
+    }
+    return { stable: stable.join('\n\n'), volatile: volatile.join('\n\n') };
+  }
+
+  build(): string {
+    const { stable, volatile } = this.buildSegments();
+    return [stable, volatile].filter(Boolean).join('\n\n');
   }
 
   sizes(): Record<string, number> {

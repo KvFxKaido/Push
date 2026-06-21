@@ -251,6 +251,27 @@ describe('SystemPromptBuilder', () => {
     );
   });
 
+  it('buildSegments splits stable and volatile bands, and joins back to build()', () => {
+    const builder = new SystemPromptBuilder()
+      .set('identity', 'Identity.') // stable 0
+      .set('tool_instructions', 'Tools.') // stable 40
+      .set('environment', 'Env.') // volatile 30
+      .set('memory', 'Memory.'); // volatile 75
+    const { stable, volatile } = builder.buildSegments();
+    expect(stable).toBe('Identity.\n\nTools.');
+    expect(volatile).toBe('Env.\n\nMemory.');
+    // Reconstruction is byte-identical to build() (the cache-split path relies
+    // on stable + '\n\n' + volatile === build()).
+    expect(`${stable}\n\n${volatile}`).toBe(builder.build());
+  });
+
+  it('buildSegments returns empty bands when one side is absent', () => {
+    const onlyStable = new SystemPromptBuilder().set('identity', 'Identity.').buildSegments();
+    expect(onlyStable).toEqual({ stable: 'Identity.', volatile: '' });
+    const onlyVolatile = new SystemPromptBuilder().set('memory', 'Memory.').buildSegments();
+    expect(onlyVolatile).toEqual({ stable: '', volatile: 'Memory.' });
+  });
+
   it('keeps a volatile change from disturbing the stable prefix bytes', () => {
     const build = (env: string) =>
       new SystemPromptBuilder()

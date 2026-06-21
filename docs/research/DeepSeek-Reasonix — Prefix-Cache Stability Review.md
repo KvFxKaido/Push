@@ -127,13 +127,21 @@ the full CLI suite (2689), and the app+lib vitest suite (5970) — none depended
 the old interleaved order. No stable section was found to depend on appearing
 before the volatile workspace/memory sections.
 
-**Secondary (only if the primary lands and a measured cache problem persists):**
+**Secondary:**
 
-1. **A real stable/volatile cache breakpoint on the web path.** Once stable
-   sections are contiguous, place the Anthropic `cache_control` marker at the
-   stable/volatile boundary instead of around the whole message
-   (`orchestrator.ts:577`), and confirm DeepSeek/Kimi automatic caching sees the
-   same contiguous prefix.
+1. **A real stable/volatile cache breakpoint on the web path — SHIPPED
+   2026-06-21.** The web path wrapped the *entire* system message in one
+   `cache_control: ephemeral` block, so any volatile change busted the marker.
+   `toLLMMessages` now emits two system text blocks — `{ stable, cache_control }`
+   then `{ '\n\n' + volatile }` — via the new `SystemPromptBuilder.buildSegments()`
+   (`lib/system-prompt-builder.ts`, `app/src/lib/orchestrator.ts:577`). The two
+   blocks concatenate to exactly the old `systemContent` (leading separator rides
+   the volatile block so the cached stable bytes stay clean), and it stays within
+   Anthropic's 4-breakpoint budget alongside the trailing-message tags.
+   `systemPromptOverride` callers (Auditor/Coder) keep the single-block path.
+   Direct DeepSeek/Kimi (non-`cacheable` providerType) get a plain string system
+   prompt and rely on automatic prefix caching, which the stable-first ordering
+   above already serves.
 2. **Promote `environment` git-status churn out of the prefix.** If dirty-file
    status doesn't need to be in the system prompt at all, moving it to the turn
    tail (Reasonix-style) removes the most frequent invalidator outright.

@@ -325,6 +325,10 @@ export function toLLMMessages(
   // When a systemPromptOverride is provided (Auditor, Coder), the caller has already
   // composed a complete system prompt — don't append Orchestrator-specific protocols.
   let systemContent: string;
+  // Stable/volatile split for the cache breakpoint, populated only on the
+  // sectioned-builder path. Null for systemPromptOverride callers (Auditor/
+  // Coder compose a complete prompt), which fall back to a single cached block.
+  let systemSegments: { stable: string; volatile: string } | null = null;
   const promptSnapshotKey = getPromptSnapshotKey(messages, workspaceContext);
 
   if (systemPromptOverride) {
@@ -522,6 +526,7 @@ export function toLLMMessages(
     // Intent hint (last so it overrides)
     builder.set('last_instructions', intentHint);
 
+    systemSegments = builder.buildSegments();
     systemContent = builder.build();
 
     // Always capture the snapshot (dev + prod). The accessor
@@ -578,17 +583,38 @@ export function toLLMMessages(
   // for providers that support it. OpenRouter passes the field through to its
   // upstream Anthropic models verbatim; direct Anthropic consumes it natively
   // via the openai-anthropic-bridge. Other providers harmlessly ignore it.
+  //
+  // Place the breakpoint at the stable/volatile boundary, not around the whole
+  // prompt: the stable block (identity/tools/delegation/guidelines) becomes a
+  // cached prefix that survives a turn where only a volatile section changed
+  // (e.g. environment git status). The volatile tail follows as a second,
+  // uncached text block. The leading separator rides the volatile block so the
+  // cached stable bytes stay clean, and the two blocks concatenate to exactly
+  // `systemContent`. Single breakpoint here keeps within Anthropic's 4-marker
+  // budget alongside the trailing-message tags below.
   const cacheable = providerType === 'openrouter' || providerType === 'anthropic';
-  const llmMessages: LLMMessage[] = [
-    cacheable
-      ? {
-          role: 'system',
-          content: [
-            { type: 'text', text: systemContent, cache_control: { type: 'ephemeral' } },
-          ] as LLMMessageContent[],
-        }
-      : { role: 'system', content: systemContent },
-  ];
+  let systemMessage: LLMMessage;
+  if (cacheable && systemSegments && systemSegments.stable && systemSegments.volatile) {
+    systemMessage = {
+      role: 'system',
+      content: [
+        { type: 'text', text: systemSegments.stable, cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: `\n\n${systemSegments.volatile}` },
+      ] as LLMMessageContent[],
+    };
+  } else if (cacheable) {
+    // Override prompt, or an all-stable / all-volatile build with no boundary —
+    // one cached block over the whole system content.
+    systemMessage = {
+      role: 'system',
+      content: [
+        { type: 'text', text: systemContent, cache_control: { type: 'ephemeral' } },
+      ] as LLMMessageContent[],
+    };
+  } else {
+    systemMessage = { role: 'system', content: systemContent };
+  }
+  const llmMessages: LLMMessage[] = [systemMessage];
 
   // Single boundary transform: visibility filter + smart context management.
   // Both stages were previously inline here. Consolidating into one pure
