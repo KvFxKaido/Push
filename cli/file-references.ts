@@ -250,7 +250,12 @@ export async function buildFileReferenceContextMessage(
       const textOut: string = truncateText(rendered.text, MAX_FILE_REFERENCE_CHARS);
       resolved.push({
         token: ref.token,
-        path: path.relative(root, filePath) || '.',
+        // Normalize to POSIX separators so the model-facing path reads
+        // `src/demo.ts`, not `src\demo.ts` on Windows (path.relative emits
+        // OS-native separators). The rest of the repo/sandbox speaks forward
+        // slashes; a backslash path here would be inconsistent and confuse the
+        // model's file lookups.
+        path: (path.relative(root, filePath) || '.').split(path.sep).join('/'),
         startLine: rendered.startLine,
         endLine: rendered.endLine,
         totalLines: rendered.totalLines,
