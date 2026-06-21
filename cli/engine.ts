@@ -1,21 +1,13 @@
 import process from 'node:process';
-import { promises as fs } from 'node:fs';
-import nodePath from 'node:path';
-import {
-  ensureInsideWorkspace,
-  getGitHubToolProtocol,
-  getGitHubToolProtocolAsync,
-  TOOL_PROTOCOL,
-} from './tools.js';
+import { getGitHubToolProtocol, getGitHubToolProtocolAsync, TOOL_PROTOCOL } from './tools.js';
 import { makeRunId } from './session-store.js';
-import { FileAwarenessLedger, type EditGuardVerdict } from '../lib/file-awareness-ledger.js';
 import {
   buildWorkspaceSnapshot,
   loadProjectInstructions,
   loadMemory,
 } from './workspace-context.js';
 import { formatProjectInstructionsBlock } from '../lib/project-instructions.ts';
-import { estimateContextTokens, estimateTokens, getContextBudget } from './context-manager.js';
+import { estimateTokens } from './context-manager.js';
 import { type PromptCompositionCost } from '../lib/prompt-cost-telemetry.ts';
 import { escapeToolResultBoundaries } from '../lib/untrusted-content.ts';
 import {
@@ -24,7 +16,6 @@ import {
   formatSnapshotDiff,
   type PromptSnapshot,
 } from '../lib/system-prompt-builder.ts';
-import { type CoderWorkingMemory } from '../lib/working-memory.ts';
 
 import type { SessionState } from './session-store.js';
 import type { ProviderConfig } from './provider.js';
@@ -116,8 +107,6 @@ interface MetaEnvelope {
   lastSessionDigest?: unknown;
 }
 
-type WorkingMemory = CoderWorkingMemory;
-
 // ─── Constants ───────────────────────────────────────────────────
 
 export const DEFAULT_MAX_ROUNDS: number = 30;
@@ -134,233 +123,6 @@ export const MAX_ALLOWED_ROUNDS: number = 200;
 const NEEDS_ENRICHMENT: string = '[WORKSPACE_PENDING]';
 
 const DEBUG_PROMPTS: boolean = process.env.PUSH_DEBUG === '1' || process.env.PUSH_DEBUG === 'true';
-
-// ─── Context Distillation ─────────────────────────────────────────
-
-/**
- * Determine if mid-session context distillation is needed.
- * Only distill if we're past round 4, have a plan, and are over half the token budget.
- */
-export function shouldDistillMidSession(
-  messages: Message[],
-  workingMemory: WorkingMemory | undefined,
-  round: number,
-  providerId: string,
-  model: string,
-): boolean {
-  if (round <= 4) return false;
-  if (!workingMemory?.plan?.trim().length) return false;
-  const budget = getContextBudget(providerId, model);
-  return estimateContextTokens(messages) > budget.targetTokens / 2;
-}
-
-/**
- * Canonicalize a file path for awareness-ledger lookup. The CLI tool executor
- * sets `result.meta.path` to an absolute resolved path (via
- * `ensureInsideWorkspace`), while the model passes `call.args.path` as a
- * relative path. Without canonicalization the guard and recorder use
- * different keys and a successfully-read file looks unread to the next write.
- *
- * Stable key: workspace-relative POSIX path with forward slashes.
- */
-export function canonicalizeAwarenessPath(rawPath: string, workspaceRoot: string): string {
-  const absolute = nodePath.isAbsolute(rawPath)
-    ? rawPath
-    : nodePath.resolve(workspaceRoot, rawPath);
-  const relative = nodePath.relative(workspaceRoot, absolute);
-  // Force POSIX separators so Windows and POSIX paths resolve to the same key.
-  return relative.split(nodePath.sep).join('/');
-}
-
-/**
- * Synthesize a "what the model is writing" content blob from an edit_file
- * call's hashline edits. Used by the symbolic edit check to detect whether
- * the edit declares/redeclares symbols (e.g. renaming a function), which
- * triggers a deeper coverage check than the plain `checkWriteAllowed`.
- *
- * Body-internal edits without symbol declarations produce empty content here,
- * which the canonical `checkSymbolicEditAllowed` falls back to a line-based
- * check for. That fallback is what auto-recovery handles.
- */
-function synthesizeEditContent(call: ToolCall): string {
-  const edits = Array.isArray(call.args?.edits) ? call.args.edits : [];
-  const parts: string[] = [];
-  for (const edit of edits) {
-    if (edit && typeof edit === 'object') {
-      const content = (edit as Record<string, unknown>).content;
-      if (typeof content === 'string') parts.push(content);
-    }
-  }
-  return parts.join('\n');
-}
-
-/** Run the appropriate verdict check for the given tool call. */
-function checkAwarenessVerdict(
-  call: ToolCall,
-  key: string,
-  ledger: FileAwarenessLedger,
-): EditGuardVerdict {
-  if (call.tool === 'edit_file') {
-    return ledger.checkSymbolicEditAllowed(key, synthesizeEditContent(call));
-  }
-  return ledger.checkWriteAllowed(key);
-}
-
-/**
- * Pre-execution awareness guard for write/edit tools. Returns a synthetic
- * blocked tool result when the canonical FileAwarenessLedger denies the call,
- * after attempting transparent auto-recovery. Returns null when the call may
- * proceed. Surfaces verdict codes through the structured-error channel so the
- * model can recover programmatically if auto-recovery itself fails.
- *
- * Auto-recovery: when the initial verdict blocks, the harness validates the
- * path is inside the workspace and confirms it exists on disk, then refreshes
- * the ledger to fully_read and retries the verdict before returning a block.
- * Mirrors the web app's `sandbox-write-handlers` flow.
- *
- * Security: path validation goes through `ensureInsideWorkspace` so `..`
- * traversal, absolute paths outside the root, and symlink escapes fail
- * closed (verdict propagates without any I/O on the out-of-scope target).
- *
- * Special-case: when auto-recovery's existence check fails with ENOENT,
- * write_file is allowed through (creation), edit_file remains blocked
- * (hashline edits need existing content). Other errors propagate the
- * original verdict — the downstream tool will hit the same I/O error and
- * surface a more informative message than a guard block would.
- *
- * Symbolic precision: edit_file uses `checkSymbolicEditAllowed`, which
- * compares symbols declared in the edit content against symbols the model has
- * read. When the edit content has no symbol declarations, the canonical falls
- * back to `checkWriteAllowed` — which auto-recovery then handles.
- */
-export async function awarenessGuardForCall(
-  call: ToolCall,
-  ledger: FileAwarenessLedger,
-  workspaceRoot: string,
-): Promise<ToolResult | null> {
-  if (call.tool !== 'write_file' && call.tool !== 'edit_file') return null;
-  const rawPath = typeof call.args?.path === 'string' ? call.args.path : null;
-  if (!rawPath) return null;
-
-  const key = canonicalizeAwarenessPath(rawPath, workspaceRoot);
-  const verdict = checkAwarenessVerdict(call, key, ledger);
-  if (verdict.allowed) return null;
-
-  // Auto-recovery: validate path stays inside the workspace, confirm the
-  // target exists, refresh the ledger to fully_read, retry.
-  let absolute: string;
-  try {
-    absolute = await ensureInsideWorkspace(workspaceRoot, rawPath);
-  } catch {
-    // Path escapes workspace (`..` traversal, absolute outside root, symlink
-    // escape). Fail closed — propagate the original guard verdict without
-    // touching the filesystem on the out-of-scope target. The downstream
-    // tool's own ensureInsideWorkspace call will surface the path error.
-    return {
-      ok: false,
-      text: `[Awareness guard — ${call.tool}] ${verdict.reason}`,
-      structuredError: {
-        code: verdict.code,
-        message: verdict.reason,
-        retryable: true,
-      },
-    };
-  }
-
-  try {
-    // Existence + regular-file check. recordRead with no start/end/truncated
-    // already marks the entry fully_read regardless of totalLines, so loading
-    // the file content here would be wasted I/O (and unbounded for large
-    // files). Non-regular-file targets (directories, devices) cannot be
-    // edited and are treated as "auto-recovery can't help" — propagate the
-    // original verdict so the downstream tool's own error surfaces.
-    const stat = await fs.stat(absolute);
-    if (!stat.isFile()) {
-      return {
-        ok: false,
-        text: `[Awareness guard — ${call.tool}] ${verdict.reason}`,
-        structuredError: {
-          code: verdict.code,
-          message: verdict.reason,
-          retryable: true,
-        },
-      };
-    }
-    ledger.recordRead(key);
-
-    const retryVerdict = checkAwarenessVerdict(call, key, ledger);
-    if (retryVerdict.allowed) return null;
-
-    return {
-      ok: false,
-      text: `[Awareness guard — ${call.tool}] ${retryVerdict.reason}`,
-      structuredError: {
-        code: retryVerdict.code,
-        message: retryVerdict.reason,
-        retryable: true,
-      },
-    };
-  } catch (err) {
-    const errno = (err as NodeJS.ErrnoException | null)?.code;
-    if (errno === 'ENOENT' && call.tool === 'write_file') {
-      // File doesn't exist — write_file creates it. edit_file is intentionally
-      // not granted this exception: hashline edits require existing content.
-      return null;
-    }
-    // Other auto-recovery errors (EACCES, EPERM, etc.) surface the original
-    // guard verdict. The actual write/edit will hit the same I/O error and
-    // surface a more informative message than the guard block.
-    return {
-      ok: false,
-      text: `[Awareness guard — ${call.tool}] ${verdict.reason}`,
-      structuredError: {
-        code: verdict.code,
-        message: verdict.reason,
-        retryable: true,
-      },
-    };
-  }
-}
-
-/**
- * Update the awareness ledger from a successful tool result. Reads grow
- * coverage; successful writes/edits become model_authored so an immediate
- * follow-up edit doesn't deadlock. The ledger only mutates on `result.ok`,
- * so guard-blocked synthetic results (which are `ok:false`) are skipped.
- *
- * Paths are canonicalized to the same workspace-relative key the guard uses.
- */
-export function recordAwarenessFromCall(
-  call: ToolCall,
-  result: ToolResult,
-  ledger: FileAwarenessLedger,
-  workspaceRoot: string,
-): void {
-  if (!result.ok) return;
-  const meta = result.meta;
-  if (!meta || typeof meta.path !== 'string') return;
-  const key = canonicalizeAwarenessPath(meta.path, workspaceRoot);
-
-  if (call.tool === 'read_file' || call.tool === 'read_symbol') {
-    ledger.recordRead(key, {
-      startLine: typeof meta.start_line === 'number' ? meta.start_line : undefined,
-      endLine: typeof meta.end_line === 'number' ? meta.end_line : undefined,
-      truncated: typeof meta.truncated === 'boolean' ? meta.truncated : undefined,
-      totalLines: typeof meta.total_lines === 'number' ? meta.total_lines : undefined,
-    });
-    return;
-  }
-
-  if (call.tool === 'write_file' || call.tool === 'edit_file') {
-    // Treat post-write/edit content as model_authored. v1 limitation: edit_file
-    // only modifies a portion of the file, so this is slightly permissive on
-    // subsequent edits to unread regions of the same file. The conservative
-    // alternative (leave prior partial_read state in place) deadlocks immediate
-    // follow-up edits. Auto re-read after edits is a follow-up (the web app
-    // does it via its sandbox handlers).
-    ledger.recordCreation(key);
-  }
-}
 
 // ─── System Prompt ───────────────────────────────────────────────
 
@@ -605,47 +367,6 @@ export function buildToolResultMessage(
   // the envelope early either.
   const safeBody = escapeToolResultBoundaries(`${JSON.stringify(payload, null, 2)}${metaLine}`);
   return `[TOOL_RESULT]\n${safeBody}\n[/TOOL_RESULT]`;
-}
-
-export function buildParseErrorMessage(malformed: { reason: string; sample: string }[]): string {
-  return `[TOOL_CALL_PARSE_ERROR]\n${JSON.stringify(
-    {
-      reason: 'malformed_tool_call',
-      malformed,
-      guidance: 'Emit strict JSON fenced blocks: {"tool":"name","args":{...}}',
-    },
-    null,
-    2,
-  )}\n[/TOOL_CALL_PARSE_ERROR]`;
-}
-
-export function buildMaxRoundsFinalizationMessage(
-  maxRounds: number,
-  toolsUsed: Iterable<string>,
-): string {
-  const tools = [...toolsUsed].join(', ') || 'none';
-  return `[MAX_ROUNDS_REACHED]
-Reached the tool-loop round cap (${maxRounds}). Tools used: ${tools}.
-
-Do not call any more tools. Return a concise plain-text answer using only the information already in this conversation:
-- Summarize what you found or changed.
-- Be explicit about what may be incomplete.
-- Give the next best command or request if more work is needed.
-[/MAX_ROUNDS_REACHED]`;
-}
-
-export function buildEmptySuccessFinalizationMessage(toolsUsed: Iterable<string>): string {
-  const tools = [...toolsUsed].join(', ') || 'none';
-  return `[FINAL_SUMMARY_REQUEST]
-You signaled completion (no further tool calls), but your final message was empty. Tools used during this run: ${tools}.
-
-Do not call any more tools. Return a concise plain-text summary (no JSON, no fenced blocks) using only the information already in this conversation:
-- What you investigated or changed.
-- The key finding(s) or outcome(s).
-- Any caveats or remaining work.
-
-This summary will be persisted for retrieval by future related runs, so make it self-contained.
-[/FINAL_SUMMARY_REQUEST]`;
 }
 
 // ─── Turn Entrypoint ─────────────────────────────────────────────
