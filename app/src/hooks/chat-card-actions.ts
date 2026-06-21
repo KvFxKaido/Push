@@ -434,7 +434,11 @@ export function useChatCardActions({
                   });
                   return;
                 }
-                if (livePlan.leasedRemoteSha !== auditedRemoteTipSha) {
+                // `leasedRemoteSha` re-read here is origin's CURRENT live tip (the
+                // plan recomputes it); `auditedRemoteTipSha` is the historical lease
+                // pinned at review time. Drift between the two means origin moved.
+                const liveRemoteTip = livePlan.leasedRemoteSha;
+                if (liveRemoteTip !== auditedRemoteTipSha) {
                   updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
                     if (card.type !== 'commit-review') return card;
                     return {
