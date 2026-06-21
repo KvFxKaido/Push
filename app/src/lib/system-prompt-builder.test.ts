@@ -231,6 +231,42 @@ describe('SystemPromptBuilder', () => {
     const order = ['Project.', 'Memory.', 'State.', 'Custom.'];
     expect(result).toBe(order.join('\n\n'));
   });
+
+  // --- Stable-first layout (prefix-cache stability) ---
+
+  it('emits all stable sections before any volatile section', () => {
+    // environment/user_context/capabilities are volatile with low priority
+    // numbers; guidelines/tool_instructions are stable with higher ones.
+    // Stable-first layout must put the stable blocks first regardless.
+    const result = new SystemPromptBuilder()
+      .set('environment', 'Volatile env.') // volatile, priority 30
+      .set('user_context', 'Volatile user.') // volatile, priority 20
+      .set('guidelines', 'Stable guidelines.') // stable, priority 60
+      .set('tool_instructions', 'Stable tools.') // stable, priority 40
+      .build();
+    // Stable band first (by priority: tools 40 < guidelines 60), then volatile
+    // band (by priority: user_context 20 < environment 30).
+    expect(result).toBe(
+      ['Stable tools.', 'Stable guidelines.', 'Volatile user.', 'Volatile env.'].join('\n\n'),
+    );
+  });
+
+  it('keeps a volatile change from disturbing the stable prefix bytes', () => {
+    const build = (env: string) =>
+      new SystemPromptBuilder()
+        .set('identity', 'Identity.')
+        .set('tool_instructions', 'Tool protocol.')
+        .set('guidelines', 'Guidelines.')
+        .set('environment', env)
+        .build();
+    const turn1 = build('branch: main, clean');
+    const turn2 = build('branch: main, 1 dirty file');
+    const stablePrefix = 'Identity.\n\nTool protocol.\n\nGuidelines.';
+    // The stable prefix is byte-identical across turns; only the volatile tail differs.
+    expect(turn1.startsWith(stablePrefix)).toBe(true);
+    expect(turn2.startsWith(stablePrefix)).toBe(true);
+    expect(turn1).not.toBe(turn2);
+  });
 });
 
 // ---------------------------------------------------------------------------

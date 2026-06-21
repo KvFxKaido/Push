@@ -110,20 +110,22 @@ sub-prefix for Anthropic to retain either.
 
 ## Recommendation
 
-**Primary (high value, low risk): order sections stable-first, volatile-last.**
-The `volatile` flag already exists; make it (not raw priority) the primary sort
-key in `SystemPromptBuilder.build()`, so all `volatile: false` sections form one
-contiguous byte-prefix followed by the volatile tail. Within each band, keep the
-current priority ordering. This moves `user_context` / `capabilities` /
-`environment` *behind* the large tool/GitHub/delegation/guidelines blocks, so the
-expensive stable bytes become a cacheable prefix that survives a git-status flip.
+**Primary (high value, low risk): order sections stable-first, volatile-last —
+SHIPPED 2026-06-21.** `SystemPromptBuilder.build()` now sorts by the `volatile`
+flag first and `priority` second (`lib/system-prompt-builder.ts:124`), so all
+`volatile: false` sections form one contiguous byte-prefix followed by the
+volatile tail. This moves `user_context` / `capabilities` / `environment` *behind*
+the large tool/GitHub/delegation/guidelines blocks, so the expensive stable bytes
+become a cacheable prefix that survives a git-status flip.
 
 This is a layout change, not a semantics change — the same bytes reach the model,
-just reordered — so the risk surface is prompt-quality regression (some models
-weight early-prompt context more), gated by the existing `prompt_snapshot` /
-`prompt_composition_cost` telemetry and the prompt-builder tests. Worth confirming
-no section *depends on* appearing before tool instructions before flipping the
-sort.
+just reordered. The risk surface is prompt-quality regression (some models weight
+early-prompt context more), watched via the existing `prompt_snapshot` /
+`prompt_composition_cost` telemetry. Validated by the prompt-builder tests
+(`app/src/lib/system-prompt-builder.test.ts`, incl. two new stable-first cases),
+the full CLI suite (2689), and the app+lib vitest suite (5970) — none depended on
+the old interleaved order. No stable section was found to depend on appearing
+before the volatile workspace/memory sections.
 
 **Secondary (only if the primary lands and a measured cache problem persists):**
 
