@@ -384,7 +384,11 @@ export async function streamAssistantRound(
       sameProviderAttempt,
       sameProviderMax: STREAM_RETRY_MAX,
       tried,
-      candidates: failoverEnabled ? resolveFailoverCandidates(currentProvider, tried) : [],
+      // Isolation/shape keys on the LOCKED route (where any signed-block
+      // history originates), not the current failover target.
+      candidates: failoverEnabled
+        ? resolveFailoverCandidates(lockedProvider, resolvedModel, tried)
+        : [],
       retryDelayMs: streamRetryDelayMs(sameProviderAttempt),
     });
     if (decision.action === 'give-up') break;

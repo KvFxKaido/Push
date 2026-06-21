@@ -300,6 +300,18 @@ Shipped so far (this branch):
   Anthropic signed reasoning blocks has no same-shape candidate and never fails
   over. The same-provider retry decision moved into the kernel
   (`shouldRetryStreamRound` was deleted) so there is one source of truth.
+  - **Transport-aware isolation.** Static provider→shape keying isn't enough:
+    `zen` (Zen Go MiniMax/Qwen) and `vertex` (Claude) route through the
+    Anthropic bridge *per model*. The resolver isolates any locked route where
+    `routesThroughAnthropicBridge(locked, model)` holds — returning no
+    candidates — so a model-dependent Anthropic route can't fail over to a
+    provider that can't replay its signed reasoning. That predicate is now
+    shared one-source-of-truth with `orchestrator.ts`'s reasoning-block gate.
+  - **Failover order ≠ initial-pick order.** Candidate ordering uses a
+    dedicated `FAILOVER_PROVIDER_ORDER` that includes every real provider
+    (azure/bedrock/vertex too), unlike `PROVIDER_FALLBACK_ORDER` which omits the
+    experimental trio for initial selection — otherwise an OpenAI-locked chat
+    whose only backup key is Azure would get no candidate.
 - A user-facing toggle defaulting **off**, in the unified settings doc
   (`SETTINGS_KEYS.providerFailover`, surfaced in the Settings UI on both the web
   and daemon surfaces). The round loop reads it synchronously via `getSetting`;

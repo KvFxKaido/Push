@@ -126,6 +126,8 @@ function emptyWorkspace(): SettingsWorkspaceProps {
     setProtectMainRepoOverride: vi.fn(),
     showToolActivity: true,
     setShowToolActivity: vi.fn(),
+    providerFailover: false,
+    setProviderFailover: vi.fn(),
     activeRepoFullName: null,
   };
 }
