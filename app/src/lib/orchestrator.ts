@@ -435,10 +435,19 @@ export function toLLMMessages(
       if (capabilityBlock) {
         envContent += '\n\n' + capabilityBlock;
       }
-      if (workspaceContext.includeGitHubTools) {
-        envContent += '\n' + TOOL_PROTOCOL;
-      }
       builder.set('environment', envContent);
+
+      // GitHub tool protocol is a large, session-stable block — its presence
+      // depends only on whether GitHub tools are configured, not on per-turn
+      // state. Set it in the stable `github_tool_instructions` section instead
+      // of concatenating it into the volatile `environment` block (every other
+      // tool protocol already rides the stable `tool_instructions` section).
+      // Folding it into `environment` dragged it into the uncached volatile
+      // tail, so workspace/git-status churn forced this constant to be re-read
+      // every turn; in its own stable section it joins the cached prefix.
+      if (workspaceContext.includeGitHubTools) {
+        builder.set('github_tool_instructions', TOOL_PROTOCOL);
+      }
 
       if (hasSandbox) {
         builder.set('sandbox_environment', buildSandboxEnvironmentBlock(true));

@@ -142,9 +142,19 @@ before the volatile workspace/memory sections.
    Direct DeepSeek/Kimi (non-`cacheable` providerType) get a plain string system
    prompt and rely on automatic prefix caching, which the stable-first ordering
    above already serves.
-2. **Promote `environment` git-status churn out of the prefix.** If dirty-file
-   status doesn't need to be in the system prompt at all, moving it to the turn
-   tail (Reasonix-style) removes the most frequent invalidator outright.
+2. **Stop the volatile `environment` section from dragging a stable block —
+   SHIPPED 2026-06-21.** Audited as the inverse of the original framing: the
+   per-turn git/dirty-file churn was *already* in the volatile tail after #1, so
+   moving it further bought nothing. The real cost was that the web path
+   concatenated the large, session-stable GitHub `TOOL_PROTOCOL` *into* the
+   volatile `environment` section (`orchestrator.ts:438`) — while every other
+   tool protocol rode the stable `tool_instructions` section — so the constant
+   was trapped in the uncached tail and re-sent every turn. The GitHub protocol
+   now goes into the dedicated stable `github_tool_instructions` section
+   (`orchestrator.ts:441`), joining the cached prefix; only genuinely-volatile
+   workspace status stays in `environment`. A regression test asserts the
+   protocol lands in the `cache_control` stable block and dirty-file status in
+   the uncached tail.
 
 **Smaller borrows, separately:** BM25-style lexical retrieval scoring and the
 `archive-on-forget` invalidation pattern (move to a timestamped `.archive/`,
