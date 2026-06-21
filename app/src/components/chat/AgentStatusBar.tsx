@@ -44,8 +44,10 @@ export function AgentStatusBar({ status }: AgentStatusBarProps) {
 
   return (
     <div className="flex items-center gap-2.5 px-5 py-2.5 animate-fade-in">
-      <span className="agent-pulse inline-block h-1.5 w-1.5 rounded-full bg-push-accent shadow-[0_0_8px_rgba(0,112,243,0.4)]" />
-      <span className="text-xs text-push-fg-secondary tracking-wide">
+      {/* Glow matches the sky push-accent dot (was a stale #0070f3 blue). */}
+      <span className="agent-pulse inline-block h-1.5 w-1.5 rounded-full bg-push-accent shadow-[0_0_8px_rgba(125,211,252,0.4)]" />
+      {/* Mono so the live phase/verb line reads like the TUI status line. */}
+      <span className="font-mono text-xs text-push-fg-secondary tracking-wide">
         {/* Keyed on `label` so each verb/phase change remounts the span and
             replays `status-verb-swap-in` exactly once (enter-only). The 1s
             elapsed-timer tick re-renders the parent but leaves this key

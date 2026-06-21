@@ -34,7 +34,9 @@ export const ToolCallSummary = memo(function ToolCallSummary({
         <ChevronRight
           className={`h-3 w-3 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
         />
-        <span className="font-medium truncate max-w-[260px] sm:max-w-[360px]">{summary}</span>
+        <span className="font-mono font-medium truncate max-w-[260px] sm:max-w-[360px]">
+          {summary}
+        </span>
       </button>
 
       {expanded && (
@@ -55,8 +57,10 @@ export const ToolCallSummary = memo(function ToolCallSummary({
 
             return (
               <div key={i} className="space-y-1.5">
-                {/* Tool header */}
-                <div className="flex items-center gap-1.5 text-push-2xs">
+                {/* Tool header — mono so tool names + timings read as terminal
+                    machinery, rhyming with the TUI (CardRenderer output below
+                    keeps its own formatting). */}
+                <div className="flex items-center gap-1.5 text-push-2xs font-mono">
                   <Icon className={`h-3 w-3 ${isError ? 'text-red-400' : 'text-push-fg-dim'}`} />
                   <span className={`font-medium ${isError ? 'text-red-400' : 'text-push-fg-dim'}`}>
                     {toolName}
