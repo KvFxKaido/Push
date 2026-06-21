@@ -134,6 +134,27 @@ export function cancelReconnect(state: ReconnectState): ReconnectState {
 }
 
 /**
+ * Backoff nudge (GOpencode review, suggested-priority #3). Reset the
+ * machine to idle with the attempt count zeroed, so the caller's next
+ * `planNextRetry` starts from the top of the ladder (1s) instead of
+ * wherever the backoff had climbed to.
+ *
+ * The distinction from `cancelReconnect` is the whole point:
+ * `cancelReconnect` drops the timer but *preserves* the attempt count
+ * (the disconnect still happened — keep climbing if it recurs), whereas
+ * `nudgeReconnect` is the "something changed, try now" signal —
+ * network came back, the controlling app returned to foreground — where
+ * sitting out the remaining 30s wait is needless latency. The caller
+ * clears its pending timer and immediately re-plans + re-attempts.
+ *
+ * Pure, like the rest of this module: it decides the next state, the
+ * caller owns the timer and the actual connect.
+ */
+export function nudgeReconnect(_state: ReconnectState): ReconnectState {
+  return { phase: 'idle', attempts: 0, nextRetryAtMs: null };
+}
+
+/**
  * Compute the seconds-until-next-retry value the footer chip displays.
  * Reads the wall-clock from `nowMs` rather than `Date.now()` so the
  * frame ticker can pass a single timestamp and unit tests can drive

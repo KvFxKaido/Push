@@ -74,6 +74,7 @@ live docs above when choosing or updating current work.
 - [`Copilot SDK Research.md`](<Copilot SDK Research.md>)
 - [`Duplication and Structural Symmetry Analysis.md`](<Duplication and Structural Symmetry Analysis.md>)
 - [`External Resource Review - Harness Engineering and Ralph Loop.md`](<External Resource Review — Harness Engineering and Ralph Loop.md>)
+- [`GOpencode Review.md`](<GOpencode Review.md>)
 - [`Harness Friction - Agent Self-Report.md`](<Harness Friction — Agent Self-Report.md>)
 - [`Hashline System Review.md`](<Hashline System Review.md>)
 - [`Hermes Agent - Lessons For Push.md`](<Hermes Agent — Lessons For Push.md>)

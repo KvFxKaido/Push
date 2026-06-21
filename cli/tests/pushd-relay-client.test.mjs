@@ -409,6 +409,123 @@ describe('pushd-relay-client', () => {
   });
 });
 
+describe('pushd-relay-client — liveness heartbeat (GOpencode review #1)', () => {
+  it('terminates a half-open link (no pong) and reconnects', async () => {
+    // Server accepts upgrades but PAUSES each accepted socket so it
+    // never auto-pongs and never sends data — a faithful half-open
+    // simulation. The only thing that can drop the connection is the
+    // client's own heartbeat, so an observed reconnect proves it fired.
+    const httpServer = http.createServer();
+    const wss = new WebSocketServer({ noServer: true });
+    let upgrades = 0;
+    httpServer.on('upgrade', (req, socket, head) => {
+      upgrades += 1;
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        // Stop reading frames → incoming pings are never parsed, so the
+        // server never auto-pongs. The client sees silence.
+        ws.pause();
+      });
+    });
+    await new Promise((r) => httpServer.listen(0, '127.0.0.1', r));
+    const port = httpServer.address().port;
+    try {
+      const client = startPushdRelayClient({
+        deploymentUrl: `ws://127.0.0.1:${port}`,
+        sessionId: 'sess-hb',
+        token: RELAY_TOKEN,
+        backoffScheduleMs: [10],
+        maxReconnectAttempts: 10,
+        heartbeatIntervalMs: 30,
+      });
+      await awaitOpen(client, 2000);
+      assert.equal(upgrades, 1);
+      // The heartbeat should declare the link dead within ~2 intervals
+      // and the ladder should re-dial. The server never rejects or
+      // closes, so the ONLY thing that can push upgrades past 1 is the
+      // client dropping the dead link itself — i.e. the heartbeat fired.
+      await awaitStatus(client, () => upgrades >= 2, 3000);
+      assert.ok(upgrades >= 2, `expected a heartbeat-driven reconnect; upgrades=${upgrades}`);
+      client.close();
+    } finally {
+      for (const c of wss.clients) c.terminate();
+      wss.close();
+      httpServer.close();
+    }
+  });
+
+  it('does NOT kill a healthy (auto-ponging) connection', async () => {
+    // Default ws server auto-pongs, so a live link must survive many
+    // heartbeat intervals without a reconnect.
+    const server = await makeServer();
+    try {
+      const client = startPushdRelayClient({
+        deploymentUrl: server.url,
+        sessionId: 'sess-hb-healthy',
+        token: RELAY_TOKEN,
+        heartbeatIntervalMs: 20,
+      });
+      await awaitOpen(client, 2000);
+      // Let several heartbeat rounds elapse.
+      await new Promise((r) => setTimeout(r, 200));
+      assert.equal(client.status.state, 'open', 'healthy link should stay open');
+      assert.equal(server.inspect().upgrades, 1, 'no reconnect should have fired');
+      client.close();
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+describe('pushd-relay-client — nudge (GOpencode review #3)', () => {
+  it('re-dials from an exhausted state', async () => {
+    // Reject the first 4 upgrades: with maxAttempts=3 the client
+    // exhausts after 4 dials (initial + 3). The 5th (nudge-driven)
+    // dial clears the gate and opens.
+    const server = await makeServer({ rejectFirstN: 4 });
+    try {
+      const client = startPushdRelayClient({
+        deploymentUrl: server.url,
+        sessionId: 'sess-nudge',
+        token: RELAY_TOKEN,
+        backoffScheduleMs: [5],
+        maxReconnectAttempts: 3,
+        heartbeatIntervalMs: 0,
+      });
+      await awaitStatus(client, (s) => s.exhausted === true, 2000);
+      assert.equal(server.inspect().upgrades, 4);
+      client.nudge();
+      await awaitOpen(client, 2000);
+      assert.equal(client.status.state, 'open');
+      client.close();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('is a no-op while the link is healthy', async () => {
+    const server = await makeServer();
+    try {
+      const client = startPushdRelayClient({
+        deploymentUrl: server.url,
+        sessionId: 'sess-nudge-open',
+        token: RELAY_TOKEN,
+        heartbeatIntervalMs: 0,
+      });
+      await awaitOpen(client, 2000);
+      assert.equal(server.inspect().upgrades, 1);
+      client.nudge();
+      // Give a nudge-triggered dial (if the no-op guard were broken) a
+      // chance to land, then confirm nothing happened.
+      await new Promise((r) => setTimeout(r, 80));
+      assert.equal(client.status.state, 'open');
+      assert.equal(server.inspect().upgrades, 1, 'nudge must not re-dial a healthy link');
+      client.close();
+    } finally {
+      await server.close();
+    }
+  });
+});
+
 describe('describeRelayUpgradeRejection', () => {
   it('maps BEARER_REJECTED to a token-mismatch reason and marks it fatal', () => {
     const r = describeRelayUpgradeRejection(401, 'BEARER_REJECTED', 'Invalid relay bearer.');
