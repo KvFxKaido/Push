@@ -317,11 +317,24 @@ data-driven, inspectable (`activeScope()`), and unit-tested
 across the migration. This is consistent with §9: it extracts a testability
 seam from `tui.ts` orchestration rather than reaching for leaf helpers.
 
-Remaining (incremental, not blocking): scopes still read `tuiState` flags to
-decide `isActive()`; the next step is to let panes/modals push and pop
-themselves onto the stack at their own lifecycle points, so focus ownership is
-held by the component rather than inferred from shared state — the last piece
-of giggles' model worth borrowing.
+Considered and declined: push/pop self-registration. giggles' scopes mount and
+unmount with their React components, so a pane "pushing" its focus scope on
+mount is free there — the framework guarantees the paired unmount. This TUI has
+no such guarantee. Every focusable surface here is already backed by
+*authoritative* state that is **also the render source of truth**: the approval
+pane by `runState === 'awaiting_approval'` + `tuiState.approvalPane` (held in
+lockstep by `openApprovalPane`/`closeApprovalPane`), the overlay modals by the
+booleans behind `getActiveOverlayModal()` (single writer:
+`setActiveOverlayModal`). Converting these to push/pop would replace a
+zero-maintenance declarative gate with a parallel stack-membership state that
+has to be hand-synced at ~11 open/close call sites — a *second* source of truth
+for "what owns input," and precisely the desync class the repo guards against
+elsewhere (the branch/sandbox sync rules). The declarative `isActive()`
+predicate IS each component's focus ownership, expressed against the one
+authoritative state; it is the correct end state, not an interim one. Dynamic
+push/pop would only earn its keep for a genuinely transient overlay with no
+backing state — there is none today, so the primitive is intentionally not
+added (YAGNI). If one appears, add `push()` then.
 
 ## Active Runtime Work
 
@@ -332,7 +345,7 @@ of giggles' model worth borrowing.
 5. Graduate loop detection enforcement only after telemetry supports thresholds.
 6. Decide whether memory Phase 3 immutable verbatim logs are worth the storage cost.
 7. Promote the diff/annotation envelope only when a roadmap item needs it.
-8. Finish the TUI focus-stack migration (§12): tab-completion, the global keybind map, and composer editing now resolve as scopes (the whole dispatch is the stack). Remaining: have panes/modals push/pop themselves onto the stack rather than the stack reading `tuiState` flags.
+8. TUI focus-stack migration (§12) — **complete**: the whole `processInput` dispatch resolves through the stack across six declarative scopes. Push/pop self-registration was considered and declined (see §12); declarative `isActive()` against authoritative state is the end state.
 9. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model. Step 1 landed 2026-06-12: interactive turns default to the in-loop lead with the Planner wrapper behind `PUSH_DELEGATION_MODE=delegated`. Step 2 landed 2026-06-12: the lead-kernel lane (`cli/lead-turn.ts`) runs the turn on the shared kernel in `leadMode`. Step 3 landed 2026-06-12: the lane is the **default**; `PUSH_LEAD_RUNTIME=engine` is the exact-match opt-out while it bakes. Remaining: retire the engine loop's duplicated round machinery once the lane has baked.
 
 ## Archived Context Worth Knowing
