@@ -26,7 +26,14 @@ const execFileAsync = promisify(execFile);
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
-function makeLocalGitExec(cwd: string, timeout: number): GitExec {
+/**
+ * Build a `GitExec` bound to `cwd` that shells out to local git via
+ * `execFile` (no shell, argv passed straight through). Exported so CLI-local
+ * git plumbing that the typed `GitBackend` doesn't cover — e.g. worktree
+ * management in `cli/worktree.ts` — runs through the same escaped, timeout-aware
+ * path instead of re-spawning git ad hoc.
+ */
+export function makeLocalGitExec(cwd: string, timeout: number): GitExec {
   // The `mutates` hint is sandbox-only (workspace-revision bump); the local
   // working tree needs no equivalent, so it is ignored here.
   return async (args, _opts) => {

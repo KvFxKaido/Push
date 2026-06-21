@@ -8,7 +8,15 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.js';
-import { matchingRiskPatternIndex, suggestApprovalPrefix } from './tools.js';
+import { isInvalidGitRef, matchingRiskPatternIndex, suggestApprovalPrefix } from './tools.js';
+import {
+  addWorktree,
+  autoWorktreeBranchName,
+  resolveGitRoot,
+  teardownWorktree,
+  WorktreeError,
+  type WorktreeHandle,
+} from './worktree.js';
 import { getCuratedModels, DEFAULT_MODELS } from './model-catalog.js';
 import { safeCitations, citationHost, sanitizeCitationText } from './citation-format.js';
 import type { UrlCitation } from '../lib/provider-contract.ts';
@@ -254,8 +262,10 @@ Options:
   --task <text>                 Task text for headless mode
   --skill <name>               Run a skill (e.g. commit, review, fix)
   --accept <cmd>                Acceptance check command (repeatable)
-  --max-rounds <n>              Tool-loop cap per user prompt (default: 30, max: 200; harness may extend on healthy progress)
+  --max-rounds <n>              Tool-loop cap per user prompt (default: 50, max: 200; harness may extend on healthy progress)
   --allow-exec                  Allow exec tool in headless mode (blocked by default)
+  --worktree                    push run: run in an isolated git worktree + branch (auto-named); kept on exit only if it has changes
+  --worktree-name <name>        push run: --worktree with a custom branch name
   --mode <strict|auto|yolo>     Exec approval mode: strict=prompt all, auto=prompt high-risk (default), yolo=no prompts
   --json                        JSON output in headless mode / resume
   --no-attach                   Resume: list sessions without prompting (script-friendly)
@@ -3266,6 +3276,14 @@ export async function main() {
       allowExec: { type: 'boolean' },
       mode: { type: 'string' },
       help: { type: 'boolean', short: 'h' },
+      // Opt-in git-worktree sandbox for `push run` (cli/worktree.ts). `--worktree`
+      // is a plain boolean (auto-named branch) to dodge the `strict:false`
+      // string-option footgun documented below, where a bare value-taking flag
+      // swallows the next argv token. `--worktree-name <name>` sets a custom
+      // branch and implies `--worktree`.
+      worktree: { type: 'boolean' },
+      'worktree-name': { type: 'string' },
+      worktreeName: { type: 'string' },
       sandbox: { type: 'boolean' },
       'exec-mode': { type: 'string' },
       'no-sandbox': { type: 'boolean' },
@@ -3816,14 +3834,69 @@ export async function main() {
     : subcommand === '' && tuiEnabled && process.stdin.isTTY
       ? 'tui'
       : 'interactive';
-  const state = await initSession(resumedSessionId, provider, requestedModel, cwd, sessionMode);
+  // Opt-in git-worktree sandbox (Phase 1: `push run` headless only). Resolve
+  // it before the session is created so the worktree path becomes the session
+  // `cwd` — that single redirection is what isolates every tool from the real
+  // checkout (cli/worktree.ts).
+  const worktreeNameArg = (values['worktree-name'] ?? values.worktreeName) as string | undefined;
+  const worktreeEnabled = Boolean(values.worktree) || Boolean(worktreeNameArg?.trim());
+  let activeWorktree: WorktreeHandle | null = null;
+  let effectiveCwd = cwd;
+  if (worktreeEnabled) {
+    if (!runHeadlessMode) {
+      throw new Error(
+        '--worktree is currently supported only with `push run` (headless). Interactive worktree sessions are not wired yet.',
+      );
+    }
+    if (resumedSessionId) {
+      throw new Error(
+        '--worktree starts a fresh sandbox session and cannot be combined with --session (resume).',
+      );
+    }
+    const gitRoot = await resolveGitRoot(cwd);
+    if (!gitRoot) {
+      throw new Error(`--worktree requires a git repository, but ${cwd} is not inside one.`);
+    }
+    const branch = worktreeNameArg?.trim() || autoWorktreeBranchName();
+    if (isInvalidGitRef(branch)) {
+      throw new Error(`Invalid --worktree-name "${branch}". Use a valid git branch name.`);
+    }
+    try {
+      activeWorktree = await addWorktree({ repoRoot: gitRoot, branch });
+    } catch (err) {
+      if (err instanceof WorktreeError) throw new Error(err.message);
+      throw err;
+    }
+    effectiveCwd = activeWorktree.path;
+    process.stdout.write(
+      `${fmt.dim('[worktree]')} sandbox ready at ${activeWorktree.path} on branch ${fmt.green(branch)}\n`,
+    );
+  }
+
+  const state = await initSession(
+    resumedSessionId,
+    provider,
+    requestedModel,
+    effectiveCwd,
+    sessionMode,
+  );
   if (values.model && values.model !== state.model) state.model = values.model;
   if (values.provider && values.provider !== state.provider) {
     state.provider = provider;
     state.model = requestedModel;
   }
-  if (values.cwd && path.resolve(values.cwd) !== state.cwd) {
+  // A `--cwd` override is ignored once a worktree owns the session cwd — the
+  // worktree path wins, otherwise the session would run outside its sandbox.
+  if (!activeWorktree && values.cwd && path.resolve(values.cwd) !== state.cwd) {
     state.cwd = path.resolve(values.cwd);
+  }
+  if (activeWorktree) {
+    state.worktree = {
+      path: activeWorktree.path,
+      branch: activeWorktree.branch,
+      baseSha: activeWorktree.baseSha,
+      repoRoot: activeWorktree.repoRoot,
+    };
   }
   await saveSessionState(state);
 
@@ -3833,45 +3906,75 @@ export async function main() {
         'Headless mode requires a task. Use: push run --task "..." or push run --skill <name>',
       );
     }
-    // Resolve API key late — after all validation — so missing keys
-    // don't mask argument or environment errors.
-    const apiKey = resolveApiKey(providerConfig);
-    const allowExec =
-      values['allow-exec'] || values.allowExec || process.env.PUSH_ALLOW_EXEC === 'true';
-    const headlessSafePatterns = Array.isArray(persistedConfig.safeExecPatterns)
-      ? persistedConfig.safeExecPatterns
-      : [];
-    // Same env-fallback contract as the REPL path: undefined -> env wins,
-    // explicit array -> opt-out.
-    const headlessDisabledTools = Array.isArray(persistedConfig.disabledTools)
-      ? persistedConfig.disabledTools
-      : undefined;
-    const headlessAlwaysAllow = Array.isArray(persistedConfig.alwaysAllow)
-      ? persistedConfig.alwaysAllow
-      : undefined;
-    const headlessExecMode = process.env.PUSH_EXEC_MODE || 'auto';
-    // Raw (not pre-resolved) so PUSH_AUDITOR_GATE can still override at the
-    // tool layer. Default on when unset.
-    const headlessAuditorGate =
-      typeof persistedConfig.auditorGate === 'boolean' ? persistedConfig.auditorGate : undefined;
-    const headlessRunOpts = {
-      allowExec,
-      safeExecPatterns: headlessSafePatterns,
-      execMode: headlessExecMode,
-      disabledTools: headlessDisabledTools,
-      alwaysAllow: headlessAlwaysAllow,
-      auditorGate: headlessAuditorGate,
-    };
-    return runHeadless(
-      state,
-      providerConfig,
-      apiKey,
-      task,
-      maxRounds,
-      values.json,
-      acceptanceChecks,
-      headlessRunOpts,
-    );
+    // The worktree (when set) is already created here, so the teardown
+    // `finally` must wrap API-key resolution + opts setup too — not just the
+    // run — otherwise a throw in between (e.g. a missing key) leaks the sandbox.
+    try {
+      // Resolve API key late — after all validation — so missing keys
+      // don't mask argument or environment errors.
+      const apiKey = resolveApiKey(providerConfig);
+      const allowExec =
+        values['allow-exec'] || values.allowExec || process.env.PUSH_ALLOW_EXEC === 'true';
+      const headlessSafePatterns = Array.isArray(persistedConfig.safeExecPatterns)
+        ? persistedConfig.safeExecPatterns
+        : [];
+      // Same env-fallback contract as the REPL path: undefined -> env wins,
+      // explicit array -> opt-out.
+      const headlessDisabledTools = Array.isArray(persistedConfig.disabledTools)
+        ? persistedConfig.disabledTools
+        : undefined;
+      const headlessAlwaysAllow = Array.isArray(persistedConfig.alwaysAllow)
+        ? persistedConfig.alwaysAllow
+        : undefined;
+      const headlessExecMode = process.env.PUSH_EXEC_MODE || 'auto';
+      // Raw (not pre-resolved) so PUSH_AUDITOR_GATE can still override at the
+      // tool layer. Default on when unset.
+      const headlessAuditorGate =
+        typeof persistedConfig.auditorGate === 'boolean' ? persistedConfig.auditorGate : undefined;
+      const headlessRunOpts = {
+        allowExec,
+        safeExecPatterns: headlessSafePatterns,
+        execMode: headlessExecMode,
+        disabledTools: headlessDisabledTools,
+        alwaysAllow: headlessAlwaysAllow,
+        auditorGate: headlessAuditorGate,
+      };
+      return await runHeadless(
+        state,
+        providerConfig,
+        apiKey,
+        task,
+        maxRounds,
+        values.json,
+        acceptanceChecks,
+        headlessRunOpts,
+      );
+    } finally {
+      // Clean-if-clean teardown: remove the worktree only when it has no
+      // uncommitted changes and no commits beyond base; otherwise keep it and
+      // report the path so unpushed work is never silently destroyed. Runs in
+      // `finally` so an aborted/failed run still gets the keep-if-work check.
+      if (activeWorktree) {
+        try {
+          const outcome = await teardownWorktree(activeWorktree);
+          if (outcome.removed) {
+            process.stdout.write(
+              `${fmt.dim('[worktree]')} removed disposable sandbox (branch ${outcome.branch}) — no changes to keep\n`,
+            );
+          } else {
+            process.stdout.write(
+              `${fmt.warn('[worktree]')} kept ${outcome.path} (branch ${fmt.green(outcome.branch)}) — ${outcome.reason}.\n` +
+                `${fmt.dim('           ')}Commit/push from there, then remove with: git worktree remove ${outcome.path}\n`,
+            );
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          process.stderr.write(
+            `${fmt.warn('[worktree]')} teardown check failed (${message}); left ${activeWorktree.path} in place.\n`,
+          );
+        }
+      }
+    }
   }
 
   // Default UX: bare "push" opens TUI when enabled.
