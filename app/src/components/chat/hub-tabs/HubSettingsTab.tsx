@@ -61,7 +61,7 @@ const DETAIL_META: Record<
   },
   workspace: {
     title: 'Workspace',
-    description: 'Long-chat behavior, runtime warm-up, and branch safety.',
+    description: 'Runtime warm-up and branch safety.',
     icon: SETTINGS_SECTION_ICONS.workspace,
   },
   ai: {
@@ -198,7 +198,6 @@ export function HubSettingsTab({
       badge: sandboxLabel,
       icon: SETTINGS_SECTION_ICONS.workspace,
       lines: [
-        `Long chats are set to ${workspace.contextMode === 'graceful' ? 'keep steady' : 'keep everything'}.`,
         `Runtime warm-up is ${workspace.sandboxStartMode === 'off' ? 'manual' : workspace.sandboxStartMode}.`,
         `Main protection is ${workspace.protectMainGlobal ? 'on' : 'off'} and the console is ${workspace.showToolActivity ? 'visible' : 'hidden'}.`,
       ],

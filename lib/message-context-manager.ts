@@ -73,8 +73,6 @@ export interface PreCompactEventLike {
  * `recordContextMetric`, etc.) while still preserving exact behaviour.
  */
 export interface ContextManagerDeps<M extends Message> {
-  /** Returns `'none'` to disable context management entirely. */
-  getContextMode: () => 'graceful' | 'none';
   estimateMessageTokens: (message: M) => number;
   estimateContextTokens: (messages: M[]) => number;
   /** Semantic summarization of a single verbose message (e.g. tool result). */
@@ -150,10 +148,9 @@ export function createContextManager<M extends Message>(
     provider?: string,
     onPreCompact?: (event: PreCompactEventLike) => void,
   ): M[] {
-    if (deps.getContextMode() === 'none') {
-      return messages;
-    }
-
+    // Context management is always on — it is fully runtime-owned. There is no
+    // user-facing opt-out: leaving a long chat uncompacted only ever ends in a
+    // provider-side context-window error, so the runtime always trims to fit.
     const totalTokens = deps.estimateContextTokens(messages);
 
     // Use the lower summarizeTokens threshold to decide when to compress old

@@ -7,7 +7,6 @@ import { SettingsSectionContent } from '@/components/SettingsSectionContent';
 import type { AIProviderType, SandboxStateCardData } from '@/types';
 import type { PreferredProvider } from '@/lib/providers';
 import type { GitHubTokenKind } from '@/lib/github-auth';
-import type { ContextMode } from '@/lib/orchestrator';
 import type { SandboxStartMode } from '@/lib/sandbox-start-mode';
 import type { ApprovalMode } from '@/lib/approval-mode';
 import type { RepoOverride } from '@/hooks/useProtectMain';
@@ -201,8 +200,6 @@ export interface SettingsTavilyProvider {
 export interface SettingsWorkspaceProps {
   approvalMode: ApprovalMode;
   updateApprovalMode: (mode: ApprovalMode) => void;
-  contextMode: ContextMode;
-  updateContextMode: (mode: ContextMode) => void;
   sandboxStartMode: SandboxStartMode;
   updateSandboxStartMode: (mode: SandboxStartMode) => void;
   sandboxStatus: 'idle' | 'reconnecting' | 'creating' | 'ready' | 'error';

@@ -53,11 +53,8 @@ import { getContextBudget } from './orchestrator-context';
 
 // --- Barrel re-exports (preserve existing consumer import paths) ---
 export {
-  getContextMode,
-  setContextMode,
   getContextBudget,
   estimateContextTokens,
-  type ContextMode,
   type ContextBudget,
 } from './orchestrator-context';
 

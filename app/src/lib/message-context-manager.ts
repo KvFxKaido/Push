@@ -24,7 +24,6 @@ import {
   DEFAULT_CONTEXT_BUDGET,
   estimateContextTokens,
   estimateMessageTokens,
-  getContextMode,
 } from './orchestrator-context';
 import { recordContextMetric } from './context-metrics';
 
@@ -35,7 +34,6 @@ export {
 } from '@push/lib/message-context-manager';
 
 const _manager = createContextManager<ChatMessage>({
-  getContextMode,
   estimateMessageTokens,
   estimateContextTokens,
   compactMessage: (msg) => compactChatMessage(msg),

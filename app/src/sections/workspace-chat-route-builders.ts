@@ -366,8 +366,6 @@ export function buildSettingsWorkspace(props: ChatRouteProps): SettingsWorkspace
   return {
     approvalMode: props.approvalMode,
     updateApprovalMode: props.updateApprovalMode,
-    contextMode: props.contextMode,
-    updateContextMode: props.updateContextMode,
     sandboxStartMode: props.sandboxStartMode,
     updateSandboxStartMode: props.updateSandboxStartMode,
     sandboxStatus: props.sandbox.status,
