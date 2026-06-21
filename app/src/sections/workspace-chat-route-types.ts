@@ -241,6 +241,8 @@ export interface ChatRouteUiStateProps {
   updateShowToolActivity: (value: boolean) => void;
   providerFailover: boolean;
   updateProviderFailover: (value: boolean) => void;
+  runTokenBudget: number | null;
+  updateRunTokenBudget: (value: number | null) => void;
   showInstallIdInput: boolean;
   setShowInstallIdInput: (value: boolean) => void;
   installIdInput: string;

@@ -1114,6 +1114,11 @@ export async function runInPageCoderKernel(
     // kernel applies its high invisible backstop (LEAD_MAX_ROUNDS); the
     // delegated arc keeps the profile cap.
     harnessMaxRounds: leadRound.harnessMaxRounds,
+    // Per-run token budget (consumption circuit breaker). Independent of the
+    // round cap, so it applies to the lead (whose round cap is the high
+    // backstop) as well as the delegated arc. The shim routes delegated
+    // sub-Coders through here too, so this one site covers both web lanes.
+    harnessTokenBudget: spec.harnessSettings?.runTokenBudget,
     harnessContextResetsEnabled: spec.harnessSettings?.contextResetsEnabled,
     resumeState: spec.resumeState,
     checkpointCadenceRounds: spec.checkpointCadenceRounds,

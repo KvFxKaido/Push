@@ -446,6 +446,8 @@ export function useDaemonSettingsBundles({
       setShowToolActivity: prefs.updateShowToolActivity,
       providerFailover: prefs.providerFailover,
       setProviderFailover: prefs.updateProviderFailover,
+      runTokenBudget: prefs.runTokenBudget,
+      setRunTokenBudget: prefs.updateRunTokenBudget,
       activeRepoFullName: null,
     };
 

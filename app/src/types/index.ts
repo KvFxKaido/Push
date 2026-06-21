@@ -253,6 +253,13 @@ export interface HarnessProfileSettings {
   contextResetsEnabled: boolean;
   /** Whether the Auditor evaluation runs after every Coder delegation. */
   evaluateAfterCoder: boolean;
+  /** Per-run token budget — halts a run once it has consumed this many tokens
+   *  (a consumption circuit breaker complementing `maxCoderRounds`). `null` /
+   *  omitted ⇒ uncapped. Resolved/accounted by the shared
+   *  `lib/run-cost-budget.ts`; the kernel consumes it as `harnessTokenBudget`.
+   *  Unlike the auto-computed `maxCoderRounds`, this carries the user's
+   *  configured preference (web settings / CLI config). */
+  runTokenBudget?: number | null;
 }
 
 export interface AIModel {

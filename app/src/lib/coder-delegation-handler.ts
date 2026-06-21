@@ -71,6 +71,7 @@ import { getSandboxDiff } from '@/lib/sandbox-client';
 import { runCoderAgent } from '@/lib/coder-agent';
 import { capturePreCoderSnapshot, createCoderCheckpointAnswerer } from '@/lib/inline-coder-run';
 import { resolveHarnessSettings } from '@/lib/model-capabilities';
+import { getRunTokenBudgetPref } from '@/lib/run-token-budget-pref';
 import type { HarnessProfileSettings } from '@/types';
 import {
   buildMemoryScope,
@@ -422,7 +423,9 @@ export async function handleCoderDelegation(
   try {
     const harnessProvider = lockedProviderForChat || getActiveProvider();
     const harnessModelId = resolvedModelForChat || undefined;
-    const harnessSettings = resolveHarnessSettings(harnessProvider, harnessModelId);
+    const harnessSettings = resolveHarnessSettings(harnessProvider, harnessModelId, {
+      runTokenBudget: getRunTokenBudgetPref(),
+    });
 
     const delegateArgs = toolCall.call.args;
     const taskList = Array.isArray(delegateArgs.tasks)

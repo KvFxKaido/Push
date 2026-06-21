@@ -200,6 +200,9 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
         'extraToolProtocols',
         'harnessContextResetsEnabled',
         'harnessMaxRounds',
+        // Per-run token budget — null here (delegated arc inherits the
+        // envelope's harness setting; the inline lead folds in the user pref).
+        'harnessTokenBudget',
         // Parity decision: delegated Coders do not seed from chat history.
         // The inline conversational lead sets this; task-shaped runs keep the
         // single task preamble.

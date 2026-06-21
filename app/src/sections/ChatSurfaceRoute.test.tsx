@@ -221,6 +221,8 @@ function baseProps(overrides: Partial<ChatRouteProps> = {}): ChatRouteProps {
     updateShowToolActivity: vi.fn(),
     providerFailover: false,
     updateProviderFailover: vi.fn(),
+    runTokenBudget: null,
+    updateRunTokenBudget: vi.fn(),
     showInstallIdInput: false,
     setShowInstallIdInput: vi.fn(),
     installIdInput: '',

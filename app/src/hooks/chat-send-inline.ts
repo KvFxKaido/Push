@@ -51,6 +51,7 @@ import {
   teePushStream,
 } from '@/lib/inline-coder-run';
 import { resolveHarnessSettings } from '@/lib/model-capabilities';
+import { getRunTokenBudgetPref } from '@/lib/run-token-budget-pref';
 import { buildMemoryScope, runContextMemoryBestEffort } from '@/lib/memory-context-helpers';
 import { invalidateMemoryForChangedFiles } from '@/lib/context-memory';
 import {
@@ -610,7 +611,9 @@ export async function startInlineCoderTurn(
 
   const memoryScope = buildMemoryScope(chatId, repoFullName, activeBranch);
   const verificationPolicy = args.getVerificationPolicyForChat(chatId);
-  const harnessSettings = resolveHarnessSettings(lockedProvider, resolvedModel || undefined);
+  const harnessSettings = resolveHarnessSettings(lockedProvider, resolvedModel || undefined, {
+    runTokenBudget: getRunTokenBudgetPref(),
+  });
 
   // Themed thinking verbs for the spinner, classified off real repo signals
   // the same way the Orchestrator round loop does (topics → domain, boot-time
