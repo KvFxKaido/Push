@@ -35,6 +35,7 @@ import {
   type SessionResponse,
 } from '@/lib/local-daemon-binding';
 import { type AttachResult, createRelayDaemonBinding } from '@/lib/relay-daemon-binding';
+import { shouldNudgeReconnect, subscribeReconnectNudges } from '@/lib/reconnect-nudge';
 import { parseSessionSnapshot, type DaemonSessionSnapshot } from '@/lib/daemon-snapshot';
 import type { LiveDaemonBinding } from '@/lib/local-daemon-sandbox-client';
 import type { RelayBinding } from '@/types';
@@ -539,6 +540,25 @@ export function useRelayDaemon(
     dispatchReconnect({ type: 'MANUAL_RESET' });
     setLocalReconnectKey((k) => k + 1);
   }, []);
+
+  // Environment "try now" nudge (GOpencode review #3) — same wiring as
+  // `useLocalDaemon`: on network-restore / app-foreground, collapse a
+  // pending backoff wait and reconnect now, but only when parked in a
+  // dropped/exhausted state. Status read from a ref so listeners bind
+  // once per binding rather than per status transition.
+  const wsStatusRef = useRef(wsStatus);
+  useEffect(() => {
+    wsStatusRef.current = wsStatus;
+  }, [wsStatus]);
+  const nudgeReconnect = useCallback(() => {
+    if (!shouldNudgeReconnect(wsStatusRef.current)) return;
+    dispatchReconnect({ type: 'MANUAL_RESET' });
+    setLocalReconnectKey((k) => k + 1);
+  }, []);
+  useEffect(() => {
+    if (deploymentUrl === null || sessionId === null || token === null) return;
+    return subscribeReconnectNudges(nudgeReconnect);
+  }, [deploymentUrl, sessionId, token, nudgeReconnect]);
 
   return {
     status,

@@ -328,6 +328,84 @@ describe('pushd-ws auth gate', () => {
     }
   });
 
+  describe('liveness heartbeat (GOpencode review #2)', () => {
+    it('terminates a client that stops responding to pings (half-open)', async () => {
+      const hbPortPath = path.join(tmpDir, 'pushd-ws-hb.port');
+      const hbHandle = await startPushdWs(stubDeps, {
+        portFilePath: hbPortPath,
+        heartbeatIntervalMs: 40,
+      });
+      let ws;
+      try {
+        const { token, tokenId } = await mintDeviceToken({ boundOrigin: 'loopback' });
+        ws = new WebSocket(`ws://127.0.0.1:${hbHandle.port}`, {
+          headers: { Authorization: `Bearer ${token}`, Origin: 'http://localhost:5173' },
+        });
+        await new Promise((resolve, reject) => {
+          ws.once('open', resolve);
+          ws.once('error', reject);
+        });
+        // Pause the client socket so it never reads — and therefore
+        // never auto-pongs — the server's ping frames. A real vanished
+        // phone behaves the same; it won't observe its own termination,
+        // so we assert from the SERVER side: the heartbeat reap runs the
+        // connection's cleanup, which drops it from listConnectedDevices.
+        ws.pause();
+        let stillListed = true;
+        for (let i = 0; i < 40; i += 1) {
+          await new Promise((r) => setTimeout(r, 50));
+          if (!hbHandle.listConnectedDevices().some((row) => row.tokenId === tokenId)) {
+            stillListed = false;
+            break;
+          }
+        }
+        assert.equal(stillListed, false, 'server should have reaped the unresponsive client');
+      } finally {
+        try {
+          ws?.terminate();
+        } catch {
+          /* already dead */
+        }
+        await hbHandle.close();
+        await fs.rm(hbPortPath, { force: true });
+      }
+    });
+
+    it('keeps a healthy (auto-ponging) client connected across intervals', async () => {
+      const hbPortPath = path.join(tmpDir, 'pushd-ws-hb-healthy.port');
+      const hbHandle = await startPushdWs(stubDeps, {
+        portFilePath: hbPortPath,
+        heartbeatIntervalMs: 30,
+      });
+      try {
+        const { token, tokenId } = await mintDeviceToken({ boundOrigin: 'loopback' });
+        const ws = new WebSocket(`ws://127.0.0.1:${hbHandle.port}`, {
+          headers: { Authorization: `Bearer ${token}`, Origin: 'http://localhost:5173' },
+        });
+        await new Promise((resolve, reject) => {
+          ws.once('open', resolve);
+          ws.once('error', reject);
+        });
+        let closedEarly = false;
+        ws.once('close', () => {
+          closedEarly = true;
+        });
+        // Several heartbeat rounds; the `ws` client auto-pongs, so a
+        // live link must survive.
+        await new Promise((r) => setTimeout(r, 200));
+        assert.equal(closedEarly, false, 'healthy client must not be reaped');
+        assert.ok(
+          hbHandle.listConnectedDevices().some((row) => row.tokenId === tokenId),
+          'healthy client should still be listed',
+        );
+        await closeAndWait(ws);
+      } finally {
+        await hbHandle.close();
+        await fs.rm(hbPortPath, { force: true });
+      }
+    });
+  });
+
   describe('listConnectedDevices + disconnectByTokenId (Phase 3)', () => {
     // Helper: open a WS, wait for the upgrade to complete, return it.
     async function openAndWaitOpen({ token, origin = 'http://localhost:5173' }) {

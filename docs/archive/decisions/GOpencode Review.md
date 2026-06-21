@@ -1,8 +1,10 @@
 # GOpencode Review
 
-Status: Reference, added 2026-06-21 — comparative review; suggested-priority #1 + #3 prototyped 2026-06-21 (see Update below). Broader graduation still needs a `ROADMAP.md` entry.
+Status: Reference, added 2026-06-21 — comparative review; suggested-priorities #1, #2, #3 prototyped 2026-06-21 (see Updates below). Broader graduation still needs a `ROADMAP.md` entry.
 
-> **Update 2026-06-21** — Suggested-priorities #1 (liveness heartbeat) and #3 (backoff nudge) landed as prototypes on the daemon's long-lived outbound relay link. `cli/pushd-relay-client.ts` now sends a WS-level ping on `RELAY_HEARTBEAT_INTERVAL_MS` (default 20s) and `terminate()`s a connection that misses a pong/traffic window — synthesizing the `close` a half-open link never delivers and routing it into the existing reconnect ladder; the heartbeat suspends while the send buffer is backlogged so a slow-but-live transfer isn't false-killed (`RELAY_HEARTBEAT_BUFFER_SUSPEND_BYTES`). A `nudge()` handle method collapses a pending backoff wait (or an exhausted/stranded state) and re-dials from the top of the ladder, but is a no-op while the link is healthy or a dial is in flight — the reusable pure primitive for the TUI link is `nudgeReconnect()` in `cli/tui-daemon-reconnect.ts`. Tests: `cli/tests/pushd-relay-client.test.mjs` (half-open kill + healthy-link survival + nudge from exhausted/no-op-while-open), `cli/tests/tui-daemon-reconnect.test.mjs` (nudge resets the ladder). Suggested-priorities #2 (server-side ping in `cli/pushd-ws.ts`), #4 (OTA bundle for the Capacitor shell), and #5 (wedged-session UX vocabulary) remain unstarted.
+> **Update 2026-06-21 (a)** — Suggested-priorities #1 (liveness heartbeat) and #3 (backoff nudge) landed as prototypes on the daemon's long-lived outbound relay link. `cli/pushd-relay-client.ts` now sends a WS-level ping on `RELAY_HEARTBEAT_INTERVAL_MS` (default 20s) and `terminate()`s a connection that misses a pong/traffic window — synthesizing the `close` a half-open link never delivers and routing it into the existing reconnect ladder; the heartbeat suspends while the send buffer is backlogged so a slow-but-live transfer isn't false-killed (`RELAY_HEARTBEAT_BUFFER_SUSPEND_BYTES`). A `nudge()` handle method collapses a pending backoff wait (or an exhausted/stranded state) and re-dials from the top of the ladder, but is a no-op while the link is healthy or a dial is in flight — the reusable pure primitive for the TUI link is `nudgeReconnect()` in `cli/tui-daemon-reconnect.ts`. Tests: `cli/tests/pushd-relay-client.test.mjs` (half-open kill + healthy-link survival + nudge from exhausted/no-op-while-open), `cli/tests/tui-daemon-reconnect.test.mjs` (nudge resets the ladder). (PR #1051.)
+
+> **Update 2026-06-21 (b)** — Suggested-priority #2 (server-side ping) and the web/Capacitor half of #3 landed. **#2:** `cli/pushd-ws.ts` now runs the accept-side heartbeat mirror — a server interval pings each open connection (`DEFAULT_HEARTBEAT_INTERVAL_MS`, 30s) and terminates any that missed the previous round's pong/traffic, so a vanished phone's half-open socket is reaped and its `cleanup()` (abort in-flight `sandbox_exec` runs + deregister session clients) fires promptly instead of waiting on a TCP timeout; same `bufferedAmount` suspension, logged as `pushd_ws_heartbeat_half_open`. **#3 (web):** the environment "try now" signal is wired via `app/src/lib/reconnect-nudge.ts` (`shouldNudgeReconnect()` pure guard + `subscribeReconnectNudges()` listener plumbing for `online` / foreground `visibilitychange`), consumed by both `app/src/hooks/useLocalDaemon.ts` and `app/src/hooks/useRelayDaemon.ts` so network-restore / app-foreground collapses a pending backoff wait — but only when parked in a dropped/exhausted state. Tests: `cli/tests/pushd-ws.test.mjs` (half-open reap + healthy-link survival), `app/src/lib/reconnect-nudge.test.ts` (guard table + listener fire/cleanup + no-DOM safety). Suggested-priorities #4 (OTA bundle for the Capacitor shell) and #5 (wedged-session UX vocabulary) remain unstarted.
 
 Origin: external repo — [`millnara/GOpencode`](https://github.com/millnara/GOpencode).
 
@@ -60,7 +62,7 @@ What Push's transport layer **lacked before this review** is the thing GOpencode
 
 GOpencode's gateway pings clients too. Push's `cli/pushd-ws.ts` accepts inbound WS connections (loopback today; relay-fanned phones via the shared wsState) and has **no** server-side ping — a phone that vanishes leaves its session-client emit registered until something else trips cleanup. Symmetric with #1 but on the accept side.
 
-**Verdict / suggested-priority #2 (unstarted)**: add the canonical `ws` server heartbeat (interval ping + terminate on missed pong) in `startPushdWs`, terminating dead connections so `cleanup()` (which already aborts in-flight `sandbox_exec` runs and deregisters session clients) fires promptly instead of waiting on a TCP timeout.
+**Verdict / suggested-priority #2 (prototyped — Update b)**: added the canonical `ws` server heartbeat (interval ping + terminate on missed pong) in `startPushdWs`, terminating dead connections so `cleanup()` (which already aborts in-flight `sandbox_exec` runs and deregisters session clients) fires promptly instead of waiting on a TCP timeout.
 
 ### OTA bundle updates for the Capacitor shell
 
@@ -82,8 +84,8 @@ GOpencode exposes a *"wedged session"* badge + one-tap resume + *undo-to-any-pre
 
 ## Suggested Priorities
 
-1. **Liveness heartbeat on the relay link** — closes the half-open-connection correctness gap. *(Prototyped.)*
-2. **Server-side heartbeat in `pushd-ws.ts`** — the accept-side mirror of #1; prompt `cleanup()` of vanished clients.
-3. **Backoff nudge on network-restore / app-foreground** — eliminate up-to-30s reconnect latency after an environment change. *(Prototyped; pure primitive + relay-client `nudge()` landed. Wiring the nudge to actual `online`/app-resume signals on web/Capacitor is the remaining step.)*
+1. **Liveness heartbeat on the relay link** — closes the half-open-connection correctness gap. *(Prototyped — Update a.)*
+2. **Server-side heartbeat in `pushd-ws.ts`** — the accept-side mirror of #1; prompt `cleanup()` of vanished clients. *(Prototyped — Update b.)*
+3. **Backoff nudge on network-restore / app-foreground** — eliminate up-to-30s reconnect latency after an environment change. *(Prototyped — relay-client `nudge()` + pure primitive in Update a; web/Capacitor `online`/foreground wiring in Update b.)*
 4. **OTA bundle for the Capacitor shell** — an Android update path; needs an integrity/origin decision first.
 5. **Wedged-session UX + stranded indicator** — presentation over existing checkpoint/backoff machinery.
