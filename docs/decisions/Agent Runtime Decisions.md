@@ -1,7 +1,7 @@
 # Agent Runtime Decisions
 
 Status: **Current**
-Reviewed: 2026-06-12
+Reviewed: 2026-06-21
 
 This is the live decision surface for Push's agent runtime. Archived source
 notes live in [`../archive/decisions/`](../archive/decisions/README.md).
@@ -275,6 +275,67 @@ deliberate — degrading a *watched* read to last-pushed state is strictly bette
 than failing in front of someone, but an *unwatched* job editing against stale
 bytes is worse than pausing.
 
+### 12. TUI key routing borrows giggles' focus model; we do not adopt the framework
+
+[giggles](https://github.com/zion-off/giggles) is a batteries-included
+React/Ink framework for terminal UIs (decentralized "each component owns its
+keys" handling, focus scopes with restoration, a context-aware keybinding
+registry, a component library). It was evaluated for the CLI TUI. The decision
+is **borrow the patterns, do not adopt the dependency.**
+
+Adopt was rejected on a runtime mismatch, not on quality. Push's TUI is
+~14k lines of hand-rolled, **zero-dependency** raw-ANSI rendering across the
+`cli/tui-*.ts` modules (`tui.ts` alone is the imperative round loop +
+renderer); the top of `tui.ts` states the zero-dependency tenet explicitly.
+giggles is a reactive React + Ink runtime. Adopting it means pulling in
+React + Ink + the framework and porting the entire renderer onto a component
+model — a from-scratch rewrite of a mature surface, against an explicit design
+invariant, while §9/§10 are pulling the TUI toward *convergence and
+simplification* (one conversational lead), not a framework migration. It would
+also make a pre-1.0 external project load-bearing for the primary local
+surface. None of those costs buy something the borrow can't.
+
+What is worth taking is the *idea*: focus scopes that own their keys with
+explicit fall-through to a global keybind map. The TUI already had the seed of
+this — the approval pane exposes a `handleKey(key): boolean` Pane contract, and
+the dispatcher carried a comment wanting future non-modal panes to fall through
+to the global map — but the precedence lived as a hand-maintained cascade
+(`if (runState === 'awaiting_approval') … if (awaiting_user_question) … switch
+(getActiveOverlayModal()) …`) inside the 7k-line `processInput`.
+
+Shipped: `cli/tui-focus.ts` is a generic, dependency-free `FocusStack` —
+ordered `KeyScope`s evaluated highest-priority-first, each owning its keys and
+returning consumed/fall-through. The **entire** `processInput` key dispatch now
+resolves through `focusStack.dispatch(key)` over six scopes in precedence
+order: approval pane → ask-user → overlay modal → tab completion → global
+keybinds → composer (bottom). The global keybind map and composer editing are
+no longer a special imperative tail — they are just the lowest-priority scopes,
+and a key no scope claims is a deliberate no-op exactly as before. Precedence
+and behavior are byte-for-byte the prior hand-rolled cascade; the resolution is
+data-driven, inspectable (`activeScope()`), and unit-tested
+(`cli/tests/tui-focus.test.mjs`), with the full CLI suite (2707 tests) green
+across the migration. This is consistent with §9: it extracts a testability
+seam from `tui.ts` orchestration rather than reaching for leaf helpers.
+
+Considered and declined: push/pop self-registration. giggles' scopes mount and
+unmount with their React components, so a pane "pushing" its focus scope on
+mount is free there — the framework guarantees the paired unmount. This TUI has
+no such guarantee. Every focusable surface here is already backed by
+*authoritative* state that is **also the render source of truth**: the approval
+pane by `runState === 'awaiting_approval'` + `tuiState.approvalPane` (held in
+lockstep by `openApprovalPane`/`closeApprovalPane`), the overlay modals by the
+booleans behind `getActiveOverlayModal()` (single writer:
+`setActiveOverlayModal`). Converting these to push/pop would replace a
+zero-maintenance declarative gate with a parallel stack-membership state that
+has to be hand-synced at ~11 open/close call sites — a *second* source of truth
+for "what owns input," and precisely the desync class the repo guards against
+elsewhere (the branch/sandbox sync rules). The declarative `isActive()`
+predicate IS each component's focus ownership, expressed against the one
+authoritative state; it is the correct end state, not an interim one. Dynamic
+push/pop would only earn its keep for a genuinely transient overlay with no
+backing state — there is none today, so the primitive is intentionally not
+added (YAGNI). If one appears, add `push()` then.
+
 ## Active Runtime Work
 
 1. Delete the Planner/brief now that inline is the measured default (2026-06-11); attachments-on-engine-envelope is the prerequisite.
@@ -284,7 +345,8 @@ bytes is worse than pausing.
 5. Graduate loop detection enforcement only after telemetry supports thresholds.
 6. Decide whether memory Phase 3 immutable verbatim logs are worth the storage cost.
 7. Promote the diff/annotation envelope only when a roadmap item needs it.
-8. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model. Step 1 landed 2026-06-12: interactive turns default to the in-loop lead with the Planner wrapper behind `PUSH_DELEGATION_MODE=delegated`. Step 2 landed 2026-06-12: the lead-kernel lane (`cli/lead-turn.ts`) runs the turn on the shared kernel in `leadMode`. Step 3 landed 2026-06-12: the lane is the **default**; `PUSH_LEAD_RUNTIME=engine` is the exact-match opt-out while it bakes. Remaining: retire the engine loop's duplicated round machinery once the lane has baked.
+8. TUI focus-stack migration (§12) — **complete**: the whole `processInput` dispatch resolves through the stack across six declarative scopes. Push/pop self-registration was considered and declined (see §12); declarative `isActive()` against authoritative state is the end state.
+9. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model. Step 1 landed 2026-06-12: interactive turns default to the in-loop lead with the Planner wrapper behind `PUSH_DELEGATION_MODE=delegated`. Step 2 landed 2026-06-12: the lead-kernel lane (`cli/lead-turn.ts`) runs the turn on the shared kernel in `leadMode`. Step 3 landed 2026-06-12: the lane is the **default**; `PUSH_LEAD_RUNTIME=engine` is the exact-match opt-out while it bakes. Remaining: retire the engine loop's duplicated round machinery once the lane has baked.
 
 ## Archived Context Worth Knowing
 
