@@ -1,17 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { createCodePlugin } from '@streamdown/code';
+import { createPushCodePlugin } from './push-code-plugin';
 
 /**
  * Real verification that the Shiki highlighting wired into PushMarkdownRenderer
  * actually resolves colors — not just that Streamdown emits the code-block
  * structure. (An earlier attempt shipped uncolored output because the
- * `@streamdown/code` plugin was never installed/passed; the SSR fixtures only
+ * code plugin was never installed/passed; the SSR fixtures only
  * asserted structure, so the gap went unnoticed.) This calls the same plugin
  * the adapter uses and asserts the highlighter returns real token colors.
  */
-describe('@streamdown/code Shiki plugin', () => {
+describe('Push Streamdown Shiki plugin', () => {
   it('resolves real (non-inherit) token colors for highlighted code', async () => {
-    const plugin = createCodePlugin({ themes: ['github-dark-default', 'github-dark-default'] });
+    const plugin = createPushCodePlugin();
 
     const options = {
       code: 'const x: number = 1;',
@@ -50,8 +50,9 @@ describe('@streamdown/code Shiki plugin', () => {
   });
 
   it('reports the language as supported', () => {
-    const plugin = createCodePlugin();
+    const plugin = createPushCodePlugin();
     expect(plugin.supportsLanguage('ts')).toBe(true);
+    expect(plugin.supportsLanguage('emacs-lisp')).toBe(false);
     expect(plugin.name).toBe('shiki');
   });
 });

@@ -77,8 +77,8 @@ describe('PushMarkdownRenderer (Streamdown adapter)', () => {
     expect(html).not.toContain('tracker.png');
   });
 
-  // 5 + 8. Code rendering. Highlighting is on by default via the @streamdown/code
-  // (Shiki) plugin — these SSR fixtures assert the code-block STRUCTURE and that
+  // 5 + 8. Code rendering. Highlighting is on by default via Push's curated
+  // Shiki plugin — these SSR fixtures assert the code-block STRUCTURE and that
   // the code text is present; the actual resolved colors are verified separately
   // in code-highlight.test.ts (the plugin highlights asynchronously, so colors
   // don't resolve during synchronous SSR).

@@ -374,8 +374,8 @@
 
 /* ── Streamdown code chrome → Push palette ─────────────
    The Streamdown adapter mounts under `.push-markdown` and leaves code/pre to
-   Streamdown's own CodeBlock so the @streamdown/code Shiki plugin can color
-   tokens. That chrome themes through shadcn tokens (--sidebar / --background /
+   Streamdown's own CodeBlock so Push's curated Shiki plugin can color tokens.
+   That chrome themes through shadcn tokens (--sidebar / --background /
    --border / --muted-foreground), which read as a generic github-dark block.
    These rules repaint only the frame, code well, language bar, and inline chips
    onto Push's explicit palette — a raised frame around a darker inset code well,

@@ -11,8 +11,7 @@ module.exports = {
     // builds and highlighted blocks render unstyled. Required by Streamdown's
     // Tailwind v3 setup. Adapter: src/components/chat/PushMarkdownRenderer.tsx.
     './node_modules/streamdown/dist/*.js',
-    // Same for the @streamdown/code (Shiki) plugin's own classes.
-    './node_modules/@streamdown/code/dist/*.js',
+    // Push's Shiki plugin lives in src/ and is covered by the app glob above.
   ],
   theme: {
     extend: {

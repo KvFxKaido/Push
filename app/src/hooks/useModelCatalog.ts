@@ -22,7 +22,7 @@ import {
   normalizeFireworksModelName,
   type PreferredProvider,
 } from '@/lib/providers';
-import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
+import { getActiveProvider, type ActiveProvider } from '@/lib/active-provider';
 import { resolveApiUrl } from '@/lib/api-url';
 import {
   fetchCloudflareModels,

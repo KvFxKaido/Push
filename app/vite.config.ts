@@ -126,6 +126,10 @@ export default defineConfig({
   base: './',
   plugins: [react(), stampServiceWorkerCache()],
   build: {
+    // Mermaid's parser core is an intentional, artifact-only lazy chunk at
+    // ~594 kB minified. Keep the warning ceiling just above it so startup
+    // regressions and larger accidental chunks still trip the build output.
+    chunkSizeWarningLimit: 600,
     rollupOptions: {
       output: {
         entryFileNames: 'assets/entry/[name]-[hash].js',

@@ -25,38 +25,11 @@ import { geminiStream } from './gemini-stream';
 import { iterateChatStream, type IterateChatStreamTimeouts } from './iterate-chat-stream';
 import { getZenGoTransport } from './zen-go';
 import { getVertexModelTransport } from './vertex-provider';
-import { getOllamaKey } from '@/hooks/useOllamaConfig';
-import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
-import { getZenKey } from '@/hooks/useZenConfig';
-import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
-import { getBlackboxKey } from '@/hooks/useBlackboxConfig';
-import { getKilocodeKey } from '@/hooks/useKilocodeConfig';
-import { getFireworksKey } from '@/hooks/useFireworksConfig';
-import { getOpenAdapterKey } from '@/hooks/useOpenAdapterConfig';
-import { getAnthropicKey } from '@/hooks/useAnthropicConfig';
-import { getOpenAIKey } from '@/hooks/useOpenAIConfig';
-import { getGoogleKey } from '@/hooks/useGoogleConfig';
-import {
-  getAzureBaseUrl,
-  getAzureKey,
-  getAzureModelName,
-  getBedrockBaseUrl,
-  getBedrockKey,
-  getBedrockModelName,
-} from '@/hooks/useExperimentalProviderConfig';
-import {
-  getVertexKey,
-  getVertexModelName,
-  getVertexBaseUrl,
-  getVertexMode,
-  getVertexRegion,
-} from '@/hooks/useVertexConfig';
+import { getAzureModelName, getBedrockModelName } from '@/hooks/useExperimentalProviderConfig';
+import { getVertexModelName } from '@/hooks/useVertexConfig';
 import {
   getCloudflareModelName,
-  getCloudflareWorkerConfigured,
   getOllamaModelName,
-  getPreferredProvider,
-  getLastUsedProvider,
   getOpenRouterModelName,
   getZenModelName,
   getNvidiaModelName,
@@ -68,11 +41,14 @@ import {
   getOpenAIModelName,
   getGoogleModelName,
 } from './providers';
-import type { PreferredProvider } from './providers';
-import { normalizeExperimentalBaseUrl } from './experimental-providers';
-import { normalizeVertexRegion } from './vertex-provider';
-import { createChunkedEmitter } from './orchestrator';
-import type { StreamUsage, ChunkMetadata } from './orchestrator-streaming';
+import { getActiveProvider, isProviderAvailable, type ActiveProvider } from './active-provider';
+import {
+  createChunkedEmitter,
+  type StreamUsage,
+  type ChunkMetadata,
+} from './orchestrator-streaming';
+
+export { getActiveProvider, isProviderAvailable, type ActiveProvider } from './active-provider';
 
 // ---------------------------------------------------------------------------
 // Standard timeouts shared with `buildChatTimeouts` below.
@@ -83,97 +59,6 @@ const STANDARD_TIMEOUTS = {
   contentTimeoutMs: 60_000,
   totalTimeoutMs: 180_000,
 } as const;
-
-// ---------------------------------------------------------------------------
-// Active provider detection
-// ---------------------------------------------------------------------------
-
-export type ActiveProvider =
-  | 'ollama'
-  | 'openrouter'
-  | 'cloudflare'
-  | 'zen'
-  | 'nvidia'
-  | 'blackbox'
-  | 'azure'
-  | 'kilocode'
-  | 'fireworks'
-  | 'openadapter'
-  | 'bedrock'
-  | 'vertex'
-  | 'anthropic'
-  | 'openai'
-  | 'google'
-  | 'demo';
-
-const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
-  ollama: () => Boolean(getOllamaKey()),
-  openrouter: () => Boolean(getOpenRouterKey()),
-  cloudflare: () => getCloudflareWorkerConfigured(),
-  zen: () => Boolean(getZenKey()),
-  nvidia: () => Boolean(getNvidiaKey()),
-  blackbox: () => Boolean(getBlackboxKey()),
-  kilocode: () => Boolean(getKilocodeKey()),
-  fireworks: () => Boolean(getFireworksKey()),
-  openadapter: () => Boolean(getOpenAdapterKey()),
-  azure: () =>
-    Boolean(
-      getAzureKey() &&
-        normalizeExperimentalBaseUrl('azure', getAzureBaseUrl()).ok &&
-        getAzureModelName(),
-    ),
-  bedrock: () =>
-    Boolean(
-      getBedrockKey() &&
-        normalizeExperimentalBaseUrl('bedrock', getBedrockBaseUrl()).ok &&
-        getBedrockModelName(),
-    ),
-  vertex: () => {
-    const mode = getVertexMode();
-    if (mode === 'native') {
-      return Boolean(
-        getVertexKey() && normalizeVertexRegion(getVertexRegion()).ok && getVertexModelName(),
-      );
-    }
-    return Boolean(
-      getVertexKey() &&
-        normalizeExperimentalBaseUrl('vertex', getVertexBaseUrl()).ok &&
-        getVertexModelName(),
-    );
-  },
-  anthropic: () => Boolean(getAnthropicKey() && getAnthropicModelName()),
-  openai: () => Boolean(getOpenAIKey() && getOpenAIModelName()),
-  google: () => Boolean(getGoogleKey() && getGoogleModelName()),
-};
-
-/**
- * Fallback order when no preference or last-used provider is available.
- * Neutral ordering — no provider is favoured.
- */
-const PROVIDER_FALLBACK_ORDER: PreferredProvider[] = [
-  'ollama',
-  'openrouter',
-  'cloudflare',
-  'zen',
-  'nvidia',
-  'blackbox',
-  'kilocode',
-  'fireworks',
-  'openadapter',
-  'anthropic',
-  'openai',
-  'google',
-];
-
-/**
- * Check whether a provider is fully configured (has credentials / required fields).
- * Returns false for 'demo' since it's not a real provider.
- */
-export function isProviderAvailable(provider: ActiveProvider): boolean {
-  if (provider === 'demo') return false;
-  const check = PROVIDER_READY_CHECKS[provider as PreferredProvider];
-  return check ? check() : false;
-}
 
 // ---------------------------------------------------------------------------
 // Provider failover candidate resolution
@@ -293,31 +178,6 @@ export function resolveFailoverCandidates(
   return FAILOVER_PROVIDER_ORDER.filter(
     (p) => !tried.has(p) && isProviderAvailable(p) && getProviderFailoverShape(p) === shape,
   );
-}
-
-/**
- * Determine which provider is active.
- *
- * 1. If the user set a preference AND that provider has a key → use it.
- * 2. Use the last provider the user picked (if still configured).
- * 3. Otherwise, use whichever provider has a key (first available wins).
- * 4. No keys → demo.
- */
-export function getActiveProvider(): ActiveProvider {
-  const preferred = getPreferredProvider();
-
-  // Honour explicit preference when the provider is fully configured.
-  if (preferred && PROVIDER_READY_CHECKS[preferred]()) return preferred;
-
-  // No preference — use the last provider the user picked, if still ready.
-  const lastUsed = getLastUsedProvider();
-  if (lastUsed && PROVIDER_READY_CHECKS[lastUsed]()) return lastUsed;
-
-  // Fall back to any available provider.
-  for (const p of PROVIDER_FALLBACK_ORDER) {
-    if (PROVIDER_READY_CHECKS[p]()) return p;
-  }
-  return 'demo';
 }
 
 /**

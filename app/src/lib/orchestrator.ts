@@ -40,12 +40,12 @@ import { buildAttachmentContentParts } from './attachment-content-parts';
 import { routesThroughAnthropicBridge } from './orchestrator-provider-routing';
 // --- Re-exports from orchestrator-streaming (break circular dependency) ---
 export {
+  createChunkedEmitter,
   parseProviderError,
   type StreamUsage,
   type ChunkMetadata,
 } from './orchestrator-streaming';
 
-import type { ChunkMetadata } from './orchestrator-streaming';
 import type { ActiveProvider } from './orchestrator-provider-routing';
 
 // --- Imports from extracted modules ---
@@ -832,80 +832,4 @@ export function toLLMMessages(
     if (msg.reasoning_blocks && msg.reasoning_blocks.length > 0) return true;
     return isNonEmptyContent(msg.content);
   });
-}
-
-// ---------------------------------------------------------------------------
-// Smart Chunking — reduces UI updates on mobile by batching tokens
-// ---------------------------------------------------------------------------
-
-/**
- * Creates a chunked emitter that batches tokens for smoother mobile UI.
- *
- * Tokens are buffered and emitted when:
- * 1. A word boundary (space/newline) is encountered
- * 2. Buffer reaches MIN_CHUNK_SIZE characters
- * 3. FLUSH_INTERVAL_MS passes without emission
- *
- * This reduces React setState calls from per-character to per-word,
- * dramatically improving performance on slower mobile devices.
- */
-export interface ChunkedEmitter {
-  push(token: string): void;
-  flush(): void;
-}
-
-export function createChunkedEmitter(
-  emit: (chunk: string, meta?: ChunkMetadata) => void,
-  options?: { minChunkSize?: number; flushIntervalMs?: number },
-): ChunkedEmitter {
-  const MIN_CHUNK_SIZE = options?.minChunkSize ?? 4; // Min chars before emitting
-  const FLUSH_INTERVAL_MS = options?.flushIntervalMs ?? 50; // Max time to hold tokens
-
-  let buffer = '';
-  let flushTimer: ReturnType<typeof setTimeout> | undefined;
-  let chunkIndex = 0;
-
-  const doEmit = () => {
-    if (buffer) {
-      chunkIndex++;
-      emit(buffer, { chunkIndex });
-      buffer = '';
-    }
-    if (flushTimer) {
-      clearTimeout(flushTimer);
-      flushTimer = undefined;
-    }
-  };
-
-  const scheduleFlush = () => {
-    if (!flushTimer) {
-      flushTimer = setTimeout(doEmit, FLUSH_INTERVAL_MS);
-    }
-  };
-
-  return {
-    push(token: string) {
-      buffer += token;
-
-      // Emit on word boundaries (space, newline) if we have enough content
-      const hasWordBoundary = /[\s\n]/.test(token);
-      if (hasWordBoundary && buffer.length >= MIN_CHUNK_SIZE) {
-        doEmit();
-        return;
-      }
-
-      // Emit if buffer is getting large (long word without spaces)
-      if (buffer.length >= MIN_CHUNK_SIZE * 4) {
-        doEmit();
-        return;
-      }
-
-      // Otherwise, schedule a flush to ensure tokens don't get stuck
-      scheduleFlush();
-    },
-
-    flush() {
-      doEmit();
-    },
-  };
 }

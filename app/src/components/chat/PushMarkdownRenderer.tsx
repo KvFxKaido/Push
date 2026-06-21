@@ -1,14 +1,6 @@
 import { cloneElement, isValidElement, type ReactElement } from 'react';
 import { Streamdown, type Components } from 'streamdown';
-import { createCodePlugin } from '@streamdown/code';
-
-// Shiki code-highlighting plugin (the supported Streamdown integration — base
-// Streamdown does NOT highlight on its own; it needs this plugin passed via
-// `plugins.code`). Push is dark-only, so both slots of Shiki's [light, dark]
-// tuple use the same dark theme. The plugin (and Shiki) load lazily as part of
-// the already-lazy adapter chunk; highlighting resolves asynchronously, so the
-// first paint shows the code text immediately and colors fill in when ready.
-const codePlugin = createCodePlugin({ themes: ['github-dark-default', 'github-dark-default'] });
+import { pushCodePlugin } from './push-code-plugin';
 
 /**
  * Push's markdown renderer, adapting Vercel's Streamdown to Push's chat styling
@@ -18,9 +10,9 @@ const codePlugin = createCodePlugin({ themes: ['github-dark-default', 'github-da
  * Design decisions (see PR notes):
  *  - **Push-styled elements; Shiki code highlighting on by default.** Prose
  *    elements are overridden with Push-styled components. Fenced code blocks use
- *    Streamdown's CodeBlock with the `@streamdown/code` (Shiki) plugin, themed
- *    through Push's existing shadcn tokens. Highlighting can be turned off per
- *    call (`enableCodeHighlight={false}`) to render plain Push monospace with no
+ *    Streamdown's CodeBlock with Push's curated Shiki plugin, themed through
+ *    Push's existing shadcn tokens. Highlighting can be turned off per call
+ *    (`enableCodeHighlight={false}`) to render plain Push monospace with no
  *    Shiki cost. Mermaid and math (KaTeX) plugins are NOT wired, so those
  *    components never render and their chunks never load.
  *  - **No Streamdown built-in animation.** `animated={false}` so its staggered
@@ -165,9 +157,9 @@ export interface PushMarkdownRendererProps {
   /** When streaming, parse incomplete markdown so half-open tokens render cleanly. */
   isStreaming: boolean;
   /**
-   * Syntax-highlight fenced code blocks via Streamdown's `@streamdown/code`
-   * (Shiki) plugin. On by default. When false, code blocks render as plain
-   * Push-styled monospace with no Shiki cost.
+   * Syntax-highlight fenced code blocks via Push's curated Streamdown/Shiki
+   * plugin. On by default. When false, code blocks render as plain Push-styled
+   * monospace with no Shiki cost.
    */
   enableCodeHighlight?: boolean;
 }
@@ -191,7 +183,7 @@ export function PushMarkdownRenderer({
       lineNumbers={false}
       disallowedElements={['img']}
       components={enableCodeHighlight ? BASE_COMPONENTS : COMPONENTS_PLAIN}
-      plugins={enableCodeHighlight ? { code: codePlugin } : undefined}
+      plugins={enableCodeHighlight ? { code: pushCodePlugin } : undefined}
       className={isStreaming ? 'push-markdown push-markdown-streaming' : 'push-markdown'}
     >
       {text}

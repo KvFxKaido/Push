@@ -13,7 +13,7 @@ import {
 import { getTavilyKey } from '@/hooks/useTavilyConfig';
 import { getGoogleKey } from '@/hooks/useGoogleConfig';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
-import { getActiveProvider } from '@/lib/orchestrator-provider-routing';
+import { getActiveProvider } from '@/lib/active-provider';
 
 interface WebSearchMenuProps {
   /** Shared header round-button class so the trigger matches sibling icons. */
