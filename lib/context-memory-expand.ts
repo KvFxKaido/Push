@@ -140,10 +140,18 @@ export async function expandMemoryRecords(input: MemoryExpandInput): Promise<Mem
     }
     const expanded = toExpanded(record);
     // Resolve the lossless original when the record points at one and a log is
-    // available. A pruned/absent verbatim entry degrades silently to the capped
-    // stored detail — the record is still self-describing without it.
+    // available. Verbatim resolution is purely additive, so it is best-effort: a
+    // pruned/absent entry — or a read that throws on a broken store — degrades to
+    // the capped stored detail rather than failing the expand. The degrade is not
+    // silent: the call-site (`runMemoryExpand`) logs records left with a
+    // `verbatimRef` but `verbatim !== true` as `verbatim_expand_unresolved`.
     if (record.verbatimRef && input.verbatimLog) {
-      const entry = await input.verbatimLog.read(record.verbatimRef);
+      let entry: Awaited<ReturnType<typeof input.verbatimLog.read>> | undefined;
+      try {
+        entry = await input.verbatimLog.read(record.verbatimRef);
+      } catch {
+        entry = undefined;
+      }
       if (entry) {
         expanded.detail = entry.text;
         expanded.verbatim = true;

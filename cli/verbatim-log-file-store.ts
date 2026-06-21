@@ -137,6 +137,14 @@ async function listAllFiles(baseDir: string): Promise<string[]> {
 export function createFileVerbatimLog(options: CreateFileVerbatimLogOptions): VerbatimLog {
   const { baseDir } = options;
 
+  // Single-chain serializer (identical to the typed file store). Each op waits
+  // for the previous one to settle before running. The returned `next` carries
+  // the operation's real result *and its real rejection* — callers `await` it
+  // and see failures normally (append failures are surfaced/logged by
+  // `stampVerbatimDetail`; read failures degrade to capped detail in
+  // `expandMemoryRecords`). The separate `tail = next.catch(() => {})` exists
+  // only so one op's rejection does not poison the queue for the *next* op; it
+  // does not swallow the error from the caller, which holds `next`.
   let tail: Promise<unknown> = Promise.resolve();
   function serialize<T>(fn: () => Promise<T>): Promise<T> {
     const next = tail.then(() => fn());

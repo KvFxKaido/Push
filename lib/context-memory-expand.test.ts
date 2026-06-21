@@ -285,4 +285,28 @@ describe('expandMemoryRecords — verbatim resolution (LCM Phase 3)', () => {
     expect(resolved.found[0]?.verbatim).toBeUndefined();
     expect(resolved.found[0]?.detail!.length).toBeLessThanOrEqual(2000);
   });
+
+  it('degrades to capped detail when the verbatim log read throws (broken store)', async () => {
+    const store = createInMemoryStore();
+    const record = createMemoryRecord({
+      kind: 'finding',
+      summary: 'big finding',
+      detail: 'D'.repeat(5000),
+      scope: { repoFullName: repo, branch },
+      source: { kind: 'explorer', label: 'Explorer investigation' },
+    });
+    record.verbatimRef = 'vb_whatever_5000';
+    await store.write(record);
+
+    // A log whose read rejects (e.g. permission denied) must not fail the expand.
+    const brokenLog = {
+      ...createInMemoryVerbatimLog(),
+      read: () => Promise.reject(new Error('EACCES')),
+    };
+
+    const resolved = await expandMemoryRecords({ ids: [record.id], store, verbatimLog: brokenLog });
+    expect(resolved.found).toHaveLength(1);
+    expect(resolved.found[0]?.verbatim).toBeUndefined();
+    expect(resolved.found[0]?.detail!.length).toBeLessThanOrEqual(2000);
+  });
 });

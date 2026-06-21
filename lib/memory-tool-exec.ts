@@ -226,6 +226,11 @@ export async function runMemoryExpand(
   });
 
   const verbatimResolved = result.found.filter((r) => r.verbatim).length;
+  // A log is always supplied above, so any found record that still carries a
+  // verbatimRef without `verbatim` set is one whose backing entry was pruned,
+  // absent, or unreadable — surface it so a broken/over-pruned verbatim store
+  // is visible instead of silently degrading to capped detail.
+  const verbatimUnresolved = result.found.filter((r) => r.verbatimRef && !r.verbatim).length;
   const logCtx = {
     repoFullName: ctx.scope.repoFullName,
     branch: ctx.scope.branch ?? null,
@@ -233,8 +238,21 @@ export async function runMemoryExpand(
     found: result.found.length,
     missing: result.missing.length,
     verbatim: verbatimResolved,
+    verbatimUnresolved,
   };
   const meta = { ...logCtx, missingIds: result.missing };
+
+  if (verbatimUnresolved > 0) {
+    console.log(
+      JSON.stringify({
+        level: 'warn',
+        event: 'verbatim_expand_unresolved',
+        repoFullName: ctx.scope.repoFullName,
+        branch: ctx.scope.branch ?? null,
+        unresolved: verbatimUnresolved,
+      }),
+    );
+  }
 
   if (result.found.length === 0) {
     log('memory_expand_miss', logCtx);
