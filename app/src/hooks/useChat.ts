@@ -46,6 +46,7 @@ import { useChatReplay } from './chat-replay';
 import { useChatCheckpoint } from './useChatCheckpoint';
 import { type SendLoopContext } from './chat-send';
 import { runRoundLoop } from './chat-round-loop';
+import { maybeCompactBeforeTurn } from './chat-compaction';
 import { routeActiveRunInput } from './chat-active-run-router';
 import { prepareSendContext } from './chat-prepare-send';
 import { acquireRunSession, finalizeRunSession } from './chat-run-session';
@@ -717,11 +718,11 @@ export function useChat(
           const lane = await startInlineCoderTurn(loopCtx, { trimmedText, attachments, apiMessages, runId: runEngineStateRef.current.runId, agentsMdRef, instructionFilenameRef, getVerificationPolicyForChat });
           loopCompletedNormally = lane.completedNormally;
         } else {
-          const result = await runRoundLoop(
-            loopCtx,
-            { apiMessages, recoveryState: toolCallRecoveryState },
-            { runJournalEntryRef, persistRunJournal, dequeuePendingSteer, pendingSteersByChatRef },
-          );
+          // Pre-turn LLM compaction (fails soft; sync heuristic backstops). Coordinator: chat-compaction.ts.
+          // biome-ignore format: kept compact for the useChat max-lines cap.
+          const compacted = await maybeCompactBeforeTurn(loopCtx, { apiMessages, provider: lockedProviderForChat, model: resolvedModelForChat ?? undefined });
+          // biome-ignore format: kept compact for the useChat max-lines cap.
+          const result = await runRoundLoop(loopCtx, { apiMessages: compacted, recoveryState: toolCallRecoveryState }, { runJournalEntryRef, persistRunJournal, dequeuePendingSteer, pendingSteersByChatRef });
           loopCompletedNormally = result.loopCompletedNormally;
         }
       } catch (err) {

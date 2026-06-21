@@ -153,7 +153,7 @@ describe('createCompactionMessage', () => {
       phase: 'hard_trim',
       messagesDropped: 3,
     });
-    const messages = [{ id: 'a' }, marker, { id: 'b' }];
+    const messages = [{ id: 'a', visibleToModel: true }, marker, { id: 'b', visibleToModel: true }];
     const out = filterModelVisibleMessages(messages);
     expect(out.map((m) => (m as { id?: string }).id)).toEqual(['a', 'b']);
   });
