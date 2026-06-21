@@ -35,6 +35,7 @@ import {
   createLocalDaemonBinding,
 } from '@/lib/local-daemon-binding';
 import { LOCAL_PC_HOST } from '@/lib/local-pc-binding';
+import { shouldNudgeReconnect, subscribeReconnectNudges } from '@/lib/reconnect-nudge';
 import type { LiveDaemonBinding } from '@/lib/local-daemon-sandbox-client';
 import type { LocalPcBinding } from '@/types';
 
@@ -378,6 +379,34 @@ export function useLocalDaemon(
     dispatchReconnect({ type: 'MANUAL_RESET' });
     setLocalReconnectKey((k) => k + 1);
   }, []);
+
+  // Environment "try now" nudge (GOpencode review #3): when the network
+  // comes back or the app foregrounds, collapse any pending backoff
+  // wait and reconnect immediately instead of sitting out up to 30s —
+  // but ONLY when we're actually parked in a dropped/exhausted state.
+  // A healthy or in-flight link is left untouched (the guard lives in
+  // `shouldNudgeReconnect`). Read the live status from a ref so the
+  // listeners are registered once per binding, not re-bound on every
+  // status transition.
+  const wsStatusRef = useRef(wsStatus);
+  useEffect(() => {
+    wsStatusRef.current = wsStatus;
+  }, [wsStatus]);
+  const nudgeReconnect = useCallback(() => {
+    if (!shouldNudgeReconnect(wsStatusRef.current)) return;
+    dispatchReconnect({ type: 'MANUAL_RESET' });
+    setLocalReconnectKey((k) => k + 1);
+    // Empty deps is intentional: this reads `wsStatusRef.current` (the
+    // live mutable ref) rather than a captured `wsStatus` snapshot, so
+    // the callback must stay referentially stable. Adding `wsStatus` (or
+    // anything else) here would re-create it on every status transition,
+    // which re-binds the env listeners below — and reading the ref makes
+    // those deps unnecessary anyway. Do not add deps.
+  }, []);
+  useEffect(() => {
+    if (port === null || token === null) return;
+    return subscribeReconnectNudges(nudgeReconnect);
+  }, [port, token, nudgeReconnect]);
 
   return { status, events, request, liveBinding, reconnect, reconnectInfo };
 }

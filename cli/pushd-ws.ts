@@ -152,6 +152,13 @@ export interface PushdWsOptions {
   portFilePath?: string;
   /** Max bearer-token length accepted in the Authorization header. */
   maxTokenLength?: number;
+  /**
+   * Liveness heartbeat interval (ms). Default
+   * `DEFAULT_HEARTBEAT_INTERVAL_MS`. Set ≤ 0 to disable the heartbeat
+   * (no background timer) — tests not exercising half-open detection
+   * pass 0; tests that do pass a small value.
+   */
+  heartbeatIntervalMs?: number;
 }
 
 /**
@@ -213,6 +220,23 @@ export interface PushdWsHandle {
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_MAX_TOKEN_LENGTH = 512;
+
+/**
+ * Server-side liveness heartbeat (GOpencode review #2) — the accept-side
+ * mirror of the relay client's ping (`RELAY_HEARTBEAT_INTERVAL_MS`).
+ * Ping each connection on this interval; terminate any that missed the
+ * previous round's pong/traffic. Set ≤ 0 to disable (tests that don't
+ * exercise it pass a small value or 0).
+ */
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
+
+/**
+ * Suspend the heartbeat for a connection whose send buffer exceeds this
+ * — a backlog means we're mid-transfer (link up, just slow), so pinging
+ * and timing it out would be a false positive. Mirrors the relay
+ * client's `RELAY_HEARTBEAT_BUFFER_SUSPEND_BYTES`.
+ */
+const HEARTBEAT_BUFFER_SUSPEND_BYTES = 64 * 1024;
 
 function getPortFilePath(override?: string): string {
   if (override) return override;
@@ -317,6 +341,7 @@ export async function startPushdWs(
     throw new Error(`pushd-ws refuses non-loopback host: ${host}`);
   }
   const maxTokenLength = options.maxTokenLength ?? DEFAULT_MAX_TOKEN_LENGTH;
+  const heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
   const portFilePath = getPortFilePath(options.portFilePath);
 
   // The HTTP server is only used as a transport for WS upgrades. Any
@@ -357,6 +382,59 @@ export async function startPushdWs(
   // one direct device-token connection) collapse into one bucket so
   // a single-device revoke can fan out cleanly.
   const connectionsByDeviceTokenId = new Map<string, Set<ConnectionRegistryEntry>>();
+
+  // Server-side liveness heartbeat (GOpencode review #2). A paired phone
+  // that vanishes on a flaky network leaves its WS half-open — no close
+  // frame ever arrives, so the per-connection `cleanup()` (which aborts
+  // in-flight sandbox_exec runs and deregisters session clients) would
+  // otherwise wait on a TCP timeout. Ping each open connection on an
+  // interval and terminate any that missed the previous round's
+  // pong/traffic; the terminate synthesizes the close the network never
+  // delivered, and the existing close handler runs cleanup promptly.
+  //
+  // Liveness is tracked per-connection in a map keyed by the socket and
+  // mutated by the `pong` handler / message handler (any inbound frame
+  // proves the peer is alive). The entry is deleted in `cleanup`.
+  const heartbeatLiveness = new Map<WebSocket, { alive: boolean; deviceId: string }>();
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  if (heartbeatIntervalMs > 0) {
+    heartbeatTimer = setInterval(() => {
+      for (const ws of wss.clients) {
+        const liveness = heartbeatLiveness.get(ws);
+        if (!liveness) continue;
+        if (ws.readyState !== ws.OPEN) continue;
+        // Mid-transfer backlog: link is up but slow. Treat as alive and
+        // skip this round rather than risk a false-positive kill.
+        if (ws.bufferedAmount > HEARTBEAT_BUFFER_SUSPEND_BYTES) {
+          liveness.alive = true;
+          continue;
+        }
+        if (!liveness.alive) {
+          // No pong/traffic since the previous tick → half-open. The
+          // event name calls out the cause so ops can grep heartbeat
+          // kills apart from peer-initiated closes; never logs token
+          // material (deviceId is the parent device tokenId, already
+          // emitted in the auth.upgrade audit event).
+          process.stderr.write(
+            `${JSON.stringify({ level: 'warn', event: 'pushd_ws_heartbeat_half_open', deviceId: liveness.deviceId })}\n`,
+          );
+          try {
+            ws.terminate();
+          } catch {
+            // best-effort — the close handler still runs cleanup
+          }
+          continue;
+        }
+        liveness.alive = false;
+        try {
+          ws.ping();
+        } catch {
+          // best-effort; a failed ping surfaces as a missed pong next round
+        }
+      }
+    }, heartbeatIntervalMs);
+    if (typeof heartbeatTimer.unref === 'function') heartbeatTimer.unref();
+  }
 
   httpServer.on('upgrade', async (req, socket, head) => {
     try {
@@ -482,6 +560,16 @@ export async function startPushdWs(
     }
     bucket.add(registryEntry);
 
+    // Register heartbeat liveness for this connection. Any pong proves
+    // the peer is alive; so does any inbound data frame (marked in the
+    // message handler below), so a chatty client stays certified even
+    // if it never pongs specifically.
+    const liveness = { alive: true, deviceId: auth.parentDeviceTokenId };
+    heartbeatLiveness.set(ws, liveness);
+    ws.on('pong', () => {
+      liveness.alive = true;
+    });
+
     const attachedSessions = new Set<string>();
     // Per-connection state plumbed into every handler via the dispatcher
     // context. Today: in-flight sandbox_exec AbortControllers so cancel_run
@@ -503,6 +591,9 @@ export async function startPushdWs(
     };
 
     ws.on('message', async (data, isBinary) => {
+      // Inbound traffic proves the peer is alive — credit the heartbeat
+      // so a busy connection isn't reaped between pings.
+      liveness.alive = true;
       if (isBinary) {
         // Mirror Unix-socket behaviour: text/NDJSON only.
         emit(
@@ -600,6 +691,9 @@ export async function startPushdWs(
         }
       }
       wsState.activeRuns.clear();
+      // Drop heartbeat liveness for this socket so a terminated/closed
+      // connection isn't re-pinged on the next interval tick.
+      heartbeatLiveness.delete(ws);
       // Deregister from the parent-device bucket. If this was the
       // last connection for the device, drop the (now empty) bucket
       // so `listConnectedDevices` doesn't surface stale zero-rows.
@@ -641,6 +735,10 @@ export async function startPushdWs(
         port,
         close: () =>
           new Promise<void>((resolveClose) => {
+            if (heartbeatTimer !== null) {
+              clearInterval(heartbeatTimer);
+              heartbeatTimer = null;
+            }
             for (const client of wss.clients) {
               try {
                 client.close(1001, 'pushd shutting down');
