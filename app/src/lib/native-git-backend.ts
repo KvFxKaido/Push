@@ -129,6 +129,22 @@ export class NativeGitBackend implements GitBackend {
   async switchBranch(branch: string): Promise<GitWriteResult> {
     return this.runExclusive(async () => {
       try {
+        const first = toWriteResult(await this.plugin.switchBranch({ dir: this.dir, branch }));
+        if (first.ok) return first;
+        // Shallow / single-branch clones (created with `depth` or only the
+        // initial branch) may not have the target branch locally yet. Fetch it
+        // (depth 1) then retry — matching SandboxPlumbingBackend.switchBranch so
+        // the native backend honors the same contract.
+        const fetched = toWriteResult(
+          await this.plugin.fetch({
+            dir: this.dir,
+            remote: 'origin',
+            refspec: `${branch}:refs/remotes/origin/${branch}`,
+            depth: 1,
+            token: this.getToken?.(),
+          }),
+        );
+        if (!fetched.ok) return fetched;
         return toWriteResult(await this.plugin.switchBranch({ dir: this.dir, branch }));
       } catch (err) {
         return writeError(err);

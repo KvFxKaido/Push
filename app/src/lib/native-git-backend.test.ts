@@ -115,6 +115,50 @@ describe('NativeGitBackend writes', () => {
   });
 });
 
+describe('NativeGitBackend.switchBranch shallow-clone fallback', () => {
+  it('fetches the branch then retries the switch when the first switch fails', async () => {
+    const switchBranch = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, message: 'pathspec did not match' })
+      .mockResolvedValueOnce({ ok: true });
+    const fetch = vi.fn(async () => ({ ok: true }));
+    const backend = new NativeGitBackend(fakePlugin({ switchBranch, fetch }), {
+      dir: DIR,
+      getToken: () => 'gho_t',
+    });
+    const res = await backend.switchBranch('feat/x');
+    expect(res.ok).toBe(true);
+    expect(switchBranch).toHaveBeenCalledTimes(2);
+    // Fetch the missing branch (depth 1) with the transient token, like the
+    // shared backend's depth-1 fallback.
+    expect(fetch).toHaveBeenCalledWith({
+      dir: DIR,
+      remote: 'origin',
+      refspec: 'feat/x:refs/remotes/origin/feat/x',
+      depth: 1,
+      token: 'gho_t',
+    });
+  });
+
+  it('surfaces the fetch failure when the fallback fetch fails', async () => {
+    const switchBranch = vi.fn(async () => ({ ok: false, message: 'no local ref' }));
+    const fetch = vi.fn(async () => ({ ok: false, message: 'fetch failed' }));
+    const backend = new NativeGitBackend(fakePlugin({ switchBranch, fetch }), { dir: DIR });
+    const res = await backend.switchBranch('feat/x');
+    expect(res.ok).toBe(false);
+    expect(res.stderr).toBe('fetch failed');
+    expect(switchBranch).toHaveBeenCalledTimes(1); // no retry once the fetch failed
+  });
+
+  it('switches directly without fetching when the branch is already local', async () => {
+    const fetch = vi.fn(async () => ({ ok: true }));
+    const backend = new NativeGitBackend(fakePlugin({ fetch }), { dir: DIR });
+    const res = await backend.switchBranch('feat/x');
+    expect(res.ok).toBe(true);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
 describe('NativeGitBackend serialization (shared working-copy lock)', () => {
   it('serializes concurrent writes to the same working copy', async () => {
     const order: string[] = [];
