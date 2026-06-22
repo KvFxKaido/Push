@@ -24,6 +24,8 @@ import {
 import { buildTodoContext } from '@/lib/todo-tools';
 import { detectAnyToolCall } from '@/lib/tool-dispatch';
 import { promoteReasoningAnswer } from '@/lib/tool-call-recovery';
+import { getReasoningPhaseDisplay } from '@push/lib/role-display';
+import { isReasoningHeavyModel } from '@push/lib/reasoning-models';
 import { setOpenRouterSessionId } from '@/lib/openrouter-session';
 import { getDefaultMemoryStore } from '@push/lib/context-memory-store';
 import { type SessionDigest, SESSION_DIGEST_HEADER } from '@push/lib/session-digest';
@@ -196,6 +198,13 @@ export async function streamAssistantRound(
       // orchestrator may resolve to OpenRouter even when lockedProvider differs,
       // and the consume-and-clear getter keeps it from leaking to other providers.
       setOpenRouterSessionId(chatId);
+      // Known heavy reasoners (glm-5.x, kimi-k2.x, …) think on the reasoning
+      // channel for tens of seconds before any text. Resolved once per attempt
+      // so the per-token thinking handler below can rotate a liveness verb
+      // instead of freezing on a static label during that dead air — `model` is
+      // the best signal available at this seam (the orchestrator may still
+      // resolve a different backend, but the locked pick is the common case).
+      const reasoningHeavy = isReasoningHeavyModel(model);
       streamChat(
         apiMessagesForSend,
         (token) => {
@@ -246,7 +255,19 @@ export async function streamAssistantRound(
             text: accumulated,
             thinking: thinkingAccumulated,
           });
-          updateAgentStatus({ active: true, phase: 'Reasoning...' }, { chatId, log: false });
+          // Phase label comes from the role-display seam, never hand-spelled.
+          // For a known heavy reasoner, pass the vibe verbs so the bar rotates
+          // through them during reasoning dead air (the same liveness
+          // affordance "Responding..." gets) — a long glm/kimi think reads as
+          // alive, not stalled. Non-heavy models keep the static phase.
+          updateAgentStatus(
+            {
+              active: true,
+              phase: `${getReasoningPhaseDisplay().phase}…`,
+              ...(reasoningHeavy ? { verbs: vibeVerbs } : {}),
+            },
+            { chatId, log: false },
+          );
           setConversations((prev) => {
             const conv = prev[chatId];
             if (!conv) return prev;

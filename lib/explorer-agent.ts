@@ -30,6 +30,7 @@ import type { AIProviderType, LlmMessage, PushStream } from './provider-contract
 import type { RunEventInput } from './runtime-contract.js';
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
 import { iteratePushStreamText } from './stream-utils.js';
+import { reasoningHeavyStreamOpts } from './reasoning-models.js';
 import {
   getToolPublicName,
   getToolPublicNames,
@@ -518,8 +519,9 @@ export async function runExplorerAgent<TCall, TCard>(
       // the activity timer (which only resets on `text_delta`) kills an
       // actively-thinking round. Thinking IS progress here; the wall-clock cap
       // above bounds a model that reasons forever. Mirrors deep-reviewer
-      // (PR #907).
-      { reasoningResetsActivityTimer: true },
+      // (PR #907). The helper also widens the first-token window for a known
+      // heavy reasoner; other models keep the per-round window unchanged.
+      reasoningHeavyStreamOpts(explorerModelId),
     );
 
     if (streamError) {
