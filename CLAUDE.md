@@ -132,6 +132,8 @@ Canonical shape is `console.log(JSON.stringify({ level, event, ...ctx }))` with 
 - `coder_checkpoint_captured` ↔ `coder_checkpoint_failed`
 - `coder_job_resumed` ↔ `coder_resume_restore_failed` ↔ `coder_resume_cap_exhausted` ↔ `coder_resume_no_checkpoint` ↔ `coder_resume_state_parse_failed`
 
+**Stream choice is surface-dependent.** `console.log` is the canonical sink for worker/web code, where stdout is the logging pipeline. But a shared `lib/` module that also runs on the **CLI must emit to `console.error`** — CLI stdout is reserved for user output and `--json` payloads, so a structured log on stdout corrupts them. Shape and event-pairing are identical; only the stream changes. Precedent: `lib/git/repo-lock.ts`, `lib/context-memory.ts`, `lib/verbatim-retain.ts`.
+
 In-band with the change that introduces the silent path — not as a follow-up. Silent returns shipped at PR-merge time become an "untriaged runtime degradation" the next person paying attention has to root-cause.
 
 ### Decision-doc discipline

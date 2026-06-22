@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SandboxPlumbingBackend, type GitExec, type GitExecResult } from './backend.ts';
+import { gitWorkingCopyLockScope } from './repo-lock.ts';
+
+const tick = () => new Promise((r) => setTimeout(r, 0));
 
 const ok = (stdout: string): GitExecResult => ({ stdout, stderr: '', exitCode: 0 });
 const fail = (stderr = 'fatal: not a git repository'): GitExecResult => ({
@@ -199,5 +202,100 @@ describe('SandboxPlumbingBackend writes', () => {
     expect(exec).toHaveBeenCalledWith(['push', 'origin', 'HEAD'], { mutates: true });
     await backend.push({ setUpstream: true, ref: 'feat/x' });
     expect(exec).toHaveBeenLastCalledWith(['push', '-u', 'origin', 'feat/x'], { mutates: true });
+  });
+});
+
+describe('SandboxPlumbingBackend write serialization', () => {
+  /**
+   * An exec that records the joined args of every call in order and blocks the
+   * very first call on a gate, so we can hold one write open and observe
+   * whether a second write's git ops start before the first releases.
+   */
+  function gatedExec() {
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let calls = 0;
+    const exec = vi.fn(async (args: string[]) => {
+      order.push(args.join(' '));
+      if (calls++ === 0) await firstGate;
+      return ok('');
+    });
+    return { exec: exec as unknown as GitExec, order, releaseFirst };
+  }
+
+  it('serializes concurrent writes under a lockScope — the commit add+commit is indivisible', async () => {
+    const { exec, order, releaseFirst } = gatedExec();
+    const backend = new SandboxPlumbingBackend(exec, {
+      lockScope: gitWorkingCopyLockScope('wc-serialized'),
+    });
+
+    const a = backend.commit('A');
+    const b = backend.commit('B');
+    await tick();
+    // commit A holds the lock, blocked on its own `add`. commit B must not have
+    // touched git yet — no interleaving between A's stage and A's commit.
+    expect(order).toEqual(['add -A']);
+
+    releaseFirst();
+    await Promise.all([a, b]);
+    // Strict A-then-B ordering: A fully completes before B begins.
+    expect(order).toEqual(['add -A', 'commit -m A', 'add -A', 'commit -m B']);
+  });
+
+  it('does not serialize without a lockScope — writes interleave as before', async () => {
+    const { exec, order, releaseFirst } = gatedExec();
+    const backend = new SandboxPlumbingBackend(exec);
+
+    const a = backend.commit('A');
+    const b = backend.commit('B');
+    await tick();
+    // With no lock, commit B runs to completion (add + commit) while commit A
+    // is still blocked on its own `add` — B's whole operation slips between A's
+    // stage and A's commit. That interleaving is the race the lock prevents.
+    expect(order).toEqual(['add -A', 'add -A', 'commit -m B']);
+
+    releaseFirst();
+    await Promise.all([a, b]);
+    // Full sequence: A's commit lands last, after B already finished — the
+    // mirror image of the serialized test's grouped A-then-B ordering.
+    expect(order).toEqual(['add -A', 'add -A', 'commit -m B', 'commit -m A']);
+  });
+
+  it('runs writes on different working copies concurrently', async () => {
+    const { exec, order, releaseFirst } = gatedExec();
+    const backendA = new SandboxPlumbingBackend(exec, {
+      lockScope: gitWorkingCopyLockScope('wc-a'),
+    });
+    const backendB = new SandboxPlumbingBackend(exec, {
+      lockScope: gitWorkingCopyLockScope('wc-b'),
+    });
+
+    const a = backendA.commit('A');
+    const b = backendB.commit('B');
+    await tick();
+    // Distinct working copies don't share a lane, so B proceeds while A is held.
+    expect(order.filter((o) => o === 'add -A')).toHaveLength(2);
+
+    releaseFirst();
+    await Promise.all([a, b]);
+  });
+
+  it('runs an { alreadyLocked } write inline inside a held section (no self-deadlock)', async () => {
+    const exec = vi.fn(async () => ok(''));
+    const backend = new SandboxPlumbingBackend(exec, {
+      lockScope: gitWorkingCopyLockScope('wc-already-locked'),
+    });
+    // Hold the lock and run a commit that's told it's already locked. The lock
+    // is non-reentrant, so without the flag this nested acquire would deadlock;
+    // completing proves the flag bypasses re-acquisition.
+    const result = await backend.runExclusive(() =>
+      backend.commit('inside', undefined, { alreadyLocked: true }),
+    );
+    expect(result.ok).toBe(true);
+    expect(exec).toHaveBeenNthCalledWith(1, ['add', '-A'], { mutates: true });
+    expect(exec).toHaveBeenNthCalledWith(2, ['commit', '-m', 'inside'], { mutates: true });
   });
 });

@@ -12,6 +12,7 @@
  */
 
 import { SandboxPlumbingBackend, type GitBackend, type GitExec } from '@push/lib/git/backend';
+import { gitWorkingCopyLockScope } from '@push/lib/git/repo-lock';
 import {
   PushGit,
   composePrePushGates,
@@ -155,7 +156,12 @@ export function createSandboxGitBackend(
   execFn: SandboxExecFn = execInSandbox,
   opts?: { getGitHubToken?: GitHubTokenProvider },
 ): GitBackend {
-  return new SandboxPlumbingBackend(makeSandboxGitExec(sandboxId, execFn, opts?.getGitHubToken));
+  // The sandbox id is the durable working-copy identity on web (one sandbox =
+  // one working copy, preserved across typed branch switches); every backend/
+  // PushGit over the same sandbox shares this lock lane.
+  return new SandboxPlumbingBackend(makeSandboxGitExec(sandboxId, execFn, opts?.getGitHubToken), {
+    lockScope: gitWorkingCopyLockScope(sandboxId),
+  });
 }
 
 /**
@@ -234,7 +240,9 @@ export function createSandboxPushGit(
   },
 ): PushGit {
   const exec = makeSandboxGitExec(sandboxId, opts?.execFn ?? execInSandbox, opts?.getGitHubToken);
-  const backend = new SandboxPlumbingBackend(exec);
+  const backend = new SandboxPlumbingBackend(exec, {
+    lockScope: gitWorkingCopyLockScope(sandboxId),
+  });
   const prePush =
     opts?.prePush ??
     composePrePushGates([

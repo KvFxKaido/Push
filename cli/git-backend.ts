@@ -9,8 +9,11 @@
  */
 
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { promisify } from 'node:util';
 import { SandboxPlumbingBackend, type GitBackend, type GitExec } from '../lib/git/backend.js';
+import { gitWorkingCopyLockScope } from '../lib/git/repo-lock.js';
 import {
   PushGit,
   composePrePushGates,
@@ -58,8 +61,34 @@ export function makeLocalGitExec(cwd: string, timeout: number): GitExec {
   };
 }
 
+/**
+ * Resolve the lock key for the working copy containing `cwd`. Walks up to the
+ * Git **working-tree root** (the nearest ancestor with a `.git`) and keys the
+ * lock on it, so two sessions rooted at different subdirs of one working copy —
+ * say `/repo` and `/repo/packages/app` — mutate the same `.git/index`/HEAD and
+ * share a lock lane. A linked worktree's `.git` is a *file* at its own root,
+ * which is exactly the per-index identity we want (each worktree has its own
+ * index). Pure `fs` — no `git` subprocess — so it never blocks the event loop
+ * or depends on git's version/environment. Falls back to the resolved `cwd`
+ * when no `.git` ancestor exists (an unmanaged dir keys by its own path).
+ */
+function resolveWorkingCopyLockScope(cwd: string): string {
+  let dir = path.resolve(cwd);
+  while (true) {
+    if (existsSync(path.join(dir, '.git'))) return gitWorkingCopyLockScope(dir);
+    const parent = path.dirname(dir);
+    if (parent === dir) break; // reached the filesystem root with no `.git`
+    dir = parent;
+  }
+  return gitWorkingCopyLockScope(path.resolve(cwd));
+}
+
 export function createLocalGitBackend(cwd: string, opts?: { timeoutMs?: number }): GitBackend {
-  return new SandboxPlumbingBackend(makeLocalGitExec(cwd, opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS));
+  // Lock by the working-tree root so every backend/PushGit over the same working
+  // copy shares one lane, regardless of which subdir the session was rooted at.
+  return new SandboxPlumbingBackend(makeLocalGitExec(cwd, opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS), {
+    lockScope: resolveWorkingCopyLockScope(cwd),
+  });
 }
 
 /**
@@ -84,7 +113,9 @@ export function createLocalPushGit(
   },
 ): PushGit {
   const exec = makeLocalGitExec(cwd, opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-  const backend = new SandboxPlumbingBackend(exec);
+  const backend = new SandboxPlumbingBackend(exec, {
+    lockScope: resolveWorkingCopyLockScope(cwd),
+  });
   const prePush =
     opts?.prePush ??
     composePrePushGates([

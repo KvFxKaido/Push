@@ -21,6 +21,7 @@
  * must quote it.
  */
 
+import { withRepoLock } from './repo-lock.js';
 import { parseGitStatusInfo, type GitStatusInfo } from './status.js';
 
 export interface GitExecResult {
@@ -72,7 +73,28 @@ export interface GitWriteResult extends GitExecResult {
   retryable?: boolean;
 }
 
+/**
+ * Tells a write it is already running inside its working-copy critical section,
+ * so it must NOT re-acquire the lock (which is non-reentrant and would
+ * self-deadlock). A composing layer that needs a gate + write to be atomic
+ * (`PushGit`) takes the lock once via {@link GitBackend.runExclusive} and passes
+ * this to the inner `commit`/`push`.
+ */
+export interface WriteLockContext {
+  alreadyLocked?: boolean;
+}
+
 export interface GitBackend {
+  /**
+   * Run `task` inside this backend's working-copy critical section. When a
+   * `lockScope` is configured, it acquires the same lock the sanctioned writes
+   * use; otherwise it runs `task` directly. Composed operations that must be
+   * atomic against concurrent executors — notably `PushGit`'s pre-push gate +
+   * push, where a racing commit must not move HEAD between the audit and the
+   * push — wrap the whole sequence here, then pass `{ alreadyLocked: true }` to
+   * the inner `commit`/`push` so it doesn't re-acquire the (non-reentrant) lock.
+   */
+  runExclusive<T>(task: () => Promise<T>): Promise<T>;
   /** Current branch name, or null when detached / not a repo / error. */
   currentBranch(): Promise<string | null>;
   /** Upstream ref for the current branch (e.g. `origin/feature/x`), or null when unset / unreadable. */
@@ -108,15 +130,50 @@ export interface GitBackend {
   /**
    * Stage and commit. `addArgs` are the `git add` arguments (default `-A`);
    * pass surface-specific forms (e.g. the CLI's `-A -- . :!.push`, or explicit
-   * pathspecs) when staging differs.
+   * pathspecs) when staging differs. `lock` lets a caller that already holds the
+   * working-copy lock (via `runExclusive`) skip re-acquiring it.
    */
-  commit(message: string, opts?: { addArgs?: string[] }): Promise<GitWriteResult>;
-  /** Push (`git push [-u] <remote> <ref>`; defaults to `origin HEAD`). */
-  push(opts?: { setUpstream?: boolean; remote?: string; ref?: string }): Promise<GitWriteResult>;
+  commit(
+    message: string,
+    opts?: { addArgs?: string[] },
+    lock?: WriteLockContext,
+  ): Promise<GitWriteResult>;
+  /**
+   * Push (`git push [-u] <remote> <ref>`; defaults to `origin HEAD`). `lock`
+   * lets a caller already holding the working-copy lock skip re-acquiring it.
+   */
+  push(
+    opts?: { setUpstream?: boolean; remote?: string; ref?: string },
+    lock?: WriteLockContext,
+  ): Promise<GitWriteResult>;
 }
 
 function toWriteResult(res: GitExecResult): GitWriteResult {
   return { ...res, ok: res.exitCode === 0 };
+}
+
+/** Construction options for {@link SandboxPlumbingBackend}. */
+export interface SandboxPlumbingBackendOptions {
+  /**
+   * Working-copy lock scope (build it with `gitWorkingCopyLockScope` from
+   * `./repo-lock.ts`). When set, the sanctioned *writes* — `createBranch`,
+   * `switchBranch`, `commit`, `push` — run under {@link withRepoLock} so two
+   * executors sharing one working copy (a sandbox id on web, a repo path on
+   * CLI) can't race `.git/index.lock` or interleave a stage with another
+   * commit. Every backend over the same working copy MUST pass the *same*
+   * scope string to share the lane. Omitted (e.g. read-normalization unit
+   * tests) means writes run unserialized, exactly as before.
+   *
+   * Only writes are serialized: reads are designed to run in parallel (the
+   * per-turn read cap) and a read that races a write already resolves to null
+   * via the GitExec null-on-failure contract — it can't corrupt the index.
+   * The lock is in-process (a module-level registry); it serializes concurrent
+   * ops within one isolate/daemon, the realistic race here. Cross-isolate
+   * coordination against one sandbox relies on the working copy's own
+   * single-writer nature and higher-level routing (e.g. the single-threaded
+   * coder-job DO), not this lock.
+   */
+  lockScope?: string;
 }
 
 /**
@@ -126,9 +183,34 @@ function toWriteResult(res: GitExecResult): GitWriteResult {
  */
 export class SandboxPlumbingBackend implements GitBackend {
   private readonly exec: GitExec;
+  private readonly lockScope?: string;
 
-  constructor(exec: GitExec) {
+  constructor(exec: GitExec, opts?: SandboxPlumbingBackendOptions) {
     this.exec = exec;
+    this.lockScope = opts?.lockScope;
+  }
+
+  /**
+   * Run a whole logical write under the working-copy lock when a scope is set,
+   * or directly when it isn't. Each write method wraps its *entire* git
+   * sequence (e.g. `commit`'s add+commit, `switchBranch`'s fetch-fallback+
+   * switch) in one call so the sequence is indivisible — never a per-exec lock,
+   * which would leave the gap between staging and commit open to interleaving.
+   *
+   * Public so a composing layer (`PushGit`) can hold this same critical section
+   * across a gate + write; that caller passes `{ alreadyLocked: true }` to the
+   * inner write so the (non-reentrant) lock isn't re-acquired.
+   */
+  runExclusive<T>(task: () => Promise<T>): Promise<T> {
+    return this.lockScope ? withRepoLock(this.lockScope, task) : task();
+  }
+
+  /** Run `task` under the lock unless the caller already holds it. */
+  private maybeExclusive<T>(
+    lock: WriteLockContext | undefined,
+    task: () => Promise<T>,
+  ): Promise<T> {
+    return lock?.alreadyLocked ? task() : this.runExclusive(task);
   }
 
   async currentBranch(): Promise<string | null> {
@@ -171,46 +253,61 @@ export class SandboxPlumbingBackend implements GitBackend {
   }
 
   async createBranch(name: string, from?: string): Promise<GitWriteResult> {
-    // Atomic `checkout -b` only moves HEAD on success.
-    const args = from ? ['checkout', '-b', name, from] : ['checkout', '-b', name];
-    return toWriteResult(await this.exec(args, { mutates: true }));
+    return this.runExclusive(async () => {
+      // Atomic `checkout -b` only moves HEAD on success.
+      const args = from ? ['checkout', '-b', name, from] : ['checkout', '-b', name];
+      return toWriteResult(await this.exec(args, { mutates: true }));
+    });
   }
 
   async switchBranch(branch: string): Promise<GitWriteResult> {
-    // `git switch` is branch-only (a path collision fails fast instead of a
-    // silent path-mode checkout). Fall back to a depth-1 fetch when the bare
-    // switch fails: shallow clones (`--depth=1 --single-branch`) only have the
-    // create-time branch locally, so other remote branches need fetching first.
-    let res = await this.exec(['switch', branch], { mutates: true });
-    if (res.exitCode !== 0) {
-      const fetched = await this.exec(
-        ['fetch', '--depth=1', 'origin', `${branch}:refs/remotes/origin/${branch}`],
-        { mutates: true },
-      );
-      if (fetched.exitCode === 0) {
-        res = await this.exec(['switch', branch], { mutates: true });
-      } else {
-        res = fetched;
+    return this.runExclusive(async () => {
+      // `git switch` is branch-only (a path collision fails fast instead of a
+      // silent path-mode checkout). Fall back to a depth-1 fetch when the bare
+      // switch fails: shallow clones (`--depth=1 --single-branch`) only have the
+      // create-time branch locally, so other remote branches need fetching first.
+      let res = await this.exec(['switch', branch], { mutates: true });
+      if (res.exitCode !== 0) {
+        const fetched = await this.exec(
+          ['fetch', '--depth=1', 'origin', `${branch}:refs/remotes/origin/${branch}`],
+          { mutates: true },
+        );
+        if (fetched.exitCode === 0) {
+          res = await this.exec(['switch', branch], { mutates: true });
+        } else {
+          res = fetched;
+        }
       }
-    }
-    return toWriteResult(res);
+      return toWriteResult(res);
+    });
   }
 
-  async commit(message: string, opts?: { addArgs?: string[] }): Promise<GitWriteResult> {
-    const addArgs = opts?.addArgs ?? ['-A'];
-    const staged = await this.exec(['add', ...addArgs], { mutates: true });
-    if (staged.exitCode !== 0) return toWriteResult(staged);
-    return toWriteResult(await this.exec(['commit', '-m', message], { mutates: true }));
+  async commit(
+    message: string,
+    opts?: { addArgs?: string[] },
+    lock?: WriteLockContext,
+  ): Promise<GitWriteResult> {
+    return this.maybeExclusive(lock, async () => {
+      const addArgs = opts?.addArgs ?? ['-A'];
+      const staged = await this.exec(['add', ...addArgs], { mutates: true });
+      if (staged.exitCode !== 0) return toWriteResult(staged);
+      return toWriteResult(await this.exec(['commit', '-m', message], { mutates: true }));
+    });
   }
 
-  async push(opts?: {
-    setUpstream?: boolean;
-    remote?: string;
-    ref?: string;
-  }): Promise<GitWriteResult> {
-    const remote = opts?.remote ?? 'origin';
-    const ref = opts?.ref ?? 'HEAD';
-    const args = opts?.setUpstream ? ['push', '-u', remote, ref] : ['push', remote, ref];
-    return toWriteResult(await this.exec(args, { mutates: true }));
+  async push(
+    opts?: {
+      setUpstream?: boolean;
+      remote?: string;
+      ref?: string;
+    },
+    lock?: WriteLockContext,
+  ): Promise<GitWriteResult> {
+    return this.maybeExclusive(lock, async () => {
+      const remote = opts?.remote ?? 'origin';
+      const ref = opts?.ref ?? 'HEAD';
+      const args = opts?.setUpstream ? ['push', '-u', remote, ref] : ['push', remote, ref];
+      return toWriteResult(await this.exec(args, { mutates: true }));
+    });
   }
 }
