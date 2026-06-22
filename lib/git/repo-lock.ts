@@ -115,12 +115,14 @@ export async function withRepoLock<T>(scope: string, task: RepoLockTask<T>): Pro
 
   // Symmetric structured logs for the only ops-relevant branch: contention.
   // The uncontended path proceeds with no wait and is intentionally silent
-  // (logging every acquire would drown the signal). `git_repo_lock_wait` (we
-  // queued behind someone) pairs with `git_repo_lock_acquired` (the wait
-  // ended) so a stalled lane is visible as a wait with no matching acquire.
+  // (logging every acquire would drown the signal). Emit to stderr because
+  // this module also runs in the CLI, where stdout is user output / `--json`.
+  // `git_repo_lock_wait` (we queued behind someone) pairs with
+  // `git_repo_lock_acquired` (the wait ended) so a stalled lane is visible as
+  // a wait with no matching acquire.
   const waitStart = contended ? Date.now() : 0;
   if (contended) {
-    console.log(
+    console.error(
       JSON.stringify({
         level: 'info',
         event: 'git_repo_lock_wait',
@@ -133,7 +135,7 @@ export async function withRepoLock<T>(scope: string, task: RepoLockTask<T>): Pro
   await ahead;
 
   if (contended) {
-    console.log(
+    console.error(
       JSON.stringify({
         level: 'info',
         event: 'git_repo_lock_acquired',

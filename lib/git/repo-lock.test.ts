@@ -157,7 +157,7 @@ describe('withRepoLock — lane cleanup', () => {
 describe('withRepoLock — structured logs', () => {
   it('emits paired wait/acquired logs only on contention', async () => {
     const scope = gitWorkingCopyLockScope('s6');
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     const hold = deferred();
 
     const first = withRepoLock(scope, async () => {
@@ -178,7 +178,7 @@ describe('withRepoLock — structured logs', () => {
 
   it('stays silent for an uncontended acquisition', async () => {
     const scope = gitWorkingCopyLockScope('s7');
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     await withRepoLock(scope, async () => undefined);
     expect(log).not.toHaveBeenCalled();
   });
