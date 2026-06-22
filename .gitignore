@@ -53,12 +53,15 @@ __pycache__/
 *.pyc
 
 # development
-android/
+# The Capacitor Android project at app/android/ is now COMMITTED source (native
+# customization — JGit plugin, desugaring — outgrew the regenerate-and-patch
+# model). Build outputs, the regenerated web bundle (app/src/main/assets/public),
+# and the generated config json are ignored by app/android/.gitignore, not here.
 
 # firebase
 .firebase/
 
-# android signing (preventative — survives if android/ is ever un-ignored)
+# android signing — keystores are never committed
 *.jks
 *.keystore
 keystore.properties

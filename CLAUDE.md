@@ -30,7 +30,7 @@ npm install
 cd app && npm run android:sync && cd android && ./gradlew installDebug
 ```
 
-`app/android/` is gitignored — `npm run android:setup` regenerates it.
+`app/android/` is **committed source** (it carries native customization — the `capacitor-native-git` JGit plugin wiring, core-library desugaring, the proguard fix). Build outputs and the regenerated web bundle are ignored by `app/android/.gitignore`. `cap sync` updates web assets + plugin registration; don't regenerate via `cap add android`.
 
 ## Validation commands
 

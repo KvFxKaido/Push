@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Library manifest. The package/namespace is set in build.gradle (AGP 8).
+     INTERNET is required for clone/fetch/push; declared here so the capability
+     travels with the plugin even if a host app forgot it (Capacitor apps
+     normally declare it already). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>
