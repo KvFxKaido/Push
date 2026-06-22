@@ -164,34 +164,42 @@ export class PushGit {
    * fail-safe-blocks, mirroring `commit`; the secret-scan gate itself fails
    * *open* on its own infra errors (it can't read the diff), so this catch only
    * trips on an unexpected gate bug.
+   *
+   * The gate + push run inside one working-copy critical section
+   * (`backend.runExclusive`): the gate inspects HEAD / the push diff, so a
+   * concurrent executor that commits or switches between gate and push would
+   * otherwise ship a HEAD the gate never saw. The inner `backend.push` is told
+   * it's `alreadyLocked` so it doesn't re-acquire the (non-reentrant) lock.
    */
   async push(opts?: PushOptions): Promise<GitWriteResult> {
-    if (this.prePush) {
-      let verdict: PrePushVerdict;
-      try {
-        // Forward opts so a gate can inspect the real push destination (e.g. a
-        // refspec targeting a protected branch), not just the checked-out one.
-        verdict = await this.prePush(opts);
-      } catch (err) {
-        const reason = err instanceof Error ? err.message : 'pre-push gate failed';
-        return { ok: false, blocked: true, exitCode: 1, stdout: '', stderr: reason };
+    return this.backend.runExclusive(async () => {
+      if (this.prePush) {
+        let verdict: PrePushVerdict;
+        try {
+          // Forward opts so a gate can inspect the real push destination (e.g. a
+          // refspec targeting a protected branch), not just the checked-out one.
+          verdict = await this.prePush(opts);
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : 'pre-push gate failed';
+          return { ok: false, blocked: true, exitCode: 1, stdout: '', stderr: reason };
+        }
+        if (!verdict.ok) {
+          const reason = verdict.reason ?? 'push blocked by pre-push gate';
+          return {
+            ok: false,
+            blocked: true,
+            exitCode: 1,
+            stdout: '',
+            stderr: reason,
+            // Carry the gate's transient/infra signal so the caller can classify a
+            // retryable failure (e.g. Auditor unreachable) apart from a terminal
+            // policy block (secret found, protected branch).
+            ...(verdict.retryable ? { retryable: true } : {}),
+          };
+        }
       }
-      if (!verdict.ok) {
-        const reason = verdict.reason ?? 'push blocked by pre-push gate';
-        return {
-          ok: false,
-          blocked: true,
-          exitCode: 1,
-          stdout: '',
-          stderr: reason,
-          // Carry the gate's transient/infra signal so the caller can classify a
-          // retryable failure (e.g. Auditor unreachable) apart from a terminal
-          // policy block (secret found, protected branch).
-          ...(verdict.retryable ? { retryable: true } : {}),
-        };
-      }
-    }
-    return this.backend.push(opts);
+      return this.backend.push(opts, { alreadyLocked: true });
+    });
   }
 
   /**
@@ -199,25 +207,35 @@ export class PushGit {
    * the commit is not attempted and `{ ok: false, blocked: true }` is
    * returned. The two-phase web flow runs the Auditor at the prepare step and
    * commits here without a gate; one-shot callers can inject one.
+   *
+   * Gate + commit share one working-copy critical section (see `push` above),
+   * so a concurrent write can't change the staged tree between the gate's read
+   * and the commit; the inner `backend.commit` is told it's `alreadyLocked`.
    */
   async commit(opts: { message: string; addArgs?: string[] }): Promise<PushGitCommitResult> {
-    if (this.preCommit) {
-      let verdict: PreCommitVerdict;
-      try {
-        verdict = await this.preCommit();
-      } catch (err) {
-        // Fail safe: a gate that throws blocks the commit, mirroring the
-        // Auditor's default-to-UNSAFE-on-error stance — never commit when the
-        // gate couldn't render a verdict.
-        return {
-          ok: false,
-          blocked: true,
-          reason: err instanceof Error ? err.message : 'pre-commit gate failed',
-        };
+    return this.backend.runExclusive(async () => {
+      if (this.preCommit) {
+        let verdict: PreCommitVerdict;
+        try {
+          verdict = await this.preCommit();
+        } catch (err) {
+          // Fail safe: a gate that throws blocks the commit, mirroring the
+          // Auditor's default-to-UNSAFE-on-error stance — never commit when the
+          // gate couldn't render a verdict.
+          return {
+            ok: false,
+            blocked: true,
+            reason: err instanceof Error ? err.message : 'pre-commit gate failed',
+          };
+        }
+        if (!verdict.ok) return { ok: false, blocked: true, reason: verdict.reason };
       }
-      if (!verdict.ok) return { ok: false, blocked: true, reason: verdict.reason };
-    }
-    const result = await this.backend.commit(opts.message, { addArgs: opts.addArgs });
-    return { ok: result.ok, blocked: false, result };
+      const result = await this.backend.commit(
+        opts.message,
+        { addArgs: opts.addArgs },
+        { alreadyLocked: true },
+      );
+      return { ok: result.ok, blocked: false, result };
+    });
   }
 }

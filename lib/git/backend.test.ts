@@ -282,4 +282,20 @@ describe('SandboxPlumbingBackend write serialization', () => {
     releaseFirst();
     await Promise.all([a, b]);
   });
+
+  it('runs an { alreadyLocked } write inline inside a held section (no self-deadlock)', async () => {
+    const exec = vi.fn(async () => ok(''));
+    const backend = new SandboxPlumbingBackend(exec, {
+      lockScope: gitWorkingCopyLockScope('wc-already-locked'),
+    });
+    // Hold the lock and run a commit that's told it's already locked. The lock
+    // is non-reentrant, so without the flag this nested acquire would deadlock;
+    // completing proves the flag bypasses re-acquisition.
+    const result = await backend.runExclusive(() =>
+      backend.commit('inside', undefined, { alreadyLocked: true }),
+    );
+    expect(result.ok).toBe(true);
+    expect(exec).toHaveBeenNthCalledWith(1, ['add', '-A'], { mutates: true });
+    expect(exec).toHaveBeenNthCalledWith(2, ['commit', '-m', 'inside'], { mutates: true });
+  });
 });

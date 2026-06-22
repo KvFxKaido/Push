@@ -41,7 +41,12 @@
  *
  * A task must not call `withRepoLock` again on the same scope from inside its
  * own callback — it would wait for itself (deadlock). Acquire once at the
- * outermost logical boundary.
+ * outermost logical boundary. A composing layer that needs to hold the lock
+ * across several inner writes (e.g. `PushGit` spanning a pre-push gate + the
+ * push) acquires once via `backend.runExclusive` and tells the inner write it
+ * is `alreadyLocked` so it doesn't re-enter — see `lib/git/backend.ts`. (We
+ * can't make the lock reentrant via `AsyncLocalStorage`: `node:async_hooks` is
+ * externalized in the browser bundle, where this module also runs.)
  */
 
 /** A unit of git work serialized under a scope. Must settle (resolve or reject). */

@@ -12,6 +12,9 @@ const writeFail = (stderr = 'boom'): GitWriteResult => ({
 
 function fakeBackend(overrides: Partial<GitBackend> = {}): GitBackend {
   return {
+    // Default: run the task directly (an unscoped backend's behavior). Tests
+    // that assert gate+write atomicity override this with a recording wrapper.
+    runExclusive: async (task) => task(),
     currentBranch: async () => 'main',
     upstreamRef: async () => 'origin/main',
     remoteUrl: async () => 'https://github.com/owner/repo.git',
@@ -31,7 +34,7 @@ describe('PushGit.commit', () => {
     const pg = new PushGit({ backend: fakeBackend({ commit }) });
     const res = await pg.commit({ message: 'msg' });
     expect(res).toEqual({ ok: true, blocked: false, result: writeOk('done') });
-    expect(commit).toHaveBeenCalledWith('msg', { addArgs: undefined });
+    expect(commit).toHaveBeenCalledWith('msg', { addArgs: undefined }, { alreadyLocked: true });
   });
 
   it('runs the gate then commits when it passes', async () => {
@@ -80,7 +83,11 @@ describe('PushGit.commit', () => {
     const commit = vi.fn(async () => writeOk());
     const pg = new PushGit({ backend: fakeBackend({ commit }) });
     await pg.commit({ message: 'm', addArgs: ['-A', '--', '.', ':!.push'] });
-    expect(commit).toHaveBeenCalledWith('m', { addArgs: ['-A', '--', '.', ':!.push'] });
+    expect(commit).toHaveBeenCalledWith(
+      'm',
+      { addArgs: ['-A', '--', '.', ':!.push'] },
+      { alreadyLocked: true },
+    );
   });
 });
 
@@ -129,7 +136,10 @@ describe('PushGit write delegation', () => {
     await pg.push({ setUpstream: true, ref: 'feat/x' });
     expect(createBranch).toHaveBeenCalledWith('feat/x', 'main');
     expect(switchBranch).toHaveBeenCalledWith('feat/x');
-    expect(push).toHaveBeenCalledWith({ setUpstream: true, ref: 'feat/x' });
+    expect(push).toHaveBeenCalledWith(
+      { setUpstream: true, ref: 'feat/x' },
+      { alreadyLocked: true },
+    );
   });
 });
 
@@ -150,7 +160,10 @@ describe('PushGit.push gate', () => {
     expect(prePush).toHaveBeenCalledOnce();
     // The gate must see the push opts so it can inspect the real destination.
     expect(prePush).toHaveBeenCalledWith({ setUpstream: true, ref: 'feat/x' });
-    expect(push).toHaveBeenCalledWith({ setUpstream: true, ref: 'feat/x' });
+    expect(push).toHaveBeenCalledWith(
+      { setUpstream: true, ref: 'feat/x' },
+      { alreadyLocked: true },
+    );
     expect(res.ok).toBe(true);
   });
 
@@ -176,6 +189,48 @@ describe('PushGit.push gate', () => {
     expect(res.blocked).toBe(true);
     expect(res.stderr).toContain('gate crashed');
     expect(push).not.toHaveBeenCalled();
+  });
+
+  it('runs the gate and the push inside one runExclusive critical section', async () => {
+    // Record the order of: entering the section, the gate, and the push. The
+    // gate and push must both fall between section-enter and section-exit so a
+    // concurrent executor can't move HEAD between the audit and the push.
+    const order: string[] = [];
+    const runExclusive = vi.fn(async (task: () => Promise<unknown>) => {
+      order.push('enter');
+      const result = await task();
+      order.push('exit');
+      return result;
+    });
+    const prePush = vi.fn(async () => {
+      order.push('gate');
+      return { ok: true };
+    });
+    const push = vi.fn(async () => {
+      order.push('push');
+      return writeOk();
+    });
+    const pg = new PushGit({ backend: fakeBackend({ runExclusive, push }), prePush });
+    await pg.push();
+    expect(order).toEqual(['enter', 'gate', 'push', 'exit']);
+  });
+
+  it('blocks inside the critical section without pushing when the gate denies', async () => {
+    const order: string[] = [];
+    const runExclusive = vi.fn(async (task: () => Promise<unknown>) => {
+      order.push('enter');
+      const result = await task();
+      order.push('exit');
+      return result;
+    });
+    const prePush = vi.fn(async () => ({ ok: false, reason: 'secret found' }));
+    const push = vi.fn(async () => writeOk());
+    const pg = new PushGit({ backend: fakeBackend({ runExclusive, push }), prePush });
+    const res = await pg.push();
+    expect(res.blocked).toBe(true);
+    expect(push).not.toHaveBeenCalled();
+    // The section still opened and closed cleanly around the denied gate.
+    expect(order).toEqual(['enter', 'exit']);
   });
 });
 

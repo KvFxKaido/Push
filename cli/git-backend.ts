@@ -8,7 +8,7 @@
  * which is the contract `GitBackend` expects.
  */
 
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { SandboxPlumbingBackend, type GitBackend, type GitExec } from '../lib/git/backend.js';
@@ -60,16 +60,37 @@ export function makeLocalGitExec(cwd: string, timeout: number): GitExec {
   };
 }
 
+/**
+ * Resolve the lock key for the working copy containing `cwd`. The key is the
+ * Git **working tree root** (`git rev-parse --show-toplevel`), not the
+ * invocation directory: two sessions rooted at different subdirs of one working
+ * copy — say `/repo` and `/repo/packages/app` — mutate the same `.git/index`
+ * and HEAD, so they must share a lock lane. Each linked worktree has its own
+ * toplevel and index, so `--show-toplevel` (not the shared common git dir) is
+ * the correct identity. Falls back to the resolved `cwd` when `cwd` isn't in a
+ * repo or git can't be spawned — an unmanaged dir simply keys by its own path.
+ */
+function resolveWorkingCopyLockScope(cwd: string, timeout: number): string {
+  try {
+    const root = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd,
+      timeout,
+      encoding: 'utf8',
+    }).trim();
+    if (root) return gitWorkingCopyLockScope(root);
+  } catch {
+    // Not a git repo, or git unavailable — fall through to the path-based key.
+  }
+  return gitWorkingCopyLockScope(path.resolve(cwd));
+}
+
 export function createLocalGitBackend(cwd: string, opts?: { timeoutMs?: number }): GitBackend {
-  // The working tree's absolute path is the durable working-copy identity on
-  // CLI; every backend/PushGit over the same `cwd` shares this lock lane.
-  const workingCopyPath = path.resolve(cwd);
-  return new SandboxPlumbingBackend(
-    makeLocalGitExec(workingCopyPath, opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS),
-    {
-      lockScope: gitWorkingCopyLockScope(workingCopyPath),
-    },
-  );
+  // Lock by the working-tree root so every backend/PushGit over the same working
+  // copy shares one lane, regardless of which subdir the session was rooted at.
+  const timeout = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  return new SandboxPlumbingBackend(makeLocalGitExec(cwd, timeout), {
+    lockScope: resolveWorkingCopyLockScope(cwd, timeout),
+  });
 }
 
 /**
@@ -93,10 +114,10 @@ export function createLocalPushGit(
     defaultBranch?: string;
   },
 ): PushGit {
-  const workingCopyPath = path.resolve(cwd);
-  const exec = makeLocalGitExec(workingCopyPath, opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const timeout = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const exec = makeLocalGitExec(cwd, timeout);
   const backend = new SandboxPlumbingBackend(exec, {
-    lockScope: gitWorkingCopyLockScope(workingCopyPath),
+    lockScope: resolveWorkingCopyLockScope(cwd, timeout),
   });
   const prePush =
     opts?.prePush ??
