@@ -372,14 +372,16 @@ function statusHasUntracked(gitStatus: string | undefined): boolean {
  * auto-branch-name proposer reflect them — the working-tree `git diff HEAD`
  * omits untracked content (#1075). Read-only: `git diff --no-index /dev/null
  * <file>` never touches the index, and the trailing `|| true` keeps git's
- * "differences found" exit 1 from looking like a failure. Returns '' when there
- * are no untracked files.
+ * "differences found" exit 1 from looking like a failure. `--no-ext-diff` /
+ * `--no-textconv` disable any repo-configured external/textconv diff drivers so
+ * this read-only probe can't trigger a helper (matching `handleShowCommit`).
+ * Returns '' when there are no untracked files.
  */
 async function collectUntrackedDiff(ctx: GitReleaseHandlerContext): Promise<string> {
   const res = await ctx.execInSandbox(
     ctx.sandboxId,
     'git ls-files --others --exclude-standard -z | ' +
-      'xargs -0 -r -I{} git --no-pager diff --no-index /dev/null {} || true',
+      'xargs -0 -r -I{} git --no-pager diff --no-ext-diff --no-textconv --no-index /dev/null {} || true',
     '/workspace',
   );
   return res.stdout ?? '';

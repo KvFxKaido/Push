@@ -403,10 +403,13 @@ describe('handleSandboxCommit', () => {
     expect(result.text).toContain('1 file, +1 -0');
     // The backend actually committed (reached `git commit`, not the empty path).
     expect(ctx.execCalls.some((c) => String(c[1]).includes("git 'commit'"))).toBe(true);
-    // The untracked-diff probe is read-only (no markWorkspaceMutated flag).
+    // The untracked-diff probe is read-only (no markWorkspaceMutated flag) and
+    // disables repo-configured diff helpers so it can't trigger a side effect.
     const untrackedProbe = ctx.execCalls.find((c) => String(c[1]).includes('--no-index'));
     expect(untrackedProbe).toBeDefined();
     expect(untrackedProbe?.[3]).toBeUndefined();
+    expect(String(untrackedProbe?.[1])).toContain('--no-ext-diff');
+    expect(String(untrackedProbe?.[1])).toContain('--no-textconv');
   });
 
   it('returns a structured error when the backend commit fails', async () => {
