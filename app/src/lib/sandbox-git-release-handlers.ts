@@ -356,6 +356,36 @@ export async function handleShowCommit(
 }
 
 /**
+ * `git diff HEAD` (what the sandbox `diff` route returns) never lists brand-new
+ * untracked files, so a commit whose only change is a new file looks empty and
+ * the gate in `handleSandboxCommit` would short-circuit before the backend's
+ * `add -A` ever runs (issue #1075). Untracked files surface in
+ * `git status --porcelain` as `??` entries — detect them so the commit proceeds.
+ */
+function statusHasUntracked(gitStatus: string | undefined): boolean {
+  if (!gitStatus) return false;
+  return gitStatus.split('\n').some((line) => line.startsWith('??'));
+}
+
+/**
+ * Synthesize new-file diffs for untracked files so the commit's stats and the
+ * auto-branch-name proposer reflect them — the working-tree `git diff HEAD`
+ * omits untracked content (#1075). Read-only: `git diff --no-index /dev/null
+ * <file>` never touches the index, and the trailing `|| true` keeps git's
+ * "differences found" exit 1 from looking like a failure. Returns '' when there
+ * are no untracked files.
+ */
+async function collectUntrackedDiff(ctx: GitReleaseHandlerContext): Promise<string> {
+  const res = await ctx.execInSandbox(
+    ctx.sandboxId,
+    'git ls-files --others --exclude-standard -z | ' +
+      'xargs -0 -r -I{} git --no-pager diff --no-index /dev/null {} || true',
+    '/workspace',
+  );
+  return res.stdout ?? '';
+}
+
+/**
  * `sandbox_commit` (Gate-at-Push Move A) — make a SILENT local commit.
  *
  * No Auditor, no review card: commits are now cheap and unaudited; the
@@ -392,7 +422,7 @@ export async function handleSandboxCommit(
     };
   }
 
-  if (!diffResult.diff) {
+  if (!diffResult.diff && !statusHasUntracked(diffResult.git_status)) {
     console.log(
       JSON.stringify({
         level: 'info',
@@ -464,7 +494,7 @@ export async function handleSandboxCommit(
     };
   }
 
-  if (!postHookDiffResult.diff) {
+  if (!postHookDiffResult.diff && !statusHasUntracked(postHookDiffResult.git_status)) {
     console.log(
       JSON.stringify({
         level: 'info',
@@ -485,13 +515,32 @@ export async function handleSandboxCommit(
     return { text: lines.join('\n') };
   }
 
+  // `git diff HEAD` omits untracked files; fold in new-file diffs so the
+  // branch-name proposer and the commit stats below reflect them (#1075). Must
+  // run before the commit — once committed, the files are tracked and
+  // `ls-files --others` no longer lists them.
+  let effectiveDiff = postHookDiffResult.diff;
+  if (statusHasUntracked(postHookDiffResult.git_status)) {
+    const untrackedDiff = await collectUntrackedDiff(ctx);
+    if (untrackedDiff) {
+      effectiveDiff = effectiveDiff ? `${effectiveDiff}\n${untrackedDiff}` : untrackedDiff;
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'sandbox_commit_untracked_included',
+          sandboxId: ctx.sandboxId,
+        }),
+      );
+    }
+  }
+
   // Step 3: If committing from the default branch, fork first so the commit
   // cannot land on main. Same proposer path the prepare-commit flow used.
   const branchTarget = await ensureCommitTargetBranch({
     sandboxId: ctx.sandboxId,
     currentBranch: ctx.currentBranch,
     defaultBranch: ctx.defaultBranch,
-    diff: postHookDiffResult.diff,
+    diff: effectiveDiff,
     commitMessage: args.message,
     proposeName: createModelCommitBranchNameProposer({
       providerOverride: overrides?.providerOverride,
@@ -562,7 +611,7 @@ export async function handleSandboxCommit(
     };
   }
 
-  const stats = parseDiffStats(postHookDiffResult.diff);
+  const stats = parseDiffStats(effectiveDiff);
   console.log(
     JSON.stringify({
       level: 'info',
