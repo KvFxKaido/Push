@@ -1,10 +1,50 @@
 # Native Checkpoint Store
 
 Date: 2026-06-22
-Status: **Proposed** — design agreed (three-way: Shawn + Claude + ChatGPT review).
-PR1 (the `CheckpointStore` abstraction + adapters + capture-coordinator wiring,
-`app/src/lib/checkpoint/`) has **landed**; native capture (PR2) and restore wiring
-(PR3) remain proposed. Not roadmap-promoted. Owner: Push mobile/git.
+Status: **Blocked on a trigger gap** — PR1 (abstraction), PR2 (native capture +
+restore, JGit), PR3a (restore-coordinator wiring), and PR3b (history UX) have all
+**landed**. The store, plugin, lane-keying, and history UI are device-validated
+working. BUT on-device testing (2026-06-22, Moto G) found the **capture never
+fires in the inline lane** — see "Device validation finding" below. The feature
+is dormant (behind `VITE_NATIVE_CHECKPOINTS`) and **not usable** until the trigger
+gap is wired. Not roadmap-promoted. Owner: Push mobile/git.
+
+## Device validation finding (2026-06-22, Moto G) — BLOCKING
+
+A flag-on local-bundle build was driven on-device. Result:
+
+- **Verified working:** `listCheckpoints` is called on the correct lane dir and
+  returns its result; the UI → `useCheckpointHistory` → store → `NativeGit` plugin
+  → list path is sound, and the JGit engine itself passes its JVM tests. Nothing
+  below the trigger is wrong.
+- **The capture never fires.** After a real multi-file change, there were **zero**
+  `native_checkpoint_*` AND zero `auto_back_*` log events, and `files/checkpoints/`
+  was never created on the device (the native repo is `git init`-ed on first
+  capture). The capture *coordinator* (`useWorkspaceSandboxAutoBack`) didn't run at
+  all — neither the native store nor the remote draft-ref path.
+
+**Root cause (high confidence):** the capture coordinator triggers off the
+client-side `notifyWorkspaceMutation` signal (emitted by `sandbox-client.ts`
+writes / `markWorkspaceMutated` execs). On-device the user is in the **inline
+lane**, whose edits dispatch through a **detached / run-host path**
+(`sandbox_exec_detached_dispatch`, `run_host_client_*`) — and that signal isn't
+reaching the client coordinator. No signal → no debounced capture → nothing
+written. The same gap explains the hub **diff view** not picking up changes (it
+keys off the same mutation signal / workspace revision).
+
+**Scope: this is a pre-existing, lane-wide gap, not native-specific.** It is the
+*same* coordinator and signal the remote B2 auto-back uses, so remote auto-back
+almost certainly has the same blind spot in the inline lane. The native
+checkpoint store inherited it; it did not introduce it. The inline lane is "the
+collapsed lead" (CLAUDE.md §10) and was converged onto after auto-back was built
+for the delegated web round-loop.
+
+**Next slice (blocking, its own work):** make the inline / run-host mutation path
+emit `notifyWorkspaceMutation` (or trigger capture off the inline run's
+completion), so the auto-back/checkpoint coordinator and the hub diff view both
+wake on inline-lane edits. This is integration work on the inline lane, not a
+change to the checkpoint store — which is why it's a separate increment, not a
+hack inside `native-jgit-store.ts`.
 
 ## Context
 
@@ -212,8 +252,10 @@ load-bearing, not polish:
      container (renders nothing off the native shell / flag), mounted in the
      workspace hub sheet next to hibernate/snapshot. Web-safe; on-device visual +
      list/restore e2e is the device-session follow-up.
-   - Remaining: the large-upload endpoint (restore size cap) + capture/restore
-     failure telemetry + the full device e2e.
+   - Remaining: **(blocking, top priority)** wire the inline-lane mutation trigger
+     (see "Device validation finding") — without it the coordinator never captures
+     on-device; then the large-upload endpoint (restore size cap) + capture/restore
+     failure telemetry + the full device e2e (which is now unblocked to run).
 
 ## Known limitations (PR2; tracked for PR3 — surfaced by the PR2 review)
 
