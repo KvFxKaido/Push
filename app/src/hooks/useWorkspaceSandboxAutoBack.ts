@@ -98,7 +98,23 @@ export function createAutoBackScheduler(deps: AutoBackSchedulerDeps): AutoBackSc
     clearTimer();
     if (disposed) return;
     const { sandboxId, branch, repoFullName, enabled } = getContext();
-    if (!enabled || !sandboxId || !branch || !repoFullName) return;
+    if (!enabled || !sandboxId || !branch || !repoFullName) {
+      // Symmetric structured log (CLAUDE.md): a fired debounce that finds the
+      // context not ready is otherwise invisible — exactly the silent path that
+      // masked the inline-lane trigger gap (device finding 2026-06-22). Pairs
+      // with the eventual capture success/failure events.
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'auto_back_skipped_unready',
+          enabled,
+          hasSandbox: Boolean(sandboxId),
+          hasBranch: Boolean(branch),
+          hasRepo: Boolean(repoFullName),
+        }),
+      );
+      return;
+    }
     if (inFlight) {
       // Coalesce: a backup is already running; re-run once it finishes.
       pending = true;

@@ -1,13 +1,14 @@
 # Native Checkpoint Store
 
 Date: 2026-06-22
-Status: **Blocked on a trigger gap** — PR1 (abstraction), PR2 (native capture +
-restore, JGit), PR3a (restore-coordinator wiring), and PR3b (history UX) have all
-**landed**. The store, plugin, lane-keying, and history UI are device-validated
-working. BUT on-device testing (2026-06-22, Moto G) found the **capture never
-fires in the inline lane** — see "Device validation finding" below. The feature
-is dormant (behind `VITE_NATIVE_CHECKPOINTS`) and **not usable** until the trigger
-gap is wired. Not roadmap-promoted. Owner: Push mobile/git.
+Status: **Trigger wired, pending device re-validation** — PR1 (abstraction), PR2
+(native capture + restore, JGit), PR3a (restore-coordinator wiring), and PR3b
+(history UX) have all **landed**. On-device testing (2026-06-22, Moto G) found the
+**capture never fires in the inline lane** (see "Device validation finding"); the
+inline-lane mutation trigger is now **wired** (`chat-send-inline.ts` emits
+`notifyWorkspaceMutation` at run completion) and awaits a device re-test to
+confirm capture fires end-to-end. Feature stays dormant (behind
+`VITE_NATIVE_CHECKPOINTS`) until then. Not roadmap-promoted. Owner: Push mobile/git.
 
 ## Device validation finding (2026-06-22, Moto G) — BLOCKING
 
@@ -39,12 +40,17 @@ checkpoint store inherited it; it did not introduce it. The inline lane is "the
 collapsed lead" (CLAUDE.md §10) and was converged onto after auto-back was built
 for the delegated web round-loop.
 
-**Next slice (blocking, its own work):** make the inline / run-host mutation path
-emit `notifyWorkspaceMutation` (or trigger capture off the inline run's
-completion), so the auto-back/checkpoint coordinator and the hub diff view both
-wake on inline-lane edits. This is integration work on the inline lane, not a
-change to the checkpoint store — which is why it's a separate increment, not a
-hack inside `native-jgit-store.ts`.
+**Fix (landed, pending device re-validation):** `chat-send-inline.ts` now emits
+`notifyWorkspaceMutation(sandboxId)` at inline-run completion when the run changed
+the workspace (`workspaceChanged`), paired with an `inline_workspace_mutation_signaled`
+log. This is the deterministic trigger — the per-tool signals fire *during* the
+run (coordinator possibly gated, WebView possibly backgrounded with throttled
+timers), so re-firing at completion (run done, sandbox ready) reliably arms the
+capture debounce and invalidates the diff cache. It fixes BOTH symptoms (capture
++ hub diff) since both consume the one signal. A symmetric `auto_back_skipped_unready`
+log was added to the coordinator's silent early-return so the *next* device test
+shows definitively if capture still doesn't fire (and why). Done in the inline
+lane, not the checkpoint store — the store was always correct.
 
 ## Context
 

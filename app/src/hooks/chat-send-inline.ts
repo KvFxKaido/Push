@@ -38,6 +38,7 @@ import type { MutableRefObject } from 'react';
 import { getProviderPushStream } from '@/lib/orchestrator';
 import { buildInlineConversationSeed } from '@/lib/inline-conversation-context';
 import { getSandboxDiff, getSandboxEnvironment } from '@/lib/sandbox-client';
+import { notifyWorkspaceMutation } from '@/lib/sandbox-mutation-signal';
 import { getRepoMetadata } from '@/lib/repo-metadata';
 import { getVibeVerbs } from '@/lib/repo-vibe-verbs';
 import { translateCoderStatus } from '@/lib/inline-coder-status';
@@ -1052,6 +1053,26 @@ export async function startInlineCoderTurn(
         reason: 'no_workspace_change',
       }),
     );
+  } else {
+    // Wake the workspace-mutation consumers at inline-run completion: auto-back /
+    // checkpoint capture and the hub diff view. The per-tool mutation signals fire
+    // DURING the run — when the coordinator can be gated (sandbox busy) or the
+    // WebView is backgrounded and timers are throttled — so on the inline lane
+    // they may never arm the debounce. Re-firing here (run done, sandbox ready)
+    // is the deterministic trigger; redundant signals are cheap no-ops (auto-back
+    // tree/HEAD dedup). Device finding 2026-06-22 — see
+    // docs/decisions/Native Checkpoint Store.md.
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'inline_workspace_mutation_signaled',
+        mode: 'inline',
+        chatId,
+        runId: args.runId,
+        sandboxId,
+      }),
+    );
+    notifyWorkspaceMutation(sandboxId);
   }
 
   // --- Verification gate (delegated-arc parity). The delegated Coder ran the
