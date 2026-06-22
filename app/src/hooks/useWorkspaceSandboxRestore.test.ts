@@ -5,15 +5,18 @@ import {
   type RestoreDetectionPlanState,
 } from './useWorkspaceSandboxRestore';
 
+const REPO = 'owner/repo';
+
 describe('planAutoBackRestoreDetection', () => {
   it('schedules the first ready sandbox and marks it as probed', () => {
     const plan = planAutoBackRestoreDetection(INITIAL_RESTORE_DETECTION_PLAN_STATE, {
       sandboxId: 'sb-1',
       branch: ' feature/x ',
+      repoFullName: REPO,
       enabled: true,
     });
 
-    expect(plan.probe).toEqual({ sandboxId: 'sb-1', branch: 'feature/x' });
+    expect(plan.probe).toEqual({ sandboxId: 'sb-1', branch: 'feature/x', repoFullName: REPO });
     expect(plan.state.probedSandboxIds).toEqual(['sb-1']);
   });
 
@@ -22,6 +25,7 @@ describe('planAutoBackRestoreDetection', () => {
     const plan = planAutoBackRestoreDetection(state, {
       sandboxId: 'sb-1',
       branch: 'feature/x',
+      repoFullName: REPO,
       enabled: true,
     });
 
@@ -34,35 +38,33 @@ describe('planAutoBackRestoreDetection', () => {
     const plan = planAutoBackRestoreDetection(state, {
       sandboxId: 'sb-2',
       branch: 'feature/x',
+      repoFullName: REPO,
       enabled: true,
     });
 
-    expect(plan.probe).toEqual({ sandboxId: 'sb-2', branch: 'feature/x' });
+    expect(plan.probe).toEqual({ sandboxId: 'sb-2', branch: 'feature/x', repoFullName: REPO });
     expect(plan.state.probedSandboxIds).toEqual(['sb-1', 'sb-2']);
   });
 
   it('does not schedule while disabled or missing required context', () => {
     const state: RestoreDetectionPlanState = { probedSandboxIds: [] };
-    expect(
-      planAutoBackRestoreDetection(state, {
-        sandboxId: 'sb-1',
-        branch: 'feature/x',
-        enabled: false,
-      }),
-    ).toEqual({ state, probe: null });
-    expect(
-      planAutoBackRestoreDetection(state, {
-        sandboxId: null,
-        branch: 'feature/x',
-        enabled: true,
-      }),
-    ).toEqual({ state, probe: null });
-    expect(
-      planAutoBackRestoreDetection(state, {
-        sandboxId: 'sb-1',
-        branch: '  ',
-        enabled: true,
-      }),
-    ).toEqual({ state, probe: null });
+    const base = { sandboxId: 'sb-1', branch: 'feature/x', repoFullName: REPO, enabled: true };
+    expect(planAutoBackRestoreDetection(state, { ...base, enabled: false })).toEqual({
+      state,
+      probe: null,
+    });
+    expect(planAutoBackRestoreDetection(state, { ...base, sandboxId: null })).toEqual({
+      state,
+      probe: null,
+    });
+    expect(planAutoBackRestoreDetection(state, { ...base, branch: '  ' })).toEqual({
+      state,
+      probe: null,
+    });
+    // repoFullName is required — the native store keys its on-device dir on it.
+    expect(planAutoBackRestoreDetection(state, { ...base, repoFullName: null })).toEqual({
+      state,
+      probe: null,
+    });
   });
 });

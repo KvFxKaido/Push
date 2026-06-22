@@ -110,6 +110,7 @@ export function WorkspaceSessionScreen({
   const autoBackRestore = useWorkspaceSandboxRestore({
     sandboxId: sandbox.sandboxId,
     branch: repoBranch,
+    repoFullName: workspaceRepo?.full_name ?? null,
     enabled:
       workspaceRepo != null &&
       sandbox.status === 'ready' &&

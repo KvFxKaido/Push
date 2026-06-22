@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  applyAutoBackRestore,
-  detectAutoBackRestore,
-  type RestoreAvailability,
-  type RestoreResult,
-} from '@/lib/sandbox-auto-back-restore';
+import { resolveCheckpointStore } from '@/lib/checkpoint/resolve-store';
+import type {
+  CheckpointDetectInput,
+  CheckpointRestoreAvailability,
+  CheckpointRestoreInput,
+  CheckpointRestoreResult,
+} from '@/lib/checkpoint/checkpoint-store';
 
 export interface WorkspaceSandboxRestoreContext {
   sandboxId: string | null;
   branch: string | null | undefined;
+  /** Durable repo identity — the native checkpoint store keys its dir on it. */
+  repoFullName: string | null;
   enabled: boolean;
 }
 
@@ -18,7 +21,7 @@ export interface RestoreDetectionPlanState {
 
 export interface RestoreDetectionPlan {
   state: RestoreDetectionPlanState;
-  probe: { sandboxId: string; branch: string } | null;
+  probe: { sandboxId: string; branch: string; repoFullName: string } | null;
 }
 
 export const INITIAL_RESTORE_DETECTION_PLAN_STATE: RestoreDetectionPlanState = {
@@ -26,7 +29,7 @@ export const INITIAL_RESTORE_DETECTION_PLAN_STATE: RestoreDetectionPlanState = {
 };
 
 /**
- * Pure once-per-sandbox planner for auto-back restore detection. The hook marks
+ * Pure once-per-sandbox planner for checkpoint restore detection. The hook marks
  * a sandbox as probed before the async detection starts so React re-renders
  * cannot duplicate the fetch.
  */
@@ -35,11 +38,11 @@ export function planAutoBackRestoreDetection(
   ctx: WorkspaceSandboxRestoreContext,
 ): RestoreDetectionPlan {
   const branch = ctx.branch?.trim();
-  if (!ctx.enabled || !ctx.sandboxId || !branch) return { state, probe: null };
+  if (!ctx.enabled || !ctx.sandboxId || !branch || !ctx.repoFullName) return { state, probe: null };
   if (state.probedSandboxIds.includes(ctx.sandboxId)) return { state, probe: null };
   return {
     state: { probedSandboxIds: [...state.probedSandboxIds, ctx.sandboxId] },
-    probe: { sandboxId: ctx.sandboxId, branch },
+    probe: { sandboxId: ctx.sandboxId, branch, repoFullName: ctx.repoFullName },
   };
 }
 
@@ -52,16 +55,23 @@ export interface WorkspaceSandboxRestoreState {
   error: string | null;
 }
 
+type DetectFn = (input: CheckpointDetectInput) => Promise<CheckpointRestoreAvailability>;
+type RestoreFn = (input: CheckpointRestoreInput) => Promise<CheckpointRestoreResult>;
+
+/** Defaults resolve the active CheckpointStore per-call (platform/flag current). */
+const defaultDetect: DetectFn = (input) => resolveCheckpointStore().detectRestore(input);
+const defaultRestore: RestoreFn = (input) => resolveCheckpointStore().restore(input);
+
 export interface UseWorkspaceSandboxRestoreArgs extends WorkspaceSandboxRestoreContext {
-  detect?: typeof detectAutoBackRestore;
-  apply?: typeof applyAutoBackRestore;
+  detect?: DetectFn;
+  apply?: RestoreFn;
 }
 
 interface RestoreBannerState {
   sandboxId: string | null;
   available: boolean;
   summary: string;
-  sha: string | null;
+  checkpointId: string | null;
   restoring: boolean;
   error: string | null;
 }
@@ -70,14 +80,19 @@ const initialBannerState: RestoreBannerState = {
   sandboxId: null,
   available: false,
   summary: '',
-  sha: null,
+  checkpointId: null,
   restoring: false,
   error: null,
 };
 
-function restoreErrorMessage(result: Exclude<RestoreResult, { status: 'restored' }>): string {
+function restoreErrorMessage(
+  result: Exclude<CheckpointRestoreResult, { status: 'restored' }>,
+): string {
   if (result.status === 'skipped-dirty') {
     return 'Restore skipped because the workspace changed.';
+  }
+  if (result.status === 'unsupported') {
+    return 'Restore is not available for this workspace.';
   }
   if (result.reason === 'backup_changed') {
     return 'The backup was updated — dismiss and reopen to restore the latest.';
@@ -91,9 +106,10 @@ function restoreErrorMessage(result: Exclude<RestoreResult, { status: 'restored'
 export function useWorkspaceSandboxRestore({
   sandboxId,
   branch,
+  repoFullName,
   enabled,
-  detect = detectAutoBackRestore,
-  apply = applyAutoBackRestore,
+  detect = defaultDetect,
+  apply = defaultRestore,
 }: UseWorkspaceSandboxRestoreArgs): WorkspaceSandboxRestoreState {
   const [banner, setBanner] = useState<RestoreBannerState>(initialBannerState);
   const planRef = useRef<RestoreDetectionPlanState>(INITIAL_RESTORE_DETECTION_PLAN_STATE);
@@ -108,15 +124,24 @@ export function useWorkspaceSandboxRestore({
   useEffect(() => {
     if (!enabled || !sandboxId) return;
 
-    const plan = planAutoBackRestoreDetection(planRef.current, { sandboxId, branch, enabled });
+    const plan = planAutoBackRestoreDetection(planRef.current, {
+      sandboxId,
+      branch,
+      repoFullName,
+      enabled,
+    });
     planRef.current = plan.state;
     if (!plan.probe) return;
     const probe = plan.probe;
 
     let cancelled = false;
     detectRef
-      .current(probe.sandboxId, probe.branch)
-      .then((availability: RestoreAvailability) => {
+      .current({
+        sandboxId: probe.sandboxId,
+        branch: probe.branch,
+        repoFullName: probe.repoFullName,
+      })
+      .then((availability: CheckpointRestoreAvailability) => {
         if (cancelled) return;
         if (!availability.available) {
           setBanner(initialBannerState);
@@ -126,7 +151,7 @@ export function useWorkspaceSandboxRestore({
           sandboxId: probe.sandboxId,
           available: true,
           summary: availability.summary,
-          sha: availability.sha,
+          checkpointId: availability.checkpointId,
           restoring: false,
           error: null,
         });
@@ -140,7 +165,7 @@ export function useWorkspaceSandboxRestore({
     return () => {
       cancelled = true;
     };
-  }, [sandboxId, branch, enabled]);
+  }, [sandboxId, branch, repoFullName, enabled]);
 
   const visible = enabled && banner.sandboxId === sandboxId && banner.available;
 
@@ -149,14 +174,14 @@ export function useWorkspaceSandboxRestore({
   }, []);
 
   const restore = useCallback(async () => {
-    if (!sandboxId || !branch || !banner.available || !banner.sha) return;
-    // Pin the SHA detection summarized — apply bails if the ref has since moved
-    // (a new auto-back), so we never restore a different backup than offered.
-    const sha = banner.sha;
+    if (!sandboxId || !branch || !repoFullName || !banner.available || !banner.checkpointId) return;
+    // Pin the checkpoint detection summarized — the store's restore re-checks the
+    // backup, so we never restore a different checkpoint than the one offered.
+    const checkpointId = banner.checkpointId;
     setBanner((current) =>
       current.available ? { ...current, restoring: true, error: null } : current,
     );
-    const result = await applyRef.current(sandboxId, branch, sha);
+    const result = await applyRef.current({ sandboxId, branch, repoFullName, checkpointId });
     if (result.status === 'restored') {
       setBanner(initialBannerState);
       return;
@@ -166,7 +191,7 @@ export function useWorkspaceSandboxRestore({
       restoring: false,
       error: restoreErrorMessage(result),
     }));
-  }, [sandboxId, branch, banner.available, banner.sha]);
+  }, [sandboxId, branch, repoFullName, banner.available, banner.checkpointId]);
 
   return {
     available: visible,
