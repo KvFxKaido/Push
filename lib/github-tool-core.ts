@@ -3119,7 +3119,7 @@ export async function executeListSecretScanningAlertsTool(
   return { text: lines.join('\n') };
 }
 
-export async function executeGitHubCoreTool(
+async function dispatchGitHubCoreToolCall(
   runtime: GitHubCoreRuntime,
   call: GitHubCoreToolCall,
 ): Promise<GitHubCoreToolResult> {
@@ -3279,4 +3279,67 @@ export async function executeGitHubCoreTool(
     case 'list_secret_scanning_alerts':
       return executeListSecretScanningAlertsTool(runtime, call.args.repo, call.args.state);
   }
+}
+
+/**
+ * Recursively redact secret-like text in every string value of a card payload,
+ * preserving structure. Cards copy raw GitHub fields (PR titles/bodies/comments,
+ * commit messages) into structured metadata that the web surface renders and
+ * stores, so redacting only the result text would still leak a card-borne
+ * secret. A generic walk covers every card type — current and future — without
+ * a per-type redaction list that could drift. `redactSensitiveText` only
+ * rewrites secret-shaped substrings, so non-secret strings (URLs, SHAs, names)
+ * pass through untouched.
+ */
+function redactCardDeep(
+  value: unknown,
+  redact: (text: string) => { text: string; redacted: boolean },
+): { value: unknown; redacted: boolean } {
+  if (typeof value === 'string') {
+    const { text, redacted } = redact(value);
+    return { value: text, redacted };
+  }
+  if (Array.isArray(value)) {
+    let any = false;
+    const out = value.map((entry) => {
+      const r = redactCardDeep(entry, redact);
+      any ||= r.redacted;
+      return r.value;
+    });
+    return { value: any ? out : value, redacted: any };
+  }
+  if (value && typeof value === 'object') {
+    let any = false;
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      const r = redactCardDeep(entry, redact);
+      any ||= r.redacted;
+      out[key] = r.value;
+    }
+    return { value: any ? out : value, redacted: any };
+  }
+  return { value, redacted: false };
+}
+
+export async function executeGitHubCoreTool(
+  runtime: GitHubCoreRuntime,
+  call: GitHubCoreToolCall,
+): Promise<GitHubCoreToolResult> {
+  const result = await dispatchGitHubCoreToolCall(runtime, call);
+  // Defense-in-depth secret redaction at the single dispatch chokepoint. All
+  // GitHub-API text — PR/issue bodies, comments, titles, commit messages,
+  // branch names — is attacker-controlled and may carry a pasted secret. Most
+  // tools don't redact it themselves (only file-content and CI-log tools do),
+  // and only the MCP surface wraps results in a blanket redactor; the web
+  // Worker/local and CLI return this verbatim. Redacting here covers every
+  // surface uniformly (behavior in code, not per-surface), and both the result
+  // text AND the structured card (which the web renders/stores). Idempotent for
+  // the tools that already redact internally — re-running finds nothing new.
+  const { text, redacted: textRedacted } = runtime.redactSensitiveText(result.text);
+  if (!result.card) {
+    return textRedacted ? { ...result, text } : result;
+  }
+  const card = redactCardDeep(result.card, runtime.redactSensitiveText);
+  if (!textRedacted && !card.redacted) return result;
+  return { ...result, text, card: card.value as GitHubCoreCard };
 }
