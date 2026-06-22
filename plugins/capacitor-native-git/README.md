@@ -6,10 +6,11 @@ On-device git for the Push Android shell — a typed Capacitor plugin backed by
 (the `PushGit` gates, the working-copy serialization lock) is the same shared
 machinery the web and CLI surfaces use.
 
-> **Status: Phase 2, device-build-pending.** The Kotlin/JGit code here is
-> written to convention but has **not** been compiled or run — the dev/CI
-> container is headless Linux with no Android SDK. Build and verify it on a
-> machine with Android Studio. See "Build & verify" below. Design + phases:
+> **Status: installed in the Android shell and device-built.** The general
+> native live-push path is still dormant, but this plugin now backs the flagged
+> APK-local checkpoint store (`VITE_NATIVE_CHECKPOINTS`), with capture validated
+> on a Moto G. Kotlin/JGit changes still need Android Studio or an Android SDK
+> runner to verify. Design + phases:
 > [`docs/runbooks/Local Git on Mobile — Native JGit Provider.md`](../../docs/runbooks/Local%20Git%20on%20Mobile%20%E2%80%94%20Native%20JGit%20Provider.md).
 
 ## Layout
@@ -27,20 +28,21 @@ src/                          TS contract + registerPlugin (for standalone consu
 The web app already declares the JS side (`app/src/lib/native-git/plugin.ts`
 calls `registerPlugin('NativeGit')`), so it binds to the Kotlin plugin **by
 name** — it does not import this package's JS. This package's `src/` is the
-publishable mirror; once it is installed, dedupe by having the app import
-`NativeGitPlugin` from here (drop `app/src/lib/native-git/definitions.ts`).
+publishable mirror; future cleanup can dedupe by having the app import
+`NativeGitPlugin` from here and dropping `app/src/lib/native-git/definitions.ts`.
 
-## Install into the app
+## App integration
 
 ```bash
 # from app/
-npm install ../plugins/capacitor-native-git   # adds the file: dependency
-npm run android:sync                            # cap sync picks up the Android module
+npm install          # refreshes the file:../plugins/capacitor-native-git dependency when needed
+npm run android:sync # builds the SPA and syncs web assets + plugin registration
 ```
 
+The app already declares this package as `file:../plugins/capacitor-native-git`.
 `cap sync` reads this package's `capacitor.android.src` and wires the Gradle
-module into `app/android/` (which is gitignored/regenerated — that's fine, the
-plugin is an npm dependency, so it re-links on every sync).
+module into the committed `app/android/` project; regenerated web assets and
+Capacitor plugin metadata stay ignored by `app/android/.gitignore`.
 
 ## Build & verify (on a device / emulator)
 
@@ -54,9 +56,12 @@ Confirm at build time:
   `java.time`; `build.gradle` enables core-library desugaring for that on
   `minSdk < 26`. If you target an older toolchain, pin JGit `5.13.x` (the last
   Java 8 line) instead.
-- **First end-to-end check (the thin proof):** clone a small repo, read
-  `status`/`currentBranch`, make a commit, and push with a GitHub token —
-  exercising `NativeGitBackend` → this plugin end-to-end.
+- **Checkpoint path:** build with `VITE_NATIVE_CHECKPOINTS=1`, make a workspace
+  edit in the APK, and confirm `native_checkpoint_captured` plus a listed
+  checkpoint. Restore remains the device-validation follow-up before this
+  graduates beyond the experimental flag.
+- **Live git path:** clone a small repo, read `status`/`currentBranch`, make a
+  commit, and push with a GitHub token before enabling native live-push UX.
 
 ## Not yet covered (later phases)
 

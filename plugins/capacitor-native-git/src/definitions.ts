@@ -1,8 +1,8 @@
 // Typed contract for the on-device git engine. Mirrors
 // app/src/lib/native-git/definitions.ts — that copy is the one the web app
 // currently imports (it binds to this plugin by name via `registerPlugin`).
-// Once this package is installed into the app, the app should import the
-// interface from here to remove the duplication (see README).
+// Future cleanup: have the app import the interface from here to remove the
+// duplicated copy in app/src/lib/native-git/definitions.ts (see README).
 
 export interface NativeGitWriteResult {
   ok: boolean;

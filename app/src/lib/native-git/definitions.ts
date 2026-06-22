@@ -95,7 +95,7 @@ export interface NativeGitPlugin {
   // `app/src/lib/checkpoint/native-jgit-store.ts`.
 
   /**
-   * Extract a `tar.gz` (base64) into `dir`'s worktree (clearing prior worktree
+   * Extract a ZIP (base64) into `dir`'s worktree (clearing prior worktree
    * content but keeping `.git`), `git add -A` (delete-faithful), and commit.
    * `committed` is false when the tree was identical to HEAD (nothing to commit);
    * `commitId` is the resulting HEAD either way (null on error, with `message`).
@@ -106,7 +106,7 @@ export interface NativeGitPlugin {
     message: string;
   }): Promise<{ committed: boolean; commitId: string | null; message?: string }>;
 
-  /** A checkpoint commit's tree as a base64 `tar.gz`, or null when not found. */
+  /** A checkpoint commit's tree as a base64 ZIP, or null when not found. */
   archiveCommit(options: {
     dir: string;
     commitId: string;

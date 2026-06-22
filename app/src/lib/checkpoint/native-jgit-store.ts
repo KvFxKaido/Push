@@ -11,7 +11,7 @@
  *              .gitignore-respecting + WIP, hard-excludes + size cap) → fetch its
  *              bytes (`downloadFileFromSandbox`) → `NativeGit.commitWorkingTree`
  *              (extract into the worktree, `git add -A`, commit) on the device.
- *   restore  — `NativeGit.archiveCommit` (device tree → tar.gz) → push to the
+ *   restore  — `NativeGit.archiveCommit` (device tree → ZIP) → push to the
  *              sandbox (`writeToSandbox`) → a `.git`-PRESERVING, delete-faithful
  *              sync (clear-except-.git + extract) so the clone's origin/branch
  *              survive and the recovered work lands as unstaged changes.

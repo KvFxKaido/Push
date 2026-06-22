@@ -1,7 +1,10 @@
 # Local Git on Mobile — Native JGit Provider
 
 Date: 2026-06-22
-Status: **Draft / in progress** — thin-proof slice landing; not yet roadmap-promoted.
+Status: **Foundation shipped / live-push deferred** — the Android project and
+JGit plugin are committed, installed in the app, and device-built. The active
+APK use is the flagged native checkpoint store; native-as-live-push remains
+deferred behind `Native Git Runtime Integration.md`.
 Owner: Push
 
 Folds the local-git experience (the GitSync daily loop — clone, browse, diff,
@@ -68,19 +71,20 @@ Capacitor-touching, native-client-only modules.
 - **Phase 1 (this slice — TS foundation):** typed `NativeGitPlugin` contract,
   `NativeGitBackend`, factories, plugin registration, and tests. Verified in
   vitest with a mock plugin. ✅
-- **Phase 2 (native engine — written, device-build-pending):** the
+- **Phase 2 (native engine — shipped):** the
   `NativeGit` Capacitor plugin package lives at
   [`plugins/capacitor-native-git/`](../../plugins/capacitor-native-git/README.md)
   — Kotlin `@CapacitorPlugin` bridge (`NativeGitPlugin.kt`), the JGit operations
-  (`JGitEngine.kt`), Gradle wiring with the JGit dependency, and HTTPS-token
-  auth via `UsernamePasswordCredentialsProvider`. Written to convention but
-  **not yet compiled/run** — that needs an Android build env (see the package
-  README's "Build & verify"). Not yet wired into `app/package.json`; the install
-  step is documented so this container's app build/tests stay green.
-- **Phase 3 (shell + routing):** switch the Android config off the pure remote
-  WebView for the local-repo surface, route file read/edit/list to the device
-  filesystem for a local clone, and select the native backend when
-  `isNativePlatform()`.
+  (`JGitEngine.kt`), Gradle wiring with the JGit dependency, HTTPS-token auth via
+  `UsernamePasswordCredentialsProvider`, and checkpoint primitives
+  (`commitWorkingTree` / `archiveCommit` / `listCheckpoints` / `pruneCheckpoints`).
+  The app depends on it via `file:../plugins/capacitor-native-git`, and the
+  committed `app/android/` project carries the native wiring/desugaring.
+- **Phase 3 (checkpoint consumer shipped; live local-repo routing deferred):**
+  `VITE_NATIVE_CHECKPOINTS` selects the app-private JGit checkpoint store on the
+  APK shell. Switching the normal file/read/edit/push path to a device clone is
+  deferred until the pushed-diff/gate work in the sibling native-git decision is
+  picked back up.
 - **Phase 4 (GitSync-parity UX):** diff/history views, conflict resolution,
   pull-with-rebase, multi-remote.
 
@@ -88,10 +92,10 @@ Capacitor-touching, native-client-only modules.
 
 - **Phase 1 is verifiable in CI** (vitest over `NativeGitBackend` with a mock
   plugin; `lib/git` suites cover the shared lock refactor).
-- **Phases 2+ need an Android build environment** (`npm run android:sync &&
+- **Native changes need an Android build environment** (`npm run android:sync &&
   cd android && ./gradlew installDebug`). The Kotlin/JGit engine cannot be
-  compiled or run in the headless Linux CI/dev container — on-device runs are
-  the handoff for those phases.
+  compiled or run in the headless Linux CI/dev container — on-device runs remain
+  the handoff for those paths.
 
 ## Open questions
 

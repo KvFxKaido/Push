@@ -42,7 +42,7 @@ debounced capture. The on-device JGit dedups identical trees (no new commit), bu
 the 7 MB download still happens each time. Capture should skip the download when
 the tree is unchanged (cheap tree-hash probe first), or move to diff transport.
 
-## Device validation finding (2026-06-22, Moto G) — BLOCKING
+## Historical device finding (2026-06-22, Moto G) — fixed by PR3c
 
 A flag-on local-bundle build was driven on-device. Result:
 
@@ -50,7 +50,7 @@ A flag-on local-bundle build was driven on-device. Result:
   returns its result; the UI → `useCheckpointHistory` → store → `NativeGit` plugin
   → list path is sound, and the JGit engine itself passes its JVM tests. Nothing
   below the trigger is wrong.
-- **The capture never fires.** After a real multi-file change, there were **zero**
+- **Original failure: capture never fired.** After a real multi-file change, there were **zero**
   `native_checkpoint_*` AND zero `auto_back_*` log events, and `files/checkpoints/`
   was never created on the device (the native repo is `git init`-ed on first
   capture). The capture *coordinator* (`useWorkspaceSandboxAutoBack`) didn't run at
@@ -72,7 +72,7 @@ checkpoint store inherited it; it did not introduce it. The inline lane is "the
 collapsed lead" (CLAUDE.md §10) and was converged onto after auto-back was built
 for the delegated web round-loop.
 
-**Fix (landed, pending device re-validation):** `chat-send-inline.ts` now emits
+**Fix (landed and capture device-validated):** `chat-send-inline.ts` now emits
 `notifyWorkspaceMutation(sandboxId)` at inline-run completion when the run changed
 the workspace (`workspaceChanged`), paired with an `inline_workspace_mutation_signaled`
 log. This is the deterministic trigger — the per-tool signals fire *during* the
@@ -80,9 +80,8 @@ run (coordinator possibly gated, WebView possibly backgrounded with throttled
 timers), so re-firing at completion (run done, sandbox ready) reliably arms the
 capture debounce and invalidates the diff cache. It fixes BOTH symptoms (capture
 + hub diff) since both consume the one signal. A symmetric `auto_back_skipped_unready`
-log was added to the coordinator's silent early-return so the *next* device test
-shows definitively if capture still doesn't fire (and why). Done in the inline
-lane, not the checkpoint store — the store was always correct.
+log was added to the coordinator's silent early-return. Done in the inline lane,
+not the checkpoint store — the store was always correct.
 
 ## Context
 
@@ -152,7 +151,7 @@ restore UX (minimal new UI), and is flag-gated and native-only (web untouched).
    data, but needs the device base kept in sync) is **deferred**.
 3. **Tree-in-JGit (Model 3), NOT archive-blob.** The on-device archive is
    **extracted into the repo worktree** and committed as real files, so git tracks
-   a true tree — not stored as an opaque `tar.gz` blob. This is the product vision
+   a true tree — not stored as an opaque archive blob. This is the product vision
    (browsable history + per-checkpoint diffs) and it is also the most
    storage-efficient across many checkpoints (git delta-packs similar trees; N
    blob archives would each be full). It stays consistent with forks 1–2: still
@@ -178,7 +177,7 @@ work on native). Model 3 uses it as follows:
 
 **Restore** (on-device commit → fresh sandbox that already has a clone):
 1. `NativeGit.archiveCommit(dir, commitId)` → the checkpoint tree as a base64
-   `tar.gz`.
+   ZIP.
 2. Apply into the sandbox via `execInSandbox` with a **`.git`-preserving,
    delete-faithful** sync (see finding below) — leaving the recovered work as
    unstaged changes on the existing clone (matching auto-back restore semantics).
@@ -195,7 +194,7 @@ variant via `execInSandbox`:
 
 ```
 cd /workspace && find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
-tar xzf /tmp/checkpoint.tar.gz -C /workspace
+unzip -o -q /tmp/push-checkpoint-restore.zip -d /workspace
 ```
 
 Delete-faithful (clears all working files except `.git`) and repo-preserving. No
@@ -276,26 +275,27 @@ load-bearing, not polish:
    - **2a (JS, device-free):** grow the interface with `list()`; add the four
      plugin TS definitions (`commitWorkingTree` / `archiveCommit` /
      `listCheckpoints` / `pruneCheckpoints`) + web stub; implement
-     `NativeJgitCheckpointStore` over them — capture via the git-aware tar exec,
+     `NativeJgitCheckpointStore` over them — capture via the git-aware ZIP exec,
      restore via the `.git`-preserving sync exec, list via the plugin; unit-test
      the orchestration with a fake plugin.
    - **2b (Kotlin + device):** the four `JGitEngine`/plugin methods (extract +
-     `add -A` + commit; tree → tar.gz; `git log`; prune) and end-to-end device
+     `add -A` + commit; tree → ZIP; `git log`; prune) and end-to-end device
      validation of the capture→commit→restore round-trip on the Moto G.
 3. **Restore-coordinator wiring + UX.**
    - **3a (shipped):** routed `useWorkspaceSandboxRestore` through the store
      (both coordinators now backend-agnostic), keyed on the full lane scope.
-   - **3b (UX):** the checkpoint-history browse/restore surface — `useCheckpointHistory`
+   - **3b (UX, shipped):** the checkpoint-history browse/restore surface — `useCheckpointHistory`
      + a presentational `CheckpointHistoryList` + a self-gating `CheckpointHistory`
      container (renders nothing off the native shell / flag), mounted in the
      workspace hub sheet next to hibernate/snapshot. Web-safe; on-device visual +
      list/restore e2e is the device-session follow-up.
-   - Remaining: **(blocking, top priority)** wire the inline-lane mutation trigger
-     (see "Device validation finding") — without it the coordinator never captures
-     on-device; then the large-upload endpoint (restore size cap) + capture/restore
-     failure telemetry + the full device e2e (which is now unblocked to run).
+   - **3c (shipped):** inline-lane mutation trigger + capture telemetry fixes;
+     capture now flows end-to-end on-device.
+   - Remaining: restore device-validation, the capture efficiency fix (avoid the
+     ~7 MB full-tree download when unchanged), restore large-upload endpoint, and
+     broader capture/restore failure telemetry.
 
-## Known limitations (PR2; tracked for PR3 — surfaced by the PR2 review)
+## Known limitations
 
 - **Exec bit / symlinks not preserved.** ZIP extraction via `java.util.zip` writes
   every entry as a plain file, so a tracked executable or symlink round-trips as a
@@ -322,8 +322,8 @@ load-bearing, not polish:
 
 ## Status flip plan
 
-Note PR1/2/3 inline as they land; promote **Proposed → Current** when the native
-capture+restore path is device-validated end-to-end. Fold durable parts into
+Note PR1/2/3 inline as they land; promote to **Current** when the remaining
+restore device-validation and transport-efficiency fixes land. Fold durable parts into
 [`Platform, Sessions, and Sandbox Decisions.md`](<Platform, Sessions, and Sandbox Decisions.md>)
 when the arc stabilizes.
 
