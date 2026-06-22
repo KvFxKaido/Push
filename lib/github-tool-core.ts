@@ -2476,6 +2476,8 @@ const JOB_LOG_DEFAULT_TAIL = 200;
 const JOB_LOG_MAX_TAIL = 1000;
 const JOB_LOG_MAX_JOBS = 5;
 const JOB_LOG_CHAR_LIMIT = 50_000;
+/** Cap the jobs-list pagination walk (per_page=100, so 5 pages = 500 jobs). */
+const JOB_LIST_MAX_PAGES = 5;
 /** Job conclusions that count as "failed" for `failed_only`. */
 const FAILED_JOB_CONCLUSIONS: ReadonlySet<string> = new Set([
   'failure',
@@ -2560,15 +2562,25 @@ export async function executeGetJobLogsTool(
     );
   }
 
-  const jobsRes = await runtime.githubFetch(
-    buildGitHubApiUrl(runtime, `/repos/${repo}/actions/runs/${runId}/jobs?per_page=100`),
-    { headers },
+  // Paginate the jobs list: a large matrix run can exceed one page, and a
+  // failure on a later page would otherwise be invisible (false "No failed
+  // jobs"). Walk Link pages up to a sane cap before filtering.
+  const allJobs: WorkflowJobSummaryApi[] = [];
+  let jobsPage = 0;
+  let jobsUrl: string | null = buildGitHubApiUrl(
+    runtime,
+    `/repos/${repo}/actions/runs/${runId}/jobs?per_page=100`,
   );
-  if (!jobsRes.ok) {
-    throw new Error(formatGitHubError(jobsRes.status, `jobs for run #${runId} on ${repo}`));
+  while (jobsUrl && jobsPage < JOB_LIST_MAX_PAGES) {
+    const jobsRes = await runtime.githubFetch(jobsUrl, { headers });
+    if (!jobsRes.ok) {
+      throw new Error(formatGitHubError(jobsRes.status, `jobs for run #${runId} on ${repo}`));
+    }
+    const jobsData = (await jobsRes.json()) as { jobs?: WorkflowJobSummaryApi[] };
+    if (jobsData.jobs) allJobs.push(...jobsData.jobs);
+    jobsUrl = parseNextLink(jobsRes.headers.get('Link'));
+    jobsPage += 1;
   }
-  const jobsData = (await jobsRes.json()) as { jobs?: WorkflowJobSummaryApi[] };
-  const allJobs = jobsData.jobs || [];
   const candidates = failedOnly
     ? allJobs.filter((job) => FAILED_JOB_CONCLUSIONS.has(job.conclusion || ''))
     : allJobs;
@@ -2615,6 +2627,8 @@ export async function executeGetJobLogsTool(
 
 const ISSUE_BODY_CHAR_LIMIT = 8000;
 const ISSUE_COMMENT_CHAR_LIMIT = 2000;
+/** Cap the issues-list pagination walk (per_page=100, so 10 pages = 1000 items). */
+const LIST_ISSUES_MAX_PAGES = 10;
 
 function labelNames(labels: IssueLabelApi[] | undefined): string[] {
   return (labels || [])
@@ -2632,22 +2646,33 @@ export async function executeListIssuesTool(
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
   const limit = Math.max(1, Math.min(count || 20, 50));
   // The /issues endpoint mixes issues and PRs and we filter PRs out client-side,
-  // so a PR-heavy first page could hide real issues. Over-fetch a full page (100,
-  // the API max) and slice to the requested limit after filtering.
-  let url = buildGitHubApiUrl(
-    runtime,
-    `/repos/${repo}/issues?state=${encodeURIComponent(state)}&per_page=100`,
-  );
-  if (labels) url += `&labels=${encodeURIComponent(labels)}`;
+  // so a PR-heavy page could hide real issues. Walk Link pages (per_page=100)
+  // until we've collected `limit` non-PR issues or run out of pages — stops
+  // after the first page on a normal repo, only paginates when PRs crowd it out.
+  const collected: IssueListItemApi[] = [];
+  let issuesPage = 0;
+  let nextUrl: string | null = (() => {
+    const base = buildGitHubApiUrl(
+      runtime,
+      `/repos/${repo}/issues?state=${encodeURIComponent(state)}&per_page=100`,
+    );
+    return labels ? `${base}&labels=${encodeURIComponent(labels)}` : base;
+  })();
 
-  const res = await runtime.githubFetch(url, { headers });
-  if (!res.ok) {
-    throw new Error(formatGitHubError(res.status, `issues on ${repo}`));
+  while (nextUrl && issuesPage < LIST_ISSUES_MAX_PAGES && collected.length < limit) {
+    const res = await runtime.githubFetch(nextUrl, { headers });
+    if (!res.ok) {
+      throw new Error(formatGitHubError(res.status, `issues on ${repo}`));
+    }
+    const pageData = await res.json();
+    if (!Array.isArray(pageData)) break;
+    for (const issue of pageData as IssueListItemApi[]) {
+      if (!issue.pull_request) collected.push(issue);
+    }
+    nextUrl = parseNextLink(res.headers.get('Link'));
+    issuesPage += 1;
   }
-  const data = (await res.json()) as IssueListItemApi[];
-  const issues = (Array.isArray(data) ? data : [])
-    .filter((issue) => !issue.pull_request)
-    .slice(0, limit);
+  const issues = collected.slice(0, limit);
 
   if (issues.length === 0) {
     return {

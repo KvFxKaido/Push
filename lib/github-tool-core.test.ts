@@ -9,6 +9,8 @@ interface CannedResponse {
   status?: number;
   body?: unknown;
   text?: string;
+  /** Raw `Link` header value, e.g. `<url>; rel="next"`, to exercise pagination. */
+  link?: string;
 }
 
 type FetchHandler = (url: string, init?: RequestInit) => CannedResponse;
@@ -32,7 +34,7 @@ function makeRuntime(
         async text() {
           return canned.text ?? '';
         },
-        headers: new Headers(),
+        headers: new Headers(canned.link ? { Link: canned.link } : {}),
       } as unknown as Response;
     },
     buildHeaders: () => ({}),
@@ -146,6 +148,30 @@ describe('get_job_logs', () => {
     expect(result.text).toContain('eslint error');
   });
 
+  it('paginates the jobs list to find failures on later pages', async () => {
+    const { runtime, calls } = makeRuntime((url) => {
+      if (url.includes('/actions/runs/5/jobs') && !url.includes('page=2')) {
+        return {
+          body: { jobs: [{ id: 1, name: 'a', status: 'completed', conclusion: 'success' }] },
+          link: '<https://api.github.com/repos/o/r/actions/runs/5/jobs?per_page=100&page=2>; rel="next"',
+        };
+      }
+      if (url.includes('page=2')) {
+        return {
+          body: {
+            jobs: [{ id: 2, name: 'late-fail', status: 'completed', conclusion: 'failure' }],
+          },
+        };
+      }
+      if (url.includes('/actions/jobs/2/logs')) return { text: 'boom' };
+      return { status: 404 };
+    });
+    const result = await run(runtime, { tool: 'get_job_logs', args: { repo: 'o/r', run_id: 5 } });
+    expect(calls.some((c) => c.url.includes('page=2'))).toBe(true);
+    expect(result.text).toContain('late-fail (failure)');
+    expect(result.text).toContain('boom');
+  });
+
   it('does not falsely truncate a log that ends with a newline', async () => {
     // "a\nb\nc\n" is 3 real lines; tail_lines:3 must keep all of them and not
     // mark the result truncated (the trailing '' segment is not a line). The
@@ -182,6 +208,30 @@ describe('list_issues', () => {
     expect(result.text).toContain('#1 A real issue');
     expect(result.text).not.toContain('A pull request');
     expect(result.text).toContain('1 open issue');
+  });
+
+  it('paginates past a PR-only first page to reach real issues', async () => {
+    const { runtime, calls } = makeRuntime((url) => {
+      if (url.includes('/issues') && !url.includes('page=2')) {
+        return {
+          body: [
+            { number: 1, title: 'pr only', state: 'open', user: { login: 'x' }, pull_request: {} },
+          ],
+          link: '<https://api.github.com/repos/o/r/issues?state=open&per_page=100&page=2>; rel="next"',
+        };
+      }
+      if (url.includes('page=2')) {
+        return {
+          body: [
+            { number: 2, title: 'real issue', state: 'open', user: { login: 'x' }, comments: 0 },
+          ],
+        };
+      }
+      return { status: 404 };
+    });
+    const result = await run(runtime, { tool: 'list_issues', args: { repo: 'o/r' } });
+    expect(calls.some((c) => c.url.includes('page=2'))).toBe(true);
+    expect(result.text).toContain('real issue');
   });
 
   it('over-fetches a full page and slices to the requested count', async () => {
