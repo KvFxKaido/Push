@@ -2,7 +2,9 @@
 
 Date: 2026-06-22
 Status: **Proposed** — design agreed (three-way: Shawn + Claude + ChatGPT review).
-First increment not yet built. Not roadmap-promoted. Owner: Push mobile/git.
+PR1 (the `CheckpointStore` abstraction + adapters + capture-coordinator wiring,
+`app/src/lib/checkpoint/`) has **landed**; native capture (PR2) and restore wiring
+(PR3) remain proposed. Not roadmap-promoted. Owner: Push mobile/git.
 
 ## Context
 
