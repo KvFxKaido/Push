@@ -1,8 +1,20 @@
 # Native Git Runtime Integration
 
 Date: 2026-06-21
-Status: **Draft** — increment 1 (selection seam) shipped; increment 2 (pushed-diff
-source) decided here (Option E), not yet built. Not roadmap-promoted. Owner: Push mobile/git.
+Status: **Deferred** (2026-06-22) — native-as-live-push-path is no longer the next
+increment. The current next increment is the APK-local **Native Checkpoint Store**
+(see [`Native Checkpoint Store.md`](<Native Checkpoint Store.md>)), which sidesteps
+the pushed-diff/gate problem entirely (local checkpoints never push). The Option E
+decision below remains the chosen design *if and when* the live-native-push path is
+picked back up; it is not wasted, just not next. Increment 1 (selection seam) shipped
+(PR #1069) and stays dormant under the checkpoint approach. Owner: Push mobile/git.
+
+> **Why deferred:** the pre-push gates exist to protect *the remote*. A checkpoint
+> store that keeps work durably **on the device** never pushes, so it needs none of
+> the native `getDiff` / pushed-diff-source / device-validated-DiffFormatter work
+> this doc specifies. The checkpoint store reaches the mobile work-loss goal sooner,
+> behind a flag, with the gnarliest part removed. This doc reactivates only if we
+> later want native commits/pushes to ship to GitHub directly.
 
 ## Context
 
