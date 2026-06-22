@@ -194,7 +194,7 @@ export function HubSettingsTab({
     },
     {
       title: 'Workspace',
-      description: 'Notebook controls for context, sandbox, and branch safety.',
+      description: 'Controls for context, sandbox, and branch safety.',
       badge: sandboxLabel,
       icon: SETTINGS_SECTION_ICONS.workspace,
       lines: [
