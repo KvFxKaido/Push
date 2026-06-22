@@ -20,10 +20,14 @@
  * the auditor's single-block diff *display* truncation; the `*DiffChunk`
  * entries are the per-file chunking caps fed to `chunkDiffByFile`.
  *
- * Lib-owned only for now. The web `app/src/lib/agent-loop-utils.ts` copy already
- * imports the read-only tool-result cap from here transitively; the CLI's own
- * instruction/memory caps in `cli/workspace-context.ts` are a deliberate
- * follow-up (CLI surface, separate truncation path).
+ * Lib-owned. The web `app/src/lib/agent-loop-utils.ts` copy imports the
+ * read-only tool-result cap from here transitively. The CLI's project-
+ * instruction cap routes through the shared `formatProjectInstructionsBlock`
+ * (the 8K `projectInstructionsDefault` below), and its workspace free-text
+ * memory cap is now `workspaceMemory` here too. The CLI's entry-COUNT caps
+ * (`MAX_TREE_ENTRIES`, `MAX_STRUCTURED_ENTRIES` in `cli/workspace-context.ts`)
+ * stay local on purpose — they bound a *number of items*, not characters, so
+ * they're out of this char-budget module's scope.
  *
  * Pure module — no imports, no I/O. Safe for both Web and CLI.
  */
@@ -40,6 +44,9 @@ export const SIZE_BUDGETS = Object.freeze({
   /** Reviewer/Auditor compact project-policy hints — side guidance, not the
    *  primary input, so it gets the smallest budget. */
   roleProjectHints: 2_500,
+  /** CLI workspace-context free-text memory block (`.push/memory.md`) folded
+   *  into the prompt (`cli/workspace-context.ts`). */
+  workspaceMemory: 4_000,
   /** REVIEW.md reviewer guidance — primary repo-specific review input. */
   reviewGuidance: 8_000,
   /** Tool-result truncation for the read-only investigation agents. */

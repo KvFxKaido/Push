@@ -10,6 +10,7 @@ describe('SIZE_BUDGETS', () => {
       projectInstructionsAgent: 12_000,
       agentsMdCoder: 4_000,
       roleProjectHints: 2_500,
+      workspaceMemory: 4_000,
       reviewGuidance: 8_000,
       toolResultReadOnly: 8_000,
       toolResultCoder: 24_000,

@@ -13,6 +13,8 @@
  * only the import boundary and dep-injection wrapper are new.
  */
 
+import { DEFAULT_CONTEXT_BUDGET, type ContextBudget } from './context-budget.js';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -30,23 +32,13 @@ export interface Message {
   isToolResult?: boolean;
 }
 
-export interface ContextBudget {
-  maxTokens: number;
-  targetTokens: number;
-  /** Threshold at which old tool results get summarized. Decoupled from
-   *  targetTokens so large-context models (Gemini) still get lean working
-   *  context without premature message dropping. */
-  summarizeTokens: number;
-}
-
-const DEFAULT_CONTEXT_MAX_TOKENS = 100_000;
-const DEFAULT_CONTEXT_TARGET_TOKENS = 88_000;
-
-export const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
-  maxTokens: DEFAULT_CONTEXT_MAX_TOKENS,
-  targetTokens: DEFAULT_CONTEXT_TARGET_TOKENS,
-  summarizeTokens: DEFAULT_CONTEXT_TARGET_TOKENS,
-};
+// `ContextBudget` + `DEFAULT_CONTEXT_BUDGET` are defined once in
+// `context-budget.ts` (the canonical context-budget module both surfaces
+// import) and re-exported here so existing importers of this module keep
+// working. They were previously duplicated verbatim — the 100K/88K numbers had
+// to be kept in lockstep by hand, the exact drift risk this removes.
+export { DEFAULT_CONTEXT_BUDGET };
+export type { ContextBudget };
 
 export type SummarizationCause = 'tool_output' | 'long_message' | 'mixed';
 

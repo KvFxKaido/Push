@@ -2,6 +2,7 @@ import { promises as fs, type Dirent } from 'node:fs';
 import path from 'node:path';
 import { GitInfo, MANIFEST_PARSERS } from '../lib/repo-awareness.js';
 import { resolveProjectInstructions } from '../lib/project-instructions-source.js';
+import { SIZE_BUDGETS } from '../lib/size-budgets.js';
 import { createLocalGitBackend } from './git-backend.js';
 
 const IGNORED_ENTRIES = new Set([
@@ -16,7 +17,7 @@ const IGNORED_ENTRIES = new Set([
 ]);
 
 const MAX_TREE_ENTRIES = 40;
-const MAX_MEMORY_CHARS = 4000;
+const MAX_MEMORY_CHARS = SIZE_BUDGETS.workspaceMemory;
 const MEMORY_PATH = '.push/memory.md';
 const STRUCTURED_MEMORY_PATH = '.push/memory.json';
 const MAX_STRUCTURED_ENTRIES = 20;
@@ -176,7 +177,9 @@ export async function loadMemory(cwd: string): Promise<string | null> {
     const fullPath: string = path.join(cwd, MEMORY_PATH);
     let content: string = await fs.readFile(fullPath, 'utf8');
     if (content.length > MAX_MEMORY_CHARS) {
-      content = content.slice(0, MAX_MEMORY_CHARS);
+      // Mark the cut so the model knows the memory block was clipped (was a
+      // silent slice before — see the truncation audit).
+      content = `${content.slice(0, MAX_MEMORY_CHARS)}\n[… workspace memory truncated at ${MAX_MEMORY_CHARS} chars]`;
     }
     if (content.trim()) {
       parts.push(content.trim());

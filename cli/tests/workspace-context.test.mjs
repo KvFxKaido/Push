@@ -251,14 +251,18 @@ describe('loadMemory', () => {
     }
   });
 
-  it('caps content at 4000 characters', async () => {
+  it('caps content at 4000 characters and marks the cut', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-ws-test-'));
     try {
       await fs.mkdir(path.join(tmpDir, '.push'));
       await fs.writeFile(path.join(tmpDir, '.push', 'memory.md'), 'x'.repeat(5000));
 
       const result = await loadMemory(tmpDir);
-      assert.equal(result.length, 4000);
+      // The first 4000 chars survive, the rest is dropped...
+      assert.ok(result.startsWith('x'.repeat(4000)), 'keeps the first 4000 chars');
+      assert.ok(!result.includes('x'.repeat(4001)), 'cuts at the 4000-char cap');
+      // ...and the cut is marked, not silent (truncation audit).
+      assert.match(result, /truncated at 4000 chars/);
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }
