@@ -9,6 +9,8 @@ export interface CheckpointHistoryListProps {
   error: string | null;
   /** The checkpoint currently being restored, or null. */
   restoringId: string | null;
+  /** Whether restore can run (false with no sandbox to restore into). */
+  canRestore: boolean;
   onRestore: (checkpointId: string) => void;
   /** Current time for relative ages — injected for deterministic tests. */
   nowMs: number;
@@ -25,15 +27,22 @@ export function CheckpointHistoryList({
   loading,
   error,
   restoringId,
+  canRestore,
   onRestore,
   nowMs,
 }: CheckpointHistoryListProps) {
   const restoringAny = restoringId !== null;
+  const restoreDisabled = restoringAny || !canRestore;
   return (
     <div className={`${HUB_PANEL_SURFACE_CLASS} px-3 py-2.5`}>
-      <div className="mb-2 flex items-center gap-1.5 text-push-xs font-medium text-push-fg-dim">
-        <History className="h-3.5 w-3.5" />
-        <span>Checkpoints</span>
+      <div className="mb-2 flex items-center justify-between gap-2 text-push-xs font-medium text-push-fg-dim">
+        <span className="flex items-center gap-1.5">
+          <History className="h-3.5 w-3.5" />
+          <span>Checkpoints</span>
+        </span>
+        {!canRestore && checkpoints.length > 0 ? (
+          <span className="text-push-fg-dim/70">Start the workspace to restore</span>
+        ) : null}
       </div>
 
       {loading ? (
@@ -68,8 +77,8 @@ export function CheckpointHistoryList({
                 <button
                   type="button"
                   onClick={() => onRestore(checkpoint.checkpointId)}
-                  disabled={restoringAny}
-                  className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} shrink-0 gap-1.5 px-3 text-push-fg-secondary`}
+                  disabled={restoreDisabled}
+                  className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} shrink-0 gap-1.5 px-3 text-push-fg-secondary disabled:opacity-50`}
                 >
                   {restoring ? (
                     <Loader2 className="h-3 w-3 animate-spin" />

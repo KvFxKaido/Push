@@ -1602,6 +1602,7 @@ export function WorkspaceHubSheet({
             sandboxId={sandboxId}
             repoFullName={repoFullName ?? null}
             branch={branchProps.currentBranch}
+            open={open}
           />
 
           {/* Branch switch confirmation overlay */}

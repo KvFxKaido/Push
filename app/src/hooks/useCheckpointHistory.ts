@@ -30,6 +30,12 @@ export interface CheckpointHistoryState {
   error: string | null;
   /** The checkpoint currently being restored, or null. */
   restoringId: string | null;
+  /**
+   * Whether restore can run — false when there's no sandbox to restore INTO (an
+   * idle/hibernated workspace can still list history). Call sites disable the
+   * restore control rather than letting it no-op silently (Codex P2).
+   */
+  canRestore: boolean;
   refresh: () => void;
   restore: (checkpointId: string) => Promise<void>;
 }
@@ -43,8 +49,10 @@ interface LoadedData {
 
 const EMPTY_DATA: LoadedData = { scope: '', checkpoints: [], error: null };
 
-/** Map a non-restored result to a user-facing message. */
-function restoreError(result: Exclude<CheckpointRestoreResult, { status: 'restored' }>): string {
+/** Map a non-restored result to a user-facing message. Exported for tests. */
+export function restoreError(
+  result: Exclude<CheckpointRestoreResult, { status: 'restored' }>,
+): string {
   if (result.status === 'skipped-dirty') return 'Restore skipped — the workspace has changes.';
   if (result.status === 'unsupported') return 'Restore is not available here.';
   return result.reason || 'Restore failed.';
@@ -139,5 +147,13 @@ export function useCheckpointHistory({
     [sandboxId, repoFullName, trimmedBranch],
   );
 
-  return { checkpoints, loading, error, restoringId, refresh, restore };
+  return {
+    checkpoints,
+    loading,
+    error,
+    restoringId,
+    canRestore: Boolean(sandboxId),
+    refresh,
+    restore,
+  };
 }

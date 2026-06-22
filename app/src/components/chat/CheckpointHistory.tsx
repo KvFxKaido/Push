@@ -8,6 +8,13 @@ export interface CheckpointHistoryProps {
   sandboxId: string | null;
   repoFullName: string | null | undefined;
   branch: string | null | undefined;
+  /**
+   * Whether the host surface (hub sheet) is open. Gating the hook's work on this
+   * makes the history re-fetch each time the sheet reopens — the sheet stays
+   * mounted, so without this checkpoints captured between opens stay invisible
+   * (Codex P2).
+   */
+  open: boolean;
 }
 
 /**
@@ -16,18 +23,23 @@ export interface CheckpointHistoryProps {
  * otherwise. The gate lives here so call sites mount it unconditionally
  * (`<CheckpointHistory … />`) with zero effect on web.
  */
-export function CheckpointHistory({ sandboxId, repoFullName, branch }: CheckpointHistoryProps) {
+export function CheckpointHistory({
+  sandboxId,
+  repoFullName,
+  branch,
+  open,
+}: CheckpointHistoryProps) {
   const active = isNativePlatform() && isNativeCheckpointsEnabled();
   // Snapshot "now" once at mount (relative ages are computed against it) — keeps
   // render pure. The sheet is transient, so a per-open snapshot is fine.
   const [nowMs] = useState(() => Date.now());
   // Hook runs unconditionally (rules of hooks); `enabled` gates its work so it's
-  // inert on web.
+  // inert on web AND re-fetches on each reopen (the scope key cycles with `open`).
   const history = useCheckpointHistory({
     sandboxId,
     repoFullName: repoFullName ?? null,
     branch,
-    enabled: active,
+    enabled: active && open,
   });
 
   if (!active) return null;
@@ -38,6 +50,7 @@ export function CheckpointHistory({ sandboxId, repoFullName, branch }: Checkpoin
       loading={history.loading}
       error={history.error}
       restoringId={history.restoringId}
+      canRestore={history.canRestore}
       onRestore={history.restore}
       nowMs={nowMs}
     />

@@ -17,6 +17,7 @@ function html(props: Partial<Parameters<typeof CheckpointHistoryList>[0]>): stri
       loading={false}
       error={null}
       restoringId={null}
+      canRestore={true}
       onRestore={() => {}}
       nowMs={NOW}
       {...props}
@@ -60,5 +61,11 @@ describe('CheckpointHistoryList', () => {
     const out = html({ checkpoints: RECORDS, restoringId: 'c2' });
     expect(out).toContain('Restoring');
     expect(out).toMatch(/disabled/);
+  });
+
+  it('disables restore and hints when there is no sandbox (Codex P2)', () => {
+    const out = html({ checkpoints: RECORDS, canRestore: false });
+    expect(out).toMatch(/disabled/);
+    expect(out).toContain('Start the workspace to restore');
   });
 });
