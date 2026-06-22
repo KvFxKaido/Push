@@ -18,7 +18,10 @@ import { applyAutoBackRestore, detectAutoBackRestore } from '../sandbox-auto-bac
 import type {
   CheckpointCaptureInput,
   CheckpointCaptureResult,
+  CheckpointDetectInput,
+  CheckpointRecord,
   CheckpointRestoreAvailability,
+  CheckpointRestoreInput,
   CheckpointRestoreResult,
   CheckpointStore,
 } from './checkpoint-store';
@@ -62,22 +65,15 @@ export const remoteDraftRefCheckpointStore: CheckpointStore = {
     return toCaptureResult(result);
   },
 
-  async detectRestore(
-    sandboxId: string,
-    branch: string | null | undefined,
-  ): Promise<CheckpointRestoreAvailability> {
-    const availability = await detectAutoBackRestore(sandboxId, branch);
+  async detectRestore(input: CheckpointDetectInput): Promise<CheckpointRestoreAvailability> {
+    const availability = await detectAutoBackRestore(input.sandboxId, input.branch);
     if (!availability.available) return { available: false, reason: availability.reason };
     // The backup commit sha is the store-local checkpoint handle.
     return { available: true, checkpointId: availability.sha, summary: availability.summary };
   },
 
-  async restore(
-    sandboxId: string,
-    branch: string | null | undefined,
-    checkpointId: string,
-  ): Promise<CheckpointRestoreResult> {
-    const result = await applyAutoBackRestore(sandboxId, branch, checkpointId);
+  async restore(input: CheckpointRestoreInput): Promise<CheckpointRestoreResult> {
+    const result = await applyAutoBackRestore(input.sandboxId, input.branch, input.checkpointId);
     switch (result.status) {
       case 'restored':
         return { status: 'restored', checkpointId: result.sha };
@@ -86,5 +82,13 @@ export const remoteDraftRefCheckpointStore: CheckpointStore = {
       case 'failed':
         return { status: 'failed', reason: result.reason };
     }
+  },
+
+  // The remote backend keeps a single force-updated draft ref per branch, not a
+  // history — there's nothing to enumerate. `detectRestore` is the "is the one
+  // backup there?" query; `list` is a degenerate empty here (the on-device store
+  // is where a real checkpoint history lives).
+  async list(): Promise<CheckpointRecord[]> {
+    return [];
   },
 };

@@ -3,11 +3,13 @@ import { createAutoBackScheduler, type AutoBackContext } from './useWorkspaceSan
 import type { CheckpointCaptureResult } from '@/lib/checkpoint/checkpoint-store';
 
 const DEBOUNCE = 45_000;
+const REPO = 'owner/repo';
 
 function setup(ctxOverrides?: Partial<AutoBackContext>) {
   const ctx: AutoBackContext = {
     sandboxId: 'sb-1',
     branch: 'feature/x',
+    repoFullName: REPO,
     enabled: true,
     ...ctxOverrides,
   };
@@ -35,6 +37,7 @@ describe('createAutoBackScheduler', () => {
     expect(capture).toHaveBeenCalledTimes(1);
     // First capture has no prior token to dedup against.
     expect(capture).toHaveBeenCalledWith({
+      repoFullName: REPO,
       sandboxId: 'sb-1',
       branch: 'feature/x',
       priorToken: undefined,
@@ -42,7 +45,12 @@ describe('createAutoBackScheduler', () => {
   });
 
   it('threads the last dedup token into the next capture so it can dedup (#982)', async () => {
-    const ctx: AutoBackContext = { sandboxId: 'sb-1', branch: 'feature/x', enabled: true };
+    const ctx: AutoBackContext = {
+      sandboxId: 'sb-1',
+      branch: 'feature/x',
+      repoFullName: REPO,
+      enabled: true,
+    };
     const capture = vi.fn(
       async (): Promise<CheckpointCaptureResult> => ({ status: 'captured', dedupToken: 'tok-1' }),
     );
@@ -55,6 +63,7 @@ describe('createAutoBackScheduler', () => {
     scheduler.onMutation('sb-1');
     await vi.advanceTimersByTimeAsync(DEBOUNCE);
     expect(capture).toHaveBeenNthCalledWith(1, {
+      repoFullName: REPO,
       sandboxId: 'sb-1',
       branch: 'feature/x',
       priorToken: undefined,
@@ -64,6 +73,7 @@ describe('createAutoBackScheduler', () => {
     await vi.advanceTimersByTimeAsync(DEBOUNCE);
     // Second run carries the token the first capture pinned.
     expect(capture).toHaveBeenNthCalledWith(2, {
+      repoFullName: REPO,
       sandboxId: 'sb-1',
       branch: 'feature/x',
       priorToken: 'tok-1',
@@ -71,7 +81,12 @@ describe('createAutoBackScheduler', () => {
   });
 
   it('does not reuse the dedup pin across a branch change', async () => {
-    const ctx: AutoBackContext = { sandboxId: 'sb-1', branch: 'feature/x', enabled: true };
+    const ctx: AutoBackContext = {
+      sandboxId: 'sb-1',
+      branch: 'feature/x',
+      repoFullName: REPO,
+      enabled: true,
+    };
     const capture = vi.fn(
       async (input): Promise<CheckpointCaptureResult> => ({
         status: 'captured',
@@ -92,10 +107,18 @@ describe('createAutoBackScheduler', () => {
     await vi.advanceTimersByTimeAsync(DEBOUNCE);
     // New branch → no carried pin (the pin was for feature/x).
     expect(capture).toHaveBeenNthCalledWith(2, {
+      repoFullName: REPO,
       sandboxId: 'sb-1',
       branch: 'feature/y',
       priorToken: undefined,
     });
+  });
+
+  it('does nothing without a repoFullName (native store needs the durable key)', async () => {
+    const { capture, scheduler } = setup({ repoFullName: null });
+    scheduler.onMutation('sb-1');
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+    expect(capture).not.toHaveBeenCalled();
   });
 
   it('ignores mutations for a different sandbox', async () => {
@@ -143,7 +166,12 @@ describe('createAutoBackScheduler', () => {
           resolveBackup = () => resolve({ status: 'captured', dedupToken: 'tok' });
         }),
     );
-    const ctx: AutoBackContext = { sandboxId: 'sb-1', branch: 'feature/x', enabled: true };
+    const ctx: AutoBackContext = {
+      sandboxId: 'sb-1',
+      branch: 'feature/x',
+      repoFullName: REPO,
+      enabled: true,
+    };
     const scheduler = createAutoBackScheduler({
       debounceMs: DEBOUNCE,
       getContext: () => ctx,

@@ -44,4 +44,16 @@ export class NativeGitWeb extends WebPlugin implements NativeGitPlugin {
   fetch(): Promise<never> {
     return this.notAvailable();
   }
+  commitWorkingTree(): Promise<never> {
+    return this.notAvailable();
+  }
+  archiveCommit(): Promise<never> {
+    return this.notAvailable();
+  }
+  listCheckpoints(): Promise<never> {
+    return this.notAvailable();
+  }
+  pruneCheckpoints(): Promise<never> {
+    return this.notAvailable();
+  }
 }

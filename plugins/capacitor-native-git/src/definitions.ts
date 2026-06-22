@@ -55,4 +55,19 @@ export interface NativeGitPlugin {
     depth?: number;
     token?: string;
   }): Promise<NativeGitWriteResult>;
+
+  // -- Checkpoint operations (CheckpointStore native backend) ----------------
+  commitWorkingTree(options: {
+    dir: string;
+    archiveBase64: string;
+    message: string;
+  }): Promise<{ committed: boolean; commitId: string | null; message?: string }>;
+  archiveCommit(options: {
+    dir: string;
+    commitId: string;
+  }): Promise<{ archiveBase64: string | null }>;
+  listCheckpoints(options: { dir: string }): Promise<{
+    checkpoints: Array<{ commitId: string; message: string; timestampMs: number }>;
+  }>;
+  pruneCheckpoints(options: { dir: string; keep: number }): Promise<{ pruned: number }>;
 }

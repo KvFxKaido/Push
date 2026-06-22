@@ -88,4 +88,35 @@ export interface NativeGitPlugin {
     depth?: number;
     token?: string;
   }): Promise<NativeGitWriteResult>;
+
+  // -- Checkpoint operations (CheckpointStore native backend) ----------------
+  // These operate on an app-private backup repo (auto-`git init`-ed on first
+  // use), separate from any session working copy. See
+  // `app/src/lib/checkpoint/native-jgit-store.ts`.
+
+  /**
+   * Extract a `tar.gz` (base64) into `dir`'s worktree (clearing prior worktree
+   * content but keeping `.git`), `git add -A` (delete-faithful), and commit.
+   * `committed` is false when the tree was identical to HEAD (nothing to commit);
+   * `commitId` is the resulting HEAD either way (null on error, with `message`).
+   */
+  commitWorkingTree(options: {
+    dir: string;
+    archiveBase64: string;
+    message: string;
+  }): Promise<{ committed: boolean; commitId: string | null; message?: string }>;
+
+  /** A checkpoint commit's tree as a base64 `tar.gz`, or null when not found. */
+  archiveCommit(options: {
+    dir: string;
+    commitId: string;
+  }): Promise<{ archiveBase64: string | null }>;
+
+  /** Checkpoint history (the repo's `git log`), newest first. */
+  listCheckpoints(options: { dir: string }): Promise<{
+    checkpoints: Array<{ commitId: string; message: string; timestampMs: number }>;
+  }>;
+
+  /** Retain the newest `keep` checkpoints; drop the rest. Returns how many were pruned. */
+  pruneCheckpoints(options: { dir: string; keep: number }): Promise<{ pruned: number }>;
 }
