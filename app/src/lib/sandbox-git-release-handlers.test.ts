@@ -382,6 +382,36 @@ describe('handleSandboxCommit', () => {
     expect(ctx.execCalls.some((c) => String(c[1]).includes("git 'commit'"))).toBe(true);
   });
 
+  it('commits a brand-new untracked file instead of short-circuiting (#1075)', async () => {
+    // `git diff HEAD` is empty for a brand-new file; the porcelain `??` entry is
+    // the only signal. The gate must proceed and the backend's `add -A` stages it.
+    const untrackedDiff =
+      'diff --git a/dev/null b/docs/new.md\n' +
+      '--- /dev/null\n+++ b/docs/new.md\n@@ -0,0 +1 @@\n+hello\n';
+    const ctx = makeContext({
+      diffResults: [
+        { diff: '', truncated: false, git_status: '?? docs/new.md' },
+        { diff: '', truncated: false, git_status: '?? docs/new.md' },
+      ],
+      // [0] pre-commit hook, [1] collectUntrackedDiff (new-file diff),
+      // [2] git add -A, [3] git commit (backend).
+      execResults: [ok('hook ran'), ok(untrackedDiff), ok(), ok('[branch abc123] add doc')],
+    });
+    const result = await handleSandboxCommit(ctx, { message: 'docs: add new doc' });
+    expect(result.text).toContain('Committed: "docs: add new doc"');
+    // Stats come from the synthesized untracked diff, not the empty `git diff HEAD`.
+    expect(result.text).toContain('1 file, +1 -0');
+    // The backend actually committed (reached `git commit`, not the empty path).
+    expect(ctx.execCalls.some((c) => String(c[1]).includes("git 'commit'"))).toBe(true);
+    // The untracked-diff probe is read-only (no markWorkspaceMutated flag) and
+    // disables repo-configured diff helpers so it can't trigger a side effect.
+    const untrackedProbe = ctx.execCalls.find((c) => String(c[1]).includes('--no-index'));
+    expect(untrackedProbe).toBeDefined();
+    expect(untrackedProbe?.[3]).toBeUndefined();
+    expect(String(untrackedProbe?.[1])).toContain('--no-ext-diff');
+    expect(String(untrackedProbe?.[1])).toContain('--no-textconv');
+  });
+
   it('returns a structured error when the backend commit fails', async () => {
     const diff = 'diff --git a/x.ts b/x.ts\n+ok\n';
     const ctx = makeContext({
