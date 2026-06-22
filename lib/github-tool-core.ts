@@ -6,6 +6,11 @@
  * user-facing text/card shaping for the shared GitHub tool surface.
  */
 
+// Pure, config-free envelope-marker defanging — imported directly rather than
+// threaded through the runtime port (which carries surface-specific primitives
+// like the secret redactor).
+import { sanitizeUntrustedSource } from './untrusted-content.js';
+
 export interface GitHubCoreBranch {
   name: string;
   isDefault: boolean;
@@ -3335,11 +3340,25 @@ export async function executeGitHubCoreTool(
   // surface uniformly (behavior in code, not per-surface), and both the result
   // text AND the structured card (which the web renders/stores). Idempotent for
   // the tools that already redact internally — re-running finds nothing new.
-  const { text, redacted: textRedacted } = runtime.redactSensitiveText(result.text);
+  const { text: redactedText } = runtime.redactSensitiveText(result.text);
+  // Envelope-integrity sanitization (#1080) at the same chokepoint, AFTER
+  // redaction — mirroring the MCP path (which already does redact → sanitize).
+  // Attacker-controlled GitHub text can carry [TOOL_RESULT]/[meta]/[CODER_STATE]
+  // markers or a fenced JSON tool-call shape to break out of the agent's result
+  // envelope; sanitizing here means the web Worker/local and CLI inherit the
+  // guard too, not just MCP. Idempotent, and it only neutralizes the dangerous
+  // infrastructure markers — the tools' own `[Tool Result — …]` headers survive.
+  //
+  // Text-only (not the card): the card is structured data the web renders
+  // (React-escaped) and stores, never fed into the model's envelope text stream,
+  // so envelope markers there can't break out. The card still gets secret
+  // REDACTION below (a leakage concern, which is different).
+  const text = sanitizeUntrustedSource(redactedText);
+  const textChanged = text !== result.text;
   if (!result.card) {
-    return textRedacted ? { ...result, text } : result;
+    return textChanged ? { ...result, text } : result;
   }
   const card = redactCardDeep(result.card, runtime.redactSensitiveText);
-  if (!textRedacted && !card.redacted) return result;
+  if (!textChanged && !card.redacted) return result;
   return { ...result, text, card: card.value as GitHubCoreCard };
 }
