@@ -663,8 +663,8 @@ import { runDeepReviewer } from '../lib/deep-reviewer-agent.ts';
 import { buildReviewerContextBlock } from '../lib/role-context.ts';
 import { getSubagentLabel } from '../lib/role-display.ts';
 import {
+  capReviewGuidanceLines,
   REVIEW_GUIDANCE_FILENAME,
-  REVIEW_GUIDANCE_MAX_LINES,
   resolveReviewGuidance,
 } from '../lib/review-guidance.ts';
 import { validateTaskGraph, executeTaskGraph, formatTaskGraphResult } from '../lib/task-graph.ts';
@@ -5222,7 +5222,7 @@ async function readWorkspaceReviewGuidance(cwd) {
     const buffer = Buffer.alloc(REVIEW_GUIDANCE_MAX_BYTES);
     const { bytesRead } = await handle.read(buffer, 0, REVIEW_GUIDANCE_MAX_BYTES, 0);
     const text = buffer.subarray(0, bytesRead).toString('utf8');
-    return text.split('\n').slice(0, REVIEW_GUIDANCE_MAX_LINES).join('\n');
+    return capReviewGuidanceLines(text);
   } catch (err) {
     if (err && typeof err === 'object' && err.code === 'ENOENT') return null;
     throw err;

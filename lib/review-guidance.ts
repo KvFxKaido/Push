@@ -13,6 +13,20 @@ export const REVIEW_GUIDANCE_SANDBOX_PATH = '/workspace/REVIEW.md';
 // cap in role-context applies. Comfortably covers a real guidance file.
 export const REVIEW_GUIDANCE_MAX_LINES = 600;
 
+/**
+ * Apply the working-copy line cap and mark the cut. The real truncation gate is
+ * the char cap in `role-context`'s `formatReviewGuidance` (which already marks),
+ * so this only bites the defense-in-depth edge — a REVIEW.md over the line cap
+ * whose lines are short enough to stay under the char cap. Shared by both
+ * surfaces (CLI reads the file whole; web reads `MAX + 1` lines as an overflow
+ * sentinel) so the marker text can't drift between them.
+ */
+export function capReviewGuidanceLines(text: string): string {
+  const lines = text.split('\n');
+  if (lines.length <= REVIEW_GUIDANCE_MAX_LINES) return text;
+  return `${lines.slice(0, REVIEW_GUIDANCE_MAX_LINES).join('\n')}\n[… REVIEW.md truncated at ${REVIEW_GUIDANCE_MAX_LINES} lines]`;
+}
+
 export interface ReviewGuidanceSources {
   /**
    * Read the working-copy REVIEW.md — the version the author is editing right

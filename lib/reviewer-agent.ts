@@ -233,6 +233,8 @@ function buildFileStructureBlock(
   let totalChars = lines[0].length;
   let includedEntries = 0;
 
+  let truncated = false;
+
   for (const entry of entries) {
     if (entry.symbols.length === 0) continue;
 
@@ -247,20 +249,33 @@ function buildFileStructureBlock(
     for (const line of sectionLines) {
       const lineChars = line.length + 1;
       if (totalChars + sectionChars + lineChars > REVIEWER_FILE_STRUCTURE_LIMIT) {
+        truncated = true;
         break;
       }
       acceptedSectionLines.push(line);
       sectionChars += lineChars;
     }
 
-    if (acceptedSectionLines.length === 0) break;
+    if (acceptedSectionLines.length === 0) {
+      truncated = true;
+      break;
+    }
 
     lines.push(...acceptedSectionLines);
     totalChars += sectionChars;
     includedEntries++;
   }
 
-  return includedEntries > 0 ? lines.join('\n') : null;
+  if (includedEntries === 0) return null;
+  // Mark the cut so the reviewer knows the outline is partial (was a silent
+  // break before — see the truncation audit). The static "don't assume it's
+  // complete" header is a general caveat; this flags THIS outline as clipped.
+  if (truncated) {
+    lines.push(
+      `[… file structure truncated at ${REVIEWER_FILE_STRUCTURE_LIMIT} chars — outline is partial]`,
+    );
+  }
+  return lines.join('\n');
 }
 
 async function fetchFileStructure(

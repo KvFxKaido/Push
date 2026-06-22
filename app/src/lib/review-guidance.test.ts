@@ -34,7 +34,9 @@ describe('resolveReviewGuidance', () => {
     });
 
     expect(result).toBe('# REVIEW.md\nsandbox copy');
-    expect(mockReadFromSandbox).toHaveBeenCalledWith('sb-1', '/workspace/REVIEW.md', 1, 600);
+    // 600 + 1: reads one past the line cap as an overflow sentinel so a
+    // truncation can be marked instead of silently dropped (capReviewGuidanceLines).
+    expect(mockReadFromSandbox).toHaveBeenCalledWith('sb-1', '/workspace/REVIEW.md', 1, 601);
     expect(mockFetchReviewGuidance).not.toHaveBeenCalled();
   });
 

@@ -1,6 +1,7 @@
 import { readFromSandbox } from '@/lib/sandbox-client';
 import { fetchReviewGuidance as fetchReviewGuidanceFromGitHub } from '@/lib/github-tools';
 import {
+  capReviewGuidanceLines,
   REVIEW_GUIDANCE_MAX_LINES,
   REVIEW_GUIDANCE_SANDBOX_PATH,
   resolveReviewGuidance as resolveReviewGuidanceCore,
@@ -34,13 +35,15 @@ export async function resolveReviewGuidance({
   return resolveReviewGuidanceCore({
     readWorkingCopy: sandboxId
       ? async () => {
+          // Read one past the cap as an overflow sentinel so capReviewGuidanceLines
+          // can mark a truncation the bare line cap would otherwise hide.
           const result = await readFromSandbox(
             sandboxId,
             REVIEW_GUIDANCE_SANDBOX_PATH,
             1,
-            REVIEW_GUIDANCE_MAX_LINES,
+            REVIEW_GUIDANCE_MAX_LINES + 1,
           );
-          return result.error ? null : result.content;
+          return result.error || !result.content ? null : capReviewGuidanceLines(result.content);
         }
       : undefined,
     fetchCommitted: repoFullName
