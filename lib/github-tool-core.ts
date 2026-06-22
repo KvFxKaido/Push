@@ -3119,7 +3119,7 @@ export async function executeListSecretScanningAlertsTool(
   return { text: lines.join('\n') };
 }
 
-export async function executeGitHubCoreTool(
+async function dispatchGitHubCoreToolCall(
   runtime: GitHubCoreRuntime,
   call: GitHubCoreToolCall,
 ): Promise<GitHubCoreToolResult> {
@@ -3279,4 +3279,21 @@ export async function executeGitHubCoreTool(
     case 'list_secret_scanning_alerts':
       return executeListSecretScanningAlertsTool(runtime, call.args.repo, call.args.state);
   }
+}
+
+export async function executeGitHubCoreTool(
+  runtime: GitHubCoreRuntime,
+  call: GitHubCoreToolCall,
+): Promise<GitHubCoreToolResult> {
+  const result = await dispatchGitHubCoreToolCall(runtime, call);
+  // Defense-in-depth secret redaction at the single dispatch chokepoint. All
+  // GitHub-API text — PR/issue bodies, comments, titles, commit messages,
+  // branch names — is attacker-controlled and may carry a pasted secret. Most
+  // tools don't redact it themselves (only file-content and CI-log tools do),
+  // and only the MCP surface wraps results in a blanket redactor; the web
+  // Worker/local and CLI return this text verbatim. Redacting here covers every
+  // surface uniformly (behavior in code, not per-surface). Idempotent for the
+  // tools that already redact internally — re-running finds nothing new.
+  const { text, redacted } = runtime.redactSensitiveText(result.text);
+  return redacted ? { ...result, text } : result;
 }
