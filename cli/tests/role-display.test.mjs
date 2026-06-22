@@ -12,6 +12,8 @@ import assert from 'node:assert/strict';
 
 import {
   ROLE_DISPLAY,
+  REASONING_PHASE_DISPLAY,
+  getReasoningPhaseDisplay,
   getRoleDisplay,
   getRoleLabel,
   getSourceLabel,
@@ -94,6 +96,18 @@ describe('role-display vocabulary map', () => {
     assert.equal(getSourceLabel('reviewer'), 'Reviewer');
     assert.equal(getSourceLabel('auditor'), 'Auditor');
     assert.equal(getSourceLabel('mystery'), 'Working');
+  });
+
+  it('surfaces reasoning as a phase-first "Thinking" display, not a role', () => {
+    // Reasoning is a model-channel phase, not an AgentRole — it must not leak
+    // into ROLE_DISPLAY, and it reads as a phase with no named actor.
+    assert.deepEqual(REASONING_PHASE_DISPLAY, {
+      phase: 'Thinking',
+      name: null,
+      showActorName: false,
+    });
+    assert.deepEqual(getReasoningPhaseDisplay(), REASONING_PHASE_DISPLAY);
+    assert.equal(Object.prototype.hasOwnProperty.call(ROLE_DISPLAY, 'reasoning'), false);
   });
 
   it('maps RunEventSubagent supersets through the seam', () => {

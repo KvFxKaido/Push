@@ -68,6 +68,33 @@ export const ROLE_DISPLAY: Readonly<Record<AgentRole, RoleDisplay>> = {
  */
 const NEUTRAL_DISPLAY: RoleDisplay = { phase: 'Working', name: null, showActorName: false };
 
+/**
+ * The user-facing phase shown while a model is streaming on its reasoning
+ * channel (native `reasoning_content` deltas or an inline `<think>` block).
+ *
+ * Reasoning is a *phase*, not a role — like `planner`/`task_graph` in
+ * `getSubagentDisplay`, it has no `AgentRole` of its own and so isn't in
+ * `ROLE_DISPLAY`. It's surfaced through this seam so the live status bar reads
+ * the canonical word instead of hand-spelling "Reasoning..." at the call site
+ * (the rule this file exists to enforce). Phase-first, no named actor: the user
+ * doesn't need to know *which* agent is thinking, only that thinking is
+ * happening.
+ */
+export const REASONING_PHASE_DISPLAY: RoleDisplay = {
+  phase: 'Thinking',
+  name: null,
+  showActorName: false,
+};
+
+/**
+ * Resolve the user-facing display for the reasoning phase. A function (not just
+ * the const) so call sites match the `getRoleDisplay` / `getSubagentDisplay`
+ * shape and a future context axis can be threaded without churn.
+ */
+export function getReasoningPhaseDisplay(): RoleDisplay {
+  return REASONING_PHASE_DISPLAY;
+}
+
 function isAgentRole(value: unknown): value is AgentRole {
   return typeof value === 'string' && Object.prototype.hasOwnProperty.call(ROLE_DISPLAY, value);
 }
