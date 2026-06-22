@@ -30,6 +30,7 @@ import { annotateDiffWithLineNumbers, REVIEWER_CRITERIA_BLOCK } from './reviewer
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
 import { parseDiffStats, chunkDiffByFile, classifyFilePath } from './diff-utils.js';
 import { iteratePushStreamText } from './stream-utils.js';
+import { reasoningHeavyStreamOpts } from './reasoning-models.js';
 import { parseStructured } from './structured-output.js';
 import { ReviewerResponseSchema } from './review-schema.js';
 import { getToolPublicName, getToolPublicNames } from './tool-registry.js';
@@ -740,8 +741,11 @@ export async function runDeepReviewer<TCall, TCard>(
       // Heavy reasoners (glm-5.1) legitimately stream reasoning for >60s
       // before the first text token on large-transcript rounds — observed
       // killing an actively-progressing round 7 live (PR #907). Thinking is
-      // progress here; the wall-clock cap above bounds endless reasoning.
-      { reasoningResetsActivityTimer: true },
+      // progress here; the wall-clock cap above bounds endless reasoning. The
+      // helper also widens the FIRST-token window for a known heavy reasoner
+      // (the round timeout alone gave the connect + reasoning preamble no
+      // grace); other models keep the per-round window unchanged.
+      reasoningHeavyStreamOpts(modelId),
     );
     addUsage(roundUsage);
     if (streamError) {
@@ -998,8 +1002,9 @@ export async function runDeepReviewer<TCall, TCard>(
     DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
     `Deep review final forced output exceeded ${DEEP_REVIEW_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap.`,
     // Same heavy-reasoner allowance as the loop rounds: the forced-output
-    // turn is where glm thinks hardest (whole-investigation synthesis).
-    { reasoningResetsActivityTimer: true },
+    // turn is where glm thinks hardest (whole-investigation synthesis), so the
+    // first-token grace matters most here.
+    reasoningHeavyStreamOpts(modelId),
   );
   addUsage(finalUsage);
   const finalAccumulated = rawFinalAccumulated.trim();

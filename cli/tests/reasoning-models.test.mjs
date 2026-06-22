@@ -14,6 +14,8 @@ import assert from 'node:assert/strict';
 import {
   isReasoningHeavyModel,
   reasoningHeavyFamily,
+  reasoningHeavyStreamOpts,
+  REASONING_HEAVY_FIRST_TOKEN_GRACE_MS,
   REASONING_HEAVY_MODEL_MATCHERS,
 } from '../../lib/reasoning-models.ts';
 
@@ -94,5 +96,32 @@ describe('reasoning-heavy model registry', () => {
       assert.ok(m.note.length > 0, `matcher ${m.family} needs a note`);
       assert.ok(m.pattern instanceof RegExp, `matcher ${m.family} needs a RegExp`);
     }
+  });
+});
+
+describe('reasoningHeavyStreamOpts', () => {
+  it('always opts reasoning into the activity timer, model-independent', () => {
+    // The reset is unconditional: a non-reasoner never emits reasoning_delta,
+    // so it is a no-op for them, and gating it would re-expose an unlisted
+    // reasoning model to the unresponsive kill.
+    assert.equal(reasoningHeavyStreamOpts('gpt-5.4').reasoningResetsActivityTimer, true);
+    assert.equal(reasoningHeavyStreamOpts('glm-5.1').reasoningResetsActivityTimer, true);
+    assert.equal(reasoningHeavyStreamOpts(null).reasoningResetsActivityTimer, true);
+  });
+
+  it('grants the first-token grace ONLY to a known heavy reasoner', () => {
+    assert.equal(
+      reasoningHeavyStreamOpts('z-ai/glm-5.1:nitro').firstTokenGraceMs,
+      REASONING_HEAVY_FIRST_TOKEN_GRACE_MS,
+    );
+    assert.equal(
+      reasoningHeavyStreamOpts('kimi-k2.6').firstTokenGraceMs,
+      REASONING_HEAVY_FIRST_TOKEN_GRACE_MS,
+    );
+    // Non-heavy and missing ids get no grace key — the caller's single window
+    // (timeoutMs) stands, so this can only widen a window, never tighten one.
+    assert.equal('firstTokenGraceMs' in reasoningHeavyStreamOpts('gpt-5.4'), false);
+    assert.equal('firstTokenGraceMs' in reasoningHeavyStreamOpts('glm-4.7'), false);
+    assert.equal('firstTokenGraceMs' in reasoningHeavyStreamOpts(undefined), false);
   });
 });

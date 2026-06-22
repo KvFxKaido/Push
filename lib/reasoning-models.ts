@@ -106,3 +106,44 @@ export function reasoningHeavyFamily(modelId: string | null | undefined): string
   const normalized = modelId.toLowerCase();
   return REASONING_HEAVY_MODEL_MATCHERS.find((m) => m.pattern.test(normalized))?.family ?? null;
 }
+
+/**
+ * First-token grace for a known heavy reasoner: how long the activity timer
+ * waits for the FIRST sign of life before tightening to the per-round window.
+ * 90s matches `CODER_FIRST_TOKEN_GRACE_MS` — the value the Coder already proved
+ * out for glm-5.x connect + long reasoning preamble on large-transcript rounds.
+ */
+export const REASONING_HEAVY_FIRST_TOKEN_GRACE_MS = 90_000;
+
+/**
+ * `iteratePushStreamText` opts for an agent round that treats reasoning as
+ * progress. Two layered concerns, deliberately split by which one may depend on
+ * table completeness (see the module header):
+ *
+ *   - `reasoningResetsActivityTimer` is ALWAYS `true` here, model or not. A
+ *     non-reasoner never emits `reasoning_delta`, so it's a no-op for them;
+ *     gating it on the registry would silently re-expose a *reasoning* model
+ *     not yet listed to the "unresponsive" kill. Liveness correctness must not
+ *     depend on the table.
+ *   - `firstTokenGraceMs` is the additive part, gated on the registry: a known
+ *     heavy reasoner gets a wider window to produce its first token; every other
+ *     model keeps the caller's single window (omitted ⇒ `iteratePushStreamText`
+ *     falls back to `timeoutMs`). This can only *widen* a window, never tighten
+ *     one, so an unlisted model is never worse off than before.
+ *
+ * Call sites that want an unconditional grace for ALL models (the Coder does,
+ * via `CODER_FIRST_TOKEN_GRACE_MS`) intentionally do NOT use this helper —
+ * routing the Coder through here would tighten its non-heavy models from 90s to
+ * the per-round window, a regression.
+ */
+export function reasoningHeavyStreamOpts(modelId: string | null | undefined): {
+  reasoningResetsActivityTimer: true;
+  firstTokenGraceMs?: number;
+} {
+  return isReasoningHeavyModel(modelId)
+    ? {
+        reasoningResetsActivityTimer: true,
+        firstTokenGraceMs: REASONING_HEAVY_FIRST_TOKEN_GRACE_MS,
+      }
+    : { reasoningResetsActivityTimer: true };
+}
