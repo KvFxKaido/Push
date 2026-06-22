@@ -51,6 +51,7 @@ import {
   SpanStatusCode,
 } from './tracing';
 import { ProviderStreamError } from './stream-error';
+import { reasoningHeavyFamily } from '@push/lib/reasoning-models';
 
 type IterateChatStreamTimeoutReason = 'event' | 'content' | 'total' | 'user';
 
@@ -355,6 +356,7 @@ export async function iterateChatStream<M extends LlmMessage>(
       : undefined;
   const workspaceMode =
     typeof workspaceRecord?.mode === 'string' ? workspaceRecord.mode : undefined;
+  const reasoningFamily = reasoningHeavyFamily(request.model);
 
   let runEntered = false;
   try {
@@ -366,6 +368,15 @@ export async function iterateChatStream<M extends LlmMessage>(
           'push.provider': request.provider,
           'push.model': request.model,
           'push.message_count': request.messages.length,
+          // Reasoning-heavy attribution so latency/TTFT dashboards can segment a
+          // glm/kimi/deepseek-r1 round (often >60s of pure reasoning before the
+          // first text token) from a fast model. `push.reasoning_heavy` is the
+          // boolean filter; the family string (omitted when null — undefined is
+          // dropped by setSpanAttributes, so we don't even set the key) is the
+          // group-by. Resolved from the locked model id, matching the seam the
+          // status bar reads.
+          'push.reasoning_heavy': reasoningFamily !== null,
+          ...(reasoningFamily ? { 'push.reasoning_heavy_family': reasoningFamily } : {}),
           ...(typeof request.hasSandbox === 'boolean'
             ? { 'push.has_sandbox': request.hasSandbox }
             : {}),
