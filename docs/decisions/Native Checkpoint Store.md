@@ -1,10 +1,88 @@
 # Native Checkpoint Store
 
 Date: 2026-06-22
-Status: **Proposed** — design agreed (three-way: Shawn + Claude + ChatGPT review).
-PR1 (the `CheckpointStore` abstraction + adapters + capture-coordinator wiring,
-`app/src/lib/checkpoint/`) has **landed**; native capture (PR2) and restore wiring
-(PR3) remain proposed. Not roadmap-promoted. Owner: Push mobile/git.
+Status: **Capture device-validated end-to-end** (2026-06-22, Moto G) — PR1–PR3b
+landed; a capture now flows inline edit → trigger → coordinator → archive →
+download → on-device JGit commit, confirmed by an orphan checkpoint ref on disk.
+Getting there took fixing **three stacked bugs** the device test surfaced (below).
+Feature stays dormant (behind `VITE_NATIVE_CHECKPOINTS`) pending the remaining
+work: **restore** device-validation, the **7 MB-per-capture** efficiency fix, and
+the restore large-upload endpoint. Not roadmap-promoted. Owner: Push mobile/git.
+
+## Device validation: the three stacked bugs (2026-06-22)
+
+The original finding ("capture never fires in the inline lane") was the *first* of
+three failures, each invisible until the one before it was fixed:
+
+1. **No trigger.** The capture coordinator listens for the client-side
+   `notifyWorkspaceMutation` signal, but the inline lane's edits dispatch detached
+   / run-host, so it never fired. Fix: `chat-send-inline.ts` emits the signal at
+   run completion when the workspace changed.
+2. **Over-eager readiness gate.** `onMutation`/`schedule` hard-rejected on
+   `enabled` (`sandbox.status === 'ready'`), which can be transiently false at
+   mutation time. Fix: move readiness to the single `runBackup` gate (fires after
+   the 45s debounce, when status has settled); keep only the sandbox-identity
+   guard eager.
+3. **Archive written to `/tmp`.** The capture built a 7 MB git-aware zip in `/tmp`
+   and tried to fetch it — but the Cloudflare download endpoint rejects
+   non-`/workspace` paths ("Path must be within /workspace"), and exec stdout is
+   500 KB-capped so streaming the base64 wasn't an option. Fix: write the archive
+   under `/workspace` (`.push-checkpoint.zip`), kept invisible to git via
+   `.git/info/exclude` + an archive pathspec so it never pollutes status / diff /
+   `add -A` / remote auto-back, and never lands in a checkpoint.
+
+Each fix added the symmetric structured logs that were missing on the silent path
+(per-stage `native_checkpoint_capture_failed`, `auto_back_skipped_unready`,
+`auto_back_mutation_ignored`) — which is what turned "silently does nothing" into
+"here is the exact failing line."
+
+**Known design point (next):** because the agent commits the whole tree, the
+git-aware archive is the *entire repo* (~7 MB for Push), re-downloaded every
+debounced capture. The on-device JGit dedups identical trees (no new commit), but
+the 7 MB download still happens each time. Capture should skip the download when
+the tree is unchanged (cheap tree-hash probe first), or move to diff transport.
+
+## Device validation finding (2026-06-22, Moto G) — BLOCKING
+
+A flag-on local-bundle build was driven on-device. Result:
+
+- **Verified working:** `listCheckpoints` is called on the correct lane dir and
+  returns its result; the UI → `useCheckpointHistory` → store → `NativeGit` plugin
+  → list path is sound, and the JGit engine itself passes its JVM tests. Nothing
+  below the trigger is wrong.
+- **The capture never fires.** After a real multi-file change, there were **zero**
+  `native_checkpoint_*` AND zero `auto_back_*` log events, and `files/checkpoints/`
+  was never created on the device (the native repo is `git init`-ed on first
+  capture). The capture *coordinator* (`useWorkspaceSandboxAutoBack`) didn't run at
+  all — neither the native store nor the remote draft-ref path.
+
+**Root cause (high confidence):** the capture coordinator triggers off the
+client-side `notifyWorkspaceMutation` signal (emitted by `sandbox-client.ts`
+writes / `markWorkspaceMutated` execs). On-device the user is in the **inline
+lane**, whose edits dispatch through a **detached / run-host path**
+(`sandbox_exec_detached_dispatch`, `run_host_client_*`) — and that signal isn't
+reaching the client coordinator. No signal → no debounced capture → nothing
+written. The same gap explains the hub **diff view** not picking up changes (it
+keys off the same mutation signal / workspace revision).
+
+**Scope: this is a pre-existing, lane-wide gap, not native-specific.** It is the
+*same* coordinator and signal the remote B2 auto-back uses, so remote auto-back
+almost certainly has the same blind spot in the inline lane. The native
+checkpoint store inherited it; it did not introduce it. The inline lane is "the
+collapsed lead" (CLAUDE.md §10) and was converged onto after auto-back was built
+for the delegated web round-loop.
+
+**Fix (landed, pending device re-validation):** `chat-send-inline.ts` now emits
+`notifyWorkspaceMutation(sandboxId)` at inline-run completion when the run changed
+the workspace (`workspaceChanged`), paired with an `inline_workspace_mutation_signaled`
+log. This is the deterministic trigger — the per-tool signals fire *during* the
+run (coordinator possibly gated, WebView possibly backgrounded with throttled
+timers), so re-firing at completion (run done, sandbox ready) reliably arms the
+capture debounce and invalidates the diff cache. It fixes BOTH symptoms (capture
++ hub diff) since both consume the one signal. A symmetric `auto_back_skipped_unready`
+log was added to the coordinator's silent early-return so the *next* device test
+shows definitively if capture still doesn't fire (and why). Done in the inline
+lane, not the checkpoint store — the store was always correct.
 
 ## Context
 
@@ -212,8 +290,10 @@ load-bearing, not polish:
      container (renders nothing off the native shell / flag), mounted in the
      workspace hub sheet next to hibernate/snapshot. Web-safe; on-device visual +
      list/restore e2e is the device-session follow-up.
-   - Remaining: the large-upload endpoint (restore size cap) + capture/restore
-     failure telemetry + the full device e2e.
+   - Remaining: **(blocking, top priority)** wire the inline-lane mutation trigger
+     (see "Device validation finding") — without it the coordinator never captures
+     on-device; then the large-upload endpoint (restore size cap) + capture/restore
+     failure telemetry + the full device e2e (which is now unblocked to run).
 
 ## Known limitations (PR2; tracked for PR3 — surfaced by the PR2 review)
 

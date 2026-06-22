@@ -28,6 +28,7 @@ const {
   mockBuildLinkedLibraryContext,
   mockSpliceLinkedImagesIntoLastUser,
   mockMemoryStoreList,
+  mockNotifyWorkspaceMutation,
 } = vi.hoisted(() => ({
   mockRunInPageCoderKernel: vi.fn(),
   mockRunCoderAuditorGate: vi.fn(),
@@ -43,6 +44,7 @@ const {
   mockBuildLinkedLibraryContext: vi.fn(),
   mockSpliceLinkedImagesIntoLastUser: vi.fn(),
   mockMemoryStoreList: vi.fn(),
+  mockNotifyWorkspaceMutation: vi.fn(),
 }));
 
 vi.mock('@/lib/inline-coder-run', () => ({
@@ -66,6 +68,10 @@ vi.mock('@/lib/orchestrator', () => ({
 vi.mock('@/lib/sandbox-client', () => ({
   getSandboxDiff: (...args: unknown[]) => mockGetSandboxDiff(...args),
   getSandboxEnvironment: () => null,
+}));
+
+vi.mock('@/lib/sandbox-mutation-signal', () => ({
+  notifyWorkspaceMutation: (...args: unknown[]) => mockNotifyWorkspaceMutation(...args),
 }));
 
 vi.mock('@/lib/repo-metadata', () => ({
@@ -264,6 +270,7 @@ beforeEach(() => {
   mockTeePushStream.mockReset().mockReturnValue('TEED-STREAM');
   mockGetProviderPushStream.mockReset().mockReturnValue('PROVIDER-STREAM');
   mockGetSandboxDiff.mockReset().mockResolvedValue({ diff: 'diff --git a/src/a.ts b/src/a.ts' });
+  mockNotifyWorkspaceMutation.mockReset();
   mockResolveHarnessSettings.mockReset().mockReturnValue({ evaluateAfterCoder: true });
   mockInvalidateMemory.mockReset().mockResolvedValue(undefined);
   // Default: no verification criteria (empty policy in these fixtures). Tests
@@ -495,6 +502,22 @@ describe('startInlineCoderTurn', () => {
     expect(callbacks.onCheckpoint).toBeInstanceOf(Function);
     expect(callbacks.onCheckpointRequest).toBeInstanceOf(Function);
     expect(callbacks.onBranchSwitchPayload).toBeInstanceOf(Function);
+  });
+
+  it('signals a workspace mutation at completion when the run changed the workspace (device finding 2026-06-22)', async () => {
+    // Default harness returns a non-empty diff → workspaceChanged → the
+    // deterministic trigger fires the mutation signal so auto-back / checkpoint
+    // capture and the hub diff view wake up on the inline lane.
+    const { ctx } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+    expect(mockNotifyWorkspaceMutation).toHaveBeenCalledWith('sb-1');
+  });
+
+  it('does not signal a mutation on a no-change turn', async () => {
+    mockGetSandboxDiff.mockResolvedValue({ diff: '', head_sha: 'abc' });
+    const { ctx } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+    expect(mockNotifyWorkspaceMutation).not.toHaveBeenCalled();
   });
 
   it('passes current-turn attachments as multipart content to the kernel spec', async () => {
