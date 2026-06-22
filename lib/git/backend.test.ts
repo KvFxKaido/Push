@@ -252,12 +252,16 @@ describe('SandboxPlumbingBackend write serialization', () => {
     const a = backend.commit('A');
     const b = backend.commit('B');
     await tick();
-    // With no lock, B's `add` runs while A's first exec is still blocked: the
-    // two stages interleave — the race the lock exists to prevent.
-    expect(order.slice(0, 2)).toEqual(['add -A', 'add -A']);
+    // With no lock, commit B runs to completion (add + commit) while commit A
+    // is still blocked on its own `add` — B's whole operation slips between A's
+    // stage and A's commit. That interleaving is the race the lock prevents.
+    expect(order).toEqual(['add -A', 'add -A', 'commit -m B']);
 
     releaseFirst();
     await Promise.all([a, b]);
+    // Full sequence: A's commit lands last, after B already finished — the
+    // mirror image of the serialized test's grouped A-then-B ordering.
+    expect(order).toEqual(['add -A', 'add -A', 'commit -m B', 'commit -m A']);
   });
 
   it('runs writes on different working copies concurrently', async () => {
