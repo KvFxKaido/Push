@@ -47,7 +47,13 @@ export const CHECKPOINT_ARCHIVE_MAX_BYTES = 64 * 1024 * 1024;
 export const CHECKPOINT_RETENTION_KEEP = 50;
 
 const TMP_ARCHIVE = '/tmp/push-checkpoint.zip';
-const TMP_RESTORE_B64 = '/tmp/push-checkpoint-restore.b64';
+// The restore archive is uploaded via `writeToSandbox`, whose endpoint only
+// permits paths under /workspace (Codex P1) — so the base64 lands here, then the
+// sync decodes it to /tmp (which survives the clear-except-.git step) before
+// wiping the worktree. NOTE: `writeToSandbox` is currently ~5 MB-capped, so
+// restore of a larger checkpoint needs a dedicated upload endpoint — tracked for
+// the restore-wiring increment (PR3); capture (download path) is uncapped.
+const RESTORE_UPLOAD_B64 = '/workspace/.push-checkpoint-restore.b64';
 
 /**
  * Sandbox-side capture: a git-aware archive of the working tree. `git ls-files
@@ -79,24 +85,46 @@ const CAPTURE_ARCHIVE_COMMAND = [
 const RESTORE_SYNC_COMMAND = [
   `cd /workspace 2>/dev/null || { echo "ERR workspace"; exit 0; }`,
   `arc=/tmp/push-checkpoint-restore.zip`,
-  `base64 -d ${TMP_RESTORE_B64} > "$arc" 2>/dev/null || { echo "ERR decode"; exit 0; }`,
+  // Decode to /tmp FIRST — the b64 lives under /workspace and the clear step
+  // below would otherwise delete it before extraction.
+  `base64 -d ${RESTORE_UPLOAD_B64} > "$arc" 2>/dev/null || { echo "ERR decode"; exit 0; }`,
   `find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} + 2>/dev/null || { echo "ERR clear"; exit 0; }`,
   `unzip -o -q "$arc" -d /workspace 2>/dev/null || { echo "ERR extract"; exit 0; }`,
-  `rm -f ${TMP_RESTORE_B64} "$arc"`,
+  `rm -f "$arc"`,
   `echo OK`,
 ].join('\n');
 
 /** `git status --porcelain` — non-empty means the target tree is dirty. */
 const DIRTY_CHECK_COMMAND = `cd /workspace 2>/dev/null && git status --porcelain 2>/dev/null | head -1`;
 
-/** Path-safe segment for the on-device dir (relative → app-private filesDir). */
+/** Cosmetic, path-safe prefix for the on-device dir (NOT the uniqueness key). */
 function sanitizeSegment(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '_') || '_';
 }
 
+/**
+ * FNV-1a 32-bit hex of the EXACT value — the collision-free part of the lane key.
+ * Sanitizing alone is lossy (`feat/x`, `feat:x`, `feat_x` all sanitize to
+ * `feat_x`), which would point distinct branches at the same on-device repo and
+ * restore the wrong work (Codex P1). The hash disambiguates; the sanitized prefix
+ * is just for human-readable dirs.
+ */
+function laneHash(value: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < value.length; i++) {
+    h ^= value.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+function laneSegment(value: string): string {
+  return `${sanitizeSegment(value)}-${laneHash(value)}`;
+}
+
 /** App-private on-device checkpoint repo dir for a lane (relative; resolved under filesDir). */
 function checkpointDir(scope: CheckpointScope): string {
-  return `checkpoints/${sanitizeSegment(scope.repoFullName)}/${sanitizeSegment(scope.branch)}`;
+  return `checkpoints/${laneSegment(scope.repoFullName)}/${laneSegment(scope.branch)}`;
 }
 
 export interface NativeCheckpointDeps {
@@ -227,7 +255,7 @@ export function createNativeJgitCheckpointStore(deps: NativeCheckpointDeps = {})
       }
 
       // 2. Push it into the sandbox and run the .git-preserving sync.
-      const wrote = await write(input.sandboxId, TMP_RESTORE_B64, archiveBase64);
+      const wrote = await write(input.sandboxId, RESTORE_UPLOAD_B64, archiveBase64);
       if (!wrote.ok) return { status: 'failed', reason: wrote.error ?? 'upload failed' };
       try {
         const synced = await exec(input.sandboxId, RESTORE_SYNC_COMMAND, undefined, {

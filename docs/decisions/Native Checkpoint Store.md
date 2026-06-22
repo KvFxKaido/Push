@@ -209,6 +209,23 @@ load-bearing, not polish:
    (the existing offer-to-restore handles restore-latest in the meantime);
    capture/restore failure telemetry.
 
+## Known limitations (PR2; tracked for PR3 — surfaced by the PR2 review)
+
+- **Exec bit / symlinks not preserved.** ZIP extraction via `java.util.zip` writes
+  every entry as a plain file, so a tracked executable or symlink round-trips as a
+  non-executable regular file — a mode/semantics diff on restore even when content
+  matches. (tar would preserve these; the ZIP choice was to avoid an Android tar
+  dependency. Reconsider tar + Apache Commons Compress in PR3 if this bites.)
+- **Empty-tree deletion not checkpointed.** When the working tree has no files,
+  `zip -@` produces no archive and capture reports `clean`, so deleting the last
+  file isn't recorded — a later restore could resurrect it. Needs an explicit
+  empty-checkpoint path.
+- **Restore upload is ~5 MB-capped.** Restore uploads the archive through
+  `writeToSandbox` (the only `/workspace`-writable path), which is ~5 MB-capped,
+  while capture's download path is uncapped (64 MB). Large checkpoints capture but
+  can't restore until a dedicated large-upload endpoint lands with the restore
+  wiring.
+
 ## Out of scope (deferred, not rejected)
 
 - Diff-based transport (revisit when full-tree mobile-data cost bites).

@@ -4,7 +4,9 @@ import type { NativeGitPlugin } from '../native-git/definitions';
 
 const REPO = 'owner/repo';
 const SCOPE = { repoFullName: REPO, sandboxId: 'sb', branch: 'feat/x' };
-const DIR = 'checkpoints/owner_repo/feat_x';
+// The lane dir is `checkpoints/<sanitized>-<fnv hash>/<sanitized>-<fnv hash>` —
+// the hash is the collision-free key (sanitizing alone collides feat/x ↔ feat_x).
+const DIR = expect.stringMatching(/^checkpoints\/owner_repo-[0-9a-f]{8}\/feat_x-[0-9a-f]{8}$/);
 
 /** Fake exec routed by command content (archive / dirty-check / restore-sync). */
 function fakeExec(over: { archive?: string; dirty?: string; sync?: string } = {}) {
@@ -63,6 +65,19 @@ describe('NativeJgitCheckpointStore.capture', () => {
     expect(plugin.commitWorkingTree).toHaveBeenCalledWith(expect.objectContaining({ dir: DIR }));
   });
 
+  it('gives branches with colliding sanitized forms distinct dirs (Codex P1)', async () => {
+    // Both are valid refs that sanitize to the same `feat_x`; the hash must keep
+    // their on-device lanes distinct so neither overwrites the other.
+    const dirs = new Set<string>();
+    for (const branch of ['feat/x', 'feat_x']) {
+      const plugin = fakePlugin();
+      await store({ plugin }).capture({ repoFullName: REPO, sandboxId: 'sb', branch });
+      const mockFn = plugin.commitWorkingTree as ReturnType<typeof vi.fn>;
+      dirs.add(mockFn.mock.calls[0][0].dir);
+    }
+    expect(dirs.size).toBe(2); // no cross-lane overwrite
+  });
+
   it('reports clean when the archive is empty (no working-tree content)', async () => {
     const download = vi.fn();
     const result = await store({ exec: fakeExec({ archive: 'OK 0' }), download }).capture(SCOPE);
@@ -110,7 +125,7 @@ describe('NativeJgitCheckpointStore.restore', () => {
     const result = await store({ plugin, write }).restore({ ...SCOPE, checkpointId: 'commit-1' });
     expect(result).toEqual({ status: 'restored', checkpointId: 'commit-1' });
     expect(plugin.archiveCommit).toHaveBeenCalledWith({ dir: DIR, commitId: 'commit-1' });
-    expect(write).toHaveBeenCalledWith('sb', '/tmp/push-checkpoint-restore.b64', 'ARCHIVE');
+    expect(write).toHaveBeenCalledWith('sb', '/workspace/.push-checkpoint-restore.b64', 'ARCHIVE');
   });
 
   it('refuses a dirty target tree (does not clobber live work)', async () => {
