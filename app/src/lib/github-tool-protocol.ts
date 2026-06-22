@@ -51,7 +51,51 @@ export type ToolCall =
   | { tool: 'merge_pr'; args: { repo: string; pr_number: number; merge_method?: string } }
   | { tool: 'delete_branch'; args: { repo: string; branch_name: string } }
   | { tool: 'check_pr_mergeable'; args: { repo: string; pr_number: number } }
-  | { tool: 'find_existing_pr'; args: { repo: string; head_branch: string; base_branch?: string } };
+  | { tool: 'find_existing_pr'; args: { repo: string; head_branch: string; base_branch?: string } }
+  | {
+      tool: 'get_job_logs';
+      args: {
+        repo: string;
+        run_id?: number;
+        job_id?: number;
+        failed_only?: boolean;
+        tail_lines?: number;
+      };
+    }
+  | { tool: 'list_issues'; args: { repo: string; state?: string; labels?: string; count?: number } }
+  | { tool: 'get_issue'; args: { repo: string; issue_number: number } }
+  | { tool: 'add_issue_comment'; args: { repo: string; issue_number: number; body: string } }
+  | {
+      tool: 'create_issue';
+      args: { repo: string; title: string; body?: string; labels?: string[] };
+    }
+  | {
+      tool: 'update_issue';
+      args: {
+        repo: string;
+        issue_number: number;
+        title?: string;
+        body?: string;
+        state?: string;
+        labels?: string[];
+      };
+    }
+  | {
+      tool: 'update_pull_request';
+      args: {
+        repo: string;
+        pr_number: number;
+        title?: string;
+        body?: string;
+        base?: string;
+        state?: string;
+      };
+    }
+  | { tool: 'rerun_failed_jobs'; args: { repo: string; run_id: number } }
+  | { tool: 'cancel_workflow_run'; args: { repo: string; run_id: number } }
+  | { tool: 'list_code_scanning_alerts'; args: { repo: string; state?: string; ref?: string } }
+  | { tool: 'list_dependabot_alerts'; args: { repo: string; state?: string } }
+  | { tool: 'list_secret_scanning_alerts'; args: { repo: string; state?: string } };
 
 // --- Parsing helpers (LLM output coercions) ---
 
@@ -288,6 +332,99 @@ function validateToolCall(parsed: unknown): ToolCall | null {
         base_branch: asString(args.base_branch),
       },
     };
+  }
+  if (tool === 'get_job_logs' && repo && (args.run_id !== undefined || args.job_id !== undefined)) {
+    return {
+      tool: 'get_job_logs',
+      args: {
+        repo,
+        run_id: args.run_id !== undefined ? Number(args.run_id) : undefined,
+        job_id: args.job_id !== undefined ? Number(args.job_id) : undefined,
+        failed_only: typeof args.failed_only === 'boolean' ? args.failed_only : undefined,
+        tail_lines: args.tail_lines !== undefined ? Number(args.tail_lines) : undefined,
+      },
+    };
+  }
+  if (tool === 'list_issues' && repo) {
+    return {
+      tool: 'list_issues',
+      args: {
+        repo,
+        state: asString(args.state),
+        labels: asString(args.labels),
+        count: args.count !== undefined ? Number(args.count) : undefined,
+      },
+    };
+  }
+  if (tool === 'get_issue' && repo && args.issue_number !== undefined) {
+    return { tool: 'get_issue', args: { repo, issue_number: Number(args.issue_number) } };
+  }
+  if (
+    tool === 'add_issue_comment' &&
+    repo &&
+    args.issue_number !== undefined &&
+    asString(args.body)
+  ) {
+    return {
+      tool: 'add_issue_comment',
+      args: { repo, issue_number: Number(args.issue_number), body: asString(args.body)! },
+    };
+  }
+  if (tool === 'create_issue' && repo && asString(args.title)) {
+    return {
+      tool: 'create_issue',
+      args: {
+        repo,
+        title: asString(args.title)!,
+        body: asString(args.body),
+        labels: asTrimmedStringArray(args.labels),
+      },
+    };
+  }
+  if (tool === 'update_issue' && repo && args.issue_number !== undefined) {
+    return {
+      tool: 'update_issue',
+      args: {
+        repo,
+        issue_number: Number(args.issue_number),
+        title: asString(args.title),
+        body: asString(args.body),
+        state: asString(args.state),
+        // Preserve an explicit empty array so "remove all labels" is expressible.
+        labels: Array.isArray(args.labels) ? (asTrimmedStringArray(args.labels) ?? []) : undefined,
+      },
+    };
+  }
+  if (tool === 'update_pull_request' && repo && args.pr_number !== undefined) {
+    return {
+      tool: 'update_pull_request',
+      args: {
+        repo,
+        pr_number: Number(args.pr_number),
+        title: asString(args.title),
+        body: asString(args.body),
+        base: asString(args.base),
+        state: asString(args.state),
+      },
+    };
+  }
+  if (tool === 'rerun_failed_jobs' && repo && args.run_id !== undefined) {
+    return { tool: 'rerun_failed_jobs', args: { repo, run_id: Number(args.run_id) } };
+  }
+  if (tool === 'cancel_workflow_run' && repo && args.run_id !== undefined) {
+    return { tool: 'cancel_workflow_run', args: { repo, run_id: Number(args.run_id) } };
+  }
+  if (tool === 'list_code_scanning_alerts' && repo) {
+    return {
+      tool: 'list_code_scanning_alerts',
+      args: { repo, state: asString(args.state), ref: asString(args.ref) },
+    };
+  }
+  if (tool === 'list_dependabot_alerts' && repo) {
+    return { tool: 'list_dependabot_alerts', args: { repo, state: asString(args.state) } };
+  }
+  if (tool === 'list_secret_scanning_alerts' && repo) {
+    return { tool: 'list_secret_scanning_alerts', args: { repo, state: asString(args.state) } };
   }
   return null;
 }

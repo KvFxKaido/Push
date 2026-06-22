@@ -294,7 +294,51 @@ export type GitHubCoreToolCall =
   | { tool: 'merge_pr'; args: { repo: string; pr_number: number; merge_method?: string } }
   | { tool: 'delete_branch'; args: { repo: string; branch_name: string } }
   | { tool: 'check_pr_mergeable'; args: { repo: string; pr_number: number } }
-  | { tool: 'find_existing_pr'; args: { repo: string; head_branch: string; base_branch?: string } };
+  | { tool: 'find_existing_pr'; args: { repo: string; head_branch: string; base_branch?: string } }
+  | {
+      tool: 'get_job_logs';
+      args: {
+        repo: string;
+        run_id?: number;
+        job_id?: number;
+        failed_only?: boolean;
+        tail_lines?: number;
+      };
+    }
+  | { tool: 'list_issues'; args: { repo: string; state?: string; labels?: string; count?: number } }
+  | { tool: 'get_issue'; args: { repo: string; issue_number: number } }
+  | { tool: 'add_issue_comment'; args: { repo: string; issue_number: number; body: string } }
+  | {
+      tool: 'create_issue';
+      args: { repo: string; title: string; body?: string; labels?: string[] };
+    }
+  | {
+      tool: 'update_issue';
+      args: {
+        repo: string;
+        issue_number: number;
+        title?: string;
+        body?: string;
+        state?: string;
+        labels?: string[];
+      };
+    }
+  | {
+      tool: 'update_pull_request';
+      args: {
+        repo: string;
+        pr_number: number;
+        title?: string;
+        body?: string;
+        base?: string;
+        state?: string;
+      };
+    }
+  | { tool: 'rerun_failed_jobs'; args: { repo: string; run_id: number } }
+  | { tool: 'cancel_workflow_run'; args: { repo: string; run_id: number } }
+  | { tool: 'list_code_scanning_alerts'; args: { repo: string; state?: string; ref?: string } }
+  | { tool: 'list_dependabot_alerts'; args: { repo: string; state?: string } }
+  | { tool: 'list_secret_scanning_alerts'; args: { repo: string; state?: string } };
 
 export interface GitHubCoreRuntime {
   githubFetch(url: string, options?: RequestInit): Promise<Response>;
@@ -426,6 +470,66 @@ interface PullRequestMergeabilityApi {
   mergeable_state?: string | null;
   head?: { ref?: string; sha?: string };
   base?: { ref?: string };
+}
+
+interface WorkflowJobSummaryApi {
+  id: number;
+  name: string;
+  status: string;
+  conclusion: string | null;
+}
+
+type IssueLabelApi = string | { name?: string };
+
+interface IssueListItemApi {
+  number: number;
+  title: string;
+  state: string;
+  user?: { login?: string };
+  labels?: IssueLabelApi[];
+  comments?: number;
+  /** Present iff this "issue" is actually a pull request (the /issues list mixes both). */
+  pull_request?: unknown;
+  created_at: string;
+  html_url: string;
+}
+
+interface IssueDetailApi extends IssueListItemApi {
+  body?: string | null;
+}
+
+interface IssueCommentApi {
+  user?: { login?: string };
+  body?: string;
+  created_at: string;
+}
+
+interface CodeScanningAlertApi {
+  number: number;
+  state: string;
+  html_url: string;
+  rule?: { id?: string; severity?: string; description?: string };
+  tool?: { name?: string };
+  most_recent_instance?: { ref?: string; location?: { path?: string; start_line?: number } };
+}
+
+interface DependabotAlertApi {
+  number: number;
+  state: string;
+  html_url: string;
+  dependency?: { package?: { name?: string }; manifest_path?: string };
+  security_advisory?: { severity?: string; summary?: string };
+  security_vulnerability?: { severity?: string };
+}
+
+interface SecretScanningAlertApi {
+  number: number;
+  state: string;
+  html_url: string;
+  secret_type_display_name?: string;
+  secret_type?: string;
+  resolution?: string | null;
+  created_at: string;
 }
 
 function parseNextLink(linkHeader: string | null): string | null {
@@ -2364,6 +2468,632 @@ export async function executeSearchFilesTool(
   return { text: lines.join('\n'), card: { type: 'file-search', data: cardData } };
 }
 
+// ---------------------------------------------------------------------------
+// CI job logs (real log text, not just step status)
+// ---------------------------------------------------------------------------
+
+const JOB_LOG_DEFAULT_TAIL = 200;
+const JOB_LOG_MAX_TAIL = 1000;
+const JOB_LOG_MAX_JOBS = 5;
+const JOB_LOG_CHAR_LIMIT = 50_000;
+/** Job conclusions that count as "failed" for `failed_only`. */
+const FAILED_JOB_CONCLUSIONS: ReadonlySet<string> = new Set([
+  'failure',
+  'timed_out',
+  'action_required',
+]);
+
+function tailLines(text: string, max: number): { text: string; truncated: boolean } {
+  // A terminal newline yields a trailing '' segment from split('\n'); don't
+  // count it as a line, or tail_lines:3 on "a\nb\nc\n" would drop a real line
+  // and falsely mark the result truncated. Strip one trailing newline first.
+  const normalized = text.endsWith('\n') ? text.slice(0, -1) : text;
+  const lines = normalized.split('\n');
+  if (lines.length <= max) return { text, truncated: false };
+  return { text: lines.slice(lines.length - max).join('\n'), truncated: true };
+}
+
+async function fetchJobLogText(
+  runtime: GitHubCoreRuntime,
+  repo: string,
+  jobId: number,
+): Promise<string | null> {
+  // GitHub 302-redirects this endpoint to a short-lived blob URL; the platform
+  // fetch follows the redirect (and strips Authorization cross-origin per the
+  // Fetch spec), so we just read the final body. 404 = logs expired/absent.
+  const res = await runtime.githubFetch(
+    buildGitHubApiUrl(runtime, `/repos/${repo}/actions/jobs/${jobId}/logs`),
+    { headers: runtime.buildHeaders(DEFAULT_ACCEPT) },
+  );
+  if (!res.ok) return null;
+  return res.text();
+}
+
+export async function executeGetJobLogsTool(
+  runtime: GitHubCoreRuntime,
+  repo: string,
+  runId?: number,
+  jobId?: number,
+  failedOnly: boolean = true,
+  tail?: number,
+): Promise<GitHubCoreToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const tailN = Math.max(1, Math.min(tail || JOB_LOG_DEFAULT_TAIL, JOB_LOG_MAX_TAIL));
+
+  // Single job by id — the targeted "why did THIS job fail" path.
+  if (typeof jobId === 'number') {
+    const metaRes = await runtime.githubFetch(
+      buildGitHubApiUrl(runtime, `/repos/${repo}/actions/jobs/${jobId}`),
+      { headers },
+    );
+    if (!metaRes.ok) {
+      throw new Error(formatGitHubError(metaRes.status, `job #${jobId} on ${repo}`));
+    }
+    const meta = (await metaRes.json()) as WorkflowJobSummaryApi;
+    const raw = await fetchJobLogText(runtime, repo, jobId);
+    if (raw === null) {
+      return {
+        text: `[Tool Result — get_job_logs]\nNo logs available for job #${jobId} on ${repo} (logs may have expired or the job has not produced output yet).`,
+      };
+    }
+    const tailed = tailLines(raw.slice(-JOB_LOG_CHAR_LIMIT * 2), tailN);
+    const safe = runtime.redactSensitiveText(tailed.text.slice(-JOB_LOG_CHAR_LIMIT));
+    return {
+      text: [
+        `[Tool Result — get_job_logs]`,
+        `Job: ${meta.name || `#${jobId}`} — ${meta.conclusion || meta.status || 'unknown'}`,
+        tailed.truncated ? `(showing last ${tailN} lines)` : '',
+        safe.redacted ? 'Redactions: secret-like values hidden.' : '',
+        '',
+        '```',
+        safe.text,
+        '```',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    };
+  }
+
+  if (typeof runId !== 'number') {
+    throw new Error(
+      'get_job_logs requires either run_id (a workflow run) or job_id (a single job).',
+    );
+  }
+
+  const jobsRes = await runtime.githubFetch(
+    buildGitHubApiUrl(runtime, `/repos/${repo}/actions/runs/${runId}/jobs?per_page=100`),
+    { headers },
+  );
+  if (!jobsRes.ok) {
+    throw new Error(formatGitHubError(jobsRes.status, `jobs for run #${runId} on ${repo}`));
+  }
+  const jobsData = (await jobsRes.json()) as { jobs?: WorkflowJobSummaryApi[] };
+  const allJobs = jobsData.jobs || [];
+  const candidates = failedOnly
+    ? allJobs.filter((job) => FAILED_JOB_CONCLUSIONS.has(job.conclusion || ''))
+    : allJobs;
+
+  if (candidates.length === 0) {
+    return {
+      text: `[Tool Result — get_job_logs]\n${failedOnly ? 'No failed jobs' : 'No jobs'} found for run #${runId} on ${repo}.${failedOnly && allJobs.length > 0 ? ' Pass failed_only: false to see all jobs.' : ''}`,
+    };
+  }
+
+  const selected = candidates.slice(0, JOB_LOG_MAX_JOBS);
+  const blocks: string[] = [
+    `[Tool Result — get_job_logs]`,
+    `Run #${runId} on ${repo} — ${selected.length} job${selected.length > 1 ? 's' : ''}${failedOnly ? ' (failed only)' : ''}, last ${tailN} lines each:`,
+  ];
+  let anyRedacted = false;
+  for (const job of selected) {
+    blocks.push('', `── ${job.name} (${job.conclusion || job.status}) ──`);
+    const raw = await fetchJobLogText(runtime, repo, job.id);
+    if (raw === null) {
+      blocks.push('(logs unavailable — may have expired)');
+      continue;
+    }
+    const tailed = tailLines(raw.slice(-JOB_LOG_CHAR_LIMIT * 2), tailN);
+    const safe = runtime.redactSensitiveText(tailed.text.slice(-JOB_LOG_CHAR_LIMIT));
+    anyRedacted ||= safe.redacted;
+    blocks.push('```', safe.text, '```');
+  }
+  if (candidates.length > JOB_LOG_MAX_JOBS) {
+    blocks.push(
+      '',
+      `(${candidates.length - JOB_LOG_MAX_JOBS} more job(s) not shown — pass job_id to target one.)`,
+    );
+  }
+  if (anyRedacted) blocks.push('', 'Redactions: secret-like values hidden.');
+  return { text: blocks.join('\n') };
+}
+
+// ---------------------------------------------------------------------------
+// Issues (read + write). The /issues list and item endpoints also serve PRs;
+// list filters PRs out, get/comment/update operate on both (a PR IS an issue
+// API-side, which is exactly why add_issue_comment works on PRs too).
+// ---------------------------------------------------------------------------
+
+const ISSUE_BODY_CHAR_LIMIT = 8000;
+const ISSUE_COMMENT_CHAR_LIMIT = 2000;
+
+function labelNames(labels: IssueLabelApi[] | undefined): string[] {
+  return (labels || [])
+    .map((label) => (typeof label === 'string' ? label : label?.name))
+    .filter((name): name is string => Boolean(name));
+}
+
+export async function executeListIssuesTool(
+  runtime: GitHubCoreRuntime,
+  repo: string,
+  state: string = 'open',
+  labels?: string,
+  count?: number,
+): Promise<GitHubCoreToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const limit = Math.max(1, Math.min(count || 20, 50));
+  // The /issues endpoint mixes issues and PRs and we filter PRs out client-side,
+  // so a PR-heavy first page could hide real issues. Over-fetch a full page (100,
+  // the API max) and slice to the requested limit after filtering.
+  let url = buildGitHubApiUrl(
+    runtime,
+    `/repos/${repo}/issues?state=${encodeURIComponent(state)}&per_page=100`,
+  );
+  if (labels) url += `&labels=${encodeURIComponent(labels)}`;
+
+  const res = await runtime.githubFetch(url, { headers });
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `issues on ${repo}`));
+  }
+  const data = (await res.json()) as IssueListItemApi[];
+  const issues = (Array.isArray(data) ? data : [])
+    .filter((issue) => !issue.pull_request)
+    .slice(0, limit);
+
+  if (issues.length === 0) {
+    return {
+      text: `[Tool Result — list_issues]\nNo ${state} issues found on ${repo}${labels ? ` with labels "${labels}"` : ''}.`,
+    };
+  }
+
+  const lines: string[] = [
+    `[Tool Result — list_issues]`,
+    `${issues.length} ${state} issue${issues.length > 1 ? 's' : ''} on ${repo}:`,
+    '',
+  ];
+  for (const issue of issues) {
+    const names = labelNames(issue.labels);
+    lines.push(`  #${issue.number} ${issue.title}`);
+    lines.push(
+      `    by ${issue.user?.login || 'unknown'} | ${issue.comments ?? 0} comment(s)${names.length ? ` | labels: ${names.join(', ')}` : ''}`,
+    );
+  }
+  return { text: lines.join('\n') };
+}
+
+export async function executeGetIssueTool(
+  runtime: GitHubCoreRuntime,
+  repo: string,
+  issueNumber: number,
+): Promise<GitHubCoreToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const [issueRes, commentsRes] = await Promise.all([
+    runtime.githubFetch(buildGitHubApiUrl(runtime, `/repos/${repo}/issues/${issueNumber}`), {
+      headers,
+    }),
+    runtime.githubFetch(
+      buildGitHubApiUrl(runtime, `/repos/${repo}/issues/${issueNumber}/comments?per_page=10`),
+      { headers },
+    ),
+  ]);
+
+  if (!issueRes.ok) {
+    throw new Error(formatGitHubError(issueRes.status, `issue #${issueNumber} on ${repo}`));
+  }
+  const issue = (await issueRes.json()) as IssueDetailApi;
+  const comments = commentsRes.ok ? ((await commentsRes.json()) as IssueCommentApi[]) : [];
+  const names = labelNames(issue.labels);
+  const kind = issue.pull_request ? 'PR' : 'Issue';
+
+  const body = (issue.body || '').trim();
+  const lines: string[] = [
+    `[Tool Result — get_issue]`,
+    `${kind} #${issue.number}: ${issue.title}`,
+    `State: ${issue.state} | by ${issue.user?.login || 'unknown'}${names.length ? ` | labels: ${names.join(', ')}` : ''}`,
+    `URL: ${issue.html_url}`,
+    '',
+    body ? body.slice(0, ISSUE_BODY_CHAR_LIMIT) : '(no description)',
+  ];
+  if (body.length > ISSUE_BODY_CHAR_LIMIT) lines.push('… (body truncated)');
+
+  if (comments.length) {
+    const total = issue.comments ?? comments.length;
+    lines.push(
+      '',
+      `Comments (${comments.length}${total > comments.length ? ` of ${total}` : ''}):`,
+    );
+    for (const comment of comments) {
+      const text = (comment.body || '').trim();
+      lines.push(
+        '',
+        `— ${comment.user?.login || 'unknown'}:`,
+        text.slice(0, ISSUE_COMMENT_CHAR_LIMIT) +
+          (text.length > ISSUE_COMMENT_CHAR_LIMIT ? ' …' : ''),
+      );
+    }
+  }
+  return { text: lines.join('\n') };
+}
+
+export async function executeAddIssueCommentTool(
+  runtime: GitHubCoreRuntime,
+  repo: string,
+  issueNumber: number,
+  body: string,
+): Promise<GitHubCoreToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const res = await runtime.githubFetch(
+    buildGitHubApiUrl(runtime, `/repos/${repo}/issues/${issueNumber}/comments`),
+    {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body }),
+    },
+  );
+  if (res.status === 404) {
+    throw new Error(`Issue/PR #${issueNumber} not found on ${repo}.`);
+  }
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `commenting on #${issueNumber} on ${repo}`));
+  }
+  const data = (await res.json()) as { html_url?: string };
+  return {
+    text: [
+      `[Tool Result — add_issue_comment]`,
+      `Comment posted on #${issueNumber} on ${repo}.`,
+      data.html_url ? `URL: ${data.html_url}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  };
+}
+
+export async function executeCreateIssueTool(
+  runtime: GitHubCoreRuntime,
+  repo: string,
+  title: string,
+  body?: string,
+  labels?: string[],
+): Promise<GitHubCoreToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const payload: Record<string, unknown> = { title };
+  if (body) payload.body = body;
+  if (labels && labels.length) payload.labels = labels;
+
+  const res = await runtime.githubFetch(buildGitHubApiUrl(runtime, `/repos/${repo}/issues`), {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (res.status === 410) {
+    throw new Error(`Issues are disabled on ${repo}.`);
+  }
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `creating issue on ${repo}`));
+  }
+  const data = (await res.json()) as { number?: number; html_url?: string };
+  return {
+    text: [
+      `[Tool Result — create_issue]`,
+      `Issue #${data.number} created on ${repo}.`,
+      `Title: ${title}`,
+      data.html_url ? `URL: ${data.html_url}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  };
+}
+
+export async function executeUpdateIssueTool(
+  runtime: GitHubCoreRuntime,
+  repo: string,
+  issueNumber: number,
+  title?: string,
+  body?: string,
+  state?: string,
+  labels?: string[],
+): Promise<GitHubCoreToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const payload: Record<string, unknown> = {};
+  if (title !== undefined) payload.title = title;
+  if (body !== undefined) payload.body = body;
+  if (state !== undefined) payload.state = state;
+  if (labels !== undefined) payload.labels = labels;
+  if (Object.keys(payload).length === 0) {
+    throw new Error(
+      'update_issue requires at least one field to change (title, body, state, or labels).',
+    );
+  }
+
+  const res = await runtime.githubFetch(
+    buildGitHubApiUrl(runtime, `/repos/${repo}/issues/${issueNumber}`),
+    {
+      method: 'PATCH',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+  );
+  if (res.status === 404) {
+    throw new Error(`Issue #${issueNumber} not found on ${repo}.`);
+  }
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `updating issue #${issueNumber} on ${repo}`));
+  }
+  const data = (await res.json()) as { state?: string; html_url?: string };
+  return {
+    text: [
+      `[Tool Result — update_issue]`,
+      `Issue #${issueNumber} updated on ${repo}.`,
+      `State: ${data.state || 'unchanged'}`,
+      data.html_url ? `URL: ${data.html_url}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  };
+}
+
+export async function executeUpdatePullRequestTool(
+  runtime: GitHubCoreRuntime,
+  repo: string,
+  prNumber: number,
+  title?: string,
+  body?: string,
+  base?: string,
+  state?: string,
+): Promise<GitHubCoreToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const payload: Record<string, unknown> = {};
+  if (title !== undefined) payload.title = title;
+  if (body !== undefined) payload.body = body;
+  if (base !== undefined) payload.base = base;
+  if (state !== undefined) payload.state = state;
+  if (Object.keys(payload).length === 0) {
+    throw new Error(
+      'update_pull_request requires at least one field to change (title, body, base, or state).',
+    );
+  }
+
+  const res = await runtime.githubFetch(
+    buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${prNumber}`),
+    {
+      method: 'PATCH',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+  );
+  if (res.status === 404) {
+    throw new Error(`PR #${prNumber} not found on ${repo}.`);
+  }
+  if (res.status === 422) {
+    const errorData = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(
+      `Could not update PR #${prNumber}: ${errorData?.message || 'validation failed (check the base branch exists)'}`,
+    );
+  }
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `updating PR #${prNumber} on ${repo}`));
+  }
+  const data = (await res.json()) as { state?: string; html_url?: string };
+  return {
+    text: [
+      `[Tool Result — update_pull_request]`,
+      `PR #${prNumber} updated on ${repo}.`,
+      `State: ${data.state || 'unchanged'}`,
+      data.html_url ? `URL: ${data.html_url}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// CI control — re-run failed jobs / cancel a run
+// ---------------------------------------------------------------------------
+
+export async function executeRerunFailedJobsTool(
+  runtime: GitHubCoreRuntime,
+  repo: string,
+  runId: number,
+): Promise<GitHubCoreToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const res = await runtime.githubFetch(
+    buildGitHubApiUrl(runtime, `/repos/${repo}/actions/runs/${runId}/rerun-failed-jobs`),
+    { method: 'POST', headers },
+  );
+  if (res.status === 403) {
+    throw new Error(
+      `Cannot re-run jobs for run #${runId} on ${repo} (token lacks actions:write, or the run is not re-runnable).`,
+    );
+  }
+  if (!res.ok) {
+    throw new Error(
+      formatGitHubError(res.status, `re-running failed jobs for run #${runId} on ${repo}`),
+    );
+  }
+  return {
+    text: [
+      `[Tool Result — rerun_failed_jobs]`,
+      `Re-run of failed jobs requested for run #${runId} on ${repo}.`,
+      `Watch progress with get_workflow_runs or fetch_checks.`,
+    ].join('\n'),
+  };
+}
+
+export async function executeCancelWorkflowRunTool(
+  runtime: GitHubCoreRuntime,
+  repo: string,
+  runId: number,
+): Promise<GitHubCoreToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const res = await runtime.githubFetch(
+    buildGitHubApiUrl(runtime, `/repos/${repo}/actions/runs/${runId}/cancel`),
+    { method: 'POST', headers },
+  );
+  if (res.status === 409) {
+    throw new Error(
+      `Run #${runId} on ${repo} cannot be cancelled (it has already completed or is not in a cancellable state).`,
+    );
+  }
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `cancelling run #${runId} on ${repo}`));
+  }
+  return {
+    text: [
+      `[Tool Result — cancel_workflow_run]`,
+      `Cancellation requested for run #${runId} on ${repo}.`,
+    ].join('\n'),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Security alerts (read-only). 404 = the feature isn't enabled on the repo or
+// the token lacks the security_events scope — reported as a soft message, not
+// an error, so the agent can move on. Secret-scanning deliberately surfaces
+// only alert metadata (type/state/location), never the raw `secret` value.
+// ---------------------------------------------------------------------------
+
+function formatSecurityFeatureDisabled(tool: string, repo: string, feature: string): string {
+  return `[Tool Result — ${tool}]\n${feature} is not enabled on ${repo}, or the token lacks the security_events scope. No alerts accessible.`;
+}
+
+export async function executeListCodeScanningAlertsTool(
+  runtime: GitHubCoreRuntime,
+  repo: string,
+  state: string = 'open',
+  ref?: string,
+): Promise<GitHubCoreToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  let url = buildGitHubApiUrl(
+    runtime,
+    `/repos/${repo}/code-scanning/alerts?state=${encodeURIComponent(state)}&per_page=30`,
+  );
+  if (ref) url += `&ref=${encodeURIComponent(ref)}`;
+
+  const res = await runtime.githubFetch(url, { headers });
+  if (res.status === 404) {
+    return {
+      text: formatSecurityFeatureDisabled('list_code_scanning_alerts', repo, 'Code scanning'),
+    };
+  }
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `code scanning alerts on ${repo}`));
+  }
+  const data = (await res.json()) as CodeScanningAlertApi[];
+  const alerts = Array.isArray(data) ? data : [];
+  if (alerts.length === 0) {
+    return {
+      text: `[Tool Result — list_code_scanning_alerts]\nNo ${state} code scanning alerts on ${repo}.`,
+    };
+  }
+  const lines: string[] = [
+    `[Tool Result — list_code_scanning_alerts]`,
+    `${alerts.length} ${state} code scanning alert${alerts.length > 1 ? 's' : ''} on ${repo}:`,
+    '',
+  ];
+  for (const alert of alerts) {
+    const loc = alert.most_recent_instance?.location;
+    lines.push(
+      `  #${alert.number} [${alert.rule?.severity || 'unknown'}] ${alert.rule?.description || alert.rule?.id || 'rule'}`,
+    );
+    lines.push(
+      `    ${alert.tool?.name || 'tool'}${loc?.path ? ` | ${loc.path}${loc.start_line ? `:${loc.start_line}` : ''}` : ''} | ${alert.html_url}`,
+    );
+  }
+  return { text: lines.join('\n') };
+}
+
+export async function executeListDependabotAlertsTool(
+  runtime: GitHubCoreRuntime,
+  repo: string,
+  state: string = 'open',
+): Promise<GitHubCoreToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const url = buildGitHubApiUrl(
+    runtime,
+    `/repos/${repo}/dependabot/alerts?state=${encodeURIComponent(state)}&per_page=30`,
+  );
+  const res = await runtime.githubFetch(url, { headers });
+  if (res.status === 404) {
+    return {
+      text: formatSecurityFeatureDisabled('list_dependabot_alerts', repo, 'Dependabot alerts'),
+    };
+  }
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `dependabot alerts on ${repo}`));
+  }
+  const data = (await res.json()) as DependabotAlertApi[];
+  const alerts = Array.isArray(data) ? data : [];
+  if (alerts.length === 0) {
+    return {
+      text: `[Tool Result — list_dependabot_alerts]\nNo ${state} Dependabot alerts on ${repo}.`,
+    };
+  }
+  const lines: string[] = [
+    `[Tool Result — list_dependabot_alerts]`,
+    `${alerts.length} ${state} Dependabot alert${alerts.length > 1 ? 's' : ''} on ${repo}:`,
+    '',
+  ];
+  for (const alert of alerts) {
+    const severity =
+      alert.security_advisory?.severity || alert.security_vulnerability?.severity || 'unknown';
+    lines.push(`  #${alert.number} [${severity}] ${alert.dependency?.package?.name || 'package'}`);
+    lines.push(
+      `    ${alert.security_advisory?.summary || 'vulnerability'}${alert.dependency?.manifest_path ? ` | ${alert.dependency.manifest_path}` : ''} | ${alert.html_url}`,
+    );
+  }
+  return { text: lines.join('\n') };
+}
+
+export async function executeListSecretScanningAlertsTool(
+  runtime: GitHubCoreRuntime,
+  repo: string,
+  state: string = 'open',
+): Promise<GitHubCoreToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const url = buildGitHubApiUrl(
+    runtime,
+    `/repos/${repo}/secret-scanning/alerts?state=${encodeURIComponent(state)}&per_page=30`,
+  );
+  const res = await runtime.githubFetch(url, { headers });
+  if (res.status === 404) {
+    return {
+      text: formatSecurityFeatureDisabled('list_secret_scanning_alerts', repo, 'Secret scanning'),
+    };
+  }
+  if (!res.ok) {
+    throw new Error(formatGitHubError(res.status, `secret scanning alerts on ${repo}`));
+  }
+  const data = (await res.json()) as SecretScanningAlertApi[];
+  const alerts = Array.isArray(data) ? data : [];
+  if (alerts.length === 0) {
+    return {
+      text: `[Tool Result — list_secret_scanning_alerts]\nNo ${state} secret scanning alerts on ${repo}.`,
+    };
+  }
+  // Surface alert metadata only — never the raw `secret` value the API returns.
+  const lines: string[] = [
+    `[Tool Result — list_secret_scanning_alerts]`,
+    `${alerts.length} ${state} secret scanning alert${alerts.length > 1 ? 's' : ''} on ${repo} (secret values withheld):`,
+    '',
+  ];
+  for (const alert of alerts) {
+    lines.push(
+      `  #${alert.number} ${alert.secret_type_display_name || alert.secret_type || 'secret'} — ${alert.state}${alert.resolution ? ` (${alert.resolution})` : ''}`,
+    );
+    lines.push(`    ${alert.html_url}`);
+  }
+  return { text: lines.join('\n') };
+}
+
 export async function executeGitHubCoreTool(
   runtime: GitHubCoreRuntime,
   call: GitHubCoreToolCall,
@@ -2454,5 +3184,74 @@ export async function executeGitHubCoreTool(
         call.args.head_branch,
         call.args.base_branch,
       );
+    case 'get_job_logs':
+      return executeGetJobLogsTool(
+        runtime,
+        call.args.repo,
+        call.args.run_id,
+        call.args.job_id,
+        call.args.failed_only ?? true,
+        call.args.tail_lines,
+      );
+    case 'list_issues':
+      return executeListIssuesTool(
+        runtime,
+        call.args.repo,
+        call.args.state,
+        call.args.labels,
+        call.args.count,
+      );
+    case 'get_issue':
+      return executeGetIssueTool(runtime, call.args.repo, call.args.issue_number);
+    case 'add_issue_comment':
+      return executeAddIssueCommentTool(
+        runtime,
+        call.args.repo,
+        call.args.issue_number,
+        call.args.body,
+      );
+    case 'create_issue':
+      return executeCreateIssueTool(
+        runtime,
+        call.args.repo,
+        call.args.title,
+        call.args.body,
+        call.args.labels,
+      );
+    case 'update_issue':
+      return executeUpdateIssueTool(
+        runtime,
+        call.args.repo,
+        call.args.issue_number,
+        call.args.title,
+        call.args.body,
+        call.args.state,
+        call.args.labels,
+      );
+    case 'update_pull_request':
+      return executeUpdatePullRequestTool(
+        runtime,
+        call.args.repo,
+        call.args.pr_number,
+        call.args.title,
+        call.args.body,
+        call.args.base,
+        call.args.state,
+      );
+    case 'rerun_failed_jobs':
+      return executeRerunFailedJobsTool(runtime, call.args.repo, call.args.run_id);
+    case 'cancel_workflow_run':
+      return executeCancelWorkflowRunTool(runtime, call.args.repo, call.args.run_id);
+    case 'list_code_scanning_alerts':
+      return executeListCodeScanningAlertsTool(
+        runtime,
+        call.args.repo,
+        call.args.state,
+        call.args.ref,
+      );
+    case 'list_dependabot_alerts':
+      return executeListDependabotAlertsTool(runtime, call.args.repo, call.args.state);
+    case 'list_secret_scanning_alerts':
+      return executeListSecretScanningAlertsTool(runtime, call.args.repo, call.args.state);
   }
 }

@@ -1011,8 +1011,8 @@ Available tools:
 ${GITHUB_PROTOCOL_ENTRIES.map((spec) => `- ${spec.protocolSignature} — ${spec.protocolDescription}`).join('\n')}
 
 Rules:
-- Read-only GitHub tools (pr, prs, commits, repo_read, repo_grep, repo_ls, branches, checks, repo_search, commit_files, pr_check, pr_find, workflow_runs, workflow_logs) may run in parallel with other read-only calls.
-- Write GitHub tools (pr_create, pr_merge, branch_delete, workflow_run) are side-effecting — at most one trailing side-effect per turn, same budget as exec/git_commit.
+- Read-only GitHub tools (${getToolPublicNames({ source: 'github', readOnly: true }).join(', ')}) may run in parallel with other read-only calls.
+- Write GitHub tools (${getToolPublicNames({ source: 'github', readOnly: false }).join(', ')}) are side-effecting — at most one trailing side-effect per turn, same budget as exec/git_commit.
 - Merges happen through the PR flow: open a PR (pr_create) and merge it (pr_merge); never merge locally.
 - Do not describe tool calls in prose. Emit only JSON blocks for tool calls.`;
 

@@ -46,6 +46,19 @@ export function asStringRecord(value: unknown): Record<string, string> | undefin
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
+export function asBoolean(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return undefined;
+}
+
+export function asStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const strings = value.filter((entry): entry is string => typeof entry === 'string');
+  return strings.length > 0 ? strings : undefined;
+}
+
 // --- Shared tool-arg parser ---
 
 /**
@@ -181,6 +194,103 @@ export function parseGitHubCoreToolCall(
           args: { repo, head_branch: headBranch, base_branch: asString(args.base_branch) },
         }
       : null;
+  }
+  if (name === 'get_job_logs') {
+    const runId = asPositiveInt(args.run_id);
+    const jobId = asPositiveInt(args.job_id);
+    // Need at least one target; the executor disambiguates job_id vs run_id.
+    if (runId === undefined && jobId === undefined) return null;
+    return {
+      tool: 'get_job_logs',
+      args: {
+        repo,
+        run_id: runId,
+        job_id: jobId,
+        failed_only: asBoolean(args.failed_only),
+        tail_lines: asPositiveInt(args.tail_lines),
+      },
+    };
+  }
+  if (name === 'list_issues') {
+    return {
+      tool: 'list_issues',
+      args: {
+        repo,
+        state: asString(args.state),
+        labels: asString(args.labels),
+        count: asPositiveInt(args.count),
+      },
+    };
+  }
+  if (name === 'get_issue') {
+    const issueNumber = asPositiveInt(args.issue_number);
+    return issueNumber ? { tool: 'get_issue', args: { repo, issue_number: issueNumber } } : null;
+  }
+  if (name === 'add_issue_comment') {
+    const issueNumber = asPositiveInt(args.issue_number);
+    const body = asString(args.body);
+    if (!issueNumber || !body) return null;
+    return { tool: 'add_issue_comment', args: { repo, issue_number: issueNumber, body } };
+  }
+  if (name === 'create_issue') {
+    const title = asString(args.title);
+    if (!title) return null;
+    return {
+      tool: 'create_issue',
+      args: { repo, title, body: asString(args.body), labels: asStringArray(args.labels) },
+    };
+  }
+  if (name === 'update_issue') {
+    const issueNumber = asPositiveInt(args.issue_number);
+    if (!issueNumber) return null;
+    return {
+      tool: 'update_issue',
+      args: {
+        repo,
+        issue_number: issueNumber,
+        title: asString(args.title),
+        body: asString(args.body),
+        state: asString(args.state),
+        // Preserve an explicit empty array so "remove all labels" is expressible:
+        // asStringArray([]) is undefined, which the executor reads as "unchanged".
+        labels: Array.isArray(args.labels) ? (asStringArray(args.labels) ?? []) : undefined,
+      },
+    };
+  }
+  if (name === 'update_pull_request') {
+    const prNumber = asPositiveInt(args.pr_number);
+    if (!prNumber) return null;
+    return {
+      tool: 'update_pull_request',
+      args: {
+        repo,
+        pr_number: prNumber,
+        title: asString(args.title),
+        body: asString(args.body),
+        base: asString(args.base),
+        state: asString(args.state),
+      },
+    };
+  }
+  if (name === 'rerun_failed_jobs') {
+    const runId = asPositiveInt(args.run_id);
+    return runId ? { tool: 'rerun_failed_jobs', args: { repo, run_id: runId } } : null;
+  }
+  if (name === 'cancel_workflow_run') {
+    const runId = asPositiveInt(args.run_id);
+    return runId ? { tool: 'cancel_workflow_run', args: { repo, run_id: runId } } : null;
+  }
+  if (name === 'list_code_scanning_alerts') {
+    return {
+      tool: 'list_code_scanning_alerts',
+      args: { repo, state: asString(args.state), ref: asString(args.ref) },
+    };
+  }
+  if (name === 'list_dependabot_alerts') {
+    return { tool: 'list_dependabot_alerts', args: { repo, state: asString(args.state) } };
+  }
+  if (name === 'list_secret_scanning_alerts') {
+    return { tool: 'list_secret_scanning_alerts', args: { repo, state: asString(args.state) } };
   }
 
   return null;
