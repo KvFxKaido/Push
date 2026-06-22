@@ -80,7 +80,7 @@ Roles are locked internally and models are replaceable. Presentation is phase-fi
 
 ### Delivery rules
 
-- Standard commits go through **Auditor** as a default-on SAFE/UNSAFE gate. The gate fails closed when enabled but unrunnable.
+- Web/cloud delivery uses **Gate-at-Push**: `sandbox_commit` is a silent local commit (pre-commit hook + auto-branch off main, no Auditor card), then `prepare_push` audits the cumulative push diff and returns the review card; direct `sandbox_push` also runs the push-time Auditor gate. CLI/daemon `git_commit` still uses the pre-commit Auditor gate. Required Auditor gates fail closed when unrunnable.
 - Reviewer is advisory; **only PR-backed branch-diff reviews** can be posted back to GitHub.
 - Standard merges go through the **GitHub PR flow** only — Push **never** runs local `git merge`.
 - `Protect Main` may block direct commits to `main`.
@@ -164,7 +164,7 @@ Not exhaustive; encode new patterns here when a review catches the same class tw
 
 ### Project instructions loading
 
-Loader order is `PUSH.md` → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md` (first found wins). `PUSH.md` is the Push-specific override and applies on both surfaces. Caps differ per surface: the **web/repo** loader (`fetchProjectInstructions` in `app/src/lib/github-tools.ts`) fetches via GitHub REST and truncates at **5,000 chars** with a marker, then re-reads from the sandbox once it's ready (two-phase, not strictly first-found-wins end-to-end). The **CLI/shared** loader (`lib/project-instructions.ts`, `cli/workspace-context.ts`) caps at **8,000 chars**. CLI workspace context injects the result as a `[PROJECT_INSTRUCTIONS]` block alongside a workspace snapshot (git branch, dirty files, top-level tree, manifest summary).
+Loader order is `PUSH.md` → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md` (first found wins). `PUSH.md` is the Push-specific override and applies on both surfaces. Acquisition returns raw content through the shared resolver (`lib/project-instructions-source.ts`); injection-time sanitization in `lib/project-instructions.ts` applies the default **8,000 char** cap and delimiter escaping. The web fetches via GitHub REST before the sandbox exists, then re-reads from the sandbox once ready; the CLI injects the same `[PROJECT_INSTRUCTIONS]` block alongside a workspace snapshot (git branch, dirty files, top-level tree, manifest summary).
 
 ## Pointers
 

@@ -39,7 +39,7 @@ Startup loaders use the first existing file in this order: `PUSH.md` → `AGENTS
 - Use the Explorer runtime for read-only investigation and architecture tracing.
 - The Coder runtime is the detached path (CLI/daemon task graphs, background jobs), not the default — reach for `delegate:coder` only for genuinely detached work, not ordinary edits.
 - Use Reviewer for advisory diffs on branch diff, last commit, or working tree.
-- Use Auditor for the pre-commit SAFE/UNSAFE gate on standard commits.
+- Use Auditor at the delivery boundary: web/cloud `sandbox_commit` is silent/local and `prepare_push` / direct `sandbox_push` audit the cumulative push diff; CLI `git_commit` still uses the pre-commit SAFE/UNSAFE gate.
 - Standard merges go through **GitHub PR flow** only.
 - Push never runs `git merge` locally.
 - PR-backed branch diff reviews are the only reviews that can be posted back to GitHub.
@@ -80,6 +80,6 @@ npm run typecheck:all
 
 Three guardrails surfaced during the 2026-04 Big Four extraction and CLI parity work. Apply them before adding a cross-surface feature:
 
-- **Storage: scope keys CLI-first.** Durable identifiers (e.g. `repoFullName + branch`) beat per-session ones. Web chatId is durable; CLI sessionId is per-run, so a chatId-shaped key breaks cross-run retrieval on CLI (see the PR #333 typed-memory retraction). If both surfaces touch the store, put the scope resolver in `lib/` from day one — follow the shared-module pattern of `lib/role-memory-budgets.ts`, not a per-surface helper like today's `cli/workspace-identity.ts` (which should be promoted to `lib/` the next time web needs it).
+- **Storage: scope keys CLI-first.** Durable identifiers (e.g. `repoFullName + branch`) beat per-session ones. Web chatId is durable; CLI sessionId is per-run, so a chatId-shaped key breaks cross-run retrieval on CLI (see the PR #333 typed-memory retraction). If both surfaces touch the store, put the scope resolver in `lib/` from day one — follow the shared-module pattern of `lib/role-memory-budgets.ts` and `lib/workspace-identity.ts`.
 - **Background tasks: name the coordinator's home first.** State + callback clusters need an owning module before the first line of code. If the owner isn't obvious in one sentence, the coordinator lands in `useChat.ts` by default. New feature hooks ship as sibling modules under `app/src/hooks/` or `app/src/lib/`; the `max-lines` ESLint guard on `useChat.ts` enforces this at CI.
 - **Web/CLI communication: one source of truth per vocabulary.** Any new tool, event, or envelope type needs a single canonical definition and a drift-detector test in the same PR. Gap 2 (2026-04-18) surfaced three parallel layers (dispatcher allowlist, prompt protocol, capability table) diverging silently. Pick the precedent that matches the vocabulary: tool-protocol drift uses `cli/tests/daemon-integration.test.mjs` (prompt-vs-capability sync); event/envelope drift uses `cli/tests/protocol-drift.test.mjs` (strict-mode schema pins). Extend `lib/capabilities.ts` for shared capability tables and `lib/protocol-schema.ts` strict mode for protocol envelopes.
