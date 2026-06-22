@@ -7,41 +7,41 @@ import type { NativeGitPlugin } from './definitions';
  * mistaken web-side use fails loudly rather than silently no-ops.
  */
 export class NativeGitWeb extends WebPlugin implements NativeGitPlugin {
-  private unavailable(): never {
+  private notAvailable(): never {
     throw this.unimplemented('NativeGit is only available in the native (Android) shell');
   }
 
   clone(): Promise<never> {
-    return this.unavailable();
+    return this.notAvailable();
   }
   currentBranch(): Promise<never> {
-    return this.unavailable();
+    return this.notAvailable();
   }
   upstreamRef(): Promise<never> {
-    return this.unavailable();
+    return this.notAvailable();
   }
   remoteUrl(): Promise<never> {
-    return this.unavailable();
+    return this.notAvailable();
   }
   headSha(): Promise<never> {
-    return this.unavailable();
+    return this.notAvailable();
   }
   status(): Promise<never> {
-    return this.unavailable();
+    return this.notAvailable();
   }
   createBranch(): Promise<never> {
-    return this.unavailable();
+    return this.notAvailable();
   }
   switchBranch(): Promise<never> {
-    return this.unavailable();
+    return this.notAvailable();
   }
   commit(): Promise<never> {
-    return this.unavailable();
+    return this.notAvailable();
   }
   push(): Promise<never> {
-    return this.unavailable();
+    return this.notAvailable();
   }
   fetch(): Promise<never> {
-    return this.unavailable();
+    return this.notAvailable();
   }
 }
