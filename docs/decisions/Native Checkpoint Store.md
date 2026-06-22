@@ -15,9 +15,17 @@ The original finding ("capture never fires in the inline lane") was the *first* 
 three failures, each invisible until the one before it was fixed:
 
 1. **No trigger.** The capture coordinator listens for the client-side
-   `notifyWorkspaceMutation` signal, but the inline lane's edits dispatch detached
-   / run-host, so it never fired. Fix: `chat-send-inline.ts` emits the signal at
-   run completion when the workspace changed.
+   `notifyWorkspaceMutation` signal (emitted by `sandbox-client.ts` writes /
+   `markWorkspaceMutated` execs), but on-device the user is in the **inline lane**,
+   whose edits dispatch through a detached / run-host path
+   (`sandbox_exec_detached_dispatch`, `run_host_client_*`) that never reaches the
+   client coordinator — so capture *and* the hub diff view (same signal /
+   workspace revision) both went silent. **Scope: pre-existing and lane-wide, not
+   native-specific** — it's the same coordinator/signal the remote B2 auto-back
+   uses, so auto-back shares the blind spot; the native store inherited it. (The
+   inline lane is "the collapsed lead", CLAUDE.md §10, converged onto after
+   auto-back was built for the delegated web round-loop.) Fix: `chat-send-inline.ts`
+   emits the signal at run completion when the workspace changed.
 2. **Over-eager readiness gate.** `onMutation`/`schedule` hard-rejected on
    `enabled` (`sandbox.status === 'ready'`), which can be transiently false at
    mutation time. Fix: move readiness to the single `runBackup` gate (fires after
@@ -41,47 +49,6 @@ git-aware archive is the *entire repo* (~7 MB for Push), re-downloaded every
 debounced capture. The on-device JGit dedups identical trees (no new commit), but
 the 7 MB download still happens each time. Capture should skip the download when
 the tree is unchanged (cheap tree-hash probe first), or move to diff transport.
-
-## Historical device finding (2026-06-22, Moto G) — fixed by PR3c
-
-A flag-on local-bundle build was driven on-device. Result:
-
-- **Verified working:** `listCheckpoints` is called on the correct lane dir and
-  returns its result; the UI → `useCheckpointHistory` → store → `NativeGit` plugin
-  → list path is sound, and the JGit engine itself passes its JVM tests. Nothing
-  below the trigger is wrong.
-- **Original failure: capture never fired.** After a real multi-file change, there were **zero**
-  `native_checkpoint_*` AND zero `auto_back_*` log events, and `files/checkpoints/`
-  was never created on the device (the native repo is `git init`-ed on first
-  capture). The capture *coordinator* (`useWorkspaceSandboxAutoBack`) didn't run at
-  all — neither the native store nor the remote draft-ref path.
-
-**Root cause (high confidence):** the capture coordinator triggers off the
-client-side `notifyWorkspaceMutation` signal (emitted by `sandbox-client.ts`
-writes / `markWorkspaceMutated` execs). On-device the user is in the **inline
-lane**, whose edits dispatch through a **detached / run-host path**
-(`sandbox_exec_detached_dispatch`, `run_host_client_*`) — and that signal isn't
-reaching the client coordinator. No signal → no debounced capture → nothing
-written. The same gap explains the hub **diff view** not picking up changes (it
-keys off the same mutation signal / workspace revision).
-
-**Scope: this is a pre-existing, lane-wide gap, not native-specific.** It is the
-*same* coordinator and signal the remote B2 auto-back uses, so remote auto-back
-almost certainly has the same blind spot in the inline lane. The native
-checkpoint store inherited it; it did not introduce it. The inline lane is "the
-collapsed lead" (CLAUDE.md §10) and was converged onto after auto-back was built
-for the delegated web round-loop.
-
-**Fix (landed and capture device-validated):** `chat-send-inline.ts` now emits
-`notifyWorkspaceMutation(sandboxId)` at inline-run completion when the run changed
-the workspace (`workspaceChanged`), paired with an `inline_workspace_mutation_signaled`
-log. This is the deterministic trigger — the per-tool signals fire *during* the
-run (coordinator possibly gated, WebView possibly backgrounded with throttled
-timers), so re-firing at completion (run done, sandbox ready) reliably arms the
-capture debounce and invalidates the diff cache. It fixes BOTH symptoms (capture
-+ hub diff) since both consume the one signal. A symmetric `auto_back_skipped_unready`
-log was added to the coordinator's silent early-return. Done in the inline lane,
-not the checkpoint store — the store was always correct.
 
 ## Context
 
