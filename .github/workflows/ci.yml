@@ -94,10 +94,9 @@ jobs:
 
   android-build:
     # Verifies the production Vite bundle survives a Capacitor Android build
-    # end-to-end on a clean checkout. `app/android/` is gitignored, so this
-    # job regenerates it via the `android:setup` script (which also patches
-    # the deprecated proguard-android.txt reference) and then runs the
-    # debug Gradle build.
+    # end-to-end on a clean checkout. `app/android/` is committed source, so
+    # this job just syncs the freshly-built web assets + plugins into it and
+    # runs the debug Gradle build.
     #
     # Runs whenever the workflow runs — the existing top-level `paths`
     # filter triggers on cli/, mcp/, lib/, etc. as well as app/, so this
@@ -142,12 +141,6 @@ jobs:
 
       - name: Build SPA
         run: npm run build
-
-      - name: Bootstrap Capacitor Android
-        # Generates app/android/ on first run and applies the proguard fix.
-        # Idempotent — patches the gradle file even when android/ already
-        # exists (cached scenario, future restore-keys cache hits, etc.).
-        run: npm run android:setup
 
       - name: Sync web assets to Android
         run: npx cap sync android

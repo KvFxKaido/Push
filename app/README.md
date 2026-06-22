@@ -10,7 +10,6 @@ npm run dev       # Start dev server (port 5173)
 npm run build     # Production build → dist/
 npm run preview   # Preview production build locally
 npm run lint      # Run ESLint
-npm run android:setup  # Regenerate the gitignored Capacitor Android project
 npm run android:sync   # Build the SPA and sync it into Android
 ```
 
@@ -92,13 +91,7 @@ Push runs tasks inside ephemeral Linux workspaces. Two backends are supported, s
 
 The Android app is a Capacitor wrapper around the built web app. It is currently for emulator/device smoke testing, OAuth/WebView validation, CI build verification, and sideloaded debug APKs. Treat it as experimental until release signing and distribution are wired.
 
-`app/android/` is generated and gitignored. Recreate it with:
-
-```bash
-npm run android:setup
-```
-
-Build and sync the web bundle into Android with:
+`app/android/` is **committed source** (the Capacitor project, with the native-git plugin + build config). Build outputs and the regenerated web bundle are ignored via `app/android/.gitignore`; don't regenerate it with `cap add android`. Build and sync the web bundle into Android with:
 
 ```bash
 npm run android:sync
