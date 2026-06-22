@@ -385,4 +385,35 @@ describe('boundary redaction', () => {
     expect(result.text).not.toContain('ghp_LEAKEDVALUE');
     expect(result.text).toContain('[redacted]');
   });
+
+  it('redacts secret-like text inside structured cards, not just text', async () => {
+    // list_prs copies PR titles into result.card.data.prs[]; a secret there must
+    // be scrubbed too (the web surface renders and stores cards).
+    const { runtime } = makeRuntime(
+      (url) => {
+        if (url.includes('/pulls')) {
+          return {
+            body: [
+              {
+                number: 1,
+                title: 'fix leak of ghp_CARDLEAK token',
+                user: { login: 'a' },
+                created_at: '2026-01-01T00:00:00Z',
+              },
+            ],
+          };
+        }
+        return { status: 404 };
+      },
+      (text) => ({
+        text: text.replace('ghp_CARDLEAK', '[redacted]'),
+        redacted: text.includes('ghp_CARDLEAK'),
+      }),
+    );
+    const result = await run(runtime, { tool: 'list_prs', args: { repo: 'o/r' } });
+    expect(result.card).toBeDefined();
+    // Secret gone from the entire result — both text and card.
+    expect(JSON.stringify(result)).not.toContain('ghp_CARDLEAK');
+    expect(JSON.stringify(result.card)).toContain('[redacted]');
+  });
 });
