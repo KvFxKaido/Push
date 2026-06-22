@@ -50,6 +50,12 @@
  * token, and the `(?:[.p]\d+)?(?:[^0-9]|$)` tail accepts a `.`/`p` minor
  * version (or none) without letting `glm-5` match `glm-50`. Crucially it does
  * NOT match the older `glm-4.x` line, which is not a heavy reasoner.
+ *
+ * Invariant: the families are mutually exclusive — no model id contains two of
+ * `glm-5` / `kimi-k2` / `deepseek-r1` at once — so table *order is irrelevant*.
+ * `isReasoningHeavyModel` is a `.some()` disjunction (order can't change a
+ * boolean OR), and `reasoningHeavyFamily` returns the only match. Reordering
+ * the table is therefore safe; no entry can shadow another.
  */
 export interface ReasoningHeavyMatcher {
   family: string;
