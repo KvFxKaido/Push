@@ -152,6 +152,29 @@ function toWriteResult(res: GitExecResult): GitWriteResult {
   return { ...res, ok: res.exitCode === 0 };
 }
 
+/**
+ * The working-copy critical section, shared by every `GitBackend`
+ * implementation (the sandbox/CLI `SandboxPlumbingBackend` and the mobile
+ * `NativeGitBackend`) so the lock semantics live in one place. `runExclusive`
+ * takes the lock for `lockScope` (or runs inline when unscoped);
+ * `maybeExclusive` skips re-acquiring when the caller already holds it (the
+ * `PushGit` gate+write span). Promote-to-`lib`-on-second-surface, per the
+ * cross-surface checklist — `NativeGitBackend` was that second surface.
+ */
+export interface WorkingCopyLock {
+  runExclusive<T>(task: () => Promise<T>): Promise<T>;
+  maybeExclusive<T>(lock: WriteLockContext | undefined, task: () => Promise<T>): Promise<T>;
+}
+
+export function createWorkingCopyLock(lockScope: string | undefined): WorkingCopyLock {
+  const runExclusive = <T>(task: () => Promise<T>): Promise<T> =>
+    lockScope ? withRepoLock(lockScope, task) : task();
+  return {
+    runExclusive,
+    maybeExclusive: (lock, task) => (lock?.alreadyLocked ? task() : runExclusive(task)),
+  };
+}
+
 /** Construction options for {@link SandboxPlumbingBackend}. */
 export interface SandboxPlumbingBackendOptions {
   /**
@@ -183,16 +206,16 @@ export interface SandboxPlumbingBackendOptions {
  */
 export class SandboxPlumbingBackend implements GitBackend {
   private readonly exec: GitExec;
-  private readonly lockScope?: string;
+  private readonly lock: WorkingCopyLock;
 
   constructor(exec: GitExec, opts?: SandboxPlumbingBackendOptions) {
     this.exec = exec;
-    this.lockScope = opts?.lockScope;
+    this.lock = createWorkingCopyLock(opts?.lockScope);
   }
 
   /**
-   * Run a whole logical write under the working-copy lock when a scope is set,
-   * or directly when it isn't. Each write method wraps its *entire* git
+   * Run a whole logical write under the working-copy lock (see
+   * {@link createWorkingCopyLock}). Each write method wraps its *entire* git
    * sequence (e.g. `commit`'s add+commit, `switchBranch`'s fetch-fallback+
    * switch) in one call so the sequence is indivisible — never a per-exec lock,
    * which would leave the gap between staging and commit open to interleaving.
@@ -202,7 +225,7 @@ export class SandboxPlumbingBackend implements GitBackend {
    * inner write so the (non-reentrant) lock isn't re-acquired.
    */
   runExclusive<T>(task: () => Promise<T>): Promise<T> {
-    return this.lockScope ? withRepoLock(this.lockScope, task) : task();
+    return this.lock.runExclusive(task);
   }
 
   /** Run `task` under the lock unless the caller already holds it. */
@@ -210,7 +233,7 @@ export class SandboxPlumbingBackend implements GitBackend {
     lock: WriteLockContext | undefined,
     task: () => Promise<T>,
   ): Promise<T> {
-    return lock?.alreadyLocked ? task() : this.runExclusive(task);
+    return this.lock.maybeExclusive(lock, task);
   }
 
   async currentBranch(): Promise<string | null> {
