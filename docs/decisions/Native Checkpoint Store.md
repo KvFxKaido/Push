@@ -204,10 +204,16 @@ load-bearing, not polish:
    - **2b (Kotlin + device):** the four `JGitEngine`/plugin methods (extract +
      `add -A` + commit; tree → tar.gz; `git log`; prune) and end-to-end device
      validation of the capture→commit→restore round-trip on the Moto G.
-3. **Restore-coordinator wiring + UX.** Route `useWorkspaceSandboxRestore` through
-   the store; surface the checkpoint history `list()` as a browse/restore UX
-   (the existing offer-to-restore handles restore-latest in the meantime);
-   capture/restore failure telemetry.
+3. **Restore-coordinator wiring + UX.**
+   - **3a (shipped):** routed `useWorkspaceSandboxRestore` through the store
+     (both coordinators now backend-agnostic), keyed on the full lane scope.
+   - **3b (UX):** the checkpoint-history browse/restore surface — `useCheckpointHistory`
+     + a presentational `CheckpointHistoryList` + a self-gating `CheckpointHistory`
+     container (renders nothing off the native shell / flag), mounted in the
+     workspace hub sheet next to hibernate/snapshot. Web-safe; on-device visual +
+     list/restore e2e is the device-session follow-up.
+   - Remaining: the large-upload endpoint (restore size cap) + capture/restore
+     failure telemetry + the full device e2e.
 
 ## Known limitations (PR2; tracked for PR3 — surfaced by the PR2 review)
 

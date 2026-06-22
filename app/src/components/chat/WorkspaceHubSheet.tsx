@@ -108,6 +108,7 @@ import type {
 import type { ScratchpadMemory } from '@/hooks/useScratchpad';
 import type { TodoItem } from '@/lib/todo-tools';
 import { formatSnapshotAge } from '@/hooks/useSnapshotManager';
+import { CheckpointHistory } from './CheckpointHistory';
 import type { PinnedArtifact } from '@/hooks/usePinnedArtifacts';
 import type {
   AIProviderType,
@@ -1593,6 +1594,15 @@ export function WorkspaceHubSheet({
               </div>
             </div>
           )}
+
+          {/* On-device checkpoint history — self-gating (native shell + flag),
+              renders nothing on web. Sits in the workspace-state zone next to
+              hibernate/snapshot. */}
+          <CheckpointHistory
+            sandboxId={sandboxId}
+            repoFullName={repoFullName ?? null}
+            branch={branchProps.currentBranch}
+          />
 
           {/* Branch switch confirmation overlay */}
           {switchConfirmBranch && (
