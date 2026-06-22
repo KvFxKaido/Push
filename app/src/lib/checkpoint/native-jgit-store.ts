@@ -46,7 +46,7 @@ export const CHECKPOINT_ARCHIVE_MAX_BYTES = 64 * 1024 * 1024;
 /** Default retention: keep the newest N checkpoints per lane. */
 export const CHECKPOINT_RETENTION_KEEP = 50;
 
-const TMP_ARCHIVE = '/tmp/push-checkpoint.tar.gz';
+const TMP_ARCHIVE = '/tmp/push-checkpoint.zip';
 const TMP_RESTORE_B64 = '/tmp/push-checkpoint-restore.b64';
 
 /**
@@ -54,15 +54,17 @@ const TMP_RESTORE_B64 = '/tmp/push-checkpoint-restore.b64';
  * --cached --others --exclude-standard` is tracked + untracked, .gitignore-
  * respecting, WIP included (`git archive HEAD` would miss untracked WIP); the
  * `:!:` pathspecs hard-exclude heavy build dirs even when a repo fails to
- * gitignore them. Prints `OK <bytes>` or `ERR <stage>` (never fatal).
+ * gitignore them. ZIP (not tar.gz) so the device side extracts with built-in
+ * `java.util.zip` — no native tar dependency. Prints `OK <bytes>` or `ERR`.
  */
 const CAPTURE_ARCHIVE_COMMAND = [
   `cd /workspace 2>/dev/null || { echo "ERR workspace"; exit 0; }`,
   `rm -f ${TMP_ARCHIVE}`,
-  `git ls-files -z --cached --others --exclude-standard \
+  `git ls-files --cached --others --exclude-standard \
     ':!:node_modules/**' ':!:dist/**' ':!:build/**' ':!:.next/**' ':!:.cache/**' \
     ':!:coverage/**' ':!:target/**' ':!:.git/**' \
-    | tar --null --no-recursion -czf ${TMP_ARCHIVE} -T - 2>/dev/null || { echo "ERR tar"; exit 0; }`,
+    | zip -q -@ ${TMP_ARCHIVE} 2>/dev/null`,
+  `[ -f ${TMP_ARCHIVE} ] || { echo "ERR zip"; exit 0; }`,
   `sz=$(stat -c %s ${TMP_ARCHIVE} 2>/dev/null || echo 0)`,
   `echo "OK $sz"`,
 ].join('\n');
@@ -76,10 +78,10 @@ const CAPTURE_ARCHIVE_COMMAND = [
  */
 const RESTORE_SYNC_COMMAND = [
   `cd /workspace 2>/dev/null || { echo "ERR workspace"; exit 0; }`,
-  `arc=/tmp/push-checkpoint-restore.tar.gz`,
+  `arc=/tmp/push-checkpoint-restore.zip`,
   `base64 -d ${TMP_RESTORE_B64} > "$arc" 2>/dev/null || { echo "ERR decode"; exit 0; }`,
   `find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} + 2>/dev/null || { echo "ERR clear"; exit 0; }`,
-  `tar xzf "$arc" -C /workspace 2>/dev/null || { echo "ERR extract"; exit 0; }`,
+  `unzip -o -q "$arc" -d /workspace 2>/dev/null || { echo "ERR extract"; exit 0; }`,
   `rm -f ${TMP_RESTORE_B64} "$arc"`,
   `echo OK`,
 ].join('\n');

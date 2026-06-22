@@ -1,5 +1,6 @@
 package com.push.nativegit
 
+import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
@@ -7,6 +8,7 @@ import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import java.io.File
 import java.util.concurrent.Executors
+import org.json.JSONObject
 
 /**
  * Capacitor bridge for the on-device git engine. Binds to the JS
@@ -146,6 +148,53 @@ class NativeGitPlugin : Plugin() {
         call.getInt("depth"),
         call.getString("token"),
       )
+    }
+  }
+
+  // -- Checkpoints ------------------------------------------------------------
+
+  @PluginMethod
+  fun commitWorkingTree(call: PluginCall) {
+    val archive = call.getString("archiveBase64") ?: return call.reject("missing 'archiveBase64'")
+    val message = call.getString("message") ?: "checkpoint"
+    resolveAsync(call) {
+      val result = JGitEngine.commitWorkingTree(call.requireDir(), archive, message)
+      JSObject()
+        .put("committed", result.committed)
+        .put("commitId", result.commitId ?: JSONObject.NULL)
+    }
+  }
+
+  @PluginMethod
+  fun archiveCommit(call: PluginCall) {
+    val commitId = call.getString("commitId") ?: return call.reject("missing 'commitId'")
+    resolveAsync(call) {
+      JSObject().put(
+        "archiveBase64",
+        JGitEngine.archiveCommit(call.requireDir(), commitId) ?: JSONObject.NULL,
+      )
+    }
+  }
+
+  @PluginMethod
+  fun listCheckpoints(call: PluginCall) = resolveAsync(call) {
+    val arr = JSArray()
+    for (entry in JGitEngine.listCheckpoints(call.requireDir())) {
+      arr.put(
+        JSObject()
+          .put("commitId", entry.commitId)
+          .put("message", entry.message)
+          .put("timestampMs", entry.timestampMs),
+      )
+    }
+    JSObject().put("checkpoints", arr)
+  }
+
+  @PluginMethod
+  fun pruneCheckpoints(call: PluginCall) {
+    val keep = call.getInt("keep") ?: 50
+    resolveAsync(call) {
+      JSObject().put("pruned", JGitEngine.pruneCheckpoints(call.requireDir(), keep))
     }
   }
 }

@@ -52,4 +52,7 @@ dependencies {
     // The git engine. Pin to a current release at build time.
     implementation 'org.eclipse.jgit:org.eclipse.jgit:6.10.0.202406032230-r'
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
+    // JVM unit tests for the checkpoint engine — pure JGit + java.util.zip logic,
+    // no android.* APIs, so it runs on the host JVM (`testDebugUnitTest`).
+    testImplementation 'junit:junit:4.13.2'
 }
