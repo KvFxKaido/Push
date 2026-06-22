@@ -141,7 +141,13 @@ export function createAutoBackScheduler(deps: AutoBackSchedulerDeps): AutoBackSc
   };
 
   const schedule = () => {
-    if (disposed || !getContext().enabled) return;
+    // NOTE: no `enabled` pre-check here. `runBackup` is the single readiness
+    // gate (it logs `auto_back_skipped_unready` when not ready). The debounce is
+    // long (45s) and `enabled` (sandbox.status === 'ready') can be transiently
+    // false at mutation time — e.g. mid inline-run — yet ready by the time the
+    // timer fires. Gating only at fire time lets that case self-heal instead of
+    // silently dropping the capture (device finding 2026-06-22).
+    if (disposed) return;
     clearTimer();
     timer = setTimeout(() => void runBackup(), debounceMs);
   };
@@ -150,7 +156,20 @@ export function createAutoBackScheduler(deps: AutoBackSchedulerDeps): AutoBackSc
     onMutation(sandboxId: string) {
       if (disposed) return;
       const ctx = getContext();
-      if (!ctx.enabled || sandboxId !== ctx.sandboxId) return;
+      // Only the sandbox-identity guard is eager (a mutation for a different
+      // sandbox is never ours). Readiness is deferred to runBackup (see schedule).
+      if (sandboxId !== ctx.sandboxId) {
+        console.log(
+          JSON.stringify({
+            level: 'info',
+            event: 'auto_back_mutation_ignored',
+            reason: 'sandbox_mismatch',
+            incoming: sandboxId,
+            current: ctx.sandboxId ?? null,
+          }),
+        );
+        return;
+      }
       schedule();
     },
     flush() {

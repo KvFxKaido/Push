@@ -1,14 +1,46 @@
 # Native Checkpoint Store
 
 Date: 2026-06-22
-Status: **Trigger wired, pending device re-validation** — PR1 (abstraction), PR2
-(native capture + restore, JGit), PR3a (restore-coordinator wiring), and PR3b
-(history UX) have all **landed**. On-device testing (2026-06-22, Moto G) found the
-**capture never fires in the inline lane** (see "Device validation finding"); the
-inline-lane mutation trigger is now **wired** (`chat-send-inline.ts` emits
-`notifyWorkspaceMutation` at run completion) and awaits a device re-test to
-confirm capture fires end-to-end. Feature stays dormant (behind
-`VITE_NATIVE_CHECKPOINTS`) until then. Not roadmap-promoted. Owner: Push mobile/git.
+Status: **Capture device-validated end-to-end** (2026-06-22, Moto G) — PR1–PR3b
+landed; a capture now flows inline edit → trigger → coordinator → archive →
+download → on-device JGit commit, confirmed by an orphan checkpoint ref on disk.
+Getting there took fixing **three stacked bugs** the device test surfaced (below).
+Feature stays dormant (behind `VITE_NATIVE_CHECKPOINTS`) pending the remaining
+work: **restore** device-validation, the **7 MB-per-capture** efficiency fix, and
+the restore large-upload endpoint. Not roadmap-promoted. Owner: Push mobile/git.
+
+## Device validation: the three stacked bugs (2026-06-22)
+
+The original finding ("capture never fires in the inline lane") was the *first* of
+three failures, each invisible until the one before it was fixed:
+
+1. **No trigger.** The capture coordinator listens for the client-side
+   `notifyWorkspaceMutation` signal, but the inline lane's edits dispatch detached
+   / run-host, so it never fired. Fix: `chat-send-inline.ts` emits the signal at
+   run completion when the workspace changed.
+2. **Over-eager readiness gate.** `onMutation`/`schedule` hard-rejected on
+   `enabled` (`sandbox.status === 'ready'`), which can be transiently false at
+   mutation time. Fix: move readiness to the single `runBackup` gate (fires after
+   the 45s debounce, when status has settled); keep only the sandbox-identity
+   guard eager.
+3. **Archive written to `/tmp`.** The capture built a 7 MB git-aware zip in `/tmp`
+   and tried to fetch it — but the Cloudflare download endpoint rejects
+   non-`/workspace` paths ("Path must be within /workspace"), and exec stdout is
+   500 KB-capped so streaming the base64 wasn't an option. Fix: write the archive
+   under `/workspace` (`.push-checkpoint.zip`), kept invisible to git via
+   `.git/info/exclude` + an archive pathspec so it never pollutes status / diff /
+   `add -A` / remote auto-back, and never lands in a checkpoint.
+
+Each fix added the symmetric structured logs that were missing on the silent path
+(per-stage `native_checkpoint_capture_failed`, `auto_back_skipped_unready`,
+`auto_back_mutation_ignored`) — which is what turned "silently does nothing" into
+"here is the exact failing line."
+
+**Known design point (next):** because the agent commits the whole tree, the
+git-aware archive is the *entire repo* (~7 MB for Push), re-downloaded every
+debounced capture. The on-device JGit dedups identical trees (no new commit), but
+the 7 MB download still happens each time. Capture should skip the download when
+the tree is unchanged (cheap tree-hash probe first), or move to diff transport.
 
 ## Device validation finding (2026-06-22, Moto G) — BLOCKING
 

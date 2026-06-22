@@ -53,7 +53,7 @@ describe('NativeJgitCheckpointStore.capture', () => {
     const download = vi.fn(async () => ({ ok: true, fileBase64: 'B64' }) as never);
     const result = await store({ plugin, download }).capture(SCOPE);
     expect(result).toEqual({ status: 'captured', dedupToken: 'commit-1' });
-    expect(download).toHaveBeenCalledWith('sb', '/tmp/push-checkpoint.zip');
+    expect(download).toHaveBeenCalledWith('sb', '/workspace/.push-checkpoint.zip');
     expect(plugin.commitWorkingTree).toHaveBeenCalledWith(
       expect.objectContaining({ dir: DIR, archiveBase64: 'B64', message: expect.any(String) }),
     );

@@ -46,13 +46,14 @@ export const CHECKPOINT_ARCHIVE_MAX_BYTES = 64 * 1024 * 1024;
 /** Default retention: keep the newest N checkpoints per lane. */
 export const CHECKPOINT_RETENTION_KEEP = 50;
 
-const TMP_ARCHIVE = '/tmp/push-checkpoint.zip';
-// The restore archive is uploaded via `writeToSandbox`, whose endpoint only
-// permits paths under /workspace (Codex P1) — so the base64 lands here, then the
-// sync decodes it to /tmp (which survives the clear-except-.git step) before
-// wiping the worktree. NOTE: `writeToSandbox` is currently ~5 MB-capped, so
-// restore of a larger checkpoint needs a dedicated upload endpoint — tracked for
-// the restore-wiring increment (PR3); capture (download path) is uncapped.
+// The archive lives UNDER /workspace, not /tmp: the download endpoint rejects
+// non-/workspace paths ("Path must be within /workspace" — device finding
+// 2026-06-22, the Cloudflare sandbox; exec stdout is 500 KB-capped so streaming
+// the base64 out isn't an option either). The temp name is added to
+// `.git/info/exclude` so it stays invisible to git status / `add -A` / the diff
+// view / remote auto-back, and is excluded from the checkpoint archive itself.
+const ARCHIVE_NAME = '.push-checkpoint.zip';
+const TMP_ARCHIVE = `/workspace/${ARCHIVE_NAME}`;
 const RESTORE_UPLOAD_B64 = '/workspace/.push-checkpoint-restore.b64';
 
 /**
@@ -65,13 +66,15 @@ const RESTORE_UPLOAD_B64 = '/workspace/.push-checkpoint-restore.b64';
  */
 const CAPTURE_ARCHIVE_COMMAND = [
   `cd /workspace 2>/dev/null || { echo "ERR workspace"; exit 0; }`,
-  `rm -f ${TMP_ARCHIVE}`,
+  // Hide the temp archive from all git-based consumers (idempotent).
+  `grep -qxF '${ARCHIVE_NAME}' .git/info/exclude 2>/dev/null || echo '${ARCHIVE_NAME}' >> .git/info/exclude 2>/dev/null || true`,
+  `rm -f ${ARCHIVE_NAME}`,
   `git ls-files --cached --others --exclude-standard \
     ':!:node_modules/**' ':!:dist/**' ':!:build/**' ':!:.next/**' ':!:.cache/**' \
-    ':!:coverage/**' ':!:target/**' ':!:.git/**' \
-    | zip -q -@ ${TMP_ARCHIVE} 2>/dev/null`,
-  `[ -f ${TMP_ARCHIVE} ] || { echo "ERR zip"; exit 0; }`,
-  `sz=$(stat -c %s ${TMP_ARCHIVE} 2>/dev/null || echo 0)`,
+    ':!:coverage/**' ':!:target/**' ':!:.git/**' ':!:${ARCHIVE_NAME}' \
+    | zip -q -@ ${ARCHIVE_NAME} 2>/dev/null`,
+  `[ -f ${ARCHIVE_NAME} ] || { echo "ERR zip"; exit 0; }`,
+  `sz=$(stat -c %s ${ARCHIVE_NAME} 2>/dev/null || echo 0)`,
   `echo "OK $sz"`,
 ].join('\n');
 
@@ -180,9 +183,16 @@ export function createNativeJgitCheckpointStore(deps: NativeCheckpointDeps = {})
         }
         bytes = Number(m[1]);
       } catch (err) {
-        return { status: 'failed', reason: err instanceof Error ? err.message : String(err) };
+        // Previously silent — an exec throw (e.g. transport/CORS on the
+        // localhost-origin build) returned failed with no log.
+        const reason = err instanceof Error ? err.message : String(err);
+        log('warn', 'native_checkpoint_capture_failed', { stage: 'archive_throw', reason });
+        return { status: 'failed', reason };
       }
-      if (bytes <= 0) return { status: 'clean' };
+      if (bytes <= 0) {
+        log('info', 'native_checkpoint_capture_clean', { bytes });
+        return { status: 'clean' };
+      }
       if (bytes > CHECKPOINT_ARCHIVE_MAX_BYTES) {
         log('warn', 'native_checkpoint_capture_skipped', { reason: 'too_large', bytes });
         return { status: 'skipped', reason: `archive too large (${bytes} bytes)` };
@@ -191,7 +201,14 @@ export function createNativeJgitCheckpointStore(deps: NativeCheckpointDeps = {})
       // 2. Fetch the bytes to the device.
       const fetched = await download(input.sandboxId, TMP_ARCHIVE);
       if (!fetched.ok || !fetched.fileBase64) {
-        return { status: 'failed', reason: fetched.error ?? 'archive download failed' };
+        const reason = fetched.error ?? 'archive download failed';
+        log('warn', 'native_checkpoint_capture_failed', {
+          stage: 'download',
+          reason,
+          bytes,
+          hasBase64: Boolean(fetched.fileBase64),
+        });
+        return { status: 'failed', reason };
       }
 
       // 3. Extract + commit into the on-device repo.
@@ -202,6 +219,10 @@ export function createNativeJgitCheckpointStore(deps: NativeCheckpointDeps = {})
           message: `checkpoint ${new Date().toISOString()}`,
         });
         if (!result.commitId) {
+          log('warn', 'native_checkpoint_capture_failed', {
+            stage: 'commit',
+            message: result.message ?? null,
+          });
           return { status: 'failed', reason: result.message ?? 'commit failed' };
         }
         // Best-effort retention; never fail the capture on a prune error.
@@ -215,7 +236,9 @@ export function createNativeJgitCheckpointStore(deps: NativeCheckpointDeps = {})
           ? { status: 'captured', dedupToken: result.commitId }
           : { status: 'unchanged', dedupToken: result.commitId };
       } catch (err) {
-        return { status: 'failed', reason: err instanceof Error ? err.message : String(err) };
+        const reason = err instanceof Error ? err.message : String(err);
+        log('warn', 'native_checkpoint_capture_failed', { stage: 'commit_throw', reason });
+        return { status: 'failed', reason };
       }
     },
 
