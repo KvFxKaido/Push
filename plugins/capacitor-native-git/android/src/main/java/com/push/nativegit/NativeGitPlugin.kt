@@ -5,6 +5,7 @@ import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
+import java.io.File
 import java.util.concurrent.Executors
 
 /**
@@ -51,13 +52,22 @@ class NativeGitPlugin : Plugin() {
     }
   }
 
+  /**
+   * Resolve a working-copy dir. Absolute paths pass through unchanged (the typed
+   * contract); a relative path resolves against the app's private `filesDir`, so
+   * a JS caller can pass a plain name (e.g. "smoke-clone") without knowing
+   * Android's absolute storage path. Additive — absolute callers are unaffected.
+   */
+  private fun resolveDir(dir: String): String =
+    if (File(dir).isAbsolute) dir else File(getContext().filesDir, dir).absolutePath
+
   private fun PluginCall.requireDir(): String =
-    getString("dir") ?: throw IllegalArgumentException("missing 'dir'")
+    getString("dir")?.let { resolveDir(it) } ?: throw IllegalArgumentException("missing 'dir'")
 
   @PluginMethod
   fun clone(call: PluginCall) {
     val url = call.getString("url") ?: return call.reject("missing 'url'")
-    val dir = call.getString("dir") ?: return call.reject("missing 'dir'")
+    val dir = resolveDir(call.getString("dir") ?: return call.reject("missing 'dir'"))
     writeAsync(call) {
       JGitEngine.clone(url, dir, call.getString("branch"), call.getString("token"), call.getInt("depth"))
     }
