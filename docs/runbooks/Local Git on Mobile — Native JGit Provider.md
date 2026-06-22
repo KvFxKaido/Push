@@ -68,10 +68,15 @@ Capacitor-touching, native-client-only modules.
 - **Phase 1 (this slice — TS foundation):** typed `NativeGitPlugin` contract,
   `NativeGitBackend`, factories, plugin registration, and tests. Verified in
   vitest with a mock plugin. ✅
-- **Phase 2 (native engine):** the `NativeGit` Capacitor plugin package —
-  Kotlin `@CapacitorPlugin`, JGit dependency, the typed methods, HTTPS auth via
-  `UsernamePasswordCredentialsProvider` (token), clone/fetch/push. Built and
-  run on a device.
+- **Phase 2 (native engine — written, device-build-pending):** the
+  `NativeGit` Capacitor plugin package lives at
+  [`plugins/capacitor-native-git/`](../../plugins/capacitor-native-git/README.md)
+  — Kotlin `@CapacitorPlugin` bridge (`NativeGitPlugin.kt`), the JGit operations
+  (`JGitEngine.kt`), Gradle wiring with the JGit dependency, and HTTPS-token
+  auth via `UsernamePasswordCredentialsProvider`. Written to convention but
+  **not yet compiled/run** — that needs an Android build env (see the package
+  README's "Build & verify"). Not yet wired into `app/package.json`; the install
+  step is documented so this container's app build/tests stay green.
 - **Phase 3 (shell + routing):** switch the Android config off the pure remote
   WebView for the local-repo surface, route file read/edit/list to the device
   filesystem for a local clone, and select the native backend when

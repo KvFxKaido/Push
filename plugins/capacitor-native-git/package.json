@@ -1,0 +1,37 @@
+{
+  "name": "capacitor-native-git",
+  "version": "0.0.1",
+  "description": "On-device git (JGit) for the Push Android shell, exposed as a typed Capacitor plugin.",
+  "private": true,
+  "main": "dist/plugin.cjs.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/esm/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "files": [
+    "android/src/main/",
+    "android/build.gradle",
+    "dist/",
+    "src/"
+  ],
+  "keywords": [
+    "capacitor",
+    "plugin",
+    "git",
+    "jgit",
+    "android"
+  ],
+  "capacitor": {
+    "android": {
+      "src": "android"
+    }
+  },
+  "devDependencies": {
+    "@capacitor/core": "^8.3.1",
+    "typescript": "^5.6.0"
+  },
+  "peerDependencies": {
+    "@capacitor/core": ">=8.0.0"
+  }
+}
