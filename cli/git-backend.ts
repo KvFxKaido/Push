@@ -11,6 +11,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { SandboxPlumbingBackend, type GitBackend, type GitExec } from '../lib/git/backend.js';
+import { gitWorkingCopyLockScope } from '../lib/git/repo-lock.js';
 import {
   PushGit,
   composePrePushGates,
@@ -59,7 +60,11 @@ export function makeLocalGitExec(cwd: string, timeout: number): GitExec {
 }
 
 export function createLocalGitBackend(cwd: string, opts?: { timeoutMs?: number }): GitBackend {
-  return new SandboxPlumbingBackend(makeLocalGitExec(cwd, opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS));
+  // The working tree's absolute path is the durable working-copy identity on
+  // CLI; every backend/PushGit over the same `cwd` shares this lock lane.
+  return new SandboxPlumbingBackend(makeLocalGitExec(cwd, opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS), {
+    lockScope: gitWorkingCopyLockScope(cwd),
+  });
 }
 
 /**
@@ -84,7 +89,7 @@ export function createLocalPushGit(
   },
 ): PushGit {
   const exec = makeLocalGitExec(cwd, opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-  const backend = new SandboxPlumbingBackend(exec);
+  const backend = new SandboxPlumbingBackend(exec, { lockScope: gitWorkingCopyLockScope(cwd) });
   const prePush =
     opts?.prePush ??
     composePrePushGates([
