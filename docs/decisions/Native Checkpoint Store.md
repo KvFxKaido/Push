@@ -128,12 +128,17 @@ load-bearing, not polish:
 
 ## PR sequencing
 
-1. **Interface + adapters (no transport yet).** Define `CheckpointStore`; add
-   `RemoteDraftRefCheckpointStore` as a thin delegating adapter over existing
-   auto-back; add a `NativeJGitCheckpointStore` skeleton (no-op/throws behind the
-   APK flag); route the coordinator through a `resolveCheckpointStore()` selector
-   (mirrors `git-session.ts`); contract/drift test that both satisfy the interface;
-   decision-doc updates. Low-risk, earns the abstraction.
+1. **Interface + adapters (no transport yet).** ✅ *Landed.* Defined
+   `CheckpointStore` (`app/src/lib/checkpoint/`); `RemoteDraftRefCheckpointStore`
+   as a thin delegating adapter over existing auto-back (untouched);
+   `NativeJGitCheckpointStore` skeleton (clean `unsupported`/`unavailable` returns
+   + structured logs, behind `VITE_NATIVE_CHECKPOINTS`); the capture coordinator
+   (`useWorkspaceSandboxAutoBack`) routes through `resolveCheckpointStore()` with
+   an opaque dedup token (replacing the git `tree:head` pin — the remote store
+   encodes/decodes it); contract test for both backends + the selector. The
+   restore *coordinator* keeps calling auto-back directly until PR3; the store's
+   restore methods are contract-tested but not yet live-wired. `list`/`prune`
+   (retention) deferred to PR2 with native capture.
 2. **Native capture.** Sandbox tree download with exclusions + size cap → write to
    the app-private checkpoint repo → JGit commit → retention cap. Symmetric
    structured logs per branch.
