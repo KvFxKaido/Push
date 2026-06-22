@@ -4,9 +4,10 @@ Repository-specific review guidance for Push. Adapted from our GitHub Actions
 review bot (`.github/workflows/gemini-review.yml`) so automated and human reviews
 share one standard.
 
-Push is a mobile-first AI coding notebook with three surfaces — a web app, an
-experimental Capacitor Android shell, and a local CLI — all sharing a role-based
-runtime in root `lib/`. Most review value here is **cross-surface consistency**
+Push collapses the mobile dev stack into one conversation — a git tool with the
+feel of your everyday AI app — across three surfaces: a web app, an experimental
+Capacitor Android shell, and a local CLI, all sharing a role-based runtime in
+root `lib/`. Most review value here is **cross-surface consistency**
 and **runtime-vs-prompt discipline**, not generic lint. The canonical references
 are `AGENTS.md` (startup contract, wins on conflict), `CLAUDE.md`, and
 `ARCHITECTURE.md`.

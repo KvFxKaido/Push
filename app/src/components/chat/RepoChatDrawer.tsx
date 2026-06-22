@@ -875,7 +875,7 @@ export function RepoChatDrawer({
                 <PushMarkIcon className="h-[13px] w-[13px] shrink-0 text-push-accent" />
                 <div className="min-w-0">
                   <p className="text-push-xs font-medium text-push-fg-secondary">Push</p>
-                  <p className="truncate text-push-2xs text-push-fg-dim">Your coding notebook</p>
+                  <p className="truncate text-push-2xs text-push-fg-dim">Your repo, in one chat</p>
                 </div>
               </div>
             </div>

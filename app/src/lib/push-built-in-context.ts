@@ -38,7 +38,7 @@ Repo/session model:
 - Models can create branches via create_branch and switch existing branches via switch_branch. Raw git checkout/switch branch commands are blocked in sandbox_exec and should use the typed tools instead
 
 Workspace Hub:
-- The Workspace Hub is the coding notebook for the active branch
+- The Workspace Hub is where everything for the active branch lives
 - Scratchpad, Console, Files, Diff, PRs, Review, and commit/push live in the Workspace Hub
 - Reviewer sources are Branch diff, Last commit, and Working tree
 - Review findings can jump to Diff or be sent into chat as fix requests
