@@ -1,10 +1,13 @@
 /**
  * useWorkspaceSandboxAutoBack — B2 auto-back coordinator (increment 1b).
  *
- * Wires the working-tree backup primitive (`backUpWorkingTree`) to a cadence so
- * the cloud sandbox is continuously mirrored to its durable `draft/auto/<branch>`
- * ref while work is happening. Cadence (decided): **debounce after edits +
- * flush before the tab goes away.**
+ * Wires checkpoint *capture* — via the active `CheckpointStore`
+ * (`resolveCheckpointStore`) — to a cadence so in-progress work is continuously
+ * checkpointed while it's happening. On web/cloud the store is the remote
+ * draft-ref backend (`backUpWorkingTree` → `origin/draft/auto/<branch>`); on the
+ * native APK shell it's the on-device store (flagged). The coordinator is
+ * storage-agnostic: it threads an opaque dedup token and reads only a status.
+ * Cadence (decided): **debounce after edits + flush before the tab goes away.**
  *
  * - Mutations are observed via `onWorkspaceMutation` — a client-side signal
  *   emitted at tool dispatch on a successful file mutation / mutating exec (see
@@ -28,7 +31,11 @@
 
 import { useEffect, useRef } from 'react';
 import { onWorkspaceMutation } from '@/lib/sandbox-mutation-signal';
-import { backUpWorkingTree, type AutoBackResult } from '@/lib/sandbox-auto-back';
+import { resolveCheckpointStore } from '@/lib/checkpoint/resolve-store';
+import type {
+  CheckpointCaptureInput,
+  CheckpointCaptureResult,
+} from '@/lib/checkpoint/checkpoint-store';
 
 export const AUTO_BACK_DEBOUNCE_MS = 45_000;
 
@@ -52,17 +59,14 @@ interface AutoBackSchedulerDeps {
   /** Read the latest context — the hook backs this with refs. */
   getContext: () => AutoBackContext;
   /**
-   * `lastBacked` is the (tree, head) of the most recent successful backup for
-   * the *same branch* this session, so the primitive can skip re-pushing when
-   * both still match (#982). Both are needed: the restore path only accepts a
-   * backup whose parent == current HEAD, so a same-tree snapshot on a newer
-   * HEAD must still push. Undefined on the first backup or after a branch change.
+   * Capture a checkpoint via the active CheckpointStore. `priorToken` is the
+   * opaque dedup token of the most recent successful capture for the *same
+   * branch* this session, threaded back so the store can skip redundant work
+   * when nothing changed (#982). The scheduler never interprets the token —
+   * the store encodes whatever identity it needs (the remote store: `tree:head`).
+   * Undefined on the first capture or after a branch change.
    */
-  backUp: (
-    sandboxId: string,
-    branch: string,
-    lastBacked?: { tree: string; head: string },
-  ) => Promise<AutoBackResult>;
+  capture: (input: CheckpointCaptureInput) => Promise<CheckpointCaptureResult>;
 }
 
 /**
@@ -70,16 +74,16 @@ interface AutoBackSchedulerDeps {
  * `setTimeout`/`clearTimeout` so tests drive it with fake timers.
  */
 export function createAutoBackScheduler(deps: AutoBackSchedulerDeps): AutoBackScheduler {
-  const { debounceMs, getContext, backUp } = deps;
+  const { debounceMs, getContext, capture } = deps;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let inFlight = false;
   let pending = false; // a mutation arrived while a backup was running
   let disposed = false;
-  // (tree, head) of the last backup we pushed (or skipped as unchanged), with
-  // the branch it belonged to — passed back into the primitive to dedup an
-  // unchanged re-push (#982). Reset implicitly when the branch differs; HEAD is
-  // tracked so a commit (new HEAD, same tree) still re-pushes onto the new base.
-  let lastBacked: { branch: string; tree: string; head: string } | null = null;
+  // Opaque dedup token of the last successful capture (or unchanged skip), with
+  // the branch it belonged to — passed back into the store to dedup an unchanged
+  // re-capture (#982). Reset implicitly when the branch differs; the token
+  // encodes base identity so a commit (new HEAD, same tree) still re-captures.
+  let lastBacked: { branch: string; token: string } | null = null;
 
   const clearTimer = () => {
     if (timer) {
@@ -101,16 +105,13 @@ export function createAutoBackScheduler(deps: AutoBackSchedulerDeps): AutoBackSc
     inFlight = true;
     pending = false;
     try {
-      const carried =
-        lastBacked?.branch === branch
-          ? { tree: lastBacked.tree, head: lastBacked.head }
-          : undefined;
-      const result = await backUp(sandboxId, branch, carried);
-      // Pin (tree, head) on a real push or an unchanged skip — both confirm the
-      // durable ref holds this tree on this base, so the next identical snapshot
+      const priorToken = lastBacked?.branch === branch ? lastBacked.token : undefined;
+      const result = await capture({ sandboxId, branch, priorToken });
+      // Pin the token on a real capture or an unchanged skip — both confirm the
+      // store holds this content on this base, so the next identical snapshot
       // can dedup.
-      if (result.status === 'backed-up' || result.status === 'unchanged') {
-        lastBacked = { branch, tree: result.tree, head: result.head };
+      if (result.status === 'captured' || result.status === 'unchanged') {
+        lastBacked = { branch, token: result.dedupToken };
       }
     } finally {
       inFlight = false;
@@ -152,37 +153,40 @@ export interface UseWorkspaceSandboxAutoBackArgs {
   enabled?: boolean;
   /** Debounce after the last mutation. Default AUTO_BACK_DEBOUNCE_MS. */
   debounceMs?: number;
-  /** Injectable for tests. */
-  backUp?: typeof backUpWorkingTree;
+  /**
+   * Capture function override (tests inject a fake). Defaults to the active
+   * CheckpointStore's `capture`, resolved per-call so the platform/flag pick
+   * is current.
+   */
+  capture?: (input: CheckpointCaptureInput) => Promise<CheckpointCaptureResult>;
 }
+
+const defaultCapture = (input: CheckpointCaptureInput): Promise<CheckpointCaptureResult> =>
+  resolveCheckpointStore().capture(input);
 
 export function useWorkspaceSandboxAutoBack({
   sandboxId,
   branch,
   enabled = true,
   debounceMs = AUTO_BACK_DEBOUNCE_MS,
-  backUp = backUpWorkingTree,
+  capture = defaultCapture,
 }: UseWorkspaceSandboxAutoBackArgs): void {
   // Latest context for the scheduler's callbacks — avoids re-subscribing on
   // every branch/status change while still reading current values. Synced in an
   // effect (not during render) so the scheduler, whose callbacks fire on async
   // events after commit, always reads current values.
   const ctxRef = useRef<AutoBackContext>({ sandboxId, branch, enabled });
-  const backUpRef = useRef(backUp);
+  const captureRef = useRef(capture);
   useEffect(() => {
     ctxRef.current = { sandboxId, branch, enabled };
-    backUpRef.current = backUp;
+    captureRef.current = capture;
   });
 
   useEffect(() => {
     const scheduler = createAutoBackScheduler({
       debounceMs,
       getContext: () => ctxRef.current,
-      backUp: (id, br, lastBacked) =>
-        backUpRef.current(id, br, {
-          lastBackedTree: lastBacked?.tree,
-          lastBackedHead: lastBacked?.head,
-        }),
+      capture: (input) => captureRef.current(input),
     });
     const unsubscribe = onWorkspaceMutation((mutatedSandboxId) => {
       scheduler.onMutation(mutatedSandboxId);
