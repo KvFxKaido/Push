@@ -32,7 +32,7 @@ import {
 import { markLastAssistantToolCall } from '@/lib/chat-tool-messages';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import type { DelegationOutcome, ReasoningBlock } from '@/types';
-import { createSandboxGitBackend } from '@/lib/git-backend';
+import { getActiveGitBackend } from '@/lib/git-session';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { executeTodoToolCall } from '@/lib/todo-tools';
 import { getToolName } from '@/lib/chat-tool-messages';
@@ -411,7 +411,7 @@ export function createTurnRunContext(
       // Run in parallel so the round-status fetch stays one round-trip of
       // wall-clock latency (it's cached per round and only invalidated when a
       // tool mutates the workspace, so the extra requests are infrequent).
-      const backend = createSandboxGitBackend(sandboxIdRef.current);
+      const backend = getActiveGitBackend({ sandboxId: sandboxIdRef.current });
       const [branch, head, info] = await Promise.all([
         backend.currentBranch(),
         backend.headSha({ short: true }),

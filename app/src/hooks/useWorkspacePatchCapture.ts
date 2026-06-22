@@ -32,7 +32,7 @@ import { useCallback } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 
 import { fetchSandboxDiffWithMeta } from '@/lib/sandbox-client';
-import { createSandboxGitBackend } from '@/lib/git-backend';
+import { getActiveGitBackend } from '@/lib/git-session';
 import { replayWorkspacePatch } from '@/lib/sandbox-patch';
 import type { ChatCard, Conversation, RunEventInput } from '@/types';
 import {
@@ -137,7 +137,7 @@ export function useWorkspacePatchCapture(
       try {
         const [diffCapture, baseSha] = await Promise.all([
           fetchSandboxDiffWithMeta(sandboxId),
-          createSandboxGitBackend(sandboxId).headSha(),
+          getActiveGitBackend({ sandboxId }).headSha(),
         ]);
 
         if (!diffCapture.diff) return; // V1: no card on empty diff.
