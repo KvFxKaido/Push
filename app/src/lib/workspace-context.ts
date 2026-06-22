@@ -2,7 +2,7 @@ import type { RepoWithActivity, ActiveRepo, WorkspaceContext } from '@/types';
 import { getSandboxEnvironment, getSandboxLifecycleEvents } from './sandbox-client';
 import { MANIFEST_PARSERS, type GitInfo } from '@push/lib/repo-awareness';
 import { listDirectory, readFromSandbox } from './sandbox-client';
-import { createSandboxGitBackend } from './git-backend';
+import { getActiveGitBackend } from './git-session';
 
 export {
   sanitizeProjectInstructions,
@@ -20,7 +20,7 @@ export interface SandboxWorkspaceContext {
 
 async function getGitSnapshot(sandboxId: string): Promise<GitInfo | null> {
   try {
-    return await createSandboxGitBackend(sandboxId).status();
+    return await getActiveGitBackend({ sandboxId }).status();
   } catch {
     return null;
   }

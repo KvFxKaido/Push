@@ -5,21 +5,15 @@
 // server and the WebView falls back to the bundled index.html (HTML where the
 // caller expected JSON). When running natively, prepend VITE_API_BASE_URL.
 //
-// Detect Capacitor at runtime via window.Capacitor instead of importing
-// @capacitor/core — keeps this module safe to land in the Worker bundle via
-// transitive imports without dragging the Capacitor SDK into it.
+// Detect Capacitor at runtime via window.Capacitor (see ./platform) instead of
+// importing @capacitor/core — keeps this module safe to land in the Worker
+// bundle via transitive imports without dragging the Capacitor SDK into it.
+
+import { isNativePlatform } from './platform';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
 
-type CapacitorGlobal = { isNativePlatform?: () => boolean };
-
-function isCapacitorNative(): boolean {
-  if (typeof window === 'undefined') return false;
-  const cap = (window as unknown as { Capacitor?: CapacitorGlobal }).Capacitor;
-  return cap?.isNativePlatform?.() ?? false;
-}
-
 export function resolveApiUrl(path: string): string {
-  if (!isCapacitorNative() || !API_BASE) return path;
+  if (!isNativePlatform() || !API_BASE) return path;
   return `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
 }

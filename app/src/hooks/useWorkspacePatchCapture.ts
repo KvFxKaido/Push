@@ -137,6 +137,13 @@ export function useWorkspacePatchCapture(
       try {
         const [diffCapture, baseSha] = await Promise.all([
           fetchSandboxDiffWithMeta(sandboxId),
+          // Pinned to the sandbox backend, NOT the active-binding seam: this
+          // baseSha is the diff base for the sandbox-sourced `diffCapture` above,
+          // and the two go into the same patch card. `fetchSandboxDiffWithMeta`
+          // is sandbox-only, so the base must read from the same working copy —
+          // otherwise, once the native arm goes live, the card would pair a
+          // device-clone base with a sandbox diff and replay would 3-way/refuse
+          // against the wrong base. Migrate together when diff capture is native-aware.
           createSandboxGitBackend(sandboxId).headSha(),
         ]);
 

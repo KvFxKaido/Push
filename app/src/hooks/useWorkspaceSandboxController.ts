@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, type MutableRefObject } from 
 import { buildWorkspaceScratchActions, type SnapshotManager } from '@/hooks/useSnapshotManager';
 import type { SandboxStatus } from '@/hooks/useSandbox';
 import { downloadFromSandbox } from '@/lib/sandbox-client';
-import { createSandboxGitBackend } from '@/lib/git-backend';
+import { getActiveGitBackend } from '@/lib/git-session';
 import type { GitStatusInfo } from '@push/lib/git/status';
 import type {
   ActiveRepo,
@@ -86,7 +86,7 @@ export function useWorkspaceSandboxController({
     async (id: string): Promise<SandboxStateCardData | null> => {
       setSandboxStateLoading(true);
       try {
-        const info = await createSandboxGitBackend(id).status();
+        const info = await getActiveGitBackend({ sandboxId: id }).status();
         if (!info) return null;
 
         const nextState = gitStatusToCard(id, info);

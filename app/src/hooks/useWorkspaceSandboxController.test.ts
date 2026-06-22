@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActiveRepo, WorkspaceSession } from '@/types';
 
-const gitBackend = vi.hoisted(() => ({
-  createSandboxGitBackend: vi.fn(),
+const gitSession = vi.hoisted(() => ({
+  getActiveGitBackend: vi.fn(),
 }));
 
-vi.mock('@/lib/git-backend', () => gitBackend);
+vi.mock('@/lib/git-session', () => gitSession);
 vi.mock('@/lib/sandbox-client', () => ({
   downloadFromSandbox: vi.fn(),
 }));
@@ -123,7 +123,7 @@ beforeEach(() => {
   reactState.states = [];
   reactState.stateIndex = 0;
   reactState.effects = [];
-  gitBackend.createSandboxGitBackend.mockReset();
+  gitSession.getActiveGitBackend.mockReset();
 });
 
 describe('useWorkspaceSandboxController branch teardown guard', () => {
