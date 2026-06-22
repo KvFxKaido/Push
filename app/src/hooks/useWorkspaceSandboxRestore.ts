@@ -16,7 +16,7 @@ export interface WorkspaceSandboxRestoreContext {
 }
 
 export interface RestoreDetectionPlanState {
-  probedSandboxIds: readonly string[];
+  probedScopes: readonly string[];
 }
 
 export interface RestoreDetectionPlan {
@@ -25,12 +25,20 @@ export interface RestoreDetectionPlan {
 }
 
 export const INITIAL_RESTORE_DETECTION_PLAN_STATE: RestoreDetectionPlanState = {
-  probedSandboxIds: [],
+  probedScopes: [],
 };
 
+/** Lane identity for dedup: a checkpoint is scoped by sandbox + repo + branch. */
+function scopeKey(sandboxId: string, repoFullName: string, branch: string): string {
+  return [sandboxId, repoFullName, branch].join('\u0000');
+}
+
 /**
- * Pure once-per-sandbox planner for checkpoint restore detection. The hook marks
- * a sandbox as probed before the async detection starts so React re-renders
+ * Pure once-per-lane planner for checkpoint restore detection. Keyed on the full
+ * scope (sandbox + repo + branch), NOT sandboxId alone: a typed branch switch
+ * preserves the sandbox (see CLAUDE.md), so a sandbox-only key would suppress
+ * detection for the new branch's checkpoints and leave a stale offer up. The hook
+ * marks a scope as probed before the async detection starts so React re-renders
  * cannot duplicate the fetch.
  */
 export function planAutoBackRestoreDetection(
@@ -39,9 +47,10 @@ export function planAutoBackRestoreDetection(
 ): RestoreDetectionPlan {
   const branch = ctx.branch?.trim();
   if (!ctx.enabled || !ctx.sandboxId || !branch || !ctx.repoFullName) return { state, probe: null };
-  if (state.probedSandboxIds.includes(ctx.sandboxId)) return { state, probe: null };
+  const key = scopeKey(ctx.sandboxId, ctx.repoFullName, branch);
+  if (state.probedScopes.includes(key)) return { state, probe: null };
   return {
-    state: { probedSandboxIds: [...state.probedSandboxIds, ctx.sandboxId] },
+    state: { probedScopes: [...state.probedScopes, key] },
     probe: { sandboxId: ctx.sandboxId, branch, repoFullName: ctx.repoFullName },
   };
 }
@@ -69,6 +78,8 @@ export interface UseWorkspaceSandboxRestoreArgs extends WorkspaceSandboxRestoreC
 
 interface RestoreBannerState {
   sandboxId: string | null;
+  repoFullName: string | null;
+  branch: string | null;
   available: boolean;
   summary: string;
   checkpointId: string | null;
@@ -78,6 +89,8 @@ interface RestoreBannerState {
 
 const initialBannerState: RestoreBannerState = {
   sandboxId: null,
+  repoFullName: null,
+  branch: null,
   available: false,
   summary: '',
   checkpointId: null,
@@ -149,6 +162,8 @@ export function useWorkspaceSandboxRestore({
         }
         setBanner({
           sandboxId: probe.sandboxId,
+          repoFullName: probe.repoFullName,
+          branch: probe.branch,
           available: true,
           summary: availability.summary,
           checkpointId: availability.checkpointId,
@@ -159,7 +174,13 @@ export function useWorkspaceSandboxRestore({
       .catch((err: unknown) => {
         if (cancelled) return;
         const message = err instanceof Error ? err.message : String(err);
-        setBanner({ ...initialBannerState, sandboxId: probe.sandboxId, error: message });
+        setBanner({
+          ...initialBannerState,
+          sandboxId: probe.sandboxId,
+          repoFullName: probe.repoFullName,
+          branch: probe.branch,
+          error: message,
+        });
       });
 
     return () => {
@@ -167,7 +188,15 @@ export function useWorkspaceSandboxRestore({
     };
   }, [sandboxId, branch, repoFullName, enabled]);
 
-  const visible = enabled && banner.sandboxId === sandboxId && banner.available;
+  // Only show / allow restore when the banner's full lane scope matches the
+  // current one — a branch switch on the same sandbox must not surface a stale
+  // offer (Codex P2).
+  const visible =
+    enabled &&
+    banner.available &&
+    banner.sandboxId === sandboxId &&
+    banner.repoFullName === repoFullName &&
+    banner.branch === (branch?.trim() ?? null);
 
   const dismiss = useCallback(() => {
     setBanner(initialBannerState);
