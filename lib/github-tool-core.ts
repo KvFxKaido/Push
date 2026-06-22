@@ -6,6 +6,21 @@
  * user-facing text/card shaping for the shared GitHub tool surface.
  */
 
+// Pure, config-free envelope-marker defanging — imported directly rather than
+// threaded through the runtime port (which carries surface-specific primitives
+// like the secret redactor). `sanitizeUntrustedSource` = boundary-escape +
+// JSON-tool-call defang; `escapeEnvelopeBoundaries` is the boundary-escape
+// alone, used for file-content tools (see the chokepoint below).
+import { escapeEnvelopeBoundaries, sanitizeUntrustedSource } from './untrusted-content.js';
+
+// GitHub tools whose `result.text` is verbatim repository file content. The
+// JSON-tool-call defang would corrupt legitimate file bodies (a config/schema
+// file with a `"tool":` key, MCP manifests, etc.) the agent must reason over
+// faithfully — `untrusted-content.ts` documents skipping the defang on file
+// reads. They still get boundary escaping (a malicious file could embed a
+// `[/TOOL_RESULT]` literal to break out — that defense applies everywhere).
+const FILE_CONTENT_TOOLS: ReadonlySet<string> = new Set(['read_file', 'grep_file']);
+
 export interface GitHubCoreBranch {
   name: string;
   isDefault: boolean;
@@ -3335,11 +3350,35 @@ export async function executeGitHubCoreTool(
   // surface uniformly (behavior in code, not per-surface), and both the result
   // text AND the structured card (which the web renders/stores). Idempotent for
   // the tools that already redact internally — re-running finds nothing new.
-  const { text, redacted: textRedacted } = runtime.redactSensitiveText(result.text);
+  const { text: redactedText } = runtime.redactSensitiveText(result.text);
+  // Envelope-integrity sanitization (#1080) at the same chokepoint, AFTER
+  // redaction — mirroring the MCP path (which already does redact → sanitize).
+  // Attacker-controlled GitHub text can carry [TOOL_RESULT]/[meta]/[CODER_STATE]
+  // markers or a fenced JSON tool-call shape to break out of the agent's result
+  // envelope; sanitizing here means the web Worker/local and CLI inherit the
+  // guard too, not just MCP. Idempotent, and it only neutralizes the dangerous
+  // infrastructure markers — the tools' own `[Tool Result — …]` headers survive.
+  //
+  // Text-only (not the card): the card is structured data the web renders
+  // (React-escaped) and stores, never fed into the model's envelope text stream,
+  // so envelope markers there can't break out. The card still gets secret
+  // REDACTION below (a leakage concern, which is different).
+  //
+  // File-content tools (read_file/grep_file) get boundary escaping only, NOT the
+  // JSON-tool-call defang: their text is verbatim repository content, and
+  // defanging would silently rewrite a legitimate `"tool":` key in a config or
+  // schema file — leaving the agent reasoning over source that no longer matches
+  // GitHub while the editor card still holds the original. The envelope-breakout
+  // markers are still escaped (a malicious file can carry a `[/TOOL_RESULT]`
+  // literal), which is the part that matters for #1080.
+  const text = FILE_CONTENT_TOOLS.has(call.tool)
+    ? escapeEnvelopeBoundaries(redactedText)
+    : sanitizeUntrustedSource(redactedText);
+  const textChanged = text !== result.text;
   if (!result.card) {
-    return textRedacted ? { ...result, text } : result;
+    return textChanged ? { ...result, text } : result;
   }
   const card = redactCardDeep(result.card, runtime.redactSensitiveText);
-  if (!textRedacted && !card.redacted) return result;
+  if (!textChanged && !card.redacted) return result;
   return { ...result, text, card: card.value as GitHubCoreCard };
 }
