@@ -6,7 +6,7 @@ Startup loaders use the first existing file in this order: `PUSH.md` → `AGENTS
 
 ## Core model
 
-- Push is a mobile-first AI coding notebook with a web app, an experimental Capacitor Android shell, and a local CLI.
+- Push collapses the mobile dev stack — GitHub, terminal, CI, code, and AI — into one conversation: a git tool with the feel of your everyday AI app, across a web app, an experimental Capacitor Android shell, and a local CLI.
 - Internal runtime roles are **Orchestrator**, **Explorer**, **Coder**, **Reviewer**, and **Auditor**. User-facing surfaces de-emphasize that org chart: Explorer/Coder render as workflow phases through `lib/role-display.ts`, while Reviewer/Auditor keep names where attribution is a trust signal.
 - Repo context is locked to the selected repo.
 - Chats are branch-scoped.
