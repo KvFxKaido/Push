@@ -472,8 +472,11 @@ describe('ExecutionMode — orchestrator capability widening for local-daemon', 
         if (!daemonCaps.has(cap)) cloudOnly.add(cap);
       }
       // git:commit is NO LONGER cloud-only (local op kept in daemon); only the
-      // genuinely remote-bound ops remain cloud-only.
-      expect(cloudOnly).toEqual(new Set<Capability>(['pr:write', 'workflow:trigger', 'git:push']));
+      // genuinely remote-bound ops remain cloud-only. issue:write joins
+      // pr:write/workflow:trigger as a remote-only cap stripped in local-daemon.
+      expect(cloudOnly).toEqual(
+        new Set<Capability>(['pr:write', 'issue:write', 'workflow:trigger', 'git:push']),
+      );
     });
   });
 

@@ -199,7 +199,7 @@ export function createDefaultApprovalGates(options: ApprovalGateOptions): Approv
     // latent no-op surfaced when the inline lead started routing these tools
     // through the approval pipeline.
     matcher:
-      'sandbox_push|create_pr|pr_create|merge_pr|pr_merge|delete_branch|branch_delete|trigger_workflow|workflow_run',
+      'sandbox_push|create_pr|pr_create|merge_pr|pr_merge|delete_branch|branch_delete|trigger_workflow|workflow_run|update_pull_request|pr_update|add_issue_comment|issue_comment|create_issue|issue_create|update_issue|issue_update|rerun_failed_jobs|workflow_rerun|cancel_workflow_run|workflow_cancel',
     evaluate: (
       toolName: string,
       args: Record<string, unknown>,
@@ -213,7 +213,7 @@ export function createDefaultApprovalGates(options: ApprovalGateOptions): Approv
       return 'ask_user';
     },
     blockedReason:
-      'This action causes a remote side effect (push, PR, branch deletion, workflow) and requires explicit approval in supervised mode.',
+      'This action causes a remote side effect (push, PR/issue create or edit, comment, branch deletion, workflow run/cancel) and requires explicit approval in supervised mode.',
     recoveryPath:
       'Use ask_user to describe the remote action and its consequences, then re-run with approval.',
   });

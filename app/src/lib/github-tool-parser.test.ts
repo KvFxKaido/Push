@@ -287,4 +287,28 @@ describe('parseGitHubCoreToolCall', () => {
       expect(parseGitHubCoreToolCall('find_existing_pr', { repo: REPO })).toBeNull();
     });
   });
+
+  describe('update_issue label semantics', () => {
+    it('omits labels when absent (leaves them unchanged)', () => {
+      const call = parseGitHubCoreToolCall('update_issue', { repo: REPO, issue_number: 1 });
+      expect(call?.tool).toBe('update_issue');
+      expect((call as { args: { labels?: string[] } }).args.labels).toBeUndefined();
+    });
+    it('preserves an explicit empty array (remove all labels)', () => {
+      const call = parseGitHubCoreToolCall('update_issue', {
+        repo: REPO,
+        issue_number: 1,
+        labels: [],
+      });
+      expect((call as { args: { labels?: string[] } }).args.labels).toEqual([]);
+    });
+    it('passes through a non-empty label set', () => {
+      const call = parseGitHubCoreToolCall('update_issue', {
+        repo: REPO,
+        issue_number: 1,
+        labels: ['bug', 'p1'],
+      });
+      expect((call as { args: { labels?: string[] } }).args.labels).toEqual(['bug', 'p1']);
+    });
+  });
 });

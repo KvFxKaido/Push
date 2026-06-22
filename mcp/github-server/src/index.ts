@@ -46,6 +46,18 @@ const TOOL_MERGE_PR = 'merge_pr';
 const TOOL_DELETE_BRANCH = 'delete_branch';
 const TOOL_CHECK_PR_MERGEABLE = 'check_pr_mergeable';
 const TOOL_FIND_EXISTING_PR = 'find_existing_pr';
+const TOOL_GET_JOB_LOGS = 'get_job_logs';
+const TOOL_LIST_ISSUES = 'list_issues';
+const TOOL_GET_ISSUE = 'get_issue';
+const TOOL_ADD_ISSUE_COMMENT = 'add_issue_comment';
+const TOOL_CREATE_ISSUE = 'create_issue';
+const TOOL_UPDATE_ISSUE = 'update_issue';
+const TOOL_UPDATE_PULL_REQUEST = 'update_pull_request';
+const TOOL_RERUN_FAILED_JOBS = 'rerun_failed_jobs';
+const TOOL_CANCEL_WORKFLOW_RUN = 'cancel_workflow_run';
+const TOOL_LIST_CODE_SCANNING_ALERTS = 'list_code_scanning_alerts';
+const TOOL_LIST_DEPENDABOT_ALERTS = 'list_dependabot_alerts';
+const TOOL_LIST_SECRET_SCANNING_ALERTS = 'list_secret_scanning_alerts';
 
 function getGitHubToken(): string {
   return process.env.GITHUB_TOKEN || process.env.GITHUB_PERSONAL_ACCESS_TOKEN || '';
@@ -126,6 +138,18 @@ function getServerInfoText(): string {
       TOOL_DELETE_BRANCH,
       TOOL_CHECK_PR_MERGEABLE,
       TOOL_FIND_EXISTING_PR,
+      TOOL_GET_JOB_LOGS,
+      TOOL_LIST_ISSUES,
+      TOOL_GET_ISSUE,
+      TOOL_ADD_ISSUE_COMMENT,
+      TOOL_CREATE_ISSUE,
+      TOOL_UPDATE_ISSUE,
+      TOOL_UPDATE_PULL_REQUEST,
+      TOOL_RERUN_FAILED_JOBS,
+      TOOL_CANCEL_WORKFLOW_RUN,
+      TOOL_LIST_CODE_SCANNING_ALERTS,
+      TOOL_LIST_DEPENDABOT_ALERTS,
+      TOOL_LIST_SECRET_SCANNING_ALERTS,
     ],
     status:
       'Push now shares a common GitHub tool core across the app worker bridge and the MCP server.',
@@ -443,6 +467,204 @@ const githubTools = [
       additionalProperties: false,
     },
   },
+  {
+    name: TOOL_GET_JOB_LOGS,
+    description:
+      "Fetch the actual CI log text for a workflow run's jobs (default: failed jobs only, last 200 lines each). Pass job_id to target a single job. Reveals why a check failed, not just that it did.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        run_id: { type: 'number', description: 'Workflow run ID (fetches its jobs).' },
+        job_id: { type: 'number', description: 'Specific job ID to fetch logs for.' },
+        failed_only: {
+          type: 'boolean',
+          description: 'When using run_id, only include failed jobs (default true).',
+        },
+        tail_lines: {
+          type: 'number',
+          description: 'Number of trailing log lines to keep per job (default 200, max 1000).',
+        },
+      },
+      required: ['repo'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_LIST_ISSUES,
+    description:
+      'List repository issues (pull requests excluded), optionally filtered by state and labels.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        state: { type: 'string', description: 'Issue state filter: open, closed, or all.' },
+        labels: { type: 'string', description: 'Comma-separated label names to filter by.' },
+        count: { type: 'number', description: 'Maximum number of issues to return.' },
+      },
+      required: ['repo'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_GET_ISSUE,
+    description: 'Read a single issue (or pull request) with its body and recent comments.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        issue_number: { type: 'number', description: 'Issue or pull request number.' },
+      },
+      required: ['repo', 'issue_number'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_ADD_ISSUE_COMMENT,
+    description: 'Post a comment on an issue or pull request.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        issue_number: { type: 'number', description: 'Issue or pull request number.' },
+        body: { type: 'string', description: 'Comment body (Markdown).' },
+      },
+      required: ['repo', 'issue_number', 'body'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_CREATE_ISSUE,
+    description: 'Open a new issue on the repository.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        title: { type: 'string', description: 'Issue title.' },
+        body: { type: 'string', description: 'Optional issue body (Markdown).' },
+        labels: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional label names to apply.',
+        },
+      },
+      required: ['repo', 'title'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_UPDATE_ISSUE,
+    description:
+      "Edit an issue's title/body/labels, or open/close it. At least one field is required.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        issue_number: { type: 'number', description: 'Issue number.' },
+        title: { type: 'string', description: 'New title.' },
+        body: { type: 'string', description: 'New body.' },
+        state: { type: 'string', description: 'New state: open or closed.' },
+        labels: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Replacement label set.',
+        },
+      },
+      required: ['repo', 'issue_number'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_UPDATE_PULL_REQUEST,
+    description:
+      "Edit a pull request's title/body, retarget its base branch, or open/close it. At least one field is required.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        pr_number: { type: 'number', description: 'Pull request number.' },
+        title: { type: 'string', description: 'New title.' },
+        body: { type: 'string', description: 'New body.' },
+        base: { type: 'string', description: 'New base branch.' },
+        state: { type: 'string', description: 'New state: open or closed.' },
+      },
+      required: ['repo', 'pr_number'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_RERUN_FAILED_JOBS,
+    description: 'Re-run only the failed jobs of a workflow run (useful for flaky CI).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        run_id: { type: 'number', description: 'Workflow run ID.' },
+      },
+      required: ['repo', 'run_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_CANCEL_WORKFLOW_RUN,
+    description: 'Cancel an in-progress workflow run.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        run_id: { type: 'number', description: 'Workflow run ID.' },
+      },
+      required: ['repo', 'run_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_LIST_CODE_SCANNING_ALERTS,
+    description: 'List code scanning (CodeQL) alerts for the repository.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        state: {
+          type: 'string',
+          description: 'Alert state filter: open, closed, dismissed, fixed.',
+        },
+        ref: { type: 'string', description: 'Optional git ref to scope alerts to.' },
+      },
+      required: ['repo'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_LIST_DEPENDABOT_ALERTS,
+    description: 'List Dependabot vulnerability alerts for the repository.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        state: {
+          type: 'string',
+          description: 'Alert state filter: open, dismissed, fixed, auto_dismissed.',
+        },
+      },
+      required: ['repo'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_LIST_SECRET_SCANNING_ALERTS,
+    description:
+      'List secret scanning alerts for the repository (metadata only — secret values are never returned).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+        state: { type: 'string', description: 'Alert state filter: open or resolved.' },
+      },
+      required: ['repo'],
+      additionalProperties: false,
+    },
+  },
 ] as const;
 
 const githubToolRuntime: GitHubCoreRuntime = {
@@ -522,7 +744,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     request.params.name === TOOL_MERGE_PR ||
     request.params.name === TOOL_DELETE_BRANCH ||
     request.params.name === TOOL_CHECK_PR_MERGEABLE ||
-    request.params.name === TOOL_FIND_EXISTING_PR
+    request.params.name === TOOL_FIND_EXISTING_PR ||
+    request.params.name === TOOL_GET_JOB_LOGS ||
+    request.params.name === TOOL_LIST_ISSUES ||
+    request.params.name === TOOL_GET_ISSUE ||
+    request.params.name === TOOL_ADD_ISSUE_COMMENT ||
+    request.params.name === TOOL_CREATE_ISSUE ||
+    request.params.name === TOOL_UPDATE_ISSUE ||
+    request.params.name === TOOL_UPDATE_PULL_REQUEST ||
+    request.params.name === TOOL_RERUN_FAILED_JOBS ||
+    request.params.name === TOOL_CANCEL_WORKFLOW_RUN ||
+    request.params.name === TOOL_LIST_CODE_SCANNING_ALERTS ||
+    request.params.name === TOOL_LIST_DEPENDABOT_ALERTS ||
+    request.params.name === TOOL_LIST_SECRET_SCANNING_ALERTS
   ) {
     throw new McpError(
       ErrorCode.InvalidParams,

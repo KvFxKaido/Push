@@ -35,9 +35,12 @@ export type Capability =
   | 'git:draft' // Quick-save uncommitted changes to a draft branch
   | 'git:branch' // Create a new branch and switch to it
   | 'pr:read' // Read PRs, check mergeability, find existing PRs
-  | 'pr:write' // Create or merge PRs, delete branches
-  | 'workflow:read' // List and view workflow runs and logs
-  | 'workflow:trigger' // Trigger a workflow dispatch event
+  | 'pr:write' // Create or merge PRs, delete branches, edit PR metadata
+  | 'issue:read' // Read issues and their comments
+  | 'issue:write' // Open/update issues, comment on issues or PRs
+  | 'workflow:read' // List and view workflow runs, logs, and job output
+  | 'workflow:trigger' // Trigger/re-run/cancel workflow runs
+  | 'security:read' // Read code-scanning, Dependabot, and secret-scanning alerts
   | 'delegate:coder' // Delegate work to the Coder agent
   | 'delegate:explorer' // Delegate investigation to the Explorer agent
   | 'scratchpad' // Read/write the session scratchpad
@@ -60,8 +63,11 @@ export const ALL_CAPABILITIES: readonly Capability[] = [
   'git:branch',
   'pr:read',
   'pr:write',
+  'issue:read',
+  'issue:write',
   'workflow:read',
   'workflow:trigger',
+  'security:read',
   'delegate:coder',
   'delegate:explorer',
   'scratchpad',
@@ -94,6 +100,12 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
   list_commit_files: ['repo:read'],
   check_pr_mergeable: ['pr:read'],
   find_existing_pr: ['pr:read'],
+  get_job_logs: ['workflow:read'],
+  list_issues: ['issue:read'],
+  get_issue: ['issue:read'],
+  list_code_scanning_alerts: ['security:read'],
+  list_dependabot_alerts: ['security:read'],
+  list_secret_scanning_alerts: ['security:read'],
 
   // GitHub mutating tools
   trigger_workflow: ['workflow:trigger'],
@@ -102,6 +114,12 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
   create_pr: ['pr:write'],
   merge_pr: ['pr:write'],
   delete_branch: ['pr:write'],
+  update_pull_request: ['pr:write'],
+  add_issue_comment: ['issue:write'],
+  create_issue: ['issue:write'],
+  update_issue: ['issue:write'],
+  rerun_failed_jobs: ['workflow:trigger'],
+  cancel_workflow_run: ['workflow:trigger'],
 
   // Sandbox read-only tools
   sandbox_read_file: ['repo:read'],
@@ -380,6 +398,7 @@ const LOCAL_DAEMON_ORCHESTRATOR_REMOTE_GIT: ReadonlySet<Capability> = new Set<Ca
  */
 const LOCAL_DAEMON_REMOTE_ONLY_CAPS: ReadonlySet<Capability> = new Set<Capability>([
   'pr:write',
+  'issue:write',
   'workflow:trigger',
 ]);
 
@@ -409,8 +428,11 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
     'git:push',
     'pr:read',
     'pr:write',
+    'issue:read',
+    'issue:write',
     'workflow:read',
     'workflow:trigger',
+    'security:read',
     'delegate:coder',
     'delegate:explorer',
     'scratchpad',
@@ -435,7 +457,9 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
   explorer: new Set<Capability>([
     'repo:read',
     'pr:read',
+    'issue:read',
     'workflow:read',
+    'security:read',
     'web:search',
     'memory:read',
   ]),
@@ -452,8 +476,11 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
     'git:branch',
     'pr:read',
     'pr:write',
+    'issue:read',
+    'issue:write',
     'workflow:read',
     'workflow:trigger',
+    'security:read',
     'scratchpad',
     'todo',
     'web:search',
@@ -479,7 +506,21 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
   // deep-reviewer didn't opt in to runtime role enforcement; closed
   // here so the kernel-promoted role check below can be turned on for
   // every read-only agent including deep-reviewer.
-  reviewer: new Set<Capability>(['repo:read', 'pr:read', 'web:search', 'memory:read']),
+  reviewer: new Set<Capability>([
+    'repo:read',
+    'pr:read',
+    'issue:read',
+    // workflow:read lets the reviewer read CI runs/logs/job output for the PR
+    // under review. Required because the reviewer advertises every read-only
+    // GitHub tool (`getToolPublicNames({ source: 'github', readOnly: true })`),
+    // which includes get_workflow_runs/get_workflow_logs/get_job_logs — without
+    // the grant those dead-end on ROLE_CAPABILITY_DENIED (the
+    // registry-exposes-it-so-grant-it invariant noted on the explorer block).
+    'workflow:read',
+    'security:read',
+    'web:search',
+    'memory:read',
+  ]),
 
   auditor: new Set<Capability>(['repo:read', 'memory:read']),
 };
@@ -699,8 +740,11 @@ export const CAPABILITY_LABELS: Readonly<Record<Capability, string>> = {
   'git:branch': 'create branches',
   'pr:read': 'read pull requests',
   'pr:write': 'create/merge pull requests',
+  'issue:read': 'read issues',
+  'issue:write': 'create/comment on issues',
   'workflow:read': 'view CI/CD runs',
   'workflow:trigger': 'trigger workflows',
+  'security:read': 'read security alerts',
   'delegate:coder': 'delegate to Coder',
   'delegate:explorer': 'delegate to Explorer',
   scratchpad: 'use scratchpad',

@@ -41,7 +41,19 @@ export function supportsWorkerGitHubTool(name: string): name is WorkerGitHubTool
     name === 'merge_pr' ||
     name === 'delete_branch' ||
     name === 'check_pr_mergeable' ||
-    name === 'find_existing_pr'
+    name === 'find_existing_pr' ||
+    name === 'get_job_logs' ||
+    name === 'list_issues' ||
+    name === 'get_issue' ||
+    name === 'add_issue_comment' ||
+    name === 'create_issue' ||
+    name === 'update_issue' ||
+    name === 'update_pull_request' ||
+    name === 'rerun_failed_jobs' ||
+    name === 'cancel_workflow_run' ||
+    name === 'list_code_scanning_alerts' ||
+    name === 'list_dependabot_alerts' ||
+    name === 'list_secret_scanning_alerts'
   );
 }
 
