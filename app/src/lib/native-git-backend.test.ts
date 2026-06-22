@@ -17,6 +17,10 @@ function fakePlugin(overrides: Partial<NativeGitPlugin> = {}): NativeGitPlugin {
     commit: vi.fn(async () => ({ ok: true })),
     push: vi.fn(async () => ({ ok: true })),
     fetch: vi.fn(async () => ({ ok: true })),
+    commitWorkingTree: vi.fn(async () => ({ committed: true, commitId: 'c1' })),
+    archiveCommit: vi.fn(async () => ({ archiveBase64: 'A' })),
+    listCheckpoints: vi.fn(async () => ({ checkpoints: [] })),
+    pruneCheckpoints: vi.fn(async () => ({ pruned: 0 })),
     ...overrides,
   };
 }

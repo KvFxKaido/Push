@@ -31,18 +31,44 @@ import { isNativePlatform } from '../platform';
 /** Identity tag for logs / selection assertions. */
 export type CheckpointStoreKind = 'remote-draft-ref' | 'native-jgit';
 
-export interface CheckpointCaptureInput {
-  sandboxId: string;
+/**
+ * Durable identity of a checkpoint lane. `repoFullName + branch` (NOT the
+ * per-session `sandboxId`) is the key the native store uses to locate its
+ * on-device repo dir, so checkpoints persist across sandboxes/sessions (the
+ * CLAUDE.md "scope keys CLI-first" rule). The remote store ignores `repoFullName`
+ * — its durable home is the server-side `draft/auto/<branch>` ref.
+ */
+export interface CheckpointScope {
+  repoFullName: string;
   branch: string;
+}
+
+export interface CheckpointCaptureInput extends CheckpointScope {
+  sandboxId: string;
   /**
    * Opaque dedup token from the prior successful capture on the SAME branch, if
    * any — threaded back so the store can skip redundant work when nothing
    * changed. The coordinator never interprets it (the remote store encodes
-   * `tree:head`; a native store would encode its own content identity), so it
-   * stays a black box at the seam. Undefined on the first capture / after a
-   * branch change.
+   * `tree:head`; the native store encodes the commit id), so it stays a black box
+   * at the seam. Undefined on the first capture / after a branch change.
    */
   priorToken?: string;
+}
+
+export interface CheckpointDetectInput extends CheckpointScope {
+  sandboxId: string;
+}
+
+export interface CheckpointRestoreInput extends CheckpointScope {
+  sandboxId: string;
+  checkpointId: string;
+}
+
+/** One checkpoint in the history (the native `git log` of the on-device repo). */
+export interface CheckpointRecord {
+  checkpointId: string;
+  message: string;
+  timestampMs: number;
 }
 
 export type CheckpointCaptureResult =
@@ -78,16 +104,11 @@ export interface CheckpointStore {
   /** Capture the current sandbox working tree as a checkpoint. */
   capture(input: CheckpointCaptureInput): Promise<CheckpointCaptureResult>;
   /** Is a checkpoint available to restore for this sandbox/branch? */
-  detectRestore(
-    sandboxId: string,
-    branch: string | null | undefined,
-  ): Promise<CheckpointRestoreAvailability>;
+  detectRestore(input: CheckpointDetectInput): Promise<CheckpointRestoreAvailability>;
   /** Restore `checkpointId` into the sandbox working tree. */
-  restore(
-    sandboxId: string,
-    branch: string | null | undefined,
-    checkpointId: string,
-  ): Promise<CheckpointRestoreResult>;
+  restore(input: CheckpointRestoreInput): Promise<CheckpointRestoreResult>;
+  /** Checkpoint history for a lane, newest first (empty when none / unsupported). */
+  list(scope: CheckpointScope): Promise<CheckpointRecord[]>;
 }
 
 /**

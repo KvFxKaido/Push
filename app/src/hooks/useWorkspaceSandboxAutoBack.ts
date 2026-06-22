@@ -42,6 +42,8 @@ export const AUTO_BACK_DEBOUNCE_MS = 45_000;
 export interface AutoBackContext {
   sandboxId: string | null;
   branch: string | null | undefined;
+  /** Durable repo identity — the native store keys its on-device dir on it. */
+  repoFullName: string | null;
   enabled: boolean;
 }
 
@@ -95,8 +97,8 @@ export function createAutoBackScheduler(deps: AutoBackSchedulerDeps): AutoBackSc
   const runBackup = async () => {
     clearTimer();
     if (disposed) return;
-    const { sandboxId, branch, enabled } = getContext();
-    if (!enabled || !sandboxId || !branch) return;
+    const { sandboxId, branch, repoFullName, enabled } = getContext();
+    if (!enabled || !sandboxId || !branch || !repoFullName) return;
     if (inFlight) {
       // Coalesce: a backup is already running; re-run once it finishes.
       pending = true;
@@ -106,7 +108,7 @@ export function createAutoBackScheduler(deps: AutoBackSchedulerDeps): AutoBackSc
     pending = false;
     try {
       const priorToken = lastBacked?.branch === branch ? lastBacked.token : undefined;
-      const result = await capture({ sandboxId, branch, priorToken });
+      const result = await capture({ repoFullName, sandboxId, branch, priorToken });
       // Pin the token on a real capture or an unchanged skip — both confirm the
       // store holds this content on this base, so the next identical snapshot
       // can dedup.
@@ -149,6 +151,8 @@ export function createAutoBackScheduler(deps: AutoBackSchedulerDeps): AutoBackSc
 export interface UseWorkspaceSandboxAutoBackArgs {
   sandboxId: string | null;
   branch: string | null | undefined;
+  /** Durable repo identity (owner/name); required for the native checkpoint store. */
+  repoFullName: string | null;
   /** Gate the coordinator (e.g. only when the sandbox is ready). Default true. */
   enabled?: boolean;
   /** Debounce after the last mutation. Default AUTO_BACK_DEBOUNCE_MS. */
@@ -167,6 +171,7 @@ const defaultCapture = (input: CheckpointCaptureInput): Promise<CheckpointCaptur
 export function useWorkspaceSandboxAutoBack({
   sandboxId,
   branch,
+  repoFullName,
   enabled = true,
   debounceMs = AUTO_BACK_DEBOUNCE_MS,
   capture = defaultCapture,
@@ -175,10 +180,10 @@ export function useWorkspaceSandboxAutoBack({
   // every branch/status change while still reading current values. Synced in an
   // effect (not during render) so the scheduler, whose callbacks fire on async
   // events after commit, always reads current values.
-  const ctxRef = useRef<AutoBackContext>({ sandboxId, branch, enabled });
+  const ctxRef = useRef<AutoBackContext>({ sandboxId, branch, repoFullName, enabled });
   const captureRef = useRef(capture);
   useEffect(() => {
-    ctxRef.current = { sandboxId, branch, enabled };
+    ctxRef.current = { sandboxId, branch, repoFullName, enabled };
     captureRef.current = capture;
   });
 

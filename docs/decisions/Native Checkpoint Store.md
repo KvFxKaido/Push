@@ -65,12 +65,65 @@ restore UX (minimal new UI), and is flag-gated and native-only (web untouched).
 1. **`git init` + full-tree snapshots, NOT clone-based.** The job is "do not lose
    my sandbox work," not "maintain a faithful project DAG." `git init` needs zero
    auth, makes no claim to origin's history, and has no "checkpoint base no longer
-   matches origin" failure mode. History is just `checkpoint 1, 2, 3…` — enough to
-   restore a filesystem moment. Clone-based ancestry (real base, cheap diffs) is
-   **deferred** until there's real pain, not architectural prophecy.
+   matches origin" failure mode. Clone-based **origin ancestry** (checkpoints
+   related to the real project DAG) is **deferred** — but note this does NOT defer
+   **checkpoint-to-checkpoint file diffs**, which fall out of Model 3 below for
+   free (git diffs commit N against N-1 regardless of origin ancestry).
 2. **Full-tree transport, NOT diff.** Capture streams the sandbox working tree to
    the device repo dir and commits it. Diff-based transport (lighter on mobile
    data, but needs the device base kept in sync) is **deferred**.
+3. **Tree-in-JGit (Model 3), NOT archive-blob.** The on-device archive is
+   **extracted into the repo worktree** and committed as real files, so git tracks
+   a true tree — not stored as an opaque `tar.gz` blob. This is the product vision
+   (browsable history + per-checkpoint diffs) and it is also the most
+   storage-efficient across many checkpoints (git delta-packs similar trees; N
+   blob archives would each be full). It stays consistent with forks 1–2: still
+   `git init` (no clone), still full-tree transport — the only addition is
+   extracting the tree so git sees files.
+
+## Capture / restore data flow (Model 3)
+
+The sandbox↔archive transport already exists (the snapshot system:
+`downloadFromSandbox` ↔ `hydrateSnapshotInSandbox`, both HTTP to the Worker, both
+work on native). Model 3 uses it as follows:
+
+**Capture** (sandbox WIP → on-device commit):
+1. A **git-aware** archive of the sandbox working tree, via `execInSandbox` —
+   `git ls-files -z --cached --others --exclude-standard | tar --null -czf - -T -`
+   (tracked + untracked, `.gitignore`-respecting, WIP included; `git archive HEAD`
+   would miss untracked WIP), plus the hard-exclude list + size cap. NOT the raw
+   `downloadFromSandbox` endpoint, which is not git-aware and would tar
+   `node_modules`.
+2. The base64 archive → `NativeGit.commitWorkingTree(dir, archive, message)`:
+   clear the worktree (**keeping `.git`**), extract, `git add -A` (so deletions
+   stage → delete-faithful), commit. Returns the commit id.
+
+**Restore** (on-device commit → fresh sandbox that already has a clone):
+1. `NativeGit.archiveCommit(dir, commitId)` → the checkpoint tree as a base64
+   `tar.gz`.
+2. Apply into the sandbox via `execInSandbox` with a **`.git`-preserving,
+   delete-faithful** sync (see finding below) — leaving the recovered work as
+   unstaged changes on the existing clone (matching auto-back restore semantics).
+
+### Finding: the hydrate endpoint can't be reused verbatim for restore
+
+`hydrateSnapshotInSandbox` (`sandbox/app.py` restore handler) is clear-then-extract
+— it runs `find /workspace -mindepth 1 -maxdepth 1 -exec rm -rf` which **deletes
+`.git` too**, then extracts. That's correct for a *full snapshot* (the archive
+carries `.git`), but **wrong for a checkpoint restore**: the git-aware capture
+excludes `.git`, and restore lands on a fresh sandbox whose clone `.git` (origin,
+branch) must be preserved. So checkpoint restore uses a **`.git`-preserving**
+variant via `execInSandbox`:
+
+```
+cd /workspace && find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+tar xzf /tmp/checkpoint.tar.gz -C /workspace
+```
+
+Delete-faithful (clears all working files except `.git`) and repo-preserving. No
+new Worker endpoint needed (the sandbox has `git`/`tar`/`base64`, no `rsync`).
+Restore refuses on a dirty working tree (don't clobber live work), mirroring
+auto-back restore.
 
 ## The `CheckpointStore` interface (sketch)
 
@@ -141,11 +194,37 @@ load-bearing, not polish:
    restore *coordinator* keeps calling auto-back directly until PR3; the store's
    restore methods are contract-tested but not yet live-wired. `list`/`prune`
    (retention) deferred to PR2 with native capture.
-2. **Native capture.** Sandbox tree download with exclusions + size cap → write to
-   the app-private checkpoint repo → JGit commit → retention cap. Symmetric
-   structured logs per branch.
-3. **Native restore.** Restore a selected checkpoint into a sandbox (sync,
-   incl. deletions) → reuse offer-to-restore UX → capture/restore failure telemetry.
+2. **Native capture + restore (Model 3).** Built as two slices landed together:
+   - **2a (JS, device-free):** grow the interface with `list()`; add the four
+     plugin TS definitions (`commitWorkingTree` / `archiveCommit` /
+     `listCheckpoints` / `pruneCheckpoints`) + web stub; implement
+     `NativeJgitCheckpointStore` over them — capture via the git-aware tar exec,
+     restore via the `.git`-preserving sync exec, list via the plugin; unit-test
+     the orchestration with a fake plugin.
+   - **2b (Kotlin + device):** the four `JGitEngine`/plugin methods (extract +
+     `add -A` + commit; tree → tar.gz; `git log`; prune) and end-to-end device
+     validation of the capture→commit→restore round-trip on the Moto G.
+3. **Restore-coordinator wiring + UX.** Route `useWorkspaceSandboxRestore` through
+   the store; surface the checkpoint history `list()` as a browse/restore UX
+   (the existing offer-to-restore handles restore-latest in the meantime);
+   capture/restore failure telemetry.
+
+## Known limitations (PR2; tracked for PR3 — surfaced by the PR2 review)
+
+- **Exec bit / symlinks not preserved.** ZIP extraction via `java.util.zip` writes
+  every entry as a plain file, so a tracked executable or symlink round-trips as a
+  non-executable regular file — a mode/semantics diff on restore even when content
+  matches. (tar would preserve these; the ZIP choice was to avoid an Android tar
+  dependency. Reconsider tar + Apache Commons Compress in PR3 if this bites.)
+- **Empty-tree deletion not checkpointed.** When the working tree has no files,
+  `zip -@` produces no archive and capture reports `clean`, so deleting the last
+  file isn't recorded — a later restore could resurrect it. Needs an explicit
+  empty-checkpoint path.
+- **Restore upload is ~5 MB-capped.** Restore uploads the archive through
+  `writeToSandbox` (the only `/workspace`-writable path), which is ~5 MB-capped,
+  while capture's download path is uncapped (64 MB). Large checkpoints capture but
+  can't restore until a dedicated large-upload endpoint lands with the restore
+  wiring.
 
 ## Out of scope (deferred, not rejected)
 

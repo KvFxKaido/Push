@@ -20,16 +20,19 @@ const mockApply = vi.mocked(applyAutoBackRestore);
 
 beforeEach(() => vi.clearAllMocks());
 
-const native = createNativeJgitCheckpointStore(() => {});
+const REPO = 'owner/repo';
+// Native store with no real deps invoked — used for shape/selector checks only.
+const native = createNativeJgitCheckpointStore({ log: () => {} });
 
 describe('CheckpointStore interface conformance', () => {
   const stores: CheckpointStore[] = [remoteDraftRefCheckpointStore, native];
-  it('both stores expose kind + capture/detectRestore/restore', () => {
+  it('both stores expose kind + capture/detectRestore/restore/list', () => {
     for (const store of stores) {
       expect(typeof store.kind).toBe('string');
       expect(typeof store.capture).toBe('function');
       expect(typeof store.detectRestore).toBe('function');
       expect(typeof store.restore).toBe('function');
+      expect(typeof store.list).toBe('function');
     }
     expect(remoteDraftRefCheckpointStore.kind).toBe('remote-draft-ref');
     expect(native.kind).toBe('native-jgit');
@@ -37,13 +40,11 @@ describe('CheckpointStore interface conformance', () => {
 });
 
 describe('RemoteDraftRefCheckpointStore.capture mapping', () => {
+  const input = { repoFullName: REPO, sandboxId: 'sb', branch: 'feat/x' };
+
   it('decodes priorToken into the auto-back (tree, head) pin', async () => {
     mockBackUp.mockResolvedValue({ status: 'clean' });
-    await remoteDraftRefCheckpointStore.capture({
-      sandboxId: 'sb',
-      branch: 'feat/x',
-      priorToken: 'tree-1:head-1',
-    });
+    await remoteDraftRefCheckpointStore.capture({ ...input, priorToken: 'tree-1:head-1' });
     expect(mockBackUp).toHaveBeenCalledWith('sb', 'feat/x', {
       lastBackedTree: 'tree-1',
       lastBackedHead: 'head-1',
@@ -52,7 +53,7 @@ describe('RemoteDraftRefCheckpointStore.capture mapping', () => {
 
   it('passes an undefined pin when there is no prior token', async () => {
     mockBackUp.mockResolvedValue({ status: 'clean' });
-    await remoteDraftRefCheckpointStore.capture({ sandboxId: 'sb', branch: 'feat/x' });
+    await remoteDraftRefCheckpointStore.capture(input);
     expect(mockBackUp).toHaveBeenCalledWith('sb', 'feat/x', {
       lastBackedTree: undefined,
       lastBackedHead: undefined,
@@ -67,11 +68,10 @@ describe('RemoteDraftRefCheckpointStore.capture mapping', () => {
       tree: 'T',
       head: 'H',
     });
-    const result = await remoteDraftRefCheckpointStore.capture({
-      sandboxId: 'sb',
-      branch: 'feat/x',
+    expect(await remoteDraftRefCheckpointStore.capture(input)).toEqual({
+      status: 'captured',
+      dedupToken: 'T:H',
     });
-    expect(result).toEqual({ status: 'captured', dedupToken: 'T:H' });
   });
 
   it('maps unchanged → unchanged with the token', async () => {
@@ -82,27 +82,27 @@ describe('RemoteDraftRefCheckpointStore.capture mapping', () => {
       tree: 'T',
       head: 'none',
     });
-    const result = await remoteDraftRefCheckpointStore.capture({ sandboxId: 'sb', branch: 'b' });
-    expect(result).toEqual({ status: 'unchanged', dedupToken: 'T:none' });
+    expect(await remoteDraftRefCheckpointStore.capture(input)).toEqual({
+      status: 'unchanged',
+      dedupToken: 'T:none',
+    });
   });
 
   it('maps clean / skipped / blocked / failed through', async () => {
     mockBackUp.mockResolvedValueOnce({ status: 'clean' });
-    expect(await remoteDraftRefCheckpointStore.capture({ sandboxId: 's', branch: 'b' })).toEqual({
-      status: 'clean',
-    });
+    expect(await remoteDraftRefCheckpointStore.capture(input)).toEqual({ status: 'clean' });
     mockBackUp.mockResolvedValueOnce({ status: 'skipped', reason: 'no_branch' });
-    expect(await remoteDraftRefCheckpointStore.capture({ sandboxId: 's', branch: 'b' })).toEqual({
+    expect(await remoteDraftRefCheckpointStore.capture(input)).toEqual({
       status: 'skipped',
       reason: 'no_branch',
     });
     mockBackUp.mockResolvedValueOnce({ status: 'blocked', reason: 'secret' });
-    expect(await remoteDraftRefCheckpointStore.capture({ sandboxId: 's', branch: 'b' })).toEqual({
+    expect(await remoteDraftRefCheckpointStore.capture(input)).toEqual({
       status: 'blocked',
       reason: 'secret',
     });
     mockBackUp.mockResolvedValueOnce({ status: 'failed', reason: 'boom' });
-    expect(await remoteDraftRefCheckpointStore.capture({ sandboxId: 's', branch: 'b' })).toEqual({
+    expect(await remoteDraftRefCheckpointStore.capture(input)).toEqual({
       status: 'failed',
       reason: 'boom',
     });
@@ -110,12 +110,8 @@ describe('RemoteDraftRefCheckpointStore.capture mapping', () => {
 
   it('treats a malformed prior token as no pin', async () => {
     mockBackUp.mockResolvedValue({ status: 'clean' });
-    await remoteDraftRefCheckpointStore.capture({
-      sandboxId: 'sb',
-      branch: 'b',
-      priorToken: 'garbage-no-colon',
-    });
-    expect(mockBackUp).toHaveBeenCalledWith('sb', 'b', {
+    await remoteDraftRefCheckpointStore.capture({ ...input, priorToken: 'garbage-no-colon' });
+    expect(mockBackUp).toHaveBeenCalledWith('sb', 'feat/x', {
       lastBackedTree: undefined,
       lastBackedHead: undefined,
     });
@@ -123,9 +119,11 @@ describe('RemoteDraftRefCheckpointStore.capture mapping', () => {
 });
 
 describe('RemoteDraftRefCheckpointStore restore mapping', () => {
+  const scope = { repoFullName: REPO, sandboxId: 'sb', branch: 'b' };
+
   it('maps available → checkpointId from the backup sha', async () => {
     mockDetect.mockResolvedValue({ available: true, sha: 'abc123', summary: '3 files' });
-    expect(await remoteDraftRefCheckpointStore.detectRestore('sb', 'b')).toEqual({
+    expect(await remoteDraftRefCheckpointStore.detectRestore(scope)).toEqual({
       available: true,
       checkpointId: 'abc123',
       summary: '3 files',
@@ -134,59 +132,34 @@ describe('RemoteDraftRefCheckpointStore restore mapping', () => {
 
   it('maps unavailable through', async () => {
     mockDetect.mockResolvedValue({ available: false, reason: 'no_ref' });
-    expect(await remoteDraftRefCheckpointStore.detectRestore('sb', 'b')).toEqual({
+    expect(await remoteDraftRefCheckpointStore.detectRestore(scope)).toEqual({
       available: false,
       reason: 'no_ref',
     });
   });
 
-  it('maps restore results (restored / skipped-dirty / failed)', async () => {
+  it('maps restore results and forwards the checkpointId as the expected sha', async () => {
     mockApply.mockResolvedValueOnce({ status: 'restored', sha: 'abc123' });
-    expect(await remoteDraftRefCheckpointStore.restore('sb', 'b', 'abc123')).toEqual({
-      status: 'restored',
-      checkpointId: 'abc123',
-    });
+    expect(
+      await remoteDraftRefCheckpointStore.restore({ ...scope, checkpointId: 'abc123' }),
+    ).toEqual({ status: 'restored', checkpointId: 'abc123' });
+    expect(mockApply).toHaveBeenCalledWith('sb', 'b', 'abc123');
+
     mockApply.mockResolvedValueOnce({ status: 'skipped-dirty' });
-    expect(await remoteDraftRefCheckpointStore.restore('sb', 'b', 'abc123')).toEqual({
-      status: 'skipped-dirty',
-    });
+    expect(
+      await remoteDraftRefCheckpointStore.restore({ ...scope, checkpointId: 'abc123' }),
+    ).toEqual({ status: 'skipped-dirty' });
+
     mockApply.mockResolvedValueOnce({ status: 'failed', reason: 'nope' });
-    expect(await remoteDraftRefCheckpointStore.restore('sb', 'b', 'abc123')).toEqual({
-      status: 'failed',
-      reason: 'nope',
-    });
+    expect(
+      await remoteDraftRefCheckpointStore.restore({ ...scope, checkpointId: 'abc123' }),
+    ).toEqual({ status: 'failed', reason: 'nope' });
   });
 
-  it('forwards the checkpointId as the expected sha to applyAutoBackRestore', async () => {
-    mockApply.mockResolvedValue({ status: 'restored', sha: 'deadbee' });
-    await remoteDraftRefCheckpointStore.restore('sb', 'b', 'deadbee');
-    expect(mockApply).toHaveBeenCalledWith('sb', 'b', 'deadbee');
-  });
-});
-
-describe('NativeJgitCheckpointStore skeleton degrades cleanly', () => {
-  it('capture → unsupported, and logs', async () => {
-    const log = vi.fn();
-    const store = createNativeJgitCheckpointStore(log);
-    expect(await store.capture({ sandboxId: 'sb', branch: 'b' })).toEqual({
-      status: 'unsupported',
-    });
-    expect(log).toHaveBeenCalledWith(
-      'info',
-      'native_checkpoint_capture_unsupported',
-      expect.objectContaining({ sandboxId: 'sb', branch: 'b' }),
+  it('list is a degenerate empty (single draft ref, no history)', async () => {
+    expect(await remoteDraftRefCheckpointStore.list({ repoFullName: REPO, branch: 'b' })).toEqual(
+      [],
     );
-  });
-
-  it('detectRestore → unavailable', async () => {
-    expect(await native.detectRestore('sb', 'b')).toEqual({
-      available: false,
-      reason: expect.stringContaining('not yet implemented'),
-    });
-  });
-
-  it('restore → unsupported', async () => {
-    expect(await native.restore('sb', 'b', 'cp')).toEqual({ status: 'unsupported' });
   });
 });
 

@@ -25,7 +25,10 @@ app = modal.App("push-sandbox")
 # Image for sandbox containers (cloned repos run here)
 sandbox_image = (
     modal.Image.debian_slim(python_version="3.12")
-    .apt_install("git", "curl", "ripgrep", "jq")
+    # zip/unzip back the native checkpoint store's git-aware archive transport
+    # (the Cloudflare sandbox image already ships them). Without these, native
+    # checkpoint capture/restore fails on Modal with `ERR zip`.
+    .apt_install("git", "curl", "ripgrep", "jq", "zip", "unzip")
     .pip_install("ruff", "pytest")
     .run_commands(
         "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -",

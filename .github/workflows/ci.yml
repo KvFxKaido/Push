@@ -145,6 +145,13 @@ jobs:
       - name: Sync web assets to Android
         run: npx cap sync android
 
+      - name: Native-git checkpoint engine unit tests
+        working-directory: app/android
+        # Host-JVM tests for the JGit checkpoint logic (commit/dedup,
+        # delete-faithfulness, archive round-trip, list, prune cap). No android.*
+        # in those methods, so they run on the JVM without a device.
+        run: ./gradlew :capacitor-native-git:testDebugUnitTest --no-daemon
+
       - name: Assemble debug APK
         working-directory: app/android
         # --no-daemon: ephemeral runner, daemon survives nothing useful.
