@@ -8,8 +8,18 @@
 
 // Pure, config-free envelope-marker defanging — imported directly rather than
 // threaded through the runtime port (which carries surface-specific primitives
-// like the secret redactor).
-import { sanitizeUntrustedSource } from './untrusted-content.js';
+// like the secret redactor). `sanitizeUntrustedSource` = boundary-escape +
+// JSON-tool-call defang; `escapeEnvelopeBoundaries` is the boundary-escape
+// alone, used for file-content tools (see the chokepoint below).
+import { escapeEnvelopeBoundaries, sanitizeUntrustedSource } from './untrusted-content.js';
+
+// GitHub tools whose `result.text` is verbatim repository file content. The
+// JSON-tool-call defang would corrupt legitimate file bodies (a config/schema
+// file with a `"tool":` key, MCP manifests, etc.) the agent must reason over
+// faithfully — `untrusted-content.ts` documents skipping the defang on file
+// reads. They still get boundary escaping (a malicious file could embed a
+// `[/TOOL_RESULT]` literal to break out — that defense applies everywhere).
+const FILE_CONTENT_TOOLS: ReadonlySet<string> = new Set(['read_file', 'grep_file']);
 
 export interface GitHubCoreBranch {
   name: string;
@@ -3353,7 +3363,17 @@ export async function executeGitHubCoreTool(
   // (React-escaped) and stores, never fed into the model's envelope text stream,
   // so envelope markers there can't break out. The card still gets secret
   // REDACTION below (a leakage concern, which is different).
-  const text = sanitizeUntrustedSource(redactedText);
+  //
+  // File-content tools (read_file/grep_file) get boundary escaping only, NOT the
+  // JSON-tool-call defang: their text is verbatim repository content, and
+  // defanging would silently rewrite a legitimate `"tool":` key in a config or
+  // schema file — leaving the agent reasoning over source that no longer matches
+  // GitHub while the editor card still holds the original. The envelope-breakout
+  // markers are still escaped (a malicious file can carry a `[/TOOL_RESULT]`
+  // literal), which is the part that matters for #1080.
+  const text = FILE_CONTENT_TOOLS.has(call.tool)
+    ? escapeEnvelopeBoundaries(redactedText)
+    : sanitizeUntrustedSource(redactedText);
   const textChanged = text !== result.text;
   if (!result.card) {
     return textChanged ? { ...result, text } : result;
