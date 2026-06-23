@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import type { OpenAIChatRequest } from './openai-chat-types.ts';
-import type { LlmMessage, PushStreamEvent, PushStreamRequest } from './provider-contract.ts';
+import type {
+  LlmMessage,
+  PushStreamEvent,
+  PushStreamRequest,
+  ToolFunctionSchema,
+} from './provider-contract.ts';
 import {
   buildGeminiGenerateContentRequest,
   createGeminiTranslatedStream,
@@ -9,6 +14,7 @@ import {
   toGeminiGenerateContent,
 } from './openai-gemini-bridge.ts';
 import { openAISSEPump } from './openai-sse-pump.ts';
+import { getToolFunctionSchemas } from './tool-function-schemas.ts';
 
 function createEventStreamResponse(chunks: string[]): Response {
   const encoder = new TextEncoder();
@@ -36,6 +42,22 @@ async function collectChunks(stream: ReadableStream<Uint8Array>): Promise<string
   out += decoder.decode();
   return out;
 }
+
+const readFileTool: ToolFunctionSchema = {
+  type: 'function',
+  function: {
+    name: 'sandbox_read_file',
+    description: 'Read a file from the active workspace',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Repo-relative path' },
+      },
+      required: ['path'],
+      additionalProperties: false,
+    },
+  },
+};
 
 describe('buildGeminiGenerateContentRequest', () => {
   it('renames assistant -> model, hoists system into systemInstruction', () => {
@@ -153,12 +175,200 @@ describe('buildGeminiGenerateContentRequest', () => {
     });
   });
 
+  it('translates OpenAI function tools into Gemini functionDeclarations and drops grounding', () => {
+    // `google_search_grounding` is set AND function tools are attached. Gemini only
+    // supports that combination on Gemini 3 (Preview) and rejects it on gemini-2.5-*,
+    // so the bridge drops grounding whenever native function tools are present —
+    // function calling wins. See the dedicated drop test below.
+    const body = buildGeminiGenerateContentRequest({
+      model: 'gemini-3.1-pro-preview',
+      messages: [{ role: 'user', content: 'Read README.md' }],
+      tools: [readFileTool],
+      google_search_grounding: true,
+    } as OpenAIChatRequest);
+
+    expect(body.tools).toEqual([
+      {
+        functionDeclarations: [
+          {
+            name: 'sandbox_read_file',
+            description: 'Read a file from the active workspace',
+            parameters: {
+              type: 'OBJECT',
+              properties: {
+                path: { type: 'STRING', description: 'Repo-relative path' },
+              },
+              required: ['path'],
+            },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('drops googleSearch grounding when native function tools are present (combo unsupported on gemini-2.5)', () => {
+    const withTools = buildGeminiGenerateContentRequest({
+      model: 'gemini-2.5-flash',
+      messages: [{ role: 'user', content: 'Read README.md' }],
+      tools: [readFileTool],
+      google_search_grounding: true,
+    } as OpenAIChatRequest);
+    // Only functionDeclarations — no googleSearch entry.
+    expect(withTools.tools).toHaveLength(1);
+    expect(withTools.tools).not.toContainEqual({ googleSearch: {} });
+
+    // Grounding-only turns (no function schemas) keep grounding.
+    const groundingOnly = buildGeminiGenerateContentRequest({
+      model: 'gemini-2.5-flash',
+      messages: [{ role: 'user', content: 'weather?' }],
+      google_search_grounding: true,
+    } as OpenAIChatRequest);
+    expect(groundingOnly.tools).toEqual([{ googleSearch: {} }]);
+  });
+
   it('omits generationConfig when no sampling params are set', () => {
     const body = buildGeminiGenerateContentRequest({
       model: 'gemini-3.1-pro-preview',
       messages: [{ role: 'user', content: 'x' }],
     } as OpenAIChatRequest);
     expect(body).not.toHaveProperty('generationConfig');
+  });
+});
+
+describe('Gemini functionDeclaration schema translation (empty-OBJECT guards)', () => {
+  // Gemini rejects an OBJECT schema with no properties ("should be non-empty for
+  // OBJECT type"), so the converter must never emit one — at the top level
+  // (parameterless tools), as a nested property (open-ended objects), or as
+  // array items (object-typed arrays). The full tool registry ships every round,
+  // so a single offender 400s the whole request before the model can respond.
+  const decl = (tool: ToolFunctionSchema): Record<string, unknown> => {
+    const body = buildGeminiGenerateContentRequest({
+      model: 'gemini-2.5-flash',
+      messages: [{ role: 'user', content: 'go' }],
+      tools: [tool],
+    } as OpenAIChatRequest);
+    const tools = body.tools as Array<{ functionDeclarations: Array<Record<string, unknown>> }>;
+    return tools[0].functionDeclarations[0];
+  };
+
+  it('omits `parameters` for a parameterless tool (no empty OBJECT)', () => {
+    const noArg: ToolFunctionSchema = {
+      type: 'function',
+      function: {
+        name: 'sandbox_typecheck',
+        description: 'Run typecheck',
+        parameters: { type: 'object', properties: {}, required: [], additionalProperties: false },
+      },
+    };
+    const d = decl(noArg);
+    expect(d).toEqual({ name: 'sandbox_typecheck', description: 'Run typecheck' });
+    expect(d).not.toHaveProperty('parameters');
+  });
+
+  it('represents an open-ended object property as STRING', () => {
+    const objParam: ToolFunctionSchema = {
+      type: 'function',
+      function: {
+        name: 'workflow_run',
+        description: 'Dispatch a workflow',
+        parameters: {
+          type: 'object',
+          properties: { inputs: { type: 'object' } },
+          required: ['inputs'],
+          additionalProperties: false,
+        },
+      },
+    };
+    const params = decl(objParam).parameters as {
+      type: string;
+      properties: Record<string, { type: string }>;
+      required?: string[];
+    };
+    expect(params.type).toBe('OBJECT');
+    expect(params.properties.inputs).toEqual({ type: 'STRING' });
+    // `required` survives because `inputs` is still an emitted property.
+    expect(params.required).toEqual(['inputs']);
+  });
+
+  it('represents object-typed array items as STRING items', () => {
+    const arrParam: ToolFunctionSchema = {
+      type: 'function',
+      function: {
+        name: 'edit_file',
+        description: 'Apply edits',
+        parameters: {
+          type: 'object',
+          properties: { edits: { type: 'array', items: { type: 'object' } } },
+          required: ['edits'],
+          additionalProperties: false,
+        },
+      },
+    };
+    const params = decl(arrParam).parameters as {
+      properties: { edits: { type: string; items: { type: string } } };
+    };
+    expect(params.properties.edits).toEqual({ type: 'ARRAY', items: { type: 'STRING' } });
+  });
+
+  it('drops a `required` entry whose property was not emitted', () => {
+    // A property whose value is not a valid schema object gets skipped; the
+    // converter must not leave it dangling in `required` (Gemini rejects that too).
+    const dangling: ToolFunctionSchema = {
+      type: 'function',
+      function: {
+        name: 'odd_tool',
+        description: 'x',
+        parameters: {
+          type: 'object',
+          properties: { path: { type: 'string' }, ghost: null as unknown as object },
+          required: ['path', 'ghost'],
+          additionalProperties: false,
+        },
+      },
+    };
+    const params = decl(dangling).parameters as {
+      properties: Record<string, unknown>;
+      required: string[];
+    };
+    expect(Object.keys(params.properties)).toEqual(['path']);
+    expect(params.required).toEqual(['path']);
+  });
+
+  it('emits no empty-OBJECT schema for any real registry tool (full set, end to end)', () => {
+    // The strongest guard against the P1: translate the *actual* tool registry
+    // and walk every node of the resulting body, asserting Gemini's "OBJECT needs
+    // non-empty properties" rule holds everywhere — and that no `required` entry
+    // dangles past a dropped property.
+    const tools = getToolFunctionSchemas();
+    expect(tools.length).toBeGreaterThan(0);
+    const body = buildGeminiGenerateContentRequest({
+      model: 'gemini-2.5-flash',
+      messages: [{ role: 'user', content: 'go' }],
+      tools,
+    } as OpenAIChatRequest);
+
+    const offenders: string[] = [];
+    const walk = (node: unknown, path: string): void => {
+      if (Array.isArray(node)) {
+        node.forEach((n, i) => walk(n, `${path}[${i}]`));
+        return;
+      }
+      if (!node || typeof node !== 'object') return;
+      const obj = node as Record<string, unknown>;
+      if (obj.type === 'OBJECT') {
+        const props = obj.properties as Record<string, unknown> | undefined;
+        if (!props || Object.keys(props).length === 0)
+          offenders.push(`${path}: OBJECT w/o properties`);
+        const req = Array.isArray(obj.required) ? (obj.required as string[]) : [];
+        for (const r of req) {
+          if (!props || !(r in props))
+            offenders.push(`${path}: required "${r}" missing from properties`);
+        }
+      }
+      for (const [k, v] of Object.entries(obj)) walk(v, `${path}.${k}`);
+    };
+    walk(body.tools, 'tools');
+    expect(offenders).toEqual([]);
   });
 });
 
@@ -246,6 +456,39 @@ describe('createGeminiTranslatedStream', () => {
     expect(out).toContain('"content":" frames"');
     expect(out).toContain('"finish_reason":"stop"');
     expect(out.endsWith('data: [DONE]\n\n')).toBe(true);
+  });
+
+  it('translates Gemini functionCall parts into OpenAI tool_call deltas', async () => {
+    const frames = [
+      `data: ${JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [{ functionCall: { name: 'sandbox_read_file', args: { path: 'README.md' } } }],
+            },
+            finishReason: 'STOP',
+          },
+        ],
+      })}\n\n`,
+    ];
+
+    const translated = createGeminiTranslatedStream(
+      createEventStreamResponse(frames),
+      'gemini-3.1-pro-preview',
+    );
+    const events = await collectEvents(
+      openAISSEPump({
+        body: translated,
+        isKnownToolName: (name) => name === 'sandbox_read_file',
+      }),
+    );
+
+    expect(events[0]).toEqual({ type: 'tool_call_delta' });
+    expect(events[1]).toEqual({
+      type: 'text_delta',
+      text: '\n```json\n{"tool":"sandbox_read_file","args":{"path":"README.md"}}\n```\n',
+    });
+    expect(events[2]).toMatchObject({ type: 'done', finishReason: 'tool_calls' });
   });
 });
 
@@ -387,6 +630,33 @@ describe('toGeminiGenerateContent — drift vs legacy OpenAI-detour path', () =>
     });
     expect(body.systemInstruction).toEqual({ parts: [{ text: 'be terse' }] });
   });
+
+  it('serializes neutral native tools as Gemini functionDeclarations', () => {
+    const body = toGeminiGenerateContent({
+      provider: 'google',
+      model: 'gemini-3.5-flash',
+      messages: [llm('1', 'user', 'read it')],
+      tools: [readFileTool],
+    });
+
+    expect(body.tools).toEqual([
+      {
+        functionDeclarations: [
+          {
+            name: 'sandbox_read_file',
+            description: 'Read a file from the active workspace',
+            parameters: {
+              type: 'OBJECT',
+              properties: {
+                path: { type: 'STRING', description: 'Repo-relative path' },
+              },
+              required: ['path'],
+            },
+          },
+        ],
+      },
+    ]);
+  });
 });
 
 describe('toGeminiGenerateContent — multimodal contentParts', () => {
@@ -515,6 +785,39 @@ describe('geminiEventStream — drift vs translate->pump', () => {
     {
       name: 'stream ends without a finishReason frame (clean close -> stop)',
       frames: [frame({ candidates: [{ content: { parts: [{ text: 'tail' }] } }] })],
+    },
+    {
+      name: 'functionCall part flushes as dispatcher JSON',
+      frames: [
+        frame({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  { functionCall: { name: 'sandbox_read_file', args: { path: 'README.md' } } },
+                ],
+              },
+              finishReason: 'STOP',
+            },
+          ],
+        }),
+      ],
+    },
+    {
+      name: 'functionCall part with clean close still finishes as tool_calls',
+      frames: [
+        frame({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  { functionCall: { name: 'sandbox_read_file', args: { path: 'README.md' } } },
+                ],
+              },
+            },
+          ],
+        }),
+      ],
     },
   ];
 

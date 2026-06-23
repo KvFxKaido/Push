@@ -6,8 +6,9 @@ allowlist; both the OpenAI and Anthropic Go transports), Fireworks AI
 (name-based catalog allowlist), and the validated OpenAI-compatible adapters:
 OpenAI / Azure OpenAI (OpenAI-family model ids), Kilo Code / OpenAdapter
 (curated catalog allowlists), direct Anthropic (curated catalog allowlist),
-plus Ollama Cloud / Nvidia NIM / Blackbox AI (models.dev capability-gated).
-Bedrock, Google/Gemini, Vertex, and the CLI lead are deferred follow-ups, not yet promoted to
+Google/Gemini (name-based curated allowlist), plus Ollama Cloud / Nvidia NIM /
+Blackbox AI (models.dev capability-gated). Bedrock, Vertex, and the CLI lead are
+deferred follow-ups, not yet promoted to
 `ROADMAP.md` — tracked in #1082.
 
 **Date:** 2026-06-17
@@ -98,8 +99,8 @@ native tool call — both converge at one dispatch path. Consequences:
 
 ## Scope / deferred
 
-The deferred follow-ups below are tracked in #1082 (Gemini / Vertex / Bedrock
-gates, the CLI lead, delegated Coder/Explorer, and conditional
+The deferred follow-ups below are tracked in #1082 (Vertex / Bedrock gates,
+the CLI lead, delegated Coder/Explorer, and conditional
 toolsets). Flip the Status line and the relevant bullet here as each lands.
 
 - **Other providers.** The gate is the single switch. OpenRouter
@@ -114,8 +115,13 @@ toolsets). Flip the Status line and the relevant bullet here as each lands.
   the **Anthropic-transport** Go models (minimax/qwen) translate OpenAI tool
   schemas to Anthropic's custom-tool shape in `toAnthropicMessages` and turn the
   model's `tool_use` blocks back into the dispatcher's fenced JSON via
-  `createAnthropicTranslatedStream` (web) / `anthropicEventStream` (CLI). The CLI
-  OpenAI-compat adapter (`cli/openai-stream.ts`) is a separate follow-up — its
+  `createAnthropicTranslatedStream` (web) / `anthropicEventStream` (CLI).
+  Google/Gemini direct provider is enabled by the curated `GOOGLE_MODELS`
+  allowlist: `gemini-stream.ts` carries neutral `tools`, `toGeminiGenerateContent`
+  maps them to Gemini `functionDeclarations`, and
+  `createGeminiTranslatedStream` / `geminiEventStream` turn Gemini `functionCall`
+  parts back into the dispatcher's fenced JSON. The CLI OpenAI-compat adapter
+  (`cli/openai-stream.ts`) is a separate follow-up — its
   lead doesn't attach `nativeToolSchemas` yet, so it stays text-dispatch (the
   shared `toOpenAIChat` already serializes `tools` once a CLI gate lands).
 - **Other roles.** Delegated Coder, Explorer, auditor/reviewer are unchanged

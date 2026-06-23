@@ -87,6 +87,20 @@ const baseRequest: PushStreamRequest<ChatMessage> = {
   messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 } as unknown as ChatMessage],
 };
 
+const readFileTool = {
+  type: 'function' as const,
+  function: {
+    name: 'sandbox_read_file',
+    description: 'Read a file',
+    parameters: {
+      type: 'object' as const,
+      properties: { path: { type: 'string' as const } },
+      required: ['path'],
+      additionalProperties: false as const,
+    },
+  },
+};
+
 describe('geminiStream', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
   let collect: (stream: AsyncIterable<PushStreamEvent>) => Promise<PushStreamEvent[]>;
@@ -213,6 +227,21 @@ describe('geminiStream', () => {
     expect(body).not.toHaveProperty('max_tokens');
     expect(body).not.toHaveProperty('top_p');
     expect(body).not.toHaveProperty('stream');
+  });
+
+  it('carries native function tools on the neutral wire body', async () => {
+    installStreamFetch(fetchMock);
+    const { geminiStream } = await import('./gemini-stream');
+    const iter = geminiStream({ ...baseRequest, tools: [readFileTool] });
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.tools).toEqual([readFileTool]);
+    expect(body).not.toHaveProperty('tool_choice');
   });
 
   it('sends googleSearchGrounding: true when requested', async () => {

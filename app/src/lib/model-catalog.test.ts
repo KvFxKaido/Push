@@ -1385,6 +1385,14 @@ describe('providerModelSupportsStructuredOutput', () => {
     expect(providerModelSupportsNativeToolCalling('fireworks', undefined)).toBe(false);
   });
 
+  it('gates Google native tool calling against the curated Gemini catalog allowlist', () => {
+    stubWindow();
+    expect(providerModelSupportsNativeToolCalling('google', 'gemini-3.5-flash')).toBe(true);
+    expect(providerModelSupportsNativeToolCalling('google', 'gemini-3.1-pro-preview')).toBe(true);
+    expect(providerModelSupportsNativeToolCalling('google', 'not-a-gemini-model')).toBe(false);
+    expect(providerModelSupportsNativeToolCalling('google', undefined)).toBe(false);
+  });
+
   it('gates validated OpenAI-compatible adapters by catalog or OpenAI-family id', () => {
     stubWindow();
     expect(providerModelSupportsNativeToolCalling('openai', 'gpt-5.4')).toBe(true);

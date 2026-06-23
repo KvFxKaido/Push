@@ -5,8 +5,9 @@ import type {
   PushStreamEvent,
   PushStreamRequest,
   StreamUsage,
+  ToolFunctionSchema,
 } from './provider-contract.ts';
-import { stripTemplateTokens } from './openai-sse-pump.ts';
+import { formatNativeToolCallFenced, stripTemplateTokens } from './openai-sse-pump.ts';
 
 /**
  * OpenAI ↔ Gemini bridge.
@@ -78,6 +79,107 @@ function flattenSystemParts(parts: Array<Record<string, unknown>>): string {
     .join('\n\n');
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function jsonSchemaTypeToGeminiType(type: unknown): string | undefined {
+  switch (type) {
+    case 'object':
+      return 'OBJECT';
+    case 'array':
+      return 'ARRAY';
+    case 'string':
+      return 'STRING';
+    case 'integer':
+      return 'INTEGER';
+    case 'number':
+      return 'NUMBER';
+    case 'boolean':
+      return 'BOOLEAN';
+    default:
+      return undefined;
+  }
+}
+
+function openAIJsonSchemaToGeminiSchema(schema: unknown): Record<string, unknown> {
+  const src = asRecord(schema);
+  if (!src) return {};
+
+  const out: Record<string, unknown> = {};
+  const type = jsonSchemaTypeToGeminiType(src.type);
+  if (typeof src.description === 'string' && src.description.length > 0) {
+    out.description = src.description;
+  }
+  if (Array.isArray(src.enum)) {
+    const values = src.enum.filter(
+      (item) => typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean',
+    );
+    if (values.length > 0) out.enum = values;
+  }
+
+  // Build child properties first so we can detect an OBJECT that ends up with no
+  // usable properties.
+  const mapped: Record<string, unknown> = {};
+  const properties = asRecord(src.properties);
+  if (properties) {
+    for (const [key, value] of Object.entries(properties)) {
+      const child = openAIJsonSchemaToGeminiSchema(value);
+      if (Object.keys(child).length > 0) mapped[key] = child;
+    }
+  }
+
+  // Gemini's API rejects an OBJECT schema whose `properties` is empty/missing
+  // ("properties: should be non-empty for OBJECT type"). Our tool schemas carry
+  // open-ended objects (e.g. `workflow_run.inputs`) and object-typed array items
+  // (`edits[]`) with no declared sub-fields, plus parameterless tools whose whole
+  // parameter object is empty. Represent any such empty OBJECT as STRING — the
+  // documented Gemini workaround for open-ended objects — so the request isn't
+  // rejected; the loose executor + text-dispatch fallback still handle the real
+  // shape. Parameterless tools then drop `parameters` entirely in the declaration
+  // builder (a STRING is not a valid top-level parameters schema).
+  if (type === 'OBJECT' && Object.keys(mapped).length === 0) {
+    out.type = 'STRING';
+    return out;
+  }
+
+  if (type) out.type = type;
+  if (Object.keys(mapped).length > 0) {
+    out.properties = mapped;
+    // Only keep `required` entries that name a property we actually emitted —
+    // Gemini also rejects a `required` value that points at a missing property.
+    if (Array.isArray(src.required)) {
+      const required = src.required.filter(
+        (item): item is string => typeof item === 'string' && item in mapped,
+      );
+      if (required.length > 0) out.required = required;
+    }
+  }
+
+  if (src.items !== undefined) {
+    const items = openAIJsonSchemaToGeminiSchema(src.items);
+    if (Object.keys(items).length > 0) out.items = items;
+  }
+
+  return out;
+}
+
+function openAIToolToGeminiFunctionDeclaration(tool: ToolFunctionSchema): Record<string, unknown> {
+  const declaration: Record<string, unknown> = { name: tool.function.name };
+  if (tool.function.description) declaration.description = tool.function.description;
+  const parameters = openAIJsonSchemaToGeminiSchema(tool.function.parameters);
+  // Attach `parameters` only for an OBJECT with at least one property. A
+  // parameterless tool (empty object, collapsed to STRING above) must be declared
+  // with name + description only — Gemini rejects an empty OBJECT parameter block.
+  const props = asRecord(parameters.properties);
+  if (parameters.type === 'OBJECT' && props && Object.keys(props).length > 0) {
+    declaration.parameters = parameters;
+  }
+  return declaration;
+}
+
 export function buildGeminiGenerateContentRequest(
   request: OpenAIChatRequest,
 ): Record<string, unknown> {
@@ -118,6 +220,7 @@ export function buildGeminiGenerateContentRequest(
     // Strict `=== true` so a malformed input (e.g. the string `"false"`) can't
     // accidentally enable grounding.
     enableGoogleSearch: request.google_search_grounding === true,
+    tools: request.tools,
   });
 }
 
@@ -126,8 +229,8 @@ export function buildGeminiGenerateContentRequest(
  * shape) and `toGeminiGenerateContent` (neutral) converge here, so the two paths
  * can only diverge on message conversion. Applies Gemini's user-first-turn
  * requirement, `generationConfig` placement, the `systemInstruction` hoist, and
- * the `googleSearch` tool. (Model is NOT in the body — Gemini carries it in the
- * URL path.)
+ * native tools (`functionDeclarations` and `googleSearch`). (Model is NOT in the
+ * body — Gemini carries it in the URL path.)
  */
 interface GeminiBodyAssembly {
   contents: Array<Record<string, unknown>>;
@@ -137,6 +240,7 @@ interface GeminiBodyAssembly {
   temperature?: number;
   topP?: number;
   enableGoogleSearch: boolean;
+  tools?: ToolFunctionSchema[];
 }
 
 function assembleGeminiBody(parts: GeminiBodyAssembly): Record<string, unknown> {
@@ -171,8 +275,27 @@ function assembleGeminiBody(parts: GeminiBodyAssembly): Record<string, unknown> 
   if (Object.keys(generationConfig).length > 0) {
     body.generationConfig = generationConfig;
   }
-  if (parts.enableGoogleSearch) {
-    body.tools = [{ googleSearch: {} }];
+  const tools: Array<Record<string, unknown>> = [];
+  const nativeFunctionTools = parts.tools ?? [];
+  if (nativeFunctionTools.length > 0) {
+    tools.push({
+      functionDeclarations: nativeFunctionTools.map(openAIToolToGeminiFunctionDeclaration),
+    });
+  }
+  // Gemini only supports combining the built-in `googleSearch` grounding tool
+  // with custom `functionDeclarations` on Gemini 3 models (it's a Preview
+  // feature, "supported for Gemini 3 models only"), and even there it's been
+  // field-flaky — `gemini-2.5-*` reject the combination outright. Push offers
+  // both 2.5 and 3 Gemini models and grounding is default-on, so when native
+  // function tools are attached we drop grounding to keep function calling
+  // working uniformly across the catalog rather than 400 on the 2.5 models.
+  // Grounding-only turns (no function schemas attached) are unaffected.
+  // Ref: https://ai.google.dev/gemini-api/docs/tool-combination
+  if (parts.enableGoogleSearch && nativeFunctionTools.length === 0) {
+    tools.push({ googleSearch: {} });
+  }
+  if (tools.length > 0) {
+    body.tools = tools;
   }
   return body;
 }
@@ -290,6 +413,7 @@ export function toGeminiGenerateContent(
       typeof req.temperature === 'number' ? req.temperature : options?.temperatureDefault,
     topP: typeof req.topP === 'number' ? req.topP : undefined,
     enableGoogleSearch: options?.enableGoogleSearch ?? req.googleSearchGrounding === true,
+    tools: req.tools,
   });
 }
 
@@ -302,9 +426,28 @@ function buildOpenAISseChunk(params: {
     completion_tokens?: number;
     total_tokens?: number;
   };
+  toolCall?: {
+    index: number;
+    id?: string;
+    name?: string;
+    arguments?: string;
+  };
 }): string {
   const delta: Record<string, unknown> = {};
   if (params.content) delta.content = params.content;
+  if (params.toolCall) {
+    const fn: Record<string, unknown> = {};
+    if (params.toolCall.name) fn.name = params.toolCall.name;
+    if (typeof params.toolCall.arguments === 'string') fn.arguments = params.toolCall.arguments;
+    delta.tool_calls = [
+      {
+        index: params.toolCall.index,
+        id: params.toolCall.id ?? `call_${crypto.randomUUID()}`,
+        type: 'function',
+        function: fn,
+      },
+    ];
+  }
 
   const payload: Record<string, unknown> = {
     id: `chatcmpl-${crypto.randomUUID()}`,
@@ -350,8 +493,18 @@ function mapGeminiFinishReason(reason: string | null | undefined): string {
   }
 }
 
+type GeminiFunctionCall = {
+  name?: unknown;
+  args?: unknown;
+};
+
+type GeminiCandidatePart = {
+  text?: unknown;
+  functionCall?: GeminiFunctionCall;
+};
+
 type GeminiCandidate = {
-  content?: { parts?: Array<{ text?: unknown }> };
+  content?: { parts?: GeminiCandidatePart[] };
   finishReason?: string;
 };
 
@@ -370,6 +523,35 @@ function extractTextFromCandidate(candidate: GeminiCandidate | undefined): strin
   let out = '';
   for (const part of parts) {
     if (part && typeof part.text === 'string') out += part.text;
+  }
+  return out;
+}
+
+function stringifyGeminiFunctionCallArgs(args: unknown): string {
+  if (args === undefined || args === null) return '{}';
+  if (typeof args === 'string') return args.trim() ? args : '{}';
+  if (typeof args === 'object') {
+    try {
+      return JSON.stringify(args);
+    } catch {
+      return '{}';
+    }
+  }
+  return '{}';
+}
+
+function extractFunctionCallsFromCandidate(
+  candidate: GeminiCandidate | undefined,
+): Array<{ name: string; argsJson: string }> {
+  const parts = candidate?.content?.parts;
+  if (!Array.isArray(parts)) return [];
+  const out: Array<{ name: string; argsJson: string }> = [];
+  for (const part of parts) {
+    const call = asRecord(part?.functionCall);
+    if (!call) continue;
+    const rawName = call?.name;
+    if (typeof rawName !== 'string' || rawName.trim().length === 0) continue;
+    out.push({ name: rawName.trim(), argsJson: stringifyGeminiFunctionCallArgs(call.args) });
   }
   return out;
 }
@@ -396,6 +578,8 @@ export function createGeminiTranslatedStream(
         | { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
         | undefined;
       let terminalFinishReason: string | null = null;
+      let sawFunctionCall = false;
+      let nextToolCallIndex = 0;
       let closed = false;
 
       const finishWithCurrent = (): void => {
@@ -405,7 +589,7 @@ export function createGeminiTranslatedStream(
           encoder.encode(
             buildOpenAISseChunk({
               model,
-              finishReason: terminalFinishReason ?? 'stop',
+              finishReason: terminalFinishReason ?? (sawFunctionCall ? 'tool_calls' : 'stop'),
               usage,
             }),
           ),
@@ -439,6 +623,23 @@ export function createGeminiTranslatedStream(
           controller.enqueue(encoder.encode(buildOpenAISseChunk({ model, content: text })));
         }
 
+        const functionCalls = extractFunctionCallsFromCandidate(candidate);
+        for (const call of functionCalls) {
+          sawFunctionCall = true;
+          controller.enqueue(
+            encoder.encode(
+              buildOpenAISseChunk({
+                model,
+                toolCall: {
+                  index: nextToolCallIndex++,
+                  name: call.name,
+                  arguments: call.argsJson,
+                },
+              }),
+            ),
+          );
+        }
+
         if (parsed.usageMetadata) {
           const prompt = parsed.usageMetadata.promptTokenCount ?? usage?.prompt_tokens ?? 0;
           const completion =
@@ -448,7 +649,8 @@ export function createGeminiTranslatedStream(
         }
 
         if (candidate?.finishReason) {
-          terminalFinishReason = mapGeminiFinishReason(candidate.finishReason);
+          const mapped = mapGeminiFinishReason(candidate.finishReason);
+          terminalFinishReason = sawFunctionCall && mapped === 'stop' ? 'tool_calls' : mapped;
         }
       };
 
@@ -524,7 +726,18 @@ export async function* geminiEventStream(
   const decoder = new TextDecoder();
   let buffer = '';
   let usage: StreamUsage | undefined;
-  let terminalFinishReason: 'stop' | 'length' = 'stop';
+  let terminalFinishReason: 'stop' | 'length' | 'tool_calls' = 'stop';
+  const pendingFunctionCalls: Array<{ name: string; argsJson: string }> = [];
+
+  function* flushFunctionCalls(): Generator<PushStreamEvent> {
+    for (const call of pendingFunctionCalls) {
+      yield {
+        type: 'text_delta',
+        text: formatNativeToolCallFenced(call.name, call.argsJson),
+      };
+    }
+    pendingFunctionCalls.length = 0;
+  }
 
   function* processFrame(raw: string): Generator<PushStreamEvent> {
     const trimmed = raw.trim();
@@ -550,6 +763,13 @@ export async function* geminiEventStream(
       if (token) yield { type: 'text_delta', text: token };
     }
 
+    const functionCalls = extractFunctionCallsFromCandidate(candidate);
+    if (functionCalls.length > 0) {
+      pendingFunctionCalls.push(...functionCalls);
+      if (terminalFinishReason === 'stop') terminalFinishReason = 'tool_calls';
+      yield { type: 'tool_call_delta' };
+    }
+
     if (parsed.usageMetadata) {
       const inputTokens = parsed.usageMetadata.promptTokenCount ?? usage?.inputTokens ?? 0;
       const outputTokens = parsed.usageMetadata.candidatesTokenCount ?? usage?.outputTokens ?? 0;
@@ -558,8 +778,13 @@ export async function* geminiEventStream(
     }
 
     if (candidate?.finishReason) {
+      const mapped = mapGeminiFinishReason(candidate.finishReason);
       terminalFinishReason =
-        mapGeminiFinishReason(candidate.finishReason) === 'length' ? 'length' : 'stop';
+        pendingFunctionCalls.length > 0 && mapped === 'stop'
+          ? 'tool_calls'
+          : mapped === 'length'
+            ? 'length'
+            : 'stop';
     }
   }
 
@@ -594,6 +819,7 @@ export async function* geminiEventStream(
     }
     // Gemini has no [DONE] sentinel — emit the single terminal `done` at stream
     // end with the finish reason + usage accumulated from the final frame.
+    yield* flushFunctionCalls();
     yield { type: 'done', finishReason: terminalFinishReason, usage };
   } finally {
     signal?.removeEventListener('abort', onAbort);

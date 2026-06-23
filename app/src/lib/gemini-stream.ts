@@ -69,6 +69,7 @@ export async function* geminiStream(
     temperature: req.temperature,
     topP: req.topP,
     ...(grounding ? { googleSearchGrounding: true } : {}),
+    ...(req.tools && req.tools.length > 0 ? { tools: req.tools } : {}),
   });
 
   // The Worker prefers its own server-side GOOGLE_API_KEY when set and ignores

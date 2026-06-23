@@ -15,6 +15,7 @@ import {
   BLACKBOX_MODELS,
   compareProviderModelIds,
   FIREWORKS_MODELS,
+  GOOGLE_MODELS,
   KILOCODE_MODELS,
   NVIDIA_MODELS,
   OPENADAPTER_MODELS,
@@ -431,6 +432,7 @@ const ZEN_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set([
  * normalizes the native `tool_calls`.
  */
 const FIREWORKS_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(FIREWORKS_MODELS);
+const GOOGLE_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(GOOGLE_MODELS);
 const KILOCODE_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(KILOCODE_MODELS);
 const OPENADAPTER_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(OPENADAPTER_MODELS);
 const BLACKBOX_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(BLACKBOX_MODELS);
@@ -460,6 +462,10 @@ function looksLikeOpenAIToolCallingModel(modelId: string): boolean {
  *     gating isn't viable for Zen.
  *   - **Fireworks AI** — name-based against the curated catalog
  *     (`FIREWORKS_NATIVE_TOOL_CALLING_MODELS`).
+ *   - **Google Gemini** — name-based against the curated Gemini catalog; the
+ *     direct serializer translates OpenAI-shaped tools into Gemini
+ *     `functionDeclarations` and the bridge normalizes `functionCall` parts
+ *     back into dispatcher JSON.
  *   - **Ollama Cloud / Nvidia NIM / Blackbox AI** — capability-based, using the
  *     existing models.dev metadata caches.
  *   - **OpenAI / Azure OpenAI / Kilo Code / OpenAdapter** — name-based against
@@ -482,6 +488,7 @@ export function providerModelSupportsNativeToolCalling(
   if (provider === 'openrouter') return getModelCapabilities('openrouter', modelId).toolCall;
   if (provider === 'zen') return ZEN_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'fireworks') return FIREWORKS_NATIVE_TOOL_CALLING_MODELS.has(modelId);
+  if (provider === 'google') return GOOGLE_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'ollama') return getModelCapabilities('ollama', modelId).toolCall;
   if (provider === 'nvidia') return getModelCapabilities('nvidia', modelId).toolCall;
   if (provider === 'blackbox') {
