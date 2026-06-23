@@ -96,6 +96,23 @@ describe('trailing newline preservation', () => {
     ]);
     expect(result.content).toBe('alpha\nBETA\n');
   });
+
+  it('yields an empty file (not a lone newline) when every line is deleted', async () => {
+    // Deleting all visible lines of a newline-terminated file must produce an
+    // empty file — the newline restoration must not leave a stray blank line.
+    const content = 'alpha\nbeta\n';
+    const refs = await Promise.all([
+      calculateLineHash('alpha', 12),
+      calculateLineHash('beta', 12),
+      calculateLineHash('', 12),
+    ]);
+    const result = await applyHashlineEdits(
+      content,
+      refs.map((ref) => ({ op: 'delete_line', ref })),
+    );
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('');
+  });
 });
 
 describe('applyHashlineEdits with longer refs (8–12 chars)', () => {
