@@ -3,16 +3,19 @@ package com.push.nativegit
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.time.Instant
 import java.util.Base64
 import java.util.Date
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.dircache.DirCacheEntry
 import org.eclipse.jgit.lib.BranchConfig
 import org.eclipse.jgit.lib.BranchTrackingStatus
 import org.eclipse.jgit.lib.CommitBuilder
 import org.eclipse.jgit.lib.Constants
+import org.eclipse.jgit.lib.FileMode
 import org.eclipse.jgit.lib.ObjectId
 import org.eclipse.jgit.lib.PersonIdent
 import org.eclipse.jgit.lib.Ref
@@ -261,8 +264,18 @@ object JGitEngine {
     val repo = git.repository
     val refs = repo.refDatabase.getRefsByPrefix(CHECKPOINT_REF_PREFIX)
     RevWalk(repo).use { walk ->
-      return refs.sortedByDescending { walk.parseCommit(it.objectId).commitTime }
+      return refs.sortedWith(
+        compareByDescending<Ref> { checkpointRefTimestampMs(it) ?: walk.parseCommit(it.objectId).commitTime.toLong() * 1000L }
+          .thenByDescending { it.objectId.name },
+      )
     }
+  }
+
+  private fun checkpointRefTimestampMs(ref: Ref): Long? {
+    val leaf = ref.name.removePrefix(CHECKPOINT_REF_PREFIX)
+    val separator = leaf.indexOf('-')
+    if (separator <= 0) return null
+    return leaf.substring(0, separator).toLongOrNull()
   }
 
   /** Clear [workTree] (keeping `.git`) and extract a base64 ZIP into it. */
@@ -288,6 +301,72 @@ object JGitEngine {
     }
   }
 
+  private data class WorktreeFile(val path: String, val file: File)
+
+  private fun listWorktreeFiles(workTree: File): List<WorktreeFile> {
+    val out = mutableListOf<WorktreeFile>()
+    fun walk(dir: File) {
+      val children = dir.listFiles() ?: return
+      for (child in children) {
+        if (child.name == ".git" && child.isDirectory) continue
+        if (child.isDirectory) {
+          walk(child)
+        } else if (child.isFile) {
+          val rel = workTree.toPath().relativize(child.toPath()).toString().replace(File.separatorChar, '/')
+          out.add(WorktreeFile(rel, child))
+        }
+      }
+    }
+    walk(workTree)
+    return out.sortedBy { it.path }
+  }
+
+  private fun clearStaleIndexLock(repo: Repository) {
+    val lock = File(repo.directory, "index.lock")
+    if (lock.exists() && !lock.delete()) {
+      throw IllegalStateException("could not remove stale checkpoint index lock: ${lock.absolutePath}")
+    }
+  }
+
+  /**
+   * Rebuild the checkpoint repo index from the extracted archive worktree.
+   *
+   * Do not use JGit's AddCommand here: the captured tree can include `.gitignore`,
+   * and those ignore rules belong to the source repo, not to the checkpoint repo's
+   * staging decision. The sandbox has already chosen the capture set with
+   * `git ls-files --cached --others --exclude-standard`; staging must preserve that
+   * set exactly, including tracked files that match ignore patterns.
+   */
+  private fun stageWorktreeSnapshot(git: Git) {
+    val repo = git.repository
+    val files = listWorktreeFiles(repo.workTree)
+    repo.newObjectInserter().use { inserter ->
+      clearStaleIndexLock(repo)
+      val cache = repo.lockDirCache()
+      var committed = false
+      try {
+        val builder = cache.builder()
+        for ((path, file) in files) {
+          val entry = DirCacheEntry(path)
+          entry.setFileMode(FileMode.REGULAR_FILE)
+          entry.setLength(file.length())
+          entry.setLastModified(Instant.ofEpochMilli(file.lastModified()))
+          file.inputStream().use { input ->
+            entry.setObjectId(inserter.insert(Constants.OBJ_BLOB, file.length(), input))
+          }
+          builder.add(entry)
+        }
+        inserter.flush()
+        if (!builder.commit()) {
+          throw IllegalStateException("could not commit checkpoint index")
+        }
+        committed = true
+      } finally {
+        if (!committed) cache.unlock()
+      }
+    }
+  }
+
   /**
    * Extract [archiveBase64] into `dir`'s worktree, stage it (additions +
    * deletions), and create an orphan checkpoint commit. `committed` is false when
@@ -296,8 +375,7 @@ object JGitEngine {
   fun commitWorkingTree(dir: String, archiveBase64: String, message: String): CheckpointCommit {
     openOrInit(dir).use { git ->
       replaceWorktree(git.repository.workTree, archiveBase64)
-      git.add().addFilepattern(".").call()
-      git.add().setUpdate(true).addFilepattern(".").call()
+      stageWorktreeSnapshot(git)
       val r = commitStagedTree(git, message)
       return CheckpointCommit(r.committed, r.commitId)
     }
@@ -345,11 +423,30 @@ object JGitEngine {
       }
       val commitId = inserter.insert(builder)
       inserter.flush()
-      val update = repo.updateRef(CHECKPOINT_REF_PREFIX + commitId.name)
+      val update = repo.updateRef(CHECKPOINT_REF_PREFIX + "${System.currentTimeMillis()}-${commitId.name}")
       update.setNewObjectId(commitId)
       update.setForceUpdate(true)
       update.update()
       return CheckpointDelta(true, commitId.name, treeId.name)
+    }
+  }
+
+  private fun archiveCommit(repo: Repository, commitId: ObjectId): String? {
+    RevWalk(repo).use { walk ->
+      val commit = try { walk.parseCommit(commitId) } catch (e: Exception) { return null }
+      val baos = ByteArrayOutputStream()
+      ZipOutputStream(baos).use { zos ->
+        TreeWalk(repo).use { tw ->
+          tw.addTree(commit.tree)
+          tw.isRecursive = true
+          while (tw.next()) {
+            zos.putNextEntry(ZipEntry(tw.pathString))
+            repo.open(tw.getObjectId(0)).copyTo(zos)
+            zos.closeEntry()
+          }
+        }
+      }
+      return Base64.getEncoder().encodeToString(baos.toByteArray())
     }
   }
 
@@ -359,22 +456,7 @@ object JGitEngine {
     Git.open(File(dir)).use { git ->
       val repo = git.repository
       val id = try { ObjectId.fromString(commitId) } catch (e: Exception) { return null }
-      RevWalk(repo).use { walk ->
-        val commit = try { walk.parseCommit(id) } catch (e: Exception) { return null }
-        val baos = ByteArrayOutputStream()
-        ZipOutputStream(baos).use { zos ->
-          TreeWalk(repo).use { tw ->
-            tw.addTree(commit.tree)
-            tw.isRecursive = true
-            while (tw.next()) {
-              zos.putNextEntry(ZipEntry(tw.pathString))
-              repo.open(tw.getObjectId(0)).copyTo(zos)
-              zos.closeEntry()
-            }
-          }
-        }
-        return Base64.getEncoder().encodeToString(baos.toByteArray())
-      }
+      return archiveCommit(repo, id)
     }
   }
 
@@ -487,11 +569,13 @@ object JGitEngine {
   }
 
   /**
-   * Apply a capture DELTA onto the existing worktree (no clear) and commit an
-   * orphan checkpoint — same result tree as a full capture, a fraction of the
-   * bytes. [deletedPaths] are removed FIRST so a dir↔file swap at one path lands
-   * cleanly, then [deltaArchiveBase64]'s changed/new files are extracted over the
-   * tree. The applied tree is verified against [expectedManifest] (the sandbox's
+   * Apply a capture DELTA onto the newest checkpoint tree and commit an orphan
+   * checkpoint — same result tree as a full capture, a fraction of the bytes. The
+   * newest checkpoint is restored into a clean worktree first so residue from a
+   * prior failed verify cannot poison the next delta. [deletedPaths] are removed
+   * FIRST so a dir↔file swap at one path lands cleanly, then
+   * [deltaArchiveBase64]'s changed/new files are extracted over the tree. The
+   * applied tree is verified against [expectedManifest] (the sandbox's
    * current content manifest) BEFORE any ref is written, so a wrong delta never
    * publishes a checkpoint. Returns `committed=false` with a null commitId when
    * there's no base, when verification fails, or when applying threw — the caller
@@ -507,11 +591,13 @@ object JGitEngine {
   ): CheckpointDelta {
     if (!isCheckpointRepo(dir)) return CheckpointDelta(false, null, null)
     openOrInit(dir).use { git ->
+      val newest = checkpointRefsNewestFirst(git).firstOrNull() ?: return CheckpointDelta(false, null, null)
       val workTree = git.repository.workTree
+      val baseArchive = archiveCommit(git.repository, newest.objectId) ?: return CheckpointDelta(false, null, null)
+      replaceWorktree(workTree, baseArchive)
       for (rel in deletedPaths) safeChild(workTree, rel)?.deleteRecursively()
       extractDeltaOnto(workTree, deltaArchiveBase64)
-      git.add().addFilepattern(".").call()
-      git.add().setUpdate(true).addFilepattern(".").call()
+      stageWorktreeSnapshot(git)
       return commitStagedTree(git, message, expectedManifest)
     }
   }

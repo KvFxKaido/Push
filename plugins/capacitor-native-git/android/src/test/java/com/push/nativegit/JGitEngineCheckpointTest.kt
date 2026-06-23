@@ -2,6 +2,7 @@ package com.push.nativegit
 
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.nio.file.Files
 import java.util.Base64
 import java.util.zip.ZipEntry
@@ -89,7 +90,7 @@ class JGitEngineCheckpointTest {
   fun listIsNewestFirstAndPruneEnforcesTheCap() {
     val dir = tempDir()
     val c1 = JGitEngine.commitWorkingTree(dir, zipOf(mapOf("f" to "1")), "cp1").commitId
-    Thread.sleep(1000) // commitTime is second-resolution; separate the ordering
+    Thread.sleep(5) // New refs carry millisecond order; no full-second pause needed.
     val c2 = JGitEngine.commitWorkingTree(dir, zipOf(mapOf("f" to "2")), "cp2").commitId
 
     val list = JGitEngine.listCheckpoints(dir)
@@ -222,6 +223,66 @@ class JGitEngineCheckpointTest {
   }
 
   @Test
+  fun fullCaptureStagesFilesEvenWhenCapturedGitignoreWouldIgnoreThem() {
+    val dir = tempDir()
+    val ignoredPath = "sandbox/__pycache__/app.cpython-314.pyc"
+
+    val r = JGitEngine.commitWorkingTree(
+      dir,
+      zipOf(mapOf(".gitignore" to "*.pyc\n", ignoredPath to "bytecode")),
+      "cp1",
+    )
+
+    assertTrue(r.committed)
+    val m = JGitEngine.listManifest(dir)
+    assertEquals(blobSha("bytecode"), m[ignoredPath])
+    val tree = unzip(JGitEngine.archiveCommit(dir, r.commitId!!)!!)
+    assertEquals("bytecode", tree[ignoredPath])
+  }
+
+  @Test
+  fun commitDeltaStagesFilesEvenWhenCapturedGitignoreWouldIgnoreThem() {
+    val dir = tempDir()
+    val ignoredPath = "sandbox/__pycache__/app.cpython-314.pyc"
+    JGitEngine.commitWorkingTree(dir, zipOf(mapOf(".gitignore" to "*.pyc\n", "a.txt" to "base")), "cp1")
+
+    val r = JGitEngine.commitDelta(
+      dir,
+      zipOf(mapOf(ignoredPath to "bytecode")),
+      emptyList(),
+      mapOf(
+        ".gitignore" to blobSha("*.pyc\n"),
+        "a.txt" to blobSha("base"),
+        ignoredPath to blobSha("bytecode"),
+      ),
+      "cp2",
+    )
+
+    assertTrue("delta commits ignored-but-captured files", r.committed)
+    assertNotNull(r.commitId)
+    val tree = unzip(JGitEngine.archiveCommit(dir, r.commitId!!)!!)
+    assertEquals("bytecode", tree[ignoredPath])
+    assertEquals(blobSha("bytecode"), JGitEngine.listManifest(dir)[ignoredPath])
+  }
+
+  @Test
+  fun captureClearsStaleCheckpointIndexLock() {
+    val dir = tempDir()
+    val first = JGitEngine.commitWorkingTree(dir, zipOf(mapOf("a.txt" to "one")), "cp1")
+    assertTrue(first.committed)
+
+    val lock = File(File(dir, ".git"), "index.lock")
+    lock.writeText("stale")
+
+    val second = JGitEngine.commitWorkingTree(dir, zipOf(mapOf("a.txt" to "two")), "cp2")
+
+    assertTrue(second.committed)
+    assertFalse("stale index.lock is removed before rebuilding the checkpoint index", lock.exists())
+    val tree = unzip(JGitEngine.archiveCommit(dir, second.commitId!!)!!)
+    assertEquals("two", tree["a.txt"])
+  }
+
+  @Test
   fun commitDeltaRefusesToPublishOnVerifyMismatch() {
     val dir = tempDir()
     val c1 = JGitEngine.commitWorkingTree(dir, zipOf(mapOf("a" to "1")), "cp1")
@@ -234,5 +295,37 @@ class JGitEngineCheckpointTest {
     val list = JGitEngine.listCheckpoints(dir)
     assertEquals("only the original checkpoint exists", 1, list.size)
     assertEquals(c1.commitId, list[0].commitId)
+  }
+
+  @Test
+  fun commitDeltaRestoresCleanBaseAfterFailedDeltaResidue() {
+    val dir = tempDir()
+    val base = JGitEngine.commitWorkingTree(dir, zipOf(mapOf("keep.txt" to "base")), "cp1")
+
+    val failed = JGitEngine.commitDelta(
+      dir,
+      zipOf(mapOf("stale.txt" to "stale")),
+      emptyList(),
+      mapOf("keep.txt" to blobSha("base")),
+      "bad",
+    )
+    assertFalse("bad expected manifest fails verify", failed.committed)
+    assertNull("failed verify does not publish a checkpoint", failed.commitId)
+    assertNotNull(failed.detail)
+
+    val recovered = JGitEngine.commitDelta(
+      dir,
+      zipOf(emptyMap()),
+      emptyList(),
+      mapOf("keep.txt" to blobSha("base")),
+      "cp2",
+    )
+
+    assertFalse("clean base with empty delta dedups to existing checkpoint", recovered.committed)
+    assertEquals(base.commitId, recovered.commitId)
+    assertNull("no phantom onlyActual residue after restoring the base", recovered.detail)
+    val tree = unzip(JGitEngine.archiveCommit(dir, recovered.commitId!!)!!)
+    assertEquals("base", tree["keep.txt"])
+    assertNull(tree["stale.txt"])
   }
 }

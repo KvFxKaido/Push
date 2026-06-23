@@ -234,12 +234,12 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
 
     let cancelled = false;
     reconnectingRef.current = true;
+    setSandboxOwnerToken(saved.ownerToken);
+    setSandboxOwnerToken(saved.ownerToken, saved.sandboxId);
     const reconnectStartTimer = setTimeout(() => {
       if (cancelled) return;
       setStatus('reconnecting');
       setActiveSandboxEnvironment(null);
-      setSandboxOwnerToken(saved.ownerToken);
-      setSandboxOwnerToken(saved.ownerToken, saved.sandboxId);
     }, 0);
 
     const attemptSnapshotRestore = async (): Promise<string | null> => {

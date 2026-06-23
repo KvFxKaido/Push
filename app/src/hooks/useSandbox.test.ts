@@ -63,6 +63,11 @@ const sandboxSession = vi.hoisted(() => ({
   saveSandboxSession: vi.fn(),
   touchSandboxSessionActivity: vi.fn(),
   isSavedSessionRecoverable: vi.fn<() => boolean>(() => true),
+  decideReconnectProbe: vi.fn((args: { savedSandboxId: string; now: number }) => ({
+    probe: true,
+    nextAttempt: { sandboxId: args.savedSandboxId, at: args.now, attempts: 1 },
+  })),
+  shouldRetryReconnect: vi.fn(() => false),
 }));
 
 vi.mock('@/lib/sandbox-client', () => sandboxClient);
@@ -84,6 +89,7 @@ const reactState = vi.hoisted(() => ({
   index: 0,
   refs: [] as { current: unknown }[],
   refIndex: 0,
+  effects: [] as Array<() => void | (() => void)>,
 }));
 
 vi.mock('react', () => ({
@@ -100,7 +106,9 @@ vi.mock('react', () => ({
     return [cell.value as T, setter];
   },
   useCallback: <T extends (...args: never[]) => unknown>(fn: T) => fn,
-  useEffect: () => {},
+  useEffect: (fn: () => void | (() => void)) => {
+    reactState.effects.push(fn);
+  },
   useRef: <T>(initial: T) => {
     const i = reactState.refIndex++;
     if (!reactState.refs[i]) reactState.refs[i] = { current: initial };
@@ -118,6 +126,18 @@ function render(repo: string | null = null, branch: string | null = null) {
   return useSandbox(repo, branch);
 }
 
+async function runEffects(limit: number = reactState.effects.length): Promise<Array<() => void>> {
+  const effects = reactState.effects.splice(0, limit);
+  const cleanups: Array<() => void> = [];
+  for (const effect of effects) {
+    const cleanup = effect();
+    if (typeof cleanup === 'function') cleanups.push(cleanup);
+  }
+  await Promise.resolve();
+  await Promise.resolve();
+  return cleanups;
+}
+
 // The hook syncs sandboxId/status into refs via useEffect. Our useEffect mock
 // skips those, so tests call this after state transitions to keep the refs
 // aligned with what real React would do after a re-render.
@@ -133,6 +153,7 @@ beforeEach(() => {
   });
   sandboxClient.getSandboxOwnerToken.mockReturnValue(null);
   sandboxClient.msSinceLastSandboxCall.mockReturnValue(0);
+  sandboxClient.probeSandboxEnvironment.mockResolvedValue(null);
   Object.values(safeStorage).forEach((m) => m.mockReset());
   safeStorage.get.mockReturnValue(null);
   fileLedger.reset.mockReset();
@@ -156,6 +177,7 @@ beforeEach(() => {
   reactState.index = 0;
   reactState.refs = [];
   reactState.refIndex = 0;
+  reactState.effects = [];
 });
 
 describe('useSandbox — initial state', () => {
@@ -313,6 +335,37 @@ describe('useSandbox.start', () => {
     expect(id).toBeNull();
     expect(reactState.cells[1].value).toBe('error');
     expect(reactState.cells[2].value).toBe('network down');
+  });
+});
+
+describe('useSandbox reconnect', () => {
+  it('seeds the saved owner token before probing a saved sandbox', async () => {
+    sandboxSession.loadSandboxSession.mockReturnValue({
+      sandboxId: 'sb-saved',
+      ownerToken: 'owner-tok',
+      repoFullName: 'owner/repo',
+      branch: 'main',
+      createdAt: Date.now(),
+      lastActivityAt: Date.now(),
+    });
+    sandboxClient.execInSandbox.mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    render('owner/repo', 'main');
+    const cleanups = await runEffects(3);
+
+    expect(sandboxClient.setSandboxOwnerToken).toHaveBeenCalledWith('owner-tok');
+    expect(sandboxClient.setSandboxOwnerToken).toHaveBeenCalledWith('owner-tok', 'sb-saved');
+    expect(sandboxClient.execInSandbox).toHaveBeenCalledWith('sb-saved', 'true');
+    expect(sandboxClient.setSandboxOwnerToken.mock.invocationCallOrder[0]).toBeLessThan(
+      sandboxClient.execInSandbox.mock.invocationCallOrder[0],
+    );
+
+    cleanups.forEach((cleanup) => cleanup());
   });
 });
 
