@@ -2389,6 +2389,50 @@ describe('handleGoogleChat — neutral wire (dual-accept)', () => {
     expect(body.tools).toEqual([{ googleSearch: {} }]);
   });
 
+  it('translates neutral tools to Gemini functionDeclarations', async () => {
+    const get = captureUpstream();
+    await handleGoogleChat(
+      makeNeutralGoogleRequest({
+        model: 'gemini-3.5-flash',
+        messages: [{ role: 'user', content: 'read it' }],
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: 'sandbox_read_file',
+              description: 'Read a file',
+              parameters: {
+                type: 'object',
+                properties: { path: { type: 'string', description: 'Repo-relative path' } },
+                required: ['path'],
+                additionalProperties: false,
+              },
+            },
+          },
+        ],
+      }),
+      makeEnv({ GOOGLE_API_KEY: 'AIza' }),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    expect(body.tools).toEqual([
+      {
+        functionDeclarations: [
+          {
+            name: 'sandbox_read_file',
+            description: 'Read a file',
+            parameters: {
+              type: 'OBJECT',
+              properties: {
+                path: { type: 'STRING', description: 'Repo-relative path' },
+              },
+              required: ['path'],
+            },
+          },
+        ],
+      },
+    ]);
+  });
+
   it('carries multimodal image content as inline_data and clamps maxTokens', async () => {
     const get = captureUpstream();
     await handleGoogleChat(

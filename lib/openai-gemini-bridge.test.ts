@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import type { OpenAIChatRequest } from './openai-chat-types.ts';
-import type { LlmMessage, PushStreamEvent, PushStreamRequest } from './provider-contract.ts';
+import type {
+  LlmMessage,
+  PushStreamEvent,
+  PushStreamRequest,
+  ToolFunctionSchema,
+} from './provider-contract.ts';
 import {
   buildGeminiGenerateContentRequest,
   createGeminiTranslatedStream,
@@ -36,6 +41,22 @@ async function collectChunks(stream: ReadableStream<Uint8Array>): Promise<string
   out += decoder.decode();
   return out;
 }
+
+const readFileTool: ToolFunctionSchema = {
+  type: 'function',
+  function: {
+    name: 'sandbox_read_file',
+    description: 'Read a file from the active workspace',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Repo-relative path' },
+      },
+      required: ['path'],
+      additionalProperties: false,
+    },
+  },
+};
 
 describe('buildGeminiGenerateContentRequest', () => {
   it('renames assistant -> model, hoists system into systemInstruction', () => {
@@ -153,6 +174,34 @@ describe('buildGeminiGenerateContentRequest', () => {
     });
   });
 
+  it('translates OpenAI function tools into Gemini functionDeclarations', () => {
+    const body = buildGeminiGenerateContentRequest({
+      model: 'gemini-3.1-pro-preview',
+      messages: [{ role: 'user', content: 'Read README.md' }],
+      tools: [readFileTool],
+      google_search_grounding: true,
+    } as OpenAIChatRequest);
+
+    expect(body.tools).toEqual([
+      {
+        functionDeclarations: [
+          {
+            name: 'sandbox_read_file',
+            description: 'Read a file from the active workspace',
+            parameters: {
+              type: 'OBJECT',
+              properties: {
+                path: { type: 'STRING', description: 'Repo-relative path' },
+              },
+              required: ['path'],
+            },
+          },
+        ],
+      },
+      { googleSearch: {} },
+    ]);
+  });
+
   it('omits generationConfig when no sampling params are set', () => {
     const body = buildGeminiGenerateContentRequest({
       model: 'gemini-3.1-pro-preview',
@@ -246,6 +295,39 @@ describe('createGeminiTranslatedStream', () => {
     expect(out).toContain('"content":" frames"');
     expect(out).toContain('"finish_reason":"stop"');
     expect(out.endsWith('data: [DONE]\n\n')).toBe(true);
+  });
+
+  it('translates Gemini functionCall parts into OpenAI tool_call deltas', async () => {
+    const frames = [
+      `data: ${JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [{ functionCall: { name: 'sandbox_read_file', args: { path: 'README.md' } } }],
+            },
+            finishReason: 'STOP',
+          },
+        ],
+      })}\n\n`,
+    ];
+
+    const translated = createGeminiTranslatedStream(
+      createEventStreamResponse(frames),
+      'gemini-3.1-pro-preview',
+    );
+    const events = await collectEvents(
+      openAISSEPump({
+        body: translated,
+        isKnownToolName: (name) => name === 'sandbox_read_file',
+      }),
+    );
+
+    expect(events[0]).toEqual({ type: 'tool_call_delta' });
+    expect(events[1]).toEqual({
+      type: 'text_delta',
+      text: '\n```json\n{"tool":"sandbox_read_file","args":{"path":"README.md"}}\n```\n',
+    });
+    expect(events[2]).toMatchObject({ type: 'done', finishReason: 'tool_calls' });
   });
 });
 
@@ -387,6 +469,33 @@ describe('toGeminiGenerateContent — drift vs legacy OpenAI-detour path', () =>
     });
     expect(body.systemInstruction).toEqual({ parts: [{ text: 'be terse' }] });
   });
+
+  it('serializes neutral native tools as Gemini functionDeclarations', () => {
+    const body = toGeminiGenerateContent({
+      provider: 'google',
+      model: 'gemini-3.5-flash',
+      messages: [llm('1', 'user', 'read it')],
+      tools: [readFileTool],
+    });
+
+    expect(body.tools).toEqual([
+      {
+        functionDeclarations: [
+          {
+            name: 'sandbox_read_file',
+            description: 'Read a file from the active workspace',
+            parameters: {
+              type: 'OBJECT',
+              properties: {
+                path: { type: 'STRING', description: 'Repo-relative path' },
+              },
+              required: ['path'],
+            },
+          },
+        ],
+      },
+    ]);
+  });
 });
 
 describe('toGeminiGenerateContent — multimodal contentParts', () => {
@@ -515,6 +624,39 @@ describe('geminiEventStream — drift vs translate->pump', () => {
     {
       name: 'stream ends without a finishReason frame (clean close -> stop)',
       frames: [frame({ candidates: [{ content: { parts: [{ text: 'tail' }] } }] })],
+    },
+    {
+      name: 'functionCall part flushes as dispatcher JSON',
+      frames: [
+        frame({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  { functionCall: { name: 'sandbox_read_file', args: { path: 'README.md' } } },
+                ],
+              },
+              finishReason: 'STOP',
+            },
+          ],
+        }),
+      ],
+    },
+    {
+      name: 'functionCall part with clean close still finishes as tool_calls',
+      frames: [
+        frame({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  { functionCall: { name: 'sandbox_read_file', args: { path: 'README.md' } } },
+                ],
+              },
+            },
+          ],
+        }),
+      ],
     },
   ];
 
