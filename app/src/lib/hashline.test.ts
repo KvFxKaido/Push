@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { adaptiveHashDisplayLength, calculateLineHash, applyHashlineEdits } from './hashline';
+import {
+  adaptiveHashDisplayLength,
+  calculateLineHash,
+  applyHashlineEdits,
+  renderAnchoredRange,
+} from './hashline';
 
 describe('calculateLineHash', () => {
   it('returns 7 chars by default', async () => {
@@ -66,16 +71,25 @@ describe('trimmed line hashing (reindentation resilience)', () => {
   });
 });
 
-describe('trailing newline preservation', () => {
-  it('keeps the terminal newline when the model deletes the phantom empty last line', async () => {
-    // A newline-terminated file surfaces its trailing newline as a phantom empty
-    // last line. Models routinely delete it as a "stray blank"; that must NOT
-    // strip the file's terminal newline.
+describe('trailing newline as a file property (no phantom line)', () => {
+  it('does not show the terminal newline as an editable line', async () => {
+    // A newline-terminated file must render exactly its real lines — no phantom
+    // empty last line for the model to mistake for a stray blank and delete.
+    const view = await renderAnchoredRange('alpha\nbeta\n');
+    expect(view.totalLines).toBe(2);
+    expect(view.text.split('\n')).toHaveLength(2);
+    expect(view.text).toContain('alpha');
+    expect(view.text).toContain('beta');
+  });
+
+  it('appends past the last line and keeps the terminal newline', async () => {
     const content = 'alpha\nbeta\n';
-    const phantomRef = await calculateLineHash('', 12);
-    const result = await applyHashlineEdits(content, [{ op: 'delete_line', ref: phantomRef }]);
+    const ref = await calculateLineHash('beta', 12);
+    const result = await applyHashlineEdits(content, [
+      { op: 'insert_after', ref, content: 'gamma' },
+    ]);
     expect(result.failed).toBe(0);
-    expect(result.content).toBe('alpha\nbeta\n');
+    expect(result.content).toBe('alpha\nbeta\ngamma\n');
   });
 
   it('does not fabricate a trailing newline on a file that never had one', async () => {
@@ -98,14 +112,10 @@ describe('trailing newline preservation', () => {
   });
 
   it('yields an empty file (not a lone newline) when every line is deleted', async () => {
-    // Deleting all visible lines of a newline-terminated file must produce an
+    // Deleting all editable lines of a newline-terminated file must produce an
     // empty file — the newline restoration must not leave a stray blank line.
     const content = 'alpha\nbeta\n';
-    const refs = await Promise.all([
-      calculateLineHash('alpha', 12),
-      calculateLineHash('beta', 12),
-      calculateLineHash('', 12),
-    ]);
+    const refs = await Promise.all([calculateLineHash('alpha', 12), calculateLineHash('beta', 12)]);
     const result = await applyHashlineEdits(
       content,
       refs.map((ref) => ({ op: 'delete_line', ref })),
