@@ -3,9 +3,11 @@ import {
   adaptiveHashDisplayLength,
   calculateLineHash,
   applyHashlineEdits,
+  detectLineEndingStyle,
   renderAnchoredRange,
   splitEditableLines,
   splitEditContentLines,
+  splitRenderableLines,
 } from './hashline';
 
 describe('calculateLineHash', () => {
@@ -144,14 +146,46 @@ describe('trailing newline as a file property (no phantom line)', () => {
   });
 
   it('preserves a CRLF file ending when editing a different line', async () => {
-    // The `\r` rides on each line; editing one line must not disturb the
-    // untouched trailing CRLF.
+    // The replacement line must inherit the file's CRLF style; checking only
+    // the untouched tail misses the mixed-ending regression.
     const ref = await calculateLineHash('alpha', 12);
     const result = await applyHashlineEdits('alpha\r\nbeta\r\n', [
       { op: 'replace_line', ref, content: 'ALPHA' },
     ]);
     expect(result.failed).toBe(0);
-    expect(result.content.endsWith('beta\r\n')).toBe(true);
+    expect(result.content).toBe('ALPHA\r\nbeta\r\n');
+  });
+
+  it('uses CRLF for inserted lines in a CRLF file without a terminal newline', async () => {
+    const ref = await calculateLineHash('beta', 12);
+    const result = await applyHashlineEdits('alpha\r\nbeta', [
+      { op: 'insert_after', ref, content: 'gamma' },
+    ]);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('alpha\r\nbeta\r\ngamma');
+  });
+
+  it('uses CRLF for every line in a multi-line replacement', async () => {
+    const ref = await calculateLineHash('beta', 12);
+    const result = await applyHashlineEdits('alpha\r\nbeta\r\ngamma\r\n', [
+      { op: 'replace_line', ref, content: 'b1\nb2' },
+    ]);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('alpha\r\nb1\r\nb2\r\ngamma\r\n');
+  });
+});
+
+describe('line ending helpers', () => {
+  it('detects dominant newline style, using the terminal newline as the tie-breaker', () => {
+    expect(detectLineEndingStyle('alpha\nbeta\n')).toBe('\n');
+    expect(detectLineEndingStyle('alpha\r\nbeta\r\n')).toBe('\r\n');
+    expect(detectLineEndingStyle('alpha\r\nbeta\n')).toBe('\n');
+    expect(detectLineEndingStyle('alpha\nbeta\r\n')).toBe('\r\n');
+  });
+
+  it('drops only the render phantom while hiding CRLF carriage returns', () => {
+    expect(splitRenderableLines('alpha\r\nbeta\r\n')).toEqual(['alpha', 'beta']);
+    expect(splitRenderableLines('alpha\n\n')).toEqual(['alpha', '']);
   });
 });
 
