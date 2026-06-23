@@ -248,6 +248,33 @@ interface OffsetCall {
   offset: number;
 }
 
+function stableInvocationKey(tool: string, args: Record<string, unknown>): string {
+  return `${tool}:${JSON.stringify(normalizeInvocationValue(args) ?? null)}`;
+}
+
+function normalizeInvocationValue(value: unknown): unknown {
+  if (value === null) return null;
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => {
+      const normalized = normalizeInvocationValue(item);
+      return normalized === undefined ? null : normalized;
+    });
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(record).sort()) {
+      const normalized = normalizeInvocationValue(record[key]);
+      if (normalized !== undefined) out[key] = normalized;
+    }
+    return out;
+  }
+  return undefined;
+}
+
 /**
  * Brace-counted scan that returns every top-level JSON object in `text`
  * together with its starting offset. Mirrors `extractAllBareJsonObjects`
@@ -388,11 +415,15 @@ function isInsideRecoveryArgsRegion(text: string, objectStart: number): boolean 
 function detectFromLegacyScan(text: string): {
   entries: OffsetCall[];
   droppedCandidates: DroppedToolCallCandidate[];
+  droppedIdentities: string[];
 } {
   const parsedObjects = scanBareObjectsWithOffsets(text);
-  if (parsedObjects.length === 0) return { entries: [], droppedCandidates: [] };
+  if (parsedObjects.length === 0) {
+    return { entries: [], droppedCandidates: [], droppedIdentities: [] };
+  }
   const entries: OffsetCall[] = [];
   const droppedCandidates: DroppedToolCallCandidate[] = [];
+  const droppedIdentities: string[] = [];
   for (const { parsed, start } of parsedObjects) {
     // Skip bare-args inference when the object is preceded by a
     // recovery-shape prefix. Objects WITH a `tool` field still pass
@@ -406,17 +437,24 @@ function detectFromLegacyScan(text: string): {
     if (!call) {
       const rawToolName = typeof parsed.tool === 'string' ? parsed.tool.trim() : null;
       if (rawToolName) {
+        const args =
+          parsed.args && typeof parsed.args === 'object' && !Array.isArray(parsed.args)
+            ? (parsed.args as Record<string, unknown>)
+            : null;
         droppedCandidates.push({
           rawToolName,
           resolvedToolName: resolveToolName(rawToolName),
           sample: serialized.length > 200 ? `${serialized.slice(0, 200)}…` : serialized,
         });
+        droppedIdentities.push(
+          args ? stableInvocationKey(rawToolName, args) : `raw:${rawToolName}`,
+        );
       }
       continue;
     }
     entries.push({ call, offset: start });
   }
-  return { entries, droppedCandidates };
+  return { entries, droppedCandidates, droppedIdentities };
 }
 
 /**
@@ -474,12 +512,13 @@ export function detectAllToolCalls(text: string, opts?: DetectToolCallsOptions):
     offset: kernelResult.callOffsets[i],
   }));
   const droppedCandidates: DroppedToolCallCandidate[] = [];
+  const droppedIdentities: string[] = [];
 
   // Track which dropped candidates we've already surfaced so the legacy
   // fallback below doesn't double-report shapes the kernel already
-  // claimed. Key on rawToolName because the two paths emit different
-  // samples (kernel: raw fenced text; legacy: re-stringified parsed
-  // object), so sample-based deduplication doesn't work.
+  // claimed. Prefer a stable invocation key when the candidate parsed far
+  // enough to expose args; fall back to rawToolName for older/more malformed
+  // shapes where args are unavailable.
   const droppedSeen = new Set<string>();
   for (const malformed of kernelResult.malformed) {
     // `missing_args_object` cases are shapes the kernel's structural
@@ -490,9 +529,11 @@ export function detectAllToolCalls(text: string, opts?: DetectToolCallsOptions):
     if (malformed.reason === 'missing_args_object') continue;
     const dropped = mapMalformedToDropped(malformed);
     if (!dropped) continue;
-    if (droppedSeen.has(dropped.rawToolName)) continue;
-    droppedSeen.add(dropped.rawToolName);
+    const identity = malformed.canonicalInvocationKey ?? `raw:${dropped.rawToolName}`;
+    if (droppedSeen.has(identity)) continue;
+    droppedSeen.add(identity);
     droppedCandidates.push(dropped);
+    droppedIdentities.push(identity);
   }
 
   // `extractBareToolJsonObjects` requires a string `tool` field, so
@@ -517,12 +558,12 @@ export function detectAllToolCalls(text: string, opts?: DetectToolCallsOptions):
       ...recoverXmlToolCalls(text),
       ...recoverTokenDelimitedToolCalls(text),
     ].sort((a, b) => a.offset - b.offset);
-    const recoveredRawNames = new Set<string>();
+    const recoveredKeys = new Set<string>();
     for (const recovered of recoveries) {
       const call = wrapRecoveredCallToAny(recovered.tool, recovered.args);
       if (!call) continue;
       recoveryEntries.push({ call, offset: recovered.offset });
-      recoveredRawNames.add(recovered.tool.trim());
+      recoveredKeys.add(stableInvocationKey(recovered.tool.trim(), recovered.args));
     }
     // Reconcile the kernel's malformed reports against what this pass
     // claimed. `enableInternalRecovery: false` makes the kernel emit every
@@ -533,15 +574,19 @@ export function detectAllToolCalls(text: string, opts?: DetectToolCallsOptions):
     // `chat-send` short-circuits the turn into a parse-error correction and
     // the recovered call never executes. Because this branch only runs when
     // `!hasExplicitWrappers` (no canonical/bare JSON in the text), every
-    // kernel malformed here is recovery-origin, so matching on `rawToolName`
-    // can't shadow a genuine canonical drop. Recovery shapes this pass could
-    // NOT claim (`wrapRecoveredCallToAny` → null, i.e. a truly unknown tool)
-    // are absent from the set and correctly stay in `droppedCandidates`.
-    if (recoveredRawNames.size > 0) {
+    // kernel malformed here is recovery-origin, so matching on the full
+    // invocation key can't shadow a genuine canonical drop. Recovery shapes
+    // this pass could NOT claim (`wrapRecoveredCallToAny` → null, e.g. a
+    // genuinely unknown tool or invalid args for that tool) are absent from
+    // the set and correctly stay in `droppedCandidates`, even when another
+    // recovered sibling used the same raw tool name.
+    if (recoveredKeys.size > 0) {
       for (let i = droppedCandidates.length - 1; i >= 0; i--) {
-        if (recoveredRawNames.has(droppedCandidates[i].rawToolName)) {
-          droppedSeen.delete(droppedCandidates[i].rawToolName);
+        const identity = droppedIdentities[i];
+        if (identity && recoveredKeys.has(identity)) {
+          droppedSeen.delete(identity);
           droppedCandidates.splice(i, 1);
+          droppedIdentities.splice(i, 1);
         }
       }
     }
@@ -560,10 +605,13 @@ export function detectAllToolCalls(text: string, opts?: DetectToolCallsOptions):
   if (hasExplicitWrappers) {
     const legacyResult = detectFromLegacyScan(text);
     legacyEntries = legacyResult.entries;
-    for (const dropped of legacyResult.droppedCandidates) {
-      if (droppedSeen.has(dropped.rawToolName)) continue;
-      droppedSeen.add(dropped.rawToolName);
+    for (let i = 0; i < legacyResult.droppedCandidates.length; i++) {
+      const dropped = legacyResult.droppedCandidates[i];
+      const identity = legacyResult.droppedIdentities[i] ?? `raw:${dropped.rawToolName}`;
+      if (droppedSeen.has(identity)) continue;
+      droppedSeen.add(identity);
       droppedCandidates.push(dropped);
+      droppedIdentities.push(identity);
     }
   }
 

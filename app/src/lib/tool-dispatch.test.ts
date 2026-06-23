@@ -1304,6 +1304,21 @@ describe('detectAllToolCalls — recovery clears its own droppedCandidates', () 
     expect(result.droppedCandidates).toHaveLength(1);
     expect(result.droppedCandidates[0].rawToolName).toBe('totally_unknown_tool');
   });
+
+  it('keeps a malformed same-name recovered sibling dropped', () => {
+    const text = [
+      '<invoke name="read"><parameter name="path">/workspace/README.md</parameter></invoke>',
+      '<invoke name="read"><parameter name="bad">x</parameter></invoke>',
+    ].join('\n');
+    const result = detectAllToolCalls(text);
+
+    expect(result.readOnly.map((c) => c.call.tool)).toEqual(['sandbox_read_file']);
+    expect(result.droppedCandidates).toHaveLength(1);
+    expect(result.droppedCandidates[0]).toMatchObject({
+      rawToolName: 'read',
+      resolvedToolName: 'sandbox_read_file',
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

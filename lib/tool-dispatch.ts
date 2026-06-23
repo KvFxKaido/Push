@@ -93,6 +93,10 @@ export interface ToolMalformedReport {
    *  to re-derive it from the (truncated) sample — the web wrapper previously
    *  re-parsed `sample`, the CLI dropped the name entirely. */
   rawToolName?: string;
+  /** Stable `tool + args` key for candidates that parsed far enough to carry
+   *  args. Lets callers reconcile recovered calls without collapsing distinct
+   *  same-name siblings. */
+  canonicalInvocationKey?: string;
 }
 
 export type ToolMalformedReason =
@@ -388,6 +392,7 @@ export function createToolDispatcher<TCall>(
             reason: 'unknown_tool',
             sample: truncateSample(recovered.sample),
             rawToolName: recovered.tool.trim(),
+            canonicalInvocationKey: canonicalKey(parsed),
           });
         }
       }
@@ -431,6 +436,7 @@ export function createToolDispatcher<TCall>(
             reason: 'unknown_tool',
             sample: truncateSample(candidate.sample),
             rawToolName: candidate.parsed.tool.trim(),
+            canonicalInvocationKey: canonicalKey(candidate.parsed),
           });
         }
       }
