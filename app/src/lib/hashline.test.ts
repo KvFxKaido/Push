@@ -125,6 +125,23 @@ describe('trailing newline as a file property (no phantom line)', () => {
     expect(result.content).toBe('');
   });
 
+  it('keeps a surviving blank line (with its newline) when a sibling line is deleted', async () => {
+    // `alpha\n\n` = "alpha" + one blank line + terminal newline. Deleting alpha
+    // leaves the blank line, so the file is `\n` — NOT empty. (A blank line that
+    // survives is content; only deleting *every* line empties the file.)
+    const ref = await calculateLineHash('alpha', 12);
+    const result = await applyHashlineEdits('alpha\n\n', [{ op: 'delete_line', ref }]);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('\n');
+  });
+
+  it('keeps the terminal newline when the only line is replaced with empty content', async () => {
+    const ref = await calculateLineHash('alpha', 12);
+    const result = await applyHashlineEdits('alpha\n', [{ op: 'replace_line', ref, content: '' }]);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('\n');
+  });
+
   it('preserves a CRLF file ending when editing a different line', async () => {
     // The `\r` rides on each line; editing one line must not disturb the
     // untouched trailing CRLF.

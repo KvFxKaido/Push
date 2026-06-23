@@ -465,12 +465,16 @@ export function applyResolvedHashlineEdits(
 
   // Preserve the original terminal-newline state: restore it only if an edit
   // dropped it. Never collapse trailing blanks the model intentionally added,
-  // never fabricate a newline on a file that never had one, and never on a now
-  // -empty result — deleting every line yields an empty file, not a lone newline.
+  // never fabricate a newline on a file that never had one. Distinguish "no
+  // lines left" (deleted every line → empty file, no newline) from "a blank line
+  // survives" (`['']` joins to `''` too, but it's content → keep the newline):
+  // gate on `resultLines.length`, not on the joined string being empty.
   const joined = resultLines.join('\n');
   return {
     content:
-      originalEndedWithNewline && joined !== '' && !joined.endsWith('\n') ? `${joined}\n` : joined,
+      originalEndedWithNewline && resultLines.length > 0 && !joined.endsWith('\n')
+        ? `${joined}\n`
+        : joined,
     applied: appliedCount,
     failed: failedCount,
     errors,
