@@ -5,7 +5,7 @@
 
 Run your repo from a chat. Push collapses the mobile dev stack — GitHub, terminal, CI, code, and AI — into one conversation, not a dozen apps and browser tabs.
 
-Self-hosted, provider-flexible, and built to stay tied to real code — not a managed cloud.
+Self-hosted, provider-flexible, and built to stay tied to real code — not someone else's managed AI cloud.
 
 ## Why Push exists
 
@@ -17,7 +17,7 @@ On a phone especially, running a repo normally means bouncing between the GitHub
 
 ## What makes it different
 
-- **One surface, not a tab graveyard** — git, GitHub, CI, code, and AI in a single conversation instead of a half-dozen apps and browser tabs
+- **One surface, not a tab graveyard** — git, GitHub, CI, code, and AI in a single conversation
 - **Chat-first, repo-locked workflow** — context stays anchored to one repo and one active branch
 - **One capable agent, not a relay** — a single lead reads, edits, runs, and ships in one loop; pulls in read-only investigation or independent review only when it earns its keep
 - **Self-hosted and provider-flexible** — use your own model stack instead of buying into one AI platform
