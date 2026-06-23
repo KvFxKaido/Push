@@ -1412,8 +1412,7 @@ export function WorkspaceHubSheet({
                                   </div>
                                 )}
                               {branchProps.availableBranches.map((branch) => {
-                                const isActive =
-                                  branch.name === branchProps.currentBranch;
+                                const isActive = branch.name === branchProps.currentBranch;
                                 return (
                                   <BranchListItem
                                     key={branch.name}

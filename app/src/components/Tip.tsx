@@ -1,10 +1,6 @@
 import * as React from 'react';
 
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useLongPress } from '@/hooks/useLongPress';
 
 type TipSide = React.ComponentProps<typeof TooltipContent>['side'];
@@ -34,13 +30,7 @@ interface TipProps {
  * Long-press is a progressive enhancement: on touch the subsequent tap still
  * activates the underlying control. Keep that in mind for destructive triggers.
  */
-export function Tip({
-  content,
-  children,
-  side = 'top',
-  sideOffset = 6,
-  className,
-}: TipProps) {
+export function Tip({ content, children, side = 'top', sideOffset = 6, className }: TipProps) {
   const [open, setOpen] = React.useState(false);
   const { pointerHandlers } = useLongPress(() => setOpen(true));
 
