@@ -205,6 +205,23 @@ class JGitEngineCheckpointTest {
   }
 
   @Test
+  fun checkpointBlobsStayRawDespiteCapturedGitattributes() {
+    // The captured tree carries a .gitattributes that WOULD normalize CRLF->LF, plus
+    // a CRLF file. .git/info/attributes (`* -text`) must override it so the stored
+    // blob is the RAW bytes — matching the sandbox's `git hash-object --no-filters`,
+    // without which every delta verify fails (Push's `* text=auto eol=lf`).
+    val dir = tempDir()
+    val crlf = "line1\r\nline2\r\n"
+    JGitEngine.commitWorkingTree(
+      dir,
+      zipOf(mapOf(".gitattributes" to "* text=auto eol=lf\n", "win.txt" to crlf)),
+      "cp1",
+    )
+    val m = JGitEngine.listManifest(dir)
+    assertEquals("blob is RAW CRLF content, not LF-normalized", blobSha(crlf), m["win.txt"])
+  }
+
+  @Test
   fun commitDeltaRefusesToPublishOnVerifyMismatch() {
     val dir = tempDir()
     val c1 = JGitEngine.commitWorkingTree(dir, zipOf(mapOf("a" to "1")), "cp1")

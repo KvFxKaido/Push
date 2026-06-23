@@ -212,7 +212,12 @@ object JGitEngine {
   data class CheckpointCommit(val committed: Boolean, val commitId: String?)
   /** Like [CheckpointCommit] but also carries the result tree id, so a delta
    *  caller can verify it against the sandbox's tree hash and fall back on drift. */
-  data class CheckpointDelta(val committed: Boolean, val commitId: String?, val treeId: String?)
+  data class CheckpointDelta(
+    val committed: Boolean,
+    val commitId: String?,
+    val treeId: String?,
+    val detail: String? = null,
+  )
   data class CheckpointEntry(val commitId: String, val message: String, val timestampMs: Long)
 
   private const val CHECKPOINT_REF_PREFIX = "refs/checkpoints/"
@@ -223,14 +228,27 @@ object JGitEngine {
 
   private fun openOrInit(dir: String): Git {
     val f = File(dir)
-    if (File(f, ".git").exists()) return Git.open(f)
-    f.mkdirs()
-    val git = Git.init().setDirectory(f).call()
-    // Keep checkpoint blob ids = raw-content hashes so the device's manifest (JGit)
-    // and the sandbox's (C-git) agree on identical content. `autocrlf` off is the
-    // load-bearing one: it must not canonicalize CRLF/LF to one blob, or a
-    // line-ending-only change would diff as unchanged. See Native Checkpoint
-    // Store.md — "Diff transport (capture): manifest-rsync" / Correctness.
+    val git =
+      if (File(f, ".git").exists()) {
+        Git.open(f)
+      } else {
+        f.mkdirs()
+        Git.init().setDirectory(f).call()
+      }
+    // Force RAW-BYTES blobs so the device's blob ids match the sandbox's manifest
+    // (`git hash-object --no-filters`). `.git/info/attributes` has the HIGHEST
+    // attribute precedence, so `* -text` disables text/EOL normalization for every
+    // path — overriding any `.gitattributes` captured into the worktree (e.g. Push's
+    // `* text=auto eol=lf` / `*.cmd eol=crlf`), which would otherwise make JGit
+    // normalize content the sandbox hashed raw and fail every delta verify. Applied
+    // on EXISTING repos too (idempotent) — checkpoints created before this predate it.
+    val infoDir = File(f, ".git/info")
+    infoDir.mkdirs()
+    val attrs = File(infoDir, "attributes")
+    if (!attrs.exists() || !attrs.readText().contains("* -text")) {
+      attrs.writeText("* -text\n")
+    }
+    // autocrlf off too — belt-and-suspenders alongside info/attributes.
     git.repository.config.apply {
       setBoolean("core", null, "autocrlf", false)
       save()
@@ -305,8 +323,11 @@ object JGitEngine {
       // if the applied tree doesn't match (filter disagreement / drift), refuse
       // WITHOUT writing a ref, so an unverified checkpoint never lands (the caller
       // falls back to a full capture, which resets the worktree).
-      if (expected != null && !manifestsEqual(treeManifest(repo, treeId), expected)) {
-        return CheckpointDelta(false, null, treeId.name)
+      if (expected != null) {
+        val actual = treeManifest(repo, treeId)
+        if (!manifestsEqual(actual, expected)) {
+          return CheckpointDelta(false, null, treeId.name, manifestMismatchDetail(actual, expected))
+        }
       }
       val newest = checkpointRefsNewestFirst(git).firstOrNull()
       if (newest != null) {
@@ -420,6 +441,15 @@ object JGitEngine {
   private fun manifestsEqual(a: Map<String, String>, b: Map<String, String>): Boolean =
     a.size == b.size && a.all { (k, v) -> b[k] == v }
 
+  /** Diagnostic summary of why two manifests differ (counts + sample paths). */
+  private fun manifestMismatchDetail(actual: Map<String, String>, expected: Map<String, String>): String {
+    val onlyActual = actual.keys.filter { it !in expected }.take(6)
+    val onlyExpected = expected.keys.filter { it !in actual }.take(6)
+    val valDiff = actual.keys.filter { it in expected && actual[it] != expected[it] }.take(6)
+    return "actual=${actual.size} expected=${expected.size}" +
+      " onlyActual=$onlyActual onlyExpected=$onlyExpected valDiff=$valDiff"
+  }
+
   /** Resolve [rel] under [workTree], returning null if it would escape the tree. */
   private fun safeChild(workTree: File, rel: String): File? {
     val child = File(workTree, rel)
@@ -476,7 +506,7 @@ object JGitEngine {
     message: String,
   ): CheckpointDelta {
     if (!isCheckpointRepo(dir)) return CheckpointDelta(false, null, null)
-    Git.open(File(dir)).use { git ->
+    openOrInit(dir).use { git ->
       val workTree = git.repository.workTree
       for (rel in deletedPaths) safeChild(workTree, rel)?.deleteRecursively()
       extractDeltaOnto(workTree, deltaArchiveBase64)
