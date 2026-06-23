@@ -458,6 +458,28 @@ describe('recoverXmlToolCalls — Shape E (standalone invoke, no wrapper)', () =
     expect(recovered).toHaveLength(1);
     expect(recovered[0].args).toEqual({ start_line: 10, enabled: true });
   });
+
+  // The standalone scan reuses INVOKE_TAG_REGEX, whose `NS` prefix is
+  // optional, so a namespace-token-wrapped standalone invoke (the Shape D
+  // tag style emitted WITHOUT its usual <｜DSML｜tool_calls｜> wrapper) is
+  // recovered too — both the ASCII-pipe and full-width-pipe delimiters.
+  it('recovers a namespace-token-wrapped standalone invoke (ASCII pipe)', () => {
+    const text =
+      '<|DSML|invoke name="search"><|DSML|parameter name="query">a</|DSML|parameter></|DSML|invoke>';
+    const recovered = recoverXmlToolCalls(text);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0].tool).toBe('search');
+    expect(recovered[0].args).toEqual({ query: 'a' });
+  });
+
+  it('recovers a namespace-token-wrapped standalone invoke (full-width pipe)', () => {
+    const text =
+      '<｜DSML｜invoke name="search"><｜DSML｜parameter name="query">a</｜DSML｜parameter></｜DSML｜invoke>';
+    const recovered = recoverXmlToolCalls(text);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0].tool).toBe('search');
+    expect(recovered[0].args).toEqual({ query: 'a' });
+  });
 });
 
 // ---------------------------------------------------------------------------
