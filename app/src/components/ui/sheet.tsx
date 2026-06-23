@@ -73,7 +73,12 @@ function SheetContent({
           // iOS without a notch, so this is a no-op there. h-full is dropped
           // for left/right because top + bottom already imply the height —
           // keeping h-full would override `bottom` and re-extend past the nav.
-          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out fixed z-50 flex flex-col gap-4 shadow-lg transition ease-in-out data-[state=closed]:duration-300 data-[state=open]:duration-500",
+          //
+          // Slide timing/easing is NOT set here: it's retimed onto the shared
+          // `--panel-*` motion tokens in index.css (the `[data-slot=sheet-content]`
+          // rules), so every Push panel shares one open/close feel. The classes
+          // below only declare the animation + directional slide.
+          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out fixed z-50 flex flex-col gap-4 shadow-lg",
           side === "right" &&
             "data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right top-[env(safe-area-inset-top)] bottom-[env(safe-area-inset-bottom)] right-0 w-3/4 border-l sm:max-w-sm",
           side === "left" &&
