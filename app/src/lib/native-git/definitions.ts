@@ -131,14 +131,17 @@ export interface NativeGitPlugin {
   /**
    * Apply a capture delta onto the worktree (no clear: extract changed files,
    * remove `deletedPaths`, handling dir<->file transitions) and commit an orphan
-   * checkpoint. `treeId` is the result tree, for the caller to verify against the
-   * sandbox's tree hash. `committed` is false when the repo has no base (caller
-   * must full-capture) or the result tree matches the newest checkpoint.
+   * checkpoint — but only after the applied tree is verified against
+   * `expectedManifest` (the sandbox's current content manifest); a mismatch
+   * publishes NO ref. `committed=false` + null `commitId` means no base / verify
+   * failed / threw (caller must full-capture); `committed=false` + a `commitId`
+   * means the delta de-duped to the newest checkpoint (no change).
    */
   commitDelta(options: {
     dir: string;
     deltaArchiveBase64: string;
     deletedPaths: string[];
+    expectedManifest: Record<string, string>;
     message: string;
   }): Promise<{ committed: boolean; commitId: string | null; treeId: string | null }>;
 }

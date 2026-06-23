@@ -251,13 +251,10 @@ describe('NativeJgitCheckpointStore.capture — diff transport (delta path)', ()
   // a.txt changed (HA -> HA2), b.txt unchanged; the sandbox's current manifest.
   const deltaStdout = `OK 50\n---DEL---\n---MAN---\n${HA2} a.txt\n${HB} b.txt\n`;
 
-  /** A plugin whose listManifest returns the base, then the post-commit manifest. */
+  /** A plugin whose listManifest returns the base; commitDelta verifies internally. */
   function deltaPlugin(over: Partial<NativeGitPlugin> = {}) {
     return fakePlugin({
-      listManifest: vi
-        .fn()
-        .mockResolvedValueOnce({ manifest: { 'a.txt': HA, 'b.txt': HB } }) // base (call 1)
-        .mockResolvedValue({ manifest: { 'a.txt': HA2, 'b.txt': HB } }), // after (verify)
+      listManifest: vi.fn(async () => ({ manifest: { 'a.txt': HA, 'b.txt': HB } })),
       commitDelta: vi.fn(async () => ({ committed: true, commitId: 'delta-1', treeId: 't1' })),
       ...over,
     });
@@ -277,8 +274,14 @@ describe('NativeJgitCheckpointStore.capture — diff transport (delta path)', ()
     expect(result).toEqual({ status: 'captured', dedupToken: 'delta-1' });
     expect(upload).toHaveBeenCalledWith('sb', BASE_PATH, expect.stringContaining('a.txt'));
     expect(download).toHaveBeenCalledWith('sb', TMP_DELTA);
+    // The sandbox's current manifest is handed to commitDelta as the verify target.
     expect(plugin.commitDelta).toHaveBeenCalledWith(
-      expect.objectContaining({ dir: DIR, deltaArchiveBase64: 'DELTAB64', deletedPaths: [] }),
+      expect.objectContaining({
+        dir: DIR,
+        deltaArchiveBase64: 'DELTAB64',
+        deletedPaths: [],
+        expectedManifest: { 'a.txt': HA2, 'b.txt': HB },
+      }),
     );
     expect(plugin.commitWorkingTree).not.toHaveBeenCalled();
   });
@@ -294,13 +297,11 @@ describe('NativeJgitCheckpointStore.capture — diff transport (delta path)', ()
     expect(download).toHaveBeenCalledWith('sb', TMP_ARCHIVE);
   });
 
-  it('falls back to full capture when delta verification mismatches', async () => {
+  it('falls back to full capture when commitDelta refuses to publish (verify failed)', async () => {
+    // commitDelta verifies the applied tree against the sandbox manifest before
+    // publishing; a mismatch returns committed=false + null commitId (no ref).
     const plugin = deltaPlugin({
-      // The post-commit manifest disagrees with the sandbox's emitted one → verify fails.
-      listManifest: vi
-        .fn()
-        .mockResolvedValueOnce({ manifest: { 'a.txt': HA, 'b.txt': HB } })
-        .mockResolvedValue({ manifest: { 'a.txt': 'd'.repeat(40), 'b.txt': HB } }),
+      commitDelta: vi.fn(async () => ({ committed: false, commitId: null, treeId: 't1' })),
     });
     const result = await store({
       plugin,
@@ -310,12 +311,22 @@ describe('NativeJgitCheckpointStore.capture — diff transport (delta path)', ()
     expect(plugin.commitWorkingTree).toHaveBeenCalled(); // the superseding full capture
   });
 
+  it('reports unchanged when the delta de-dupes to the newest checkpoint', async () => {
+    // committed=false WITH a commitId means the applied tree matched the newest.
+    const plugin = deltaPlugin({
+      commitDelta: vi.fn(async () => ({ committed: false, commitId: 'existing-1', treeId: 't1' })),
+    });
+    const result = await store({
+      plugin,
+      exec: fakeExec({ probe: PROBE, delta: deltaStdout }),
+    }).capture(SCOPE);
+    expect(result).toEqual({ status: 'unchanged', dedupToken: 'existing-1' });
+    expect(plugin.commitWorkingTree).not.toHaveBeenCalled();
+  });
+
   it('uses an empty archive (no delta download) when the delta is deletions-only', async () => {
     const plugin = deltaPlugin({
-      listManifest: vi
-        .fn()
-        .mockResolvedValueOnce({ manifest: { 'a.txt': HA, 'gone.txt': HB } }) // base
-        .mockResolvedValue({ manifest: { 'a.txt': HA } }), // after: gone.txt removed
+      listManifest: vi.fn(async () => ({ manifest: { 'a.txt': HA, 'gone.txt': HB } })),
     });
     const download = vi.fn(async () => ({ ok: true, fileBase64: 'B64' }) as never);
     const delStdout = `OK 0\n---DEL---\ngone.txt\n---MAN---\n${HA} a.txt\n`;

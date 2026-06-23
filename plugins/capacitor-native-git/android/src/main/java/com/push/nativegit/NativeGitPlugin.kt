@@ -213,7 +213,16 @@ class NativeGitPlugin : Plugin() {
     resolveAsync(call) {
       val arr = call.getArray("deletedPaths")
       val deleted = if (arr == null) emptyList() else (0 until arr.length()).map { arr.getString(it) }
-      val r = JGitEngine.commitDelta(call.requireDir(), archive, deleted, message)
+      val expObj = call.getObject("expectedManifest")
+      val expected = LinkedHashMap<String, String>()
+      if (expObj != null) {
+        val keys = expObj.keys()
+        while (keys.hasNext()) {
+          val k = keys.next()
+          expObj.getString(k)?.let { expected[k] = it }
+        }
+      }
+      val r = JGitEngine.commitDelta(call.requireDir(), archive, deleted, expected, message)
       JSObject()
         .put("committed", r.committed)
         .put("commitId", r.commitId ?: JSONObject.NULL)

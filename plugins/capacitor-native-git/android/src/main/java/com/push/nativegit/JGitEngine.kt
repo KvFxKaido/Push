@@ -16,6 +16,7 @@ import org.eclipse.jgit.lib.Constants
 import org.eclipse.jgit.lib.ObjectId
 import org.eclipse.jgit.lib.PersonIdent
 import org.eclipse.jgit.lib.Ref
+import org.eclipse.jgit.lib.Repository
 import org.eclipse.jgit.revwalk.RevWalk
 import org.eclipse.jgit.transport.CredentialsProvider
 import org.eclipse.jgit.transport.RefSpec
@@ -291,11 +292,22 @@ object JGitEngine {
    * capture) and [commitDelta] (incremental); the returned `treeId` lets a delta
    * caller verify the result against the sandbox's tree hash.
    */
-  private fun commitStagedTree(git: Git, message: String): CheckpointDelta {
+  private fun commitStagedTree(
+    git: Git,
+    message: String,
+    expected: Map<String, String>? = null,
+  ): CheckpointDelta {
     val repo = git.repository
     repo.newObjectInserter().use { inserter ->
       val treeId = repo.readDirCache().writeTree(inserter)
       inserter.flush()
+      // Verify-BEFORE-publish: a delta caller passes the expected content manifest;
+      // if the applied tree doesn't match (filter disagreement / drift), refuse
+      // WITHOUT writing a ref, so an unverified checkpoint never lands (the caller
+      // falls back to a full capture, which resets the worktree).
+      if (expected != null && !manifestsEqual(treeManifest(repo, treeId), expected)) {
+        return CheckpointDelta(false, null, treeId.name)
+      }
       val newest = checkpointRefsNewestFirst(git).firstOrNull()
       if (newest != null) {
         RevWalk(repo).use { walk ->
@@ -389,18 +401,24 @@ object JGitEngine {
     Git.open(File(dir)).use { git ->
       val repo = git.repository
       val newest = checkpointRefsNewestFirst(git).firstOrNull() ?: return emptyMap()
-      RevWalk(repo).use { walk ->
-        val tree = walk.parseCommit(newest.objectId).tree
-        val out = LinkedHashMap<String, String>()
-        TreeWalk(repo).use { tw ->
-          tw.addTree(tree)
-          tw.isRecursive = true
-          while (tw.next()) out[tw.pathString] = tw.getObjectId(0).name
-        }
-        return out
-      }
+      RevWalk(repo).use { walk -> return treeManifest(repo, walk.parseCommit(newest.objectId).tree) }
     }
   }
+
+  /** Content-only manifest (`path → blob SHA-1`, mode excluded) of a tree. */
+  private fun treeManifest(repo: Repository, tree: ObjectId): Map<String, String> {
+    val out = LinkedHashMap<String, String>()
+    TreeWalk(repo).use { tw ->
+      tw.addTree(tree)
+      tw.isRecursive = true
+      while (tw.next()) out[tw.pathString] = tw.getObjectId(0).name
+    }
+    return out
+  }
+
+  /** Content equality of two `path → sha` manifests (mode excluded). */
+  private fun manifestsEqual(a: Map<String, String>, b: Map<String, String>): Boolean =
+    a.size == b.size && a.all { (k, v) -> b[k] == v }
 
   /** Resolve [rel] under [workTree], returning null if it would escape the tree. */
   private fun safeChild(workTree: File, rel: String): File? {
@@ -443,14 +461,18 @@ object JGitEngine {
    * orphan checkpoint — same result tree as a full capture, a fraction of the
    * bytes. [deletedPaths] are removed FIRST so a dir↔file swap at one path lands
    * cleanly, then [deltaArchiveBase64]'s changed/new files are extracted over the
-   * tree. Returns the result tree id for the caller to verify against the
-   * sandbox's; a repo with no existing checkpoint returns `committed=false` (a
-   * delta has no base to apply onto — the caller must full-capture).
+   * tree. The applied tree is verified against [expectedManifest] (the sandbox's
+   * current content manifest) BEFORE any ref is written, so a wrong delta never
+   * publishes a checkpoint. Returns `committed=false` with a null commitId when
+   * there's no base, when verification fails, or when applying threw — the caller
+   * full-captures in every such case; `committed=false` with the existing commitId
+   * means the delta de-duped to the newest checkpoint (no change).
    */
   fun commitDelta(
     dir: String,
     deltaArchiveBase64: String,
     deletedPaths: List<String>,
+    expectedManifest: Map<String, String>,
     message: String,
   ): CheckpointDelta {
     if (!isCheckpointRepo(dir)) return CheckpointDelta(false, null, null)
@@ -460,7 +482,7 @@ object JGitEngine {
       extractDeltaOnto(workTree, deltaArchiveBase64)
       git.add().addFilepattern(".").call()
       git.add().setUpdate(true).addFilepattern(".").call()
-      return commitStagedTree(git, message)
+      return commitStagedTree(git, message, expectedManifest)
     }
   }
 }
