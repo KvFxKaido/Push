@@ -195,21 +195,30 @@ describe('trailing newline as a file property (no phantom line)', () => {
 });
 
 describe('line ending helpers', () => {
-  it('detects dominant newline style, using the terminal newline as the tie-breaker', () => {
-    expect(detectLineEndingStyle('alpha\nbeta\n')).toBe('\n');
-    expect(detectLineEndingStyle('alpha\r\nbeta\r\n')).toBe('\r\n');
+  it('uses CRLF only for a uniformly-CRLF file, LF otherwise', () => {
+    expect(detectLineEndingStyle('alpha\r\nbeta\r\n')).toBe('\r\n'); // uniform CRLF
+    expect(detectLineEndingStyle('alpha\nbeta\n')).toBe('\n'); // uniform LF
+    expect(detectLineEndingStyle('alpha')).toBe('\n'); // no newline → LF
+    // ANY LF terminator makes it LF — a mixed file is not normalized off one edit,
+    // even when CRLF is the majority.
     expect(detectLineEndingStyle('alpha\r\nbeta\n')).toBe('\n');
-    expect(detectLineEndingStyle('alpha\nbeta\r\n')).toBe('\r\n');
-    // Clear majority wins regardless of the terminal newline.
-    expect(detectLineEndingStyle('a\r\nb\r\nc\n')).toBe('\r\n');
-    expect(detectLineEndingStyle('a\nb\nc\r\n')).toBe('\n');
-    // No newline at all → default LF.
-    expect(detectLineEndingStyle('alpha')).toBe('\n');
+    expect(detectLineEndingStyle('alpha\nbeta\r\n')).toBe('\n');
+    expect(detectLineEndingStyle('a\r\nb\r\nc\n')).toBe('\n');
   });
 
   it('drops only the render phantom while hiding CRLF carriage returns', () => {
     expect(splitRenderableLines('alpha\r\nbeta\r\n')).toEqual(['alpha', 'beta']);
     expect(splitRenderableLines('alpha\n\n')).toEqual(['alpha', '']);
+  });
+
+  it('does not rewrite untouched separators when editing a mixed-ending file', async () => {
+    // A targeted edit on a mixed file must leave untouched lines byte-for-byte —
+    // a one-line edit stays a one-line diff (Codex P2 on #1093).
+    const ref = await calculateLineHash('d', 12);
+    const result = await applyHashlineEdits('a\r\nb\nc\r\nd', [
+      { op: 'replace_line', ref, content: 'D' },
+    ]);
+    expect(result.content).toBe('a\r\nb\nc\r\nD');
   });
 });
 

@@ -334,6 +334,20 @@ export interface AppliedEditDetail {
 
 export type HashlineLineEnding = '\n' | '\r\n';
 
+/**
+ * The line-ending style the apply path should impose on edited/new lines. CRLF
+ * is returned ONLY for a uniformly-CRLF file (every terminator is `\r\n`); any
+ * LF terminator makes it `\n`.
+ *
+ * Why uniformity, not majority: for a uniform-CRLF file the CRLF join is a no-op
+ * on untouched lines (they already carry `\r`) and only styles the new lines, so
+ * the common "edited line came back LF" bug is fixed with zero collateral. For a
+ * mixed file, taking the LF path preserves every original byte (each line's `\r`
+ * rides along as content), so a targeted edit never rewrites an untouched line's
+ * separator — a one-line edit stays a one-line diff. Mixed files are rare and
+ * usually accidental; we leave their (already inconsistent) endings untouched
+ * rather than normalize the whole file off the back of a single edit.
+ */
 export function detectLineEndingStyle(content: string): HashlineLineEnding {
   const text = String(content);
   let crlfCount = 0;
@@ -345,9 +359,7 @@ export function detectLineEndingStyle(content: string): HashlineLineEnding {
     else lfCount += 1;
   }
 
-  if (crlfCount > lfCount) return '\r\n';
-  if (lfCount > crlfCount) return '\n';
-  return text.endsWith('\r\n') ? '\r\n' : '\n';
+  return crlfCount > 0 && lfCount === 0 ? '\r\n' : '\n';
 }
 
 export function splitRenderableLines(content: string): string[] {
