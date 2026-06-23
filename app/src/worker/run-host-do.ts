@@ -425,6 +425,14 @@ export class RunHost {
       resumed: Boolean(prior && prior.runId === runId),
       reclaimed: reclaimedFromAdopted,
     });
+    // Register is the one mutation that flips a run back to `watched` (a
+    // returning/superseding live client reclaiming it). A viewer following
+    // the prior adopted/adoptable run must see that `watched` snapshot so it
+    // drops the stale controls and stops following — without this broadcast
+    // the client's WS-primary guard suppresses the poll fallback, leaving the
+    // banner stale until the next checkpoint/release (minutes on a long
+    // round; heartbeats don't broadcast).
+    await this.broadcastWatchers('register');
     return json({
       ok: true,
       state: record.state,

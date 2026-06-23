@@ -1252,4 +1252,18 @@ describe('run watch: broadcastWatchers', () => {
     expect(watcher.closed?.code).toBe(1000);
     expect(watcher.closed?.reason).toBe('released');
   });
+
+  it('broadcasts the watched reclaim on register so a viewer drops stale controls', async () => {
+    // A live client reclaiming/superseding the run via register flips it back
+    // to `watched`. A connected viewer must see that snapshot (it clears the
+    // banner client-side) — register is the one mutation that would otherwise
+    // leave the WS-primary client stale until the next checkpoint/release.
+    const storage = makeStorage();
+    const watcher = makeFakeWatcher();
+    const host = makeWatchedHost(storage, [watcher]);
+    await register(host);
+    const frame = lastSnapshotFrame(watcher);
+    expect(frame.t).toBe('snapshot');
+    expect(frame.snapshot?.state).toBe('watched');
+  });
 });
