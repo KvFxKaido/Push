@@ -3,9 +3,11 @@ import {
   adaptiveHashDisplayLength,
   calculateLineHash,
   applyHashlineEdits,
+  detectLineEndingStyle,
   renderAnchoredRange,
   splitEditableLines,
   splitEditContentLines,
+  splitRenderableLines,
 } from './hashline';
 
 describe('calculateLineHash', () => {
@@ -144,14 +146,79 @@ describe('trailing newline as a file property (no phantom line)', () => {
   });
 
   it('preserves a CRLF file ending when editing a different line', async () => {
-    // The `\r` rides on each line; editing one line must not disturb the
-    // untouched trailing CRLF.
+    // The replacement line must inherit the file's CRLF style; checking only
+    // the untouched tail misses the mixed-ending regression.
     const ref = await calculateLineHash('alpha', 12);
     const result = await applyHashlineEdits('alpha\r\nbeta\r\n', [
       { op: 'replace_line', ref, content: 'ALPHA' },
     ]);
     expect(result.failed).toBe(0);
-    expect(result.content.endsWith('beta\r\n')).toBe(true);
+    expect(result.content).toBe('ALPHA\r\nbeta\r\n');
+  });
+
+  it('uses CRLF for inserted lines in a CRLF file without a terminal newline', async () => {
+    const ref = await calculateLineHash('beta', 12);
+    const result = await applyHashlineEdits('alpha\r\nbeta', [
+      { op: 'insert_after', ref, content: 'gamma' },
+    ]);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('alpha\r\nbeta\r\ngamma');
+  });
+
+  it('uses CRLF for every line in a multi-line replacement', async () => {
+    const ref = await calculateLineHash('beta', 12);
+    const result = await applyHashlineEdits('alpha\r\nbeta\r\ngamma\r\n', [
+      { op: 'replace_line', ref, content: 'b1\nb2' },
+    ]);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('alpha\r\nb1\r\nb2\r\ngamma\r\n');
+  });
+
+  it('keeps a surviving blank line as CRLF when a sibling is deleted', async () => {
+    // CRLF analog of the LF surviving-blank case: deleting alpha from
+    // `alpha\r\n\r\n` leaves the blank line as `\r\n`, not empty.
+    const ref = await calculateLineHash('alpha', 12);
+    const result = await applyHashlineEdits('alpha\r\n\r\n', [{ op: 'delete_line', ref }]);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('\r\n');
+  });
+
+  it('yields an empty file when every line of a CRLF file is deleted', async () => {
+    const refs = await Promise.all([calculateLineHash('alpha', 12), calculateLineHash('beta', 12)]);
+    const result = await applyHashlineEdits(
+      'alpha\r\nbeta\r\n',
+      refs.map((ref) => ({ op: 'delete_line', ref })),
+    );
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('');
+  });
+});
+
+describe('line ending helpers', () => {
+  it('uses CRLF only for a uniformly-CRLF file, LF otherwise', () => {
+    expect(detectLineEndingStyle('alpha\r\nbeta\r\n')).toBe('\r\n'); // uniform CRLF
+    expect(detectLineEndingStyle('alpha\nbeta\n')).toBe('\n'); // uniform LF
+    expect(detectLineEndingStyle('alpha')).toBe('\n'); // no newline → LF
+    // ANY LF terminator makes it LF — a mixed file is not normalized off one edit,
+    // even when CRLF is the majority.
+    expect(detectLineEndingStyle('alpha\r\nbeta\n')).toBe('\n');
+    expect(detectLineEndingStyle('alpha\nbeta\r\n')).toBe('\n');
+    expect(detectLineEndingStyle('a\r\nb\r\nc\n')).toBe('\n');
+  });
+
+  it('drops only the render phantom while hiding CRLF carriage returns', () => {
+    expect(splitRenderableLines('alpha\r\nbeta\r\n')).toEqual(['alpha', 'beta']);
+    expect(splitRenderableLines('alpha\n\n')).toEqual(['alpha', '']);
+  });
+
+  it('does not rewrite untouched separators when editing a mixed-ending file', async () => {
+    // A targeted edit on a mixed file must leave untouched lines byte-for-byte —
+    // a one-line edit stays a one-line diff (Codex P2 on #1093).
+    const ref = await calculateLineHash('d', 12);
+    const result = await applyHashlineEdits('a\r\nb\nc\r\nd', [
+      { op: 'replace_line', ref, content: 'D' },
+    ]);
+    expect(result.content).toBe('a\r\nb\nc\r\nD');
   });
 });
 

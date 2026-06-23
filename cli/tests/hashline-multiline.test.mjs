@@ -83,6 +83,22 @@ describe('delete_line (unchanged)', () => {
   });
 });
 
+describe('CRLF fidelity', () => {
+  it('preserves CRLF style when replacing and inserting lines', () => {
+    const replaceRef = makeRef('alpha', 1);
+    const replaced = applyHashlineEdits('alpha\r\nbeta\r\n', [
+      { op: 'replace_line', ref: replaceRef, content: 'ALPHA' },
+    ]);
+    assert.equal(replaced.content, 'ALPHA\r\nbeta\r\n');
+
+    const insertRef = makeRef('beta', 2);
+    const inserted = applyHashlineEdits('alpha\r\nbeta', [
+      { op: 'insert_after', ref: insertRef, content: 'gamma' },
+    ]);
+    assert.equal(inserted.content, 'alpha\r\nbeta\r\ngamma');
+  });
+});
+
 describe('trimmed line hashing', () => {
   it('keeps internal whitespace significant', () => {
     // Trim does not collapse internal runs, so spacing inside literals/data stays in the hash.
