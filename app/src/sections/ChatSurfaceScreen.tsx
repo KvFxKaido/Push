@@ -1,4 +1,4 @@
-import { useState, type ComponentProps } from 'react';
+import { useState, type ComponentProps, type CSSProperties } from 'react';
 import { Palette } from 'lucide-react';
 import { LauncherGridIcon, WorkspaceDockIcon } from '@/components/icons/push-custom-icons';
 import { ChatBackgroundGlow } from '@/components/chat/ChatBackgroundGlow';
@@ -17,6 +17,8 @@ type ChatInputProps = ComponentProps<typeof ChatInput>;
 interface ChatSurfaceScreenProps {
   chatShellTransform: string;
   chatShellShadow: string;
+  /** Extra inline style for the chat shell (pager-mode opacity/filter/transition). */
+  chatShellStyle?: CSSProperties;
   onOpenLauncher: () => void;
   onOpenWorkspaceHub: () => void;
   drawerProps: RepoChatDrawerProps;
@@ -31,6 +33,7 @@ interface ChatSurfaceScreenProps {
 export function ChatSurfaceScreen({
   chatShellTransform,
   chatShellShadow,
+  chatShellStyle,
   onOpenLauncher,
   onOpenWorkspaceHub,
   drawerProps,
@@ -47,7 +50,7 @@ export function ChatSurfaceScreen({
     <div className="relative flex h-dvh flex-col overflow-hidden bg-push-surface-inset safe-area-top safe-area-bottom">
       <div
         className={`relative z-10 isolate flex min-h-0 flex-1 flex-col bg-push-surface-inset transition-[transform,box-shadow] duration-500 ease-in-out will-change-transform ${chatShellShadow}`}
-        style={{ transform: chatShellTransform }}
+        style={{ transform: chatShellTransform, ...chatShellStyle }}
       >
         <ChatBackgroundGlow active={appearance.glowEnabled} color={accentHex} />
         <header className="relative z-10 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 pt-3 pb-2">

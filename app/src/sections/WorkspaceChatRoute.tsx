@@ -9,6 +9,7 @@ import { useMergeDetectedBanner } from '@/hooks/useMergeDetectedBanner';
 import { useWorkspaceChatComposerController } from '@/hooks/useWorkspaceChatComposerController';
 import { useWorkspaceChatPanelsController } from '@/hooks/useWorkspaceChatPanelsController';
 import { getSandboxConnectivityToast } from '@/lib/sandbox-connectivity-notifications';
+import { getChatShellNav, resolveNavMode } from '@/lib/nav-transition';
 import type { BranchSwitchProbe } from '@/lib/branch-switch-probe';
 import { getRepoAppearanceColorHex, hexToRgba } from '@/lib/repo-appearance';
 import { getSandboxDiff } from '@/lib/sandbox-client';
@@ -562,18 +563,13 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     ],
   );
 
-  const chatsDrawerOffset = 'min(86vw, 24rem)';
-  const workspaceHubOffset = '94vw';
-  const chatShellTransform = isChatsDrawerOpen
-    ? `translateX(${chatsDrawerOffset})`
-    : isWorkspaceHubOpen
-      ? `translateX(-${workspaceHubOffset})`
-      : 'translateX(0px)';
-  const chatShellShadow = isChatsDrawerOpen
-    ? 'shadow-[-24px_0_56px_rgba(0,0,0,0.42)]'
-    : isWorkspaceHubOpen
-      ? 'shadow-[24px_0_56px_rgba(0,0,0,0.42)]'
-      : '';
+  const chatShellNav = getChatShellNav(resolveNavMode(), {
+    drawerOpen: isChatsDrawerOpen,
+    hubOpen: isWorkspaceHubOpen,
+  });
+  const chatShellTransform = chatShellNav.transform;
+  const chatShellShadow = chatShellNav.shadowClass;
+  const chatShellStyle = chatShellNav.style;
 
   const snapshotAgeLabel = snapshots.latestSnapshot
     ? formatSnapshotAge(snapshots.latestSnapshot.createdAt)
@@ -676,6 +672,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     hasWorkspaceActivityIndicator: scratchpad.hasContent || agentStatus.active,
     chatShellTransform,
     chatShellShadow,
+    chatShellStyle,
     onOpenLauncher: openLauncherWithMount,
     onOpenWorkspaceHub: openWorkspaceHubWithMount,
     drawerProps,

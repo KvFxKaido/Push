@@ -204,6 +204,15 @@ One open/close vocabulary for every panel — the shadcn Sheets and any custom f
 - **`.panel-reveal`** (custom floating panels/reveals): a `data-open` boolean toggles a Y-slide + fade + cross-blur. Closed → `translateY(--panel-translate-y, 0.5rem)`, `opacity 0`, `blur(--panel-blur)`, `pointer-events: none`; open reverses all three and only lengthens the duration. Set `--panel-translate-y` per consumer for a longer throw. Used by `ScrollToBottomButton`. The `transform` is owned by the primitive — center with margins/`left`, not `-translate-x-*`.
 - **shadcn `Sheet`** (the 9 bottom/side sheets): keeps its directional `slide-in/out`, but its timing + easing are retimed onto the same `--panel-*` tokens via the `[data-slot=sheet-content]` rules in `index.css` (not utility classes on the component). **No blur** on the sheets — animating `filter: blur` on a 3/4-width panel janks the Capacitor Android shell, so the cross-blur is reserved for small elements.
 
+### Navigation model
+
+How the chat-history drawer and the workspace hub enter, shared across every chat surface via `app/src/lib/nav-transition.ts` (`getChatShellNav`):
+
+- **`pager`** (default): chat is a center page that cross-fades + blurs (`3px`) + slides `8px` toward the incoming menu — history is the page to the left, the hub the page to the right — so opening either reads as a symmetric page swap. Same feel family as the panel reveals.
+- **`push`** (legacy): the chat shell slides aside (`translateX`) to reveal the menu; drawer/hub used different offsets, hence the uneven left/right rhythm `pager` replaces.
+
+**Reversible:** flip `NAV_MODE_DEFAULT` in `nav-transition.ts` to revert globally, or override per-session with no redeploy via `?nav=push` / `?nav=pager` in the URL, or `localStorage['push:navMode']`. Push mode reproduces the legacy parallax exactly. Reduced motion is handled by the global `index.css` wildcard.
+
 ### Interaction Patterns
 
 - **Spring press:** Scale to 0.97 on `:active`, `--motion-fast`
