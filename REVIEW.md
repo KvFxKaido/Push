@@ -90,6 +90,14 @@ Kept first so it survives the reviewer-context size cap.
   resource on one path, grep every other path that touches the same resource and
   confirm the gate is symmetric. Trace at least one denied and one allowed path
   end-to-end.
+- **Text-edit primitive boundary cases.** A change to a text-editing primitive
+  (hashline, the line model, content (de)serialization) must hold across every
+  serialization path: empty file; single line with no trailing newline; one vs.
+  multiple trailing newlines; all content deleted → empty; a blank line surviving
+  a sibling's deletion; an edit on the last line (EOF); and uniform-LF /
+  uniform-CRLF / mixed-ending files. Normalization is lossy-by-default — flag any
+  canonicalization that fires without the file proving a single convention, and
+  any one-line edit that produces collateral diffs on untouched lines.
 
 ### Consult the canonical docs
 
