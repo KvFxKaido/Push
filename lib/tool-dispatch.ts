@@ -919,8 +919,22 @@ function matchSources<TCall>(
   return { ok: false };
 }
 
+/**
+ * Stable `tool + args` invocation key. Single source of truth shared by the
+ * kernel's malformed reports (`canonicalInvocationKey`) and the web dispatcher's
+ * recovery reconciliation — defining it once is load-bearing: if the two
+ * surfaces computed the key differently, the keys would never match and web
+ * recovery would silently stop executing (recovered calls would never clear
+ * their own dropped-candidate reports, so `chat-send` short-circuits the turn).
+ * Order-independent (object keys sorted, `undefined` dropped) so logically equal
+ * calls collapse regardless of how the model emitted them.
+ */
+export function stableInvocationKey(tool: string, args: unknown): string {
+  return `${tool}:${stableJsonStringify(args)}`;
+}
+
 function canonicalKey(parsed: ParsedToolObject): string {
-  return `${parsed.tool}:${stableJsonStringify(parsed.args)}`;
+  return stableInvocationKey(parsed.tool, parsed.args);
 }
 
 function stableJsonStringify(value: unknown): string {
