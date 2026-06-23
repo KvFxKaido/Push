@@ -418,6 +418,21 @@ only sound if a hash means the same thing on both sides:
   `git write-tree` hash must **not** be the delta-emptiness signal; the manifest
   diff is the sole authority on what changed.
 
+These two surfaced during on-device validation (2026-06-23) — both made every
+delta verify fail, and the second is also a latent bug in the *full*-capture path:
+
+- **`.gitattributes` EOL normalization (device side).** The captured tree carries
+  the project's `.gitattributes` (Push's is `* text=auto eol=lf`, `*.cmd/*.bat
+  eol=crlf`), and JGit's `add()` honored it — normalizing content the sandbox
+  hashed raw (`--no-filters`), so blob ids diverged. Fix: write `* -text` into the
+  checkpoint repo's `.git/info/attributes` (highest attribute precedence), forcing
+  raw-bytes blobs that match the sandbox.
+- **`core.quotePath` drops non-ASCII paths.** `git ls-files` C-quotes non-ASCII
+  paths by default (em-dash → `"…\342\200\224…"`); `zip -@` then can't find the
+  file and **silently omits it**. So every non-ASCII-named file was missing from
+  checkpoints (full capture *and* delta). Fix: `git -c core.quotePath=false
+  ls-files` everywhere paths feed `zip`/`hash-object`.
+
 ### Rejected alternative: git-bundle bridge
 
 Make the sandbox aware of the device checkpoint commit (export device objects into

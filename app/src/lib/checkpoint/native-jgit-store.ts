@@ -70,7 +70,10 @@ const CAPTURE_ARCHIVE_COMMAND = [
   // Hide the temp archive from all git-based consumers (idempotent).
   `grep -qxF '${ARCHIVE_NAME}' .git/info/exclude 2>/dev/null || echo '${ARCHIVE_NAME}' >> .git/info/exclude 2>/dev/null || true`,
   `rm -f ${ARCHIVE_NAME}`,
-  `git ls-files --cached --others --exclude-standard \
+  // `-c core.quotePath=false`: without it git C-quotes non-ASCII paths (e.g. an
+  // em-dash → "…\342\200\224…"), and `zip -@` then can't find the file and SILENTLY
+  // drops it — so every non-ASCII-named file was missing from checkpoints.
+  `git -c core.quotePath=false ls-files --cached --others --exclude-standard \
     ':!:node_modules/**' ':!:dist/**' ':!:build/**' ':!:.next/**' ':!:.cache/**' \
     ':!:coverage/**' ':!:target/**' ':!:.git/**' ':!:.push-checkpoint*' \
     | zip -q -@ ${ARCHIVE_NAME} 2>/dev/null`,
@@ -156,8 +159,10 @@ const DELTA_CAPTURE_COMMAND = [
   `for f in "$delta" "$base"; do grep -qxF "$f" .git/info/exclude 2>/dev/null || echo "$f" >> .git/info/exclude 2>/dev/null; done`,
   `rm -f "$delta"`,
   `[ -f "$base" ] || { echo "ERR nobase"; exit 0; }`,
-  // Same captured set + hard-excludes as the full capture/probe.
-  `git ls-files --cached --others --exclude-standard \
+  // Same captured set + hard-excludes as the full capture/probe. `quotePath=false`
+  // so non-ASCII paths (em-dash, …) flow raw to hash-object/zip — must match the
+  // full-capture archive's set or every checkpoint with such a file fails verify.
+  `git -c core.quotePath=false ls-files --cached --others --exclude-standard \
     ':!:node_modules/**' ':!:dist/**' ':!:build/**' ':!:.next/**' ':!:.cache/**' \
     ':!:coverage/**' ':!:target/**' ':!:.git/**' ':!:.push-checkpoint*' > /tmp/pc-paths 2>/dev/null \
     || { echo "ERR lsfiles"; exit 0; }`,

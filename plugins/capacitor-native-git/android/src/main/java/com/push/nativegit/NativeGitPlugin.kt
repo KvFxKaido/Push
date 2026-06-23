@@ -223,6 +223,7 @@ class NativeGitPlugin : Plugin() {
         }
       }
       val r = JGitEngine.commitDelta(call.requireDir(), archive, deleted, expected, message)
+      r.detail?.let { android.util.Log.i("PushCheckpointDelta", "verify mismatch: $it") }
       JSObject()
         .put("committed", r.committed)
         .put("commitId", r.commitId ?: JSONObject.NULL)
