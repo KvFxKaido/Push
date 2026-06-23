@@ -19,7 +19,6 @@ import {
   KILOCODE_MODELS,
   NVIDIA_MODELS,
   OPENADAPTER_MODELS,
-  OPENAI_MODELS,
   OPENROUTER_MODELS,
   PROVIDER_URLS,
   ZEN_GO_MODELS,
@@ -27,7 +26,11 @@ import {
 } from './providers';
 import { getZenGoTransport } from './zen-go';
 import { asRecord } from './utils';
-import { VERTEX_MODEL_OPTIONS } from './vertex-provider';
+import {
+  looksLikeBedrockAnthropicToolCallingModel,
+  looksLikeOpenAIToolCallingModel,
+  VERTEX_NATIVE_TOOL_CALLING_MODELS,
+} from '@push/lib/native-tool-gate';
 
 const MODELS_FETCH_TIMEOUT_MS = 12_000;
 const MODELS_DEV_OPENROUTER_URL = 'https://models.dev/api.json';
@@ -434,24 +437,14 @@ const ZEN_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set([
  */
 const FIREWORKS_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(FIREWORKS_MODELS);
 const GOOGLE_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(GOOGLE_MODELS);
-const VERTEX_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(
-  VERTEX_MODEL_OPTIONS.map((model) => model.id),
-);
 const KILOCODE_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(KILOCODE_MODELS);
 const OPENADAPTER_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(OPENADAPTER_MODELS);
 const BLACKBOX_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(BLACKBOX_MODELS);
-const OPENAI_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(OPENAI_MODELS);
 const ANTHROPIC_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(ANTHROPIC_MODELS);
-
-function looksLikeOpenAIToolCallingModel(modelId: string): boolean {
-  const m = modelId.trim().toLowerCase();
-  return OPENAI_NATIVE_TOOL_CALLING_MODELS.has(modelId) || /^gpt-[45](?:$|[-.]|o)/.test(m);
-}
-
-function looksLikeBedrockAnthropicToolCallingModel(modelId: string): boolean {
-  const m = modelId.trim().toLowerCase();
-  return /^(?:[a-z]{2}\.)?anthropic\.claude(?:-[345]|-(?:haiku|opus|sonnet))/.test(m);
-}
+// `looksLikeOpenAIToolCallingModel`, `looksLikeBedrockAnthropicToolCallingModel`,
+// and `VERTEX_NATIVE_TOOL_CALLING_MODELS` are shared with the CLI gate via
+// `@push/lib/native-tool-gate` (single definition; pinned by the web↔CLI drift
+// test below). Capability-based providers stay resolved here (models.dev).
 
 /**
  * Whether to attach native function-calling `tools` for the given

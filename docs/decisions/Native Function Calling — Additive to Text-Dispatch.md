@@ -138,6 +138,22 @@ Coder/Explorer, and scoped toolsets.
   the OpenAI-compatible request body. CLI OpenAI-compatible, direct Anthropic,
   and direct Gemini streams serialize the same neutral `tools` field once the
   CLI-local gate passes.
+  Gemini-on-Vertex does NOT route through the Gemini `functionDeclarations`
+  bridge, so it doesn't inherit that bridge's two guards directly: (1) the
+  grounding/function-calling combo is dropped at the Vertex `appendVertexGoogleSearchTool`
+  chokepoint instead — Gemini rejects `googleSearch` + function tools together on
+  2.5 models (Gemini-3-only Preview), so when native function tools are present
+  grounding is skipped, mirroring the direct-Gemini fix; (2) empty-OBJECT schema
+  rejection (Gemini 400s on a parameterless OBJECT) is handled by Vertex's
+  OpenAI-compatible layer translating standard OpenAI tools — a first-run
+  watch-item if a no-arg tool ever 400s a Vertex Gemini request.
+- **Shared gate, single source.** The name-based gate decisions (the OpenAI /
+  Bedrock model-id shapes and the curated Vertex set) live once in
+  `lib/native-tool-gate.ts` (data from `lib/provider-models.ts`), imported by both
+  the web gate (`model-catalog.ts`) and the CLI gate (`cli/native-tool-gate.ts`).
+  A web↔CLI drift test in `model-catalog.test.ts` pins parity for the name-based
+  providers; capability-based providers (OpenRouter / Ollama / Nvidia via
+  models.dev) stay surface-specific by necessity (the CLI has no models.dev cache).
 - **Other roles.** Auditor/reviewer are unchanged (they use `response_format`
   structured outputs, a separate mechanism — see
   `docs/runbooks/OpenRouter Capability Expansion.md`).

@@ -1671,7 +1671,9 @@ describe('translateVertexOpenApiBody', () => {
     expect(parsed.model).toBe('gemini-2.5-pro');
   });
 
-  it('appends to existing tools rather than overwriting, and dedupes the googleSearch entry', () => {
+  it('drops grounding when function tools are present, and dedupes the googleSearch entry', () => {
+    // Function tools + googleSearch is unsupported on Gemini 2.5 — function
+    // calling wins, grounding is dropped (no second tool appended).
     const bodyText = JSON.stringify({
       model: 'gemini-2.5-pro',
       messages: [],
@@ -1681,9 +1683,8 @@ describe('translateVertexOpenApiBody', () => {
     const parsed = JSON.parse(
       translateVertexOpenApiBody({ google_search_grounding: true }, bodyText),
     );
-    expect(parsed.tools).toHaveLength(2);
-    expect(parsed.tools[0]).toMatchObject({ type: 'function', function: { name: 'calc' } });
-    expect(parsed.tools[1]).toEqual({ googleSearch: {} });
+    expect(parsed.tools).toEqual([{ type: 'function', function: { name: 'calc' } }]);
+    expect(parsed.tools).not.toContainEqual({ googleSearch: {} });
 
     // If the request already carried googleSearch we don't duplicate it.
     const bodyTextAlreadyHasIt = JSON.stringify({
@@ -1816,7 +1817,9 @@ describe('handleVertexChat — neutral wire (dual-accept)', () => {
     expect(body.tool_choice).toBe('auto');
   });
 
-  it('combines neutral tools with googleSearch on the OpenAPI branch', async () => {
+  it('drops googleSearch when native function tools are present (combo unsupported on Gemini 2.5)', async () => {
+    // Gemini rejects function tools + googleSearch together on 2.5 models, so the
+    // Vertex OpenAPI branch must not combine them — function calling wins.
     const get = captureUpstream();
     await handleVertexChat(
       makeNeutralRequest({
@@ -1828,7 +1831,8 @@ describe('handleVertexChat — neutral wire (dual-accept)', () => {
       makeEnv(),
     );
     const body = JSON.parse(get()!.init.body as string);
-    expect(body.tools).toEqual([readFileTool, { googleSearch: {} }]);
+    expect(body.tools).toEqual([readFileTool]);
+    expect(body.tools).not.toContainEqual({ googleSearch: {} });
     expect(body.tool_choice).toBe('auto');
   });
 
