@@ -1746,6 +1746,20 @@ describe('handleVertexChat — neutral wire (dual-accept)', () => {
     return () => captured;
   }
 
+  const readFileTool = {
+    type: 'function',
+    function: {
+      name: 'sandbox_read_file',
+      description: 'Read a file',
+      parameters: {
+        type: 'object',
+        properties: { path: { type: 'string', description: 'Repo-relative path' } },
+        required: ['path'],
+        additionalProperties: false,
+      },
+    },
+  };
+
   it('routes a claude model through toAnthropicMessages with NO body model (model in URL)', async () => {
     const get = captureUpstream();
     await handleVertexChat(
@@ -1787,6 +1801,37 @@ describe('handleVertexChat — neutral wire (dual-accept)', () => {
     expect(body.stream).toBe(true);
   });
 
+  it('forwards neutral tools to the OpenAPI branch with tool_choice auto', async () => {
+    const get = captureUpstream();
+    await handleVertexChat(
+      makeNeutralRequest({
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', content: 'read it' }],
+        tools: [readFileTool],
+      }),
+      makeEnv(),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    expect(body.tools).toEqual([readFileTool]);
+    expect(body.tool_choice).toBe('auto');
+  });
+
+  it('combines neutral tools with googleSearch on the OpenAPI branch', async () => {
+    const get = captureUpstream();
+    await handleVertexChat(
+      makeNeutralRequest({
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', content: 'read and search' }],
+        tools: [readFileTool],
+        googleSearchGrounding: true,
+      }),
+      makeEnv(),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    expect(body.tools).toEqual([readFileTool, { googleSearch: {} }]);
+    expect(body.tool_choice).toBe('auto');
+  });
+
   it('injects the googleSearch tool on the openapi branch from neutral googleSearchGrounding', async () => {
     const get = captureUpstream();
     await handleVertexChat(
@@ -1799,6 +1844,26 @@ describe('handleVertexChat — neutral wire (dual-accept)', () => {
     );
     const body = JSON.parse(get()!.init.body as string);
     expect(body.tools).toEqual([{ googleSearch: {} }]);
+  });
+
+  it('translates neutral tools to Anthropic custom-tool shape on the Claude branch', async () => {
+    const get = captureUpstream();
+    await handleVertexChat(
+      makeNeutralRequest({
+        model: 'claude-sonnet-4-6',
+        messages: [{ role: 'user', content: 'read it' }],
+        tools: [readFileTool],
+      }),
+      makeEnv(),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    expect(body.tools).toEqual([
+      {
+        name: 'sandbox_read_file',
+        description: 'Read a file',
+        input_schema: readFileTool.function.parameters,
+      },
+    ]);
   });
 
   it('enables the native web_search tool on the anthropic branch from anthropicWebSearch', async () => {

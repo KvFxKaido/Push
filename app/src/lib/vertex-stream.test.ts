@@ -104,6 +104,20 @@ const baseRequest: PushStreamRequest<ChatMessage> = {
   messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 } as unknown as ChatMessage],
 };
 
+const readFileTool = {
+  type: 'function' as const,
+  function: {
+    name: 'sandbox_read_file',
+    description: 'Read a file',
+    parameters: {
+      type: 'object' as const,
+      properties: { path: { type: 'string' as const } },
+      required: ['path'],
+      additionalProperties: false as const,
+    },
+  },
+};
+
 // vi.doMock-altering tests live at the end so their state doesn't pollute
 // the default-fixture (native-mode) tests above.
 
@@ -342,6 +356,22 @@ describe('vertexStream', () => {
     expect(body).not.toHaveProperty('stream');
   });
 
+  it('carries native function tools on the native neutral wire body', async () => {
+    installStreamFetch(fetchMock);
+    const { vertexStream } = await import('./vertex-stream');
+    const iter = vertexStream({ ...baseRequest, tools: [readFileTool] });
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.contract).toBe('push.stream.v1');
+    expect(body.tools).toEqual([readFileTool]);
+    expect(body).not.toHaveProperty('tool_choice');
+  });
+
   it('maps finish_reason onto the done event', async () => {
     const { push, finish } = installStreamFetch(fetchMock);
     const { vertexStream } = await import('./vertex-stream');
@@ -432,6 +462,28 @@ describe('vertexStream', () => {
     expect(body.max_tokens).toBe(4096);
     expect(body.temperature).toBe(0.5);
     expect(body).not.toHaveProperty('maxTokens');
+  });
+
+  it('legacy mode carries native function tools on the OpenAI Chat body', async () => {
+    vi.doMock('@/hooks/useVertexConfig', () => ({
+      getVertexBaseUrl: () =>
+        'https://us-central1-aiplatform.googleapis.com/v1beta1/projects/test-project/locations/us-central1/endpoints/openapi',
+      getVertexKey: () => 'test-key',
+      getVertexMode: () => 'legacy' as const,
+      getVertexRegion: () => 'us-central1',
+    }));
+    installStreamFetch(fetchMock);
+    const { vertexStream } = await import('./vertex-stream');
+    const iter = vertexStream({ ...baseRequest, model: 'gemini-2.5-pro', tools: [readFileTool] });
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1]!.body as string);
+    expect(body.contract).toBeUndefined();
+    expect(body.tools).toEqual([readFileTool]);
+    expect(body.tool_choice).toBe('auto');
   });
 
   it('legacy mode omits Authorization when the client key is empty', async () => {

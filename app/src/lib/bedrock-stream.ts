@@ -65,13 +65,9 @@ export async function* bedrockStream(
     ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
-    // Native function calling. NOTE: Bedrock is intentionally NOT in the
-    // `providerModelSupportsNativeToolCalling` gate yet (deferred per the Native
-    // Function Calling decision doc), so `req.tools` is never populated on this
-    // path today and this branch stays dormant. The line is kept so the
-    // OpenAI-compatible body stays uniform with the other adapters and enabling
-    // Bedrock later is a one-line gate change — the gate is the single switch.
-    // The shared SSE pump normalizes native tool_calls back into fenced JSON.
+    // Native function calling. Bedrock's OpenAI-compatible proxy accepts the
+    // same tools/tool_choice shape as the other OpenAI-compatible adapters, and
+    // the shared SSE pump normalizes native tool_calls back into fenced JSON.
     ...(nativeTools ? { tools: nativeTools, tool_choice: 'auto' } : {}),
   };
 

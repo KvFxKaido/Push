@@ -158,6 +158,7 @@ export async function* vertexStream(
         topP: req.topP,
         ...(anthropicWebSearch ? { anthropicWebSearch: true } : {}),
         ...(googleSearchGrounding ? { googleSearchGrounding: true } : {}),
+        ...(req.tools && req.tools.length > 0 ? { tools: req.tools } : {}),
       })
     : null;
   const legacyBase: Record<string, unknown> | null = isNeutral
@@ -171,6 +172,7 @@ export async function* vertexStream(
         ...(req.topP !== undefined ? { top_p: req.topP } : {}),
         ...(anthropicWebSearch ? { anthropic_web_search: true } : {}),
         ...(googleSearchGrounding ? { google_search_grounding: true } : {}),
+        ...(req.tools && req.tools.length > 0 ? { tools: req.tools, tool_choice: 'auto' } : {}),
       };
 
   // 5. POST + stream response. Anthropic-transport models (Claude on Vertex)

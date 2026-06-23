@@ -220,9 +220,9 @@ export function toOpenAIChat(
     // Native function-calling tool schemas, when the caller attached them (gated
     // on model support upstream). Additive — `openai-sse-pump` normalizes any
     // native `tool_calls` back into the dispatcher's fenced JSON. `tool_choice:
-    // 'auto'` keeps prose answers available. This serializer feeds the worker's
-    // neutral-contract Zen-Go path (`handleZenGoChat`) and the CLI OpenAI-compat
-    // adapters; both ignore the field when no caller sets `tools`.
+    // 'auto'` keeps prose answers available. This serializer feeds neutral
+    // OpenAI-compatible Worker paths (Vertex Gemini, Zen-Go) and the CLI
+    // OpenAI-compat adapters; all ignore the field when no caller sets `tools`.
     ...(nativeTools.length > 0 ? { tools: nativeTools, tool_choice: 'auto' } : {}),
     ...(req.responseFormat ? { response_format: toOpenAIResponseFormat(req.responseFormat) } : {}),
   };

@@ -29,6 +29,7 @@ function baseOptions(overrides: {
   detectAllToolCalls?: ExplorerAgentOptions<Call, never>['detectAllToolCalls'];
   detectAnyToolCall?: ExplorerAgentOptions<Call, never>['detectAnyToolCall'];
   evaluateAfterModel?: ExplorerAgentOptions<Call, never>['evaluateAfterModel'];
+  nativeToolSchemas?: ExplorerAgentOptions<Call, never>['nativeToolSchemas'];
 }): ExplorerAgentOptions<Call, never> {
   return {
     provider: 'openrouter',
@@ -55,6 +56,7 @@ function baseOptions(overrides: {
       })),
     detectAnyToolCall: overrides.detectAnyToolCall ?? (() => null),
     webSearchToolProtocol: '',
+    nativeToolSchemas: overrides.nativeToolSchemas,
     evaluateAfterModel: overrides.evaluateAfterModel ?? (async () => null),
   };
 }
@@ -78,6 +80,37 @@ describe('runExplorerAgent (PushStream consumer)', () => {
     const req = capturedRequests[0] as { model: string; systemPromptOverride?: string };
     expect(req.model).toBe('explorer-model');
     expect(req.systemPromptOverride).toContain('Explorer agent');
+  });
+
+  it('forwards native function schemas to the stream request when provided', async () => {
+    const { stream, capturedRequests } = makePushStream([
+      [
+        { type: 'text_delta', text: 'Summary:\nDone.' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+    const nativeToolSchemas = [
+      {
+        type: 'function' as const,
+        function: {
+          name: 'read_file',
+          description: 'Read file content',
+          parameters: {
+            type: 'object' as const,
+            properties: { path: { type: 'string' as const } },
+            required: ['path'],
+            additionalProperties: false,
+          },
+        },
+      },
+    ];
+
+    await runExplorerAgent(baseOptions({ stream, nativeToolSchemas }), {
+      onStatus: () => {},
+    });
+
+    const req = capturedRequests[0] as { tools?: unknown };
+    expect(req.tools).toBe(nativeToolSchemas);
   });
 
   it('continues looping while tool calls are detected', async () => {

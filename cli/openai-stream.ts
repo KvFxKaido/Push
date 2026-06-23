@@ -32,6 +32,8 @@ import { OPENROUTER_MAX_SESSION_ID_LENGTH } from '../lib/provider-models.ts';
 import { toOpenAIChat } from '../lib/openai-chat-serializer.ts';
 import type { ProviderConfig } from './provider.ts';
 
+const OPENROUTER_WEB_SEARCH_TOOL = { type: 'openrouter:web_search' } as const;
+
 export class CliProviderError extends Error {
   /** Upstream HTTP status from the non-2xx response. */
   readonly status: number;
@@ -118,6 +120,13 @@ async function* cliProviderStream(
     temperatureDefault: 0.1,
     tagCacheBreakpoints: config.id === 'openrouter',
   });
+  const nativeTools = Array.isArray(baseBody.tools) ? baseBody.tools : [];
+  const openRouterWebSearch = config.id === 'openrouter' && resolveOpenRouterWebSearch(req);
+  const openRouterTools = [
+    ...nativeTools,
+    ...(openRouterWebSearch ? [OPENROUTER_WEB_SEARCH_TOOL] : []),
+  ];
+  const openRouterRequireParameters = nativeTools.length > 0 || Boolean(baseBody.response_format);
 
   const body =
     config.id === 'openrouter'
@@ -129,9 +138,9 @@ async function* cliProviderStream(
           // OpenRouter executes `openrouter:web_search` server-side (engine
           // `auto`) and feeds grounded, cited results back to the model.
           // The text-based dispatcher never sees it as a client tool call.
-          ...(resolveOpenRouterWebSearch(req)
-            ? { tools: [{ type: 'openrouter:web_search' }] }
-            : {}),
+          ...(openRouterTools.length > 0 ? { tools: openRouterTools } : {}),
+          ...(nativeTools.length > 0 ? { tool_choice: 'auto' } : {}),
+          ...(openRouterRequireParameters ? { provider: { require_parameters: true } } : {}),
           // See: https://openrouter.ai/docs/guides/features/broadcast/overview
           trace: { generation_name: 'push-cli-chat', trace_name: 'push-cli' },
         }

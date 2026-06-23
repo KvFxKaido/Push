@@ -26,7 +26,12 @@
  * `ChatMessage`.
  */
 
-import type { AIProviderType, LlmMessage, PushStream } from './provider-contract.js';
+import type {
+  AIProviderType,
+  LlmMessage,
+  PushStream,
+  ToolFunctionSchema,
+} from './provider-contract.js';
 import type { RunEventInput } from './runtime-contract.js';
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
 import { iteratePushStreamText } from './stream-utils.js';
@@ -326,6 +331,12 @@ export interface ExplorerAgentOptions<TCall, TCard> {
   webSearchToolProtocol: string;
 
   /**
+   * Provider-native function-calling schemas for the exact tool surface this
+   * Explorer run can execute. Undefined keeps the text-dispatch-only behavior.
+   */
+  nativeToolSchemas?: ToolFunctionSchema[];
+
+  /**
    * Optional override for the full tool-protocol block spliced into
    * the Explorer system prompt's `tool_instructions` slot. When
    * provided, replaces the built-in `EXPLORER_TOOL_PROTOCOL` constant
@@ -404,6 +415,7 @@ export async function runExplorerAgent<TCall, TCard>(
     detectAllToolCalls,
     detectAnyToolCall,
     webSearchToolProtocol,
+    nativeToolSchemas,
     sandboxToolProtocol,
     evaluateAfterModel,
   } = options;
@@ -509,6 +521,7 @@ export async function runExplorerAgent<TCall, TCard>(
         messages,
         systemPromptOverride: systemPrompt,
         hasSandbox: Boolean(sandboxId),
+        ...(nativeToolSchemas && nativeToolSchemas.length > 0 ? { tools: nativeToolSchemas } : {}),
       },
       EXPLORER_ROUND_TIMEOUT_MS,
       `Explorer round ${rounds} timed out after ${EXPLORER_ROUND_TIMEOUT_MS / 1000}s.`,

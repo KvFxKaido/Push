@@ -779,6 +779,19 @@ describe('streamCompletion', () => {
       apiKeyEnv: ['TEST_OR_KEY'],
       requiresKey: false,
     };
+    const sampleTool = {
+      type: 'function',
+      function: {
+        name: 'read_file',
+        description: 'Read a file',
+        parameters: {
+          type: 'object',
+          properties: { path: { type: 'string' } },
+          required: ['path'],
+          additionalProperties: false,
+        },
+      },
+    };
 
     it('sends HTTP-Referer and X-Title headers for openrouter', async () => {
       let capturedHeaders;
@@ -824,6 +837,42 @@ describe('streamCompletion', () => {
       }
 
       assert.deepEqual(capturedBody.tools, [{ type: 'openrouter:web_search' }]);
+    });
+
+    it('merges native function tools with the openrouter:web_search server tool', async () => {
+      const prev = process.env.PUSH_OPENROUTER_WEB_SEARCH;
+      delete process.env.PUSH_OPENROUTER_WEB_SEARCH;
+      let capturedBody;
+      globalThis.fetch = async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildSSE(['ok'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      try {
+        const stream = createCliProviderStream(orConfig, 'key');
+        for await (const _ of stream({
+          provider: 'openrouter',
+          model: 'model',
+          messages: [{ id: 'm1', role: 'user', content: 'read and search', timestamp: 0 }],
+          tools: [sampleTool],
+        })) {
+          // drain
+        }
+      } finally {
+        if (prev === undefined) delete process.env.PUSH_OPENROUTER_WEB_SEARCH;
+        else process.env.PUSH_OPENROUTER_WEB_SEARCH = prev;
+      }
+
+      assert.deepEqual(capturedBody.tools, [sampleTool, { type: 'openrouter:web_search' }]);
+      assert.equal(capturedBody.tool_choice, 'auto');
+      assert.deepEqual(capturedBody.provider, { require_parameters: true });
     });
 
     it('omits the web_search tool when PUSH_OPENROUTER_WEB_SEARCH=0', async () => {

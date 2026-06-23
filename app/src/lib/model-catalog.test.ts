@@ -1393,6 +1393,14 @@ describe('providerModelSupportsStructuredOutput', () => {
     expect(providerModelSupportsNativeToolCalling('google', undefined)).toBe(false);
   });
 
+  it('gates Vertex native tool calling against the curated Vertex catalog allowlist', () => {
+    stubWindow();
+    expect(providerModelSupportsNativeToolCalling('vertex', 'google/gemini-2.5-pro')).toBe(true);
+    expect(providerModelSupportsNativeToolCalling('vertex', 'claude-sonnet-4@20250514')).toBe(true);
+    expect(providerModelSupportsNativeToolCalling('vertex', 'custom-vertex-model')).toBe(false);
+    expect(providerModelSupportsNativeToolCalling('vertex', undefined)).toBe(false);
+  });
+
   it('gates validated OpenAI-compatible adapters by catalog or OpenAI-family id', () => {
     stubWindow();
     expect(providerModelSupportsNativeToolCalling('openai', 'gpt-5.4')).toBe(true);
@@ -1414,8 +1422,15 @@ describe('providerModelSupportsStructuredOutput', () => {
       providerModelSupportsNativeToolCalling('blackbox', 'blackboxai/anthropic/claude-sonnet-4.6'),
     ).toBe(true);
     expect(providerModelSupportsNativeToolCalling('bedrock', 'us.anthropic.claude-sonnet-4')).toBe(
-      false,
+      true,
     );
+    expect(
+      providerModelSupportsNativeToolCalling(
+        'bedrock',
+        'anthropic.claude-3-7-sonnet-20250219-v1:0',
+      ),
+    ).toBe(true);
+    expect(providerModelSupportsNativeToolCalling('bedrock', 'anthropic.claude-v2')).toBe(false);
   });
 
   it('gates direct Anthropic native tool calling against the curated catalog allowlist', () => {
