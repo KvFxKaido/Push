@@ -719,7 +719,8 @@ export const MessageBubble = memo(function MessageBubble({
 
     return (
       <div className="flex justify-end px-4 py-1.5 group/user animate-fade-in-up">
-        <div className="opacity-0 group-hover/user:opacity-100 transition-opacity duration-200 flex items-start gap-0.5 pt-2 mr-1.5">
+        {/* Touch fallback: always-visible on hover-less devices (see assistant row above). */}
+        <div className="opacity-0 group-hover/user:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity duration-200 flex items-start gap-0.5 pt-2 mr-1.5">
           <CopyButton text={displayContentText} />
           {onEdit && (
             <button
@@ -785,7 +786,12 @@ export const MessageBubble = memo(function MessageBubble({
           <SourcesFooter citations={message.citations} />
         )}
         {hasContent && !isStreaming && (
-          <div className="opacity-0 group-hover/assistant:opacity-100 transition-opacity duration-200 mt-1.5 flex items-center gap-0.5">
+          // Touch devices have no real :hover, so the hover-only reveal left
+          // Copy/Regenerate/Pin unreachable on the APK (only the WebView's flaky
+          // tap-synthesizes-hover ever surfaced them). `[@media(hover:none)]`
+          // keeps the row always-visible on hover-less devices while desktop
+          // keeps the hover-fade.
+          <div className="opacity-0 group-hover/assistant:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity duration-200 mt-1.5 flex items-center gap-0.5">
             <CopyButton text={displayContentText} />
             {canRegenerate && onRegenerate && (
               <button
