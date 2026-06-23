@@ -76,6 +76,7 @@ import {
   HUB_TAG_CLASS,
 } from '@/components/chat/hub-styles';
 import { BranchSwitchConfirm } from '@/components/chat/BranchSwitchConfirm';
+import { BranchListItem } from './BranchListItem';
 import { countGitStatusEntries, type BranchSwitchProbe } from '@/lib/branch-switch-probe';
 import {
   BranchWaveIcon,
@@ -453,7 +454,6 @@ export function WorkspaceHubSheet({
 
   // Branch dropdown
   const [branchDropdownOpen, setBranchDropdownOpen] = useState(false);
-  const [pendingDeleteBranch, setPendingDeleteBranch] = useState<string | null>(null);
   const [deletingBranch, setDeletingBranch] = useState<string | null>(null);
   const [switchConfirmBranch, setSwitchConfirmBranch] = useState<string | null>(null);
   const [switchProbe, setSwitchProbe] = useState<BranchSwitchProbe | null>(null);
@@ -1180,7 +1180,6 @@ export function WorkspaceHubSheet({
       setDeletingBranch(branchName);
       try {
         await branchProps.onDeleteBranch(branchName);
-        setPendingDeleteBranch(null);
       } finally {
         setDeletingBranch((prev) => (prev === branchName ? null : prev));
       }
@@ -1197,7 +1196,6 @@ export function WorkspaceHubSheet({
         setCommitTargetSheetOpen(false);
         setCommitTargetError(null);
         setBranchDropdownOpen(false);
-        setPendingDeleteBranch(null);
         setSwitchConfirmBranch(null);
         branchSuggestionAttemptedRef.current = false;
       }, 0);
@@ -1344,7 +1342,6 @@ export function WorkspaceHubSheet({
                             className="fixed inset-0 z-40"
                             onClick={() => {
                               setBranchDropdownOpen(false);
-                              setPendingDeleteBranch(null);
                               setSwitchConfirmBranch(null);
                             }}
                           />
@@ -1416,59 +1413,18 @@ export function WorkspaceHubSheet({
                                 )}
                               {branchProps.availableBranches.map((branch) => {
                                 const isActive = branch.name === branchProps.currentBranch;
-                                const canDelete = !isActive && !branch.isDefault;
-                                const isDeletePending = pendingDeleteBranch === branch.name;
-                                const isDeletingThis = deletingBranch === branch.name;
                                 return (
-                                  <div key={branch.name}>
-                                    <button
-                                      onClick={() => {
-                                        if (!isActive) handleBranchSwitch(branch.name);
-                                      }}
-                                      className={`flex w-full items-center gap-2 px-3 py-2 text-left transition-colors ${
-                                        isActive ? 'bg-white/[0.04]' : 'hover:bg-white/[0.03]'
-                                      }`}
-                                    >
-                                      <span
-                                        className={`min-w-0 flex-1 truncate text-xs ${isActive ? 'text-push-fg' : 'text-push-fg-secondary'}`}
-                                      >
-                                        {branch.name}
-                                      </span>
-                                      {branch.isDefault && (
-                                        <span className={HUB_TAG_CLASS}>default</span>
-                                      )}
-                                      {isActive && <Check className="h-3.5 w-3.5 text-push-link" />}
-                                    </button>
-                                    {canDelete && (
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          if (isDeletingThis || deletingBranch) return;
-                                          if (!isDeletePending) {
-                                            setPendingDeleteBranch(branch.name);
-                                            return;
-                                          }
-                                          void handleDeleteBranch(branch.name);
-                                        }}
-                                        className={`flex w-full items-center gap-2 px-3 py-1.5 text-push-xs ${
-                                          isDeletePending
-                                            ? 'bg-red-950/25 text-red-300 hover:bg-red-950/35'
-                                            : 'text-push-fg-dim transition-colors hover:bg-white/[0.03] hover:text-red-300'
-                                        }`}
-                                      >
-                                        {isDeletingThis ? (
-                                          <Loader2 className="h-3 w-3 animate-spin" />
-                                        ) : (
-                                          <Trash2 className="h-3 w-3" />
-                                        )}
-                                        {isDeletingThis
-                                          ? 'Deleting...'
-                                          : isDeletePending
-                                            ? 'Confirm delete'
-                                            : 'Delete'}
-                                      </button>
-                                    )}
-                                  </div>
+                                  <BranchListItem
+                                    key={branch.name}
+                                    name={branch.name}
+                                    isDefault={branch.isDefault}
+                                    isActive={isActive}
+                                    canDelete={!isActive && !branch.isDefault}
+                                    isDeleting={deletingBranch === branch.name}
+                                    anyDeleting={deletingBranch !== null}
+                                    onSwitch={() => handleBranchSwitch(branch.name)}
+                                    onDelete={() => void handleDeleteBranch(branch.name)}
+                                  />
                                 );
                               })}
                             </div>
