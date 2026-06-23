@@ -209,6 +209,9 @@ object JGitEngine {
   // delta-packs the similar trees, and `git diff <a> <b>` works across them.
 
   data class CheckpointCommit(val committed: Boolean, val commitId: String?)
+  /** Like [CheckpointCommit] but also carries the result tree id, so a delta
+   *  caller can verify it against the sandbox's tree hash and fall back on drift. */
+  data class CheckpointDelta(val committed: Boolean, val commitId: String?, val treeId: String?)
   data class CheckpointEntry(val commitId: String, val message: String, val timestampMs: Long)
 
   private const val CHECKPOINT_REF_PREFIX = "refs/checkpoints/"
@@ -221,7 +224,17 @@ object JGitEngine {
     val f = File(dir)
     if (File(f, ".git").exists()) return Git.open(f)
     f.mkdirs()
-    return Git.init().setDirectory(f).call()
+    val git = Git.init().setDirectory(f).call()
+    // Keep checkpoint blob ids = raw-content hashes so the device's manifest (JGit)
+    // and the sandbox's (C-git) agree on identical content. `autocrlf` off is the
+    // load-bearing one: it must not canonicalize CRLF/LF to one blob, or a
+    // line-ending-only change would diff as unchanged. See Native Checkpoint
+    // Store.md — "Diff transport (capture): manifest-rsync" / Correctness.
+    git.repository.config.apply {
+      setBoolean("core", null, "autocrlf", false)
+      save()
+    }
+    return git
   }
 
   /** Checkpoint refs, newest commit first. */
@@ -263,35 +276,47 @@ object JGitEngine {
    */
   fun commitWorkingTree(dir: String, archiveBase64: String, message: String): CheckpointCommit {
     openOrInit(dir).use { git ->
-      val repo = git.repository
-      replaceWorktree(repo.workTree, archiveBase64)
+      replaceWorktree(git.repository.workTree, archiveBase64)
       git.add().addFilepattern(".").call()
       git.add().setUpdate(true).addFilepattern(".").call()
-      repo.newObjectInserter().use { inserter ->
-        val treeId = repo.readDirCache().writeTree(inserter)
-        inserter.flush()
-        val newest = checkpointRefsNewestFirst(git).firstOrNull()
-        if (newest != null) {
-          RevWalk(repo).use { walk ->
-            if (walk.parseCommit(newest.objectId).tree.name == treeId.name) {
-              return CheckpointCommit(false, newest.objectId.name)
-            }
+      val r = commitStagedTree(git, message)
+      return CheckpointCommit(r.committed, r.commitId)
+    }
+  }
+
+  /**
+   * Write the staged index to a tree and create an orphan checkpoint commit + ref,
+   * deduping against the newest existing checkpoint (identical tree → no new
+   * commit, the existing ref is returned). Shared by [commitWorkingTree] (full
+   * capture) and [commitDelta] (incremental); the returned `treeId` lets a delta
+   * caller verify the result against the sandbox's tree hash.
+   */
+  private fun commitStagedTree(git: Git, message: String): CheckpointDelta {
+    val repo = git.repository
+    repo.newObjectInserter().use { inserter ->
+      val treeId = repo.readDirCache().writeTree(inserter)
+      inserter.flush()
+      val newest = checkpointRefsNewestFirst(git).firstOrNull()
+      if (newest != null) {
+        RevWalk(repo).use { walk ->
+          if (walk.parseCommit(newest.objectId).tree.name == treeId.name) {
+            return CheckpointDelta(false, newest.objectId.name, treeId.name)
           }
         }
-        val builder = CommitBuilder().apply {
-          setTreeId(treeId)
-          author = ident()
-          committer = ident()
-          setMessage(message)
-        }
-        val commitId = inserter.insert(builder)
-        inserter.flush()
-        val update = repo.updateRef(CHECKPOINT_REF_PREFIX + commitId.name)
-        update.setNewObjectId(commitId)
-        update.setForceUpdate(true)
-        update.update()
-        return CheckpointCommit(true, commitId.name)
       }
+      val builder = CommitBuilder().apply {
+        setTreeId(treeId)
+        author = ident()
+        committer = ident()
+        setMessage(message)
+      }
+      val commitId = inserter.insert(builder)
+      inserter.flush()
+      val update = repo.updateRef(CHECKPOINT_REF_PREFIX + commitId.name)
+      update.setNewObjectId(commitId)
+      update.setForceUpdate(true)
+      update.update()
+      return CheckpointDelta(true, commitId.name, treeId.name)
     }
   }
 
@@ -349,6 +374,93 @@ object JGitEngine {
       // Prune the now-unreferenced orphan commit objects (older than "now" = all).
       git.gc().setExpire(Date()).call()
       return drop.size
+    }
+  }
+
+  /**
+   * Content-only manifest (`path → blob SHA-1`) of the NEWEST checkpoint ref's
+   * tree — the base a diff capture diffs against. NOT HEAD: checkpoints are orphan
+   * refs and HEAD never moves. Blob ids are content hashes (mode excluded), which
+   * is exactly what the sandbox's raw-bytes manifest must agree with. Empty map
+   * when there is no checkpoint yet (the caller then full-captures).
+   */
+  fun listManifest(dir: String): Map<String, String> {
+    if (!isCheckpointRepo(dir)) return emptyMap()
+    Git.open(File(dir)).use { git ->
+      val repo = git.repository
+      val newest = checkpointRefsNewestFirst(git).firstOrNull() ?: return emptyMap()
+      RevWalk(repo).use { walk ->
+        val tree = walk.parseCommit(newest.objectId).tree
+        val out = LinkedHashMap<String, String>()
+        TreeWalk(repo).use { tw ->
+          tw.addTree(tree)
+          tw.isRecursive = true
+          while (tw.next()) out[tw.pathString] = tw.getObjectId(0).name
+        }
+        return out
+      }
+    }
+  }
+
+  /** Resolve [rel] under [workTree], returning null if it would escape the tree. */
+  private fun safeChild(workTree: File, rel: String): File? {
+    val child = File(workTree, rel)
+    val base = workTree.canonicalPath
+    val cp = child.canonicalPath
+    if (cp != base && !cp.startsWith(base + File.separator)) return null
+    return child
+  }
+
+  /**
+   * Extract a delta ZIP onto [workTree] WITHOUT clearing it, handling dir↔file
+   * transitions (the full path leans on a clear-first; a delta can't): a leaf
+   * arriving as the wrong type replaces whatever occupies its path.
+   */
+  private fun extractDeltaOnto(workTree: File, archiveBase64: String) {
+    val base = workTree.canonicalPath
+    ZipInputStream(ByteArrayInputStream(Base64.getDecoder().decode(archiveBase64))).use { zis ->
+      var entry: ZipEntry? = zis.nextEntry
+      while (entry != null) {
+        val out = File(workTree, entry.name)
+        if (out.canonicalPath != base && !out.canonicalPath.startsWith(base + File.separator)) {
+          throw IllegalStateException("zip entry escapes target: ${entry.name}")
+        }
+        if (entry.isDirectory) {
+          if (out.isFile) out.delete() // file → dir
+          out.mkdirs()
+        } else {
+          if (out.isDirectory) out.deleteRecursively() // dir → file
+          out.parentFile?.mkdirs()
+          out.outputStream().use { zis.copyTo(it) }
+        }
+        entry = zis.nextEntry
+      }
+    }
+  }
+
+  /**
+   * Apply a capture DELTA onto the existing worktree (no clear) and commit an
+   * orphan checkpoint — same result tree as a full capture, a fraction of the
+   * bytes. [deletedPaths] are removed FIRST so a dir↔file swap at one path lands
+   * cleanly, then [deltaArchiveBase64]'s changed/new files are extracted over the
+   * tree. Returns the result tree id for the caller to verify against the
+   * sandbox's; a repo with no existing checkpoint returns `committed=false` (a
+   * delta has no base to apply onto — the caller must full-capture).
+   */
+  fun commitDelta(
+    dir: String,
+    deltaArchiveBase64: String,
+    deletedPaths: List<String>,
+    message: String,
+  ): CheckpointDelta {
+    if (!isCheckpointRepo(dir)) return CheckpointDelta(false, null, null)
+    Git.open(File(dir)).use { git ->
+      val workTree = git.repository.workTree
+      for (rel in deletedPaths) safeChild(workTree, rel)?.deleteRecursively()
+      extractDeltaOnto(workTree, deltaArchiveBase64)
+      git.add().addFilepattern(".").call()
+      git.add().setUpdate(true).addFilepattern(".").call()
+      return commitStagedTree(git, message)
     }
   }
 }
