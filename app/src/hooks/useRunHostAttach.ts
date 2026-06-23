@@ -14,9 +14,12 @@
  *     anchor (`saveCheckpointV1`), so re-hydration is idempotent across
  *     remounts.
  *   - **Cursor-follow** — while the run is detached (adopted/adoptable) the
- *     hook polls `/run/attach` with the `savedAt` cursor; each fresher
- *     checkpoint appends the new rounds. Polls are read-only — they never
- *     heartbeat, so watching never resurrects the run.
+ *     hook follows the host at round grain. The primary transport is a
+ *     `/run/watch` WebSocket that pushes each fresher snapshot the instant
+ *     the host persists it (reconnect + backoff owned here); a `/run/attach`
+ *     `savedAt`-cursor poll is the fallback, firing only while the socket is
+ *     down or unsupported. Both are read-only — neither heartbeats, so
+ *     watching never resurrects the run.
  *   - **Controls** — approve/deny the paused gate (the host relaunches the
  *     loop with the decision), stop, and pull-back-local (hydrate → release
  *     → continue in-page via a reclaim note).
@@ -45,7 +48,10 @@ import {
   releaseRunHostRun,
   stopRunHostRun,
   submitRunHostApproval,
+  watchRunHost,
+  type RunHostWatchHandle,
 } from '@/lib/run-host-attach';
+import type { RunHostAttachSnapshot } from '@push/lib/run-host-adoption';
 import { loadCheckpointV1, saveCheckpointV1 } from '@/lib/checkpoint-store';
 import { clearRunCheckpoint } from '@/lib/checkpoint-manager';
 import { isRunActive, type RunEngineState } from '@/lib/run-engine';
@@ -126,6 +132,9 @@ export function useRunHostAttach({
   const hydrateQueueRef = useRef<Promise<void>>(Promise.resolve());
   /** NOT_CONFIGURED latch (the transport's stance): one log, then quiet. */
   const disabledRef = useRef(false);
+  /** True while the `/run/watch` WS is connected — the poll backs off to a
+   * fallback (only fires when the socket is down or unsupported). */
+  const wsConnectedRef = useRef(false);
 
   const scopeFor = useCallback(
     (chatId: string): RunHostScope | null => {
@@ -193,8 +202,56 @@ export function useRunHostAttach({
   );
 
   /**
-   * One probe/poll round: fetch the snapshot at the current cursor, hydrate
-   * anything fresher, refresh the banner state. Safe to call repeatedly.
+   * Fold one snapshot into the banner + transcript: advance/reset the cursor,
+   * suppress watched/dismissed runs, hydrate anything fresher, refresh the
+   * banner state. Shared by the poll (`syncOnce`) and the WS push effect, so
+   * both transports converge on identical handling — a pushed frame is just a
+   * snapshot that arrived without a poll.
+   */
+  const processSnapshot = useCallback(
+    async (chatId: string, snapshot: RunHostAttachSnapshot): Promise<void> => {
+      const cursor = cursorRef.current.get(chatId);
+      if (cursor && cursor.runId !== snapshot.runId) {
+        // A different run superseded the one we were following — restart the
+        // cursor so the new run hydrates from its own anchor.
+        cursorRef.current.delete(chatId);
+      }
+      if (snapshot.state === 'watched' || dismissedRef.current.has(`${chatId}:${snapshot.runId}`)) {
+        // `watched` means a live client (possibly this one, mid-handoff) is
+        // driving — nothing to view or control here.
+        setHostRun(null);
+        return;
+      }
+      if (snapshot.checkpoint) {
+        await applyHydration(chatId, snapshot.checkpoint);
+        if (snapshot.checkpointSavedAt !== null) {
+          cursorRef.current.set(chatId, {
+            runId: snapshot.runId,
+            savedAt: snapshot.checkpointSavedAt,
+          });
+        }
+      }
+      setHostRun((prev) => ({
+        runId: snapshot.runId,
+        state: snapshot.state,
+        round: snapshot.round,
+        midFlight: snapshot.midFlight,
+        pausedForApproval: snapshot.pausedForApproval ?? null,
+        ...(snapshot.lastError ? { lastError: snapshot.lastError } : {}),
+        busy: prev?.runId === snapshot.runId ? prev.busy : false,
+      }));
+    },
+    [applyHydration],
+  );
+
+  const processSnapshotRef = useRef(processSnapshot);
+  useEffect(() => {
+    processSnapshotRef.current = processSnapshot;
+  }, [processSnapshot]);
+
+  /**
+   * One probe/poll round: fetch the snapshot at the current cursor and fold
+   * it in. Safe to call repeatedly.
    */
   const syncOnce = useCallback(async (): Promise<void> => {
     const chatId = activeChatId;
@@ -220,37 +277,8 @@ export function useRunHostAttach({
       });
       return;
     }
-    const snapshot = result.snapshot;
-    if (cursor && cursor.runId !== snapshot.runId) {
-      // A different run superseded the one we were following — restart the
-      // cursor so the new run hydrates from its own anchor.
-      cursorRef.current.delete(chatId);
-    }
-    if (snapshot.state === 'watched' || dismissedRef.current.has(`${chatId}:${snapshot.runId}`)) {
-      // `watched` means a live client (possibly this one, mid-handoff) is
-      // driving — nothing to view or control here.
-      setHostRun(null);
-      return;
-    }
-    if (snapshot.checkpoint) {
-      await applyHydration(chatId, snapshot.checkpoint);
-      if (snapshot.checkpointSavedAt !== null) {
-        cursorRef.current.set(chatId, {
-          runId: snapshot.runId,
-          savedAt: snapshot.checkpointSavedAt,
-        });
-      }
-    }
-    setHostRun((prev) => ({
-      runId: snapshot.runId,
-      state: snapshot.state,
-      round: snapshot.round,
-      midFlight: snapshot.midFlight,
-      pausedForApproval: snapshot.pausedForApproval ?? null,
-      ...(snapshot.lastError ? { lastError: snapshot.lastError } : {}),
-      busy: prev?.runId === snapshot.runId ? prev.busy : false,
-    }));
-  }, [activeChatId, applyHydration, scopeFor]);
+    await processSnapshot(chatId, result.snapshot);
+  }, [activeChatId, processSnapshot, scopeFor]);
 
   const syncOnceRef = useRef(syncOnce);
   useEffect(() => {
@@ -266,12 +294,68 @@ export function useRunHostAttach({
     void syncOnceRef.current();
   }, [activeChatId, isStreaming, runEngineStateRef]);
 
-  // Cursor-follow while the run is detached on the host. Read-only polls.
+  // Cursor-follow while the run is detached on the host.
   const followable =
     hostRun !== null && (hostRun.state === 'adopted' || hostRun.state === 'adoptable');
+
+  // WS push is the primary follow transport: open `/run/watch` while detached
+  // and fold each pushed snapshot in the instant the host mutates the run,
+  // instead of on the next poll tick. The lib connection is single-shot; this
+  // effect owns reconnect/backoff and the poll fallback (the lib/hook split
+  // the poll already uses). A caller-initiated close on cleanup suppresses the
+  // reconnect.
+  useEffect(() => {
+    if (!followable || isStreaming || !activeChatId || disabledRef.current) return;
+    const chatId = activeChatId;
+    const scope = scopeFor(chatId);
+    if (!scope) return;
+    let cancelled = false;
+    let handle: RunHostWatchHandle | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    let attempt = 0;
+    const open = () => {
+      if (cancelled) return;
+      const cursor = cursorRef.current.get(chatId);
+      handle = watchRunHost(scope, cursor?.savedAt ?? null, {
+        onOpen: () => {
+          attempt = 0;
+          wsConnectedRef.current = true;
+        },
+        onSnapshot: (snapshot) => {
+          if (cancelled || chatId !== activeChatId) return;
+          // A locally-started run owns the record through the Phase 2
+          // transport — stay out of the way, same guard as the poll.
+          if (isRunActive(runEngineStateRef.current)) return;
+          void processSnapshotRef.current(chatId, snapshot);
+        },
+        onError: (message) => {
+          log('warn', 'run_host_watch_client_error', { chatId, message });
+        },
+        onClose: () => {
+          wsConnectedRef.current = false;
+          if (cancelled) return;
+          // Reconnect with bounded backoff; the poll fallback covers the gap.
+          attempt += 1;
+          const delay = Math.min(1000 * 2 ** Math.min(attempt, 4), 16_000);
+          reconnectTimer = setTimeout(open, delay);
+        },
+      });
+    };
+    open();
+    return () => {
+      cancelled = true;
+      wsConnectedRef.current = false;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      handle?.close();
+    };
+  }, [followable, isStreaming, activeChatId, scopeFor, runEngineStateRef]);
+
+  // Read-only poll — the fallback. Skips a tick while the WS is connected so
+  // the push path is primary; covers WS-down / unsupported deployments.
   useEffect(() => {
     if (!followable || isStreaming) return;
     const timer = setInterval(() => {
+      if (wsConnectedRef.current) return;
       if (isRunActive(runEngineStateRef.current)) return;
       void syncOnceRef.current();
     }, RUN_HOST_ATTACH_POLL_INTERVAL_MS);

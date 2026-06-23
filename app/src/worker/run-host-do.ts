@@ -49,6 +49,8 @@ import {
   type RunHostRecord,
   type RunHostResolvedApproval,
   type RunHostScope,
+  type RunHostWatchAttachment,
+  type RunHostWatchServerFrame,
   RUN_HOST_ADOPTED_WATCHDOG_MS,
   RUN_HOST_HEARTBEAT_INTERVAL_MS,
   RUN_HOST_MAX_ADOPTION_RELAUNCHES,
@@ -273,6 +275,9 @@ export class RunHost {
     // --- Phase 3 attach/viewer: snapshot hydration + pending-gate controls ---
     if (url.pathname === '/run/attach' && request.method === 'GET') {
       return this.runAttach(request);
+    }
+    if (url.pathname === '/run/watch' && request.method === 'GET') {
+      return this.runWatch(request);
     }
     if (url.pathname === '/run/stop' && request.method === 'POST') {
       return this.runStop(request);
@@ -556,6 +561,7 @@ export class RunHost {
       bytes,
       midFlight: record.midFlight,
     });
+    await this.broadcastWatchers('checkpoint');
     return json({ ok: true, bytes, round: cp.round });
   }
 
@@ -651,6 +657,9 @@ export class RunHost {
     await this.state.storage.delete(RECORD_KEY);
     await this.state.storage.delete(CHECKPOINT_KEY);
     rhLog('info', 'run_host_run_released', { runId: record.runId, fromState: record.state });
+    // Record is gone now — broadcastWatchers closes any open watch sockets
+    // cleanly so a viewer stops following instead of hanging on a dead run.
+    await this.broadcastWatchers('released');
     return json({ ok: true, released: true });
   }
 
@@ -712,6 +721,178 @@ export class RunHost {
   }
 
   /**
+   * GET /run/watch — the push counterpart of `/run/attach`. Accepts a
+   * WebSocket through the DO Hibernation API and streams the same
+   * `RunHostAttachSnapshot` on every host mutation (see `broadcastWatchers`),
+   * so a viewer following an adopted run sees each round the instant it
+   * persists rather than on the next poll tick. Read-only like the poll: a
+   * watch never bumps the heartbeat clock or mutates the record, so watching
+   * an adopted run can't resurrect it.
+   *
+   * The first snapshot ships inline on open (the socket's `sinceSavedAt`
+   * rides the upgrade query, mirroring the poll cursor). No run for the scope
+   * yet → an `error` frame + clean close, and the client falls back to its
+   * `/run/attach` poll. The per-socket cursor lives in the hibernation
+   * attachment so it survives DO eviction between rounds.
+   */
+  private async runWatch(request: Request): Promise<Response> {
+    if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
+      return new Response('Expected WebSocket upgrade', { status: 426 });
+    }
+    const sinceParam = new URL(request.url).searchParams.get('sinceSavedAt');
+    const sinceSavedAt =
+      sinceParam !== null && /^\d+$/.test(sinceParam) ? Number(sinceParam) : null;
+    const pair = new (
+      globalThis as unknown as {
+        WebSocketPair: new () => Record<string, CfWebSocket>;
+      }
+    ).WebSocketPair();
+    const client = pair[0];
+    const server = pair[1];
+    // Hibernation API (NOT server.accept()): an idle adopted run between
+    // rounds must be able to evict without dropping the viewer, and the
+    // per-socket cursor below survives in the attachment.
+    this.state.acceptWebSocket(server);
+    const attachment: RunHostWatchAttachment = { sinceSavedAt };
+    server.serializeAttachment(attachment);
+
+    const record = await this.loadRecord();
+    if (!record) {
+      this.sendWatchFrame(server, { t: 'error', message: 'NOT_FOUND' });
+      try {
+        server.close(1000, 'no run');
+      } catch {
+        // socket already gone — nothing to close.
+      }
+      rhLog('info', 'run_host_watch_opened_no_run', { cursor: sinceSavedAt });
+    } else {
+      const checkpoint = (await this.state.storage.get<RunCheckpointV1>(CHECKPOINT_KEY)) ?? null;
+      const snapshot = buildAttachSnapshot(record, checkpoint, sinceSavedAt);
+      this.sendWatchFrame(server, { t: 'snapshot', snapshot });
+      if (snapshot.checkpoint && snapshot.checkpointSavedAt !== null) {
+        server.serializeAttachment({ sinceSavedAt: snapshot.checkpointSavedAt });
+      }
+      rhLog('info', 'run_host_watch_opened', {
+        runId: record.runId,
+        state: record.state,
+        round: record.round,
+        cursor: sinceSavedAt,
+      });
+    }
+
+    return new Response(null, {
+      status: 101,
+      // @ts-expect-error — Cloudflare extension: Response init accepts `webSocket` to attach a paired socket on upgrade.
+      webSocket: client,
+    });
+  }
+
+  /** Serialize + send a watch frame, swallowing a send to an already-closed
+   * socket (the hibernation close handler does the cleanup). */
+  private sendWatchFrame(ws: CfWebSocket, frame: RunHostWatchServerFrame): void {
+    try {
+      ws.send(JSON.stringify(frame));
+    } catch {
+      // socket gone — close handler cleans up.
+    }
+  }
+
+  /**
+   * Push the current attach snapshot to every connected watcher. Called on
+   * each behavior-changing record/checkpoint mutation so `/run/watch` viewers
+   * track the run at round grain. Cheap when nobody is watching — the empty
+   * check short-circuits before any storage read. Per-socket cursor (the
+   * hibernation attachment) means each watcher only receives the checkpoint
+   * body when its own `sinceSavedAt` is behind, exactly as the poll does.
+   *
+   * Symmetric with the poll's `run_host_attach_served`: broadcasts log
+   * `run_host_watch_broadcast`, a record gone mid-stream logs
+   * `run_host_watch_closed_all` (and closes the sockets so viewers stop).
+   */
+  private async broadcastWatchers(reason: string): Promise<void> {
+    const sockets = this.state.getWebSockets();
+    if (sockets.length === 0) return;
+    const record = await this.loadRecord();
+    if (!record) {
+      // The run was released/torn down — close watchers cleanly so the client
+      // stops following instead of waiting on a stream that will never speak.
+      for (const ws of sockets) {
+        try {
+          ws.close(1000, 'released');
+        } catch {
+          // already gone.
+        }
+      }
+      rhLog('info', 'run_host_watch_closed_all', { reason, count: sockets.length });
+      return;
+    }
+    const checkpoint = (await this.state.storage.get<RunCheckpointV1>(CHECKPOINT_KEY)) ?? null;
+    let sent = 0;
+    for (const ws of sockets) {
+      const att = (ws.deserializeAttachment() as RunHostWatchAttachment | null) ?? {
+        sinceSavedAt: null,
+      };
+      const snapshot = buildAttachSnapshot(record, checkpoint, att.sinceSavedAt);
+      this.sendWatchFrame(ws, { t: 'snapshot', snapshot });
+      sent += 1;
+      if (
+        snapshot.checkpoint &&
+        snapshot.checkpointSavedAt !== null &&
+        snapshot.checkpointSavedAt !== att.sinceSavedAt
+      ) {
+        try {
+          ws.serializeAttachment({ sinceSavedAt: snapshot.checkpointSavedAt });
+        } catch {
+          // socket gone mid-broadcast — close handler cleans up.
+        }
+      }
+    }
+    rhLog('info', 'run_host_watch_broadcast', {
+      reason,
+      runId: record.runId,
+      state: record.state,
+      round: record.round,
+      sent,
+    });
+  }
+
+  /**
+   * Hibernation message handler. Watchers are read-only — the cursor advances
+   * server-side on each broadcast — so the only client frame honored is an
+   * optional `{ t: 'cursor', sinceSavedAt }` resync hint. Unknown / non-JSON
+   * frames are ignored quietly.
+   */
+  async webSocketMessage(ws: CfWebSocket, message: string | ArrayBuffer): Promise<void> {
+    if (typeof message !== 'string') return;
+    try {
+      const frame = JSON.parse(message) as { t?: unknown; sinceSavedAt?: unknown };
+      if (frame.t === 'cursor' && typeof frame.sinceSavedAt === 'number') {
+        ws.serializeAttachment({ sinceSavedAt: frame.sinceSavedAt });
+      }
+    } catch {
+      // Non-JSON / unexpected frame — watchers send nothing in steady state.
+    }
+  }
+
+  /** Hibernation close handler — close the server end so the pair is freed. */
+  async webSocketClose(ws: CfWebSocket, code: number): Promise<void> {
+    try {
+      // 1006 (abnormal) isn't a valid close code to echo; normalize it.
+      ws.close(code >= 1000 && code !== 1006 ? code : 1000, 'client closed');
+    } catch {
+      // already closed.
+    }
+  }
+
+  /** Hibernation error handler — logged so a persistently failing watch
+   * socket is visible in ops rather than silently dropped. */
+  async webSocketError(_ws: CfWebSocket, error: unknown): Promise<void> {
+    rhLog('warn', 'run_host_watch_socket_error', {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  /**
    * POST /run/stop — attached-viewer control: end the run server-side. Stops
    * an in-flight adopted loop, marks the run `ended`, clears the alarm — but
    * KEEPS the checkpoint, so the viewer can still hydrate the final
@@ -760,6 +941,7 @@ export class RunHost {
     await this.state.storage.put(RECORD_KEY, record);
     await this.state.storage.deleteAlarm();
     rhLog('info', 'run_host_run_stopped', { runId: record.runId, fromState });
+    await this.broadcastWatchers('stopped');
     return json({ ok: true, stopped: true, fromState });
   }
 
@@ -856,6 +1038,10 @@ export class RunHost {
       decision,
     });
     await this.startAdoption(record, 'approval');
+    // Surface the cleared gate to watchers even if startAdoption parked
+    // (blocked provisioning) rather than relaunching — the success path
+    // already broadcast `adopted`, so this is a cheap idempotent snapshot.
+    await this.broadcastWatchers('approval');
     const after = await this.loadRecord();
     return json({ ok: true, decision, state: after?.state ?? record.state });
   }
@@ -903,6 +1089,7 @@ export class RunHost {
         round: record.round,
         silentMs: now - record.lastHeartbeatAt,
       });
+      await this.broadcastWatchers('adoptable');
       // Consume `adoptable` immediately: launch the server-side loop (or
       // park loudly if provisioning is blocked — startAdoption manages the
       // alarm on every branch).
@@ -962,6 +1149,7 @@ export class RunHost {
         await this.state.storage.put(RECORD_KEY, record);
         await this.state.storage.deleteAlarm();
         rhLog('warn', 'run_host_run_expired', { runId: record.runId, reason: decision.reason });
+        await this.broadcastWatchers('expired');
         return;
       }
       default: {
@@ -1039,6 +1227,7 @@ export class RunHost {
       mode: current.mode,
       relaunches: current.adoptionRelaunches ?? 0,
     });
+    await this.broadcastWatchers('adopted');
 
     const controller = new AbortController();
     this.adoption = { id: adoptionId, controller };
@@ -1056,9 +1245,15 @@ export class RunHost {
           loadRecord: () => this.loadRecord(),
           saveRecord: async (r) => {
             await this.state.storage.put(RECORD_KEY, r);
+            // Push lifecycle changes (a supervised pause, a per-round round
+            // bump, a loop error) to watchers at the moment they persist.
+            await this.broadcastWatchers('loop_record');
           },
           saveCheckpoint: async (cp) => {
             await this.state.storage.put(CHECKPOINT_KEY, cp);
+            // Each adopted round persists here — this is the broadcast that
+            // turns the viewer's 10 s poll into round-grain streaming.
+            await this.broadcastWatchers('loop_checkpoint');
           },
           armAlarm: async (at) => {
             await this.state.storage.setAlarm(at);

@@ -416,6 +416,59 @@ export const RUN_HOST_ATTACH_SNAPSHOT_OPTIONAL_FIELDS = [
   'lastError',
 ] as const;
 
+// ---------------------------------------------------------------------------
+// The watch transport (Phase 3 refinement — WS push over the attach snapshot)
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET /run/watch` is the push counterpart of the read-only `/run/attach`
+ * poll: the same `RunHostAttachSnapshot`, delivered over a WebSocket the
+ * moment the host mutates the run (each adopted-loop round, a supervised
+ * pause, stop/approve/expire) instead of on the viewer's next 10 s tick. It
+ * is the "WS delivery per the Phase 0 spike" the Phase 3 attach/viewer doc
+ * left as the open refinement — the spike measured WS-from-DO at ~140 ms
+ * first token, comfortably inside budget.
+ *
+ * Cursor grain is identical to the poll: the host tracks each watcher's
+ * `sinceSavedAt` (the socket's hibernation attachment) and only ships the
+ * `RunCheckpointV1` body when `checkpointSavedAt` advances, so a follow
+ * stream costs one lifecycle frame per round, not a re-download. The socket
+ * is accepted through the DO WebSocket **Hibernation API** so an idle adopted
+ * run (no client traffic between rounds) doesn't pin the isolate in memory;
+ * the per-socket cursor survives eviction in `serializeAttachment`.
+ *
+ * Read-only by construction — the same stance as the poll. A watch frame
+ * never bumps the heartbeat clock; control still flows only through
+ * register / approval / stop / release. The viewer keeps a slow `/run/attach`
+ * poll as a fallback for when the socket is down or unsupported, so the push
+ * path is an enhancement, never a hard dependency.
+ *
+ * Frames are server→client only (`snapshot` carries the attach snapshot;
+ * `error` reports a no-run / rejected open before close). The cursor advances
+ * server-side, so there is no client→server data frame in the steady state.
+ */
+export const RUN_HOST_WATCH_SERVER_FRAME_TYPES = ['snapshot', 'error'] as const;
+export type RunHostWatchServerFrameType = (typeof RUN_HOST_WATCH_SERVER_FRAME_TYPES)[number];
+
+export interface RunHostWatchSnapshotFrame {
+  t: 'snapshot';
+  snapshot: RunHostAttachSnapshot;
+}
+
+export interface RunHostWatchErrorFrame {
+  t: 'error';
+  message: string;
+}
+
+export type RunHostWatchServerFrame = RunHostWatchSnapshotFrame | RunHostWatchErrorFrame;
+
+/** The per-socket cursor the host stows in the WebSocket hibernation
+ * attachment — the last `checkpointSavedAt` shipped to that watcher, so a
+ * rehydrated (post-eviction) broadcast still ships only fresher rounds. */
+export interface RunHostWatchAttachment {
+  sinceSavedAt: number | null;
+}
+
 /**
  * Assemble the attach snapshot for a record + stored checkpoint at cursor
  * `sinceSavedAt` (null = first attach, always include the checkpoint when

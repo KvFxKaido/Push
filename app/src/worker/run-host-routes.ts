@@ -19,6 +19,12 @@
  *     GET  /api/runhost/run/attach     — snapshot hydration + cursor-follow
  *                                        (`?sinceSavedAt=` echoes the last
  *                                        seen checkpoint cursor).
+ *     GET  /api/runhost/run/watch      — WS push of the attach snapshot
+ *                                        (Upgrade: websocket; same cursor on
+ *                                        the query). The low-latency
+ *                                        counterpart to the attach poll;
+ *                                        the client keeps the poll as a
+ *                                        fallback.
  *     POST /api/runhost/run/stop       — end the run server-side (keeps the
  *                                        checkpoint for final hydration).
  *     POST /api/runhost/run/approval   — approve/deny the gate a supervised
@@ -53,6 +59,7 @@ export type RunRouteAction =
   | 'run.release'
   | 'run.status'
   | 'run.attach'
+  | 'run.watch'
   | 'run.stop'
   | 'run.approval';
 export type RunHostAction = SpikeRouteAction | RunRouteAction;
@@ -72,6 +79,8 @@ export function matchRunHostRoute(pathname: string, method: string): RunHostActi
   if (rest === 'run/status' && method === 'GET') return 'run.status';
   // Phase 3 attach/viewer — snapshot hydration + pending-gate controls.
   if (rest === 'run/attach' && method === 'GET') return 'run.attach';
+  // Phase 3 refinement — WS push of the attach snapshot (Upgrade: websocket).
+  if (rest === 'run/watch' && method === 'GET') return 'run.watch';
   if (rest === 'run/stop' && method === 'POST') return 'run.stop';
   if (rest === 'run/approval' && method === 'POST') return 'run.approval';
   // Phase 0 spike — latency instruments.
@@ -143,7 +152,7 @@ async function handleRunAction(
   let forwardBody: string | undefined;
   let scope: RunHostScope | null;
 
-  if (action === 'run.status' || action === 'run.attach') {
+  if (action === 'run.status' || action === 'run.attach' || action === 'run.watch') {
     scope = scopeFromQuery(requestUrl);
   } else {
     let raw: unknown;
@@ -168,6 +177,23 @@ async function handleRunAction(
 
   const id = env.RUN_HOST!.idFromName(runHostInstanceId(scope));
   const stub = env.RUN_HOST!.get(id);
+
+  // The watch upgrade must reach the DO as a reconstruction of the original
+  // request so the `Upgrade: websocket` semantics survive the namespace.fetch
+  // boundary (the spike/ws precedent). The generic forward below rebuilds the
+  // request with a JSON content-type, which would strip the upgrade — so
+  // watch forwards `new Request(targetUrl, request)` instead, carrying only
+  // the server-derived scope (→ instance) and the cursor on the query.
+  if (action === 'run.watch') {
+    const watchUrl = new URL('https://do/run/watch');
+    const since = requestUrl.searchParams.get('sinceSavedAt');
+    if (since !== null) watchUrl.searchParams.set('sinceSavedAt', since);
+    const forwardedWatch = new Request(watchUrl.toString(), request);
+    return (await (stub as unknown as { fetch: (r: Request) => Promise<Response> }).fetch(
+      forwardedWatch,
+    )) as Response;
+  }
+
   const doPath = `/run/${action.slice('run.'.length)}`;
   // Server-derived deployment origin, stamped unconditionally (a
   // client-supplied value can never win — the spikeOrigin stance). The DO

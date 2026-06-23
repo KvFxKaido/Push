@@ -1,6 +1,6 @@
 # Durable Runs — Adopt-on-Silence
 
-**Status:** Current — Phases 0–3 COMPLETE. Phase 0: latency spike #870, eval harness #871 (numbers in [Phase 0 results](#phase-0-results-2026-06-10) — latency does not block Phase 2). Phase 1: schema #873, capture #874. Phase 2: the delegation-collapse precondition (the inline route + flag in `delegation-mode-settings.ts`; A/B measured 2026-06-11 — direct ≥ delegated on every axis, see [Delegation-collapse A/B](#delegation-collapse-ab-measured-2026-06-11)), the **adoption substrate** (heartbeat ledger, checkpoint persistence, watched→adoptable decision — see [Phase 2 substrate](#phase-2-substrate-shipped-2026-06-10)), the **client transport** (register/mirror/heartbeat/release + pull-back-local — see [Phase 2 client transport](#phase-2-client-transport-shipped-2026-06-10)), and the **server-side loop** that consumes `adoptable` (see [Phase 2 server-side loop](#phase-2-server-side-loop-shipped-2026-06-10)). Phase 3: the **attach/viewer** — bearer-authenticated reattach, snapshot hydration, approve/deny pending gates, stop, pull-back-local (see [Phase 3 attach/viewer](#phase-3-attachviewer-shipped-2026-06-11)).
+**Status:** Current — Phases 0–3 COMPLETE. Phase 0: latency spike #870, eval harness #871 (numbers in [Phase 0 results](#phase-0-results-2026-06-10) — latency does not block Phase 2). Phase 1: schema #873, capture #874. Phase 2: the delegation-collapse precondition (the inline route + flag in `delegation-mode-settings.ts`; A/B measured 2026-06-11 — direct ≥ delegated on every axis, see [Delegation-collapse A/B](#delegation-collapse-ab-measured-2026-06-11)), the **adoption substrate** (heartbeat ledger, checkpoint persistence, watched→adoptable decision — see [Phase 2 substrate](#phase-2-substrate-shipped-2026-06-10)), the **client transport** (register/mirror/heartbeat/release + pull-back-local — see [Phase 2 client transport](#phase-2-client-transport-shipped-2026-06-10)), and the **server-side loop** that consumes `adoptable` (see [Phase 2 server-side loop](#phase-2-server-side-loop-shipped-2026-06-10)). Phase 3: the **attach/viewer** — bearer-authenticated reattach, snapshot hydration, approve/deny pending gates, stop, pull-back-local (see [Phase 3 attach/viewer](#phase-3-attachviewer-shipped-2026-06-11)); the **WS push refinement** (2026-06-23) makes `/run/watch` the primary round-grain follow transport with the poll demoted to fallback (see [WS push](#phase-3-attachviewer-shipped-2026-06-11)).
 
 **Date:** 2026-06-10
 
@@ -481,12 +481,41 @@ pushd's `get_session_snapshot` packet: lifecycle summary + the stored
 (`buildAttachSnapshot` in `lib/run-host-adoption.ts`, field-pinned next to
 the record vocabulary). The checkpoint IS the snapshot — and since the
 adopted loop persists every round, `savedAt` is the natural cursor grain, so
-cursor-follow is a read-only 10 s poll (`RUN_HOST_ATTACH_POLL_INTERVAL_MS`)
-that ships only the rounds the viewer hasn't seen. Attach never bumps the
-heartbeat clock: watching can't resurrect a run (control stays explicit —
-register/approval/stop/release). Event-grain streaming (the `lastEventSeq`
-anchor, WS delivery per the Phase 0 spike) remains the open refinement; the
-adopted loop does not emit run events yet.
+cursor-follow ships only the rounds the viewer hasn't seen. Attach never bumps
+the heartbeat clock: watching can't resurrect a run (control stays explicit —
+register/approval/stop/release).
+
+**WS push (shipped 2026-06-23).** The 10 s poll is now the *fallback*: the
+primary follow transport is a `GET /run/watch` WebSocket that pushes the same
+`RunHostAttachSnapshot` the instant the host mutates the run — each
+adopted-loop round (the `saveCheckpoint`/`saveRecord` hooks), a supervised
+pause, and the stop/approve/expire/release transitions — so a viewer sees
+round-grain progress rather than waiting on the next tick. This is the
+"WS delivery per the Phase 0 spike" that paragraph left open (Phase 0 measured
+WS-from-DO at ~140 ms first token, comfortably inside budget). Implementation
+notes:
+
+- The socket is accepted through the DO **WebSocket Hibernation API**
+  (`acceptWebSocket`/`webSocketMessage`/`webSocketClose`), so an idle adopted
+  run between rounds doesn't pin the isolate; the per-watcher `sinceSavedAt`
+  cursor lives in `serializeAttachment` and survives eviction. The next alarm
+  wake (watchdog / orphan relaunch) rebroadcasts, so a viewer that connected
+  across an eviction resyncs.
+- Cursor grain is identical to the poll (`checkpointSavedAt`), so the body
+  ships only when a watcher's cursor is behind — `broadcastWatchers` short-
+  circuits before any storage read when nobody is watching. Frames are
+  server→client only (`snapshot` / `error`), pinned in
+  `RUN_HOST_WATCH_SERVER_FRAME_TYPES`
+  (`cli/tests/run-host-adoption.test.mjs`).
+- Read-only by construction, exactly like the poll — a watch frame never bumps
+  the heartbeat clock; control still flows only through
+  register/approval/stop/release. The client (`useRunHostAttach`) keeps the
+  poll alive as a fallback that fires only while the socket is down or
+  unsupported, so the push path is an enhancement, never a hard dependency.
+
+Literal per-event-seq run-event emission (finer than the per-round checkpoint
+grain) remains a future refinement; the adopted loop still persists per round,
+which is the grain the snapshot cursor follows.
 
 **Hydration.** `useRunHostAttach` (mounted from `useChatCheckpoint`, the
 resume-lifecycle owner) folds the host transcript into the conversation via
