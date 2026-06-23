@@ -5,9 +5,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-
-/** Hold duration (ms) before a touch long-press reveals the tip. */
-const LONG_PRESS_MS = 400;
+import { useLongPress } from '@/hooks/useLongPress';
 
 type TipSide = React.ComponentProps<typeof TooltipContent>['side'];
 
@@ -29,11 +27,9 @@ interface TipProps {
  * correctly near edges, and follows the app's palette/motion.
  *
  * Reveal model (mobile-first): pointer devices use Radix hover/focus; touch
- * devices use a long-press, since hover doesn't exist there. `open` is
- * controlled so both paths can drive it — Radix still updates it from
- * hover/focus/escape via `onOpenChange`, and the long-press additionally forces
- * it open. A move/lift/cancel before the hold completes aborts (so a scroll that
- * starts on the trigger never pops the tip).
+ * devices use a long-press (`useLongPress`), since hover doesn't exist there.
+ * `open` is controlled so both paths drive it — Radix still updates it from
+ * hover/focus/escape via `onOpenChange`, and the long-press forces it open.
  *
  * Long-press is a progressive enhancement: on touch the subsequent tap still
  * activates the underlying control. Keep that in mind for destructive triggers.
@@ -46,38 +42,11 @@ export function Tip({
   className,
 }: TipProps) {
   const [open, setOpen] = React.useState(false);
-  const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const clearLongPress = React.useCallback(() => {
-    if (timer.current) {
-      clearTimeout(timer.current);
-      timer.current = null;
-    }
-  }, []);
-
-  const onPointerDown = React.useCallback(
-    (e: React.PointerEvent) => {
-      // Mouse/pen reveal on hover; only touch needs the press-and-hold path.
-      if (e.pointerType !== 'touch') return;
-      clearLongPress();
-      timer.current = setTimeout(() => setOpen(true), LONG_PRESS_MS);
-    },
-    [clearLongPress],
-  );
-
-  // Clear any in-flight hold if the component unmounts mid-press.
-  React.useEffect(() => clearLongPress, [clearLongPress]);
+  const { pointerHandlers } = useLongPress(() => setOpen(true));
 
   return (
     <Tooltip open={open} onOpenChange={setOpen} delayDuration={150}>
-      <TooltipTrigger
-        asChild
-        onPointerDown={onPointerDown}
-        onPointerUp={clearLongPress}
-        onPointerMove={clearLongPress}
-        onPointerLeave={clearLongPress}
-        onPointerCancel={clearLongPress}
-      >
+      <TooltipTrigger asChild {...pointerHandlers}>
         {children}
       </TooltipTrigger>
       <TooltipContent side={side} sideOffset={sideOffset} className={className}>
