@@ -142,8 +142,10 @@ function KeptCard({
           aria-label={copied ? 'Copied!' : 'Copy content'}
           title={copied ? 'Copied!' : 'Copy content'}
         >
+          {/* `icon-swap` on the incoming Check only; `copied` inits false, so it
+              plays once per click and never on mount/remount. */}
           {copied ? (
-            <Check className="h-3.5 w-3.5 text-push-status-success" />
+            <Check className="icon-swap h-3.5 w-3.5 text-push-status-success" />
           ) : (
             <Copy className="h-3.5 w-3.5" />
           )}
