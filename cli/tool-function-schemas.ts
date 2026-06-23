@@ -18,7 +18,11 @@ const PARAM_TYPES: Record<string, JsonSchemaType> = {
   end_line: 'integer',
   max_results: 'integer',
   timeout_ms: 'integer',
-  session_id: 'integer',
+  // CLI exec session ids are strings (`exec_<base36>_<n>`, see `cli/tools.ts`),
+  // and the exec_poll/write/stop executors call `asString(session_id)`. Typing
+  // this `integer` in the native schema made the model emit a number, so
+  // follow-up calls failed with `session_id must be a string`.
+  session_id: 'string',
   from_seq: 'integer',
   max_chars: 'integer',
   expected_version: 'integer',

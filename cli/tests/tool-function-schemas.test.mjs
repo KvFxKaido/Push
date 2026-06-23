@@ -37,6 +37,15 @@ describe('CLI native tool function schemas', () => {
       'integer',
     );
     assert.equal(schemas.get('exec_start').function.parameters.properties.tty.type, 'boolean');
+    // Exec session ids are strings (`exec_<base36>_<n>`); the executor calls
+    // asString(session_id). The schema must not tell the model they're integers.
+    for (const tool of ['exec_poll', 'exec_write', 'exec_stop']) {
+      assert.equal(
+        schemas.get(tool).function.parameters.properties.session_id.type,
+        'string',
+        `${tool}.session_id must be string`,
+      );
+    }
   });
 
   it('derives the Explorer read-only schema from READ_ONLY_TOOL_PROTOCOL', () => {
