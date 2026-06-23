@@ -56,6 +56,7 @@ const ROUTES = new Set([
   'exec-kill',
   'read',
   'write',
+  'upload',
   'batch-write',
   'delete',
   'list',
@@ -288,7 +289,7 @@ export async function handleCloudflareSandbox(
   }
 
   const maxBodyBytes =
-    route === 'restore' || route === 'batch-write'
+    route === 'restore' || route === 'batch-write' || route === 'upload'
       ? RESTORE_MAX_BODY_SIZE_BYTES
       : MAX_BODY_SIZE_BYTES;
   const bodyResult = await readBodyText(request, maxBodyBytes);
@@ -387,6 +388,8 @@ export async function handleCloudflareSandbox(
         return await routeRead(env, body);
       case 'write':
         return await routeWrite(env, body);
+      case 'upload':
+        return await routeUpload(env, body);
       case 'batch-write':
         return await routeBatchWrite(env, body);
       case 'delete':
@@ -1189,6 +1192,48 @@ async function routeWrite(env: Env, body: Json): Promise<Response> {
     bytes_written: new TextEncoder().encode(content).length,
     new_version: newVersion,
     workspace_revision: 0,
+  });
+}
+
+// Large-file upload to /workspace. The standard `write` route is capped at
+// MAX_BODY_SIZE_BYTES (~5 MB); this route sits in the RESTORE_MAX_BODY_SIZE_BYTES
+// (12 MB) body tier (see the dispatch body-limit) so a native-checkpoint restore
+// archive — ~9 MB of base64 for Push's ~7 MB working tree — can round-trip.
+// Writes the payload verbatim via the SDK (`sandbox.writeFile`, uncapped at the
+// SDK level — the same path `hydrateBase64IntoSandbox` uses), confined to
+// /workspace. No version/CAS check: callers (checkpoint restore) write a private
+// temp path, not a tracked file.
+async function routeUpload(env: Env, body: Json): Promise<Response> {
+  const sandboxId = requireStr(body, 'sandbox_id');
+  const requestedPath = requireStr(body, 'path');
+  const content = requireStr(body, 'content');
+
+  if (!requestedPath.startsWith('/workspace/')) {
+    return Response.json({ ok: false, error: 'Path must be within /workspace' });
+  }
+
+  const sandbox = sandboxFor(env, sandboxId);
+
+  // The target file may not exist yet, so canonicalize with `realpath -m` (no
+  // existence requirement). It still resolves `..` and any *existing* symlink
+  // component, so `/workspace/../etc/x` or an in-tree symlink can't escape — the
+  // resolved path is then re-checked against /workspace (the confinement
+  // boundary, mirroring routeDownload).
+  const realpathResult = (await withExecDeadline(
+    sandbox.exec(`realpath -m -- ${shellSingleQuote(requestedPath)}`),
+  )) as { stdout?: string; exitCode?: number };
+  if ((realpathResult.exitCode ?? 0) !== 0) {
+    return Response.json({ ok: false, error: `Invalid path: ${requestedPath}` });
+  }
+  const path = (realpathResult.stdout ?? '').trim();
+  if (!path.startsWith('/workspace/')) {
+    return Response.json({ ok: false, error: 'Path must be within /workspace' });
+  }
+
+  await sandbox.writeFile(path, content);
+  return Response.json({
+    ok: true,
+    bytes_written: new TextEncoder().encode(content).length,
   });
 }
 

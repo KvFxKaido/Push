@@ -1751,6 +1751,39 @@ export async function writeToSandbox(
   }
 }
 
+/**
+ * Upload a large file to `/workspace` via the dedicated `upload` route, which is
+ * in the 12 MB body tier — vs `writeToSandbox`'s ~5 MB `write` route. Used by the
+ * native checkpoint restore to land the archive base64 (a ~7 MB checkpoint is
+ * ~9 MB of base64, over the standard write cap). Confined to `/workspace`
+ * server-side. Signals a workspace mutation on attempt, matching `writeToSandbox`.
+ */
+export async function uploadFileToSandbox(
+  sandboxId: string,
+  path: string,
+  content: string,
+): Promise<{ ok: boolean; error?: string; bytes_written?: number }> {
+  let requestAttempted = false;
+  try {
+    const body = {
+      ...withOwnerToken({}, sandboxId),
+      sandbox_id: sandboxId,
+      path,
+      content,
+    };
+    requestAttempted = true;
+    return await sandboxFetch<{ ok: boolean; error?: string; bytes_written?: number }>(
+      'upload',
+      body,
+      WRITE_TIMEOUT_MS,
+      undefined,
+      WRITE_MAX_RETRIES,
+    );
+  } finally {
+    if (requestAttempted) notifyWorkspaceMutation(sandboxId);
+  }
+}
+
 // --- Batch write ---
 
 export interface BatchWriteEntry {

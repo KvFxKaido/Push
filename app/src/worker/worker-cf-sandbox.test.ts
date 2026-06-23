@@ -785,6 +785,66 @@ describe('handleCloudflareSandbox happy paths', () => {
     expect(sandbox.writeFile).toHaveBeenCalledWith('/workspace/file.txt', 'new text');
   });
 
+  it('uploads a large file to /workspace via the upload route (realpath-confined)', async () => {
+    const sandbox = mockSandbox();
+    withOwnerTokenAuthExec(sandbox, async (command) =>
+      command.startsWith('realpath -m')
+        ? { stdout: '/workspace/.push-checkpoint-restore.b64\n', stderr: '', exitCode: 0 }
+        : { stdout: '', stderr: '', exitCode: 0 },
+    );
+
+    const response = await callRoute('upload', {
+      sandbox_id: 'sb-1',
+      path: '/workspace/.push-checkpoint-restore.b64',
+      content: 'BASE64DATA',
+    });
+
+    expect(response.status).toBe(200);
+    const body = await jsonBody(response);
+    expect(body).toMatchObject({ ok: true, bytes_written: 10 });
+    expect(sandbox.writeFile).toHaveBeenCalledWith(
+      '/workspace/.push-checkpoint-restore.b64',
+      'BASE64DATA',
+    );
+  });
+
+  it('upload rejects a path outside /workspace without writing', async () => {
+    const sandbox = mockSandbox();
+
+    const response = await callRoute('upload', {
+      sandbox_id: 'sb-1',
+      path: '/etc/passwd',
+      content: 'x',
+    });
+
+    expect(await jsonBody(response)).toMatchObject({
+      ok: false,
+      error: 'Path must be within /workspace',
+    });
+    expect(sandbox.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('upload rejects a /workspace path that resolves outside (traversal/symlink)', async () => {
+    const sandbox = mockSandbox();
+    withOwnerTokenAuthExec(sandbox, async (command) =>
+      command.startsWith('realpath -m')
+        ? { stdout: '/etc/shadow\n', stderr: '', exitCode: 0 }
+        : { stdout: '', stderr: '', exitCode: 0 },
+    );
+
+    const response = await callRoute('upload', {
+      sandbox_id: 'sb-1',
+      path: '/workspace/../etc/shadow',
+      content: 'x',
+    });
+
+    expect(await jsonBody(response)).toMatchObject({
+      ok: false,
+      error: 'Path must be within /workspace',
+    });
+    expect(sandbox.writeFile).not.toHaveBeenCalled();
+  });
+
   it('deletes a file', async () => {
     const sandbox = mockSandbox();
 
