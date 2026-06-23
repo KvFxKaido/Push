@@ -17,6 +17,11 @@ type HotUpdateHook = (ctx: {
   file: string;
   modules: unknown[];
 }) => void;
+type HotChannel = { send: (...args: unknown[]) => unknown };
+type ConfigureServerHook = (server: {
+  httpServer: null;
+  environments: { client: { hot: HotChannel } };
+}) => void;
 
 const ESC = String.fromCharCode(27);
 
@@ -92,6 +97,46 @@ describe('agentDevReporter', () => {
         modules: 2,
       }),
     );
+  });
+
+  it('emits hmr_error for overlay-error payloads and still passes them through', () => {
+    const cap = captureWriter();
+    const plugin = agentDevReporter({ env: { CLAUDECODE: '1' }, write: cap.write });
+
+    const forwarded: unknown[] = [];
+    const hot: HotChannel = { send: (...args: unknown[]) => void forwarded.push(args[0]) };
+    const configureServer = plugin.configureServer as unknown as ConfigureServerHook;
+    configureServer({ httpServer: null, environments: { client: { hot } } });
+
+    const errorPayload = {
+      type: 'error',
+      err: {
+        message: `${ESC}[31mUnexpected token${ESC}[39m`,
+        id: '/repo/src/Broken.tsx',
+        frame: 'const x =',
+        plugin: 'vite:react-babel',
+        loc: { file: 'src/Broken.tsx', line: 3, column: 9 },
+        stack: 'SyntaxError: Unexpected token',
+      },
+    };
+    hot.send(errorPayload);
+
+    // Non-error traffic must not be reported.
+    hot.send({ type: 'update', updates: [] });
+
+    const events = cap.events();
+    const hmrError = events.find((e) => e.event === 'hmr_error');
+    expect(hmrError).toMatchObject({
+      level: 'error',
+      source: 'vite-dev',
+      message: 'Unexpected token',
+      file: '/repo/src/Broken.tsx',
+      plugin: 'vite:react-babel',
+    });
+    expect(events.filter((e) => e.event === 'hmr_error')).toHaveLength(1);
+
+    // Both sends pass through to the real channel untouched (overlay intact).
+    expect(forwarded).toEqual([errorPayload, { type: 'update', updates: [] }]);
   });
 
   it('is inert when no agent is detected', () => {

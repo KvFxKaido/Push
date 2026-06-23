@@ -12,7 +12,10 @@ import { type Plugin, createLogger } from 'vite';
 //
 // Event shape follows the repo's "symmetric structured logs" convention
 // (CLAUDE.md): one JSON object per line, `{ level, event, source, t, ...ctx }`.
-// Paired events: `dev_server_ready`, `hmr_update`, `vite_warn`, `vite_error`.
+// Events: `dev_server_ready`, `hmr_update`, `hmr_error`, `vite_warn`,
+// `vite_error`. (`hmr_update` ↔ `hmr_error` pair the success/failure halves of
+// a hot pass; a transform failure may also surface on the logger as
+// `vite_error` — they're distinct channels, not duplicates.)
 
 // Env vars set by the harnesses of common coding agents. Presence of any one
 // flips the reporter on. `PUSH_DEV_AGENT` is the explicit override and wins
@@ -38,6 +41,24 @@ function stripAnsi(value: string): string {
 }
 
 export type AgentDevLevel = 'info' | 'warn' | 'error';
+
+// Minimal shapes for the HMR overlay-error interception. Vite 8 emits overlay
+// errors via the client environment's hot channel as
+// `client.hot.send({ type: 'error', err: prepareError(err) })`; `prepareError`
+// produces the `err` fields below. Typed loosely so the wrap doesn't pin to a
+// specific Vite internal type across versions.
+type HotChannelLike = { send?: (...args: unknown[]) => unknown };
+interface HotErrorPayload {
+  type?: string;
+  err?: {
+    message?: string;
+    stack?: string;
+    id?: string;
+    frame?: string;
+    plugin?: string;
+    loc?: unknown;
+  };
+}
 
 export interface AgentDevReporterOptions {
   /** Defaults to `process.env`. Injectable for tests. */
@@ -98,6 +119,36 @@ export function agentDevReporter(options: AgentDevReporterOptions = {}): Plugin 
     // racing Vite's ANSI box.
     configureServer(server) {
       if (!active) return;
+
+      // Intercept HMR overlay errors. Vite 8 routes these through the client
+      // environment's hot channel (falling back to the legacy `hot`/`ws`
+      // aliases on older shapes). We wrap `send`, emit a structured
+      // `hmr_error` for `{ type: 'error' }` payloads, then pass through
+      // untouched so the browser overlay still renders.
+      const channel =
+        (server.environments?.client?.hot as HotChannelLike | undefined) ??
+        (server as unknown as { hot?: HotChannelLike }).hot ??
+        (server as unknown as { ws?: HotChannelLike }).ws;
+      const send = channel?.send;
+      if (channel && typeof send === 'function') {
+        const origSend = send.bind(channel);
+        channel.send = (...args: unknown[]) => {
+          const payload = args[0] as HotErrorPayload | undefined;
+          if (payload && typeof payload === 'object' && payload.type === 'error' && payload.err) {
+            const err = payload.err;
+            log('error', 'hmr_error', {
+              message: stripAnsi(err.message ?? 'unknown HMR error'),
+              ...(err.id ? { file: err.id } : {}),
+              ...(err.loc ? { loc: err.loc } : {}),
+              ...(err.plugin ? { plugin: err.plugin } : {}),
+              ...(err.frame ? { frame: stripAnsi(err.frame) } : {}),
+              ...(err.stack ? { stack: stripAnsi(err.stack) } : {}),
+            });
+          }
+          return origSend(...args);
+        };
+      }
+
       const httpServer = server.httpServer;
       if (!httpServer) return;
       httpServer.once('listening', () => {
