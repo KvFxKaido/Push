@@ -26,6 +26,7 @@ import {
   RUN_HOST_RECORD_ADOPTION_FIELDS,
   RUN_HOST_RECORD_FIELDS,
   RUN_HOST_SILENCE_THRESHOLD_MS,
+  RUN_HOST_WATCH_SERVER_FRAME_TYPES,
   RUN_LIFECYCLE_ALARM_ACTIVE_STATES,
   RUN_LIFECYCLE_STATES,
   buildAttachSnapshot,
@@ -117,6 +118,14 @@ test('pin: attach snapshot field vocabulary (Phase 3)', () => {
     'lastError',
     'pausedForApproval',
   ]);
+});
+
+test('pin: watch server frame vocabulary (Phase 3 refinement)', () => {
+  // The `/run/watch` WS push frames the DO sends and the client parses. A
+  // drift here is a cross-surface drift (host DO ↔ reopening client read the
+  // same module), so the set is pinned alongside the attach snapshot it
+  // carries — extending it means updating this pin in the same PR.
+  assert.deepEqual([...RUN_HOST_WATCH_SERVER_FRAME_TYPES].sort(), ['error', 'snapshot']);
 });
 
 test('pin: load-bearing constants', () => {

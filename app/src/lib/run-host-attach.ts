@@ -24,6 +24,7 @@ import {
   isCompleteScope,
   type RunHostAttachSnapshot,
   type RunHostScope,
+  type RunHostWatchServerFrame,
   type RunLifecycleState,
 } from '@push/lib/run-host-adoption';
 import {
@@ -40,6 +41,7 @@ import type { AttachmentData, ChatMessage } from '@/types';
 import { resolveApiUrl } from './api-url';
 
 const ATTACH_PATH = '/api/runhost/run/attach';
+const WATCH_PATH = '/api/runhost/run/watch';
 const APPROVAL_PATH = '/api/runhost/run/approval';
 const STOP_PATH = '/api/runhost/run/stop';
 const RELEASE_PATH = '/api/runhost/run/release';
@@ -115,6 +117,106 @@ export async function fetchRunHostAttach(
     return { kind: 'error', status: res.status, message: 'attach response malformed' };
   }
   return { kind: 'snapshot', snapshot };
+}
+
+// ---------------------------------------------------------------------------
+// Watch (WS push) — low-latency counterpart of the attach poll
+// ---------------------------------------------------------------------------
+
+/** Resolve the WebSocket URL for a same-origin (web) or native (Capacitor)
+ * deployment. `resolveApiUrl` yields a relative path on web and an absolute
+ * `https://…` base on native; map either to `ws(s)://`. */
+function resolveWatchWsUrl(pathWithQuery: string): string {
+  const resolved = resolveApiUrl(pathWithQuery);
+  if (/^https?:/i.test(resolved)) return resolved.replace(/^http/i, 'ws');
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${proto}//${location.host}${resolved}`;
+}
+
+export interface RunHostWatchHandlers {
+  onOpen?: () => void;
+  onSnapshot: (snapshot: RunHostAttachSnapshot) => void;
+  onError?: (message: string) => void;
+  /** Fired once when the socket closes (clean or not) — the caller owns
+   * reconnect/backoff and the poll fallback. */
+  onClose?: () => void;
+}
+
+export interface RunHostWatchHandle {
+  close: () => void;
+}
+
+/**
+ * Open a `/run/watch` WebSocket and surface each pushed snapshot. Thin by
+ * design — single connection, no reconnect: the polling lifecycle, backoff,
+ * and poll fallback live in `useRunHostAttach` (the owning coordinator), the
+ * same lib/hook split the attach poll uses. The DO advances the cursor
+ * server-side per socket, so the client sends nothing in steady state; the
+ * initial cursor rides the upgrade query like the poll's `sinceSavedAt`.
+ *
+ * Auth rides the same-origin session cookie on the WS upgrade (browsers can't
+ * set upgrade headers) — the universal GitHub-identity gate, same bearer as
+ * the poll. Returns a handle whose `close()` is idempotent and suppresses the
+ * `onClose` callback (a caller-initiated teardown isn't a reconnect trigger).
+ */
+export function watchRunHost(
+  scope: RunHostScope,
+  sinceSavedAt: number | null,
+  handlers: RunHostWatchHandlers,
+): RunHostWatchHandle {
+  const params = new URLSearchParams({
+    repoFullName: scope.repoFullName,
+    branch: scope.branch,
+    chatId: scope.chatId,
+  });
+  if (sinceSavedAt !== null) params.set('sinceSavedAt', String(sinceSavedAt));
+
+  let closedByCaller = false;
+  let ws: WebSocket | null = null;
+  try {
+    ws = new WebSocket(resolveWatchWsUrl(`${WATCH_PATH}?${params.toString()}`));
+  } catch (err) {
+    // `new WebSocket` throws synchronously on a malformed URL — report and let
+    // the caller fall back to the poll.
+    handlers.onError?.(err instanceof Error ? err.message : String(err));
+    handlers.onClose?.();
+    return { close: () => {} };
+  }
+
+  ws.addEventListener('open', () => handlers.onOpen?.());
+  ws.addEventListener('message', (event: MessageEvent) => {
+    if (typeof event.data !== 'string') return;
+    let frame: RunHostWatchServerFrame;
+    try {
+      frame = JSON.parse(event.data) as RunHostWatchServerFrame;
+    } catch {
+      return; // non-JSON control frame — ignore.
+    }
+    if (frame.t === 'snapshot') {
+      const snapshot = parseAttachSnapshot(frame.snapshot);
+      if (snapshot) handlers.onSnapshot(snapshot);
+      else log('warn', 'run_host_watch_parse_failed', { chatId: scope.chatId });
+    } else if (frame.t === 'error') {
+      handlers.onError?.(frame.message);
+    }
+  });
+  ws.addEventListener('error', () => {
+    if (!closedByCaller) handlers.onError?.('watch socket error');
+  });
+  ws.addEventListener('close', () => {
+    if (!closedByCaller) handlers.onClose?.();
+  });
+
+  return {
+    close: () => {
+      closedByCaller = true;
+      try {
+        ws?.close();
+      } catch {
+        // already closed.
+      }
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------

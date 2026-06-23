@@ -261,6 +261,9 @@ function makeLedgerHost(storage: Storage): RunHost {
       waitUntil: (p: Promise<unknown>) => {
         void p.catch(() => {});
       },
+      // The ledger tests don't attach `/run/watch` sockets; an empty list is
+      // the no-watchers short-circuit `broadcastWatchers` takes in production.
+      getWebSockets: () => [],
     } as unknown as ConstructorParameters<typeof RunHost>[0],
     {} as unknown as Env,
   );
@@ -1152,5 +1155,115 @@ describe('run ledger: ownerUserId stamp', () => {
     );
     const record = storage.map.get('run:record') as Record<string, unknown>;
     expect(record.ownerUserId).toBe('anon');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 3 refinement — `/run/watch` WS push (broadcastWatchers)
+// ---------------------------------------------------------------------------
+
+/** Minimal stand-in for a hibernation WebSocket: records sends, round-trips
+ * the cursor attachment, and notes a close. */
+function makeFakeWatcher(initial: { sinceSavedAt: number | null } = { sinceSavedAt: null }) {
+  let attachment: { sinceSavedAt: number | null } = initial;
+  const sent: string[] = [];
+  let closed: { code: number; reason: string } | null = null;
+  return {
+    sent,
+    get attachment() {
+      return attachment;
+    },
+    get closed() {
+      return closed;
+    },
+    send: (data: string) => sent.push(data),
+    serializeAttachment: (value: { sinceSavedAt: number | null }) => {
+      attachment = value;
+    },
+    deserializeAttachment: () => attachment,
+    close: (code: number, reason: string) => {
+      closed = { code, reason };
+    },
+  };
+}
+
+type FakeWatcher = ReturnType<typeof makeFakeWatcher>;
+
+function makeWatchedHost(storage: Storage, sockets: FakeWatcher[]): RunHost {
+  return new RunHost(
+    {
+      storage,
+      waitUntil: (p: Promise<unknown>) => {
+        void p.catch(() => {});
+      },
+      getWebSockets: () => sockets,
+    } as unknown as ConstructorParameters<typeof RunHost>[0],
+    {} as unknown as Env,
+  );
+}
+
+function lastSnapshotFrame(socket: FakeWatcher) {
+  const raw = socket.sent.at(-1);
+  expect(raw).toBeDefined();
+  return JSON.parse(raw as string) as { t: string; snapshot?: Record<string, unknown> };
+}
+
+describe('run watch: broadcastWatchers', () => {
+  it('pushes a fresh snapshot to watchers when a checkpoint persists', async () => {
+    const storage = makeStorage();
+    const watcher = makeFakeWatcher();
+    const host = makeWatchedHost(storage, [watcher]);
+    await register(host);
+    watcher.sent.length = 0; // ignore any register-path noise
+
+    await host.fetch(ledgerRequest('/run/checkpoint', 'PUT', { checkpoint: makeCheckpoint() }));
+
+    const frame = lastSnapshotFrame(watcher);
+    expect(frame.t).toBe('snapshot');
+    // First broadcast: the watcher's cursor was null, so the body ships and
+    // the per-socket cursor advances to the checkpoint's savedAt.
+    expect(frame.snapshot?.round).toBe(4);
+    expect(frame.snapshot?.checkpoint).toBeDefined();
+    expect(frame.snapshot?.checkpointSavedAt).toBe(1781000000000);
+    expect(watcher.attachment.sinceSavedAt).toBe(1781000000000);
+  });
+
+  it('omits the checkpoint body once the watcher cursor is caught up', async () => {
+    const storage = makeStorage();
+    // Watcher already at the checkpoint's savedAt — a re-broadcast must ship
+    // the lifecycle frame without re-downloading the unchanged transcript.
+    const watcher = makeFakeWatcher({ sinceSavedAt: 1781000000000 });
+    const host = makeWatchedHost(storage, [watcher]);
+    await register(host);
+    await host.fetch(ledgerRequest('/run/checkpoint', 'PUT', { checkpoint: makeCheckpoint() }));
+
+    const frame = lastSnapshotFrame(watcher);
+    expect(frame.t).toBe('snapshot');
+    expect(frame.snapshot?.checkpoint).toBeUndefined();
+    expect(frame.snapshot?.checkpointSavedAt).toBe(1781000000000);
+  });
+
+  it('closes watcher sockets when the run is released', async () => {
+    const storage = makeStorage();
+    const watcher = makeFakeWatcher();
+    const host = makeWatchedHost(storage, [watcher]);
+    await register(host);
+    await host.fetch(ledgerRequest('/run/release', 'POST', { runId: 'run-1', scope: SCOPE }));
+    expect(watcher.closed?.code).toBe(1000);
+    expect(watcher.closed?.reason).toBe('released');
+  });
+
+  it('broadcasts the watched reclaim on register so a viewer drops stale controls', async () => {
+    // A live client reclaiming/superseding the run via register flips it back
+    // to `watched`. A connected viewer must see that snapshot (it clears the
+    // banner client-side) — register is the one mutation that would otherwise
+    // leave the WS-primary client stale until the next checkpoint/release.
+    const storage = makeStorage();
+    const watcher = makeFakeWatcher();
+    const host = makeWatchedHost(storage, [watcher]);
+    await register(host);
+    const frame = lastSnapshotFrame(watcher);
+    expect(frame.t).toBe('snapshot');
+    expect(frame.snapshot?.state).toBe('watched');
   });
 });
