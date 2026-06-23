@@ -108,10 +108,18 @@ export function reasoningHeavyFamily(modelId: string | null | undefined): string
 }
 
 /**
- * First-token grace for a known heavy reasoner: how long the activity timer
- * waits for the FIRST sign of life before tightening to the per-round window.
- * 90s matches `CODER_FIRST_TOKEN_GRACE_MS` — the value the Coder already proved
- * out for glm-5.x connect + long reasoning preamble on large-transcript rounds.
+ * Canonical first-token grace: how long an activity timer waits for the FIRST
+ * sign of life before tightening to the per-round window. Sized for the slowest
+ * legitimate start — connect/cold-queue plus a heavy reasoner's reasoning
+ * preamble, which together run well past the 60s inter-token window on large
+ * transcripts (proved out on glm-5.x).
+ *
+ * Single source of truth for that window, consumed two ways:
+ *   - the Coder applies it *unconditionally* to every model — slow time-to-first-
+ *     token (Workers AI kimi/glm) is not exclusive to registry-matched reasoners;
+ *   - `reasoningHeavyStreamOpts` applies it only to registry-matched heavy
+ *     reasoners, where the others (deep-reviewer, explorer) would otherwise give
+ *     no grace at all.
  */
 export const REASONING_HEAVY_FIRST_TOKEN_GRACE_MS = 90_000;
 

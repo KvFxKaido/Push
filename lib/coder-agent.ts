@@ -58,6 +58,7 @@ import { createId } from './id-utils.js';
 import { buildMalformedToolCallEvents, summarizeToolResultPreview } from './run-events.js';
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
 import { iteratePushStreamText, asRecord } from './stream-utils.js';
+import { REASONING_HEAVY_FIRST_TOKEN_GRACE_MS } from './reasoning-models.js';
 import { createRunTokenLedger } from './run-cost-budget.js';
 import { estimateTokens } from './context-budget.js';
 import { detectToolFromText } from './tool-call-parsing.js';
@@ -119,14 +120,18 @@ const CODER_ROUND_TIMEOUT_MS = 60_000; // 60s of inactivity (activity-based — 
 // jobs run unattended, so bound each round by wall-clock too. Mirrors
 // EXPLORER_ROUND_WALL_CLOCK_MS / DEEP_REVIEW_ROUND_WALL_CLOCK_MS.
 const CODER_ROUND_WALL_CLOCK_MS = 180_000;
-// First-token grace for the activity timer. Workers AI models (kimi/glm)
-// routinely have a 20–30s time-to-first-token; the 60s activity window above is
-// tight enough that a slow-to-START round (cold/queued upstream) trips it and
-// surfaces as "model may be unresponsive" before the model has emitted anything.
-// Give the first token a wider window, then fall back to CODER_ROUND_TIMEOUT_MS
-// for inter-token gaps. The wall-clock cap still bounds the round overall.
-// Tunable — sized at ~1.5x the activity window, well under the wall-clock cap.
-const CODER_FIRST_TOKEN_GRACE_MS = 90_000;
+// First-token grace for the activity timer. The canonical value lives once in
+// the reasoning-model registry (REASONING_HEAVY_FIRST_TOKEN_GRACE_MS) — both
+// here and `reasoningHeavyStreamOpts` size the same window, so it shouldn't be
+// re-stated as a bare literal. Workers AI models (kimi/glm) routinely have a
+// 20–30s time-to-first-token and a heavy reasoner's preamble runs longer still;
+// the 60s activity window above is tight enough that a slow-to-START round
+// (cold/queued upstream) trips it and surfaces as "model may be unresponsive"
+// before the model has emitted anything. The Coder applies this grace to EVERY
+// model — slow-TTFT is not exclusive to registry-matched reasoners — then falls
+// back to CODER_ROUND_TIMEOUT_MS for inter-token gaps. The wall-clock cap still
+// bounds the round overall.
+const CODER_FIRST_TOKEN_GRACE_MS = REASONING_HEAVY_FIRST_TOKEN_GRACE_MS;
 const MAX_CODER_ROUNDS = 30; // Circuit breaker — prevent runaway delegation
 // The inline lead is a *watched* foreground run — the user sees every round and
 // can Stop it — so it doesn't get the 30-round wall a delegated Coder does.
