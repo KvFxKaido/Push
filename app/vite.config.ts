@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'path';
 import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
+import { agentDevReporter } from './dev/agent-dev-reporter';
 // https://vite.dev/config/
 
 // Stamp the PWA service-worker cache name with a per-build id so installed
@@ -124,7 +125,7 @@ function chunkBaseName(chunkName: string, facadeModuleId?: string | null): strin
 
 export default defineConfig({
   base: './',
-  plugins: [react(), stampServiceWorkerCache()],
+  plugins: [react(), stampServiceWorkerCache(), agentDevReporter()],
   build: {
     // Mermaid's parser core is an intentional, artifact-only lazy chunk at
     // ~594 kB minified. Keep the warning ceiling just above it so startup
