@@ -4,6 +4,7 @@ import {
   calculateLineHash,
   applyHashlineEdits,
   renderAnchoredRange,
+  splitEditableLines,
 } from './hashline';
 
 describe('calculateLineHash', () => {
@@ -122,6 +123,51 @@ describe('trailing newline as a file property (no phantom line)', () => {
     );
     expect(result.failed).toBe(0);
     expect(result.content).toBe('');
+  });
+
+  it('preserves a CRLF file ending when editing a different line', async () => {
+    // The `\r` rides on each line; editing one line must not disturb the
+    // untouched trailing CRLF.
+    const ref = await calculateLineHash('alpha', 12);
+    const result = await applyHashlineEdits('alpha\r\nbeta\r\n', [
+      { op: 'replace_line', ref, content: 'ALPHA' },
+    ]);
+    expect(result.failed).toBe(0);
+    expect(result.content.endsWith('beta\r\n')).toBe(true);
+  });
+});
+
+describe('splitEditableLines', () => {
+  it('treats the empty file as a single empty line with no newline', () => {
+    expect(splitEditableLines('')).toEqual({ lines: [''], trailingNewline: false });
+  });
+
+  it('treats a file with no terminal newline as bare', () => {
+    expect(splitEditableLines('alpha')).toEqual({ lines: ['alpha'], trailingNewline: false });
+    expect(splitEditableLines('alpha\nbeta')).toEqual({
+      lines: ['alpha', 'beta'],
+      trailingNewline: false,
+    });
+  });
+
+  it('pulls a terminal newline into the flag, leaving no phantom line', () => {
+    expect(splitEditableLines('alpha\n')).toEqual({ lines: ['alpha'], trailingNewline: true });
+    expect(splitEditableLines('alpha\nbeta\n')).toEqual({
+      lines: ['alpha', 'beta'],
+      trailingNewline: true,
+    });
+  });
+
+  it('keeps the CRLF carriage return on the line (byte-preserving)', () => {
+    expect(splitEditableLines('alpha\r\nbeta\r\n')).toEqual({
+      lines: ['alpha\r', 'beta\r'],
+      trailingNewline: true,
+    });
+  });
+
+  it('keeps an intentional trailing blank line distinct from the phantom', () => {
+    // `'a\n\n'` is line "a" + one blank line + terminal newline → two lines.
+    expect(splitEditableLines('a\n\n')).toEqual({ lines: ['a', ''], trailingNewline: true });
   });
 });
 

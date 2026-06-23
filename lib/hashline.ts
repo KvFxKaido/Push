@@ -339,7 +339,13 @@ export interface AppliedEditDetail {
  * an empty final line, which models routinely `delete_line` as a stray blank,
  * stripping the newline. Returning the newline as an explicit flag keeps it out
  * of the line model entirely, so it can't be targeted, and the caller re-asserts
- * it on output. The empty file (`''`) is zero editable lines with no newline.
+ * it on output. The empty file (`''`) is a single empty line with no newline.
+ *
+ * CRLF: we split on `\n` only, so a `\r` rides on the end of each line as
+ * content (matching the apply path's byte preservation). `normalizeLineForHash`
+ * trims it, so refs still align, and an untouched line's `\r\n` round-trips
+ * intact. (Stripping `\r\n` together would force-convert the terminator to LF —
+ * strictly more lossy — so we deliberately don't.)
  */
 export function splitEditableLines(content: string): {
   lines: string[];

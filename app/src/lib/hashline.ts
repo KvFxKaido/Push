@@ -14,6 +14,7 @@ export {
   applyResolvedHashlineEdits,
   applyHashlineEdits,
   renderAnchoredRange,
+  splitEditableLines,
   type HashlineOp,
   type HashlineEditResult,
   type HashlineDiagnostic,
