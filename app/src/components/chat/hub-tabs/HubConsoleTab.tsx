@@ -268,7 +268,13 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
             className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5 text-push-fg-secondary`}
             title="Copy all logs"
           >
-            {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
+            {/* `icon-swap` fires on the incoming Check only; `copied` inits false
+                so it plays once per click, never on mount/remount. */}
+            {copied ? (
+              <Check className="icon-swap h-3 w-3 text-push-status-success" />
+            ) : (
+              <Copy className="h-3 w-3" />
+            )}
             <span>Copy All</span>
           </button>
           <button

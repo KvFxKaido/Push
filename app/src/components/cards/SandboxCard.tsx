@@ -63,8 +63,11 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
                 className={`${CARD_ICON_BUTTON_CLASS} h-7 w-7`}
                 title="Copy output"
               >
+                {/* `icon-swap` on the incoming Check only; `copied` inits false,
+                    so a Virtuoso scroll-remount shows the resting Copy and never
+                    replays the swap. */}
                 {copied ? (
-                  <Check className="h-3 w-3 text-green-500" />
+                  <Check className="icon-swap h-3 w-3 text-push-status-success" />
                 ) : (
                   <Copy className="h-3 w-3" />
                 )}
