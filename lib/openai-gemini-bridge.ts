@@ -110,7 +110,6 @@ function openAIJsonSchemaToGeminiSchema(schema: unknown): Record<string, unknown
 
   const out: Record<string, unknown> = {};
   const type = jsonSchemaTypeToGeminiType(src.type);
-  if (type) out.type = type;
   if (typeof src.description === 'string' && src.description.length > 0) {
     out.description = src.description;
   }
@@ -121,19 +120,42 @@ function openAIJsonSchemaToGeminiSchema(schema: unknown): Record<string, unknown
     if (values.length > 0) out.enum = values;
   }
 
+  // Build child properties first so we can detect an OBJECT that ends up with no
+  // usable properties.
+  const mapped: Record<string, unknown> = {};
   const properties = asRecord(src.properties);
   if (properties) {
-    const mapped: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(properties)) {
       const child = openAIJsonSchemaToGeminiSchema(value);
       if (Object.keys(child).length > 0) mapped[key] = child;
     }
-    if (Object.keys(mapped).length > 0) out.properties = mapped;
   }
 
-  if (Array.isArray(src.required)) {
-    const required = src.required.filter((item): item is string => typeof item === 'string');
-    if (required.length > 0) out.required = required;
+  // Gemini's API rejects an OBJECT schema whose `properties` is empty/missing
+  // ("properties: should be non-empty for OBJECT type"). Our tool schemas carry
+  // open-ended objects (e.g. `workflow_run.inputs`) and object-typed array items
+  // (`edits[]`) with no declared sub-fields, plus parameterless tools whose whole
+  // parameter object is empty. Represent any such empty OBJECT as STRING — the
+  // documented Gemini workaround for open-ended objects — so the request isn't
+  // rejected; the loose executor + text-dispatch fallback still handle the real
+  // shape. Parameterless tools then drop `parameters` entirely in the declaration
+  // builder (a STRING is not a valid top-level parameters schema).
+  if (type === 'OBJECT' && Object.keys(mapped).length === 0) {
+    out.type = 'STRING';
+    return out;
+  }
+
+  if (type) out.type = type;
+  if (Object.keys(mapped).length > 0) {
+    out.properties = mapped;
+    // Only keep `required` entries that name a property we actually emitted —
+    // Gemini also rejects a `required` value that points at a missing property.
+    if (Array.isArray(src.required)) {
+      const required = src.required.filter(
+        (item): item is string => typeof item === 'string' && item in mapped,
+      );
+      if (required.length > 0) out.required = required;
+    }
   }
 
   if (src.items !== undefined) {
@@ -145,11 +167,16 @@ function openAIJsonSchemaToGeminiSchema(schema: unknown): Record<string, unknown
 }
 
 function openAIToolToGeminiFunctionDeclaration(tool: ToolFunctionSchema): Record<string, unknown> {
-  const declaration: Record<string, unknown> = {
-    name: tool.function.name,
-    parameters: openAIJsonSchemaToGeminiSchema(tool.function.parameters),
-  };
+  const declaration: Record<string, unknown> = { name: tool.function.name };
   if (tool.function.description) declaration.description = tool.function.description;
+  const parameters = openAIJsonSchemaToGeminiSchema(tool.function.parameters);
+  // Attach `parameters` only for an OBJECT with at least one property. A
+  // parameterless tool (empty object, collapsed to STRING above) must be declared
+  // with name + description only — Gemini rejects an empty OBJECT parameter block.
+  const props = asRecord(parameters.properties);
+  if (parameters.type === 'OBJECT' && props && Object.keys(props).length > 0) {
+    declaration.parameters = parameters;
+  }
   return declaration;
 }
 

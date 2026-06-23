@@ -14,6 +14,7 @@ import {
   toGeminiGenerateContent,
 } from './openai-gemini-bridge.ts';
 import { openAISSEPump } from './openai-sse-pump.ts';
+import { getToolFunctionSchemas } from './tool-function-schemas.ts';
 
 function createEventStreamResponse(chunks: string[]): Response {
   const encoder = new TextEncoder();
@@ -231,6 +232,143 @@ describe('buildGeminiGenerateContentRequest', () => {
       messages: [{ role: 'user', content: 'x' }],
     } as OpenAIChatRequest);
     expect(body).not.toHaveProperty('generationConfig');
+  });
+});
+
+describe('Gemini functionDeclaration schema translation (empty-OBJECT guards)', () => {
+  // Gemini rejects an OBJECT schema with no properties ("should be non-empty for
+  // OBJECT type"), so the converter must never emit one — at the top level
+  // (parameterless tools), as a nested property (open-ended objects), or as
+  // array items (object-typed arrays). The full tool registry ships every round,
+  // so a single offender 400s the whole request before the model can respond.
+  const decl = (tool: ToolFunctionSchema): Record<string, unknown> => {
+    const body = buildGeminiGenerateContentRequest({
+      model: 'gemini-2.5-flash',
+      messages: [{ role: 'user', content: 'go' }],
+      tools: [tool],
+    } as OpenAIChatRequest);
+    const tools = body.tools as Array<{ functionDeclarations: Array<Record<string, unknown>> }>;
+    return tools[0].functionDeclarations[0];
+  };
+
+  it('omits `parameters` for a parameterless tool (no empty OBJECT)', () => {
+    const noArg: ToolFunctionSchema = {
+      type: 'function',
+      function: {
+        name: 'sandbox_typecheck',
+        description: 'Run typecheck',
+        parameters: { type: 'object', properties: {}, required: [], additionalProperties: false },
+      },
+    };
+    const d = decl(noArg);
+    expect(d).toEqual({ name: 'sandbox_typecheck', description: 'Run typecheck' });
+    expect(d).not.toHaveProperty('parameters');
+  });
+
+  it('represents an open-ended object property as STRING', () => {
+    const objParam: ToolFunctionSchema = {
+      type: 'function',
+      function: {
+        name: 'workflow_run',
+        description: 'Dispatch a workflow',
+        parameters: {
+          type: 'object',
+          properties: { inputs: { type: 'object' } },
+          required: ['inputs'],
+          additionalProperties: false,
+        },
+      },
+    };
+    const params = decl(objParam).parameters as {
+      type: string;
+      properties: Record<string, { type: string }>;
+      required?: string[];
+    };
+    expect(params.type).toBe('OBJECT');
+    expect(params.properties.inputs).toEqual({ type: 'STRING' });
+    // `required` survives because `inputs` is still an emitted property.
+    expect(params.required).toEqual(['inputs']);
+  });
+
+  it('represents object-typed array items as STRING items', () => {
+    const arrParam: ToolFunctionSchema = {
+      type: 'function',
+      function: {
+        name: 'edit_file',
+        description: 'Apply edits',
+        parameters: {
+          type: 'object',
+          properties: { edits: { type: 'array', items: { type: 'object' } } },
+          required: ['edits'],
+          additionalProperties: false,
+        },
+      },
+    };
+    const params = decl(arrParam).parameters as {
+      properties: { edits: { type: string; items: { type: string } } };
+    };
+    expect(params.properties.edits).toEqual({ type: 'ARRAY', items: { type: 'STRING' } });
+  });
+
+  it('drops a `required` entry whose property was not emitted', () => {
+    // A property whose value is not a valid schema object gets skipped; the
+    // converter must not leave it dangling in `required` (Gemini rejects that too).
+    const dangling: ToolFunctionSchema = {
+      type: 'function',
+      function: {
+        name: 'odd_tool',
+        description: 'x',
+        parameters: {
+          type: 'object',
+          properties: { path: { type: 'string' }, ghost: null as unknown as object },
+          required: ['path', 'ghost'],
+          additionalProperties: false,
+        },
+      },
+    };
+    const params = decl(dangling).parameters as {
+      properties: Record<string, unknown>;
+      required: string[];
+    };
+    expect(Object.keys(params.properties)).toEqual(['path']);
+    expect(params.required).toEqual(['path']);
+  });
+
+  it('emits no empty-OBJECT schema for any real registry tool (full set, end to end)', () => {
+    // The strongest guard against the P1: translate the *actual* tool registry
+    // and walk every node of the resulting body, asserting Gemini's "OBJECT needs
+    // non-empty properties" rule holds everywhere — and that no `required` entry
+    // dangles past a dropped property.
+    const tools = getToolFunctionSchemas();
+    expect(tools.length).toBeGreaterThan(0);
+    const body = buildGeminiGenerateContentRequest({
+      model: 'gemini-2.5-flash',
+      messages: [{ role: 'user', content: 'go' }],
+      tools,
+    } as OpenAIChatRequest);
+
+    const offenders: string[] = [];
+    const walk = (node: unknown, path: string): void => {
+      if (Array.isArray(node)) {
+        node.forEach((n, i) => walk(n, `${path}[${i}]`));
+        return;
+      }
+      if (!node || typeof node !== 'object') return;
+      const obj = node as Record<string, unknown>;
+      if (obj.type === 'OBJECT') {
+        const props = obj.properties as Record<string, unknown> | undefined;
+        if (!props || Object.keys(props).length === 0)
+          offenders.push(`${path}: OBJECT w/o properties`);
+        const req = Array.isArray(obj.required) ? (obj.required as string[]) : [];
+        for (const r of req) {
+          if (!props || !(r in props))
+            offenders.push(`${path}: required "${r}" missing from properties`);
+        }
+      }
+      for (const [k, v] of Object.entries(obj)) walk(v, `${path}.${k}`);
+    };
+    walk(body.tools, 'tools');
+    expect(offenders).toEqual([]);
   });
 });
 
