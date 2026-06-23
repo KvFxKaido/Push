@@ -5,9 +5,9 @@ name-based), OpenRouter (capability-based), OpenCode Zen (name-based catalog
 allowlist; both the OpenAI and Anthropic Go transports), Fireworks AI
 (name-based catalog allowlist), and the validated OpenAI-compatible adapters:
 OpenAI / Azure OpenAI (OpenAI-family model ids), Kilo Code / OpenAdapter
-(curated catalog allowlists), plus Ollama Cloud / Nvidia NIM / Blackbox AI
-(models.dev capability-gated). Bedrock, direct Anthropic, Google/Gemini,
-Vertex, and the CLI lead are deferred follow-ups, not yet promoted to
+(curated catalog allowlists), direct Anthropic (curated catalog allowlist),
+plus Ollama Cloud / Nvidia NIM / Blackbox AI (models.dev capability-gated).
+Bedrock, Google/Gemini, Vertex, and the CLI lead are deferred follow-ups, not yet promoted to
 `ROADMAP.md` — tracked in #1082.
 
 **Date:** 2026-06-17
@@ -98,14 +98,17 @@ native tool call — both converge at one dispatch path. Consequences:
 
 ## Scope / deferred
 
-The deferred follow-ups below are tracked in #1082 (direct Anthropic / Gemini /
-Vertex / Bedrock gates, the CLI lead, delegated Coder/Explorer, and conditional
+The deferred follow-ups below are tracked in #1082 (Gemini / Vertex / Bedrock
+gates, the CLI lead, delegated Coder/Explorer, and conditional
 toolsets). Flip the Status line and the relevant bullet here as each lands.
 
 - **Other providers.** The gate is the single switch. OpenRouter
   (capability-based), OpenCode Zen (name-based), Fireworks AI (name-based; single
   OpenAI-compatible endpoint, `tools` straight through `fireworks-stream.ts`),
-  and the validated OpenAI-compatible adapters are enabled on the web lead — Zen
+  direct Anthropic (name-based against the curated direct-provider catalog;
+  `anthropic-stream.ts` carries neutral `tools`, and `toAnthropicMessages`
+  translates them to Anthropic custom tools), and the validated
+  OpenAI-compatible adapters are enabled on the web lead — Zen
   across both transports: the OpenAI-transport models (standard tier + Go) carry
   `tools` straight through `toOpenAIChat`, and
   the **Anthropic-transport** Go models (minimax/qwen) translate OpenAI tool

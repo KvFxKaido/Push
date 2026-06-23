@@ -1410,6 +1410,16 @@ describe('providerModelSupportsStructuredOutput', () => {
     );
   });
 
+  it('gates direct Anthropic native tool calling against the curated catalog allowlist', () => {
+    stubWindow();
+    expect(providerModelSupportsNativeToolCalling('anthropic', 'claude-sonnet-4-6')).toBe(true);
+    expect(providerModelSupportsNativeToolCalling('anthropic', 'claude-opus-4-7')).toBe(true);
+    expect(providerModelSupportsNativeToolCalling('anthropic', 'claude-custom-free-text')).toBe(
+      false,
+    );
+    expect(providerModelSupportsNativeToolCalling('anthropic', undefined)).toBe(false);
+  });
+
   it('returns false for an allowlisted provider when the catalog reports no support', () => {
     stubWindow();
     // `openai` is OpenAI-shaped (allowlisted) but has no models.dev structured-

@@ -10,6 +10,7 @@ import { getGoogleKey } from '@/hooks/useGoogleConfig';
 import { getOpenAIKey } from '@/hooks/useOpenAIConfig';
 import { safeStorageGet, safeStorageSet } from './safe-storage';
 import {
+  ANTHROPIC_MODELS,
   CLOUDFLARE_MODELS,
   BLACKBOX_MODELS,
   compareProviderModelIds,
@@ -434,6 +435,7 @@ const KILOCODE_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(KILOCOD
 const OPENADAPTER_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(OPENADAPTER_MODELS);
 const BLACKBOX_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(BLACKBOX_MODELS);
 const OPENAI_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(OPENAI_MODELS);
+const ANTHROPIC_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(ANTHROPIC_MODELS);
 
 function looksLikeOpenAIToolCallingModel(modelId: string): boolean {
   const m = modelId.trim().toLowerCase();
@@ -463,6 +465,9 @@ function looksLikeOpenAIToolCallingModel(modelId: string): boolean {
  *   - **OpenAI / Azure OpenAI / Kilo Code / OpenAdapter** — name-based against
  *     curated OpenAI-compatible catalogs or OpenAI-family model ids. Free-text
  *     unknowns stay text-dispatch.
+ *   - **Direct Anthropic** — name-based against the curated direct-provider
+ *     catalog; the neutral Worker path translates schemas to Anthropic custom
+ *     tools and normalizes `tool_use` back to fenced JSON.
  * Other providers stay on the text-dispatch tool protocol until native tool
  * calling is wired and validated for them. Additive regardless: `openai-sse-pump`
  * normalizes any native `tool_calls` back into the fenced JSON the dispatcher
@@ -489,6 +494,7 @@ export function providerModelSupportsNativeToolCalling(
   if (provider === 'azure') return looksLikeOpenAIToolCallingModel(modelId);
   if (provider === 'kilocode') return KILOCODE_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'openadapter') return OPENADAPTER_NATIVE_TOOL_CALLING_MODELS.has(modelId);
+  if (provider === 'anthropic') return ANTHROPIC_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   return false;
 }
 
