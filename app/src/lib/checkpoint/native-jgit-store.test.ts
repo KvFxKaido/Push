@@ -9,8 +9,19 @@ const SCOPE = { repoFullName: REPO, sandboxId: 'sb', branch: 'feat/x' };
 const DIR = expect.stringMatching(/^checkpoints\/owner_repo-[0-9a-f]{8}\/feat_x-[0-9a-f]{8}$/);
 
 /** Fake exec routed by command content (archive / dirty-check / restore-sync). */
-function fakeExec(over: { archive?: string; dirty?: string; sync?: string } = {}) {
+function fakeExec(
+  over: { archive?: string; dirty?: string; sync?: string; probe?: string | string[] } = {},
+) {
+  // `probe` may be a single response or a sequence consumed across calls (the
+  // last entry sticks) — lets a test return a changed tree-hash on the 2nd debounce.
+  const probeSeq = Array.isArray(over.probe) ? [...over.probe] : null;
   return vi.fn(async (_id: string, command: string) => {
+    if (command.includes('write-tree')) {
+      const p = probeSeq
+        ? ((probeSeq.length > 1 ? probeSeq.shift() : probeSeq[0]) ?? 'ERR')
+        : ((over.probe as string | undefined) ?? '');
+      return result(p);
+    }
     if (command.includes('ls-files')) return result(over.archive ?? 'OK 100');
     if (command.includes('git status --porcelain')) return result(over.dirty ?? '');
     if (command.includes('base64 -d')) return result(over.sync ?? 'OK');
@@ -94,6 +105,43 @@ describe('NativeJgitCheckpointStore.capture', () => {
   it('fails on an archive-build error', async () => {
     const result = await store({ exec: fakeExec({ archive: 'ERR tar' }) }).capture(SCOPE);
     expect(result.status).toBe('failed');
+  });
+
+  it('probe short-circuits a no-change debounce (no second download)', async () => {
+    const download = vi.fn(async () => ({ ok: true, fileBase64: 'B64' }) as never);
+    const s = store({ exec: fakeExec({ probe: `OK ${'a'.repeat(40)}` }), download });
+
+    const first = await s.capture(SCOPE);
+    expect(first).toEqual({ status: 'captured', dedupToken: 'commit-1' });
+    expect(download).toHaveBeenCalledTimes(1);
+
+    const second = await s.capture(SCOPE);
+    expect(second).toEqual({ status: 'unchanged', dedupToken: 'commit-1' });
+    expect(download).toHaveBeenCalledTimes(1); // archive NOT re-downloaded
+  });
+
+  it('re-captures when the working tree changes between debounces', async () => {
+    const download = vi.fn(async () => ({ ok: true, fileBase64: 'B64' }) as never);
+    const s = store({
+      exec: fakeExec({ probe: [`OK ${'a'.repeat(40)}`, `OK ${'b'.repeat(40)}`] }),
+      download,
+    });
+
+    await s.capture(SCOPE);
+    const second = await s.capture(SCOPE);
+    expect(second).toEqual({ status: 'captured', dedupToken: 'commit-1' });
+    expect(download).toHaveBeenCalledTimes(2); // changed tree → full re-capture
+  });
+
+  it('falls through to a full capture when the probe fails (no baseline)', async () => {
+    const download = vi.fn(async () => ({ ok: true, fileBase64: 'B64' }) as never);
+    const s = store({ exec: fakeExec({ probe: 'ERR write-tree' }), download });
+
+    await s.capture(SCOPE);
+    const second = await s.capture(SCOPE);
+    // A failed probe never establishes a baseline, so every debounce captures.
+    expect(second).toEqual({ status: 'captured', dedupToken: 'commit-1' });
+    expect(download).toHaveBeenCalledTimes(2);
   });
 
   it('skips an invalid branch', async () => {

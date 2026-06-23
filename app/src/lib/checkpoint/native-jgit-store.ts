@@ -80,6 +80,28 @@ const CAPTURE_ARCHIVE_COMMAND = [
 ].join('\n');
 
 /**
+ * Cheap working-tree fingerprint for the capture short-circuit. Stages the same
+ * file set the capture archive includes (gitignore-respecting via `add` defaults
+ * + the same hard-excludes) into a THROWAWAY index — never the real one — then
+ * `git write-tree`, which hashes blob CONTENTS, so the hash changes iff the
+ * captured tree's content/structure does. Runs entirely in the sandbox (no
+ * mobile data), so a no-change debounce skips the ~7 MB archive download +
+ * commit. Prints `OK <sha1>` or `ERR ...`.
+ */
+const PROBE_TREE_HASH_COMMAND = [
+  `cd /workspace 2>/dev/null || { echo "ERR workspace"; exit 0; }`,
+  `idx=/tmp/.push-probe-index`,
+  `rm -f "$idx"`,
+  `GIT_INDEX_FILE="$idx" git add -A -- \
+    ':!:node_modules/**' ':!:dist/**' ':!:build/**' ':!:.next/**' ':!:.cache/**' \
+    ':!:coverage/**' ':!:target/**' ':!:.git/**' ':!:${ARCHIVE_NAME}' 2>/dev/null \
+    || { rm -f "$idx"; echo "ERR add"; exit 0; }`,
+  `h=$(GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null)`,
+  `rm -f "$idx"`,
+  `[ -n "$h" ] && echo "OK $h" || echo "ERR write-tree"`,
+].join('\n');
+
+/**
  * Sandbox-side restore sync: decode the uploaded archive, then a `.git`-
  * PRESERVING, delete-faithful replace of the working tree (clear everything under
  * /workspace except `.git`, then extract). Keeps the clone's origin/branch; the
@@ -146,6 +168,12 @@ export function createNativeJgitCheckpointStore(deps: NativeCheckpointDeps = {})
   const upload = deps.upload ?? uploadFileToSandbox;
   const log = deps.log ?? defaultLog;
 
+  // The last captured working-tree fingerprint per lane (`checkpointDir`), so a
+  // no-change debounce can short-circuit before the mobile-data-heavy archive
+  // download. In-memory: a fresh session re-downloads once (no baseline), which
+  // is fine. Holds the `dedupToken` too so a probe-skip returns the standing pin.
+  const lastCaptureByScope = new Map<string, { treeHash: string; dedupToken: string }>();
+
   async function listRecords(scope: CheckpointScope): Promise<CheckpointRecord[]> {
     try {
       const { checkpoints } = await plugin.listCheckpoints({ dir: checkpointDir(scope) });
@@ -168,6 +196,28 @@ export function createNativeJgitCheckpointStore(deps: NativeCheckpointDeps = {})
         return { status: 'skipped', reason: 'invalid_branch' };
       }
       const dir = checkpointDir(input);
+
+      // 0. Cheap tree-hash probe FIRST: if the working tree is byte-identical to
+      //    the last capture, skip the whole archive → download → commit path
+      //    (the ~7 MB download is the mobile-data cost). Probe failure is
+      //    non-fatal — fall through to the full capture.
+      let treeHash: string | null = null;
+      try {
+        const probe = await exec(input.sandboxId, PROBE_TREE_HASH_COMMAND);
+        const pm = /^OK ([0-9a-f]{40})$/m.exec(probe.stdout.trim());
+        if (pm) {
+          treeHash = pm[1];
+          const last = lastCaptureByScope.get(dir);
+          if (last && last.treeHash === treeHash) {
+            log('info', 'native_checkpoint_capture_unchanged_probe', { dir });
+            return { status: 'unchanged', dedupToken: last.dedupToken };
+          }
+        }
+      } catch (err) {
+        log('info', 'native_checkpoint_probe_skipped', {
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
 
       // 1. Build the git-aware archive in the sandbox.
       let bytes: number;
@@ -233,6 +283,10 @@ export function createNativeJgitCheckpointStore(deps: NativeCheckpointDeps = {})
           committed: result.committed,
           commitId: result.commitId,
         });
+        // Remember this tree so the next debounce can probe-skip. Only when the
+        // probe produced a hash this round (a probe failure leaves no baseline,
+        // forcing the next capture down the full path — fail-safe).
+        if (treeHash) lastCaptureByScope.set(dir, { treeHash, dedupToken: result.commitId });
         return result.committed
           ? { status: 'captured', dedupToken: result.commitId }
           : { status: 'unchanged', dedupToken: result.commitId };
