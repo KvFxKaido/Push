@@ -51,8 +51,16 @@ export function AgentStatusBar({ status }: AgentStatusBarProps) {
         {/* Keyed on `label` so each verb/phase change remounts the span and
             replays `status-verb-swap-in` exactly once (enter-only). The 1s
             elapsed-timer tick re-renders the parent but leaves this key
-            unchanged, so the swap fires only on real text changes. */}
-        <span key={label} className="status-verb-swap">
+            unchanged, so the swap fires only on real text changes.
+            While rotating themed verbs, `status-verb-shimmer` sweeps a light
+            band across the word; `data-text` mirrors the visible label so the
+            ::before shimmer layer masks onto the same glyphs. Phase labels get
+            the swap but no shimmer. */}
+        <span
+          key={label}
+          className={hasVerbs ? 'status-verb-swap status-verb-shimmer' : 'status-verb-swap'}
+          data-text={hasVerbs ? label : undefined}
+        >
           {label}
         </span>
         {!hasVerbs && status.detail && (
