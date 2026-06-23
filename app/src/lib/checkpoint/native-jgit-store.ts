@@ -123,6 +123,99 @@ const RESTORE_SYNC_COMMAND = [
 /** `git status --porcelain` — non-empty means the target tree is dirty. */
 const DIRTY_CHECK_COMMAND = `cd /workspace 2>/dev/null && git status --porcelain 2>/dev/null | head -1`;
 
+// --- Diff transport (capture): manifest-rsync -------------------------------
+// See docs/decisions/Native Checkpoint Store.md. The device sends its newest
+// checkpoint's content manifest; the sandbox diffs the working tree against it
+// and returns ONLY the changed files (+ a deletion list + its current manifest),
+// instead of the whole ~7 MB tree. Strictly additive: the orchestration falls
+// back to the full-tree path on any anomaly, so a broken delta never breaks
+// capture.
+
+/** Where the device uploads its base manifest (`<sha> <path>` lines); git-hidden. */
+const BASE_MANIFEST_PATH = '/workspace/.push-checkpoint-base';
+/** The delta archive (changed files only) the sandbox writes; git-hidden, downloaded. */
+const TMP_DELTA = '/workspace/.push-checkpoint-delta.zip';
+/** Base64 of a valid empty ZIP — used when a delta is deletions-only (no changed files). */
+const EMPTY_ZIP_B64 = 'UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==';
+
+/**
+ * Sandbox-side delta capture. Reads the device's base manifest from
+ * [BASE_MANIFEST_PATH], computes the current working tree's manifest with
+ * **raw-bytes** blob hashes (`git hash-object --no-filters`, so filter/EOL config
+ * can't make identical content hash differently than the device's JGit blob ids),
+ * diffs the two, and emits: `OK <deltaBytes>`, the deletion list, and the full
+ * current manifest. The delta ZIP (changed/new files) lands at [TMP_DELTA]. Same
+ * file set + hard-excludes as the full capture. Any failure prints `ERR ...` and
+ * the caller falls back.
+ */
+const DELTA_CAPTURE_COMMAND = [
+  `cd /workspace 2>/dev/null || { echo "ERR workspace"; exit 0; }`,
+  `delta=.push-checkpoint-delta.zip`,
+  `base=.push-checkpoint-base`,
+  // Keep the delta + base files invisible to git (idempotent).
+  `for f in "$delta" "$base"; do grep -qxF "$f" .git/info/exclude 2>/dev/null || echo "$f" >> .git/info/exclude 2>/dev/null; done`,
+  `rm -f "$delta"`,
+  `[ -f "$base" ] || { echo "ERR nobase"; exit 0; }`,
+  // Same captured set + hard-excludes as the full capture/probe.
+  `git ls-files --cached --others --exclude-standard \
+    ':!:node_modules/**' ':!:dist/**' ':!:build/**' ':!:.next/**' ':!:.cache/**' \
+    ':!:coverage/**' ':!:target/**' ':!:.git/**' ':!:.push-checkpoint*' > /tmp/pc-paths 2>/dev/null \
+    || { echo "ERR lsfiles"; exit 0; }`,
+  // Raw-bytes blob hash per path, in list order; pair back with the path.
+  `git hash-object --no-filters --stdin-paths < /tmp/pc-paths > /tmp/pc-hashes 2>/dev/null \
+    || { echo "ERR hash"; exit 0; }`,
+  `paste -d' ' /tmp/pc-hashes /tmp/pc-paths > /tmp/pc-man`,
+  // Diff vs base (lines are "<40 sha> <path>"; path starts at col 42 so spaces survive):
+  //   changed/new → stdout (/tmp/pc-changed); deleted (in base, not current) → /tmp/pc-del.
+  `rm -f /tmp/pc-del`,
+  `awk '
+     FNR==NR { base[substr($0,42)]=substr($0,1,40); next }
+     { p=substr($0,42); cur[p]=1; if (base[p]!=substr($0,1,40)) print p }
+     END { for (p in base) if (!(p in cur)) print p > "/tmp/pc-del" }
+   ' "$base" /tmp/pc-man > /tmp/pc-changed`,
+  `[ -s /tmp/pc-changed ] && zip -q -@ "$delta" < /tmp/pc-changed 2>/dev/null`,
+  `sz=0; [ -f "$delta" ] && sz=$(stat -c %s "$delta" 2>/dev/null || echo 0)`,
+  `echo "OK $sz"`,
+  `echo "---DEL---"; [ -f /tmp/pc-del ] && cat /tmp/pc-del`,
+  `echo "---MAN---"; cat /tmp/pc-man`,
+].join('\n');
+
+/** Serialize a `path → blobSha` manifest to the sandbox's `<sha> <path>` line format. */
+function serializeManifest(manifest: Record<string, string>): string {
+  return `${Object.entries(manifest)
+    .map(([path, sha]) => `${sha} ${path}`)
+    .join('\n')}\n`;
+}
+
+/** Parse DELTA_CAPTURE_COMMAND stdout. Returns null when it isn't well-formed. */
+function parseDeltaCapture(
+  stdout: string,
+): { bytes: number; deleted: string[]; manifest: Record<string, string> } | null {
+  const lines = stdout.split('\n');
+  const ok = /^OK (\d+)$/.exec((lines[0] ?? '').trim());
+  if (!ok) return null;
+  const delIdx = lines.indexOf('---DEL---');
+  const manIdx = lines.indexOf('---MAN---');
+  if (delIdx < 0 || manIdx < 0 || manIdx < delIdx) return null;
+  const deleted = lines.slice(delIdx + 1, manIdx).filter((l) => l.length > 0);
+  const manifest: Record<string, string> = {};
+  for (const l of lines.slice(manIdx + 1)) {
+    // "<40 sha> <path>" — sha is fixed-width, so a path with spaces survives.
+    if (l.length < 42) continue;
+    const sha = l.slice(0, 40);
+    const path = l.slice(41);
+    if (/^[0-9a-f]{40}$/.test(sha) && path) manifest[path] = sha;
+  }
+  return { bytes: Number(ok[1]), deleted, manifest };
+}
+
+/** Exact equality of two `path → sha` manifests (content identity, mode-excluded). */
+function manifestsEqual(a: Record<string, string>, b: Record<string, string>): boolean {
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  return keys.every((k) => a[k] === b[k]);
+}
+
 /** Cosmetic, path-safe prefix for the on-device dir (NOT the uniqueness key). */
 function sanitizeSegment(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '_') || '_';
@@ -188,6 +281,98 @@ export function createNativeJgitCheckpointStore(deps: NativeCheckpointDeps = {})
     }
   }
 
+  /**
+   * Incremental DELTA capture (manifest-rsync). Returns a result on success, or
+   * null to fall back to the full-tree path. STRICTLY ADDITIVE — every failure
+   * mode (no base, malformed output, verify mismatch, any throw) returns null, so
+   * a broken delta can never break capture; worst case it just never improves on
+   * the full path. On success it commits a checkpoint byte-identical to a full
+   * capture while moving only the changed files over mobile data.
+   */
+  async function tryDeltaCapture(
+    input: CheckpointCaptureInput,
+    dir: string,
+    treeHash: string | null,
+  ): Promise<CheckpointCaptureResult | null> {
+    // Base = the newest checkpoint's content manifest (empty → first capture → full).
+    let base: Record<string, string>;
+    try {
+      base = (await plugin.listManifest({ dir })).manifest ?? {};
+    } catch {
+      return null;
+    }
+    if (Object.keys(base).length === 0) return null;
+
+    // Hand the base to the sandbox (small — hashes, not contents).
+    const up = await upload(input.sandboxId, BASE_MANIFEST_PATH, serializeManifest(base));
+    if (!up.ok) return null;
+
+    // Diff in-sandbox → delta archive + deletions + the sandbox's current manifest.
+    let parsed: ReturnType<typeof parseDeltaCapture>;
+    try {
+      const res = await exec(input.sandboxId, DELTA_CAPTURE_COMMAND);
+      parsed = parseDeltaCapture(res.stdout);
+    } catch {
+      return null;
+    }
+    if (!parsed) return null;
+    if (parsed.bytes > CHECKPOINT_ARCHIVE_MAX_BYTES) return null;
+    // Nothing changed and nothing deleted: the probe normally catches this; if it
+    // didn't (no baseline hash this round), let the full path settle it.
+    if (parsed.bytes <= 0 && parsed.deleted.length === 0) return null;
+
+    // Fetch only the changed bytes (an empty ZIP when the delta is deletions-only).
+    let deltaBase64 = EMPTY_ZIP_B64;
+    if (parsed.bytes > 0) {
+      const dl = await download(input.sandboxId, TMP_DELTA);
+      if (!dl.ok || !dl.fileBase64) return null;
+      deltaBase64 = dl.fileBase64;
+    }
+
+    // Apply the delta onto the device worktree + commit an orphan checkpoint.
+    let commitId: string;
+    try {
+      const r = await plugin.commitDelta({
+        dir,
+        deltaArchiveBase64: deltaBase64,
+        deletedPaths: parsed.deleted,
+        message: `checkpoint ${new Date().toISOString()}`,
+      });
+      if (!r.commitId) return null; // no base on the device side → full path
+      commitId = r.commitId;
+    } catch {
+      return null;
+    }
+
+    // Verify: the committed tree must match the sandbox's current manifest exactly
+    // (content identity, mode-excluded). A mismatch (filter disagreement / drift)
+    // → fall back; the subsequent full capture supersedes this as the newest
+    // checkpoint, so a wrong delta never becomes the restore target for long.
+    try {
+      const after = (await plugin.listManifest({ dir })).manifest ?? {};
+      if (!manifestsEqual(after, parsed.manifest)) {
+        log('warn', 'native_checkpoint_delta_verify_failed', {
+          dir,
+          afterCount: Object.keys(after).length,
+          expectedCount: Object.keys(parsed.manifest).length,
+        });
+        return null;
+      }
+    } catch {
+      return null;
+    }
+
+    await plugin.pruneCheckpoints({ dir, keep: CHECKPOINT_RETENTION_KEEP }).catch(() => {});
+    if (treeHash) lastCaptureByScope.set(dir, { treeHash, dedupToken: commitId });
+    log('info', 'native_checkpoint_captured_delta', {
+      dir,
+      commitId,
+      deltaBytes: parsed.bytes,
+      deleted: parsed.deleted.length,
+    });
+    return { status: 'captured', dedupToken: commitId };
+  }
+
   return {
     kind: 'native-jgit',
 
@@ -219,7 +404,14 @@ export function createNativeJgitCheckpointStore(deps: NativeCheckpointDeps = {})
         });
       }
 
-      // 1. Build the git-aware archive in the sandbox.
+      // 0b. Incremental DELTA capture (manifest-rsync) — move only the changed
+      //     files instead of the whole ~7 MB tree. Returns null on ANY anomaly,
+      //     and we fall through to the proven full-tree path below; it can't break
+      //     capture. Only reached when the tree changed (probe didn't short-circuit).
+      const delta = await tryDeltaCapture(input, dir, treeHash);
+      if (delta) return delta;
+
+      // 1. Build the git-aware archive in the sandbox (full-tree fallback path).
       let bytes: number;
       try {
         const res = await exec(input.sandboxId, CAPTURE_ARCHIVE_COMMAND);

@@ -303,9 +303,12 @@ load-bearing, not polish:
 
 ## Diff transport (capture): manifest-rsync
 
-**Status: design approved (2026-06-23), not yet implemented.** Capture-direction
-only; restore stays on the full-tree upload path (rare, user-initiated, already in
-the 12 MB tier — its diff variant is still deferred, see Out of scope).
+**Status: implemented (2026-06-23), pending on-device validation.** Device
+primitives (`listManifest`/`commitDelta`, JGit-tested) + the sandbox delta exec and
+`capture()` orchestration have landed behind the strictly-additive fallback;
+remaining is a small-delta round-trip on the Moto G. Capture-direction only;
+restore stays on the full-tree upload path (rare, user-initiated, already in the
+12 MB tier — its diff variant is still deferred, see Out of scope).
 
 ### Problem
 
