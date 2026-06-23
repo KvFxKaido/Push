@@ -14,6 +14,7 @@ describe('sandbox-routes — SANDBOX_ROUTES table', () => {
       delete: 'file-ops',
       restore: 'file-ops',
       'batch-write': 'file-ops',
+      upload: 'file-ops',
       download: 'create-archive',
       hibernate: 'snapshot-and-terminate',
       'restore-snapshot': 'restore-from-snapshot',

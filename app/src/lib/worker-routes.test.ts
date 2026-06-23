@@ -17,6 +17,7 @@ describe('SANDBOX_ROUTES — completeness', () => {
     'delete',
     'restore',
     'batch-write',
+    'upload',
     'download',
     'hibernate',
     'restore-snapshot',

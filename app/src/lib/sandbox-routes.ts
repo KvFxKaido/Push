@@ -9,6 +9,11 @@ export const SANDBOX_ROUTES: Record<string, string> = {
   delete: 'file-ops',
   restore: 'file-ops',
   'batch-write': 'file-ops',
+  // `upload` is the CF large-body write route (native-checkpoint restore). On
+  // Modal it has no dedicated function — forward it to file-ops as a `write`
+  // (enriched in worker-infra) so a Modal deployment keeps the pre-upload-route
+  // restore parity instead of 404-ing on an unknown route.
+  upload: 'file-ops',
   download: 'create-archive',
   hibernate: 'snapshot-and-terminate',
   'restore-snapshot': 'restore-from-snapshot',

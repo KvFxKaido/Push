@@ -1,13 +1,18 @@
 # Native Checkpoint Store
 
 Date: 2026-06-22
-Status: **Capture device-validated end-to-end** (2026-06-22, Moto G) — PR1–PR3b
-landed; a capture now flows inline edit → trigger → coordinator → archive →
-download → on-device JGit commit, confirmed by an orphan checkpoint ref on disk.
-Getting there took fixing **three stacked bugs** the device test surfaced (below).
-Feature stays dormant (behind `VITE_NATIVE_CHECKPOINTS`) pending the remaining
-work: **restore** device-validation, the **7 MB-per-capture** efficiency fix, and
-the restore large-upload endpoint. Not roadmap-promoted. Owner: Push mobile/git.
+Status: **Current** — capture↔restore device-validated end-to-end (2026-06-23,
+Moto G). The full loop runs: inline edit → trigger → coordinator → git-aware
+archive → download → on-device JGit commit, and **history Restore** → on-device
+`archiveCommit` → large-upload route → `.git`-preserving sandbox sync, confirmed
+with zero errors on-device. The three named remaining items all landed: **restore
+device-validation** (this session), the **capture-efficiency tree-hash probe**
+(skip the ~7 MB download on an unchanged tree, #1097), and the **restore
+large-upload endpoint** (the dedicated 12 MB `upload` route, #1097 + Modal parity
+here). Feature stays **flag-gated** (`VITE_NATIVE_CHECKPOINTS`), native-only; web
+untouched — Current means the design is active, not that it's GA. Getting capture
+working took fixing **three stacked bugs** the device test surfaced (below).
+Owner: Push mobile/git.
 
 ## Device validation: the three stacked bugs (2026-06-22)
 
@@ -44,11 +49,14 @@ Each fix added the symmetric structured logs that were missing on the silent pat
 `auto_back_mutation_ignored`) — which is what turned "silently does nothing" into
 "here is the exact failing line."
 
-**Known design point (next):** because the agent commits the whole tree, the
+**Known design point (addressed):** because the agent commits the whole tree, the
 git-aware archive is the *entire repo* (~7 MB for Push), re-downloaded every
 debounced capture. The on-device JGit dedups identical trees (no new commit), but
-the 7 MB download still happens each time. Capture should skip the download when
-the tree is unchanged (cheap tree-hash probe first), or move to diff transport.
+the 7 MB download still happened each time. **Fixed (#1097):** capture now runs a
+cheap tree-hash probe first (temp-index `git add -A` + `git write-tree` in the
+sandbox, no mobile data) and short-circuits to `unchanged` before the download
+when the working tree matches the last capture for that scope. Diff-based
+transport remains the deferred next step (below).
 
 ## Context
 
@@ -258,9 +266,14 @@ load-bearing, not polish:
      list/restore e2e is the device-session follow-up.
    - **3c (shipped):** inline-lane mutation trigger + capture telemetry fixes;
      capture now flows end-to-end on-device.
-   - Remaining: restore device-validation, the capture efficiency fix (avoid the
-     ~7 MB full-tree download when unchanged), restore large-upload endpoint, and
-     broader capture/restore failure telemetry.
+   - **3d (shipped, #1097 + this PR):** the restore large-upload endpoint (the
+     dedicated 12 MB `upload` route; CF in #1097, Modal `file-ops`/`write` parity
+     here) and the capture-efficiency tree-hash probe. Restore round-trip
+     device-validated on the Moto G (2026-06-23) — capture → history Restore →
+     `.git`-preserving sync, zero errors. This is the flip-to-**Current** PR.
+   - Remaining (non-blocking, deferred): diff-based transport, and the
+     known-limitation follow-ups below (exec-bit/symlink preservation,
+     empty-tree-deletion checkpoints).
 
 ## Known limitations
 
@@ -273,11 +286,16 @@ load-bearing, not polish:
   `zip -@` produces no archive and capture reports `clean`, so deleting the last
   file isn't recorded — a later restore could resurrect it. Needs an explicit
   empty-checkpoint path.
-- **Restore upload is ~5 MB-capped.** Restore uploads the archive through
-  `writeToSandbox` (the only `/workspace`-writable path), which is ~5 MB-capped,
-  while capture's download path is uncapped (64 MB). Large checkpoints capture but
-  can't restore until a dedicated large-upload endpoint lands with the restore
-  wiring.
+- ~~**Restore upload is ~5 MB-capped.**~~ **Resolved (#1097 + this PR).** Restore
+  no longer uploads through the ~5 MB `write` route; it uses a dedicated `upload`
+  route in the 12 MB body tier. On **Cloudflare** it writes via the uncapped
+  sandbox SDK path with `realpath -m`-based `/workspace` confinement (blocks `..`
+  *and* symlinked-dir escape). On **Modal** it forwards to `file-ops`/`write` (no
+  dedicated function) — the same path, and the same `normpath`/prefix-based
+  confinement, the pre-route restore already used, so this is parity, not a new
+  guarantee. (The two backends' confinement strength differs; that asymmetry
+  predates this change.) A ~7 MB whole-tree checkpoint (~9 MB base64) now
+  restores; the device-validated round-trip exercised exactly this path.
 
 ## Out of scope (deferred, not rejected)
 
@@ -289,8 +307,10 @@ load-bearing, not polish:
 
 ## Status flip plan
 
-Note PR1/2/3 inline as they land; promote to **Current** when the remaining
-restore device-validation and transport-efficiency fixes land. Fold durable parts into
+Flipped to **Current** (2026-06-23): the restore device-validation and
+transport-efficiency fixes that gated the promotion have all landed (see the PR
+sequencing above). Remaining work is deferred/non-blocking, not a barrier to
+Current. Next: fold the durable parts into
 [`Platform, Sessions, and Sandbox Decisions.md`](<Platform, Sessions, and Sandbox Decisions.md>)
 when the arc stabilizes.
 
