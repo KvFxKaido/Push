@@ -543,6 +543,25 @@
   animation-timing-function: var(--panel-ease);
 }
 
+/* Reduced motion: panels and sheets show/hide instantly — no slide, blur, or
+   fade-travel. The global wildcard at the foot of this file already clamps all
+   durations to ~0 (so this isn't strictly required — `.spring-press`,
+   `.card-hover`, and `.stagger-in` rely on it alone), but `.panel-reveal` and
+   the sheets are named reveal primitives, so mirror the explicit per-primitive
+   blocks above and drop the resting transform/blur outright rather than just
+   speeding them up. */
+@media (prefers-reduced-motion: reduce) {
+  .panel-reveal {
+    transition: none;
+    transform: none;
+    filter: none;
+  }
+  [data-slot='sheet-content'][data-state='open'],
+  [data-slot='sheet-content'][data-state='closed'] {
+    animation: none;
+  }
+}
+
 /* Staggered entrance for lists (uses fade-in-up keyframe from tailwind.config) */
 .stagger-in > * {
   animation: fade-in-up var(--motion-normal) var(--ease-spring) backwards;
