@@ -431,7 +431,12 @@ export function corsHeadersFor(request: Request, env: Env): Record<string, strin
   const requestedHeaders = request.headers.get('Access-Control-Request-Headers');
   return {
     'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    // Must list every method any /api/* route accepts, or the cross-origin
+    // Capacitor shell (origin https://localhost) gets its preflight rejected and
+    // the real request never fires. PUT: run-host `run/checkpoint` + settings
+    // key writes; DELETE: settings key removal. The same-origin web app never
+    // preflights, which is why an omission here only bites the APK (#1098).
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': requestedHeaders ?? 'Content-Type, X-Push-Request-Id',
     // Allow the cross-site session cookie to ride from the Capacitor APK
     // (origin https://localhost) to the deployed Worker. Safe alongside a

@@ -200,6 +200,22 @@ describe('corsHeadersFor', () => {
     const request = makeRequest(requestUrl);
     expect(corsHeadersFor(request, makeEnv())).toBeNull();
   });
+
+  it('allows every method the /api/* route registry accepts, including PUT and DELETE', () => {
+    // Regression for #1098: the cross-origin Capacitor shell preflights PUT
+    // /api/runhost/run/checkpoint (and settings key PUT/DELETE). An allow-list
+    // that omits these silently kills those routes on the APK while the
+    // same-origin web app (no preflight) keeps working.
+    const request = makeRequest(requestUrl, {
+      headers: { Origin: CAPACITOR_ANDROID_ORIGIN },
+    });
+    const methods = (corsHeadersFor(request, makeEnv())!['Access-Control-Allow-Methods'] ?? '')
+      .split(',')
+      .map((m) => m.trim());
+    for (const required of ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']) {
+      expect(methods).toContain(required);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
