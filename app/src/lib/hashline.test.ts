@@ -173,6 +173,25 @@ describe('trailing newline as a file property (no phantom line)', () => {
     expect(result.failed).toBe(0);
     expect(result.content).toBe('alpha\r\nb1\r\nb2\r\ngamma\r\n');
   });
+
+  it('keeps a surviving blank line as CRLF when a sibling is deleted', async () => {
+    // CRLF analog of the LF surviving-blank case: deleting alpha from
+    // `alpha\r\n\r\n` leaves the blank line as `\r\n`, not empty.
+    const ref = await calculateLineHash('alpha', 12);
+    const result = await applyHashlineEdits('alpha\r\n\r\n', [{ op: 'delete_line', ref }]);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('\r\n');
+  });
+
+  it('yields an empty file when every line of a CRLF file is deleted', async () => {
+    const refs = await Promise.all([calculateLineHash('alpha', 12), calculateLineHash('beta', 12)]);
+    const result = await applyHashlineEdits(
+      'alpha\r\nbeta\r\n',
+      refs.map((ref) => ({ op: 'delete_line', ref })),
+    );
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('');
+  });
 });
 
 describe('line ending helpers', () => {
@@ -181,6 +200,11 @@ describe('line ending helpers', () => {
     expect(detectLineEndingStyle('alpha\r\nbeta\r\n')).toBe('\r\n');
     expect(detectLineEndingStyle('alpha\r\nbeta\n')).toBe('\n');
     expect(detectLineEndingStyle('alpha\nbeta\r\n')).toBe('\r\n');
+    // Clear majority wins regardless of the terminal newline.
+    expect(detectLineEndingStyle('a\r\nb\r\nc\n')).toBe('\r\n');
+    expect(detectLineEndingStyle('a\nb\nc\r\n')).toBe('\n');
+    // No newline at all → default LF.
+    expect(detectLineEndingStyle('alpha')).toBe('\n');
   });
 
   it('drops only the render phantom while hiding CRLF carriage returns', () => {
