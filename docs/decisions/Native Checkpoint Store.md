@@ -56,7 +56,8 @@ the 7 MB download still happened each time. **Fixed (#1097):** capture now runs 
 cheap tree-hash probe first (temp-index `git add -A` + `git write-tree` in the
 sandbox, no mobile data) and short-circuits to `unchanged` before the download
 when the working tree matches the last capture for that scope. Diff-based
-transport remains the deferred next step (below).
+transport is the **designed next step** for the changed-capture case — see
+[Diff transport (capture): manifest-rsync](#diff-transport-capture-manifest-rsync).
 
 ## Context
 
@@ -123,7 +124,10 @@ restore UX (minimal new UI), and is flag-gated and native-only (web untouched).
    free (git diffs commit N against N-1 regardless of origin ancestry).
 2. **Full-tree transport, NOT diff.** Capture streams the sandbox working tree to
    the device repo dir and commits it. Diff-based transport (lighter on mobile
-   data, but needs the device base kept in sync) is **deferred**.
+   data, but needs the device base kept in sync) was **deferred** at this
+   increment — since designed for the capture direction via manifest-rsync (the
+   base-sync concern is resolved by having the device supply its own base each
+   capture; see [Diff transport (capture)](#diff-transport-capture-manifest-rsync)).
 3. **Tree-in-JGit (Model 3), NOT archive-blob.** The on-device archive is
    **extracted into the repo worktree** and committed as real files, so git tracks
    a true tree — not stored as an opaque archive blob. This is the product vision
@@ -297,9 +301,90 @@ load-bearing, not polish:
   predates this change.) A ~7 MB whole-tree checkpoint (~9 MB base64) now
   restores; the device-validated round-trip exercised exactly this path.
 
+## Diff transport (capture): manifest-rsync
+
+**Status: design approved (2026-06-23), not yet implemented.** Capture-direction
+only; restore stays on the full-tree upload path (rare, user-initiated, already in
+the 12 MB tier — its diff variant is still deferred, see Out of scope).
+
+### Problem
+
+Even with the tree-hash probe short-circuiting *no-change* debounces, a capture
+that *does* change still ships the **entire** git-aware tree (~7 MB for Push) over
+mobile data — on every 45 s debounce after edits. A one-line edit costs 7 MB. The
+goal: transmit only what changed since the last checkpoint.
+
+### Constraint that shapes it
+
+The sandbox's git repo is the **origin clone**; the device's checkpoint repo is a
+separate `git init`. They **share no object store**, so the sandbox cannot
+`git diff` against a device checkpoint commit. Any design that bridges the two
+object stores re-introduces exactly the "keep the device base in sync" coupling
+this doc deferred (first-increment fork 2).
+
+### Decision: device-supplied manifest, stateless sandbox diff (manifest-rsync)
+
+The device supplies its own base each capture; the sandbox holds **no checkpoint
+state**:
+
+1. **device → sandbox:** the base manifest — `path → blobhash` for the last
+   checkpoint's tree (gzipped; ~tens of KB for Push, vs the 7 MB that flows the
+   other way).
+2. **sandbox:** stage the working tree into the **throwaway index** (the probe
+   already does this — `git add -A` into `GIT_INDEX_FILE=/tmp/…`), then
+   `git ls-files -s` → the *current* manifest. Diff it against the supplied base:
+   - changed/new paths → `zip` only those file contents (the delta archive);
+   - paths in base but not current → a **deletion list** (delete-faithful).
+3. **sandbox → device:** the delta archive (small) + deletion list + the new tree
+   hash. This is the only payload that crosses mobile data.
+4. **device:** apply the delta **onto the existing worktree** (do *not* clear):
+   extract the changed files, remove the deleted paths, `git add -A`, commit. New
+   checkpoint commit; same result tree as a full capture, a fraction of the bytes.
+
+The sandbox needs **zero persisted state** — it survives restarts because the
+device re-supplies the base every capture. That is what defuses the base-sync
+objection: the base lives where it is authoritative (the device) and travels up
+cheaply (hashes, not contents).
+
+### Base = worktree invariant, and the fallback
+
+After every checkpoint commit the device worktree holds that commit's tree, so the
+next delta applies onto the correct base with no checkout. The device guards this:
+before applying a delta it confirms its current worktree manifest matches the base
+it sent (cheap — the same hash set). On **any** mismatch — first capture, no prior
+checkpoint, an app-restart cache miss, or worktree drift — it **falls back to the
+existing full-tree capture**. Diff transport is an optimization layered over the
+proven full path, never a replacement that can strand a capture.
+
+### New plugin surface
+
+- `listManifest(dir)` → `path → blobhash` of HEAD's tree (cheap JGit `TreeWalk`);
+  the authority for the base manifest (a JS-side cache can prime it, with this as
+  the fallback on cache miss).
+- `commitDelta(dir, deltaArchiveBase64, deletedPaths, message)` → apply onto the
+  worktree without clearing, then `add -A` + commit. Sibling to
+  `commitWorkingTree`, which stays for the full-tree fallback.
+
+### Rejected alternative: git-bundle bridge
+
+Make the sandbox aware of the device checkpoint commit (export device objects into
+the sandbox, or keep a parallel checkpoint branch there) and ship a real packfile
+delta. More git-native, but it forces the two repos to share object state — the
+exact coupling manifest-rsync avoids — and adds a new failure surface (a drifted or
+absent bridge ref) for no payload-size win over content-hash diffing.
+
+### Caveats (unchanged by this)
+
+- The manifest is a small **upload** each capture — the inverse trade (KB up to
+  save MB down). Net win is large, but it is not free; gzip the manifest.
+- **Exec-bit / symlinks** are still ZIP-bound (a separate known limitation); the
+  delta archive inherits it. Orthogonal to transport size.
+
 ## Out of scope (deferred, not rejected)
 
-- Diff-based transport (revisit when full-tree mobile-data cost bites).
+- Diff-based transport **for restore** (the capture direction is now designed —
+  see [Diff transport (capture): manifest-rsync](#diff-transport-capture-manifest-rsync);
+  restore stays full-tree for now, since it's user-initiated and rare).
 - Clone-based device repo with origin ancestry.
 - Native-as-live-push-path and its pushed-diff source (the Deferred sibling doc).
 - A local secret scanner for checkpoints (first version relies on app-private +
