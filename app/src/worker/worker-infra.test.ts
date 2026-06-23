@@ -301,6 +301,43 @@ describe('handleSandbox snapshot index integration', () => {
   });
 });
 
+describe('handleSandbox route enrichment', () => {
+  it('forwards the CF-only upload route to Modal file-ops as a write', async () => {
+    const env = makeEnv({ MODAL_SANDBOX_BASE_URL: 'https://org--push-app.modal.run' });
+    let forwardedUrl = '';
+    let forwardedBody: Record<string, unknown> = {};
+    vi.stubGlobal(
+      'fetch',
+      sequentialFetch([
+        (input, init) => {
+          forwardedUrl = String(input);
+          forwardedBody = JSON.parse(String(init?.body ?? '{}'));
+          return jsonResponse({ ok: true, bytes_written: 42 });
+        },
+      ]),
+    );
+
+    const request = makeRequest('https://push.example.test/api/sandbox/upload', {
+      body: JSON.stringify({
+        sandbox_id: 'sb-1',
+        owner_token: 'ot',
+        path: '/workspace/.push-checkpoint-restore.b64',
+        content: 'AAAA',
+      }),
+    });
+    const response = await handleSandbox(request, env, new URL(request.url), 'upload');
+
+    expect(response.status).toBe(200);
+    // Routed to the same Modal function as `write`, not a (nonexistent) upload fn.
+    expect(forwardedUrl).toBe('https://org--push-app-file-ops.modal.run');
+    // Enriched with the write action so file-ops dispatches it as a write, and
+    // the original path/content survive untouched.
+    expect(forwardedBody.action).toBe('write');
+    expect(forwardedBody.path).toBe('/workspace/.push-checkpoint-restore.b64');
+    expect(forwardedBody.content).toBe('AAAA');
+  });
+});
+
 // ===========================================================================
 // handleGitHubAppOAuth — error paths
 // ===========================================================================

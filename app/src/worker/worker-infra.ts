@@ -82,9 +82,10 @@ export async function handleSandbox(
   }
 
   // Read and forward body. `upload` shares the large-body tier with restore so
-  // the policy is provider-consistent; the route itself is CF-only (native
-  // checkpoints), so a Modal deployment forwarding it just gets Modal's
-  // unknown-action error.
+  // the policy is provider-consistent. On Modal the route has no dedicated
+  // function, so it's forwarded to file-ops as a `write` (see the enrichment
+  // block below) — keeping the native-checkpoint restore working on Modal
+  // exactly as it did before the dedicated CF upload route existed.
   const maxBodyBytes =
     route === 'restore' || route === 'batch-write' || route === 'upload'
       ? RESTORE_MAX_BODY_SIZE_BYTES
@@ -99,6 +100,7 @@ export async function handleSandbox(
   if (
     route === 'read' ||
     route === 'write' ||
+    route === 'upload' ||
     route === 'batch-write' ||
     route === 'list' ||
     route === 'delete' ||
@@ -109,6 +111,10 @@ export async function handleSandbox(
 
       if (route === 'read') payload.action = 'read';
       if (route === 'write') payload.action = 'write';
+      // `upload` (CF large-body write) maps onto Modal's file-ops write; its
+      // payload is a write payload minus the optional optimistic-concurrency
+      // fields, so the same action handles it.
+      if (route === 'upload') payload.action = 'write';
       if (route === 'batch-write') payload.action = 'batch_write';
       if (route === 'list') payload.action = 'list';
       if (route === 'delete') payload.action = 'delete';
