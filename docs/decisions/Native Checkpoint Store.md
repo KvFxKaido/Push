@@ -327,43 +327,84 @@ this doc deferred (first-increment fork 2).
 The device supplies its own base each capture; the sandbox holds **no checkpoint
 state**:
 
-1. **device → sandbox:** the base manifest — `path → blobhash` for the last
-   checkpoint's tree (gzipped; ~tens of KB for Push, vs the 7 MB that flows the
-   other way).
+1. **device → sandbox:** the base manifest — `path → blobhash` for the **newest
+   checkpoint** (gzipped; ~tens of KB for Push, vs the 7 MB that flows the other
+   way). Blob hashes are **content-only, over raw file bytes** — load-bearing, see
+   Correctness constraints below.
 2. **sandbox:** stage the working tree into the **throwaway index** (the probe
-   already does this — `git add -A` into `GIT_INDEX_FILE=/tmp/…`), then
-   `git ls-files -s` → the *current* manifest. Diff it against the supplied base:
-   - changed/new paths → `zip` only those file contents (the delta archive);
+   already does this — `git add -A` into `GIT_INDEX_FILE=/tmp/…`), then read the
+   *current* manifest from that index (`git ls-files -s`, content hashes). Diff it
+   against the supplied base:
+   - changed/new paths → the delta archive;
    - paths in base but not current → a **deletion list** (delete-faithful).
+   Build the delta **from the staged index's object IDs**, not a re-read of the
+   worktree — so the manifest, the delta bytes, and the returned tree hash are one
+   atomic snapshot; a worktree write mid-capture can't desync them.
 3. **sandbox → device:** the delta archive (small) + deletion list + the new tree
    hash. This is the only payload that crosses mobile data.
 4. **device:** apply the delta **onto the existing worktree** (do *not* clear):
-   extract the changed files, remove the deleted paths, `git add -A`, commit. New
-   checkpoint commit; same result tree as a full capture, a fraction of the bytes.
+   write the changed files, remove the deleted paths (handling dir↔file
+   transitions — see plugin surface), `git add -A`, commit a new orphan
+   checkpoint. Then **verify the resulting tree matches the returned tree hash**;
+   on mismatch, discard and fall back to a full capture. Same result tree as a
+   full capture, a fraction of the bytes.
 
 The sandbox needs **zero persisted state** — it survives restarts because the
 device re-supplies the base every capture. That is what defuses the base-sync
 objection: the base lives where it is authoritative (the device) and travels up
 cheaply (hashes, not contents).
 
-### Base = worktree invariant, and the fallback
+### Base = newest-checkpoint tree, and the fallback
 
-After every checkpoint commit the device worktree holds that commit's tree, so the
-next delta applies onto the correct base with no checkout. The device guards this:
-before applying a delta it confirms its current worktree manifest matches the base
-it sent (cheap — the same hash set). On **any** mismatch — first capture, no prior
-checkpoint, an app-restart cache miss, or worktree drift — it **falls back to the
-existing full-tree capture**. Diff transport is an optimization layered over the
-proven full path, never a replacement that can strand a capture.
+Checkpoints are **orphan commits under `refs/checkpoints/<sha>`** — there is no
+branch and **HEAD never moves** (`JGitEngine.commitWorkingTree`). The base is the
+**newest checkpoint ref's tree**, *not* HEAD. The device worktree happens to track
+it because each full capture extracts that tree (`replaceWorktree`) and each delta
+applies onto it — so after any successful commit the worktree equals the newest
+checkpoint's tree. The device guards this: before applying a delta it confirms its
+current worktree manifest matches the base it sent (cheap — the same hash set). On
+**any** mismatch — first capture, no prior checkpoint, an app-restart cache miss,
+or worktree drift — it **falls back to the existing full-tree capture**, and the
+post-apply tree-hash verification (step 4) catches a delta that applied wrong. Diff
+transport is an optimization layered over the proven full path, never a replacement
+that can strand a capture.
 
 ### New plugin surface
 
-- `listManifest(dir)` → `path → blobhash` of HEAD's tree (cheap JGit `TreeWalk`);
-  the authority for the base manifest (a JS-side cache can prime it, with this as
-  the fallback on cache miss).
+- `listManifest(dir)` → `path → blobhash` of the **newest checkpoint ref's** tree
+  (cheap JGit `TreeWalk`; **not** HEAD — checkpoints are orphan refs and HEAD
+  doesn't track them). The authority for the base manifest (a JS-side cache can
+  prime it, with this as the fallback on cache miss).
 - `commitDelta(dir, deltaArchiveBase64, deletedPaths, message)` → apply onto the
-  worktree without clearing, then `add -A` + commit. Sibling to
-  `commitWorkingTree`, which stays for the full-tree fallback.
+  worktree without clearing — write changed files, remove deleted paths, and
+  **handle dir↔file transitions** (delete a directory before writing a file at its
+  path, and vice versa; there's no clear-first to lean on) — then `add -A`, commit
+  an orphan checkpoint, and **return the resulting tree hash** for the caller to
+  verify against the sandbox's. Sibling to `commitWorkingTree`, which stays for the
+  full-tree fallback.
+
+### Correctness constraints (from design review)
+
+Load-bearing, not polish — a content-hash diff across *two* git implementations is
+only sound if a hash means the same thing on both sides:
+
+- **Raw-bytes hashing, no filters.** The base manifest is JGit-computed (device),
+  the current manifest C-git-computed (sandbox). So **both sides must hash raw file
+  bytes with EOL/clean filters and `core.autocrlf` disabled.** The unsafe failure
+  is specifically `autocrlf`: it can canonicalize CRLF and LF content to the *same*
+  blob, making a line-ending-only change hash as **unchanged** → silently dropped
+  (a false *unchanged*, the only dangerous direction). The reverse (same content,
+  different hash) only yields a false *changed* — a bigger delta, still correct.
+  Repos with `.gitattributes` clean filters / LFS are the live risk; disabling
+  filters for manifest+delta hashing closes it, and the drift-check + full-tree
+  fallback contains anything missed.
+- **Mode / symlinks out of scope.** Manifest hashes are content-only and the ZIP
+  transport already writes regular files (the existing exec-bit/symlink
+  limitation). A chmod-only change therefore yields an *empty* content delta; the
+  device no-ops it (the on-device tree already dedups identical trees). Consistent
+  with today's behavior, not a regression — but it means the sandbox's mode-aware
+  `git write-tree` hash must **not** be the delta-emptiness signal; the manifest
+  diff is the sole authority on what changed.
 
 ### Rejected alternative: git-bundle bridge
 
