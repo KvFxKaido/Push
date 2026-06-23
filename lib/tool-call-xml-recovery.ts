@@ -180,7 +180,7 @@ export function recoverXmlToolCalls(text: string): RecoveredXmlCall[] {
   // the gate; gaps between blocks need to be whitespace regardless of
   // which wrapper sits on either side.
   const matches: Array<{
-    kind: 'tool_call' | 'function_calls';
+    kind: 'tool_call' | 'function_calls' | 'invoke';
     blockStart: number;
     blockEnd: number;
     /**
@@ -227,6 +227,35 @@ export function recoverXmlToolCalls(text: string): RecoveredXmlCall[] {
       inner: match[1],
     });
   }
+
+  // Shape E — standalone `<invoke>` elements with no `<function_calls>` /
+  // `<tool_calls>` wrapper. Some models (x-ai/grok-code-fast-1 observed in
+  // the wild) emit the Anthropic invoke/parameter shape but omit the outer
+  // wrapper, so a single call leaks into the content stream as
+  //   <invoke name="search"><parameter name="query">…</parameter></invoke>
+  // which matches neither the `<tool_call>` regex nor the wrapper regex
+  // above and therefore fell through entirely. We scan for `<invoke>`
+  // elements at the top level and keep only those that fall OUTSIDE every
+  // wrapper block already collected — an invoke that belongs to a
+  // function_calls/tool_calls wrapper is expanded by that wrapper's path
+  // and must not be double-counted here. The whole-element text is stored
+  // as `inner` (with `innerStart` anchored to its start) so the expansion
+  // pass below can route it through the same `parseFunctionCallsInner`
+  // logic as a wrapped invoke.
+  const wrapperRanges = matches.map((m) => [m.blockStart, m.blockEnd] as const);
+  const invokeRegex = new RegExp(INVOKE_TAG_REGEX.source, INVOKE_TAG_REGEX.flags);
+  while ((match = invokeRegex.exec(text)) !== null) {
+    const start = match.index;
+    if (wrapperRanges.some(([s, e]) => start >= s && start < e)) continue;
+    matches.push({
+      kind: 'invoke',
+      blockStart: start,
+      blockEnd: start + match[0].length,
+      innerStart: start,
+      inner: match[0],
+    });
+  }
+
   matches.sort((a, b) => a.blockStart - b.blockStart);
 
   // Drop matches that nest inside an earlier (outer) wrapper. This
@@ -278,13 +307,16 @@ export function recoverXmlToolCalls(text: string): RecoveredXmlCall[] {
       out.push({ ...parsed, offset: m.blockStart, endOffset: m.blockEnd });
       continue;
     }
-    // `<function_calls>` wrapper — expand each `<invoke>` child into its
-    // own recovered call. Re-anchor each invoke's offsets to the outer
-    // text by adding `m.innerStart` (where the capture group begins),
-    // NOT `m.blockStart` — the latter would undercount by the opening
-    // tag's length and shift recovery regions backward, which lets the
-    // legacy bare-object skip miss objects inside the recovered
-    // invoke. Copilot review on PR #683.
+    // `<function_calls>` wrapper (or a standalone `<invoke>`, Shape E) —
+    // expand each `<invoke>` child into its own recovered call. Re-anchor
+    // each invoke's offsets to the outer text by adding `m.innerStart`
+    // (where `m.inner` begins), NOT `m.blockStart` — for the wrapper case
+    // the latter would undercount by the opening tag's length and shift
+    // recovery regions backward, which lets the legacy bare-object skip
+    // miss objects inside the recovered invoke (Copilot review on PR #683).
+    // For the standalone `invoke` kind `m.inner` is the whole element and
+    // `m.innerStart === m.blockStart`, so the single child resolves back
+    // to its own `<invoke>` offset.
     for (const invoke of parseFunctionCallsInner(m.inner)) {
       out.push({
         tool: invoke.tool,
