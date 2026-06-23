@@ -2145,6 +2145,39 @@ describe('handleAnthropicChat — neutral wire (dual-accept)', () => {
     ]);
   });
 
+  it('translates neutral tools to Anthropic custom-tool shape on the direct Anthropic path', async () => {
+    const get = captureUpstream();
+    const tool = {
+      type: 'function',
+      function: {
+        name: 'sandbox_read_file',
+        description: 'Read a file',
+        parameters: {
+          type: 'object',
+          properties: { path: { type: 'string' } },
+          required: ['path'],
+          additionalProperties: false,
+        },
+      },
+    };
+    await handleAnthropicChat(
+      makeNeutralRequest({
+        model: 'claude-sonnet-4-6',
+        messages: [{ role: 'user', content: 'read it' }],
+        tools: [tool],
+      }),
+      makeEnv({ ANTHROPIC_API_KEY: 'sk-ant' }),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    expect(body.tools).toEqual([
+      {
+        name: 'sandbox_read_file',
+        description: 'Read a file',
+        input_schema: tool.function.parameters,
+      },
+    ]);
+  });
+
   it('clamps neutral maxTokens to the route ceiling (12288)', async () => {
     const get = captureUpstream();
     await handleAnthropicChat(
