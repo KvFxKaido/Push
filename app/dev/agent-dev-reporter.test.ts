@@ -38,6 +38,8 @@ describe('isAgentDev', () => {
   it('detects known agent env vars', () => {
     expect(isAgentDev({ CLAUDECODE: '1' })).toBe(true);
     expect(isAgentDev({ CURSOR_AGENT: 'x' })).toBe(true);
+    expect(isAgentDev({ CODEX_HOME: '/home/user/.codex' })).toBe(true);
+    expect(isAgentDev({ CODEX_CI: '1' })).toBe(true);
     expect(isAgentDev({})).toBe(false);
   });
 

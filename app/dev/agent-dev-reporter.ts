@@ -21,7 +21,15 @@ import { type Plugin, createLogger } from 'vite';
 // flips the reporter on. `PUSH_DEV_AGENT` is the explicit override and wins
 // either way, so a human can force JSON on (`=1`) or an agent can force it off
 // (`=0`) without guessing which detector fired.
-const KNOWN_AGENT_ENV = ['CLAUDECODE', 'CLAUDE_CODE', 'CURSOR_AGENT', 'AIDER', 'REPLIT_AGENT'];
+const KNOWN_AGENT_ENV = [
+  'CLAUDECODE',
+  'CLAUDE_CODE',
+  'CURSOR_AGENT',
+  'AIDER',
+  'REPLIT_AGENT',
+  'CODEX_CI',
+  'CODEX_HOME',
+];
 
 export function isAgentDev(env: NodeJS.ProcessEnv = process.env): boolean {
   const explicit = env.PUSH_DEV_AGENT?.toLowerCase();
