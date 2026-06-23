@@ -191,6 +191,68 @@
   }
 }
 
+/* Verb shimmer — a soft band of light sweeps across the live thinking-verb in
+   AgentStatusBar, layered on top of the per-change `status-verb-swap` enter.
+   Two-layer text-shimmer recipe (after transitions.dev): the host span paints
+   the verb normally in `push-fg-secondary`, and a ::before duplicate
+   (content: attr(data-text)) clips a transparent → highlight → transparent
+   gradient to the same glyphs via background-clip: text, then animates
+   background-position to sweep the band. Continuous (infinite) — the swap fires
+   once per verb change while the shimmer runs underneath; because ::before is
+   absolutely positioned inside the host, it inherits the swap's transform/blur
+   and enters together with the base layer. The highlight is a brighter
+   foreground (not the accent), so it reads as light passing over the label
+   rather than a colored tint. Applied only when the bar is rotating themed
+   verbs (the thinking dead-air state), not to phase labels.
+   `data-text` is kept in sync with the visible label in AgentStatusBar. */
+:root {
+  --verb-shimmer-dur: 2.4s;
+  --verb-shimmer-highlight: #f5f7ff; /* push-fg — brighter than the secondary base */
+  --verb-shimmer-band: 320%;
+}
+
+.status-verb-shimmer {
+  position: relative;
+}
+.status-verb-shimmer::before {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    transparent 40%,
+    var(--verb-shimmer-highlight) 50%,
+    transparent 60%,
+    transparent 100%
+  );
+  background-size: var(--verb-shimmer-band) 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: verb-shimmer var(--verb-shimmer-dur) linear infinite;
+}
+@keyframes verb-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0% 0;
+  }
+}
+
+/* Drop the overlay entirely (not just freeze it) so no static highlight band is
+   left frozen across the glyphs — the base verb renders plainly. */
+@media (prefers-reduced-motion: reduce) {
+  .status-verb-shimmer::before {
+    content: none;
+    animation: none;
+  }
+}
+
 /* Earned-success beat — a green pop with a soft overshoot and a brief glow that
    blooms then settles. Shared by the two "earned" green moments in the commit
    gate: the shield on an Auditor SAFE verdict, and the check when a commit

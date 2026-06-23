@@ -205,6 +205,7 @@ Named keyframe animations in `app/src/index.css`. Consume the class directly —
 | Class | Keyframes | Timing | Use |
 | ----- | --------- | ------ | --- |
 | `.status-verb-swap` | `status-verb-swap-in`: enter from 0.4em below, 3px blur clearing to 0 | 0.42s `--ease-default` | AgentStatusBar verb / phase-label rotation. Enter-only — fires once per mount via a React `key` on the label span (same pattern as `stream-word`). |
+| `.status-verb-shimmer` | `verb-shimmer`: a transparent→`push-fg`→transparent band swept across the glyphs via `background-position` (clipped to text by a `::before` `attr(data-text)` duplicate) | 2.4s `linear` infinite | Layered on `status-verb-swap` while AgentStatusBar rotates themed thinking-verbs (not phase labels). Continuous light sweep; `data-text` mirrors the visible label. Two-layer text-shimmer recipe (after transitions.dev). Removed (not frozen) under reduced motion. |
 | `.verdict-safe-icon`, `.commit-landed-icon` | `success-pop` (scale 0.4 → 1.18 → 1) + `success-glow` (green drop-shadow bloom → settle) | pop 0.5s `--ease-spring`; glow 0.9s `--ease-default` 0.1s delay | The earned-success beat: Auditor SAFE shield and commit-landed check. Confident, not celebratory — no rotate or stroke-draw. Each consumer fires once and guards against Virtuoso scroll-remount replays. |
 
 ## Components
