@@ -1122,6 +1122,21 @@ function appendVertexGoogleSearchTool<T extends object>(
   const existing = Array.isArray((body as { tools?: unknown }).tools)
     ? ((body as { tools?: unknown }).tools as Array<Record<string, unknown>>)
     : [];
+  // Gemini only supports combining the built-in `googleSearch` grounding tool
+  // with custom function tools on Gemini 3 (Preview, "Gemini 3 models only");
+  // gemini-2.5-* reject the combination. Vertex carries both Gemini and Claude,
+  // so when native function tools are present we skip grounding — function
+  // calling wins — mirroring the direct-Gemini bridge fix (#1086). Without this,
+  // a native-FC turn on a Vertex Gemini-2.5 model 400s before the model responds.
+  const hasFunctionTools = existing.some(
+    (t) =>
+      typeof t === 'object' &&
+      t !== null &&
+      ((t as { type?: unknown }).type === 'function' ||
+        'function' in t ||
+        'functionDeclarations' in t),
+  );
+  if (hasFunctionTools) return { ...body, tools: existing };
   const hasGoogleSearch = existing.some(
     (t) => typeof t === 'object' && t !== null && 'googleSearch' in t,
   );

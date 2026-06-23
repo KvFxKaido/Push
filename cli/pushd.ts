@@ -655,6 +655,11 @@ import { buildSystemPrompt, runAssistantTurn, DEFAULT_MAX_ROUNDS } from './engin
 import { appendUserMessageWithFileReferences } from './file-references.js';
 import { runExplorerAgent } from '../lib/explorer-agent.ts';
 import { runCoderAgent } from '../lib/coder-agent.ts';
+import { cliProviderModelSupportsNativeToolCalling } from './native-tool-gate.js';
+import {
+  getCliNativeToolSchemas,
+  getCliReadOnlyNativeToolSchemas,
+} from './tool-function-schemas.js';
 import { RUN_TOKEN_BUDGET_ENV_VAR, resolveRunTokenBudget } from '../lib/run-cost-budget.ts';
 import { isSensitivePath as isDaemonSensitivePath } from '../lib/sensitive-paths.ts';
 import { isPathAllowed, snapshotAllowlist } from './pushd-allowlist.js';
@@ -3201,6 +3206,9 @@ async function runExplorerForTaskGraph(sessionId, entry, node, signal, preambleE
   const toolExec = makeDaemonExplorerToolExec({ entry, signal });
   const evaluateAfterModel = async () => null;
   const daemonStream = createDaemonProviderStream(provider, sessionId);
+  const nativeToolSchemas = cliProviderModelSupportsNativeToolCalling(provider, model)
+    ? getCliReadOnlyNativeToolSchemas()
+    : undefined;
 
   // Splice graph-internal memory (from executeTaskGraph's
   // enrichedContext) and typed-memory retrieval blocks into the
@@ -3232,6 +3240,7 @@ async function runExplorerForTaskGraph(sessionId, entry, node, signal, preambleE
       // silently fails to execute anything (codex + Copilot P1 on
       // PR #284).
       sandboxToolProtocol: READ_ONLY_TOOL_PROTOCOL,
+      nativeToolSchemas,
       evaluateAfterModel,
     },
     {
@@ -3321,6 +3330,9 @@ async function runCoderForTaskGraph(
   const startedAt = Date.now();
   const { provider, model } = resolveRoleRouting(entry, 'coder');
   const daemonStream = createDaemonProviderStream(provider, sessionId);
+  const nativeToolSchemas = cliProviderModelSupportsNativeToolCalling(provider, model)
+    ? getCliNativeToolSchemas()
+    : undefined;
   // `parentRunId` can be null when `submit_task_graph` is called on a
   // session with no active run AND no `parentRunId` payload override.
   // `buildApprovalFn` would emit `approval_required` events with
@@ -3364,6 +3376,7 @@ async function runCoderForTaskGraph(
       // Feed in `TOOL_PROTOCOL` from `cli/tools.ts`, the same block the
       // non-delegated CLI engine uses.
       sandboxToolProtocol: TOOL_PROTOCOL,
+      nativeToolSchemas,
       verificationPolicyBlock: null,
       approvalModeBlock: null,
       evaluateAfterModel,
@@ -4678,6 +4691,12 @@ async function handleDelegateExplorer(req) {
     let runError = null;
     try {
       const daemonStream = createDaemonProviderStream(resolvedProvider, sessionId);
+      const nativeToolSchemas = cliProviderModelSupportsNativeToolCalling(
+        resolvedProvider,
+        resolvedModel,
+      )
+        ? getCliReadOnlyNativeToolSchemas()
+        : undefined;
       const result = await runExplorerAgent(
         {
           provider: resolvedProvider,
@@ -4700,6 +4719,7 @@ async function handleDelegateExplorer(req) {
           // the model emit CLI tool names that match
           // `READ_ONLY_TOOLS` + `executeToolCall`'s dispatch table.
           sandboxToolProtocol: READ_ONLY_TOOL_PROTOCOL,
+          nativeToolSchemas,
           evaluateAfterModel,
         },
         {
@@ -5041,6 +5061,12 @@ async function handleDelegateCoder(req) {
     let runError = null;
     try {
       const daemonStream = createDaemonProviderStream(resolvedProvider, sessionId);
+      const nativeToolSchemas = cliProviderModelSupportsNativeToolCalling(
+        resolvedProvider,
+        resolvedModel,
+      )
+        ? getCliNativeToolSchemas()
+        : undefined;
       const result = await runCoderAgent(
         {
           provider: resolvedProvider,
@@ -5063,6 +5089,7 @@ async function handleDelegateCoder(req) {
           // Feed in `TOOL_PROTOCOL` from `cli/tools.ts`, the same block the
           // non-delegated CLI engine uses.
           sandboxToolProtocol: TOOL_PROTOCOL,
+          nativeToolSchemas,
           verificationPolicyBlock: null,
           approvalModeBlock: null,
           evaluateAfterModel,

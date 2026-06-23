@@ -40,6 +40,7 @@ import type {
 } from '../lib/provider-contract.ts';
 import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
 import { decideStreamFailover } from '../lib/provider-failover.ts';
+import { cliProviderModelSupportsNativeToolCalling } from './native-tool-gate.js';
 import {
   createProviderStream,
   classifyCliStreamError,
@@ -48,6 +49,7 @@ import {
   MAX_RETRIES,
 } from './provider.js';
 import type { ProviderConfig } from './provider.js';
+import { getCliNativeToolSchemas } from './tool-function-schemas.js';
 import {
   detectAllToolCalls as cliDetectAllToolCalls,
   detectToolCall as cliDetectToolCall,
@@ -367,6 +369,13 @@ export async function runLeadKernelTurn(
     snapshot,
     memory,
   );
+  const leadModelId = state.model || providerConfig.defaultModel;
+  const nativeToolSchemas = cliProviderModelSupportsNativeToolCalling(
+    providerConfig.id,
+    leadModelId,
+  )
+    ? getCliNativeToolSchemas({ includeGitHub: Boolean(githubProtocol) })
+    : undefined;
 
   // Tee the provider stream into the engine event vocabulary so the TUI /
   // REPL / daemon clients render the kernel's rounds exactly like engine
@@ -422,11 +431,16 @@ export async function runLeadKernelTurn(
         });
         let yieldedAny = false;
         try {
+          const requestTools =
+            req.tools && cliProviderModelSupportsNativeToolCalling(activeConfig.id, activeModel)
+              ? req.tools
+              : undefined;
           const events = normalizeReasoning(
             providerStream({
               ...req,
               provider: activeConfig.id as AIProviderType,
               model: activeModel,
+              tools: requestTools,
             }),
           );
           for await (const event of events) {
@@ -593,7 +607,7 @@ export async function runLeadKernelTurn(
       {
         provider: providerConfig.id as AIProviderType,
         stream,
-        modelId: state.model || providerConfig.defaultModel,
+        modelId: leadModelId,
         sandboxId: '',
         allowedRepo: '',
         userProfile: null,
@@ -607,6 +621,7 @@ export async function runLeadKernelTurn(
         // as the daemon's delegated Coder nodes.
         sandboxToolProtocol: TOOL_PROTOCOL,
         extraToolProtocols: githubProtocol ? [githubProtocol] : undefined,
+        nativeToolSchemas,
         projectInstructions: instructions?.content || undefined,
         instructionFilename: instructions?.file || undefined,
         verificationPolicyBlock: null,

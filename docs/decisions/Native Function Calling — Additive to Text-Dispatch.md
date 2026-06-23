@@ -6,10 +6,11 @@ allowlist; both the OpenAI and Anthropic Go transports), Fireworks AI
 (name-based catalog allowlist), and the validated OpenAI-compatible adapters:
 OpenAI / Azure OpenAI (OpenAI-family model ids), Kilo Code / OpenAdapter
 (curated catalog allowlists), direct Anthropic (curated catalog allowlist),
-Google/Gemini (name-based curated allowlist), plus Ollama Cloud / Nvidia NIM /
-Blackbox AI (models.dev capability-gated). Bedrock, Vertex, and the CLI lead are
-deferred follow-ups, not yet promoted to
-`ROADMAP.md` — tracked in #1082.
+Google/Gemini (name-based curated allowlist), Google Vertex AI (name-based
+curated allowlist), AWS Bedrock Claude ids (name-based), plus Ollama Cloud /
+Nvidia NIM / Blackbox AI (models.dev capability-gated). The CLI lead and
+daemon delegated Coder/Explorer now attach CLI-native scoped schemas behind a
+CLI-local provider/model gate. Tracked in #1082.
 
 **Date:** 2026-06-17
 
@@ -53,6 +54,12 @@ native tool call — both converge at one dispatch path. Consequences:
   resolves to canonical. The array is **complete** by construction (a partial
   list would tell the model those are its only tools); a completeness test pins
   one-to-one with the registry.
+  CLI runs use `cli/tool-function-schemas.ts` instead: it parses the versioned
+  `TOOL_PROTOCOL` / `READ_ONLY_TOOL_PROTOCOL` blocks so native schema names stay
+  in the CLI executor namespace (`read_file`, `search_files`, `write_file`, ...)
+  rather than the web registry namespace (`read`, `search`, ...). The CLI lead
+  appends GitHub registry schemas only when the GitHub protocol block is actually
+  advertised.
 - **Neutral wire field.** `PushStreamRequest.tools?: ToolFunctionSchema[]` plus
   the `ToolFunctionSchema` type in `lib/provider-contract.ts`.
 - **Cloudflare adapter.** The client (`app/src/lib/cloudflare-stream.ts`)
@@ -71,8 +78,9 @@ native tool call — both converge at one dispatch path. Consequences:
   verbatim, and the guardrail validator preserves unknown fields). The shared
   `toOpenAIChat` serializer also gained `tools`/`tool_choice` for the Go neutral
   contract (currently dormant) and the CLI OpenAI-compat adapters. Anthropic-transport
-  Go models (minimax/qwen) rebuild an Anthropic Messages body that doesn't forward
-  the OpenAI `tools` array, so they fall back to text-dispatch.
+  Go models (minimax/qwen) rebuild an Anthropic Messages body via
+  `toAnthropicMessages`, which translates OpenAI-shaped schemas into Anthropic
+  custom tools and normalizes `tool_use` blocks back to dispatcher JSON.
 - **Capability gate.** `providerModelSupportsNativeToolCalling(provider, model)`
   in `app/src/lib/model-catalog.ts` — name-based (Kimi/GLM) for Cloudflare, which
   has no models.dev metadata; capability-based for OpenRouter (the model's
@@ -90,18 +98,20 @@ native tool call — both converge at one dispatch path. Consequences:
   gateway catalog is hand-maintained; Ollama Cloud / Nvidia NIM / Blackbox also
   honor models.dev capability metadata when present. Direct OpenAI and Azure
   OpenAI enable native tools for OpenAI-family model ids (`gpt-4*` / `gpt-5*`).
-  Other providers return `false`.
-- **Lead wiring.** `inline-coder-run.ts` attaches `getToolFunctionSchemas()`
-  when the gate passes; the coder kernel (`lib/coder-agent.ts`) threads the new
-  `nativeToolSchemas` option into each round's request. Provider-agnostic — once
-  the gate returns `true` for a provider/model, the lead attaches schemas and the
-  provider's adapter serializes them.
+  Google Vertex AI is enabled from `VERTEX_MODEL_OPTIONS`, and AWS Bedrock is
+  enabled for Claude 3+ / Claude 4-style Anthropic model ids routed through the
+  OpenAI-compatible proxy. Other providers return `false`.
+- **Lead and role wiring.** `inline-coder-run.ts` attaches web registry schemas
+  when the gate passes; the coder kernel (`lib/coder-agent.ts`) threads the
+  `nativeToolSchemas` option into each round's request. CLI lead wiring attaches
+  the full CLI schema set, plus GitHub schemas when GitHub tools are advertised.
+  Daemon delegated Coder gets the full CLI schema set; daemon Explorer gets the
+  read-only CLI schema set through `lib/explorer-agent.ts`.
 
-## Scope / deferred
+## Scope / out of scope
 
-The deferred follow-ups below are tracked in #1082 (Vertex / Bedrock gates,
-the CLI lead, delegated Coder/Explorer, and conditional
-toolsets). Flip the Status line and the relevant bullet here as each lands.
+The #1082 follow-ups are covered for Vertex, Bedrock, CLI lead, delegated
+Coder/Explorer, and scoped toolsets.
 
 - **Other providers.** The gate is the single switch. OpenRouter
   (capability-based), OpenCode Zen (name-based), Fireworks AI (name-based; single
@@ -120,13 +130,34 @@ toolsets). Flip the Status line and the relevant bullet here as each lands.
   allowlist: `gemini-stream.ts` carries neutral `tools`, `toGeminiGenerateContent`
   maps them to Gemini `functionDeclarations`, and
   `createGeminiTranslatedStream` / `geminiEventStream` turn Gemini `functionCall`
-  parts back into the dispatcher's fenced JSON. The CLI OpenAI-compat adapter
-  (`cli/openai-stream.ts`) is a separate follow-up — its
-  lead doesn't attach `nativeToolSchemas` yet, so it stays text-dispatch (the
-  shared `toOpenAIChat` already serializes `tools` once a CLI gate lands).
-- **Other roles.** Delegated Coder, Explorer, auditor/reviewer are unchanged
-  (auditor/reviewer use `response_format` structured outputs, a separate
-  mechanism — see `docs/runbooks/OpenRouter Capability Expansion.md`).
-- **Conditional toolsets.** The `tools` array is the full registry today; if a
-  surface wires only a subset of executors, narrowing the advertised set is a
-  follow-up. The dispatcher already rejects/handles tools that aren't wired.
+  parts back into the dispatcher's fenced JSON. Google Vertex AI is enabled by
+  the curated `VERTEX_MODEL_OPTIONS` allowlist: `vertex-stream.ts` carries
+  neutral `tools`, Gemini-on-Vertex forwards them through the OpenAI-compatible
+  endpoint, and Claude-on-Vertex translates them through the Anthropic custom-tool
+  bridge. AWS Bedrock is enabled for Claude-style Anthropic model ids through
+  the OpenAI-compatible request body. CLI OpenAI-compatible, direct Anthropic,
+  and direct Gemini streams serialize the same neutral `tools` field once the
+  CLI-local gate passes.
+  Gemini-on-Vertex does NOT route through the Gemini `functionDeclarations`
+  bridge, so it doesn't inherit that bridge's two guards directly: (1) the
+  grounding/function-calling combo is dropped at the Vertex `appendVertexGoogleSearchTool`
+  chokepoint instead — Gemini rejects `googleSearch` + function tools together on
+  2.5 models (Gemini-3-only Preview), so when native function tools are present
+  grounding is skipped, mirroring the direct-Gemini fix; (2) empty-OBJECT schema
+  rejection (Gemini 400s on a parameterless OBJECT) is handled by Vertex's
+  OpenAI-compatible layer translating standard OpenAI tools — a first-run
+  watch-item if a no-arg tool ever 400s a Vertex Gemini request.
+- **Shared gate, single source.** The name-based gate decisions (the OpenAI /
+  Bedrock model-id shapes and the curated Vertex set) live once in
+  `lib/native-tool-gate.ts` (data from `lib/provider-models.ts`), imported by both
+  the web gate (`model-catalog.ts`) and the CLI gate (`cli/native-tool-gate.ts`).
+  A web↔CLI drift test in `model-catalog.test.ts` pins parity for the name-based
+  providers; capability-based providers (OpenRouter / Ollama / Nvidia via
+  models.dev) stay surface-specific by necessity (the CLI has no models.dev cache).
+- **Other roles.** Auditor/reviewer are unchanged (they use `response_format`
+  structured outputs, a separate mechanism — see
+  `docs/runbooks/OpenRouter Capability Expansion.md`).
+- **Conditional toolsets.** Native schema sets are scoped to the runnable
+  surface: web lead uses source-scoped registry schemas; CLI lead uses the full
+  CLI protocol plus conditional GitHub schemas; delegated Coder uses the full CLI
+  protocol; delegated Explorer uses the read-only CLI protocol.

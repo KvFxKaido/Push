@@ -19,7 +19,6 @@ import {
   KILOCODE_MODELS,
   NVIDIA_MODELS,
   OPENADAPTER_MODELS,
-  OPENAI_MODELS,
   OPENROUTER_MODELS,
   PROVIDER_URLS,
   ZEN_GO_MODELS,
@@ -27,6 +26,11 @@ import {
 } from './providers';
 import { getZenGoTransport } from './zen-go';
 import { asRecord } from './utils';
+import {
+  looksLikeBedrockAnthropicToolCallingModel,
+  looksLikeOpenAIToolCallingModel,
+  VERTEX_NATIVE_TOOL_CALLING_MODELS,
+} from '@push/lib/native-tool-gate';
 
 const MODELS_FETCH_TIMEOUT_MS = 12_000;
 const MODELS_DEV_OPENROUTER_URL = 'https://models.dev/api.json';
@@ -436,13 +440,11 @@ const GOOGLE_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(GOOGLE_MO
 const KILOCODE_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(KILOCODE_MODELS);
 const OPENADAPTER_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(OPENADAPTER_MODELS);
 const BLACKBOX_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(BLACKBOX_MODELS);
-const OPENAI_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(OPENAI_MODELS);
 const ANTHROPIC_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(ANTHROPIC_MODELS);
-
-function looksLikeOpenAIToolCallingModel(modelId: string): boolean {
-  const m = modelId.trim().toLowerCase();
-  return OPENAI_NATIVE_TOOL_CALLING_MODELS.has(modelId) || /^gpt-[45](?:$|[-.]|o)/.test(m);
-}
+// `looksLikeOpenAIToolCallingModel`, `looksLikeBedrockAnthropicToolCallingModel`,
+// and `VERTEX_NATIVE_TOOL_CALLING_MODELS` are shared with the CLI gate via
+// `@push/lib/native-tool-gate` (single definition; pinned by the web↔CLI drift
+// test below). Capability-based providers stay resolved here (models.dev).
 
 /**
  * Whether to attach native function-calling `tools` for the given
@@ -466,6 +468,12 @@ function looksLikeOpenAIToolCallingModel(modelId: string): boolean {
  *     direct serializer translates OpenAI-shaped tools into Gemini
  *     `functionDeclarations` and the bridge normalizes `functionCall` parts
  *     back into dispatcher JSON.
+ *   - **Google Vertex AI** — name-based against the curated Vertex model list;
+ *     Gemini models use the OpenAI-compatible endpoint (`tools` straight
+ *     through) and Claude models use the Anthropic custom-tool bridge.
+ *   - **AWS Bedrock** — name-based for Claude 3+ / Claude 4-style Anthropic
+ *     model ids routed through the OpenAI-compatible proxy (`tools` straight
+ *     through).
  *   - **Ollama Cloud / Nvidia NIM / Blackbox AI** — capability-based, using the
  *     existing models.dev metadata caches.
  *   - **OpenAI / Azure OpenAI / Kilo Code / OpenAdapter** — name-based against
@@ -489,6 +497,8 @@ export function providerModelSupportsNativeToolCalling(
   if (provider === 'zen') return ZEN_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'fireworks') return FIREWORKS_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'google') return GOOGLE_NATIVE_TOOL_CALLING_MODELS.has(modelId);
+  if (provider === 'vertex') return VERTEX_NATIVE_TOOL_CALLING_MODELS.has(modelId);
+  if (provider === 'bedrock') return looksLikeBedrockAnthropicToolCallingModel(modelId);
   if (provider === 'ollama') return getModelCapabilities('ollama', modelId).toolCall;
   if (provider === 'nvidia') return getModelCapabilities('nvidia', modelId).toolCall;
   if (provider === 'blackbox') {

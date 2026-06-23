@@ -18,6 +18,17 @@ import {
   providerModelSupportsNativeToolCalling,
   providerModelSupportsStructuredOutput,
 } from './model-catalog';
+import { cliProviderModelSupportsNativeToolCalling } from '../../../cli/native-tool-gate';
+import {
+  ANTHROPIC_MODELS,
+  FIREWORKS_MODELS,
+  GOOGLE_MODELS,
+  KILOCODE_MODELS,
+  OPENADAPTER_MODELS,
+  OPENAI_MODELS,
+  VERTEX_MODELS,
+} from '@push/lib/provider-models';
+import { VERTEX_MODEL_OPTIONS } from './vertex-provider';
 
 function createStorageMock() {
   const store = new Map<string, string>();
@@ -1393,6 +1404,14 @@ describe('providerModelSupportsStructuredOutput', () => {
     expect(providerModelSupportsNativeToolCalling('google', undefined)).toBe(false);
   });
 
+  it('gates Vertex native tool calling against the curated Vertex catalog allowlist', () => {
+    stubWindow();
+    expect(providerModelSupportsNativeToolCalling('vertex', 'google/gemini-2.5-pro')).toBe(true);
+    expect(providerModelSupportsNativeToolCalling('vertex', 'claude-sonnet-4@20250514')).toBe(true);
+    expect(providerModelSupportsNativeToolCalling('vertex', 'custom-vertex-model')).toBe(false);
+    expect(providerModelSupportsNativeToolCalling('vertex', undefined)).toBe(false);
+  });
+
   it('gates validated OpenAI-compatible adapters by catalog or OpenAI-family id', () => {
     stubWindow();
     expect(providerModelSupportsNativeToolCalling('openai', 'gpt-5.4')).toBe(true);
@@ -1414,8 +1433,15 @@ describe('providerModelSupportsStructuredOutput', () => {
       providerModelSupportsNativeToolCalling('blackbox', 'blackboxai/anthropic/claude-sonnet-4.6'),
     ).toBe(true);
     expect(providerModelSupportsNativeToolCalling('bedrock', 'us.anthropic.claude-sonnet-4')).toBe(
-      false,
+      true,
     );
+    expect(
+      providerModelSupportsNativeToolCalling(
+        'bedrock',
+        'anthropic.claude-3-7-sonnet-20250219-v1:0',
+      ),
+    ).toBe(true);
+    expect(providerModelSupportsNativeToolCalling('bedrock', 'anthropic.claude-v2')).toBe(false);
   });
 
   it('gates direct Anthropic native tool calling against the curated catalog allowlist', () => {
@@ -1426,6 +1452,49 @@ describe('providerModelSupportsStructuredOutput', () => {
       false,
     );
     expect(providerModelSupportsNativeToolCalling('anthropic', undefined)).toBe(false);
+  });
+
+  it('keeps the shared VERTEX_MODELS list in sync with VERTEX_MODEL_OPTIONS', () => {
+    // The CLI gate can't import the web-only VERTEX_MODEL_OPTIONS (it carries
+    // browser metadata), so the gate resolves Vertex against the shared
+    // `lib/provider-models` VERTEX_MODELS. Pin the two so they can't drift.
+    expect([...VERTEX_MODELS].sort()).toEqual([...VERTEX_MODEL_OPTIONS.map((m) => m.id)].sort());
+  });
+
+  it('web and CLI native-tool gates agree on every name-based provider (drift guard)', () => {
+    stubWindow();
+    // Name-based providers must decide identically across surfaces (single source
+    // of truth via `lib/native-tool-gate` + `lib/provider-models`). Capability-based
+    // providers (openrouter / ollama / nvidia / blackbox) are intentionally
+    // surface-specific — models.dev on web, curated fallback on CLI — and excluded.
+    const nameBasedCases: Array<[string, string[]]> = [
+      ['anthropic', ANTHROPIC_MODELS],
+      ['fireworks', FIREWORKS_MODELS],
+      ['google', GOOGLE_MODELS],
+      ['vertex', VERTEX_MODELS],
+      ['kilocode', KILOCODE_MODELS],
+      ['openadapter', OPENADAPTER_MODELS],
+      ['openai', [...OPENAI_MODELS, 'gpt-5-mini', 'gpt-4o', 'not-a-model']],
+      ['azure', [...OPENAI_MODELS, 'gpt-5-mini']],
+      [
+        'bedrock',
+        ['us.anthropic.claude-sonnet-4', 'anthropic.claude-3-5-sonnet', 'anthropic.claude-v2'],
+      ],
+    ];
+    const disagreements: string[] = [];
+    for (const [provider, models] of nameBasedCases) {
+      for (const model of models) {
+        const web = providerModelSupportsNativeToolCalling(provider, model);
+        const cli = cliProviderModelSupportsNativeToolCalling(provider, model);
+        if (web !== cli) disagreements.push(`${provider}/${model}: web=${web} cli=${cli}`);
+      }
+    }
+    expect(disagreements).toEqual([]);
+    // Both surfaces gate the new providers ON for a representative model.
+    expect(cliProviderModelSupportsNativeToolCalling('vertex', 'google/gemini-2.5-pro')).toBe(true);
+    expect(
+      cliProviderModelSupportsNativeToolCalling('bedrock', 'us.anthropic.claude-sonnet-4'),
+    ).toBe(true);
   });
 
   it('returns false for an allowlisted provider when the catalog reports no support', () => {
