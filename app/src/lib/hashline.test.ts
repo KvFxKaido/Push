@@ -66,6 +66,55 @@ describe('trimmed line hashing (reindentation resilience)', () => {
   });
 });
 
+describe('trailing newline preservation', () => {
+  it('keeps the terminal newline when the model deletes the phantom empty last line', async () => {
+    // A newline-terminated file surfaces its trailing newline as a phantom empty
+    // last line. Models routinely delete it as a "stray blank"; that must NOT
+    // strip the file's terminal newline.
+    const content = 'alpha\nbeta\n';
+    const phantomRef = await calculateLineHash('', 12);
+    const result = await applyHashlineEdits(content, [{ op: 'delete_line', ref: phantomRef }]);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('alpha\nbeta\n');
+  });
+
+  it('does not fabricate a trailing newline on a file that never had one', async () => {
+    const content = 'alpha\nbeta';
+    const ref = await calculateLineHash('beta', 12);
+    const result = await applyHashlineEdits(content, [
+      { op: 'replace_line', ref, content: 'BETA' },
+    ]);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('alpha\nBETA');
+  });
+
+  it('preserves the terminal newline through an ordinary line replace', async () => {
+    const content = 'alpha\nbeta\n';
+    const ref = await calculateLineHash('beta', 12);
+    const result = await applyHashlineEdits(content, [
+      { op: 'replace_line', ref, content: 'BETA' },
+    ]);
+    expect(result.content).toBe('alpha\nBETA\n');
+  });
+
+  it('yields an empty file (not a lone newline) when every line is deleted', async () => {
+    // Deleting all visible lines of a newline-terminated file must produce an
+    // empty file — the newline restoration must not leave a stray blank line.
+    const content = 'alpha\nbeta\n';
+    const refs = await Promise.all([
+      calculateLineHash('alpha', 12),
+      calculateLineHash('beta', 12),
+      calculateLineHash('', 12),
+    ]);
+    const result = await applyHashlineEdits(
+      content,
+      refs.map((ref) => ({ op: 'delete_line', ref })),
+    );
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('');
+  });
+});
+
 describe('applyHashlineEdits with longer refs (8–12 chars)', () => {
   it('matches successfully with an 8-char ref', async () => {
     const content = 'alpha\nbeta\ngamma';

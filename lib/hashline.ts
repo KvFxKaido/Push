@@ -336,6 +336,15 @@ export function applyResolvedHashlineEdits(
   resultLines: string[],
   resolved: ResolvedEdit[],
 ): HashlineEditResult & { appliedDetails: AppliedEditDetail[] } {
+  // Whether the original file ended with a newline. `resultLines` is the caller's
+  // `content.split('\n')`, so a trailing `\n` shows up as a final empty element
+  // (the `length > 1` guard excludes the empty file, which splits to a single
+  // `''`). That terminal newline is a property of the file, not an editable line,
+  // but it's surfaced to the model as a phantom empty last line — which models
+  // routinely `delete_line` as "a stray blank", stripping the file's trailing
+  // newline. We re-assert it on output below so that strip can't ship.
+  const originalEndedWithNewline =
+    resultLines.length > 1 && resultLines[resultLines.length - 1] === '';
   let appliedCount = 0;
   let failedCount = 0;
   const errors: string[] = [];
@@ -430,8 +439,14 @@ export function applyResolvedHashlineEdits(
     }
   }
 
+  // Preserve the original terminal-newline state: restore it only if an edit
+  // dropped it. Never collapse trailing blanks the model intentionally added,
+  // never fabricate a newline on a file that never had one, and never on a now
+  // -empty result — deleting every line yields an empty file, not a lone newline.
+  const joined = resultLines.join('\n');
   return {
-    content: resultLines.join('\n'),
+    content:
+      originalEndedWithNewline && joined !== '' && !joined.endsWith('\n') ? `${joined}\n` : joined,
     applied: appliedCount,
     failed: failedCount,
     errors,
