@@ -8,7 +8,7 @@ OpenAI / Azure OpenAI (OpenAI-family model ids), Kilo Code / OpenAdapter
 (curated catalog allowlists), plus Ollama Cloud / Nvidia NIM / Blackbox AI
 (models.dev capability-gated). Bedrock, direct Anthropic, Google/Gemini,
 Vertex, and the CLI lead are deferred follow-ups, not yet promoted to
-`ROADMAP.md`.
+`ROADMAP.md` — tracked in #1082.
 
 **Date:** 2026-06-17
 
@@ -97,6 +97,10 @@ native tool call — both converge at one dispatch path. Consequences:
   provider's adapter serializes them.
 
 ## Scope / deferred
+
+The deferred follow-ups below are tracked in #1082 (direct Anthropic / Gemini /
+Vertex / Bedrock gates, the CLI lead, delegated Coder/Explorer, and conditional
+toolsets). Flip the Status line and the relevant bullet here as each lands.
 
 - **Other providers.** The gate is the single switch. OpenRouter
   (capability-based), OpenCode Zen (name-based), Fireworks AI (name-based; single
