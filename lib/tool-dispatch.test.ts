@@ -1,5 +1,41 @@
 import { describe, it, expect } from 'vitest';
-import { PASS_THROUGH_CLI_SOURCE, createToolDispatcher, type ToolSource } from './tool-dispatch';
+import {
+  PASS_THROUGH_CLI_SOURCE,
+  createToolDispatcher,
+  stableInvocationKey,
+  type ToolSource,
+} from './tool-dispatch';
+
+// The kernel's malformed `canonicalInvocationKey` and the web dispatcher's
+// recovery reconciliation both key on `stableInvocationKey`. It now has a single
+// definition (this module), so the two surfaces can't drift; these pin the
+// format + the properties the reconciliation relies on (order-independent
+// dedup, args-sensitive distinctness) so an accidental change is caught.
+describe('stableInvocationKey — shared kernel/web reconciliation key', () => {
+  it('is order-independent across object keys', () => {
+    expect(stableInvocationKey('read', { a: 1, b: 2 })).toBe(
+      stableInvocationKey('read', { b: 2, a: 1 }),
+    );
+    expect(stableInvocationKey('read', { a: { x: 1, y: 2 } })).toBe(
+      stableInvocationKey('read', { a: { y: 2, x: 1 } }),
+    );
+  });
+
+  it('distinguishes different args and different tools', () => {
+    expect(stableInvocationKey('read', { path: 'a' })).not.toBe(
+      stableInvocationKey('read', { path: 'b' }),
+    );
+    expect(stableInvocationKey('read', { path: 'a' })).not.toBe(
+      stableInvocationKey('write', { path: 'a' }),
+    );
+  });
+
+  it('pins the wire format: drops undefined, nulls array holes, defaults to null', () => {
+    expect(stableInvocationKey('t', { a: undefined, b: 1 })).toBe('t:{"b":1}');
+    expect(stableInvocationKey('t', { a: [1, undefined, 'x'] })).toBe('t:{"a":[1,null,"x"]}');
+    expect(stableInvocationKey('t', undefined)).toBe('t:null');
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Convergence-gap regression: the parser MUST detect tool-call JSON that

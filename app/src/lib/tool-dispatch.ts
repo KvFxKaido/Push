@@ -54,6 +54,7 @@ import {
 import {
   createToolDispatcher,
   type ParsedToolObject,
+  stableInvocationKey,
   type ToolMalformedReport,
   type ToolSource,
 } from '@push/lib/tool-dispatch';
@@ -246,33 +247,6 @@ const webDispatcher = createToolDispatcher<AnyToolCall>([WEB_DISPATCH_SOURCE], {
 interface OffsetCall {
   call: AnyToolCall;
   offset: number;
-}
-
-function stableInvocationKey(tool: string, args: Record<string, unknown>): string {
-  return `${tool}:${JSON.stringify(normalizeInvocationValue(args) ?? null)}`;
-}
-
-function normalizeInvocationValue(value: unknown): unknown {
-  if (value === null) return null;
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value.map((item) => {
-      const normalized = normalizeInvocationValue(item);
-      return normalized === undefined ? null : normalized;
-    });
-  }
-  if (value && typeof value === 'object') {
-    const record = value as Record<string, unknown>;
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(record).sort()) {
-      const normalized = normalizeInvocationValue(record[key]);
-      if (normalized !== undefined) out[key] = normalized;
-    }
-    return out;
-  }
-  return undefined;
 }
 
 /**
