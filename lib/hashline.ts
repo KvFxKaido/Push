@@ -357,6 +357,18 @@ export function splitEditableLines(content: string): {
   return { lines: body.split('\n'), trailingNewline };
 }
 
+/**
+ * Split an edit's replacement `content` into the lines it inserts. The content
+ * IS the new line(s) for the slot; the engine supplies the `\n` separators when
+ * it joins. A trailing newline on the content is therefore redundant — left in,
+ * it splices a spurious blank line after the intended content (models routinely
+ * append `\n` because "lines end in newlines"). Strip exactly one trailing
+ * `\r?\n`; an intentional trailing blank line still works with a doubled newline.
+ */
+export function splitEditContentLines(content: string): string[] {
+  return content.replace(/\r?\n$/, '').split('\n');
+}
+
 export function applyResolvedHashlineEdits(
   resultLines: string[],
   resolved: ResolvedEdit[],
@@ -422,19 +434,19 @@ export function applyResolvedHashlineEdits(
     let linesAdded = 0;
     switch (edit.op) {
       case 'replace_line': {
-        const newLines = edit.content.split('\n');
+        const newLines = splitEditContentLines(edit.content);
         resultLines.splice(adjustedIdx, 1, ...newLines);
         linesAdded = newLines.length;
         break;
       }
       case 'insert_after': {
-        const newLines = edit.content.split('\n');
+        const newLines = splitEditContentLines(edit.content);
         resultLines.splice(adjustedIdx + 1, 0, ...newLines);
         linesAdded = newLines.length;
         break;
       }
       case 'insert_before': {
-        const newLines = edit.content.split('\n');
+        const newLines = splitEditContentLines(edit.content);
         resultLines.splice(adjustedIdx, 0, ...newLines);
         linesAdded = newLines.length;
         break;

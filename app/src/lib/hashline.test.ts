@@ -5,6 +5,7 @@ import {
   applyHashlineEdits,
   renderAnchoredRange,
   splitEditableLines,
+  splitEditContentLines,
 } from './hashline';
 
 describe('calculateLineHash', () => {
@@ -185,6 +186,48 @@ describe('splitEditableLines', () => {
   it('keeps an intentional trailing blank line distinct from the phantom', () => {
     // `'a\n\n'` is line "a" + one blank line + terminal newline → two lines.
     expect(splitEditableLines('a\n\n')).toEqual({ lines: ['a', ''], trailingNewline: true });
+  });
+});
+
+describe('edit content trailing newline', () => {
+  it('strips a trailing newline from replace_line content (no spurious blank line)', async () => {
+    const ref = await calculateLineHash('beta', 12);
+    const result = await applyHashlineEdits('alpha\nbeta\ngamma', [
+      { op: 'replace_line', ref, content: 'BETA\n' },
+    ]);
+    expect(result.content).toBe('alpha\nBETA\ngamma');
+  });
+
+  it('strips a trailing newline from insert content', async () => {
+    const ref = await calculateLineHash('alpha', 12);
+    const result = await applyHashlineEdits('alpha\nbeta', [
+      { op: 'insert_after', ref, content: 'MID\n' },
+    ]);
+    expect(result.content).toBe('alpha\nMID\nbeta');
+  });
+
+  it('keeps internal newlines and an intentional trailing blank (doubled newline)', async () => {
+    const ref = await calculateLineHash('beta', 12);
+    const multi = await applyHashlineEdits('alpha\nbeta', [
+      { op: 'replace_line', ref, content: 'b1\nb2' },
+    ]);
+    expect(multi.content).toBe('alpha\nb1\nb2');
+
+    const ref2 = await calculateLineHash('beta', 12);
+    const blank = await applyHashlineEdits('alpha\nbeta', [
+      { op: 'replace_line', ref: ref2, content: 'X\n\n' },
+    ]);
+    // `X\n\n` → strip one trailing newline → `X\n` → X plus one intentional blank.
+    expect(blank.content).toBe('alpha\nX\n');
+  });
+
+  it('splitEditContentLines strips exactly one trailing newline', () => {
+    expect(splitEditContentLines('foo')).toEqual(['foo']);
+    expect(splitEditContentLines('foo\n')).toEqual(['foo']);
+    expect(splitEditContentLines('foo\r\n')).toEqual(['foo']);
+    expect(splitEditContentLines('foo\n\n')).toEqual(['foo', '']);
+    expect(splitEditContentLines('a\nb')).toEqual(['a', 'b']);
+    expect(splitEditContentLines('')).toEqual(['']);
   });
 });
 
