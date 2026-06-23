@@ -8,9 +8,15 @@ const SCOPE = { repoFullName: REPO, sandboxId: 'sb', branch: 'feat/x' };
 // the hash is the collision-free key (sanitizing alone collides feat/x ↔ feat_x).
 const DIR = expect.stringMatching(/^checkpoints\/owner_repo-[0-9a-f]{8}\/feat_x-[0-9a-f]{8}$/);
 
-/** Fake exec routed by command content (archive / dirty-check / restore-sync). */
+/** Fake exec routed by command content (probe / delta / archive / dirty / sync). */
 function fakeExec(
-  over: { archive?: string; dirty?: string; sync?: string; probe?: string | string[] } = {},
+  over: {
+    archive?: string;
+    dirty?: string;
+    sync?: string;
+    probe?: string | string[];
+    delta?: string;
+  } = {},
 ) {
   // `probe` may be a single response or a sequence consumed across calls (the
   // last entry sticks) — lets a test return a changed tree-hash on the 2nd debounce.
@@ -22,6 +28,10 @@ function fakeExec(
         : ((over.probe as string | undefined) ?? '');
       return result(p);
     }
+    // The delta-capture command is the one that hashes the tree (`hash-object`);
+    // check it before `ls-files`, which the full archive command also contains.
+    if (command.includes('hash-object'))
+      return result(over.delta ?? 'OK 0\n---DEL---\n---MAN---\n');
     if (command.includes('ls-files')) return result(over.archive ?? 'OK 100');
     if (command.includes('git status --porcelain')) return result(over.dirty ?? '');
     if (command.includes('base64 -d')) return result(over.sync ?? 'OK');
@@ -227,5 +237,122 @@ describe('NativeJgitCheckpointStore.list / detectRestore', () => {
       available: false,
       reason: 'no_checkpoint',
     });
+  });
+});
+
+describe('NativeJgitCheckpointStore.capture — diff transport (delta path)', () => {
+  const HA = 'a'.repeat(40);
+  const HA2 = 'c'.repeat(40);
+  const HB = 'b'.repeat(40);
+  const PROBE = `OK ${'f'.repeat(40)}`;
+  const BASE_PATH = '/workspace/.push-checkpoint-base';
+  const TMP_DELTA = '/workspace/.push-checkpoint-delta.zip';
+  const TMP_ARCHIVE = '/workspace/.push-checkpoint.zip';
+  // a.txt changed (HA -> HA2), b.txt unchanged; the sandbox's current manifest.
+  const deltaStdout = `OK 50\n---DEL---\n---MAN---\n${HA2} a.txt\n${HB} b.txt\n`;
+
+  /** A plugin whose listManifest returns the base; commitDelta verifies internally. */
+  function deltaPlugin(over: Partial<NativeGitPlugin> = {}) {
+    return fakePlugin({
+      listManifest: vi.fn(async () => ({ manifest: { 'a.txt': HA, 'b.txt': HB } })),
+      commitDelta: vi.fn(async () => ({ committed: true, commitId: 'delta-1', treeId: 't1' })),
+      ...over,
+    });
+  }
+
+  it('moves only the changed files via commitDelta when a base manifest exists', async () => {
+    const plugin = deltaPlugin();
+    const download = vi.fn(async () => ({ ok: true, fileBase64: 'DELTAB64' }) as never);
+    const upload = vi.fn(async () => ({ ok: true }) as never);
+    const result = await store({
+      plugin,
+      exec: fakeExec({ probe: PROBE, delta: deltaStdout }),
+      download,
+      upload,
+    }).capture(SCOPE);
+
+    expect(result).toEqual({ status: 'captured', dedupToken: 'delta-1' });
+    expect(upload).toHaveBeenCalledWith('sb', BASE_PATH, expect.stringContaining('a.txt'));
+    expect(download).toHaveBeenCalledWith('sb', TMP_DELTA);
+    // The sandbox's current manifest is handed to commitDelta as the verify target.
+    expect(plugin.commitDelta).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dir: DIR,
+        deltaArchiveBase64: 'DELTAB64',
+        deletedPaths: [],
+        expectedManifest: { 'a.txt': HA2, 'b.txt': HB },
+      }),
+    );
+    expect(plugin.commitWorkingTree).not.toHaveBeenCalled();
+  });
+
+  it('falls back to full capture when the device has no base manifest', async () => {
+    const plugin = fakePlugin({ listManifest: vi.fn(async () => ({ manifest: {} })) });
+    const download = vi.fn(async () => ({ ok: true, fileBase64: 'B64' }) as never);
+    const result = await store({ plugin, exec: fakeExec({ probe: PROBE }), download }).capture(
+      SCOPE,
+    );
+    expect(result).toEqual({ status: 'captured', dedupToken: 'commit-1' });
+    expect(plugin.commitWorkingTree).toHaveBeenCalled();
+    expect(download).toHaveBeenCalledWith('sb', TMP_ARCHIVE);
+  });
+
+  it('falls back to full capture when commitDelta refuses to publish (verify failed)', async () => {
+    // commitDelta verifies the applied tree against the sandbox manifest before
+    // publishing; a mismatch returns committed=false + null commitId (no ref).
+    const plugin = deltaPlugin({
+      commitDelta: vi.fn(async () => ({ committed: false, commitId: null, treeId: 't1' })),
+    });
+    const result = await store({
+      plugin,
+      exec: fakeExec({ probe: PROBE, delta: deltaStdout }),
+    }).capture(SCOPE);
+    expect(result).toEqual({ status: 'captured', dedupToken: 'commit-1' });
+    expect(plugin.commitWorkingTree).toHaveBeenCalled(); // the superseding full capture
+  });
+
+  it('reports unchanged when the delta de-dupes to the newest checkpoint', async () => {
+    // committed=false WITH a commitId means the applied tree matched the newest.
+    const plugin = deltaPlugin({
+      commitDelta: vi.fn(async () => ({ committed: false, commitId: 'existing-1', treeId: 't1' })),
+    });
+    const result = await store({
+      plugin,
+      exec: fakeExec({ probe: PROBE, delta: deltaStdout }),
+    }).capture(SCOPE);
+    expect(result).toEqual({ status: 'unchanged', dedupToken: 'existing-1' });
+    expect(plugin.commitWorkingTree).not.toHaveBeenCalled();
+  });
+
+  it('uses an empty archive (no delta download) when the delta is deletions-only', async () => {
+    const plugin = deltaPlugin({
+      listManifest: vi.fn(async () => ({ manifest: { 'a.txt': HA, 'gone.txt': HB } })),
+    });
+    const download = vi.fn(async () => ({ ok: true, fileBase64: 'B64' }) as never);
+    const delStdout = `OK 0\n---DEL---\ngone.txt\n---MAN---\n${HA} a.txt\n`;
+    const result = await store({
+      plugin,
+      exec: fakeExec({ probe: PROBE, delta: delStdout }),
+      download,
+    }).capture(SCOPE);
+    expect(result).toEqual({ status: 'captured', dedupToken: 'delta-1' });
+    expect(plugin.commitDelta).toHaveBeenCalledWith(
+      expect.objectContaining({ deletedPaths: ['gone.txt'] }),
+    );
+    expect(download).not.toHaveBeenCalled(); // bytes=0 → empty zip, no archive fetch
+  });
+
+  it('falls back to full capture when a delta step throws', async () => {
+    const plugin = deltaPlugin({
+      commitDelta: vi.fn(async () => {
+        throw new Error('jgit boom');
+      }),
+    });
+    const result = await store({
+      plugin,
+      exec: fakeExec({ probe: PROBE, delta: deltaStdout }),
+    }).capture(SCOPE);
+    expect(result).toEqual({ status: 'captured', dedupToken: 'commit-1' });
+    expect(plugin.commitWorkingTree).toHaveBeenCalled();
   });
 });

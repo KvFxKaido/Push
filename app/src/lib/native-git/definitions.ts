@@ -119,4 +119,29 @@ export interface NativeGitPlugin {
 
   /** Retain the newest `keep` checkpoints; drop the rest. Returns how many were pruned. */
   pruneCheckpoints(options: { dir: string; keep: number }): Promise<{ pruned: number }>;
+
+  /**
+   * Content-only manifest (`path -> blob SHA-1`) of the newest checkpoint's tree —
+   * the base for a diff capture. Empty when there is no checkpoint yet. Blob ids
+   * are content hashes (mode excluded), to agree with the sandbox's raw-bytes
+   * manifest. (Diff transport — see docs/decisions/Native Checkpoint Store.md.)
+   */
+  listManifest(options: { dir: string }): Promise<{ manifest: Record<string, string> }>;
+
+  /**
+   * Apply a capture delta onto the worktree (no clear: extract changed files,
+   * remove `deletedPaths`, handling dir<->file transitions) and commit an orphan
+   * checkpoint — but only after the applied tree is verified against
+   * `expectedManifest` (the sandbox's current content manifest); a mismatch
+   * publishes NO ref. `committed=false` + null `commitId` means no base / verify
+   * failed / threw (caller must full-capture); `committed=false` + a `commitId`
+   * means the delta de-duped to the newest checkpoint (no change).
+   */
+  commitDelta(options: {
+    dir: string;
+    deltaArchiveBase64: string;
+    deletedPaths: string[];
+    expectedManifest: Record<string, string>;
+    message: string;
+  }): Promise<{ committed: boolean; commitId: string | null; treeId: string | null }>;
 }

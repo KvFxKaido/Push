@@ -290,6 +290,15 @@ load-bearing, not polish:
   `zip -@` produces no archive and capture reports `clean`, so deleting the last
   file isn't recorded — a later restore could resurrect it. Needs an explicit
   empty-checkpoint path.
+- **Same-second checkpoint ordering is ambiguous.** "Newest" is resolved by
+  git `commitTime`, which is second-resolution, and checkpoints are orphan refs
+  with no parent chain — so two checkpoints committed in the same second have an
+  undefined relative order. The 45 s capture debounce makes this rare, and diff
+  transport's **verify-before-publish** prevents the dangerous case (a *wrong* ref
+  can't land; a stale same-second base just makes the delta verify fail and fall
+  back). The residual is low-severity: a restore could pick the older of two valid
+  near-simultaneous checkpoints. A monotonic `refs/checkpoint-latest` pointer
+  updated on every commit would make it deterministic — deferred follow-up.
 - ~~**Restore upload is ~5 MB-capped.**~~ **Resolved (#1097 + this PR).** Restore
   no longer uploads through the ~5 MB `write` route; it uses a dedicated `upload`
   route in the 12 MB body tier. On **Cloudflare** it writes via the uncapped
@@ -303,9 +312,12 @@ load-bearing, not polish:
 
 ## Diff transport (capture): manifest-rsync
 
-**Status: design approved (2026-06-23), not yet implemented.** Capture-direction
-only; restore stays on the full-tree upload path (rare, user-initiated, already in
-the 12 MB tier — its diff variant is still deferred, see Out of scope).
+**Status: implemented (2026-06-23), pending on-device validation.** Device
+primitives (`listManifest`/`commitDelta`, JGit-tested) + the sandbox delta exec and
+`capture()` orchestration have landed behind the strictly-additive fallback;
+remaining is a small-delta round-trip on the Moto G. Capture-direction only;
+restore stays on the full-tree upload path (rare, user-initiated, already in the
+12 MB tier — its diff variant is still deferred, see Out of scope).
 
 ### Problem
 

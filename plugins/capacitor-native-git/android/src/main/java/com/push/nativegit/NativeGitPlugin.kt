@@ -197,4 +197,36 @@ class NativeGitPlugin : Plugin() {
       JSObject().put("pruned", JGitEngine.pruneCheckpoints(call.requireDir(), keep))
     }
   }
+
+  @PluginMethod
+  fun listManifest(call: PluginCall) = resolveAsync(call) {
+    val manifest = JSObject()
+    for ((path, hash) in JGitEngine.listManifest(call.requireDir())) manifest.put(path, hash)
+    JSObject().put("manifest", manifest)
+  }
+
+  @PluginMethod
+  fun commitDelta(call: PluginCall) {
+    val archive = call.getString("deltaArchiveBase64")
+      ?: return call.reject("missing 'deltaArchiveBase64'")
+    val message = call.getString("message") ?: "checkpoint"
+    resolveAsync(call) {
+      val arr = call.getArray("deletedPaths")
+      val deleted = if (arr == null) emptyList() else (0 until arr.length()).map { arr.getString(it) }
+      val expObj = call.getObject("expectedManifest")
+      val expected = LinkedHashMap<String, String>()
+      if (expObj != null) {
+        val keys = expObj.keys()
+        while (keys.hasNext()) {
+          val k = keys.next()
+          expObj.getString(k)?.let { expected[k] = it }
+        }
+      }
+      val r = JGitEngine.commitDelta(call.requireDir(), archive, deleted, expected, message)
+      JSObject()
+        .put("committed", r.committed)
+        .put("commitId", r.commitId ?: JSONObject.NULL)
+        .put("treeId", r.treeId ?: JSONObject.NULL)
+    }
+  }
 }
