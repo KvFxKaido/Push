@@ -5,6 +5,7 @@ import {
   applyHashlineEdits,
   renderAnchoredRange,
   splitEditableLines,
+  splitEditContentLines,
 } from './hashline';
 
 describe('calculateLineHash', () => {
@@ -185,6 +186,62 @@ describe('splitEditableLines', () => {
   it('keeps an intentional trailing blank line distinct from the phantom', () => {
     // `'a\n\n'` is line "a" + one blank line + terminal newline → two lines.
     expect(splitEditableLines('a\n\n')).toEqual({ lines: ['a', ''], trailingNewline: true });
+  });
+});
+
+describe('edit content trailing newline', () => {
+  it('strips a trailing newline from replace_line content (no spurious blank line)', async () => {
+    const ref = await calculateLineHash('beta', 12);
+    const result = await applyHashlineEdits('alpha\nbeta\ngamma', [
+      { op: 'replace_line', ref, content: 'BETA\n' },
+    ]);
+    expect(result.content).toBe('alpha\nBETA\ngamma');
+  });
+
+  it('strips a trailing newline from insert content', async () => {
+    const ref = await calculateLineHash('alpha', 12);
+    const result = await applyHashlineEdits('alpha\nbeta', [
+      { op: 'insert_after', ref, content: 'MID\n' },
+    ]);
+    expect(result.content).toBe('alpha\nMID\nbeta');
+  });
+
+  it('keeps internal newlines (multi-line content)', async () => {
+    const ref = await calculateLineHash('beta', 12);
+    const result = await applyHashlineEdits('alpha\nbeta', [
+      { op: 'replace_line', ref, content: 'b1\nb2' },
+    ]);
+    expect(result.content).toBe('alpha\nb1\nb2');
+  });
+
+  it('expresses a blank line BETWEEN content with a doubled newline', async () => {
+    // Mid-content the doubled newline survives strip-one as a real blank line.
+    const ref = await calculateLineHash('beta', 12);
+    const result = await applyHashlineEdits('alpha\nbeta\ngamma', [
+      { op: 'replace_line', ref, content: 'X\n\n' },
+    ]);
+    // alpha, X, <blank>, gamma
+    expect(result.content).toBe('alpha\nX\n\ngamma');
+  });
+
+  it('collapses a trailing blank at EOF into the terminal newline (no distinct blank)', async () => {
+    // At end-of-file there is no separate "trailing blank line" — it folds into
+    // the terminal newline (the phantom-free model tracks that as a flag, not a
+    // line). So `X\n\n` on the last line is a newline-terminated `X`, not `X` + blank.
+    const ref = await calculateLineHash('beta', 12);
+    const result = await applyHashlineEdits('alpha\nbeta', [
+      { op: 'replace_line', ref, content: 'X\n\n' },
+    ]);
+    expect(result.content).toBe('alpha\nX\n');
+  });
+
+  it('splitEditContentLines strips exactly one trailing newline', () => {
+    expect(splitEditContentLines('foo')).toEqual(['foo']);
+    expect(splitEditContentLines('foo\n')).toEqual(['foo']);
+    expect(splitEditContentLines('foo\r\n')).toEqual(['foo']);
+    expect(splitEditContentLines('foo\n\n')).toEqual(['foo', '']);
+    expect(splitEditContentLines('a\nb')).toEqual(['a', 'b']);
+    expect(splitEditContentLines('')).toEqual(['']);
   });
 });
 
