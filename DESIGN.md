@@ -190,12 +190,27 @@ Buttons press in on `:active` by swapping `shadow-push-raised` → `shadow-push-
 | `--ease-press`   | `cubic-bezier(0.34, 1.56, 0.64, 1)` |
 | `--ease-default` | `cubic-bezier(0.4, 0, 0.2, 1)`  |
 
+### Panel reveal
+
+One open/close vocabulary for every panel — the shadcn Sheets and any custom floating reveal share it, so they read as one motion instead of three hand-tuned ones. Built on the duration/easing tokens above via a small `--panel-*` set:
+
+| Token              | Value (resolves to) | Role |
+| ------------------ | ------------------- | ---- |
+| `--panel-open-dur`  | `--motion-slow` (350ms)   | Open beat — deliberate |
+| `--panel-close-dur` | `--motion-normal` (250ms) | Close beat — snappy |
+| `--panel-ease`      | `--ease-spring`           | Soft decel, no overshoot |
+| `--panel-blur`      | `2px`                     | Cross-blur — **small reveals only** |
+
+- **`.panel-reveal`** (custom floating panels/reveals): a `data-open` boolean toggles a Y-slide + fade + cross-blur. Closed → `translateY(--panel-translate-y, 0.5rem)`, `opacity 0`, `blur(--panel-blur)`, `pointer-events: none`; open reverses all three and only lengthens the duration. Set `--panel-translate-y` per consumer for a longer throw. Used by `ScrollToBottomButton`. The `transform` is owned by the primitive — center with margins/`left`, not `-translate-x-*`.
+- **shadcn `Sheet`** (the 9 bottom/side sheets): keeps its directional `slide-in/out`, but its timing + easing are retimed onto the same `--panel-*` tokens via the `[data-slot=sheet-content]` rules in `index.css` (not utility classes on the component). **No blur** on the sheets — animating `filter: blur` on a 3/4-width panel janks the Capacitor Android shell, so the cross-blur is reserved for small elements.
+
 ### Interaction Patterns
 
 - **Spring press:** Scale to 0.97 on `:active`, `--motion-fast`
 - **Card hover:** 1px upward translate with shadow transition
 - **Stagger in:** List items fade-in-up with 40ms stagger delay
 - **Expand/collapse:** ScaleY 0.96 to 1 with opacity
+- **Panel reveal:** Y-slide + fade + cross-blur on `--panel-*`; shared by sheets and `.panel-reveal` (see above)
 - Reduced motion is respected via `prefers-reduced-motion`
 
 ### Animation Classes

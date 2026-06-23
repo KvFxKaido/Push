@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import { ArrowDown } from 'lucide-react';
 
 /**
@@ -11,11 +12,20 @@ export function ScrollToBottomButton({
   visible: boolean;
   onClick: () => void;
 }) {
+  // Reveal uses the shared `.panel-reveal` primitive (Y-slide + fade +
+  // cross-blur on the `--panel-*` tokens) driven by `data-open`, so this floats
+  // in on the same motion as the sheets. Horizontal centering uses `left-1/2`
+  // + `-ml-5` (half of `w-10`) rather than `-translate-x-1/2`, because
+  // panel-reveal owns the `transform` (translateY) and the two can't share it.
+  // `--panel-translate-y` keeps the original ~12px throw.
   return (
     <button
       onClick={onClick}
+      data-open={visible}
+      style={{ '--panel-translate-y': '0.75rem' } as CSSProperties}
       className={`
-        absolute left-1/2 -translate-x-1/2 bottom-8
+        panel-reveal
+        absolute left-1/2 -ml-5 bottom-8
         flex items-center justify-center
         w-10 h-10
         rounded-full
@@ -24,10 +34,8 @@ export function ScrollToBottomButton({
         bg-push-grad-card
         text-push-fg-secondary
         shadow-push-lg backdrop-blur-sm
-        transition-all duration-300 ease-out
         hover:border-push-edge-hover hover:text-push-fg hover:shadow-push-xl
         spring-press
-        ${visible ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-3 pointer-events-none'}
       `}
       aria-label="Scroll to bottom"
     >
