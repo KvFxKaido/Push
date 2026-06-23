@@ -249,12 +249,22 @@ function assembleGeminiBody(parts: GeminiBodyAssembly): Record<string, unknown> 
     body.generationConfig = generationConfig;
   }
   const tools: Array<Record<string, unknown>> = [];
-  if (parts.tools && parts.tools.length > 0) {
+  const nativeFunctionTools = parts.tools ?? [];
+  if (nativeFunctionTools.length > 0) {
     tools.push({
-      functionDeclarations: parts.tools.map(openAIToolToGeminiFunctionDeclaration),
+      functionDeclarations: nativeFunctionTools.map(openAIToolToGeminiFunctionDeclaration),
     });
   }
-  if (parts.enableGoogleSearch) {
+  // Gemini only supports combining the built-in `googleSearch` grounding tool
+  // with custom `functionDeclarations` on Gemini 3 models (it's a Preview
+  // feature, "supported for Gemini 3 models only"), and even there it's been
+  // field-flaky — `gemini-2.5-*` reject the combination outright. Push offers
+  // both 2.5 and 3 Gemini models and grounding is default-on, so when native
+  // function tools are attached we drop grounding to keep function calling
+  // working uniformly across the catalog rather than 400 on the 2.5 models.
+  // Grounding-only turns (no function schemas attached) are unaffected.
+  // Ref: https://ai.google.dev/gemini-api/docs/tool-combination
+  if (parts.enableGoogleSearch && nativeFunctionTools.length === 0) {
     tools.push({ googleSearch: {} });
   }
   if (tools.length > 0) {

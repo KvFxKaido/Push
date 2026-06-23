@@ -174,7 +174,11 @@ describe('buildGeminiGenerateContentRequest', () => {
     });
   });
 
-  it('translates OpenAI function tools into Gemini functionDeclarations', () => {
+  it('translates OpenAI function tools into Gemini functionDeclarations and drops grounding', () => {
+    // `google_search_grounding` is set AND function tools are attached. Gemini only
+    // supports that combination on Gemini 3 (Preview) and rejects it on gemini-2.5-*,
+    // so the bridge drops grounding whenever native function tools are present —
+    // function calling wins. See the dedicated drop test below.
     const body = buildGeminiGenerateContentRequest({
       model: 'gemini-3.1-pro-preview',
       messages: [{ role: 'user', content: 'Read README.md' }],
@@ -198,8 +202,27 @@ describe('buildGeminiGenerateContentRequest', () => {
           },
         ],
       },
-      { googleSearch: {} },
     ]);
+  });
+
+  it('drops googleSearch grounding when native function tools are present (combo unsupported on gemini-2.5)', () => {
+    const withTools = buildGeminiGenerateContentRequest({
+      model: 'gemini-2.5-flash',
+      messages: [{ role: 'user', content: 'Read README.md' }],
+      tools: [readFileTool],
+      google_search_grounding: true,
+    } as OpenAIChatRequest);
+    // Only functionDeclarations — no googleSearch entry.
+    expect(withTools.tools).toHaveLength(1);
+    expect(withTools.tools).not.toContainEqual({ googleSearch: {} });
+
+    // Grounding-only turns (no function schemas) keep grounding.
+    const groundingOnly = buildGeminiGenerateContentRequest({
+      model: 'gemini-2.5-flash',
+      messages: [{ role: 'user', content: 'weather?' }],
+      google_search_grounding: true,
+    } as OpenAIChatRequest);
+    expect(groundingOnly.tools).toEqual([{ googleSearch: {} }]);
   });
 
   it('omits generationConfig when no sampling params are set', () => {
