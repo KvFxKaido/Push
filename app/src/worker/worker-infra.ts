@@ -81,9 +81,12 @@ export async function handleSandbox(
     );
   }
 
-  // Read and forward body
+  // Read and forward body. `upload` shares the large-body tier with restore so
+  // the policy is provider-consistent; the route itself is CF-only (native
+  // checkpoints), so a Modal deployment forwarding it just gets Modal's
+  // unknown-action error.
   const maxBodyBytes =
-    route === 'restore' || route === 'batch-write'
+    route === 'restore' || route === 'batch-write' || route === 'upload'
       ? RESTORE_MAX_BODY_SIZE_BYTES
       : MAX_BODY_SIZE_BYTES;
   const bodyResult = await readBodyText(request, maxBodyBytes);

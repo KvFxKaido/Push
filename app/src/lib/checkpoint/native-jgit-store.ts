@@ -12,7 +12,8 @@
  *              bytes (`downloadFileFromSandbox`) → `NativeGit.commitWorkingTree`
  *              (extract into the worktree, `git add -A`, commit) on the device.
  *   restore  — `NativeGit.archiveCommit` (device tree → ZIP) → push to the
- *              sandbox (`writeToSandbox`) → a `.git`-PRESERVING, delete-faithful
+ *              sandbox (`uploadFileToSandbox`, the 12 MB upload route) → a
+ *              `.git`-PRESERVING, delete-faithful
  *              sync (clear-except-.git + extract) so the clone's origin/branch
  *              survive and the recovered work lands as unstaged changes.
  *   list     — `NativeGit.listCheckpoints` (the on-device `git log`).
@@ -21,7 +22,7 @@
  * `pruneCheckpoints`) are skeletoned on web and implemented in JGit on Android.
  */
 
-import { execInSandbox, downloadFileFromSandbox, writeToSandbox } from '../sandbox-client';
+import { execInSandbox, downloadFileFromSandbox, uploadFileToSandbox } from '../sandbox-client';
 import { isInvalidGitRef } from '../git-ref-validation';
 import { NativeGit } from '../native-git/plugin';
 import type { NativeGitPlugin } from '../native-git/definitions';
@@ -134,7 +135,7 @@ export interface NativeCheckpointDeps {
   plugin?: NativeGitPlugin;
   exec?: typeof execInSandbox;
   download?: typeof downloadFileFromSandbox;
-  write?: typeof writeToSandbox;
+  upload?: typeof uploadFileToSandbox;
   log?: LogFn;
 }
 
@@ -142,7 +143,7 @@ export function createNativeJgitCheckpointStore(deps: NativeCheckpointDeps = {})
   const plugin = deps.plugin ?? NativeGit;
   const exec = deps.exec ?? execInSandbox;
   const download = deps.download ?? downloadFileFromSandbox;
-  const write = deps.write ?? writeToSandbox;
+  const upload = deps.upload ?? uploadFileToSandbox;
   const log = deps.log ?? defaultLog;
 
   async function listRecords(scope: CheckpointScope): Promise<CheckpointRecord[]> {
@@ -277,8 +278,10 @@ export function createNativeJgitCheckpointStore(deps: NativeCheckpointDeps = {})
         return { status: 'failed', reason: err instanceof Error ? err.message : String(err) };
       }
 
-      // 2. Push it into the sandbox and run the .git-preserving sync.
-      const wrote = await write(input.sandboxId, RESTORE_UPLOAD_B64, archiveBase64);
+      // 2. Push it into the sandbox and run the .git-preserving sync. The
+      // dedicated `upload` route (12 MB body tier) replaces the ~5 MB-capped
+      // `write`, so a real ~7 MB checkpoint (~9 MB base64) round-trips.
+      const wrote = await upload(input.sandboxId, RESTORE_UPLOAD_B64, archiveBase64);
       if (!wrote.ok) return { status: 'failed', reason: wrote.error ?? 'upload failed' };
       try {
         const synced = await exec(input.sandboxId, RESTORE_SYNC_COMMAND, undefined, {

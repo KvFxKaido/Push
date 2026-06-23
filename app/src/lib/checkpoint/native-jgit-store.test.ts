@@ -34,14 +34,14 @@ function fakePlugin(over: Partial<NativeGitPlugin> = {}): NativeGitPlugin {
 }
 
 const okDownload = vi.fn(async () => ({ ok: true, fileBase64: 'B64' }) as never);
-const okWrite = vi.fn(async () => ({ ok: true }) as never);
+const okUpload = vi.fn(async () => ({ ok: true }) as never);
 
 function store(over: Parameters<typeof createNativeJgitCheckpointStore>[0] = {}) {
   return createNativeJgitCheckpointStore({
     plugin: fakePlugin(),
     exec: fakeExec(),
     download: okDownload,
-    write: okWrite,
+    upload: okUpload,
     log: () => {},
     ...over,
   });
@@ -121,11 +121,11 @@ describe('NativeJgitCheckpointStore.capture', () => {
 describe('NativeJgitCheckpointStore.restore', () => {
   it('reads the checkpoint tree off-device and syncs it into a clean sandbox', async () => {
     const plugin = fakePlugin();
-    const write = vi.fn(async () => ({ ok: true }) as never);
-    const result = await store({ plugin, write }).restore({ ...SCOPE, checkpointId: 'commit-1' });
+    const upload = vi.fn(async () => ({ ok: true }) as never);
+    const result = await store({ plugin, upload }).restore({ ...SCOPE, checkpointId: 'commit-1' });
     expect(result).toEqual({ status: 'restored', checkpointId: 'commit-1' });
     expect(plugin.archiveCommit).toHaveBeenCalledWith({ dir: DIR, commitId: 'commit-1' });
-    expect(write).toHaveBeenCalledWith('sb', '/workspace/.push-checkpoint-restore.b64', 'ARCHIVE');
+    expect(upload).toHaveBeenCalledWith('sb', '/workspace/.push-checkpoint-restore.b64', 'ARCHIVE');
   });
 
   it('refuses a dirty target tree (does not clobber live work)', async () => {
