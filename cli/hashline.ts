@@ -13,6 +13,7 @@ import {
   normalizeLineForHash,
   resolveHashlineRefs,
   applyResolvedHashlineEdits,
+  splitEditableLines,
 } from '../lib/hashline.ts';
 
 export type { HashlineOp };
@@ -49,6 +50,9 @@ export function renderAnchoredRange(
   endLine: number | null = null,
 ): AnchoredRange {
   const lines = String(content).split(/\r?\n/);
+  // Drop the trailing-newline phantom so it isn't shown or counted as a line —
+  // matches the editable line model (see splitEditableLines in lib/hashline.ts).
+  if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
   const totalLines = lines.length || 1;
   const start = Math.max(1, Math.min(Number(startLine) || 1, totalLines));
   const end = Math.max(start, Math.min(Number(endLine) || totalLines, totalLines));
@@ -123,8 +127,9 @@ export function applyHashlineEdits(content: unknown, edits: unknown): CliHashlin
     throw new Error(`unsupported edit op: ${op}`);
   });
 
-  // Sync crypto, shared resolution + application engine
-  const resultLines = String(content).split('\n');
+  // Sync crypto, shared resolution + application engine. Split via the shared
+  // helper so the trailing-newline phantom stays out of the editable line model.
+  const { lines: resultLines, trailingNewline } = splitEditableLines(String(content));
   const hashCache = resultLines.map((l) =>
     createHash('sha256').update(normalizeLineForHash(l)).digest('hex').slice(0, 12),
   );
@@ -136,7 +141,7 @@ export function applyHashlineEdits(content: unknown, edits: unknown): CliHashlin
     if ('error' in r) throw new Error(r.error);
   }
 
-  const result = applyResolvedHashlineEdits(resultLines, resolved);
+  const result = applyResolvedHashlineEdits(resultLines, resolved, trailingNewline);
 
   // CLI policy: throw on any application error
   if (result.failed > 0) {

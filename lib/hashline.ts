@@ -332,19 +332,43 @@ export interface AppliedEditDetail {
   linesAdded: number;
 }
 
+/**
+ * Split file content into editable lines, excluding the trailing-newline
+ * "phantom". A file's terminal newline is a property of the file, not an
+ * editable line — but a naive `content.split('\n')` surfaces it to the model as
+ * an empty final line, which models routinely `delete_line` as a stray blank,
+ * stripping the newline. Returning the newline as an explicit flag keeps it out
+ * of the line model entirely, so it can't be targeted, and the caller re-asserts
+ * it on output. The empty file (`''`) is a single empty line with no newline.
+ *
+ * CRLF: we split on `\n` only, so a `\r` rides on the end of each line as
+ * content (matching the apply path's byte preservation). `normalizeLineForHash`
+ * trims it, so refs still align, and an untouched line's `\r\n` round-trips
+ * intact. (Stripping `\r\n` together would force-convert the terminator to LF —
+ * strictly more lossy — so we deliberately don't.)
+ */
+export function splitEditableLines(content: string): {
+  lines: string[];
+  trailingNewline: boolean;
+} {
+  const text = String(content);
+  const trailingNewline = text.length > 0 && text.endsWith('\n');
+  const body = trailingNewline ? text.slice(0, -1) : text;
+  return { lines: body.split('\n'), trailingNewline };
+}
+
 export function applyResolvedHashlineEdits(
   resultLines: string[],
   resolved: ResolvedEdit[],
+  trailingNewline?: boolean,
 ): HashlineEditResult & { appliedDetails: AppliedEditDetail[] } {
-  // Whether the original file ended with a newline. `resultLines` is the caller's
-  // `content.split('\n')`, so a trailing `\n` shows up as a final empty element
-  // (the `length > 1` guard excludes the empty file, which splits to a single
-  // `''`). That terminal newline is a property of the file, not an editable line,
-  // but it's surfaced to the model as a phantom empty last line — which models
-  // routinely `delete_line` as "a stray blank", stripping the file's trailing
-  // newline. We re-assert it on output below so that strip can't ship.
+  // The file's terminal-newline state. Preferred path: callers split via
+  // `splitEditableLines` (no phantom) and pass the flag explicitly. Legacy path:
+  // when the flag is omitted, derive it from a phantom trailing empty element of
+  // a raw `content.split('\n')` (the `length > 1` guard excludes the empty file).
+  // Either way it's re-asserted on output so an edit can't strip the newline.
   const originalEndedWithNewline =
-    resultLines.length > 1 && resultLines[resultLines.length - 1] === '';
+    trailingNewline ?? (resultLines.length > 1 && resultLines[resultLines.length - 1] === '');
   let appliedCount = 0;
   let failedCount = 0;
   const errors: string[] = [];
@@ -441,12 +465,16 @@ export function applyResolvedHashlineEdits(
 
   // Preserve the original terminal-newline state: restore it only if an edit
   // dropped it. Never collapse trailing blanks the model intentionally added,
-  // never fabricate a newline on a file that never had one, and never on a now
-  // -empty result — deleting every line yields an empty file, not a lone newline.
+  // never fabricate a newline on a file that never had one. Distinguish "no
+  // lines left" (deleted every line → empty file, no newline) from "a blank line
+  // survives" (`['']` joins to `''` too, but it's content → keep the newline):
+  // gate on `resultLines.length`, not on the joined string being empty.
   const joined = resultLines.join('\n');
   return {
     content:
-      originalEndedWithNewline && joined !== '' && !joined.endsWith('\n') ? `${joined}\n` : joined,
+      originalEndedWithNewline && resultLines.length > 0 && !joined.endsWith('\n')
+        ? `${joined}\n`
+        : joined,
     applied: appliedCount,
     failed: failedCount,
     errors,
@@ -467,10 +495,10 @@ export async function applyHashlineEdits(
   originalContent: string,
   edits: HashlineOp[],
 ): Promise<HashlineEditResult> {
-  const resultLines = originalContent.split('\n');
+  const { lines: resultLines, trailingNewline } = splitEditableLines(originalContent);
   const hashCache = await batchHashLines(resultLines);
   const resolved = resolveHashlineRefs(hashCache, resultLines, edits);
-  return applyResolvedHashlineEdits(resultLines, resolved);
+  return applyResolvedHashlineEdits(resultLines, resolved, trailingNewline);
 }
 
 export async function renderAnchoredRange(
@@ -479,6 +507,9 @@ export async function renderAnchoredRange(
   endLine: number | null = null,
 ): Promise<{ text: string; startLine: number; endLine: number; totalLines: number }> {
   const lines = String(content).split(/\r?\n/);
+  // Drop the trailing-newline phantom so it isn't shown or counted as a line —
+  // matches the editable line model (see splitEditableLines).
+  if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
   const totalLines = lines.length || 1;
   const start = Math.max(1, Math.min(Number(startLine) || 1, totalLines));
   const end = Math.max(start, Math.min(Number(endLine) || totalLines, totalLines));

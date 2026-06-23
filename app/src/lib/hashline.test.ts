@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { adaptiveHashDisplayLength, calculateLineHash, applyHashlineEdits } from './hashline';
+import {
+  adaptiveHashDisplayLength,
+  calculateLineHash,
+  applyHashlineEdits,
+  renderAnchoredRange,
+  splitEditableLines,
+} from './hashline';
 
 describe('calculateLineHash', () => {
   it('returns 7 chars by default', async () => {
@@ -66,16 +72,25 @@ describe('trimmed line hashing (reindentation resilience)', () => {
   });
 });
 
-describe('trailing newline preservation', () => {
-  it('keeps the terminal newline when the model deletes the phantom empty last line', async () => {
-    // A newline-terminated file surfaces its trailing newline as a phantom empty
-    // last line. Models routinely delete it as a "stray blank"; that must NOT
-    // strip the file's terminal newline.
+describe('trailing newline as a file property (no phantom line)', () => {
+  it('does not show the terminal newline as an editable line', async () => {
+    // A newline-terminated file must render exactly its real lines — no phantom
+    // empty last line for the model to mistake for a stray blank and delete.
+    const view = await renderAnchoredRange('alpha\nbeta\n');
+    expect(view.totalLines).toBe(2);
+    expect(view.text.split('\n')).toHaveLength(2);
+    expect(view.text).toContain('alpha');
+    expect(view.text).toContain('beta');
+  });
+
+  it('appends past the last line and keeps the terminal newline', async () => {
     const content = 'alpha\nbeta\n';
-    const phantomRef = await calculateLineHash('', 12);
-    const result = await applyHashlineEdits(content, [{ op: 'delete_line', ref: phantomRef }]);
+    const ref = await calculateLineHash('beta', 12);
+    const result = await applyHashlineEdits(content, [
+      { op: 'insert_after', ref, content: 'gamma' },
+    ]);
     expect(result.failed).toBe(0);
-    expect(result.content).toBe('alpha\nbeta\n');
+    expect(result.content).toBe('alpha\nbeta\ngamma\n');
   });
 
   it('does not fabricate a trailing newline on a file that never had one', async () => {
@@ -98,20 +113,78 @@ describe('trailing newline preservation', () => {
   });
 
   it('yields an empty file (not a lone newline) when every line is deleted', async () => {
-    // Deleting all visible lines of a newline-terminated file must produce an
+    // Deleting all editable lines of a newline-terminated file must produce an
     // empty file — the newline restoration must not leave a stray blank line.
     const content = 'alpha\nbeta\n';
-    const refs = await Promise.all([
-      calculateLineHash('alpha', 12),
-      calculateLineHash('beta', 12),
-      calculateLineHash('', 12),
-    ]);
+    const refs = await Promise.all([calculateLineHash('alpha', 12), calculateLineHash('beta', 12)]);
     const result = await applyHashlineEdits(
       content,
       refs.map((ref) => ({ op: 'delete_line', ref })),
     );
     expect(result.failed).toBe(0);
     expect(result.content).toBe('');
+  });
+
+  it('keeps a surviving blank line (with its newline) when a sibling line is deleted', async () => {
+    // `alpha\n\n` = "alpha" + one blank line + terminal newline. Deleting alpha
+    // leaves the blank line, so the file is `\n` — NOT empty. (A blank line that
+    // survives is content; only deleting *every* line empties the file.)
+    const ref = await calculateLineHash('alpha', 12);
+    const result = await applyHashlineEdits('alpha\n\n', [{ op: 'delete_line', ref }]);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('\n');
+  });
+
+  it('keeps the terminal newline when the only line is replaced with empty content', async () => {
+    const ref = await calculateLineHash('alpha', 12);
+    const result = await applyHashlineEdits('alpha\n', [{ op: 'replace_line', ref, content: '' }]);
+    expect(result.failed).toBe(0);
+    expect(result.content).toBe('\n');
+  });
+
+  it('preserves a CRLF file ending when editing a different line', async () => {
+    // The `\r` rides on each line; editing one line must not disturb the
+    // untouched trailing CRLF.
+    const ref = await calculateLineHash('alpha', 12);
+    const result = await applyHashlineEdits('alpha\r\nbeta\r\n', [
+      { op: 'replace_line', ref, content: 'ALPHA' },
+    ]);
+    expect(result.failed).toBe(0);
+    expect(result.content.endsWith('beta\r\n')).toBe(true);
+  });
+});
+
+describe('splitEditableLines', () => {
+  it('treats the empty file as a single empty line with no newline', () => {
+    expect(splitEditableLines('')).toEqual({ lines: [''], trailingNewline: false });
+  });
+
+  it('treats a file with no terminal newline as bare', () => {
+    expect(splitEditableLines('alpha')).toEqual({ lines: ['alpha'], trailingNewline: false });
+    expect(splitEditableLines('alpha\nbeta')).toEqual({
+      lines: ['alpha', 'beta'],
+      trailingNewline: false,
+    });
+  });
+
+  it('pulls a terminal newline into the flag, leaving no phantom line', () => {
+    expect(splitEditableLines('alpha\n')).toEqual({ lines: ['alpha'], trailingNewline: true });
+    expect(splitEditableLines('alpha\nbeta\n')).toEqual({
+      lines: ['alpha', 'beta'],
+      trailingNewline: true,
+    });
+  });
+
+  it('keeps the CRLF carriage return on the line (byte-preserving)', () => {
+    expect(splitEditableLines('alpha\r\nbeta\r\n')).toEqual({
+      lines: ['alpha\r', 'beta\r'],
+      trailingNewline: true,
+    });
+  });
+
+  it('keeps an intentional trailing blank line distinct from the phantom', () => {
+    // `'a\n\n'` is line "a" + one blank line + terminal newline → two lines.
+    expect(splitEditableLines('a\n\n')).toEqual({ lines: ['a', ''], trailingNewline: true });
   });
 });
 
