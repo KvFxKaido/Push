@@ -363,7 +363,14 @@ export function splitEditableLines(content: string): {
  * it joins. A trailing newline on the content is therefore redundant — left in,
  * it splices a spurious blank line after the intended content (models routinely
  * append `\n` because "lines end in newlines"). Strip exactly one trailing
- * `\r?\n`; an intentional trailing blank line still works with a doubled newline.
+ * `\r?\n`.
+ *
+ * A blank line *between* content is still expressible with a doubled newline
+ * (`"a\n\nb"` → `a`, blank, `b`). At end-of-file there is no distinct "trailing
+ * blank line": a trailing blank collapses into the file's terminal newline,
+ * because the phantom-free line model represents the terminal newline as the
+ * `trailingNewline` flag, not as a line (see splitEditableLines). So replacing
+ * the last line with `"X\n\n"` yields a newline-terminated `X`, not `X` + blank.
  */
 export function splitEditContentLines(content: string): string[] {
   return content.replace(/\r?\n$/, '').split('\n');

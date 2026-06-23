@@ -206,19 +206,33 @@ describe('edit content trailing newline', () => {
     expect(result.content).toBe('alpha\nMID\nbeta');
   });
 
-  it('keeps internal newlines and an intentional trailing blank (doubled newline)', async () => {
+  it('keeps internal newlines (multi-line content)', async () => {
     const ref = await calculateLineHash('beta', 12);
-    const multi = await applyHashlineEdits('alpha\nbeta', [
+    const result = await applyHashlineEdits('alpha\nbeta', [
       { op: 'replace_line', ref, content: 'b1\nb2' },
     ]);
-    expect(multi.content).toBe('alpha\nb1\nb2');
+    expect(result.content).toBe('alpha\nb1\nb2');
+  });
 
-    const ref2 = await calculateLineHash('beta', 12);
-    const blank = await applyHashlineEdits('alpha\nbeta', [
-      { op: 'replace_line', ref: ref2, content: 'X\n\n' },
+  it('expresses a blank line BETWEEN content with a doubled newline', async () => {
+    // Mid-content the doubled newline survives strip-one as a real blank line.
+    const ref = await calculateLineHash('beta', 12);
+    const result = await applyHashlineEdits('alpha\nbeta\ngamma', [
+      { op: 'replace_line', ref, content: 'X\n\n' },
     ]);
-    // `X\n\n` → strip one trailing newline → `X\n` → X plus one intentional blank.
-    expect(blank.content).toBe('alpha\nX\n');
+    // alpha, X, <blank>, gamma
+    expect(result.content).toBe('alpha\nX\n\ngamma');
+  });
+
+  it('collapses a trailing blank at EOF into the terminal newline (no distinct blank)', async () => {
+    // At end-of-file there is no separate "trailing blank line" — it folds into
+    // the terminal newline (the phantom-free model tracks that as a flag, not a
+    // line). So `X\n\n` on the last line is a newline-terminated `X`, not `X` + blank.
+    const ref = await calculateLineHash('beta', 12);
+    const result = await applyHashlineEdits('alpha\nbeta', [
+      { op: 'replace_line', ref, content: 'X\n\n' },
+    ]);
+    expect(result.content).toBe('alpha\nX\n');
   });
 
   it('splitEditContentLines strips exactly one trailing newline', () => {
