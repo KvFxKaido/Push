@@ -9,6 +9,7 @@ import {
   CARD_ICON_BUTTON_CLASS,
 } from '@/lib/utils';
 import { TerminalCrateIcon } from '@/components/icons/push-custom-icons';
+import { Tip } from '@/components/Tip';
 import { ExpandChevron, ExpandableCardPanel } from './expandable';
 import { CardCodeBlock } from './card-code-block';
 
@@ -58,27 +59,31 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
         <div className="flex items-center gap-2 shrink-0">
           {expanded && (data.stdout || data.stderr) && (
             <div className="flex items-center gap-1 mr-1">
-              <button
-                onClick={handleCopy}
-                className={`${CARD_ICON_BUTTON_CLASS} h-7 w-7`}
-                title="Copy output"
-              >
-                {/* `icon-swap` on the incoming Check only; `copied` inits false,
-                    so a Virtuoso scroll-remount shows the resting Copy and never
-                    replays the swap. */}
-                {copied ? (
-                  <Check className="icon-swap h-3 w-3 text-push-status-success" />
-                ) : (
-                  <Copy className="h-3 w-3" />
-                )}
-              </button>
-              <button
-                onClick={handleDownload}
-                className={`${CARD_ICON_BUTTON_CLASS} h-7 w-7`}
-                title="Download output"
-              >
-                <Download className="h-3 w-3" />
-              </button>
+              <Tip content="Copy output">
+                <button
+                  onClick={handleCopy}
+                  className={`${CARD_ICON_BUTTON_CLASS} h-7 w-7`}
+                  aria-label="Copy output"
+                >
+                  {/* `icon-swap` on the incoming Check only; `copied` inits false,
+                      so a Virtuoso scroll-remount shows the resting Copy and never
+                      replays the swap. */}
+                  {copied ? (
+                    <Check className="icon-swap h-3 w-3 text-push-status-success" />
+                  ) : (
+                    <Copy className="h-3 w-3" />
+                  )}
+                </button>
+              </Tip>
+              <Tip content="Download output">
+                <button
+                  onClick={handleDownload}
+                  className={`${CARD_ICON_BUTTON_CLASS} h-7 w-7`}
+                  aria-label="Download output"
+                >
+                  <Download className="h-3 w-3" />
+                </button>
+              </Tip>
             </div>
           )}
           {data.durationMs !== undefined && (

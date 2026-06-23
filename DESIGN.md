@@ -226,6 +226,14 @@ Named keyframe animations in `app/src/index.css`. Consume the class directly —
 
 ## Components
 
+### Tooltips (`Tip`)
+
+The shared "explain this control" affordance — use it instead of a native `title=` on icon buttons and terse controls. `<Tip content="…">{trigger}</Tip>` wraps the retuned Radix tooltip (`components/ui/tooltip.tsx`): a dark raised-chrome surface (`bg-push-surface-raised` + `border-push-edge` + `shadow-push-lg`) that animates with the transitions.dev feel — scale 0.98 → 1 + fade, 150ms in / 75ms out, `ease-out`, pure scale from the Radix origin (no slide). It portals out of `overflow:hidden` panels and collides at edges; `max-w` + `text-balance` let longer copy wrap.
+
+- **Reveal (mobile-first):** hover/focus on pointer devices; **long-press** (~400ms) on touch, since hover doesn't exist there. `open` is controlled so both paths drive it; a move/lift before the hold completes aborts.
+- Keep an **`aria-label`** on icon-only triggers — Radix supplies `aria-describedby` (the description), not the accessible *name*.
+- Long-press is a progressive enhancement: on touch the subsequent tap still fires the control, so be deliberate on destructive triggers.
+
 ### Buttons
 
 - Border radius: `rounded-md` (8px)
