@@ -289,35 +289,50 @@ export function createNativeJgitCheckpointStore(deps: NativeCheckpointDeps = {})
     dir: string,
     treeHash: string | null,
   ): Promise<CheckpointCaptureResult | null> {
+    // Every fallback logs a `reason` so the path is never silent (which is exactly
+    // how a delta that quietly never engages stays invisible). Returns null → the
+    // caller runs the proven full capture.
+    const bail = (reason: string, extra: Record<string, unknown> = {}): null => {
+      log('info', 'native_checkpoint_delta_fallback', { dir, reason, ...extra });
+      return null;
+    };
+
     // Base = the newest checkpoint's content manifest (empty → first capture → full).
     let base: Record<string, string>;
     try {
       base = (await plugin.listManifest({ dir })).manifest ?? {};
-    } catch {
-      return null;
+    } catch (err) {
+      return bail('list_manifest_threw', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
-    if (Object.keys(base).length === 0) return null;
+    if (Object.keys(base).length === 0) return bail('no_base');
 
     // Hand the base to the sandbox (small — hashes, not contents).
-    const up = await upload(input.sandboxId, BASE_MANIFEST_PATH, serializeManifest(base));
-    if (!up.ok) return null;
+    try {
+      const up = await upload(input.sandboxId, BASE_MANIFEST_PATH, serializeManifest(base));
+      if (!up.ok) return bail('base_upload_failed', { error: up.error ?? null });
+    } catch (err) {
+      return bail('base_upload_threw', { error: err instanceof Error ? err.message : String(err) });
+    }
 
     // Diff in-sandbox → delta archive + deletions + the sandbox's current manifest.
-    let parsed: ReturnType<typeof parseDeltaCapture>;
+    let res: Awaited<ReturnType<typeof exec>>;
     try {
-      const res = await exec(input.sandboxId, DELTA_CAPTURE_COMMAND);
-      // A truncated stdout (per-call cap) means a partial manifest — never trust
-      // it; fall back. (commitDelta's verify would also catch it, but cheaper here.)
-      if (res.truncated) return null;
-      parsed = parseDeltaCapture(res.stdout);
-    } catch {
-      return null;
+      res = await exec(input.sandboxId, DELTA_CAPTURE_COMMAND);
+    } catch (err) {
+      return bail('delta_exec_threw', { error: err instanceof Error ? err.message : String(err) });
     }
-    if (!parsed) return null;
-    if (parsed.bytes > CHECKPOINT_ARCHIVE_MAX_BYTES) return null;
-    // Nothing changed and nothing deleted: the probe normally catches this; if it
-    // didn't (no baseline hash this round), let the full path settle it.
-    if (parsed.bytes <= 0 && parsed.deleted.length === 0) return null;
+    // A truncated stdout (per-call cap) means a partial manifest — never trust it.
+    if (res.truncated) return bail('stdout_truncated');
+    const parsed = parseDeltaCapture(res.stdout);
+    if (!parsed) return bail('parse_failed', { head: res.stdout.slice(0, 200) });
+    if (parsed.bytes > CHECKPOINT_ARCHIVE_MAX_BYTES)
+      return bail('too_large', { bytes: parsed.bytes });
+    // Nothing changed and nothing deleted: the probe normally catches this.
+    if (parsed.bytes <= 0 && parsed.deleted.length === 0) {
+      return bail('empty_delta', { baseCount: Object.keys(base).length });
+    }
 
     // Fetch only the changed bytes (an empty ZIP when the delta is deletions-only).
     let deltaBase64 = EMPTY_ZIP_B64;
@@ -325,10 +340,13 @@ export function createNativeJgitCheckpointStore(deps: NativeCheckpointDeps = {})
       let dl: Awaited<ReturnType<typeof download>>;
       try {
         dl = await download(input.sandboxId, TMP_DELTA);
-      } catch {
-        return null;
+      } catch (err) {
+        return bail('delta_download_threw', {
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
-      if (!dl.ok || !dl.fileBase64) return null;
+      if (!dl.ok || !dl.fileBase64)
+        return bail('delta_download_failed', { error: dl.error ?? null });
       deltaBase64 = dl.fileBase64;
     }
 
@@ -346,12 +364,13 @@ export function createNativeJgitCheckpointStore(deps: NativeCheckpointDeps = {})
         expectedManifest: parsed.manifest,
         message: `checkpoint ${new Date().toISOString()}`,
       });
-    } catch {
-      return null;
+    } catch (err) {
+      return bail('commit_delta_threw', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
     if (!result.commitId) {
-      log('info', 'native_checkpoint_delta_unverified', { dir, deltaBytes: parsed.bytes });
-      return null;
+      return bail('verify_failed_or_no_base', { deltaBytes: parsed.bytes });
     }
     const commitId = result.commitId;
 
