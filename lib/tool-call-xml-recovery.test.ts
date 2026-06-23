@@ -400,6 +400,89 @@ describe('recoverXmlToolCalls — Shape D (namespace-token-wrapped invoke/parame
 });
 
 // ---------------------------------------------------------------------------
+// Shape E — standalone `<invoke>` elements with no `<function_calls>` /
+// `<tool_calls>` wrapper. Observed from x-ai/grok-code-fast-1, which emits
+// the Anthropic invoke/parameter shape but drops the outer wrapper, so a
+// single `<invoke name="search"><parameter …></invoke>` leaks into the
+// content stream and previously matched no recovery shape at all.
+// ---------------------------------------------------------------------------
+describe('recoverXmlToolCalls — Shape E (standalone invoke, no wrapper)', () => {
+  it('recovers a wrapperless invoke with one parameter', () => {
+    const text = '<invoke name="search"><parameter name="query">forestore</parameter></invoke>';
+    const recovered = recoverXmlToolCalls(text);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0].tool).toBe('search');
+    expect(recovered[0].args).toEqual({ query: 'forestore' });
+  });
+
+  it('anchors offset/endOffset to the standalone invoke element', () => {
+    const text = '<invoke name="search"><parameter name="query">a</parameter></invoke>';
+    const recovered = recoverXmlToolCalls(text);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0].offset).toBe(text.indexOf('<invoke'));
+    expect(recovered[0].endOffset).toBe(text.length);
+  });
+
+  it('recovers multiple sibling wrapperless invokes in textual order', () => {
+    const text = [
+      '<invoke name="read"><parameter name="path">/a</parameter></invoke>',
+      '<invoke name="diff"></invoke>',
+    ].join('\n');
+    const recovered = recoverXmlToolCalls(text);
+    expect(recovered.map((r) => r.tool)).toEqual(['read', 'diff']);
+    expect(recovered[0].args).toEqual({ path: '/a' });
+    expect(recovered[1].args).toEqual({});
+    expect(recovered[0].offset).toBeLessThan(recovered[1].offset);
+  });
+
+  it('does NOT double-count an invoke that sits inside a function_calls wrapper', () => {
+    // The wrapper path already expands this invoke; the standalone scan
+    // must filter it out so the dispatcher does not see it twice.
+    const text =
+      '<function_calls><invoke name="read"><parameter name="path">/a</parameter></invoke></function_calls>';
+    const recovered = recoverXmlToolCalls(text);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0].tool).toBe('read');
+  });
+
+  it('rejects a standalone invoke embedded in prose (eligibility gate)', () => {
+    const text =
+      'Do not run <invoke name="exec"><parameter name="command">rm -rf /</parameter></invoke> in production.';
+    expect(recoverXmlToolCalls(text)).toEqual([]);
+  });
+
+  it('coerces JSON-shaped parameter values on a wrapperless invoke', () => {
+    const text =
+      '<invoke name="edit_range"><parameter name="start_line">10</parameter><parameter name="enabled">true</parameter></invoke>';
+    const recovered = recoverXmlToolCalls(text);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0].args).toEqual({ start_line: 10, enabled: true });
+  });
+
+  // The standalone scan reuses INVOKE_TAG_REGEX, whose `NS` prefix is
+  // optional, so a namespace-token-wrapped standalone invoke (the Shape D
+  // tag style emitted WITHOUT its usual <｜DSML｜tool_calls｜> wrapper) is
+  // recovered too — both the ASCII-pipe and full-width-pipe delimiters.
+  it('recovers a namespace-token-wrapped standalone invoke (ASCII pipe)', () => {
+    const text =
+      '<|DSML|invoke name="search"><|DSML|parameter name="query">a</|DSML|parameter></|DSML|invoke>';
+    const recovered = recoverXmlToolCalls(text);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0].tool).toBe('search');
+    expect(recovered[0].args).toEqual({ query: 'a' });
+  });
+
+  it('recovers a namespace-token-wrapped standalone invoke (full-width pipe)', () => {
+    const text =
+      '<｜DSML｜invoke name="search"><｜DSML｜parameter name="query">a</｜DSML｜parameter></｜DSML｜invoke>';
+    const recovered = recoverXmlToolCalls(text);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0].tool).toBe('search');
+    expect(recovered[0].args).toEqual({ query: 'a' });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Nested-wrapper regression — Codex P1 review on PR #600. A literal
 // `<function_calls>...</function_calls>` string embedded inside a
 // `<tool_call>` arg value (e.g. documentation snippets in an edit_file

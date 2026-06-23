@@ -72,6 +72,12 @@ const MATRIX: MatrixRow[] = [
     tools: ['read_file'],
   },
   {
+    format: 'Anthropic standalone invoke (no wrapper, x-ai/grok-code-fast-1)',
+    sample: '<invoke name="read_file"><parameter name="path">a</parameter></invoke>',
+    expect: 'recover',
+    tools: ['read_file'],
+  },
+  {
     format: 'Namespaced functions.<name>:<id> (Kimi/Blackbox)',
     sample: 'functions.read_file:0 {"path":"a"}',
     expect: 'recover',
