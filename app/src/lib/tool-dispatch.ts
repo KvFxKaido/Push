@@ -517,10 +517,33 @@ export function detectAllToolCalls(text: string, opts?: DetectToolCallsOptions):
       ...recoverXmlToolCalls(text),
       ...recoverTokenDelimitedToolCalls(text),
     ].sort((a, b) => a.offset - b.offset);
+    const recoveredRawNames = new Set<string>();
     for (const recovered of recoveries) {
       const call = wrapRecoveredCallToAny(recovered.tool, recovered.args);
       if (!call) continue;
       recoveryEntries.push({ call, offset: recovered.offset });
+      recoveredRawNames.add(recovered.tool.trim());
+    }
+    // Reconcile the kernel's malformed reports against what this pass
+    // claimed. `enableInternalRecovery: false` makes the kernel emit every
+    // recovery shape as an `unknown_tool` malformed (it defers recovery to
+    // this layer), and those mapped into `droppedCandidates` above. Now
+    // that this pass has turned the same shapes into real calls, drop the
+    // duplicate reports — otherwise the dropped-candidate guard in
+    // `chat-send` short-circuits the turn into a parse-error correction and
+    // the recovered call never executes. Because this branch only runs when
+    // `!hasExplicitWrappers` (no canonical/bare JSON in the text), every
+    // kernel malformed here is recovery-origin, so matching on `rawToolName`
+    // can't shadow a genuine canonical drop. Recovery shapes this pass could
+    // NOT claim (`wrapRecoveredCallToAny` → null, i.e. a truly unknown tool)
+    // are absent from the set and correctly stay in `droppedCandidates`.
+    if (recoveredRawNames.size > 0) {
+      for (let i = droppedCandidates.length - 1; i >= 0; i--) {
+        if (recoveredRawNames.has(droppedCandidates[i].rawToolName)) {
+          droppedSeen.delete(droppedCandidates[i].rawToolName);
+          droppedCandidates.splice(i, 1);
+        }
+      }
     }
   }
 

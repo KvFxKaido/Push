@@ -1260,6 +1260,53 @@ describe('detectAllToolCalls — XML-wrapper recovery', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Recovery vs droppedCandidates reconciliation. The web dispatcher runs the
+// shared kernel with `enableInternalRecovery: false`, so the kernel reports
+// every recovery shape as an `unknown_tool` malformed and defers the actual
+// recovery to the web layer's own pass. Without reconciliation those reports
+// land in `droppedCandidates`, which trips the dropped-candidate guard in
+// `chat-send` and short-circuits the turn into a parse-error correction —
+// so a recovered call would parse but never execute. These pin that a
+// successfully-recovered shape leaves `droppedCandidates` empty, while a
+// genuinely-unknown recovered tool still surfaces as dropped.
+// ---------------------------------------------------------------------------
+describe('detectAllToolCalls — recovery clears its own droppedCandidates', () => {
+  it('leaves droppedCandidates empty for a recovered standalone <invoke> (Shape E)', () => {
+    const text =
+      '<invoke name="read"><parameter name="path">/workspace/README.md</parameter></invoke>';
+    const result = detectAllToolCalls(text);
+    expect(result.readOnly.map((c) => c.call.tool)).toEqual(['sandbox_read_file']);
+    expect(result.droppedCandidates).toHaveLength(0);
+  });
+
+  it('leaves droppedCandidates empty for a recovered <function_calls> wrapper (Shape C)', () => {
+    const text =
+      '<function_calls><invoke name="read"><parameter name="path">/a</parameter></invoke></function_calls>';
+    const result = detectAllToolCalls(text);
+    expect(result.readOnly.map((c) => c.call.tool)).toEqual(['sandbox_read_file']);
+    expect(result.droppedCandidates).toHaveLength(0);
+  });
+
+  it('leaves droppedCandidates empty for a recovered <tool_call> block (Shape A)', () => {
+    const text = '<tool_call>{"name":"read_file","arguments":{"path":"a"}}</tool_call>';
+    const result = detectAllToolCalls(text);
+    expect(result.readOnly.map((c) => c.call.tool)).toEqual(['sandbox_read_file']);
+    expect(result.droppedCandidates).toHaveLength(0);
+  });
+
+  it('still reports a genuinely-unknown recovered tool as dropped', () => {
+    // wrapRecoveredCallToAny can't claim this name, so it stays a real
+    // dropped candidate — the reconciliation only clears shapes this pass
+    // actually turned into calls.
+    const text = '<invoke name="totally_unknown_tool"><parameter name="x">1</parameter></invoke>';
+    const result = detectAllToolCalls(text);
+    expect(result.readOnly).toHaveLength(0);
+    expect(result.droppedCandidates).toHaveLength(1);
+    expect(result.droppedCandidates[0].rawToolName).toBe('totally_unknown_tool');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Dropped-candidate tracking — the Coder "loops on sandbox_diff" bug.
 // Before this surface existed, a malformed edit_range emitted alongside a
 // valid diff would let the diff execute alone (the only sandbox tool with no
